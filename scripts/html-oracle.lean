@@ -613,8 +613,15 @@ const printDeck = async (page, name, fx) => {
 // `<wbr>` — a declared listing that wraps at listings' units — a break
 // falls only at a space or the `<wbr>` the page stands between two units (a
 // unit may part a fallback token: `0x1F` is the units `0` and `x1F`), or
-// inside a unit the page holds nowhere because it is wider than a line. And
-// a wrapping block holds its lines inside its box: none runs past it.
+// inside a unit the page holds nowhere because it is wider than a line, or
+// between two characters of scripts that wrap between their characters
+// where the engine parts its units, which the page leaves to the browser.
+// Thai and Lao break only between the words a dictionary finds (the
+// browser's own segmenter's), a subset of the clusters the page may break
+// between, save inside a word wider than a line. And a wrapping block
+// holds its lines inside its box: none runs past it, save a box whose
+// continuation line cannot hold the units the page holds in every box
+// (`HtmlDoc.codeShortColumns`), which no wrap keeps inside.
 const codeWrapJudge = (tables) => {
   const inR = (rs, cp) => {
     let lo = 0, hi = rs.length - 1;
@@ -642,8 +649,8 @@ const codeWrapJudge = (tables) => {
     // a continuation line's room, the block's less the hang its continuations take
     const room = pre.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) -
       Math.abs(parseFloat(cs.textIndent) || 0);
-    if (/^(pre-wrap|break-spaces)$/.test(cs.whiteSpace) && pre.scrollWidth > pre.clientWidth + 1)
-      over.push(pre.scrollWidth - pre.clientWidth);
+    const overrun = /^(pre-wrap|break-spaces)$/.test(cs.whiteSpace) &&
+      pre.scrollWidth > pre.clientWidth + 1 ? pre.scrollWidth - pre.clientWidth : 0;
     const chars = [];
     let wbr = false, units = false;
     const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -661,15 +668,44 @@ const codeWrapJudge = (tables) => {
         i += ch.length;
       }
     }
+    // a block whose continuation line holds no unit the page always holds
+    // (`HtmlDoc.codeShortColumns`) cannot keep its lines inside its box
+    const cells = chars.filter(c => c.w > 0 && !/\s/.test(c.ch)).map(c => c.w).sort((a, b) => a - b);
+    const cell = cells.length ? cells[cells.length >> 1] : 0;
+    if (overrun && room >= (tables.short + 1) * cell) over.push(overrun);
+    // Thai and Lao words, as the browser's segmenter finds them, line by line
+    const words = new Intl.Segmenter('th', { granularity: 'word' });
+    let wseg = 0;
+    const wordWidth = new Map();
+    for (let a = 0; a < chars.length;) {
+      let b = a;
+      while (b < chars.length && chars[b].ch !== '\n') b++;
+      const line = chars.slice(a, b);
+      const starts = new Set();
+      if (line.some(c => inR(tables.words, c.ch.codePointAt(0)))) {
+        let off = 0;
+        const at = new Map(line.map((c, k) => { const o = off; off += c.ch.length; return [o, k]; }));
+        for (const s of words.segment(line.map(c => c.ch).join(''))) starts.add(at.get(s.index));
+      }
+      line.forEach((c, k) => {
+        if (starts.has(k)) wseg++;
+        c.wb = starts.has(k);
+        c.wseg = wseg;
+        wordWidth.set(wseg, (wordWidth.get(wseg) || 0) + c.w);
+      });
+      wseg++;
+      a = b + 1;
+    }
     // under listings' rule, the stretches between two break points the page
     // marks — a space or a `<wbr>` — that no element holds: a unit wider
     // than a line, which breaks where it must
     let seg = 0;
-    const segWidth = new Map();
+    const segWidth = new Map(), heldWidth = new Map();
     for (const c of chars) {
       if (c.ch === '\n' || c.ch === ' ' || c.ch === '\t' || c.wbr || c.holder) seg++;
       c.seg = seg;
       if (!c.holder) segWidth.set(seg, (segWidth.get(seg) || 0) + c.w);
+      else heldWidth.set(c.holder, (heldWidth.get(c.holder) || 0) + c.w);
     }
     // the fallback tokens, glued as the engine glues them
     let tok = 0, prev = null, held = false;
@@ -694,10 +730,18 @@ const codeWrapJudge = (tables) => {
         wraps++;
         const inside = last.tok === c.tok;
         const wide = inside && width.get(c.tok) > room + 0.5;
-        const longUnit = !last.holder && !c.holder && last.seg === c.seg &&
-          segWidth.get(c.seg) > room + 0.5;
-        const ok = units ? (last.sp || c.sp || c.wbr || longUnit)
-          : (last.sp || c.sp || !inside || wide);
+        // a unit wider than a line breaks where it must: one the page holds
+        // nowhere, or one a box too narrow for it released
+        const longUnit = (!last.holder && !c.holder && last.seg === c.seg &&
+          segWidth.get(c.seg) > room + 0.5) ||
+          (last.holder && last.holder === c.holder && heldWidth.get(c.holder) > room + 0.5);
+        const lp = last.ch.codePointAt(0), cp = c.ch.codePointAt(0);
+        const parted = inR(tables.apart, lp) && inR(tables.apart, cp) &&
+          !inR(tables.before, cp) && !inR(tables.after, lp);
+        const dictionary = inR(tables.words, lp) && inR(tables.words, cp);
+        const ok = (units ? (last.sp || c.sp || c.wbr || longUnit || parted)
+          : (last.sp || c.sp || !inside || wide)) &&
+          (!dictionary || c.wb || wordWidth.get(c.wseg) > room + 0.5);
         if (!ok) bad.push(JSON.stringify(last.ch + '|' + c.ch));
       }
       last = c;
@@ -708,11 +752,13 @@ const codeWrapJudge = (tables) => {
       (bad.length ? ', inside a token at ' + [...new Set(bad)].slice(0, 6).join(' ') : '') +
       (over.length ? ', a wrapping block overflowing its box by ' + over.map(Math.round).join(' ') + ' px' : '') };
 };
-const codeTables = JSON.parse(process.env.LT_CODE_TABLES || '{"apart":[],"before":[],"after":[]}');
+const codeTables = JSON.parse(process.env.LT_CODE_TABLES ||
+  '{"apart":[],"words":[],"before":[],"after":[],"short":3}');
 
-// The judge at narrow screens, where long lines wrap, and on paper.
+// The judge at narrow screens, where long lines wrap — from the 320 CSS px
+// WCAG 2.2's reflow criterion sets (SC 1.4.10) — and on paper.
 const codeWrap = async (page) => {
-  const widths = [360, 600, 900];
+  const widths = [320, 360, 600, 900];
   const runs = [];
   try {
     for (const w of widths) {
@@ -739,7 +785,8 @@ const codeWrap = async (page) => {
 // sheet: Letter, 0.4 in margins, backgrounds off; paper is read back with
 // pdftotext. Two facts, one judgement: laid out for that sheet's printable
 // width, nothing runs past it — Chromium prints a page that does at a
-// reduced scale, every line of it smaller — and every letter and digit the
+// reduced scale, every line of it smaller — no code block's lines run past
+// its own box, over what stands beside it, and every letter and digit the
 // page lays out is on paper, the multiset, NFKC and case folded
 // (`census`). A deck pages on its own sheet (`print-spill`).
 const printCode = async (page, name, fx) => {
@@ -755,6 +802,8 @@ const printCode = async (page, name, fx) => {
   await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
   const laid = await page.evaluate(() => ({
     past: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    over: [...document.querySelectorAll('pre')].filter(p => p.getBoundingClientRect().width > 0)
+      .map(p => p.scrollWidth - p.clientWidth).filter(d => d > 1),
     text: (document.querySelector('main') || document.body).innerText }));
   const pdf = path.join(dir, fx + '.code.pdf');
   await page.pdf({ path: pdf, format: 'Letter',
@@ -765,9 +814,11 @@ const printCode = async (page, name, fx) => {
   catch (e) { return { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) }; }
   const want = census(laid.text), got = census(paper);
   const short = [...want].reduce((a, [c, k]) => a + Math.max(0, k - (got.get(c) || 0)), 0);
-  return { ok: laid.past <= 1 && short === 0, n: 1,
+  return { ok: laid.past <= 1 && laid.over.length === 0 && short === 0, n: 1,
     why: `${Math.max(0, laid.past)} px past the sheet's printable width, ` +
-      `${short} laid-out characters missing on paper` };
+      `${short} laid-out characters missing on paper` +
+      (laid.over.length ? ', a code block running past its box by ' +
+        laid.over.map(Math.round).join(' ') + ' px' : '') };
 };
 
 // A frame its PDF page holds is held by its stage: at the deck's own aspect
@@ -1083,6 +1134,38 @@ async function runReader(name) {
       await control.evaluate(() => document.fonts.ready);
       const engine = await printCode(control, name, 'print-code-engine');
       if (!engine.ok || engine.n !== 1) throw new Error("print-code control: the engine's page " + engine.why);
+      await control.emulateMedia({ media: 'screen' });
+    }
+    // A held atom in a box narrower than it, beside another box, runs over
+    // its neighbour on paper; the engine's page of such boxes, and of a
+    // breaking listing's Thai, holds its code in its boxes on paper and on
+    // every screen, the Thai parting only between its words.
+    if (name === 'chromium') {
+      await control.setContent('<main style="container-type: inline-size"><div style="display: grid; ' +
+        'grid-template-columns: 20% 80%"><div style="container-type: inline-size"><pre style="white-space: ' +
+        'pre-wrap"><code><span style="white-space: nowrap">' + 'x'.repeat(30) + '</span></code></pre></div>' +
+        '<p>Prose beside the box.</p></div></main>');
+      if ((await printCode(control, name, 'print-code-box')).ok) throw new Error('print-code control: a box run past');
+      await control.emulateMedia({ media: 'screen' });
+      const thai = 'ภาษาไทยไม่มีช่องว่างระหว่างคำจึงต้องตัดบรรทัดระหว่างคำแทนการเว้นวรรค';
+      await control.setViewportSize({ width: 480, height: 300 });
+      await control.setContent('<pre style="width: 160px; white-space: pre-wrap; overflow-wrap: break-word; ' +
+        'font: 16px monospace"><code>' + [...thai].join('<wbr>') + '</code></pre>');
+      if ((await control.evaluate(codeWrapJudge, codeTables)).ok)
+        throw new Error('code-wrap control: Thai parted between its letters');
+    }
+    if (name === 'chromium' && process.env.LT_CODE_NARROW) {
+      await control.goto('file://' + process.env.LT_CODE_NARROW, { waitUntil: 'load', timeout: 30000 });
+      await control.evaluate(() => document.fonts.ready);
+      const wrapped = await codeWrap(control);
+      if (!wrapped.ok || wrapped.n !== 1) throw new Error("code-wrap control: the engine's narrow page " + wrapped.why);
+      await control.setViewportSize({ width: 480, height: 720 });
+      await control.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const thaiAt480 = await control.evaluate(codeWrapJudge, codeTables);
+      if (!thaiAt480.ok || thaiAt480.wraps === 0)
+        throw new Error("code-wrap control: the engine's Thai listing at 480 px " + thaiAt480.why);
+      const boxed = await printCode(control, name, 'print-code-narrow');
+      if (!boxed.ok || boxed.n !== 1) throw new Error("print-code control: the engine's narrow page " + boxed.why);
       await control.emulateMedia({ media: 'screen' });
     }
   } finally { await control.close(); }
@@ -1407,8 +1490,10 @@ def codeTables : String :=
         start := none
       | _, _ => pure ()
     return "[" ++ ",".intercalate out.toList ++ "]"
-  "{\"apart\":" ++ ranges Listing.wrapsBetweenChars ++ ",\"before\":" ++
-    ranges Listing.holdsToPrevious ++ ",\"after\":" ++ ranges Listing.holdsToNext ++ "}"
+  "{\"apart\":" ++ ranges Listing.wrapsBetweenChars ++ ",\"words\":" ++
+    ranges Listing.wrapsAtWords ++ ",\"before\":" ++
+    ranges Listing.holdsToPrevious ++ ",\"after\":" ++ ranges Listing.holdsToNext ++
+    s!",\"short\":{HtmlDoc.codeShortColumns}}"
 
 /-- The page the paper judge's engine control prints (`printCode`): prose,
 then a code line holding a token wider than any sheet and a comment in a
@@ -1419,6 +1504,26 @@ def codePrintSource : String :=
   "value = compute(" ++ "".pushn 'x' 140 ++ ")\n" ++
   "# この行は折り返しを確かめるための架空のコメントで、句読点の前では改行しません。" ++
   "二行目に続く文も「括弧」の中で切れません。\n```\n"
+
+/-- The page the narrow-box controls build (`printCode`, `codeWrap`): a
+breaking listing in a box a fifth of the line wide beside prose, the same
+box before a wider one, and a breaking listing of Thai with no space in
+it, whose words its dictionary finds. Invented throughout. -/
+def codeNarrowSource : String :=
+  "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n" ++
+  "Prose before the boxes.\n\n" ++
+  "\\noindent\\begin{minipage}{0.48\\textwidth}\nLeft box prose that fills the left half " ++
+  "of the line with ordinary words for the reader.\n\\end{minipage}\\hfill" ++
+  "\\begin{minipage}{0.2\\textwidth}\n\\begin{lstlisting}[breaklines=true]\n" ++
+  "abcdefghijklmnopqrstuvwxyzA\nalpha_beta_gamma_delta(x) -> y\n\\end{lstlisting}\n" ++
+  "\\end{minipage}\n\n" ++
+  "\\noindent\\begin{minipage}{0.2\\textwidth}\n\\begin{lstlisting}[breaklines=true]\n" ++
+  "abcdefghijklmnopqrstuvwxyzA\n\\end{lstlisting}\n\\end{minipage}\\hfill" ++
+  "\\begin{minipage}{0.75\\textwidth}\nRight box prose that fills the right side of the " ++
+  "line with ordinary words for the reader to read here.\n\\end{minipage}\n\n" ++
+  "\\begin{lstlisting}[breaklines=true]\n" ++
+  "th = \"ภาษาไทยไม่มีช่องว่างระหว่างคำจึงต้องตัดบรรทัดระหว่างคำแทนการเว้นวรรค" ++
+  "และสระต้องอยู่กับพยัญชนะ\"\nyear = 2567 # ๒๕๖๗\n\\end{lstlisting}\n\\end{document}\n"
 
 -- ## Main
 
@@ -1474,6 +1579,13 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           "-o", (control / "code-print.html").toString] }
     if built.exitCode != 0 then
       return (← die 2 s!"html-oracle: the paper judge's control page did not build:\n{built.stdout}{built.stderr}")
+    IO.FS.writeFile (control / "code-narrow.tex") codeNarrowSource
+    let narrow ← IO.Process.output
+      { cmd := leantexBin
+        args := #["-q", "--porcelain", "build", (control / "code-narrow.tex").toString,
+          "-o", (control / "code-narrow.html").toString] }
+    if narrow.exitCode != 0 then
+      return (← die 2 s!"html-oracle: the narrow-box control page did not build:\n{narrow.stdout}{narrow.stderr}")
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
     let mut tools := s!"node {nodeVersion}"
     match chromium with
@@ -1492,7 +1604,8 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           env := #[("PW_MODULE", some m), ("LT_TOKENS", some tokens),
                    ("LT_READERS", some (String.intercalate " " readers)),
                    ("LT_CODE_TABLES", some codeTables),
-                   ("LT_CODE_PRINT", some (control / "code-print.html").toString)] }
+                   ("LT_CODE_PRINT", some (control / "code-print.html").toString),
+                   ("LT_CODE_NARROW", some (control / "code-narrow.html").toString)] }
       if out.exitCode != 0 then
         IO.eprintln s!"html-oracle: the probe exited {out.exitCode}:\n{out.stderr}"
       probe := parseProbe out.stdout

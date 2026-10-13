@@ -560,25 +560,37 @@ public def contract (pal : Palette) (ground : Option Color) (style : Option List
     | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)
     | none => true
 
+/-- Whether a character is Thai's or Lao's: text a browser wraps between
+the words its dictionary finds (UAX #14 class SA), which no table here
+holds. -/
+public def wrapsAtWords (c : Char) : Bool :=
+  let n := c.toNat
+  0x0E00 ≤ n && n ≤ 0x0EFF
+
 /-- Whether text in a character's script wraps between its characters, not
-at spaces: the ideographs, kana, Hangul syllables, Bopomofo, CJK symbols and
-punctuation and the fullwidth forms, which UAX #14 breaks between any two
-(classes ID, H2, H3, and the CJK punctuation's own), and Thai and Lao,
-which wrap between the words a dictionary finds (class SA) and are read
-here between their syllables (`holdsToPrevious`, `holdsToNext`). Khmer and
-Myanmar stack their consonants, a cluster no table here reads, and keep a
-run whole. -/
+at spaces: the ideographs, kana and its supplements, Hangul syllables and
+its compatibility letters, Bopomofo, Yi, CJK symbols and punctuation and
+the fullwidth forms, which UAX #14 breaks between any two (classes ID, H2,
+H3, and the CJK punctuation's own), and Thai and Lao (`wrapsAtWords`),
+read here between their clusters (`holdsToPrevious`, `holdsToNext`): not
+their syllables, an emergency reading the page takes only in a code line
+wider than its measure, where the web page leaves their breaks to the
+browser's dictionary (`HtmlDoc.codeLineNodes`). Their digits are digits,
+one number one token. Khmer and Myanmar stack their consonants, a cluster
+no table here reads, and keep a run whole, as do Hangul's conjoining
+letters and the small form variants, whose holds no table here reads. -/
 public def wrapsBetweenChars (c : Char) : Bool :=
   let n := c.toNat
-  (0x0E00 ≤ n && n ≤ 0x0EFF) ||
+  (wrapsAtWords c && !(0x0E50 ≤ n && n ≤ 0x0E59) && !(0x0ED0 ≤ n && n ≤ 0x0ED9)) ||
   (0x2E80 ≤ n && n ≤ 0x2FDF) ||
-  (0x3000 ≤ n && n ≤ 0x312F) ||
-  (0x3190 ≤ n && n ≤ 0x4DBF) ||
+  (0x3000 ≤ n && n ≤ 0x4DBF) ||
   (0x4E00 ≤ n && n ≤ 0x9FFF) ||
+  (0xA000 ≤ n && n ≤ 0xA4CF) ||
   (0xAC00 ≤ n && n ≤ 0xD7A3) ||
   (0xF900 ≤ n && n ≤ 0xFAFF) ||
   (0xFE30 ≤ n && n ≤ 0xFE4F) ||
   (0xFF00 ≤ n && n ≤ 0xFFEF) ||
+  (0x1AFF0 ≤ n && n ≤ 0x1B12F) ||
   (0x20000 ≤ n && n ≤ 0x3FFFF)
 
 /-- A character no wrap falls before: a combining mark, which belongs to the

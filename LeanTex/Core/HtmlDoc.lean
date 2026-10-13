@@ -351,7 +351,7 @@ public def engineClasses : List String :=
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
    "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before", "squeeze",
-   "tok"] ++
+   "tok", "tok-long"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1222,6 +1222,23 @@ public def verbatimListClass : String := "verbatim-list"
 its rule holds it on one line (`pre .tok`), and the line wraps only where
 the page's own wrap may. -/
 public def codeTokClass : String := "tok"
+
+/-- The class of a held code unit longer than `codeShortColumns`: what a
+box too narrow to fit it releases (`codeReleaseWidth`). -/
+public def codeLongTokClass : String := "tok-long"
+
+/-- The most columns a held code unit takes and stays held in every box: an
+operator, `->`, `:=`, `...`, which fits any box wider than its own hang and
+these few columns, as the page never parts it. -/
+public def codeShortColumns : Nat := 3
+
+/-- The width below which a box releases the code units its lines hold
+(`codeHoldColumns`): the page's own column at the 320 CSS px viewport the
+cap is cut to, 280 px at the 16 px root. A narrower box — a minipage, a
+column — cannot fit a held unit, which would run past it on screen and, on
+paper, past the sheet or over its neighbour; there a code line breaks where
+it must, as the page's breaks a line wider than its measure. -/
+public def codeReleaseWidth : String := "17.5em"
 
 /-- The class of a document skip's box (`skipNode`). -/
 public def skipClass : String := "vskip"
@@ -6412,8 +6429,11 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   -- alone), and a listing states its own (`fontStyleDecls`).
   "code, pre { font-family: var(--font-mono); }\n" ++
   -- A code atom a line may not break inside (`codeLineNodes`): the line
-  -- wraps only where the page's own wrap may (`Listing.codeMarks`).
+  -- wraps only where the page's own wrap may (`Listing.codeMarks`), save
+  -- in a box too narrow to fit one (`codeReleaseWidth`), where it breaks
+  -- where it must, on screen and on paper.
   s!"pre .{codeTokClass} \{ white-space: nowrap; }\n" ++
+  s!"@container (width < {codeReleaseWidth}) \{ pre .{codeLongTokClass} \{ white-space: inherit; } }\n" ++
   -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
   -- Keep code at its content height; a crowded stage owns vertical scrolling.
   s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
@@ -6615,7 +6635,8 @@ color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 
   -- itself inside the box instead. A departure from LaTeX's verbatim, which
   -- overruns the measure: only such a line moves, and every character
   -- reaches the sheet, since no unit a code line holds whole is wider than
-  -- the narrowest line (`codeHoldColumns`).
+  -- the narrowest line (`codeHoldColumns`) and a box narrower than that
+  -- line holds none (`codeReleaseWidth`).
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
   (if docHasDisclosure doc then
     disclosurePrintCss ++
@@ -9252,18 +9273,23 @@ public def abstractClass (styles : Ir.Styles) : String :=
 
 /-- The most columns a code line holds whole (`codeLineNodes`): a code
 block's continuation line at the width WCAG 2.2's reflow criterion sets
-(SC 1.4.10, 320 CSS px), as Chromium sets a markdown fence there, 248 px of
-line at an 8 px advance less the 20 pt hang, 27 columns. A held unit wider
-than its line runs past it, so no wider one is held, and on paper, whose
-line is wider still, every held unit fits. -/
-public def codeHoldColumns : Nat := 27
+(SC 1.4.10, a 320 CSS px viewport), as Chromium sets a markdown fence
+there: 208 px of line less the 20 pt hang, at the 7.68 px advance a 0.6 em
+face takes at the fence's 0.8 em, 23 columns — as many as a listing at the
+body's size holds at its 248 px. A held unit wider than its line runs past
+it, so no wider one is held, and a box narrower than the page's own column
+at that viewport releases what it holds (`codeReleaseWidth`). -/
+public def codeHoldColumns : Nat := 23
 
 /-- How many columns a code character takes: two for a wide character of a
-script that wraps between its characters, one for any other. -/
+script that wraps between its characters, or an emoji, which a terminal
+and a browser draw two cells wide; one for any other. -/
 private def codeColumns (c : Char) : Nat :=
   let n := c.toNat
-  if Listing.wrapsBetweenChars c && !(0x0E00 ≤ n && n ≤ 0x0EFF) &&
-      !(0xFF61 ≤ n && n ≤ 0xFFDC) && !(0xFFE8 ≤ n && n ≤ 0xFFEE) then 2
+  if (Listing.wrapsBetweenChars c && !Listing.wrapsAtWords c &&
+      !(0xFF61 ≤ n && n ≤ 0xFFDC) && !(0xFFE8 ≤ n && n ≤ 0xFFEE)) ||
+      (0x1F300 ≤ n && n ≤ 0x1F64F) || (0x1F680 ≤ n && n ≤ 0x1F6FF) ||
+      (0x1F900 ≤ n && n ≤ 0x1F9FF) || (0x1FA70 ≤ n && n ≤ 0x1FAFF) then 2
   else 1
 
 mutual
@@ -9302,9 +9328,14 @@ under whitespace first each stretch between two spaces, so the line wraps
 at a space where one stands, or, in a stretch wider than its line, each
 fallback token of it (`Listing.codeMarks`); under listings' rule each unit,
 with a `<wbr>` between two that are no space, where listings may break and a
-browser might not. A unit of one character is never held, nor one wider
-than `codeHoldColumns`, which breaks where it must. A held unit that is a
-whole run takes the class on the run's own element (`withClass`). -/
+browser might not — but between two characters of scripts that wrap
+between their characters, where a browser breaks as it may: between two
+ideographs, and in Thai and Lao between the words its dictionary finds, a
+subset of the clusters the page may break between. A unit of one character
+is never held, nor one wider than `codeHoldColumns`, which breaks where it
+must. A held unit longer than `codeShortColumns` carries the class a box
+too narrow to fit it releases (`codeLongTokClass`). A held unit that is a
+whole run takes its classes on the run's own element (`withClass`). -/
 private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array Listing.Run)
     (line : Array ListingHighlight.Token) : Array Node := Id.run do
   let marks := Listing.codeMarks wrap line
@@ -9325,9 +9356,10 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
         if a' == a then atoms := atoms.pop.push (a', sp, joinPieces ps #[(ri, String.singleton c)])
         else atoms := atoms.push (a, m.space, #[(ri, String.singleton c)])
       | none => atoms := atoms.push (a, m.space, #[(ri, String.singleton c)])
+  let columns (ps : Array (Nat × String)) : Nat :=
+    ps.foldl (fun n p => p.2.foldl (fun k c => k + codeColumns c) n) 0
   let fits (ps : Array (Nat × String)) : Bool :=
-    2 ≤ ps.foldl (fun n p => n + p.2.length) 0 &&
-      ps.foldl (fun n p => p.2.foldl (fun k c => k + codeColumns c) n) 0 ≤ codeHoldColumns
+    2 ≤ ps.foldl (fun n p => n + p.2.length) 0 && columns ps ≤ codeHoldColumns
   -- The units the line emits, in order: white space, and what it holds.
   let mut units : Array (Bool × Bool × Array (Nat × String)) := #[]
   match wrap with
@@ -9350,15 +9382,19 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
     match runs[ri]? with
     | some r => fillHoleList hole content #[] (inlines cfg (Listing.paintRun r #[.text hole])).toList
     | none => content
-  let held (kids : Array Node) : Node := Html.elem "span" kids #[("class", codeTokClass)]
-  -- A run whose whole text is one held unit takes the class on its own
+  let classesOf (ps : Array (Nat × String)) : String :=
+    if columns ps ≤ codeShortColumns then codeTokClass else codeTokClass ++ " " ++ codeLongTokClass
+  let held (ps : Array (Nat × String)) (kids : Array Node) : Node :=
+    Html.elem "span" kids #[("class", classesOf ps)]
+  -- A run whose whole text is one held unit takes the classes on its own
   -- element, where it paints as one.
   let flush (ri : Nat) (content : Array Node) : Array Node :=
     match content with
     | #[.elem "span" #[("class", k)] #[.text t]] =>
-      if k == codeTokClass && (runs[ri]?.map (·.text)) == some t then
+      if (k.splitOn " ").contains codeTokClass && (runs[ri]?.map (·.text)) == some t then
         match paint ri #[.text t] with
-        | #[.elem tag attrs kids] => #[withClass codeTokClass (.elem tag attrs kids)]
+        | #[.elem tag attrs kids] =>
+          #[(k.splitOn " ").foldl (fun n c => withClass c n) (.elem tag attrs kids)]
         | _ => paint ri content
       else paint ri content
     | _ => paint ri content
@@ -9366,8 +9402,12 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
   -- the run being filled, and what it holds so far
   let mut cur : Option (Nat × Array Node) := none
   let mut prevSpace : Option Bool := none
+  let mut prevLast : Option Char := none
   for (sp, hold, ps) in units do
-    let gap := wrap matches .units && prevSpace == some false && !sp
+    let first := ps[0]?.bind fun (_, t) => t.toList.head?
+    let between := (prevLast.any Listing.wrapsBetweenChars) && (first.any Listing.wrapsBetweenChars)
+    prevLast := (ps.back?.bind fun (_, t) => t.toList.getLast?).orElse fun _ => prevLast
+    let gap := wrap matches .units && prevSpace == some false && !sp && !between
     match ps with
     | #[(ri, t)] =>
       -- inside one run: in that run's paint
@@ -9377,7 +9417,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
       if let some (ri', c) := cur then
         if ri' != ri then out := out ++ flush ri' c
       let content := if gap then content.push (Html.elem "wbr" #[] #[]) else content
-      let content := if hold then content.push (held #[.text t]) else pushCodeText content t
+      let content := if hold then content.push (held ps #[.text t]) else pushCodeText content t
       cur := some (ri, content)
     | _ =>
       -- across runs: each piece in its own run's paint, the unit around them
@@ -9385,7 +9425,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
       cur := none
       if gap then out := out.push (Html.elem "wbr" #[] #[])
       let pieces := ps.foldl (fun acc (ri, t) => acc ++ paint ri #[.text t]) #[]
-      out := if hold then out.push (held pieces) else out ++ pieces
+      out := if hold then out.push (held ps pieces) else out ++ pieces
     prevSpace := some sp
   if let some (ri, c) := cur then out := out ++ flush ri c
   return out

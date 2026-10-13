@@ -428,6 +428,41 @@ def codeAtomsOf (doc : Ir.Doc) : Array (String × Array String × Nat) :=
     | .elem _ _ kids => some (nodeTextList "" kids.toList, heldAtomsList (#[], 0) kids.toList)
     | _ => none
 
+/-- Each held unit of a document's code, in order: its text, and whether a
+box too narrow to fit it releases it (`HtmlDoc.codeLongTokClass`). -/
+def heldClassesOf (doc : Ir.Doc) : Array (String × Bool) :=
+  (elemNodesList (fun _ => true) #[] (docNodesOf doc).toList).filterMap fun n => match n with
+    | .elem _ attrs kids =>
+      let cls := (((attrs.find? (·.1 == "class")).map (·.2)).getD "").splitOn " "
+      if cls.contains HtmlDoc.codeTokClass then
+        some (nodeTextList "" kids.toList, cls.contains HtmlDoc.codeLongTokClass)
+      else none
+    | _ => none
+
+mutual
+
+/-- A code element's characters and its `<wbr>`s, in order, `none` where a
+`<wbr>` stands. -/
+def wbrMarksOne (acc : Array (Option Char)) : Html.Node → Array (Option Char)
+  | .elem "wbr" _ _ => acc.push none
+  | .elem _ _ kids => wbrMarksList acc kids.toList
+  | .text s => s.toList.foldl (fun a c => a.push (some c)) acc
+  | .style _ | .script _ _ => acc
+
+def wbrMarksList (acc : Array (Option Char)) : List Html.Node → Array (Option Char)
+  | [] => acc
+  | k :: rest => wbrMarksList (wbrMarksOne acc k) rest
+
+end
+
+/-- The characters each `<wbr>` of a document's code stands between. -/
+def codeWbrNeighbours (doc : Ir.Doc) : Array (Char × Char) :=
+  let marks := wbrMarksList #[] (elemNodesList (· == "code") #[] (docNodesOf doc).toList).toList
+  (Array.range marks.size).filterMap fun i =>
+    match marks[i]?, marks[i - 1]?, marks[i + 1]? with
+    | some none, some (some a), some (some b) => if 0 < i then some (a, b) else none
+    | _, _, _ => none
+
 /-- What a code line holds whole under whitespace first, as the web page
 reads it (`HtmlDoc.codeLineNodes`): each stretch between two spaces that
 fits `HtmlDoc.codeHoldColumns`, else each fallback token of it that does,
@@ -487,6 +522,11 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
   let css := HtmlDoc.baseCss {} doc
   t "the stylesheet holds a code atom on one line"
     (hasStr css s!"pre .{HtmlDoc.codeTokClass} \{ white-space: nowrap; }")
+  let (opDoc, _) := elabMd "```python\ndef handler(event) -> dict:\n```\n"
+  t s!"an operator stays held in every box, a longer unit only where it fits ({heldClassesOf opDoc})"
+    (heldClassesOf opDoc == #[("def", false), ("handler(event)", true), ("->", false), ("dict:", true)])
+  t "a box too narrow to fit a held unit longer than an operator releases it"
+    (hasStr css s!"@container (width < {HtmlDoc.codeReleaseWidth}) \{ pre .{HtmlDoc.codeLongTokClass} \{ white-space: inherit; } }")
   let pres := elemNodesList (· == "pre") #[] (docNodesOf doc).toList
   t "a wrapping code block wraps a run wider than its line between its atoms"
     (pres.all fun n => match n with
@@ -576,6 +616,21 @@ nor ends on what holds to the next ({texts})"
         t s!"code script wrap: a {surface} {label}'s characters stand apart on the web page ({held})"
           (text == line && held.all joins)
       | other => t s!"code script wrap: a {surface} {label} is one code element ({other.size})" false
+      -- No `<wbr>` between two of its characters: a browser breaks there as
+      -- it may, by its dictionary in Thai, a subset of the page's breaks.
+      t s!"code script wrap: a {surface} {label} marks no break between two of its characters"
+        ((codeWbrNeighbours doc).all fun (a, b) =>
+          !(Listing.wrapsBetweenChars a && Listing.wrapsBetweenChars b))
+  -- Thai's and Lao's digits are digits: a number is one unit, one token.
+  let numbers := "year = 2567 # ๒๕๖๗ and ໒໕໖໗ ok"
+  let numDoc := (elabStr (dvDoc "" s!"\\begin\{lstlisting}[breaklines=true]\n{numbers}\n\\end\{lstlisting}")).1
+  match codeAtomsOf numDoc with
+  | #[(text, held, _)] =>
+    t s!"code script wrap: Thai and Lao numbers are held whole ({held})"
+      (text == numbers && held.contains "๒๕๖๗" && held.contains "໒໕໖໗" &&
+        (codeWbrNeighbours numDoc).all fun (a, b) =>
+          !(Listing.wrapsAtWords a && Listing.wrapsAtWords b))
+  | other => t s!"code script wrap: a numbered line is one code element ({other.size})" false
 
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

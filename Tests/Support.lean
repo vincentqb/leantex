@@ -456,12 +456,15 @@ overflow-wrap: break-word; text-indent: 20pt hanging each-line;"),
     ("tabindex", "0")]
 
 /-- A plain code block's text: its text, and the atoms the page holds on one
-line (`HtmlDoc.codeTokClass`) read through — `none` where it carries any
-other element, such as a highlighter's ink. -/
+line (`HtmlDoc.codeTokClass`), with the class a box too narrow for them
+releases or without (`HtmlDoc.codeLongTokClass`), read through — `none`
+where it carries any other element, such as a highlighter's ink. -/
 def plainCodeText (kids : Array Html.Node) : Option String :=
   kids.foldl (fun acc k => acc.bind fun t => match k with
     | .text s => some (t ++ s)
-    | .elem "span" #[("class", c)] #[.text s] => if c == HtmlDoc.codeTokClass then some (t ++ s) else none
+    | .elem "span" #[("class", c)] #[.text s] =>
+      if c == HtmlDoc.codeTokClass || c == HtmlDoc.codeTokClass ++ " " ++ HtmlDoc.codeLongTokClass
+      then some (t ++ s) else none
     | _ => none) (some "")
 
 /-- The page's code blocks, in order, each as the one text its `<code>`

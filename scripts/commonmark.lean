@@ -191,12 +191,14 @@ right alignment against none, still differ."),
     "inside a code block the engine holds what a line may not wrap inside \
 — a stretch between two spaces, a fallback token or a listings unit of two \
 characters or more — in a `<span>` whose one attribute is the class `tok` \
-(`HtmlDoc.codeTokClass`), which its stylesheet sets `nowrap`, or, where it \
-is one run's whole text, as that class on the run's own element, and parts \
-two listings units with a `<wbr>`; inside <pre> such a span is read \
-through, its children compared in place, and a `<wbr>` dropped. Hides: \
-nothing that reads — the characters stand once, in order — and a span \
-carrying anything else, or outside <pre>, stays compared."),
+(`HtmlDoc.codeTokClass`), which its stylesheet sets `nowrap`, with \
+`tok-long` beside it where a box too narrow to fit it releases it \
+(`HtmlDoc.codeLongTokClass`), or, where it is one run's whole text, as \
+those classes on the run's own element, and parts two listings units with \
+a `<wbr>`; inside <pre> such a span is read through, its children compared \
+in place, and a `<wbr>` dropped. Hides: nothing that reads — the \
+characters stand once, in order — and a span carrying anything else, or \
+outside <pre>, stays compared."),
    ("a column group of bare columns",
     "the engine opens every table with a `<colgroup>` of one `<col>` per \
 column; a column that carries no attribute adds nothing to the columns HTML's \
@@ -242,10 +244,12 @@ def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
     | none => rest
 
 /-- A code atom the engine holds on one line: a `<span>` whose one attribute
-is the class `tok` (`HtmlDoc.codeTokClass`), the declared code-atom
+is the class `tok` (`HtmlDoc.codeTokClass`), with `tok-long`
+(`HtmlDoc.codeLongTokClass`) or alone, the declared code-atom
 normalization. -/
 def heldAtom (tag : String) (attrs : Array (String × String)) : Bool :=
-  tag == "span" && attrs == #[("class", HtmlDoc.codeTokClass)]
+  tag == "span" && (attrs == #[("class", HtmlDoc.codeTokClass)] ||
+    attrs == #[("class", HtmlDoc.codeTokClass ++ " " ++ HtmlDoc.codeLongTokClass)])
 
 /-- A `<colgroup>` whose every child is a `<col>` carrying no attribute (or
 whitespace between them), and which carries none itself. -/
@@ -1624,6 +1628,12 @@ def selftest : IO UInt32 := do
      same "code atom: a held atom is read through inside <pre>"
        "<pre><code>a <span class=\"tok\">-&gt;</span><wbr>b</code></pre>"
        "<pre><code>a -&gt;b</code></pre>",
+     same "code atom: a held atom a narrow box releases is read through inside <pre>"
+       "<pre><code>a <span class=\"tok tok-long\">name</span><wbr>b</code></pre>"
+       "<pre><code>a nameb</code></pre>",
+     differ "code atom: a span of the release class alone stays"
+       "<pre><code>a <span class=\"tok-long\">name</span>b</code></pre>"
+       "<pre><code>a nameb</code></pre>",
      differ "code atom: a span carrying anything else stays"
        "<pre><code>a <span class=\"tok\" hidden>-&gt;</span>b</code></pre>"
        "<pre><code>a -&gt;b</code></pre>",
