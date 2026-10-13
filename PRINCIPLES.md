@@ -4,10 +4,10 @@ These decide what the rules in `AGENTS.md` leave open, each naming its check (`s
 
 ## Always ship
 
-Every readable input yields an artifact. A loss is repaired where it occurs, marked in the artifact
-where content is absent, and reported once. Only unreadable input, a missing or cyclic \input, no
-usable font, an unwritable output or a failed \assert stops the writer; the exit status is a
-separate policy (--werror, CI), never whether the artifact exists
+Every readable input yields an artifact. A loss is repaired where it occurs, marked in the
+artifact where content is absent, and reported once. Only unreadable input, a missing or cyclic
+\input, no usable font, an unwritable output or the document's own failed \assert stops the
+writer; the exit status is a separate policy (--werror, CI), never whether the artifact exists
 (`testdata/scoreboard/external.tsv`, `machineLossChecks`; owed (U37): `DiagCode.error_iff_fatal`).
 
 ## The standard is the specification
@@ -16,8 +16,8 @@ Warts are not: meaning comes from the documented standards (LaTeX's manuals and 
 CommonMark and GFM, OpenType MATH, MathML Core, HTML, CSS, PDF 2.0, WCAG 2.2; `compatIndexChecks`),
 never from parameter resets and discards, recovery quirks, once-only package loads or single-pass
 limits. A visible departure is measurably better on a named axis (legibility, accessibility, rhythm,
-alignment, content fidelity) and names the check holding it, as role-coloured code does
-(`codeRoleChecks`); lualatex parity and rhythm are tiers, not ceilings
+alignment, content fidelity) and names the check holding it, as code coloured by its token's role,
+not lualatex's type, does (`codeRoleChecks`); lualatex parity and rhythm are tiers, not ceilings
 (`testdata/scoreboard/parity.tsv`, `testdata/scoreboard/rhythm.tsv`).
 
 ## Evident intent wins
@@ -46,8 +46,8 @@ slides (`testdata/scoreboard/typeset.tsv`, `monoCompanion_contract`; owed (U35):
 
 ## One fact in one IR value
 
-A fact both artifacts honour (faces, numbering, anchors, alignment, language, title, spacing) is one
-typed IR value with one resolving site, stated on the IR first; each backend's version is a
+A fact both artifacts honour (faces, numbering, anchors, alignment, language, title, spacing) is
+one typed IR value with one resolving site, stated on the IR first; each backend's version is a
 projection corollary, never re-derived or left to a platform (`footBand_projects`,
 `backend_gaps_agree`, `html_fonts_cover_pdf`, `table_length_agree`; owed (U09):
 `heading_family_agree`; owed (U11): `frameNumbers_keepFor_gapless`; owed (U41): `Ir.title_agree`).
@@ -62,10 +62,10 @@ format a producer writes and reads back round-trips its all-empty value (`script
 
 ## One mechanism per concept
 
-Generic structure, specific semantics: one traversal per tree type, with identity, fusion and census
-laws proved once; one command and environment registry with argument signatures; one key=value
-reader; one counter model; one cache protocol. A predicate projects the registry, never a hand-kept
-mirror (`Ir.mapInlines_text`, `Ir.mapBlocks_text`; owed (U92); owed (U20):
+Generic structure, specific semantics: one traversal per tree type, with identity, fusion and
+census laws proved once; one command and environment registry with argument signatures; one
+key=value reader; one counter model; one cache protocol. A predicate projects the registry,
+never a hand-kept mirror (`Ir.mapInlines_text`, `Ir.mapBlocks_text`; owed (U92); owed (U20):
 `KeyVal.parse_unbraced_comma_exact`).
 
 ## A canvas fits and a flow breaks
@@ -116,15 +116,15 @@ Every rule here and in `AGENTS.md` names what holds it, owed until it lands or r
 holds each name to one non-type declaration or a path, not that it states the rule (owed (U71)).
 Checks read the compiled program or the shipped artifact, never the spelling of source lines, the
 hook's line scans owed (U90); gates come from one table (owed (U29): `scripts/Gates.lean`); history
-lives in commit messages, never in code or a dated rule (`datedLines`, `narrativeMarks`).
+lives in commit messages, never in a comment or a dated rule (`datedLines`, `narrativeMarks`).
 
 ## Decisions owed
 
 The user owns these; until answered, the unit named builds the default given (review).
-- Discarded list parameters are honoured with a note (U55); an unknown class takes the article model
-  with a warning (U37); an undated build is a named loss (U76) (review).
+- Discarded list parameters are honoured with a note (U55); an unknown class takes the article
+  model with a warning (U37); an undated build is a named loss (U76) (review).
 - Faces: Latin Modern for LaTeX classes and Libertinus for markdown (U35); native article takes
-  LaTeX's indent (U08); markdown smart typography on and definition lists off (U58), attributes and
-  citations as pandoc where GFM is silent (U109); css = bulma becomes a neutral container class with
-  bulma a deprecated alias for one cycle (U62) (review).
+  LaTeX's indent (U08); markdown smart typography on and definition lists off (U58), attributes
+  and citations as pandoc where GFM is silent (U109); css = bulma becomes a neutral container
+  class with bulma a deprecated alias for one cycle (U62) (review).
 - Keep or delete the theme sketch `testdata/corpus/theme-modern.tex`: it stays (review).

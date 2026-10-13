@@ -591,7 +591,7 @@ def writerReach (l : String) : Bool :=
     || (t.startsWith "open " && hasWord t "Pdf")
     || usesQualified l "Pdf"
 
-/-- HTML built by concatenating tag strings (`"<" ++ …`) outside the typed tree's renderer. -/
+/-- HTML built by concatenating a tag string, `"<" ++ …`. -/
 def tagStringEmit (l : String) : Bool :=
   ((stripLineComment l).splitOn "\"<\"").drop 1 |>.any fun rest =>
     rest.trimAscii.toString.startsWith patAppend
@@ -773,8 +773,8 @@ def datedLines (text : String) : Array (Nat × String) :=
 /-- The section marker, composed so this file's own text makes no pointer. -/
 def sectionMark : String := " " ++ "§"
 
-/-- The `<doc> § <heading>` pointers a line makes, backticks aside, each heading running to the next
-punctuation. -/
+/-- The `<doc> § <heading>` pointers a line makes, backticks aside, each heading running to a
+parenthesis, `,`, `;`, `:`, `"`, a backslash or a comment's close, less a closing period. -/
 def sectionRefs (l : String) : Array (String × String) := Id.run do
   let t := l.replace "`" ""
   let mut out := #[]
@@ -1027,8 +1027,8 @@ def readsSetup (t : String) : Bool := premiseSources.any (containsSub t ·)
 /-- The indentation of a line, in leading spaces. -/
 def indentOf (l : String) : Nat := (l.toList.takeWhile (· == ' ')).length
 
-/-- The condition of a conditional opening at line `i`, through continuation lines to its `then` or
-`do`, with the line it ends on. -/
+/-- The condition of a conditional opening at line `i`, through up to four continuation lines to its
+`then` or `do`, with the line it ends on. -/
 def condSpan (lines : Array String) (i : Nat) : Option (String × Nat) := Id.run do
   let l := stripLineComment (lines[i]?.getD "")
   unless hasWord l "if" || hasWord l "unless" do return none
@@ -1590,14 +1590,22 @@ def proseWords (s : String) : Array ProseWord := Id.run do
 
 /-- Past-tense forms that do not end in `-ed`. -/
 def irregularPast : List String :=
-  ["ate", "became", "began", "bent", "bore", "bought", "broke", "brought", "built", "came",
-   "caught", "chose", "cost", "cut", "dealt", "did", "drew", "drove", "fell", "felt", "fit",
-   "flew", "fought", "found", "froze", "gave", "got", "grew", "had", "held", "hid", "hit",
-   "hung", "kept", "knew", "laid", "lay", "led", "left", "lent", "let", "lost", "made", "meant",
-   "met", "paid", "put", "ran", "rang", "read", "rode", "rose", "said", "sang", "sank", "sat",
-   "saw", "sent", "set", "shook", "shot", "shut", "slept", "slid", "sought", "spent", "split",
-   "spoke", "spread", "stood", "stole", "struck", "stuck", "swept", "taught", "thought",
-   "threw", "told", "took", "tore", "was", "went", "were", "woke", "won", "wore", "wrote"]
+  ["ate", "beat", "became", "began", "bent", "bled", "bore", "bought", "bred", "broke", "brought",
+   "built", "came", "caught", "chose", "cost", "crept", "cut", "dealt", "did", "drank", "drew",
+   "drove", "dug", "fed", "fell", "felt", "fit", "fled", "flew", "flung", "forgot", "fought",
+   "found", "froze", "gave", "got", "grew", "had", "held", "hid", "hit", "hung", "kept", "knew",
+   "laid", "lay", "led", "left", "lent", "let", "lit", "lost", "made", "meant", "met", "paid",
+   "put", "quit", "ran", "rang", "read", "rode", "rose", "said", "sang", "sank", "sat", "saw",
+   "sent", "set", "shook", "shot", "shrank", "shut", "slept", "slid", "sought", "spent", "split",
+   "spoke", "sprang", "spread", "spun", "stood", "stole", "strove", "struck", "stuck", "swam",
+   "swept", "swore", "swung", "taught", "thought", "threw", "told", "took", "tore", "was", "went",
+   "wept", "were", "woke", "won", "wore", "wound", "wrote"]
+
+/-- Is the word a past-tense form, an irregular one under a prefix included? -/
+def pastWord (w : String) : Bool :=
+  (w.length > 3 && w.endsWith "ed") || irregularPast.contains w ||
+    ["re", "over", "mis", "un", "out", "with", "under", "up"].any fun p =>
+      w.startsWith p && irregularPast.contains (w.drop p.length).toString
 
 /-- Does the word spell an ISO date, `YYYY-MM-DD`, at its start? -/
 def isoDateWord (w : String) : Bool :=
@@ -1612,44 +1620,71 @@ def hashWord (w : String) : Bool :=
   w.length ≥ 7 && w.length ≤ 40 && w.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) &&
     w.any Char.isDigit && w.any Char.isAlpha
 
-/-- A word naming a code-review process: `review` in any form, or `must-fix`. -/
-def reviewWord (w : String) : Bool :=
-  let b := if w.endsWith "'s" then (w.dropEnd 2).toString else w
-  ["review", "reviews", "reviewed", "reviewer", "reviewers", "reviewing", "must-fix",
-   "must-fixes"].contains b || b.startsWith "review-" || b.startsWith "re-review"
+/-- Does the word spell a report id, `R` and digits? -/
+def reportIdWord (w : String) : Bool :=
+  w.length ≥ 2 && w.startsWith "R" && (w.drop 1).toString.all Char.isDigit
+
+/-- The inflections of `review`. -/
+def reviewForms : List String :=
+  ["review", "reviews", "reviewed", "reviewer", "reviewers", "reviewing"]
 
 /-- The narrative markers of comment prose, each with the offset it opens at: a report id, an ISO
-date, a commit hash, a `review` word, and `once`, `used to` or `previously` telling history. -/
+date, a commit hash, a `review` naming an event or a round, and `once`, `used to` or `previously`
+telling history. -/
 def narrativeMarks (prose : String) : Array (Nat × String) := Id.run do
   let ws := proseWords prose
-  let word (k : Nat) : String := ((ws[k]?.map (·.text)).getD "").toLower
+  let raw (k : Nat) : String := (ws[k]?.map (·.text)).getD ""
   let joined (k : Nat) : Bool := k > 0 && (ws[k]?.any (·.sep.all Char.isWhitespace))
-  let after (k : Nat) : String := if joined k then word k else ""
-  let past (w : String) : Bool := (w.length > 3 && w.endsWith "ed") || irregularPast.contains w
+  let after (k : Nat) : String := if joined k then (raw k).toLower else ""
+  let bare (p : String) : String := if p.endsWith "'s" then (p.dropEnd 2).toString else p
+  let number (n : String) : Bool := (!n.isEmpty && n.all Char.isDigit) ||
+    ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].contains n
+  let ordinal (n : String) : Bool :=
+    ["first", "second", "third", "fourth", "fifth", "final", "last", "next"].contains n ||
+      (n.length ≥ 3 && n.front.isDigit && ["st", "nd", "rd", "th"].any (n.endsWith ·))
   let mut out : Array (Nat × String) := #[]
   for (w, k) in ws.zipIdx do
     let t := w.text
     let l := t.toLower
-    let prev := if joined k then word (k - 1) else ""
+    let rawParts := (t.splitOn "-").map bare
+    let parts := rawParts.map (·.toLower)
+    let prev := if joined k then (raw (k - 1)).toLower else ""
     let next := after (k + 1)
-    if t.length ≥ 2 && t.startsWith "R" && (t.drop 1).toString.all Char.isDigit then
-      out := out.push (w.pos, t)
-    else if isoDateWord t || (hashWord t && !w.sep.endsWith "#") then
+    let rounds := parts.any (fun p => p == "round" || p == "rounds")
+    let listedNoun := ["list", "lists", "tip", "result", "results", "verdict", "verdicts", "row",
+      "rows", "merge"]
+    if (isoDateWord t && !w.ticked) || rawParts.any reportIdWord ||
+        (rawParts.any hashWord && !w.sep.endsWith "#") then
       out := out.push (w.pos, t)
     else if w.ticked then continue
-    else if reviewWord l then out := out.push (w.pos, t)
+    else if parts.length > 1 && ((parts.any reviewForms.contains &&
+          !(parts.head? == some "reviewed" && parts.getLast?.any listedNoun.contains)) ||
+        l.startsWith "must-fix" || (rounds && parts.any (fun p => ordinal p || number p))) then
+      out := out.push (w.pos, t)
+    else if reviewForms.contains (bare l) then
+      let id := bare (if joined (k + 1) then raw (k + 1) else "")
+      let listed := bare l == "reviewed" && listedNoun.contains next
+      if !listed && ((!id.isEmpty && !id.any Char.isLower) || pastWord next ||
+          next == "round" || next == "rounds" ||
+          ["the", "a", "an", "this", "that", "every", "each", "first", "second", "third", "last",
+           "final", "adversarial", "independent", "fresh", "same", "earlier", "prior", "later",
+           "code", "peer"].contains prev) then
+        out := out.push (w.pos, t)
     else if l == "must" && (next == "fix" || next == "fixes") then
       out := out.push (w.pos, s!"{t} {next}")
-    else if (l == "round" || l == "rounds") &&
-        ["first", "second", "third", "fourth", "final", "last", "next"].contains prev then
-      out := out.push (((ws[k - 1]?.map (·.pos)).getD w.pos), s!"{prev} {t}")
+    else if rounds && ((ordinal prev && !["trip", "trips", "of", "off", "robin"].contains next) ||
+        number next) then
+      out := out.push (if ordinal prev then ((ws[k - 1]?.map (·.pos)).getD w.pos) else w.pos,
+        if ordinal prev then s!"{prev} {t}" else s!"{t} {next}")
     else if l == "once" && !prev.isEmpty &&
         !["at", "and", "or", "but", "nor", "then", "is", "are", "be", "has", "have", "exactly",
           "only", "just", "each", "all"].contains prev then
       let skip := if (after (k + 1)).endsWith "ly" then
         (if (after (k + 2)).endsWith "ly" then 3 else 2) else 1
       let verb := after (k + skip)
-      if past verb || (["was", "were", "had", "been"].contains prev &&
+      let tail := ((ws[k + skip + 1]?.map (·.sep)).getD "").trimAscii.toString
+      let elliptic := [",", ";", "(", ")", "*"].any (tail.startsWith ·)
+      if (pastWord verb && !elliptic) || (["was", "were", "had", "been"].contains prev &&
           !["per", "each", "every", "more", "again", "only"].contains next) then
         out := out.push (w.pos, if verb.isEmpty then t else s!"{t} {verb}")
     else if l == "used" && next == "to" && !prev.isEmpty &&
@@ -1662,8 +1697,8 @@ def narrativeMarks (prose : String) : Array (Nat × String) := Id.run do
       out := out.push (w.pos, t)
   return out
 
-/-- The documentation rule's findings in a Lean source, by line: each comment holding an added
-line that is over three lines long or carries a narrative marker on an added line. -/
+/-- The documentation rule's findings in a Lean source, by line: each comment its added lines take
+past three lines, and each narrative marker on an added comment line. -/
 def docFindings (text : String) (added : Array Nat) : Array (Nat × String) := Id.run do
   let addedSet : Std.HashSet Nat := added.foldl (·.insert ·) {}
   let declLine := firstDeclLine (text.splitOn "\n").toArray
@@ -1671,8 +1706,10 @@ def docFindings (text : String) (added : Array Nat) : Array (Nat × String) := I
   for b in commentBlocks text do
     unless b.lines.any (addedSet.contains ·.1) do continue
     if headerComment declLine b then continue
-    let n := (b.lines.filter (!·.2.trimAscii.isEmpty)).size
-    if n > 3 then out := out.push (b.first, s!"a comment of {n} lines")
+    let texts := b.lines.filter (!·.2.trimAscii.isEmpty)
+    let n := texts.size
+    if n > 3 && n - (texts.filter (addedSet.contains ·.1)).size ≤ 3 then
+      out := out.push (b.first, s!"a comment of {n} lines")
     let mut joined := ""
     let mut starts : Array (Nat × Nat) := #[]
     for (ln, p) in b.lines do
@@ -1682,6 +1719,15 @@ def docFindings (text : String) (added : Array Nat) : Array (Nat × String) := I
       let ln := ((starts.filter (·.1 ≤ pos)).back?.map (·.2)).getD b.first
       if addedSet.contains ln then out := out.push (ln, s!"\"{mark}\"")
   return out.qsort (·.1 < ·.1)
+
+/-- The revision a range's diff reads new text at, `none` for one revision, whose diff reads the
+working tree. -/
+def rangeTip (r : String) : Option String :=
+  match r.splitOn ".." with
+  | [_] => none
+  | parts =>
+    let t := String.ofList ((parts.getLastD "").toList.dropWhile (· == '.'))
+    some (if t.isEmpty then "HEAD" else t)
 
 /-- A maintained Lean source, which the documentation rule reads. -/
 def docRuleFile (f : String) : Bool := f.endsWith ".lean" && !f.startsWith "testdata/"
@@ -2362,7 +2408,32 @@ def selftest : IO UInt32 := do
     ("the colour #1f77b4ff, Lean v4.34.1, 20261013 and a decade", false),
     ("the `.reviewer` state and the `once` latch", false),
     (" premise: fooChecks — named by the elaborator once, with no placeholder", false),
-    (" conserves: none — fills a hole; the output census is a mix", false)]
+    (" conserves: none — fills a hole; the output census is a mix", false),
+    ("the gap R149's fix and rows R12-R14", true),
+    ("at f66f9381's tip", true),
+    ("a code-review note", true),
+    ("peer-reviewed", true),
+    ("the Reviewed-by trailer", true),
+    ("in round two", true),
+    ("the 2nd round", true),
+    ("round-2 notes", true),
+    ("a second-round finding", true),
+    ("Round 3 found it", true),
+    ("review NIT: the label", true),
+    ("(review LP-5)", true),
+    ("the parity review reproduced it", true),
+    ("an adversarial review", true),
+    ("the parser once rewrote it", true),
+    ("it once forgot the tail", true),
+    ("the table once shrank", true),
+    ("the reviewed list, the reviewed tip and the reviewed-list check", false),
+    ("which review holds; not by review; it stays review's job", false),
+    ("the 110 dpi review raster", false),
+    (" premise: none — review holds it", false),
+    ("the first round of glue and a second round trip", false),
+    ("a record such as `2026-01-31`", false),
+    ("how many names it shows once truncated (`uniquelist`)", false),
+    ("judged once shipped), never named", false)]
   let docCase (what text : String) (added want : List Nat) : IO Unit := do
     let got := docFindings text added.toArray
     unless got.toList.map (·.1) == want do
@@ -2371,6 +2442,8 @@ def selftest : IO UInt32 := do
   docCase "three lines" "/-- one\ntwo\nthree -/\ndef x := 1\n" [1, 2, 3] []
   docCase "blank prose lines" "/--\none\ntwo\nthree\n-/\ndef x := 1\n" [2] []
   docCase "an untouched comment" "/-- one\ntwo\nthree\nfour -/\ndef x := 1\n" [5] []
+  docCase "an edit inside a long comment" "/-- one\ntwo\nthree\nfour\nfive -/\ndef x := 1\n" [2] []
+  docCase "a comment grown past three lines" "/-- one\ntwo\nthree\nfour -/\ndef x := 1\n" [4] [1]
   docCase "a run of line comments" "def x := 1\n-- a\n-- b\n-- c\n-- d\n" [5] [2]
   docCase "trailing comments" "def x := 1 -- a\ndef y := 2 -- b\ndef z := 3 -- c\ndef w := 4 -- d\n"
     [1, 2, 3, 4] []
@@ -2382,6 +2455,9 @@ def selftest : IO UInt32 := do
   docCase "a generated header" "module\n\n/-\nGenerated by scripts/gen-x.lean; do not edit.\n\
     Source: x 1.0 (2025-07-10)\na\nb\n-/\nnamespace X\n" [4, 5] []
   docCase "a header after a declaration" "def x := 1\n/-\nGenerated by hand\na\nb\nc\n-/\n" [3] [2]
+  unless [rangeTip "origin/main...HEAD", rangeTip "abc..def", rangeTip "abc..", rangeTip "HEAD"] ==
+      [some "HEAD", some "def", some "HEAD", none] do
+    fails.modify ("rangeTip misread a revision range" :: ·)
   expect "looseRuleRef" looseRuleRef [
     ("(AGENTS.md, Conventions)", true),
     ("per AGENTS: a visual bug", true),
@@ -3160,10 +3236,15 @@ the privacy check is skipped."
 
   let docAdded := (addedLines fullDiff).filter (docRuleFile ·.1)
   let docFiles := Privacy.uniq (docAdded.map (·.1))
-  let docTexts : Array (String × String) ← if src == .index then do
-      let blobs ← catBlobs (docFiles.map (":" ++ ·))
+  let tip := match src with
+    | .index => some ""
+    | .range r => rangeTip r
+    | .tree => none
+  let docTexts : Array (String × String) ← match tip with
+    | some rev => do
+      let blobs ← catBlobs (docFiles.map (rev ++ ":" ++ ·))
       pure (docFiles.zip (blobs.map Privacy.textOfBytes))
-    else docFiles.filterMapM fun (f : String) => do
+    | none => docFiles.filterMapM fun (f : String) => do
       unless ← System.FilePath.pathExists f do return none
       return some (f, ← sourceText f)
   let docHits := docTexts.flatMap fun (f, text) =>
@@ -3172,10 +3253,10 @@ the privacy check is skipped."
   unless docHits.isEmpty do
     say s!"pre-commit: a comment breaks the documentation rule:
 {String.intercalate "\n" docHits.toList}
-  A docstring or comment is one sentence at most, only where the name does not say it, and code
-  carries no history, review, report id, date or commit hash (AGENTS.md § Lean rules).
-  Fix: cut it to the contract it states, three lines at most, and put the story in the commit
-  message."
+  A docstring or comment is one sentence at most, only where the name does not say it, and carries
+  no history, review, report id, date or commit hash (AGENTS.md § Lean rules).
+  Fix: cut it to the contract it states, three lines at most, put the story in the commit message,
+  and write a purpose as \"used for\"."
 
   -- A warn-once key spells its namespace at the call: a literal holding ':', alone or opening a
   -- concatenation.

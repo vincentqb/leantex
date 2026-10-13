@@ -6,21 +6,21 @@ what these leave open: read it before designing.
 
 ## Privacy
 
-- Nothing personal or private enters the tree or a commit message: no names, initials, emails,
+- Nothing personal or private enters the repository or a commit message: no names, initials, emails,
   career facts, a private document's text, topic, palette, font, spacing or path (`homePathHits`);
   acceptance runs locally on the private corpus, named abstractly, never in CI (review).
 - The denylist, info/private-terms in git's common directory (format: `scripts/Privacy.lean`), is
   never committed, printed or quoted; the gates read what a commit adds, the tree and each unpushed
-  commit with its message, naming a location, never the term (`privacyTree`, `privacyGateChecks`).
+  commit and its message, naming a location, never the term (`privacyTree`, `privacyGateChecks`).
 - Fixtures, probes and tests are invented (placeholder names, example.org) and hermetic: a fixture
   naming a font ships it with its licence in `testdata/corpus/fonts/` and declares
   `\fonts{ dir = "fonts" }` (review), tests scan only there (`fontScanInTest`), and a hermetic run
-  empties font and TeX trees, HOME and PATH (unshare -Urm; owed (U34): `Tests/Registry.lean`).
+  empties font and TeX trees, HOME and PATH (owed (U34): `Tests/Registry.lean`).
 
 ## Build and verify
 
 `lean-toolchain` is bumped only in its own commit (`scripts/precommit.lean`). Export these before
-lake, and run bash-isms via bash -c (fish).
+lake; run bash-isms via bash -c (fish).
 
 ```bash
 export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang
@@ -31,10 +31,11 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   is `git config core.hooksPath scripts/hooks` (`scripts/precommit.lean`), `land check` runs the
   landing gates (`scripts/land.lean`); one gate table is owed (U29): `scripts/Gates.lean`.
 - The harness is Lean (`scripts/*.lean`; lake env lean --run rebuilds nothing, so build a script's
-  imports first) but for the hook's sh trampoline into `scripts/precommit.lean`. Lake runs the extra
-  linters, missingDocs off (`lakefile.toml`); the hook and land build --wfail (`defaultGates`);
-  goldens move only with a source, through lake exe Tests --update (`goldenSource`).
-- Run an area's oracle on touching it, evidence and not a gate (review):
+  imports first) but for the hook's few-line sh trampoline into `scripts/precommit.lean`. Lake runs
+  the extra linters, missingDocs off (`lakefile.toml`); the hook and land build --wfail
+  (`defaultGates`); goldens move only with a source, through lake exe Tests --update
+  (`goldenSource`).
+- Run an area's oracle on touching it, evidence, not a gate (review):
   - line breaking: `scripts/kp-fuzz.lean`; hyphenation: `scripts/hyphen-diff.lean`
   - Elab's preamble apply sites: `scripts/compose-fuzz.lean`; Oklab: `scripts/oklab-roundtrip.lean`
   - image decoding: `scripts/img-fuzz.lean`; font scan and cache: `scripts/fontcache-check.lean`
@@ -45,7 +46,7 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   - the picture reader or vector emission: `scripts/tikz-diff.lean`
 - Performance claims come only from `scripts/bench.lean`, run on touching a whole-document pass: a
   report, never a gate (`defaultGates`), recording --doc-cost history only from main (`onMain`);
-  document cost gates only as the hermetic doccost tier (`scripts/doccost.lean`); build cost is owed
+  document cost gates only as the hermetic doccost tier (`scripts/doccost.lean`); build cost owed
   (U30): `scripts/buildcost.lean`.
 
 ## Layout and design
@@ -112,8 +113,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 - A declaration a group scopes: its state in Elab's GroupScope, restored at the group's end, or a
   logged GlobalWrite where TeX assigns globally, never its own ESt field (`groupScopeChecks`).
 - A math or text symbol: a generated row (`mathSymChecks`, `textSymChecks`).
-- A comparison level with a blind spot: the pair it cannot see, equal at it and unequal a level up,
-  and its ordering premise checked (`scripts/parity.lean`, `scripts/mdtwin.lean`).
+- Each comparison level with a blind spot: the pair it cannot see, equal at it and unequal a level
+  up, and its ordering premise checked (`scripts/parity.lean`, `scripts/mdtwin.lean`).
 - A measurement a goal is judged by: a tier, whose contract `scripts/Board.lean` states.
 - An HTML emission assistive technology must name, reach or skip: its fact in `a11yFacts`
   (`htmlA11yChecks`); a box a stylesheet scrolls: its rule in `declaresScroll` and a print lift
@@ -152,9 +153,9 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   (`quadraticPrepend`); hot paths use Array and ByteArray, bit work UInt64, never Nat (review).
 - An index is proved or defaulted, never a new `]!` (`bangBaseline`); constructor fields carry no
   defaults (`ctorDefault`).
-- A docstring or comment: one sentence at most, only where the name does not say it; no history,
-  incidents, reviews, report ids, dates or rationale in code; reasons go in commit messages
-  (`docFindings`, `narrativeMarks`).
+- A docstring or comment: one sentence at most, only where the name does not say it (review); no
+  history, incidents, reviews, report ids, dates or rationale but a one-line why; reasons go in
+  commit messages (`docFindings`, `narrativeMarks`).
 - Elab's knots are at budget: a name a knot seals is unsealed after it (`sealMismatch`); arm logic
   goes in outside helpers (`tikzArm`, `boxOptsArm`); knot functions gain no parameter or top-level
   state, values in the raws, state in its own record (review; owed (U87): `Elab.classify_exact`).
