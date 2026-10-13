@@ -1,27 +1,7 @@
 /-
-How much of TikZ the engine draws itself, committed as numbers. Run from
-the repository root after `lake build TestsModules`:
-
-  lake env lean --run scripts/tikz-native.lean              regenerate the baseline
-  lake env lean --run scripts/tikz-native.lean --check      gate against the committed one
-  lake env lean --run scripts/tikz-native.lean --selftest   break each verdict once
-
-One item per construct: an invented probe exercising it, elaborated
-in-process under the declared refusal (`\pictures{ tool = none }`), so what
-the subset draws is all that ships. The value is the probe's verdict:
-
-  2  drawn natively with no loss named;
-  1  drawn natively with a named loss (W0334, E0333, W0012);
-  0  refused: no engine picture ships, or only the placeholder (W0362).
-
-The spec's 2 also asks that the drawing be structurally equal to its
-lualatex reference as the PDF figure reader reads it. That reader has not
-landed, so the structural half is not measured yet: when it lands, a probe
-whose drawing differs falls from 2, and the fall is the finding. Positions
-against lualatex are `scripts/tikz-diff.lean`'s report, never this gate.
-
-Hermetic: the probes are in this file, the faces are the suite's, and no
-tool runs.
+The tikz-native tier: per construct, an invented probe's verdict under `\pictures{ tool = none
+}`: 2 drawn with no loss, 1 drawn with a named loss, 0 refused.
+Usage: lake build TestsModules && lake env lean --run scripts/tikz-native.lean [--check | --selftest]
 -/
 import Tests.Support
 import scripts.Board

@@ -1,12 +1,9 @@
 import Std.Data.HashMap
 
 /-
-Regenerate LeanTex/Core/NfcData.lean from UnicodeData.txt (the Unicode
-Character Database file TeX Live ships in `unicode-data`). Run with:
-
-  lake env lean --run scripts/gen-nfc-data.lean [source] [--output path]
-
-Without a source argument the file is located via kpsewhich.
+Regenerate LeanTex/Core/NfcData.lean from UnicodeData.txt (TeX Live's `unicode-data`, found with
+kpsewhich without a source).
+Usage: lake env lean --run scripts/gen-nfc-data.lean [source] [--output path]
 -/
 
 def notice : String := "/-
@@ -51,10 +48,8 @@ def defaultSource : IO String := do
     die "kpsewhich could not find UnicodeData.txt"
   return path
 
-/-- The listed (script-specific) composition exclusions: the codepoints of
-CompositionExclusions.txt as of Unicode 3.2, frozen by stability policy —
-post-3.1 additions (2ADC, 1D15E-1D164, 1D1BB-1D1C0) are non-starter or
-singleton cases derived below, but are listed here too for robustness. -/
+/-- The listed composition exclusions of CompositionExclusions.txt as of Unicode 3.2,
+frozen by stability policy; later additions are derived below too. -/
 def listedExclusions : List (Nat × Nat) :=
   [(0x0958, 0x095F), (0x09DC, 0x09DD), (0x09DF, 0x09DF), (0x0A33, 0x0A33),
    (0x0A36, 0x0A36), (0x0A59, 0x0A5B), (0x0A5E, 0x0A5E), (0x0B5C, 0x0B5D),
@@ -79,8 +74,8 @@ def hexToNat (s : String) : Nat := Id.run do
     v := v * 16 + d
   return v
 
-/-- Full canonical decomposition: expand recursively (the mappings are
-acyclic and shallow, so a fuel of 8 covers every chain in the UCD). -/
+/-- Full canonical decomposition, expanded recursively; the UCD's chains are shorter than
+the fuel of 8. -/
 def expand (canon : Std.HashMap Nat (List Nat)) (fuel : Nat) (cp : Nat) : List Nat :=
   match fuel with
   | 0 => [cp]
@@ -89,9 +84,8 @@ def expand (canon : Std.HashMap Nat (List Nat)) (fuel : Nat) (cp : Nat) : List N
     | some parts => parts.flatMap (expand canon fuel)
     | none => [cp]
 
-/-- Fixed-width lowercase hex, left-padded. The loader reads a field by
-byte offset, so every field of a table is the same width and no separator
-is emitted; `die` rather than truncate if a value does not fit. -/
+/-- Fixed-width lowercase hex, left-padded, since the loader reads fields by byte offset;
+a value that does not fit dies. -/
 def hexOf (width n : Nat) : IO String := do
   let ds := String.ofList (Nat.toDigits 16 n)
   if ds.length > width then
@@ -148,13 +142,10 @@ def main (args : List String) : IO UInt32 := do
     | _ => pure ()
   let cccOf : Nat → Nat := fun cp =>
     (ccc.find? (·.1 == cp)).map (·.2) |>.getD 0
-  -- Full canonical decomposition, recursively expanded.
   let mut decompEntries : Array (Nat × List Nat) := #[]
   for (cp, _) in canon.toList.toArray do
     decompEntries := decompEntries.push (cp, expand canon 8 cp)
-  -- Primary composites: immediate canonical pairs, minus exclusions.
-  -- UAX #15 §5: listed, singleton (1-element), and non-starter (the first
-  -- element or the composite itself is a non-starter) decompositions.
+  -- Primary composites: canonical pairs minus UAX #15 §5's exclusions.
   let mut compEntries : Array (Nat × Nat × Nat) := #[]
   for (cp, parts) in canon.toList.toArray do
     match parts with

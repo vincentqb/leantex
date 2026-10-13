@@ -1,10 +1,7 @@
 /-
-Regenerates bench/lorem.tex — a deterministic, lualatex-compatible document
-of justified prose, large enough to make timing differences visible — and
-bench/underline.tex, the same prose with every word underlined, so the
-per-glyph ink decode sits on the measured path. Run with:
-
-  lake env lean --run scripts/gen-lorem.lean
+Regenerates bench/lorem.tex, deterministic justified prose for timing, and bench/underline.tex,
+the same prose underlined.
+Usage: lake env lean --run scripts/gen-lorem.lean
 -/
 
 def words : Array String := #[

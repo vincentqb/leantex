@@ -1,17 +1,5 @@
-"""Build testdata/corpus/fonts/ExampleIcons-Regular.ttf: an invented icon face
-for the leantex test corpus. Five simple geometric glyphs (invented shapes,
-drawn here, no outlines copied from any icon font) at the Font Awesome 5
-Free codepoints the fixtures reference:
-
-  U+F062 arrow-up        triangle over a stem
-  U+F09B github          circle (drawn as an octagon)
-  U+F08C linkedin        square with a notch
-  U+F0E0 envelope        rectangle with a V fold
-  U+F19D graduation-cap  flat diamond over a bar
-
-The codepoints come from fontawesome5-mapping.def (CTAN); the shapes are
-original and trivial. Licence: CC0 (see LICENSE-ExampleIcons.txt).
-
+"""Build testdata/corpus/fonts/ExampleIcons-Regular.ttf: five invented geometric glyphs at the
+Font Awesome 5 Free codepoints the fixtures reference. Licence: CC0 (see LICENSE-ExampleIcons.txt).
 Run: /tmp/fontenv/bin/python scripts/gen-test-icons.py   (needs fontTools)
 """
 from fontTools.fontBuilder import FontBuilder

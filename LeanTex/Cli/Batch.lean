@@ -4,9 +4,8 @@ import Std
 
 namespace LeanTex.Cli.Batch
 
-/-- Take a bounded source prefix, stopping before a repeated resource key.
-The remainder is untouched, so repeated requests serialize without changing
-the order of results or allowing concurrent writes to one cache slot. -/
+/-- The longest prefix of at most `n` items with distinct keys, and the untouched
+remainder. -/
 private def takeBatch [DecidableEq κ] (key : α → κ) : Nat → List κ → List α → List α × List α
   | 0, _, xs => ([], xs)
   | _ + 1, _, [] => ([], [])
@@ -85,8 +84,7 @@ private theorem takeBatch_keys_nodup [DecidableEq κ] (key : α → κ) (n : Nat
         exact ⟨fun h => takeBatch_fresh key n (key x :: seen) xs (key x) h
           (List.mem_cons_self ..), ih _ _⟩
 
-/-- `extra + 1` is the concurrency bound; zero extra workers still makes
-progress. Each batch owns distinct resource keys. -/
+/-- Consecutive batches of at most `extra + 1` items, each with distinct resource keys. -/
 public def plan [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) : List (List α) :=
   match xs with
   | [] => []
@@ -135,9 +133,8 @@ public theorem plan_keys_nodup [DecidableEq κ] (extra : Nat) (key : α → κ) 
         (List.mem_cons_self ..), takeBatch_keys_nodup key extra [key x] xs⟩
     · exact ih _ h
 
-/-- Execute the checked source partition. All started tasks are joined,
-including after a failure; an exception cannot leave cache writers running.
-Results are collected in source order, independently of completion order. -/
+/-- Run `f` over `xs` in `plan`'s batches, joining every started task; results in source
+order. -/
 public def map [DecidableEq κ] (limit : Nat) (key : α → κ)
     (f : α → IO β) (xs : Array α) : IO (Array β) := do
   let mut result := #[]

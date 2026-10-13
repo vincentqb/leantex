@@ -1,27 +1,7 @@
 /-
-Regenerate LeanTex/Core/PygmentsStyleData.lean and
-testdata/oracles/pygments-styles.tsv from an installed Pygments. Run from
-the repository root with:
-
-  lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>]
-
-The interpreter defaults to `python3`. Pygments is the module it imports,
-or else the wheel TeX Live installs beside its `latexminted` launcher: the
-two places the listing provider reads it from (LeanTex/Cli/ListingHighlight.lean),
-and the second is the one a lualatex build's minted runs.
-
-For each shipped style (`Ir.ListingStyle`):
-- the data module receives the style's `styles` table, every non-empty
-  declaration verbatim, in token order: what `PygmentsStyle` resolves;
-  and `STANDARD_TYPES`, each type's name in the formatter's macros;
-- the oracle receives Pygments' own answers for every standard token type
-  (`pygments.token.STANDARD_TYPES`): `style_for_token`, and what the LaTeX
-  formatter minted runs ships for one token of the type, read off its
-  `\PYG` chain and the chain's command definitions.
-
-A declaration word the painter does not carry is refused, never dropped:
-a font family (`roman`, `sans`, `mono`), `noinherit`, and a colour that is
-not `#rgb` or `#rrggbb`.
+Regenerate LeanTex/Core/PygmentsStyleData.lean and testdata/oracles/pygments-styles.tsv from an
+installed Pygments, refusing a style word the painter does not carry.
+Usage: lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>]
 -/
 import Lean.Data.Json
 
@@ -33,8 +13,8 @@ def die (msg : String) : IO α := do
 
 def styles : List String := ["default", "friendly"]
 
-/-- Constant program, run isolated (`-I`): no working directory, user site
-or PYTHONPATH reaches the import. -/
+/-- The constant bridge program, run isolated (`-I`) so no working directory, user site or
+PYTHONPATH reaches the import. -/
 def bridge : String := r#"import io
 import json
 import pathlib

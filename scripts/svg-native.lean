@@ -1,31 +1,7 @@
 /-
-How much SVG the engine reads and draws itself, as a tier. Run from the
-repository root:
-
-  lake env lean --run scripts/svg-native.lean              regenerate the baseline
-  lake env lean --run scripts/svg-native.lean --check      gate against the committed one
-  lake env lean --run scripts/svg-native.lean --selftest   the measures
-
-Every row is a count or a 0–2 score over committed, invented inputs, read
-by the pure core — no converter, no font the repository does not ship, no
-network — so `--check` is hermetic:
-
-* `boundary.*`: the resource boundary's matrix (`svgBoundaryAdmitted`,
-  `svgBoundaryRefused`, `svgBoundaryMalformed`), each case judged as the
-  matrix says;
-* `terminal.*`: the terminal-pose projection's matrix
-  (`svgTerminalRefused`, `svgTerminalAccepted`), each refused, or ending in
-  its static pose;
-* `boundary.encodings`: the encoded sources (`svgBoundaryEncodings`), each
-  read or refused as the matrix says;
-* `feature.<name>`: one invented probe per SVG feature, 2 when the importer
-  draws it whole, 1 when it draws it with its losses named, 0 when it
-  refuses it or draws nothing — a feature the engine stops drawing is a
-  fall. A score of 2 will also require the drawing to read back equal to
-  the converter's PDF of the same probe once the PDF importer lands;
-* `fixtures.exact` / `fixtures.text`: the invented figures under
-  `testdata/svg` and `testdata/corpus/figures` the importer draws without a
-  loss, and those whose text sets in the shipped faces with nothing missing.
+The svg-native tier over committed invented inputs: the boundary and terminal matrices, each
+feature probe's score, the fixtures drawn exactly.
+Usage: lake env lean --run scripts/svg-native.lean [--check | --selftest]
 -/
 import scripts.Board
 import Tests.Support
@@ -98,8 +74,7 @@ def featureProbes : List (String × String) := [
   ("nested-svg-transform", "<svg width=\"20\" height=\"20\" transform=\"translate(10 10)\"><rect width=\"10\" height=\"10\"/></svg>"),
   ("text-line-feed", "<text x=\"2\" y=\"20\">two\n  words</text>")]
 
-/-- Whether the importer draws a probe whole: exact, and something painted
-or set. -/
+/-- Whether the importer draws a probe whole: exact, with something painted or set. -/
 def drawnWhole (bytes : ByteArray) : Bool :=
   match Svg.importBytes bytes with
   | .exact i => !i.fig.marks.isEmpty || !i.fig.labels.isEmpty
@@ -164,7 +139,6 @@ def measureTier : IO (Array String × Array Row) := do
       { item := "terminal.refused", value := tRefused.length }] ++ features.toArray)
 
 def selftest : IO UInt32 := tierSelftest "svg-native" fun no => do
-  -- The probe measure: exact and drawing is 1, a loss or a refusal 0.
   no "a drawn probe counts" (drawnWhole (svgDocument "<rect width=\"4\" height=\"4\"/>"))
   no "a lossy probe does not"
     (!drawnWhole (svgDocument "<filter id=\"f\"/><rect width=\"4\" height=\"4\" filter=\"url(#f)\"/>"))

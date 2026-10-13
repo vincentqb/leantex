@@ -15,8 +15,8 @@ def wrapper (root : System.FilePath) (names manifest : Array String) : String :=
   String.join (names.toList.map fun name => "import " ++ importName name ++ "\n") ++
   auditCommand root names manifest
 
-/-- Lake chooses the platform's native library name. Loading a compiler plugin
-registers the linter without adding imports to the module being checked. -/
+/-- The compiled audit plugin's library, whose loading registers the linter without adding
+imports to the checked module. -/
 def sourcePlugin : IO System.FilePath := do
   let target := "+scripts.ProofAudit:dynlib"
   let built ← IO.Process.output { cmd := "lake", args := #["build", "--wfail", target] }
@@ -45,7 +45,7 @@ def checkGroup (dir : System.FilePath) (index : Nat)
   IO.FS.writeFile file (wrapper (← IO.currentDir) names manifest)
   compile file
 
-/-- A successful compiler exit is insufficient if its audit did not finish. -/
+/-- A successful compiler exit fails when its audit did not finish. -/
 def requireSourceAudit (source : System.FilePath) (out : IO.Process.Output) :
     IO.Process.Output :=
   if out.exitCode != 0 || (out.stdout.splitOn "\n").any (fun line =>
@@ -61,17 +61,12 @@ def checkSource (plugin source : System.FilePath) (extra : Array String := #[])
   return requireSourceAudit source (← compile source
     (#["--plugin=" ++ plugin.toString] ++ extra) search)
 
-/-- Compilers resident at once. Source elaboration can be large: the largest
-audit (Layout) peaks near 2.5 GB and the next two (Compat, Elab) under 2 GB,
-so eight stay under 20 GB. At two, re-elaborating 481 sources held
-`lake lint`, which every commit's hook runs, at 25 minutes. -/
+/-- Compilers resident at once: the largest source audits peak near 2.5 GB, so eight stay
+under 20 GB. -/
 def auditWidth : Nat := 8
 
-/-- Compiler audits read already-built dependencies and own distinct temporary
-wrappers. `auditWidth` workers draw them from one queue, costliest first:
-batches of eight waited for their slowest member, so seven compilers idled
-behind every large module. Every started job is joined, a failed one is
-rethrown, each job must report exactly once, and results keep job order. -/
+/-- Run compiler audits on `auditWidth` workers from one queue, costliest first; every
+started job is joined, a failure rethrown, and results keep job order. -/
 def auditBatch (jobs : Array α) (cost : α → Nat) (run : Nat → α → IO IO.Process.Output) :
     IO (Array IO.Process.Output) := do
   let queue := jobs.zipIdx.qsort fun a b => cost a.1 > cost b.1
@@ -131,8 +126,8 @@ def verify : IO UInt32 := do
       IO.println s!"proof audit: {files.size} source modules; no unfinished proofs or project axioms"
     return if passed then 0 else 1
 
-/-- Exercise the compiler and the compiled audit independently. A suppressed
-compiler warning cannot certify a proof; unused private declarations count too. -/
+/-- Exercise the compiler and the compiled audit independently: a suppressed warning
+certifies no proof, and unused private declarations count. -/
 def selftest : IO UInt32 := IO.FS.withTempDir fun dir => do
   let plugin ← sourcePlugin
   let mut failures : Array String := #[]
@@ -215,11 +210,7 @@ public theorem dependentBoundary : False := exportedBoundary
     let out ← compile file #["-R", dir.toString] (some dir)
     (_, failures) ← (expect label ((out.exitCode == 0) == okay)).run failures
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
-  -- A failed compiler is an audit result, not an exception that skips the
-  -- remaining sources. Exercise real compiler jobs through the same executor.
-  -- The queue runs Foundation, Hidden, Valid by cost: an executor answering
-  -- in queue order, or in reverse job order, reads true, false, true or
-  -- false, true, true, not the true, true, false of job order.
+  -- A failed compiler is an audit result; cost order differs from job order, so misplacement shows.
   let batchCases := #[("Valid", true), ("Foundation", true), ("Hidden", false)]
   let batched ← auditBatch batchCases (·.1.length) fun index (name, _) => do
     let file := dir / s!"BatchAudit{index}.lean"
@@ -230,8 +221,7 @@ public theorem dependentBoundary : False := exportedBoundary
   (_, failures) ← (expect "parallel audit hid an unused private unfinished proof"
     (batched.any fun out => out.exitCode != 0 &&
       (out.stdout ++ out.stderr).contains "sorryAx")).run failures
-  -- Each job's own answer in its own slot: the queue reverses job order and
-  -- the workers finish out of both orders.
+  -- Each job's own answer in its own slot, whatever order workers finish in.
   let tagged ← auditBatch (Array.range 24) id fun index job => do
     IO.sleep (UInt32.ofNat (job * 7 % 5))
     return { exitCode := 0, stdout := s!"{index}:{job}", stderr := "" }
@@ -259,8 +249,7 @@ public theorem dependentBoundary : False := exportedBoundary
   (_, failures) ← (expect "audit grouping lost or duplicated a source"
     (regrouped.size == discovered.size &&
       (discovered.map moduleName).all regrouped.contains)).run failures
-  -- An imported module omitted by discovery still belongs to this project.
-  -- Nothing in the root refers to these declarations: reachability is not enough.
+  -- An imported module discovery omitted still belongs to the project; reachability is not enough.
   for layout in ["hidden", "linked"] do
     for (kind, body) in [
         ("valid", "public theorem unused : True := True.intro\n"),
@@ -302,8 +291,7 @@ public theorem dependentBoundary : False := exportedBoundary
       (_, failures) ← (expect (label ++ ": omitted imported module escaped")
         (out.exitCode != 0 &&
           (out.stdout ++ out.stderr).contains "is missing from the source manifest")).run failures
-      -- The same import is legal once discovery accounts for it. Its proof
-      -- obligations are then checked in its own batch, including private ones.
+      -- A discovered import's obligations are checked in its own batch, private ones included.
       if layout == "linked" then
         let complete := #["Project", hiddenName]
         IO.FS.writeFile audit (wrapper src #["Project"] complete)
@@ -319,9 +307,7 @@ public theorem dependentBoundary : False := exportedBoundary
   (_, failures) ← (expect "relative source root changes module names"
     (fromRelative == fromAbsolute &&
       fromRelative.all (fun file => !(moduleName file).isEmpty))).run failures
-  -- Anonymous proofs have no declarations in their compiled modules. They must
-  -- be checked in the frontend's saved environment before that environment goes
-  -- away, independently of both hasSorry and diagnostic suppression.
+  -- Anonymous proofs leave no compiled declarations: checked in the saved environment.
   let anonymousCases := #[
     ("ordinary", "example : 1 = 1 := rfl\nexample : 2 + 2 = 4 := by decide\n",
       true, "2 anonymous examples checked before discard"),
@@ -371,8 +357,7 @@ public theorem dependentBoundary : False := exportedBoundary
         ((out.exitCode == 0) == okay && (out.stdout ++ out.stderr).contains diagnostic)).run failures
       if (out.exitCode == 0) != okay || !(out.stdout ++ out.stderr).contains diagnostic then
         IO.eprint (out.stdout ++ out.stderr)
-  -- The audit's implementation imports must not become imports of the source.
-  -- In particular, an interface guard must have the same answer under audit.
+  -- The audit's imports never become the source's: an interface guard answers the same.
   let isolated := dir / "Isolated.lean"
   IO.FS.writeFile isolated "module
 

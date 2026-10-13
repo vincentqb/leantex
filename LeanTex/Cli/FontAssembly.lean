@@ -11,8 +11,8 @@ import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.SlotLoss
 import LeanTex.Core.Layout
 
-/-! Font assembly shared by the driver and its artifact checks. Host discovery
-stays with the caller; this module resolves the document against that scan. -/
+/-! Font assembly shared by the driver and its artifact checks, resolving the document
+against the caller's scan. -/
 
 namespace LeanTex.Cli.FontAssembly
 
@@ -27,24 +27,19 @@ private def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
 /-- The scan produced nothing usable at all. -/
 private def noFontDiag : Diag := DriverDiag.noFont
 
-/-- The scan is the host's answer and the parses are the filesystem's, so
-both are taken once and handed to every assembly that needs them. Two
-assemblies do need them: the provisional font environment a picture's
-labels are measured against, resolved from the preamble, and the final one
-the document settles. -/
+/-- The host's face scan and its parses, taken once and shared by every assembly of a run.
+-/
 public structure FaceScan where
   faces : Array FontDb.Face
   docDirs : List String
   dirs : Array String
   diags : Array Diag
-  /-- The roots the engine alone was told about — `--font-dir` and
-  `LEANTEX_FONT_PATH` — which no other program's font search reads. -/
+  /-- The roots only the engine was told about (`--font-dir`, `LEANTEX_FONT_PATH`), which
+  no other program's font search reads. -/
   privateDirs : List String := []
 
-/-- Which assembly a font set is: the one the document settles on, or the
-provisional one a picture's labels are measured against before the body has
-been read. A value rather than a flag — it says what the caller is doing,
-and the assembly reads its own consequences off it. -/
+/-- Which assembly a font set is: the document's settled one, or the provisional one a
+picture's labels are measured against. -/
 public inductive Purpose where
   /-- The environment the artifact is a function of. -/
   | settled
@@ -53,9 +48,8 @@ public inductive Purpose where
   | provisional (math : Bool)
   deriving Repr, BEq, Inhabited
 
-/-- The family a document's text is set in, as the assembly reads it: a
-deck's sans, else its body, and the engine's default family where it names
-neither (`FontDb.defaultFamily`). -/
+/-- The family a document's text is set in: a deck's sans, else its body, else the
+engine's default family. -/
 public def textFamilyIn (doc : Ir.Doc) (faces : Array FontDb.Face) : Option String :=
   let spec := doc.fonts
   let spec := if spec.body.isNone && spec.sans.isNone then
@@ -70,31 +64,13 @@ public def ownFaces (faces : Array FontDb.Face) (docDirs : List String) : Array 
   if docDirs.isEmpty then faces else faces.filter fun f =>
     docDirs.any fun dir => f.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")
 
-/-- An undeclared typewriter slot the document sets runs in (the census
-`SlotLoss` reports from) takes a typewriter default (`FontDb.monoPick`):
-for a document declaring its text family, that family's designed
-companion where it matches the text's x-height closer than lualatex's
-Latin Modern Mono (`FontDb.companionLeads`), then for a tex document
-lualatex's own shapes, as lualatex sets them beside its `\setmainfont`,
-then another companion or the first platform monospace; for any other
-document the text family's designed companion first, else the first
-platform monospace, a tex document's lualatex shapes after them. Each is
-served at its upright corners in its own fixed-pitch faces, and at its
-italic corners whole or upright
-(`monoPick_contract`, over the pool the resolver reads first, as it
-reads a document's directories before the host's). A document that
-ships its fonts (`\fonts{ dir = ... }`) is answered from its own faces
-first, and a monospace it ships is resolved from them alone, its italic
-corners too, so the host neither displaces it nor lends it a face;
-where it ships none the whole scan answers, so its code is never set
-proportional where the host holds a monospace. Neither answering leaves
-the slot to the body family, the loss W0390 names; a slot no run
-reaches loads no face, so no page ships one it never sets. The
-second answer is whether the default is a family the document ships. -/
+/-- The typewriter default for an undeclared typewriter slot the document sets runs in
+(`FontDb.monoPick`), answered from the document's own faces first; the second component
+says whether the document ships it. -/
 public def monoDefaultOf (doc : Ir.Doc) (faces : Array FontDb.Face) (docDirs : List String) :
     Option FontDb.MonoPick × Bool :=
   let textFamily := textFamilyIn doc faces
-  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the monospace it ships whatever the host holds, its italics upright where it ships none, and the host's monospace where it ships none
+  -- premise: monoDefaultChecks — the default monospace follows the scan and the shipped faces
   let tex := doc.surface != .markdown
   let declaredText := doc.fonts.body.isSome || doc.fonts.sans.isSome
   let own := ownFaces faces docDirs
@@ -104,35 +80,9 @@ public def monoDefaultOf (doc : Ir.Doc) (faces : Array FontDb.Face) (docDirs : L
     if wantsMono then FontDb.monoPick tex declaredText faces textFamily else none
   (pick, !docDirs.isEmpty && ownPick.isSome)
 
-/-- Every face a document can reach: the three family slots crossed with the
-four bold/italic variants, loaded once and deduplicated by path. Faces the
-document never uses are still loaded but not embedded — `Pdf.keepFaces` decides
-what reaches the file. A document with no `\fonts` is served by the same
-mechanism: `FontDb.defaultFamily` picks a family from the scan and it fills
-the body slot, so the default exists wherever any font does, by construction.
-A `\fonts{ dir = ... }` is searched first, resolved against the document's own
-directory like `\input`: a document that ships its fonts renders the same on
-every host, whatever else is installed.
-
-Per-glyph fallback is precomputed here, against the document's own scalars
-(`Layout.docScalars`): a scalar some declared face covers maps to the first
-covering face in declaration order, and one no declared face covers goes to
-`FontDiscovery.fallbackPicks`, whose face is loaded at the end of the set. Layout
-consults the map only on a missing glyph. The `LEANTEX_FONT` override is a
-single face with no scan behind it, so it gets no fallback.
-
-Whether a math face loads is the document's own answer — whether a formula
-stands anywhere — except for the provisional assembly, which has no body to
-ask and takes the answer from what its pictures set (`Elab.picWants`): a
-node label setting `$x$` is the commonest reason a preamble-resolved face
-would measure differently from the final one, and a math face is also the
-most expensive parse a document makes, so it is resolved early exactly when
-a picture would use it.
-
-Neither `ui` nor `file` is an argument any more: the host's answer and the
-document's own directories were the only reasons to hold them, and both are
-now the scan's (`scanFaces`). Assembly is a function of the document, the
-faces in hand, the parses already made, and which assembly this is. -/
+/-- Every face a document can reach, the family slots crossed with the four variants,
+loaded once and deduplicated by path, with per-glyph fallback precomputed over the
+document's scalars. -/
 public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (cache : FontEnv.Cache) (purpose : Purpose) (figureScalars : Array Char := #[]) :
     IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × Array String)) := do
@@ -144,9 +94,6 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       match ← FontEnv.loadOverride path with
       | .error d => return .error d
       | .ok (f, path) =>
-        -- The override is one real face: read its own alphabet coverage so a
-        -- math override face is not falsely told it lacks every alphabet, and
-        -- carry the resolver's N0018 diagnostics out instead of dropping them.
         let coverage := f.mathAlphabetCoverage spec.mathSources
         let (doc, alphaDiags) := Ir.resolveMathAlphas coverage f.family doc
         let set : Font.FontSet := {
@@ -157,14 +104,11 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
-  -- Mono and math are independent roles; neither supplies the text default.
   let spec := if spec.body.isNone && spec.sans.isNone then
       { spec with body := FontDb.defaultFamily faces }
     else spec
-  -- beamer sets a presentation in its sans family (see `resolveName`).
   let slides := doc.docClass == Ir.DocClass.slides
   let textFamily := textFamilyIn doc faces
-  -- An undeclared typewriter slot takes its default (`monoDefaultOf`).
   let tex := doc.surface != .markdown
   let own := ownFaces faces docDirs
   let (pick, monoOwn) := monoDefaultOf doc faces docDirs
@@ -174,49 +118,25 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
                   faces := spec.faces ++ (p.faces.map fun (c : (Nat × Bool) × String) =>
                     ((2, c.1.1, c.1.2), c.2)).toArray }
     | none => spec
-  -- Whether a run sets italic code, read once and only where the default's
-  -- italic answers upright.
   let mut italicCode : Option Bool := none
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let mut missing : Array String := #[]
-  -- A provisional assembly resolves the *text* slot and nothing else: a
-  -- node label sets in the document's text face, and the sans and mono
-  -- slots cost a search of the whole scan per key for a face no label is
-  -- going to ask for. A label that does ask — `\texttt` inside a node —
-  -- measures against font 0 here, the settled face disagrees, and the
-  -- driver elaborates again; the cost of being wrong is bounded and the
-  -- cost of being thorough was not.
+  -- A provisional assembly resolves only the text slot, the face a node label sets in.
   let slots : List (Nat × Option String) :=
     match purpose with
     | .provisional _ => [(0, spec.body)]
     | .settled => [(0, spec.body), (1, spec.sans), (2, spec.mono)] ++
-      -- Each declared family's own slot (`Ir.FontSpec.families`).
       spec.families.toList.zipIdx.map fun ((_, fam), i) => (Ir.familySlotBase + i, some fam)
-  -- A slot the document did not name falls back to the body family, and the
-  -- body's declared per-variant faces come with it.
-  -- beamer sets a presentation in its sans family: the class's default
-  -- font theme is sans serif (beamer user guide §18, "the default font
-  -- theme uses sans serif fonts"), so in the slides class the default
-  -- text slot is the declared sans family, and its declared per-variant
-  -- faces come with it. The engine's three slots carry no separate serif
-  -- default for decks: \rmfamily follows the deck's face.
+  -- beamer's default font theme is sans serif, so a deck's text slot is its sans family.
   let resolveName (slot : Nat) : Option String :=
     match slot with
-    -- A document that names a sans family and no body family reads its
-    -- text in that face. This was already the shipped behaviour — with no
-    -- slot-0 entry every text lookup fell through to font 0, the sans
-    -- regular — but as an accident of load order that no weight or
-    -- variant could refine; naming it makes the sans's declared faces
-    -- (an upright of another weight, a light one) reach the text.
     | 0 => textFamily
     | 1 => spec.sans.orElse fun _ => spec.body
     | 2 => spec.mono.orElse fun _ => spec.body
     | s => spec.slotFamily s
-  -- A slot's declared faces live under its *effective* slot: the one its
-  -- family resolution reads (a deck's body — or a sans-only document's —
-  -- follows the sans declaration).
+  -- A slot's declared faces live under the slot its family resolution reads.
   let effectiveOf (slot : Nat) : Nat := match slot with
     | 0 => if (slides || spec.body.isNone) && spec.sans.isSome then 1 else 0
     | 1 => if spec.sans.isSome then 1 else 0
@@ -224,11 +144,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     | s => s
   let declaredFace (slot : Nat) (weight : Nat) (italic : Bool) : Option String :=
     spec.faceFor (effectiveOf slot) weight italic
-  -- The off-corner keys this document can ask the index for: the weights
-  -- its styles really use (`docWeightKeys`, exact so W0366 never fires
-  -- for a weight nobody asked), plus every declared face's own key — a
-  -- declaration is a request to load, as fontspec's is, so a declared
-  -- Light ships in the HTML set even before a run selects it.
+  -- Off-corner keys: the styles' weights plus every declared face's, as fontspec loads them.
   let standard : List (Nat × Bool) := FontDb.corners
   let extraKeysFor (slot : Nat) : List (Nat × Bool) :=
     ((Layout.docWeightKeys doc).toList.filterMap fun (s, w, i) =>
@@ -236,10 +152,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (spec.faces.toList.filterMap fun ((s, w, i), _) =>
       if s == effectiveOf slot && !(standard.contains (w, i)) then some (w, i)
       else none)
-  -- lualatex's shapes are named by their files, one family of several
-  -- optical sizes and weights: a weight off their corners is set in the
-  -- nearest corner's file, the substitution named (W0366), never in a file
-  -- of another design size the family's weight order happens to rank first.
+  -- A weight off lualatex's corners sets in the nearest corner's file (W0366).
   let nearestFile (slot weight : Nat) (italic : Bool) : Option (Nat × String) :=
     if slot != 2 || weight == 400 || weight == 700 then none else
     match pick with
@@ -264,19 +177,12 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       | none =>
         unless missing.contains family do
           missing := missing.push family
-          -- A host with TeX Live installed has a thousand families; listing
-          -- them all is not help. Name the ones that look like what was asked
-          -- for, and how to see the rest.
+          -- Name only the families resembling the request; a host may hold thousands.
           let all := FontDb.families faces
           diags := diags.push (DriverDiag.familyMissing family
             (FontDb.nearest all family).toList all.size)
       | some (face, sub) =>
-        -- The engine's own typewriter default may hold no italic
-        -- (`FontDb.italicCorners`): its italic corners set upright in it,
-        -- unslanted, named once as a note (N0031) where a run sets italic
-        -- code (`Layout.docFaceKeys`) — a variant the document never asked
-        -- of a family it never named is no W0006.
-        -- premise: monoDefaultChecks — the same faces declared as the document's typewriter family name each italic corner's substitution (W0006) where the undeclared slot names one note, both pages setting the code in the same faces; a document setting no italic code names nothing
+        -- premise: monoDefaultChecks — a declared typewriter family names each italic substitution
         let upright := slot == 2 && pick.isSome && italic && !face.italic
         if upright && !diags.any (·.kind == .N0031) then
           let asked := match italicCode with
@@ -288,8 +194,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
         if let some s := sub then
           unless upright && s matches .variant _ do
             let d := DriverDiag.substituted s
-            -- Slots share families, so the same substitution surfaces
-            -- repeatedly; two weights sharing a nearest face are two records.
+            -- Slots share families: a substitution is recorded once per message and detail.
             unless diags.any (fun e => e.message == d.message && e.detail == d.detail) do
               diags := diags.push d
         match paths.findIdx? (· == face.path) with
@@ -302,9 +207,6 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
             index := index.push ((slot, weight, italic), fonts.size)
             fonts := fonts.push f
             paths := paths.push face.path
-  -- The math face: resolved like any named family, and installed only when
-  -- it carries an OpenType MATH table (`FontEnv.resolveMath`, which is
-  -- handed this scan rather than performing one).
   let wantsMath : Bool := match purpose with
     | .provisional math => math
     | .settled => !(Layout.docMathScalars doc).isEmpty
@@ -317,17 +219,13 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   diags := diags ++ math.diags
   let mathIdx := math.index
   if fonts.isEmpty then
-    -- Every named family failed and `diags` carries the errors; the caller
-    -- stops on them, but nothing downstream may ever see an empty set.
+    -- Every named family failed: the caller stops on `diags`, and no empty set may escape.
     match FontDb.defaultFamily faces |>.bind (FontDb.resolve faces · {}) with
     | none => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
     | some (face, _) =>
       match ← cache.parse face.path with
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
-        -- The single fallback face answers its own coverage, and its N0018
-        -- diagnostics join the errors already collected rather than being
-        -- dropped.
         let coverage := f.mathAlphabetCoverage spec.mathSources
         let (doc, alphaDiags) := Ir.resolveMathAlphas coverage f.family doc
         let set : Font.FontSet := {
@@ -335,9 +233,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
           index := singleFaceIndex
           mathAlphabets := coverage }
         return .ok (set, doc, diags ++ alphaDiags, #[face.path])
-  -- The math face answers its alphabet ranges once. Resolve the shared IR
-  -- before `docScalars`, so a wholly unavailable alphabet never becomes a
-  -- request the host fallback scan can answer by accident.
+  -- Alphabets resolve before `docScalars`, so a missing one never reaches the fallback.
   let (doc, mathAlphabets, alphaDiags) :=
     match mathIdx.bind (fonts[·]?) with
     | some f =>
@@ -345,15 +241,10 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       let (resolved, ds) := Ir.resolveMathAlphas coverage f.family doc
       (resolved, coverage, ds)
     | none =>
-      -- No math face resolved: the coverage carries no range, so the resolver
-      -- names every used alphabet as lost (N0018). Keep those diagnostics —
-      -- they are appended once below, so the normal path is not doubled.
       let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
       let (resolved, ds) := Ir.resolveMathAlphas coverage "math face" doc
       (resolved, coverage, ds)
   diags := diags ++ alphaDiags
-  -- Per-glyph fallback: map every scalar the resolved document uses to the first
-  -- declared face covering it; scalars none covers go to the scan.
   let mut fallback : Array (Char × Nat) := #[]
   let mut uncovered : Array Char := #[]
   -- A drawn SVG's text sets in these faces too (`Layout.storeScalars`).
@@ -364,8 +255,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     | some i => fallback := fallback.push (c, i)
     | none => uncovered := uncovered.push c
   unless uncovered.isEmpty do
-    -- The document's own directories outrank the host: a shipped face
-    -- answers first for every scalar it covers.
+    -- A face the document ships answers first for every scalar it covers.
     let inDocDir (path : String) : Bool :=
       docDirs.any fun d => path.startsWith (d ++ "/") || path.startsWith d
     for (c, path) in ← FontDiscovery.fallbackPicksPreferring inDocDir faces uncovered do
@@ -386,28 +276,10 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     mathAlphabets := mathAlphabets }
   return .ok (set, doc, diags, paths)
 
-/-- **A boundary standalone sets in the faces the page sets in.** The
-document's declared roles, and for a role it left undeclared the family the
-engine itself resolved: the text slot's regular face (`FontDb.defaultFamily`
-for a document naming none, a deck's sans), the math face the companion
-rule chose (`FontEnv.resolveMath`), and the typewriter family its default
-chose (`monoDefaultOf`), the one decision the page's assembly reads, where
-that is a family rather than lualatex's own Latin Modern Mono shapes, which
-the tool sets unasked. The default answers a slot the page sets runs in, so
-a document whose only code stands inside a picture sends none, and its
-picture sets that code in lualatex's Latin Modern Mono: pending work.
-Without them lualatex sets a picture's
-text and formulas in its Computer Modern defaults — another face than the
-page's, and Type 1 programs a vector import cannot read. Only a family the
-scan found in a root the tool searches too travels — the system's and TeX's
-font directories, never the document's own nor one only the engine was told
-about (`FaceScan.privateDirs`): the tool resolves a family by name from its
-own search path, and a family it cannot find fails the picture that a
-Computer Modern default would have drawn. -/
--- premise: boundaryFaceChecks — a family found only in the document's
--- directories or in an engine-only root stays home, one found in a shared
--- root travels; that luaotfload's search reads the shared roots and no
--- other is the tool's, witnessed by the fixture lualatex made.
+/-- The font roles a boundary standalone sets in: the document's declared roles and, for
+an undeclared one, the family the engine resolved, when the scan found it in a root the
+tool also searches. -/
+-- premise: boundaryFaceChecks — only a family in a shared root travels
 public def boundaryFonts (doc : Ir.Doc) (fs : Font.FontSet) (scan : FaceScan) :
     Ir.FontSpec :=
   let spec := doc.fonts

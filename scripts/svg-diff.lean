@@ -1,48 +1,7 @@
 /-
-The engine's drawing of an SVG against a browser's, and against the
-converter's, as a report. Run from the repository root:
-
-  lake build ScriptsModules && lake env lean --run scripts/svg-diff.lean     report and gate
-  lake env lean --run scripts/svg-diff.lean --update                         also record the run
-  lake env lean --run scripts/svg-diff.lean --keep <dir>                     keep every raster
-  lake env lean --run scripts/svg-diff.lean --selftest                       the judge, broken once
-
-Each invented figure (`testdata/svg`, `testdata/corpus/figures`: drawings in
-the shapes a plotting library, a chart grammar, a graph layout tool and a
-vector editor write, and an animation's pose) is drawn in these ways, and
-one browser, Chromium, rasterizes them all at one width:
-
-* the reference: the authored bytes, as a page's `<img>` shows them — for a
-  figure that moves, its still pose, every animation element taken out,
-  since a browser shows the authored bytes at whatever moment it is asked;
-* the engine's drawing (`FigureOutline.poster`: the native import, its text
-  shaped and outlined) twice: in the host's faces (`hostFaces`, the ones
-  fontconfig answers the reference's families with, which the run checks),
-  so its text is comparable glyph for glyph, and in the shipped faces
-  (`shippedFaces`), what the corpus pages set;
-* the fallback: what the converter route ships for a figure the engine does
-  not draw whole, librsvg's drawing of the canonical parse (`rsvg-convert`),
-  its text in the host's faces too.
-
-Each distance is DSSIM at the raster judge's scale
-(`RasterJudge.dssimAgainst`). The geometry is measured apart: every `text`
-taken out of the reference, the engine's drawing and the fallback's. The
-judge's noise is measured per figure on the run — the reference against
-itself shown one pixel wider and resampled back, and against the canonical
-respelling of its parse (`Xml.renderItem`, which must draw what the
-authored bytes draw) — and a figure's `ε` is its larger noise, at least
-`slack`.
-
-The gate is never worse, for every figure the engine draws whole (an exact
-import, so its drawing is what ships): its drawing in the host's faces
-stays within the fallback's distance plus `ε`, whole and in its geometry.
-A lossy figure is reported, never held to the fallback: the fallback is
-what ships for it. The shipped faces' distance is reported, never gated —
-their letters differ from the host's by design. The gate reads the run;
-`testdata/oracles/svg-diff.tsv` keeps the last recorded one as evidence. A
-report, never a hermetic gate: it needs Chromium (through Playwright),
-librsvg, ImageMagick, fontconfig and the host's faces, and a missing tool
-fails the run with its name.
+Report of the engine's drawing of each invented SVG against Chromium's and librsvg's by DSSIM; a
+figure drawn whole stays within the fallback's distance plus its noise.
+Usage: lake build ScriptsModules && lake env lean --run scripts/svg-diff.lean [--update | --keep <dir> | --selftest]
 -/
 import scripts.RasterJudge
 import LeanTex.Core.SvgPoster
@@ -128,8 +87,8 @@ def fixtureFiles : IO (Array System.FilePath) := do
 /-- The width every drawing is shown at, in CSS pixels. -/
 def rasterWidth : Nat := 800
 
-/-- Playwright's module: `LEANTEX_PLAYWRIGHT`, else the first
-`~/.npm/_npx/*/node_modules/playwright`. Nothing is installed. -/
+/-- Playwright's module, looked up and never installed: `LEANTEX_PLAYWRIGHT`, else the
+first `~/.npm/_npx/*/node_modules/playwright`. -/
 def playwrightModule : IO (Option String) := do
   if let some m ← IO.getEnv "LEANTEX_PLAYWRIGHT" then return some m
   let some home ← IO.getEnv "HOME" | return none
@@ -205,10 +164,9 @@ def fallbackOf (dir : System.FilePath) (tag : String) (canonical : ByteArray) :
   unless r.exitCode == 0 do throw <| IO.userError s!"svg-diff: librsvg does not draw {tag}"
   return output
 
-/-- One figure's distances from the reference: the engine's in the host's
-faces and in the shipped ones, the fallback's, the judge's noise (the wider
-drawing's and the respelling's), and the engine's and the fallback's
-geometry; and whether the engine draws the figure whole. -/
+/-- One figure's distances from the reference (the engine's in the host's and the shipped
+faces, the fallback's, the judge's two noises, both geometries) and whether the engine
+draws it whole. -/
 structure Row where
   name : String
   exact : Bool
@@ -312,12 +270,8 @@ def columns : String :=
 def Row.line (r : Row) : String :=
   s!"{r.name}\t{if r.exact then "native" else "lossy"}\t{spell r.host}\t{spell r.fallback}\t{spell r.shipped}\t{spell r.resample}\t{spell r.respell}\t{spell r.geom}\t{spell r.fallbackGeom}"
 
-/-- The judge broken once, each way: synthetic rows — a drawing or a
-geometry past the fallback by more than the tolerance is named and one
-within it is not, a lossy figure is never held to the fallback, a figure's
-noise widens its tolerance — then the true pipeline with the engine's
-import emptied, which must be named for every figure drawn whole whose
-reference has ink the noise cannot hide. -/
+/-- The judge broken once, each way, on synthetic rows, then the true pipeline with the
+engine's import emptied. -/
 def selftest (host shipped : Font.FontSet) : IO UInt32 := do
   let mut fails : Array String := #[]
   let row (n : String) (exact : Bool) (drawn geom noise : Float) : Row :=
@@ -333,8 +287,7 @@ def selftest (host shipped : Font.FontSet) : IO UInt32 := do
     fails := fails.push "a figure's noise widens its tolerance"
   if !((spell 0.012345 == "0.01235") || (spell 0.012345 == "0.01234")) then
     fails := fails.push s!"spelling: {spell 0.012345}"
-  -- The premise bites: faces fontconfig does not answer the generics with
-  -- are refused, never compared.
+  -- Faces fontconfig does not answer the generics with are refused, never compared.
   if (← hostFacesIn "testdata/corpus/fonts").toBool then
     fails := fails.push "faces fontconfig does not answer with are refused"
   let blank ← measureAll host shipped fun fig =>

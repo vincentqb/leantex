@@ -1,29 +1,7 @@
 /-
-The performance histories under `testdata/perf/`: what a measurement produced,
-appended run by run and committed, so a trend is a file and a regression is a
-diff. The one history today is document builds' (`documents.tsv`, written by
-`bench --doc-cost --record`). The format is meant to serve code builds' times
-too, so that one reader reads them all; no such history exists yet, and its
-rows will need the required `binary` field, an executable's hash, to name
-something a module build has:
-
-  # <provenance>
-  run<TAB>commit<TAB>binary<TAB>host<TAB>item<TAB>value<TAB>unit
-
-`run` is the UTC second the run started (`2026-10-09T03:12:45Z`), shared by
-every row it wrote; `commit` is the measured tree's abbreviated commit, with
-`+` when the tree held uncommitted changes — in the committed history, always a
-clean commit `main` holds, so the row names a state anyone can check out after
-the branch that measured it is gone (`recordable`); `binary` is the first twelve hex digits of the
-SHA-256 of the executable measured, which a commit alone cannot name (a saved
-or stale binary measures as some other tree); `host` names the class of
-machine — system, architecture and logical cores — never the machine or its
-processor; `value` is an integer in `unit`. A run's rows stand together, name
-one commit, binary and host, and measure an item once. Nothing here gates:
-these numbers depend on the host, and the scoreboard holds only the hermetic
-ones. What a run is compared with is the latest earlier run on its host class
-(`lastRun`), and a count near-deterministic enough to hold to a band is held to
-±3% of it (`withinBand`) — a report, never a gate.
+The performance histories under `testdata/perf/`: `# <provenance>` lines, then
+`run⇥commit⇥binary⇥host⇥item⇥value⇥unit` rows, each run held within ±3% of its host class's
+last.
 -/
 import Std.Async.System
 
@@ -62,8 +40,7 @@ def commitOk (s : String) : Bool :=
   let core := if s.endsWith "+" then (s.dropEnd 1).toString else s
   7 ≤ core.length && core.length ≤ 40 && hexOk core
 
-/-- Rows the committed history may hold: each names a clean commit. Which
-commits `main` holds is git's to say at recording time (`onMain`). -/
+/-- Faults for rows the committed history may not hold: each must name a clean commit. -/
 def recordable (rows : Array Row) : Array String :=
   (rows.filter (·.commit.endsWith "+")).map fun r =>
     s!"run {r.run} measured a tree with uncommitted changes ({r.commit})"
@@ -105,10 +82,8 @@ structure History where
   rows : Array Row
 deriving Inhabited
 
-/-- Each run's rows together, naming one commit, binary and host, each item
-once per run. Runs need not be in time order: two branches that each record a
-run merge by union (`.gitattributes`), which keeps each side's run whole but
-may put the later one first. -/
+/-- Faults in a history: each run's rows together, naming one commit, binary and host,
+each item once; runs may stand in any order, since histories merge by union. -/
 def check (rows : Array Row) : Array String := Id.run do
   let mut out := #[]
   let mut seen : Array String := #[]
@@ -149,9 +124,8 @@ def read (path : System.FilePath) : IO (Except String History) := do
   let text ← if ← path.pathExists then IO.FS.readFile path else pure ""
   return (parse text).mapError fun e => s!"{path} does not read: {e}"
 
-/-- Append one run's rows to the history at `path`, writing `header` first
-when the file is new. The file must read before, and the run with it after: a
-run that would not writes nothing. -/
+/-- Append one run's rows to the history at `path`, `header` first for a new file; a run
+that would not read back writes nothing. -/
 def append (path : System.FilePath) (header : Array String) (run : Array Row) :
     IO (Except String Nat) := do
   let old ← if ← path.pathExists then IO.FS.readFile path else pure ""
@@ -171,10 +145,8 @@ def append (path : System.FilePath) (header : Array String) (run : Array Row) :
   IO.FS.writeFile path (old ++ sep ++ head ++ String.intercalate "\n" lines.toList ++ "\n")
   return .ok run.size
 
-/-! ## Comparing runs -/
-
-/-- The latest run in `rows` measured on `host`, other than `run`: its rows,
-empty when there is none. Run names are UTC seconds, which sort as time. -/
+/-- The latest run in `rows` measured on `host`, other than `run`; empty when there is
+none. -/
 def lastRun (rows : Array Row) (host run : String) : Array Row := Id.run do
   let mut best : Option String := none
   for r in rows do
@@ -190,10 +162,8 @@ def changeBp (old new : Int) : Option Int :=
     let mag : Int := ((new - old).natAbs * 10000 / old.toNat : Nat)
     some (if new ≥ old then mag else -mag)
 
-/-- The band a near-deterministic count is held to: 3% of the earlier run's.
-The noise it stands above: three sealed warm builds of the invented deck
-spread their user-space instructions by under 0.5%, the other reference
-documents' by under 0.2%. -/
+/-- The band a near-deterministic count is held to: 3% of the earlier run's, above the
+observed spread of under 0.5%. -/
 def bandBp : Nat := 300
 
 def withinBand (old new : Int) : Bool :=
@@ -209,12 +179,8 @@ def bpMag (bp : Nat) : String :=
 /-- Basis points as a signed percentage to two places, `+1.25%`. -/
 def bpText (bp : Int) : String := (if bp < 0 then "-" else "+") ++ bpMag bp.natAbs
 
-/-! ## What a run names -/
-
-/-- The class of machine a run measured on, from the platform's own answers:
-system, architecture and logical cores — what a reading of milliseconds or
-parallel peaks needs — never a name, a processor model or a memory size that
-would say more about the machine than that. -/
+/-- The class of machine a run measured on: system, architecture and logical cores, never
+a name, a processor model or a memory size. -/
 def host : IO String := do
   let system ← try
       let info ← Std.Async.System.getSystemInfo
@@ -232,18 +198,15 @@ def commit : IO (Option String) := do
   let sha := head.stdout.trimAscii.toString
   return some (if status.stdout.trimAscii.isEmpty then sha else sha ++ "+")
 
-/-- Whether `main` holds the checked-out commit, so a row naming it stays
-checkable once the branch that measured it is rebased and gone. -/
+/-- Whether `main` holds the checked-out commit, so a recorded row stays checkable. -/
 def onMain : IO Bool := do
   for base in ["refs/heads/main", "refs/remotes/origin/main"] do
     let r ← IO.Process.output { cmd := "git", args := #["merge-base", "--is-ancestor", "HEAD", base] }
     if r.exitCode == 0 then return true
   return false
 
-/-- The first twelve hex digits of the executable's SHA-256, from the
-platform's own checksum tool (`sha256sum`, or `shasum -a 256` where that is
-the one shipped): hashing a large executable in interpreted code would cost
-more than the builds it names. -/
+/-- The first twelve hex digits of the executable's SHA-256, from the platform's checksum
+tool. -/
 def binaryKey (path : System.FilePath) : IO (Option String) := do
   for (cmd, args) in [("sha256sum", #["--", path.toString]),
       ("shasum", #["-a", "256", "--", path.toString])] do
@@ -261,11 +224,7 @@ def now : IO (Option String) := do
   let s := out.stdout.trimAscii.toString
   return if out.exitCode == 0 && runOk s then some s else none
 
-/-- The format's own judges, each made to fail once: a row reads back as
-itself; every field refused empty, with a tab, or malformed; a run split by
-another, an item measured twice in one run and a run naming two binaries
-refused; two whole runs accepted in either order; the comparison picks the
-latest earlier run on the same host class, and the band holds 3% exactly. -/
+/-- The format's own judges, each made to fail once. -/
 def selftest : Array String := Id.run do
   let mut fails := #[]
   let r : Row := { run := "2026-10-09T03:12:45Z", commit := "0123456789ab", binary := "a1b2c3d4e5f6",

@@ -1,37 +1,7 @@
 /-
-The diagnostics audit, as a tier and as a census. Run from the repository
-root after `lake build TestsModules` (the aggregate does that for you):
-
-  lake env lean --run scripts/diagaudit.lean                      regenerate the baseline
-  lake env lean --run scripts/diagaudit.lean --check              gate against the committed one
-  lake env lean --run scripts/diagaudit.lean --selftest           the arithmetic and the confinement
-  lake env lean --run scripts/diagaudit.lean --census <p>...      a census of porcelain streams
-
-The tier measures adjudication debt: the codes no `DiagAudit.registry` row binds
-(`Tests/DiagAudit.lean`), encoded as headroom, so a new code with no verdict
-is a fall that fails the commit adding it, and a row whose pin stops
-resolving is a fault. So is a row whose pin is not about its code, which is
-decided here, where the pinned declarations are readable: a theorem's
-statement, or a check's block or a table of the suite's it reads, holds the
-code's constructor or its name spelled whole; a compat item's index refuses
-with it. The modules that apply each owed code are provenance
-and never gated: moving an emission between modules decides nothing, and a
-gate on it would fail a behaviour-preserving refactor. It measures whether a
-decision is *bound*, never whether it is right — rightness stays with the
-review, and a new deliberate divergence from LaTeX stays the user's.
-`diagdebt` is the other ledger: accounting debt (a censused code with no
-subject). A code can be accounted for and undecided, or decided and
-uncounted.
-
-The census reads porcelain streams, never documents, and never gates: the
-corpus it is for is private and off-tree. It bands every line by its declared
-`loss`, never by its rendered severity (a repeat site's note and an accepted
-loss both print `note`), groups sites by (code, output, subject) and never by
-message text, adds each line's `sites` (the first line of a loss carries them
-all), and counts each document once however many backends built it. Common
-losses count once; each observed output contributes its own losses. Its rows hold a
-registered code and numbers and nothing else, so nothing a document wrote can
-reach its output, wherever that output is sent.
+The diagaudit tier: the codes no `DiagAudit.registry` row binds, as headroom; `--census` reads
+porcelain streams into rows of registered codes and counts only.
+Usage: lake build TestsModules && lake env lean --run scripts/diagaudit.lean [--check | --selftest | --census <p>...]
 -/
 import Lean
 import Tests.DiagAudit
@@ -39,15 +9,12 @@ import scripts.Board
 
 open Scoreboard LeanTex.Core DiagAudit
 
-/-! ## Each pin is about its code -/
-
 namespace DiagAudit
 
 open Lean
 
-/-- Does `e` hold the code as a value: its constructor, or its name spelled
-whole as a string? A message mentioning the code holds it only inside a
-longer string, which is not a use. -/
+/-- Whether `e` holds the code as a value: its constructor, or its name spelled whole as a
+string. -/
 def holdsCode (e : Expr) (ctor : Name) (code : String) : Bool :=
   (e.find? fun x => x.isConstOf ctor || x == mkStrLit code).isSome
 
@@ -140,10 +107,7 @@ a target rung and a pin that resolves and holds the code; {owed} owed",
 {modules}"],
     #[{ item := "verdict-debt-absent", value := debtCap - owed }])
 
-/-! ## The census -/
-
-/-- A porcelain line's raw string field, escapes left in place: a group key
-needs identity, not the text. -/
+/-- A porcelain line's raw string field, escapes left in place. -/
 def strField (line key : String) : Option String :=
   match line.splitOn ("\"" ++ key ++ "\":\"") with
   | [_, rest] => Id.run do
@@ -162,20 +126,19 @@ def natField (line key : String) : Option Nat :=
   | [_, rest] => (String.ofList (rest.toList.takeWhile Char.isDigit)).toNat?
   | _ => none
 
-/-- One code and output scope in one document: its lines, the sites they account for, the
-distinct losses among them, and whether they printed at more than one
-severity. -/
+/-- One code and output scope in one document: its lines, the sites they account for, its
+distinct losses, and whether they printed at more than one severity. -/
 structure Tally where
   lines : Nat := 0
   sites : Nat := 0
   groups : Array String := #[]
   severities : Array String := #[]
 
-/-- Scope is part of loss identity. Keeping it as a field prevents a subject
-or path from impersonating an output by containing a delimiter. -/
+/-- Scope is a field, so a subject or path holding a delimiter cannot impersonate an
+output. -/
 abbrev Tallies := Array ((String × Option String) × Tally)
 
-/-- A census row. No field holds text: a code the registry names, and counts. -/
+/-- A census row holding no text: a code the registry names, and counts. -/
 structure PublicRow where
   code : DiagCode
   lines : Nat
@@ -184,8 +147,7 @@ structure PublicRow where
   docs : Nat
   mixed : Bool
 
-/-- The bands, in the order the work is owed: no artifact, ink owed, a
-milestone's gap, a standard the document misses, nothing owed. -/
+/-- The bands, in the order the work is owed. -/
 def bandOrder : List Loss := [.dropped, .degraded, .pending, .standard, .config, .info]
 
 def bandIndex (l : Loss) : Nat := (bandOrder.idxOf? l).getD bandOrder.length
@@ -233,11 +195,9 @@ def readStream (text : String) (fallback : String) :
       severities := if t.severities.contains sev then t.severities else t.severities.push sev })
   return (doc, tallies, misfiled, unregistered)
 
-/-- The census of some porcelain streams. Common losses count once, from the
-first stream for a document. Each new output scope contributes its own losses;
-repeated observations of a scope compare counts rather than adding them.
-A scope absent from every diagnostic is unobserved, not a claim of zero losses:
-old summary records do not declare an output plan. -/
+/-- The census of some porcelain streams: common losses count once, from a document's
+first stream, and each new output scope adds its own; a scope no diagnostic names is
+unobserved. -/
 def census (streams : Array (String × String)) : Census := Id.run do
   let mut docs : Array (String × Tallies) := #[]
   let mut disagreements := 0
@@ -305,11 +265,9 @@ def runCensus (paths : List String) : IO UInt32 := do
   IO.print (census streams).render
   return 0
 
-/-! ## The selftest: each rule broken once -/
-
 def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
   let suite ← suiteText
-  -- P5: a pin that holds nothing is a fault, never a quiet unbinding.
+  -- A pin that holds nothing is a fault, never a quiet unbinding.
   let broken := registry ++ [⟨.W0303, .refusal, .skipped, .tier "compat" "zz-no-such.impl"⟩]
   no "a row whose pin holds nothing makes the registry malformed"
     (match ← auditBound suite broken with | .error _ => true | .ok _ => false)
@@ -318,11 +276,7 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
     (match ← auditBound suite twice with | .error _ => true | .ok _ => false)
   no "a theorem pin is a proof, and so resolves"
     (← (thm% Diag.tallySites_sum_exact).resolves suite)
-  -- P7: a pin is about its code. Each rule is broken once, by a pin about
-  -- nothing (the reviewer's theorem), about another code (the reviewer's
-  -- check, and a compat item), and about codes its table leaves out; each
-  -- way a pin can hold its code is shown once. `pin_faults%` spells a code
-  -- by its constructor's name, which is the premise checked first.
+  -- A pin is about its code: each way to fail broken once, each way to hold shown once.
   no "every code is spelled as its constructor is named"
     (DiagCode.all.all fun c => (reprStr c).endsWith ("." ++ c.code))
   no "every row of the registry is read for its pin" (pinAudit.1 == registry.length)
@@ -345,8 +299,7 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
       AuditRow)]).2.isEmpty
   no "a check holds a code through a suite table it reads"
     (pin_faults% [(⟨.W0362, .merge, .native, check% siteAccountingChecks⟩ : AuditRow)]).2.isEmpty
-  -- P6: a code losing its row is owed once more, and charged to every
-  -- module that applies it and to no other.
+  -- A code losing its row is owed once more, charged to every module that applies it and no other.
   let sources ← codeSources
   match ← auditBound suite registry, ← auditBound suite (registry.drop 1) with
   | .ok all, .ok fewer =>
@@ -366,7 +319,7 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
     (debtCap - (2 : Int) < debtCap - (1 : Int))
   no "a module's item is its path under LeanTex/, dotted"
     (moduleItem "LeanTex/Core/Elab.lean" == "Core.Elab" && moduleItem "Main.lean" == "Main")
-  -- P1: nothing a document wrote reaches the census output.
+  -- Nothing a document wrote reaches the census output.
   let mark := "zqleakzq"
   let leak := s!"\{\"event\":\"diagnostic\",\"severity\":\"warning\",\"code\":\"W0301\",\
 \"loss\":\"degraded\",\"message\":\"unknown command '\\\\{mark}'\",\"file\":\"{mark}.tex\",\
@@ -378,8 +331,7 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
   no "no string a stream carries reaches the census output" (!containsSub leaked mark)
   no "an unregistered code is counted, never printed"
     ((census #[("s", leak)]).unregistered == 1)
-  -- P2 and P3: one loss at three sites, the first a warning and two notes
-  -- after it, counts as one group of three sites in its declared band.
+  -- One loss at three sites counts as one group of three in its declared band.
   let site (sev : String) (loss : String) (sites : String) : String :=
     s!"\{\"event\":\"diagnostic\",\"severity\":\"{sev}\",\"code\":\"W0104\",\"loss\":\"{loss}\",\
 \"message\":\"m\",\"file\":\"a.tex\",\"line\":1,\"col\":1,\"subject\":\"ctrl:x\"{sites}}\n"

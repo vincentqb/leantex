@@ -1,13 +1,7 @@
 /-
-Randomized differential test: the pruned Knuth-Plass DP must return a break
-sequence whose demerits equal the brute-force minimum over all legal break
-sequences, with and without a background stretch every line carries
-(`KpSums.bg`, a narrowed table cell's ragged right skip). Run with:
-
-  lake env lean --run scripts/kp-fuzz.lean [iterations]
-
-Kept out of `lake test` because brute force is exponential; this is the
-deeper oracle to run when touching `kp`.
+Randomized differential test: the pruned Knuth-Plass DP's demerits equal the brute-force
+minimum.
+Usage: lake env lean --run scripts/kp-fuzz.lean [iterations]
 -/
 import LeanTex
 
@@ -27,12 +21,9 @@ private def Gen.next (g : Gen) (bound : Nat) : Nat × Gen :=
   let (s, v) := nextRand g.seed
   ((v % UInt64.ofNat bound).toNat, { seed := s })
 
-/-- Random item list: boxes separated by glue, with occasional flagged
-hyphen penalties and forced breaks, terminated like a real paragraph.
-Every box carries one glyph drawn from a pool spanning the protrusion
-table's classes (letters, punctuation, quotes, none), and a hyphen pen
-carries its hyphen glyph, so the protrusion boundary term is exercised
-at every kind of break. -/
+/-- A random paragraph's items: boxes separated by glue, occasional flagged hyphen
+penalties and forced breaks, each box one glyph from a pool spanning the protrusion
+table's classes. -/
 private def randItems (g : Gen) : Array Item × Gen := Id.run do
   let pool : Array Char := #['a', 'A', 'y', '1', '.', ',', '-', '‘', '”', 'x']
   let mut g := g
@@ -76,11 +67,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
   let mut total : Int := 0
   for b in breaks do
     let a := if first then lineStart items 0 else lineStart items (prev + 1)
-    -- A line holds content: when the start (past the previous break's
-    -- discardables) passes the break, the "line" would be empty — `kp`'s
-    -- own `a ≤ j` gate refuses it, so the oracle must too, or a break at
-    -- the terminator fil glue right before the forced pen reads as a
-    -- cheaper empty last line no rendering could ship.
+    -- A line holds content: `kp`'s own `a ≤ j` gate refuses an empty line, so the oracle does too.
     if a > b then
       return none
     for k in [a:b] do
@@ -101,10 +88,8 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
     return none
   return some total
 
-/-- The brute-force minimum over every legal break sequence, and among the
-sequences that reach it the one TeX's line breaker keeps — each break's
-predecessor the latest of equal demerits (tex.web §855), which is the
-sequence greatest when compared from its end. -/
+/-- The brute-force minimum over every legal break sequence and, among its ties, the one
+TeX keeps: each break's predecessor the latest of equal demerits (tex.web §855). -/
 private def bruteBest (items : Array Item) (target : Dim.Sp)
     (protrude expand fil : Bool) (runt : Bool := false) (bg : Dim.Sp := 0) :
     Option (Int × List Nat) := Id.run do
@@ -133,9 +118,8 @@ private def bruteBest (items : Array Item) (target : Dim.Sp)
       | none => best := some (c, seq)
   return best
 
-/-- `kp`'s prefix-sum measure must agree with the direct `measure` wherever
-`kp` evaluates it: a line start to a legal breakpoint — with and without
-the protrusion boundary term. -/
+/-- `kp`'s prefix-sum measure agrees with the direct `measure` from every line start to
+every legal breakpoint, with and without the protrusion term. -/
 private def measuresAgree (items : Array Item) : Bool := Id.run do
   let sums := kpSums items
   for a in [0:items.size] do
@@ -160,13 +144,7 @@ def main (args : List String) : IO UInt32 := do
     let (tw, g'') := g.next 200
     g := g''
     let target := Dim.pt (tw + 40)
-    -- Justified, ragged as the finite transform the card class uses,
-    -- LaTeX's `\raggedright` (TeX's own glue under a fil `\rightskip`), and
-    -- a centred paragraph's fil with its lone last word priced: the same
-    -- breaker must be optimal over every item shape — with the protrusion
-    -- boundary term, the expansion flexibility and the background stretch
-    -- on and off, independently — and under the fil, where demerits tie,
-    -- keep TeX's own choice among the ties.
+    -- Justified, ragged, `\raggedright` and centred: optimal under every toggle, TeX's tie kept.
     for (shape, fil, runt) in [(items, false, false), (raggedItems items, false, false),
         (items, true, false), (items, true, true)] do
       for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do

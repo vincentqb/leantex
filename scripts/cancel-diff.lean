@@ -1,51 +1,7 @@
 /-
-External cancellation-geometry placement differential. Run from the repo root:
-
-  lake build leantex
-  lake env lean --run scripts/cancel-diff.lean            # build + measure + gate
-  lake env lean --run scripts/cancel-diff.lean --report   # measure, print, never fail
-  lake env lean --run scripts/cancel-diff.lean --selftest  # parser self-check
-
-This is a report and deeper oracle, never a `lake test` gate: it needs a TeX
-installation and writes only under `.lake/cancel-diff/`. Run it when the
-cancellation geometry (`Math.cancelGeom` and the marks it lays) changes.
-
-It builds an invented matrix of `\cancel`/`\cancelto` cases — narrow, wide
-and tall struck content, text and display style, thin and thick rules, room
-reserved (`makeroom`) and overlapping, with and without a value — with both
-LuaLaTeX (cancel.sty over unicode-math/FiraMath) and leantex (the same
-FiraMath face), and asks Poppler `pdftotext -bbox` for the bounding boxes of
-the struck content, the value and the following atom. From those boxes it
-measures the placements the two engines must agree on in direction, and
-prints every magnitude with the cross-engine ratio as evidence.
-
-The struck content and the neighbour are separate math words, so Poppler
-isolates each; the value is the digit 7, kept upright. Gated invariants,
-both required of BOTH engines:
-
-  G1  room reserved   makeroom never moves the neighbour left of overlap;
-                      the makeroom−overlap advance is held to the band
-                      cross-engine whenever cancel.sty adds room
-  G2  value to the right of the struck box            (\cancelto)
-  G3  value top above the struck glyph top          (\cancelto)
-
-The cross-engine tolerance is a magnitude band [0.40, 2.50] on a positive
-reference room effect. cancel.sty's `\@can@slash` selects a slope whose
-horizontal reach can already fit a narrow or tall operand: makeroom then
-adds no advance. Those cases are measured too, with the engine's extra
-clearance bounded by 2pt (the explicit "+2" line extension in cancel.sty
-v2.2). A zero engine effect against a positive reference still fails;
-zero reference effects never divide by zero or escape a bound.
-
-The value's rise and rightward offset are printed as evidence, NOT gated on
-magnitude: leantex centres the `\cancelto` value's measured ink along the
-arrow's forward ray (`Math.cancelto_value_between`). cancel.sty also attaches to its tip,
-but chooses the arrow's slope and reach from discrete cases. The two
-agree in direction (G2, G3); the font-derived clearance and continuous
-operand geometry need not reproduce the package's point offsets.
-Poppler word boxes read each writer's font descriptor differently; the raw
-boxes are evidence, not an identity. No private fixtures: the fonts are the
-repository's own corpus faces and every struck symbol is invented.
+LuaLaTeX (cancel.sty over FiraMath) against leantex placement for `\cancel`/`\cancelto` over an
+invented matrix: room within [0.40, 2.50], the value right of and above the strike.
+Usage: lake build leantex && lake env lean --run scripts/cancel-diff.lean [--report | --selftest]
 -/
 import LeanTex
 
@@ -75,9 +31,8 @@ def wordText (line : String) : String :=
   let body := (after.splitOn "</word>").headD ""
   (((body.replace "&lt;" "<").replace "&gt;" ">").replace "&amp;" "&").trimAscii.toString
 
-/-- Every non-empty word box in a Poppler `-bbox` dump. cancel.sty's rules
-surface as empty-text word boxes; those are dropped, since the differential
-compares glyph placement, not each engine's mark encoding. -/
+/-- Every non-empty word box in a Poppler `-bbox` dump; cancel.sty's rules surface as
+empty words and are dropped. -/
 def parseWords (xml : String) : Array WordBox := Id.run do
   let mut out : Array WordBox := #[]
   for raw in xml.splitOn "\n" do
@@ -97,10 +52,8 @@ def pointMicro (v : Int) : String :=
   let frac := toString (n % 1000000)
   s!"{sign}{n / 1000000}.{String.ofList (List.replicate (6 - frac.length) '0')}{frac}"
 
-/-- The mathematical-italic scalar an ASCII letter maps to in math mode,
-matching leantex's elaboration and unicode-math: `a`–`z` at U+1D44E, `A`–`Z`
-at U+1D434, with italic h at U+210E in Letterlike Symbols (Unicode's
-Mathematical Alphanumeric Symbols chart). A digit stays itself. -/
+/-- The mathematical-italic scalar an ASCII letter maps to in math mode (italic h at
+U+210E); a digit stays itself. -/
 def mathItalic (c : Char) : String :=
   let u := c.toNat
   if c == 'h' then "ℎ"
@@ -113,10 +66,8 @@ def mathItalic (c : Char) : String :=
 def mathItalicStr (s : String) : String :=
   String.join (s.toList.map mathItalic)
 
-/-- One case of the invented matrix. `struck` is the TeX source and
-`struckWord` its expected Poppler text; `neighbour` the following atom;
-`value` the `\cancelto` target (`none` for a plain strike); `display`
-whether the math is set in display style; `thick` selects `thicklines`. -/
+/-- One case of the invented matrix: the struck source and its expected Poppler text, the
+neighbour, the `\cancelto` value, display style and thick rules. -/
 structure Case where
   label : String
   cmd : String
@@ -132,10 +83,8 @@ def mkCase (label cmd struck struckWord neighbour : String) (value : Option Stri
     (display thick : Bool := false) : Case :=
   { label, cmd, struck, struckWord, neighbour, value, display, thick }
 
-/-- Every cancellation flavor over narrow, wide and tall struck content,
-then display and thick-rule variants of the wide arrow. Zero-area boxes
-have no struck word for Poppler to isolate; the universal containment
-contract and shipped-layout checks cover those independently. -/
+/-- Every cancellation flavour over narrow, wide and tall struck content, then display and
+thick-rule variants of the wide arrow. -/
 def cases : List Case :=
   let shapes := [("narrow", "v", mathItalicStr "v"),
     ("wide", "abcd", mathItalicStr "abcd"), ("tall", "\\int", "∫")]
@@ -150,10 +99,7 @@ def bodyOf (c : Case) : String :=
   let mark := match c.value with
     | some v => s!"\\{c.cmd}\{{v}}\{{c.struck}}"
     | none => s!"\\{c.cmd}\{{c.struck}}"
-  -- A `\quad` before the neighbour keeps it a separate Poppler word even
-  -- under overlap (which otherwise collapses the mark's advance and merges
-  -- the struck glyphs with the neighbour). The same fixed space sits in
-  -- both room variants, so it cancels in the makeroom−overlap difference.
+  -- A `\quad` keeps the neighbour a separate word; it cancels in the room difference.
   let inner := s!"{mark}\\quad {c.neighbour}"
   if c.display then s!"\\[ {inner} \\]" else s!"$ {inner} $"
 
@@ -161,9 +107,8 @@ def optStr (c : Case) (room : Bool) : String :=
   String.intercalate "," ((if room then ["makeroom"] else ["overlap"]) ++
     (if c.thick then ["thicklines"] else []))
 
-/-- The LuaLaTeX source: unicode-math over the corpus FiraMath face, cancel
-in the case's options, the mark drawn in a pure red the report never needs
-but that pins the mark's ink to one colour across engines. -/
+/-- The LuaLaTeX source: unicode-math over the corpus FiraMath face, cancel with the
+case's options, the mark in pure red. -/
 def luaSource (fontDir : String) (c : Case) (room : Bool) : String :=
   "\\documentclass{article}\n\\usepackage{fontspec}\n\\usepackage{unicode-math}\n" ++
   s!"\\setmainfont\{FiraSans-Regular.otf}[Path={fontDir}/]\n" ++
@@ -196,9 +141,8 @@ def version (cmd : String) (args : Array String) (cwd : System.FilePath) : IO St
     return "unavailable"
   catch _ => return "unavailable"
 
-/-- The three glyph boxes a case exposes: the struck content, the value
-(`\cancelto`), and the following atom. `none` when Poppler could not isolate
-exactly the expected words. -/
+/-- The three glyph boxes a case exposes: the struck content, the value (`\cancelto`), and
+the following atom; `none` when Poppler could not isolate exactly the expected words. -/
 structure Boxes where
   struck : WordBox
   neighbour : WordBox
@@ -206,8 +150,7 @@ structure Boxes where
   deriving Repr, Inhabited
 
 def isolate (c : Case) (words : Array WordBox) : Option Boxes := do
-  -- Match by exact glyph text: this ignores cancel.sty's arrowhead (a `:`
-  -- glyph), the engine's page number, and the mark rules (empty words).
+  -- Exact glyph text ignores the arrowhead, the page number and empty mark words.
   let unique (text : String) : Option WordBox :=
     match (words.filter (·.text == text)).toList with
     | [w] => some w
@@ -220,9 +163,8 @@ def isolate (c : Case) (words : Array WordBox) : Option Boxes := do
     return { struck, neighbour, value := some value }
   | none => return { struck, neighbour, value := none }
 
-/-- Compare reserved advances in micro-points. The zero-reference budget
-is cancel.sty v2.2's explicit 2pt line extension in `\@can@slash`. Positive
-effects use the declared ratio band, compared before rounding. -/
+/-- Whether two reserved advances agree in micro-points: within the ratio band for a
+positive reference, within cancel.sty v2.2's 2pt line extension for a zero one. -/
 def roomAgreement (reference engine : Int) : Bool :=
   0 ≤ reference && 0 ≤ engine &&
     if reference == 0 then engine ≤ 2000000
@@ -246,8 +188,7 @@ yMax=\"6.500000\"></word>\n</page>"
     | some b => b.struck.text == "𝑎𝑏" && b.neighbour.text == "𝑍" &&
         (b.value.map (·.text)) == some "7"
     | none => false
-  -- Each expected glyph word must be present exactly once. Unrelated
-  -- words (page furniture or cancel.sty's arrow glyph) remain irrelevant.
+  -- Each expected glyph word must appear exactly once; unrelated words are irrelevant.
   let missingOk := ws.all fun w => (isolate c (ws.filter (·.text != w.text))).isNone
   let uniqueOk := ws.all fun w => (isolate c (ws.push w)).isNone
   let unrelatedOk := (isolate c (ws.push { text := ":", x0 := 0, y0 := 0, x1 := 1, y1 := 1 })).isSome
@@ -292,7 +233,6 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"  lualatex: {← version "lualatex" #["--version"] root}"
   IO.println s!"  poppler:  {← version "pdftotext" #["-v"] root}"
 
-  -- Build one source with an engine and return its isolated boxes.
   let measure (tag : String) (c : Case) (room : Bool)
       (src : String) (buildLua : Bool) : IO (Option Boxes) := do
     let stem := s!"{c.label}-{if room then "mk" else "ov"}-{tag}"
@@ -320,14 +260,13 @@ def main (args : List String) : IO UInt32 := do
   let mut crossFail := 0
   for c in cases do
     IO.println s!"\n{c.label}  (\\{c.cmd}, struck={c.struck}, {if c.display then "display" else "text"}{if c.thick then ", thick" else ""})"
-    -- Gap of the neighbour from the struck origin, per engine, both rooms.
     let build (buildLua : Bool) (room : Bool) : IO (Option Boxes) :=
       measure (if buildLua then "lua" else "lean") c room
         ((if buildLua then luaSource else leanSource) fontDir c room) buildLua
     let engines := [("lualatex", true), ("leantex", false)]
-    let mut effects : List (String × Int) := []   -- room-reservation effect, per engine
-    let mut rises : List (String × Int) := []      -- value rise, per engine
-    let mut dxs : List (String × Int) := []         -- value dx, per engine
+    let mut effects : List (String × Int) := []
+    let mut rises : List (String × Int) := []
+    let mut dxs : List (String × Int) := []
     for (ename, isLua) in engines do
       let mk ← build isLua true
       let ov ← build isLua false
@@ -363,8 +302,7 @@ def main (args : List String) : IO UInt32 := do
         | none => s!"{pointMicro e} pt [0, 2]"
       IO.println s!"    room agreement: {comparison} [{if ok then "PASS" else "FAIL"}]"
     | _, _ => pure ()
-    -- Value rise and dx are evidence: both targets follow the tip, but
-    -- the two engines choose different arrow slopes and clearances.
+    -- Value rise and dx are evidence only: the engines choose different slopes.
     let ratioLine (name : String) (m : List (String × Int)) : IO Unit := do
       match m.lookup "lualatex", m.lookup "leantex" with
       | some l, some e =>

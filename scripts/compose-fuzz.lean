@@ -1,29 +1,14 @@
 /-
-Permutation oracle for preamble commutation — T1's evidence while the
-theorem stays open (an executable oracle is evidence, not a theorem):
-swapping two adjacent preamble declarations with different heads, neither
-of which is `\theme` or a name-declaring/name-reading head, must leave the
-elaborated `Doc` unchanged and the diagnostic codes the same multiset.
-Run with:
-
-  lake env lean --run scripts/compose-fuzz.lean
-
-Kept out of `lake test` (the kp-fuzz precedent): it re-elaborates every
-corpus document once per adjacent pair, plus a synthetic preamble that
-exercises every swappable pair the corpus does not.
+Permutation oracle: swapping two adjacent preamble declarations of different, order-free heads
+leaves the elaborated `Doc` and the diagnostic codes unchanged.
+Usage: lake env lean --run scripts/compose-fuzz.lean
 -/
 import LeanTex
 
 open LeanTex.Core
 
-/-- Heads the oracle may swap. Deliberately coarser than T1's exception
-list: `\theme` (positional by design, its own named exception), the
-name-declaring and name-reading heads (`\define`, `\defineenv`, `\tokens`,
-`\palette`, `\style` — reference→referent order is essential, E1-E3 in the
-audit), and same-head pairs (same-key last-wins is inherently ordered) are
-all excluded wholesale rather than pairwise. `\documentclass` is excluded
-because a class-conditional diagnostic (W0318) legitimately reads the class
-declared so far. -/
+/-- Heads the oracle may swap: `\theme`, the name-declaring and name-reading heads, and
+`\documentclass`, whose class a diagnostic reads, are excluded wholesale. -/
 def safeHeads : List String :=
   ["page", "pdfmeta", "fonts", "output", "chrome", "assert", "allow",
    "runninghead", "runningfoot", "logo", "title", "subtitle", "author",
@@ -34,9 +19,8 @@ def declHeads : List String :=
   safeHeads ++ ["documentclass", "define", "defineenv", "tokens", "palette",
     "style", "theme", "usetheme", "maketitle"]
 
-/-- Split the preamble into declaration units: a unit starts at a top-level
-`.ctrl` whose name is a known head and carries everything up to the next
-one. Unit 0 is whatever precedes the first head (unswappable). -/
+/-- The preamble's declaration units: each starts at a top-level `.ctrl` naming a known
+head; unit 0 is what precedes the first head. -/
 def segment (pre : Array Parse.Raw) : Array (Option String × Array Parse.Raw) := Id.run do
   let mut units : Array (Option String × Array Parse.Raw) := #[]
   let mut cur : Array Parse.Raw := #[]
@@ -59,11 +43,8 @@ def segment (pre : Array Parse.Raw) : Array (Option String × Array Parse.Raw) :
 def flatten (units : Array (Option String × Array Parse.Raw)) : Array Parse.Raw :=
   units.foldl (fun acc u => acc ++ u.2) #[]
 
-/-- The fields a block declaration writes, at field granularity: `size`
-writes width and height, `margin` both margins, a `\fonts` alias its slot —
-two blocks commute only when these sets are disjoint, not merely their key
-spellings. Heads without a keyed block return none: same-head swaps are
-attempted only where a key set is extractable. -/
+/-- The fields a block declaration writes, at field granularity, so two blocks commute
+only when these sets are disjoint; none for a head without a keyed block. -/
 def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) := do
   let body ← raws.findSome? fun r => match r with
     | .group b _ => some b
@@ -103,9 +84,8 @@ def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) :
       | none => ["<malformed>"])
   | _ => none
 
-/-- Elaborate raws to the comparison key: the document, and the diagnostic
-codes as a sorted list (a swap may reorder emission; it must not change
-what fires). -/
+/-- Elaborate raws to the comparison key: the document, and the diagnostic codes as a
+sorted list. -/
 def key (file : String) (raws : Array Parse.Raw) : Ir.Doc × List String :=
   let (doc, ds) := Elab.runRaws file raws
   (doc, (ds.map (·.code)).toList.mergeSort (· ≤ ·))
@@ -131,9 +111,7 @@ def checkSource (label : String) (src : String) : IO Nat := do
         | some a, some b =>
           if a != b then safeHeads.contains a && safeHeads.contains b
           else
-            -- Same head: only with extractable, field-disjoint key sets
-            -- (T1's "touch disjoint keys"; same-key order is the one
-            -- essential order last-wins carries).
+            -- Same head: only with extractable, field-disjoint key sets.
             safeHeads.contains a &&
               (match unitFields a u1, unitFields a u2 with
                | some k1, some k2 => k1.all (fun k => !k2.contains k)
@@ -171,9 +149,8 @@ def synthetic : String :=
   "\\allow{W0318}\n" ++
   "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"
 
-/-- Same-head adjacent blocks with field-disjoint keys: the shape whose
-across-block accidents (I1, the chrome wholesale replace) the different-head
-sweep cannot see. -/
+/-- Same-head adjacent blocks with field-disjoint keys, which the different-head sweep
+cannot see. -/
 def syntheticSameHead : String :=
   "\\documentclass{slides}\n" ++
   "\\page{ margin = 18mm }\n" ++
@@ -189,10 +166,8 @@ def syntheticSameHead : String :=
   "\\chrome{ footer = { right = \\framenumber } }\n" ++
   "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"
 
-/-- `\urlstyle` beside the inline-content heads that can hold a `\url`, each
-of which elaborates its content at the declaration while LaTeX sets it on
-the page, after every preamble selector has run: a logo and a running head
-here, the title parts below. -/
+/-- `\urlstyle` beside the inline-content heads that can hold a `\url`: a logo and a
+running head. -/
 def syntheticUrl : String :=
   "\\documentclass{slides}\n" ++
   "\\logo{\\url{https://example.org/logo}}\n" ++
@@ -201,9 +176,8 @@ def syntheticUrl : String :=
   "\\date{An Invented Date}\n" ++
   "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"
 
-/-- The title parts reach the document only through `\maketitle`, so they
-are exercised where one is set: an author holding a `\url` beside the
-selector, the shape the reported defect had. -/
+/-- The title parts, exercised where `\maketitle` sets them: an author holding a `\url`
+beside the selector. -/
 def syntheticUrlTitle : String :=
   "\\documentclass{article}\n" ++
   "\\title{An Invented Title}\n" ++

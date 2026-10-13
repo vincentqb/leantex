@@ -1,30 +1,7 @@
 /-
-External picture differential: the engine's drawing of each invented probe
-against LuaLaTeX's, as rasters. Run from the repository root:
-
-  lake build leantex
-  lake env lean --run scripts/tikz-diff.lean              draw both, compare, report
-  lake env lean --run scripts/tikz-diff.lean --selftest   the comparison over hand-made rasters
-
-A report, never a gate: it needs a TeX installation and Poppler, and writes
-only under `.lake/tikz-diff/`. Run it when touching the picture reader
-(`Picture.lean`) or the vector model's emission. The probes are the
-tikz-native tier's (`scripts/TikzProbes.lean`), invented; the reference sets
-each in the standalone class with the libraries its keys belong to.
-
-Each drawing is rasterized by `pdftoppm -gray` at one resolution and read at
-three levels, each blind to something the next one sees:
-
-  box    the ink's bounding box in pixels — blind to what stands inside it;
-  pixel  the share of the union of ink whose gray differs by more than a
-         quarter of the scale, the two boxes aligned at their top left
-         corners — blind to differences under that threshold;
-  exact  the cropped rasters' bytes — blind to nothing.
-
-A label sets in each engine's own default face, so the pixel level counts
-glyph differences too: the report is evidence for a reader, never a
-verdict. The structural half — the drawing's geometry against the
-reference's, read back from the PDF — waits on the PDF figure reader.
+Picture differential: each tikz-native probe drawn by the engine and by LuaLaTeX, rasterized and
+read by ink box, pixel share and exact bytes; a report.
+Usage: lake build leantex && lake env lean --run scripts/tikz-diff.lean [--selftest]
 -/
 import LeanTex
 import scripts.TikzProbes
@@ -39,9 +16,7 @@ structure Gray where
 def Gray.at (g : Gray) (x y : Nat) : Nat :=
   if x < g.w && y < g.h then (g.px.get! (y * g.w + x)).toNat else 255
 
-/-- A binary PGM (`P5`, maximum 255), as `pdftoppm -gray` writes it: the
-magic, the width, the height and the maximum as whitespace-separated
-decimals, one whitespace byte, then the rows. -/
+/-- A binary PGM (`P5`, maximum 255) as `pdftoppm -gray` writes it. -/
 def parsePgm (b : ByteArray) : Option Gray := Id.run do
   let isWs (c : UInt8) : Bool := c == 32 || c == 10 || c == 13 || c == 9
   let mut fields : Array String := #[]
@@ -68,9 +43,8 @@ def parsePgm (b : ByteArray) : Option Gray := Id.run do
     | _, _ => return none
   | _ => return none
 
-/-- The bounding box of the ink — pixels darker than three quarters of the
-scale, so a hairline straddling two rows of pixels still counts — as
-`(x0, y0, x1, y1)`, inclusive; `none` for a blank raster. -/
+/-- The ink's bounding box, pixels darker than three quarters of the scale, as inclusive
+`(x0, y0, x1, y1)`; `none` for a blank raster. -/
 def inkBox (g : Gray) : Option (Nat × Nat × Nat × Nat) := Id.run do
   let mut box : Option (Nat × Nat × Nat × Nat) := none
   for y in [0:g.h] do
@@ -81,7 +55,6 @@ def inkBox (g : Gray) : Option (Nat × Nat × Nat × Nat) := Id.run do
           | some (x0, y0, x1, y1) => (min x0 x, min y0 y, max x1 x, max y1 y))
   return box
 
-/-- The raster cropped to a box. -/
 def crop (g : Gray) (box : Nat × Nat × Nat × Nat) : Gray := Id.run do
   let (x0, y0, x1, y1) := box
   let w := x1 + 1 - x0
@@ -100,9 +73,8 @@ def boxSame (a b : Gray) : Bool :=
   | none, none => true
   | _, _ => false
 
-/-- The pixel level over two cropped inks aligned at their top left
-corners: of the pixels either inks (`inkBox`'s threshold), how many in a
-thousand differ by more than a quarter of the gray scale. -/
+/-- The pixel level over two cropped inks aligned at their top left corners: per thousand
+inked pixels, how many differ by more than a quarter of the gray scale. -/
 def pixelDiff (a b : Gray) : Nat := Id.run do
   let w := max a.w b.w
   let h := max a.h b.h
@@ -120,14 +92,9 @@ def pixelDiff (a b : Gray) : Nat := Id.run do
 /-- The exact level: the same size and the same bytes. -/
 def exactSame (a b : Gray) : Bool := a.w == b.w && a.h == b.h && a.px == b.px
 
-/-- The reference document: the probe in the standalone class, with the
-libraries its keys belong to, the palette entry the probes name, `\alert`
-as the engine reads it in the probe's unthemed document — bold, no colour
-(`Compat.alertStyled`); the standalone has no `\alert`, and beamer's red
-would hold the drawing against another colour — and the faces the engine
-resolves for a document that declares none — set as the boundary sets them
-(`boundaryFonts`), so a label's letters are the same letters in both
-drawings. -/
+/-- The reference document: the probe in the standalone class with its keys' libraries,
+the probes' palette entry, `\alert` bold and uncoloured as the engine reads it unthemed,
+and the faces the engine resolves (`boundaryFonts`). -/
 def referenceDoc (kind : ProbeKind) (body : String) : String :=
   let pre := "\\documentclass[border=0pt]{standalone}\n\\usepackage{tikz}\n" ++
     "\\usetikzlibrary{arrows.meta, shapes.geometric, fit, decorations.pathreplacing, calc}\n" ++
@@ -140,9 +107,8 @@ def referenceDoc (kind : ProbeKind) (body : String) : String :=
   | .cd => pre ++ "$\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}$\n\\end{document}\n"
   | .cdBlock => pre ++ "\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}\n\\end{document}\n"
 
-/-- The engine's document: the tier's own, loading the libraries the
-reference loads — arrows.meta changes the head `->` draws in both — with no
-page number to ink. -/
+/-- The engine's document: the tier's own, loading the reference's libraries, with no page
+number. -/
 def nativeDoc (kind : ProbeKind) (body : String) : String :=
   (probeDoc kind body).replace "\\begin{document}" ("\\usepackage{tikz}\n" ++
     "\\usetikzlibrary{arrows.meta, shapes.geometric, fit, decorations.pathreplacing, calc}\n" ++
@@ -194,16 +160,14 @@ def selftest : IO UInt32 := do
   let check (name : String) (ok : Bool) : IO Nat := do
     unless ok do IO.eprintln s!"tikz-diff selftest: {name}"
     return if ok then 0 else 1
-  -- The box level is blind to what stands inside the box; the pixel level
-  -- sees it.
+  -- The box level is blind to what stands inside the box; the pixel level sees it.
   let corners := ofRows [[0, 255, 255, 255], [255, 255, 255, 255], [255, 255, 255, 255],
     [255, 255, 255, 0]]
   let inner := ofRows [[0, 255, 255, 255], [255, 0, 255, 255], [255, 255, 255, 255],
     [255, 255, 255, 0]]
   failed := failed + (← check "box: blind to the inside of the box" (boxSame corners inner))
   failed := failed + (← check "pixel: sees the inside of the box" (pixelDiff corners inner > 0))
-  -- The pixel level is blind to a difference under its threshold; the exact
-  -- level sees it.
+  -- The pixel level is blind to a difference under its threshold; the exact level sees it.
   let dark := ofRows [[0, 255], [255, 0]]
   let lighter := ofRows [[40, 255], [255, 0]]
   failed := failed + (← check "pixel: blind to a difference under a quarter of the scale"
@@ -214,7 +178,6 @@ def selftest : IO UInt32 := do
   failed := failed + (← check "pixel: a moved mark differs" (pixelDiff dark shifted == 1000))
   let wide := ofRows [[0, 255, 0]]
   failed := failed + (← check "box: a wider ink differs" (!boxSame dark wide))
-  -- The reader.
   let pgm := "P5\n2 2\n255\n".toUTF8 ++ ByteArray.mk #[0, 255, 255, 0]
   failed := failed + (← check "pgm: reads a raster pdftoppm writes"
     ((parsePgm pgm).map (fun g => g.w == 2 && g.h == 2 && g.px == ByteArray.mk #[0, 255, 255, 0])

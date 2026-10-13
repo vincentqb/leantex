@@ -1,43 +1,15 @@
 /-
-The ink oracle: the external half of the artifact tier. Run from the
-repository root:
-
-  lake build TestsModules && lake env lean --run scripts/ink-oracle.lean
-  lake env lean --run scripts/ink-oracle.lean --selftest
-
-`lake test` judges the produced bytes with the engine's own reader
-(Tests/Artifact.lean: the page box, the text area, the bands, the markup
-watch, consecutive pages, the glyph names). That keeps the suite hermetic —
-it asks nothing of what this host has installed — and it buys the one
-weakness an in-tree reader always has: a reader built from the same
-understanding as the writer can be wrong in the same direction twice. Every
-defect this tier exists for was in fact found by an outside tool.
-
-So this script is the corroboration, and it is deliberately not in
-`lake test`: it asks Poppler (`pdftotext -bbox`) what it sees, and holds
-that against what `readArtifact` saw on the same bytes. Two agreements are
-checked per page — the ink extent (the tightest box containing every word)
-and the text — and one verdict: whether Poppler's own numbers put any word
-outside the page box, which must match the engine reader's `pageBox`
-judgement fixture for fixture.
-
-A tool not on PATH reports `untested` and exits 0: an absent Poppler is a
-fact about the machine, never a pass and never a failure. A disagreement
-exits 1.
-
-Nothing is written to the repository. The comparison is extent-and-text
-rather than word-for-word on purpose: Poppler groups glyphs into words by
-its own spacing rules while the engine reads the writer's runs, so the two
-segment differently and only their union is comparable.
+The ink oracle: Poppler's ink extent, text and off-page verdict per corpus page against
+`readArtifact`'s; without Poppler it reports `untested` and exits 0, a disagreement exits 1.
+Usage: lake build TestsModules && lake env lean --run scripts/ink-oracle.lean [--selftest]
 -/
 import LeanTex.Cli.FontDiscovery
 import Tests.Artifact
 
 open LeanTex.Core LeanTex.Cli
 
-/-- One `<word …>` of `pdftotext -bbox` output. Poppler's origin is the
-top-left corner with y growing down, so a bound is converted against the
-page height it reports. -/
+/-- One `<word …>` of `pdftotext -bbox` output, its bounds converted from Poppler's
+top-left origin against the page height. -/
 structure PopWord where
   x0 : Float
   y0 : Float
@@ -51,9 +23,8 @@ def attrOf (line attr : String) : Option String := do
   let after ← (line.splitOn (attr ++ "=\""))[1]?
   (after.splitOn "\"")[0]?
 
-/-- A decimal number as a `Float`, sign and fraction only — the shape
-`pdftotext -bbox` writes (`149.723000`). Written out rather than borrowed
-so the oracle's own reading has no dependency to be wrong about. -/
+/-- A decimal number as a `Float`, sign and fraction only, the shape `pdftotext -bbox`
+writes. -/
 def parseFloat (s : String) : Option Float := do
   let (neg, body) := match s.toList with
     | '-' :: rest => (true, rest)
@@ -134,20 +105,13 @@ def artExtent (p : ArtPage) : Option (Float × Float × Float × Float) := Id.ru
     yh := max yh (f r.top)
   return some (x0, yl, x1, yh)
 
-/-- How far the two readings of one page's ink extent may differ. Two
-points: Poppler measures a word's painted glyph outlines while the engine
-reads the writer's advance box and the descriptor's declared ascent and
-descent, so the two bound the same ink differently by design — the point of
-the comparison is that neither is off by a *placement*, which is what every
-defect this tier exists for was. -/
+/-- How far the two readings of a page's ink extent may differ: Poppler bounds painted
+outlines and the engine advance boxes and declared ascent and descent, so only a placement
+error exceeds two points. -/
 def extentTolerance : Float := 2.0
 
-/-- Letters and digits only, lowercased and sorted: the comparison the two
-readings can both satisfy. Poppler joins a hyphenated break, inserts spaces
-by its own rules, and returns words in *its* reading order (columns, table
-cells and floats reordered), while the engine reads the writer's runs in
-painting order. So the content is comparable and the order is not, and this
-sorts to say only the comparable thing. -/
+/-- Letters and digits only, lowercased and sorted, since Poppler's word order and spacing
+differ from the writer's painting order. -/
 def inkLetters (s : String) : String :=
   String.ofList ((s.toList.filter fun c => c.isAlphanum).map Char.toLower).mergeSort
 
@@ -166,8 +130,8 @@ def haveTool (name : String) : IO Bool := do
   let out ← IO.Process.output { cmd := "sh", args := #["-c", s!"command -v {name}"] }
   return out.exitCode == 0
 
-/-- The self-test: the parser on hand-written output, and the extent
-arithmetic, so the oracle's own reading is checked with no tool present. -/
+/-- The self-test: the parser on hand-written output and the extent arithmetic, needing no
+tool. -/
 def selftest : IO UInt32 := do
   let mut bad : Array String := #[]
   let xml := "<doc>\n  <page width=\"612.000000\" height=\"792.000000\">\n\
@@ -240,7 +204,6 @@ def main (args : List String) : IO UInt32 := do
         if extentTolerance < worst then
           gaps := gaps.push s!"p{i + 1} extent off by {worst}: poppler [{px0} {py0} {px1} {py1}] engine [{ax0} {ay0} {ax1} {ay1}]"
       | _, _ => pure ()
-    -- The text both readings can compare: letters and digits, in order.
     let popText := inkLetters (String.join (pops.toList.flatMap fun p =>
       p.words.toList.map (·.text)))
     let artText := inkLetters (String.join (pages.toList.flatMap fun p =>
@@ -248,8 +211,7 @@ def main (args : List String) : IO UInt32 := do
     let textGap : Option String :=
       if popText == artText then none
       else some s!"letters differ: poppler {popText.length}, engine {artText.length}"
-    -- The page-box verdict, from Poppler's own numbers, against the
-    -- engine reader's. `accounted` is read the way the suite reads it.
+    -- The page-box verdict from Poppler's numbers, against the engine reader's.
     let accounted := artAccounted (diags ++ out.diags)
     let popOff := pops.toList.any fun p =>
       p.words.toList.any fun w => w.x0 < -0.01 || w.y0 < -0.01

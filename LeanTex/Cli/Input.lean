@@ -13,81 +13,52 @@ public import LeanTex.Core.BibText
 import LeanTex.Core.Data
 import LeanTex.Cli.DriverDiag
 
-/-! The driver's file frontend fulfils `\input`/`\include`,
-`\markdownInput` and local `.sty` requests at their executed use. The pure
-macro evaluator returns requests; this driver reads the file, parses its
-surface once and resumes the same execution context with that answer.
-Unused definitions and unselected branches have no file effects. Local
-styles reserve their first load before execution; repeats and cycle back
-edges read nothing. Distinct nested styles and ordinary inputs share the
-existing eight-file nesting bound.
-
-Every other file the *document* names is read here for the same reason:
-the document's own bytes (`readSource`), the `.bib` its `\bibliography`
-requests (`resolveBibliography`), the `.bib` its `\data` requests
-(`resolveData`). Each is one decision — the file is there, or its absence
-is a named loss — and each **returns** its diagnostics rather than
-printing them, which is what lets a test run the decision instead of
-restating it. Every file's bytes become text through one door
-(`Encoding.readTex`, `Encoding.readMarkdown`), once per run, in the encoding
-the document declares wherever its declaration runs: the declaration
-governs every file the document reads, so a file read under another is
-read again under it. Bytes never refuse a file, and never escape as an
-exception. A decision reachable only from the entry path in Main.lean
-is a decision no test can witness: its code's witness then has to be a
-hand-built value, and a value cannot tell you the driver stopped emitting
-it. -/
+/-! The driver's file frontend: the document's own bytes and the `\input`/`\include`,
+`\markdownInput`, local `.sty`, `.bib` and `\data` files it names, each read through one
+decoding door and returning its diagnostics. -/
 
 namespace LeanTex.Cli.Input
 
 open LeanTex.Core
 
-/-- The first line of an `IO.Error`'s rendering. `IO.Error`'s own
-`toString` appends a second `  file: <path>` line, and the path it repeats
-is the one the message already names — so the second line says nothing new
-and costs a newline inside a `Diag.message`, where one line per diagnostic
-is what every reader, `Render.human`, and the registry golden's block
-parse all assume. -/
+/-- The first line of an `IO.Error`'s rendering, since a diagnostic message is one line.
+-/
 private def reasonLine (s : String) : String :=
   (s.splitOn "\n").headD s
 
-/-- The document's own bytes, or the diagnostic naming why they could not
-be read (E0001). The read is the driver's first effect and its refusal is
-the driver's first decision, so it is returned rather than printed. -/
+/-- The document's own bytes, or the E0001 naming why they could not be read. -/
 public def readSource (file : String) : IO (Except Diag ByteArray) := do
   match ← (IO.FS.readBinFile file).toBaseIO with
   | .ok bytes => return .ok bytes
   | .error e => return .error (DriverDiag.unreadableInput file (reasonLine (toString e)))
 
-/-- What a run knows of the files it reads: the reads' diagnostics, the
-local styles spliced, and the input encoding — the declaration each file is
-read under and the ledger of what each file read as. -/
+/-- What a run knows of the files it reads: the reads' diagnostics, the local styles
+spliced, and the input encoding. -/
 private structure InputLog where
   diags : Array Diag := #[]
   spliced : Array (String × Option String × Pos) := #[]
-  /-- Where every file is read under one declaration the run already knows
-  (`none` inside for UTF-8): a second pass, under the declaration the first
-  settled on, since that declaration governs every file of the document. -/
+  /-- The declaration every file is read under on a second pass (`none` inside for UTF-8).
+  -/
   fixed : Option (Option Encoding.Declared) := none
-  /-- The declaration the document's own preamble makes, which a file read
-  before any `inputenc` load runs is read under. -/
+  /-- The declaration the document's own preamble makes, for a file read before any
+  `inputenc` load runs. -/
   guess : Option Encoding.Declared := none
   /-- The first `inputenc` load executed, and each file read. -/
   ledger : Encoding.Ledger := {}
-  /-- Whether `inputenc` has loaded: the first load's options are the ones
-  applied, as a later load's new options are not (W0110). -/
+  /-- Whether `inputenc` has loaded; the first load's options apply, and a later load's
+  new options are W0110. -/
   inputenc : Bool := false
   /-- Each file decoded in this run, so a file read twice is decoded once and
   its losses named once. -/
   decoded : Array (String × Encoding.FileText) := #[]
-  /-- Each file read, by the path it was read at: what publication must
-  never write over (`PublicationPaths.overwrite`). -/
+  /-- Each file read, by the path it was read at, which publication must never overwrite.
+  -/
   reads : Array String := #[]
 
 private abbrev ReadM := StateT InputLog IO
 
-/-- A file's bytes through the decoding door, once per run: the losses are
-named the first time, and a repeat read is the first reading. -/
+/-- A file's bytes through the decoding door once per run; a repeat read returns the first
+reading. -/
 private def decodeOnce (path : String) (fresh : Unit → Encoding.FileText) :
     ReadM (Encoding.FileText × Bool) := do
   if let some (_, read) := (← get).decoded.find? (·.1 == path) then return (read, false)
@@ -97,11 +68,8 @@ private def decodeOnce (path : String) (fresh : Unit → Encoding.FileText) :
     decoded := log.decoded.push (path, read) }
   return (read, true)
 
-/-- A tex file the document reads, through the decoding door: under the
-declaration the run fixed, else the one in force, else the document's own
-preamble's, else the one the file makes for itself — pdfLaTeX applies a
-declaration to every file of the document, the file that makes it
-included. -/
+/-- A tex file read through the decoding door under the declaration the run fixed, else
+the one in force, else the preamble's, else its own. -/
 private def readTexOnce (path : String) (bytes : ByteArray) : ReadM Encoding.FileText := do
   let log ← get
   let under := match log.fixed with
@@ -112,20 +80,8 @@ private def readTexOnce (path : String) (bytes : ByteArray) : ReadM Encoding.Fil
     modify fun log => { log with ledger := log.ledger.record (read.read path under) }
   return read
 
-/-- Every included surface uses the document reader's decoding door and IO
-error contract, and its one door (`Surface.fragment`): the file's reading is
-a fragment of the same AST, wrapped as the file it came from; its bytes are
-never converted to TeX source and parsed again. The wrapper carries the
-file's name and nothing else: an include standing as a whole block sequence
-— a document body, a frame's content — with only blank source around the
-call elaborates as the file alone does (`Elab.elabBlocks_input_exact`, and
-at a frame's content by a lemma private to `InputContract`; for a markdown
-file whose desugaring is not empty, `Elab.markdownInput_blocks_exact`).
-Beside other content the included blocks are the same and the inner
-frame-source offsets shift, which no statement here claims. Filename normalization
-precedes the surface's extension policy: LaTeX's file-name sanitizer removes
-paired quotes and trims both ends when the name contains a dot, only the
-start otherwise (expl3-code.tex; quotedInputFilenameChecks). -/
+/-- An included surface read through the document reader's decoding door into one
+`Surface.fragment` of the same AST, after LaTeX's file-name sanitizing. -/
 private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
     (prefer : String → String) (command : String)
     (decode : String → ByteArray → ReadM Encoding.FileText) (surface : Ir.Surface) :
@@ -147,14 +103,12 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
       let read ← decode path.toString bytes
       return Surface.fragment surface path.toString read.text pos
   else
-    -- The span names `file`, the file the `\input` sits in — the reader
-    -- goes to that line to fix it, and a directory has no line 5.
+    -- The span names the file the `\input` sits in, where the reader fixes it.
     let d := DriverDiag.inputMissing preferred (some ⟨file, pos⟩) command
     return (#[], #[d])
 
-/-- An `\input` read through the door. TeX's input scanner tries the default
-`.tex` suffix before the literal spelling, unless that spelling already ends
-in `.tex` (inputFileChecks). -/
+/-- An `\input` read through the door, trying the `.tex` suffix before the literal
+spelling unless it already ends in `.tex`. -/
 private def readInputAt (dir : System.FilePath) (file name : String) (pos : Pos) :
     ReadM (Array Parse.Raw × Array Diag) :=
   readFragment dir file name pos (fun name =>
@@ -165,11 +119,8 @@ public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
   let ((raws, ds), log) ← (readInputAt dir file name pos).run {}
   return (raws, log.diags ++ ds)
 
-/-- Fulfil one executed request. A local style is admitted before reading
-its body; a compatible repeat or cycle back edge consumes no input depth.
-Distinct nested files retain the existing eight-file input-stack bound.
-An absent local style is left for normal package dispatch. Answers stay
-parsed AST and execute before the requesting token stream continues. -/
+/-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
+reads nothing, and nesting stays within eight files. -/
 private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
     Compat.InputReader ReadM := fun request context => do
   let input := ["input", "include", "markdownInput"].contains request.command
@@ -200,8 +151,7 @@ the file uses the Markdown document dialect" (some ⟨request.file, request.pos�
     let mut out : Array Parse.Raw := #[]
     let mut current := context
     let mut handled := false
-    -- Admit and execute each member before the next one. A dependency of
-    -- the first member may already have loaded a later sibling.
+    -- Each member executes before the next, since an earlier member may load a later sibling.
     for (name, call) in request.packageCalls do
       if name == "inputenc" && !(← get).inputenc then
         modify fun log => { log with
@@ -215,8 +165,6 @@ the file uses the Markdown document dialect" (some ⟨request.file, request.pos�
       let (options, reserved) := current.admitLocalPackage name request.options request.pos
       match options with
       | none =>
-        -- The gate also diagnoses new options. Neither a compatible repeat
-        -- nor a clash reads the file or spends another input-stack level.
         current := reserved
         handled := true
       | some passed =>
@@ -257,14 +205,9 @@ private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog
     IO (Compat.Executed × InputLog) :=
   (Elab.executeInputs (readAt dir file 8) file raws).run log
 
-/-- Execute macros and fulfil input requests in source order. A definition
-or unselected branch never reads a file; an actual use binds its filename
-before the driver reads it, and the answer's definitions and flags are in
-force at the caller's next token. The returned execution must continue
-through `Elab.prepareExecuted` or `Elab.runExecuted`, without a second macro
-pass. The other results are read diagnostics and the local-style records
-whose N0020 counts become available after elaboration. Requests resolve
-beside the document unless `dir` says where it stands. -/
+/-- Execute macros and fulfil input requests in source order, resolving beside the
+document unless `dir` says otherwise; the execution continues through
+`Elab.prepareExecuted` or `Elab.runExecuted`, with no second macro pass. -/
 public def expandInputs (file : String) (raws : Array Parse.Raw)
     (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
     IO (Compat.Executed × Array Diag × Array (String × Option String × Pos)) := do
@@ -282,19 +225,9 @@ the paths `resolveBibliography` reads them from. -/
 public def bibPaths (file : String) (doc : Ir.Doc) : Array System.FilePath :=
   (Ir.bibRefs doc).map fun src => besideDocument file (Bib.sourceName src)
 
-/-- The bibliography request an elaborated document states (`Ir.bibRefs`),
-fulfilled: each named `.bib` resolves beside the document, like `\input`,
-and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
-formatting, and the citation rewrite all happen there, on every document
-(`Bib.apply_no_cite`: no `.cite` node reaches a backend), each field read
-through `cv` — the driver passes the document's own elaborator
-(`Bib.FieldDoor.read`). A missing file is E0503 naming the path where no
-named file is there — the marker stays empty and the citations' `?` marks
-say so on the page — and W0424 where others are, whose entries the list
-holds. Each `.bib` is read under the declaration the ledger holds, and
-joins its reads. The list's own references resolve against the document's
-labels (`labels`, `Bib.resolveListRefs`), as the body's did; the one judge
-of what stays `??` is the document's (`Bib.refJudge`). -/
+/-- The document's bibliography request fulfilled: each named `.bib` read beside the
+document and applied by `Bib.apply`; a list with no file read is E0503, a partly read one
+W0424. -/
 public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldReading)
     (labels : Ir.RefTable) (bibSpans : Array (String × Span) := #[])
     (ledger : Encoding.Ledger := {}) :
@@ -318,21 +251,14 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
       | .error d => diags := diags.push { d with span := spanOf src }
     else
       missing := missing.push (src, path.toString)
-  -- A list with no file read is empty (E0503); one that read some of its
-  -- files holds their entries, the missing one named (W0424).
   let missingDiags := missing.map fun (src, looked) =>
     if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src)
     else DriverDiag.bibMissingAmong src looked (spanOf src)
   let (doc, applyDiags) := Bib.apply sources doc cv
   return (Bib.resolveListRefs labels doc, diags ++ missingDiags ++ applyDiags, ledger)
 
-/-- The data request a parsed document states (`Data.fileRefsAt`), fulfilled
-before elaboration — the expansion needs the records where
-`\begin{foreach}` stands, so this is the `resolveBibliography` shape moved
-ahead of `Elab.runRaws`. Each named `.bib` resolves beside the document,
-like `\input`, and is read under the declaration the ledger holds; a
-missing file is E0365 naming the path, and the reads that wanted its
-records say what stayed unresolved. -/
+/-- The document's data requests fulfilled before elaboration: each named `.bib` read
+beside the document under the ledger's declaration; a missing file is E0365. -/
 private def resolveDataIn (file : String) (raws : Array Parse.Raw) (ledger : Encoding.Ledger) :
     IO (Array Parse.Raw × Array Diag × Encoding.Ledger × Array String) := do
   unless Data.hasData raws do return (raws, #[], ledger, #[])
@@ -363,11 +289,9 @@ public def resolveData (file : String) (raws : Array Parse.Raw) :
   let (raws, diags, _, _) ← resolveDataIn file raws {}
   return (raws, diags)
 
-/-- A document's sources as the driver reads them: its own text as the door
-read it, executed, with its data resolved, the diagnostics of every read,
-the local styles spliced, the ledger of the input encoding, and the path of
-every other file the execution read — an include, a local style, a `\data`
-file. -/
+/-- A document's sources as the driver reads them: its executed text and data, every
+read's diagnostics, the local styles spliced, the encoding ledger, and every other file
+read. -/
 public structure Source where
   text : String
   executed : Compat.Executed
@@ -376,15 +300,9 @@ public structure Source where
   ledger : Encoding.Ledger
   reads : Array String
 
-/-- **The front door**: a document's bytes to its executed source, as the
-driver reads every document and as every harness that claims to read one
-like the driver must. The bytes become text through the decoding door
-(`Encoding.readDocument`) under the declaration the preamble makes; the surface
-its extension selects is parsed and the inputs executed. The declaration
-execution settles on governs every file the document read — the one that
-makes it, and those read before it ran — so where a file was read under
-another, the document is read again under it, once, every file with it.
-`phase` hears each stage's name, detail and milliseconds. -/
+/-- The front door: a document's bytes to its executed source, decoded under the
+declaration its preamble makes and read again under the one execution settles on; `phase`
+hears each stage's name, detail and milliseconds. -/
 public def readDocument (file : String) (bytes : ByteArray)
     (phase : String → String → Nat → IO Unit := fun _ _ _ => pure ()) : IO Source := do
   let since (t : Nat) : IO Nat := do return (← IO.monoMsNow) - t
@@ -393,13 +311,6 @@ public def readDocument (file : String) (bytes : ByteArray)
   let (first, guess) := if markdown then (Encoding.readMarkdown file bytes, none)
     else Encoding.readDocument file bytes
   phase "decode" s!"{first.text.utf8ByteSize} bytes of text" (← since t)
-  -- Which surface a path's extension selects, read through its one door.
-  -- The markdown door hands back the same surface AST the tex door does —
-  -- one elaborator, one place where meaning lives — so everything past
-  -- this point reads raws, never the surface that wrote them; the
-  -- elaborator records the same decision in the document, where only the
-  -- surface's own defaults read it (`Ir.Surface.textBlock`, `Ir.Surface.listing`).
-  -- The tex door's two stages report apart (`Surface.read_tex_exact`).
   let surface (text : String) (phases : Bool) : IO (Array Parse.Raw × Array Diag) := do
     let t ← IO.monoMsNow
     match Ir.Surface.ofPath file with

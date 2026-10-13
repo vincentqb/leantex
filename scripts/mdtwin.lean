@@ -1,34 +1,7 @@
 /-
-Does the markdown twin read back? Committed as numbers. Run from the
-repository root after `lake build TestsModules ScriptsModules`:
-
-  lake env lean --run scripts/mdtwin.lean              regenerate the baseline
-  lake env lean --run scripts/mdtwin.lean --check      gate against the committed one
-  lake env lean --run scripts/mdtwin.lean --selftest   break each measurement once
-
-The twin (`MarkdownDoc.emit`) writes markdown from the IR, and the markdown
-door reads markdown into the same IR. The round trip is the twin's
-correctness claim, and it is an internal one: measured here, never assumed.
-Three measurements, each a level with its own blind spot:
-
-* `cm.<section>.reread-exact` — of the CommonMark examples the reader
-  accepts (no error), how many re-read from their own twin to the same IR
-  body. Per section, so one section's fall cannot hide behind another's
-  rise.
-* `corpus.reread-clean` — of the corpus documents, each elaborated as the
-  driver elaborates it (`corpusTwinDocs`: the tex fixtures with their
-  includes, data and bibliography, and the markdown golden fixtures), how
-  many twins re-read with no error. The twin erases source locations at its
-  entry, so this is the twin the driver writes.
-* `corpus.twin-stable` — how many twins are a fixed point of the round
-  trip: emitting the re-read document writes the same bytes.
-
-`twin-stable` is blind to IR distinctions markdown cannot spell (italic and
-emphasis both write `*x*`), which `reread-exact` sees; the selftest holds
-that pair in both directions.
-
-Hermetic: committed inputs only, elaboration in-process, no fonts, no
-tool, no network.
+The mdtwin tier: whether the markdown twin reads back, per CommonMark section (`reread-exact`)
+and over the corpus (`reread-clean`, `twin-stable`); hermetic.
+Usage: lake build TestsModules ScriptsModules && lake env lean --run scripts/mdtwin.lean [--check | --selftest]
 -/
 import Tests.Support
 import scripts.Board
@@ -44,9 +17,9 @@ structure Case where
   section_ : String
   md : String
 
-/-- The examples of the spec, in order: a fence of 32 backticks and
-`example` opens one, a lone `.` ends its markdown, and the section is the
-last `## ` heading outside an example. A `→` stands for a tab. -/
+/-- The examples of the spec, in order: a fence of 32 backticks and `example` opens one, a
+lone `.` ends its markdown, the section is the last `## ` heading outside an example, and
+a `→` stands for a tab. -/
 def readCases (text : String) : Array Case := Id.run do
   let fence := String.ofList (List.replicate 32 '`')
   let mut out : Array Case := #[]
@@ -126,9 +99,7 @@ lost escape loses. -/
 def droppedEscapes (d : Ir.Doc) : String := (MarkdownDoc.emit d).replace "\\*" "*"
 
 def mdtwinSelftest : IO UInt32 := tierSelftest "mdtwin" fun no => do
-  -- The blind-spot pair, measured as each level measures it: italic writes
-  -- the spelling emphasis writes, so italic's twin re-reads as emphasis.
-  -- The byte level sees a fixed point where the IR level sees the body change.
+  -- The blind-spot pair: italic re-reads as emphasis, a byte fixed point the IR level sees.
   let italic : Ir.Doc := { body := #[.para #[.styled .italic #[.text "x"]]] }
   let emph : Ir.Doc := { body := #[.para #[.styled .emph #[.text "x"]]] }
   let back := (reread MarkdownDoc.emit italic).1

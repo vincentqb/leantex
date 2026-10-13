@@ -1,16 +1,7 @@
 /-
-Regenerate testdata/oracles/xcolor-html-decimals.tsv: the DeviceRGB decimal
-lualatex's xcolor writes into the PDF for each HTML byte, read off one probe
-that sets a word in `\textcolor[HTML]{XX0000}` for every byte XX. Run from the
-repository root with:
-
-  lake env lean --run scripts/gen-xcolor-decimals.lean           write the table
-  lake env lean --run scripts/gen-xcolor-decimals.lean --check   exit 1 when it is stale
-
-The probe asks for an uncompressed PDF, so each colour's `rg` operator is
-plain text, in the order the words stand. Needs lualatex and xcolor; the
-table it writes is what `Tests.ColorNames.htmlDecimalChecks` reads, so no
-test needs TeX.
+Regenerate testdata/oracles/xcolor-html-decimals.tsv: the DeviceRGB decimal lualatex's xcolor
+writes for each HTML byte, read off one uncompressed probe; needs lualatex and xcolor.
+Usage: lake env lean --run scripts/gen-xcolor-decimals.lean [--check]
 -/
 
 def path : String := "testdata/oracles/xcolor-html-decimals.tsv"
@@ -61,8 +52,7 @@ def render : IO (Except String String) := do
     "# xcolor's HTML model, one \\textcolor[HTML]{XX0000} per byte\n" ++
     "byte\tdecimal\n" ++ "\n".intercalate rows ++ "\n")
 
-/-- The table's data: what `--check` compares, so another TeX build that
-writes the same decimals reads as current. -/
+/-- The table's data lines, which `--check` compares. -/
 def dataLines (text : String) : List String :=
   (text.splitOn "\n").filter fun l => !l.startsWith "#"
 

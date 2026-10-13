@@ -10,28 +10,16 @@ import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.PictureAssets
 
-/-! The boundary's decisions. Whether a tool is runnable is a fact about the
-machine, and what a tool that ran said is that tool's own words — neither is
-this module's. What is this module's is the judgement taken once the answers
-are in. When "nothing ran", an earlier render of the same request serves,
-and where none exists the placeholder ships and the loss is named
-(`coldPicture`). When a request was refused either way, a picture the
-rendered subset draws in part is withdrawn from the boundary and drawn by
-the subset (`withdraw`); an attempt that never reached an answer is no
-refusal, and stands. No step here runs a tool: a picture's HTML face is
-decided in the driver, native first (`PdfFaces.face`), and a picture left
-without one ships the page's labelled placeholder (`markFaceless`). Each decision returns its
-diagnostics, so a test can run it rather than restate it, and a driver that
-stopped naming the loss fails the suite instead of passing it. -/
+/-! The boundary's decisions once a tool's answers are in: an earlier render or a named
+placeholder when nothing ran, the rendered subset's drawing for a refused picture it draws
+in part, and the faceless mark for the HTML page. -/
 
 namespace LeanTex.Cli.Boundary
 
 open LeanTex.Core
 
-/-- With no tool, a complete checked drawing of the same request can serve.
-Otherwise W0379 names the missing drawing at its source span, with `why`,
-how the tool's version question ended. Refusals are not replayed here:
-without the tool, its identity cannot be established. -/
+/-- With no tool, a complete checked drawing of the same request serves; otherwise W0379
+names the missing drawing at its span, with `why`. -/
 public def coldPicture (picDir : System.FilePath) (tool key : String)
     (span : Option Span := none) (why : String := "") : IO (Except Diag ByteArray) := do
   match ← PictureAssets.previous picDir key with
@@ -57,34 +45,19 @@ public def firstInput (dir : String) (out : Array (String × ByteArray)) :
         | .error _ => .pure out
       | .error _ => firstInput dir out rest
 
-/-- The files a boundary request reads (`Ir.pictureInputs`), as the host
-answers for them: resolved as an image of the document is — against its
-own directory, through graphicx's extensions and the document's
-`\graphicspath` (`Image.searchCandidates`), which rides into the
-standalone too (`Compat.boundaryCtrls`) — and read once, to be staged
-beside the standalone where the path it was found by puts it, and keyed by
-their bytes (`PictureAssets.keyed`). -/
+/-- The files a boundary request reads, resolved as the document's images are (graphicx
+extensions, `\graphicspath`) and read once, keyed by their bytes. -/
 public def requestInputs (dir : String) (paths : Array String) (wrapped : String) :
     World.Prog (Array (String × ByteArray)) :=
   (Ir.pictureInputs wrapped).foldlM (init := #[]) fun out p =>
     firstInput dir out (Image.searchCandidates paths p)
 
-/-- The document's own request, where the tool refused one set in the
-faces the page sets in (`FontAssembly.boundaryFonts`): a package the
-document loads can refuse fontspec or unicode-math beside it — newtxtext
-loads fontspec under LuaTeX with `.otf` defaults, so the page's face is
-looked for as a file; newtxmath, txfonts or mathabx define what
-unicode-math defines — and the document's own request is the one LaTeX
-itself would set. Only the tool's own refusal falls back: an attempt that
-never finished is asked again next build, and a request the faces left
-unchanged has nothing to fall back to. -/
+/-- The document's own request, asked only after the tool refused the one set in the
+page's faces, and only when it differs from it. -/
 public def ownRequest? (wrapped own : String) : PicCache.Outcome → Option String
   | .refused _ => if own == wrapped then none else some own
   | .drawn | .inconclusive _ => none
 
-/-- **Only the tool's refusal of a faced request asks the document's own**
-(`_exact`): the fallback is asked exactly when the faced request came back
-refused and differs from the document's own, and it is that request. -/
 public theorem ownRequest?_exact (wrapped own r : String) (o : PicCache.Outcome) :
     ownRequest? wrapped own o = some r ↔ (∃ why, o = .refused why) ∧ own ≠ wrapped ∧ r = own := by
   cases o with
@@ -98,23 +71,17 @@ public theorem ownRequest?_exact (wrapped own r : String) (o : PicCache.Outcome)
   | drawn => simp [ownRequest?]
   | inconclusive _ => simp [ownRequest?]
 
-/-- What the boundary's refusals leave standing, once the rendered subset
-has been asked to stand in: the picture ids whose requests are withdrawn,
-the refusals that still stand, and why each withdrawn picture's request
-came back undrawn — by picture id, the tool's own last words where it ran,
-none where no tool looked. -/
+/-- What the boundary's refusals leave once the rendered subset stands in: the withdrawn
+picture ids, the refusals that still stand, and why each withdrawn request came back
+undrawn. -/
 public structure Withdrawal where
   ids : Array String := #[]
   standing : Array (String × Diag) := #[]
   said : Array (String × Option String) := #[]
   deriving Repr
 
-/-- How a boundary request came back with no drawing. `answered` is an
-answer the withdrawal may act on: no tool looked at the request (W0379,
-`said` none), or the tool ran and said no, in its own words. `unfinished` is
-an attempt that never reached an answer — a budget kill, a spawn that
-raised, a nonzero exit that left no log (`PicCache.outcome`): a fact about
-the machine, not the request. -/
+/-- How a boundary request came back with no drawing: answered (no tool looked, or the
+tool said no), or unfinished. -/
 public inductive Undrawn where
   | answered (why : Diag) (said : Option String)
   | unfinished (why : Diag)
@@ -125,9 +92,8 @@ def Undrawn.why : Undrawn → Diag
   | .answered d _ => d
   | .unfinished d => d
 
-/-- One attempt's ending as the withdrawal reads it: a drawing is nothing to
-withdraw, the tool's own no is an answer in its words, and an attempt that
-never finished is no answer at all. -/
+/-- One attempt's ending as the withdrawal reads it: a drawing is nothing to withdraw, a
+refusal is an answer, and an unfinished attempt none. -/
 public def undrawnOf (tool : String) (o : PicCache.Outcome) (span : Option Span) (src : String) :
     Option Undrawn :=
   match o with
@@ -145,12 +111,6 @@ public def withdrawStep (fallbacks : Array String) (w : Withdrawal)
     { w with ids := w.ids.push id, said := w.said.push (id, said) }
   | u, _ => { w with standing := w.standing.push (r.1, u.why) }
 
-/-- **An attempt that never finished is never withdrawn** (`_exact`): it
-joins the refusals that stand, whatever the subset could draw, so the run
-stays as loud as a failed render — the artifact never changes on a fact
-about the machine. The defect withdrew it like the tool's own verdict: a
-killed or crashed tool shipped the subset's drawing with exit 0, its cause
-a note printed only under `-v`. -/
 public theorem withdrawStep_unfinished_exact (fallbacks : Array String) (w : Withdrawal)
     (src : String) (d : Diag) :
     withdrawStep fallbacks w (src, .unfinished d) =
@@ -158,25 +118,14 @@ public theorem withdrawStep_unfinished_exact (fallbacks : Array String) (w : Wit
   unfold withdrawStep
   cases fallbacks.find? (Ir.picSrcPrefix ++ · == src) <;> rfl
 
-/-- **A refusal withdraws a request the subset can stand in for.** An
-answered request — no tool looked, or the tool said no — whose picture the
-rendered subset draws in part (`fallbacks`, by picture id, the elaborator's
-record) is withdrawn: the driver elaborates again with its id
-(`Elab.runPrepared`'s `picWithdrawn`), and the subset's drawing ships with
-one W0419 at the picture's span naming every construct it leaves out, its
-help saying why the boundary did not draw it (`fold`), in the tool's own
-words where it ran. Every other refusal stands: a picture the subset draws
-nothing of keeps W0379's or W0382's placeholder, and an attempt that never
-finished keeps its W0382 (`withdrawStep_unfinished_exact`). Pure, so the
-decision is a value a test runs rather than a sentence about the driver. -/
+/-- Withdraw each answered request whose picture the rendered subset draws in part, so the
+subset's drawing ships with one W0419; every other refusal stands. -/
 public def withdraw (fallbacks : Array String) (undrawn : Array (String × Undrawn)) :
     Withdrawal :=
   undrawn.foldl (withdrawStep fallbacks) {}
 
-/-- Is `d` one of withdrawn picture `id`'s losses? The elaborator names each
-refusal the rendered subset states for a withdrawn picture under the
-picture (`Ir.picFragmentKey`), so this reads the structured subject, never
-the message; a note names a decision, not missing ink, and stands as it is. -/
+/-- Whether `d` is one of withdrawn picture `id`'s losses, read by its structured subject;
+a note stands as it is. -/
 public def fragmentOf (id : String) (d : Diag) : Bool :=
   d.subject.any (·.startsWith (Ir.picFragmentKey id "")) && d.kind.floor != .inert
 
@@ -185,15 +134,13 @@ line of text, which the rendered subset never draws (`Ir.picInlineKey`)? -/
 public def inlineOf (id : String) (d : Diag) : Bool :=
   d.subject == some (Ir.picInlineKey id)
 
-/-- The fragments the fold takes: a loss the document's `\allow` accepts
-(`accepted`) stays the elaborator's line, so its acceptance, and the
-`\allow` entry it fires, are the document's as written. -/
+/-- The fragments the fold takes; a loss the document's `\allow` accepts stays the
+elaborator's line. -/
 private def taken (accepted : String → Bool) (id : String) (d : Diag) : Bool :=
   fragmentOf id d && !accepted d.code
 
-/-- What a picture's one line says beside its refusals: why the boundary drew
-none of it, for the picture in a paragraph of its own (`block`) and in a line
-of text (`inline`; `none` leaves that line's own help). -/
+/-- Why the boundary drew none of a picture, for its line in a paragraph of its own
+(`block`) and in a line of text (`inline`). -/
 public structure LineHelp where
   block : String
   inline : Option String := none
@@ -205,9 +152,8 @@ public def withdrawnLine (tool : String) (said : Option String) : LineHelp :=
   { block := DriverDiag.withdrawnHelp tool said
     inline := some (DriverDiag.withdrawnInlineHelp tool said) }
 
-/-- A declined picture's — one the document's `\pictures{ tool = none }`
-leaves to the rendered subset (`Elab.ReqSpans.declined`): the declaration,
-and what drawing it whole would take (`DriverDiag.declinedHelp`). -/
+/-- A declined picture's, one the document's `\pictures{ tool = none }` leaves to the
+rendered subset. -/
 public def declinedLine : LineHelp := { block := DriverDiag.declinedHelp }
 
 /-- The pictures whose refusals the driver folds, each with what its line
@@ -216,12 +162,8 @@ public def linesOf (tool : String) (w : Withdrawal) (declined : Array String) :
     Array (String × LineHelp) :=
   w.said.map (fun p => (p.1, withdrawnLine tool p.2)) ++ declined.map (·, declinedLine)
 
-/-- One site of a picture as the line that names it: every loss the
-rendered subset states for the picture there, in order, a clause after the
-line's lead — in the record of the site's first fragment, so its span, its
-site count and whether it is a repeat site stay what the elaborator made
-them — under the picture's image source, with why the boundary drew none of
-it (`help`). -/
+/-- One site of a picture as the line that names it: every loss the subset states there,
+as clauses, in the record of the site's first fragment, with `help`. -/
 public def lineOf (accepted : String → Bool) (help id : String) (ds : Array Diag)
     (first : Diag) : Diag :=
   let here := ((ds.filter fun e => taken accepted id e && e.span == first.span).map
@@ -260,29 +202,16 @@ private def placeLine (accepted : String → Bool) (p : String × LineHelp) (ds 
     (acc.1.push { d with help := some p.2.block }, acc.2.push d.span)
   else (acc.1.push (inlineHelp p d), acc.2)
 
-/-- One picture folded. -/
 private def foldOne (accepted : String → Bool) (ds : Array Diag) (p : String × LineHelp) :
     Array Diag :=
   (ds.foldl (placeLine accepted p ds) (#[], #[])).1
 
-/-- **A picture the rendered subset draws in part is named once at each
-place it stands.** The elaboration names every construct the subset leaves
-out of a withdrawn or declined picture, each keyed under the picture
-(`fragmentOf`); this folds the ones the document does not accept (`allow`,
-`allowAll`, read as `Diag.accept` reads them) into one line per site of the
-picture (W0419, `lineOf`), a degraded warning, so an expression the subset
-could not read no longer fails the document the picture stands in, and a
-repeat site stays a repeat site with its count. Where the document accepts
-every refusal at a place, the first keeps why the boundary drew nothing as
-its help. A picture in a line of text, which the subset never draws, keeps
-the line that says so, with why the boundary did not draw it as its help.
-Every other diagnostic is still there (`foldLines_covers`). The refusals
-once stood beside a note as several lines, an error among them, and a
-picture no renderer could draw cost the whole run. -/
+/-- Name a picture the rendered subset draws in part once at each place it stands: its
+unaccepted fragments fold into one W0419 line per site, and every other diagnostic stays.
+-/
 public def foldLines (allow : Array String) (allowAll : Bool) (lines : Array (String × LineHelp))
     (ds : Array Diag) : Array Diag :=
-  -- premise: pictureRouteChecks — every refusal folded is a clause of its
-  -- picture's line, and an accepted one is left as the document accepts it
+  -- premise: pictureRouteChecks — folded refusals are clauses of the picture's line
   lines.foldl (foldOne fun c => allowAll || allow.contains c) ds
 
 /-- The withdrawn pictures alone (`foldLines` over `linesOf tool w #[]`). -/
@@ -327,10 +256,6 @@ private theorem placeLine_adds (accepted : String → Bool) (p : String × LineH
       exact Array.mem_push_self
     · exact ih _ hr
 
-/-- **The fold changes only the folded pictures' own lines** (`_covers`):
-every diagnostic that is neither a fragment of a picture the fold names nor
-that picture's line in a line of text is still there after the fold — the
-document's other losses, and the pictures' notes. -/
 public theorem foldLines_covers (allow : Array String) (allowAll : Bool)
     (lines : Array (String × LineHelp)) (ds : Array Diag) (d : Diag) (hd : d ∈ ds)
     (h : ∀ p ∈ lines, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) :
@@ -352,8 +277,6 @@ public theorem foldLines_covers (allow : Array String) (allowAll : Bool)
       exact placeLine_adds _ q acc d hq.1 hq.2 acc.toList _ (Array.mem_toList_iff.mpr hacc)
   exact key lines.toList ds hd fun p hp => h p (Array.mem_toList_iff.mp hp)
 
-/-- **The withdrawal's fold changes only the withdrawn pictures' own lines**
-(`_covers`): `foldLines_covers` for the withdrawn pictures alone. -/
 public theorem fold_covers (allow : Array String) (allowAll : Bool) (tool : String)
     (w : Withdrawal) (ds : Array Diag) (d : Diag) (hd : d ∈ ds)
     (h : ∀ p ∈ w.said, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) :
@@ -365,23 +288,13 @@ public theorem fold_covers (allow : Array String) (allowAll : Bool) (tool : Stri
   · exact h q hq
   · simp at hid
 
-/-- **The HTML face withdraws a drawing it cannot show.** A boundary
-picture's page face is its PDF, and its HTML face the one decided from
-that PDF (`PdfFaces.face`). Where it is missing (W0378) — no drawing the
-page can carry — the image has nothing to
-show but a request key, so a picture the rendered subset draws in part —
-`fallbacks`, the elaborator's record — is withdrawn from the HTML face
-alone, which the driver elaborates again with it drawn by the subset; the
-PDF keeps the boundary's drawing. The ids, by picture: those among the
-fallbacks whose image source has no converted SVG (`unconverted`). -/
+/-- The pictures withdrawn from the HTML face alone: those the subset draws in part whose
+image source has no converted SVG. -/
 public def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
   fallbacks.filter fun id => unconverted.contains (Ir.picSrcPrefix ++ id)
 
-/-- A boundary picture's HTML face is missing whatever the cause — no tool
-drew it (W0379), the tool drew nothing or did not finish (W0382), or its face was not
-converted (W0378) — and that loss was named where it
-happened, so the reason the page records is this constant and adds no
-diagnostic. -/
+/-- The reason a faceless boundary picture's HTML entry records; its loss was named where
+it happened. -/
 public def facelessReason : String :=
   "the boundary picture has no browser face"
 
@@ -392,24 +305,14 @@ public def faceless (en : Image.Loaded) : Bool :=
   en.src.startsWith Ir.picSrcPrefix && en.webSvg.isNone && en.webError.isNone
 
 private def markOne (en : Image.Loaded) : Image.Loaded :=
-  -- premise: machineLossChecks — a faceless picture's loss was named where it happened
-  -- (W0379, W0382, or W0378), so the mark names none
+  -- premise: machineLossChecks — the faceless picture's loss is already named
   if faceless en then { en with webError := some facelessReason } else en
 
-/-- **A missing face degrades the page instead of refusing it.** The closure
-check refused the whole HTML artifact (E0606) for a boundary picture with no
-face — the store kept its request key as the image's `src`, which resolves
-to no resource — although the PDF shipped its placeholder and the loss was
-already named. Marked, the entry takes the page's existing failed-face arm:
-a span labelled with the picture's text alternative, which reserves the
-drawing's intrinsic box when the boundary drew one, and is only as large as
-its label when nothing did — while the PDF draws a placeholder box. That the
-marked page closes is evidence, not a theorem: `machineLossChecks` closes it
-over the fixture's IR and through the built binary. -/
+/-- Mark every faceless boundary-picture entry with `facelessReason`, so the page shows
+its labelled placeholder instead of refusing. -/
 public def markFaceless (s : Image.Store) : Image.Store :=
   { s with entries := s.entries.map markOne }
 
-/-- **Every boundary picture has a face or a reason** (`_covers`). -/
 public theorem markFaceless_covers (s : Image.Store) :
     ∀ en ∈ (markFaceless s).entries, en.src.startsWith Ir.picSrcPrefix = true →
       en.webSvg.isSome = true ∨ en.webError.isSome = true := by
@@ -428,10 +331,6 @@ public theorem markFaceless_covers (s : Image.Store) :
       | some _ => exact .inr rfl
       | none => simp [faceless, hsrc, hs, hw] at hf
 
-/-- **Only the HTML face's reason changes** (`_exact`): with `webError`
-erased, the marked store is the store — every native plan, request, size and
-captured byte. Only the HTML backend reads `webError`; the layout and the
-PDF writer read the rest, which this holds fixed. -/
 public theorem markFaceless_info_exact (s : Image.Store) :
     (markFaceless s).entries.map (fun en => { en with webError := none }) =
       s.entries.map (fun en => { en with webError := none }) := by
@@ -441,19 +340,14 @@ public theorem markFaceless_info_exact (s : Image.Store) :
   simp only [Function.comp, markOne]
   split <;> rfl
 
-/-- **An entry with a face, or a reason, or no picture is unchanged** (`_exact`). -/
 public theorem markFaceless_face_exact (s : Image.Store) (k : Nat) (en : Image.Loaded)
     (h : s.get? k = some en) (hface : faceless en = false) :
     (markFaceless s).get? k = some en := by
   simp only [Image.Store.get?, markFaceless, Array.getElem?_map] at h ⊢
   simp [h, markOne, hface]
 
-/-! ## A figure's web face: native first -/
-
-/-- What an importer answered for a figure: exact — every construct it met
-has the model's meaning, so the native drawing is the figure; lossy — the
-native drawing, with each construct it could not give that meaning named;
-refused — no drawing, and why. -/
+/-- What an importer answered for a figure: exact, lossy with each unmet construct named,
+or refused with why. -/
 public inductive Verdict where
   | exact
   | lossy (losses : Array Gfx.Loss)
@@ -468,13 +362,8 @@ public inductive ToolState where
   | failed (why : String)
   deriving Repr
 
-/-- **A converter's attempt that drew nothing, read as the reason the
-engine's drawing ships**: an exit the converter chose and left words for is
-its verdict on the figure (`failed`), which no install changes; anything
-else — it could not start, was stopped, or left nothing — is a run that did
-not finish (`unfinished`). The line is the attempt's own
-(`PicCache.Outcome`), so a figure's remedy follows what the run was, never
-the spelling of its words (`FigureLoss.remedy_tool_exact`). -/
+/-- A converter's attempt that drew nothing, as the reason the engine's drawing ships: its
+own refusal, or a run that did not finish. -/
 public def undrawn : PicCache.Outcome → FigureLoss.Unconverted
   | .refused w => .failed w
   | .inconclusive w => .unfinished w
@@ -510,14 +399,10 @@ public def Verdict.asksTool (v : Verdict) (decl : Refusal) : Bool :=
   | _, .declared => false
   | _, .none => true
 
-/-- **The one decision** a figure's web face is: native where the import is
-exact; the converter's drawing where the import named a loss and the
-converter drew; the lossy native drawing with its losses named where the
-converter was refused, missing or failed; a placeholder only where nothing
-drew at all. -/
--- premise: figureRouteChecks — two builds differing only by tool presence:
--- a lossless figure ships byte-identical faces and runs no tool; a lossy
--- one names every loss subject in both builds.
+/-- The one decision a figure's web face is: native where the import is exact; the
+converter's drawing where it drew a lossy figure; else the lossy native drawing with its
+losses named; a placeholder only where nothing drew. -/
+-- premise: figureRouteChecks — tool presence never changes a lossless figure's face
 public def route (v : Verdict) (t : ToolState) (decl : Refusal) : Route :=
   match v with
   | .exact => .native
@@ -530,51 +415,35 @@ public def route (v : Verdict) (t : ToolState) (decl : Refusal) : Route :=
     | .none, .drew => .tool
     | _, _ => .refused
 
-/-- **An exact import never reaches the converter** (`_exact`): its face is
-the native drawing whatever the converter and the document say, so a
-lossless figure ships the same face on a machine with no tool. -/
 public theorem route_exact (t : ToolState) (decl : Refusal) : route .exact t decl = .native := by
   unfold route
   rfl
 
-/-- **A drawn figure is never a placeholder** (`_exact`): a lossy import
-ships the converter's drawing or its own, never nothing. -/
 public theorem route_lossy_exact (ls : Array Gfx.Loss) (t : ToolState) (decl : Refusal) :
     route (.lossy ls) t decl = .tool ∨ route (.lossy ls) t decl = .nativeWithLoss := by
   unfold route
   cases decl <;> cases t <;> simp
 
-/-- **The converter's drawing serves only where it drew** (`_exact`): a lossy
-import takes the converter's face only from a converter the document did
-not refuse and that drew one. -/
 public theorem route_tool_exact (ls : Array Gfx.Loss) (t : ToolState) (decl : Refusal)
     (h : route (.lossy ls) t decl = .tool) : t = .drew ∧ decl = .none := by
   unfold route at h
   cases decl <;> cases t <;> simp_all
 
-/-- **A lossless import never asks the converter** (`_exact`), whatever the
-document declares. -/
 public theorem asksTool_lossless_exact (decl : Refusal) : Verdict.exact.asksTool decl = false := by
   cases decl <;> rfl
 
-/-- **A refused converter is never run** (`_exact`): under the document's
-refusal no verdict asks it. -/
 public theorem asksTool_declared_exact (v : Verdict) : v.asksTool .declared = false := by
   cases v <;> simp [Verdict.asksTool]
 
-/-- What an SVG figure's route owes: nothing where the engine drew it
-whole; one note per loss where the converter drew it (N0024); one W0609 per
-loss where the engine's drawing ships without the feature, saying why no
-converter drew it. Each under its loss's own subject. -/
+/-- What an SVG figure's route owes, each under its loss's subject: nothing for the
+engine's whole drawing, an N0024 note per loss for the converter's, a W0609 per loss for
+the engine's lossy drawing. -/
 @[expose] public def svgRouteDiags (moving : Bool) (src : String) (why : FigureLoss.Unconverted)
     (losses : Array Gfx.Loss) : Route → Array Diag
   | .native => #[]
   | .tool => FigureLoss.diags (FigureLoss.svgConvertedDiag moving src) losses
   | .nativeWithLoss | .refused => FigureLoss.diags (FigureLoss.svgLostDiag moving src why) losses
 
-/-- **Every loss is named, whichever drew the figure** (`_named`): on every
-route but the engine's whole drawing, each loss of the census has a
-diagnostic whose subject is its key. -/
 public theorem svgRouteDiags_named (moving : Bool) (src : String) (why : FigureLoss.Unconverted)
     (losses : Array Gfx.Loss) (r : Route) (hr : r ≠ .native) (l : Gfx.Loss) (h : l ∈ losses) :
     ∃ d ∈ svgRouteDiags moving src why losses r, d.subject = some (FigureLoss.subject "svg" l) := by
@@ -583,9 +452,6 @@ public theorem svgRouteDiags_named (moving : Bool) (src : String) (why : FigureL
   | tool => exact FigureLoss.svgDiags_named moving src why true losses l h
   | nativeWithLoss | refused => exact FigureLoss.svgDiags_named moving src why false losses l h
 
-/-- **A figure's import decides its route, never the host alone** (`_exact`):
-a figure whose import names no loss is the engine's whatever the converter
-and the document say, and one that names a loss never is. -/
 public theorem route_losses_exact (losses : Array Gfx.Loss) (t : ToolState) (decl : Refusal) :
     route (if losses.isEmpty then .exact else .lossy losses) t decl = .native ↔
       losses.isEmpty = true := by

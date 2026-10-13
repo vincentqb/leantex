@@ -1,72 +1,9 @@
 module
 
 /-
-The matcher behind the privacy gate: does a text name a term of this clone's
-denylist? Pure; reading the list, the staged diff, the tree and the unpushed
-commits is the gate's own work (scripts/precommit.lean), and the selftests
-over invented terms run in `lake test` (Tests/Privacy.lean).
-
-The list lives outside the tree, at `info/private-terms` in the git common
-directory, so every worktree shares one copy and no commit carries it. A
-line opening with `#` is a comment and a blank line is nothing; any other
-line, trimmed, is one term. A term prefixed `case:` matches case-sensitively,
-any other case-insensitively, and both with diacritics folded: canonical
-decomposition, combining marks dropped.
-
-A term is a sequence of words: its runs of letters and digits, split again
-where an identifier's case opens a word (`fooBar`, `HTMLParser`). A text
-holds the term where those words stand in order, each pair apart by nothing
-or by at most `gapMax` scalars that are neither letters nor digits — white
-space and line breaks, `-`, `_`, `.`, `/`, a comment leader on a wrapped
-line, the quotes and `++` of a split string literal — so a phrase reads the
-same spaced, wrapped, kebab-, snake- or camel-cased, or run together. The
-match is a whole word: on either side stands the text's edge, a scalar that
-is no letter or digit, or a case change that opens a word. A digit beside a
-letter is no boundary.
-
-A term is looked for in several readings of one text, and a hit in any of
-them counts, because a term reaches a source file spelled more ways than
-one:
-* the text as written;
-* TeX's spellings of letters undone: accent commands (`\'e`, `\c{c}`),
-  letter commands (`\o`, `\ss`), the discretionary hyphen, ties, spacing
-  commands and braces, with invisible format characters removed;
-* the same after Lean's string escapes (`\\`, `\"`, `\u{…}`, `\uXXXX`,
-  `\xHH`), character references (`&#…;`, `&#x…;`, and the named ones of
-  Latin-1) and percent-encoding are decoded first, which is how a test's
-  string literal, a page or a URL spells its text.
-
-Bytes are cut into lines at LF and NUL, which every encoding read here
-keeps; a line that is not UTF-8 is read as lenient UTF-8 and again as
-Windows-1252, which spells Latin-1's letters too, so a legacy-encoded file's
-accented letter does not split its word into two around U+FFFD. Content
-that is not text (a font, an image, a PDF) is read as lenient UTF-8, and
-again with every zero byte removed and each other byte read as the
-Windows-1252 scalar it spells: how ASCII and Latin-1 text stored as UTF-16
-reads, in either byte order and at either alignment. Compressed content is
-inflated and read the same ways — a PDF's zlib streams, a PNG's compressed
-text, a gzip member, a zip archive's members, and one container inside
-another — and a PDF's strings are decoded: their escapes, hex digits and
-byte-order mark read, the strings of one array (a `TJ` operand, which
-kerning splits mid-word) run together.
-
-What no reading sees: a phrase whose words stand more than `gapMax`
-separator scalars apart or with letters between them; text a PDF sets in a
-font's glyph codes rather than in characters, which is most page text a TeX
-engine writes; an accent command parted from its letter by a line break;
-text in any encoding other than UTF-8, UTF-16's Latin-1 range and
-Windows-1252; content under any other compression (Brotli, LZW, xz) or past
-`decodeCap` bytes; and, in a staged change or an unpushed commit, the
-content of a binary file whose path is not UTF-8, which git is asked for by
-that path (the tree check reads every blob by its object id).
-
-A hit is reported by where it stands, never by what it says. Where the
-location is itself text that may hold a term — a path, a line the gate
-prints — `Matcher.mask` replaces each segment taking part in a hit with `…`,
-and a text still holding one after that is masked whole.
-
-The rest of the module reads what the gate asks git for: the added lines of
-a unified diff, and the per-commit records of `git log`.
+The privacy gate's matcher: whether a text names a term of this clone's denylist,
+`info/private-terms` in the git common directory, in any of its readings; a hit is reported by
+where it stands, never by the term.
 -/
 
 public import LeanTex.Core.Nfc
@@ -115,8 +52,8 @@ def lowerOf (c : Char) : Char :=
 /-- A capital: a letter its simple lowercase moves. -/
 def isUpper (c : Char) : Bool := lowerOf c != c
 
-/-- A letter that is no capital: a lowercase one, or one of a script
-without case. Digits are not letters. -/
+/-- A letter that is no capital: a lowercase one, or one of a script without case; digits
+are not letters. -/
 def isLowerLetter (c : Char) : Bool :=
   wordChar c && !(c.toNat < 0x80 && c.isDigit) && !isUpper c
 
@@ -155,11 +92,9 @@ letter or digit: room for a comment leader on a wrapped line (` -- `) or a
 split string literal (`" ++ "`). -/
 def gapMax : Nat := 8
 
-/-- A reading folded for matching: each scalar's canonical decomposition with
-its marks dropped, every run of white space one space. `breaks` holds, per
-newline of the reading, how many folded scalars precede the line it opens.
-Every reading keeps the text's newlines one for one, so a folded scalar's
-line is one more than the breaks at or below its index. -/
+/-- A reading folded for matching: each scalar's canonical decomposition with marks
+dropped, every run of white space one space; `breaks` holds, per newline, how many folded
+scalars precede the line it opens. -/
 structure Folded where
   chars : Array Char
   breaks : Array Nat
@@ -213,8 +148,9 @@ def termWords (raw : String) (cased : Bool) : Array (Array Char) := Id.run do
     out := out.push cur
   return out
 
-/-- The list's terms, in file order. A term with no letter or digit is no
-term: a bare `case:` line, or one of marks or punctuation alone. -/
+/-- The list's terms in file order: a `#` line is a comment, any other non-blank trimmed
+line one term, `case:` making it case-sensitive; a line with no letter or digit is no
+term. -/
 def parseTerms (src : String) : Array Term := Id.run do
   let mut out : Array Term := #[]
   for raw in src.splitOn "\n" do
@@ -250,10 +186,10 @@ def Matcher.opening (m : Matcher) (c : Char) : Array Nat :=
 def Matcher.maxWords (m : Matcher) : Nat :=
   m.terms.foldl (fun n t => max n t.words.size) 0
 
-/-- Does `t` stand at index `i` of `s`: its words in order, compared
-case-folded unless it keeps case, each after the first at most `gapMax`
-scalars that are no letter or digit past the one before, and a word's close
-after the last? The open before it is the caller's to judge. -/
+/-- Whether `t` stands at index `i` of `s`: its words in order, compared case-folded
+unless it keeps case, each after the first at most `gapMax` scalars that are no letter or
+digit past the one before, and a word's close after the last; the open before it is the
+caller's to judge. -/
 def standsAt (s : Array Char) (i : Nat) (t : Term) : Bool := Id.run do
   let mut j := i
   for (w, k) in t.words.zipIdx do
@@ -267,10 +203,8 @@ def standsAt (s : Array Char) (i : Nat) (t : Term) : Bool := Id.run do
       j := j + 1
   return closesAt s j
 
-/-- The 1-based lines of one folded reading on which a term opens as a
-whole word, ascending, a line once per hit. A case-folded term opens with a
-lowercase scalar and a cased one with its own, so the scalar and its
-lowercase name every term that can stand at an index. -/
+/-- The 1-based lines of one folded reading on which a term opens as a whole word,
+ascending, once per hit. -/
 def Matcher.linesIn (m : Matcher) (f : Folded) : Array Nat := Id.run do
   let s := f.chars
   let mut out : Array Nat := #[]
@@ -399,11 +333,10 @@ def percentRun (cs : Array Char) (i : Nat) : ByteArray × Nat := Id.run do
     | none => break
   return (bytes, j)
 
-/-- Lean's string escapes, character references and percent-encoding
-decoded: `\\`, `\"`, `\'`, `\n`/`\t`/`\r` (as spaces), `\u{…}`, `\uXXXX`,
-`\xHH`, `&#…;`/`&#x…;`, the named references of `entityScalar`, and runs of
-`%XX` read as UTF-8 where they spell it and as Latin-1 bytes where they do
-not. Anything else is kept as written. -/
+/-- Lean's string escapes, character references and percent-encoding decoded: `\\`, `\"`,
+`\'`, `\n`/`\t`/`\r` (as spaces), `\u{…}`, `\uXXXX`, `\xHH`, `&#…;`/`&#x…;`, the named
+references of `entityScalar`, and runs of `%XX` read as UTF-8 where they spell it and as
+Latin-1 bytes where they do not; anything else is kept as written. -/
 def escapeReading (cs : Array Char) : Array Char := Id.run do
   let mut out : Array Char := Array.mkEmpty cs.size
   let mut i := 0
@@ -472,8 +405,8 @@ def letterCommands : List (String × String) :=
    ("ss", "ß"), ("ae", "æ"), ("AE", "Æ"), ("oe", "œ"), ("OE", "Œ"),
    ("aa", "å"), ("AA", "Å")]
 
-/-- The index past the spaces and tabs at `i`: what TeX skips after a
-command word. A newline is kept, so the reading keeps its lines. -/
+/-- The index past the spaces and tabs at `i`, what TeX skips after a command word; a
+newline is kept, so the reading keeps its lines. -/
 def skipBlanks (cs : Array Char) (i : Nat) : Nat := Id.run do
   let mut j := i
   for _ in [0:cs.size + 1] do
@@ -481,13 +414,10 @@ def skipBlanks (cs : Array Char) (i : Nat) : Nat := Id.run do
     if c == ' ' || c == '\t' then j := j + 1 else break
   return j
 
-/-- TeX's spellings of letters undone: an accent command is dropped (the
-fold drops the accent it would set) with the blanks before its argument,
-which the accent macro skips as it reads that argument; a letter command
-becomes its letter; the discretionary hyphen, the italic correction and
-`\@` vanish; a tie or a spacing command is a space; and braces are
-dropped, as are invisible format characters. Any other command is kept as
-written. -/
+/-- TeX's spellings of letters undone: accent commands dropped with the blanks before
+their argument, letter commands as their letters, the discretionary hyphen, italic
+correction and `\@` removed, ties and spacing commands as spaces, braces and invisible
+format characters dropped; any other command is kept. -/
 def texReading (cs : Array Char) : Array Char := Id.run do
   let mut out : Array Char := Array.mkEmpty cs.size
   let mut i := 0
@@ -532,17 +462,16 @@ def texReading (cs : Array Char) : Array Char := Id.run do
       i := i + 1
   return out
 
-/-- Ascending, without repeats. -/
 def ascendingUnique (xs : Array Nat) : Array Nat := Id.run do
   let mut out : Array Nat := #[]
   for x in xs.qsort (· < ·) do
     if out.back? != some x then out := out.push x
   return out
 
-/-- The readings of a text worth folding: the text as written, its TeX
-reading where it holds a backslash, a brace, a tie or an invisible format
-character, and its escape-then-TeX reading where it holds a backslash, an
-ampersand or a percent sign. Any other text reads the same every way. -/
+/-- The readings of a text worth folding: the text as written, its TeX reading where it
+holds a backslash, a brace, a tie or an invisible format character, and its
+escape-then-TeX reading where it holds a backslash, an ampersand or a percent sign; any
+other text reads the same every way. -/
 def readingsOf (cs : Array Char) : Array (Array Char) :=
   let tex := cs.any fun c => c == '\\' || c == '{' || c == '}' || c == '~' || invisible c
   let esc := cs.any fun c => c == '\\' || c == '&' || c == '%'
@@ -563,17 +492,12 @@ def Matcher.textLines (m : Matcher) (s : String) : Array Nat :=
 /-- Does a text name a term anywhere, in any reading? -/
 def Matcher.hits (m : Matcher) (s : String) : Bool := !(m.textLines s).isEmpty
 
-/-- Does a path name a term? A path reads like any text, its separators
-being no letters. -/
+/-- Whether a path names a term, read like any text with its separators as no letters. -/
 def Matcher.pathHit (m : Matcher) (p : String) : Bool := m.hits p
 
-/-- `segs` joined by `sep`, each segment that takes part in a hit replaced
-by `…`: a segment that hits alone, and each run of consecutive segments
-that hits while neither run one segment shorter inside it does — hitting
-only grows as a run grows, so those are the runs no shorter run inside
-hits. A run is at most two segments per word of the longest term and two
-more, empty segments between separators included. Whatever still holds a
-term after that is masked whole, so the result never names one. -/
+/-- `segs` joined by `sep`, each segment taking part in a hit replaced by `…` (one hitting
+alone, and each minimal run of consecutive segments that hits), the result masked whole if
+it still holds a term. -/
 def Matcher.mask (m : Matcher) (segs : Array String) (sep : String) : String := Id.run do
   let whole := sep.intercalate segs.toList
   unless m.hits whole do return whole
@@ -624,11 +548,9 @@ def cp1252NonZero (bs : ByteArray) : Array Char :=
 /-- Does a zero byte stand anywhere in `bs`? -/
 def hasZero (bs : ByteArray) : Bool := bs.foldl (fun z b => z || b == 0) false
 
-/-- The readings of bytes cut into segments at LF and NUL, which both
-encodings below keep one for one: a segment that is UTF-8 reads as itself,
-and one that is not as lenient UTF-8 in the first reading and as
-Windows-1252 in the second. One reading when every segment is UTF-8, and
-then it is the bytes' own text. -/
+/-- The readings of bytes cut into segments at LF and NUL: a UTF-8 segment as itself, any
+other as lenient UTF-8 in the first reading and Windows-1252 in the second; one reading
+when every segment is UTF-8. -/
 def segmentReadings (bs : ByteArray) : Array String :=
   match String.fromUTF8? bs with
   | some s => #[s]
@@ -655,8 +577,6 @@ def segmentReadings (bs : ByteArray) : Array String :=
           legacy := legacy.push (Char.ofNat b.toNat)
         start := i + 1
     return #[String.ofList lenient.toList, String.ofList legacy.toList]
-
-/-! ## Compressed content -/
 
 /-- The most bytes the decompressed readings of one blob take, all streams
 together: past it the rest is not read. -/
@@ -712,9 +632,9 @@ def zlibAt (bs : ByteArray) (start cap : Nat) : Option ByteArray := do
 def isPdf (bs : ByteArray) : Bool :=
   findBytes (bs.extract 0 1024) 0 (ascii "%PDF-") < min bs.size 1024
 
-/-- A PDF's object syntax, around and between its streams, and those of its
-streams that inflate as zlib (`zlibAt`), within `cap` bytes in all. A
-stream's raw data is binary and is left to the blob's own readings. -/
+/-- A PDF's object syntax, around and between its streams, and those of its streams that
+inflate as zlib (`zlibAt`), within `cap` bytes in all; a stream's raw data is binary and
+left to the blob's own readings. -/
 def pdfParts (bs : ByteArray) (cap : Nat) : ByteArray × Array ByteArray := Id.run do
   let kw := ascii "stream"
   let endKw := ascii "endstream"
@@ -793,9 +713,9 @@ def pdfLiteral (bs : ByteArray) (i : Nat) : ByteArray × Nat := Id.run do
       j := j + 1
   return (out, j)
 
-/-- A PDF hex string's bytes from just past its `<`, and the index past its
-`>` (ISO 32000-2 §7.3.4.3): white space skipped, a final odd digit read as
-followed by 0. `none` where any other byte stands before the `>`. -/
+/-- A PDF hex string's bytes from just past its `<`, and the index past its `>` (ISO
+32000-2 §7.3.4.3): white space skipped, a final odd digit read as followed by 0, and
+`none` where any other byte stands before the `>`. -/
 def pdfHex (bs : ByteArray) (i : Nat) : Option (ByteArray × Nat) := Id.run do
   let mut out : ByteArray := .empty
   let mut high : Option Nat := none
@@ -843,10 +763,9 @@ def pdfText (bs : ByteArray) : Array Char :=
     | some s => s.toList.toArray
     | none => cp1252 bs
 
-/-- The strings of PDF syntax, decoded (`pdfLiteral`, `pdfHex`, `pdfText`),
-each on a line of its own — except that the strings of one array, a `TJ`
-operand that kerning splits mid-word, run together on one line. A comment
-runs to the end of its line. -/
+/-- The strings of PDF syntax, decoded (`pdfLiteral`, `pdfHex`, `pdfText`), each on a line
+of its own, except that the strings of one array, a `TJ` operand that kerning splits
+mid-word, run together on one line; a comment runs to the end of its line. -/
 def pdfStrings (bs : ByteArray) : Array Char := Id.run do
   let mut out : Array Char := #[]
   let mut depth := 0
@@ -905,9 +824,9 @@ def pngTexts (bs : ByteArray) (cap : Nat) : Array ByteArray := Id.run do
     i := stop + 4
   return out
 
-/-- A gzip member's data (RFC 1952 §2.3), past the header fields its flags
-declare — an extra field, a file name, a comment, a header check — and
-inflated. The name and the comment are in the file's own bytes. -/
+/-- A gzip member's data (RFC 1952 §2.3), past the header fields its flags declare (an
+extra field, a file name, a comment, a header check) and inflated; the name and the
+comment are in the file's own bytes. -/
 def gzipBody (bs : ByteArray) (cap : Nat) : Option ByteArray :=
   if !(bytesAt bs 0 #[0x1F, 0x8B, 8]) then none else
     let flg := (bs[3]?.getD 0).toNat
@@ -918,9 +837,9 @@ def gzipBody (bs : ByteArray) (cap : Nat) : Option ByteArray :=
     let i := if flg / 2 % 2 == 1 then i + 2 else i
     inflateAt bs i cap
 
-/-- The members of a zip archive (PKWARE's APPNOTE §4.3.7): each local file
-header's data, stored or deflated, within `cap` bytes in all. A member's
-name is in the file's own bytes. -/
+/-- The members of a zip archive (PKWARE's APPNOTE §4.3.7): each local file header's data,
+stored or deflated, within `cap` bytes in all; a member's name is in the file's own bytes.
+-/
 def zipMembers (bs : ByteArray) (cap : Nat) : Array ByteArray := Id.run do
   let sig : Array UInt8 := #[0x50, 0x4B, 0x03, 0x04]
   let mut out : Array ByteArray := #[]
@@ -943,9 +862,9 @@ def zipMembers (bs : ByteArray) (cap : Nat) : Array ByteArray := Id.run do
     i := j + 4
   return out
 
-/-- The content a container wraps, decompressed, within `cap` bytes: a
-PDF's zlib streams (`pdfParts`), a PNG's compressed text, a gzip member, a
-zip archive's members. Anything else wraps nothing this module reads. -/
+/-- The content a container wraps, decompressed, within `cap` bytes: a PDF's zlib streams
+(`pdfParts`), a PNG's compressed text, a gzip member, a zip archive's members; anything
+else wraps nothing this module reads. -/
 def unwrap (bs : ByteArray) (cap : Nat) : Array ByteArray :=
   if isPdf bs then (pdfParts bs cap).2
   else if bytesAt bs 0 #[0x89, 0x50, 0x4E, 0x47] then pngTexts bs cap
@@ -953,12 +872,10 @@ def unwrap (bs : ByteArray) (cap : Nat) : Array ByteArray :=
   else if bytesAt bs 0 #[0x50, 0x4B, 0x03, 0x04] then zipMembers bs cap
   else #[]
 
-/-- What a blob's compressed content and a PDF's strings read as: each
-chunk a container wraps (`unwrap`), and each chunk one of those wraps in
-turn, by segment (`segmentReadings`) and with its zero bytes removed
-(`cp1252NonZero`); and a PDF's strings (`pdfStrings`), those of its object
-syntax and of each inflated stream with no zero byte, which content and
-object streams are. -/
+/-- What a blob's compressed content and a PDF's strings read as: each chunk a container
+wraps, and each chunk one of those wraps, by segment and with zero bytes removed, and a
+PDF's decoded strings; glyph-coded PDF text, other compressions and bytes past `decodeCap`
+are not read. -/
 def decodedReadings (bs : ByteArray) : Array (Array Char) := Id.run do
   let pdf := isPdf bs
   let parts := if pdf then pdfParts bs decodeCap else (.empty, unwrap bs decodeCap)
@@ -993,8 +910,6 @@ def Matcher.blobHits (m : Matcher) (bs : ByteArray) : Hits :=
       || !(m.linesIn (fold (cp1252NonZero bs))).isEmpty)
     { lines, binary := raw || (decodedReadings bs).any fun r => !(m.charLines r).isEmpty }
 
-/-! ## What the gate reads from git -/
-
 /-- The byte an octal escape `\ooo` spells, read from `cs[i]` on: up to
 three digits, and the index past them. -/
 def octalAt (cs : Array Char) (i : Nat) : Nat × Nat := Id.run do
@@ -1009,9 +924,8 @@ def octalAt (cs : Array Char) (i : Nat) : Nat × Nat := Id.run do
   return (v % 256, j)
 
 /-- A path as git quotes one in a diff header when it must (`"b/a\"b"`,
-`"b/caf\303\251"`): core.quotePath's C escapes and octal bytes read back,
-the bytes then read as UTF-8. A path git did not quote is returned as
-written. -/
+`"b/caf\303\251"`): core.quotePath's C escapes and octal bytes read back, the bytes then
+read as UTF-8; a path git did not quote is returned as written. -/
 def unquotePath (s : String) : String := Id.run do
   let cs := s.toList.toArray
   unless cs.size ≥ 2 && charAt cs 0 == '"' && charAt cs (cs.size - 1) == '"' do return s
@@ -1045,12 +959,9 @@ def headerPath (rest : String) : String :=
   let p := unquotePath (if rest.endsWith "\t" then String.ofList rest.toList.dropLast else rest)
   if p.startsWith "b/" then (p.drop 2).toString else ""
 
-/-- Added lines of a unified=0 diff, with file and new-file line number. A
-`+++ ` line is a file header only between a `diff --git` line and the first
-hunk after it: inside a hunk it is an added line whose own text begins
-`++ `, and reading it as a header once dropped the rest of that hunk, home
-path and all. A header git quoted is read back (`headerPath`), so a path
-with a quote, a backslash or a control character keeps its added lines. -/
+/-- Added lines of a unified=0 diff, with file and new-file line number; a `+++ ` line is
+a header only between a `diff --git` line and the first hunk, and a quoted header is read
+back (`headerPath`). -/
 def addedLines (diff : String) : Array (String × Nat × String) := Id.run do
   let mut out : Array (String × Nat × String) := #[]
   let mut file := ""
@@ -1100,10 +1011,10 @@ def logPatches (out : String) : Array (String × String) := Id.run do
     | [] => pure ()
   return res
 
-/-- The records of a `git log --format=%x00%H -z` answer with one record a
-path (`--name-only`) or a numstat row (`--numstat`), each beside its
-commit. Under `-z` a commit reads as an empty field, its sha, then its
-records, the first opening with the newline that ends the format line. -/
+/-- The records of a `git log --format=%x00%H -z` answer with one record a path
+(`--name-only`) or a numstat row (`--numstat`), each beside its commit; under `-z` a
+commit reads as an empty field, its sha, then its records, the first opening with the
+newline that ends the format line. -/
 def logRecords (out : String) : Array (String × String) := Id.run do
   let mut res : Array (String × String) := #[]
   let mut sha : Option String := none
@@ -1162,11 +1073,8 @@ def splitFirst (s sep : String) : Option (String × String) :=
   | a :: rest@(_ :: _) => some (a, sep.intercalate rest)
   | _ => none
 
-/-! ## The gate's findings over what git answered
-
-Each finding is one line naming where a term stands — a path (masked), a
-line, a commit — and never the term. The gate gathers the answers; these
-judge them, so the suite can feed them invented ones. -/
+/-! The gate's findings over what git answered, each naming where a term stands, never the
+term. -/
 
 /-- Findings in a diff's added lines: each run of consecutive added lines
 of one file, read as one text so a wrapped phrase is one phrase. -/
@@ -1202,11 +1110,10 @@ def Matcher.pathFindings (m : Matcher) (paths : Array String) (lead what : Strin
 /-- The commit a finding names: its sha, short. -/
 def commitLead (sha : String) : String := s!"commit {(sha.take 12).toString}: "
 
-/-- Findings in unpushed commits, from what git answered for them: each
-commit's patch (`logPatches`), the paths each adds (`logRecords` of
-`--name-only`), and each binary blob it adds or changes with its content.
-A term one commit adds and a later one removes is still found in the first,
-which is what a landing would publish. -/
+/-- Findings in unpushed commits, from what git answered for them: each commit's patch
+(`logPatches`), the paths each adds (`logRecords` of `--name-only`), and each binary blob
+it adds or changes with its content; a term one commit adds and a later one removes is
+still found in the first, as a landing would publish it. -/
 def Matcher.commitFindings (m : Matcher) (patches : Array (String × String))
     (paths : Array (String × String)) (blobs : Array ((String × String) × ByteArray)) :
     Array String := Id.run do

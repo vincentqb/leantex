@@ -1,48 +1,7 @@
 /-
-A PDF figure's two web faces against the page itself. Run from the
-repository root:
-
-  lake build ScriptsModules && lake env lean --run scripts/pdffig-diff.lean --report
-  lake env lean --run scripts/pdffig-diff.lean --selftest
-
-The never-worse report for the PDF figure importer. Each figure is a
-committed pdf-native fixture (testdata/pdf-native, invented, made by the
-tool the importer meets — lualatex, cairo, the engine's writer — or by
-hand in matplotlib's dialect, a print workflow's CMYK one, or over PDF's
-own geometry rules and text state). Its reference is Poppler's raster of the
-page (`pdftoppm` at `rasterDpi`). Its two web faces are the engine's own
-drawing (`PdfFaces.svgOf` of `PdfGfx.importPage`) and the converter's
-(`pdftocairo -svg`), each a standalone SVG Chromium screenshots at the
-same scale. Each is held to the reference by ImageMagick's DSSIM at
-`dssimScale`, and the native face passes when
-
-  d(native, ref) ≤ d(converter, ref) + ε
-
-with ε the distance between two rasterizations of the one reference —
-Poppler's and Cairo's own (`pdftocairo -png`) — which is how far two
-conforming renderers of the same page already stand apart. Text regions
-are not separated: the native face draws a figure's glyphs from its own
-font programs, as Poppler does, so faces do not differ by design here.
-
-`--selftest` injects a mutant into the native face only — its glyphs
-dropped, the drawing shifted by a tenth of its width, its fills turned
-grey — and fails unless every mutant lands worse than never-worse while
-its unmutated face stays within. A report, never a gate: it needs
-Poppler, Chromium and ImageMagick, and a missing tool fails the run with
-its name.
-
-  lake env lean --run scripts/pdffig-diff.lean --cmyk [--selftest]
-
-`--cmyk` measures the importer's device CMYK preview (`PdfGfx.cmykRgb`)
-against Poppler's: a probe page of device CMYK patches — the cube's
-sixteen corners, then the lattice {0.2, 0.5, 0.8}⁴ — rasterized by
-`pdftoppm` at one pixel per point and read at each patch's centre. A
-corner must be the table's colour exactly (`PdfGfx.cmykCorners` is this
-measurement), and a lattice colour within one step of a byte per channel
-of the interpolation, which is the rounding apart of two evaluations of
-one multilinear blend. `--cmyk --selftest` moves the measured pixels and
-fails unless the judge catches a corner one step off and a lattice colour
-two steps off, and passes a lattice colour one step off. Poppler only.
+Report of a PDF figure's two web faces against Poppler's raster: the native face passes within
+the converter's distance plus the Poppler–Cairo one; `--cmyk` checks the CMYK preview.
+Usage: lake build ScriptsModules && lake env lean --run scripts/pdffig-diff.lean [--report | --selftest | --cmyk [--selftest]]
 -/
 import LeanTex
 import scripts.RasterJudge
@@ -236,10 +195,9 @@ def stepsOff (p : Nat) (px : UInt8 × UInt8 × UInt8) : Nat :=
   let (r, g, b) := px
   max (step r wr) (max (step g wg) (step b wb))
 
-/-- **The judge of the CMYK preview**: the patches where the measured pixel
-stands from `PdfGfx.cmykRgb` by more than its bound — none for a corner,
-whose colour the table holds as measured, one step of a byte per channel
-for a lattice colour. -/
+/-- The CMYK preview's judge: the patches whose measured pixel stands from
+`PdfGfx.cmykRgb` past its bound, none for a corner and one step per channel for a lattice
+colour. -/
 def cmykOffences (pixel : Nat → Option (UInt8 × UInt8 × UInt8)) : Array String := Id.run do
   let mut out : Array String := #[]
   for p in [0:cmykPatches.size] do
@@ -317,8 +275,7 @@ def main (args : List String) : IO UInt32 := do
     if args.contains "--selftest" then
       let base ← measure chrome work stem pdf imp.figure (0, ref) (eps, ref)
       for (what, mutate) in mutants do
-        -- A mutant that leaves the face's bytes as they were (no glyphs to
-        -- drop, no solid fill to grey) shows nothing, and is not run.
+        -- A mutant that leaves the face's bytes unchanged shows nothing and is not run.
         let mutated := mutate imp.figure
         if PdfFaces.svgOf mutated == PdfFaces.svgOf imp.figure then
           IO.println s!"n/a     {name}, {what}: the face has nothing it changes"

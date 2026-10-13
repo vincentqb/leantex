@@ -8,18 +8,15 @@ import LeanTex.Cli.ToolProbe
 import LeanTex.Core.Flate
 import LeanTex.Core.Utf8
 
-/-! Fulfil standalone picture requests with owned scratch and checked cache
-answers. Tools must finish their writers with the foreground invocation;
-atomic publication protects readers, not arbitrary daemon descendants. -/
+/-! Fulfil standalone picture requests in owned scratch with checked cache answers; a tool
+finishes its writes before its invocation returns. -/
 
 namespace LeanTex.Cli.PictureAssets
 
 open LeanTex.Core
 
-/-- A request as its cache knows it: the standalone, then one line per file it
-reads (`Ir.pictureInputs`, staged beside it), by the path it spells and the
-content key of its bytes — so a changed figure is a changed request, and a
-request that reads none is keyed by its standalone alone, as it always was. -/
+/-- A request as its cache keys it: the standalone, then one line per file it reads, by
+path and content key. -/
 public def keyed (wrapped : String) (inputs : Array (String × ByteArray)) : String :=
   inputs.foldl (fun s (p, b) => s ++ s!"% input {p} {Flate.contentKey b}\n") wrapped
 
@@ -29,10 +26,8 @@ public def slotName (wrapped tool stamp version : String) : String :=
   ConvCache.slotName wrapped.toUTF8 "standalone-picture"
     (String.intercalate "\u0000" [tool, stamp, version])
 
-/-- Where an input stands relative to the standalone: its leading `..` steps
-and the components after them, or `none` for a path the scratch cannot
-hold — absolute (the tool reads it where it is), or stepping up again
-after descending. -/
+/-- An input's leading `..` steps and remaining components relative to the standalone, or
+`none` for a path the scratch cannot hold. -/
 public def stagePath (p : String) : Option (Nat × List String) :=
   if p.startsWith "/" then none else
   let comps := (p.splitOn "/").filter fun c => !c.isEmpty && c != "."
@@ -40,9 +35,6 @@ public def stagePath (p : String) : Option (Nat × List String) :=
   let rest := comps.drop ups
   if rest.isEmpty || rest.contains ".." then none else some (ups, rest)
 
-/-- The scratch directory `levels` steps below `root`: where a standalone
-runs whose inputs step up that far, so every one of them lands inside the
-scratch. -/
 private def below (root : System.FilePath) (levels : Nat) : System.FilePath :=
   (List.replicate levels "s").foldl (fun (p : System.FilePath) (c : String) => p / c) root
 
@@ -61,8 +53,8 @@ public def cacheDir : IO (Option System.FilePath) := do
 private def readAnswer (path : System.FilePath) : IO (Option (Except String ByteArray)) := do
   return (← (IO.FS.readBinFile path).toBaseIO).toOption.bind ConvCache.decode
 
-/-- Without a tool, only complete checked drawings of this request can
-serve. Legacy raw PDFs and remembered refusals supply no such evidence. -/
+/-- A complete checked drawing of this request from the cache, the only answer that may
+serve without a tool. -/
 public def previous (dir : System.FilePath) (key : String) : IO (Option ByteArray) := do
   try
     let entries := (← dir.readDir).qsort (fun a b => a.fileName < b.fileName)
@@ -72,8 +64,7 @@ public def previous (dir : System.FilePath) (key : String) : IO (Option ByteArra
     return none
   catch _ => return none
 
-/-- Keep the tool's error lines, or its last nonblank line when there are
-none, so the diagnostic survives scratch cleanup. -/
+/-- The tool's error lines, or its last nonblank line, kept past scratch cleanup. -/
 private def logTail (log : String) : String :=
   let lines := (log.splitOn "\n").filter (!·.trimAscii.toString.isEmpty)
   let bangs := lines.filter (·.startsWith "!")
@@ -83,15 +74,11 @@ private def logTail (log : String) : String :=
 private def produce (tool wrapped : String) (inputs : Array (String × ByteArray)) :
     IO ConvCache.Result := do
   try
-    -- Anchor relative paths to the caller, preserving the invoked alias:
-    -- TeX engines use that name to choose their format.
+    -- TeX engines choose their format by the invoked name, so a relative path keeps it.
     let command ← if tool.contains '/' && (System.FilePath.mk tool).isRelative then
         pure ((← IO.currentDir) / tool).toString
       else pure tool
     Host.withScratch fun scratch => do
-      -- Each input stands where the standalone's own spelling finds it,
-      -- inside the scratch: the run directory sits as deep as the inputs
-      -- step up.
       let staged := inputs.filterMap fun (p, b) => (stagePath p).map (·, b)
       let depth := staged.foldl (fun d ((ups, _), _) => max d ups) 0
       let work := below scratch depth
@@ -112,17 +99,13 @@ private def produce (tool wrapped : String) (inputs : Array (String × ByteArray
           pure (PicCache.Log.says ((logTail (Utf8.decode (← IO.FS.readBinFile logPath)).text).replace
             work.toString "<scratch>"))
         else pure PicCache.Log.absent
-      -- An attempt that reached no verdict and left no log names the tool's
-      -- last words too (`PicCache.annotate`), the scratch directory's random
-      -- name spelled out of them.
+      -- The scratch directory's random name never reaches a reason.
       let said := PicCache.saidOf (ended.err.replace work.toString "<scratch>")
       return { outcome := PicCache.annotate (PicCache.outcome ended.ran (!bytes.isEmpty) log) log said, bytes }
   catch e => return { outcome := .inconclusive (toString e) }
 
-/-- Independent invocations never share scratch. Each captures its result
-before cleanup, then publishes one integrity-checked answer by atomic rename.
-Cache failures leave the produced answer intact; unfinished attempts write
-nothing (`ConvCache.inconclusive_retried_exact`). -/
+/-- Fulfil a request in its own scratch and publish one integrity-checked answer by atomic
+rename; an unfinished attempt writes nothing. -/
 public def fulfil (dir : Option System.FilePath) (tool stamp version wrapped : String)
     (inputs : Array (String × ByteArray) := #[]) : IO Answer := do
   let slot ← if !stamp.isEmpty && !version.isEmpty && (← ToolProbe.witness tool) == stamp then

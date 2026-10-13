@@ -1,24 +1,7 @@
 /-
-External title-page placement differential. Run from the repository root:
-
-  lake build leantex
-  lake env lean --run scripts/title-placement-diff.lean
-  lake env lean --run scripts/title-placement-diff.lean --selftest
-
-This is a report and deeper oracle, never a `lake test` gate. It writes only
-under `.lake/title-placement-diff/`, builds two invented beamer templates
-with LuaLaTeX and leantex, and asks independent PDF tools what each artifact
-states: Ghostscript txtwrite at 1440 dpi for baselines, Poppler bbox for word
-boxes, and Poppler raster plus ImageMagick for the page ground.
-
-The placement bound is 0.25 PDF point. Ghostscript's grid contributes at
-most 0.05 pt across two rounded readings; LuaTeX converts a 33 TeX-point
-baseline skip to PDF points, contributing 0.123 pt against leantex's declared
-PDF-point unit. The next 0.05-pt grid value, 0.20 pt, leaves less than one
-coordinate quantum for both PDF spellings; 0.25 pt is therefore the smallest
-honest bound on this extractor. It is a placement bound, not a glyph-box
-identity claim: Poppler's vertical word boxes read each writer's font
-descriptor differently and are printed as evidence rather than gated.
+Title-page placement differential: two invented beamer templates by LuaLaTeX and leantex,
+baselines within 0.25 pt by Ghostscript's txtwrite.
+Usage: lake build leantex && lake env lean --run scripts/title-placement-diff.lean [--selftest]
 -/
 import LeanTex
 

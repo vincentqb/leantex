@@ -1,14 +1,7 @@
 /-
-Regenerates bench/paper.tex and bench/refs.bib — a deterministic,
-paper-shaped bench fixture: two-level sections with \paragraph runs,
-numbered equations cross-referenced with \eqref, figure and table floats
-with captions, natbib citations resolved from the .bib beside it, and an
-appendix — the constructs of an academic paper, with invented content
-(the private paper it is shaped after never enters this repo; compare
-construct counts locally when recalibrating). Targets roughly 10 pages.
-Fonts and images come from testdata/corpus, so the run is hermetic. Run with:
-
-  lake env lean --run scripts/gen-paper.lean
+Regenerates bench/paper.tex and bench/refs.bib: a deterministic, paper-shaped bench fixture of
+about ten pages with invented content and hermetic fonts and images.
+Usage: lake env lean --run scripts/gen-paper.lean
 -/
 
 def words : Array String := #[

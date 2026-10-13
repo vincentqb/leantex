@@ -1,12 +1,7 @@
 /-
-Regenerate LeanTex/Core/HyphenData*.lean from the hyph-utf8 pattern files.
-Run with:
-
-  lake env lean --run scripts/gen-hyphen-data.lean [source] [--lang en|fr] [--output path]
-
-Without a source argument the language's file is located via kpsewhich.
-Each language is one row of `langs`: adding a language to the engine is
-adding a row and rerunning — babel's data-not-code design, copied.
+Regenerate LeanTex/Core/HyphenData*.lean from the hyph-utf8 pattern files (located through
+kpsewhich without a source), one `langs` row per language.
+Usage: lake env lean --run scripts/gen-hyphen-data.lean [source] [--lang en|fr] [--output path]
 -/
 
 structure LangSpec where
@@ -78,8 +73,7 @@ def defaultSource (file : String) : IO String := do
     die s!"kpsewhich could not find {file}"
   return path
 
-/-- The whitespace-separated words of the `\command{ … }` block, comments
-stripped, matching the Python generator token for token. -/
+/-- The whitespace-separated words of the `\command{ … }` block, comments stripped. -/
 def block (text command : String) : IO (List String) := do
   let marker := "\\" ++ command ++ "{"
   let parts := text.splitOn marker

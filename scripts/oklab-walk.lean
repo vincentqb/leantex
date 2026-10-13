@@ -1,13 +1,6 @@
 /-
-The Oklab round-trip walk itself — spawned by scripts/oklab-roundtrip.lean
-on a cache miss, never run directly. The split keeps the cache-hit path
-free of the LeanTex import (~1 s of olean loading the verdict lookup does
-not need). Exhaustive over all 2²⁴ sRGB inputs: `cover 100 bg c` — the
-shipped cover function at a fraction of 100%, i.e. sRGB → Oklab → sRGB
-with the mix a no-op — must return `c` exactly. This is what makes the
-nearest-entry inversion in `Oklab.toColor` an identity rather than an
-approximation. An executable oracle, not a theorem (16.7M cube roots
-exceed any sane kernel budget).
+The Oklab round-trip walk over all 2²⁴ sRGB inputs, spawned by scripts/oklab-roundtrip.lean:
+`cover 100 bg c` must return `c` exactly.
 -/
 import LeanTex
 

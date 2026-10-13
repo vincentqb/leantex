@@ -1,59 +1,7 @@
 /-
-The parity ladder's tier. Run from the repository root:
-
-  lake build parity
-  .lake/build/bin/parity --selftest
-  .lake/build/bin/parity --check      # the gate
-  .lake/build/bin/parity --repin      # re-pin a comment-only edit
-  .lake/build/bin/parity              # regenerate the baseline
-
-The three tier modes are `Scoreboard.tierMain`'s, so the ratchet is the one
-every tier shares (`Scoreboard.ratchet`): a fall fails, an unretired vanish
-fails, an unrecorded rise fails as `stale`, and regeneration refuses to
-write a fall no human-written `# lowered:` line authorises. Nothing here
-decides any of that; this file measures, and says when a measurement is not
-one.
-
-Compiled rather than interpreted, for two reasons: it imports test-suite
-internals other branches edit, so a build is what fails when one of them
-moves; and interpreting it cost 7.4 s against 0.1 s for the binary.
-`lake env lean --run scripts/parity.lean` works too, and is what the
-scoreboard aggregate runs.
-
-Nothing here invokes another engine, reads PATH, or touches the network: it
-builds each fixture the way the driver builds it, reads the *committed*
-reference beside it, and holds the level each pair reaches against
-`testdata/scoreboard/parity.tsv`.
-
-Two things stop a run before the ratchet sees it, in every mode, and exit 2
-with nothing written:
-
-  fault       the measurement is not of the committed pairings: a source or
-              an input moved since its reference was built (regenerate, or
-              `--repin` when only comments moved), or a sidecar or a
-              reference cannot be read. Such a pairing is not measured.
-  accounting  a fixture's `% diverges:` declaration does not account for
-              where it stops — it excuses a level the fixture does not stop
-              on, or the fixture reaches the top anyway. Either would sit in
-              the file excusing the next regression. Correct the line, then
-              `--repin`. A fixture that fell to such a stop, read against
-              the committed floor by the one ratchet, is named as a fall
-              first: that is the engine's to fix before the line is.
-
-The oracle is never "must match". Every fixture's number is what the engine
-reaches today; the ladder's whole claim is that it does not go down. So it
-is also the one bound on how far a departure the principles allow moves a
-page from lualatex's, and only on the fixtures it reads: a departure that
-costs an item a fall needs a human's lowering line, never a regeneration
-alone.
-
-Each comparison level owes the pair it is blind to, equal under it and
-unequal under the level above, and its ordering premise as a check, never a
-docstring: `--selftest` reads a page painted out of order, since the line
-reading once took first-paint order for reading order, which a float placed
-away from its source falsifies. The sidecar is a record format a tier reads,
-so it owes the round trip of its empty value that scripts/Board.lean's tier
-contract states, held in scripts/parity-regen.lean.
+The parity tier: the ladder level each fixture under `testdata/parity` reaches against its
+committed lualatex reference; a stale pairing or an unaccounted declaration exits 2.
+Usage: lake build parity && .lake/build/bin/parity [--check | --selftest | --repin]
 -/
 import LeanTex.Cli.FontDiscovery
 import scripts.ParityCore
@@ -65,28 +13,17 @@ open LeanTex.Core LeanTex.Cli Parity
 structure Reached where
   fixture : String
   level : Int
-  /-- The level that failed, and what it saw. Empty at the top. -/
+  /-- The level that failed and what it saw, empty at the top. -/
   stopped : Option (Level × String)
   /-- What the fixture declares about its own pairing. -/
   declared : List Divergence
-  /-- Anything worth printing that is not a verdict: the reference's own
-  overfull count, a divergence the pairing declares. -/
+  /-- Anything worth printing that is not a verdict. -/
   notes : Array String
   deriving Inhabited
 
-/-- Does the fixture's declaration account for where it stopped? A stop at a
-level some declared divergence excuses is explained; a declaration that does
-not excuse the level the fixture stopped on explains nothing, which is the
-`unexplained` arm and a failure; and reaching the top while declaring
-anything at all is a declaration that `outlived` its stop, also a failure.
-A fixture outside the denominator stops at no level, so anything it
-declares is unexplained.
-
-A fixture that declares nothing is `clean` whatever it reaches: the ladder
-records the level it measures and does not ask for prose. What fails is a
-declaration that is *wrong* — one that names a divergence which does not
-account for the stop, and would therefore sit in the file excusing whatever
-regression came next. -/
+/-- Whether the fixture's declaration accounts for where it stopped: a stop a declared
+divergence excuses is explained, a declaration excusing nothing is `unexplained`, one on a
+fixture reaching the top `outlived`; declaring nothing is `clean`. -/
 inductive Accounting where
   | explained (d : Divergence)
   | unexplained
@@ -104,9 +41,8 @@ def accountingOf (r : Reached) : Accounting :=
       | some d => .explained d
       | none => .unexplained
 
-/-- The engine's side of a pairing: the document elaborated, laid out and
-written exactly as the driver writes it, then read back from its bytes.
-`driverPdf` is the one spelling every artifact claim reads. -/
+/-- The engine's side of a pairing: the document elaborated, laid out and written as the
+driver writes it, then read back from its bytes. -/
 def engineSide (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)
     (pats : Hyphen.Patterns) (stem : String) :
     IO (Array Diag × Except String (Array ArtPage)) := do
@@ -118,10 +54,7 @@ def engineSide (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)
   let pdf := driverPdf fs geom doc out {}
   return (diags ++ out.diags, readArtifact pdf)
 
-/-- Judge one pairing, level by level, stopping at the first that does not
-hold. Cumulative by construction: the loop cannot reach a level whose
-predecessor failed, so a level never has to restate its predecessor's
-premise. -/
+/-- Judge one pairing level by level, stopping at the first that does not hold. -/
 def judge (stem : String) (side : Sidecar) (declared : List Divergence)
     (engineDiags : Array Diag)
     (engine : Except String (Array ArtPage))
@@ -166,9 +99,8 @@ def judge (stem : String) (side : Sidecar) (declared : List Divergence)
     return { fixture := stem, level := Level.all.length, stopped := none
              declared := declared, notes := notes }
 
-/-- Why a run is not a measurement of the committed pairings: one
-constructor per arm of `measureAll`, so a staged break is judged by the arm
-it reached (`Fault.arm`) and never by the words of its sentence. -/
+/-- Why a run is not a measurement of the committed pairings, one constructor per arm of
+`measureAll`. -/
 inductive Fault where
   | noSidecar
   | sidecarUnreadable (why : String)
@@ -193,8 +125,7 @@ def Fault.render : Fault → String
   | .referenceNotRecorded => "the committed reference is not the one the sidecar records"
   | .referenceUnreadable e => s!"the committed reference is unreadable — {e}"
 
-/-- The arm a fault came from, and the path it names: what the selftest
-compares, never the sentence. -/
+/-- The arm a fault came from and the path it names, which the selftest compares. -/
 def Fault.arm : Fault → String
   | .noSidecar => "no-sidecar"
   | .sidecarUnreadable _ => "sidecar-unreadable"
@@ -206,17 +137,15 @@ def Fault.arm : Fault → String
   | .referenceNotRecorded => "reference-not-recorded"
   | .referenceUnreadable _ => "reference-unreadable"
 
-/-- One run over the corpus: what each fixture reached, and every reason the
-run is not a measurement of the committed pairings at all, fixture by
-fixture. A fault is collected rather than returned at once, so one run
-names every one. -/
+/-- One run over the corpus: what each fixture reached, and every fault, fixture by
+fixture. -/
 structure Measured where
   reached : Array Reached
   faults : Array (String × Fault)
   deriving Inhabited
 
-/-- What every fixture is measured under: the shipped faces and the
-hyphenation patterns, read once per run. -/
+/-- What every fixture is measured under: the shipped faces and the hyphenation patterns,
+read once per run. -/
 structure Env where
   pats : Hyphen.Patterns
   oneFace : Font.FontSet
@@ -230,9 +159,8 @@ def envOf : IO Env := do
   return { pats := Hyphen.english.get, oneFace, mathSet := ← mathSetOf oneFace
            shipped := ← FontDiscovery.scanRoots [testFonts] }
 
-/-- Every pairing is read relative to the working directory — `testdata/parity`,
-and the pinned inputs beside it — so the selftest drives this over a staged
-copy by changing directory. -/
+/-- Measure every pairing relative to the working directory, so the selftest drives a
+staged copy. -/
 def measureWith (env : Env) : IO Measured := do
   let mut reached : Array Reached := #[]
   let mut faults : Array (String × Fault) := #[]
@@ -246,8 +174,7 @@ def measureWith (env : Env) : IO Measured := do
       | .error e => do
           faults := faults.push (stem, .sidecarUnreadable e)
           continue
-    -- The pairing's two halves, pinned. A source edited since the reference
-    -- was built is a stale pairing, never a level result.
+    -- A source edited since its reference was built is a stale pairing, never a level result.
     let src ← IO.FS.readFile (System.FilePath.mk parityDir / (stem ++ ".tex"))
     let refSrc ← IO.FS.readFile (System.FilePath.mk parityDir / (stem ++ ".ref.tex"))
     let declared ← match declaredDivergences src with
@@ -259,10 +186,7 @@ def measureWith (env : Env) : IO Measured := do
       faults := faults.push (stem, .engineSourceMoved)
     if srcKeyOf refSrc != side.refSrcKey then
       faults := faults.push (stem, .referenceSourceMoved)
-    -- Every in-repo file the reference read, pinned. The shipped font is the
-    -- one this catches: it is read by both engines, and an update to it
-    -- would otherwise leave the engine on the new face and the committed
-    -- reference on the old one, silently.
+    -- Every in-repo file the reference read is pinned, the shipped font first among them.
     for (p, k) in inputPins side.inputs do
       let path := System.FilePath.mk parityDir / p
       unless ← path.pathExists do
@@ -278,10 +202,7 @@ def measureWith (env : Env) : IO Measured := do
     -- A pairing that is not the committed one has no level to report: the
     -- engine is not measured against a reference built from other inputs.
     if faults.any (·.1 == stem) then continue
-    -- A reference the reader cannot read is a fault in the harness, not a
-    -- level: every fixture would read as having fallen, and a regeneration
-    -- would store it. One reader reads both sides, so a regression in it is
-    -- exactly the thing a measurement must not be allowed to express.
+    -- A reference the reader cannot read is a fault in the harness, not a level.
     let rPages ← if side.compiles then
         match readArtifact refBytes with
         | .ok ps => pure ps
@@ -295,8 +216,7 @@ def measureWith (env : Env) : IO Measured := do
 
 def measureAll : IO Measured := do measureWith (← envOf)
 
-/-- The baseline's own header lines: what the integers mean. The ratchet's
-rules are `Scoreboard`'s and are not restated here. -/
+/-- The baseline's own header lines: what the integers mean. -/
 def provenance : Array String :=
   #[s!"# the parity ladder against lualatex: one integer per fixture, the number of \
 levels that hold, of {Level.all.length}",
@@ -317,21 +237,18 @@ def report (r : Reached) : IO Unit := do
   | .clean => pure ()
   for n in r.notes do IO.println s!"    note: {n}"
 
-/-- A declaration the gate refuses, with the fall behind it when there is
-one: a fixture that fell to a stop its declaration never excused is a
-regression before it is a wrong declaration. -/
+/-- A declaration the gate refuses, with the fall behind it when there is one. -/
 structure Refusal where
   fixture : String
-  /-- The committed level and the measured one, when the one ratchet reads a
-  fall between them. -/
+  /-- The committed and measured levels, when the ratchet reads a fall between them. -/
   fell : Option (Int × Int)
   stopped : Option (Level × String)
   accounting : Accounting
   declared : List Divergence
   deriving Inhabited
 
-/-- The falls `Scoreboard.ratchet` reads between a committed baseline and
-this measurement. An unreadable baseline reads none. -/
+/-- The falls `Scoreboard.ratchet` reads between a committed baseline and this
+measurement; an unreadable baseline reads none. -/
 def fallsSince (board : String) (m : Measured) : Array Scoreboard.Change :=
   match Scoreboard.parse board with
   | .error _ => #[]
@@ -359,9 +276,7 @@ def refusals (m : Measured) (falls : Array Scoreboard.Change) : Array Refusal :=
   for x in rest do fell := fell.push x
   return fell
 
-/-- A measurement held against the baseline. `main` is `measureAll` then
-this, so the selftest drives exactly the path that ships with measurements
-it wrote by hand. -/
+/-- A measurement held against the baseline, as `main` runs it after `measureAll`. -/
 def gate (m : Measured) (args : List String) : IO UInt32 := do
   for r in m.reached do report r
   if !m.faults.isEmpty then
@@ -403,8 +318,7 @@ fixture had. If the new stop is the intended one, correct the '% diverges:' line
 {(m.reached.filter (·.level == refuses)).size} outside the denominator, \
 top level {Level.all.length}"
   let rows := m.reached.map fun r => ({ item := r.fixture, value := r.level } : Scoreboard.Row)
-  -- The selftest argument is unreachable: `main` answers `--selftest` before
-  -- measuring. It fails closed if that ever stops being true.
+  -- `main` answers `--selftest` before measuring, so this argument fails closed.
   Scoreboard.tierMain "parity" .raw (pure (provenance, rows)) (pure 1) args
 
 /-- Re-pin every sidecar whose engine source moved in comments only. -/
@@ -446,10 +360,8 @@ def repinAll : IO UInt32 := do
     return 1
   return 0
 
-/-- `gate` over a scratch baseline, in a scratch directory: its exit code,
-the baseline it left, and its porcelain line. The tier's paths are
-relative, so the directory is the whole of the isolation and the committed
-baseline is never touched. -/
+/-- `gate` over a scratch baseline in a scratch directory: its exit code, the baseline it
+left, and its porcelain line. -/
 def gateLine (board : String) (m : Measured) (args : List String) :
     IO (UInt32 × String × String) := do
   let home ← IO.currentDir
@@ -473,10 +385,8 @@ def gateIn (board : String) (m : Measured) (args : List String) :
   let (code, after, line) ← gateLine board m args
   return (code, after, (Scoreboard.field line "result").getD "")
 
-/-- `measureWith` over a staged copy of one committed pairing, after `brk`
-has edited the copy: how the selftest reaches each fault arm through the
-loop `main` runs. The copy is the pairing's four files and the shipped
-faces, in a scratch directory, so the committed tree is never touched. -/
+/-- `measureWith` over a staged copy of one committed pairing after `brk` has edited it,
+in a scratch directory. -/
 def measureStaged (env : Env) (stem : String) (brk : System.FilePath → IO Unit) :
     IO Measured := do
   let home ← IO.currentDir
@@ -508,8 +418,7 @@ def selftest : IO UInt32 := do
   unless levelName 0 == "0 (next: P0)" do bad := bad.push s!"levelName 0: {levelName 0}"
   unless (Level.all.map Level.tag) == ["P0", "P1", "P2", "P3", "P4"] do bad := bad.push "level tags"
   unless Level.all.length == 5 do bad := bad.push "level count"
-  -- The registry: every divergence names a reason, and only the permanently
-  -- out-of-scope one is allowed to excuse nothing while also being unread.
+  -- Every divergence names a reason, and only the out-of-scope one may excuse nothing while unread.
   for d in Divergence.all do
     if (d.why).isEmpty then bad := bad.push s!"divergence {d.name} has no reason"
     if d.outOfScope && !(d.excuses).isEmpty then
@@ -540,12 +449,10 @@ def selftest : IO UInt32 := do
     bad := bad.push "a declaration on a fixture outside the denominator was not unexplained"
   unless accountingOf (mk refuses none []) == .clean do
     bad := bad.push "a fixture outside the denominator declaring nothing was not clean"
-  -- A fixture that declares nothing is clean wherever it stops: the ladder
-  -- records what it measures and does not ask for prose. What fails is a
-  -- declaration that explains nothing, which is the arm above.
+  -- A fixture that declares nothing is clean wherever it stops.
   unless accountingOf (mk 2 (some (.census, "")) []) == .clean do
     bad := bad.push "a fixture declaring nothing was called unexplained"
-  -- The line reading, which is the new level's whole content.
+  -- The line reading, the whole content of the line level.
   let line (y : Dim.Sp) (t : String) : ArtRun :=
     { marks := #[], x := 0, y := y, w := 0, size := Dim.pt 10, ascent := 0
       inkAscent := 0, descent := 0, widest := 0, text := t }
@@ -554,10 +461,7 @@ def selftest : IO UInt32 := do
   unless linesOf (page #[line 100 "ab", line 100 " c", line 80 "d"]) == #["abc", "d"] do
     bad := bad.push s!"linesOf: {repr (linesOf (page #[line 100 "ab", line 100 " c", line 80 "d"]))}"
   unless linesOf (page #[line 100 "  "]) == #[] do bad := bad.push "linesOf keeps a blank line"
-  -- Lines are read top to bottom and left to right, not in the order the
-  -- writer happened to paint them: a float or a footnote painted at its
-  -- source position and placed elsewhere would otherwise read as reading
-  -- order. The premise a docstring used to carry, now the measurement.
+  -- Lines are read top to bottom and left to right, never in paint order.
   unless linesOf (page #[line 80 "cd", line 100 "ab"]) == #["ab", "cd"] do
     bad := bad.push s!"linesOf is in paint order: {repr (linesOf (page #[line 80 "cd", line 100 "ab"]))}"
   let pd : ArtPage := page #[line 100 "ab", line 80 "cd"]
@@ -569,23 +473,17 @@ def selftest : IO UInt32 := do
       inkAscent := 0, descent := 0, widest := 0, text := "z" }
   unless linesOf (page #[wide, line 100 "ab"]) == #["abz"] do
     bad := bad.push s!"a line is not read left to right: {repr (linesOf (page #[wide, line 100 "ab"]))}"
-  -- Order is blind to the line partition; the line level is not. That is the
-  -- measured reason the level exists, so it is asserted here rather than told:
-  -- the reading-order level was once believed to see line breaking, until two
-  -- pages with one scalar sequence and different line partitions both passed.
+  -- Order is blind to the line partition; the line level is not.
   let split := page #[line 100 "ab", line 80 "cd"]
   let joined := page #[line 100 "abcd"]
   unless orderKey split == orderKey joined do bad := bad.push "orderKey is not blind to lines"
   unless lineKey split != lineKey joined do bad := bad.push "lineKey is blind to lines"
-  -- And the level below: census is blind to order, order is not. Every
-  -- comparison level with a declared blind spot owes such a pair, one equal
-  -- under the level and unequal under the one above (AGENTS.md § When you add).
+  -- Census is blind to order; order is not.
   let ab := page #[line 100 "ab"]
   let ba := page #[line 100 "b", { line 100 "a" with x := Dim.pt 50 }]
   unless censusKey ab == censusKey ba do bad := bad.push "censusKey is not blind to order"
   unless orderKey ab != orderKey ba do bad := bad.push "orderKey is blind to order"
-  -- --repin, every arm. A comment moved is re-pinned; anything the reference
-  -- depends on moved, and it is not.
+  -- `--repin`, every arm: only a comment-only move is re-pinned.
   let pinSrc := "% parity: a claim\n\\documentclass{article}\n"
   let pinRef := "\\documentclass{article}\n"
   let pinned : Sidecar :=
@@ -617,8 +515,7 @@ def selftest : IO UInt32 := do
   unless bodyOf "% a comment\n\\documentclass{article}\n% another\n"
       == "\\documentclass{article}\n" do
     bad := bad.push s!"bodyOf: {repr (bodyOf "% a\nx\n")}"
-  -- Inside a verbatim body a `%` line is text the engine sets: an edit there
-  -- is an edit to the document, and a repin must not clear it.
+  -- A `%` line inside a verbatim body is text, so a repin must not clear it.
   let verb := "\\documentclass{article}\n\\begin{document}\n\\begin{verbatim}\n% set as text\n\
 \\end{verbatim}\n\\end{document}\n"
   let verbEdited := "\\documentclass{article}\n\\begin{document}\n\\begin{verbatim}\n% set as other text\n\
@@ -636,8 +533,7 @@ def selftest : IO UInt32 := do
   unless firstGap "ab" "ab" == "no difference" do bad := bad.push "firstGap equal"
   unless (firstGap "ab" "abc").startsWith "the readings agree for 2" do
     bad := bad.push s!"firstGap prefix: {firstGap "ab" "abc"}"
-  -- The gate, through the path that ships: `gate` is what `main` runs after
-  -- measuring, and each case hands it a measurement and a baseline.
+  -- The gate through the path that ships: each case hands `gate` a measurement and a baseline.
   let reach (f : String) (lvl : Int) : Reached :=
     { fixture := f, level := lvl, stopped := none, declared := [], notes := #[] }
   let measured (rs : List Reached) : Measured := { reached := rs.toArray, faults := #[] }
@@ -668,8 +564,7 @@ def selftest : IO UInt32 := do
   let (c, _, result) ← gateIn at4 (measured [reach "prose" 5]) ["--check"]
   unless c == 1 && result == "stale" do
     bad := bad.push s!"gate: an unrecorded rise exited {c} with result={result}, not stale"
-  -- 5. a measurement that is not of the committed pairings is a fault in
-  -- every mode, and writes nothing.
+  -- 5. A measurement not of the committed pairings is a fault in every mode.
   let staleM : Measured :=
     { reached := #[reach "prose" 5], faults := #[("prose", .engineSourceMoved)] }
   let (c, _, result) ← gateIn at5 staleM ["--check"]
@@ -678,9 +573,7 @@ def selftest : IO UInt32 := do
   let (c, after, _) ← gateIn at4 staleM []
   unless c == 2 && after == at4 do
     bad := bad.push s!"gate: a stale pairing was recorded (exit {c}): {repr after}"
-  -- 6. a declaration that excuses nothing about the stop fails, in every
-  -- mode — the re-review's case: `pagebreak` stops at P4 and declares
-  -- `point-unit`, which excuses no level.
+  -- 6. A declaration that excuses nothing about the stop fails in every mode.
   let unexplained : Reached :=
     { fixture := "prose", level := 4, stopped := some (.lines, "p2 line 1")
       declared := [.pointUnit], notes := #[] }
@@ -699,12 +592,7 @@ def selftest : IO UInt32 := do
       declared := [.defaultMeasure], notes := #[] }
   let (c, _, _) ← gateIn (board ["# encoding: raw", "prose\t2"]) (measured [explained]) ["--check"]
   unless c == 0 do bad := bad.push s!"gate: an explained stop exited {c}"
-  -- 9. a spent lowering authorises nothing again: the fall it named is
-  -- written, a recorded rise takes the item back up, and the same fall is
-  -- then refused with the baseline untouched. The rule is the Board's
-  -- (`Scoreboard.authorises_exact`: a line authorises a change exactly when
-  -- it is a request and the change is the fall it names); this is the
-  -- tier's own path to it.
+  -- 9. A spent lowering authorises nothing again.
   let (c1, after1, _) ← gateIn lowered (measured [reach "prose" 4]) []
   let (c2, after2, _) ← gateIn after1 (measured [reach "prose" 5]) []
   unless c1 == 0 && c2 == 0 && (after2.splitOn "\nprose\t5\n").length == 2 do
@@ -714,10 +602,7 @@ def selftest : IO UInt32 := do
   unless c3 == 1 && after3 == after2 do
     bad := bad.push s!"gate: the same fall after a recorded rise was written on the strength \
 of a spent lowering (exit {c3})"
-  -- 10. The fault arms of the loop `measureAll` runs, each reached by one
-  -- staged break of a copy of the committed `prose` pairing and judged by the
-  -- arm it names. The untouched copy names none, so each arm below is its
-  -- break's alone.
+  -- 10. The fault arms of `measureAll`, each reached by one staged break.
   let editText (d : System.FilePath) (n : String) (f : String → String) : IO Unit := do
     IO.FS.writeFile (d / n) (f (← IO.FS.readFile (d / n)))
   let pinAlso (extra : String) (d : System.FilePath) : IO Unit :=
@@ -765,11 +650,7 @@ of a spent lowering (exit {c3})"
     let expect := if want.isEmpty then 1 else 0
     unless m.reached.size == expect do
       bad := bad.push s!"staged: {what} measured {m.reached.size} fixture(s), not {expect}"
-  -- 11. a fixture that fell to a stop its declaration does not excuse is
-  -- refused as a fall first: the one ratchet reads the fall against the
-  -- committed floor, and the refusal lists it before a declaration that is
-  -- only wrong. `b` falls from 2 to P0 behind `default-measure`, which
-  -- excuses P1 to P4, and `a` declares a divergence while reaching the top.
+  -- 11. A fixture that fell to a stop its declaration does not excuse is refused as a fall first.
   let top : Int := Level.all.length
   let a : Reached := { reach "a" top with declared := [.defaultMeasure] }
   let b : Reached := { fixture := "b", level := 0, stopped := some (.build, "an engine error")

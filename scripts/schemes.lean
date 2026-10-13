@@ -1,22 +1,7 @@
 /-
-The colour schemes the corpus's web pages ship, committed as numbers. Run
-from the repository root:
-
-  lake env lean --run scripts/schemes.lean              regenerate the baseline
-  lake env lean --run scripts/schemes.lean --check      gate against the committed one
-  lake env lean --run scripts/schemes.lean --selftest   break each check once
-
-Every golden fixture is elaborated in-process and judged as its web page is
-emitted (`Contrast.schemeJudge`, under the page's own stylesheet mode): each
-scheme the document asks its page to offer (`Ir.Doc.requestedSchemes` — a
-document every scheme, a deck print, its light screen and that screen's more
-contrast) is a row `<fixture>.<scheme>`, 1 where the page ships it and 0
-where a colour it cannot carry legibly there drops it (W0308 names which).
-A page that loses a scheme it shipped is a fall; one that gains it is a
-rise to record.
-
-Hermetic: committed inputs only — no browser, no network, no tool, no font
-from the host.
+The schemes tier: per golden fixture's page, 1 for each requested colour scheme it ships;
+hermetic.
+Usage: lake env lean --run scripts/schemes.lean [--check | --selftest]
 -/
 import Tests.HtmlA11y
 import scripts.Board
@@ -63,10 +48,7 @@ def schemesSelftest : IO UInt32 := tierSelftest "schemes" fun no => do
   let deck := schemeProbe "" (cls := "slides")
   no "a deck asks print, its light screen and that screen's more contrast"
     ((schemesOf deck).1 == [.print, .light, .lightMore])
-  -- A mid-grey ink on a mid-grey page: no tone of the ink reaches the
-  -- more-contrast gate on the page, nor one of the page against the ink, so
-  -- that scheme alone drops; the colours were declared for the light screen
-  -- and print, which ship them as declared.
+  -- A mid-grey ink on a mid-grey page: only the more-contrast scheme drops.
   let grey := schemeProbe "\\palette{ bg = #767676, fg = #777777 }"
   no s!"a colour no tone carries drops that scheme alone: {(schemesOf grey).2.map (·.name)}"
     (!(schemesOf grey).2.contains .lightMore && (schemesOf grey).2.contains .light &&

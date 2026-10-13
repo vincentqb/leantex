@@ -1,111 +1,7 @@
 /-
-Documented-command coverage: how much of LaTeX does this engine answer?
-
-  lake env lean --run scripts/coverage.lean                  regenerate the scoreboard (Scoreboard.tierMain)
-  lake env lean --run scripts/coverage.lean --check          measure and hold it to the committed baseline
-  lake env lean --run scripts/coverage.lean --selftest       the rung rule, the guards, and the corpus control
-  lake env lean --run scripts/coverage.lean --report         the per-item detail and the drift audit
-  lake env lean --run scripts/coverage.lean --denominator <latex2e.texi>
-                                                             rebuild testdata/coverage/latex2e-index.txt
-
-Each mode imports compiled script modules, which `scoreboard` builds before
-fan-out; run standalone, build them first (`lake build ScriptsModules`).
-
-The number is a measurement, never a list. Every rung comes from running
-the engine's own dispatch over a probe of the command (`Elab.run`), so the
-published figure cannot drift from what the engine does: a command the
-dispatch stops recognising falls to `unknown` on the next run.
-
-**The rung is read from the diagnostics whose subject names the construct.**
-That qualification is the whole of the rule, and getting it wrong is how
-the first version of this script charged its own malformed probes to the
-commands it was probing: `\begin` read `unknown` because the probe's
-environment `x` was unknown, and `\documentclass` read refused because the
-probe put it in the body. W0301/W0302/W0012 carry `ctrl:<name>`,
-`env:<name>` and `math:\<name>` subjects; the probe's own argument errors
-(E0304 "missing argument", E0312 "block-level command used inline",
-E0205) carry none. So a subjectless warning or error is the probe's
-mistake, never the command's, and a name whose every shape produced only
-those is `unprobed` — reported, not counted as a gap we owe.
-
-**A construct is probed in the places LaTeX defines it in.** Many commands
-exist only relative to a context and the engine models them only there:
-the math parser answers `\frac` and `\sum`, the tabular answers `\hline`,
-the float answers `\caption`, the list answers `\item`, a label answers
-`\ref`, a declared title answers `\maketitle`. Probing every name
-as a text-mode command in an article body is not a measurement of the
-engine; it is a measurement of one dispatch table. The place family below
-is uniform — no per-command table — and monotone: a place can only move a
-name toward recognised, so it cannot inflate the count. The control is
-`\zzfakecommandzz`, which stays `unknown` in every place, asserted in
-`--selftest`.
-
-The positive control is the repo's own golden corpus, read in both
-directions. A name the probe calls `unknown` that a fixture uses where
-elaboration never reports it unknown is a contradiction; so is a name the
-probe puts on any other rung below the cut that a fixture uses where no
-diagnostic names it at all. Every contradiction is explained or the
-selftest fails, and every explanation is falsifiable: it says which side of
-the contradiction the construct is on and carries a natural usage, which
-must read the way that side says. The context-blind place list fails the
-control; the shipped one passes it.
-
-The denominator has two halves, and neither is chosen here.
-
-*Kernel.* `testdata/coverage/latex2e-index.txt`: the command names indexed by
-the LaTeX2e unofficial reference manual (`@findex`, `@ftable` items, and
-`@node` headings that name a command), each confirmed by lualatex to be a
-control sequence LaTeX actually defines, and each classified by the meaning
-lualatex gives it. `--denominator` rebuilds it from the manual alone: it
-writes its own Lua probe and wrappers into a scratch directory and runs
-lualatex over them, so the only input outside the tree is the manual, whose
-sha256 the file records. The file carries its own row count and a body
-stamp, which catch an accidental edit; what stops a deliberate prune is the
-scoreboard, whose `<item>.rows` values may not fall without a human-written
-`# lowered:` line.
-
-*Packages.* `testdata/compat-index/<pkg>.txt`, unchanged: each file is already
-one package's documented command list sourced to a manual section, one row
-per command with its verdict. Every row is in the denominator, including a
-`divergence:<code>` row; only `impl` and `inert:` enter the numerator. The
-rule is shared with the `compat` scoreboard tier. That tier ratchets both
-numbers per package (`<p>.rows`, `<p>.impl`), while this tier ratchets their
-aggregate as `packages.rows` and `packages.counted`, so the combined
-headline cannot stale as provenance.
-
-Exclusions, all stated and all derived:
-
-  * math-mode symbol commands — the names lualatex reports as `math_given`
-    (`\mathchardef`-style: `\alpha`, `\Gamma`, `\leq`). They are a font
-    table, not a dispatch surface; counting them would inflate both halves
-    of the fraction with the same work. The classification runs under a
-    *bare* `article` and a bare `book`, no packages: under amsmath, seven
-    of them (`\sum \int \prod \coprod \oint \bigcup \bigcap`) are macros
-    instead, so a package-loaded confirmation makes the exclusion depend on
-    what the confirmation happened to load.
-  * the names `latex.ltx` defines only as an error — `\def\mho{\not@base\mho}`
-    and ten like it, whose one expansion is "Command not provided in base
-    LaTeX2e". lualatex reports them as macros, so the confirmation reads
-    each macro's body and classifies these `not_base`. They are commands a
-    package provides, and a package-provided command is counted in that
-    package's half or not at all.
-  * names the manual indexes that lualatex does not define under a bare
-    `article` or `book` — index entries for environments, file extensions,
-    counters, the `letter` class's commands, tabbing-local spellings, box
-    parameters, and commands a package provides.
-  * environments. The manual indexes them as `@findex <name> environment`;
-    this extraction keeps `\name` tokens only, so `itemize` never enters the
-    command denominator. An environment surface is the compat-index's job.
-
-The scoreboard is `testdata/scoreboard/coverage.tsv`, written and checked by
-`Scoreboard.tierMain` like every other tier, under the `pairs counted/rows`
-encoding: per kernel item (a manual chapter, or the register file),
-`<item>.counted` is the count of names at `rewritten` or above and
-`<item>.rows` the count of names in its denominator; `packages.counted` and
-`packages.rows` hold the package aggregate. Both are higher-better under
-the one ratchet, so a construct falling below the cut and a denominator row
-deleted are both regressions, and the queue ranks each item by the names it
-still owes.
+The coverage tier: per manual chapter and for the package indexes in aggregate, the documented
+commands (`.rows`) and those whose probed rung reaches `rewritten` (`.counted`).
+Usage: lake build ScriptsModules && lake env lean --run scripts/coverage.lean [--check | --selftest | --report | --denominator <latex2e.texi>]
 -/
 import LeanTex
 import scripts.Board
@@ -120,32 +16,24 @@ def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
   return code
 
--- ## The kernel denominator, as committed data
-
-/-- One kernel row: the command, the manual chapter that documents it, and
-the meaning lualatex gives it (the class the exclusion and the register
-grouping read). -/
+/-- One kernel row: the command, the manual chapter documenting it, and the meaning
+lualatex gives it. -/
 structure KRow where
   name : String
   chapter : String
   cls : String
 deriving Inhabited, BEq
 
-/-- Commands whose lualatex meaning is a math symbol — excluded, by the
-engine's own report rather than by a list kept here. -/
+/-- Commands whose lualatex meaning is a math symbol, excluded by the engine's own report.
+-/
 def mathClass : String := "math_given"
 
-/-- Commands `latex.ltx` defines only as `\not@base\<name>` — an error
-saying the command is not provided in base LaTeX2e. The confirmation's Lua
-reads each macro's body and gives these their own class, so the exclusion
-is lualatex's reading too and not a list kept here. -/
+/-- Commands `latex.ltx` defines only as the `\not@base` error, excluded by lualatex's
+reading too. -/
 def notBaseClass : String := "not_base"
 
-/-- The TeX register classes: a name that is a length, a glue or a counter
-register, not a command with a dispatch. They are counted, because a
-document that writes `\parindent` is owed an answer, but they are grouped
-into their own scoreboard item rather than scattered through the chapters
-that happen to document them: the work that answers one answers most. -/
+/-- The TeX register classes: lengths, glues and counters, counted in an item of their
+own. -/
 def registerClasses : List String := ["assign_dimen", "assign_glue", "assign_int"]
 
 def KRow.counted (r : KRow) : Bool := r.cls != mathClass && r.cls != notBaseClass
@@ -160,10 +48,8 @@ def KRow.item (r : KRow) : String :=
 def tabs (line : String) : Array String :=
   (line.splitOn "\t").toArray.map (·.trimAscii.toString)
 
-/-- A provenance line, as distinct from a data row: a `#` with no tab after
-it. `\#` is a documented command and its row begins with `#`, so "starts
-with `#`" alone silently dropped it — the row count check below is what
-caught that, and it is why the count is checked at all. -/
+/-- A provenance line, as distinct from a data row: a `#` with no tab after it, since `\#`
+is a documented command. -/
 def isComment (line : String) : Bool :=
   line.startsWith "#" && !(line.any (· == '\t'))
 
@@ -197,61 +83,28 @@ def parseDenom (text : String) : Except String Denom := do
 def denomBody (rows : Array KRow) : String :=
   rows.foldl (fun acc r => acc ++ r.name ++ "\t" ++ r.chapter ++ "\t" ++ r.cls ++ "\n") ""
 
-/-- The committed body's fingerprint: rows, bytes and Adler-32, recorded in
-the file's own header and re-derived by `--check`.
-
-A change detector for an *accidental* edit, and no more: the file stamps
-itself, so pruning rows and rewriting the two header lines passes it — a
-review did exactly that and reached 555/1249. What makes a deliberate prune
-a human act is the scoreboard: every item's `.rows` value is ratcheted, so
-a smaller denominator is a fall that regeneration refuses to write without
-a `# lowered:` line. Nothing this check prints hands a caller the value to
-paste. -/
+/-- The committed body's fingerprint (rows, bytes, Adler-32), which catches an accidental
+edit; a deliberate prune is a ratcheted fall. -/
 def bodyStamp (body : String) : String :=
   let b := body.toUTF8
   s!"{b.size} bytes, adler32 {Flate.hex16 (Flate.adler32 b).toUInt64}"
 
--- ## The rung: what this engine does with one construct
-
-/-- The coverage cut: `rewritten` and above. A named refusal is better than
-silence and is still not support — the same judgement `ink_covered_or_named`
-makes one level up. -/
+/-- The coverage cut: `rewritten` and above. -/
 def Rung.counted (r : Rung) : Bool := r.level ≥ Rung.rewritten.level
 
 def Rung.best (a b : Rung) : Rung := if a.level ≥ b.level then a else b
 
 def Rung.worse (a b : Rung) : Rung := if a.level ≤ b.level then a else b
 
-/-- The unknown-construct codes: the engine met a name nothing answers, in
-text, where any command may stand. -/
+/-- The unknown-construct codes in text, where any command may stand. -/
 def textUnknownCodes : List String := ["W0301", "W0302"]
 
-/-- The math parser's decline. It reports a name it does not know with
-W0012 (`math:\<name>`) rather than with W0301, and W0012's declared loss is
-`degraded` — so reading it by its loss would move every name in the
-`unknown` list into `degraded` (all 434, measured). The coverage number
-would not budge, because
-`degraded` is below the cut; what would be destroyed is the `unknown` list,
-which is the queue the autonomy loop takes its next item from.
-
-It is read as *no information* rather than as `unknown`, because a math
-place is additive: it exists to rescue the constructs that live in math, and
-its negative answer says only that this name is not one of them. Reading it
-as `unknown` put `\documentclass` in the gap queue — every probe document
-uses `\documentclass`, and what the math place had found was that it is not
-a math construct. -/
+/-- The math parser's decline (W0012), read as no information, since a math place only
+rescues the constructs living in math. -/
 def mathDeclinedCodes : List String := ["W0012"]
 
-/-- The tokens the probe injects as arguments. A diagnostic whose subject
-names one of them is a complaint about the probe's *own* operand — which is
-evidence that the construct read its argument, and so that the dispatch
-answered it.
-
-Both halves matter. Charging a `\zzprobe` argument's own W0301 to the
-construct discarded every definer shape, which is where `\setlength`,
-`\newenvironment` and `\newcommand` are answered; and reading an operand
-complaint as nothing at all left `\ref` in the gap queue, whose W0349 names
-the key it could not resolve — a key the probe invented. -/
+/-- The tokens the probe injects as arguments; a diagnostic naming one is a complaint
+about the probe's own operand, so the construct read its argument. -/
 def probeOperands : List String := ["zzprobe", "x", "y", "o", "1", "1-2", "empty", "section", "3"]
 
 /-- The bare name inside a namespaced subject key: `ctrl:zzprobe` and
@@ -267,9 +120,8 @@ def isOperandDiag (d : Diag) : Bool :=
   | some s => probeOperands.contains (bareSubject s)
   | none => false
 
-/-- The subject keys a diagnostic uses to name this construct. Measured,
-not read off a docstring: `ctrl:` and `env:` carry the bare name and
-`math:` carries the name with its backslash. -/
+/-- The subject keys a diagnostic names this construct by: `ctrl:` and `env:` with the
+bare name, `math:` with its backslash. -/
 def aboutKeys (name : String) : List String :=
   ["ctrl:" ++ name, "env:" ++ name, "math:\\" ++ name]
 
@@ -278,8 +130,8 @@ def isAbout (name : String) (d : Diag) : Bool :=
   | some s => (aboutKeys name).contains s
   | none => false
 
-/-- The rung one `Loss` puts a construct on, when a diagnostic carrying that
-loss names the construct. The one place the ladder reads `Loss`. -/
+/-- The rung one `Loss` puts a construct on when a diagnostic carrying that loss names the
+construct, the one place the ladder reads `Loss`. -/
 def rungOfLoss : Loss → Rung
   | .dropped => .fails
   | .pending => .degraded
@@ -288,55 +140,11 @@ def rungOfLoss : Loss → Rung
   | .config => .skipped
   | .info => .rewritten
 
-/-- One probe's rung, read from that probe's diagnostics.
-
-The order of the readings is the rule, and each arm was put there by a
-defect it answers.
-
-1. A code whose subject names the construct decides through its `Loss`,
-   except that a text-mode unknown is `unknown` and the math parser's
-   decline is no information at all.
-2. The engine's own note that it rewrote the construct to nothing
-   (`ctrl:nothing:<name>`) is `skipped`: recognised and consumed, nothing
-   modelled. Read as a rewrite, it counted `\noindent`, `\frenchspacing`
-   and the ten `\Class…`/`\Package…` log commands as translated.
-3. A subjectless warning or error is the probe's own shape, misplaced or
-   malformed, and nothing downstream of it counts: `\documentclass{\zzprobe}`
-   in a body draws E0312 for the misplacement *and* a W0301 for the argument
-   that then leaked into text, and the second is not evidence of dispatch.
-   It is read before a rewrite, so a rewrite whose document also errors
-   without a subject does not count — a bare `\vspace` draws N0100 and
-   E0320. Reading the rewrite first changed no verdict, which is why the
-   order could be fixed before it mattered.
-4. So is a complaint the place draws around any fragment — its own,
-   measured once per place against a name nothing knows (`Place.own`):
-   the dimension-operand place's W0314 for a width it cannot read. With it
-   the probe perturbed its context, and a rewrite beside it says nothing.
-   Reading it as nothing counted `\newenvironment` and `\renewenvironment`,
-   whose only counting witness was that place.
-5. Otherwise a rewrite note is positive whatever subject-carrying complaint
-   stands beside it. The complaint names an operand the probe invented or
-   the construct the rewrite produced — `\setlength{\zzprobe}{y}` draws a
-   W0301 for the placeholder, `\linespread{x}` in a body a W0340 about the
-   `\page` it became — and requiring a complaint-free rewrite dropped five
-   more names (`\fontseries`, `\linespread`, `\parbox`, `\setlength`,
-   `\vspace`) that a natural usage shows the engine implements.
-6. A document with no complaint is clean.
-7. Otherwise a complaint about one of the probe's own operands says the
-   construct read its argument, so it decides through its `Loss`.
-8. Anything else: some other part of the document objected, so the probe
-   perturbed its own context and learned nothing. The `length-argument`
-   place reports `W0314 {env:minipage-width}` for a width it cannot read,
-   which is how `\zzfakecommandzz` came to read as recognised there — the
-   control is what caught it.
-
-`native` means "nothing went wrong" — that a usage differs from a decoy's is
-a separate question, asked in `probeIn`, because answering it costs a
-second elaboration.
-
-A subjectless diagnostic is assumed to be the probe's, and only censused
-codes promise a subject, so a construct the engine answers only with a
-subjectless code reads `unprobed` — a probe owed, never a gap. -/
+/-- One probe's rung from its diagnostics, read in order: a code naming the construct
+decides by its `Loss` (a text-mode unknown is `unknown`, the math decline no information);
+a rewrite to nothing is `skipped`; a subjectless or place-own complaint means the probe
+learned nothing; a rewrite note counts; a clean document is `native`; an operand complaint
+decides by its `Loss`; anything else learned nothing. -/
 def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
   let worstOf (xs : Array Diag) : Rung :=
     xs.foldl (fun acc d => Rung.worse acc (rungOfLoss d.kind.loss)) .verified
@@ -354,18 +162,9 @@ def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
     let operands := complaints.filter isOperandDiag
     if operands.isEmpty then .unprobed else worstOf operands
 
-/-- The argument shapes every command is tried in. The denominator carries
-names and not signatures, so the family is uniform and monotone: a shape
-can only move a name toward recognised.
-
-Read it as a fixed set of *opaque argument tokens* rather than as
-signatures — a text group (`x`, `y`), a control sequence (`\zzprobe`), a
-composable base in both TeX spellings (`o`), a span (`1-2`), a keyword
-(`empty`), a counter name (`section`) — plus the definer shapes whose first
-argument is a control sequence rather than text. No token is chosen for a
-command; each is tried against every name, and `\zzfakecommandzz` stays
-`unknown` through all of them, which is what stops a token that happens to
-fit from inflating the count. -/
+/-- The argument shapes every command is tried in: a fixed set of opaque argument tokens
+and definer shapes, uniform and monotone, which `\zzfakecommandzz` stays `unknown`
+through. -/
 def shapes (name : String) : Array String :=
   #["\\" ++ name,
     "\\" ++ name ++ "{x}",
@@ -381,10 +180,8 @@ def shapes (name : String) : Array String :=
     "\\" ++ name ++ "{section}",
     "\\" ++ name ++ "{section}{3}"]
 
-/-- A place is a document context a construct can stand in, as a function
-from the spelled fragment to a whole document. The wrapper alone draws no
-diagnostic, which is what lets `rungOfProbe` attribute a subjectless note
-to the fragment. -/
+/-- A document context a construct can stand in, as a function from the spelled fragment
+to a whole document whose wrapper draws no diagnostic. -/
 structure Place where
   label : String
   doc : String → String
@@ -395,15 +192,13 @@ def wrap (body : String) : String :=
 def wrapPre (pre : String) : String :=
   "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\nx\n\\end{document}"
 
-/-- The places the original script probed: an article body and its
-preamble. Kept, because `--selftest` runs the corpus control against them
-as its negative control — a context-blind place list must fail a check that
-the shipped list passes, or the check witnesses nothing. -/
+/-- An article body and its preamble, the context-blind places the corpus control must
+fail with. -/
 def contextBlindPlaces : Array Place :=
   #[{ label := "body", doc := wrap }, { label := "preamble", doc := wrapPre }]
 
-/-- Every place, uniform across all names. Each context here is one the
-engine models a family of commands *only* inside. -/
+/-- Every place, uniform across all names, each a context the engine models a family of
+commands only inside. -/
 def places : Array Place :=
   contextBlindPlaces ++ #[
     { label := "inline-math", doc := fun s => wrap ("$ " ++ s ++ " $") },
@@ -416,18 +211,12 @@ def places : Array Place :=
     { label := "float", doc := fun s => wrap ("\\begin{figure}\nx\n" ++ s ++ "\n\\end{figure}") },
     { label := "list-item",
       doc := fun s => wrap ("\\begin{itemize}\n\\item x " ++ s ++ "\n\\end{itemize}") },
-    -- A dimension operand. The registers (`\textwidth`, `\linewidth`) are
-    -- answered here and nowhere else, which the golden corpus shows: it
-    -- writes them inside `p{0.29\linewidth}` and `{0.55\textwidth}`. Not
-    -- through `\setlength`, which accepts invented names too and would flip
-    -- every name including the control (a routed engine defect).
+    -- A dimension operand, where the registers (`\textwidth`, `\linewidth`) are answered.
     { label := "length-argument",
       doc := fun s => wrap ("\\begin{minipage}{0.5" ++ s ++ "}\nx\n\\end{minipage}") },
-    -- After a label: a reference is defined relative to one, and `\ref{x}`
-    -- with no `\label{x}` is a degraded reference, not a gap.
+    -- After a label: `\ref{x}` with no `\label{x}` is a degraded reference, not a gap.
     { label := "after-label", doc := fun s => wrap ("\\section{s}\\label{x}\n" ++ s) },
-    -- A titled document: `\maketitle` is defined relative to a declared
-    -- title, and with none it draws W0309 for the title it has nothing to set.
+    -- A titled document, which `\maketitle` is defined relative to.
     { label := "titled",
       doc := fun s => "\\documentclass{article}\n\\title{t}\n\\author{a}\n\\begin{document}\n"
         ++ s ++ "\n\\end{document}" }]
@@ -436,39 +225,16 @@ def places : Array Place :=
 one nothing can know. -/
 def decoy (name : String) : String := "zqzqzq" ++ name
 
-/-- An alphabetic name can be swapped for one nothing knows, which is how
-the effect question is asked. A control symbol cannot: `\$` has no letters
-to replace, and `\zqzq$` is a different parse rather than the same document
-under an unknown name. So the effect check runs for control words only, and
-a control symbol takes `native` on the absence of a diagnostic alone. -/
+/-- Whether a name can be swapped for a decoy: control words only, so a control symbol
+takes `native` on the absence of a diagnostic alone. -/
 def isControlWord (n : String) : Bool := !n.isEmpty && n.all Char.isAlpha
 
-/-- Does this usage differ from *the same shape in the same place* with the
-command replaced by a name nothing knows? The compat index's
-`compatRowEffect` question, asked of the kernel half.
-
-What it shows is narrower than it looks: the decoy keeps its arguments as
-text, so any construct that consumes its arguments differs from it. So
-`native` means consumed without complaint, not that something came of it;
-five names (`\setcounter`, `\addtocounter`, `\textwidth`, `\linewidth`,
-`\columnwidth`) have no witness that differs from deleting the fragment,
-and all five are implemented — their effect needs a later construct to
-show, which is the parity ladder's to witness, not this check's.
-
-The comparison is made by re-spelling the shape, not by rewriting the
-finished document: a document holds the wrapper's own `\documentclass`,
-`\begin` and `\end`, and replacing the name everywhere destroyed the
-wrapper whenever the construct under test was one of those three. That is
-how `\documentclass` came to read `unknown` while every probe document used
-it. -/
+/-- Whether a usage differs from the same shape in the same place with the command swapped
+for a decoy, which shows the construct consumed its arguments. -/
 def changesDoc (a b : String) : Bool := (Elab.run "effect" a).1 != (Elab.run "effect" b).1
 
-/-- A place's own complaints: the subjects its document draws, in every
-shape, around a name nothing knows — other than that name's own key and the
-probe's operands. What the place says around any fragment is the place's to
-answer for, and `rungOfProbe` reads it as a probe that perturbed its context.
-Measured, not listed: today it is W0314's `env:minipage-width` in the
-dimension-operand place and nothing anywhere else. -/
+/-- A place's own complaints around a name nothing knows, measured per place;
+`rungOfProbe` reads them as a probe that perturbed its context. -/
 def Place.own (p : Place) : Array String := Id.run do
   let n := decoy "place"
   let mut out : Array String := #[]
@@ -484,10 +250,8 @@ abbrev Measured := Array (Place × Array String)
 
 def measurePlaces (ps : Array Place) : Measured := ps.map fun p => (p, p.own)
 
-/-- Probe one name through the engine's real dispatch, in every shape and
-every place, and keep the best rung. A shape that draws no diagnostic has
-its effect checked on the spot; with no effect the name is recognised and
-consumed and nothing came of it, which is `skipped`. -/
+/-- Probe one name through the engine's real dispatch in every shape and place and keep
+the best rung; a clean shape with no effect is `skipped`. -/
 def probeIn (ps : Measured) (name : String) : Rung := Id.run do
   let mut best : Rung := .unprobed
   let real := shapes name
@@ -502,10 +266,8 @@ def probeIn (ps : Measured) (name : String) : Rung := Id.run do
       else best := Rung.best best r
   return best
 
-/-- One name, on its own. A run measures the places once and calls `probeIn`. -/
+/-- One name, on its own; a run measures the places once and calls `probeIn`. -/
 def probe (name : String) : Rung := probeIn (measurePlaces places) name
-
--- ## The package half, from the compat index
 
 /-- One package's documented rows and its implemented subset. -/
 structure PRow where
@@ -520,11 +282,7 @@ def packageRow (pkg : String) (rows : Array IndexRow) : PRow :=
 def readPackages : IO (Array PRow) := do
   return (← readCompatIndex).map fun (pkg, rows) => packageRow pkg rows
 
--- ## The scoreboard file
-
-/-- How many probe tasks stand at once. Each probe is pure, so the only
-contention is the allocator's: one task per name put 690 threads on a
-shared host and spent twice its user time in the kernel. -/
+/-- How many probe tasks stand at once; one task per name contends on the allocator. -/
 def probeTasks : Nat := 24
 
 /-- `f` over `xs`, in `probeTasks` contiguous chunks, each its own task; the
@@ -542,18 +300,13 @@ def parMap (xs : Array α) (f : α → β) : Array β := Id.run do
     for y in t.get do out := out.push y
   return out
 
-/-- The rung of every counted kernel row, measured once, in parallel.
-Every mode reads this array: probing 679 names in 13 places is the
-expensive part of a run, and the first version of this script paid for it
-three times in `--check` alone. -/
+/-- The rung of every counted kernel row, measured once, in parallel. -/
 def measureKernel (rows : Array KRow) : Array (KRow × Rung) :=
   let ps := measurePlaces places
   parMap (rows.filter (·.counted)) fun r => (r, probeIn ps r.name)
 
-/-- The rows a run computes, under the `pairs counted/rows` encoding: per
-kernel item, `<item>.rows` names in its denominator and `<item>.counted`
-names at `rewritten` or above. Every item appears in both, so an item whose
-count falls to zero is a regression and not a retirement. -/
+/-- The rows a run computes: per kernel item, `<item>.rows` and `<item>.counted`, every
+item in both so a count falling to zero is a regression. -/
 def computeRows (kernel : Array (KRow × Rung)) : Array Scoreboard.Row := Id.run do
   let mut items : Array (String × Nat × Nat) := #[]
   for (r, rung) in kernel do
@@ -568,10 +321,8 @@ def computeRows (kernel : Array (KRow × Rung)) : Array Scoreboard.Row := Id.run
     out := out.push { item := key ++ ".rows", value := Int.ofNat n }
   return out.qsort (fun a b => a.item < b.item)
 
-/-- The complete coverage measurement. Kernel items stay per chapter; the
-package half is one aggregate pair, while `compat` holds every package's
-pair independently. Keeping this aggregate in rows makes the combined
-headline part of `--check`, not ungated provenance. -/
+/-- The complete coverage measurement: kernel items per chapter and the package half as
+one aggregate pair. -/
 def computeCoverageRows (kernel : Array (KRow × Rung)) (pkgs : Array PRow) :
     Array Scoreboard.Row :=
   let pImpl := pkgs.foldl (fun n p => n + p.impl) 0
@@ -619,12 +370,8 @@ def totalsOf (kernel : Array (KRow × Rung)) (rows : Array KRow) (pkgs : Array P
     t := { t with pImpl := t.pImpl + p.impl, pDoc := t.pDoc + p.documented }
   return t
 
--- ## The corpus control
-
-/-- Control words a source uses, with `%` comments stripped. A name in
-verbatim or in a user definition is still collected, which is why the
-contradictions this finds are read against a declared exemption table
-rather than treated as a count. -/
+/-- Control words a source uses, `%` comments stripped; names in verbatim or user
+definitions are still collected, so contradictions are read against an exemption table. -/
 def controlWordsOf (text : String) : Array String := Id.run do
   let noComments := String.intercalate "\n" ((text.splitOn "\n").map fun l =>
     match l.splitOn "%" with
@@ -643,10 +390,8 @@ def controlWordsOf (text : String) : Array String := Id.run do
     else i := i + 1
   return out
 
-/-- A subject that names the construct, under its own key, a longer one
-(`ctrl:fontseries:b`), or the engine's rewrite-to-nothing key
-(`ctrl:nothing:noindent`). The corpus control reads it wide: a fixture whose
-elaboration names the construct anywhere is not a clean use of it. -/
+/-- A subject naming the construct under its own key, a longer one, or the
+rewrite-to-nothing key. -/
 def namesConstruct (name : String) (d : Diag) : Bool :=
   match d.subject with
   | some s =>
@@ -664,15 +409,8 @@ structure Contradiction where
   rung : Rung
 deriving Inhabited
 
-/-- The corpus control, in both directions. A fixture uses a name the probe
-puts below the cut, and the fixture's own elaboration says otherwise: for
-`unknown`, the file never reports the name unknown; for every other rung
-below the cut, no diagnostic in the file names it at all. Checking `unknown`
-alone let eight names the corpus uses cleanly read `degraded`, `skipped` or
-`unprobed` unremarked.
-
-Only names the corpus actually uses are probed, one task each, which is
-what makes this runnable inside `--selftest`. -/
+/-- The corpus control, both ways: a fixture uses a name the probe puts below the cut, and
+the fixture's own elaboration never reports it unknown, or names it not at all. -/
 def corpusContradictions (ps : Array Place) (denom : Array KRow) :
     IO (Array Contradiction) := do
   let files := (← System.FilePath.walkDir corpusDir).filter (·.toString.endsWith ".tex")
@@ -706,12 +444,11 @@ def corpusContradictions (ps : Array Place) (denom : Array KRow) :
 
 /-- Which side of a contradiction an explanation puts the construct on. -/
 inductive Side where
-  /-- The fixture's use is not evidence — a region elaboration never reaches,
-  or the same spelling meaning something else — and the construct really is
-  where the probe put it. -/
+  /-- The fixture's use is not evidence, and the construct really is where the probe put
+  it. -/
   | corpus
-  /-- The engine answers the construct and no fragment the probe writes can
-  spell it: a known false reading below the cut, printed by `--report`. -/
+  /-- The engine answers the construct and no fragment the probe writes can spell it: a
+  known false reading below the cut. -/
   | probe
 deriving BEq, Inhabited
 
@@ -727,9 +464,8 @@ structure Usage where
 
 def Usage.doc (u : Usage) : String := if u.preamble then wrapPre u.fragment else wrap u.fragment
 
-/-- Does the engine answer the construct in this usage, at the level a
-contradiction on `rung` asks about? For `unknown`, nothing reports it
-unknown; for any other rung, nothing names it at all. -/
+/-- Whether the engine answers the construct in this usage at the level a contradiction on
+`rung` asks about. -/
 def answeredIn (name : String) (rung : Rung) (u : Usage) : Bool :=
   let ds := (Elab.run "usage" u.doc).2
   if rung == .unknown then !ds.any (reportsUnknown name) else !ds.any (namesConstruct name)
@@ -740,17 +476,8 @@ structure Explanation where
   usage : Usage
   why : String
 
-/-- The contradictions the probe is not wrong about, and the ones it is,
-each with its side and a natural usage that must read the way that side
-says: a `corpus` row's usage must *not* be answered — the construct really
-is a gap — and a `probe` row's usage must be. The first draft of this table
-had no falsifier, and it filed `\fill` and `\parskip` under `corpus` while
-`\vspace{\fill}` and `\setlength{\parskip}{7pt}` both rewrite cleanly.
-
-A row must also still be a contradiction: if the corpus stops using the
-name, or the probe starts answering it, the row is stale and `--selftest`
-fails. Failing in every direction is what keeps this from becoming a
-baseline that blesses whatever the script says today. -/
+/-- The corpus contradictions explained, each with its side and a natural usage that must
+read the way that side says; a stale row fails `--selftest`. -/
 def witnessExplained : Array Explanation := #[
   { name := "accent", side := .corpus, usage := ⟨false, "\\accent127 a"⟩,
     why := "a palette role named in a theme block, not the kernel's \\accent" },
@@ -793,16 +520,11 @@ counting witness was the dimension-operand place, whose own complaint it stood b
   { name := "vbox", side := .corpus, usage := ⟨false, "\\vbox{x}"⟩,
     why := "inside a \\renewcommand{\\@maketitle} body elaboration never reaches" }]
 
-/-- Known false readings the corpus cannot witness, because no fixture uses
-the construct: found by spot checks in natural usage. Each row fails in both
-directions like the table above — the usage must stay answered and the probe
-must still read the name below the cut. -/
+/-- Known false readings no fixture witnesses, held both ways like `witnessExplained`. -/
 def falseQueue : Array Explanation := #[]
 
 def explained (name : String) : Option Explanation :=
   witnessExplained.find? (·.name == name)
-
--- ## Modes
 
 def loadKernel : IO Denom := do
   unless (← System.FilePath.pathExists denomPath) do
@@ -811,12 +533,8 @@ def loadKernel : IO Denom := do
   | .error e => throw (IO.userError ("coverage: " ++ e))
   | .ok d => return d
 
-/-- The denominator's own header, checked before the file is trusted: the
-row count against the figure it states, and the body against its stamp.
-This catches an accidental edit and nothing more — the file stamps itself —
-so no message here prints the value a caller could paste back: a
-regeneration from the manual is the only way to a new stamp, and a smaller
-denominator is the ratchet's to refuse, through every item's `.rows`. -/
+/-- The denominator's header checked before the file is trusted: its row count and body
+stamp, with no message printing a value to paste back. -/
 def checkDenom (d : Denom) : Array String := Id.run do
   let mut bad : Array String := #[]
   match provValue d.provenance "rows" with
@@ -835,8 +553,8 @@ def checkDenom (d : Denom) : Array String := Id.run do
   return bad.map (fun m => s!"{denomPath}: {m} — never hand-edit it; rebuild it from the \
 manual with --denominator <latex2e.texi>")
 
-/-- The tier's provenance. The package aggregate is also a scoreboard pair,
-so these readable totals cannot stale independently of `--check`. -/
+/-- The tier's provenance; the package aggregate is also a scoreboard pair, so these
+totals cannot go stale apart from `--check`. -/
 def provenanceLines (d : Denom) (t : Totals) : Array String :=
   let bucketLine := String.intercalate ", " (Rung.all.map fun r =>
     let n := t.bucket r
@@ -855,10 +573,8 @@ the compat tier: {t.pImpl} implemented of {t.pDoc} documented (testdata/compat-i
 or `inert:`).",
     s!"# total: {t.num}/{t.den} = {pct t.num t.den}"]
 
-/-- One measurement for the tier: the denominator's header checked, every
-counted kernel name probed. A header that fails its own check measures
-nothing, which the shared `tierMain` reports as a fault after the reasons
-printed here. -/
+/-- One measurement for the tier: the denominator's header checked and every counted
+kernel name probed. -/
 def measureTier : IO (Array String × Array Scoreboard.Row) := do
   let d ← loadKernel
   let bad := checkDenom d
@@ -937,24 +653,12 @@ fragment spells them): {known.size}"
     for r in idx do
         let ann := r.verdict
         let call := r.call
-        -- Only a row that *is* one control word is comparable. A row naming
-        -- a whole environment, several commands, a starred form or a
-        -- delimited call has no single name to probe — and admitting
-        -- `\lstinline|x|` and `\ProcessKeyvalOptions*` as names is what
-        -- produced four of the seven "disagreements" this audit first
-        -- reported.
+        -- Only a row that is one control word is comparable.
         if call.startsWith "\\" && isControlWord (call.drop 1).toString then
           let name := (call.drop 1).toString
           comparable := comparable + 1
           let rung := pr name
-          -- The vocabularies are lined up before a difference means
-          -- anything. `refuse:W0301` *is* unknown (W0301 is the
-          -- unknown-command code). Every other annotation — `impl`,
-          -- `inert:`, and a refusal naming any other code — asserts that the
-          -- dispatch recognised the command, which is the one question both
-          -- vocabularies can answer. Skipping this alignment made 37 rows
-          -- read as disagreements and every one was this script's own
-          -- vocabulary.
+          -- `refuse:W0301` is unknown; every other annotation asserts recognition.
           let wantUnknown :=
             match r.refusalCode? with
             | some code => textUnknownCodes.contains code
@@ -968,10 +672,7 @@ cannot spell it"
             disagree := disagree + 1
             IO.println s!"  {pkg}\t{call}\tindex:{ann}\tmeasured:{rung.word}"
           else if r.implemented && !rung.counted then
-            -- Recognition agrees; the two halves count it differently. An
-            -- `inert:` row and the `skipped` rung are the same judgement —
-            -- recognised, no ink — made by a reviewer and by the engine, and
-            -- the package half counts it while the kernel half does not.
+            -- Recognition agrees; `inert:` and `skipped` are one judgement, counted differently.
             counting := counting.push s!"  {pkg}\t{call}\tindex:{ann}\tmeasured:{rung.word}"
   IO.println s!"-- {disagree} recognition disagreement(s) over {comparable} comparable \
 row(s), one control word each, of {t.pDoc} documented"
@@ -980,13 +681,8 @@ row(s), one control word each, of {t.pDoc} documented"
 would not"
   return 0
 
--- ## Rebuilding the denominator
-
-/-- Texinfo writes `@`, `{` and `}` as `@@`, `@{` and `@}`, so a manual line
-documenting `\@`, `\{` or `\}` reads `\@@`, `\@{` or `\@}`. Reading the
-escape as the character it stands for is how those three enter the
-denominator at all; without it `\@` — the second-ranked blocker over the
-public corpus — was never harvested. -/
+/-- Texinfo's `@@`, `@{` and `@}` read as the character they stand for, so `\@`, `\{` and
+`\}` enter the denominator. -/
 def texinfoChar? (c : Char) : Option Char :=
   if c == '@' || c == '{' || c == '}' then some c else none
 
@@ -1042,13 +738,8 @@ def plainTitle (s : String) : String := Id.run do
       i := i + 1
   return out.trimAscii.toString
 
-/-- The Lua the confirmation runs: lualatex's own answer to "is this name
-defined, and what is it?", asked through `token.is_defined` and
-`token.create(n).cmdname`, and for a macro whose body begins `\not@base` —
-`latex.ltx`'s "not provided in base LaTeX2e" error — the class
-`notBaseClass` names, read from `token.get_macro`. Written by this mode
-rather than kept beside the tree, so the only input a regeneration needs is
-the manual. -/
+/-- The Lua the confirmation runs: lualatex's own `token.is_defined` and `cmdname` per
+name, and `notBaseClass` for a macro whose body begins `\not@base`. -/
 def probeLua (outFile : String) : String :=
   String.intercalate "\n" [
     "local out = io.open(\"" ++ outFile ++ "\", \"w\")",
@@ -1069,9 +760,8 @@ def probeLua (outFile : String) : String :=
     "out:close()",
     ""]
 
-/-- The wrapper: a *bare* class, no packages. Under amsmath seven math
-symbols are macros rather than symbol-table entries, so a package-loaded
-confirmation makes the one stated exclusion depend on what it loaded. -/
+/-- The confirmation wrapper: a bare class with no packages, since amsmath turns seven
+math symbols into macros. -/
 def probeTex (cls luaFile : String) : String :=
   "\\documentclass{" ++ cls ++ "}\n\\begin{document}\n\\directlua{dofile(\"" ++ luaFile ++
   "\")}\nx\n\\end{document}\n"
@@ -1099,10 +789,8 @@ def confirmUnder (dir cls : String) (cands : Array String) :
     if f[1]! == "true" then out := out.push (f[0]!, f[2]!)
   return out
 
-/-- Rebuild the kernel denominator from the reference manual. The manual is
-the one input outside the tree; the probe inputs are written here and run
-here, so "never hand-edit" is enforceable and the file is reproducible from
-a sha256. Never part of a gate: `--check` reads the committed file only. -/
+/-- Rebuild the kernel denominator from the reference manual alone, its probe inputs
+written and run here; never part of a gate. -/
 def denominator (texi : String) : IO UInt32 := do
   let src ← IO.FS.readFile texi
   let mut chapter := "About this document"
@@ -1172,8 +860,6 @@ def denominator (texi : String) : IO UInt32 := do
 of {cands.size} indexed"
   return 0
 
--- ## Selftest
-
 def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
   -- The rung rule, on diagnostics the engine really produces.
   let measured := measurePlaces places
@@ -1193,12 +879,7 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
   expect "a math construct is answered" ((pr "frac").counted)
   expect "a reference is answered after its label" ((pr "ref").counted)
   expect "a title is answered where one is declared" ((pr "maketitle").counted)
-  -- Every probe document uses these three, and the first version of this
-  -- script read `\begin` as unknown and `\documentclass`/`\end` as refused
-  -- because of it. None of the three can be spelled as a fragment — a class
-  -- name is a document's identity, `\begin`/`\end` are halves of a delimiter
-  -- pair — so `unprobed` is the honest reading, and the point is that none
-  -- of them is a gap charged to the engine.
+  -- `\begin`, `\end` and `\documentclass` cannot be fragments, so `unprobed`, not a gap.
   expect s!"documentclass is unprobed, not a gap (got {(pr "documentclass").word})"
     (pr "documentclass" == .unprobed)
   expect s!"end is unprobed, not a gap (got {(pr "end").word})" (pr "end" == .unprobed)
@@ -1228,9 +909,7 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
   expect "a rewrite onto nothing is skipped, not translated"
     (rungOfProbe "noindent" #[] (Elab.run "p" (wrap "\\noindent")).2 == .skipped
       && pr "noindent" == .skipped && pr "PackageWarning" == .skipped)
-  -- The silence guard's W0387 once carried no subject, so its two log
-  -- commands read as the probe's own mistake; with `ctrl:<name>` they are a
-  -- `config` answer about the construct.
+  -- The silence guard's W0387 carries `ctrl:<name>`, so its two log commands read `skipped`.
   expect "a construct the silence guard names reads skipped"
     (pr "ClassError" == .skipped && pr "PackageError" == .skipped)
   expect "a rewrite whose document also errors without a subject does not count"
@@ -1242,7 +921,6 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
     (rungOfProbe "zzfakecommandzz" #[]
       (Elab.run "p" (wrap "\\begin{minipage}{0.5\\zzfakecommandzz}\nx\n\\end{minipage}")).2
       == .unprobed)
-  -- The ladder's arithmetic.
   expect "best keeps the higher rung" (Rung.best .unknown .native == .native)
   expect "worse keeps the lower rung" (Rung.worse .native .skipped == .skipped)
   expect "a measurement beats no measurement" (Rung.best .unprobed .unknown == .unknown)
@@ -1294,8 +972,7 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
     { provenance := #[], rows := rs, retired := #[], lowered := #[],
       encoding := some (.pairs "counted" "rows") }
   expect "the rows are a valid baseline" ((Scoreboard.validate (asTsv rows)).isEmpty)
-  -- A pruned denominator is a fall under the one ratchet — a human act, not
-  -- a rewrite of the header.
+  -- A pruned denominator is a fall under the one ratchet.
   let pruned := computeCoverageRows (tiny.filter (·.1.name != "zz")) #[]
   let d := Scoreboard.ratchet (asTsv rows) (asTsv pruned)
   expect "a smaller denominator is a fall the ratchet reports"
@@ -1350,8 +1027,7 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
   expect "a plain title is unchanged" (plainTitle "Math formulas" == "Math formulas")
   expect "tenths rounds" (tenths 1 3 == 333 && tenths 2 3 == 667 && tenths 1 2 == 500)
   expect "pct renders" (pct 605 1314 == "46.0%")
-  -- The positive control, both directions: the corpus is evidence from the
-  -- artifact side, and a context-blind place list must fail it.
+  -- The positive control, both ways: a context-blind place list must fail it.
   match (← IO.FS.readFile denomPath |>.toBaseIO) with
   | .error _ => expect "the denominator is readable for the corpus control" false
   | .ok text =>

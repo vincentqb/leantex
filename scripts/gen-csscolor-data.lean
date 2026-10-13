@@ -1,13 +1,7 @@
 /-
-Regenerate LeanTex/Core/CssColorData.lean from the vendored CSS named-colour
-table, testdata/vendor/color-name/index.js. Run from the repository root:
-
-  lake env lean --run scripts/gen-csscolor-data.lean [--check]
-
-Each `"name": [r, g, b],` line of the table becomes one row, sorted by name;
-any other non-blank line between the braces is refused, so a changed upstream
-spelling fails here instead of dropping a colour. `--check` compares the
-generated text with the committed module and exits 1 on any difference.
+Regenerate LeanTex/Core/CssColorData.lean from the vendored CSS named-colour table
+(testdata/vendor/color-name/index.js), refusing a line of any other shape.
+Usage: lake env lean --run scripts/gen-csscolor-data.lean [--check]
 -/
 
 def die (msg : String) : IO α := do

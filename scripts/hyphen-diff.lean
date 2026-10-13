@@ -1,16 +1,7 @@
 /-
-Differential test: leantex hyphenation vs real TeX on a word list. Run with:
-
-  lake env lean --run scripts/hyphen-diff.lean [wordlist] [--lang en|fr]
-
-The oracle is luatex loading THE SAME pattern set the engine embeds
-(hyph-en-us.tex / ushyphmax), with matching hyphenmins. Note that plain
-`lualatex` would be the wrong oracle: TeX Live's language.dat maps the
-`english` language to hyphen.tex (Knuth's frozen set), a strict subset, so
-it legitimately reports fewer break candidates.
-
-`\showhyphens` lists every admissible break, not one chosen rendering.
-Our side calls `Hyphen.hyphenate` in-process; no leantex binary needed.
+Differential test of leantex hyphenation against luatex loading the same patterns
+(hyph-en-us.tex, ushyphmax), since lualatex's `english` is Knuth's smaller hyphen.tex.
+Usage: lake env lean --run scripts/hyphen-diff.lean [wordlist] [--lang en|fr]
 -/
 import LeanTex
 
@@ -37,10 +28,8 @@ def readWordList (path : System.FilePath) : IO (Array String) := do
     let w := line.trimAscii.toString
     if w.isEmpty || w.startsWith "#" then none else some w).toArray
 
-/-- The committed sample (`testdata/oracles/hyphen-words.txt`) and the
-lowercase-alphabetic words of length ≥ 6 in the corpus documents, sorted
-and deduplicated: data and fixtures, never a rules document, so editing
-one cannot shrink the sample. -/
+/-- The committed sample (`testdata/oracles/hyphen-words.txt`) and the corpus documents'
+lowercase alphabetic words of six letters or more, sorted and deduplicated. -/
 def defaultWords : IO (Array String) := do
   let mut text := ""
   for entry in (← System.FilePath.readDir "testdata/corpus").qsort (·.fileName < ·.fileName) do

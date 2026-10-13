@@ -6,38 +6,27 @@ import LeanTex.Cli.AtomicFile
 import LeanTex.Core.Flate
 import LeanTex.Core.SlotRecord
 
-/-! The image plan cache: an included image's plan is the pure planner's
-answer for its bytes and parameters, so it is kept under them and under the
-engine that planned it, beside the font and boundary caches. -/
+/-! The image plan cache, keyed by an image's bytes, its plan parameters and the planning
+engine. -/
 
 namespace LeanTex.Cli.PlanCache
 
 open LeanTex.Core
 
-/-- Where a plan is filed: by the *content* (so a re-exported file under the
-same name re-plans and an unchanged one never does) and by the plan
-parameters (every non-source input to `Image.plan`, so two plans that could
-differ never share a slot — `planParams_serialize_inj`). No document or
-output path enters it. -/
+/-- Where a plan is filed: by the source's content and every plan parameter, never by a
+path. -/
 public def cachePath (dir : System.FilePath) (params : Image.PlanParams) (bytes : ByteArray) :
     System.FilePath :=
   dir / "imgs" / s!"{Flate.contentKey bytes}-{params.key}.img"
 
-/-- **The key a plan is stored under**: the format, the source's content key,
-the plan parameters and the engine that planned it
-(`SlotRecord.lookup_exact`): an upgraded planner re-plans, and
-`Image.decodeBin`'s magic orphans a format change. -/
+/-- The key a plan is stored under: format, content key, plan parameters and planning
+engine. -/
 public def slotKey (engine : String) (params : Image.PlanParams) (bytes : ByteArray) :
     Array String :=
   #["image-plan-v1", Flate.contentKey bytes, params.key, engine]
 
-/-- Plan through the cache. The header is probed first; only a plan the
-planner itself says does real work — an alpha PNG's inflate, split, deflate
-(`Image.Plan.recodes`, `recodes_iff`) — is worth a disk read, and everything
-else plans directly from the probe. The cached value is the pure plan's own
-output (`Image.encodeBin`), so a hit equals a recomputation —
-`decodeBin_encodeBin_id`, the transparency statement — and only a slot this
-engine wrote answers. Returns whether this was a hit, for the phase line. -/
+/-- Plan through the cache, read only for a plan that recodes; also returns whether it was
+a hit. -/
 public def decodeCached (cache : Option Engine.Cache) (params : Image.PlanParams)
     (bytes : ByteArray) : IO (Except String Image.Plan × Bool) := do
   let src ← match Image.probe bytes with

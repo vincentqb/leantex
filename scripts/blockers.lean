@@ -1,88 +1,7 @@
 /-
-The blocker ranking: which missing construct holds back the most documents?
-
-  lake env lean --run scripts/blockers.lean --rank                  the declared public corpus,
-                                                                   into testdata/coverage/blockers.tsv
-  lake env lean --run scripts/blockers.lean --rank <list> <out>     any list, into <out>, which
-                                                                   may not lie in a leantex checkout
-  lake env lean --run scripts/blockers.lean --screen <dir> <out>    the lualatex-buildable list, the
-                                                                   same rule for <out>
-  lake env lean --run scripts/blockers.lean --selftest              the ranking arithmetic, and the
-                                                                   confinement rule end to end
-
-A report, never a gate. `--screen` needs lualatex and a corpus on the host;
-`--rank` needs the TeX distribution the manifest names. Neither runs in
-`lake test`.
-
-*Confinement is structural.* The tool reads documents, and two rules keep
-what it reads out of the tree. Each is a function the writer cannot route
-around, and `--selftest` breaks both through the path that ships.
-
-1. *Only the public corpus reaches the tree.* `testdata/coverage/blockers.tsv`
-   is ranked from `testdata/coverage/public-corpus.txt` alone: paths relative to
-   the TeX distribution's root, each resolved with symlinks followed and
-   refused if it lands outside that root. Any other list goes to an output
-   the caller names, and `Dest.of?` refuses one inside a leantex checkout —
-   any worktree, any clone, whatever the working directory. `Dest.write`
-   then writes into the directory it checked, a new file renamed onto the
-   output's name, so a symlink or a hard link planted at the name — or at
-   `<out>.neither` — is replaced rather than written through. So a
-   private corpus's composition — which public classes it loads, whose
-   commands it reaches for — cannot reach the tree either, not only the names
-   it chose itself.
-2. *Only a public definer is named.* A construct is written by name only
-   when a TeX primitive, `latex.ltx`, or a class or package file inside the
-   distribution defines it; a class or package is published only when the
-   file the distribution holds has the very stem the document loaded it by
-   (`PublicFile`), so a symlink to a file of another name publishes nothing.
-   A load by path, a file found through TEXINPUTS, TEXMFHOME or the
-   working directory, and every name the definer scan cannot attribute fold
-   into aggregate rows whose owners — `document`, `nonpublic`,
-   `unattributed` — carry no payload at all: there is nothing a document
-   chose that could be written through them.
-
-Everything the tree's table depends on is asked of kpsewhich in an
-environment emptied but for `PATH` (`emptiedEnv`) — the root, and every
-class and package the public corpus loads — so no shell setting,
-`TEXMFDIST_kpsewhich` included, makes a tree public or moves an
-attribution; when kpsewhich cannot answer, nothing is public and
-everything folds. Each manifest entry carries the sha256 of its bytes, so a
-kpsewhich that a `texmf.cnf` beside it points elsewhere can substitute no
-document, and by the stem rule it can substitute no name.
-
-*The denominator is what lualatex builds, counted once.* A document lualatex
-cannot compile with `-halt-on-error` says nothing about this engine, so
-`--screen` drops it; the manifest lists what survived. Documents are keyed by
-content, so one document reached by two paths counts once — the corpus this
-table was first ranked over held 45 distinct documents under 50 paths, three
-of them two or three times each, and their constructs led the ranking on
-that alone.
-
-*A kill is not a verdict, and neither is a tool that never ran.* `--screen`
-bounds its pool; a run `timeout` killed, and one where `timeout` could not
-start lualatex at all (125/126/127, or a copy that failed), go to a third
-list counted as neither buildable nor unbuildable. The tree's rule for
-cached tool answers, applied to a screen: an attempt the tool never finished
-is a fact about the machine, not about the document.
-
-*What a blocker is, and how that differs from P0.* The constructs the engine
-does not know: the subjects of W0301 (unknown command) and W0302 (unknown
-environment), read from the structured `Diag.subject` rather than from
-message text, and kept with the kind that namespaces them — `\em` the
-command and `em` the environment are two constructs, not one. Losses the
-engine *names* are deliberately not blockers here: a refusal with a code is a
-decision on the record, and the ranking is for the names nothing answers.
-So "blocked" is narrower than P0; the gap is published as a number beside
-the ranking.
-
-*How they are ranked* (flashtex's two numbers, for the same reason):
-
-  * `sole` — documents this construct alone blocks.
-  * `share` — Σ 1/|blockers| over the documents it blocks, in thousandths.
-
-*Attribution.* The precedence is primitive → the document's own macro → a
-class the document loads → the LaTeX kernel → a package the document loads →
-unattributed.
+The blocker ranking: the unknown constructs holding back the most documents; only the public
+corpus's table reaches the tree, naming public definers only.
+Usage: lake env lean --run scripts/blockers.lean [--rank [<list> <out>] | --screen <dir> <out> | --selftest]
 -/
 import LeanTex
 import scripts.Board
@@ -110,24 +29,13 @@ def orElse (x : IO α) (d : α) : IO α := do
 def realPath? (p : String) : IO (Option String) :=
   orElse (do return some (← IO.FS.realPath p).toString) none
 
--- ## The public tree
-
-/-- The environment a kpsewhich query runs in whenever its answer decides
-what is public or what the committed table says: empty but for `PATH`.
-kpathsea reads more variables than a list here could name — a
-`TEXMFDIST_kpsewhich` before `TEXMFDIST`, for every variable and every
-program name — so the shell's settings are not unset one by one; none of
-them is passed at all. -/
+/-- The environment for any kpsewhich query that decides what is public: empty but for
+`PATH`, so no shell setting moves an answer. -/
 def emptiedEnv : IO (Array (String × Option String)) := do
   return #[("PATH", ← IO.getEnv "PATH")]
 
-/-- The distribution's roots, resolved and each ending in `/`: TEXMFDIST, and
-TEXMFSYSDIST where a host sets one, asked in `emptiedEnv`. Empty when
-kpsewhich cannot answer — and then nothing is public, so every construct
-folds and nothing can be ranked into the tree: the rule fails closed. A
-kpsewhich earlier on `PATH` with a `texmf.cnf` beside it still moves the
-answer; what stands between that and the tree is the manifest's pins and
-`PublicFile.of?`'s name rule, not this query. -/
+/-- The distribution's roots (TEXMFDIST, and TEXMFSYSDIST where set), each ending in `/`,
+asked in `emptiedEnv`; empty when kpsewhich cannot answer, so nothing is public. -/
 def publicRoots : IO (Array String) := do
   let env ← emptiedEnv
   let mut roots : Array String := #[]
@@ -145,13 +53,9 @@ def publicRoots : IO (Array String) := do
 def underRoots (roots : Array String) (resolved : String) : Bool :=
   roots.any (resolved.startsWith ·)
 
-/-- A file the public tree holds, named by its own stem. `PublicFile.of?` is
-the one constructor, and it runs only after the resolved path is checked
-against the roots and its stem against the load argument that reached it:
-this is the only payload a published owner can carry. The stem rule is what
-keeps a file's name out of the table unless a document wrote it first — a
-class a document loads as `article` that resolves, through a symlink, to a
-file of another name is not public, whatever tree it sits in. -/
+/-- A file the public tree holds, named by its own stem: built only by `PublicFile.of?`,
+after its resolved path is checked against the roots and its stem against the load
+argument. -/
 structure PublicFile where
   private mk ::
   stem : String
@@ -164,15 +68,14 @@ def PublicFile.of? (roots : Array String) (resolved load : String) : Option Publ
     let stem := String.intercalate "." (base.splitOn ".").dropLast
     if stem.isEmpty || stem != load then none else some ⟨stem⟩
 
-/-- A load argument that may be looked up by name at all. A load by path is a
-document's own file by construction, whatever it resolves to. -/
+/-- A load argument that may be looked up by name; a load by path is a document's own
+file. -/
 def loadName? (n : String) : Option String :=
   if n.isEmpty || n.any (fun c => c == '/' || c == '\\' || c.isWhitespace || c.toNat < 32)
   then none else some n
 
-/-- Where a construct comes from. The public owners name something anyone can
-read; the others carry no payload, so the aggregate row one folds into is
-spelled by `Owner.render` alone — a closed function of the constructor. -/
+/-- Where a construct comes from; the non-public owners carry no payload, so a folded row
+is spelled by `Owner.render` alone. -/
 inductive Owner where
   | primitive
   | kernel
@@ -182,9 +85,8 @@ inductive Owner where
   | pkg (file : PublicFile)
   /-- The document defines it. -/
   | document
-  /-- A class or package the document loads defines it, and that file is not
-  the distribution's: a load by path, TEXINPUTS, TEXMFHOME, the working
-  directory. -/
+  /-- A non-distribution class or package the document loads defines it: a load by path,
+  TEXINPUTS, TEXMFHOME, the working directory. -/
   | nonpublic
   /-- Nothing the scan read defines it. -/
   | unattributed
@@ -203,30 +105,22 @@ def Owner.isPublic : Owner → Bool
   | .primitive | .kernel | .cls _ | .pkg _ => true
   | .document | .nonpublic | .unattributed => false
 
-/-- Does this `lakefile.toml` declare the package `leantex`? Read as a key and
-a value, so spacing and quoting do not decide it. -/
+/-- Whether this `lakefile.toml` declares the package `leantex`, read as a key and a
+value. -/
 def namesLeantex (lakefile : String) : Bool :=
   (lakefile.splitOn "\n").any fun l =>
     let t := String.ofList (l.toList.filter (!·.isWhitespace))
     t == "name=\"leantex\"" || t == "name='leantex'"
 
-/-- An output the caller named, placed: the directory it lands in, resolved
-and checked to lie outside every leantex checkout, and the name it takes
-there. `Dest.of?` is the one constructor, so a write cannot skip the check,
-and `Dest.write` writes into the directory that was checked — never through
-whatever the name itself points at. -/
+/-- An output the caller named, placed in a directory checked to lie outside every leantex
+checkout; `Dest.of?` is its one constructor. -/
 structure Dest where
   private mk ::
   dir : String
   name : String
 
-/-- Where an output may be written: anywhere but a leantex checkout. The walk
-goes up from the output's resolved directory, and a directory whose
-`lakefile.toml` names the package `leantex` is a checkout — every worktree
-and every clone, whatever the working directory is. A directory that does
-not exist is refused too, since it cannot be resolved to say where it
-lies. The name is not resolved: a link there is replaced by the write, so
-where it points never matters. -/
+/-- Where an output may be written: anywhere but a leantex checkout, found by walking up
+from its resolved directory, which must exist; the name itself is not resolved. -/
 def Dest.of? (out : String) : IO (Except String Dest) := do
   let fp := System.FilePath.mk out
   let some name := fp.fileName
@@ -246,12 +140,8 @@ def Dest.of? (out : String) : IO (Except String Dest) := do
     | none => break
   return .ok ⟨dir, name⟩
 
-/-- Write an output, or a sibling of it (`suffix`, as `.neither`), into the
-checked directory. The bytes go to a file created there new — `writeNew`
-fails rather than open a name that exists — and that file is renamed onto
-the name. A rename replaces a symlink at the name instead of following it,
-and leaves a hard link's other names on the old inode, so no link planted
-at the name carries the write out of the checked directory. -/
+/-- Write an output, or a sibling of it (`suffix`), as a new file in the checked directory
+renamed onto the name, so no planted link carries the write elsewhere. -/
 def Dest.write (d : Dest) (suffix content : String) : IO (Except String Unit) := do
   let target := System.FilePath.mk d.dir / (d.name ++ suffix)
   let tmp := System.FilePath.mk d.dir /
@@ -269,10 +159,8 @@ def Dest.write (d : Dest) (suffix content : String) : IO (Except String Unit) :=
     let _ ← (IO.FS.removeFile tmp).toBaseIO
     return .error s!"{target}: not written ({e})"
 
--- ## Screening: only what lualatex builds
-
-/-- What one screening run learned. A kill and a tool that never ran are
-their own answers: neither says anything about the document. -/
+/-- What one screening run learned; a kill and a tool that never ran say nothing about the
+document. -/
 inductive Screened where
   | builds
   | fails
@@ -283,17 +171,15 @@ deriving Inhabited, BEq
 def Screened.word : Screened → String
   | .builds => "builds" | .fails => "fails" | .killed => "killed" | .notRun => "not-run"
 
-/-- `timeout`'s exit, read. 124 is its "I killed it" and 137 a SIGKILL;
-125, 126 and 127 are `timeout` itself failing, the command not executable
-and the command not found — the tool never ran. -/
+/-- `timeout`'s exit, read: 124 and 137 are kills, and 125–127 a tool that never ran. -/
 def Screened.ofExit (code : UInt32) : Screened :=
   if code == 0 then .builds
   else if code == 124 || code == 137 then .killed
   else if code == 125 || code == 126 || code == 127 then .notRun
   else .fails
 
-/-- Run lualatex on one file in a scratch directory. Nothing is read back but
-exit codes, so a document's text never enters this process. -/
+/-- Run lualatex on one file in a scratch directory, reading back only exit codes, so a
+document's text never enters this process. -/
 def buildsWithLualatex (path : String) : IO Screened := do
   let tmp ← IO.Process.output { cmd := "mktemp", args := #["-d"] }
   let dir := tmp.stdout.trimAscii.toString
@@ -309,14 +195,12 @@ def buildsWithLualatex (path : String) : IO Screened := do
   finally
     let _ ← IO.Process.output { cmd := "rm", args := #["-r", dir] }
 
-/-- How many lualatex runs stand at once. Bounded, so a kill means the
-document really took a minute rather than that the host was busy. -/
+/-- How many lualatex runs stand at once, bounded so a kill means the document took a
+minute. -/
 def poolSize : Nat := 16
 
-/-- Screen a directory of `.tex` files. The buildable list goes to `out` and
-everything that is neither verdict to `out.neither`, one `<reason>\t<path>`
-per line. `out` holds absolute corpus paths, so it may not lie in a
-checkout, and both files are written through `Dest`. -/
+/-- Screen a directory of `.tex` files: the buildable list to `out`, each one with neither
+verdict to `out.neither`, both through `Dest`. -/
 def screen (dir out : String) : IO UInt32 := do
   let dest ← match ← Dest.of? out with
     | .ok d => pure d
@@ -349,15 +233,12 @@ def screen (dir out : String) : IO UInt32 := do
 (killed or never run, in {out}.neither)"
   return 0
 
--- ## The blockers of one document
-
 /-- Strip the namespace from a subject key: `ctrl:<name>`, `env:<name>`. -/
 def constructOf (subject : String) : Option (String × String) :=
   match subject.splitOn ":" with
   | kind :: rest =>
     let name := String.intercalate ":" rest
-    -- A subject carrying a control character is a line break or a
-    -- mis-spelled key, not a construct a reader could implement.
+    -- A subject carrying a control character is no construct.
     if name.isEmpty || name.any (fun c => Char.toNat c < 32) then none else some (kind, name)
   | [] => none
 
@@ -372,12 +253,10 @@ def blockersIn (ds : Array Diag) : Array (String × String) := Id.run do
         if !out.contains (kind, name) then out := out.push (kind, name)
   return out.qsort (fun a b => a.1 ++ a.2 < b.1 ++ b.2)
 
-/-- Errors with no unknown name: unblocked by this table's rule and still
-short of P0. -/
+/-- Whether an elaboration errored with no unknown name: unblocked here and still short of
+P0. -/
 def erroredIn (ds : Array Diag) : Bool :=
   ds.any (fun d => d.severity == .error)
-
--- ## Attribution
 
 /-- The package and class names a document loads. -/
 def loadsOf (text : String) : Array String := Id.run do
@@ -397,17 +276,12 @@ def loadsOf (text : String) : Array String := Id.run do
           if !n.isEmpty && !out.contains n then out := out.push n
   return out
 
-/-- A character that can continue a control word in the files the scan reads:
-a letter, and `@`, `_` and `:` — class, package and kernel files are read
-with `@` a letter, and expl3 code with `_` and `:` letters too. Treating them
-as part of the name is what stops `\def\foo@bar` from defining `\foo`, which
-would attribute a name the public file never defines. -/
+/-- A character that can continue a control word in class, package and kernel files: a
+letter, `@`, `_` or `:`. -/
 def nameChar (c : Char) : Bool := c.isAlpha || c == '@' || c == '_' || c == ':'
 
-/-- Does this source define the command? The definer spellings a `.cls` or
-`.sty` actually uses, braced and bare. A name defined by expansion is still
-missed, and falls through to the next layer or to `unattributed` — visible
-as a gap in the table rather than as a guess. -/
+/-- Whether this source defines the command, by the definer spellings a `.cls` or `.sty`
+uses; a name defined by expansion is missed and falls through. -/
 def defines (src name : String) : Bool :=
   let n := "\\" ++ name
   let braced := ["newcommand", "newcommand*", "renewcommand", "renewcommand*",
@@ -431,14 +305,8 @@ def defines (src name : String) : Bool :=
 /-- A file resolved for the scan: its real path and its text. -/
 abbrev Resolver := String → IO (Option (String × String))
 
-/-- Resolve through kpsewhich, follow symlinks, read, once per name. A list's
-documents are resolved in the calling environment (`inherit`) — it is what
-lualatex saw when they were screened — because wherever it points,
-`PublicFile.of?` decides whether the answer is the distribution's. The
-public corpus is resolved in `emptiedEnv`, so the committed table is a
-function of the manifest and the distribution, not of the shell that ran
-it. `env` also lets the selftest stand in for a shell that sets
-TEXINPUTS. -/
+/-- Resolve through kpsewhich, follow symlinks and read, once per name: a list's documents
+in the calling environment, the public corpus in `emptiedEnv`. -/
 def kpseResolver (cache : IO.Ref (Array (String × Option (String × String))))
     (inherit : Bool) (env : Array (String × Option String)) : Resolver := fun file => do
   if let some (_, r) := (← cache.get).find? (·.1 == file) then return r
@@ -453,11 +321,8 @@ def kpseResolver (cache : IO.Ref (Array (String × Option (String × String))))
   cache.modify (·.push (file, r))
   return r
 
-/-- Where a construct comes from, by the declared precedence. A class or
-package is public only when the load argument is a bare name, the file it
-resolved to lies inside the distribution, and that file's stem *is* the
-argument; any failing, the definer is `nonpublic`, and nothing about it is
-kept. -/
+/-- Where a construct comes from, by the declared precedence; a class or package is public
+only when its bare load name resolves inside the distribution to a file of that stem. -/
 def ownerOf (roots : Array String) (resolve : Resolver) (docText name : String) :
     IO Owner := do
   if Compat.texPrimitives.contains name then return .primitive
@@ -480,8 +345,6 @@ def ownerOf (roots : Array String) (resolve : Resolver) (docText name : String) 
         | none => return .nonpublic
   return .unattributed
 
--- ## The ranking
-
 structure Rank where
   kind : String
   construct : String
@@ -492,7 +355,7 @@ structure Rank where
   docs : Nat
 deriving Inhabited, BEq
 
-/-- A row as written. Built by `publish` alone. -/
+/-- A row as written, built by `publish` alone. -/
 structure Row where
   kind : String
   construct : String
@@ -502,10 +365,8 @@ structure Row where
   docs : Nat
 deriving Inhabited, BEq
 
-/-- Accumulate `sole`, `share` and the document count from one document's
-blocker set. A document with one blocker gives that construct a whole `sole`
-and a whole 1000 thousandths; a document with n blockers gives each 1000/n
-and no `sole`. -/
+/-- Accumulate `sole`, `share` and the document count from one document's blocker set: n
+blockers give each 1000/n thousandths, and one blocker also its `sole`. -/
 def tally (acc : Array Rank) (blockers : Array (String × String))
     (owners : Array (String × Owner)) : Array Rank := Id.run do
   let n := blockers.size
@@ -524,12 +385,8 @@ def tally (acc : Array Rank) (blockers : Array (String × String))
                         share := piece, docs := 1 }
   return out
 
-/-- **The confinement rule, as the only way to a written row.** A public
-owner's construct is written by name; every other owner folds into one
-aggregate row per owner, keyed and labelled by `Owner.render` of a
-constructor that carries nothing. The number of names folded away is
-returned for the header, so the table says how much of itself it is not
-showing. -/
+/-- The only way to a written row: a public owner's construct by name, every other owner
+one aggregate row keyed by `Owner.render`; also returns how many names folded away. -/
 def publish (rows : Array Rank) : Array Row × Nat := Id.run do
   let mut out : Array Row := #[]
   let mut folded := 0
@@ -566,13 +423,8 @@ structure Ranked where
   erroredClean : Nat
   corpusKey : String
 
-/-- Rank documents, each given as its path and the bytes read from it. Each
-is its own text as the driver's decoding door reads it (`Encoding.readDocument`:
-a byte-order mark skipped, bytes that are not text replaced, CR settled, its
-preamble's input encoding honoured), elaborated alone: the ranking is over
-the files the manifest pins, so an `\input` or a local style it names is not
-read, as it never was. One keyed by text already seen is a duplicate,
-counted as such and not again. -/
+/-- Rank documents given as path and bytes, each read through the driver's decoding door
+and elaborated alone; a text already seen is a duplicate. -/
 def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array (String × ByteArray)) :
     IO Ranked := do
   let mut acc : Array Rank := #[]
@@ -644,18 +496,12 @@ def texLine : IO String := do
       return (← IO.Process.output { cmd := "lualatex", args := #["--version"] }).stdout) ""
   return s!"# tex: {((v.splitOn "\n").headD "").trimAscii.toString}\n"
 
--- ## The manifest, pinned
-
 /-- The manifest's entries: `sha256sum`'s format, one pinned document per
 line, a path relative to the distribution's root. -/
 def parseManifest (text : String) : Except String (Array Entry) := parsePins manifestPath text
 
-/-- The manifest's entries, each resolved inside a root and read once. An
-entry that is absolute, that leaves every root once its symlinks are
-followed, or whose bytes are not the ones its pin names, is refused — so the
-manifest can only name the distribution's own files, and only the bytes
-they held when they were declared, whatever tree a kpsewhich moved by its
-surroundings calls the distribution. -/
+/-- The manifest's entries, each resolved inside a root and read once; an absolute entry,
+one leaving every root, or one whose bytes are not its pin's is refused. -/
 def resolveManifest (roots : Array String) (entries : Array Entry) :
     IO (Except String (Array (String × ByteArray))) := do
   let mut out : Array (String × ByteArray) := #[]
@@ -681,8 +527,8 @@ def manifestEntries (text : String) : Array String :=
     let l := l.trimAscii.toString
     if l.isEmpty || l.startsWith "#" then none else some l).toArray
 
-/-- Rank the declared public corpus into the tree. Everything kpsewhich is
-asked here runs in `emptiedEnv`. -/
+/-- Rank the declared public corpus into the tree, every kpsewhich query in `emptiedEnv`.
+-/
 def rankTree : IO UInt32 := do
   let roots ← publicRoots
   if roots.isEmpty then
@@ -709,9 +555,8 @@ distinct document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
       IO.println s!"  {w.sole}\t{w.share}\t{w.docs}\t{w.kind}:{w.construct}\t{w.owner}"
     return 0
 
-/-- Rank any list to an output outside every checkout, written through
-`Dest`. The same publish rule applies: the file may be copied, so it carries
-nothing a copy could leak. -/
+/-- Rank any list to an output outside every checkout, through `Dest`, under the same
+publish rule. -/
 def rankList (resolve : Resolver) (listPath out : String) : IO UInt32 := do
   let dest ← match ← Dest.of? out with
     | .ok d => pure d
@@ -731,13 +576,9 @@ this table does not belong in the tree\n"
 document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
   return 0
 
--- ## Selftest
-
-/-- A link at an output's name into a checkout — a symlink, one that points
-at nothing yet, a hard link, a symlink at `<out>.neither` — through both
-writers that ship. Each leaves the checkout holding exactly the bytes it
-held, and the output lands at the link's own name instead. The links are
-made with `ln`, which is how a caller would make them. -/
+/-- A link at an output's name into a checkout (symlink, dangling symlink, hard link, a
+symlink at `<out>.neither`) through both shipped writers: the checkout keeps its bytes and
+the output lands at the link's own name. -/
 def linkedOutputs (expect : String → Bool → IO Unit) (dir : String) (resolve : Resolver)
     (list checkout : String) : IO Unit := do
   let ck := checkout ++ "/testdata/coverage"
@@ -777,8 +618,7 @@ def linkedOutputs (expect : String → Bool → IO Unit) (dir : String) (resolve
   expect "a symlink at <out>.neither is replaced, not followed"
     (!(← System.FilePath.pathExists (ck ++ "/zzneither.txt"))
       && (← regular (out ++ "/screen.txt.neither")))
-  -- The control, which held before as well: a link on the directory is
-  -- resolved, so the checkout behind it is found and the output refused.
+  -- A link on the directory is resolved, so the checkout behind it is found and the output refused.
   let viaDir ← rankList resolve list (out ++ "/dirlink/zz.tsv")
   expect "an output under a linked directory inside a checkout is refused" (viaDir != 0)
   let mut files : Array String := #[]
@@ -787,10 +627,8 @@ def linkedOutputs (expect : String → Bool → IO Unit) (dir : String) (resolve
   expect "the checkout holds exactly the files it held"
     (files.qsort (· < ·) == #[checkout ++ "/lakefile.toml", manifest, table].qsort (· < ·))
 
-/-- The pin, against a scratch root that stands in for a tree a kpsewhich
-was moved to — the real distribution is never written: the declared bytes
-resolve, other bytes at the same path are refused, so is a symlink out of
-the root whatever it holds, and an entry with no pin is a fault. -/
+/-- The pin against a scratch root: the declared bytes resolve, other bytes at the path
+and a symlink out of the root are refused, and an entry with no pin is a fault. -/
 def pinnedManifest (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
   let root := dir ++ "/proot"
   let doc := root ++ "/tex/latex/zzpin/doc.tex"
@@ -821,14 +659,9 @@ def pinnedManifest (expect : String → Bool → IO Unit) (dir : String) : IO Un
       | .ok es => es == #[{ pin, path := "tex/a.tex" }]
       | .error _ => false)
 
-/-- A shell that points kpathsea at a planted tree, through the command that
-ships: `--rank` in a child process whose environment really holds the
-setting, run in a scratch directory whose manifest names a document only
-the planted tree holds. Its pin is right, so the pin passes and the root
-alone decides. Each setting alone must leave the planted tree non-public —
-the child refuses and writes nothing — and an honest child ranking a real
-public document must succeed, or the refusals witness nothing; the same
-child under a TEXINPUTS that shadows its class must write the same table. -/
+/-- A shell pointing kpathsea at a planted tree, through the shipped `--rank`: each
+setting alone leaves the planted tree non-public, an honest child succeeds, and a
+shadowing TEXINPUTS writes the same table. -/
 def hostileShell (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
   let hroot := dir ++ "/hroot"
   let pdir := hroot ++ "/tex/latex/zzplanthroot"
@@ -861,9 +694,7 @@ def hostileShell (expect : String → Bool → IO Unit) (dir : String) : IO Unit
     let honestTable ← orElse (IO.FS.readFile table) ""
     expect "an honest child ranks a pinned public document" (honest == 0 && !honestTable.isEmpty)
     let _ ← orElse (IO.FS.removeFile table) ()
-    -- A shell whose TEXINPUTS shadows the class that document loads, with
-    -- the class's own bytes: the public corpus is resolved in the emptied
-    -- environment, so the table is the honest one byte for byte.
+    -- A TEXINPUTS shadowing the class with its own bytes leaves the table unchanged.
     let shadow := dir ++ "/hshadow"
     IO.FS.createDirAll shadow
     IO.FS.writeFile (shadow ++ "/article.cls")
@@ -885,11 +716,8 @@ def hostileShell (expect : String → Bool → IO Unit) (dir : String) : IO Unit
       (code != 0 && !(← System.FilePath.pathExists table) && !leaked)
     let _ ← orElse (IO.FS.removeFile table) ()
 
-/-- The queue's reader of this table fails loudly, through the command that
-ships: `scoreboard --queue`, run in a scratch directory that holds nothing
-but a table, ranks a well-formed one and stops with exit 2 on a malformed
-row. The reader it replaced skipped what it could not parse and ranked
-nothing, and every gate passed with it restored. -/
+/-- The queue's reader of this table fails loudly through the shipped `scoreboard
+--queue`: a well-formed table ranks, a malformed row exits 2. -/
 def queueReader (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
   let cwd := dir ++ "/qcwd"
   IO.FS.createDirAll (cwd ++ "/testdata/coverage")
@@ -913,11 +741,9 @@ ctrl\thspace\tkernel\t1\t1000\t1\naggregate\t(document)\tdocument\t0\t500\t1\n"
   let (word, _) ← queue
   expect "a blocker count that is not an integer stops the queue with exit 2" (word == 2)
 
-/-- The confinement rule end to end, through the writer that ships: planted,
-private-looking names behind every lookup a document can use — a style by
-absolute path, a class by path, a style a shell's TEXINPUTS finds, a
-document-local macro, a name nothing defines — every file the writer left,
-read back, and a link at the output's name into a checkout. -/
+/-- The confinement rule end to end through the shipped writer: planted, private-looking
+names behind every lookup a document can use, every file the writer left read back, and a
+link at the output's name into a checkout. -/
 def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
   let tmp ← IO.Process.output { cmd := "mktemp", args := #["-d"] }
   let dir := tmp.stdout.trimAscii.toString
@@ -973,9 +799,7 @@ def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
       (containsSub table "aggregate\t(unattributed)\tunattributed\t")
     expect "the duplicate path is one document"
       (containsSub table "# corpus: 4 distinct document(s) (by content; 1 duplicate")
-    -- An output inside a checkout is refused, and nothing is written. The
-    -- checkout is a scratch one, so a broken guard writes into scratch and
-    -- not into the tree this selftest runs in.
+    -- An output inside a scratch checkout is refused and nothing is written.
     let fakeCheckout := dir ++ "/checkout"
     IO.FS.createDirAll (fakeCheckout ++ "/testdata/coverage")
     IO.FS.writeFile (fakeCheckout ++ "/lakefile.toml") "name = \"leantex\"\n"
@@ -1012,8 +836,7 @@ def selftest : IO UInt32 := do
   expect "an empty blocker set changes nothing" (tally one #[] #[] == one)
   let bothKinds := tally #[] #[("ctrl", "em"), ("env", "em")] #[]
   expect "a command and an environment of one name are two rows" (bothKinds.size == 2)
-  -- A document in a declared 8-bit encoding is read as the driver's
-  -- decoding door reads it, never skipped as unreadable.
+  -- A document in a declared 8-bit encoding is read as the driver's decoding door reads it.
   let latin := "\\documentclass{article}\n\\usepackage[latin1]{inputenc}\n\\begin{document}\nCaf".toUTF8
     ++ ⟨#[0xE9]⟩ ++ ".\n\\end{document}\n".toUTF8
   let latinRank ← rankDocs #[] (fun _ => pure none) #[("latin.tex", latin)]
@@ -1050,8 +873,7 @@ def selftest : IO UInt32 := do
     ((Owner.cls default).isPublic && Owner.kernel.isPublic && Owner.primitive.isPublic
       && (Owner.pkg default).isPublic && !Owner.document.isPublic
       && !Owner.nonpublic.isPublic && !Owner.unattributed.isPublic)
-  -- Attribution against a stand-in resolver: the same definer, public or not
-  -- by where it resolved, and never public through a path load.
+  -- Attribution: public by where the definer resolved, never through a path load.
   let fake : Resolver := fun file => pure <|
     if file == "zzinside.sty" then some ("/r/dist/tex/latex/zzinside.sty", "\\newcommand{\\zzq}{}")
     else if file == "zzoutside.sty" then some ("/r/private/zzoutside.sty", "\\newcommand{\\zzq}{}")
@@ -1103,7 +925,6 @@ def selftest : IO UInt32 := do
   expect "a longer name is not this one" (defines "\\newcommand\\foobar{x}" "foo" == false)
   expect "an @-name is not its prefix" (defines "\\def\\foo@bar{x}" "foo" == false)
   expect "an expl3 name is not its prefix" (defines "\\cs_new:Npn \\foo_bar:n {x}" "foo" == false)
-  -- The load scan.
   expect "usepackage lists are read"
     (loadsOf "\\usepackage{amsmath,graphicx}" == #["amsmath", "graphicx"])
   expect "an option group is skipped"
@@ -1115,10 +936,8 @@ def selftest : IO UInt32 := do
       && Screened.ofExit 124 == .killed && Screened.ofExit 137 == .killed
       && Screened.ofExit 125 == .notRun && Screened.ofExit 126 == .notRun
       && Screened.ofExit 127 == .notRun)
-  -- A content key, not a path.
   expect "equal bytes are one document" (contentKey "abc" == contentKey "abc")
   expect "different bytes are two" (contentKey "abc" != contentKey "abd")
-  -- Where an output may land.
   expect "a lakefile naming leantex is a checkout, however it is spaced"
     (namesLeantex "[x]\nname = \"leantex\"\n" && namesLeantex "name=\"leantex\""
       && !namesLeantex "name = \"other\"" && !namesLeantex "")

@@ -1,17 +1,7 @@
 /-
-Fuzz the compressor. Run from the repository root:
-
-  lake env lean --run scripts/flate-fuzz.lean
-
-The claim under test is `inflate_deflate_id`'s statement — the engine's
-own inflate inverts its deflate on every input — witnessed here on random
-and adversarial byte strings, the shipped fixtures' decoded planes, and
-every stream the PDF writer emits for the bench's underline document
-(needs `lake build` first: the built binary produces them).
-Two graders judge every stream: the engine's `inflate`, and a foreign
-inflater (python3's zlib) so a defect the engine's decoder happens to
-forgive is still caught. An executable oracle, not a theorem: it witnesses
-the round trip on megabytes of input, it does not prove it.
+Fuzz the compressor: inflate inverts deflate on random and adversarial bytes, the fixtures'
+planes and every stream the PDF writer emits, judged by `inflate` and python3's zlib.
+Usage: lake build && lake env lean --run scripts/flate-fuzz.lean
 -/
 import LeanTex
 
@@ -53,9 +43,8 @@ def check (dir : System.FilePath) (label : String) (b : ByteArray) : IO Unit := 
   checkOwn label b
   checkForeign dir label b
 
-/-- Every `/FlateDecode` stream the engine's PDF writer emitted for a
-document, inflated back to the bytes it compressed: the writer's own
-spelling (`/Length n >>\nstream\n`) is the anchor. -/
+/-- Every `/FlateDecode` stream the engine's PDF writer emitted, inflated back, found by
+the writer's own spelling. -/
 def pdfStreams (pdf : ByteArray) : IO (Array ByteArray) := do
   let pat := " >>\nstream\n".toUTF8
   let mut out : Array ByteArray := #[]
@@ -101,9 +90,7 @@ def main : IO Unit := do
     | _, _ => die "fixture planes did not inflate"
   | .ok _ => die "fixture planned without a soft mask"
   | .error e => die s!"fixture refused: {e}"
-  -- The bench's underline document: 45 pages of content streams, the
-  -- text-shaped input the compressor is tuned on — every stream the
-  -- writer emitted for it, re-deflated here and judged twice.
+  -- Every stream the writer emitted for the bench's underline document, judged twice.
   let pdfPath := dir / "underline.pdf"
   let built ← IO.Process.output {
     cmd := ".lake/build/bin/leantex"
@@ -124,8 +111,7 @@ def main : IO Unit := do
       s := s2
       arr := arr.push (UInt8.ofNat v)
     check dir s!"random #{k} ({size} bytes)" (ByteArray.mk arr)
-  -- Mixed compressible/random segments: block statistics that favour
-  -- neither extreme.
+  -- Mixed compressible and random segments, block statistics favouring neither extreme.
   for k in [0:10] do
     let (a, s1) := rand s 50000
     let (b, s2) := rand s1 50000

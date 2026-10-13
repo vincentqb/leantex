@@ -1,9 +1,6 @@
 /-
-The raster judge the picture oracles share: a tool run that reports a
-missing tool as `none`, the Chrome binaries Playwright's cache holds,
-ImageMagick's DSSIM at the scale and tolerance pdf-oracles calibrated,
-and its numbers parsed back. A library: `scripts/pdf-oracles.lean` and
-`scripts/gfx-diff.lean` import it; it runs nothing itself.
+The raster judge the picture oracles share: a tool runner reporting a missing tool as `none`,
+Playwright's Chrome binaries, and ImageMagick's DSSIM at the calibrated scale and tolerance.
 -/
 
 def runTool (cmd : String) (args : Array String) : IO (Option IO.Process.Output) := do
@@ -14,23 +11,14 @@ def runTool (cmd : String) (args : Array String) : IO (Option IO.Process.Output)
 /-- The raster judgement's resolution, for Poppler, PDFium and pdf.js alike. -/
 def rasterDpi : Nat := 100
 
-/-- The DSSIM (ImageMagick `compare -metric DSSIM`, alpha dropped, both
-rasters brought to `dssimScale`) a browser's page may stand from Poppler's
-and still pass. Calibrated on the 2026-09-22 run over the 142 corpus pages
-(the run record carries every cell): PDFium at most 0.026 (a dense text
-page, `valign` p5) and pdf.js at most 0.030 (`deck` p8) against Poppler;
-the negative cases the same record keeps lie above — a page against a
-different page of the same deck 0.085, a text page against itself rolled
-down one 12 pt line 0.043. The window is narrow, `[0.030, 0.043]`, and the
-number sits in its middle; a wider one needs a metric that reads ink
-positions, not pixels. Not identity: Ghostscript's fast-colour raster
-against Poppler measures 0.002 on the image page and is meant to. -/
+/-- The DSSIM a browser's page may stand from Poppler's and still pass: above the corpus's
+largest conforming distance (pdf.js, 0.030) and below the nearest negative case (a page
+rolled down one line, 0.043). -/
 def dssimTolerance : Float := 0.035
 
-/-- The Chrome binaries to try: `LEANTEX_CHROME` first, then every
-`~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome`, newest revision
-first — the full browser, whose viewer is PDFium; the `headless_shell`
-beside it downloads a PDF instead of showing it. Nothing is installed. -/
+/-- The Chrome binaries to try: `LEANTEX_CHROME`, then each Playwright-cached
+`chromium-*/chrome-linux64/chrome`, newest first, the full browser whose viewer is PDFium.
+-/
 def chromeCandidates : IO (Array String) := do
   let mut out : Array String := #[]
   if let some p ← IO.getEnv "LEANTEX_CHROME" then out := out.push p
@@ -76,12 +64,8 @@ def pngGeometry (png : String) : IO (Option String) := do
   if out.exitCode != 0 then return none
   return some out.stdout.trimAscii.toString
 
-/-- The scale both rasters are brought to before they are compared: a
-quarter of `rasterDpi`, 25 dpi. At full resolution the distance between
-two conforming renderers of one dense text page (glyph anti-aliasing, a
-one-pixel registration offset) exceeds the distance between two different
-pages; at a quarter the glyphs are the grey they set, and what remains is
-where ink lies. -/
+/-- The scale both rasters are compared at, a quarter of `rasterDpi`, where glyphs read as
+the grey they set and what remains is where ink lies. -/
 def dssimScale : String := "25%"
 
 /-- The candidate with alpha dropped, resampled to the reference's geometry

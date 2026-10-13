@@ -1,66 +1,35 @@
 module
 
-/-
-The construct-support vocabulary the tiers share: the rungs — one ladder for
-`coverage`, which reads a construct's rung off its probe, and `diagaudit`,
-which records the rung a diagnostic code's verdict targets — and the verdict
-a compat-index row declares, which `compat` counts and `coverage` judges
-with. The readings (`rungOfLoss`, the coverage cut) stay with the tier that
-makes them; only the words, their order and the index's one reader live
-here, so no two tiers can mean different things by one word.
--/
+/- The construct-support vocabulary the tiers share: the rungs, and the compat-index row,
+its verdicts and the index's one reader. -/
 public section
 
-/-- The support rungs, per construct, lowest first. Words, not numbers:
-`P0`–`P5` and R name the parity ladder's per-document levels, `L0`–`L2`
-the theorem layers, and `L3` also names LaTeX3, so numbering the rungs too
-would be one meaning per label too many.
-
-Each rung is a reading of the diagnostics whose subject names the
-construct, so the ladder derives from `Loss` in one place exactly as
-`Loss.severity`, `Loss.floor` and `Loss.censused` do — `config` and
-`dropped` losses have rungs here, which the numbered draft of this ladder
-left with none.
-
-The order below `rewritten` is a reporting convention and not a claim that
-a skipped construct is worse than a degraded one: it decides only which
-word gets published for a name that earns two, and nothing reads it as a
-judgement. Above `rewritten` the order is load-bearing — it is the
-coverage cut. -/
+/-- The support rungs, per construct, lowest first, each a reading of the diagnostics
+whose subject names the construct; above `rewritten` the order is the coverage cut. -/
 inductive Rung where
-  /-- Nothing was measured: every shape produced only diagnostics about the
-  probe's own malformed arguments. Not a gap we owe; a probe we owe. -/
+  /-- Nothing was measured: every shape produced only diagnostics about the probe's own
+  malformed arguments. -/
   | unprobed
-  /-- Nothing answers the name; its arguments survive as text.
-  W0301/W0302, and W0012 for a name the math parser does not know. -/
+  /-- Nothing answers the name and its arguments survive as text: W0301/W0302, or W0012
+  for a name the math parser does not know. -/
   | unknown
   /-- Recognised, and the construct earns a `dropped` code: the content is
   gone and no plan owns it. -/
   | fails
-  /-- Recognised, and the construct earns a `config` code: no content
-  operand, nothing modelled, the meaning of the content survives. Also the
-  reading for a construct recognised and consumed with nothing to show for
-  it: the engine's own note that it rewrote the construct to nothing
-  (`ctrl:nothing:<name>`), or no code at all and no difference from the
-  same usage under a name nothing knows. -/
+  /-- Recognised, and the construct earns a `config` code or is consumed with nothing to
+  show for it: no content operand, the content's meaning survives. -/
   | skipped
   /-- Recognised, and the construct earns a `degraded` or `pending` code:
   the content is kept, but not as declared, or it is owed. -/
   | degraded
-  /-- Translated onto a native construct: an `info` code, the conservation
-  of the translation owed. A rewrite onto nothing is `skipped`. -/
+  /-- Translated onto a native construct: an `info` code, the conservation of the
+  translation owed; a rewrite onto nothing is `skipped`. -/
   | rewritten
-  /-- Implemented natively: no code, and the usage differs from the same
-  usage under a name nothing knows. That difference shows the construct
-  consumed what it was given, not that anything came of it — a deletion
-  comparison would ask more, and it demotes `\setcounter` and `\textwidth`,
-  whose effect needs a later construct to show. The effect is the parity
-  ladder's to witness. -/
+  /-- Implemented natively: no code, and the usage differs from the same usage under an
+  unknown name. -/
   | native
-  /-- The construct's own one-construct probe holds at P3 or better against
-  lualatex. The rung that joins this ladder to the parity ladder; it is the
-  only one that needs a rendered page, so nothing here can award it and
-  this script never does. -/
+  /-- The construct's one-construct probe holds at P3 or better against lualatex; nothing
+  here awards it. -/
   | verified
 deriving Inhabited, BEq, Repr
 
@@ -88,10 +57,8 @@ def Rung.word : Rung → String
 def Rung.all : List Rung :=
   [.unprobed, .unknown, .fails, .skipped, .degraded, .rewritten, .native, .verified]
 
-/-- One row of `testdata/compat-index/<pkg>.txt`: `<place> <verdict> <call>`,
-one documented command of a package with the verdict the engine owes it.
-The format is `lake test`'s (`compatIndexChecks` probes every row); this is
-the one reader the tiers count with. -/
+/-- One row of `testdata/compat-index/<pkg>.txt`: `<place> <verdict> <call>`, a documented
+command with the verdict the engine owes it. -/
 structure IndexRow where
   place : String
   verdict : String
@@ -108,11 +75,8 @@ def IndexRow.parse? (line : String) : Option IndexRow :=
     let verdict := (rest.splitOn " ").headD ""
     some { place, verdict, call := (rest.drop verdict.length).toString.trimAscii.toString }
 
-/-- **One definition of "implemented" for a compat-index row**: `impl`, or
-`inert:` — a recognised command that legitimately moves no ink, with the
-reason reviewed in the row itself. The `compat` tier counts with it and the
-`coverage` tiers judge with it; the two once disagreed on the four
-`refuse:N0102` rows, which is the drift one shared predicate exists to stop. -/
+/-- Whether a compat-index row is implemented: `impl`, or `inert:` for a recognised
+command that legitimately moves no ink. -/
 def IndexRow.implemented (r : IndexRow) : Bool :=
   r.verdict == "impl" || r.verdict.startsWith "inert:"
 
@@ -126,9 +90,8 @@ def IndexRow.refused (r : IndexRow) : Bool := r.refusalCode?.isSome
 
 def compatIndexDir : System.FilePath := "testdata/compat-index"
 
-/-- Every package index under `dir`, in file-name order. Missing input,
-no index files, or no rows across all files is a measurement fault, not an
-empty package surface. A package may legitimately document zero commands. -/
+/-- Every package index under `dir`, in file-name order; missing input or no rows at all
+is a measurement fault. -/
 def readCompatIndexAt (dir : System.FilePath) : IO (Array (String × Array IndexRow)) := do
   unless ← dir.isDir do
     throw <| IO.userError s!"compat index: {dir} is missing"

@@ -1,33 +1,7 @@
 /-
-Does every theorem name a docstring cites resolve to a declaration?
-
-  lake build LeanTex TestsModules ScriptsModules leantex Tests cites
-  .lake/build/bin/cites --check
-
-A guarantee stated in prose names the theorem holding it
-(AGENTS.md § Lean rules).
-A cited name that resolves to nothing is that rule's failure mode: the
-docstring reads as a guarantee held, and nothing holds it.
-
-This is the gate the pre-commit hook and CI both run, and it is a separate
-binary from precommit for one reason: it needs a compiled `Environment`. The
-docstrings come from `Lean.findDocString?` over the imported modules and the
-names are resolved by `Lean.ResolveName.resolveGlobalName` -- the resolver
-the elaborator itself uses. Its predecessor scanned source text for a
-declaration keyword, and text-scanning cost it three recorded blind spots: a
-declaration whose name sat on a continuation line was invisible, a name that
-existed only inside a test's check-label string resolved, and a name matched
-by the `n ++ "_"` prefix rule resolved on a relative's spelling. None of the
-three survives a resolver that reads what the compiler built.
-
-The limit that remains, which no gate closes: this proves a cited name
-RESOLVES, not that the declaration it resolves to states the fact the prose
-claims. `foo_exact` may resolve to a theorem about something else entirely,
-and the docstring would still read as a guarantee held. Judging a statement
-against the sentence citing it stays review's job.
-
---selftest compiles synthetic modules and exercises inventory and resolution;
---census prints the numbers; --check is the quiet gate mode.
+The citation gate: every theorem-shaped name a compiled docstring cites, and every rule-document
+pin, resolves through Lean's own resolver; known unresolved citations are parked by name.
+Usage: lake build LeanTex TestsModules ScriptsModules leantex Tests cites && .lake/build/bin/cites [--check | --selftest | --census]
 -/
 
 import Lean
@@ -37,15 +11,8 @@ import scripts.CiteEnv
 
 open Lean CiteEnv
 
-/-- A backticked token that reads as a theorem name in this tree: it opens
-with a lowercase ASCII letter, is spelled only in ASCII letters, digits and
-underscores, and carries an interior underscore -- the snake_case joint every
-theorem name here is built from (`html_fonts_cover_pdf`,
-`footBand_projects`). The tree's other backticked things are each a
-different shape, and none of them matches: a camelCase def or field
-(`foldInlines`), a dotted or spaced type (`Ir.dump`, `Array Block`), a flag
-(`--wfail`), a path (`testdata/compat-index`), a SCREAMING_SNAKE environment or
-format key (`LEANTEX_FONT`, `ICC_PROFILE`), prose. -/
+/-- A backticked token that reads as a theorem name here: lowercase ASCII first, only
+ASCII letters, digits and underscores, an interior underscore, and no trailing one. -/
 def citeBare (tk : String) : Bool :=
   let cs := tk.toList
   !cs.isEmpty
@@ -54,14 +21,8 @@ def citeBare (tk : String) : Bool :=
     && ((cs.getLast?.map (· != '_')).getD false)
     && containsSub tk "_"
 
-/-- The namespace-qualified spelling of the same thing: `Elab.x`,
-`Layout.run_paras_body_exact`, `Diag.tallySites_exact`. A citation reaching out of its own
-file writes the qualifier, and this tree's house style does so routinely, so
-the bare form alone left a hole -- three dangling citations to a theorem that
-never existed passed the gate under the dotted spelling, in the very change
-that recorded the hole. The qualifier must look like one (capitalised
-segments, word characters only) and the last component must be the bare
-shape, which is what keeps `Ir.dump` and `Font.FontSet` out. -/
+/-- The namespace-qualified spelling of the same, each qualifier a capitalised word and
+the last component bare-shaped. -/
 def citeQualified (tk : String) : Bool :=
   match tk.splitOn "." with
   | [] | [_] => false
@@ -73,11 +34,9 @@ def citeQualified (tk : String) : Bool :=
         let cs := q.toList
         !cs.isEmpty && cs.all isWordChar && ((cs.head?.map Char.isUpper).getD false)
 
-/-- Either spelling. -/
 def citeCandidate (tk : String) : Bool := citeBare tk || citeQualified tk
 
-/-- The closed backticked spans of a line, in order. An unclosed span -- a
-citation wrapped across two lines -- is dropped rather than guessed at. -/
+/-- The closed backticked spans of a line, in order; an unclosed span is dropped. -/
 def backtickSpans (l : String) : List String := Id.run do
   let parts := (l.splitOn "`").toArray
   let n := if parts.size % 2 == 0 then parts.size - 1 else parts.size
@@ -86,19 +45,8 @@ def backtickSpans (l : String) : List String := Id.run do
     if i % 2 == 1 then out := out.push (parts[i]?.getD "")
   return out.toList
 
-/-- Names that are legitimately not declarations of this tree: foreign
-vocabulary that happens to be spelled snake_case, each named where it comes
-from. A new entry is a deliberate decision -- the question it answers is
-"whose name is this?", and only an answer outside this repository earns a
-row.
-
-The resolver shrinks the gate's other allowlist and leaves this one exactly
-where it was, and that is the honest outcome rather than a shortfall: every
-row names a thing outside this repository, so no resolver over this
-environment can ever resolve it. TeX's `mlist_to_hlist` is not a declaration
-here and will not become one. What the resolver removed is the class these
-rows were once confused with -- a name that IS this tree's and that a text
-scan could not see. -/
+/-- Names that are not declarations of this tree: foreign vocabulary spelled snake_case,
+each row naming its origin outside this repository. -/
 def citeForeign : List String :=
   ["add_xdata_ref",            -- biber's xdata-reference reader (Biber::Entry)
    "collate_options",          -- biber's collation settings (Biber::Config)
@@ -122,10 +70,8 @@ def citeForeign : List String :=
    "x_y",                      -- an example label key, quoted as prose
    "xn_over_d"]                -- TeX's scaled-integer routine (TeX §107)
 
-/-- A known unresolved citation, keyed by name, file, and declaration.
-The ratchet rejects both new sites and rows whose citation now resolves.
-Correct the reference or prove its claim; do not remove a supported claim
-merely to silence its citation. -/
+/-- A known unresolved citation, keyed by name, file and declaration; the ratchet rejects
+new sites and rows whose citation now resolves. -/
 structure PhantomRow where
   name : String
   file : String
@@ -134,53 +80,30 @@ structure PhantomRow where
 
 def citePhantomKnown : List PhantomRow :=
   [⟨"frames_sections", "Tests/Themes.lean", "deckStepChecks"⟩,
-   -- Five the qualified-spelling hole hid: the resolver read only the bare
-   -- snake_case form, so a citation written `Namespace.theorem_name` was not
-   -- a candidate at all, and the gate never asked. They are pre-existing,
-   -- each in a file this branch does not own, and each is routed with its
-   -- owner rather than silenced by deleting the sentence.
-   --
-   -- The claim is that a frame's overflow is named rather than dropped.
-   -- `Layout` states nothing of the kind. Fix: state it over `Layout.Out`
-   -- beside the spill emission, or drop the name and let `censusChecks`
-   -- carry it.
+   -- A frame's overflow is claimed named; `Layout` does not state it.
    ⟨"Layout.spill_accounts", "LeanTex/Core/Ir.lean", "LeanTex.Core.Ir.Block.frame"⟩,
-   -- The attachment point is claimed covered for every base. Fix: state it
-   -- over `Font.topAccentX` itself, where the fallback arm lives.
+   -- The attachment point is claimed covered for every base (`Font.topAccentX`).
    ⟨"Math.accentAttach_covers", "LeanTex/Core/Font.lean", "LeanTex.Core.Font.Font.topAccentX"⟩,
    -- A picture label's face is claimed to agree across backends.
-   -- `pictureLabelFaceChecks` is the artifact witness; the IR theorem it
-   -- projects from is unwritten. Fix: state the `_agree` over the one IR
-   -- value both backends read.
    ⟨"Picture.labelFace_agree", "Tests/Support.lean", "CensusLine.runFonts"⟩,
    ⟨"Picture.labelFace_agree", "Tests/Surface.lean", "pictureLabelFaceChecks"⟩,
-   -- Relative node placement claimed exact, at two sites. Nothing states
-   -- it; the rows of `pictureNodePlaceChecks` read it off shipped pages.
-   -- Fix: state it where the placement is computed.
+   -- Relative node placement is claimed exact; `pictureNodePlaceChecks` reads it off shipped pages.
    ⟨"Picture.placeRel_exact", "Tests/Support.lean", "CensusPage.pathBoxes"⟩,
    ⟨"Picture.placeRel_exact", "Tests/Surface.lean", "pictureNodePlaceChecks"⟩,
-   -- Whole-picture permutation remains an executable placement check.
-   -- Picture.NodePlan.place_order_agree proves the actual resolving
-   -- operations commute under independent reads and writes; it does not
-   -- prove the former arbitrary-source claim, refuted by duplicate names.
-   -- Fix: cite that local contract with its scope and keep the global
-   -- claim attributed to pictureNodePlaceChecks.
+   -- Whole-picture order is an executable check, beyond `place_order_agree`'s scope.
    ⟨"Picture.place_order_agree", "Tests/Support.lean", "CensusPage.pathBoxes"⟩]
 
-/-- The phantom judgement, pure so the selftest drives it in both
-directions: the hits no row parks (a new phantom, or a new site of a parked
-name), and the rows no hit met (dead, because the citation was fixed). -/
+/-- The phantom judgement: the hits no row parks, and the rows no hit met. -/
 def judgePhantoms (rows : List PhantomRow) (hits : Array PhantomRow) :
     Array PhantomRow × List PhantomRow :=
   (hits.filter (!rows.contains ·), rows.filter (!hits.contains ·))
 
-/-- The anchor a site is keyed by: the declaration its docstring is
-attached to, as `Site.subject` spells it without the backticks. -/
+/-- The anchor a site is keyed by: the declaration its docstring is attached to. -/
 def anchorOf (subject : String) : String :=
   (subject.replace "`" "").trimAscii.toString
 
-/-- The continuation-line declaration is a regression witness for compiled
-lookup: a source scanner looking beside the keyword missed it. -/
+/-- A declaration whose name stands on a continuation line, which compiled lookup must
+still find. -/
 theorem
     cite_continuation_witness : True := trivial
 
@@ -216,10 +139,9 @@ structure CompiledTree where
   batches : Array (Array String)
   sites : Array Site
 
-/-- Use the proof gate's complete inventory and executable grouping. Every source
-must have a compiled module; source text never substitutes for compiler metadata.
-Workers run sequentially because dropping an Environment does not release its
-imported memory regions. -/
+/-- The compiled docstring sites of every maintained source, in the proof gate's
+executable grouping; workers run one after another, since an environment's imported memory
+is released only when its process exits. -/
 def loadTree (root : System.FilePath := ".") : IO CompiledTree := do
   let files ← ProofSources.sources root
   if files.isEmpty then throw <| IO.userError "cites: no maintained source modules found"
@@ -235,12 +157,9 @@ def bestVerdict : Verdict → Verdict → Verdict
   | .tree, _ | _, .tree => .tree
   | .phantom, .phantom => .phantom
 
-/-- Scope resolution uses the citing module and namespace.
-The tree tier permits the existing house style of citing another namespace's
-short name. Both tiers require Lean to resolve a complete compiled declaration.
-A `named` query is answered with the declarations it resolves to, gathered
-across the batches: a declaration every batch imports is one name, not one
-per batch. -/
+/-- Resolve queries across the batches: the scope tier reads the citing module and
+namespace, the tree tier another namespace's short name; a `named` query also returns the
+declarations it names, each once. -/
 def resolveAll (tree : CompiledTree) (queries : Array Query) (named : Array Query := #[]) :
     IO (Array Verdict × Array (Array Resolved)) := do
   let mut answers := Array.replicate queries.size Verdict.phantom
@@ -280,10 +199,8 @@ structure Census where
   phantoms : Array PhantomRow := #[]
   deriving Inhabited
 
-/-- Every phantom citation no row parks, the rows no citation met, and the
-census of what was judged. `named` queries ride the same compiled batches,
-and the declarations each names come back in order: the rule documents' pins
-are resolved by the one resolver docstrings are. -/
+/-- Every phantom citation no row parks, the rows no citation met, and the census of what
+was judged, with each `named` query's declarations. -/
 def scan (tree : CompiledTree) (rows : List PhantomRow := citePhantomKnown)
     (named : Array Query := #[]) :
     IO (Array (String × String × Nat × String) × List PhantomRow × Census ×
@@ -314,30 +231,16 @@ def scan (tree : CompiledTree) (rows : List PhantomRow := citePhantomKnown)
   let (_, dead) := judgePhantoms rows c.phantoms
   return (bad, dead, c, names)
 
--- ## Rule documents
-
-/-- The rule documents. `AGENTS.md` and `PRINCIPLES.md` name the check that
-holds each rule and `THEOREMS.md` the theorems that state each guarantee, so
-a backticked name in any of them is a pin, held to the compiled tree by the
-resolver docstrings are held to. A pin a later unit delivers is written owed
-— `owed (U37):` or `owed (<branch>):` before it — and must resolve to
-nothing until it lands; then it fails until the document promotes it, the
-way an owed report row does, so neither kind of pin can rot. A held pin
-names exactly one declaration, and never a type: a short name two theorems
-share holds whichever one its reader guesses, so it is qualified until one
-remains, and a type is vocabulary, which holds nothing. The flag says
-whether the document's prose — its list items and paragraphs — states
-rules: the first two documents' does, while `THEOREMS.md`'s prose defines
-terms and only its table rows index guarantees. -/
+/-- The rule documents, whose backticked names are pins held to the compiled tree: a pin
+written `owed (<unit or branch>):` must resolve to nothing until it lands, a held pin
+names exactly one declaration and never a type; the flag says whether the document's prose
+states rules. -/
 def ruleDocs : List (String × Bool) :=
   [("AGENTS.md", true), ("PRINCIPLES.md", true), ("THEOREMS.md", false)]
 
-/-- A unit of a rule document: a list item with its continuation lines, a
-table row, or a paragraph, joined into one line, with the line it opens on
-and the `## ` section it stands in. `rule` marks the units that must name a
-check: every body row of a table, and every list item and paragraph where
-`prose` says the document's prose states rules. Fenced code is no unit: a
-command in it is an example, not a pin. -/
+/-- A unit of a rule document: a list item with its continuation lines, a table row or a
+paragraph, joined, with its line and section; `rule` marks the units that must name a
+check, and fenced code is no unit. -/
 structure DocBlock where
   line : Nat
   sec : String
@@ -402,25 +305,21 @@ inductive PinKind where
   | path
   deriving BEq, Repr, Inhabited
 
-/-- The extensions a bare file name is recognised by, so `AGENTS.md` reads
-as the file at the root rather than as a dotted declaration name. -/
+/-- The extensions a bare file name is recognised by, so `AGENTS.md` reads as a file. -/
 def pathExts : List String :=
   [".md", ".lean", ".tsv", ".txt", ".toml", ".tex", ".json", ".yml", ".py", ".sh"]
 
-/-- One segment of a dotted Lean name: an ASCII letter, then the letters,
-digits, underscores, primes, `?` and `!` Lean's identifiers allow anywhere
-after the first character (`getElem?_eq`, `record?_some_exact`). -/
+/-- One segment of a dotted Lean name: an ASCII letter, then letters, digits, underscores,
+primes, `?` and `!`. -/
 def identSegment (s : String) : Bool :=
   match s.toList with
   | c :: rest => c.isAlpha && rest.all fun d =>
       d.isAlphanum || d == '_' || d == '\'' || d == '?' || d == '!'
   | [] => false
 
-/-- How a backticked span is judged, if at all. A span with white space is a
-command or a phrase; a span holding `/`, a bare name with a known extension,
-or a bare name with a dash no identifier can hold (`lean-toolchain`) is a
-path; a dotted Lean name is a declaration; anything else — a flag, a TeX
-command, a pattern with `<…>` or `*` — is prose. -/
+/-- How a backticked span is judged: a span with white space is prose, one holding `/`, a
+known extension or a dash a path, a dotted Lean name a declaration, anything else prose.
+-/
 def pinKind (t : String) : Option PinKind :=
   let pathChar := fun (c : Char) => c.isAlphanum || c == '_' || c == '-' || c == '.' || c == '/'
   let bare := t.all pathChar && ((t.toList.head?.map Char.isAlpha).getD false)
@@ -440,8 +339,7 @@ structure Pin where
   owner : Option String
   deriving BEq, Repr, Inhabited
 
-/-- An owner as `owed (…)` spells one: a roadmap unit (`U37`) or a branch
-(`build-speed-1008`). -/
+/-- An owner as `owed (…)` spells one: a roadmap unit or a branch. -/
 def ownerShaped (s : String) : Bool :=
   match s.toList with
   | 'U' :: ds => !ds.isEmpty && ds.all Char.isDigit
@@ -456,11 +354,8 @@ def litAtArr (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
     k := k + 1
   return true
 
-/-- What one unit says about its checks: its pins; whether it carries a check
-marker of its own — an owed group, which names the unit that delivers the
-check, or `(review)`, which says review holds the rule; and the owners of
-the owed groups that name no pin, which nothing can promote when their unit
-lands, so they are counted against a baseline instead. -/
+/-- What one unit says about its checks: its pins, whether it carries a check marker of
+its own (an owed group or `(review)`), and the owners of owed groups that name no pin. -/
 structure BlockScan where
   pins : Array Pin := #[]
   marked : Bool := false
@@ -474,9 +369,9 @@ def closeOwed (owner : Option (String × Nat)) (pinned : Bool) (bare : Array Str
   | some (o, _) => if pinned then bare else bare.push o
   | none => bare
 
-/-- Scan one unit. Outside the backticks, `owed (<owner>)` opens a group; `;`,
-`|`, a sentence's period, the next group, or the parenthesis closing the one
-the group opened inside ends it. A span left unclosed is dropped. -/
+/-- Scan one unit: outside the backticks, `owed (<owner>)` opens a group that `;`, `|`, a
+sentence's period, the next group or its closing parenthesis ends; an unclosed span is
+dropped. -/
 def blockPins (text : String) : BlockScan := Id.run do
   let parts := (text.splitOn "`").toArray
   let closed := if parts.size % 2 == 0 then parts.size - 1 else parts.size
@@ -539,12 +434,8 @@ structure DocFault where
   what : String
   deriving BEq, Repr, Inhabited
 
-/-- Judge a rule document against resolution answers, pure so the selftest
-drives every branch: an unheld pin (a declaration that resolves to nothing,
-a path that is absent), an ambiguous one (a name several declarations
-answer to), a type (vocabulary, which holds nothing), a stale owed pin (one
-that now resolves), and a rule that names no check. `names` answers what a
-pin resolves to, owed or not, each answer with whether it forms types. -/
+/-- Judge a rule document against resolution answers: an unheld pin, an ambiguous one, a
+type, a stale owed pin, and a rule naming no check. -/
 def judgeDoc (file text : String) (prose : Bool) (names : Pin → Array (String × Bool)) :
     Array DocFault := Id.run do
   let mut out : Array DocFault := #[]
@@ -585,11 +476,8 @@ def docPinCounts (text : String) : Nat × Nat := Id.run do
 def docBareOwed (text : String) : Array String :=
   (docBlocks text).foldl (fun acc b => acc ++ (blockPins b.text).bareOwed) #[]
 
-/-- How many owed groups each rule document may carry that name no pin: a
-unit whose roadmap names no declaration or file for the check it delivers.
-Nothing can tell such a group that its unit landed, so the count is held in
-both directions: a new bare group fails, and so does one removed without
-lowering its row, as the report and subject-debt baselines are read. -/
+/-- How many owed groups that name no pin each rule document may carry, held in both
+directions. -/
 def bareOwedBaseline : List (String × Nat) :=
   [("AGENTS.md", 3), ("PRINCIPLES.md", 10), ("THEOREMS.md", 4)]
 
@@ -611,9 +499,8 @@ def docIdents (text : String) : Array String := Id.run do
       if p.kind == .ident && !out.contains p.token then out := out.push p.token
   return out
 
-/-- The resolver query a document pin is asked as: from no module and no
-namespace, so the tree tier — the declaration's own module and namespace —
-is where a short name resolves. -/
+/-- The resolver query a document pin is asked as, from no module and no namespace, so the
+tree tier resolves a short name. -/
 def docQuery (file token : String) : Query := ⟨file, .anonymous, token⟩
 
 /-- The rule documents that exist under `root`, with their text and whether
@@ -624,9 +511,8 @@ def readRuleDocs (root : System.FilePath := ".") : IO (Array (String × String �
     if ← (root / f).pathExists then out := out.push (f, ← IO.FS.readFile (root / f), prose)
   return out
 
-/-- Every fault of the rule documents, given the declarations each name pin
-resolved to; a path pin is held by the file or directory existing under
-`root`. -/
+/-- Every fault of the rule documents, given the declarations each name pin resolved to; a
+path pin is held by the path existing under `root`. -/
 def docFaults (root : System.FilePath) (docs : Array (String × String × Bool))
     (named : Std.HashMap String (Array Resolved)) : IO (Array DocFault) := do
   let mut out := #[]
@@ -644,8 +530,8 @@ def docFaults (root : System.FilePath) (docs : Array (String × String × Bool))
     if let some f := bareOwedFault file text then out := out.push f
   return out
 
-/-- Compile an isolated tree whose extra library, unused private declarations,
-aliases and independent executable roots all owe the same citation check. -/
+/-- Compile an isolated tree whose extra library, unused private declarations, aliases and
+independent executable roots all owe the same citation check. -/
 def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
   let failures ← IO.mkRef ([] : List String)
   let expect (label : String) (ok : Bool) : IO Unit :=
@@ -742,9 +628,7 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
     let verdicts ← resolveTree tree (cases.map fun (_, query, _) => query)
     for ((label, _, want), got) in cases.zip verdicts do
       expect s!"{label}: got {repr got}, want {repr want}" (got == want)
-    -- A rule document's pin is asked from no module and no namespace and
-    -- answered with every declaration it names: a short name two theorems
-    -- share is two, a qualified spelling one, an alias its target once.
+    -- A document pin is answered with every declaration it names, each once.
     let named : Array (String × Nat) := #[
       ("twin_invariant", 2), ("Twin.A.twin_invariant", 1), ("A.twin_invariant", 1),
       ("alias_invariant", 1), ("no_such_theorem_anywhere", 0)]
@@ -752,8 +636,7 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
     for ((token, want), got) in named.zip answers do
       expect s!"named resolution of {token}: got {got.map (·.name)}, want {want} declarations"
         (got.size == want)
-    -- Each answer says whether it forms types: a structure, its constructor,
-    -- a predicate and a type alias do; a value and a theorem do not.
+    -- Each answer says whether it forms types: structures and predicates do, theorems do not.
     let formers : Array (String × Bool) := #[
       ("Extra.Box", true), ("Extra.Box.mk", true), ("Extra.IsTrivial", true),
       ("Extra.Width", true), ("Extra.anchor", false), ("Extra.alias_invariant", false)]
@@ -788,14 +671,10 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
   finally
     searchPathRef.set before
 
-/-- Every case the gate must catch and every legal spelling it must pass.
-Positive cases are the shapes whose escape prompted a gate change; negative
-cases are spellings of this tree. A gate that does not catch the shape it
-commemorates grants false confidence, so a gate change lands with both. -/
+/-- Every case the gate must catch, and every legal spelling of this tree it must pass. -/
 def selftest : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
-  -- Worker messages must preserve kernel namespaces, including hygienic and
-  -- numeric components which are not source-level identifiers.
+  -- Worker messages preserve kernel namespaces, hygienic and numeric components included.
   let namespaces : Array Name := #[
     .anonymous, `Ordinary.Namespace,
     .str (.str (.num
@@ -867,8 +746,7 @@ def selftest : IO UInt32 := do
     if backtickSpans line != want then
       fails.modify (s!"backtickSpans: {line} gave {backtickSpans line}" :: ·)
 
-  -- The two lists are disjoint and each name on them is a candidate: a row
-  -- that the rule would never fire on is dead weight that reads as debt.
+  -- The two lists are disjoint, and each name on them is a candidate.
   for n in citeForeign do
     unless citeCandidate n do
       fails.modify (s!"allowlisted name is not a candidate: {n}" :: ·)
@@ -880,9 +758,7 @@ def selftest : IO UInt32 := do
   unless citePhantomKnown.eraseDups.length == citePhantomKnown.length do
     fails.modify ("a parked phantom row is listed twice" :: ·)
 
-  -- The parked list reads in both directions. A second site of a parked
-  -- name is a new phantom, a row no citation meets is dead, and the rows a
-  -- scan meets exactly pass.
+  -- The parked list reads both ways: a new site is a phantom, an unmet row is dead.
   let row : PhantomRow := ⟨"zz_parked_name", "x.lean", "Zz.anchor"⟩
   let elsewhere : PhantomRow := { row with anchor := "Zz.other" }
   let (fresh, dead) := judgePhantoms [row] #[row, elsewhere]
@@ -897,9 +773,7 @@ def selftest : IO UInt32 := do
   unless anchorOf "`LeanTex.Core.Ir.frameSteps`" == "LeanTex.Core.Ir.frameSteps" do
     fails.modify ("anchorOf: the backticked subject did not read as its declaration" :: ·)
 
-  -- The rule documents' grammar: what a pin is, what owes it, where an owed
-  -- group ends, and which units must name a check. Each fault is planted
-  -- once and each legal spelling passes.
+  -- The rule documents' grammar, each fault planted once and each legal spelling passing.
   let kinds : List (String × Option PinKind) := [
     ("censusChecks", some .ident), ("Ir.floorMask_id", some .ident),
     ("find?", some .ident), ("record?_some_exact", some .ident),
@@ -930,8 +804,7 @@ def selftest : IO UInt32 := do
   unless (blockPins "a rule (review)").marked && (blockPins "owed (U3) to come").marked &&
       !(blockPins "a rule with no check").marked do
     fails.modify ("blockPins: a check marker was misread" :: ·)
-  -- An owed group that names no pin is bare, wherever it closes: at a `;`,
-  -- at the next group, at its parenthesis, at a period, or at the unit's end.
+  -- An owed group that names no pin is bare wherever it closes.
   let bareCases : List (String × List String) := [
     ("`a_x`; owed (U37): `b_y`", []),
     ("owed (U14) removes it", ["U14"]),
@@ -953,9 +826,7 @@ def selftest : IO UInt32 := do
       (blocks[1]?.map (·.text)) == some "- one `held_x` continues" &&
       (blocks[1]?.map (·.sec)) == some "Rules" do
     fails.modify (s!"docBlocks: {repr blocks}" :: ·)
-  -- `twin_x` stands for a short name two theorems share: it resolves, and
-  -- still names no one check; `type_x` resolves to one type, which holds
-  -- nothing.
+  -- `twin_x` stands for a short name two theorems share, `type_x` for a type.
   let answer := fun (p : Pin) =>
     if p.token == "held_x" then #[("held_x", false)]
     else if p.token == "twin_x" then #[("A.twin_x", false), ("B.twin_x", false)]
@@ -968,8 +839,7 @@ def selftest : IO UInt32 := do
     fails.modify ("judgeDoc: an ambiguous pin was not named as one" :: ·)
   unless judged.any fun f => f.line == 20 && containsSub f.what "is a type" do
     fails.modify ("judgeDoc: a pin naming a type was not named as one" :: ·)
-  -- A document whose prose defines terms rather than states rules owes a
-  -- check only on its table rows.
+  -- A document whose prose defines terms owes a check only on its table rows.
   let termFaults := (judgeDoc "D.md" doc false answer).toList.map (·.line)
   unless termFaults == [18, 18, 19, 20, 20] do
     fails.modify (s!"judgeDoc: a term list owed checks, faults at {termFaults}" :: ·)
@@ -979,8 +849,7 @@ def selftest : IO UInt32 := do
     fails.modify (s!"headingsOf: {headingsOf doc}" :: ·)
   unless docPinCounts doc == (5, 1) do
     fails.modify (s!"docPinCounts: {docPinCounts doc}, want 5 held and 1 owed" :: ·)
-  -- The bare owed count is held both ways: equal passes, and a rise or a
-  -- fall from the baseline is a fault.
+  -- The bare owed count is held both ways.
   let bareDoc := "## R\n\n- one owed (U9) to come\n- two `held_x`\n"
   unless docBareOwed bareDoc == #["U9"] &&
       (bareOwedFault "D.md" bareDoc [("D.md", 1)]).isNone &&

@@ -3,63 +3,9 @@ import LeanTex.Cli.ConvCache
 import LeanTex.Core.Image
 
 /-
-Benchmark leantex against lualatex on the bench corpus. Run from the
-repository root after `lake build`:
-
-  lake env lean --run scripts/bench.lean
-
-Reference point, not a fair fight: lualatex loads formats and fonts per run,
-and does far more. Median of N runs (env var `N`, default 5), milliseconds.
-`LEANTEX_BENCH_BINARY` selects a saved compiler for before/after comparisons
-over the same inputs, environment and benchmark driver.
-`--boundary-only` measures independent picture requests with a cold and a
-warm content cache, after warming font discovery.
-`--concurrency-only` measures PDF compression and HTML image conversion
-with private cold/warm caches, identical output bytes and diagnostic order.
-`--slides-only` measures whole PDF and HTML builds of invented 8/32-slide
-decks with repeated assets (N must be at least 3). Each pair starts with
-empty private content AND font caches; the repeat is a new process over the same source and output
-path. Cold means application caches, not the OS page cache. Phases and
-image work counts come from verbose porcelain records. Cache inventories
-are not hit counters for operations the compiler does not instrument.
-Its gates are equivalence, invalidation and work counts, never milliseconds.
-`--slides-compressed-only` applies those same checks to eight slides with a
-256x256 dynamic-Huffman alpha PNG, exercising the token decoder rather than
-stored blocks. Optional `LEANTEX_BENCH_COMPARE_BINARY` runs a second compiler
-on the same fixtures and requires identical artifacts and diagnostics.
-`--slides-selftest` tests those judges without compiling any documents.
-`--decode-only` measures the decode phase alone over invented 3 MiB
-documents: ASCII or accented words, LF or CR LF line ends.
-`--listings-only` measures a build of the invented highlight snippets as
-minted listings, one copy and eight, and holds a listing's elaboration and
-layout linear in its length, in lines and, over invented adversarial
-listings, in the shapes that once made a lexer, painting or setting
-superlinear.
-`--pdf-pages-only <file.pdf>` embeds every page of a PDF, one build per
-page (`\includegraphics[page=k]`), and reports the warm images phase — the
-page read into its form — per page, its median over N runs, page 1 and the
-slowest page named; the file is the caller's and stays outside the tree.
-`--faces-only <file.pdf>...` builds the HTML of a document including each
-figure, cold over an empty private cache and warm over the one it left, and
-reports the html phase (and the faces phase within it, where the compiler
-names one) and the whole build, cold and warm, the median of N pairs.
-`--svg-only` measures documents of 5 and 17 invented SVG figures, built to
-PDF and HTML, cold and warm, with their `images` phase.
-The slide run also needs sha256sum and pdftocairo.
-For before/after runs use this same driver, N, font/tool environment and an
-otherwise idle host; shared-host timings are provisional. Redirect stdout
-to retain every sample, phase median and input/binary fingerprint.
-`--doc-cost` reports what the invented reference documents of
-`scripts/DocBench.lean` cost in sealed builds — cold and warm milliseconds,
-edit-to-artifact latency under `--watch`, peak resident set size, bytes,
-user-space instructions where `perf` runs, growth from `n` to `4n` — and the
-peak of every corpus fixture (N defaults to 3 there), each against the last
-run on this host class in `testdata/perf/documents.tsv`, the instructions held
-to ±3% of it. It is `scripts/doccost.lean --bench`, whose script modules
-`lake build` does not build, so it builds them, and the engine unless
-`LEANTEX_BENCH_BINARY` names one, before it runs. `--doc-cost --record`
-appends the run there, from a clean checkout of a commit main holds;
-`--history <path>` compares with and records into a scratch history instead.
+Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
+measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --decode-only | --listings-only | --bib-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -69,9 +15,8 @@ def die (msg : String) : IO α := do
   IO.eprintln msg
   IO.Process.exit 1
 
-/-- `--doc-cost`: `scripts/doccost.lean --bench` with the remaining arguments,
-after building what it imports and the engine it measures, since
-`lake env lean --run` interprets whatever the last build left. -/
+/-- `--doc-cost`: `scripts/doccost.lean --bench` with the remaining arguments, after
+building what it imports and the engine it measures. -/
 def docCost (rest : List String) : IO UInt32 := do
   let engine := if (← IO.getEnv "LEANTEX_BENCH_BINARY").isSome then #[] else #["leantex"]
   let targets := engine ++ #["scripts.doccost"]
@@ -113,8 +58,8 @@ def hasCmd (cmd : String) (args : Array String := #["--version"]) : IO Bool := d
   catch _ =>
     return false
 
-/-- An invented `.bib` of `n` entries: half share their authors and year, so
-the letters plainnat gives entries that share a label are in play. -/
+/-- An invented `.bib` of `n` entries, half sharing their authors and year, so plainnat's
+label letters are in play. -/
 def bibOf (n : Nat) : String := Id.run do
   let mut out := ""
   for i in [0:n] do
@@ -124,11 +69,9 @@ def bibOf (n : Nat) : String := Id.run do
       year = \{{yr}}}\n"
   return out
 
-/-- An invented `.bib` of `n` entries written as a real one is: accented
-names (`M{\"u}ller`), case-protected words, a formula and a dash ligature
-in the titles, page ranges, DOIs, a journal of a handful, and a third
-sharing their authors and year — every field text the document's own
-elaborator reads rather than the plain fast path. -/
+/-- An invented `.bib` of `n` entries written as a real one is: accented names,
+case-protected words, formulas, dashes, page ranges, DOIs, and a third sharing authors and
+year. -/
 def bibRichOf (n : Nat) : String := Id.run do
   let mut out := ""
   for i in [0:n] do
@@ -140,10 +83,7 @@ def bibRichOf (n : Nat) : String := Id.run do
       volume = \{{i % 40}}, pages = \{{i}--{i + 9}}, doi = \{10.0000/example.{i}}}\n"
   return out
 
-/-- An invented `.bib` of `n` entries whose every field the document's own
-elaborator reads, through the commands a real `.bib` writes most: an
-`\emph` and a formula in each title, an accented letter, a `\url`, a
-`\textit` and an escaped `\&` in the notes, a braced capital in a journal,
+/-- An invented `.bib` of `n` entries whose every field the document's elaborator reads,
 over four entry types. -/
 def bibHeavyOf (n : Nat) : String := Id.run do
   let given := #["Ann", "Bo", "Cy", "Di", "Ed", "Flo", "Gil", "Ray"]
@@ -163,9 +103,8 @@ def bibHeavyOf (n : Nat) : String := Id.run do
           volume = \{{i % 40}}, number = \{{i % 12}}, pages = \{{i}--{i + 10}}, {note}}\n"
   return out
 
-/-- An invented `.bib` of `n` entries each citing the next in its `note`:
-the list a body citation of the first completes entry by entry, as the
-rerun cycle of LaTeX and BibTeX would. -/
+/-- An invented `.bib` of `n` entries each citing the next in its `note`, completed entry
+by entry. -/
 def bibChainOf (n : Nat) : String := Id.run do
   let mut out := ""
   for i in [0:n] do
@@ -174,9 +113,7 @@ def bibChainOf (n : Nat) : String := Id.run do
       year = \{{2000 + i % 20}}, note = \{Note {i}.{next}}}\n"
   return out
 
-/-- The milliseconds `-v` reports for its `bib` phase: reading the `.bib`,
-ordering and lettering the list, formatting every entry, resolving every
-citation. -/
+/-- The milliseconds `-v` reports for a phase. -/
 def phaseMs (phase log : String) : Option Nat :=
   (log.splitOn "\n").findSome? fun l =>
     if l.startsWith (phase ++ ": ") then ((l.splitOn "(").getLast?.bind fun t =>
@@ -184,9 +121,8 @@ def phaseMs (phase log : String) : Option Nat :=
 
 def bibPhaseMs (log : String) : Option Nat := phaseMs "bib" log
 
-/-- The reference-list phase over `entries` invented entries, every one
-listed (`\nocite{*}` under plainnat, which sorts and letters them): the
-median of `n` runs' `bib` phase. -/
+/-- The reference-list phase over `entries` invented entries, all listed under plainnat's
+`\nocite{*}`: the median of `n` runs. -/
 def benchBib (n : Nat) (entries : Nat) (label : String := "plainnat")
     (bib : Nat → String := bibOf)
     (doc : String := "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
@@ -210,9 +146,8 @@ def benchBib (n : Nat) (entries : Nat) (label : String := "plainnat")
   IO.println s!"{padRight s!"leantex  bib phase, {label}, {entries} entries" 42} {padLeft (toString ms) 6} ms (median of {n})"
   return ms
 
-/-- An invented document of about `mib` MiB, its words ASCII or accented and
-its lines ending at LF or at CR LF: the shapes the decode phase's cost turns
-on (a byte past 0x7F, a CR to settle). -/
+/-- An invented document of about `mib` MiB, its words ASCII or accented, its lines ending
+at LF or CR LF. -/
 def decodeDoc (accented crlf : Bool) (mib : Nat) : String := Id.run do
   let words := if accented then #["café", "crème", "naïve", "déjà", "señor", "über"]
     else #["lorem", "ipsum", "dolor", "sitam", "elita", "sedut"]
@@ -225,18 +160,14 @@ def decodeDoc (accented crlf : Bool) (mib : Nat) : String := Id.run do
     out := out ++ words.getD (i % words.size) "" ++ gap
   return out ++ s!"\\end\{document}{nl}"
 
-/-- The milliseconds `-v` reports for the phase that reads a document's
-bytes as text: `decode`, or `utf8` in a binary from before the decoding
-door, so a before/after run reads both. -/
+/-- The milliseconds `-v` reports for the decode phase, `decode` or the older `utf8`. -/
 def decodePhaseMs (log : String) : Option Nat :=
   (log.splitOn "\n").findSome? fun l =>
     if l.startsWith "decode: " || l.startsWith "utf8: " then ((l.splitOn "(").getLast?.bind
       fun t => ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
 
-/-- The decode phase over an invented 3 MiB document of each shape, the
-median of `n` runs of `-v dump`, which reads and elaborates and lays
-nothing out: the cost of reading bytes as text, which every build pays
-first. -/
+/-- The decode phase over an invented 3 MiB document of each shape: the median of `n` runs
+of `-v dump`. -/
 def benchDecode (n : Nat) : IO Unit := do
   let leantex ← compiler
   let dir ← IO.FS.createTempDir
@@ -257,11 +188,8 @@ def benchDecode (n : Nat) : IO Unit := do
 {padLeft (toString (median times)) 6} ms (median of {n})"
   IO.FS.removeDirAll dir
 
-/-- Listings in every natively lexed language: the invented highlight
-snippets (testdata/highlight/snippets/<language>/), each a minted listing,
-`copies` times over. A build of these spawns no provider; a compiler whose
-lexers do not cover a language pays the provider's process and a second
-elaboration for it, which is what a before/after run of this row measures. -/
+/-- Listings in every natively lexed language: the invented highlight snippets, each a
+minted listing, `copies` times over. -/
 def benchListings (n copies : Nat) : IO Unit := do
   let leantex ← compiler
   let root : System.FilePath := "testdata/highlight/snippets"
@@ -282,10 +210,8 @@ def benchListings (n copies : Nat) : IO Unit := do
     bench n s!"leantex  listings, {copies} copies (HTML)" leantex
       #["-q", "build", input.toString, "-o", (dir / "listings.html").toString]
 
-/-- The median `elab` and `layout` phases of `n` builds of a document
-holding one minted listing of `lang` with this body. A build that outlasts
-two minutes is a failure: a lexer that regressed to backtracking takes
-hours on these. -/
+/-- The median `elab` and `layout` phases of `n` builds of a document holding one minted
+listing; a build past two minutes is a failure. -/
 def listingPhasesMs (n : Nat) (label lang body : String) : IO (Nat × Nat) := do
   let leantex ← compiler
   IO.FS.withTempDir fun tmp => do
@@ -310,9 +236,8 @@ def listingPhasesMs (n : Nat) (label lang body : String) : IO (Nat × Nat) := do
     IO.println s!"{padRight s!"leantex  layout, {label}" 42} {padLeft (toString l) 6} ms (median of {n})"
     return (e, l)
 
-/-- The `elab` and `layout` phases of a document holding one Python listing
-of `lines` lines, drawn in turn from the invented snippets: the medians of
-`n` runs. -/
+/-- The median `elab` and `layout` phases of a document holding one Python listing of
+`lines` lines. -/
 def listingElabMs (n lines : Nat) : IO (Nat × Nat) := do
   let mut pool : Array String := #[]
   let dir : System.FilePath := "testdata/highlight/snippets/python"
@@ -324,15 +249,8 @@ def listingElabMs (n lines : Nat) : IO (Nat × Nat) := do
     body := body ++ "\n"
   listingPhasesMs n s!"one {lines}-line listing" "python" body
 
-/-- Invented listings, of size proportional to `len`, that once cost a
-native lexer more than linear time: the session prompt pattern's nested
-repeats, a heredoc delimiter's every prefix, heredocs whose delimiters
-never recur, a state stack copied on every push, and every lookahead a
-Python rule reads past what it writes when nothing tabled it — blank lines
-before a docstring, a docstring that never closes, a format field's key,
-dotted name or width that never closes, and a named escape with no brace —
-and long lines of alike tokens, spaces and tabs, which painting copied at
-every token and setting at every no-break space. -/
+/-- Invented adversarial listings of size proportional to `len`, in the shapes that can
+make a lexer, painting or setting superlinear. -/
 def adversarialListings (len : Nat) : List (String × String × String) :=
   let rep (s : String) (k : Nat) : String := String.join (List.replicate k s)
   let lines (s : String) : String := rep (s ++ "\n") 8
@@ -355,8 +273,8 @@ def adversarialListings (len : Nat) : List (String × String × String) :=
    ("console", "long command", lines ("$ " ++ rep "x " (len / 2))),
    ("text", "long line", lines (rep "x " (len / 2))),
    ("text", "tabbed line", lines (rep "x\t" (len / 2)))]
-/-- A repeated image must not repeatedly encode the embedded font programs
-while checking HTML resource closure. Both sizes use the same captured assets. -/
+/-- A repeated image deck, whose builds must not re-encode the embedded font programs for
+each closure check. -/
 def benchImageDeck (n frames : Nat) : IO Unit := do
   let leantex ← compiler
   let fonts ← IO.FS.realPath "testdata/corpus/fonts"
@@ -382,13 +300,8 @@ def imagesPhaseMs (log : String) : Option Nat :=
     if l.startsWith "images: " then ((l.splitOn "(").getLast?.bind fun t =>
       ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
 
-/-- SVG figures in a document, each a distinct invented source: `figures`
-copies of the corpus chart, each recoloured so no two share a content key,
-and one moving figure; built to PDF and to HTML. Cold samples start with an
-empty private content cache, warm ones reuse a primed one, so a compiler
-whose figures go through an external converter pays its process spawns
-cold and its cache reads warm, and one that reads them natively pays
-neither. Reports each run's wall time and its `images` phase. -/
+/-- SVG figures in a document, each a distinct invented source, built to PDF and HTML cold
+and warm: each run's wall time and `images` phase. -/
 def benchSvg (n figures : Nat) : IO Unit := do
   let leantex ← IO.FS.realPath (← compiler)
   let fonts ← IO.FS.realPath "testdata/corpus/fonts"
@@ -433,9 +346,8 @@ def benchSvg (n figures : Nat) : IO Unit := do
         IO.println s!"{padRight label 42} {padLeft (toString (median wall)) 6} ms, images \
 {median phase} ms (median of {n})"
 
-/-- Measure the real picture boundary, not a synthetic sleep. A private
-content cache makes each cold run comparable; the following warm run must
-ship identical bytes and every requested picture must have a cached PDF. -/
+/-- The real picture boundary: a private content cache per cold run, and a warm run that
+ships identical bytes with every picture cached. -/
 def benchPictures (n requests : Nat) : IO Unit := do
   let leantex ← IO.FS.realPath (← compiler)
   let fonts ← IO.FS.realPath "testdata/corpus/fonts"
@@ -473,8 +385,7 @@ def benchPictures (n requests : Nat) : IO Unit := do
       let cached ← pictures.readDir
       let mut drawings := 0
       for entry in cached do
-        -- Saved older compilers publish raw PDFs; current compilers publish
-        -- checked answers, including refusals which must not count as drawings.
+        -- A saved older compiler caches raw PDFs; a current one caches answers, and a refusal is no drawing.
         let bytes ← IO.FS.readBinFile entry.path
         let pdf? := if entry.path.extension == some "answer" then
             match LeanTex.Cli.ConvCache.decode bytes with
@@ -497,9 +408,8 @@ structure Phase where
   detail : String
   ms : Nat
 
-/-- Keep timing out of the equivalence check; diagnostics retain their exact
-structured fields and source order. The page count comes from the completed
-compiler run, so a spilling fixture cannot silently change the workload. -/
+/-- One compiler run's sample, timing apart from the structured diagnostics and page count
+the equivalence check reads. -/
 structure Sample where
   ms : Nat := 0
   compilerMs : Nat
@@ -510,8 +420,8 @@ structure Sample where
 def Sample.phase? (r : Sample) (name : String) : Option Phase :=
   r.phases.find? (·.name == name)
 
-/-- A missing, duplicate or unsuccessful summary cannot certify a run.
-Diagnostics are compared with all structured fields, in emission order. -/
+/-- A summary that is missing, duplicated or unsuccessful certifies no run; diagnostics
+keep every structured field, in emission order. -/
 def parseSample (log : String) : Except String Sample := do
   let mut diagnostics := #[]
   let mut phases : Array Phase := #[]
@@ -557,8 +467,8 @@ def sample (binary input output cache : System.FilePath) (verbose : Bool := fals
     | .error reason => throw (IO.userError s!"benchmark needs a complete porcelain report: {reason}")
   return { report with ms }
 
-/-- Each cache is owned by this benchmark's temporary directory. Font discovery
-is warmed first; only the operation being measured is evicted between runs. -/
+/-- Time one cached operation over this benchmark's own caches, font discovery warmed
+first. -/
 def benchCached (n pages : Nat) (label : String)
     (binary input output cache : System.FilePath) (operation : String) : IO Unit := do
   let mut cold := #[]
@@ -580,9 +490,8 @@ def benchCached (n pages : Nat) (label : String)
   for (kind, times) in [("cold", cold), ("warm", warm)] do
     IO.println s!"{padRight s!"leantex  {label} ({kind})" 42} {padLeft (toString (median times)) 6} ms (median of {n})"
 
-/-- Distinct page streams and captured vector images exercise the production
-workers. Source PDFs are generated before timing; no TeX installation or
-private document is involved. -/
+/-- Distinct page streams and captured vector images through the production workers,
+sources generated before timing. -/
 def benchConcurrent (n requests : Nat) (images : Bool) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   let fonts ← IO.FS.realPath "testdata/corpus/fonts"
@@ -620,8 +529,7 @@ namespace Slides
 
 open LeanTex.Core
 
-/-- This is the existing images phase's detail protocol, not a guessed
-count from cache filenames. The fixture has one cacheable alpha PNG. -/
+/-- The images phase's detail counts; the fixture has one cacheable alpha PNG. -/
 def imageCounts (r : Sample) : Except String (Nat × Nat) := do
   let some p := r.phase? "images" | throw "no images phase (use --porcelain -v)"
   let number := fun s : String => match s.toNat? with
@@ -636,8 +544,8 @@ def imageCounts (r : Sample) : Except String (Nat × Nat) := do
   if hits > files then throw "more image hits than requests"
   return (files, hits)
 
-/-- The same source/cache replay owes the same nonempty artifact, page
-count, diagnostic order and resolved font environment. Timing is excluded. -/
+/-- The same source and cache replay owes the same nonempty artifact, page count,
+diagnostic order and font environment. -/
 def equivalent (pages : Nat) (a b : Sample) (x y : ByteArray) : Bool :=
   !x.isEmpty && x == y && a.pages == pages && b.pages == pages &&
     a.diagnostics == b.diagnostics &&
@@ -645,8 +553,7 @@ def equivalent (pages : Nat) (a b : Sample) (x y : ByteArray) : Bool :=
     (a.phase? "font").map (·.detail) == (b.phase? "font").map (·.detail) &&
     (a.phase? "fontdb").map (·.detail) == (b.phase? "fontdb").map (·.detail)
 
-/-- The fixture must resolve only copied, unchanged fonts. Discovery still
-visits host roots, so its cost remains dependent on the host font installation. -/
+/-- The fixture resolves only copied, unchanged fonts. -/
 def fixtureFonts (root : String) (r : Sample) : Bool :=
   match (r.phase? "font").map (·.detail.splitOn " (") with
   | some [_, paths] =>
@@ -655,15 +562,12 @@ def fixtureFonts (root : String) (r : Sample) : Bool :=
     !paths.isEmpty && paths.all (·.startsWith (root ++ "/fonts/"))
   | _ => false
 
-/-- A changed input owes changed bytes AND the fresh-cache answer. Merely
-noticing a new cache file would also pass a stale artifact. -/
+/-- A changed input owes changed bytes and the fresh-cache answer. -/
 def invalidated (pages : Nat) (old changed fresh : ByteArray)
     (a b : Sample) : Bool :=
   old != changed && equivalent pages a b changed fresh
 
-/-- Content answers must remain unchanged. Font-discovery TSVs are mutable
-metadata (including hash-map row order); they are not content-cache entries.
-Their resolved environment is checked by `equivalent` instead. -/
+/-- The content answers among cache files, font-discovery metadata excluded. -/
 def answers (files : Array (String × String)) : Array (String × String) :=
   files.filter fun (name, _) =>
     name.startsWith "imgs/" || name.startsWith "flate/" || name.startsWith "convs/"
@@ -680,8 +584,7 @@ def say (text : String) : IO Unit := do
   IO.println text
   (← IO.getStdout).flush
 
-/-- Hash the executable outside timing. A native checksum avoids interpreting
-two byte-by-byte fingerprint passes over a large debug executable. -/
+/-- The executable's hash, outside timing. -/
 def binaryHash (binary : System.FilePath) : IO String := do
   let result ← IO.Process.output { cmd := "sha256sum", args := #["--", binary.toString] }
   let key := (result.stdout.splitOn " ").headD ""
@@ -702,8 +605,7 @@ def be32 (n : Nat) : ByteArray :=
   ⟨#[UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
     UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]⟩
 
--- PNG CRC-32 (ISO/IEC 15948 Annex D). The browser must accept the fixture
--- too; a header-only probe with dummy checksums would not establish that.
+-- PNG CRC-32 (ISO/IEC 15948 Annex D), so the browser accepts the fixture too.
 def crc32 (bytes : ByteArray) : UInt32 := Id.run do
   let mut crc : UInt32 := 0xffffffff
   for byte in bytes do
@@ -721,8 +623,8 @@ def png (width height : Nat) (compressed : ByteArray) : ByteArray :=
     pngChunk "IHDR" (be32 width ++ be32 height ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
     pngChunk "IDAT" compressed ++ pngChunk "IEND" ByteArray.empty
 
-/-- Two same-sized RGBA fixtures, one filename. Changing the colour must
-invalidate alpha decoding by content even when the dimensions are identical. -/
+/-- Two same-sized RGBA fixtures under one filename, so a colour change must invalidate
+alpha decoding by content. -/
 def raster (edited : Bool) : ByteArray := Id.run do
   let mut raw := ByteArray.empty
   for y in [:80] do
@@ -732,9 +634,8 @@ def raster (edited : Bool) : ByteArray := Id.run do
         if edited then 40 else 200, if x % 16 < 8 then 255 else 128]⟩
   return png 128 80 (Flate.deflateStored raw)
 
-/-- Seeded low-entropy noise needs both literals and matches. Long flat runs
-would hide repeated prefix copying in the compressed-token decoder. The edit
-changes one colour sample, retaining the path, dimensions and alpha format. -/
+/-- Seeded low-entropy noise, needing both literals and matches; the edit changes one
+colour sample. -/
 def compressedRaster (side : Nat) (edited : Bool) : ByteArray := Id.run do
   let mut raw := ByteArray.emptyWithCapacity (side * (4 * side + 1))
   let mut seed : UInt64 := 731
@@ -750,8 +651,7 @@ def compressedRaster (side : Nat) (edited : Bool) : ByteArray := Id.run do
         raw := raw.push (if edited && x == 0 && y == 0 && c == 0 then value ^^^ 16 else value)
   return png side side (Flate.deflate raw)
 
-/-- A font-free vector asset, generated outside timing. Its conversion
-has no dependency on a host font substitution. -/
+/-- A font-free vector asset, generated outside timing. -/
 def vector (edited : Bool := false) : ByteArray := Id.run do
   let colour := if edited then "0.7 0.4 0.1" else "0.1 0.4 0.7"
   let content := colour ++ " rg 0 0 100 64 re f\n1 0.7 0.1 rg 12 12 40 40 re f"
@@ -864,9 +764,8 @@ def selftest : IO Unit := do
   require (deck 8 != deck 8 true) "source edit must change content"
   say "slides benchmark selftest: parser, equivalence, invalidation and fixtures passed"
 
-/-- Inventories witness published answers, not hits or tool invocations.
-All current cache files are at the root or one directory below it. Refuse
-a deeper layout rather than silently omit answers from the comparison. -/
+/-- The answers a cache publishes, at its root or one directory below; a deeper layout is
+refused. -/
 def inventory (root : System.FilePath) : IO (Array (String × String)) := do
   if !(← root.pathExists) then return #[]
   let mut out := #[]
@@ -891,8 +790,7 @@ structure Run where
   bytes : ByteArray
   cache : Array (String × String)
 
-/-- Only the child compiler is timed. Fixture generation, verification,
-inventory hashing, and Lean/Lake compilation are outside the measurement. -/
+/-- One timed child compiler run; everything else is outside the measurement. -/
 def compile (binary dir cache : System.FilePath) (format : String) : IO Run := do
   let output := dir / ("deck." ++ format)
   if ← output.pathExists then IO.FS.removeFile output
@@ -923,8 +821,8 @@ def printSample (label : String) (r : Run) : IO Unit := do
   let phases := r.report.phases.toList.map fun p => s!"{p.name}={p.ms}"
   say s!"  {label}: wall={r.report.ms} compiler={r.report.compilerMs} ms; {String.intercalate " " phases}"
 
-/-- The edited input's cached build must agree with an empty-cache oracle,
-then repeat without new answers. Invalidation checks are not timed samples. -/
+/-- The edited input's cached build must agree with an empty-cache oracle, then repeat
+without new answers. -/
 def checkEdit (binary dir cache : System.FilePath) (format label : String)
     (pages hits : Nat) (old : Run) : IO Run := do
   let changed ← compile binary dir cache format
@@ -1043,23 +941,16 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
-/-- Four times the input may cost at most eight times the phase (linear is
-4, quadratic 16). -/
+/-- Four times the input may cost at most eight times the phase (linear 4, quadratic 16).
+-/
 def growthBound (label : String) (small big : Nat) : IO Unit := do
   let ratio := (big * 10 + max small 1 / 2) / max small 1
   IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
   if big > 8 * max small 1 then
     die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
 
-/-- A listing's lexing is linear in its length, in lines and within a line,
-and so is setting it. A lexer step that copied its token array on every
-token once made it quadratic in the lines; backtracking over the session
-prompt pattern made it cubic in a line's length, a heredoc's delimiter
-search quadratic, a state stack copied on every push quadratic in the
-nesting, and a Python rule's lookahead past the scalars it writes quadratic
-in the lines or a line's length. Setting a listing copied its items at
-every token and at every box of a line, and searched every line's sources
-and every break's authored ends from the start. -/
+/-- A listing's lexing and setting are linear in its length, in lines and within a line.
+-/
 def listingGrowth (n : Nat) : IO Unit := do
   let (smallElab, smallLayout) ← listingElabMs n 2000
   let (bigElab, bigLayout) ← listingElabMs n 8000
@@ -1073,13 +964,7 @@ def listingGrowth (n : Nat) : IO Unit := do
 
 /-- The reference list's growth rows, which `--bib-only` runs alone. -/
 def benchBibGrowth (n : Nat) : IO Unit := do
-  -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
-  -- thousands of entries, and a phase quadratic in them (75 s at 1600)
-  -- passed every row above. Four times the entries may cost at most eight
-  -- times the phase: linear is 4, n log n about 4.6, quadratic 16.
-  -- The same bound over the field text a real `.bib` writes, which the
-  -- document's own elaborator reads, under BibTeX's plainnat and both of
-  -- biblatex's standard families.
+  -- Four times the entries may cost at most eight times the phase, under each style family.
   let biblatexDoc (style : String) (key : String := "r0") : String :=
     s!"\\documentclass\{article}\n\\usepackage[style={style}]\{biblatex}\n\
       \\addbibresource\{refs.bib}\n\\begin\{document}\nAlpha words \\parencite\{{key}}.\n\
@@ -1092,9 +977,7 @@ def benchBibGrowth (n : Nat) : IO Unit := do
     \\end{document}\n"
   let chainNat := "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
     \\begin{document}\nAlpha words \\citep{c0}.\n\\bibliography{refs}\n\\end{document}\n"
-  -- A field citation chain is the list completing itself entry by entry, a
-  -- round per link; it runs last, at a quarter of the sizes, as a list
-  -- that grows with the square of its chain fails its bound there too.
+  -- A field citation chain runs last, at a quarter of the sizes.
   let rows : List (String × (Nat → String) × String × Nat) :=
     [("plainnat", bibOf, "", 400), ("plainnat, TeX fields", bibRichOf, richNat, 400),
      ("plainnat, TeX-heavy fields", bibHeavyOf, heavyNat, 400),
@@ -1111,10 +994,8 @@ def benchBibGrowth (n : Nat) : IO Unit := do
     if big > 8 * max small 1 then
       die s!"the reference-list phase ({label}) grew {ratio / 10}.{ratio % 10}× for 4× the entries (bound 8)"
 
-/-- **Every page of a PDF, embedded**: one build per page of a document that
-includes it, warm (the second of each pair of runs over one private cache),
-its images phase — where the page is read into its form — the median of
-`n`. The pages are counted by the reader itself. -/
+/-- Every page of a PDF embedded, one build per page, warm: the images phase's median of
+`n`. -/
 def benchPdfPages (n : Nat) (pdf : System.FilePath) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   let fonts ← IO.FS.realPath "testdata/corpus/fonts"
@@ -1148,13 +1029,9 @@ def benchPdfPages (n : Nat) (pdf : System.FilePath) : IO Unit := do
     IO.println s!"{padRight s!"leantex  slowest page, {slowest.1} of {pages}" 42} {padLeft (toString slowest.2) 6} ms (median of {n})"
     IO.println s!"leantex  pages under 150 ms: {(times.filter (·.2 < 150)).size} of {pages}"
 
-/-- **A PDF figure's web face, cold and warm**: an HTML build of a document
-including each figure, the first over an empty private cache and the second
-over the one it left, the median of `n` pairs — the html phase, where the
-figure's web face is decided (and, where the compiler reports it, the faces
-phase within it) and the whole build. A compiler without a faces phase — one
-that converts every figure — is measured by the rest, so this driver compares
-it with one that draws them. -/
+/-- A PDF figure's web face, cold and warm: an HTML build of a document including each
+figure, the html phase (and faces phase where reported) and the whole build, the median of
+`n` pairs. -/
 def benchFaces (n : Nat) (pdfs : List String) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   let fonts ← IO.FS.realPath "testdata/corpus/fonts"
@@ -1254,20 +1131,13 @@ def main (args : List String) : IO UInt32 := do
       bench n s!"lualatex {base}" "lualatex"
         #["--interaction=batchmode", s!"--output-directory={workdir}", (workdir / base).toString]
       IO.FS.removeDirAll workdir
-  -- The theme/roles/chrome and recovery passes run only on a themed deck,
-  -- and the HTML backend was off the measured path entirely; leantex-only
-  -- (lualatex does not build the native theme declarations).
+  -- A themed deck, leantex only: the theme passes and the HTML backend.
   let outDir ← IO.FS.createTempDir
   bench n "leantex  themed.tex" leantex
     #["-q", "build", "testdata/corpus/themed.tex", "-o", (outDir / "themed.pdf").toString]
   bench n "leantex  themed.tex -o html" leantex
     #["-q", "build", "testdata/corpus/themed.tex", "-o", (outDir / "themed.html").toString]
-  -- The paper-shaped fixture: sections, numbered equations with \eqref,
-  -- floats with captions, natbib citations resolved from refs.bib in the
-  -- same run — the one-run resolution that is the engine's headline claim.
-  -- leantex-only, and that asymmetry is the honest story: a comparable
-  -- lualatex figure needs lualatex+bibtex+lualatex twice (or latexmk),
-  -- which this single-command runner deliberately does not spell.
+  -- The paper-shaped fixture, leantex only: one-run citation resolution.
   bench n "leantex  paper.tex" leantex
     #["-q", "build", "bench/paper.tex", "-o", (outDir / "paper.pdf").toString]
   bench n "leantex  paper.tex -o html" leantex

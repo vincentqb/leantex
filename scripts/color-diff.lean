@@ -1,14 +1,7 @@
 /-
-Differential probe for xcolor's rgb, gray, and cmyk PDF operators. Run from
-repository root after building the executable:
-
-  lake build leantex && lake env lean --run scripts/color-diff.lean
-
-The reference PDF disables stream and object compression. Each synthetic case
-is built independently by LuaLaTeX and leantex, then both files are parsed
-through `PdfRead`; comparisons are over PDF numeric semantics, while the
-LuaLaTeX spelling is also pinned to distinguish direct values from
-`\definecolor`'s five-decimal normalization.
+Differential probe for xcolor's rgb, gray and cmyk PDF operators: each synthetic case built by
+LuaLaTeX and leantex and compared through `PdfRead`.
+Usage: lake build leantex && lake env lean --run scripts/color-diff.lean
 -/
 import LeanTex
 

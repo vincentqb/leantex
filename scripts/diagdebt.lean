@@ -1,34 +1,7 @@
 /-
-The diagnostics debt, read as Lean values. Run from the repository root
-after `lake build TestsModules` (the aggregate does that for you):
-
-  lake env lean --run scripts/diagdebt.lean              regenerate the baseline
-  lake env lean --run scripts/diagdebt.lean --check      gate against the committed one
-  lake env lean --run scripts/diagdebt.lean --selftest   the encoding
-
-`subjectDebt` in `Tests/Diag.lean` is the censused codes that emit with no
-subject and so sit outside `Diag.tallySites`'s census. `subjectCensusChecks`
-already reads that list in both directions, falling and never rising, so the
-ratchet here mechanises an existing rule. This tier imports the module and
-measures the *value* rather than counting lines of source: a count read off
-source text drifts from the value the suite checks the first time a row is
-reformatted, and nothing would see it.
-
-`siteAccounting` is deliberately **not** ratcheted, and this is the
-correction the review found. Its rows are what AGENTS.md § When you add
-*prescribes* adding — one accounting, or a `siteAccounting` row naming the
-file that owes the merge — and that row is the shape of a routed fix. A
-tier that fails when the list grows would turn a specialist's routed
-finding into a regression, and rows also appear when a new probe discovers
-a collision rather than when code creates one. So the count is a provenance
-line: data, never gated.
-
-Encoded as headroom, so a shrinking debt reads as a rising number.
-
-What these numbers mean, exactly: they are the registries' lengths, and the
-registries equal the real debt only because `subjectCensusChecks` and
-`siteAccountingChecks` hold in both directions. On a tree where `lake test`
-fails, this tier measures two lists and not the debt.
+The diagdebt tier: `subjectDebt`'s length as headroom; `siteAccounting`'s is provenance, never
+gated.
+Usage: lake build TestsModules && lake env lean --run scripts/diagdebt.lean [--check | --selftest]
 -/
 import Tests.Diag
 import scripts.Board
@@ -46,8 +19,6 @@ AGENTS.md prescribes adding a row to route a fix"], #[
     { item := "subject-debt-absent", value := debtCap - Int.ofNat debt }])
 
 def selftest : IO UInt32 := tierSelftest "diagdebt" fun no => do
-  -- The registries are read as values, so these are facts about the module
-  -- and not about its formatting: a reflowed row cannot move them.
   no "subjectDebt is a non-empty list of codes" (!subjectDebt.isEmpty)
   no "subjectDebt holds no duplicate" (subjectDebt.eraseDups.length == subjectDebt.length)
   no "every code owing a subject is a registered code"
@@ -58,9 +29,7 @@ def selftest : IO UInt32 := tierSelftest "diagdebt" fun no => do
     (siteAccounting.all fun r => r.1 != r.2.1)
   no "encoding: a shorter debt list reads as a higher value"
     (debtCap - (1 : Int) > debtCap - (2 : Int))
-  -- The correction this tier carries: adding a siteAccounting row is how a
-  -- fix is routed (AGENTS.md § When you add), so the count is provenance. This
-  -- fails if anyone gives it an item.
+  -- Adding a siteAccounting row routes a fix, so its count is provenance and never an item.
   let (prov, rows) ← measureTier
   no s!"siteAccounting is not an item ({String.intercalate ", " (rows.map (·.item)).toList})"
     (!rows.any fun r => containsSub r.item "site")

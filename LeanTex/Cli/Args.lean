@@ -44,19 +44,11 @@ public structure Config where
   /-- `-o`: an output file (its extension picks the backend) or a directory. -/
   output : Option String := none
   watch : Bool := false
-  /-- `--best-effort`: accept every loss, as `\allow` of every code would —
-  port mode for documents written against another engine. -/
+  /-- `--best-effort`: accept every loss, as `\allow` of every code would. -/
   bestEffort : Bool := false
-  /-- `--werror`: exit 1 when any warning was emitted. Output is still
-  written — the flag changes the exit code, never the rendering — and an
-  accepted loss (`\allow`, `--best-effort`) is not a warning for this
-  purpose: that is the point of accepting it. Notes never count. -/
+  /-- `--werror`: exit 1 when an unaccepted warning is emitted; output is still written. -/
   werror : Bool := false
-  /-- The one remaining flag that shapes the artifact — a recorded debt, not
-  a design: it dies when `\output` grows a key for the math renderer, and
-  the matching hypothesis in `artifact_flag_free` dies with it. It names a
-  local script file, which the HTML page carries inline
-  (`Publication.captureMathBoundary`). -/
+  /-- `--math-boundary`: a local script file the HTML page carries inline. -/
   mathBoundary : Option String := none
   /-- Extra font directories, added to the built-in locations. -/
   fontDirs : Array String := #[]
@@ -163,8 +155,6 @@ public def parse (argv : List String) : Except String Config := do
           match cmd, wantsFile with
           | some (.hyphenate _ _), _ => hyphenWords := hyphenWords ++ [a]
           | some _, _ => throw s!"unexpected argument '{a}'"
-          -- A command that needs a file takes the next positional, not the
-          -- next token: flags belong after the command, where people type them.
           | none, some k => cmd := some (if k == "build" then .build a else .dump a)
           | none, none =>
             match a with
@@ -175,8 +165,6 @@ public def parse (argv : List String) : Except String Config := do
             | "themes" => cmd := some .themes
             | "build" | "dump" => wantsFile := some a
             | _ =>
-              -- The file is the command: `leantex doc.tex` builds it.
-              -- `.md` is reserved for the markdown surface.
               if a.endsWith ".tex" || a.endsWith ".md" then
                 cmd := some (.build a)
               else if a.toList.contains '.' || a.toList.contains '/' then
@@ -200,19 +188,17 @@ public def Emit.ext : Emit → String
   | .html => "html"
   | .md => "md"
 
-/-- Every backend, in the order the help and a refusal list them. -/
+/-- Every backend, in listing order. -/
 public def Emit.all : List Emit := [.pdf, .html, .md]
 
 public theorem Emit.all_complete (e : Emit) : e ∈ Emit.all := by
   cases e <;> simp [Emit.all]
 
-/-- The backend an output name asks for, when it names one: the one whose
-extension ends it. -/
+/-- The backend whose extension ends the output name. -/
 public def emitOfPath (o : String) : Option Emit :=
   Emit.all.find? fun e => o.endsWith ("." ++ e.ext)
 
-/-- The output names a run can take, as a refusal lists them: each
-backend's extension, from `Emit.all`. -/
+/-- Every backend's extension, as a refusal lists them. -/
 public def Emit.extensions : String :=
   match (Emit.all.map fun e => "'." ++ e.ext ++ "'").reverse with
   | [] => ""
@@ -227,29 +213,12 @@ public def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Arr
     let ds := docFormats.filterMap emitOne
     if ds.isEmpty then #[.pdf] else ds
 
-/-- Stylesheet: the document's `\output{ css = ... }` or the default. Takes
-no `Config`, by design — see `artifact_flag_free`. -/
+/-- The stylesheet the document's `\output{ css = ... }` names, or the default. -/
 public def cssFor (docCss : Option String) : CssChoice :=
   (docCss.bind cssChoice).getD .own
 
-/-- **The artifact is a function of the document and the font environment;
-flags are not arguments to it.** Two parsed configurations that agree on
-`-o` make the same backend decisions, whatever every other flag says.
-`-o` is exempted by hypothesis because the output NAME picks which
-backends run (`-o out.html`), never what any backend emits; `--font-dir`
-needs no hypothesis because it extends the font environment the invariant
-conditions on, and the planning functions cannot see it. `--math-boundary`
-is exempted as the one recorded remainder: the page carries the bytes of
-the file it names, read from the run's directory, so one flag in two
-directories can carry two renderers; it dies when the document grows an
-`\output` key for the math renderer, and its hypothesis dies with it.
-Stated over the driver's planning functions rather than `main`, which is
-IO: these are the only places a `Config` value meets a backend decision —
-`cssFor`, `Pdf.write`, `MarkdownDoc.emit`, and `HtmlDoc.emit` take no
-`Config` by type, and the pre-commit gate keeps `Config` reads in the
-driver on a declared allowlist. A future flag that shapes the artifact
-must be read here, and then this proof breaks — the invariant is a build
-error, not a convention. -/
+/-- Flags are not arguments to the artifact: configurations agreeing on `-o` and
+`--math-boundary` make the same backend decisions. -/
 public theorem artifact_flag_free (cfg cfg' : Config)
     (ho : cfg.output = cfg'.output) (hm : cfg.mathBoundary = cfg'.mathBoundary)
     (docFormats : Array String) :
@@ -257,10 +226,8 @@ public theorem artifact_flag_free (cfg cfg' : Config)
       = (cfg'.effectiveEmit docFormats, cfg'.mathBoundary) := by
   simp only [Config.effectiveEmit, ho, hm]
 
-/-- Where a backend writes. A directory keeps the source's stem; a file
-naming this backend's extension is used as-is; anything else (the other
-backend's file, when `\output` declares several formats) falls back
-beside the source. -/
+/-- Where backend `e` writes: into a directory under the source's stem, to `output` when it
+names `e`'s extension, else beside the source. -/
 public def outPath (output : Option String) (outputIsDir : Bool) (source : String)
     (e : Emit) : String :=
   let besideSource := (System.FilePath.mk source).withExtension e.ext |>.toString
@@ -274,11 +241,7 @@ public def outPath (output : Option String) (outputIsDir : Bool) (source : Strin
     else if emitOfPath o == some e then o
     else besideSource
 
-/-- The exit-code contract, one total function so the driver and the tests
-read the same answer: errors win, then failed assertions, then — only under
-`--werror` — warnings. An accepted loss was already downgraded to a note
-before it reached these counts, so `\allow` composes with `--werror` by
-construction. -/
+/-- The exit code: errors first, then failed assertions, then warnings under `--werror`. -/
 public def exitFor (errors assertFailures warnings : Nat) (werror : Bool) : UInt32 :=
   if errors > 0 then 1
   else if assertFailures > 0 then 2

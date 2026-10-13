@@ -1,48 +1,22 @@
 /-
-The parity ladder's three premises, measured rather than assumed. Run from
-the repository root:
-
-  lake build ScriptsModules
-  lake env lean --run scripts/parity-measure.lean
-
-This is a report, never a gate: it prints what two engines actually agree
-on for the committed pairings, so a tolerance is set around a number
-somebody read. It reads committed references only and invokes nothing, so
-it runs with the reference engine absent.
-
-The three premises, from the ladder's design:
-
-  1. `/ToUnicode` is real on the reference side, so no glyph-name
-     reconstruction is needed. Falsified by any unmapped scalar in the
-     reference's reading — the reader substitutes U+FFFD for a glyph it
-     cannot name, so the count of those *is* the measurement.
-  2. fontspec pointed at the fixture's own font gives identical advances.
-     Measured as the painted width of the longest shared run on each side,
-     so it reads the `hmtx` only where both sides declare micro-typography
-     alike: expansion scales a line's painted widths.
-  3. lualatex's line breaks agree with the engine's Knuth-Plass in
-     practice. Measured by grouping each side's runs into lines by
-     baseline and comparing the line texts — the reading the page-level
-     order level is blind to.
+Report measuring the parity ladder's premises over the committed pairings: `/ToUnicode`
+coverage, advances under a shared font, and line breaks.
+Usage: lake build ScriptsModules && lake env lean --run scripts/parity-measure.lean
 -/
 import LeanTex.Cli.FontDiscovery
 import scripts.ParityCore
 
 open LeanTex.Core LeanTex.Cli Parity
 
-/-- One line of a page, as the file paints it: a baseline and the scalars
-on it. Runs are grouped by their `y`, which both writers set per line. -/
+/-- One line of a page as the file paints it: a baseline and the scalars on it. -/
 structure ArtLine where
   y : Dim.Sp
   text : String
   width : Dim.Sp
   deriving Repr, Inhabited
 
-/-- A page's lines *with their geometry*: the baseline and the extent, which
-the shared `Parity.linesOf` deliberately drops — it answers which scalars
-share a line and nothing about where. This one exists for the report's
-advance and measure numbers, and is ordered by painting because it is only
-ever printed. -/
+/-- A page's lines with their baseline and extent, in painting order, for the report's
+advance and measure numbers. -/
 def lineBoxesOf (p : ArtPage) : Array ArtLine := Id.run do
   let mut ys : Array Dim.Sp := #[]
   let mut texts : Array String := #[]
@@ -66,9 +40,7 @@ def lineBoxesOf (p : ArtPage) : Array ArtLine := Id.run do
       out := out.push { y := ys[i]!, text := t, width := x1[i]! - x0[i]! }
   return out
 
-/-- How many scalars a reading could not name. `artUnmapped` is what the
-reader substitutes for a glyph with no `/ToUnicode` entry, so this counts
-exactly the glyphs that would need name reconstruction. -/
+/-- How many scalars a reading could not name: the glyphs with no `/ToUnicode` entry. -/
 def unmappedCount (pages : Array ArtPage) : Nat := Id.run do
   let bad := artUnmapped.toList.headD (Char.ofNat 0xFFFD)
   let mut n := 0
@@ -83,13 +55,8 @@ of unnamed ones. -/
 def scalarCount (pages : Array ArtPage) : Nat :=
   pages.foldl (fun a p => a + (p.runs.foldl (fun b r => b + (inked r.text).length) 0)) 0
 
-/-- The widest run both sides paint with identical text, and each side's
-advance for it. The comparison is per identical string so the two numbers
-are advances over the same glyphs. They are *painted* advances: a run's
-width carries the horizontal scale (`Tz`) it was set at, so where one side
-expands a line and the other does not, the delta is the expansion and not
-the `hmtx`. Premise 2 is read here only for a pairing that declares
-micro-typography alike on both sides. -/
+/-- The widest run both sides paint with identical text, and each side's painted advance
+for it, horizontal scale included. -/
 def sharedRunDelta (e r : Array ArtPage) : Option (String × Dim.Sp × Dim.Sp) := Id.run do
   let mut best : Option (String × Dim.Sp × Dim.Sp) := none
   for pi in [0:min e.size r.size] do
@@ -103,9 +70,8 @@ def sharedRunDelta (e r : Array ArtPage) : Option (String × Dim.Sp × Dim.Sp) :
           | none => best := some (key, a.w, b.w)
   return best
 
-/-- The line readings side by side, and where they part. Reported as a
-count of agreeing lines out of the shorter reading: a line-break
-disagreement shows as the first index whose texts differ. -/
+/-- The line readings side by side: agreeing lines out of the shorter reading, and the
+first index where they part. -/
 def lineReport (stem : String) (e r : Array ArtPage) : IO Unit := do
   let mut agree := 0
   let mut total := 0
@@ -126,11 +92,8 @@ def lineReport (stem : String) (e r : Array ArtPage) : IO Unit := do
   | some d => IO.println s!"    first difference — {d}"
   | none => IO.println s!"    every line of {stem} breaks at the same word on both sides"
 
-/-- Every Type0 font a file carries, with its descendant's `/W` read two
-ways: as the artifact reader reads it, and with the indirect reference
-followed. A writer may put `/W` behind a reference, and the two numbers
-part exactly when it does — which is premise 2's real subject, since a
-width map that came back empty leaves every glyph on `/DW`. -/
+/-- Every Type0 font a file carries, with its descendant's `/W` read as the artifact
+reader reads it and with the indirect reference followed. -/
 def widthMapSizes (pdf : ByteArray) : Except String (Array (Nat × Nat × Int)) := do
   let es ← PdfRead.objects pdf
   let esv := es.val
@@ -149,9 +112,8 @@ def widthMapSizes (pdf : ByteArray) : Except String (Array (Nat × Nat × Int)) 
     out := out.push (asRead, followed, dw)
   return out
 
-/-- What shape the reference's `/W` entry has, so a routed fix names the
-right thing: whether it is an array in place or a reference to one, and
-how many top-level items that array carries. -/
+/-- The shape of the reference's `/W` entry: an array in place or a reference to one, and
+its top-level item count. -/
 def widthEntryShape (pdf : ByteArray) : Except String (Array String) := do
   let es ← PdfRead.objects pdf
   let esv := es.val
@@ -173,25 +135,15 @@ def widthEntryShape (pdf : ByteArray) : Except String (Array String) := do
     out := out.push s!"/W in place is {shape raw}; followed it is {shape (deref raw)}"
   return out
 
-/-- The placement distribution, per page: one-to-one same-character
-matching, then |Δx| and |Δy| as p50 / p95 / max, raw and with the page's own
-first-baseline offset removed.
-
-The offset arm is not a tolerance. `Divergence.firstBaseline` is a measured
-origin offset — both engines derive the first baseline from the top margin
-by their own rules, uniformly down the page — so the raw Δy answers "do the
-two engines agree about where the text block starts", which is a declared
-divergence, and the corrected Δy answers "do they agree about where each
-glyph sits within it", which is what a placement level is for. Both are
-printed; neither is chosen here, because this file never gates. -/
+/-- The placement distribution per page: same-character glyphs matched one to one, |Δx|
+and |Δy| as p50 / p95 / max, raw and with the page's first-baseline offset removed. -/
 def placeReport (e r : Array ArtPage) : IO Unit := do
   for pi in [0:min e.size r.size] do
     let (pairs, unmatched) := placePairs e[pi]! r[pi]!
     if pairs.isEmpty then
       IO.println s!"  place p{pi + 1}: nothing paired"
       continue
-    -- The page's own baseline offset: the median Δy, which an origin offset
-    -- makes constant and a real placement difference does not.
+    -- The page's own baseline offset: the median Δy, constant under an origin offset.
     let dys := pairs.map fun (a, b) => a.2 - b.2
     let shift := atPercentile dys 50
     let dxs := pairs.map fun (a, b) => (a.1 - b.1).natAbs

@@ -2,11 +2,9 @@ module
 
 public import LeanTex.Cli.PicCache
 
-/-! The host as a vocabulary of questions. A `Prog` is a value: it asks, and
-what it does next depends only on the replies, so one program runs against a
-world given as a function (`Prog.run`) or against the machine (`Host.runIO`).
-What a program learned from the world is the trace `Prog.record` keeps, and
-`Prog.replay` answers it again from that trace alone. -/
+/-! The host as a vocabulary of questions: a `Prog` asks, and what it does next depends
+only on the replies, so one program runs against a world given as a function or against
+the machine (`Host.runIO`). -/
 
 namespace LeanTex.Cli.World
 
@@ -36,9 +34,8 @@ public structure Stat where
   real : String
   deriving DecidableEq, Repr
 
-/-- A path's metadata, symlinks followed, with its hard-link count and
-without its real path: what a comparison of many files reads, resolving
-only the few whose metadata could be one file's. -/
+/-- A path's metadata, symlinks followed, with its hard-link count and without its real
+path. -/
 public structure Metadata where
   kind : Kind
   size : Nat
@@ -47,9 +44,9 @@ public structure Metadata where
   links : Nat
   deriving DecidableEq, Repr
 
-/-- One bounded tool run in a scratch directory of its own. `inputs` are
-written there before the call and `outputs` read back after it, both named
-relative to it; `env` changes the inherited environment. -/
+/-- One bounded tool run in a scratch directory of its own: `inputs` written there before
+the call and `outputs` read back after it, both relative to it; `env` changes the
+inherited environment. -/
 public structure ToolCall where
   tool : String
   args : Array String
@@ -61,13 +58,9 @@ public structure ToolCall where
   env : Array (String × Option String) := #[]
   deriving DecidableEq
 
-/-- How a run ended, what it printed, and each declared output (`none`
-when it is not a regular file inside the run's scratch directory once its
-links are followed). `out` and `err` are the streams read as UTF-8, each
-maximal ill-formed subpart read as U+FFFD (`Utf8.decode`), with the scratch
-directory's random name spelled `<scratch>`, as it is in the reason of a run
-that never started, so a reply names nothing the run chose. `complete` is a
-run that exited within its budget with both streams read to their end. -/
+/-- How a run ended, what it printed (lenient UTF-8, the scratch directory's name spelled
+`<scratch>`), and each declared output that is a regular file inside its scratch;
+`complete` means it exited within budget with both streams read to their end. -/
 public structure Ended where
   ran : PicCache.Ran
   out : String
@@ -88,8 +81,8 @@ public inductive Ask where
   | createDirAll (path : String)
   deriving DecidableEq
 
-/-- What each question is answered with. A listing is sorted by name, and a
-read refuses anything but a regular file. -/
+/-- What each question is answered with: a listing sorted by name, and a read that refuses
+anything but a regular file. -/
 @[expose, reducible] public def Reply : Ask → Type
   | .env _ => Option String
   | .cwd => Except Failure String
@@ -191,9 +184,6 @@ public theorem asks_map {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α)
   rw [← bind_pure_comp, asks_bind]
   exact List.append_nil _
 
-/-- **A program is determined by the replies it reads.** Two worlds that
-agree on every question the program asks one of them give the same answer:
-what the program never asked cannot move it. -/
 public theorem run_replay_exact {α : Type} (p : Prog α) (w v : (q : Ask) → Reply q)
     (h : ∀ q ∈ p.asks w, v q = w q) : p.run v = p.run w := by
   induction p with
@@ -204,8 +194,6 @@ public theorem run_replay_exact {α : Type} (p : Prog α) (w v : (q : Ask) → R
     rw [hq]
     exact ih (w q) fun q' hq' => h q' (List.mem_cons_of_mem q hq')
 
-/-- **The interpreter over a pure world is `run`.** Tests' worlds and the
-host run one interpreter. -/
 public theorem runM_exact {α : Type} (p : Prog α) (w : (q : Ask) → Reply q) :
     p.runM (m := Id) (fun q => Pure.pure (w q)) = p.run w := by
   induction p with
@@ -216,9 +204,6 @@ public theorem replay_cons {α : Type} (q : Ask) (k : Reply q → Prog α) (r : 
     (tr : List Fact) : (Prog.ask q k).replay (⟨q, r⟩ :: tr) = (k r).replay tr := by
   simp [replay]
 
-/-- **A recorded run is the replay of its own trace**, in any lawful monad:
-every outcome `(a, tr)` of `record` satisfies `replay tr = some a`, stated as
-the equation that pairs each outcome with that proposition. -/
 public theorem record_replay_exact {m : Type → Type} [Monad m] [LawfulMonad m] {α : Type}
     (ans : (q : Ask) → m (Reply q)) (p : Prog α) :
     (fun x => (x, p.replay x.2 = some x.1)) <$> p.record ans =
@@ -233,9 +218,6 @@ public theorem record_replay_exact {m : Type → Type} [Monad m] [LawfulMonad m]
         ((y.1.1, (⟨q, r⟩ : Fact) :: y.1.2), y.2)) (ih r)
     simpa only [Functor.map_map, Function.comp_def, replay_cons] using h
 
-/-- **Recording changes no result**: in any lawful monad, `record`'s answer
-is `runM`'s, so the result of a run that kept no trace is still the replay
-of the trace it would have kept (`record_replay_exact`). -/
 public theorem record_fst_exact {m : Type → Type} [Monad m] [LawfulMonad m] {α : Type}
     (ans : (q : Ask) → m (Reply q)) (p : Prog α) :
     Prod.fst <$> p.record ans = p.runM ans := by
@@ -245,10 +227,7 @@ public theorem record_fst_exact {m : Type → Type} [Monad m] [LawfulMonad m] {�
     simp only [record, runM, map_bind, Functor.map_map]
     exact congrArg (ans q >>= ·) (funext ih)
 
-/-- Every question the program can ask, whatever the replies before it,
-satisfies `P`: a property of the whole tree, so it holds of every
-interpreter, including a host that answers one question twice and
-differently. -/
+/-- Every question the program can ask, whatever the replies before it, satisfies `P`. -/
 public inductive Only {α : Type} (P : Ask → Prop) : Prog α → Prop where
   | pure (a : α) : Only P (.pure a)
   | ask (q : Ask) (k : Reply q → Prog α) : P q → (∀ r, Only P (k r)) → Only P (.ask q k)
@@ -275,9 +254,6 @@ public theorem Only.asks {α : Type} {P : Ask → Prop} {p : Prog α} (h : p.Onl
     · exact hq
     · exact ih (w q) q' hq'
 
-/-- **An interpreter is read only where the program can ask.** Two
-interpreters that agree on every question satisfying `P` run a program that
-asks only such questions as the same action. -/
 public theorem runM_only_exact {m : Type → Type} [Monad m] {α : Type} {P : Ask → Prop}
     {p : Prog α} (h : p.Only P) (ans ans' : (q : Ask) → m (Reply q))
     (hag : ∀ q, P q → ans q = ans' q) : p.runM ans = p.runM ans' := by
@@ -311,12 +287,9 @@ working directory is unavailable. -/
   else if entry.startsWith "/" then some entry
   else cwd.toOption.map (join · entry)
 
-/-- The paths execvp tries for a command name, anchored to the working
-directory: a name with a slash is the one candidate, and otherwise each PATH
-entry in order. An unset PATH is a search path the C library chooses — POSIX
-leaves it to the implementation, and glibc's is `/bin:/usr/bin` — so it names
-no candidate here: `probe` runs the bare name and lets that default decide
-(`probe_unset_exact`). -/
+/-- The paths execvp tries for a command name, anchored to the working directory: a name
+with a slash alone, else each PATH entry in order; an unset PATH names none, since the C
+library chooses its default. -/
 @[expose] public def candidates (tool : String) (path : Option String)
     (cwd : Except Failure String) : List String :=
   if tool.contains '/' then (entryDir cwd tool).toList
@@ -337,9 +310,8 @@ kind of file execve can start. -/
       | some f => acc.push f
       | none => acc) cs
 
-/-- A lookup's first questions: PATH unless the name has a slash, then the
-working directory; the candidates follow from both, and `unset` is the
-program for an unset PATH. -/
+/-- A lookup's first questions: PATH unless the name has a slash, then the working
+directory; `unset` is the program for an unset PATH. -/
 @[expose] public def lookup {β : Type} (tool : String) (unset : Prog β)
     (go : List String → Prog β) : Prog β :=
   if tool.contains '/' then .ask .cwd fun cwd => go (candidates tool none cwd)
@@ -347,10 +319,8 @@ program for an unset PATH. -/
     | none => unset
     | some p => .ask .cwd fun cwd => go (candidates tool (some p) cwd)
 
-/-- Every regular file the command name reaches, in PATH order: the files
-execvp could start. Mode bits are not readable here, so which of them starts
-is `probe`'s question, and taking these asks the host no run
-(`Host.located_runless_exact`). -/
+/-- Every regular file the command name reaches, in PATH order: the files execvp could
+start; taking them asks no run. -/
 @[expose] public def located (tool : String) : Prog (List (String × Stat)) :=
   (·.toList) <$> lookup tool (.pure #[]) (regularGo #[])
 
@@ -368,11 +338,8 @@ and modification time. -/
 @[expose] public def stamp (st : Stat) : String :=
   String.intercalate "\t" [st.real, toString st.size, toString st.mtimeSec, toString st.mtimeNsec]
 
-/-- The identity of whichever file runs: the stamp of every regular file the
-name reaches, in order. Any of them may be the one execvp starts
-(`probe_located_mem`), so a change to any moves the witness; with exactly
-one, it is that file's stamp. Empty when the name reaches none, or when PATH
-is unset (`witness_unset_exact`). -/
+/-- The stamp of every regular file the name reaches, in order; empty when it reaches none
+or PATH is unset. -/
 @[expose] public def witness (tool : String) : Prog String :=
   (fun fs => "\t".intercalate (fs.map (stamp ·.2))) <$> located tool
 
@@ -381,9 +348,7 @@ exit 255 with exactly this line on standard error. -/
 @[expose] public def execFailed (exe : String) (e : Ended) : Bool :=
   e.ran == .exited 255 && e.err == "could not execute external process '" ++ exe ++ "'\n"
 
-/-- The run of candidate `c`: what `call` builds for it, with `c` as the
-tool whatever `call` set there, so a probe starts a candidate of the name it
-was asked for and nothing else (`probe_runs_mem`). -/
+/-- The run of candidate `c`: `call`'s run with `c` as the tool. -/
 @[expose] public def runAt (call : String → ToolCall) (c : String) : ToolCall :=
   { call c with tool := c }
 
@@ -405,10 +370,8 @@ search path decides. -/
     Prog (Option (String × Ended)) :=
   .ask (.run (runAt call tool)) fun e => .pure (if execFailed tool e then none else some (tool, e))
 
-/-- execvp's rule over `located`'s lookup: each regular candidate in order,
-passing over one the OS refuses (`probeGo_exact`), or the bare name when
-PATH is unset (`probe_unset_exact`). A run happens in a scratch directory of
-its own, which is why the candidates are anchored to the working directory. -/
+/-- execvp's rule over `located`'s lookup: each regular candidate in order, passing over
+one the OS refuses, or the bare name when PATH is unset. -/
 @[expose] public def probe (tool : String) (call : String → ToolCall) :
     Prog (Option (String × Ended)) :=
   lookup tool (bare tool call) (probeGo call)
@@ -451,8 +414,6 @@ public theorem candidates_slash_exact (tool : String) (p p' : Option String) (cw
     (h : tool.contains '/' = true) : candidates tool p cwd = candidates tool p' cwd := by
   simp [candidates, h]
 
-/-- **The lookup reads PATH, the working directory and one stat per
-candidate**, and finds exactly the candidates' regular files. -/
 public theorem located_exact (tool : String) (w : (q : Ask) → Reply q) :
     (located tool).run w = found w (candidates tool (w (.env "PATH")) (w .cwd)) := by
   unfold located lookup
@@ -498,15 +459,10 @@ public theorem found_head_exact (w : (q : Ask) → Reply q) (cs : List String) :
         exact ih
     | error _ => exact ih
 
-/-- **Resolution is the decision `select` names**, over whatever the host
-says about PATH, the working directory and each candidate's stat. -/
 public theorem resolve_select_exact (tool : String) (w : (q : Ask) → Reply q) :
     (resolve tool).run w = select tool (w (.env "PATH")) (w .cwd) (fun c => w (.stat c)) := by
   simp only [resolve, select, Prog.run_map, located_exact, found_head_exact]
 
-/-- **Resolution is the first candidate whose stat is a regular file**, under
-POSIX's splitting (`candidates`). With `probe`'s fall-through past a
-candidate the OS refuses, this is execvp's choice. -/
 public theorem select_exact (tool c : String) (w : (q : Ask) → Reply q) :
     (resolve tool).run w = some c ↔
       isFile (w (.stat c)) = true ∧ ∃ pre post,
@@ -515,15 +471,12 @@ public theorem select_exact (tool c : String) (w : (q : Ask) → Reply q) :
   rw [resolve_select_exact, select, List.find?_eq_some_iff_append]
   simp
 
-/-- **The witness is the stamps of every regular file the name reaches.** -/
 public theorem witness_exact (tool : String) (w : (q : Ask) → Reply q) :
     (witness tool).run w =
       "\t".intercalate ((found w (candidates tool (w (.env "PATH")) (w .cwd))).map (stamp ·.2)) := by
   unfold witness
   rw [Prog.run_map, located_exact]
 
-/-- **An unset PATH gives no witness**: the default search path is the C
-library's, and no stat can say which file it reaches. -/
 public theorem witness_unset_exact (tool : String) (w : (q : Ask) → Reply q)
     (hs : tool.contains '/' = false) (hp : w (.env "PATH") = none) : (witness tool).run w = "" := by
   rw [witness_exact, hp]
@@ -544,7 +497,6 @@ public theorem entryDir_error (e : Failure) (x : String) :
     · simp only [hs, Bool.false_eq_true, ite_false]
       rfl
 
-/-- **Without a working directory, only absolute entries are candidates.** -/
 public theorem candidates_absolute_exact (tool p : String) (e : Failure)
     (h : tool.contains '/' = false) :
     candidates tool (some p) (.error e) =
@@ -559,9 +511,6 @@ public theorem candidates_absolute_exact (tool p : String) (e : Failure)
     · simp only [List.filterMap_cons, hx, Bool.false_eq_true, ite_false, Option.map_none,
         List.filter_cons, ih]
 
-/-- **The probe answers with the first candidate that started**: a regular
-file whose run is not the exec-failure signature, every candidate before it
-either not a regular file or refused by the OS. -/
 public theorem probeGo_exact (call : String → ToolCall) (w : (q : Ask) → Reply q)
     (cs : List String) (c : String) (e : Ended) :
     (probeGo call cs).run w = some (c, e) ↔
@@ -625,8 +574,6 @@ public theorem probeGo_exact (call : String → ToolCall) (w : (q : Ask) → Rep
           · simp only [hf, Bool.false_eq_true, ite_false]
             exact hrest
 
-/-- **The probe runs over `located`'s candidates** whenever PATH is set or
-the name has a slash. -/
 public theorem probe_exact (tool : String) (call : String → ToolCall) (w : (q : Ask) → Reply q)
     (h : tool.contains '/' = true ∨ (w (.env "PATH")).isSome = true) :
     (probe tool call).run w = (probeGo call (candidates tool (w (.env "PATH")) (w .cwd))).run w := by
@@ -644,8 +591,6 @@ public theorem probe_exact (tool : String) (call : String → ToolCall) (w : (q 
     | none => simp [hw] at hp
     | some p => rfl
 
-/-- **With PATH unset, the probe is the bare name's run**, so execvp's own
-default search path decides, as it decides for every spawn by name. -/
 public theorem probe_unset_exact (tool : String) (call : String → ToolCall)
     (w : (q : Ask) → Reply q) (hs : tool.contains '/' = false) (hp : w (.env "PATH") = none) :
     (probe tool call).run w =
@@ -658,9 +603,6 @@ public theorem probe_unset_exact (tool : String) (call : String → ToolCall)
   rw [hp]
   rfl
 
-/-- **Whatever the probe starts is among the located files**, so its stamp
-is in the witness: the identity a memo or slot is keyed by covers the file
-that ran, whichever regular file the OS accepted. -/
 public theorem probe_located_mem (tool : String) (call : String → ToolCall)
     (w : (q : Ask) → Reply q) (c : String) (e : Ended)
     (h : tool.contains '/' = true ∨ (w (.env "PATH")).isSome = true)
@@ -676,8 +618,6 @@ public theorem probe_located_mem (tool : String) (call : String → ToolCall)
     rw [located_exact, found, hcs]
     exact List.mem_filterMap.mpr ⟨c, by simp, by simp [regular, hw, hk]⟩
 
-/-- **The probe over a candidate list starts only its candidates**: every
-run question it asks, whatever the replies, names one of them as the tool. -/
 public theorem probeGo_runs_mem (call : String → ToolCall) (w : (q : Ask) → Reply q)
     (cs : List String) : ∀ q ∈ (probeGo call cs).asks w, ∀ t, q.runTool? = some t → t ∈ cs := by
   induction cs with
@@ -704,11 +644,6 @@ public theorem probeGo_runs_mem (call : String → ToolCall) (w : (q : Ask) → 
       · simp only [hf, Bool.false_eq_true, ite_false] at hq
         exact List.mem_cons_of_mem _ (ih q hq t ht)
 
-/-- **A probe starts the name it was asked for or one of that name's
-candidates**: every run question `probe tool call` asks, whatever the
-replies, names `tool` itself or a path `candidates` reads off PATH, so the
-tool a host program runs through `probe` is the name its call site spells,
-whatever the call builder sets. -/
 public theorem probe_runs_mem (tool : String) (call : String → ToolCall)
     (w : (q : Ask) → Reply q) :
     ∀ q ∈ (probe tool call).asks w, ∀ t, q.runTool? = some t →

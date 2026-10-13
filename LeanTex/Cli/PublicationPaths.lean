@@ -4,20 +4,14 @@ import Init.System.IO
 public import LeanTex.Cli.World
 import Std.Data.HashSet
 
-/-! Publication destinations are checked before any artifact is written,
-twice. `conflict` holds the destinations apart from each other: it
-resolves existing directory links before `..`, since lexical normalization
-alone would mistake two names of the same file for independent
-destinations, and refuses multiply-linked files and unresolved links,
-whose independence the portable metadata API cannot establish.
-`overwrite` holds them apart from the files the build read, as a program
-of questions (`World.Prog`) that only looks (`overwrite_only`). Both are a
-filesystem preflight, not a claim against concurrent filesystem changes. -/
+/-! Publication destinations, checked before any artifact is written: apart from each
+other (`conflict`) and from the files the build read (`overwrite`), a preflight rather
+than a claim against concurrent changes. -/
 
 namespace LeanTex.Cli.PublicationPaths
 
-/-- Resolve an existing prefix and normalize the not-yet-created tail, or
-name the first component that is a link resolving to nothing. -/
+/-- Resolve an existing prefix and normalize the not-yet-created tail, or name the first
+component that is a link resolving to nothing. -/
 private def resolve (path : System.FilePath) : IO (Except System.FilePath System.FilePath) := do
   let absolute := (← IO.currentDir) / path
   let mut cursor : System.FilePath := "/"
@@ -45,9 +39,8 @@ private def canonical (path : System.FilePath) : IO System.FilePath := do
   | .ok resolved => return resolved
   | .error link => throw <| IO.userError s!"cannot resolve output link '{link}'"
 
-/-- Nothing means every requested format has a distinct resolved path and
-no destination has uninspectable hard-link aliases. Only multiple formats
-owe this independence; one output cannot overwrite another in the run. -/
+/-- Nothing when every requested format has a distinct resolved path and no destination
+has uninspectable hard-link aliases. -/
 public def conflict (paths : Array (String × String)) : IO (Option String) := do
   if paths.size < 2 then return none
   try
@@ -71,9 +64,8 @@ public def conflict (paths : Array (String × String)) : IO (Option String) := d
 public inductive Overwrite where
   /-- The destination resolves to the path the input resolves to. -/
   | same (format destination input : String)
-  /-- The destination and the input resolve apart, and their metadata
-  agrees on every fact two hard links of one file share, among them a link
-  count of at least two. -/
+  /-- The destination and the input resolve apart, and their metadata agrees on every fact
+  two hard links of one file share, a link count of at least two among them. -/
   | linked (format destination input : String)
   deriving Repr, BEq
 
@@ -84,15 +76,14 @@ private structure Standing where
   metadata : World.Metadata
   real : String
 
-/-- Could two files be one, by their metadata? A file read twice agrees
-with itself on all of it, and so do two hard links of one file. -/
+/-- Whether two files could be one by their metadata, as two hard links of one file are.
+-/
 private def sameShape (a b : World.Metadata) : Bool :=
   a.kind == b.kind && a.size == b.size && a.mtimeSec == b.mtimeSec &&
     a.mtimeNsec == b.mtimeNsec && a.links == b.links
 
-/-- The destinations that stand, each read by its metadata and real path,
-links followed; one that does not stand or that this user cannot reach is
-left out. -/
+/-- The destinations that stand, each read by its metadata and real path, links followed;
+one that does not stand or cannot be reached is left out. -/
 private def standingGo : List (String × String) → Array Standing → World.Prog (Array Standing)
   | [], acc => .pure acc
   | (format, name) :: rest, acc =>
@@ -102,10 +93,8 @@ private def standingGo : List (String × String) → Array Standing → World.Pr
         | .error _ => standingGo rest acc
         | .ok st => standingGo rest (acc.push { format, name, metadata, real := st.real })
 
-/-- The first input that is a standing destination's file: one whose real
-path is the destination's, or, resolving apart, a regular file of several
-links whose metadata agrees with it. An input is asked about once, and
-resolved only where its metadata agrees with a destination's. -/
+/-- The first input that is a standing destination's file: one with the destination's real
+path, or a multiply-linked regular file whose metadata agrees with it. -/
 private def clashGo (standing : Array Standing) :
     List String → Std.HashSet String → World.Prog (Option Overwrite)
   | [], _ => .pure none
@@ -126,19 +115,9 @@ private def clashGo (standing : Array Standing) :
                 .pure (near[0]?.map fun d => .linked d.format d.name input)
               else clashGo standing rest (asked.insert input)
 
-/-- Nothing means no destination names a file the build reads (`inputs`):
-none resolves to an input's own path, and none could be another hard link
-of an input's file. With no inode number to compare, a hard link is read
-off the metadata two links of one file share — kind, size, modification
-time and a link count of at least two — which misses no hard-link alias
-and takes an unrelated file for one only where all of them agree. A second
-mount of one directory adds no link and resolves apart (`path-identity`).
-A destination that does not stand, or that this user cannot reach, names
-no file a write could replace, so its write is the one that fails, under
-its own path; one behind a link to nothing replaces nothing. An input that
-does not stand, or that this user cannot reach, was not read by that
-spelling. One output owes this as much as several: writing it would
-replace the document or a file it reads. -/
+/-- Nothing when no destination names a file the build reads (`inputs`): none resolves to
+an input's path, and none shares an input's hard-link metadata (kind, size, modification
+time, a link count of at least two). -/
 public def overwrite (destinations : Array (String × String)) (inputs : Array String) :
     World.Prog (Option Overwrite) := do
   let standing ← standingGo destinations.toList #[]
@@ -192,9 +171,6 @@ private theorem clashGo_only (standing : Array Standing) (inputs : List String)
               · exact .pure _
               · exact ih _
 
-/-- **The preflight only looks** (`_only`): whatever the host replies,
-every question `overwrite` asks is a path's metadata or its real path, so
-a refused build has written, created and run nothing. -/
 public theorem overwrite_only (destinations : Array (String × String)) (inputs : Array String) :
     (overwrite destinations inputs).Only Inspects := by
   unfold overwrite
@@ -203,10 +179,8 @@ public theorem overwrite_only (destinations : Array (String × String)) (inputs 
   · exact .pure none
   · exact clashGo_only _ _ _
 
-/-- One path segment as a URL reads it back: each character a relative
-URL's path would read as something else (`%`, `#`, `?`, `\`, `:`, white
-space and the controls) percent-encoded as its UTF-8 bytes, and every other
-one kept, non-ASCII included, which a URL parser encodes itself. -/
+/-- One path segment as a URL reads it back: `%`, `#`, `?`, `\`, `:`, white space and the
+controls percent-encoded as UTF-8 bytes, every other character kept. -/
 private def segmentHref (s : String) : String :=
   let hex (n : UInt8) : Char := Char.ofNat (if n < 10 then 48 + n.toNat else 55 + n.toNat)
   let byte (o : String) (b : UInt8) : String := ((o.push '%').push (hex (b >>> 4))).push (hex (b &&& 15))
@@ -214,10 +188,8 @@ private def segmentHref (s : String) : String :=
     if c.isAlphanum || "-._~!$&'()*+,;=@".contains c || 0xA0 ≤ c.toNat then out.push c
     else (String.singleton c).toUTF8.foldl byte out) ""
 
-/-- A path's segments read lexically, as a browser resolves a link: empty
-and `.` segments dropped, and each `..` taking back the segment before it,
-or kept where nothing stands before it in a relative path (the root's
-parent is the root). -/
+/-- A path's segments read lexically, as a browser resolves a link: empty and `.` segments
+dropped, each `..` taking back the segment before it. -/
 private def lexical (path : String) : List String :=
   let rooted := path.startsWith "/"
   (path.splitOn "/").foldl (fun acc s =>
@@ -227,19 +199,14 @@ private def lexical (path : String) : List String :=
       else acc.dropLast
     else acc ++ [s]) []
 
-/-- The link a page gives to a file named `name` from the page's own
-directory: its segments read lexically, each percent-encoded where a URL
-would read it as something else. None for an absolute name, which names
-no place relative to the page, and for a name with no final file name
-(empty, or ending in `.`, `..` or a separator). -/
+/-- The link a page gives to a file `name` from its own directory, segments read lexically
+and percent-encoded; none for an absolute name or one with no final file name. -/
 public def nameHref (name : String) : Option String :=
   if name.startsWith "/" || (System.FilePath.mk name).fileName.isNone then none
   else some ("/".intercalate ((lexical name).map segmentHref))
 
-/-- Where a file named `name` from directory `dir` lands: read lexically
-when the page can link it (`nameHref`), so a link a `..` walks back through
-is not followed and the file is where the link points; otherwise, an
-absolute name or one with no final file name, `dir / name` as written. -/
+/-- Where a file `name` from `dir` lands: where its link points when the page can link it
+(`nameHref`), else `dir / name` as written. -/
 public def placed (dir name : String) : String :=
   if (nameHref name).isNone then (System.FilePath.mk dir / name).toString
   else

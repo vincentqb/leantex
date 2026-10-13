@@ -1,23 +1,7 @@
 /-
-Regenerate LeanTex/Core/CollateData.lean: the locale tailorings biber sorts
-a biblatex reference list by — Unicode::Collate::Locale's, which biber's
-`Biber::UCollate` subclasses — read into `Collate`'s weight rows, and
-biber's language-name map that turns a babel or polyglossia language into
-the locale it sorts by. Run from the repository root with:
-
-  lake env lean --run scripts/gen-collate-data.lean [path/to/Biber/Constants.pm]
-
-Sources, read from the host and never vendored:
-- the default table's collation elements of every Latin letter without a
-  canonical decomposition and of every combining mark, from
-  Unicode::Collate itself (`getWt`), the weights `Collate` reads them by;
-- Unicode/Collate/Locale.pm and its Locale/*.pl tailorings, through perl;
-- biber's Biber/Constants.pm `%LOCALE_MAP` — the path given, else the one
-  beside a Homebrew biber (`brew --prefix biber`).
-
-A tailoring whose weights fall outside the Latin letters (another script,
-or Hawaiian's vowels before every consonant) is listed by name and carries
-no rows: `Collate` sorts those scripts by its default reading.
+Regenerate LeanTex/Core/CollateData.lean: the Unicode::Collate::Locale tailorings biber sorts
+by, as `Collate`'s weight rows, and biber's `%LOCALE_MAP`, read from the host through perl.
+Usage: lake env lean --run scripts/gen-collate-data.lean [path/to/Biber/Constants.pm]
 -/
 
 import Std.Data.HashMap
@@ -252,7 +236,6 @@ def main (args : List String) : IO UInt32 := do
   (tailored, outside) := flush cur lines tailored outside
   if !tailored.any (·.1 == "sv") || !outside.contains "ja" then
     die "the tailorings read have no Swedish, or carry Japanese: the source changed shape"
-  -- biber's language map
   let constants ← match args with
     | p :: _ => pure p
     | [] => do
@@ -264,8 +247,7 @@ def main (args : List String) : IO UInt32 := do
   let config := (constants.dropEnd "Constants.pm".length).toString ++ "Config.pm"
   let biberVersion := (((← IO.FS.readFile config).splitOn "our $VERSION = '")[1]?.getD
     "?").splitOn "'" |>.headD "?"
-  -- the copyright the default table's own header states, which its
-  -- licence's notice carries
+  -- The copyright the default table's header states, which its licence notice carries.
   let copyright := (← run "perl" #["-e", copyrightScript]).trimAscii.toString
   unless copyright.startsWith "Copyright " && copyright.endsWith "Unicode, Inc." do
     die s!"allkeys.txt states no Unicode copyright line ('{copyright}'): the source changed shape"

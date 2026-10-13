@@ -6,14 +6,12 @@ namespace ProofSources
 
 public section
 
-/-- Hidden build metadata and fixture bytes are not maintained Lean modules.
-Every other source directory is discovered, including newly added libraries. -/
+/-- Whether a path is a maintained source: no hidden component, and outside testdata. -/
 def sourcePath (parts : List String) : Bool :=
   parts.all (!·.startsWith ".") && parts.head? != some "testdata"
 
-/-- Sorted paths relative to the canonical source root, independent of umbrella
-imports and Lake target registration. Links are not maintained source files;
-compiled import closure must be checked separately against this inventory. -/
+/-- The maintained Lean sources, sorted and relative to the canonical source root, links
+excluded. -/
 def sources (root : System.FilePath) : IO (Array System.FilePath) := do
   let root ← IO.FS.realPath root
   let relative := fun (path : System.FilePath) =>
@@ -36,9 +34,8 @@ def moduleName (file : System.FilePath) : String :=
 def importName (name : String) : String :=
   String.intercalate "." ((name.splitOn ".").map fun part => "«" ++ part ++ "»")
 
-/-- Executable roots can declare the same global `main`; inspect them in
-separate compiler environments. Every discovered source occurs in one group,
-including libraries outside the current production and test namespaces. -/
+/-- The sources grouped for separate compiler environments, since executable roots may
+each declare `main`; every source is in one group. -/
 def groups (files : Array System.FilePath) : Array (Array String) := Id.run do
   let mut library := #[]
   let mut isolated := #[]

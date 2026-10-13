@@ -54,24 +54,12 @@ private meta def flags : Flags → List String → Except String (Flags × List 
   | f, "--check" :: path :: rest => flags { f with check := some path } rest
   | f, rest => .ok (f, rest)
 
-/-- Export ordinary TeX colours from three RGB seeds:
-`lake env lean --run scripts/palette.lean Prefix INK PAPER ACCENT`.
-Use `Prefix --seeds colors.json` to read exactly `ink`, `paper` and `accent`
-string fields instead of the three RGB arguments. Flags, before the prefix:
-`--beamer-blocks` binds every beamer element the palette writes — the page's
-text and ground, the footline, the alert, and the six block elements in the
-style `--blocks tonal|strong` names (load the export after the Beamer theme's
-initialization);
-`--depth documents|decks` picks the class's ground depth (decks by default);
-`--pygments STYLE` adds a listing's code colours as the engine derives them
-from the generated palette (`CodeExport`), with STYLE's colours where the
-palette leaves a role open, and a `\<Prefix>Pygments` command to name in
-minted's `formatcom`; `--series N` adds N categorical series colours for a
-chart, the colours `<Prefix>Series1` to `<Prefix>SeriesN` (`SeedSeries`), the
-first the accent's text tone at the depth; `--check FILE` prints nothing and
-exits 1 when FILE is not what these seeds generate. Only declarations go to stdout, so the
-caller can save or compare them. The script never rewrites a document or
-changes its permissions. -/
+/-- Export TeX colour declarations from three RGB seeds (`Prefix INK PAPER ACCENT`, or
+`Prefix --seeds colors.json`) to stdout; flags before the prefix: `--beamer-blocks` binds
+beamer's elements (block style `--blocks tonal|strong`), `--depth documents|decks` picks
+the ground depth, `--pygments STYLE` adds a listing's code colours, `--series N` adds
+chart series colours, and `--check FILE` exits 1 when FILE is not what the seeds generate.
+-/
 public meta def main (args : List String) : IO UInt32 := do
   let (f, args) ← match flags {} args with
     | .ok r => pure r

@@ -1,49 +1,7 @@
 /-
-Differential test: the native listing lexers against the installed
-Pygments. Run from the repository root, after `lake build LeanTex`, with:
-
-  lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S]
-      [--lexer NAME] [--python P] [--any-version] [--docs FILE...]
-  lake env lean --run scripts/highlight-diff.lean --record [--python P]
-  lake env lean --run scripts/highlight-diff.lean --selftest
-
-Kept out of `lake test` because it needs Python and Pygments: the suite
-holds the lexers to the token streams `--record` writes instead
-(testdata/highlight/pygments-tokens.json, from the invented snippets in
-testdata/highlight/snippets/<alias>/).
-
-Pygments is the module `python3 -I` (or `--python P`) imports, or else
-the wheel TeX Live installs beside `latexminted`, as the listing provider
-and the data generator read it. It must be the release the lexers mirror
-(`PygmentsLexData.pygmentsVersion`): another release's differences are
-its rules', not the mirror's, so the run refuses it unless `--any-version`
-asks for that drift as a report. Each listing is lexed with the trailing
-newline the provider adds, through the lexer the alias selects; `lean`,
-which Pygments registers for its Lean 3 lexer, is compared with its Lean 4
-lexer (see `Highlight.leanIsLean4`).
-
-Corpora: the invented snippets; `--fuzz N` random texts per lexer (default
-2000), drawn from each language's fragments with seed `--seed`; and the
-listings of every `--docs` file, a LaTeX source's minted and lstlisting
-environments (an lstlisting's language from its own options or the last
-`\lstset` before it) or a markdown file's fences, read where they stand and
-never copied.
-
-Three comparison levels, each failing on its first difference:
-- `raw`: the token stream, every token's start, end and type;
-- `scalar`: every scalar's type, blind to where a run of one type splits;
-- `colour`: every scalar's colour in each shipped style, by Pygments'
-  `style_for_token`, blind to two types one style paints alike.
-`--selftest` shows each level's blind spot equal under it and unequal under
-the level above, and every level unequal on a changed type.
-
-What a token stream cannot show is cost. A mirror answers what Pygments'
-backtracking answers without backtracking: a rule reads past the scalars it
-writes only through a `Table`, a scan answered at every position in one
-pass (LeanTex/Core/Highlight/Scan.lean states the argument), because each
-lookahead read directly once made a lexer quadratic or worse in lines or a
-line's length; `scripts/bench.lean --listings-only` holds every lexer linear
-over invented adversarial listings, and is run with this one.
+The native listing lexers against the installed Pygments release they mirror, over the snippets,
+seeded fuzz and `--docs` listings, by token stream, scalar type and colour.
+Usage: lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--docs FILE...] | --record [--python P] | --selftest
 -/
 import LeanTex
 import LeanTex.Core.Highlight
@@ -57,9 +15,8 @@ def die (msg : String) : IO α := do
   IO.eprintln s!"highlight-diff: {msg}"
   IO.Process.exit 2
 
-/-- Constant program, run isolated (`-I`). The batch names registry aliases
-and sources only; the reply is each source's unprocessed token stream and
-every type's colour in each named style. -/
+/-- The constant bridge program, run isolated (`-I`): the batch names registry aliases and
+sources, and the reply is each source's token stream and every type's colour per style. -/
 def bridge : String := r#"import importlib
 import json
 import pathlib
@@ -157,10 +114,8 @@ abbrev Tok := Nat × Nat × String
 def nativeTokens (c : Case) : Array Tok :=
   (lex c.lexer (Src.ofString (c.source ++ "\n"))).map fun r => (r.start, r.stop, "Token." ++ r.kind)
 
-/-- Pygments' stream at the positions of the text it writes, empty tokens
-dropped, and whether every reported offset was that position: the session
-lexer reports a virtual-environment block's offsets from an earlier
-block, and the listing provider refuses such a reply. -/
+/-- Pygments' stream at the positions of the text it writes, empty tokens dropped, and
+whether every reported offset was that position. -/
 def theirTokens (answer : Json) : Except String (Array Tok × Bool) := do
   let items ← answer.getArr?
   let mut out := #[]
@@ -229,8 +184,6 @@ def showToks (src : Array Char) (ts : Array Tok) (around : Nat) : String := Id.r
       out := out ++ s!"    {a}-{b} {k} \"{escape text}\"\n"
   return out
 
-/-! Fuzzing: xorshift64*, deterministic for a seed. -/
-
 def nextRand (s : UInt64) : UInt64 × UInt64 :=
   let x := s ^^^ (s >>> 12)
   let x := x ^^^ (x <<< 25)
@@ -295,9 +248,7 @@ def fragments : Lexer → Array String
       "(venv) ❯ "]
   | .text => #["plain", " ", "\n", "\t", "é", "{}", "\\"]
 
-/-- The scalars a language's patterns divide on, for texts drawn scalar
-by scalar: where fragments exercise rule order, these reach the corners
-of single patterns (a format spec's alternatives, an escape's length). -/
+/-- The scalars a language's patterns divide on, for texts drawn scalar by scalar. -/
 def alphabet : Lexer → String
   | .lean4 => "abxyzT_'!?.0123456789eE+-\"\\n/-`@[]{}()~:=<>|&λΠΣα₁ℕ→⟨⟩ \n\t"
   | .python => "\"'{}%:!.[]()<>=^,-+ #0123456789xXeEjoObBrRfFtTuUNsadgn_\\\n\t@*hlL"
@@ -333,8 +284,7 @@ def Draw.times (d : Draw) (n : Nat) (f : Draw → Draw) : Draw := Id.run do
     d := f d
   return d
 
-/-- Python's formatting mini-languages and escapes, with their near misses:
-what a pattern's backtracking decides lives in these. -/
+/-- Python's formatting mini-languages and escapes, with their near misses. -/
 def pyStringPart (d : Draw) : Draw :=
   let (k, d) := d.nat 6
   match k with
@@ -509,8 +459,6 @@ def fuzzCases (lexer : Lexer) (count : Nat) (seed : UInt64) : Array Case := Id.r
                       alias := lexer.pygmentsAlias, lexer, source := text }
   return out
 
-/-! The invented snippets, and the recorded streams `lake test` reads. -/
-
 def snippetRoot : System.FilePath := "testdata/highlight/snippets"
 def recordPath : System.FilePath := "testdata/highlight/pygments-tokens.json"
 
@@ -525,8 +473,6 @@ def snippetCases : IO (Array Case) := do
       out := out.push { corpus := "snippets", label := f.path.toString, alias := d.fileName,
                         lexer, source := req.source }
   return out
-
-/-! A local document's listings, read where they stand. -/
 
 def between (s : String) (start stop : String) : Option (String × String) :=
   match s.splitOn start with
@@ -635,8 +581,6 @@ def docCases (paths : List String) : IO (Array Case) := do
     out := out ++ (if p.endsWith ".md" then mdListings p text else texListings p text)
   return out
 
-/-! Running Pygments. -/
-
 /-- The alias Pygments is asked for: the listing's own, but `lean`'s Lean 4. -/
 def pygmentsName (c : Case) : String :=
   if c.alias == leanIsLean4 then c.lexer.pygmentsAlias else c.alias
@@ -679,8 +623,6 @@ def runPygments (python : String) (cases : Array Case) : IO Reply := do
         colours := colours.insert (st, k) ((v.getStr?).toOption.getD "")
     return { version, python := py, unicode, answers, colours }
 
-/-! The levels' blind spots, in both directions. -/
-
 def selftest : IO UInt32 := do
   let mut fails : Array String := #[]
   let colourOf := fun (_ k : String) => if k == "Token.Name" || k == "Token.Text" then "" else k
@@ -701,8 +643,6 @@ def selftest : IO UInt32 := do
     IO.println "highlight-diff --selftest: ok (4 cases)"
     return 0
   return 1
-
-/-! Recording. -/
 
 def jsonStr (s : String) : String := (Json.str s).compress
 
@@ -727,8 +667,6 @@ def record (python : String) : IO UInt32 := do
   IO.FS.writeFile recordPath out
   IO.println s!"highlight-diff --record: wrote {recordPath} ({cases.size} snippets, Pygments {reply.version})"
   return 0
-
-/-! The run. -/
 
 structure Opts where
   fuzz : Nat := 2000

@@ -1,27 +1,7 @@
 /-
-What assistive technology is handed, committed as numbers. Run from the
-repository root:
-
-  lake env lean --run scripts/htmla11y.lean              regenerate the baseline
-  lake env lean --run scripts/htmla11y.lean --check      gate against the committed one
-  lake env lean --run scripts/htmla11y.lean --selftest   break each check once
-
-Every golden fixture is elaborated and emitted to its typed HTML tree
-in-process (`a11yCorpusPage`: the document's own stylesheet mode, its images
-from `testdata/corpus`), and `HtmlDoc.a11yFacts` — the judge `htmlA11yChecks`
-reads in the suite — counts six deficits per page (`a11yDeficits`):
-contrast pairings failed over both colour schemes, a page without exactly
-one `<h1>`, tab stops hidden from assistive technology, images with no text
-alternative, scroll containers a keyboard cannot reach, and pictures with no
-accessible name. Each is committed as
-headroom (`debtCap - count`), so a new deficit is a fall.
-
-Hermetic: committed inputs only — no browser, no network, no tool, no font
-from the host. What a browser makes of the same pages is axe's to say, and
-axe is a report, never this gate. The suite already holds `svg`, `scroll`
-and `hidden-focus` at zero on every page; `contrast` and `h1` carry defects whose fix is a
-human decision (a declared ink in dark mode; which element owns `<h1>`), so
-this tier holds them from getting worse until it is made.
+The htmla11y tier: per golden fixture's HTML page, the six deficits `HtmlDoc.a11yFacts` counts,
+as headroom; hermetic.
+Usage: lake env lean --run scripts/htmla11y.lean [--check | --selftest]
 -/
 import Tests.HtmlA11y
 import scripts.Board
@@ -122,12 +102,7 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     ((facts #[a11yEl "pre" #[("tabindex", "0")]]).scrollsUnreachable == 0)
   no "scroll: under a stylesheet the engine does not own, nothing is declared"
     ((facts #[a11yEl "pre", stage #[]] (own := false)).scrolls == 0)
-  -- contrast: the engine's own tokens pass every scheme; a declared colour
-  -- ships as declared on its own screen, judged once there, and fails it
-  -- only where it fails its own ground, and is carried to every other scheme
-  -- the page ships (`Contrast.schemeJudge`); a themed deck ships no dark
-  -- stage, and its declared ink stands on its declared ground
-  -- (`HtmlDoc.stageGround`).
+  -- contrast: engine tokens pass every scheme; a declared colour is judged on its own screen.
   let plain := (elabStr (dvDoc "" "x")).1
   no s!"contrast: an undeclared page passes every scheme: {HtmlDoc.schemeFailures true plain}"
     (HtmlDoc.schemeFailures true plain).isEmpty
@@ -142,15 +117,13 @@ others, and passes each: {HtmlDoc.schemeFailures true inked}"
      !(HtmlDoc.schemeFailures true pale).any (·.1 == "dark"))
   no "contrast: a stylesheet the engine does not own claims nothing"
     (HtmlDoc.schemeFailures false pale).isEmpty
-  -- A key no role carries declares an author colour, which paints nothing
-  -- until a document names it.
+  -- A key no role carries is an author colour, painting nothing until named.
   let named := (elabStr (dvDoc "\\palette{ ink = #D4D4D8 }\n" "x")).1
   no s!"contrast: a palette key no role carries fails nothing: \
 {HtmlDoc.schemeFailures true named}"
     (HtmlDoc.schemeFailures true named).isEmpty
   let deck := (elabStr (dvDeck "" "\\begin{frame}{T}\nx\n\\end{frame}")).1
-  -- The deck's stage paints the bundle's declared page, as the PDF does, so
-  -- its declared ink reads on it, in each scheme the page ships.
+  -- The deck's stage paints the bundle's page, so its declared ink reads on it.
   no s!"contrast: a deck bundle's colours ship no dark stage: \
 {HtmlDoc.schemeFailures true deck}"
     (!(HtmlDoc.schemeFailures true deck).any (·.1 == "dark"))

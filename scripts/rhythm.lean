@@ -1,76 +1,7 @@
 /-
-The vertical rhythm, measured at every declared boundary and held to a
-reference. Run from the repository root:
-
-  lake env lean --run scripts/rhythm.lean               regenerate the tier baseline
-  lake env lean --run scripts/rhythm.lean --check       gate against testdata/scoreboard/rhythm.tsv
-  lake env lean --run scripts/rhythm.lean --selftest    break each predicate once
-  lake env lean --run scripts/rhythm.lean --table       every boundary: engine, reference, delta
-  lake env lean --run scripts/rhythm.lean --lines <f>   a fixture's engine lines, leaves and marks
-  lake env lean --run scripts/rhythm.lean --reference [fixture…]   needs lualatex; writes testdata/rhythm/<f>.ref
-  lake env lean --run scripts/rhythm.lean --verify-reference [fixture…]   needs lualatex; rebuilds
-                                                        each reference and holds it to the file
-  lake env lean --run scripts/rhythm.lean --html <dir>  needs node and Playwright's Chromium: every
-                                                        fixture's page, measured in a browser; a report
-
-A fixture is `testdata/rhythm/<name>.tex`. Its header declares what it probes
-(`% rhythm:`) and its boundaries, one per line:
-
-  % boundary: <class> <marker> <kind>
-
-`<marker>` names the lower side of the boundary: the first line holding that
-word, or, spelled `=<text>`, the line whose whole text is `<text>` (a page
-number). `<kind>` says what is measured, always downward on the page and in
-bp (1/72 in: the PDF user unit, and this engine's pt):
-
-  span    baseline of the text line above → baseline of the marker's line
-  above   baseline of the text line above → top edge of the marks between them
-  below   bottom edge of the marks between → baseline of the marker's line
-  top     the page's top edge → baseline of the marker's line
-  pitch   as span, inside one block: a table's rows, a code block's lines
-
-"Marks" are everything a page paints that is not text: picture paths, fills,
-rules, images, polygons. A fixture whose source is not LaTeX names its LaTeX
-half with `% reference: <file>`; otherwise the reference engine compiles the
-fixture itself, which is the user's case — a LaTeX document built by both engines.
-
-The reference is lualatex's output, measured by `--reference` with the
-engine's own PDF reader (`Tests.Artifact.readArtifact`, the reader the parity
-ladder uses) and committed as numbers only: `testdata/rhythm/<name>.ref`, one
-row per boundary with its unit and what it measures from, plus the content
-keys of both sources, so a fixture edited without regenerating is a named
-fault and never a silent comparison against another document.
-
-The engine side is measured in process from `Layout.Out`, built the way the
-driver builds a document (`Scoreboard.Hermetic`'s sequence) over the shipped
-faces only: hermetic, no TeX, no host font. A line's block is its structure
-leaf (`LineOut.leaf`), and the measurement's premise is checked on every run
-rather than assumed: the marker opens its line (on both sides), and the
-marker's line opens its block, so the line above belongs to the block
-before (on the engine's side, which has structure). A boundary whose premise
-fails is measured as absent — the engine set the construct inline, or
-merged two blocks — and never compared: its "gap" would be another
-quantity, and one that happened to equal the reference would count.
-
-The tier: per fixture and boundary class, `<fixture>/<class>.boundaries`,
-the boundaries declared, and two counts of them: `.within`, how many ship
-within `toleranceMilliBp` of the reference, and `.near`, how many within
-`nearMilliBp`, half the rhythm quantum.
-The reference is what LaTeX does, not what the engine must do: a boundary
-the engine sets differently on purpose counts as outside, and the ratchet
-holds the count from falling, never from rising.
-
-Two comparison levels, each with its blind spots declared. `.within` sees
-each declared boundary's gap to within the tolerance, and nothing else —
-not a difference under half a bp, not horizontal placement, not a boundary
-no fixture declares, not line pitch inside a block. Nor does it see a gap
-move while it stays outside the tolerance: a quoted block's boundaries once
-went from 1.9 bp short of lualatex's to 4.1 bp past it under an unchanged
-count. `.near` sees that move, and is blind inside its own band.
-`--selftest` holds the pair each level owes: two gaps under the tolerance
-apart read equal under `.within` and unequal to the exact comparison above
-it, and two gaps inside the band read equal under `.near` and unequal under
-`.within`.
+The rhythm tier: per fixture and boundary class, the declared vertical boundaries shipped within
+half a bp (`.within`) and half the rhythm quantum (`.near`) of lualatex's committed reference.
+Usage: lake env lean --run scripts/rhythm.lean [--check | --selftest | --table | --lines <f> | --reference [f…] | --verify-reference [f…] | --html <dir>]
 -/
 import Tests.Artifact
 import scripts.Board
@@ -82,23 +13,16 @@ namespace Rhythm
 /-- Where the fixtures and their references live. -/
 def rhythmDir : String := "testdata/rhythm"
 
-/-- The tolerance a shipped gap is judged within, in thousandths of a bp:
-half a bp. One pixel of the 110 dpi review raster is 0.65 bp, so a gap
-inside this tolerance cannot be seen there; and the two engines' units
-differ by 0.375 % (TeX's pt is 1/72.27 in, this engine's 1/72 in), which is
-0.1 bp on a 27 bp gap — inside it. -/
+/-- The tolerance a shipped gap is judged within, in thousandths of a bp: half a bp, under
+one review-raster pixel and above the engines' 0.375 % unit difference on a typical gap.
+-/
 def toleranceMilliBp : Int := 500
 
-/-- The second band, in thousandths of a bp: half the rhythm quantum at the
-article base (`Ir.rhythmQuantum` of `Ir.baseFontSize` is 6 bp). The engine
-sets its gaps on that grid, so a gap rounded from lualatex's to the grid
-stands at most this far from it. A constant, not the function read at run
-time, so an engine change cannot move the band; the selftest fails once the
-premise does. -/
+/-- The second band, in thousandths of a bp: half the 6 bp rhythm quantum at the article
+base, a constant so an engine change cannot move it. -/
 def nearMilliBp : Int := 3000
 
-/-- sp per bp, and the conversion to thousandths of a bp, rounded half away
-from zero so a value reads the same whichever side of zero it is. -/
+/-- sp per bp, and the conversion to thousandths of a bp, rounded half away from zero. -/
 def spPerBp : Int := 65536
 
 def milliBpOfSp (v : Int) : Int :=
@@ -125,8 +49,6 @@ def parseMilli (s : String) : Option Int := do
   let v : Int := (w * 1000 + f : Nat)
   return (if neg then -v else v)
 
-/-! ## What a fixture declares -/
-
 inductive Kind where
   | span
   | above
@@ -146,8 +68,7 @@ def Kind.name : Kind → String
 
 def Kind.ofName? (s : String) : Option Kind := Kind.all.find? (·.name == s)
 
-/-- What a kind measures, from where to where: the words each `.ref` row
-carries beside its number. -/
+/-- What a kind measures, from where to where, as each `.ref` row states it. -/
 def Kind.measures : Kind → String
   | .span => "baseline of the text line above → baseline of the marker's line"
   | .above => "baseline of the text line above → top edge of the marks between"
@@ -177,9 +98,10 @@ def headerValue (l key : String) : Option String :=
   let pre := s!"% {key}:"
   if l.startsWith pre then some (l.drop pre.length).toString.trimAscii.toString else none
 
-/-- A fixture's declarations, read off its header. A malformed boundary line
-is an error rather than a skipped line: a declaration that measures nothing
-would read as coverage. -/
+/-- A fixture's declarations, read off its header: `% rhythm: <what it probes>`, one `%
+boundary: <class> <marker> <kind>` per boundary (a marker names a line's word, or
+`=<text>` its whole text), and `% reference: <file>` naming a LaTeX half; a malformed line
+is an error. -/
 def parseFixture (name src : String) : Except String Fixture := do
   let mut about : Option String := none
   let mut specs : Array Spec := #[]
@@ -203,33 +125,26 @@ def parseFixture (name src : String) : Except String Fixture := do
   if specs.isEmpty then throw s!"{name}: no '% boundary:' line, so nothing is measured"
   return { name, about := what, specs, refSrc }
 
-/-! ## A page as the measurement reads it
-
-Every coordinate is in sp, downward from the page's top edge, on both
-sides: the engine's layout coordinates already are, and a PDF's are flipped
-against its media box. -/
+/-! A page as the measurement reads it, every coordinate in sp downward from the page's
+top edge on both sides. -/
 
 structure MLine where
   y : Int
   text : String
-  /-- The structure leaf the line sets (`LineOut.leaf`); the reference's
-  lines carry none, since its PDF is untagged. -/
+  /-- The structure leaf the line sets; the reference's untagged lines carry none. -/
   leaf : Option Nat := none
   furniture : Bool := false
   deriving BEq, Inhabited, Repr
 
 structure MPage where
-  /-- Text lines, top to bottom. A line with no glyph is not here: a rule
-  alone, an image alone, is a mark. -/
+  /-- Text lines, top to bottom; a line with no glyph is a mark. -/
   lines : Array MLine
   /-- Every non-text mark: its top and bottom edge. -/
   marks : Array (Int × Int)
   deriving Inhabited, Repr
 
-/-- Does `marker` stand in `s` as a word: an occurrence with no letter
-immediately before or after it? Digits may touch it, because a section
-number is set against its title with no space glyph between them on one
-side and with one on the other. -/
+/-- Whether `marker` stands in `s` as a word, with no letter immediately before or after
+it; digits may touch it. -/
 def holdsWord (s marker : String) : Bool := Id.run do
   let cs := s.toList.toArray
   let ms := marker.toList.toArray
@@ -251,9 +166,7 @@ def lineMatches (marker : String) (l : MLine) : Bool :=
     l.text.trimAscii.toString == (marker.drop 1).toString
   else holdsWord l.text marker
 
-/-- A line's first word: its first maximal run of letters. A section number,
-a list's bullet, a footnote's mark and a bracketed label come before it and
-are not words. -/
+/-- A line's first word: its first maximal run of letters. -/
 def firstWord (s : String) : Option String :=
   let w := String.ofList ((s.toList.dropWhile (!·.isAlpha)).takeWhile (·.isAlpha))
   if w.isEmpty then none else some w
@@ -266,10 +179,7 @@ def findMarker (pages : Array MPage) (marker : String) : Option (Nat × Nat) := 
       if lineMatches marker p.lines[j]! then return some (i, j)
   return none
 
-/-- The first half of the premise, checked on both sides: a marker opens its
-line. One standing inside a line is text the block it was meant to open ran
-into — the engine set a construct inline — and the line above it is not the
-previous block's. -/
+/-- The premise's first half, on both sides: a marker opens its line. -/
 def openFault (pages : Array MPage) (s : Spec) : Option String := do
   if s.marker.startsWith "=" then none
   let (i, j) ← findMarker pages s.marker
@@ -278,11 +188,8 @@ def openFault (pages : Array MPage) (s : Spec) : Option String := do
   else some s!"the marker '{s.marker}' stands inside a line that opens with \
 '{(firstWord l.text).getD ""}', so the block it opens was set inline"
 
-/-- The text line above line `j` of a page: the nearest one standing
-strictly higher, skipping furniture unless the marker's own line is
-furniture, and skipping a line with no letter unless the marker's own line
-has none — a raised footnote mark is its own baseline in a PDF, and it is
-not the text line a reader measures a gap from. -/
+/-- The text line above line `j` of a page: the nearest one strictly higher, skipping
+furniture, and lines with no letter, unless the marker's own line is one. -/
 def lineAbove (p : MPage) (j : Nat) : Option MLine := Id.run do
   let me := p.lines[j]!
   let lettered (l : MLine) : Bool := l.text.any Char.isAlpha
@@ -294,8 +201,7 @@ def lineAbove (p : MPage) (j : Nat) : Option MLine := Id.run do
       | none => best := some l
   return best
 
-/-- The marks standing between two baselines: a mark whose vertical extent
-overlaps the open band between them. -/
+/-- The marks whose vertical extent overlaps the open band between two baselines. -/
 def marksBetween (p : MPage) (hi lo : Int) : Array (Int × Int) :=
   p.marks.filter fun (t, b) => t < lo && b > hi
 
@@ -318,12 +224,8 @@ def gapOf (pages : Array MPage) (s : Spec) : Except String Int := do
     return (if s.kind == .above then top - up.y else me.y - bot)
   | .top => return me.y
 
-/-- The measurement's premise, on the side that has structure: the marker's
-line opens its block, so the line above belongs to the block before. A line
-whose leaf is the line above's is a line inside one block, and its "gap" is
-a line pitch — a different quantity, which would be compared silently. A
-`pitch` declares exactly that quantity, so it asks the opposite: the line
-above sets the same leaf. -/
+/-- The premise on the side that has structure: the marker's line opens its block, or, for
+a `pitch`, the line above sets the same leaf. -/
 def premiseFault (pages : Array MPage) (s : Spec) : Option String := do
   if s.kind == .top then none
   let (i, j) ← findMarker pages s.marker
@@ -338,13 +240,8 @@ def premiseFault (pages : Array MPage) (s : Spec) : Option String := do
     some s!"the marker '{s.marker}' is not the first line of its block (the line above sets the same structure leaf)"
   else none
 
-/-! ## The two artifacts, read -/
-
-/-- The engine's pages. Text is every glyph run the line ships, gaps as
-spaces — and a kern too (a glyphless run: `\,`, `\quad`, `~`, a label's
-`\labelsep`), which the reference's PDF reads as the space it is, so a
-marker a kern precedes or follows stays a word; marks are picture paths,
-fills, and the rules, images and polygons a line carries. -/
+/-- The engine's pages: each line's glyph runs as text, gaps and kerns as spaces, and as
+marks the picture paths, fills, rules, images and polygons. -/
 def ofOut (out : Layout.Out) : Array MPage :=
   out.pages.map fun p => Id.run do
     let mut lines : Array MLine := #[]
@@ -396,13 +293,8 @@ def Ctm.concat (m t : Ctm) : Ctm :=
 def Ctm.apply (t : Ctm) (x y : Int) : Int × Int :=
   ((t.a * x + t.c * y) / 65536 + t.e, (t.b * x + t.d * y) / 65536 + t.f)
 
-/-- Every mark a content stream paints, as its bounding box in PDF user
-space, under the transformation in force: a stroked or filled path, and an
-image (the unit square its `cm` maps). The shared reader
-(`Tests.Artifact.evalContent`) reads a path's operands in the coordinates
-they are written in, which is right for this engine's output and wrong for
-a TikZ picture, whose paths are written inside the picture's own `cm`: read
-that way, a picture stands at the page's origin. Text is not a mark. -/
+/-- Every mark a content stream paints, as its bounding box in PDF user space under the
+transformation in force: stroked or filled paths, and images. -/
 def ctmMarks (content : ByteArray) : Array (Int × Int × Int × Int) := Id.run do
   let mut out : Array (Int × Int × Int × Int) := #[]
   let mut ctm : Ctm := {}
@@ -450,9 +342,8 @@ def ctmMarks (content : ByteArray) : Array (Int × Int × Int × Int) := Id.run 
     | _ => pure ()
   return out
 
-/-- A reference page: its runs grouped into lines by baseline, each line's
-text in left-to-right order, flipped to run downward from the media box's
-top; its marks read under the transformation in force (`ctmMarks`). -/
+/-- A reference page: its runs grouped into lines by baseline, text left to right, flipped
+downward from the media box's top, with its marks (`ctmMarks`). -/
 def ofArt (p : ArtPage) : MPage := Id.run do
   let top := p.media.2.2.2
   let mut ys : Array Int := #[]
@@ -472,7 +363,8 @@ def ofArt (p : ArtPage) : MPage := Id.run do
   let marks := (ctmMarks p.content).map fun (_, y0, _, y1) => (top - y1, top - y0)
   return { lines := lines.qsort (·.y < ·.y), marks }
 
-/-! ## The reference file: numbers only -/
+/-! The reference file: numbers only, one row per boundary, with the content keys of both
+sources. -/
 
 structure RefRow where
   spec : Spec
@@ -535,22 +427,16 @@ def RefFile.parse (text : String) : Except String RefFile := do
     unless seen.contains k do throw s!"no '{k}:' line"
   return r
 
-/-! ## Building each side -/
-
 def fontsDir : System.FilePath := "testdata/corpus/fonts"
 
-/-- A fixture's source as the driver reads it, through its front door
-(`Input.readDocument`: decode, lex, parse, `\input` and `\data` beside the
-file). -/
+/-- A fixture's source as the driver reads it, through its front door. -/
 def engineSource (file : String) : IO Input.Source := do
   match ← Input.readSource file with
   | .ok bytes => Input.readDocument file bytes
   | .error d => throw (IO.userError d.message)
 
-/-- The engine's pages for a fixture, built as the driver builds one — the
-front door, one preparation, the picture-label metric against the
-preamble's faces, the bibliography — over the shipped faces only, then laid
-out with the document's own patterns. -/
+/-- The engine's pages for a fixture, built as the driver builds one over the shipped
+faces only. -/
 def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (file : String) : IO (Layout.Out × Array Diag × Nat) := do
   let src ← engineSource file
@@ -569,8 +455,8 @@ def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Font
   let diags := elabDiags ++ bibDiags ++ imgDiags ++ out.diags
   return (out, diags, (Diag.resolveAll doc.allow false diags).errors)
 
-/-- The shipped body face and its one-face set: every fixture's text sets
-in it, on both sides (the reference names the same file through fontspec). -/
+/-- The shipped body face and its one-face set, which every fixture's text sets in on both
+sides. -/
 def oneFaceSet (cache : IO.Ref (Array (String × Font.Font))) : IO Font.FontSet := do
   let some body ← Hermetic.loadFont cache (fontsDir / "OpenSans-Regular.ttf").toString
     | throw (IO.userError s!"{fontsDir}/OpenSans-Regular.ttf does not parse")
@@ -601,8 +487,8 @@ def Measured.within (m : Measured) (tol : Int := toleranceMilliBp) : Bool :=
 
 def Measured.near (m : Measured) : Bool := m.within nearMilliBp
 
-/-- A fixture measured, or the fault that stops it being measured: no
-reference, a reference of another source, a failed premise. -/
+/-- A fixture measured, or the fault that stops it: no reference, a reference of another
+source, a failed premise. -/
 def measureFixture (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (name : String) : IO (Except String (Array Measured)) := do
   let file := s!"{rhythmDir}/{name}.tex"
@@ -632,9 +518,7 @@ regenerate: lake env lean --run scripts/rhythm.lean --reference {name}"
 regenerate: lake env lean --run scripts/rhythm.lean --reference {name}"
   let (out, _, _) ← engineOut cache faces oneFace file
   let pages := ofOut out
-  -- A boundary whose premise fails on the engine's side is measured as
-  -- absent, never compared: its "gap" would be another quantity, and one
-  -- that happened to equal the reference would count as a match.
+  -- A boundary whose premise fails on the engine's side is measured as absent, never compared.
   return .ok (ref.rows.map fun row =>
     let engine := match openFault pages row.spec, premiseFault pages row.spec with
       | some why, _ => .error s!"premise: {why}"
@@ -655,8 +539,8 @@ def measureAll : IO (Except (Array String) (Array Measured)) := do
     | .error e => faults := faults.push e
   return (if faults.isEmpty then .ok out else .error faults)
 
-/-- The tier's rows: per fixture and class, the boundaries declared and how
-many of them are within each band. -/
+/-- The tier's rows: per fixture and class, the boundaries declared and how many are
+within each band. -/
 def rowsOf (ms : Array Measured) : Array Row := Id.run do
   let mut keys : Array String := #[]
   let mut within : Array Int := #[]
@@ -714,8 +598,7 @@ def table : IO UInt32 := do
 {if m.near then "yes" else "no"}"
     return 0
 
-/-- A fixture's engine pages, printed line by line: what a declaration's
-marker has to name, read off the artifact the tier measures. -/
+/-- A fixture's engine pages printed line by line: what a marker has to name. -/
 def dumpLines (name : String) : IO UInt32 := do
   let cache ← IO.mkRef #[]
   let faces ← Hermetic.shippedFaces fontsDir
@@ -731,28 +614,13 @@ def dumpLines (name : String) : IO UInt32 := do
   for d in diags do IO.println s!"  diag {d.code} {d.subject} {d.message.take 100}"
   return 0
 
-/-! ## The HTML report (needs node, Playwright and a cached Chromium; never a gate)
+/-! The HTML report, never a gate: each fixture's page measured in a browser, each gap
+also printed in quanta of its own context's rhythm quantum (`HtmlDoc.backend_gaps_agree`).
+-/
 
-Each fixture's page is emitted in process, exactly as `Scoreboard.Hermetic`
-emits a corpus page (the document's own stylesheet mode, its images beside
-it), and a browser measures it: every text line's baseline, found from the
-first glyph's box less its face's descent at its size, and every picture's
-and image's box. The same declarations are then read over those lines as
-over a PDF page. A browser's layout is a measurement, never a theorem, so
-this prints and gates nothing.
-
-The fair comparison is not in lengths. `HtmlDoc.backend_gaps_agree` holds the
-two backends to the same *multiple* of their own context's rhythm quantum —
-half the print leading on paper, half the screen leading on a screen — so
-each gap is also printed in its own context's quanta, the reference's in the
-PDF's. The screen leading is read off the page, as the first paragraph's
-computed line height: on an article page that is `bodyLeadingMilli` of the
-root size, and on a deck it is the stage's scaled one. -/
-
-/-- The measuring probe, run by node with the Playwright module in
-`PW_MODULE`: for every page named, every text line's baseline and text, and
-every picture's and image's vertical extent, all in CSS px from the
-document's top edge. -/
+/-- The measuring probe, run by node with Playwright from `PW_MODULE`: every text line's
+baseline and text, and every picture's and image's vertical extent, in CSS px from the
+document's top. -/
 def probeJs : String := r#"
 const { chromium } = require(process.env.PW_MODULE);
 const path = require('path');
@@ -834,9 +702,8 @@ const path = require('path');
 })().catch((e) => { console.error(String(e && e.message || e)); process.exit(4); });
 "#
 
-/-- A fixture's HTML page, emitted as a corpus page is (`Hermetic.pageFor`'s
-sequence and configuration, with no error gate: a page that errs is still
-measured), with the image bytes it names. -/
+/-- A fixture's HTML page, emitted as a corpus page is but with no error gate, with the
+image bytes it names. -/
 def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (name : String) : IO (String × Array (String × ByteArray)) := do
   let file := s!"{rhythmDir}/{name}.tex"
@@ -859,9 +726,8 @@ def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Fon
       fonts := if doc.fontPolicy == .embedded then some fs else none }
   return ((HtmlDoc.emit cfg doc).1, read)
 
-/-- The PDF's rhythm quantum for a fixture, in thousandths of a bp: half the
-leading at the document's body size, the engine's own definition
-(`Ir.rhythmQuantum`). -/
+/-- The PDF's rhythm quantum for a fixture in thousandths of a bp, by the engine's own
+definition (`Ir.rhythmQuantum`). -/
 def pdfQuantumMilli (name : String) : IO Int := do
   let file := s!"{rhythmDir}/{name}.tex"
   let src ← engineSource file
@@ -876,9 +742,8 @@ def inQuanta (v q : Int) : String :=
   let f := toString (a % 100)
   (if h < 0 then "-" else "") ++ s!"{a / 100}.{"".pushn '0' (2 - f.length)}{f}"
 
-/-- The Playwright modules whose Chromium launches on this host, in the
-order `html-oracle` tries them: `LEANTEX_PLAYWRIGHT`, then every module
-`npx playwright install` left under `~/.npm/_npx`. Nothing is installed. -/
+/-- The Playwright modules whose Chromium launches here: `LEANTEX_PLAYWRIGHT`, then every
+module under `~/.npm/_npx`. -/
 def playwrightModules : IO (Array String) := do
   let mut cands : Array String := #[]
   if let some p ← IO.getEnv "LEANTEX_PLAYWRIGHT" then cands := cands.push p
@@ -924,8 +789,7 @@ written but not measured"
   if r.exitCode != 0 then
     IO.eprintln s!"rhythm: the probe exited {r.exitCode}: {r.stderr}"
     return 2
-  -- The probe's lines back as pages the declarations read: CSS px scaled to
-  -- sp at 65536 per px, so every predicate above applies unchanged.
+  -- CSS px scaled to sp at 65536 per px, so every predicate applies unchanged.
   let pxSp (s : String) : Int := (parseMilli s).getD 0 * spPerBp / 1000
   let mut pages : Array (String × MPage) := #[]
   let mut leadings : Array (String × Int) := #[]
@@ -978,23 +842,12 @@ and measured by the browser; lengths bp (PDF) and CSS px (HTML); q = that contex
 {pb}\t{pq}\t{rb}\t{rq}\t{hb}\t{hq}\t{dPR}\t{dHP}"
   return 0
 
-/-! ## The private documents (a report; never a gate, never the tree)
+/-! The private documents' report, never a gate: block boundaries paired by structure tag
+and the first twelve letters of each line, written only into a directory outside the
+working tree, holding page numbers, tags and lengths, never text. -/
 
-A document with no markers is read by pairing: each engine line whose
-structure tag opens a new marked-content sequence is a block boundary, and
-the reference line whose first twelve letters match it on the same page is
-the same boundary there. The gap on each side is the baseline of the line
-above it to its own. A boundary is classed by the engine's tags on either
-side (`P-P`, `H2-P`, `LI-LI`, …), with whether a picture or an image stands
-between.
-
-It reads private inputs, so it is structurally unable to write into the
-repository: it writes only into a directory named on the command line, and
-refuses one that resolves inside the working tree. What it writes carries no
-text of the document: page numbers, tags and lengths. -/
-
-/-- A line's structure: the tag and marked-content id of its first run's
-innermost content mark, as the engine's writer wrote it. -/
+/-- A line's structure: the tag and marked-content id of its first run's innermost content
+mark. -/
 def lineTag (rs : Array ArtRun) : Option (String × Nat) :=
   rs.findSome? fun r => r.marks.reverse.findSome? fun m => match m with
     | .content t n => some (t, n)
@@ -1006,8 +859,8 @@ structure PLine where
   tag : Option (String × Nat)
   deriving Inhabited
 
-/-- A page's lines for pairing: baseline, the first twelve letters of the
-text (the pairing key, never written out), and the structure tag. -/
+/-- A page's lines for pairing: baseline, the first twelve letters as the key (never
+written out), and the structure tag. -/
 def pairLines (p : ArtPage) : Array PLine := Id.run do
   let top := p.media.2.2.2
   let mut ys : Array Int := #[]
@@ -1026,8 +879,7 @@ def pairLines (p : ArtPage) : Array PLine := Id.run do
       out := out.push { y := top - ys[i]!, key := String.ofList (letters.toList.take 12), tag := lineTag rs }
   return out.qsort (·.y < ·.y)
 
-/-- Is `dir` inside the working tree? Both sides resolved, so neither a
-relative spelling nor a symlink hides the answer. -/
+/-- Whether `dir` is inside the working tree, both sides resolved. -/
 def insideTree (dir : String) : IO Bool := do
   IO.FS.createDirAll dir
   let d ← IO.FS.realPath dir
@@ -1045,8 +897,7 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
     | .error e => throw (IO.userError s!"{f}: {e}")
   let eng ← read enginePdf
   let ref ← read refPdf
-  -- The HTML page's lines, when a browser measured it (`probeJs`'s output
-  -- over the engine's own page): baselines in CSS px as sp, one document.
+  -- The HTML page's lines where a browser measured them, as sp.
   let keyOfText (t : String) : String :=
     String.ofList ((t.toList.filter Char.isAlpha).take 12)
   let mut html : Array (Int × String) := #[]
@@ -1075,8 +926,7 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
         | _, _ => true
       if !opens then continue
       let tagName (t : Option (String × Nat)) : String := (t.map (·.1)).getD "none"
-      -- A mark stands between only when it lies inside the band: a page's
-      -- ground or a title bar overlaps every band and stands between none.
+      -- A mark stands between only when inside the band.
       let between := emarks.any fun (_, y0, _, y1) => etop - y1 ≥ up.y && etop - y0 ≤ me.y
       let egap := me.y - up.y
       let rgap : Option Int := do
@@ -1086,8 +936,7 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
       let (rb, d) := match rgap with
         | some g => (showMilli (milliBpOfSp g), showMilli (milliBpOfSp (egap - g)))
         | none => ("-", "-")
-      -- The HTML twin of the same boundary: the next line in document order
-      -- with the same key, and the line standing above it on the screen.
+      -- The HTML twin: the next line with the same key, and the line above it on the screen.
       let mut hb := "-"
       match (html.extract cursor html.size).findIdx? (·.2 == me.key) with
       | some k =>
@@ -1107,10 +956,8 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
   IO.println s!"rhythm: {rows.size - 1} boundaries over {eng.size} engine pages, {ref.size} reference pages"
   return 0
 
-/-- One page a browser measures with `probeJs`, for a private document's
-HTML: its lines go to `<outDir>/probe-<page>.tsv`, and like the report the
-probe refuses a directory inside the working tree, because those lines are
-the document's text. -/
+/-- One page a browser measures for a private document's HTML, its lines written to
+`<outDir>/probe-<page>.tsv`; a directory inside the working tree is refused. -/
 def probePage (htmlDir page outDir : String) : IO UInt32 := do
   if ← insideTree outDir then
     IO.eprintln "rhythm: refusing: a private page's probe writes only outside the working tree"
@@ -1127,7 +974,7 @@ def probePage (htmlDir page outDir : String) : IO UInt32 := do
     return 2
   return 0
 
-/-! ## The reference, measured (needs lualatex; never a gate) -/
+/-! The reference, measured with lualatex; never a gate. -/
 
 def lualatex : String := "lualatex"
 
@@ -1135,10 +982,8 @@ def lualatex : String := "lualatex"
 def formatOf (log : String) : String :=
   ((log.splitOn "\n").find? (·.startsWith "LaTeX2e <")).getD "unknown"
 
-/-- Build one fixture's reference in a scratch directory and measure it.
-The source is compiled where it stands, so its relative paths (the shipped
-faces) resolve as they do for the engine; nothing is written beside it
-except the `.ref` the measurement produces. -/
+/-- Build one fixture's reference in a scratch directory where it stands and measure it;
+only the `.ref` is written. -/
 def referenceOf (fx : Fixture) (src : String) : IO (Except String RefFile) := do
   let texName := fx.refSrc.getD s!"{fx.name}.tex"
   let texSrc ← if fx.refSrc.isSome then readFileOr s!"{rhythmDir}/{texName}" else pure src
@@ -1162,9 +1007,7 @@ its log: {work}/{fx.name}.log\n{r1.stdout.takeEnd 1200}"
     let pages ← match readArtifact pdf with
       | .ok ps => pure (ps.map ofArt)
       | .error e => return .error s!"{fx.name}: the reference PDF does not read: {e}"
-    -- The reference's premise, as it can be checked without structure: every
-    -- marker is found, and the markers stand in the order the fixture
-    -- declares them — so each line above is the previous block's.
+    -- The reference's premise without structure: every marker found, in the declared order.
     let mut rows : Array RefRow := #[]
     let mut last : Option (Nat × Int) := none
     for s in fx.specs do
@@ -1209,8 +1052,7 @@ def reference (names : List String) (verify : Bool := false) : IO UInt32 := do
         bad := bad + 1
       | .ok r =>
         if verify then
-          -- The committed numbers are only as good as their reproducibility:
-          -- rebuild each one and hold it to the file, byte for byte.
+          -- Each committed reference rebuilt and held to the file, byte for byte.
           let committed ← readFileOr (refPath n)
           if committed == r.render then IO.println s!"rhythm: {refPath n} reproduces"
           else
@@ -1221,8 +1063,6 @@ measurement differs from the committed file"
           IO.FS.writeFile (refPath n) r.render
           IO.println s!"rhythm: wrote {refPath n} ({r.rows.size} boundaries)"
   return (if bad == 0 then 0 else 1)
-
-/-! ## Selftest -/
 
 def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   let bp (n : Int) : Int := n * spPerBp
@@ -1264,16 +1104,14 @@ def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   no "word: a longer word does not" (!holdsWord "Cedars grow" "Cedar")
   no "word: a word ending in it does not" (!holdsWord "RedCedar" "Cedar")
   no "word: a word at the line's end does" (holdsWord "under Cedar" "Cedar")
-  -- The reference's marks are read under the transformation in force: a
-  -- path written inside a picture's own `cm` stands where the `cm` puts it.
+  -- The reference's marks are read under the transformation in force.
   let content := "q 1 0 0 1 100 200 cm 0 0 m 10 0 l 10 20 l S Q 5 5 20 10 re f".toUTF8
   no s!"marks: a path inside cm is moved by it: {ctmMarks content}"
     (ctmMarks content == #[(bp 100, bp 200, bp 110, bp 220), (bp 5, bp 5, bp 25, bp 15)])
   let scaled := "q 2 0 0 3 10 10 cm 0 0 m 1 1 l S Q q 50 0 0 40 7 9 cm /Im1 Do Q".toUTF8
   no s!"marks: scale composes, and an image is its unit square mapped: {ctmMarks scaled}"
     (ctmMarks scaled == #[(bp 10, bp 10, bp 12, bp 13), (bp 7, bp 9, bp 57, bp 49)])
-  -- Polygon coordinates rise from a line's baseline; page marks run down.
-  -- Seed bounds from a vertex so the baseline itself adds no phantom ink.
+  -- Polygon coordinates rise from the baseline while marks run down; bounds seed from a vertex.
   let polygonMarks (pts : Array (Int × Int)) : Array (Int × Int) :=
     let line : Layout.LineOut :=
       { x := 0, y := bp 160, size := bp 12
@@ -1324,13 +1162,12 @@ def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   no "gap: a missing marker has no gap" (g "Yew" .span).toOption.isNone
   no "gap: a marker opening its page has no gap" (g "Alder" .span).toOption.isNone
   no "gap: no mark between has no above" (g "Birch" .above).toOption.isNone
-  -- The premise: a marker inside its block is a fault, at its block's head it is not.
+  -- A marker inside its block is a fault; at its block's head it is not.
   no "premise: a marker opening its block holds"
     (premiseFault #[pg] { cls := "c", marker := "Birch", kind := .span }).isNone
   no "premise: a marker inside its block is named"
     (premiseFault #[pg] { cls := "c", marker := "more", kind := .span }).isSome
-  -- The comparison level and its blind spot: under the tolerance apart reads
-  -- equal here and unequal to the exact comparison above it; over it, unequal.
+  -- The level's blind spot: within the tolerance equal here, unequal exactly; beyond, unequal.
   let row : RefRow := { spec := s1, milliBp := 18000 }
   let at04 : Measured := { fixture := "f", row, engine := .ok 18400 }
   let at06 : Measured := { fixture := "f", row, engine := .ok 18600 }

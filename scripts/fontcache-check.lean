@@ -2,15 +2,9 @@ import LeanTex.Cli.FontDiscovery
 
 open LeanTex.Core LeanTex.Cli
 
-/-! Font discovery's filesystem and metadata boundary. Changed file keys,
-directory mtimes and classifier versions must invalidate the caches.
-Current-key cache rows are trusted, including rejections and empty listings;
-uncached discovery must instead read the files and leave the cache untouched.
-Metadata and cmap/MATH candidates need not be fully parseable fonts.
-
-The fonts and both caches live in fresh temporary directories. Only shipped
-font bytes and invented sfnt metadata are used. Build
-`LeanTex.Cli.FontDiscovery`, then run with `lake env lean --run`. -/
+/-! Font discovery's cache boundary: changed keys, directory mtimes and classifier versions
+invalidate it, current rows are trusted, and uncached discovery reads the files.
+Usage: lake build LeanTex.Cli.FontDiscovery && lake env lean --run scripts/fontcache-check.lean -/
 
 def familyAt (cache : System.FilePath) (dir path : String) : IO (Option String) := do
   let faces ← FontDiscovery.scanRootsIn (some cache) [dir]
@@ -37,9 +31,8 @@ private def sfnt (tables : Array (String × ByteArray)) : ByteArray := Id.run do
     payload := payload ++ bytes
   return word32 0x00010000 ++ word16 tables.size ++ zeros 6 ++ directory ++ payload
 
-/-- Observable limits of discovery, through its ordinary caller interface.
-The seeded current-key rows stand for a cache whose provenance/freshness
-premise fails; they must disagree with fresh reads, not certify the bytes. -/
+/-- Observable limits of discovery: seeded current-key rows stand for a cache whose
+premise fails, and must disagree with fresh reads. -/
 private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool := do
   let failures ← IO.mkRef (#[] : Array String)
   let check (name : String) (ok : Bool) : IO Unit := do
@@ -57,7 +50,6 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
   check "the boundary fixture classifies" liveFamily.isSome
 
   -- A negative row under a live file's key makes a cache hit observable.
-  -- Merely scanning the same rejected bytes twice could hide a re-probe.
   IO.FS.writeFile probeFile (key ++ "\n")
   let rejected ← FontDiscovery.scanRootsIn (some cache) [dir.toString]
   let fresh ← FontDiscovery.scanRootsIn none [dir.toString]
@@ -110,7 +102,7 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
   check "bypassing the listing cache leaves its rows alone"
     ((← IO.FS.readFile listingFile) == emptyListing)
 
-  -- Format 12 maps only A to glyph ID 1. No metrics or glyph program exists.
+  -- Format 12 maps only A to glyph ID 1, with no metrics or glyph program.
   let point := word32 65
   let glyph := word32 1
   let cmap := word16 0 ++ word16 1 ++ word16 3 ++ word16 10 ++ word32 12 ++
@@ -138,8 +130,7 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
   check "an unreadable fallback candidate is skipped"
     ((← FontDiscovery.fallbackPicks candidates #['A']).isEmpty)
 
-  -- More than one 64-file chunk, created in reverse order, with root order
-  -- deliberately different from path order. Warm and fresh scans agree.
+  -- Over a 64-file chunk, reverse-created, root order unlike path order: scans agree.
   let firstRoot := root / "z-first"
   let secondRoot := root / "a-second"
   IO.FS.createDirAll firstRoot
@@ -184,9 +175,7 @@ private def run (root : System.FilePath) : IO UInt32 := do
   IO.FS.writeBinFile face sans
   let afterKey ← FontDiscovery.probeKey face
   let after ← familyAt cache dir face
-  -- Membership: a new file, in the root and in a fresh subdirectory, then
-  -- its removal. Each changes only a directory's entries, which is exactly
-  -- what the listing cache is keyed on.
+  -- Membership: a file added in the root and a fresh subdirectory, then removed.
   IO.sleep 1100
   IO.FS.writeBinFile (dir ++ "/Other.otf") serif
   let added := (← familiesAt cache dir).contains "Source Serif Pro"
@@ -198,11 +187,7 @@ private def run (root : System.FilePath) : IO UInt32 := do
   IO.FS.removeFile (dir ++ "/Other.otf")
   IO.FS.removeDirAll (dir ++ "/sub")
   let gone := (← familiesAt cache dir) == #["Open Sans"]
-  -- The classifier: a monospace face, and beside the cache this classifier
-  -- writes, the unversioned file every earlier one wrote, holding that
-  -- face's row as an offset-16 reader left it — proportional, under a
-  -- family no scan answers. A fresh cache, so no row of this classifier's
-  -- own stands in front of it.
+  -- The classifier: an older unversioned cache's stale row for a monospace face is ignored.
   let mono := dir ++ "/Mono.otf"
   IO.FS.writeBinFile mono code
   let fresh := root / "cache-classifier"

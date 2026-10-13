@@ -1,27 +1,22 @@
 module
 
-/- Shared lexical conventions for source checks. The compiler and axiom
-audit remain authoritative for proof completeness; this scanner provides
-earlier feedback on a staged diff. -/
+/- Shared lexical conventions for the line-scanning source checks; the compiler and axiom
+audit remain authoritative. -/
 
 public section
 
 def isWordChar (c : Char) : Bool := c.isAlphanum || c == '_'
 
-/-- Does `line` contain `word` delimited by non-word characters — the
-`(^|[^[:alnum:]_])word([^[:alnum:]_]|$)` grep the shell hook used. -/
+/-- Whether `line` contains `word` delimited by non-word characters. -/
 def hasWord (line word : String) : Bool :=
   (line.split (fun c => !isWordChar c)).any (·.toString == word)
 
 def containsSub (line pat : String) : Bool :=
   (line.splitOn pat).length > 1
 
-/-- The line with its string-literal content removed: a banned keyword is a
-code token, and a string mentioning one — the math tables' command-name
-entry for TeX's derivative symbol was the escape — is data, not a
-declaration. Escapes are honoured. Two stated line-scanner limitations,
-like `ioInCore`'s: a literal left open by a multi-line string strips to the
-line's end, and a char literal holding a double quote reads as opening one. -/
+/-- The line with string-literal content removed, escapes honoured; a literal a multi-line
+string leaves open strips to the line's end, and a char literal holding a double quote
+reads as opening one. -/
 def stripStrings (l : String) : String := Id.run do
   let mut out := ""
   let mut inStr := false
@@ -37,18 +32,13 @@ def stripStrings (l : String) : String := Id.run do
       out := out.push c
   return out
 
-/-- The line with any `--` comment stripped: a line comment, or a doc/block
-comment's opening line. Blind spots, accepted rather than parsed around
-(a line scanner has no comment state): a continuation line inside a block
-comment still looks like code, and a string literal containing `--`
-truncates the code after it — strip strings first when both apply. -/
+/-- The line with any `--` comment stripped; a block comment's continuation lines still
+read as code, and a string holding `--` truncates the code after it. -/
 def stripLineComment (l : String) : String :=
   (l.splitOn "--").headD l
 
-/-- Normalize a line-leading declaration's modifiers and attributes for source
-conventions, retaining whether it is private. Nested declarations do not
-count. Attributes must finish on this line; comment and string state remain
-the caller's responsibility. This is a lexical aid, not the Lean parser. -/
+/-- A line-leading declaration's normalized modifiers and attributes, with whether it is
+private; a lexical aid, not the Lean parser. -/
 def declarationHead (line : String) : Bool × String := Id.run do
   if (line.toList.head?.map Char.isWhitespace).getD false then return (false, "")
   let mut hidden := false
@@ -71,16 +61,13 @@ def declarationHead (line : String) : Bool × String := Id.run do
       words := [word]
   return (hidden, String.intercalate " " words.reverse)
 
-/-- Composed so no gate script's own staged diff contains the banned word
-as a word-delimited token — the hook scans every .lean file, these
-included. -/
+/-- Composed so no gate script's own source holds the banned word as a token. -/
 def kwSorry : String := "sor" ++ "ry"
 
 /-- Shared spelling for the totality convention. -/
 def kwPartial : String := "par" ++ "tial"
 
-/-- A banned keyword as a code token: word-delimited, string content and
-`--` comments aside. Strings are stripped first, so a literal containing
-`--` does not hide the code after it. -/
+/-- A banned keyword as a code token: word-delimited, outside strings and `--` comments.
+-/
 def bannedWord (kw l : String) : Bool :=
   hasWord (stripLineComment (stripStrings l)) kw

@@ -1,28 +1,7 @@
 /-
-Regenerate LeanTex/Core/TextSymData.lean: the text symbols and accents
-lualatex sets under the TU encoding, each with its Unicode scalar. Run from
-the repository root with:
-
-  lake env lean --run scripts/gen-textsym-data.lean
-
-Sources, located with kpsewhich and never vendored:
-- tuenc.def (the LaTeX kernel's TU encoding, the one lualatex's fontspec
-  selects): `\DeclareUnicodeSymbol{\name}{"hex}` is the scalar a symbol
-  command sets; `\DeclareUnicodeCommand{\name}{\iffontchar\font "hex \char
-  "hex \else …}` sets that scalar wherever the face carries it;
-  `\DeclareUnicodeAccent{\a}{"hex}` is the combining mark an accent command
-  adds to its base; `\DeclareUnicodeComposite{\a}{}{"hex}` is what an accent
-  over an empty base sets.
-- latex.ltx: `\DeclareRobustCommand{\name}{\ifmmode … \else\textsym\fi}` and
-  `\protected\def\name{…}` of that shape name a symbol's text form (`\S` is
-  `\textsection`); `\let\name\other` aliases a name already found;
-  `\DeclareTextCommandDefault\capital…{\a}` (or `{\@tabacckludge a}`) makes a
-  capital accent the accent `\a`.
-
-Not rows: a command tuenc.def defines through `\remove@tlig` (a quote the
-TeX ligatures must not reach), and a format character — U+200C, whose one
-meaning is to break a ligature the engine never forms (Font.lean reads no
-ligature lookup).
+Regenerate LeanTex/Core/TextSymData.lean: the text symbols and accents lualatex sets under TU,
+from tuenc.def and latex.ltx (via kpsewhich).
+Usage: lake env lean --run scripts/gen-textsym-data.lean
 -/
 
 def die (msg : String) : IO α := do
@@ -219,8 +198,7 @@ def main : IO UInt32 := do
             if base.trimAscii.isEmpty then empties := push empties n v
             else unless composites.any (fun c => c.1 == n && c.2.1 == base) do
               composites := composites.push (n, base, v)
-  -- A composite of a command that is not an accent (`\textcommabelow`, an
-  -- overlay construction) is not an accent's row.
+  -- A composite of a non-accent command, such as an overlay construction, is no accent row.
   composites := composites.filter fun c => accents.any (·.1 == c.1)
   let tuSyms := syms
   let aliasOf (target : String) (xs : Array (String × Char)) : Option Char :=

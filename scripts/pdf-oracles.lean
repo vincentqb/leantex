@@ -1,44 +1,7 @@
 /-
-The PDF reader and validator oracle. Run from the repository root:
-
-  lake build TestsModules leantex && lake env lean --run scripts/pdf-oracles.lean
-
-The engine's own reader judges every written file inside `lake test`
-(Tests/PdfConformance.lean: the reference walk, the mutants, determinism).
-This script is the external half: it builds every corpus fixture that
-declares a PDF output (or declares none) with the shipped binary, then asks
-the readers on this host what they make of the bytes — Poppler (`pdfinfo`,
-`pdffonts`, `pdftotext`, and `pdftoppm` as the raster reference),
-Ghostscript, pypdf, PDFium through the host Chrome's own viewer, pdf.js
-lifted out of the host Firefox's `omni.ja` and run under the same Chrome —
-and the validator (veraPDF, PDF/A-4 and PDF/UA-2 on the four reference
-fixtures), and writes what they said as data: `testdata/oracles/reader-
-matrix.txt`, whose `[feature]` rows are the writer's typed census
-(`Pdf.features`, computed here from the same inputs `write` reads, one row
-per `Feature.all`), whose cells are (feature, reader) verdicts, and whose
-`[profile]` cells are the validator's measured failures per fixture. This
-script is the file's only writer; `lake test` reads it like a golden and
-never asks what is installed. A tool not on PATH writes `untested`, never
-`pass`.
-
-A browser column passes a feature when every fixture reaching it opened,
-reported the page count, contained the shipped text (pdf.js
-`getTextContent`, PDFium's select-all), and every page's raster lay within
-`dssimTolerance` of Poppler's at 100 dpi — a tolerance, never identity:
-renderers anti-alias differently, and the calibration table in the run
-record is where the number comes from. Per-renderer raster hashes go to
-the run record, never to the repo; movement between runs is explained
-there.
-
-The `target:` line names five readers. A host without Chrome or Firefox's
-`omni.ja` writes `untested` in the browser columns and this run exits
-non-zero: that matrix must not be committed — the header is widened only
-in a commit whose run filled the cells.
-
-Exit is non-zero when any cell a reached feature has in a `target:` column
-is not `pass`. The run record (tool versions, per-fixture verdicts, the
-DSSIM calibration, the raster hashes, the matrix diff, the validator's raw
-summaries) lands under /tmp/leantex-agents/modern-output/pdf-oracles-<date>.md.
+The PDF reader and validator oracle: every corpus fixture's PDF judged by the host's readers and
+veraPDF into testdata/oracles/reader-matrix.txt; a missing tool writes `untested`.
+Usage: lake build TestsModules leantex && lake env lean --run scripts/pdf-oracles.lean
 -/
 import LeanTex.Cli.FontDiscovery
 import Lean.Data.Json
@@ -94,13 +57,9 @@ structure Fixture where
   hashes : Array (String × String × String) := #[]
   deriving Repr
 
-/-- A font set from the faces this host and the corpus directory carry:
-the body (or sans) family the document names, at the four standard
-weights, else the default family; the math face the driver would pick
-(declared, or the body's companion, or the first MATH-table face); the
-scan's per-glyph fallback — enough for the shipped text the containment
-check reads. The driver's declared per-variant faces are not reproduced
-here: they move line breaks, never the characters shipped. -/
+/-- A font set from this host's and the corpus's faces, resolved as the driver resolves
+the body or sans family, math face and per-glyph fallback: enough for the shipped text the
+containment check reads. -/
 def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.FontSet) := do
   let spec := doc.fonts
   let named := spec.body.orElse fun _ => spec.sans.orElse fun _ => spec.mono
@@ -165,9 +124,8 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
         paths := paths.push path
   return some { fonts, index, fallback, math := mathIdx, mathAlphabets }
 
-/-- The ink a text carries, as a character multiset: what containment
-compares. Whitespace is layout, the hyphen is line breaking's (a word
-hyphenated at a line end gains one), so neither counts. -/
+/-- The ink a text carries as a character multiset, whitespace and hyphens aside, since
+they are layout's and line breaking's. -/
 def inkOf (s : String) : Std.HashMap Char Nat :=
   s.toList.foldl (fun m c =>
     if c.isWhitespace || c == '-' || c == '\u00ad' then m
@@ -199,8 +157,6 @@ def veraFailures (xml : String) : Array String × String := Id.run do
       let id := s!"{attr "clause"}-{attr "testNumber"}"
       unless ids.contains id do ids := ids.push id
   return (ids.qsort (· < ·), summary)
-
--- ## The browser judges
 
 /-- pdf.js, as the host Firefox ships it: `pdf.mjs` and `pdf.worker.mjs`
 unzipped from `omni.ja` (`LEANTEX_OMNI_JA`, else `/usr/lib64/firefox/omni.ja`)
@@ -271,21 +227,9 @@ window.cropPage = async (b64, zoom, cx, cy) => {
 </script>
 "#
 
-/-- The browser driver, run by node: one headless Chrome over its debugging
-pipe (no module, no port), a viewer tab for PDFium and a harness tab for
-pdf.js. argv: chrome, the work directory (pdf.mjs, pdf.worker.mjs,
-harness.html), then PDF paths. One JSON line per PDF on stdout.
-
-PDFium is Chrome's own viewer: the file is navigated to, the extension
-frame attaches as its own target, and the `pdf-viewer` element there
-reports the load state (`failed` on a broken file) and the page boxes. The
-viewport is zoomed so a point is `dpi/72` pixels, the plugin is told to
-paint its background magenta, and each page is captured whole-viewport
-once three consecutive captures agree; the harness then cuts the page out
-as the block of non-magenta pixels around the viewer's idea of the page
-centre, less the viewer's shadow insets — the viewer's own rectangle was
-off by pixels on some pages, and a pixel is the truth here. PDFium's text
-is the select-all selection. -/
+/-- The browser driver, run by node: one headless Chrome over its debugging pipe, a viewer
+tab for PDFium and a harness tab for pdf.js, one JSON line per PDF; PDFium's page is cut
+out of a magenta-painted viewport. -/
 def judgeJs : String := r#"
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -544,8 +488,7 @@ def main : IO Unit := do
   let chrome ← findChrome
   let dir ← IO.FS.createTempDir
   let pdfjsV ← extractPdfjs dir
-  -- The browsers run when Chrome, node, pdf.js, pdftoppm and magick are
-  -- all here; else both browser columns are untested and the run fails.
+  -- The browsers need Chrome, node, pdf.js, pdftoppm and magick; else their columns are untested.
   let browsers := chrome.isSome && nodeV.isSome && pdfjsV.isSome && popplerV.isSome && magickV.isSome
   let chromeV := chrome.map fun (_, v) => (v.splitOn " ").getLast?.getD v
   let toolsLine (vera : Option String) : String := String.intercalate "  " [
@@ -556,9 +499,7 @@ def main : IO Unit := do
   IO.println s!"pdf-oracles: node {nodeV.getD "absent"}  magick {magickV.getD "absent"}  browsers {if browsers then "on" else "off"}"
   let faces ← FontDiscovery.scanRoots (["testdata/corpus/fonts"] ++ (← FontDiscovery.systemRoots []))
   let pats := Hyphen.english.get
-  -- The fixtures: every golden document that declares a PDF output or
-  -- declares none, each read through its own surface (`goldenDoc`), built
-  -- by the shipped binary.
+  -- The fixtures: every golden document with a PDF output, built by the shipped binary.
   let names := goldenNames.toArray.qsort (· < ·)
   let mut fixtures : Array Fixture := #[]
   let mut notBuilt : Array String := #[]
@@ -577,24 +518,17 @@ def main : IO Unit := do
     let pages := (((built.stdout.splitOn "\"pages\":").drop 1).head?.bind fun r =>
       ((r.splitOn ",").head?.bind (·.toNat?))).getD 0
     let pdf ← IO.FS.readBinFile pdfPath
-    -- The layout this script computes, for the typed census and the
-    -- shipped text; the driver's faces are approximated by `fontSetFor`.
+    -- This script's own layout, in `fontSetFor`'s faces, for the census and shipped text.
     let some fs ← fontSetFor faces doc | die s!"{n}: no face resolves for the census"; continue
-    -- Settled in the census's faces, as the driver settles the store in its
-    -- own: a drawn figure's forms and text reach the census only then.
+    -- Settled in the census's faces, so a drawn figure's forms and text reach the census.
     let store ← corpusStore doc (some fs)
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf fs doc geom (some pats) store
-    -- The structure tree the driver writes, so the census counts its
-    -- elements among the compressed objects (`objstm-multi`).
+    -- The driver's structure tree, so the census counts its elements.
     let tree := Struct.ofDoc (Layout.pdfView doc)
     let features := (Pdf.features geom fs out.pages store out.outline tree).toList.map
       Pdf.Feature.name
-    -- The census against the built bytes: the same rows, or the run says
-    -- where they part. One parting is expected: a boundary picture the
-    -- driver had TeX render arrives as a copied page, where this harness
-    -- (no TeX) laid a placeholder — the readers judged the driver's bytes,
-    -- so those two rows join the fixture's reach.
+    -- The census against the built bytes; a TeX-rendered picture's copied page joins the reach.
     let features ← match parsedFeatureNames pdf with
       | .ok parsed =>
         let extra := parsed.filter (!features.contains ·)
@@ -607,11 +541,7 @@ def main : IO Unit := do
           die s!"{n}: typed census {features} and built bytes {parsed} disagree"
           pure features
       | .error e => die s!"{n}: the engine's reader refuses the built file: {e}"; pure features
-    -- Body lines only: furniture (line numbers, running feet) follows
-    -- this font set's line breaks, which the driver's may not share. And
-    -- only lines on the medium: what a page sets past its edge is the
-    -- artifact tier's offence (`artKnownOffences`), and a reader that
-    -- extracts only what the page box shows is right not to read it.
+    -- Body lines on the medium only: furniture's breaks differ, and ink past the page is no text.
     let onMedium (l : Layout.LineOut) : Bool :=
       geom.onMedium l.x (l.segs.foldl (fun w s => w + s.advance) 0)
     let shipped := String.intercalate " " (((bodyLines out).filter onMedium).toList.map (lineText ·))
@@ -635,8 +565,7 @@ def main : IO Unit := do
       let uniAll := rows.all fun l => let c := cols l; c[c.size - 3]? == some "yes"
       unless embAll do fx := { fx with poppler := fx.poppler.push "pdffonts-emb" }
       unless uniAll do fx := { fx with poppler := fx.poppler.push "pdffonts-uni" }
-      -- pdffonts' `emb` column and the engine's census agree: pdf-objects'
-      -- oracle, reasserted here.
+      -- pdffonts' `emb` column agrees with the engine's census.
       match PdfCensus.census pdf with
       | .ok c =>
         unless c.fontsEmbedded == embAll do
@@ -663,8 +592,7 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
     fixtures := fixtures.push fx
     IO.println s!"  {n}: {pages} pages; poppler {fx.poppler}; gs {fx.ghostscript}; pypdf {fx.pypdf}; features {features}"
   if fixtures.size < 40 then die s!"only {fixtures.size} fixtures built"
-  -- The browsers, one Chrome for every file; then each fixture's verdicts
-  -- from what the driver said and the rasters it left.
+  -- The browsers, one Chrome for every file, then each fixture's verdicts.
   let mut hashLines : Array String := #[]
   let mut calib : Array String := #[]
   let mut negatives : Array String := #[]
@@ -673,8 +601,7 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
     let some (chromePath, _) := chrome | pure ()
     IO.FS.writeFile (dir / "harness.html") harnessHtml
     IO.FS.writeFile (dir / "judge.mjs") judgeJs
-    -- The negative case first: S3's first mutant, the file cut at 60 %,
-    -- must be refused by both engines.
+    -- The negative case first: the file cut at 60 % must be refused by both engines.
     let truncName := "zz-truncated"
     if let some img := fixtures.find? (·.name == "images") then
       let whole ← IO.FS.readBinFile (dir / s!"{img.name}.pdf")
@@ -764,10 +691,7 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
       judged := judged.push fx
       IO.println s!"  {stem}: pdfium {if fx.pdfium.isEmpty then "pass" else String.intercalate " " fx.pdfium.toList}; pdfjs {if fx.pdfjs.isEmpty then "pass" else String.intercalate " " fx.pdfjs.toList}"
     fixtures := judged
-    -- The tolerance is not vacuous: a page against another page of the
-    -- same file, and a page against itself shifted down one line, must lie
-    -- above it; Poppler against Ghostscript's fast-colour raster on the
-    -- image page is recorded for what it measures.
+    -- The tolerance is not vacuous: another page, or one shifted a line, lies above it.
     if let some fx := fixtures.find? fun f => f.name == "deck" && f.pages ≥ 3 then
       let ref ← popplerRasters dir (dir / s!"{fx.name}.pdf").toString fx.name
       if let (some p1, some p3) := (ref[0]?, ref[2]?) then
@@ -796,8 +720,7 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
   for fx in fixtures do
     let verdict (xs : Array String) : String := if xs.isEmpty then "pass" else String.intercalate " " xs.toList
     record := record.push s!"| {fx.name} | {fx.pages} | {fx.tagged} | {verdict fx.poppler} | {verdict fx.ghostscript} | {verdict fx.pypdf} | {verdict fx.pdfium} | {verdict fx.pdfjs} | {String.intercalate " " fx.features} |"
-  -- veraPDF over the four reference fixtures, both profiles: measured
-  -- failures, recorded as cells and in the run record.
+  -- veraPDF over the four reference fixtures under both profiles.
   let mut profiles : Array (String × String × String) := #[]
   let mut veraRaw : Array String := #[]
   let mut veraCore : Option String := none
@@ -815,8 +738,7 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
           else s!"fail:{String.intercalate "," ids.toList}")
       profiles := profiles.push (profile, n, cell)
       IO.println s!"  {profile} {n}: {cell}"
-  -- The feature cells: a reader passes a feature when it passed every
-  -- fixture that reaches it; a feature no built fixture reaches is untested.
+  -- A reader passes a feature that every fixture reaching it passed; unreached is untested.
   let cellFor (reader : String) (feature : String) : String :=
     let reaching := fixtures.filter (·.features.contains feature)
     if reaching.isEmpty then "untested" else
@@ -859,14 +781,12 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
   let previous ← try IO.FS.readFile matrixPath catch _ => pure ""
   IO.FS.createDirAll "testdata/oracles"
   IO.FS.writeFile matrixPath text
-  -- The file reads back through the gate's own parser, and the gate judges
-  -- it over every feature some built fixture reaches.
+  -- The file reads back through the gate's own parser, judged over every reached feature.
   let reached := fixtures.foldl (fun acc fx => fx.features.foldl (fun acc f =>
     if acc.contains f then acc else acc.push f) acc) (#[] : Array String)
   let gaps ← match readMatrix text with
     | .error e => die s!"the written matrix does not parse: {e}"; pure #[]
     | .ok m => pure (featureGate m reached.toList)
-  -- The run record.
   let diff := if previous == text then "unchanged" else if previous.isEmpty then "new file" else Id.run do
     let a := (previous.splitOn "\n").toArray
     let b := (text.splitOn "\n").toArray

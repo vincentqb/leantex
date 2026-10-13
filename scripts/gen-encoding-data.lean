@@ -1,31 +1,7 @@
 /-
-Regenerate LeanTex/Core/EncodingData.lean: the upper halves (bytes 0x80–0xFF)
-of the 8-bit encodings an inputenc declaration can name that the engine
-reads, each byte's Unicode scalar or none. Run from the repository root with:
-
-  lake env lean --run scripts/gen-encoding-data.lean
-
-Source: the host's iconv, queried one byte at a time; glibc's iconv carries
-the Unicode Consortium's mapping tables. The encodings and the inputenc
-options that name them:
-- WINDOWS-1252: `latin1`, `ansinew`, `cp1252`. The WHATWG Encoding Standard
-  reads the label latin1 as windows-1252, whose graphic characters are
-  ISO 8859-1's plus the 0x80–0x9F block a file labelled latin1 carries in
-  practice (curly quotes, dashes, the euro sign).
-- ISO-8859-15: `latin9`.
-- MACINTOSH: `applemac`, Mac OS Roman.
-
-Not text, so none: a byte the encoding leaves undefined (Windows-1252's five
-holes, which iconv refuses) and a C1 control (ISO 8859-15's 0x80–0x9F). Two
-rows from the encoding's owner rather than from glibc (`ownerRows`): Apple's
-own table (VENDORS/APPLE/ROMAN.TXT, which the WHATWG index-macintosh
-follows) maps 0xC6 to U+2206 INCREMENT, where glibc keeps the older
-U+0394 GREEK CAPITAL LETTER DELTA, and 0xF0 to U+F8FF, the Apple logo,
-where glibc spells a private-use scalar of its own (U+E01E). Apple's table
-is the one read throughout, 0xDB's euro sign included, where pdfLaTeX's
-applemac.def keeps the table as it stood before 1998 and spells some bytes
-by the nearest LaTeX command; the decoding module lists them beside its
-rule.
+Regenerate LeanTex/Core/EncodingData.lean: bytes 0x80–0xFF of the inputenc encodings the engine
+reads, as iconv decodes them, Apple's table overriding glibc's at two bytes (`ownerRows`).
+Usage: lake env lean --run scripts/gen-encoding-data.lean
 -/
 
 def die (msg : String) : IO α := do
@@ -47,8 +23,8 @@ def iconvByte (dir : System.FilePath) (charset : String) (b : UInt8) : IO (Optio
 
 def isC1 (v : Nat) : Bool := 0x80 ≤ v && v ≤ 0x9F
 
-/-- The rows an encoding's owner maps differently from glibc, by charset:
-byte and scalar. -/
+/-- The rows an encoding's owner maps differently from glibc, by charset: byte and scalar.
+-/
 def ownerRows : List (String × UInt8 × Nat) :=
   [("MACINTOSH", 0xC6, 0x2206), ("MACINTOSH", 0xF0, 0xF8FF)]
 

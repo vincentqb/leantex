@@ -1,54 +1,7 @@
 /-
-The landing procedure's pure core: a state machine over observations, whose
-only outputs are actions. No IO lives here, so every refusal, every
-ordering constraint, and the properties that matter — a ref others read is
-never touched on an unproven run, every ref a landing moves is moved to the
-commit the gates ran on, and a landing writes only what it owns — are
-decidable from values and provable, with git and lake nowhere in sight.
-
-The defect this exists to make impossible: a coordinating agent reported
-three merges, a push and three worktrees that did not exist, because it
-read tool narration instead of repository state. So an observation here is
-never prose. A sha is a sha only if it reads as forty hex digits
-(`isSha`), and anything the boundary could not parse arrives as
-`Obs.garbled`, which halts. Truncation is thereby a *failure*, not a
-silently-shortened success — the shape the driver's file-backed probes feed.
-
-The second defect, reproduced through the first draft of this tool: a
-`landed` row and a `pushed` row while `main` and the remote never moved,
-because the run compared two live refs with each other instead of against
-the commit under test. So a sha travels *with* the run. The rebase reports
-the tip it produced, read from the run's own tree; the fast-forward and the
-push both name that tip; and every later read-back is compared to it —
-never to whatever another ref happens to say by then.
-
-The third, reproduced against the second draft: the gates ran in the
-branch's own worktree while only the branch *ref* was pinned, so a worktree
-switched to another branch mid-landing had its tree gated and the pinned
-tip landed; and the push named `main`, publishing whatever `main` was at
-push time. The gate tree is the answer to the first — nobody else writes
-it, and its `HEAD` is read back around every gate — and `.push` carrying a
-sha is the answer to the second.
-
-The fourth, found by a landing rather than a reviewer: a rebase through a
-`merge=union` file kept a heading line the branch had deleted, git reported
-no conflict, and every gate passed. So the rebase is judged by what it
-produced: each file's net change after it — the diff from the new base to
-the rebased tip — must be the branch's net change before it, line for line
-with positions dropped (`netDrift`), and `proven` requires the comparison to
-have held.
-
-The fifth, reproduced against the fourth draft: the rebase ran in the
-branch owner's worktree, so a drift was answered by putting the branch back
-at the tip read before the rebase — and a commit the owner made while the
-rebase ran was erased from the branch and from the owner's worktree. The
-restore was the one step that deleted work, and a wildcard had classified
-it as writing nothing another party reads. So the gate tree is made first,
-detached at the tip the run read, and the rebase runs there (`Act.rebase`
-names both shas); a drift refuses with nothing to put back; the branch is
-not written at all; and every action declares what it writes
-(`Act.writes`, no wildcard), with the statement that a landing writes only
-what it owns proved over the step function.
+The landing procedure's pure core: a state machine from parsed observations to actions, so that
+only a proven run moves a shared ref, only to the gated commit, and a landing writes what it
+owns.
 -/
 
 namespace Land
@@ -56,19 +9,17 @@ namespace Land
 /-- A commit name, as read back from `git rev-parse`. -/
 abbrev Sha := String
 
-/-- Forty lowercase hex digits and nothing else. A truncated, padded,
-decorated or empty read fails here, which is how garbled output becomes a
-refusal rather than a comparison between two wrong strings. -/
+/-- Forty lowercase hex digits and nothing else, so a garbled read is a refusal rather
+than a comparison of two wrong strings. -/
 def isSha (s : String) : Bool :=
   s.length == 40 && s.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f'))
 
-/-- What a finished run says on its last line. `checked` is `land check`'s
-verdict: the gates ran and passed, and nothing was landed. -/
+/-- What a finished run says on its last line; `checked` is `land check`'s verdict: the
+gates passed and nothing was landed. -/
 inductive Verdict where
   | landed
-  /-- The fast-forward held and was verified; the push was rejected, or the
-  remote did not read back at the landed tip. `main` moved; the remote is
-  not known to hold it. -/
+  /-- The fast-forward held and was verified; the push was rejected or the remote did not
+  read back at the landed tip. -/
   | landedUnpushed
   | checked
   | refused
@@ -94,15 +45,14 @@ def Verdict.name : Verdict → String
   | .listed => "listed"
   | .pushed => "pushed"
 
-/-- Which command the run is: a landing may mutate refs, a check never
-reaches the stage that can. -/
+/-- Which command the run is: a landing may move refs, a check never reaches the stage
+that can. -/
 inductive Mode where
   | land
   | check
   deriving DecidableEq, Repr, Inhabited
 
-/-- Why the branch could not be read. Two facts, because one message for
-both once reported a branch with no worktree as "no branch". -/
+/-- Why the branch could not be read. -/
 inductive BranchMiss where
   | noBranch
   | noWorktree
@@ -116,8 +66,8 @@ def BranchMiss.why (name : String) : BranchMiss → String
 inductive Stage where
   | preMain
   | preBranch
-  /-- The gate tree is being made: a detached worktree at the branch's tip
-  as this run read it, which only this run writes. -/
+  /-- The gate tree is being made: a detached worktree at the branch tip this run read,
+  which only this run writes. -/
   | treeing
   /-- The gate tree is being rebased onto `main` as this run read it. -/
   | rebasing
@@ -126,8 +76,8 @@ inductive Stage where
   | gating
   /-- After the gates: does the branch still name the tip this run read? -/
   | postGate
-  /-- Before the merge: is the main worktree still on `main`, still at the
-  tip this run read at the start? -/
+  /-- Before the merge: is the main worktree still on `main`, at the tip this run read at
+  the start? -/
   | preMerge
   /-- The write-ahead ledger row, naming the gated tip before any ref moves. -/
   | announcing
@@ -156,52 +106,36 @@ def Stage.name : Stage → String
   | .verifyPush => "verify-push"
   | .done => "done"
 
-/-- What the boundary reports. Every constructor is a parsed fact; the
-`garbled` arm is what the boundary sends when it could not produce one.
-
-A gate observation carries the *index* the core dispatched and no name: the
-name is the plan's to know, so a gate cannot be reported under another
-gate's name and an absence cannot be claimed for a gate that may not be
-absent. It also carries the gate tree as read back after the gate ran, so
-the evidence each gate produced is tied to the commit it was about. -/
+/-- What the boundary reports, each constructor a parsed fact and `garbled` what it sends
+when it could not parse one; a gate observation carries the dispatched index and the gate
+tree as read back after it. -/
 inductive Obs where
-  /-- The main worktree: is `HEAD` on `main`, is the tree clean, and what is
-  its tip. Two bools rather than one, because a single conjunction reported
-  "not on main" as "the main worktree is dirty". -/
+  /-- The main worktree: whether `HEAD` is on `main`, whether the tree is clean, and its
+  tip. -/
   | mainStatus (onMain : Bool) (clean : Bool) (tip : Sha)
   | branchAbsent (miss : BranchMiss)
-  /-- The branch: how far ahead and behind `main`, is its own worktree
-  clean, and what is its tip. `landedFrom` is the tip an earlier landing of
-  this branch read, when that landing rebased it and the branch still
-  carries that tip — the ledger's `branch` field — and `landedAs` the commit
-  it landed as; both empty otherwise. `landedOnMain` is whether `main`, at
-  the tip this run read, holds `landedAs`: the core counts the row only
-  then (`landedBars`), so a landing undone by putting `main` back is no
-  landing. -/
+  /-- The branch: how far ahead and behind `main`, whether its worktree is clean, its tip,
+  and an earlier landing's read tip (`landedFrom`), commit (`landedAs`) and whether `main`
+  holds it (`landedOnMain`). -/
   | branchStatus (ahead behind : Nat) (clean : Bool) (tip : Sha) (landedFrom landedAs : Sha)
       (landedOnMain : Bool)
-  /-- The gate tree this run made, read back: its `HEAD`, and whether it is
-  clean. -/
+  /-- The gate tree this run made, read back: its `HEAD` and whether it is clean. -/
   | treeReady (head : Sha) (clean : Bool)
-  /-- The rebase in the gate tree succeeded: the tree's `HEAD` after it, and
-  whether the tree is clean and still detached. This is the commit the gates
-  run on and the only commit that may land. -/
+  /-- The rebase in the gate tree succeeded: the tree's `HEAD` after it, the only commit
+  that may land, and whether the tree is clean and detached. -/
   | rebaseOk (tip : Sha) (clean : Bool)
-  /-- The rebase in the gate tree failed. `files` are the unmerged paths,
-  empty when the rebase stopped for another reason. The tree is the run's,
-  so there is nothing of anyone else's to put back. -/
+  /-- The rebase in the gate tree failed; `files` are the unmerged paths, empty when it
+  stopped for another reason. -/
   | rebaseFailed (files : Array String)
-  /-- The two listings the net comparison reads, as `git diff --no-renames
-  -U0 --binary` printed them: the branch's own change (from its fork point
-  to its tip) and the rebase's (from the base it was replayed onto to the
-  rebased tip). Raw text, so the parse is the core's. -/
+  /-- The two listings the net comparison reads, as `git diff --no-renames -U0 --binary`
+  printed them: the branch's own change and the rebase's. -/
   | netDiffs (before after : String)
   /-- The gate at this index passed; the gate tree read back after it. -/
   | gateOk (idx : Nat) (head : Sha) (clean : Bool)
   /-- The gate at this index failed; the gate tree read back after it. -/
   | gateFail (idx : Nat) (head : Sha) (clean : Bool)
-  /-- The gate's program is not built. Permitted only where the plan says
-  so; it is recorded, and it is not a gate observation. -/
+  /-- The gate's program is not built: permitted only where the plan says so, and recorded
+  apart from gate observations. -/
   | gateAbsent (idx : Nat)
   /-- The branch ref, re-read after the gates. -/
   | branchRecheck (tip : Sha)
@@ -221,8 +155,7 @@ inductive Obs where
   | garbled (what : String)
   deriving Repr, Inhabited
 
-/-- The constructor, for a message: an observation can carry two whole diff
-listings, which do not belong in a `why`. -/
+/-- The constructor, for a message. -/
 def Obs.tag : Obs → String
   | .mainStatus .. => "mainStatus"
   | .branchAbsent .. => "branchAbsent"
@@ -246,17 +179,12 @@ def Obs.tag : Obs → String
   | .remoteTip .. => "remoteTip"
   | .garbled .. => "garbled"
 
-/-- One file's net change: the `diff --git` line naming it, and every line of
-its section except the two kinds that record *where* rather than *what* —
-hunk headers (line numbers) and `index` lines (blob names). The same change
-applied to two different bases differs in exactly those, so what is left is
-the change itself, in order. -/
+/-- One file's net change: its `diff --git` line and every line of its section but hunk
+headers and `index` lines, which record where rather than what. -/
 abbrev FileNet := String × Array String
 
-/-- Parse a `git diff --no-renames -U0 --binary` listing into one net change
-per file, in the listing's order. A content line always carries its `+`,
-`-` or `\` prefix and a binary patch line starts with a length letter, so
-neither can be mistaken for a header. -/
+/-- Parse a `git diff --no-renames -U0 --binary` listing into one net change per file, in
+listing order. -/
 def netOf (diff : String) : Array FileNet := Id.run do
   let text := if diff.endsWith "\n" then (diff.dropEnd 1).toString else diff
   let mut out : Array FileNet := #[]
@@ -272,17 +200,16 @@ def netOf (diff : String) : Array FileNet := Id.run do
   if !key.isEmpty then out := out.push (key, body)
   return out
 
-/-- The path a `diff --git a/<p> b/<p>` line names, for the report; the line
-itself when it has another shape (a quoted path). -/
+/-- The path a `diff --git a/<p> b/<p>` line names, or the line itself for another shape.
+-/
 def pathOfKey (k : String) : String :=
   let pre := "diff --git a/"
   let rest := (k.drop pre.length).toString
   let p := (rest.take ((rest.length - 3) / 2)).toString
   if k.startsWith pre && rest == s!"{p} b/{p}" then p else k
 
-/-- The files whose net change differs between two listings — a file in one
-and not in the other included — by path, first-seen order, each once. Empty
-exactly when every file's change survived. -/
+/-- The files whose net change differs between two listings, a file in only one included,
+by path in first-seen order; empty exactly when every file's change survived. -/
 def netDrift (before after : Array FileNet) : Array String := Id.run do
   let find (xs : Array FileNet) (k : String) : Option (Array String) :=
     (xs.find? (·.1 == k)).map (·.2)
@@ -293,11 +220,8 @@ def netDrift (before after : Array FileNet) : Array String := Id.run do
       if !out.contains p then out := out.push p
   return out
 
-/-- The sha `git ls-remote` printed for exactly `ref`. It prints one
-`<sha><TAB><refname>` line per ref, and a pattern argument matches every
-ref whose name *ends* with it at a `/`, so a query for `refs/heads/main`
-also answers with `refs/heads/a/refs/heads/main` — which sorts first.
-Empty when no line names `ref` exactly, or more than one does. -/
+/-- The sha `git ls-remote` printed for exactly `ref`, or empty when no line or more than
+one names it, since a pattern also matches refs ending in it. -/
 def lsRemoteTip (out ref : String) : Sha :=
   let hits := (out.splitOn "\n").filterMap fun l =>
     match l.splitOn "\t" with
@@ -307,18 +231,14 @@ def lsRemoteTip (out ref : String) : Sha :=
   | [t] => t
   | _ => ""
 
-/-- One gate in the plan. `mayAbsent` is the whole permission to skip: the
-core grants it from here and from nowhere else. -/
+/-- One gate in the plan; `mayAbsent` is the whole permission to skip it. -/
 structure GateSpec where
   name : String
   mayAbsent : Bool
   deriving DecidableEq, Repr, Inhabited
 
-/-- One gate's outcome, as recorded in the run. An absent gate does not
-appear here: an absence is not an observation that a gate passed. `head`
-and `clean` are the gate tree as read back after the gate; the core records
-an outcome only when the tree was still the gated tip and clean, so every
-recorded outcome is evidence about that commit. -/
+/-- One gate's recorded outcome, with the gate tree as read back after it; an absence is
+not recorded. -/
 structure GateObs where
   name : String
   ok : Bool
@@ -326,65 +246,53 @@ structure GateObs where
   clean : Bool
   deriving DecidableEq, Repr, Inhabited
 
-/-- What the core asks the boundary to do next. `halt` ends the run. -/
+/-- What the core asks the boundary to do next; `halt` ends the run. -/
 inductive Act where
   | probeMain
   | probeBranch
-  /-- Make the gate tree: a detached worktree at exactly this commit — the
-  branch's tip as this run read it — which only this run writes, removed
-  when the run ends. -/
+  /-- Make the gate tree: a detached worktree at exactly this commit, which only this run
+  writes, removed when the run ends. -/
   | makeTree (tip : Sha)
-  /-- Rebase the gate tree, starting from exactly `tip`, onto exactly
-  `onto` — `main` as this run read it. Two shas and no ref: the rebase's
-  input cannot move under it, and the only `HEAD` it writes is the tree's. -/
+  /-- Rebase the gate tree from exactly `tip` onto exactly `onto`: two shas and no ref, so
+  its input cannot move under it. -/
   | rebase (tip onto : Sha)
-  /-- List the two net changes: the branch's, from its fork point with
-  `newBase` to `oldTip`, and the rebase's, from `newBase` to `newTip`. -/
+  /-- List the two net changes: the branch's, from its fork point with `newBase` to
+  `oldTip`, and the rebase's, from `newBase` to `newTip`. -/
   | netDiff (oldTip newBase newTip : Sha)
-  /-- Run the gate at this index of the plan, in the gate tree; the name is
-  for the log. -/
+  /-- Run the gate at this index of the plan in the gate tree; the name is for the log. -/
   | gate (idx : Nat) (name : String)
   | recheckBranch
   | recheckMain
   /-- The write-ahead row: this run is about to move `main` to this tip. -/
   | writeLanding
-  /-- Fast-forward `refs/heads/main`, by that name, to exactly this commit —
-  the tip the gates ran on, never a branch name that may have moved since,
-  and never whatever ref the main worktree's `HEAD` happens to name. -/
+  /-- Fast-forward `refs/heads/main`, by that name, to exactly this commit, the tip the
+  gates ran on. -/
   | fastForward (tip : Sha)
   | readMain
   | writeLanded
-  /-- Push exactly this commit to the remote's `main`, as a fast-forward and
-  never a forced update — never the local `main`, which another party may
-  have moved since it was read back. -/
+  /-- Push exactly this commit to the remote's `main` as a fast-forward, never forced and
+  never the local `main`. -/
   | push (tip : Sha)
   | readRemote
   | halt (v : Verdict) (code : UInt32) (why : String)
   deriving Repr, Inhabited
 
-/-- Where an action writes. Declared for every action, with no wildcard, so
-a new action says what it writes where it is written: the drift restore
-that erased an owner's commit was classified by a wildcard as writing
-nothing another party reads, while it reset the owner's branch and
-worktree. -/
+/-- Where an action writes, declared for every action with no wildcard. -/
 inductive Writes where
-  /-- The run's gate tree: the detached worktree it made, git's
-  administrative files for it, and what a gate writes inside it. -/
+  /-- The run's gate tree: the detached worktree it made, git's administrative files for
+  it, and what a gate writes inside it. -/
   | gateTree
-  /-- The ledger file. -/
   | ledger
-  /-- `refs/heads/main`, by that name, fast-forward only, to this commit;
-  and the worktree that has `main` checked out, only through git's own
-  sync, which refuses a worktree with changes and then moves nothing. -/
+  /-- `refs/heads/main`, by that name, fast-forward only, to this commit, and the worktree
+  that has `main` checked out only through git's own sync. -/
   | mainTo (tip : Sha)
-  /-- The remote's `refs/heads/main`, by a push of this commit that is never
-  forced. -/
+  /-- The remote's `refs/heads/main`, by a push of this commit that is never forced. -/
   | remoteTo (tip : Sha)
-  /-- A branch another party owns, only by compare-and-swap from `old`, the
-  tip this run read. -/
+  /-- A branch another party owns, only by compare-and-swap from `old`, the tip this run
+  read. -/
   | branchCas (old new : Sha)
-  /-- A ref or a worktree another party owns, written without a
-  compare-and-swap against a sha this run read. -/
+  /-- A ref or a worktree another party owns, written without a compare-and-swap against a
+  sha this run read. -/
   | foreign
   deriving DecidableEq, Repr, Inhabited
 
@@ -415,8 +323,8 @@ def Writes.shared : Writes → Bool
   | .branchCas .. => true
   | .foreign => true
 
-/-- The actions that change a ref or a worktree another party reads: read
-off the declared writes, so no action is exempt by omission. -/
+/-- The actions that change a ref or a worktree another party reads, read off the declared
+writes. -/
 def Act.mutates (a : Act) : Bool := a.writes.any Writes.shared
 
 structure State where
@@ -429,25 +337,21 @@ structure State where
   skipped : Array String
   /-- The gates to run, in order, with their permission to be absent. -/
   plan : Array GateSpec
-  /-- How many of the plan's gates have been observed. Also the index the
-  next observation must carry. -/
+  /-- How many of the plan's gates have been observed, and the index the next observation
+  must carry. -/
   gateIdx : Nat
   wantPush : Bool
-  /-- `main`'s tip when the run started. The merge refuses unless `main` is
-  still here. -/
+  /-- `main`'s tip when the run started; the merge refuses unless `main` is still here. -/
   prevMainTip : Sha
-  /-- The branch's tip as this run read it: where the gate tree was made,
-  what the rebase started from, and what the branch must still name after
-  the gates. -/
+  /-- The branch's tip as this run read it: where the gate tree was made, what the rebase
+  started from, and what the branch must still name after the gates. -/
   branchTip : Sha
-  /-- The commit the rebase produced, read from the gate tree: what the
-  gates ran on, what the merge and the push name, what every later
-  read-back is compared to. -/
+  /-- The commit the rebase produced, read from the gate tree: what the gates ran on and
+  the merge and push name. -/
   gatedTip : Sha
-  /-- Did the rebase keep every file's net change? Set only where the
-  comparison came back empty. -/
+  /-- Whether the rebase kept every file's net change. -/
   netSame : Bool
-  /-- `main`, as read back after the fast-forward. Empty until then. -/
+  /-- `main` as read back after the fast-forward, empty until then. -/
   mainAt : Sha
   verdict : Option Verdict
   deriving Repr, Inhabited
@@ -455,22 +359,18 @@ structure State where
 /-- Was every gate observation in the run ok? -/
 def State.gatesOk (s : State) : Bool := s.gates.all (·.ok)
 
-/-- The run has earned a ref change: the rebase kept the branch's net
-content, at least one gate was observed, and every observation was ok. The
-gate half alone is vacuously true of a run in which no gate ever ran, which
-is the other way this property could hold while proving nothing. -/
+/-- The run has earned a ref change: the rebase kept the branch's net content, at least
+one gate was observed, and every observation was ok. -/
 def State.proven (s : State) : Bool := s.netSame && !s.gates.isEmpty && s.gatesOk
 
-/-- The gates' evidence is about `t`: `t` is a sha, and the gate tree read
-back at `t`, clean, after every gate the run recorded. -/
+/-- The gates' evidence is about `t`: a sha at which the gate tree read back clean after
+every recorded gate. -/
 def State.gatedAt (s : State) (t : Sha) : Bool :=
   isSha t && s.gates.all (fun g => g.head == t && g.clean)
 
-/-- Is this write one the run owns, given the state it was proposed from?
-The tree and the ledger are the run's. `main` and the remote only to the
-gated tip, with the gates' evidence about it and the run proven; the remote
-only to the `main` the run read back. A branch another party owns only by a
-compare-and-swap from the tip this run read. Never anything else. -/
+/-- Whether a write is the run's, given the state it was proposed from: the tree and the
+ledger always, `main` and the remote only to the gated tip on a proven run, a foreign
+branch only by compare-and-swap from the tip this run read. -/
 def Writes.owned (s : State) : Writes → Bool
   | .gateTree => true
   | .ledger => true
@@ -498,20 +398,15 @@ def State.rebased (s : State) : Bool :=
 def State.landedVerdict (s : State) : Bool :=
   s.verdict == some .landed || s.verdict == some .landedUnpushed
 
-/-- The `main` this run read back is the commit the gates ran on, and that
-commit is a real sha — so the equality is not two empty strings agreeing. -/
+/-- The `main` this run read back is the commit the gates ran on, and that commit is a
+real sha. -/
 def State.landedIsGated (s : State) : Bool :=
   s.mainAt == s.gatedTip && isSha s.gatedTip
 
-/-- The run's invariant, preserved by every transition. From the
-fast-forward's verification onward, and under any verdict that claims a
-landing, the landing is the gated commit's, and such a verdict appears only
-at `done`, which keeps the gated tip from being rewritten under a live
-claim. No gate is recorded before the rebase is judged; every recorded gate
-read the tree back at the gated tip, clean; and from the rebase onward the
-gated tip is a sha. Spelled as one boolean formula rather than a match over
-stages: it is proved against every transition, and a match there multiplies
-each proof by the number of stages. -/
+/-- The run's invariant, preserved by every transition: from the fast-forward's
+verification on, and under any verdict claiming a landing, the landing is the gated
+commit's; no gate is recorded before the rebase is judged; every recorded gate read the
+tree back clean at the gated tip. -/
 def State.pinned (s : State) : Bool :=
   (!(s.atOrPastFF || s.landedVerdict) || s.landedIsGated)
     && (!s.landedVerdict || s.stage == .done)
@@ -534,17 +429,15 @@ private def internal (s : State) (why : String) : State × Act :=
 private def gateFailed (s : State) (why : String) : State × Act :=
   ({ s with stage := .done, verdict := some .failed }, .halt .failed 1 why)
 
-/-- `main` moved and was verified at the gated tip; the remote is not known
-to hold it. Its own exit code, 4, because a failed gate (1) and a landing
-that happened are different facts to a caller reading only the status. -/
+/-- `main` moved and was verified at the gated tip, the remote not known to hold it; exit
+4. -/
 private def landedNotPushed (s : State) (why : String) : State × Act :=
   ({ s with stage := .done, verdict := some .landedUnpushed }, .halt .landedUnpushed 4 why)
 
 private def succeed (s : State) (v : Verdict) : State × Act :=
   ({ s with stage := .done, verdict := some v }, .halt v 0 "")
 
-/-- The gates are done. Either the check ends here, or the branch is
-re-read — and only under the guard, written out rather than argued for. -/
+/-- The gates are done: the check ends here, or the branch is re-read under the guard. -/
 private def afterGates (s : State) : State × Act :=
   if s.proven then
     match s.mode with
@@ -558,31 +451,21 @@ private def nextGate (s : State) : State × Act :=
   | some g => (s, .gate s.gateIdx g.name)
   | none => afterGates s
 
-/-- Does an earlier landing bar this branch from landing again? Only while
-the branch still carries the tip that landing read (`landedFrom`, empty
-otherwise) and `main` as this run read it holds the commit it landed as. A
-landing `main` no longer holds — `main` put back past it, before any push —
-bars nothing: the branch's work is not on `main`, and landing it is how it
-gets there. The ledger row alone once barred it, and the remedy the refusal
-named then dropped that work from the branch. -/
+/-- Whether an earlier landing bars this branch: only while the branch carries the tip
+that landing read and `main` as this run read it holds the commit it landed as. -/
 def landedBars (landedFrom : Sha) (landedOnMain : Bool) : Bool :=
   !landedFrom.isEmpty && landedOnMain
 
-/-- The refusal of a landed branch. A landed branch is never continued: its
-work reached `main` as rebased copies, so the next unit starts on a new
-branch from `main`. Commits made on the branch since the landing are named
-as a range and left where they are — no command here writes the branch. -/
+/-- The refusal of a landed branch: the next unit starts on a new branch from `main`, and
+commits made on the branch since are named as a range and left where they are. -/
 def landedWhy (name : String) (landedFrom landedAs tip : Sha) : String :=
   s!"agent/{name} is already landed, as {landedAs}, which main holds: a landed branch \
 takes no further landing, so start the next unit on a new branch from main (land new <name>)"
     ++ (if landedFrom == tip then "" else
       s!"; its commits since, {landedFrom}..{tip}, stay on agent/{name}")
 
-/-- The preconditions, the gate tree, the rebase in it and the net
-comparison: every stage before a gate runs. Split out from `step` so a
-theorem about the merge half unfolds none of it — the whole machine in one
-match walled every proof off behind a heartbeat limit, and a limit raised is
-not a factorization. -/
+/-- The stages before a gate runs: preconditions, the gate tree, the rebase in it and the
+net comparison. -/
 private def stepPre (s : State) (o : Obs) : State × Act :=
   match s.stage, o with
   | .preMain, .mainStatus onMain clean tip =>
@@ -595,16 +478,11 @@ private def stepPre (s : State) (o : Obs) : State × Act :=
     if ahead == 0 then refuse s s!"agent/{s.name} is not ahead of main"
     else if !clean then refuse s s!"the worktree of agent/{s.name} is dirty"
     else if !isSha tip then internal s "the branch tip did not read back as a sha"
-    -- An earlier landing replayed this branch onto `main` and left it where
-    -- it was. While `main` holds that landing the branch is landed, and a
-    -- landed branch is not continued; once `main` does not, the row bars
-    -- nothing and the branch lands again.
+    -- While `main` holds an earlier landing of this branch, the branch is landed and not continued.
     else if landedBars landedFrom onMain then refuse s (landedWhy s.name landedFrom landedAs tip)
     else ({ s with stage := .treeing, branchTip := tip }, .makeTree tip)
   | .treeing, .treeReady head clean =>
-    -- A tree this run just made, not at the tip it was made from, or not
-    -- clean, is a fault in the boundary or the repository, not the branch's.
-    -- One test per fact, so each branch carries its own.
+    -- A fresh tree not at its tip, or not clean, is the boundary's or the repository's fault.
     if !isSha head then internal s "the gate tree's HEAD did not read back as a sha"
     else if head != s.branchTip then internal s "the gate tree did not read back at the branch tip"
     else if !clean then internal s "the gate tree was dirty when it was made"
@@ -615,16 +493,11 @@ private def stepPre (s : State) (o : Obs) : State × Act :=
     else if !clean then internal s "the gate tree was dirty or on a branch after the rebase"
     else ({ s with stage := .netting, gatedTip := tip }, .netDiff s.branchTip s.prevMainTip tip)
   | .rebasing, .rebaseFailed files =>
-    -- The rebase ran in the run's own tree, which the halt removes: there is
-    -- nothing of the owner's to put back.
+    -- The rebase ran in the run's own tree, so there is nothing of the owner's to put back.
     if !files.isEmpty then refuse s s!"rebase conflict: {String.intercalate " " files.toList}"
     else refuse s "the rebase failed"
   | .netting, .netDiffs before after =>
-    -- Every file counts, a union-merged one first among them: git reports
-    -- no conflict for a hunk the union driver joined, and that is exactly
-    -- where a deleted line came back. A reported conflict never reaches
-    -- here — it stopped the rebase above. No `let` for the drift: a bound
-    -- conditional is one `split` cannot see.
+    -- Every file counts, union-merged ones first: git reports no conflict for a union hunk.
     if (netDrift (netOf before) (netOf after)).isEmpty then
       nextGate { s with stage := .gating, netSame := true }
     else
@@ -632,16 +505,13 @@ private def stepPre (s : State) (o : Obs) : State × Act :=
 {String.intercalate " " (netDrift (netOf before) (netOf after)).toList}"
   | st, ob => internal s s!"{st.name}: unexpected {ob.tag}"
 
-/-- Record one gate's outcome, with the gate tree as read back after it, and
-advance the index the next observation must carry. -/
+/-- Record one gate's outcome with the gate tree as read back after it, and advance the
+index the next observation must carry. -/
 private def record (s : State) (g : GateSpec) (ok : Bool) (head : Sha) (clean : Bool) : State :=
   { s with gates := s.gates.push ⟨g.name, ok, head, clean⟩, gateIdx := s.gateIdx + 1 }
 
-/-- The gate phase. An observation carries the index the core dispatched and
-no name: a gate cannot answer under another gate's name, and an absence is
-permitted only where the plan says so. Every gate's observation carries the
-gate tree as read back after it; a tree that moved or was dirtied is the
-gate's failure, and its outcome is not recorded as evidence. -/
+/-- The gate phase: an observation carries the dispatched index, an absence is permitted
+only where the plan says so, and a gate that moved or dirtied the tree failed. -/
 private def stepGate (s : State) (o : Obs) : State × Act :=
   match s.stage, o with
   | .gating, .gateOk i head clean =>
@@ -670,17 +540,12 @@ private def stepGate (s : State) (o : Obs) : State × Act :=
         else nextGate { s with skipped := s.skipped.push g.name, gateIdx := s.gateIdx + 1 }
   | st, ob => internal s s!"{st.name}: unexpected {ob.tag}"
 
-/-- The merge half: the two re-reads, the write-ahead row, the
-fast-forward, and the push. Both mutating actions live here, both are
-guarded in this function alone, and both name `gatedTip`. -/
+/-- The merge half: the two re-reads, the write-ahead row, the fast-forward and the push,
+both mutating actions guarded here alone and both naming `gatedTip`. -/
 private def stepMerge (s : State) (o : Obs) : State × Act :=
   match s.stage, o with
   | .postGate, .branchRecheck tip =>
-    -- The gates ran in the run's own tree on a commit the run made, so this
-    -- is not evidence about what they saw; it is whether the owner still
-    -- names the tip this run read. A branch that moved on refuses rather
-    -- than landing work its owner has since extended, and the branch is left
-    -- as the owner left it: this run never wrote it.
+    -- A branch that moved during the landing refuses.
     if tip != s.branchTip then refuse s s!"agent/{s.name} moved during the landing"
     else ({ s with stage := .preMerge }, .recheckMain)
   | .preMerge, .mainRecheck onMain tip =>
@@ -688,9 +553,7 @@ private def stepMerge (s : State) (o : Obs) : State × Act :=
     else if tip != s.prevMainTip then refuse s "main moved during the gates"
     else ({ s with stage := .announcing }, .writeLanding)
   | .announcing, .ledgerOk =>
-    -- The guard is re-asserted here rather than inherited from `afterGates`:
-    -- three stages now stand between that guard and the mutation, so the
-    -- one place the fast-forward is proposed states its own condition.
+    -- The guard is restated at the one place the fast-forward is proposed.
     if s.proven && s.gateIdx == s.plan.size then
       ({ s with stage := .ffing }, .fastForward s.gatedTip)
     else gateFailed s "the gates did not complete in this run"
@@ -709,36 +572,28 @@ private def stepMerge (s : State) (o : Obs) : State × Act :=
   | .ledgering, .ledgerFail => internal s "the ledger was not written"
   | .pushing, .pushOk => ({ s with stage := .verifyPush }, .readRemote)
   | .pushing, .pushRejected =>
-    -- `main` moved and was verified; only the remote did not. Reporting
-    -- this as a failure hid a landing that had happened.
+    -- `main` moved and was verified; only the remote did not.
     landedNotPushed s "the push was rejected; main is landed"
   | .verifyPush, .remoteTip ot =>
     if isSha ot && ot == s.mainAt then succeed s .landed
     else landedNotPushed s "the remote's main did not read back at the landed tip; main is landed"
   | st, ob => internal s s!"{st.name}: unexpected {ob.tag}"
 
-/-- Which phase owns a stage. A function of the stage alone, so a proof
-about every transition splits this free variable once instead of splitting
-`s.stage` inside a goal that also mentions `s` three more times — which is
-where the whole-machine proof hit its heartbeat wall. -/
+/-- Which phase owns a stage, a function of the stage alone. -/
 private def phaseOf : Stage → (State → Obs → State × Act)
   | .preMain | .preBranch | .treeing | .rebasing | .netting => stepPre
   | .gating => stepGate
   | _ => stepMerge
 
-/-- One observation, one action. Every pair the procedure does not expect is
-an internal failure: a state machine driven off its own transitions is
-exactly the condition under which narration got believed. -/
+/-- One observation, one action; every pair the procedure does not expect is an internal
+failure. -/
 def step (s : State) (o : Obs) : State × Act :=
   match o with
   | .garbled what => internal s s!"unparseable output: {what}"
   | o => phaseOf s.stage s o
 
--- The run-level statements at the end of this file quantify over this
--- function; the citation gate cannot resolve a name from this module, so
--- they are named there in comments rather than backticked here.
-/-- Drive the core through a scripted observation sequence, collecting the
-actions it proposed. The selftest's harness. -/
+/-- Drive the core through a scripted observation sequence, collecting the actions it
+proposed. -/
 def run (s : State) : List Obs → State × Array Act
   | [] => (s, #[])
   | o :: os =>
@@ -746,20 +601,14 @@ def run (s : State) : List Obs → State × Array Act
     let (s'', as) := run s' os
     (s'', #[a] ++ as)
 
-/-- Every step of a scripted run: the state it reached, and the action it
-proposed from there. The run-level form of the exactness statements reads
-this, because an action's sha is a claim about the state it was proposed
-from. -/
+/-- Every step of a scripted run: the state it reached and the action it proposed from
+there. -/
 def trace (s : State) : List Obs → List (State × Act)
   | [] => []
   | o :: os => (step s o) :: trace (step s o).1 os
 
--- ## `land push`
-
-/-- `land push`: publish the last landing. The commit is the last `landed`
-row's tip, which must also be its gated tip and must be what `main` reads
-now — a commit on `main` that no landing gated refuses. The push names that
-sha, never `main`. -/
+/-- `land push`'s commit: the last `landed` row's tip, which must also be its gated tip
+and what `main` reads now. -/
 def pushPlan (landedTip landedGated mainTip : Sha) : Except String Sha :=
   if !isSha landedTip then .error "the ledger has no landed row with a tip"
   else if landedGated != landedTip then .error "the last landed row's tip is not its gated tip"
@@ -767,19 +616,11 @@ def pushPlan (landedTip landedGated mainTip : Sha) : Except String Sha :=
     .error "main is not at the last landed tip: it holds a commit no landing gated"
   else .ok landedTip
 
-/-- The verdict of `land push`: published only when the push succeeded and
-the remote's `main`, read back by its exact name, is the commit pushed. -/
+/-- The verdict of `land push`: published only when the push succeeded and the remote's
+`main`, read back by its exact name, is the commit pushed. -/
 def pushVerdict (pushedOk : Bool) (remote tip : Sha) : Verdict :=
   if pushedOk && isSha remote && remote == tip then .pushed else .landedUnpushed
 
--- ## The theorems
---
--- Four properties, and the ways each could have held vacuously. Each is
--- proved per phase first: `step` dispatches on the stage, so a phase lemma
--- unfolds one match rather than the whole machine.
-
-/-- Neither precondition phase can propose a ref change: the two mutating
-actions are spelled in `stepMerge` alone. -/
 private theorem stepPre_no_mutate (s : State) (o : Obs) :
     ((stepPre s o).2).mutates = false := by
   unfold stepPre
@@ -799,7 +640,6 @@ private theorem stepGate_no_mutate (s : State) (o : Obs) :
     | (unfold afterGates)
   all_goals simp_all [Act.mutates, Act.writes, Writes.shared, internal, gateFailed, succeed]
 
-/-- The rebase is proposed by the precondition phase alone. -/
 private theorem stepGate_no_rebase (s : State) (o : Obs) (t b : Sha) :
     (stepGate s o).2 ≠ .rebase t b := by
   unfold stepGate
@@ -901,14 +741,11 @@ private theorem stepMerge_pinned (s : State) (o : Obs) :
       State.atOrPastFF, State.preTree, State.rebased, State.landedVerdict,
       State.landedIsGated]
 
-/-- The branch probe reads an earlier landing only through `landedBars`, so
-a landing `main` does not hold reads as none, at every stage. -/
 private theorem stepPre_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) :
     stepPre s (.branchStatus a b c t f g false)
       = stepPre s (.branchStatus a b c t "" "" false) := by
   cases hs : s.stage <;> simp [stepPre, hs, landedBars, Obs.tag]
 
-/-- Neither later phase reads a branch probe at all. -/
 private theorem stepGate_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) (m : Bool) :
     stepGate s (.branchStatus a b c t f g m) = stepGate s (.branchStatus a b c t "" "" m) := by
   cases hs : s.stage <;> simp [stepGate, hs, Obs.tag]
@@ -917,8 +754,6 @@ private theorem stepMerge_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha
     stepMerge s (.branchStatus a b c t f g m) = stepMerge s (.branchStatus a b c t "" "" m) := by
   cases hs : s.stage <;> simp [stepMerge, hs, Obs.tag]
 
-/-- At the branch probe, past the three facts checked first, the decision is
-`landedBars` and nothing else. -/
 private theorem stepPre_barred (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
     (hs : s.stage = .preBranch) (ha : a ≠ 0) (ht : isSha t = true) :
     ((stepPre s (.branchStatus a b true t f g m)).2 = .makeTree t ↔ landedBars f m = false)
@@ -929,16 +764,10 @@ private theorem stepPre_barred (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
 
 attribute [irreducible] stepPre stepGate stepMerge
 
-/-- Every stage is owned by one of the three phases. The dispatch lemmas
-below rewrite with this rather than trying each phase's lemma in turn: a
-failed `exact` against the wrong phase unfolds the invariant on both sides
-before it gives up, which is where a first draft hit the heartbeat wall. -/
 private theorem phaseOf_cases (st : Stage) :
     phaseOf st = stepPre ∨ phaseOf st = stepGate ∨ phaseOf st = stepMerge := by
   cases st <;> simp [phaseOf]
 
-/-- Each phase, lifted to the dispatch: the two mutating actions are
-spelled in `stepMerge`, so the other phases discharge by contradiction. -/
 private theorem phaseOf_mutates_gated (st : Stage) (s : State) (o : Obs) :
     ((phaseOf st s o).2).mutates = true → (phaseOf st s o).1.proven = true := by
   intro h
@@ -1001,11 +830,7 @@ private theorem phaseOf_pinned (st : Stage) (s : State) (o : Obs) :
   · exact stepGate_pinned s o h
   · exact stepMerge_pinned s o h
 
-/-- **No ref another party reads is touched on a run whose gates were not
-all ok.** Whenever `step` proposes an action that changes a ref or a
-worktree another party reads, the resulting state is `proven` — the rebase
-kept the branch's net content, at least one gate was observed, and every
-gate observation in the run was ok. -/
+/-- No ref another party reads is touched on a run whose gates were not all ok. -/
 theorem step_mutates_gated (s : State) (o : Obs) :
     ((step s o).2).mutates = true → (step s o).1.proven = true := by
   intro h
@@ -1014,11 +839,7 @@ theorem step_mutates_gated (s : State) (o : Obs) :
   · simp_all [Act.mutates, Act.writes, Writes.shared, internal]
   · exact phaseOf_mutates_gated _ _ _ h
 
-/-- The fast-forward is proposed only with the gate index at the plan's
-size. This restates the guard at the fast-forward's own site; that the index
-counts accepted observations one each, and that an absence is taken only
-where the plan permits it, are properties of `stepGate`'s code, checked by
-the selftest's cases rather than proved here. -/
+/-- The fast-forward is proposed only with the gate index at the plan's size. -/
 theorem step_ff_covers (s : State) (o : Obs) (t : Sha) :
     (step s o).2 = .fastForward t → (step s o).1.gateIdx = (step s o).1.plan.size := by
   intro h
@@ -1027,7 +848,6 @@ theorem step_ff_covers (s : State) (o : Obs) (t : Sha) :
   · simp_all [internal]
   · exact phaseOf_ff_covers _ _ _ _ h
 
-/-- The pinning invariant is preserved by every transition. -/
 theorem step_pinned (s : State) (o : Obs) :
     s.pinned = true → (step s o).1.pinned = true := by
   intro h
@@ -1037,20 +857,14 @@ theorem step_pinned (s : State) (o : Obs) :
       State.landedVerdict, State.landedIsGated]
   · exact phaseOf_pinned _ _ _ h
 
-/-- A state satisfying the invariant, and claiming a landing, read `main`
-back at its gated tip. -/
 private theorem pinned_landed (s : State) (h : s.pinned = true)
     (hv : s.landedVerdict = true) : s.landedIsGated = true := by
   unfold State.pinned at h
   simp only [hv, Bool.or_true, Bool.not_true, Bool.false_or, Bool.and_eq_true] at h
   exact h.1.1.1.1
 
-/-- **The rebase's input is two shas the run read.** Whenever `step`
-proposes the rebase, it starts from the branch's tip as the run read it —
-the tip the gate tree was made at — and targets `main` as the run read it,
-both shas. No ref appears in it, so a commit the owner makes meanwhile is
-neither replayed nor lost: it stays on the owner's branch, which the run
-does not write. -/
+/-- The rebase starts from the branch tip and targets the `main` this run read: two shas
+and no ref. -/
 theorem step_rebase_exact (s : State) (o : Obs) (t b : Sha) :
     (step s o).2 = .rebase t b →
       t = (step s o).1.branchTip ∧ b = (step s o).1.prevMainTip
@@ -1061,13 +875,7 @@ theorem step_rebase_exact (s : State) (o : Obs) (t b : Sha) :
   · simp [internal] at h
   · exact phaseOf_rebase_exact _ _ _ _ _ h
 
-/-- **A landing `main` does not hold is no landing.** Whatever the stage and
-whatever else the branch probe read, an earlier landing whose commit `main`
-— at the tip this run read — does not hold is the same step as no earlier
-landing at all: the row counts only while `main` holds what it landed. A
-landing undone before any push, by putting `main` back past it, once left
-its unmoved branch refused as already landed, and told a continued one to
-rebase away the work `main` no longer had. -/
+/-- A landing `main` does not hold is no landing. -/
 theorem step_unheld_exact (s : State) (a b : Nat) (c : Bool) (t f g : Sha) :
     step s (.branchStatus a b c t f g false) = step s (.branchStatus a b c t "" "" false) := by
   unfold step
@@ -1077,13 +885,7 @@ theorem step_unheld_exact (s : State) (a b : Nat) (c : Bool) (t f g : Sha) :
   · exact stepGate_unheld s a b c t f g false
   · exact stepMerge_unheld s a b c t f g false
 
-/-- **A landed branch takes no further landing, and only a landed one.** At
-the branch probe, a branch ahead of `main`, with a clean worktree and a tip
-that reads as a sha, goes on to a gate tree at that tip exactly when no
-earlier landing bars it (`landedBars`: the branch carries the tip that
-landing read, and `main` holds the commit it landed as). A barred branch is
-refused with exit 2 and the refusal that sends the next unit to a new branch
-from `main`, which names no command that writes this one. -/
+/-- A landed branch takes no further landing, and only a landed one. -/
 theorem step_barred_exact (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
     (hs : s.stage = .preBranch) (ha : a ≠ 0) (ht : isSha t = true) :
     ((step s (.branchStatus a b true t f g m)).2 = .makeTree t ↔ landedBars f m = false)
@@ -1095,10 +897,7 @@ theorem step_barred_exact (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
   simp only [e]
   exact stepPre_barred s a b t f g m hs ha ht
 
-/-- **The merge names the gated commit.** Whenever `step` proposes the
-fast-forward, it names the run's gated tip, and the gates' evidence is about
-that commit: the gate tree read back at it after every gate the run
-recorded, clean each time. -/
+/-- The fast-forward names the gated tip, about which the gates' evidence is. -/
 theorem step_ff_exact (s : State) (o : Obs) (t : Sha) (h : s.pinned = true)
     (ha : (step s o).2 = .fastForward t) :
     t = (step s o).1.gatedTip ∧ (step s o).1.gatedAt t = true := by
@@ -1107,11 +906,7 @@ theorem step_ff_exact (s : State) (o : Obs) (t : Sha) (h : s.pinned = true)
   · simp [internal] at ha
   · exact phaseOf_ff_exact _ _ _ _ h ha
 
-/-- **The push names the merged, gated commit.** Whenever `step` proposes
-the push, it names the run's gated tip; that is the `main` the run read back
-after the fast-forward; and the gates' evidence is about it. The gated sha
-is the merged sha is the pushed sha — the push never names `main`, which
-another party may have moved since it was read back. -/
+/-- The push names the merged, gated commit, never `main`. -/
 theorem step_push_exact (s : State) (o : Obs) (t : Sha) (h : s.pinned = true)
     (ha : (step s o).2 = .push t) :
     t = (step s o).1.gatedTip ∧ t = (step s o).1.mainAt ∧ (step s o).1.gatedAt t = true := by
@@ -1120,13 +915,7 @@ theorem step_push_exact (s : State) (o : Obs) (t : Sha) (h : s.pinned = true)
   · simp [internal] at ha
   · exact phaseOf_push_exact _ _ _ _ h ha
 
-/-- **A landing writes only what it owns.** Every write of every action
-`step` proposes, from a state satisfying the invariant, is owned in the
-state it was proposed from: the run's gate tree, its ledger, `main` and the
-remote only to the gated tip on a proven run, and a branch another party
-owns only by a compare-and-swap from the tip the run read — which no action
-proposes today, since a landing does not write the branch at all. Nothing
-is written to a ref or a worktree the run does not own. -/
+/-- A landing writes only what it owns. -/
 theorem step_writes_owned (s : State) (o : Obs) (h : s.pinned = true) :
     ∀ w ∈ (step s o).2.writes, w.owned (step s o).1 = true := by
   intro w hw
@@ -1158,19 +947,12 @@ theorem step_writes_owned (s : State) (o : Obs) (h : s.pinned = true) :
       | (subst hw; rfl)
       | (rcases hw with rfl | rfl <;> rfl)
 
-/-- **A landing is a landing of the gated commit.** If the state a step
-reaches claims a landing, the `main` it read back after the fast-forward is
-exactly the tip the rebase produced and the gates ran on. This is the
-statement the two false records reproduced through the first draft would
-have failed: both compared two live refs with each other, and neither
-carried the gated tip at all. -/
+/-- A landing is a landing of the gated commit. -/
 theorem step_landed_exact (s : State) (o : Obs) (h : s.pinned = true)
     (hv : (step s o).1.landedVerdict = true) :
     (step s o).1.landedIsGated = true :=
   pinned_landed _ (step_pinned s o h) hv
 
-/-- The run-level form: whatever observation sequence a run was fed, a
-verdict claiming a landing at the end of it implies the same equality. -/
 theorem run_landed_exact (s : State) (os : List Obs) (h : s.pinned = true)
     (hv : (Land.run s os).1.landedVerdict = true) :
     (Land.run s os).1.landedIsGated = true := by
@@ -1182,7 +964,6 @@ theorem run_landed_exact (s : State) (os : List Obs) (h : s.pinned = true)
     unfold Land.run at hv ⊢
     exact ih (step s o).1 (step_pinned s o h) hv
 
-/-- Every state a run passes through keeps the invariant. -/
 theorem trace_pinned (s : State) (os : List Obs) (h : s.pinned = true) :
     ∀ p ∈ Land.trace s os, p.1.pinned = true := by
   induction os generalizing s with
@@ -1194,11 +975,6 @@ theorem trace_pinned (s : State) (os : List Obs) (h : s.pinned = true) :
     · exact step_pinned s o h
     · exact ih (step s o).1 (step_pinned s o h) p hp
 
-/-- The run-level form of the two exactness statements: in every run, from
-any state satisfying the invariant, every fast-forward and every push the run
-proposes names the gated tip of the state it was proposed from, the push
-names the `main` that state read back, and the gates' evidence in that state
-is about the named commit. -/
 theorem trace_mutates_exact (s : State) (os : List Obs) (h : s.pinned = true) :
     ∀ p ∈ Land.trace s os, ∀ t : Sha,
       (p.2 = .fastForward t → t = p.1.gatedTip ∧ p.1.gatedAt t = true)
@@ -1212,9 +988,6 @@ theorem trace_mutates_exact (s : State) (os : List Obs) (h : s.pinned = true) :
     · exact ⟨step_ff_exact s o t h, step_push_exact s o t h⟩
     · exact ih (step s o).1 (step_pinned s o h) p hp t
 
-/-- The run-level form of the write statement: in every run from a state
-satisfying the invariant, every write of every action proposed is owned in
-the state it was proposed from. -/
 theorem trace_writes_owned (s : State) (os : List Obs) (h : s.pinned = true) :
     ∀ p ∈ Land.trace s os, ∀ w ∈ p.2.writes, w.owned p.1 = true := by
   induction os generalizing s with
@@ -1226,23 +999,17 @@ theorem trace_writes_owned (s : State) (os : List Obs) (h : s.pinned = true) :
     · exact step_writes_owned s o h
     · exact ih (step s o).1 (step_pinned s o h) p hp
 
-/-- A fresh run satisfies the invariant, so the run-level statements above
-apply to every run the driver starts. -/
 theorem init_pinned (name : String) (m : Mode) (plan : Array GateSpec) (p : Bool) :
     (State.init name m plan p).pinned = true := by
   simp [State.init, State.pinned, State.atOrPastFF, State.preTree, State.rebased,
     State.landedVerdict]
 
-/-- `land push` pushes the last landing's tip, which is its gated tip and
-the `main` read, and a sha. -/
 theorem pushPlan_exact (lt lg mt t : Sha) (h : pushPlan lt lg mt = .ok t) :
     t = lt ∧ t = lg ∧ t = mt ∧ isSha t = true := by
   unfold pushPlan at h
   repeat' split at h
   all_goals simp_all
 
-/-- `land push` reports `pushed` only for a push that succeeded and a remote
-that read back, by its exact name, at the commit pushed. -/
 theorem pushVerdict_exact (ok : Bool) (r t : Sha) (h : pushVerdict ok r t = .pushed) :
     ok = true ∧ r = t ∧ isSha r = true := by
   unfold pushVerdict at h
@@ -1252,32 +1019,16 @@ theorem pushVerdict_exact (ok : Bool) (r t : Sha) (h : pushVerdict ok r t = .pus
     exact ⟨hc.1.1, hc.2, hc.1.2⟩
   · simp at h
 
--- ## The scenario harness's guard
---
--- `land --scratch-selftest` builds throwaway repositories and drives this
--- tool against them, shelling out to git hundreds of times; a git command
--- writes whatever repository its environment and its directory name. The
--- harness as it stood before its scrub, run under the variables git exports
--- to a hook in a linked worktree, committed its fixtures into the repository
--- they named, rewrote that repository's config, and pushed its `main` to
--- that repository's origin (reproduced on a scratch copy; PLAN 2026-09-26,
--- the landguard entry). What follows is the decision the harness makes before
--- every command it runs, over what git answered: the boundary asks, and runs
--- only what this allows.
-
-/-- A path's components: `none` unless the path is absolute and never climbs.
-Empty components (`//`) and `.` are dropped. A relative path, or one that
-climbs with `..`, can name a directory a component comparison misjudges, so
-the guard owns neither. -/
+/-- A path's components: `none` unless the path is absolute and never climbs; empty and
+`.` components dropped. -/
 def pathParts (p : String) : Option (List String) :=
   if !p.startsWith "/" then none
   else
     let cs := (p.splitOn "/").filter fun c => !c.isEmpty && c != "."
     if cs.contains ".." then none else some cs
 
-/-- `p` is `root` or lies inside it, compared component by component, so
-`/tmp/a` does not hold `/tmp/ab`. The filesystem's own root holds nothing: a
-guard whose root is `/` guards nothing. -/
+/-- `p` is `root` or lies inside it, compared component by component; the filesystem root
+holds nothing. -/
 def within (root p : String) : Bool :=
   match pathParts root, pathParts p with
   | some (r :: rs), some q => (r :: rs).isPrefixOf q
@@ -1293,34 +1044,29 @@ def samePath (a b : String) : Bool :=
 def fromDir (cwd p : String) : String :=
   if p.startsWith "/" then p else s!"{cwd}/{p}"
 
-/-- What the guard knows: the directory the run created for itself, and the
-bare repositories the run created under it — the only repositories a push
-may write. -/
+/-- What the guard knows: the directory the run created for itself, and the bare
+repositories the run created under it, the only ones a push may write. -/
 structure HGuard where
   root : String
   made : List String
   deriving Repr, Inhabited
 
-/-- One command the harness is about to run, classified. No shape passes
-unmodelled: a global option before the subcommand, a push whose target is
-not its first operand, and a command that contacts a remote other than by a
-push are `opaque`, which the guard refuses. -/
+/-- One command the harness is about to run, classified; a shape the guard does not model
+is `opaque`, which it refuses. -/
 inductive HCall where
   /-- `git --version`: names no repository. -/
   | version
-  /-- `init`, `clone`, `worktree add` or `worktree move`, run from `cwd` in
-  the repository `gitDir` (empty when there is none yet). It creates what its
-  operands name, each read as a path from `cwd` — a branch name so read lands
-  under `cwd` too, so a destination is inside the root however it is spelled. -/
+  /-- `init`, `clone`, `worktree add` or `worktree move`, run from `cwd` in the repository
+  `gitDir` (empty when none), creating what its operands name, each read as a path from
+  `cwd`. -/
   | create (cwd gitDir : String) (paths : List String)
   /-- A push from the repository `gitDir` to `target`, read as a path. -/
   | push (cwd gitDir target : String)
-  /-- Any other command: it reads or writes the repository `gitDir`, the one
-  `git rev-parse --absolute-git-dir` names from `cwd` in the command's own
-  environment (empty when git named none). -/
+  /-- Any other command: it reads or writes the repository `gitDir` that `git rev-parse
+  --absolute-git-dir` names from `cwd` in its own environment. -/
   | inRepo (cwd gitDir : String)
-  /-- The tool under test, run from `cwd` in the repository `gitDir`, whose
-  remotes' URLs are `remotes`: it may push to any of them. -/
+  /-- The tool under test, run from `cwd` in the repository `gitDir`, which may push to
+  any of its `remotes`. -/
   | drive (cwd gitDir : String) (remotes : List String)
   /-- A shape the guard does not model. -/
   | opaque (why : String)
@@ -1350,23 +1096,21 @@ def HCall.cwd : HCall → Option String
   | .create c _ _ | .push c _ _ | .inRepo c _ | .drive c _ _ => some c
   | .version | .opaque _ => none
 
-/-- Is this write the run's? A repository, or a path a command creates, only
-inside the root; a remote only as a bare repository the run itself made
-there. -/
+/-- Whether this write is the run's: a repository or a created path only inside the root,
+a remote only as a bare repository the run made there. -/
 def HWrite.owned (g : HGuard) : HWrite → Bool
   | .repo d => within g.root d
   | .created p => within g.root p
   | .remote p => within g.root p && g.made.any (samePath p)
 
-/-- The guard's decision: a modelled command, run from inside the root, every
-write of which the run owns. -/
+/-- The guard's decision: a modelled command, run from inside the root, every write of
+which the run owns. -/
 def HCall.allowed (g : HGuard) (c : HCall) : Bool :=
   match c with
   | .opaque _ => false
   | _ => c.cwd.all (within g.root) && c.writes.all (·.owned g)
 
-/-- Why the guard refuses `c`, for the refusal's message; empty when it
-allows it. -/
+/-- Why the guard refuses `c`, for the message; empty when it allows it. -/
 def HCall.refusal (g : HGuard) (c : HCall) : String :=
   match c with
   | .opaque why => why
@@ -1382,16 +1126,16 @@ def HCall.refusal (g : HGuard) (c : HCall) : String :=
 /-- The words of an argv that are not options. -/
 def operands (args : List String) : List String := args.filter fun a => !a.startsWith "-"
 
-/-- Push options after which the target is not the first operand, or that name
-a program to run at the target. -/
+/-- Push options after which the target is not the first operand, or that name a program
+to run at the target. -/
 def pushTargetOpts : List String := ["--repo", "-o", "--push-option", "--receive-pack", "--exec"]
 
 /-- Subcommands that contact a remote other than by a push. -/
 def remoteContacts : List String :=
   ["fetch", "pull", "ls-remote", "send-pack", "fetch-pack", "archive", "submodule", "bundle"]
 
-/-- Classify an argv the harness is about to run from `cwd`, given what
-`git rev-parse --absolute-git-dir` named there (empty for nothing). -/
+/-- Classify an argv the harness is about to run from `cwd`, given what `git rev-parse
+--absolute-git-dir` named there. -/
 def classify (cwd gitDir : String) (args : Array String) : HCall :=
   match args.toList with
   | [] => .opaque "an argv with no subcommand"
@@ -1415,8 +1159,8 @@ def classify (cwd gitDir : String) (args : Array String) : HCall :=
       .opaque "a remote subcommand other than a plain add"
     else .inRepo cwd gitDir
 
-/-- The bare repository a successful command created, if it was
-`init --bare`: what the run records as its own, and so as a push target. -/
+/-- The bare repository a successful `init --bare` created, which the run records as its
+own push target. -/
 def bareCreated (cwd : String) (args : Array String) : Option String :=
   match args.toList with
   | "init" :: rest =>
@@ -1424,11 +1168,9 @@ def bareCreated (cwd : String) (args : Array String) : Option String :=
     else some ((operands rest).getLast?.map (fromDir cwd) |>.getD cwd)
   | _ => none
 
-/-- Why a directory cannot be the harness's scratch root, or nothing. It must
-be absolute and below `/`, and no repository may enclose it: git discovers
-that repository from any directory under the root that is not a repository
-itself, and writes it. `enclosing` is what `git rev-parse --absolute-git-dir`
-names from the root (empty for nothing). -/
+/-- Why a directory cannot be the harness's scratch root, or nothing: it must be absolute,
+below `/`, and enclosed by no repository (`enclosing`, as `git rev-parse
+--absolute-git-dir` names it from the root). -/
 def rootFault (root enclosing : String) : Option String :=
   match pathParts root with
   | none | some [] => some s!"the scratch root {root} is not an absolute directory below /"
@@ -1436,19 +1178,9 @@ def rootFault (root enclosing : String) : Option String :=
     if enclosing.isEmpty then none
     else some s!"the scratch root {root} is inside the checkout {enclosing}"
 
-/-- **The harness writes only what its run created.** Every write a command
-the guard lets run may make lies inside the run's scratch root, and a push —
-or a run of the tool under test, which may push to any remote its repository
-names — reaches only a bare repository the run itself made there. A script
-that runs git in repositories it makes owes this guard before every
-command, and two more conditions beside it: the run refuses to start when
-any repository encloses its root (`rootFault`), and every child runs under
-`GIT_ALLOW_PROTOCOL=file` (land's `harnessEnv`). Scrubbing inherited
-variables is one layer, never the guard. Not yet under it, a port owed:
-the scoreboard's `--check --base` cases (`runCliCase` in
-scripts/scoreboard.lean), which run git in a fresh temporary directory
-behind a scrubbed environment alone, with no root check and no protocol
-limit. -/
+/-- The harness writes only what its run created: every write an allowed command may make
+lies inside the scratch root, and a push reaches only a bare repository the run made
+there. -/
 theorem hcall_writes_owned (g : HGuard) (c : HCall) (h : c.allowed g = true) :
     ∀ w ∈ c.writes, w.owned g = true := by
   intro w hw
@@ -1458,8 +1190,6 @@ theorem hcall_writes_owned (g : HGuard) (c : HCall) (h : c.allowed g = true) :
   · simp only [Bool.and_eq_true, List.all_eq_true] at h
     exact h.2 w hw
 
-/-- A push the guard lets run names a bare repository the run made inside its
-scratch root, from a repository inside it. -/
 theorem hpush_owned (g : HGuard) (cwd d t : String)
     (h : (HCall.push cwd d t).allowed g = true) :
     within g.root d = true ∧ within g.root t = true ∧ g.made.any (samePath t) = true := by

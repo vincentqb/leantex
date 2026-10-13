@@ -1,78 +1,7 @@
 /-
-The CommonMark classifier: what this engine's markdown dialect does with
-every one of the 652 spec examples, and with the eight examples of the GFM
-spec's table extension, the one GitHub Flavored Markdown construct the
-dialect reads. Run from the repository root after
-`lake build TestsModules ScriptsModules` — the modules it imports, which
-`lake env lean --run` reads as they stand and rebuilds none of:
-
-  lake env lean --run scripts/commonmark.lean              regenerate the verdicts and the tier, then check
-  lake env lean --run scripts/commonmark.lean --check      check the committed verdicts and tier only
-  lake env lean --run scripts/commonmark.lean --selftest   the reader, the comparison and the ratchet, on hand-written inputs
-  lake env lean --run scripts/commonmark.lean --reader-hop the markdown twin through an external reader: a report
-
-The GFM cases keep the spec's own example numbers, in their own verdict
-table (`testdata/commonmark/gfm-verdicts.tsv`), and their tier rows carry a
-`GFM ` prefix; every rule below applies to them unchanged.
-
-**A classifier, not a gate.** Every case carries a committed verdict and an
-unclassified deviation fails. Four verdicts:
-
-* `match` — the tree the engine emits equals the tree the spec expects,
-  and the run names no loss. The comparison is blind to exactly the
-  normalizations `normalizations` lists below and nothing else: every
-  attribute is compared unless a row of `droppedAttrs` declares it, and no
-  attribute that decides whether content reaches a reader (`readerAttrs`)
-  can be one. `--selftest` breaks each normalization in both directions.
-* `rejected` — the strict dialect refuses the construct by design, *and*
-  something other than the reader says the refused construct is there: a
-  raw-HTML refusal's text passes through the spec's own expected HTML
-  verbatim, and an indented-code or lazy refusal is on the reviewed list
-  (`testdata/commonmark/strict-reviewed.tsv`), which fails in both directions.
-  The reader under test raised the refusal, so it cannot also be the
-  evidence for it.
-* `divergence` — a deliberate difference, listed in `divergences` with its
-  reason. Adding a row here is a dialect decision, never a code change's
-  side effect.
-* `owed` — the engine does not do this yet. Not a pass and not an excuse:
-  the ratchet lets this number fall and never rise. And `owed` never hides
-  silence: a gap construct the expected page carries (a rule, a start
-  number, a title, a language, a fourth-level heading) that the engine's
-  page drops must be named by the run, or every mode fails (`silentGaps`).
-
-A case whose run names a markdown route (or a W0110, an option the
-desugaring leaked) is never a `match`, however the trees compare: when the
-trees agree once exactly the named gaps are hidden, its note names the gap
-that blocks it, the verdict row an IR gap owes. A gap construct dropped where
-the element it sits on did ship must be named, because a list before `* * *`
-once shipped no rule and raised nothing. A case waiting on a dialect decision
-the user owns carries that decision as its note and stays `owed`.
-
-The reader desugars to the surface AST, and no reader text reaches a
-re-parse: where the elaborator reads a construct back from option text (a
-listing's language, an image's alternative), what crosses is an IR value
-(`Ir.ListingLang`) or a spelling the elaborator's own splitter is checked to
-read back exactly (`Md.altSource`), never the author's text; a `]` in an info
-string once ended the option head and leaked into the code. A construct the
-surface AST cannot express is routed by a keyed diagnostic whose loss class
-is decided by what reaches the page (`pending` only where nothing does), and
-a construct the AST can express is carried through its one existing
-resolving site, never routed.
-
-The ratchet is the tier file `testdata/scoreboard/commonmark.tsv`, in the one
-scoreboard format and under the one ratchet every tier obeys
-(`Scoreboard.tierMain`, `Scoreboard.ratchet`): per spec section a
-`<section>.match` and a `<section>.cases` row, encoded `pairs match/cases`
-so the queue ranks sections by their gap. Any change fails `--check` — a
-fall, a vanished section, and an unrecorded rise alike; regenerating records
-a rise, and writes a fall only where the committed file carries a
-human-written `# lowered:` line naming it. Hermetic — `--check` reads the
-vendored spec and the committed tables, nothing else.
-
-Comparison is over *trees*, not strings: the engine's HTML is a typed tree
-already, and the spec's expected HTML is read by the tolerant reader below
-into the same shape, then both are canonicalized by `canon`. A string
-comparison would report the two emitters' indentation as content.
+The CommonMark classifier: every spec example, and the GFM table extension's, compared as trees
+with the spec's HTML holds a committed verdict; the tier counts matches.
+Usage: lake build TestsModules ScriptsModules && lake env lean --run scripts/commonmark.lean [--check | --selftest | --scaling [shape] | --explain <case> | --explain-gfm <case> | --audit | --reader-hop]
 -/
 import LeanTex
 import Tests.Support
@@ -84,22 +13,17 @@ def specPath : String := "testdata/commonmark/spec-0.31.2.txt"
 def verdictPath : String := "testdata/commonmark/verdicts.tsv"
 def tierPath : String := "testdata/scoreboard/commonmark.tsv"
 
-/-- The sha256 the provenance file records. Provenance, not the gate: it is
-what a human verifies against upstream, and `PROVENANCE.txt` carries it. -/
+/-- The sha256 the provenance file records, for a human to verify against upstream. -/
 def specSha : String :=
   "257c41ad946f7a1414a499aca402a1aa8fdac3678532266611348c1cf54f4b80"
 
-/-- The gate on the vendored input: an in-Lean content key, so the check
-needs no host tool. `sha256sum` was shelled out to, which fails under the
-repo's own hermetic check — PATH pointed at an empty directory — and a
-classifier whose first act is to spawn a process cannot run there at all. -/
+/-- The gate on the vendored input: an in-Lean content key, so the check needs no host
+tool. -/
 def specKey : String :=
   "9AED364DA0B11E9BF5347E88BB9B04E1"
 
-/-- The GitHub Flavored Markdown spec, read for its one extension the
-dialect implements: tables. Its other sections are CommonMark 0.29, which
-the spec above classifies at a later version, or extensions this dialect
-does not read (`PROVENANCE.txt` says which and why). -/
+/-- The GitHub Flavored Markdown spec, read for the one extension the dialect implements:
+tables. -/
 def gfmSpecPath : String := "testdata/commonmark/gfm-spec-0.29.txt"
 def gfmVerdictPath : String := "testdata/commonmark/gfm-verdicts.tsv"
 def gfmSpecSha : String :=
@@ -112,26 +36,12 @@ def gfmSection : String := "Tables (extension)"
 /-- The section's examples, in the spec's own numbering. -/
 def gfmCases : Nat := 8
 
-/-- A GFM section's name in the tier: prefixed, so it never merges with a
-CommonMark section that shares its heading. -/
+/-- A GFM section's name in the tier, prefixed so it never merges with a CommonMark
+section of the same heading. -/
 def gfmItem (sec : String) : String := "GFM " ++ sec
 
--- ## The declared normalizations
---
--- Each one is a difference the comparison is blind to, with the reason it
--- is not a difference in what the construct means. A loose normalization
--- hides a real defect, so the list is short and every entry names what it
--- would hide. The attribute drop is one table, `droppedAttrs`: `canonG` and
--- the chrome walks read it, and the attribute entry below is rendered from
--- it, so the declaration and what the comparison does cannot drift apart.
-
-/-- The attributes the comparison is blind to, each with what dropping it
-hides. A row's attribute is dropped from both trees and from the chrome the
-comparison unwraps; **every other attribute is compared as content**, so an
-attribute the engine starts to emit is a difference until a row here
-declares it. The filter was once the other way round — six attributes kept
-and every other dropped, declared nowhere — and it certified a page whose
-every paragraph was `hidden` as 323 matches. -/
+/-- The attributes the comparison is blind to, each with what dropping it hides; every
+other attribute is compared as content. -/
 def droppedAttrs : List (String × String) :=
   [("class",
     "the engine's styling classes (`numbered`, `line`), and a table cell's \
@@ -152,14 +62,8 @@ reach and scroll its <pre>: focus order, not content, and every reader gets \
 the same text with or without it. Every match whose page carries a code \
 block rests on this row")]
 
-/-- Attributes that decide whether content reaches a reader, or how it is
-read, and so are never dropped: `hidden` and `inert` take content from every
-reader, `aria-hidden` from assistive technology; `role` can make a
-construct's content presentational or announce it as another thing; `lang`
-decides the voice and the hyphenation it is read with. No spec example
-states one on a construct, so any the engine adds is a difference the
-comparison must see. `--selftest` holds `droppedAttrs` disjoint from these,
-and each of them a difference on an element and on the chrome. -/
+/-- Attributes that decide whether content reaches a reader, or how it is read, and so are
+never dropped. -/
 def readerAttrs : List String := ["hidden", "inert", "aria-hidden", "role", "lang"]
 
 def dropsAttr (a : String) : Bool := droppedAttrs.any (·.1 == a)
@@ -247,8 +151,8 @@ def sideClassOf (classes : String) : Option String :=
     [Ir.HAlign.left, .center, .right].findSome? fun h =>
       if c == HtmlDoc.cellSideClass h then some h.align else none
 
-/-- A cell's alignment as one `align` value, whichever spelling carried it,
-`left` as none: the declared normalization of a table cell's alignment. -/
+/-- A cell's alignment as one `align` value, whichever spelling carried it, `left` as
+none. -/
 def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
     Array (String × String) :=
   if tag != "td" && tag != "th" then attrs
@@ -262,10 +166,8 @@ def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
     | some a => rest.push ("align", a)
     | none => rest
 
-/-- A code atom the engine holds on one line: a `<span>` whose one attribute
-is the class `tok` (`HtmlDoc.codeTokClass`), with `tok-long`
-(`HtmlDoc.codeLongTokClass`) or alone, the declared code-atom
-normalization. -/
+/-- A code atom the engine holds on one line: a `<span>` whose one attribute is the class
+`tok`, with `tok-long` or alone. -/
 def heldAtom (tag : String) (attrs : Array (String × String)) : Bool :=
   tag == "span" && (attrs == #[("class", HtmlDoc.codeTokClass)] ||
     attrs == #[("class", HtmlDoc.codeTokClass ++ " " ++ HtmlDoc.codeLongTokClass)])
@@ -281,23 +183,16 @@ def bareColGroup (n : Html.Node) : Bool :=
       | _ => false
   | _ => false
 
-/-- A row with no data cell: every header cell in it is a column header by
-HTML's own model, the condition of the column-scope normalization. -/
+/-- A row with no data cell, whose header cells are column headers by HTML's own model. -/
 def headRow (tag : String) (kids : Array Html.Node) : Bool :=
   tag == "tr" && !(kids.any fun k => k.tag? == some "td")
 
--- ## The deliberate divergences
---
--- A case listed here differs from the spec on purpose. The rationale is
--- the entry: a row with no reason is not a divergence, it is a defect.
+-- Cases that differ from the spec on purpose, each with its reason.
 
 def divergences : List (Nat × String) := []
 
-/-- The GFM table cases' deliberate divergences, keyed by the GFM spec's own
-example numbers. -/
+/-- The GFM table cases' deliberate divergences, by the GFM spec's example numbers. -/
 def gfmDivergences : List (Nat × String) := []
-
--- ## The vendored spec
 
 structure Example where
   id : Nat
@@ -306,14 +201,12 @@ structure Example where
   html : String
   deriving Inhabited
 
-/-- Restore the spec's tab spelling: an example body writes a tab as U+2192
-so the document reads, and the reader puts the tab back. -/
+/-- Restore the spec's tab spelling: an example body writes a tab as U+2192. -/
 def untab (s : String) : String :=
   String.ofList (s.toList.map (fun c => if c == '\u2192' then '\t' else c))
 
-/-- The examples, in document order, each tagged with the section heading in
-force. `## ` lines inside an example are the spec documenting ATX headings,
-not section headings, so the state machine tracks the fences. -/
+/-- The examples in document order, each tagged with the section heading in force; `## `
+lines inside an example are not section headings. -/
 def readExamples (text : String) : Array Example := Id.run do
   let fence := String.ofList (List.replicate 32 '`')
   let mut out : Array Example := #[]
@@ -348,12 +241,7 @@ def readExamples (text : String) : Array Example := Id.run do
       sec := (line.toList.drop 3 |> String.ofList)
   return out
 
--- ## A tolerant HTML reader
---
--- Enough of HTML to read what the spec's expected output contains: tags,
--- attributes, void elements, text, character references. Total by
--- construction: one index loop with an explicit element stack, the shape
--- `Parse.parse` uses.
+-- A tolerant HTML reader, enough for the spec's expected output.
 
 structure HFrame where
   tag : String
@@ -363,8 +251,8 @@ structure HFrame where
 
 def hVoid : List String := Html.voidTags
 
-/-- A numeric character reference's body (`#123`, `#x1F`) as its character,
-or the literal text when it is not one. -/
+/-- A numeric character reference's body (`#123`, `#x1F`) as its character, or the literal
+text when it is not one. -/
 def hNumeric (name : String) : String := Id.run do
   let rest := name.toList.drop 1
   let hex := rest.headD ' ' == 'x' || rest.headD ' ' == 'X'
@@ -430,8 +318,8 @@ def hText (cs : Array Char) : String := Id.run do
       i := i + 1
   return out
 
-/-- Parse a fragment of HTML into nodes. Unknown or stray tags become text
-so nothing is silently dropped. -/
+/-- Parse a fragment of HTML into nodes; unknown or stray tags become text, so nothing is
+silently dropped. -/
 def hParse (src : String) : Array Html.Node := Id.run do
   let cs := src.toList.toArray
   let mut stack : Array HFrame := #[]
@@ -525,8 +413,7 @@ def hParse (src : String) : Array Html.Node := Id.run do
           if closing then
             kids := flush kids text
             text := #[]
-            -- Close the innermost frame with this name, dropping any
-            -- unclosed frames above it.
+            -- Close the innermost frame with this name, dropping any unclosed frames above it.
             let mut depth : Option Nat := none
             for (f, k) in stack.zipIdx do
               if f.tag == name then depth := some k
@@ -559,14 +446,8 @@ def hParse (src : String) : Array Html.Node := Id.run do
   return kids
 
 
--- ## Canonicalization
---
--- Both trees reduced to one string by the same function, so the comparison
--- is over trees and the failure report is readable. Every attribute is kept
--- except the declared drops (`droppedAttrs`).
-
-/-- The one class token a spec example states as content: a fenced block's
-`language-x`. Every other class token is the engine's styling. -/
+/-- The one class token a spec example states as content, a fenced block's `language-x`.
+-/
 def languageClass? (attrs : Array (String × String)) : Option String :=
   match attrs.find? (·.1 == "class") with
   | none => none
@@ -574,9 +455,8 @@ def languageClass? (attrs : Array (String × String)) : Option String :=
     let toks := (v.splitOn " ").filter (·.startsWith "language-")
     if toks.isEmpty then none else some (String.intercalate " " toks)
 
-/-- The IR gaps a markdown route names, each with the one thing on the page
-it costs. Read only to *attribute* an `owed` case to the gap that blocks it;
-a case these hide is never a `match` (`classify`). -/
+/-- The IR gaps a markdown route names, each with the one thing on the page it costs; read
+only to attribute an `owed` case. -/
 def gapSubjects : List String :=
   ["md:thematic-break", "md:list-start", "md:loose-list", "md:link-title",
    "md:image-title", "md:image-alt", "md:code-info"]
@@ -608,18 +488,13 @@ def dropOneTrailingNewline (s : String) : String :=
 
 mutual
 
-/-- One node canonicalized. Heading tags are compared exactly; a document
-title never offsets the body's ranks. `pre` says whether whitespace is
-significant here. `gaps` are the IR gaps whose cost
-is hidden — empty for the comparison that decides `match`, and the run's
-own routes only when *attributing* an `owed` case; `inLi` says the parent
-is a list item, where a loose list's `<p>` sits, and `inHeadRow` that it is
-a row with no data cell (`headRow`). -/
+/-- One node canonicalized: `pre` says whether whitespace is significant, `gaps` are the
+IR gaps whose cost is hidden (none for the `match` comparison), `inLi` and `inHeadRow` the
+context. -/
 def canonN (gaps : List String) (pre inLi inHeadRow : Bool) (n : Html.Node) : String :=
   match n with
   | .text s => if pre then s else squeeze s
-  -- A stylesheet or script node is compared as the element it prints as,
-  -- never dropped: dropping them was a normalization nothing declared.
+  -- A stylesheet or script node is compared as what it prints, never dropped.
   | .style css => "<style>" ++ squeeze css ++ "</style>"
   | .script attrs js =>
     let keep := (attrs.filter (fun a => !dropsAttr a.1)).qsort (·.1 < ·.1)
@@ -650,13 +525,12 @@ def canonN (gaps : List String) (pre inLi inHeadRow : Bool) (n : Html.Node) : St
       if Html.voidTags.contains tag then "<" ++ tag ++ as ++ ">"
       else
         let body := canonNList gaps pre' (tag == "li") tag (headRow tag kids) "" kids.toList
-        -- Text-node boundaries are not line boundaries. Normalize once on
-        -- the assembled block code, leaving its child elements intact.
+        -- Only the assembled code block's final newline is normalized, once.
         let body := if pre && tag == "code" then dropOneTrailingNewline body else body
         "<" ++ tag ++ as ++ ">" ++ body ++ "</" ++ tag ++ ">"
 
-/-- The children of a `parent` element, accumulated: a table's bare column
-group is the one child dropped (`bareColGroup`). -/
+/-- The children of a `parent` element, accumulated; a table's bare column group is the
+one child dropped. -/
 def canonNList (gaps : List String) (pre inLi : Bool) (parent : String) (inHeadRow : Bool)
     (acc : String) : List Html.Node → String
   | [] => acc
@@ -679,20 +553,9 @@ def canon (pre : Bool) (n : Html.Node) : String := canonG [] pre false n
 def canonList (pre : Bool) (acc : String) (ns : List Html.Node) : String :=
   canonGList [] pre false acc ns
 
--- ## What an IR gap costs, counted
---
--- `owed` must not hide silence. A case can be owed on an IR gap only when
--- its run names the gap; a construct the expected page carries that the
--- engine's page drops *without* naming it is a reader defect — the shape a
--- list followed by `* * *` took, which shipped no rule and raised nothing,
--- so the ledger read it as one more owed case.
-
-/-- One count per gap construct on a tree: thematic breaks, an ordered
-list's start other than 1, a link's title, an image's title, a code
-element's language class, and a heading below the third level —
-each beside the count of the element that carries it, so a construct lost
-with its carrier (a reference link the reader does not resolve drops its
-title *and* its link) is read as the carrier's defect, not the gap's. -/
+/-- One count per gap construct on a tree (thematic breaks, ordered-list starts, link and
+image titles, code language classes, headings below the third level), each beside the
+count of its carrier element. -/
 structure GapInk where
   rules : Nat := 0
   starts : Nat := 0
@@ -737,10 +600,8 @@ def gapInkList (g : GapInk) : List Html.Node → GapInk
 
 end
 
-/-- The gaps whose construct the expected page carries more of than the
-engine's page, where the engine's page does carry the element the construct
-sits on, and with no route in the run naming it: silence, never a verdict.
-A `W0110` names a lost listing language as surely as `md:code-info` does. -/
+/-- The gaps whose construct the expected page carries more of than the engine's, where
+the engine's page carries the element it sits on, and no route in the run names it. -/
 def silentGaps (want got : GapInk) (routes : Array String) : Array String := Id.run do
   let named (g : String) : Bool :=
     routes.contains g || (g == "md:code-info" && routes.contains "W0110")
@@ -754,16 +615,10 @@ def silentGaps (want got : GapInk) (routes : Array String) : Array String := Id.
     if w > e && ec ≥ wc && !named g then out := out.push g
   return out
 
--- The engine's page reduced to the fragment a spec example is about: the
--- content of `<main>`, with the sectioning walk's `<section>` wrappers
--- unwrapped. Each walk is a one-node function plus its `List` companion
--- with an accumulator, which is what makes the recursion structural over a
--- tree whose children are an `Array`. A wrapper is looked through only when
--- it carries nothing but declared drops: `<section hidden>` unwrapped would
--- hide from the comparison exactly what it hides from a reader.
+-- The engine's page reduced to `<main>`'s content, unwrapping only wrappers of declared drops.
 
-/-- Does an element carry nothing but declared drops? Only such a wrapper
-is chrome the comparison may look through. -/
+/-- Whether an element carries nothing but declared drops, the only chrome the comparison
+may look through. -/
 def onlyDropped (attrs : Array (String × String)) : Bool :=
   attrs.all (fun a => dropsAttr a.1)
 
@@ -783,10 +638,7 @@ end
 
 mutual
 
-/-- `<main>`'s content, found through wrappers that carry only declared
-drops. A `<main>` carrying anything else is its own fragment, so the
-comparison sees it; an element carrying anything else is not looked
-through, so the whole body is compared. -/
+/-- `<main>`'s content, found through wrappers that carry only declared drops. -/
 def mainOf? (n : Html.Node) : Option (Array Html.Node) :=
   match n with
   | .elem "main" attrs kids => if onlyDropped attrs then some kids else some #[n]
@@ -802,47 +654,36 @@ def mainList? : List Html.Node → Option (Array Html.Node)
 
 end
 
--- ## The engine under test
-
-/-- The fragment a spec example is compared against: `<main>`'s content with
-the sectioning walk's wrappers unwrapped, each looked through only when it
-carries nothing but declared drops (`mainOf?`, `unwrapOne`). -/
+/-- The fragment a spec example is compared against: `<main>`'s content with the
+sectioning walk's wrappers unwrapped. -/
 def fragmentOf (body : Array Html.Node) : Array Html.Node :=
   unwrapList #[] ((mainList? body.toList).getD body).toList
 
-/-- One markdown source through the reader, the desugaring, the one
-elaborator and the HTML backend: the fragment tree and the diagnostics. -/
+/-- One markdown source through the reader, the desugaring, the elaborator and the HTML
+backend: the fragment tree and the diagnostics. -/
 def engineFragment (src : String) : Array Html.Node × Array Diag :=
   let (raws, readDiags) := Surface.read .markdown "case.md" src
   let (doc, diags) := Elab.runRaws "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
   (fragmentOf body, diags ++ htmlDiags)
 
--- ## The two doors
-
-/-- The case included in the neutral tex host, through the pure reader the
-driver's own is held to (`Tests/MarkdownDoors.lean`). -/
+/-- The case included in the neutral tex host, through the pure reader the driver's own is
+held to. -/
 def caseIncluded (src : String) : Ir.Doc × Array Diag :=
   includedDoc "host.tex" (neutralHost "case.md") [("case.md", "case.md", src)]
 
-/-- The same, the host written as a source usually is: each command on a
-line of its own, the include among blank lines. -/
+/-- The same, each host command on a line of its own and the include among blank lines. -/
 def caseIncludedSpaced (src : String) : Ir.Doc × Array Diag :=
   includedDoc "host.tex" (spacedNeutralHost "case.md") [("case.md", "case.md", src)]
 
 /-- The case as a document of its own, as the driver runs one. -/
 def caseAlone (src : String) : Ir.Doc × Array Diag := standaloneDoc "case.md" src
 
-/-- The case alone under the host's surface: its fragment as the whole of
-a document named as the host. -/
+/-- The case alone under the host's surface, as a whole document named as the host. -/
 def caseAloneInHost (src : String) : Ir.Doc × Array Diag := aloneDoc "host.tex" "case.md" src
 
-/-- Do the two doors read a case alike? Under one surface, the included
-case is the case alone, as a whole document; across the surfaces, the
-included case's fragment is the one the classifier judges, at the
-classifier's own comparison. A surface may set its content otherwise — a
-default of its own — but a verdict must not depend on which door read the
-case. -/
+/-- Whether the two doors read a case alike: the included case equals the case alone under
+one surface, and across surfaces the classifier's fragments agree. -/
 def doorsAgree (included aloneInHost standalone : String → Ir.Doc × Array Diag)
     (src : String) : Bool :=
   let iDoc := (included src).1
@@ -850,8 +691,6 @@ def doorsAgree (included aloneInHost standalone : String → Ir.Doc × Array Dia
   let (_, aBody, _) := HtmlDoc.emitTree {} (standalone src).1
   iDoc == (aloneInHost src).1 &&
     canonList false "" (fragmentOf iBody).toList == canonList false "" (fragmentOf aBody).toList
-
--- ## Verdicts
 
 inductive Verdict where
   | match_
@@ -874,15 +713,13 @@ def Verdict.ofName? (s : String) : Option Verdict :=
   | "owed" => some .owed
   | _ => none
 
-/-- The three subjects the strict dialect refuses by design. A refusal under
-one of these is only a *claim* that the case is a design decision: the
-reader under test raised it, so it cannot also be the evidence. `rejected`
-needs corroboration from outside the reader (`corroborated`). -/
+/-- The subjects the strict dialect refuses by design; such a refusal is a claim that
+needs corroboration from outside the reader. -/
 def strictSubjects : List String :=
   ["md:raw-html", "md:indented-code", "md:lazy-continuation"]
 
-/-- One strict refusal a run raised: its subject and the source position the
-reader gave for the refused construct. -/
+/-- One strict refusal a run raised: its subject and the source position the reader gave.
+-/
 structure Refusal where
   subject : String
   line : Nat
@@ -897,10 +734,8 @@ def refusalsOf (diags : Array Diag) : Array Refusal :=
         if strictSubjects.contains s then some ⟨s, sp.pos.line, sp.pos.col⟩ else none
       | _, _ => none
 
-/-- The source text a raw-HTML refusal names: from the refusal's position to
-the first `>` at or after it (across line ends), or to the end of its line
-when no `>` follows. A prefix of the refused construct, computed from the
-source alone and never from the reader's own tag grammar. -/
+/-- The source text a raw-HTML refusal names: from its position to the first `>` at or
+after it, or to the end of its line, computed from the source alone. -/
 def refusedPrefix (md : String) (line col : Nat) : String := Id.run do
   let ls := (md.splitOn "\n").toArray
   let some l := ls[line - 1]? | return ""
@@ -919,11 +754,8 @@ def refusedPrefix (md : String) (line col : Nat) : String := Id.run do
       if c == '>' then return more
   return out
 
-/-- The reviewed list: the cases whose indented-code or lazy-continuation
-refusal a human checked against the spec text (`testdata/commonmark/
-strict-reviewed.tsv`). A raw-HTML refusal needs no list — the spec's own
-expected HTML corroborates it — but these two classes leave nothing in the
-expected output a check could read. -/
+/-- The reviewed list: the cases whose indented-code or lazy-continuation refusal a human
+checked against the spec text. -/
 def reviewedPath : String := "testdata/commonmark/strict-reviewed.tsv"
 
 def parseReviewed (text : String) : Except String (Array (Nat × String)) := do
@@ -943,20 +775,16 @@ def parseReviewed (text : String) : Except String (Array (Nat × String)) := do
     out := out.push (id, sub)
   return out
 
-/-- Is one refusal corroborated by something other than the reader? Raw
-HTML: the refused construct passes through the spec's expected HTML
-verbatim — escaped text there is `&lt;`, so a literal prefix is markup the
-spec itself passed through. The other two classes: a reviewed row. -/
+/-- Whether a refusal is corroborated outside the reader: a raw-HTML refusal by its text
+passing through the spec's expected HTML verbatim, the other classes by a reviewed row. -/
 def corroborated (reviewed : Array (Nat × String)) (ex : Example) (r : Refusal) : Bool :=
   if r.subject == "md:raw-html" then
     let p := refusedPrefix ex.md r.line r.col
     p.length ≥ 2 && containsSub ex.html p
   else reviewed.contains (ex.id, r.subject)
 
-/-- The typographic characters the elaborator's `smartPunct` produces, mapped
-back to the ASCII the spec writes. A case whose only difference is this is
-not a defect and not a decided divergence: it is waiting on a dialect
-decision the user owns, so it stays `owed` and carries the note. -/
+/-- The typographic characters `smartPunct` produces, mapped back to the ASCII the spec
+writes. -/
 def unsmarten (s : String) : String := Id.run do
   let mut out := ""
   for c in s.toList do
@@ -971,13 +799,8 @@ def unsmarten (s : String) : String := Id.run do
 /-- The note a pending dialect decision carries. -/
 def smartNote : String := "pending-decision:smart-punctuation"
 
-/-- The losses a run names that bar it from `match`, sorted: every markdown
-route (`W0307`/`W0392` under an `md:` subject), and any `W0110`, which on a
-markdown run means the desugaring handed the elaborator an option it could
-not read — the shape the injected info strings took. Other diagnostics
-(`W0601` a missing image file, `N0376` a missing alternative) are about the
-document, not the reader, and the canonical trees already carry what they
-are about. -/
+/-- The losses a run names that bar it from `match`, sorted: every markdown route under an
+`md:` subject, and any `W0110`. -/
 def routesOf (diags : Array Diag) : Array String := Id.run do
   let mut out : Array String := #[]
   for d in diags do
@@ -992,18 +815,9 @@ def routesOf (diags : Array Diag) : Array String := Id.run do
       unless out.contains s do out := out.push s
   return out.qsort (· < ·)
 
-/-- A case's verdict, as a pure function of what the run produced: the two
-canonical trees, the same two with the run's own routes hidden, the refusals
-with their corroboration, and the routes. `classify` computes the inputs;
-the selftest breaks each rule here.
-
-* A refusal outranks a comparison, but only when *every* refusal is
-  corroborated — then the case is `rejected`. An uncorroborated one is a
-  reader defect, and the case is `owed` with the note naming it.
-* A case whose run names a loss is never a `match`. When the trees agree
-  once exactly the named gaps are hidden, the note says which gaps block it
-  (`blocked-by:`): that is the verdict row an IR gap owes, never a false
-  match. -/
+/-- A case's verdict as a pure function of the canonical trees, the same trees with the
+run's routes hidden, the corroborated refusals and the routes: an uncorroborated refusal
+is `owed`, and a run naming a loss is never a `match`. -/
 def judge (want got wantG gotG : String) (refusals : Array (Refusal × Bool))
     (routes : Array String) (divergence : Option String) : Verdict × String :=
   let subjects (rs : Array (Refusal × Bool)) : String :=
@@ -1029,9 +843,8 @@ structure Judged where
   got : String
   refusals : Array (Refusal × Bool)
   routes : Array String
-  /-- Gap constructs the expected page carries and the engine's page drops
-  with nothing in the run naming them (`silentGaps`); empty for a run that
-  raised a strict refusal, which fails the build and names its loss. -/
+  /-- Gap constructs the expected page carries and the engine's drops with nothing in the
+  run naming them; empty for a run that raised a strict refusal. -/
   silent : Array String := #[]
   deriving Inhabited
 
@@ -1053,8 +866,6 @@ def classify (reviewed : Array (Nat × String)) (ex : Example)
     else #[]
   { verdict := v, note, want, got, refusals, routes, silent }
 
-
--- ## The committed tables
 
 structure Row where
   id : Nat
@@ -1079,19 +890,15 @@ def parseVerdicts (text : String) : Except String (Array Row) := do
     out := out.push { id, section_ := sec, verdict := v, note := (fs[3]?).getD "" }
   return out
 
-/-- Section order as the spec states it, so the report reads in document
-order rather than alphabetically. The tier file itself is sorted by item,
-as the scoreboard format requires. -/
+/-- Section order as the spec states it, for the report. -/
 def sectionsOf (exs : Array Example) : Array String := Id.run do
   let mut out : Array String := #[]
   for e in exs do
     unless out.contains e.section_ do out := out.push e.section_
   return out
 
-/-- The tier's rows: one `<section>.match` and one `<section>.cases` per spec
-section, the `pairs match/cases` encoding. The ratchet is the scoreboard's
-own (`Scoreboard.ratchet`), so this tier cannot mean something different by
-"regressed" than every other tier does. -/
+/-- The tier's rows: one `<section>.match` and one `<section>.cases` per spec section,
+under the `pairs match/cases` encoding. -/
 def tierRows (exs : Array Example) (rows : Array Row) : Array Scoreboard.Row := Id.run do
   let mut out : Array Scoreboard.Row := #[]
   for sec in sectionsOf exs do
@@ -1116,13 +923,8 @@ def verdictText (rows : Array Row)
       ++ (if r.note.isEmpty then "" else "\t" ++ r.note) ++ "\n"
   return s
 
--- ## The reader hop
-
-/-- The writers' conventions the hop reads through before it compares, each
-with what it hides: pandoc's HTML writer against the reference renderer the
-spec's HTML comes from, and the door's own page. They are the writers', not
-the readers' — the reader under test is pandoc's CommonMark reader — and
-`--selftest` holds each in both directions. -/
+/-- The writers' conventions the hop reads through before comparing, each with what it
+hides; `--selftest` holds each in both directions. -/
 def hopConventions : List (String × String) :=
   [("ordered type", "the writer states `type=\"1\"` on every ordered list, the one \
 style CommonMark has: hides nothing"),
@@ -1158,8 +960,7 @@ def pdfSource (attrs : Array (String × String)) : Bool :=
 
 mutual
 
-/-- pandoc's HTML read back toward the reference renderer's conventions
-(`hopConventions`). -/
+/-- pandoc's HTML read back toward the reference renderer's conventions. -/
 def fromPandoc (n : Html.Node) : Html.Node :=
   match n with
   | .elem "ol" attrs kids =>
@@ -1198,8 +999,8 @@ def textOnlyList (acc : String) : List Html.Node → String
 
 end
 
-/-- A list item's children as a tight list's reader writes them: a leading
-paragraph before a nested list, unwrapped. -/
+/-- A list item's children as a tight list's reader writes them: a leading paragraph
+before a nested list, unwrapped. -/
 def tightItem (kids : Array Html.Node) : Array Html.Node :=
   match kids.toList with
   | [.elem "p" _ para, l] =>
@@ -1208,8 +1009,8 @@ def tightItem (kids : Array Html.Node) : Array Html.Node :=
 
 mutual
 
-/-- The door's side of the conventions that concern it: a PDF image's
-description is not compared, and a highlighted code block is its text. -/
+/-- The door's side of the conventions: a PDF image's description is not compared, and a
+highlighted code block is its text. -/
 def bareDoor (n : Html.Node) : Html.Node :=
   match n with
   | .elem "img" attrs kids =>
@@ -1231,13 +1032,9 @@ def bareDoorList (acc : Array Html.Node) : List Html.Node → Array Html.Node
 
 end
 
-/-- What an external CommonMark reader and the markdown door make of one
-markdown text, at the classifier's own comparison: the same tree; trees that
-differ only by the door's typographic punctuation (`unsmarten`, a dialect
-decision the user owns); different trees where the door names a loss of its
-own for the text (a route, `routesOf`); different trees for a CommonMark
-example whose own committed verdict is not a match, so the door already
-reads the example otherwise; or different trees nothing accounts for. -/
+/-- What an external CommonMark reader and the markdown door make of one text: agreement,
+a typographic-punctuation difference, a difference the door names, a difference on an
+example already not a match, or a difference nothing accounts for. -/
 inductive Hop where
   | agree
   | smartOnly
@@ -1253,9 +1050,8 @@ structure HopRead where
   got : String
   routes : Array String
 
-/-- The hop's judge, pure: the external reader's HTML for a text, the door's
-reading of the same text, and whether the text is the twin of an example the
-door already reads otherwise. -/
+/-- The hop's judge, pure: the external reader's HTML for a text, the door's reading of
+it, and whether the text is the twin of an example the door already reads otherwise. -/
 def hopRead (md html : String) (classified : Bool := false) : HopRead :=
   let breakSpace (s : String) :=
     ((s.replace " <br>" "<br>").replace " <ul>" "<ul>").replace " <ol>" "<ol>"
@@ -1275,8 +1071,7 @@ def hopRead (md html : String) (classified : Bool := false) : HopRead :=
 def hopJudge (md html : String) (classified : Bool := false) : Hop :=
   (hopRead md html classified).verdict
 
-/-- Where two canonical trees first part, with a little context either
-side: what the report prints for a hop nothing accounts for. -/
+/-- Where two canonical trees first part, with context either side. -/
 def partAt (a b : String) : String × String := Id.run do
   let xs := a.toList.toArray
   let ys := b.toList.toArray
@@ -1285,18 +1080,14 @@ def partAt (a b : String) : String × String := Id.run do
   let cut (zs : Array Char) := String.ofList (zs.extract (i - min i 40) (i + 60)).toList
   return (cut xs, cut ys)
 
-/-- The external reader the report runs: pandoc's CommonMark reader, strict
-CommonMark with no extension, through its HTML writer with highlighting off
-and tabs kept as the text holds them (pandoc's readers otherwise expand
-them). A premise about a tool is checked with one. -/
+/-- The external reader the report runs: pandoc's strict CommonMark reader through its
+HTML writer, highlighting off and tabs kept. -/
 def hopTool : String := "pandoc"
 def hopArgs (file : String) : Array String :=
   #["-f", "commonmark", "-t", "html", "--syntax-highlighting=none", "--preserve-tabs", file]
 
-/-- Every twin the report reads, with the example it is the twin of: each
-corpus document's, elaborated as the driver elaborates it
-(`corpusTwinDocs`), and each CommonMark example's the door accepts, read
-back from the document the example elaborates to. -/
+/-- Every twin the report reads, with the example it is the twin of: each corpus
+document's and each accepted CommonMark example's. -/
 def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat)) := do
   let mut out : Array (String × String × Option Nat) := #[]
   for (p, d) in ← corpusTwinDocs do
@@ -1310,8 +1101,8 @@ def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat))
 
 mutual
 
-/-- The rows of every table a page holds, in document order, each the text
-of its cells, markup dropped. -/
+/-- The rows of every table a page holds, in document order, each the text of its cells.
+-/
 def tableRowsOf (acc : Array (Array String)) (n : Html.Node) : Array (Array String) :=
   match n with
   | .elem "tr" _ kids =>
@@ -1325,15 +1116,13 @@ def tableRowsOfList (acc : Array (Array String)) : List Html.Node → Array (Arr
 
 end
 
-/-- A cell's text, compared: the door's typographic punctuation read back
-(`unsmarten`) and its white space one space. -/
+/-- A cell's text, compared: typographic punctuation read back and white space one space.
+-/
 def cellKey (s : String) : String :=
   " ".intercalate (((unsmarten s).splitOn " ").filter (!·.isEmpty))
 
-/-- The twin's own top-level tables as the door reads them: each row it
-writes read by GFM's row grammar (`MarkdownDoc.gfmRow`), each cell through
-the door as a paragraph, its text — the delimiter row, the second line of
-each table, left out. -/
+/-- The twin's own top-level tables as the door reads them, each row by GFM's row grammar
+(`MarkdownDoc.gfmRow`), the delimiter row left out. -/
 def twinTableRows (twin : String) : Array (Array String) := Id.run do
   let mut out : Array (Array String) := #[]
   let mut inTable := 0
@@ -1348,16 +1137,13 @@ def twinTableRows (twin : String) : Array (Array String) := Id.run do
     else inTable := 0
   return out
 
-/-- The table pass's reader: CommonMark with GFM's pipe tables and nothing
-else, so the tables are the one difference from the hop's own reader. -/
+/-- The table pass's reader: CommonMark with GFM's pipe tables and nothing else. -/
 def hopTableArgs (file : String) : Array String :=
   #["-f", "commonmark+pipe_tables", "-t", "html", "--syntax-highlighting=none",
     "--preserve-tabs", file]
 
-/-- The twin's pipe tables through an external GFM table reader: every
-twin that writes one, its rows as that reader reads them against the rows
-`MarkdownDoc.gfmRow` and the door read — the model `rowLine_cells_exact`
-is stated against, held to a reader. A report, like the hop. -/
+/-- The twin's pipe tables through an external GFM table reader, against the rows
+`MarkdownDoc.gfmRow` and the door read; a report. -/
 def readerHopTables (twins : Array (String × String × Option Nat)) : IO Unit := do
   let tabled := twins.filter fun (_, twin, _) => (twin.splitOn "\n").any (·.startsWith "|")
   let results ← IO.FS.withTempDir fun dir => do
@@ -1385,10 +1171,8 @@ table read; {agree.size} read as the twin's rows read"
   let failed := results.size - ran.size
   if failed > 0 then IO.println s!"  {failed} twins the tool did not read"
 
-/-- The reader hop, reported: `MarkdownDoc`'s external premise — a
-CommonMark reader parses every spelling the twin writes as the markdown door
-does — measured over every twin `hopTwins` reads, against the committed
-verdicts. A report, never a gate: it needs the tool, and its exit says only
+/-- The reader hop, reported: whether a CommonMark reader parses every spelling the twin
+writes as the markdown door does, against the committed verdicts; its exit says only
 whether the tool ran. -/
 def readerHop (exs : Array Example) (rows : Array Row) : IO UInt32 := do
   let twins ← hopTwins exs
@@ -1419,8 +1203,7 @@ the door already reads otherwise; {count .differ} differ unaccounted"
       IO.println s!"  named loss: {name} {r.routes.toList}"
   for (name, r) in ran do
     if r.verdict == .classified then IO.println s!"  classified: {name}"
-  -- Where each unaccounted pair first parts once the door's typographic
-  -- punctuation is read back, so the difference shown is never only that.
+  -- Where each unaccounted pair first parts once typographic punctuation is read back.
   for (name, r) in ran do
     if r.verdict == .differ then
       let (w, g) := partAt (unsmarten r.want) (unsmarten r.got)
@@ -1429,8 +1212,6 @@ the door already reads otherwise; {count .differ} differ unaccounted"
   if failed > 0 then IO.println s!"  {failed} twins the tool did not read"
   readerHopTables twins
   return 0
-
--- ## The modes
 
 def keyOf (path : String) : IO String := do
   let bytes ← IO.FS.readBinFile path
@@ -1442,9 +1223,7 @@ def counts (rows : Array Row) : Nat × Nat × Nat × Nat :=
    (rows.filter (·.verdict == .divergence)).size,
    (rows.filter (·.verdict == .owed)).size)
 
-/-- Every case through `classify`, once. The rows are the committed verdicts;
-the judged values carry what the reports and the reviewed-list check read,
-so nothing reruns the engine. -/
+/-- Every case through `classify`, once. -/
 def classifyAll (exs : Array Example) (reviewed : Array (Nat × String))
     (divs : List (Nat × String) := divergences) :
     Array Row × Array Judged := Id.run do
@@ -1456,9 +1235,8 @@ def classifyAll (exs : Array Example) (reviewed : Array (Nat × String))
     js := js.push j
   return (rows, js)
 
-/-- The reviewed list read in its other direction: a row naming a case whose
-run no longer raises that refusal is stale, and fails — a reviewed list that
-may lag the reader is a list that can certify anything. -/
+/-- The reviewed list read in its other direction: a row naming a case whose run no longer
+raises that refusal is stale. -/
 def staleReviewed (exs : Array Example) (js : Array Judged)
     (reviewed : Array (Nat × String)) : Array String := Id.run do
   let mut out : Array String := #[]
@@ -1493,18 +1271,16 @@ def tierProvenance (exs : Array Example) (rows : Array Row) (gfmExs : Array Exam
 def gfmTierRows (exs : Array Example) (rows : Array Row) : Array Scoreboard.Row :=
   (tierRows exs rows).map fun r => { r with item := gfmItem r.item }
 
-/-- The three strict classes, and how many spec cases each one touches:
-read off the subject each refusal carried, not asserted — with how many of
-those refusals were corroborated. -/
+/-- The three strict classes and how many spec cases each touches, read off each refusal's
+subject, with how many were corroborated. -/
 def strictTouch (js : Array Judged) : Array (String × Nat × Nat) :=
   (strictSubjects.map fun s =>
     let touched := js.filter (·.refusals.any (·.1.subject == s))
     let corr := touched.filter (·.refusals.all (fun (r, ok) => r.subject != s || ok))
     (s, touched.size, corr.size)).toArray
 
-/-- Which spec cases each IR gap blocks: the `owed` cases whose trees agree
-once exactly the gaps their run named are hidden. The verdict rows an IR gap
-owes, read back from the table. -/
+/-- Which spec cases each IR gap blocks: the `owed` cases whose trees agree once exactly
+the gaps their run named are hidden. -/
 def gapReport (rows : Array Row) : Array (String × Array Nat) :=
   (gapSubjects ++ ["W0110"]).toArray.filterMap fun g =>
     let ids := (rows.filter fun r =>
@@ -1513,8 +1289,7 @@ def gapReport (rows : Array Row) : Array (String × Array Nat) :=
 
 def selftest : IO UInt32 := do
   let mut bad : Array String := #[]
-  -- A comparison *records* its finding. Written to print it instead, this
-  -- helper reported a real mismatch and the run still said `ok`.
+  -- A comparison records its finding.
   let check (name got want : String) : Option String :=
     if got == want then none else some s!"{name}: got {got}, want {want}"
   let fence := String.ofList (List.replicate 32 '`')
@@ -1528,24 +1303,20 @@ def selftest : IO UInt32 := do
     unless e.md == "\tfoo\n" do bad := bad.push "reader: tab not restored"
     unless e.html == "<pre><code>foo\n</code></pre>\n" do
       bad := bad.push s!"reader: html '{e.html}'"
-  -- A `## ` line inside an example is the spec documenting ATX headings,
-  -- not a section heading.
+  -- A `## ` line inside an example is not a section heading.
   let sample2 := "## Real\n\n" ++ fence ++ " example\n## not a section\n.\n<h2>x</h2>\n"
     ++ fence ++ "\n"
   if let some e := (readExamples sample2)[0]? then
     unless e.section_ == "Real" do
       bad := bad.push s!"reader: a heading inside an example became a section '{e.section_}'"
-  -- A GFM extension example names its extension after the word, and is an
-  -- example all the same, numbered in sequence with the others.
+  -- A GFM extension example names its extension and is numbered in sequence.
   let sample3 := "## Tables (extension)\n\n" ++ fence ++ " example\na\n.\n<p>a</p>\n" ++ fence
     ++ "\n" ++ fence ++ " example table\n| a |\n| - |\n.\n<table></table>\n" ++ fence ++ "\n"
   let exs3 := readExamples sample3
   unless exs3.size == 2 && (exs3[1]?.map (·.id)) == some 2
       && (exs3[1]?.map (·.section_)) == some "Tables (extension)" do
     bad := bad.push s!"reader: a tagged extension example was not read in sequence ({exs3.size} read)"
-  -- The HTML reader and the canonical form. Every declared normalization is
-  -- broken once here in both directions: it hides the difference it
-  -- declares, and it does not hide the one next to it.
+  -- Every declared normalization broken once both ways: it hides its difference only.
   let cn (s : String) : String := canonList false "" (hParse s).toList
   let same (name a b : String) : Option String :=
     if cn a == cn b then none else some s!"{name}: '{cn a}' and '{cn b}' differ"
@@ -1556,7 +1327,6 @@ def selftest : IO UInt32 := do
      check "canon void" (cn "<p>a<br />b</p>") "<p>a<br>b</p>",
      check "canon entity" (cn "<p>&amp;&#65;</p>") "<p>&A</p>",
      check "canon void container" (cn "<p>a<br>b</p>") "<p>a<br>b</p>",
-     -- document chrome
      check "chrome: sections unwrap"
        (canonList false "" (unwrapList #[] (hParse "<section><p>a</p></section>").toList).toList)
        "<p>a</p>",
@@ -1580,7 +1350,6 @@ def selftest : IO UInt32 := do
        (cn "<code class=\"language-x numbered\">c</code>") "<code class=language-x>c</code>",
      differ "class: a missing language is a difference"
        "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>",
-     -- style
      same "style: dropped" "<a style=\"color: inherit\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
      differ "style: the element it sits on is still compared"
        "<a style=\"color: inherit\" href=\"u\">t</a>" "<a style=\"color: inherit\" href=\"v\">t</a>",
@@ -1608,7 +1377,6 @@ def selftest : IO UInt32 := do
        "<pre><code>a\n</code></pre>",
      differ "pre: a second trailing newline still differs"
        "<pre><code>a\n\n</code></pre>" "<pre><code>a\n</code></pre>",
-     -- attribute order
      same "attributes: order" "<img src=\"u\" alt=\"a\">" "<img alt=\"a\" src=\"u\">",
      differ "attributes: a value still differs" "<a href=\"u\">t</a>" "<a href=\"v\">t</a>",
      -- a table cell's alignment: one value whichever spelling carries it
@@ -1687,8 +1455,7 @@ def selftest : IO UInt32 := do
        "<table><tr><th scope=\"col\">a</th></tr></table>" "<table><tr><th>b</th></tr></table>"]
   for c in cs do
     if let some m := c then bad := bad.push m
-  -- Listing tokens may split text anywhere, including immediately after a
-  -- newline. Only the code block's final newline is normalized, once.
+  -- Tokens may split text anywhere; only the block's final newline is normalized.
   let code (kids : Array Html.Node) : String :=
     canon false (.elem "pre" #[] #[.elem "code" #[] kids])
   for (raw, want) in [("", ""), ("\n", ""), ("<\n >\n", "<\n >"),
@@ -1718,12 +1485,7 @@ def selftest : IO UInt32 := do
        ("textarea", "<textarea>a\n</textarea>", "<textarea>a\n</textarea>")] do
     if let some m := check s!"{name}: final newline is not the code-block normalization"
         (cn source) want then bad := bad.push m
-  -- The attribute table, broken row by row in both directions: each declared
-  -- drop hides its own attribute and neither the text nor a compared
-  -- attribute beside it; each attribute that decides whether content reaches
-  -- a reader is no row's, and is a difference on an element and on the
-  -- chrome the comparison unwraps. The filter once kept six attributes and
-  -- dropped every other in silence, `hidden` among them.
+  -- The attribute table broken row by row both ways; reader attributes always differ.
   for (a, _) in droppedAttrs do
     let v := if a == "class" then "x" else "0"
     for r in [same s!"{a}: dropped" s!"<p {a}=\"{v}\">t</p>" "<p>t</p>",
@@ -1751,8 +1513,7 @@ def selftest : IO UInt32 := do
     bad := bad.push "a style node was dropped from the comparison"
   if canonList false "" [Html.Node.script #[] "go()"] == "" then
     bad := bad.push "a script node was dropped from the comparison"
-  -- The gap normalizations, used only to attribute an owed case: each hides
-  -- its own gap's cost and nothing else.
+  -- The gap normalizations, each hiding its own gap's cost and nothing else.
   let cg (gaps : List String) (s : String) : String := canonGList gaps false false "" (hParse s).toList
   let gs : List (Option String) :=
     [check "gap hr" (cg ["md:thematic-break"] "<p>a</p><hr /><p>b</p>") (cg [] "<p>a</p><p>b</p>"),
@@ -1783,8 +1544,7 @@ def selftest : IO UInt32 := do
     bad := bad.push "gap link title: it hid the destination too"
   if cg ["md:thematic-break"] "<p>a</p>" == cg ["md:thematic-break"] "<p>b</p>" then
     bad := bad.push "gap hr: it hid a paragraph's text too"
-  -- Silence: a gap construct dropped with no route naming it is a fault,
-  -- and naming it is exactly what clears it — each rule broken once.
+  -- Silence: a gap construct dropped with no route naming it is a fault, and naming it clears it.
   let ink (s : String) : GapInk := gapInkList {} (hParse s).toList
   let sg (want got : String) (routes : Array String) : Array String :=
     silentGaps (ink want) (ink got) routes
@@ -1816,9 +1576,7 @@ def selftest : IO UInt32 := do
        (toString (sg "<h4>x</h4>" "<h4>x</h4>" #[]).toList) "[]"]
   for c in ss do
     if let some m := c then bad := bad.push m
-  -- The tier rows, in the scoreboard's own format: sorted, unique, two per
-  -- section, and every value an integer the shared ratchet reads. The old
-  -- rows were written in spec order, which the format faults.
+  -- The tier rows in the scoreboard's own format: sorted, unique, two per section, integer values.
   let fakeEx : Array Example :=
     #[{ id := 1, section_ := "B sec", md := "", html := "" },
       { id := 2, section_ := "A sec", md := "", html := "" },
@@ -1845,9 +1603,7 @@ def selftest : IO UInt32 := do
       bad := bad.push s!"verdict '{v.name}' does not round-trip"
   unless (Verdict.ofName? "nearly").isNone do
     bad := bad.push "an unknown verdict name was accepted"
-  -- Each verdict rule, broken once, against the pure judge. A normalization
-  -- that hides a real loss is how three cases read as `match` while the run
-  -- named the lost language, so the rules are mutated rather than trusted.
+  -- Each verdict rule broken once against the pure judge.
   let lossy := Diag.of .W0392 "m" (subject := some "md:list-start")
   let pending := Diag.of .W0307 "m" (subject := some "md:thematic-break")
   let optionLeak := Diag.of .W0110 "m"
@@ -1883,8 +1639,7 @@ def selftest : IO UInt32 := do
     bad := bad.push "judge: an uncorroborated refusal on agreeing trees was not owed"
   unless jv "\"q\"" "\u201cq\u201d" "" "" #[] #[] == (.owed, smartNote) do
     bad := bad.push "judge: a smart-punctuation-only difference lost its note"
-  -- Corroboration comes from the spec's expected HTML, never from the reader:
-  -- the refused text passes through verbatim, or it was not raw HTML.
+  -- Corroboration comes from the spec's expected HTML, never from the reader.
   let ex (md html : String) : Example := { id := 9, section_ := "S", md, html }
   unless refusedPrefix "a <b>x</b> c\n" 1 3 == "<b>" do
     bad := bad.push s!"prefix: '{refusedPrefix "a <b>x</b> c\n" 1 3}'"
@@ -1929,13 +1684,7 @@ def selftest : IO UInt32 := do
     (ex disclosureMd "<p><strong>Amber</strong></p><p>Cedar</p>")
   if expandedCase.verdict == .match_ then
     bad := bad.push "typed HTML: a disclosure matched its expanded bold spelling"
-  -- The HTML vocabulary, judged as a spec case is: a carried spelling
-  -- matches its page with nothing refused; one carrying an attribute the
-  -- vocabulary does not read is refused, and the spec's own passthrough
-  -- corroborates the refusal; an open disclosure matches its open element;
-  -- a refused disclosure is rejected and names no route. Every attribute
-  -- that decides whether content reaches a reader refuses both spellings
-  -- it could ride.
+  -- The HTML vocabulary judged as a spec case: carried spellings match, refusals corroborate.
   let brCase := classify #[] (ex "Alder<br>Birch\n" "<p>Alder<br>Birch</p>\n")
   unless brCase.verdict == .match_ && brCase.refusals.isEmpty do
     bad := bad.push "vocabulary: a carried <br> did not match its page"
@@ -1992,8 +1741,7 @@ def selftest : IO UInt32 := do
     unless rs.size == 2 do bad := bad.push s!"verdict table: {rs.size} rows, want 2"
   if (parseVerdicts "1\tSec\tnearly\n").toOption.isSome then
     bad := bad.push "verdict table: an unknown verdict parsed"
-  -- The two doors: a case they read alike, and a planted door that drops a
-  -- block on either side of the comparison, which it must see.
+  -- The two doors: a case they read alike, and a planted door that drops a block on either side.
   let dropsBlock : String → Ir.Doc × Array Diag := fun src =>
     let (d, ds) := caseAlone src
     ({ d with body := d.body.pop }, ds)
@@ -2005,16 +1753,14 @@ def selftest : IO UInt32 := do
     bad := bad.push "doors: a planted included door that drops a block was not seen"
   if doorsAgree caseIncluded caseAloneInHost dropsBlock "*a* b\n\n- c\n" then
     bad := bad.push "doors: a planted standalone door that drops a block was not seen"
-  -- The reader hop's judge, without the tool: an external reading it agrees
-  -- with, one that reads emphasis as text, and one that keeps straight quotes.
+  -- The reader hop's judge, without the tool.
   unless hopJudge "*a* b\n" "<p><em>a</em> b</p>\n" == .agree do
     bad := bad.push "reader hop: an external reading of the door's own tree was not agreed"
   unless hopJudge "*a* b\n" "<p>*a* b</p>\n" == .differ do
     bad := bad.push "reader hop: an external reading that lost emphasis was agreed"
   unless hopJudge "say \"hi\"\n" "<p>say &quot;hi&quot;</p>\n" == .smartOnly do
     bad := bad.push "reader hop: straight quotes against the door's curly ones were not told apart"
-  -- Each of pandoc's writer conventions read through, and the difference
-  -- beside it still seen.
+  -- Each of pandoc's writer conventions read through, and the difference beside it still seen.
   for (what, md, html, want) in [
       ("ordered type", "1. a\n", "<ol type=\"1\">\n<li>a</li>\n</ol>\n", Hop.agree),
       ("ordered type, another start", "1. a\n", "<ol start=\"2\" type=\"1\">\n<li>a</li>\n</ol>\n", .differ),
@@ -2077,8 +1823,8 @@ def printStrict (js : Array Judged) : IO Unit := do
   for (s, n, c) in strictTouch js do
     IO.println s!"  strict class {s}: {n} cases, {c} with every such refusal corroborated"
 
-/-- The committed inputs every mode reads: the vendored spec, gated on its
-content key, and the reviewed list. -/
+/-- The committed inputs every mode reads: the vendored spec, gated on its content key,
+and the reviewed list. -/
 def loadInputs : IO (Except String (Array Example × Array (Nat × String))) := do
   unless ← System.FilePath.pathExists specPath do
     return .error s!"commonmark: {specPath} is missing"
@@ -2104,9 +1850,8 @@ def loadGfm : IO (Except String (Array Example)) := do
     return .error s!"commonmark: read {exs.size} '{gfmSection}' examples, expected {gfmCases}"
   return .ok exs
 
-/-- A committed verdict table against this run's rows, in both directions:
-a case with no committed verdict, a verdict or note that moved, and a
-committed case the spec no longer holds. -/
+/-- A committed verdict table against this run's rows, both ways: a case with no committed
+verdict, a moved verdict or note, a committed case the spec no longer holds. -/
 def verdictFindings (path : String) (rows : Array Row) : IO (Except String (Array String)) := do
   unless ← System.FilePath.pathExists path do
     return .error s!"commonmark: {path} is missing; regenerate it"
@@ -2121,10 +1866,7 @@ def verdictFindings (path : String) (rows : Array Row) : IO (Except String (Arra
       unless c.verdict == r.verdict do
         bad := bad.push
           s!"{path}: case {r.id} ({r.section_}): {r.verdict.name}, committed {c.verdict.name}"
-      -- The note is part of the verdict, checked in both directions: a
-      -- case parked on a pending dialect decision or on a named loss must
-      -- not quietly become a `match`, and a case must not acquire a note
-      -- nobody reviewed.
+      -- The note is part of the verdict, checked both ways.
       unless c.note == r.note do
         bad := bad.push
           s!"{path}: case {r.id} ({r.section_}): note '{r.note}', committed '{c.note}'"
@@ -2133,10 +1875,8 @@ def verdictFindings (path : String) (rows : Array Row) : IO (Except String (Arra
       bad := bad.push s!"{path}: committed case {c.id} is not in the spec"
   return .ok bad
 
-/-- The three tier modes, shared with every other tier through
-`Scoreboard.tierMain`, plus the verdict table this tier owns. Regeneration
-writes the verdict table only after the tier was written: when the tier
-refuses a fall no `# lowered:` line authorises, neither file changes. -/
+/-- The three tier modes through `Scoreboard.tierMain`, plus the verdict table this tier
+owns, written only after the tier was. -/
 def run (args : List String) : IO UInt32 := do
   let (exs, reviewed) ← match ← loadInputs with
     | .ok v => pure v
@@ -2144,8 +1884,7 @@ def run (args : List String) : IO UInt32 := do
   let gfmExs ← match ← loadGfm with
     | .ok v => pure v
     | .error e => return ← die 1 e
-  -- The two markdown doors read every case alike, before any case is
-  -- judged: a verdict must not depend on which door read the case.
+  -- The two markdown doors read every case alike before any case is judged.
   let split := (exs ++ gfmExs).filter fun ex =>
     !(doorsAgree caseIncluded caseAloneInHost caseAlone ex.md &&
       doorsAgree caseIncludedSpaced caseAloneInHost caseAlone ex.md)
@@ -2155,19 +1894,13 @@ def run (args : List String) : IO UInt32 := do
     return ← die 1 s!"commonmark: {split.size} cases read differently through the two doors"
   let t0 ← IO.monoMsNow
   let (rows, js) := classifyAll exs reviewed
-  -- The reviewed list is keyed by CommonMark case numbers, so a GFM case
-  -- reads none: a strict refusal there is corroborated by the expected HTML
-  -- or not at all.
+  -- The reviewed list holds CommonMark cases only, so a GFM refusal needs the expected HTML.
   let (gfmRows, gfmJs) := classifyAll gfmExs #[] gfmDivergences
   let ms := (← IO.monoMsNow) - t0
-  -- The reviewed list in its other direction, in every mode: a stale row is
-  -- a fault, never a note.
+  -- A stale reviewed row is a fault in every mode.
   let stale := staleReviewed exs js reviewed
   for s in stale do IO.eprintln s!"commonmark: {s}"
-  -- Silence, in every mode: a gap construct the expected page carries and
-  -- the engine's page drops unnamed is a reader defect, never a verdict.
-  -- Reported beside the stale rows rather than after them, so one run
-  -- names every fault.
+  -- Silence is a fault in every mode, reported beside the stale rows.
   let silent := ((exs.zip js) ++ (gfmExs.zip gfmJs)).filter (!·.2.silent.isEmpty)
   for (e, j) in silent do
     IO.eprintln s!"commonmark: case {e.id} ({e.section_}) drops {j.silent.toList} and names nothing"
@@ -2207,9 +1940,9 @@ def run (args : List String) : IO UInt32 := do
   IO.println s!"commonmark: wrote {verdictPath}, {gfmVerdictPath} and {tierPath} ({ms} ms)"
   return 0
 
-/-- One case's judgement in full: the two canonical forms, the refusals with
-where the reader put them and whether anything outside the reader agrees,
-the routes, and the diagnostics. -/
+/-- One case's judgement in full: the two canonical forms, the refusals with where the
+reader put them and whether anything outside the reader agrees, the routes and the
+diagnostics. -/
 def explainOne (ex : Example) (j : Judged) : IO Unit := do
   IO.println s!"case {ex.id} ({ex.section_}): {j.verdict.name}\
 {if j.note.isEmpty then "" else "  [" ++ j.note ++ "]"}"
@@ -2222,25 +1955,9 @@ def explainOne (ex : Example) (j : Judged) : IO Unit := do
 {if ok then "corroborated" else "NOT corroborated"}{if r.subject == "md:raw-html" then " by '" ++ p ++ "'" else ""}"
   unless j.routes.isEmpty do IO.println s!"  routes {j.routes.toList}"
 
-/-- **Scaling as a gate.** Every shape runs at 1×, 2× and 4× of a base size,
-and a doubling of the input may not more than `scalingBound` the time. The
-inline phase was quadratic — 3.8× per doubling, 31.8 s for one 64 KB
-paragraph of `*a*` against 0.9 s for the same content as tex — and nothing
-noticed, because the spec's one-construct examples are all a few bytes
-long. The first version of this gate then measured only matched shapes at
-4–16 KB, and seven quadratic scans sat outside it: unclosed `<!--` took
-133 s at 78 KB.
-
-So the shapes start from cmark's own pathological suite
-(`test/pathological_tests.py`), plus block-phase shapes, at sizes where a
-quadratic term outweighs the constant. The reader phase is timed twice per
-size and the minimum kept; the whole path once. Two phases: the reader and
-its desugaring alone (`Md.read`), which this gate owns and fails on, and the
-whole path through the elaborator and the HTML backend, which it reports —
-a whole-path non-linearity with a linear reader belongs to another module.
-
-Not in `lake test`: it measures wall-clock on a shared host, so it is a deep
-oracle run when the reader is touched, like `kp-fuzz` for line breaking. -/
+/-- The largest time ratio a doubling of input may cost, over cmark's pathological shapes
+and block-phase shapes at 1×, 2× and 4× of `scalingBase`, outside `lake test`; the reader
+phase gates, the whole path reports. -/
 def scalingBound : Float := 2.6
 
 /-- The base size, in bytes, of every shape's 1× document. -/
@@ -2287,8 +2004,7 @@ def deepListTo (bytes : Nat) : String := Id.run do
     k := k + 1
   return s
 
-/-- The shapes, each a function of the target size in bytes. The inline
-shapes are one paragraph each; the pathological ones are cmark's. -/
+/-- The shapes, each a function of the target size in bytes. -/
 def scalingShapes : List (String × (Nat → String)) :=
   [("emphasis", repeatTo "*a* "), ("code spans", repeatTo "`a` "),
    ("links", repeatTo "[a](b) "), ("nested brackets", repeatTo "[[a]] "),
@@ -2325,22 +2041,19 @@ def scalingShapes : List (String × (Nat → String)) :=
    ("many list items", repeatTo "- a\n"),
    ("many quote lines", repeatTo "> a\n"),
    ("many headings", fun n => Id.run do
-      -- Distinct titles: identical ones measure the HTML backend's anchor
-      -- claim, which probes `a`, `a-2`, … per heading.
+      -- Distinct titles, since identical ones measure the HTML backend's anchor claim.
       let mut s := ""
       for k in [0:n / 8 + 1] do s := s ++ s!"# a{k}\n"
       return s),
    ("many fences", repeatTo "```\na\n```\n"),
    ("many paragraphs", repeatTo "a\n\n"),
-   -- GFM tables: one table's rows, many tables, and delimiter rows that
-   -- each fail their header and stay text
+   -- GFM tables: one table's rows, many tables, and delimiter rows that stay text.
    ("table rows", fun n => "| a | b |\n| - | - |\n" ++ repeatTo "| c `d` | e |\n" n),
    ("many tables", repeatTo "| a |\n| - |\n| b |\n\n"),
    ("failing delimiter rows", fun n => "a | b | c\n" ++ repeatTo "-|-\n" n)]
 
-/-- The minimum of `runs` timings of `f` on the document an `IO.Ref` holds,
-in nanoseconds. Read through the ref after the clock starts, so the work
-cannot be hoisted out of the timed region. -/
+/-- The minimum of `runs` timings of `f`, in nanoseconds, the document read through a ref
+after the clock starts so the work cannot be hoisted. -/
 def timeMin (src : String) (f : String → Nat) (runs : Nat := 2) : IO Nat := do
   let ref ← IO.mkRef src
   let mut best : Nat := 0
@@ -2374,8 +2087,7 @@ def scaling (only : String) : IO UInt32 := do
     IO.println s!"  {name}: reader {ms rt 0}/{ms rt 1}/{ms rt 2} ms ({r12}, {r24}); \
 whole {ms wt 0}/{ms wt 1}/{ms wt 2} ms ({w12}, {w24})"
     (← IO.getStdout).flush
-    -- A sub-2 ms denominator is noise, not a measurement: only judge a
-    -- ratio whose denominator is large enough to mean something.
+    -- A sub-2 ms denominator is noise, so only a large enough one is judged.
     let judge (phase : String) (t : Array Nat) (a b : Float) : Array String := Id.run do
       let mut out : Array String := #[]
       if (t[0]?).getD 0 ≥ 2000000 && a > scalingBound then
@@ -2399,8 +2111,7 @@ def main (argv : List String) : IO UInt32 := do
   | ["--scaling", only] => scaling only
   | ["--check"] => run ["--check"]
   | ["--explain", idS] =>
-    -- Why one case earned its verdict. A report mode, not a gate — it
-    -- writes nothing.
+    -- Why one case earned its verdict; writes nothing.
     let some id := idS.toNat? | return ← die 2 "commonmark: --explain needs a case number"
     let (exs, reviewed) ← match ← loadInputs with
       | .ok v => pure v
@@ -2425,8 +2136,7 @@ def main (argv : List String) : IO UInt32 := do
         | some sp => s!" @{sp.pos.line}:{sp.pos.col}" | none => ""}"
     return 0
   | ["--audit"] =>
-    -- Every case a strict refusal or a route touches, explained: what a
-    -- human reviewing the strict list reads. A report mode; writes nothing.
+    -- Every case a strict refusal or a route touches, explained; writes nothing.
     let (exs, reviewed) ← match ← loadInputs with
       | .ok v => pure v
       | .error e => return ← die 1 e
@@ -2435,7 +2145,7 @@ def main (argv : List String) : IO UInt32 := do
       unless j.refusals.isEmpty && j.routes.isEmpty do explainOne ex j
     return 0
   | ["--reader-hop"] =>
-    -- The twin through an external reader. A report mode; writes nothing.
+    -- The twin through an external reader; writes nothing.
     let (exs, _) ← match ← loadInputs with
       | .ok v => pure v
       | .error e => return ← die 1 e

@@ -73,9 +73,8 @@ structure Ui where
   errStream : IO.FS.Stream
   outStream : IO.FS.Stream
   showOutput : Bool := false
-  /-- Whether the summary states the process's peak: a plain run's process
-  did nothing else, and a watcher's rebuild has one only where its start reset
-  the peak. -/
+  /-- Whether the summary states the process's peak, which a watcher's rebuild has only
+  where its start reset it. -/
   statesPeak : Bool := true
 
 def Ui.mk' (cfg : Config) : IO Ui := do
@@ -89,20 +88,17 @@ def Ui.mk' (cfg : Config) : IO Ui := do
       pure (!noColor && tty)
   return ⟨cfg, color, errStream, ← IO.getStdout, false, true⟩
 
-/-- The sole terminal sink for document diagnostics: keep Diag values from
-DriverDiag and other producers structured through resolution, and render only
-when writing the chosen stream. The pre-commit rule rejects print bypasses. -/
+/-- The sole terminal sink for document diagnostics, rendering a `Diag` only as it writes
+the chosen stream. -/
 def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainDiag d)
   else if d.severity != .note || ui.cfg.verbosity ≥ 1 then
     ui.errStream.putStrLn (Render.human ui.color d (showOutput := ui.showOutput))
 
-/-- Resolve and print one phase against the document's acceptance
-(`\allow` and `--best-effort`). Return its accounting without retaining
-already-emitted messages. Each wording of a loss repeated in the phase prints
-once, its first warning carrying the wording's count and every later one a
-note (`Diag.foldRepeats`); porcelain keeps every site. -/
+/-- Resolve and print one phase against the document's acceptance (`\allow`,
+`--best-effort`), each repeated wording printed once with its count; porcelain keeps every
+site. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
   let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
@@ -119,10 +115,8 @@ def tally (xs : Array String) : List (String × Nat) := Id.run do
     | none => out := out.push (x, 1)
   return out.toList
 
-/-- Acceptance is visible, never ambient: whenever any loss was accepted,
-the line prints — under `-q` too, because an accepted error is exactly the
-thing quiet mode must not hide. It counts losses, each census loss once
-(`Diag.acceptedLosses`), however many sites accepted it. -/
+/-- The accepted-loss line, printed whenever a loss was accepted, under `-q` too, counting
+each census loss once. -/
 def Ui.accepted (ui : Ui) (accepted : Array Diag.Accepted) : IO Unit := do
   if accepted.isEmpty then return
   let counts := tally (Diag.acceptedLosses accepted)
@@ -138,9 +132,8 @@ def Ui.phase (ui : Ui) (name detail : String) (ms : Nat) : IO Unit := do
     else
       ui.errStream.putStrLn (Render.humanPhase name detail ms)
 
-/-- The `font` phase. Its porcelain record also names, as typed fields, the
-face files the settled font set loaded and how many faces its scan found: a
-report holds a build to those, where the detail is prose. -/
+/-- The `font` phase; its porcelain record also names the loaded face files and how many
+faces the scan found. -/
 def Ui.fontPhase (ui : Ui) (names : String) (paths : Array String) (scanned ms : Nat) :
     IO Unit := do
   let detail := s!"{names} ({", ".intercalate paths.toList})"
@@ -148,15 +141,13 @@ def Ui.fontPhase (ui : Ui) (names : String) (paths : Array String) (scanned ms :
     ui.outStream.putStrLn (Render.porcelainFontPhase detail ms paths scanned)
   else ui.phase "font" detail ms
 
-/-- The most memory the process held resident while this build ran. A
-watcher's earlier builds count too, for what they left resident: the process
-keeps memory it has freed. -/
+/-- The most memory the process held resident while this build ran, a watcher's earlier
+builds included. -/
 def Ui.peak (ui : Ui) : IO (Option Nat) :=
   if ui.statesPeak then RunCost.peakKiB else pure none
 
-/-- A summary ends a run's records, so it is flushed as it is written: under
-`--watch` the process never exits, and a reader on a pipe saw no rebuild until
-the buffer filled. -/
+/-- A run's summary record, flushed as written, since under `--watch` the process never
+exits. -/
 def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) (written : Array String := #[]) :
     IO Unit := do
   if ui.cfg.porcelain then
@@ -175,8 +166,7 @@ def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0)
     let shown := if ui.cfg.verbosity ≥ 1 then 0 else notes
     ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms shown)
 
-/-- The --werror run verdict follows the written output. Keep its stream
-choice and quiet policy alongside the other UI writers. -/
+/-- The `--werror` verdict, after the written outputs. -/
 def Ui.werror (ui : Ui) (file : String) (warnings ms : Nat) : IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainWerror file warnings ms (← ui.peak))
@@ -184,15 +174,12 @@ def Ui.werror (ui : Ui) (file : String) (warnings ms : Nat) : IO Unit := do
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)
 
-/-- The font directories of the TeX distribution on `PATH`
-(`TexFontTrees.roots`), so a font TeX has rarely needs `--font-dir`; finding
-them starts no process (`TexFontTrees.roots_runless_exact`). -/
+/-- The font directories of the TeX distribution on `PATH`, found without starting a
+process. -/
 def texFontDirs : IO (List String) := TexFontTrees.hostRoots
 
-/-- Which directories to look in, and what is there. The document's own
-`\fonts{ dir = ... }` outranks the host; both are preamble facts, so this
-answer serves the provisional assembly and the final one alike — and the
-driver re-scans only where the two disagree about the directories. -/
+/-- Which directories to look in and what is there, the document's `\fonts{ dir = ... }`
+before the host's. -/
 def scanFaces (ui : Ui) (file : String) (spec : Ir.FontSpec)
     (announce : Bool := true) : IO FaceScan := do
   let (docDirs, dirDiags) ← FontEnv.resolveDocDirs file spec.dirs
@@ -206,13 +193,8 @@ def scanFaces (ui : Ui) (file : String) (spec : Ir.FontSpec)
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
-/-- Where the markdown twin is written: `outPath`, unless the document
-declared its served name (`\output{ md = "llms.txt" }`) — the declared
-name, read lexically from the same directory (`PublicationPaths.placed`),
-replaces the stem-derived one, and the HTML head's alternate link names
-that file from the page (`twinHref`), so the two cannot drift apart. An
-explicit `-o twin.md` file still wins: the command line outranks the
-document. -/
+/-- Where the markdown twin is written: `outPath`, or the name the document declares
+(`\output{ md = ... }`) read from the same directory; an explicit `-o` file still wins. -/
 def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
     (declared : Option String) : String :=
   let base := outPath output outputIsDir source .md
@@ -222,21 +204,15 @@ def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
     else PublicationPaths.placed ((System.FilePath.mk base).parent.getD ".").toString name
   | none => base
 
-/-- The markdown twin's link from the page, a function of the document
-alone, as every artifact is (`artifact_flag_free`): the declared name read
-from the page's directory, where `mdOutPath` places it
-(`PublicationPaths.nameHref`), or the derived file's own name. None for a
-declared name the page cannot link: an absolute one, or one with no final
-file name. A run that writes both artifacts names no markdown file with
-`-o`, so the declared name is where its twin lands. -/
+/-- The markdown twin's link from the page: the declared name where the page can link it,
+or the derived file's own name. -/
 def twinHref (mdPath : String) (declared : Option String) : Option String :=
   match declared with
   | some name => PublicationPaths.nameHref name
   | none => (System.FilePath.mk mdPath).fileName.bind PublicationPaths.nameHref
 
 
-/-- One fulfilled boundary picture. Both artifacts read these captured
-bytes, independently of subsequent cache writes or scratch cleanup. -/
+/-- One fulfilled boundary picture, whose captured bytes both artifacts read. -/
 structure PicResult where
   src : String
   bytes : ByteArray
@@ -247,28 +223,17 @@ private structure PicAttempt where
   detail : String
   elapsed : Nat
 
-/-- Fulfil elaborated requests through `PictureAssets`, keeping captured
-results and diagnostics in source order (`Batch.plan_exact`). The scheduler
-excludes repeated keys within a batch (`Batch.plan_keys_nodup`); owned
-scratch and atomic cache publication also protect independent compiler runs.
-Unfinished attempts remain distinct from refusals, so machine failures
-cannot silently select the native subset's drawing. Also returns the path of
-every file a request staged, as the build read it. -/
+/-- Fulfil elaborated picture requests through `PictureAssets`, results and diagnostics in
+source order and unfinished attempts kept apart from refusals; also returns every file a
+request staged. -/
 def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) (faces : Ir.FontSpec := doc.fonts) :
     IO (Array PicResult × Array (String × Boundary.Undrawn) × Array String) := do
   let refs := Ir.pictureRefs doc faces
   if refs.isEmpty then return (#[], #[], #[])
-  -- **The page's faces never cost a picture its drawing.** Where they
-  -- changed a request, the document's own stands behind it, asked only
-  -- where the tool refused the faced one (`Boundary.ownRequest?`).
-  -- premise: boundaryFaceRetryChecks — a tool that refuses every request
-  -- naming a face draws the document's own, warm and cold, and is asked for
-  -- nothing more once both answers are remembered
+  -- The document's own request stands behind a faced one the tool refused (`Boundary.ownRequest?`).
+  -- premise: boundaryFaceRetryChecks — a refused faced request draws the document's own
   let own := Ir.pictureRefs doc
-  -- The files each request reads, staged beside its standalone
-  -- (`Boundary.requestInputs`); one the document's directory does not hold
-  -- is left for the tool to name.
   let dir := ((System.FilePath.mk file).parent.getD ".").toString
   let keyedRefs ← refs.mapM fun (id, wrapped) => do
     let ownWrapped := ((own.find? (·.1 == id)).map (·.2)).getD wrapped
@@ -289,17 +254,10 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
       IO PicAttempt := do
     let (id, wrapped, ownWrapped, inputs) := request
     let src := Ir.picSrcPrefix ++ id
-    -- The cache key is the *request* — the body wrapped with the design it
-    -- reads, and the bytes of the files it reads — so a palette or font
-    -- edit a picture mentions re-renders it and one it does not mention
-    -- leaves it warm (`Ir.paletteDecls_local_exact`); the id stays the
-    -- author's bytes.
+    -- Keyed by the request, its design and its inputs' bytes: only an edit it reads re-renders.
     let key := PictureAssets.key (PictureAssets.keyed wrapped inputs)
     match found with
     | .absent why =>
-      -- No tool: the cold decision is `Boundary.coldPicture`'s — an earlier
-      -- render of this request serves, and where none exists W0379 names
-      -- the loss it returns.
       let ownKey := PictureAssets.key (PictureAssets.keyed ownWrapped inputs)
       let earlier ← match picDir with
         | some dir => do
@@ -341,8 +299,7 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
           (if answer.cached then " (cached)" else "")
         elapsed := ← since t0
         undrawn := (Boundary.undrawnOf tool outcome (spanFor id) src).map (src, ·) }
-  -- Four TeX processes bound peak memory on a laptop; this changes
-  -- scheduling alone, never the request or its cache key.
+  -- Four TeX processes at once bound peak memory; scheduling never changes a request or its key.
   let attempts ← Batch.map 4 (fun (_, wrapped, _, inputs) =>
     PictureAssets.key (PictureAssets.keyed wrapped inputs)) fulfil keyedRefs
   let mut results := #[]
@@ -355,11 +312,8 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     inputs.map fun (cand, _) => Boundary.inputPath dir cand
   return (results, undrawn, staged)
 
-/-- A converter a lossy SVG may ask: given the canonical spelling of the
-native parse and whether the drawing depends on no font, its answer — a
-plan, or the attempt that drew nothing, as the attempt read it: its verdict
-or a run that did not finish (`Boundary.undrawn`) — or none where no tool is
-there to ask. -/
+/-- A converter a lossy SVG may ask: given the canonical spelling and whether the drawing
+is font-independent, a plan or the attempt that drew nothing, or none without a tool. -/
 public abbrev Converter := ByteArray → Bool → IO (Option (Except PicCache.Outcome Image.Plan))
 
 /-- A tool that is always there, answering as `run` answers. -/
@@ -367,41 +321,34 @@ public def Converter.always (run : ByteArray → Bool → IO (Except PicCache.Ou
     Converter :=
   fun b i => some <$> run b i
 
-/-- What the native SVG path decided for one source: the plan layout reads,
-the figure the engine draws (none where the converter drew it or nothing
-did), whether its source animates, and the diagnostics the route owes. -/
+/-- What the native SVG path decided for one source: the plan layout reads, the figure the
+engine draws, whether the source animates, and the diagnostics owed. -/
 public structure SvgFetch where
   res : Except String Image.Plan
   vector : Option (Gfx.Figure Gfx.Run) := none
-  /-- The drawn figure's rasters planned, one per raster in order: what the
-  PDF writer embeds for each (`FigureStore.slotRasters`). -/
+  /-- The drawn figure's raster plans, one per raster in order, which the PDF writer
+  embeds. -/
   plans : Array Image.Plan := #[]
   moving : Bool := false
   diags : Array Diag := #[]
   /-- The figure's own `<title>`, whichever route drew it. -/
   title : Option String := none
 
-/-- What the store keeps of a route's answer: the drawn figure, whether it
-moves, and its rasters' plans — the one spelling every caller attaches. -/
+/-- What the store keeps of a route's answer: the drawn figure, whether it moves, and its
+rasters' plans. -/
 public def SvgFetch.drawn (f : SvgFetch) : FigureStore.Drawn :=
   { vector := f.vector, moving := f.moving, plans := f.plans }
 
-/-- The plan a drawn figure stands under in the store: its box in CSS
-pixels at their own density — what a browser reports as the authored SVG's
-natural size — and no payload; layout reads the figure's own box
-(`Image.Loaded.size?`), the PDF writer the figure (`Pdf.docFigs`). -/
+/-- The plan a drawn figure stands under in the store: its box in CSS pixels at their own
+density, with no payload. -/
 public def vectorPlan (fig : Gfx.Figure Gfx.Run) : Image.Plan :=
   let w := fig.box.2.1 - fig.box.1.1
   let h := fig.box.2.2 - fig.box.1.2
   { pxW := HtmlDoc.cssPxOfSp w, pxH := HtmlDoc.cssPxOfSp h, dpiX := 96, dpiY := 96 }
 
-/-- **The SVG route** (`Boundary.route`): judged, posed, imported natively;
-an exact figure is the engine's drawing, a lossy one librsvg's when the
-document allows the converter and it draws, else the engine's with every
-loss named and the reason no converter drew it. `convert` is none exactly
-where the document refused the converter (`svgConverter`). A refusal of the
-judge never reaches a tool. The converter receives the canonical spelling
-of the native parse (`Xml.renderItem`), never the authored bytes. -/
+/-- The SVG route (`Boundary.route`): judged, posed and imported natively; a lossy figure
+goes to `convert` as its canonical spelling, never the authored bytes, and `convert` is
+none where the document refused the converter. -/
 public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelection) (lang : String)
     (convert : Option Converter) (params : Image.PlanParams := .default) : IO SvgFetch := do
   let terminal ← match ImageAssets.svgPosterAtEnd page with
@@ -413,14 +360,12 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let pose ← match SvgPoster.poseOf tree terminal with
     | .error why => return { res := .error why }
     | .ok t => pure t
-  -- Whether the figure moves is the authored tree's answer: the pose at the
-  -- end of its animation holds none, and the page still owes its still face.
+  -- Whether the figure moves is the authored tree's answer; a final pose holds no animation.
   let moving := Svg.moves tree
   let i := Svg.importTree pose lang
   let (fig, plans) := FigureStore.rasterPlans params i.fig
   let losses := fig.losses
-  -- What the import dropped with no ink of its own — a link — is named
-  -- once, whichever route draws the figure.
+  -- An inkless import note, such as a dropped link, is named once on any route.
   let notes := i.notes.map (FigureLoss.svgNoteDiag src)
   let native : SvgFetch :=
     { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title, diags := notes }
@@ -430,9 +375,7 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
     let owed := Boundary.svgRouteDiags moving src .refused losses (Boundary.route verdict .notAsked decl)
     let diags := notes ++ owed
     return { native with diags }
-  -- premise: Tests.svgRouteChecks — two builds differing only by the converter's
-  -- presence: a lossless figure ships one artifact and runs no tool; a lossy one
-  -- names every loss subject in both builds
+  -- premise: Tests.svgRouteChecks — converter presence never changes a lossless figure
   let answer ← match convert with
     | some run => run (Xml.renderItem pose) (!Svg.fontDependent pose)
     | none => pure none
@@ -440,8 +383,6 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
     | some (.ok _) => (.drew, .absent)
     | some (.error o) => (.failed (Boundary.undrawnWords o), Boundary.undrawn o)
     | none => (.failed "rsvg-convert is not on PATH", .absent)
-  -- The route decides what the figure owes (`Boundary.route_losses_exact`,
-  -- `svgRouteDiags_named`); the converter's drawing ships exactly when it drew.
   let route := Boundary.route verdict tool decl
   let owed := Boundary.svgRouteDiags moving src why losses route
   let diags := notes ++ owed
@@ -449,10 +390,8 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   | .tool, some (.ok plan) => return { res := .ok plan, moving, title := fig.title, diags }
   | _, _ => return { native with diags }
 
-/-- The converter a lossy SVG may ask, when the document allows it: `run`,
-asked only while `probe` says the host has it — and `probe` asked the
-first time a figure needs the converter, once, so a document whose figures
-all draw natively never probes the host. -/
+/-- The converter a lossy SVG may ask when the document allows it: `run`, while `probe`,
+asked once on first need, says the host has it. -/
 public def svgConverterWith (probe : IO Bool)
     (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan))
     (allowed : Bool) : IO (Option Converter) := do
@@ -473,16 +412,9 @@ public def svgConverter (params : Image.PlanParams) (allowed : Bool) : IO (Optio
   svgConverterWith (do return (← ToolProbe.onPath "rsvg-convert").isSome)
     (ImageAssets.canonicalPlan params) allowed
 
-/-- One image source's read — the effect half of `Image.fulfil`: a boundary
-picture's source (`Ir.picSrcPrefix`) is answered from the resolved
-boundary results, a path resolves against the document's own directory,
-like `\input`, then through graphicx's extension resolution (a deck says
-`figures/plot` and means the `figures/plot.png` beside it), and decodes in
-the pure core through the content-hash cache when the decode is the
-expensive kind. An SVG takes the native route (`svgFetch`), whose answer
-rides beside the fetch. Returns whether the cache answered, for the phase
-line, and the files it read or found standing where it read: what
-publication must not write over. -/
+/-- One image source's read, the effect half of `Image.fulfil`: a boundary picture from
+its results, a path beside the document through graphicx's extensions, an SVG through
+`svgFetch`; also whether the cache answered, and the files read. -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
     (refused : Array (String × Diag)) (params : Image.PlanParams) (lang : String)
     (convert : Option Converter)
@@ -524,8 +456,7 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
         return (.decoded href f.res (some bytes) none (some bytes) none, false, f, #[p.toString])
       else if req.page != .first || req.animated then
         let res := Image.decodeRequest params bytes req
-        -- An animation's companion SVG is read once, here, beside the PDF,
-        -- so preserving movement never rereads the file (`fulfilOne_bytes`).
+        -- An animation's companion SVG is read once, here, beside its PDF.
         let companion ← if req.animated then do
             match ← (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO with
             | .ok svg => pure (some (svg, p.withExtension "svg"))
@@ -540,20 +471,9 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
         let (res, fromCache) ← PlanCache.decodeCached cache params bytes
         return (.decoded href res none none (some bytes) none, fromCache, none', #[p.toString])
 
-/-- The image request an elaborated document states (`Ir.imageRequests`),
-fulfilled: the driver reads each source (`fetchImage`) and the pure core
-decides what each read means (`Image.fulfil`) — an entry with a payload,
-or a placeholder box with the diagnostic that names it (`fulfil_named`),
-one entry per requested source (`fulfil_covers`) — and every fact a plan
-did not carry is named after it (`Image.lossDiags`, W0603/W0604;
-`plan_losses_accounts` says the ledger is complete). The plan parameters
-are the defaults until a declaration projects them (the profile slices'
-one line). The `Nat` returned is the cache-hit count, for the phase line.
-Image diagnostics inherit the executed request span; located boundary
-refusals keep their own span. A drawn SVG's figure joins its entry
-(`FigureStore.attach`), its route's diagnostics at its request's span, and
-its own title is returned by source, for the alternative the document left
-undeclared. The files read come last. -/
+/-- The document's image requests fulfilled: each source read by `fetchImage` and judged
+by `Image.fulfil`, every unplanned fact named; also the cache-hit count, drawn SVGs'
+titles by source, and the files read. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
@@ -574,31 +494,24 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     svgs := svgs.push svg
   let (store, diags) := Image.fulfilRequests fetched
   let store := FigureStore.attach store (svgs.map fun f => some f.drawn)
-  -- A figure's route diagnostics are about its request: they stand at the
-  -- span the document names the source at, whatever their subject.
+  -- A figure's route diagnostics stand at the span the document names its source at.
   let diags := diags ++ (fetched.zip svgs).flatMap fun ((req, _), f) =>
     f.diags.map (DriverDiag.atImageRequest imageSpans req.src)
   let diags := (diags ++ PlanLoss.ledger store).map fun d =>
     match d.subject with
     | some src => DriverDiag.atImageRequest imageSpans src d
     | none => d
-  -- A loaded figure's own title, by the source spelling the document wrote.
   let titles := (store.entries.zip svgs).filterMap fun (en, f) =>
     if en.info.isSome then f.title.map (en.src, ·) else none
   return (store, diags, hits, titles, reads)
 
-/-- PDF sources receive a browser image of their selected page, converted
-from the bytes `fetchImage` already read — never a reread. A declared
-animation also looks for a readable, self-contained SVG beside that PDF:
-its SMIL stays intact in an image context, while print and reduced motion
-select the static poster. An absent or unusable companion leaves the PDF
-poster as the browser face. No generated script or inline XML is needed. -/
+/-- PDF sources' browser images of their selected page, converted from the bytes already
+read; a declared animation's self-contained companion SVG serves where usable. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
   return { imgs with entries := ← BrowserFaces.prepareAll imgs.entries }
 
-/-- `imageBrowserFaces`, with the diagnostics each face's route owes and the
-faces the engine drew itself (`PdfFaces.face`), under the document's
-refusal of the converter (`decl`). -/
+/-- `imageBrowserFaces` with each face's route diagnostics and the faces the engine drew
+itself, under the document's refusal `decl`. -/
 def imageBrowserFacesNative (imgs : Image.Store) (decl : Boundary.Refusal := .none)
     (door : Option PdfFaces.Door := none) :
     IO (Image.Store × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
@@ -609,19 +522,9 @@ def imageBrowserFacesNative (imgs : Image.Store) (decl : Boundary.Refusal := .no
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
-/-- Boundary pictures' browser faces, native first (`PdfFaces.face`): a
-picture whose import names no loss is drawn by the engine with no converter
-run; one whose import names a loss goes to the converter — its PDF converted
-to SVG and checked as publication checks it (`ImageAssets.validateSvgResult`)
-— and where the converter gives no face the check keeps, the engine's lossy
-drawing ships with each loss named. A picture nothing drew retains the existing named fallback
-— W0378 at the picture's span, and the rendered subset's drawing where it
-draws the picture in part; no output path is consulted. A picture the
-subset draws in part (`fallbacks`) whose only drawing the engine has lacks
-a font's text takes that path too: the subset sets the text in the
-document's faces, which the boundary's answer would otherwise ship without.
-Also returns the faces publication need not check again, and how each face
-was decided. -/
+/-- Boundary pictures' browser faces, native first (`PdfFaces.face`): a picture nothing
+drew keeps W0378 and the rendered subset's drawing where it draws it in part; also the
+faces publication need not check, and how each was decided. -/
 def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
     (imageSpans : Array (String × Span) := #[]) (fallbacks : Array String := #[])
     (decl : Boundary.Refusal := .none) (door : Option PdfFaces.Door := none) :
@@ -635,15 +538,12 @@ def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
   let door ← match door with
     | some d => pure d
     | none => PdfFaces.door
-  -- Pictures are read four at a time, never two of one content at once,
-  -- so the cache slot a picture writes is the one picture's.
+  -- Four at a time, never two of one content, so each cache slot has one writer.
   let faces ← Batch.map 4 (fun (r : PicResult) => Flate.contentKey r.bytes) (fun r =>
     PdfFaces.face r.src r.bytes .first (door (ImageAssets.picFaceAnswer r.bytes))
       ImageAssets.validateSvgResult (decl := decl) (cache := cache)) pics
   for (r, f) in pics.zip faces do
-    -- premise: nativeFigureBuildChecks — a textless answer for a picture the subset draws in
-    -- part ships the subset's drawing under W0378, and one the subset cannot draw keeps the
-    -- engine's drawing with its W0609
+    -- premise: nativeFigureBuildChecks — a textless face falls back to the subset's drawing
     let textless := f.route == .nativeWithLoss &&
       f.diags.any (fun d => d.subject.any (·.startsWith "figure:pdf:font:")) &&
       fallbacks.any (fun id => Ir.picSrcPrefix ++ id == r.src)
@@ -672,13 +572,8 @@ def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
   let (store, diags, unconverted, _, _) ← picsToSvgNative pics imgs imageSpans
   return (store, diags, unconverted)
 
-/-- **Elaborate, against whatever face the caller has.** Everything from the
-elaborator on is a function of the prepared source and one measurement
-(`Ir.Pic.LabelMetric`), which is why the driver can resolve a face *before*
-elaborating and still re-run this if that face turns out not to be the
-document's own. The measurement is a parameter, never a flag and never read
-from a config: the artifact stays a function of the document and the font
-environment (`artifact_flag_free`). -/
+/-- Elaborate against whatever label measurement the caller has, so the driver can
+elaborate again where it is not the document's own. -/
 def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     (earlier : Array Diag) (spliced : Array (String × Option String × Pos))
     (metric : Ir.Pic.LabelMetric) (phases : Bool := true)
@@ -688,18 +583,12 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
       IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
     let t ← IO.monoMsNow
     let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric withdrawn
-    -- N0020 says a `.sty` was read and how much of it took; its counts
-    -- are read off the elaborated diagnostics, so it is built after them.
-    -- A record from inside an `\input` wrapper names that file, not the
-    -- document: the `\RequirePackage` lives there.
+    -- N0020's counts are read off the elaborated diagnostics, so it is built after them.
     let elabDiags := elabDiags ++
       spliced.map fun (sty, src, pos) =>
         Compat.styRead (src.getD file) sty pos elabDiags
     if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     if phases then
-      -- The palette phase: the pairs the schemes this build ships judge —
-      -- the print column, and every scheme the page ships where a page is
-      -- built. Generation itself is the elaborator's, timed with it.
       let t := ← IO.monoMsNow
       let summary := if (ui.cfg.effectiveEmit doc.output.formats).contains .html then
           Contrast.pageSummary doc
@@ -711,20 +600,10 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
       (Bib.FieldDoor.of file prepared).read reqSpans.labels reqSpans.bib ledger
     unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
       ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
-    -- The unresolved-reference judge, over the document the backends read,
-    -- a list's entries with the body (`Bib.refJudge`): with the images
-    -- fulfilled below, this is the tail `pending_named` quantifies over.
     let refDiags := Bib.refJudge reqSpans doc
-    -- One accounting for the run's losses (`Bib.accountFront`): a loss the
-    -- reference list's fields raise at many sites counts with the body's
-    -- sites of it, and the bibliography, the last file a document reads,
-    -- lets the input encoding's one note name every file.
     return (doc, Bib.accountFront elabDiags bibDiags ledger.notes refDiags, reqSpans)
   let first ← pass prepared phases
-  -- A list whose fields set notes steps the footnote counter where it
-  -- stands, as LaTeX's reading of the `.bbl` there steps it: the document is
-  -- elaborated once more knowing how many (`Prepared.listNotes`), so a note
-  -- after the list numbers after the list's.
+  -- A reference list's notes step the footnote counter where it stands, as a `.bbl` does.
   let counts := first.1.listNotes.map (·.2)
   if !prepared.listNotes.isEmpty || counts.all (· == 0) then return first
   let t ← IO.monoMsNow
@@ -732,9 +611,8 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
   if phases then ui.phase "notes" s!"{counts.foldl (· + ·) 0} list notes" (← since t)
   return second
 
-/-- What the front end hands the driver: the document, and everything a
-second elaboration would need if the face this one was measured against
-turns out not to be the one the document settles on. -/
+/-- What the front end hands the driver: the document, and what a second elaboration needs
+if the measured face is not the settled one. -/
 structure Front where
   doc : Ir.Doc
   diags : Array Diag
@@ -752,31 +630,13 @@ structure Front where
   cache : FontEnv.Cache
   /-- The host's answer, taken once — absent where no face was needed yet. -/
   scan : Option FaceScan
-  /-- The measurement this document was elaborated against, where one was
-  resolved from the preamble. `none` means the source could draw no picture
-  the engine measures, so nothing was asked of a face. -/
+  /-- The measurement the document was elaborated against; `none` when the source draws no
+  measured picture. -/
   provisional : Option Ir.Pic.LabelMetric
 
-/-- Read and decode the file, then run the front end, reporting phases.
-
-**The font environment is resolved before elaboration where it can be.** A
-node's extent is a font question that the picture walk must answer while it
-places, so the measurement has to exist before the body is elaborated — and
-the environment that answers it is a function of the elaborated body, which
-is the circle. It is cut, not straightened: the *preamble* settles which
-families, sizes and page a face resolves from (`Elab.preambleDoc`), so a
-provisional environment exists before any body runs, and the driver checks
-afterwards whether the document's own environment would have measured any
-label differently (`Cli.FontFix.agree`). Where it would not — the common
-case, and the only case for a document whose picture labels set in the text
-face — one elaboration is the whole answer, and what licenses stopping there
-is `Cli.FontFix.extent_agree`: metrics that agree on a label's ink give that
-node the same extent, so the placement the walk computed is the placement
-this face determines. Where they differ, `build` elaborates again against the
-settled face, so the artifact is never the provisional one's. That the
-environment itself cannot depend on the metric — the whole-document fixed
-point — is owed, not proved; the gate that keeps it sound meanwhile is the
-check, not the claim. -/
+/-- Read and decode the file and run the front end, elaborating against a face resolved
+from the preamble alone; `build` elaborates again where the settled face would measure a
+label differently (`Cli.FontFix.agree`). -/
 def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   let t0 ← IO.monoMsNow
   let bytes ← match ← Input.readSource file with
@@ -789,17 +649,12 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   let src ← Input.readDocument file bytes ui.phase
   let earlier := src.diags
   let spliced := src.spliced
-  -- One rewrite, one boundary scan, one macro scan: two elaborations of
-  -- one document must read one source, or their agreement would be about
-  -- two (`Elab.prepareExecuted`).
+  -- Two elaborations of one document read one prepared source.
   let t ← IO.monoMsNow
   let prepared := Elab.prepareExecuted file src.executed
   ui.phase "prepare" s!"{prepared.raws.size} top-level nodes" (← since t)
   let cache ← FontEnv.Cache.mk'
-  -- Nothing is asked of a face until something might measure against it,
-  -- and a math slot only where a picture body sets a formula
-  -- (`Elab.picWants`): resolving one eagerly costs a MATH-table parse,
-  -- which is the most expensive face a document can load.
+  -- A face resolves only once something may measure against it; a math slot only for a formula.
   let wants := Elab.picWants prepared.raws
   let (scan, provisional) ← if !wants.draws then
       pure (none, none)
@@ -809,8 +664,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
       let t ← IO.monoMsNow
       match ← buildFontSet pre scan cache (.provisional wants.math) with
       | .error _ =>
-        -- A provisional face that will not resolve is not an error here:
-        -- the final assembly reports it, at the document's own spec.
+        -- An unresolvable provisional face is the final assembly's to report.
         pure (some scan, none)
       | .ok (fsPre, _, _, _) =>
         let m := Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre
@@ -819,10 +673,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   let (doc, diags, reqSpans) ←
     elaborate ui file prepared earlier spliced (provisional.getD (fun _ _ => {}))
       (ledger := src.ledger)
-  -- Discover through the elaborated document: package options, markdown,
-  -- macros and includes have already settled the language and source. The
-  -- provider returns data only; every later elaboration reuses this exact
-  -- snapshot, including font remeasurement and picture withdrawal.
+  -- Highlighting is discovered once; every later elaboration reuses this snapshot.
   let requests := LeanTex.Core.ListingReply.requests doc reqSpans.code
   let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
       pure (doc, diags, reqSpans, prepared, earlier)
@@ -840,28 +691,17 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
                 ledger := src.ledger, reads := src.reads
                 cache := cache, scan := scan, provisional := provisional }
 
-/-- The reporting scope is the output plan's projection: each artifact the
-run writes, the markdown twin included, so a loss scoped to an artifact is
-named exactly when that artifact is written. -/
+/-- The reporting scope: each artifact the run writes, so a loss scoped to an artifact is
+named exactly when it is written. -/
 def diagnosticOutputs (emit : Array Emit) : Array Diag.Output :=
   emit.map fun e => match e with
     | .pdf => .pdf
     | .html => .html
     | .md => .md
 
-/-- **Is the document elaboration returned already the fixed point?** It
-was elaborated against `front.provisional`; font assembly settled on `fs`
-and returned `resolved`, the same document with its alphabets resolved
-against `fs`'s coverage. Where the two faces measure every label alike
-(`Cli.FontFix.agree`, over `probes`), the extents the placement used are
-the extents `fs` gives — `extent_agree` is the step — so no second
-elaboration can change the document; where they differ, or where no
-provisional face was resolved and the body drew a picture anyway, it is
-elaborated again against `fs`'s measure, which this returns beside the
-probes and the verdict. The probes are `front.doc`'s labels, the calls
-elaboration made, never `resolved`'s: those carry `fs`'s alphabets, and
-where the faces' coverage differ they measure alike where the labels
-elaboration measured do not. -/
+/-- Whether the elaboration is already the fixed point: where the provisional and settled
+faces measure every probed label alike (`Cli.FontFix.agree`) it is, else the settled
+measure is returned for a second elaboration, with the probes and the verdict. -/
 def settlement (front : Front) (fs : Font.FontSet) (resolved : Ir.Doc) :
     Ir.Pic.LabelMetric × Array FontFix.Probe × Bool :=
   let metric := Layout.labelMetric (Layout.Geom.ofPage resolved.page) fs
@@ -870,12 +710,9 @@ def settlement (front : Front) (fs : Font.FontSet) (resolved : Ir.Doc) :
     | some pre => FontFix.agree pre metric ps
     | none => Elab.enginePictures resolved.body == 0)
 
-/-- The font roles a boundary request sets in (`FontAssembly.boundaryFonts`),
-resolved before any request is wrapped and only where the document states
-one: the text slot and a math face, as the provisional assembly resolves
-them — a formula inside a diagram wants the math face even where the page
-itself sets none — and the typewriter default the settled assembly will
-take. The scan it takes is the one the settled assembly reuses. -/
+/-- The font roles a boundary request sets in, resolved before any request is wrapped: the
+text slot and math face as the provisional assembly resolves them, and the typewriter
+default. -/
 def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec × Front) := do
   let doc := front.doc
   if (Ir.pictureRefs doc).isEmpty then return (doc.fonts, front)
@@ -887,24 +724,13 @@ def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec ×
   | .ok (fs, _, _, _) => return (FontAssembly.boundaryFonts doc fs scan, front)
   | .error _ => return (doc.fonts, front)
 
-/-- Every file a build reads, by the path it reads it at: the document; what
-its execution read (`Front.reads`: an include, a local style, a `\data` file);
-its bibliography (`Input.bibPaths`); the images it read and an animation's
-companion beside one (`imgReads`); the files its boundary pictures staged
-(`staged`); every face it read to parse, in any assembly, the ones it
-refused included (`FontEnv.Cache.readPaths`), with the settled set's
-(`faces`); every face the scan found under the document's own font
-directories and the run's (`FaceScan.docDirs`, `privateDirs`); and the
-stylesheet and icon it declares (`Publication.localPath?`), the document's
-own resources whether or not this run's formats read them. Publication
-writes over none of them (`PublicationPaths.overwrite`), which skips a
-listed name no file stands at. A face the scan only classified, under a
-font directory the host shares with every program, is not on the list. -/
+/-- Every file a build reads, by the path it reads it at: the document, its execution's
+reads, bibliography, images, staged picture inputs, every face read or found under the
+document's and the run's own font directories, and its declared stylesheet and icon. -/
 def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (scan : FaceScan)
     (parsed imgReads staged faces : Array String) : Array String :=
   let owned := scan.docDirs ++ scan.privateDirs
-  -- A collection's face is read from its collection, so the file a build
-  -- reads is the collection (`FontDb.faceFile`), never its member path.
+  -- A collection's face is read from its collection, so the file read is the collection.
   let scanned := (scan.faces.filter fun face =>
     owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map
       (FontDb.faceFile ·.path)
@@ -924,15 +750,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let emit := ui.cfg.effectiveEmit front.doc.output.formats
     let outputs := diagnosticOutputs emit
     let ui := { ui with showOutput := emit.toList.eraseDups.length > 1 }
-    -- **The boundary answers before the document's diagnostics are read.**
-    -- A request no tool drew, for a picture the rendered subset draws in
-    -- part, is withdrawn (`Boundary.withdraw`) and the document elaborated
-    -- again with it, so what is resolved below is the page that ships: the
-    -- subset's drawing with its loss named once (`Boundary.foldLines`), never
-    -- a placeholder the subset could have filled — as a picture the document
-    -- keeps to the subset (`\pictures{ tool = none }`) ships its drawing with
-    -- its loss named once. A document already failing asks nothing of the
-    -- tool — its build stops at the first resolution either way.
+    -- Withdrawn pictures re-elaborate first, so what is resolved below is the page that ships.
     let tool := front.doc.pictureTool.getD "lualatex"
     let declined := Boundary.linesOf tool {} front.spans.declined
     let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
@@ -955,24 +773,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let sourceDiag := front.prepared.sourceTriggers.attribute
     let diags := front.diags.map sourceDiag
     let reqSpans := front.spans
-    -- Images load before the font set settles: a drawn SVG's text sets in
-    -- the document's faces, so its scalars join the per-scalar fallback
-    -- the assembly precomputes, as the body's do. They load before the
-    -- document's diagnostics are read, too: a figure that names itself is
-    -- the alternative the document did not declare. A document already
-    -- failing reads none of them.
+    -- Images load before the faces settle (SVG scalars join the fallback) and before diagnostics.
     let failingNow := (Diag.resolveAll doc.allow allowAll (Diag.forOutputs outputs diags)).errors > 0
-    -- The engine's own answers — image plans, flate streams — are read
-    -- from slots this engine wrote, and no other's (`Engine.engineId`).
     let cache ← Engine.cache (← FontDiscovery.cacheDir)
     let tImg ← IO.monoMsNow
     let (imgs0, imgDiags0, imgHits, titles, imgReads0) ← if failingNow then pure ({}, #[], 0, #[], #[])
       else loadImages file doc pics refused reqSpans.images cache
     let imgMs ← since tImg
     let doc := FigureAlt.titled titles doc
-    -- premise: svgTitleAltChecks — two builds differing only by the figure's
-    -- title: with it the page names the figure by the title and N0376 stays
-    -- silent; without it N0376 names the image and the page ships no name
+    -- premise: svgTitleAltChecks — a figure's title answers N0376
     let diags := FigureAlt.unanswered titles doc diags
     let mut resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
     if resolved.errors > 0 then
@@ -980,18 +789,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file resolved.errors (← since t0)
       return 1
     let t ← IO.monoMsNow
-    -- The host's answer is taken once. The directories to look in are the
-    -- document's `\fonts{ dir = ... }`, a preamble fact — so a scan taken
-    -- for the provisional face serves the settled one, and only a document
-    -- that names a directory in its *body* pays for a second scan.
+    -- A provisional scan serves unless the body names another font directory.
     let reuse : Option FaceScan := front.scan.filter (·.dirs == doc.fonts.dirs)
     let scan ← match reuse with
       | some s => pure s
       | none => scanFaces ui file doc.fonts
     match ← buildFontSet doc scan front.cache .settled (Layout.storeScalars imgs0) with
     | .error d =>
-      -- No usable font set exists at all: nothing downstream can run, so
-      -- this stays fatal whatever the document accepts.
+      -- No usable font set: fatal whatever the document accepts.
       ui.diag (sourceDiag d)
       ui.summary file 1 (← since t0)
       return 1
@@ -1004,9 +809,6 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.fontPhase names paths scan.faces.size (← since t)
-      -- The artifact is a function of the document and the font
-      -- environment, never of whichever face happened to be resolved first
-      -- (`settlement`).
       let t ← IO.monoMsNow
       let (metric, ps, settled) := settlement front fs doc
       if let some pre := front.provisional then
@@ -1022,14 +824,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
         pure (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
-      -- A re-elaboration that changed what images the document requests
-      -- reads them again; the common case keeps the first read.
       let (imgs, imgDiags, imgHits, _, imgReads) ←
         if Ir.imageRequests doc == Ir.imageRequests front.doc then
           pure (imgs0, imgDiags0, imgHits, titles, imgReads0)
         else loadImages file doc pics refused reqSpans.images cache
-      -- Every drawn figure's text, set in the settled faces, and a moving
-      -- figure's still face: the one value both backends read.
       let (imgs, shapeNotes) := FigureStore.settle fs imgs
       let imgDiags := imgDiags ++ shapeNotes.map fun (src, d) =>
         DriverDiag.atImageRequest reqSpans.images src d
@@ -1042,18 +840,13 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let figs := if svgs == 0 then "" else s!", {drawn} of {svgs} SVG figures drawn natively"
         ui.phase "images" s!"{imgs.entries.size} files{cached}{figs}" (imgMs + (← since t))
       let t ← IO.monoMsNow
-      -- The main language's patterns; a language whose table has not
-      -- landed is honestly unhyphenated (W0368 already named it).
+      -- A language without patterns is unhyphenated; W0368 already named it.
       let pats := Hyphen.forTag doc.info.locale.tag
       ui.phase "hyphen" (match pats with
         | some p => s!"{p.map.size} patterns ({doc.info.locale.tag})"
         | none => s!"no patterns for '{doc.info.locale.tag}'") (← since t)
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
-      -- The pages as the overflow ladder sets them (`Layout.runFitted`); the
-      -- frames it found the page could not set at their glue's natural size,
-      -- whose lists the web deck, which has no glue to shrink, squeezes
-      -- (`Ir.squeezeFrames`).
       let fitted := Layout.runFitted geom fs pats doc imgs
         (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
         (pictureSpans := Layout.pictureSpansForPdf doc reqSpans.images)
@@ -1062,17 +855,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let layoutDiags := out.diags.map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
-      -- An unaccepted error anywhere before the writers means no output: a
-      -- failing document must not produce one (the assertion contract, held
-      -- for every dropped loss).
+      -- An unaccepted error before the writers means no output.
       if resolved.errors > 0 then
         ui.accepted resolved.accepted
         ui.summary file resolved.errors (← since t0)
         return 1
-      -- Phase 1, the plan: what to build and where it would land, as pure
-      -- computation over the flags and the document — the one read is
-      -- whether `-o` names an existing directory. No directory is created
-      -- here, and none is until `publish`.
+      -- Phase 1, the plan: what to build and where, with no directory created until `publish`.
       let css := cssFor doc.output.css
       let outIsDir ← match ui.cfg.output with
         | some o => (System.FilePath.mk o).isDir
@@ -1085,39 +873,20 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let destinations := (if emit.contains .html then #[ ("HTML", htmlPath) ] else #[]) ++
         (if emit.contains .md then #[ ("Markdown", mdPath) ] else #[]) ++
         (if emit.contains .pdf then #[ ("PDF", pdfPath) ] else #[])
-      -- premise: publicationInputChecks — a destination naming the document, a file it
-      -- reads or another name of one is refused with every input byte for byte as it was
+      -- premise: publicationInputChecks — a destination naming an input is refused
       if let some clash ← Host.runIO (PublicationPaths.overwrite destinations
           (buildInputs file front doc scan (← front.cache.readPaths) imgReads staged paths)) then
         ui.diag (DriverDiag.outputOverwritesInput clash)
         ui.summary file 1 (← since t0)
         return 1
-      -- premise: publicationPathChecks — distinct formats publish, while
-      -- colliding names and filesystem aliases leave all outputs untouched.
+      -- premise: publicationPathChecks — colliding destinations leave all outputs untouched
       if let some detail ← PublicationPaths.conflict destinations then
         ui.diag (DriverDiag.outputPathsConflict detail)
         ui.summary file 1 (← since t0)
         return 1
-      -- Phase 2, the build, in memory: every artifact's bytes exist before
-      -- any is judged, so the assertion gate reads the file that would
-      -- ship (the PDF census) and a failing document leaves nothing
-      -- behind — the HTML page included, which once beat the gate to
-      -- disk. Between here and `Check.all` nothing names an output
-      -- location: no write, no directory under `-o`, no such path handed
-      -- to a tool; the boundary conversion targets the picture cache.
-      -- The artifact ships the faces the document resolved, as the PDF
-      -- embeds them — unless the document declared its `css =` story
-      -- (the site port's `css = own`): then its stylesheet owns fonts
-      -- and nothing ships. `Doc.fontPolicy` is that rule as a value, and
-      -- a declared `fonts =` overrides it (`Pdf.fontPolicy_projects`).
+      -- Phase 2, the build in memory: every artifact's bytes exist before any is judged.
       let shipFonts := doc.fontPolicy == .embedded
-      -- **A slot that fell to the body face is named here**, and not in the
-      -- assembly: the loss is about a face a reader receives, so the
-      -- decision has to see what this run emits. The set here is the
-      -- settled one — `build` holds no other — so no assembly gate is
-      -- needed on top. The declared contract is held against each emitted
-      -- artifact's realization record beside it: warnings, resolved before
-      -- the gate and never gating (`PlanLoss.ofPlan`).
+      -- A slot fallen to the body face is named here, where the emitted formats are known.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
         ((PlanLoss.ofPlan emit fs doc).map sourceDiag))
       let mut htmlBuilt : Option HtmlArtifact := none
@@ -1127,20 +896,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           | .own => HtmlDoc.CssMode.own
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
-        -- The boundary pictures' HTML face: decided from the captured PDFs,
-        -- native first (`picsToSvgNative`; W0378 names a face this host
-        -- could not convert). A picture left without one, and that
-        -- the rendered subset draws in part, is drawn by the subset on
-        -- this face alone (`Boundary.htmlWithdraw`): the document is
-        -- elaborated again for the page with it withdrawn, and the PDF
-        -- keeps the boundary's drawing.
+        -- Boundary pictures' HTML faces, native first; a faceless one the subset draws withdraws.
         let tf ← IO.monoMsNow
-        -- premise: nativeFigureBuildChecks — two builds apart by `\figures{ convert = none }`:
-        -- with it no converter runs and each loss of a lossy figure is named on the engine's
-        -- drawing, its help offering no install; without it the converter draws it
+        -- premise: nativeFigureBuildChecks — a refused converter never runs; each loss is named
         let decl : Boundary.Refusal := if doc.figureConvert then .none else .declared
-        -- One door for the build: the host is asked for pdftocairo once, the
-        -- first time a face needs it.
         let door ← PdfFaces.door
         let (imgs, svgDiags, unconverted, picNatives, picTally) ←
           picsToSvgNative pics imgs reqSpans.images reqSpans.fallbacks (decl := decl) (door := door)
@@ -1164,19 +923,10 @@ in the HTML" (← since t)
           css := cssMode
           imgs := imgs
           fonts := if shipFonts then some fs else none
-          -- The markdown twin, when one is being written beside the page,
-          -- is linked from the head as the alternate representation.
           mdHref := if emit.contains .md then twinHref mdPath doc.output.md else none
-          -- A picture's `viewBox` is the box the PDF reserves: the same
-          -- label measurement layout places with, over the one face set.
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
-          -- The footline's box is the page's band box, over the same faces.
           footBox := fun n band => some (Layout.footBandBox (Layout.Geom.ofPage doc.page) fs imgs n band)
-          -- A rule reaching by a block title's lines stands where the page
-          -- stands it, over the same faces.
           blockTitleRule := Layout.blockTitleRule (Layout.Geom.ofPage doc.page) fs doc.styles
-          -- And a rule beside the whole block ends below the body's last
-          -- line where its line box reaches, over the same faces.
           blockLastBelow := Layout.blockLastBelow (Layout.Geom.ofPage doc.page) fs
           cancelMetric := fun measures ss st spec body value =>
             Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs ss st spec body value (some measures)
@@ -1184,8 +934,6 @@ in the HTML" (← since t)
             Layout.mathEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
           mathTextEm := fun measures ss st =>
             Layout.mathTextEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
-          -- A markdown table's size and overhang: the page's own decision,
-          -- over the one face set.
           tableFit := fun avail cols padL padR rows spans =>
             let fit := Layout.tableFit (Layout.Geom.ofPage htmlDoc.page) fs imgs
               (Layout.tableLength none htmlDoc.preambleFace "tabcolsep") avail cols padL padR rows
@@ -1215,21 +963,14 @@ in the HTML" (← since t)
       let mut pdfBuilt : Option ByteArray := none
       if emit.contains .pdf then
         let t ← IO.monoMsNow
-        -- Font programs and content streams deflate through the
-        -- content-hash cache: a subset, or a page unchanged since the last
-        -- build, reads its stream back instead of compressing it. The glyph
-        -- census is taken once for the kept faces, their programs and the
-        -- page operators; the writer takes its own.
+        -- Font programs and content streams deflate through the content-hash cache.
         let used := Pdf.usedAll fs out.pages imgs.shaped
         let keep := Pdf.keepOf used
         let programs := Pdf.facePrograms fs used
         let fs := { fs with zdata := ← Compression.fontZdata cache fs.fonts.size keep programs }
-        -- The structure tree the pages' `leaf` indices name: the one the
-        -- layout attributed against (`Layout.pdfView`), projected once.
         let tree := Struct.ofDoc (Layout.pdfView doc)
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
-        -- A copied page's content deflates through the same cache.
         let imgs := { imgs with
           formZ := ← Compression.formZdata cache (Pdf.copiedFormContents imgs out.pages) }
         match Pdf.writeChecked geom fs out.pages doc.info imgs out.outline streams tree ops programs with
@@ -1241,17 +982,9 @@ in the HTML" (← since t)
         | .ok pdf =>
           ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
           pdfBuilt := some pdf
-      -- Phase 3: census, gate, publish. Assertions judge what shipped, so
-      -- they read the built bytes and run before anything is written: a
-      -- failing document must not produce output. The page walk is
-      -- skipped when nothing asserts: measuring ink on every build would
-      -- tax the common path for the rare check — and so is the PDF
-      -- census, which runs only when an assertion reads it.
+      -- Phase 3: census, gate, publish; assertions judge the built bytes before any write.
       let t ← IO.monoMsNow
-      -- Every artifact the plan emits must carry its fonts: the PDF by the
-      -- census of its bytes (a copied page can bring a face the writer
-      -- never embedded), the HTML by the faces it embeds in the page;
-      -- the markdown twin carries none and contributes nothing.
+      -- Every emitted artifact carries its fonts: the PDF by its census, the HTML by its faces.
       let readsPdf := doc.asserts.any fun a => match a.kind with
         | .fontsAllEmbedded | .pdfProfile _ => true
         | .pages _ _ | .textInArea | .minXHeight _ | .accessibilityAA => false
@@ -1264,9 +997,6 @@ in the HTML" (← since t)
             | .error _ => false) &&
           htmlBuilt.all fun _ => shipFonts
         else true
-      -- The declared profile set, held against the census of the PDF just
-      -- built: the meet's rules the file breaks, rendered. A run that
-      -- emits no PDF leaves the list empty and fails loud below instead.
       let pdfViolations : Array String :=
         match pdfCensus with
         | none => #[]
@@ -1280,8 +1010,7 @@ in the HTML" (← since t)
           { pages := out.pages.size, fontsEmbedded := true : Check.Shipped }
         else Check.Shipped.ofOut geom fs out (fontsEmbedded := fontsEmbedded)
       let shipped := { shipped with pdfViolations }
-      -- Accepting a warning quiets the report, never the fact. A PDF also
-      -- judges placed paint; a source-only plan cannot see every run.
+      -- Accepting a warning quiets the report, never the fact.
       let shipped := if doc.asserts.any (·.kind == .accessibilityAA) then
           let a11y := if pdfBuilt.isSome then
               Check.pdfA11ySummary doc (diags ++ imgDiags) geom fs out
@@ -1289,11 +1018,7 @@ in the HTML" (← since t)
           { shipped with a11y }
         else shipped
       let failures := Check.all shipped doc.asserts
-      -- An assertion whose subject is bytes is judged on the bytes this run
-      -- emits (`AssertKind.reads`); a run emitting none of them cannot
-      -- judge it, and says so instead of passing vacuously — the
-      -- `formats = md` document that asserts embedded fonts fails here.
-      -- Layout assertions read no artifact and never reach this.
+      -- An assertion about bytes this run does not emit fails rather than passing vacuously.
       let failures := failures ++ doc.asserts.filterMap fun a =>
         if a.kind.reads.isEmpty || emit.any (fun e => a.kind.reads.contains e.ext) then none
         else some (Diag.of .E0330
@@ -1316,16 +1041,12 @@ in the HTML" (← since t)
         ui.accepted resolved.accepted
         ui.summary file unwritten.size (← since t0) written
         return exitFor unwritten.size 0 resolved.warnings ui.cfg.werror
-      -- The hatch's other teeth: an `\allow` that never fired is stale
-      -- acceptance and warns; what was accepted always prints.
+      -- An `\allow` that never fired warns.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
         ((Diag.unfired doc.allow resolved.fired).map DriverDiag.allowUnfired))
       ui.accepted resolved.accepted
       ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0)
         resolved.notes
-      -- `--werror`: the outputs above were written — the flag turns the
-      -- exit code, never the rendering — and the verdict line says why the
-      -- build failed anyway.
       if ui.cfg.werror && resolved.warnings > 0 then
         ui.werror file resolved.warnings (← since t0)
       return exitFor 0 0 resolved.warnings ui.cfg.werror
@@ -1337,8 +1058,7 @@ def dump (ui : Ui) (file : String) : IO UInt32 := do
     IO.print (Ir.dump front.doc front.diags)
     return (if countErrors front.diags > 0 then 1 else 0)
 
-/-- Insert `-` at each hyphenation point: the `hyphenate` command's output
-format, and what the lualatex differential harness compares. -/
+/-- Insert `-` at each hyphenation point, the `hyphenate` command's output format. -/
 def showHyphens (pats : Hyphen.Patterns) (word : String) : String := Id.run do
   let breaks := Hyphen.hyphenate pats word
   let mut out := ""
@@ -1365,13 +1085,8 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
     IO.println (showHyphens pats w)
   return 0
 
-/-- Rebuild whenever the source changes, by polling its mtime every 200 ms —
-no inotify dependency. Each rebuild prints the usual summary line. Its peak is
-reset as the rebuild starts, so it is the most the watcher held from then on,
-and that counts what earlier builds left resident: the first rebuild after a
-heavier revision can read about that revision's peak, and a later one less once
-that memory has been returned to the system. A platform that cannot reset the
-peak states none for a rebuild; the first build's peak is the process's own. -/
+/-- Rebuild whenever the source's mtime changes, polled every 200 ms, each rebuild
+printing its summary with the peak reset at its start. -/
 def watch (cfg : Config) (file : String) : IO UInt32 := do
   let mtime : IO (Option IO.FS.SystemTime) := do
     try
@@ -1390,8 +1105,7 @@ def watch (cfg : Config) (file : String) : IO UInt32 := do
   return 0
 
 public def main (argv : List String) : IO UInt32 := do
-  -- The engine's identity is the image this process started as, whatever is
-  -- built at its path while it runs (`Engine.engineId`).
+  -- The engine's identity is the image this process started as.
   discard Engine.engineId
   match parse argv with
   | .error msg =>
@@ -1408,8 +1122,7 @@ public def main (argv : List String) : IO UInt32 := do
       IO.println s!"leantex {LeanTex.version}"
       return 0
     | .build file =>
-      -- premise: outputNameChecks — a name no format's extension ends is one E0006, exit 3,
-      -- nothing written, and a name ending in each extension the refusal and the help list builds
+      -- premise: outputNameChecks — an output name no extension ends is one E0006, exit 3
       if let some o := cfg.output then
         unless o.endsWith "/" || (← (System.FilePath.mk o).isDir) ||
             (emitOfPath o).isSome do
@@ -1426,12 +1139,7 @@ public def main (argv : List String) : IO UInt32 := do
     | .hyphenate words file =>
       hyphenate (← Ui.mk' cfg) words file
     | .fonts =>
-      -- The answer to "what may \\fonts name here": one family per line on
-      -- stdout, so it pipes into grep. A family whose designed math
-      -- companion is installed says so on an indented line, with the
-      -- x-heights the optical match reads and the measured stems — stem
-      -- width is measurable but no authority publishes a mismatch
-      -- threshold, so it is reported here and never gates anything.
+      -- `fonts`: one family per line, its installed math companion indented beneath.
       let faces ← FontDiscovery.scan (cfg.fontDirs.toList ++ (← texFontDirs))
       let load (path : String) : IO (Option Font.Font) := do
         return ((← FontDiscovery.faceBytes path) >>= Font.parse).toOption
@@ -1460,7 +1168,6 @@ public def main (argv : List String) : IO UInt32 := do
 ({row.source}){metrics}"
       return 0
     | .themes =>
-      -- The answer to "what may \\theme name here": one bundle per line.
       for th in Theme.builtin do
         IO.println th.name
       return 0

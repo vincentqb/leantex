@@ -1,33 +1,7 @@
 /-
-Regenerate LeanTex/Core/GlyphListData.lean from the vendored sources in
-testdata/vendor/glyphlist (PROVENANCE.txt names each one). Run from the
-repository root with:
-
-  lake env lean --run scripts/gen-glyphlist-data.lean
-
-What the module receives:
-- `agl`: the Adobe Glyph List's rows, `name;XXXX` (several scalars where a
-  name decomposes), comments dropped, in the list's own order;
-- `standardEncoding`: StandardEncoding's 256 glyph names, `.notdef` as the
-  empty name (8a.enc);
-- `winAnsiEncoding` and `macRomanEncoding`: the scalar each code means, 0
-  for none — Windows code page 1252 and Mac OS Roman as Python's codecs
-  read Unicode's mapping files, with the PDF's own readings applied
-  (ISO 32000-2 Annex D.2): in WinAnsiEncoding every unused code above 040
-  means the bullet, 0240 the space and 0255 the hyphen; in
-  MacRomanEncoding 0333 means the currency sign (Mac OS Roman since 8.5
-  puts the euro there) and 0312 the space;
-- `winAnsiNames`, `macRomanNames` and `expertNames`: the glyph name each
-  code selects, empty for none — Annex D's WinAnsiEncoding and
-  MacRomanEncoding and the CFF Expert encoding, as pdf.js spells them
-  (encodings.js), whose StandardEncoding must equal 8a.enc's;
-- `cffStandardStrings`: the CFF standard strings by string identifier,
-  0 to 390 (cff_parser.js);
-- `macGlyphNames`: the 258 standard Macintosh glyph names, by the index a
-  TrueType 'post' table gives them (fonts_utils.js).
-
-Every source is checked against testdata/vendor/glyphlist/SHA256SUMS
-before it is read.
+Regenerate LeanTex/Core/GlyphListData.lean from testdata/vendor/glyphlist (see its
+PROVENANCE.txt), the PDF encodings with ISO 32000-2 Annex D.2's readings.
+Usage: lake env lean --run scripts/gen-glyphlist-data.lean
 -/
 
 def die (msg : String) : IO α := do
@@ -104,9 +78,8 @@ def pyScalar (lit : String) : Option Nat :=
     | _ => none
   | _ => none
 
-/-- The quoted literal a table row starts with, its quotes kept: a
-backslash escapes the next character, so `'#'` and `'\\''` end where
-they should. -/
+/-- The quoted literal a table row starts with, its quotes kept, a backslash escaping the
+next character. -/
 def leadingLiteral (line : String) : String := Id.run do
   let cs := line.toList
   match cs with

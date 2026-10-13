@@ -1,33 +1,7 @@
 /-
-Fuzz the image probe and planner, the PDF figure importer and the native SVG
-reader. Run from the
-repository root:
-
-  lake build imgFuzz && .lake/build/bin/imgFuzz
-
-(`lake env lean --run scripts/img-fuzz.lean` runs the same oracle
-interpreted, which reads the importer's fifty thousand inputs for hours.)
-
-Totality is the claim (never a crash, a verdict for every input) plus the
-anchors: the pristine fixtures probe and plan to their known sizes, the
-colour-keyed synthetics to their exact masks or their refusal, the
-profiled, oriented and ancillary-chunk synthetics to their source facts
-and ledger entries, and every recognised-but-unembeddable header to a
-refusal that names its format (never a lie). Every truncation length of
-the shipped fixtures and the synthetics, single-byte mutants at seeded
-random offsets, and random blobs go through `Image.probe` and
-`Image.plan`. The PDF figure importer (`PdfGfx.importPage`) is fuzzed the
-same way, in six classes of 10 000 inputs each, every import inside a
-wall-time budget (`pdfFigureFuzz`). The SVG half holds each of the reader's
-input classes — the XML parser, the CSS declaration and sheet readers, the
-path-data reader, the importer, and the terminal-pose projection — to the
-same claim over 10,000 mutants each (every truncation of every invented
-figure besides), anchored by the pristine figures importing to their known
-boxes and verdicts and by the canonical spelling reading back as itself;
-encoded sources, UTF-16 and a legacy single-byte encoding, likewise; and
-large invented inputs each inside a wall-time budget (`svgLargeFuzz`). This
-is an executable oracle, not a theorem: it witnesses totality on millions
-of bytes of input, it does not prove it.
+Fuzz oracle for totality of the image probe and planner, the PDF figure importer and the native
+SVG reader, anchored by the pristine fixtures' known answers.
+Usage: lake build imgFuzz && .lake/build/bin/imgFuzz
 -/
 import LeanTex
 
@@ -90,19 +64,8 @@ def keyOf (pl : Image.Plan) : Array Nat :=
   | .opaque => #[]
   | .soft _ _ => #[]
 
-/-! ## The PDF figure importer
-
-`PdfGfx.importPage` reads arbitrary bytes onto the vector model. Five
-classes of 10 000 inputs each go through it — truncations and single-byte
-mutants of the committed pdf-native fixtures, content streams of random
-operators over every resource kind, form, pattern and glyph-procedure
-cycles, and broken font programs — each import timed against
-`importBudgetMs`. The anchors first: every fixture imports with nothing
-lost, and a cycle is refused by name rather than followed. -/
-
-/-- The longest one import of a fuzzed input may take, in milliseconds:
-two seconds, or five times the slowest committed fixture's own import when
-that is longer (an interpreted run). -/
+/-- The longest one import of a fuzzed input may take, in milliseconds: two seconds, or
+five times the slowest fixture's own import when longer. -/
 def importBudgetMs (slowestFixture : Nat) : Nat := max 2000 (5 * slowestFixture)
 
 /-- A one-file PDF of the given objects' bytes, numbered from 1, the first
@@ -174,10 +137,8 @@ def randomContent (s : UInt64) (n : Nat) : String × UInt64 := Id.run do
     out := out ++ operators[k]! ++ "\n"
   return (out, st)
 
-/-- A page over every resource kind the interpreter reads — a Type 3
-font, a form, an image, a shading, a shading and a tiling pattern, an
-ExtGState, optional content — whose content is `content`, its forms'
-and procedures' contents `inner`. -/
+/-- A page over every resource kind the interpreter reads, its content `content` and its
+forms' and procedures' contents `inner`. -/
 def resourcePdf (content inner : String) : ByteArray := fuzzPdf #[
   "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [14 0 R] /D << /OFF [14 0 R] >> >> >>",
   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -220,8 +181,7 @@ structure Tally where
   drawn : Nat := 0
   worst : Nat := 0
 
-/-- One import against the budget, its figure forced whole — the marks are
-what the web face spells — and counted. -/
+/-- One import against the budget, its figure forced whole, and counted. -/
 def timedImport (tally : IO.Ref Tally) (budget : Nat) (what : String) (b : ByteArray) : IO Unit := do
   let t0 ← IO.monoMsNow
   let r := PdfGfx.importPage b
@@ -250,16 +210,14 @@ def pdfFigureFuzz : IO Unit := do
     slowest := max slowest ((← IO.monoMsNow) - t0)
     fixtures := fixtures.push b
   let budget := importBudgetMs slowest
-  -- A form that paints itself, and two that paint each other: refused by
-  -- name, never followed round.
+  -- A form that paints itself, and two that paint each other: refused by name, never followed.
   let selfForm := resourcePdf "/X1 Do" "/X1 Do"
   match PdfGfx.importPage selfForm with
   | .ok imp => unless imp.figure.losses.contains (.budget "form-recursion") do
       die "a form that paints itself is not named a recursion"
   | .error e => die s!"a form that paints itself refused whole: {e}"
   let tally ← IO.mkRef ({} : Tally)
-  -- 1. Truncations, evenly spaced cuts of each fixture in proportion to its
-  -- size, at least 10 000 in all.
+  -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0
   for b in fixtures do
     let cuts := max 1 ((10000 * b.size + total - 1) / total)
@@ -274,15 +232,13 @@ def pdfFigureFuzz : IO Unit := do
       let (v, s2) := rand s1 256
       s := s2
       timedImport tally budget "a byte mutant" (b.set! i (UInt8.ofNat v))
-  -- 3. Random operators over every resource kind, forms and procedures
-  -- holding random operators of their own.
+  -- 3. Random operators over every resource kind, nested in forms and procedures.
   for _ in [0:10000] do
     let (outer, s1) := randomContent s 40
     let (inner, s2) := randomContent s1 12
     s := s2
     timedImport tally budget "a random content stream" (resourcePdf outer inner)
-  -- 4. Cycles and depth: forms, tiling cells and glyph procedures that
-  -- paint themselves or each other, behind random state, and deep `q`.
+  -- 4. Cycles and depth: self-painting forms, cells and procedures, and deep `q`.
   for k in [0:10000] do
     let (pre, s1) := randomContent s 6
     s := s1
@@ -294,8 +250,7 @@ def pdfFigureFuzz : IO Unit := do
       | _ => String.join (List.replicate (k % 400) "q ")
     timedImport tally budget "a cycle" (resourcePdf (pre ++ " /X1 Do BT /T3 9 Tf (ab) Tj ET \
 /Pattern cs /P2 scn 0 0 50 50 re f") inner)
-  -- 5. Broken font programs: the shipped faces truncated and mutated, and
-  -- random bytes, as every kind of embedded program.
+  -- 5. Broken font programs: shipped faces truncated and mutated, and random bytes.
   let otf ← IO.FS.readBinFile "testdata/corpus/fonts/FiraSans-Regular.otf"
   let ttf ← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let cff := (Ink.cffTable otf).getD ByteArray.empty
@@ -320,10 +275,7 @@ def pdfFigureFuzz : IO Unit := do
       | 1 => prog.set! i (UInt8.ofNat v)
       | _ => ⟨(Array.range (i % 4096)).map fun j => UInt8.ofNat ((j * 2654435761 + v) % 256)⟩
     timedImport tally budget "a broken font program" (fontPdf font key bytes dict)
-  -- 6. Image dictionaries: every sample depth, colour space and decoding
-  -- the importer's tables read (grey, RGB, CMYK, indexed over each base, a
-  -- stencil, a colour-key or a soft mask beside), at random sizes, over
-  -- data short, exact or long, and a random Decode array.
+  -- 6. Image dictionaries over every depth, colour space and decoding, at random sizes.
   let spaces : Array String := #["/DeviceGray", "/DeviceRGB", "/DeviceCMYK",
     "[/Indexed /DeviceRGB 3 <ff000000ff000000ffffffff>]", "[/Indexed /DeviceCMYK 1 <00ff0000ff000000>]",
     "[/Indexed /DeviceGray 255 <" ++ String.join ((List.range 256).map fun i =>
@@ -368,8 +320,8 @@ def pdfFigureFuzz : IO Unit := do
   let t ← tally.get
   IO.println s!"img-fuzz: the PDF figure importer read {t.runs} inputs ({t.drawn} drawn, the rest \
 refused), the slowest in {t.worst} ms, under {budget} ms"
-/-- Single-byte mutants of `bases`, `count` in all, each at a seeded random
-offset with a random value; `f` is run on each. Returns the new seed. -/
+/-- Single-byte mutants of `bases`, `count` in all, each at a seeded random offset with a
+random value, `f` run on each; returns the new seed. -/
 def mutate (seed : UInt64) (bases : Array ByteArray) (count : Nat) (f : ByteArray → IO Unit) :
     IO UInt64 := do
   let mut s := seed
@@ -395,8 +347,7 @@ def svgFuzz : IO (Nat × Nat) := do
     "testdata/svg/icons.svg"]
   let mut figures : Array ByteArray := #[]
   for n in names do figures := figures.push (← IO.FS.readBinFile n)
-  -- Anchors: the pristine figures' verdicts and boxes, and the canonical
-  -- spelling of each parse reading back as itself.
+  -- Anchors: the pristine figures' verdicts and boxes, and canonical spellings reading back.
   let boxes : Array Nat := #[18874368, 9830400, 9830400, 3932160, 5898240, 4718592]
   for h : k in [0:figures.size] do
     let b := figures[k]
@@ -458,8 +409,7 @@ def svgFuzz : IO (Nat × Nat) := do
   seed ← mutate seed paths 10000 fun m => do
     let (cmds, stop) := PathData.parse (String.fromUTF8? m |>.getD "")
     count (stop == .done || !cmds.isEmpty)
-  -- Encoded sources: 10,000 mutants of a figure in UTF-16 and in a legacy
-  -- single-byte encoding; a parse that reads is canonical.
+  -- Encoded sources: 10,000 mutants of a figure in UTF-16 and in a legacy single-byte encoding.
   let utf16 (s : String) : ByteArray := Id.run do
     let mut out : ByteArray := ⟨#[0xFF, 0xFE]⟩
     for c in s.toList do
@@ -491,16 +441,8 @@ def svgFuzz : IO (Nat × Nat) := do
       | .refused _ => false)
   return (← verdicts.get, ← readable.get)
 
-/-- Large invented inputs, each the shape a reader once spent time
-quadratic in: a long path, a number of three hundred thousand digits in a
-path, a colour and an exponent, a fraction of as many zeros, a long
-transform list and point list, text and an attribute of references, many
-siblings, nesting to the depth budget, a long sheet, many attributes on
-one element, many distinct use targets, a long chain of nested uses, many
-shapes deep in groups, many rules over many shapes. Each must reach its
-verdict inside `budgetMs` of wall time — far above a linear reader's need
-even interpreted, far below a quadratic one's — and the whole set inside
-`totalMs`. -/
+/-- Large invented inputs of the shapes a reader can spend quadratic time on, each
+reaching its verdict inside `budgetMs` and all inside `totalMs`. -/
 def svgLargeFuzz (budgetMs totalMs : Nat) : IO Nat := do
   let doc (w : Nat) (body : String) : ByteArray :=
     (s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{w}\">" ++ body ++ "</svg>").toUTF8
@@ -555,8 +497,7 @@ def main : IO Unit := do
   let t0 ← IO.monoMsNow
   let (svgVerdicts, svgRead) ← svgFuzz
   let svgMs := (← IO.monoMsNow) - t0
-  -- The whole SVG half inside a budget: mutants are small, so a reader
-  -- that is linear in its input meets it with room to spare.
+  -- The whole SVG half runs inside a budget a linear reader meets with room to spare.
   if svgMs > 600000 then die s!"the SVG half took {svgMs} ms, past its 600000 ms budget"
   IO.println s!"img-fuzz: svg: {svgVerdicts} inputs, {svgRead} read, rest refused, no crash, no lie, {svgMs} ms"
   let large ← svgLargeFuzz 20000 120000
@@ -589,11 +530,7 @@ def main : IO Unit := do
     be32 22 ++ [0x69, 0x68, 0x64, 0x72] ++ be32 3 ++ be32 4 ++ [0, 3, 7, 7, 0, 0]).toArray⟩
   let j2k : ByteArray := ⟨([0xFF, 0x4F, 0xFF, 0x51, 0, 41, 0, 0] ++ be32 10 ++ be32 6 ++
     be32 2 ++ be32 1).toArray⟩
-  -- The anchors: the pristine files probe and plan to the sizes
-  -- images-note.md records, the keyed synthetics to their exact masks or
-  -- their refusal, the profiled and oriented ones to their ledger entries,
-  -- and each unembeddable header to a refusal opening with its format's
-  -- name. A fuzzer that cannot tell a lie from a verdict tests nothing.
+  -- Anchors: pristine files plan to their recorded sizes, synthetics to their exact answers.
   match plan keyedIdx with
   | .ok pl =>
     unless keyOf pl == #[1, 2] do die s!"keyed indexed png planned to mask {keyOf pl}"
@@ -649,8 +586,7 @@ def main : IO Unit := do
     unless pl.pxW == 64 && pl.pxH == 40 && pl.filter == .dct do
       die s!"jpg planned to {pl.pxW}x{pl.pxH}"
   | .error e => die s!"pristine jpg refused: {e}"
-  -- The PDF fixture is the engine's own output (figures/box.tex): a 90x54mm
-  -- card, 255x153 whole points.
+  -- The PDF fixture is the engine's own output: a 90x54mm card, 255x153 whole points.
   match plan pdf with
   | .ok pl =>
     unless pl.pxW == 255 && pl.pxH == 153 && pl.form.isSome do
@@ -665,8 +601,7 @@ def main : IO Unit := do
     for n in [0:base.size + 1] do
       if (plan (base.extract 0 n)).isOk then oks := oks + 1
       verdicts := verdicts + 1
-  -- The PDF fixture is ~100 KB, so its truncations are strided: every
-  -- length below 512, then 2048 evenly spaced cuts across the rest.
+  -- The PDF fixture's truncations: every length below 512, then 2048 even cuts.
   for n in [0:512] do
     if (plan (pdf.extract 0 n)).isOk then oks := oks + 1
     verdicts := verdicts + 1
@@ -674,8 +609,7 @@ def main : IO Unit := do
     let n := 512 + (pdf.size - 512) * k / 2048
     if (plan (pdf.extract 0 n)).isOk then oks := oks + 1
     verdicts := verdicts + 1
-  -- Single-byte mutants at seeded random offsets, all 256 values at some;
-  -- the synthetics' mutants walk every header arm with every payload.
+  -- Single-byte mutants at seeded offsets; the synthetics' walk every header arm.
   let mut s : UInt64 := 88172645463325252
   for base in png :: jpg :: pdf :: synthetics do
     for _ in [0:4000] do

@@ -1,16 +1,7 @@
 /-
-Round-trip oracle for the integer Oklab pipeline, cached. The walk itself
-lives in scripts/oklab-walk.lean (spawned from here) and costs ~30
-minutes; a pass is cached against the content of the claim's inputs: the
-source of `Core/Oklab.lean`, of `Core/Color.lean` (where `Color` and the
-`BEq` the check uses live), of `Core/Ir.lean` (the walk's other reads), and
-`lean-toolchain` (the compiler realizing the arithmetic). Content, never
-mtime or git state: a dirty edit must miss. The cache lives under
-`.lake/` (generated state, ignored); its absence is a miss, never an
-error. `--force` re-runs the walk regardless, checking exactly what a
-miss checks. Run it when touching `Core/Oklab.lean`:
-
-  lake env lean --run scripts/oklab-roundtrip.lean
+Round-trip oracle for the integer Oklab pipeline, its pass cached under `.lake/` by its inputs'
+content; `--force` re-runs the walk (scripts/oklab-walk.lean, about 30 minutes).
+Usage: lake env lean --run scripts/oklab-roundtrip.lean [--force]
 -/
 
 /-- The files whose content the cached verdict is a claim about. -/
@@ -26,9 +17,8 @@ def inputsHash : IO UInt64 := do
     h := mixHash (mixHash h (hash f.toString)) (hash (← IO.FS.readFile f))
   return h
 
-/-- The recorded pass, if the cache file exists and parses: input hash,
-date earned, and the result line of the run that earned it. Anything
-malformed or unreadable is a miss, never an error. -/
+/-- The recorded pass, if the cache file exists and parses: input hash, date earned and
+result line; anything else is a miss. -/
 def readCache : IO (Option (UInt64 × String × String)) := do
   try
     let s ← IO.FS.readFile cachePath

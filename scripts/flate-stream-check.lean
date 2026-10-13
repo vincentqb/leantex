@@ -1,23 +1,15 @@
 import LeanTex.Core.Flate
 import LeanTex.Core.Flate.DecodeLoop
 
-/-!
-Focused compression regression check, independent of the document engine:
-`lake env lean --run scripts/flate-stream-check.lean`.
-
-Checks both directions against Python's zlib, fixed/dynamic/stored blocks,
-the caller's output bound, and truncated streams. Printed compressed hashes
-also let a factorization be compared with its preceding implementation.
-This is an executable check; universal codec contracts live under Core/Flate.
--/
+/-! Compression regression check against Python's zlib, both directions and every block kind.
+Usage: lake env lean --run scripts/flate-stream-check.lean -/
 
 open LeanTex.Core
 
 private def fail (message : String) : IO α :=
   throw (IO.userError s!"flate-stream-check: {message}")
 
--- The budget counts the terminal step too. A terminal answer/error must
--- stop the real loop, even when its caller supplied a larger bound.
+-- The budget counts the terminal step, which stops the loop even under a larger bound.
 private def loopChecks : IO Unit := do
   let step (s : Nat) : Except String (Sum Nat Nat) :=
     if s == 3 then .ok (.inl 21)

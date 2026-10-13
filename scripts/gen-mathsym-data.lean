@@ -1,38 +1,7 @@
 /-
-Regenerate LeanTex/Core/MathSymData.lean: the math symbols the kernel and
-two packages declare, each with the scalar lualatex sets for it under
-OpenType math. Run from the repository root with:
-
-  lake env lean --run scripts/gen-mathsym-data.lean
-
-Sources, located with kpsewhich and never vendored:
-- fontmath.ltx (the LaTeX kernel's math font setup) for its declared symbol
-  names and classes, supplemented by the names the manual's "Math formulas"
-  chapter records in `testdata/coverage/latex2e-index.txt`;
-- amsfonts.sty and amssymb.sty (AMS, LPPL-compatible notice in each file):
-  a `\DeclareMathSymbol{\name}{\mathclass}{font}{"slot}` is the package's
-  own statement of what the command is — its TeX atom class, and its glyph
-  as a font slot; a `\global\let` is an alias the package defines.
-- unicode-math-table.tex and unicode-math-luatex.sty (unicode-math, LPPL
-  1.3c): `\UnicodeMathSymbol{"hex}{\name}{\class}{desc}` is the scalar
-  lualatex sets for a name under OpenType math; the .sty adds its aliases
-  (`\protected\def\hbar{\hslash}`) and its normal-style alphabet positions
-  (`\usv_set:nnn {normal} {varkappa} {"1D718}`).
-
-A row's class is the declaring file's (a parameterless composite takes
-the class of the `\mathrel{…}` it opens with, else unicode-math's); its
-scalar is unicode-math's, found by the first rule that answers:
-1. unicode-math's normal-style alphabet places the name — the position its
-   default `math-style=TeX` sets, ahead of the table (so ∂ sets italic);
-2. unicode-math's table names the command;
-3. unicode-math aliases the command to a name its table has;
-4. `renamed`: unicode-math sets the same glyph under another name;
-5. the package `\global\let`s it to a command a rule above resolved;
-6. the package declares it at a font slot such a command occupies.
-A package's declared command no rule answers is refused and listed: the
-engine sets nothing it cannot name a scalar for. A kernel name no rule
-answers, or answers with an accent, radical or fence, is a construct the
-parser reads structurally, and is not a row.
+Regenerate LeanTex/Core/MathSymData.lean: the math symbols fontmath.ltx, amsfonts and amssymb
+declare, each with its declaring file's class and unicode-math's scalar.
+Usage: lake env lean --run scripts/gen-mathsym-data.lean
 -/
 import Std.Data.HashMap
 
@@ -50,13 +19,8 @@ def locate (file : String) : IO String := do
     die s!"kpsewhich could not find {file}"
   return path
 
-/-- Legacy names unicode-math spells differently: `(package name,
-unicode-math name)`, each judged by the glyph unicode-math's own
-description gives the target — "square, open", "square, filled",
-"lozenge or total mark", "black lozenge", "clockwise open circle arrow",
-"not left triangle", "/doteqdot", "/centerdot", "rightwards dashed arrow",
-"yen sign". TeX's glyphtounicode.tex agrees on the squares, the negated
-triangles and `\doteqdot`, and names card suits for the lozenges. -/
+/-- Legacy names unicode-math spells differently, `(package name, unicode-math name)`,
+each judged by unicode-math's description of the target glyph. -/
 def renamed : List (String × String) :=
   [("square", "mdlgwhtsquare"), ("blacksquare", "mdlgblksquare"),
    ("lozenge", "mdlgwhtlozenge"), ("blacklozenge", "mdlgblklozenge"),
@@ -69,9 +33,8 @@ def renamed : List (String × String) :=
 /-- The packages read, in load order: amssymb loads amsfonts first. -/
 def packages : List String := ["amsfonts", "amssymb"]
 
-/-- Kernel commands unicode-math's table lists with a symbol class although
-LaTeX defines them to take an argument (latex.ltx: `\sqrt[…]{…}`): the
-parser reads them structurally, so they are not symbol rows. -/
+/-- Kernel commands unicode-math lists as symbols that take an argument in LaTeX, which
+the parser reads structurally. -/
 def kernelConstructs : List String := ["sqrt"]
 
 /-- A line with its TeX comment removed. -/
@@ -132,9 +95,8 @@ inductive Decl where
 def Decl.name : Decl → String
   | .sym n _ _ | .alias n _ | .composite n _ => n
 
-/-- The class a parameterless definition's body declares by what it opens
-with: an explicit `\mathrel{…}` and its siblings, or a box or group, which
-TeX sets as an ordinary atom; empty when the body says nothing. -/
+/-- The class a parameterless definition's body opens with: an explicit `\mathrel{…}` or a
+sibling, an ordinary atom for a box or group, empty otherwise. -/
 def compositeClass (body : String) : String :=
   let b := body.trimAscii.toString
   let lead := [("\\mathinner", "mathinner"), ("\\mathrel", "mathrel"), ("\\mathbin", "mathbin"),
@@ -148,8 +110,6 @@ def compositeClass (body : String) : String :=
 def declsOf (text : String) : Array Decl := Id.run do
   let body := String.intercalate "\n" ((text.splitOn "\n").map uncomment)
   let mut out : Array (Nat × Decl) := #[]
-  -- Each piece after a keyword starts at the running offset: the pieces
-  -- before it and one keyword per boundary.
   let at_ (kw : String) : List (Nat × String) := Id.run do
     let ps := body.splitOn kw
     let mut pos := 0
@@ -178,9 +138,8 @@ def declsOf (text : String) : Array Decl := Id.run do
         let rest := (piece.trimAscii.toString.drop (name.length + 1)).toString
         if rest.startsWith "{" then
           out := out.push (pos, .composite name (compositeClass ((groups rest 1).headD "")))
-  -- The kernel spells its composites `\DeclareRobustCommand\name{…}`, the
-  -- name braced or not and the body on the next line or not; one that takes
-  -- an argument is a construct, not a symbol.
+  -- The kernel's composites, `\DeclareRobustCommand\name{…}`; one taking an argument is a
+  -- construct, not a symbol.
   for (pos, piece) in at_ "\\DeclareRobustCommand" do
     let p := piece.trimAscii.toString
     let p := if p.startsWith "{" then (p.drop 1).toString else p
@@ -280,10 +239,9 @@ def provides (text : String) : String :=
     s!"{g.headD ""} {" ".intercalate ((stamp.toString.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty))}"
   | [] => "?"
 
-/-- The kernel's documented math symbols: the names the LaTeX2e manual's
-"Math formulas" chapter indexes, as `testdata/coverage/latex2e-index.txt`
-records them, that lualatex confirmed as a math symbol or a command. The
-rows it confirmed only as an error stub are the packages' to declare. -/
+/-- The kernel's documented math symbols: the names the LaTeX2e manual's "Math formulas"
+chapter indexes (`testdata/coverage/latex2e-index.txt`) that lualatex confirmed as a math
+symbol or a command. -/
 def kernelNames (index : String) : Array String := Id.run do
   let mut out : Array String := #[]
   for line in index.splitOn "\n" do
@@ -315,18 +273,14 @@ def main : IO UInt32 := do
         match al[n]?.bind (table[·]?) with
         | some v => some v
         | none => (renamed.lookup n).bind (table[·]?)
-  -- The kernel first: its declared and documented symbols, each with the class
-  -- fontmath.ltx declares for it (unicode-math's where it declares none).
-  -- A name unicode-math answers with an accent, a radical or a fence is a
-  -- construct the parser reads structurally, not a symbol atom.
+  -- The kernel first, classes from fontmath.ltx; accents, radicals and fences are no rows.
   let fontmath ← IO.FS.readFile (← locate "fontmath.ltx")
   stamps := stamps.push (provides fontmath)
   let fmDecls := declsOf fontmath
   let index ← IO.FS.readFile "testdata/coverage/latex2e-index.txt"
   stamps := stamps.push ("additional kernel names: testdata/coverage/latex2e-index.txt, " ++
     "chapter Math formulas")
-  -- An index is not the declaration list: long double arrows are declared
-  -- by the kernel even where the manual has no individual index entries.
+  -- The index is not the declaration list, so fontmath.ltx's declarations join it.
   let candidates := kernelNames index ++ fmDecls.map Decl.name
   for n in candidates do
     if kernelConstructs.contains n then continue

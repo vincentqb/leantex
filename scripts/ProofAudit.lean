@@ -7,8 +7,8 @@ meta import Lean.Util.Path
 
 open Lean Elab Command
 
-/-- The lexical source path also counts: a link into a fixture directory must
-not hide a module that the compiler actually imported into the project. -/
+/-- Whether a module is the project's, by its lexical source path too, so a link into a
+fixture directory cannot hide one. -/
 meta def projectModule (root : System.FilePath) (name : Name) : IO Bool := do
   if ← (modToFilePath root name "lean").pathExists then return true
   let object := (← IO.currentDir) / (← findOLean name)
@@ -22,8 +22,8 @@ meta def projectModule (root : System.FilePath) (name : Name) : IO Bool := do
 meta def unexpectedAxioms (axioms : Array Name) : Array Name :=
   axioms.filter fun ax => !#[`Quot.sound, `Classical.choice, `propext].contains ax
 
-/-- Count commands, not words in comments, strings, or syntax quotations.
-Macro expansions are checked separately in the elaborator's command info. -/
+/-- The `example` commands of a parse, not words in comments, strings or syntax
+quotations. -/
 meta def parsedExamples (stx : Syntax) : Array Syntax :=
   let visit (node : Syntax) : StateM (Array Syntax) (Option Syntax) := do
     if node.isQuot then return some node
@@ -33,9 +33,8 @@ meta def parsedExamples (stx : Syntax) : Array Syntax :=
     return none
   ((stx.replaceM visit).run #[]).2
 
-/-- The frontend saves an example's kernel environment in its info tree before
-discarding it. Each command gets its own snapshot: consecutive examples reuse
-the same `_example` name, so deduplicating by name across commands loses proofs. -/
+/-- The kernel environment the frontend saved for an example before discarding it, one
+snapshot per command. -/
 meta def exampleSnapshot (ctx : ContextInfo) (tree : InfoTree) :
     IO (Option (Name × Environment)) :=
   (InfoTree.context (.commandCtx ctx.toCommandContextInfo) tree).foldInfoM
@@ -46,9 +45,8 @@ meta def exampleSnapshot (ctx : ContextInfo) (tree : InfoTree) :
       unless (inner.env.checked.get.find? name).isSome do return none
       return some (name, inner.env)
 
-/-- Run after the frontend has joined this command's elaboration tasks.
-The saved kernel environments retain anonymous proofs before discard, including
-macro expansions. Missing snapshots are a refusal, never a completed proof. -/
+/-- Audit a command's anonymous examples from their saved kernel environments, macro
+expansions included; a missing snapshot is a refusal. -/
 meta def auditExamples (command : Syntax) : CommandElabM Nat := do
   let path ← getFileName
   let fileMap ← getFileMap
@@ -89,10 +87,8 @@ meta def auditExamples (command : Syntax) : CommandElabM Nat := do
       throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example was not audited before discard; give it a theorem or definition name (including examples nested in mutual or diagnostic commands)"
   return count
 
-/-- Loading this module as a native compiler plugin registers the audit without
-adding its imports to the source's environment. Lean sequences the state across
-asynchronous commands. A failed audit stays failed even when a diagnostic guard
-drops its messages; only real end-of-file can issue a success receipt. -/
+/-- Registered as a native compiler plugin, so the audit adds no imports to the source; a
+failed audit stays failed, and only end-of-file issues a success receipt. -/
 meta initialize
   discard <| registerStatefulLinter (τ := Unit) (some 0 : Option Nat)
     (post := fun stx previous _ _ _ => do
@@ -110,16 +106,9 @@ meta initialize
           logError m!"proof audit: {← getFileName}: anonymous proof audit failed"
       return checked)
 
-/-- Audit the compiled declarations of an explicit source manifest, including
-private and unused declarations. The compiler loads the complete environment;
-checking only exported theorem names would miss private unfinished proofs.
-
-The batch may be smaller than the manifest because executable roots can have
-conflicting names. Every imported project module must still be in that manifest.
-
-The accepted foundation is Lean's quotient soundness, classical choice, and
-propositional extensionality. Any additional assumption must be an explicit
-hypothesis of a contract, with its external interpretation checked separately. -/
+/-- Audit the compiled declarations of an explicit source manifest, private and unused
+ones included, against the accepted foundation: quotient soundness, classical choice and
+propositional extensionality. -/
 elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
     "with" "[" manifest:str,* "]" : command => do
   let expected := modules.getElems.map (·.getString.toName)

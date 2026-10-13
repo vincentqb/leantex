@@ -4,23 +4,9 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Cli LeanTex.Cli.World
 
-/-! The fonts the TeX font-tree rule (`TexFontTrees.roots`) finds, against
-the fonts kpsewhich's font paths reach — the driver's source of TeX fonts
-before the rule. A report, never a gate: it needs the host's TeX. Build the
-imports, then run from the repository root:
-
-  lake build LeanTex.Cli.TexFontTrees LeanTex.Cli.FontDiscovery Tests.Support
-  lake env lean --run scripts/texfonts-report.lean
-
-For every directory on `PATH` holding a `kpsewhich`, that one put first on
-`PATH`: kpsewhich's `--show-path=.otf` and `--show-path=.ttf`, read as the
-driver read them, against the rule's directories under the same `PATH`, and
-the font faces each set of directories holds. Every face kpsewhich's
-directories reach that the rule's miss is listed, and every face only the
-rule finds; so is every directory kpsewhich names that the rule never looks
-at, whether or not it exists, since an empty tree on this host may hold
-fonts on another. Exit 0 when the rule misses no face, 1 when it misses any,
-2 when there is no kpsewhich to compare with. -/
+/-! Report of the faces kpsewhich's font paths reach that `TexFontTrees.roots` misses, and the
+reverse; exit 0 when it misses none, 1 when it misses any, 2 without kpsewhich.
+Usage: lake build LeanTex.Cli.TexFontTrees LeanTex.Cli.FontDiscovery Tests.Support && lake env lean --run scripts/texfonts-report.lean -/
 
 /-- The directories of `PATH` holding a `kpsewhich`, one per program they
 resolve to, in `PATH` order. -/

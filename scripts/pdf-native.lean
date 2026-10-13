@@ -1,28 +1,7 @@
 /-
-The pdf-native tier: how far the engine draws a PDF figure itself.
-
-  lake env lean --run scripts/pdf-native.lean               regenerate the `pdf-native` tier
-  lake env lean --run scripts/pdf-native.lean --check       gate it (hermetic)
-  lake env lean --run scripts/pdf-native.lean --selftest    the tier's cases
-  lake env lean --run scripts/pdf-native.lean --fixtures    rewrite the hand-written fixture
-
-Each item is a committed, invented PDF in testdata/pdf-native, made by a
-tool the reader meets in practice — cairo through rsvg-convert, lualatex in
-the repository's shipped faces, the engine's own writer — or written here by
-hand in matplotlib's dialect (`matplotlibDialect`), a print workflow's, in
-CMYK (`printDialect`), or to exercise PDF's own geometry rules
-(`geometryDialect`) and text state (`textDialect`): PROVENANCE.txt names how
-each was made, SHA256SUMS pins the bytes. Its value is what the importer
-(`PdfGfx.importPage`) makes of page 1:
-
-  2  drawn with nothing lost
-  1  drawn, with its losses named
-  0  refused
-
-*The structural half is pending*: a 2 will also require the figure to equal
-its committed reference as the other importer reads it (pdftocairo's SVG,
-read by the SVG importer), once that importer lands. Until then a 2 is the
-importer's own verdict. Hermetic: committed bytes only, no tool.
+The pdf-native tier: `PdfGfx.importPage`'s verdict on each committed invented PDF, 2 drawn
+whole, 1 with losses named, 0 refused.
+Usage: lake env lean --run scripts/pdf-native.lean [--check | --selftest | --fixtures]
 -/
 import LeanTex
 import scripts.Board
@@ -63,12 +42,9 @@ def pdfOf (objects : Array String) : ByteArray := Id.run do
 def stream (body : String) (dict : String := "") : String :=
   s!"<< /Length {body.utf8ByteSize} {dict}>>\nstream\n{body}\nendstream"
 
-/-- **The hand-written matplotlib-dialect fixture**: what matplotlib's PDF
-backend spells, invented content — a Type 3 font whose glyphs are `d1`
-procedures that fill, with Differences and a ToUnicode CMap; an alpha
-ExtGState; a marker form painted three times with the state it inherits; a
-clip rectangle; a dashed line; an image under a soft mask, its samples in
-ASCIIHex. -/
+/-- The hand-written matplotlib-dialect fixture: a Type 3 font of filled `d1` glyphs with
+Differences and a ToUnicode CMap, an alpha ExtGState, a marker form painted three times, a
+clip, a dash, and a soft-masked ASCIIHex image. -/
 def matplotlibDialect : ByteArray := pdfOf #[
   "<< /Type /Catalog /Pages 2 0 R >>",
   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -103,10 +79,8 @@ q 16 0 0 16 160 96 cm /I1 Do Q\n\
     "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8 \
 /Filter /ASCIIHexDecode "]
 
-/-- **The hand-written print-dialect fixture**: what a print workflow's
-figures spell, invented content — device CMYK fills and strokes by `k` and
-`K`, a CMYK image, an indexed image over a CMYK base, and an axial shading
-in CMYK whose one ink changes. -/
+/-- The hand-written print-dialect fixture: device CMYK fills and strokes, a CMYK image,
+an indexed image over a CMYK base, and a CMYK axial shading. -/
 def printDialect : ByteArray := pdfOf #[
   "<< /Type /Catalog /Pages 2 0 R >>",
   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -131,13 +105,9 @@ q 30 0 0 30 150 15 cm /I2 Do Q",
   "<< /ShadingType 2 /ColorSpace /DeviceCMYK /Coords [0 0 1 0] \
 /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0.8 0 0] /C1 [1 0.8 0 0] /N 1 >> /Extend [true true] >>"]
 
-/-- **The hand-written geometry fixture**: the shapes whose drawing turns on
-PDF's own rules (ISO 32000-2 §8.5.3), invented — stroked rectangles of zero
-height and zero width, a dashed rectangle of negative extent (its dashes
-start at its corner and run toward the negative extents), a dashed curve,
-degenerate subpaths under each line cap (a square cap paints nothing, a
-round one a dot), a clip by an `re` of negative extent, and inline images
-in ASCIIHex, RGB and grey. -/
+/-- The hand-written geometry fixture: shapes whose drawing turns on ISO 32000-2 §8.5.3,
+zero- and negative-extent rectangles, a dashed curve, degenerate subpaths under each cap,
+a negative `re` clip, and inline images. -/
 def geometryDialect : ByteArray := pdfOf #[
   "<< /Type /Catalog /Pages 2 0 R >>",
   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -154,11 +124,9 @@ q 120 35 -30 -20 re W n 0.9 0.6 0.1 rg 80 5 50 40 re f Q\n\
 q 20 0 0 20 140 40 cm BI /W 2 /H 2 /CS /RGB /BPC 8 /F /AHx ID ff000000ff000000ffffff00> EI Q\n\
 q 20 0 0 20 165 40 cm BI /W 2 /H 1 /CS /G /BPC 8 /F /AHx ID 20e0> EI Q"]
 
-/-- **The hand-written text fixture**: the text state's positioning, over a
-Type 3 font whose glyphs are filled `d1` procedures, invented — leading and
-`T*`, character and word spacing, horizontal scaling, rise, the two quote
-operators, a `TJ` adjustment, and a rotated text matrix — with a ToUnicode
-CMap, so its words are the figure's. -/
+/-- The hand-written text fixture: leading and `T*`, character and word spacing,
+horizontal scaling, rise, both quote operators, a `TJ` adjustment and a rotated matrix,
+over a Type 3 font with a ToUnicode CMap. -/
 def textDialect : ByteArray := pdfOf #[
   "<< /Type /Catalog /Pages 2 0 R >>",
   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",

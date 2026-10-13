@@ -1,104 +1,6 @@
 /-
-The scoreboard's core: one committed baseline per goal, each under a
-ratchet. A tier is a file plus its only writer — `testdata/scoreboard/<tier>.tsv`
-and `scripts/<tier>.lean` — and the file is the whole claim: `#` lines for
-provenance (tool versions, the encoding; data, never gated), then
-`item<TAB>integer` rows, higher is better, sorted and unique.
-
-A measurement a goal is judged by is a tier, never a number in a report.
-`<tier>` matches `[a-z0-9-]+`, which the aggregate faults otherwise. Its
-producer runs in three modes (regenerate, `--check`, `--selftest`), and its
-name is in `declaredTiers`, whose absence is a fault unless the name is also
-on `pendingTiers`; a pending name whose tier has both halves fails the
-selftest, so landing a tier and removing its name are one commit. An absent
-or empty baseline under `--check` is a fault, and only regeneration starts
-from nothing; the aggregate faults an empty or rowless baseline itself,
-whatever its producer exits. `--check` is hermetic, reading committed
-references and in-repo data only: anything that needs another engine, the
-network or the host's TeX tree is a report (`scoreboard --bench`), never a
-gate, and `scoreboard --selftest` fans out to every tier's.
-
-The tier contract is the exit status of `--check`, and nothing else. That is
-the one thing every tier's writer was told about, and four writers built to
-it in parallel. Two things this library likes are therefore optional, never
-gating:
-
-* the porcelain line (`tierLine`) adds counts when a tier prints one, and
-  can never turn a non-zero exit into a pass;
-* the `# encoding:` line is a ranking hint — a baseline without one is
-  gated like any other and the queue reports it as unranked.
-
-An item may hold spaces: a row is split on its tab, and no consumer splits
-an item on whitespace.
-
-Any record format a producer writes and reads back — a tier's sidecar, a
-cache envelope — owes the round trip of its empty value, every field
-empty: that is the arm a real fixture eventually takes and the one a
-hand-written example never does. The parity sidecar's is held in
-scripts/parity-regen.lean, the rhythm record's in scripts/rhythm.lean; the
-conversion cache's envelope round trip is owed (U68).
-
-The ratchet, stated once here so every tier obeys the same one:
-
-* a value that drops is a regression, unless a lowering request authorises
-  exactly that fall (below);
-* a baselined item that disappears is a regression, unless a `# retired:`
-  line retires it;
-* a value that **rises** fails `--check` too, unrecorded: record it by
-  regenerating, in the commit that earned it. A floor allowed to lag the
-  tree is a floor that admits a silent fall back to it, and the queue,
-  which ranks from committed files, ranks on the stale number. It is the
-  rule `subjectDebt` and `siteAccounting` already live under — read in both
-  directions, so a row is a migration step and not a parking space;
-* a new item enters at its measured value — in a `headroom` tier, against
-  the cap.
-
-Weakening is a human act with a written reason, in the committed file, and
-each line authorises one act, once. The state of every line is decidable
-from the file alone, which is what keeps every mode hermetic:
-
-* `# lowered: <item> <old>→<new> — <why>` is a **request**. It authorises
-  exactly the fall from the committed value `<old>` to the measured `<new>`,
-  and the regeneration that writes that fall writes the line back as
-  `# lowered (applied): <item> <old>→<new> — <why>`, a **record**. A record
-  authorises nothing, ever: a line carried forward cannot let the same item
-  fall a second time, even between the same two values. A second fall needs
-  a second request, checked against the floor the first one left.
-* `# retired: <item> — <why>` beside the item's row is a request; the
-  regeneration that stops writing the row leaves the same line as the
-  record. A measurement that still produces a retired item is malformed:
-  re-admitting one means deleting its line.
-* `# retired-tier: <why>` in place of every row retires a whole tier: the
-  file stays as its tombstone and the producer is deleted.
-
-A committed file still carrying a request that names its committed floor is
-`stale` under `--check`: it is not what a regeneration wrote. One holding a
-request that names any other floor is a fault, and the message says to mark
-it applied if it records a fall already written, otherwise to correct or
-delete it. `scoreboard --check --base <rev>` holds the
-tree's files to the ones committed at `<rev>` (`judgeBase`), read with git's
-replacement objects off: a fall or a vanish there needs a line that is new
-since `<rev>` — a record spending a request `<rev>` holds is new, since the
-spend is — which is what stops a hand-edited value, or a baseline deleted and
-regenerated from nothing, from laundering one. Every tier file in the tree,
-one new since `<rev>` included (`judgeNew`), must read as the format
-(`validate`), and one still carrying a request is `stale` there too, whatever
-its producer answers. A baseline present at `<rev>` may not disappear, and a
-base git cannot read is a fault. A pass prints each weakening and each new
-line it credited, control characters spelled out, which is where the human
-reads them.
-
-The encoding line is read by the queue, so a deficit is computed rather
-than declared: `# encoding: headroom cap=<n>` means the value is
-`cap - count` and the deficit is the count; `# encoding: pairs <part>/<whole>`
-means items come in `<key>.<part>` / `<key>.<whole>` pairs and the deficit is
-the gap; `# encoding: raw` means the value is the measurement and the
-deficit is the distance from the tier's best item.
-
-A "shrink is good" metric is encoded as headroom rather than as a raw count
-because a ratchet can only point one way: with `higher is better` fixed for
-every tier, one comparison serves all of them and no tier can quietly
-invert the test.
+The scoreboard core: tier baselines (`testdata/scoreboard/<tier>.tsv`), their parser and
+validator, and the one ratchet every tier's `--check` and the base check apply.
 -/
 import LeanTex.Cli.FontDiscovery
 import LeanTex
@@ -111,17 +13,12 @@ import Lean.Data.Json
 
 namespace Scoreboard
 
-/-- The headroom ceiling. Large enough that no debt this repository tracks
-approaches it, so `cap - count` stays positive and a reader can subtract in
-their head. Raising it would raise every headroom item at once, which the
-ratchet would read as a fleet-wide improvement — so it is a constant, not a
-knob. -/
+/-- The headroom ceiling: a headroom item's value is `debtCap - count`; a constant, since
+raising it would raise every headroom item at once. -/
 def debtCap : Int := 1000
 
-/-- The lowest value a `raw` tier's item can hold and still be ranked. A
-negative value is how a tier says "outside the denominator" — `parity`
-writes `refuses -1` for a fixture the reference engine cannot build — and
-such an item is not the tier's worst, it is not in the running. -/
+/-- The lowest value a ranked `raw` item can hold; a negative value marks an item outside
+the denominator. -/
 def rawFloor : Int := 0
 
 structure Row where
@@ -129,8 +26,7 @@ structure Row where
   value : Int
 deriving BEq, Inhabited
 
-/-- How a tier's values relate to its measurements. Read off the `#
-encoding:` line; the queue needs it to rank deficits. -/
+/-- How a tier's values relate to its measurements, read off the `# encoding:` line. -/
 inductive Encoding where
   | headroom (cap : Int)
   | pairs (part whole : String)
@@ -142,9 +38,8 @@ def Encoding.render : Encoding → String
   | .pairs p w => s!"pairs {p}/{w}"
   | .raw => "raw"
 
-/-- A lowering line's standing: a human's request, which authorises one
-fall in the next regeneration, or the record regeneration leaves once it has
-written that fall, which authorises nothing. -/
+/-- A lowering line's standing: a request, which authorises one fall in the next
+regeneration, or the record of a fall written, which authorises nothing. -/
 inductive LowerState where
   | pending
   | applied
@@ -154,9 +49,8 @@ def LowerState.tag : LowerState → String
   | .pending => "# lowered:"
   | .applied => "# lowered (applied):"
 
-/-- `# lowered: <item> <old>→<new> — <why>`, or its applied record. The item
-may hold spaces, so the arrow pair is read as the last token before the
-reason. A literal built without a `state` is a request. -/
+/-- `# lowered: <item> <old>→<new> — <why>`, or its applied record; the arrow pair is the
+last token before the reason, since an item may hold spaces. -/
 structure Lowered where
   item : String
   old : Int
@@ -168,11 +62,7 @@ deriving BEq, Inhabited
 def Lowered.render (w : Lowered) : String :=
   s!"{w.state.tag} {w.item} {w.old}→{w.new} — {w.why}"
 
-/-- The same text whatever its standing: a request and the record it became
-are one human act of writing. Spending the request is another act, so the
-base check cancels a line only against one of the same standing
-(`newLowerings`) and reads this only to say which base line a new one shares
-its text with. -/
+/-- The same text, whatever the standing. -/
 def Lowered.sameLine (a b : Lowered) : Bool :=
   a.item == b.item && a.old == b.old && a.new == b.new && a.why == b.why
 
@@ -180,13 +70,10 @@ structure Tsv where
   provenance : Array String
   rows : Array Row
   retired : Array (String × String)
-  /-- Every lowering line, requests and records, in file order. Carried
-  forward when a producer regenerates, so the file reads as the history of
-  why its floor moved. -/
+  /-- Every lowering line, requests and records, in file order, carried forward on
+  regeneration. -/
   lowered : Array Lowered
-  /-- `none`: the tier declares no encoding. It is gated like any other tier
-  and the queue does not rank it — a missing hint for a report, not a
-  malformed baseline. -/
+  /-- `none`: the tier declares no encoding; it is gated but not ranked. -/
   encoding : Option Encoding
   /-- `# retired-tier: <why>`: the file is the tombstone of a retired tier. -/
   tierRetired : Option String := none
@@ -198,17 +85,13 @@ def tsvPath (tier : String) : String := s!"{baselineDir}/{tier}.tsv"
 
 def scriptPath (tier : String) : String := s!"scripts/{tier}.lean"
 
-/-- The item's spelling. A row is split on its tab, so an item may hold
-spaces — the spec permits them and two sibling tiers use them — and the
-porcelain line never carries an item, so nothing downstream splits one on
-whitespace. Only an empty name is a fault. -/
+/-- The item's spelling faults: only an empty name, since rows split on their tab and an
+item may hold spaces. -/
 def itemFaults (item : String) : Option String :=
   if item.isEmpty then some "an empty item name" else none
 
-/-- `# retired: <item> — <why>`. The em dash is the separator the repository
-already uses for a reason clause, and requiring it is what makes a
-retirement with no reason a malformation rather than an item named
-"foo — ". -/
+/-- `# retired: <item> — <why>`, the em dash required so a retirement without a reason is
+a malformation. -/
 def parseRetired (l : String) : Option (Except String (String × String)) :=
   let pre := "# retired:"
   if !l.startsWith pre then none
@@ -281,9 +164,8 @@ def parseEncoding (l : String) : Option (Except String Encoding) :=
       | _ => some (.error s!"malformed pairs encoding '{spec}' (want `<part>/<whole>`)")
     | _ => some (.error s!"unknown encoding '{String.intercalate " " toks}'")
 
-/-- Parse a baseline. Faults that stop a value being read at all throw;
-faults about the *set* of rows are `validate`'s, so a caller can report
-every one of them at once. -/
+/-- Parse a baseline; faults about the set of rows are `validate`'s, so every one can be
+reported at once. -/
 def parse (text : String) : Except String Tsv := do
   let mut provenance : Array String := #[]
   let mut rows : Array Row := #[]
@@ -340,17 +222,9 @@ requests no regeneration has applied yet. -/
 def Tsv.pendingRetirements (t : Tsv) : Array String :=
   t.retired.filterMap fun (i, _) => if t.rows.any (·.item == i) then some i else none
 
-/-- Faults of a **committed** baseline: order and uniqueness of its rows,
-and the human-written lines judged against the rows they sit beside.
-
-A lowering request must name the fall from the floor this file commits — its
-`<old>` is the item's committed value, or the cap for an item a `headroom`
-tier has not baselined — because that is the only fall it can authorise. A
-record is history and is never held to today's rows: a record that had to
-stay true against every later floor is what wedged a second fall of one item
-(the second staging under one owner module). A retirement beside its row is a
-request, which regeneration applies; `validateFresh` is where a retired item
-that is still measured is a fault. -/
+/-- Faults of a committed baseline: row order and uniqueness, and each lowering request
+naming the fall from the floor the file commits (or the cap, for an unbaselined headroom
+item); a record is history and never held to today's rows. -/
 def validate (t : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   match t.tierRetired with
@@ -374,8 +248,6 @@ def validate (t : Tsv) : Array String := Id.run do
     if w.old ≤ w.new then
       out := out.push s!"lowering of '{w.item}' names no fall ({w.old}→{w.new})"
     else if w.state == .pending then
-      -- The remedy is part of the message: a request carried after the fall it
-      -- asked for was written reads exactly like this.
       let remedy := "; if it records a fall already written, mark it `# lowered (applied):`, \
 otherwise correct or delete it"
       match t.find? w.item, t.cap? with
@@ -391,11 +263,8 @@ is not baselined, so it enters from the cap {cap}{remedy}"
         out := out.push s!"lowering of '{w.item}' names no baselined item{remedy}"
   return out
 
-/-- Faults of a **fresh measurement**, sorted by the caller, judged against
-the committed file it will be compared with. A measured item the committed
-file retires is one: the retirement said the measurement stopped, and it did
-not. Re-admitting the item is deleting its line — a human act, like
-retiring it. -/
+/-- Faults of a fresh measurement against the committed file: a measured item the file
+retires is one. -/
 def validateFresh (rows : Array Row) (committed : Option Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   if rows.isEmpty then out := out.push "no rows"
@@ -411,8 +280,7 @@ def validateFresh (rows : Array Row) (committed : Option Tsv) : Array String := 
 `# retired:` line to measure it again"
   return out
 
-/-- One change the ratchet saw, as a value: a judge reads these fields, not
-a rendered sentence. -/
+/-- One change the ratchet saw, as a value a judge reads. -/
 inductive Change where
   | fell (item : String) (old new : Int)
   | rose (item : String) (old new : Int)
@@ -443,38 +311,19 @@ def Delta.losses (d : Delta) : Array Change := d.changes.filter (·.isLoss)
 
 def Delta.gains (d : Delta) : Array Change := d.changes.filter (!·.isLoss)
 
-/-- Is this tier's committed floor the measurement? The one rule, for every
-tier: any change at all — a loss *or* an unrecorded gain — fails `--check`.
-
-Tight in both directions, as the suite already reads `subjectDebt` and
-`siteAccounting`: a floor allowed to lag the tree is a floor that admits a
-silent fall back to it, and the queue, which ranks from committed files,
-ranks on the stale number. So a gain is recorded by regenerating, in the
-commit that earned it. -/
+/-- Whether the committed floor is the measurement: any change, a loss or an unrecorded
+gain, fails `--check`. -/
 def Delta.checkPasses (d : Delta) : Bool := d.changes.isEmpty
 
-/-- Does a lowering line authorise this change? A request authorises exactly
-the fall it names, by item and both values; a record authorises nothing; and
-no lowering authorises a vanish, which is retirement's to answer. -/
+/-- Whether a lowering line authorises a change: a request authorises exactly the fall it
+names, a record nothing, and no lowering a vanish. -/
 def Lowered.authorises (w : Lowered) : Change → Bool
   | .fell i o n => w.state == .pending && w.item == i && w.old == o && w.new == n
   | _ => false
 
-/-- Compare a fresh measurement against the committed baseline. Retirement
-is read off the *baseline*: the committed file is where a human writes why
-a measurement stopped being made.
-
-In a `headroom` tier an item the baseline has never seen is compared
-against the **cap**, not treated as new: the cap is what "no debt" means
-there, so debt arriving under a name the file never held is a fall. Without
-that, staging an obligation under a new owner module read as an
-improvement — "is the debt going down" answered by the owner field's
-spelling, a typo included — while the same obligation under an existing
-owner was a regression. The rule is the encoding's, so it holds for every
-headroom tier at once.
-
-Spelled as two `filterMap`s rather than a loop so the statements below can
-read it: the monotone statement and its two companions. -/
+/-- Compare a fresh measurement against the committed baseline, retirement read off the
+baseline; in a `headroom` tier an item the baseline never saw is compared against the cap.
+-/
 def ratchet (base now : Tsv) : Delta :=
   { changes :=
       base.rows.filterMap (fun r =>
@@ -493,26 +342,16 @@ def ratchet (base now : Tsv) : Delta :=
             else some (.entered r.item r.value)
           | none => some (.entered r.item r.value)) }
 
-/-- The losses no request in the committed file authorises. Regeneration
-writes only when this is empty, and that one condition is what the three
-statements below are about. -/
+/-- The losses no request in the committed file authorises; regeneration writes only when
+there are none. -/
 def unauthorised (base now : Tsv) : Array Change :=
   (ratchet base now).losses.filter fun c => !(base.lowered.any (·.authorises c))
 
-/-- The requests no loss of this measurement answers: a request that
-authorises nothing is refused rather than carried, or it would sit in the
-file waiting to authorise some later fall nobody wrote it for. -/
+/-- The requests no loss of this measurement answers, refused rather than carried. -/
 def unusedLowerings (base now : Tsv) : Array Lowered :=
   let losses := (ratchet base now).losses
   base.pendingLowerings.filter fun w => !(losses.any w.authorises)
 
-/-! ### What the ratchet guarantees
-
-Stated over `unauthorised`, the condition regeneration writes under. -/
-
-/-- A lowering line authorises a change exactly when it is a request and the
-change is the fall it names: never a record, never a vanish, never another
-item's fall or another pair of values. -/
 theorem authorises_exact (w : Lowered) (c : Change) :
     w.authorises c = true ↔ (w.state = .pending ∧ c = .fell w.item w.old w.new) := by
   cases c with
@@ -537,8 +376,6 @@ private theorem authorised_of_unauthorised_empty {base now : Tsv}
   obtain ⟨i, hi, hp⟩ := Array.any_eq_true.mp hany
   exact ⟨_, Array.getElem_mem hi, hp⟩
 
-/-- Every baselined item a regeneration may write either did not fall, or
-fell by exactly the pair of values a request in the committed file names. -/
 theorem ratchet_monotone (base now : Tsv) (h : unauthorised base now = #[]) :
     ∀ r ∈ base.rows, ∀ v, now.find? r.item = some v →
       r.value ≤ v ∨ ∃ w ∈ base.lowered,
@@ -556,8 +393,6 @@ theorem ratchet_monotone (base now : Tsv) (h : unauthorised base now = #[]) :
     exact ⟨w, hw, hs, heq.1.symm, heq.2.1.symm, heq.2.2.symm⟩
   · exact .inl (Int.not_lt.mp hlt)
 
-/-- An item a `headroom` tier has never baselined enters at or above the cap,
-or at exactly the value a request names as a fall from the cap. -/
 theorem ratchet_cap_monotone (base now : Tsv) (h : unauthorised base now = #[])
     {cap : Int} (hcap : base.cap? = some cap) :
     ∀ r ∈ now.rows, base.find? r.item = none →
@@ -576,8 +411,6 @@ theorem ratchet_cap_monotone (base now : Tsv) (h : unauthorised base now = #[])
     exact ⟨w, hw, hs, heq.1.symm, heq.2.1.symm, heq.2.2.symm⟩
   · exact .inl (Int.not_lt.mp hlt)
 
-/-- An item a regeneration stops writing is paid for by a retirement line in
-the committed file: no lowering can stand in for one. -/
 theorem ratchet_accounts (base now : Tsv) (h : unauthorised base now = #[]) :
     ∀ r ∈ base.rows, now.find? r.item = none → base.isRetired r.item = true := by
   intro r hr hn
@@ -591,47 +424,27 @@ theorem ratchet_accounts (base now : Tsv) (h : unauthorised base now = #[]) :
     simp [Lowered.authorises] at ha
   · rfl
 
-/-! ### The base check: a floor cannot move unless a new line moves it
-
-`--check` compares the committed files with the measurement, so a floor
-edited down by hand, or a baseline deleted and regenerated from nothing,
-passes it: both files agree with the tree. What they cannot agree with is
-the file committed at the base the branch lands onto. So `judgeBase`
-compares the two committed files, and a fall between them needs lowering
-lines that are **new** since the base — a record carried from the base
-cannot pay twice. -/
-
-/-- The lowering lines the tree's file carries that the base's does not, as
-a multiset: one base line cancels one identical tree line **of the same
-standing**. A record the tree writes for a request the base holds is new,
-because spending the request is: it was never applied at the base, so the
-regeneration that applies it is the act this landing adds. Cancelling across
-standings once let the base's request swallow that record, and the tool's own
-remedy for a base holding a request ended at `laundered`. -/
+/-- The lowering lines the tree's file carries that the base's does not, as a multiset
+cancelled only within one standing, so a record spending a base request is new. -/
 def newLowerings (base tip : Tsv) : Array Lowered :=
   let step := fun (acc : List Lowered × Array Lowered) (w : Lowered) =>
     if acc.1.any (· == w) then (acc.1.eraseP (· == w), acc.2)
     else (acc.1, acc.2.push w)
   (tip.lowered.foldl step (base.lowered.toList, #[])).2
 
-/-- The items the tree's file retires that the base's does not record as
-retired. A retirement the base only requests — its line beside the row it
-retires — is unspent there, and the regeneration that drops the row spends
-it, as a record spends a request (`newLowerings`). -/
+/-- The items the tree's file retires that the base's does not record as retired; a
+retirement the base only requests is unspent there. -/
 def newRetirements (base tip : Tsv) : Array String :=
   tip.retired.filterMap fun (i, _) =>
     if base.isRetired i && !base.pendingRetirements.contains i then none else some i
 
-/-- One pass: the lowest `new` among the lines usable from `m`. The value may
-rise freely — rises need no line — so a line whose `old` is at or above `m`
-is usable. -/
+/-- One pass: the lowest `new` among the lines usable from `m`, a line usable when its
+`old` is at or above `m`, since values may rise freely. -/
 def reachStep (lines : List Lowered) (m : Int) : Int :=
   lines.foldl (fun acc w => if m ≤ w.old ∧ w.new < acc then w.new else acc) m
 
-/-- The lowest value an item can reach from `c` when it may rise freely and
-fall only along one of `lines`: the composition of the regenerations the
-lines record, with any rises between them. One pass per line reaches the
-fixed point, because each productive pass lands on some line's `new`. -/
+/-- The lowest value an item can reach from `c`, rising freely and falling only along
+`lines`; one pass per line reaches the fixed point. -/
 def reach (lines : List Lowered) (c : Int) : Int :=
   (List.replicate lines.length ()).foldl (fun m _ => reachStep lines m) c
 
@@ -655,8 +468,6 @@ private theorem lowerFold_mem (lines : List Lowered) (c m : Int) :
       · exact .inr ⟨x, hsub x (by simp), rfl⟩
       · exact h
 
-/-- What `reach` returns is drawn from its inputs: the start, or some line's
-`new` — so nothing is reached that no line wrote. -/
 theorem reach_mem (lines : List Lowered) (c : Int) :
     reach lines c = c ∨ ∃ w ∈ lines, reach lines c = w.new := by
   unfold reach
@@ -674,19 +485,15 @@ theorem reach_mem (lines : List Lowered) (c : Int) :
       exact lowerFold_mem lines c acc lines acc (fun _ hw => hw) h
   exact key _ c (.inl rfl)
 
-/-- One baselined item's verdict under the base check: it held `c` at the
-base; `tip` is its value in the tree. It may rise, fall only as far as the
-new lines reach, and vanish only where `vanishOk` says a new retirement pays
-for it. -/
+/-- One baselined item's base-check verdict: it held `c` at the base and `tip` in the
+tree; it may rise, fall only as far as the new lines reach, and vanish only where
+`vanishOk`. -/
 def itemAccepted (c : Int) (tip : Option Int) (lines : List Lowered) (vanishOk : Bool) :
     Bool :=
   match tip with
   | some v => decide (c ≤ v) || decide (reach lines c ≤ v)
   | none => vanishOk
 
-/-- A value the base check accepts either did not fall, or fell no further
-than some new line goes: every accepted fall is paid for by a line written
-since the base. -/
 theorem itemAccepted_monotone (c v : Int) (lines : List Lowered) (b : Bool)
     (h : itemAccepted c (some v) lines b = true) :
     c ≤ v ∨ ∃ w ∈ lines, w.new ≤ v := by
@@ -697,8 +504,8 @@ theorem itemAccepted_monotone (c v : Int) (lines : List Lowered) (b : Bool)
     · exact .inl (he ▸ h)
     · exact .inr ⟨w, hw, he ▸ h⟩
 
-/-- Every way the tree's committed file moved a floor the base's file held
-without a line written since the base to pay for it. -/
+/-- Every floor the base's file held that the tree's moved without a line written since
+the base. -/
 def baseFaults (base tip : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   match base.encoding, tip.encoding with
@@ -730,14 +537,9 @@ line was written for it since the base"
 lowering line written since the base reaches it"
   return out
 
-/-- What a passing base check credited, for the human who lands it to read:
-each weakening the tree's file makes against the base's — a fall, a vanish, an
-item entering a `headroom` tier below its cap, a tier retired — then each line
-new since the base that can pay for one, as written. A new line whose text the
-base already carries is marked. A record spending a request the base holds,
-or a retirement the base requested and the tree applied, says so; any other
-copy is marked because the multiset counts the extra copy as new, and whether
-it should is the human's call. -/
+/-- What a passing base check credited, for the human landing it: each weakening against
+the base, then each new line that can pay for one, marking a line whose text the base
+already carries. -/
 def baseCredits (base tip : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   if tip.tierRetired.isSome && base.tierRetired.isNone then
@@ -774,26 +576,15 @@ def creditsOf (baseText tipText : String) : Array String :=
   | .ok b, .ok t => baseCredits b t
   | _, _ => #[]
 
-/-- The requests a committed file still holds, as written: a `# lowered:` line
-no regeneration has applied, and a `# retired:` line beside its row. A file
-holding one is not what its producer writes — regeneration spends a request in
-the writing — so the base check reads it as `stale` whatever the producer's
-`--check` answers, for every tier file in the tree, a tier new since the base
-included (`treeVerdict`): the aggregate reads a producer by its exit status
-alone, and a producer need not know the request form. -/
+/-- The requests a committed file still holds: an unapplied `# lowered:` line and a `#
+retired:` line beside its row; the base check reads such a file as `stale`. -/
 def heldRequests (t : Tsv) : Array String :=
   t.pendingLowerings.map (·.render) ++
     t.retired.filterMap fun (i, why) =>
       if t.rows.any (·.item == i) then some s!"# retired: {i} — {why}" else none
 
-/-- What the tree's copy of a baseline owes whatever the base holds: the
-format's faults (`validate`) — a duplicated item, whose floor a first reader
-picks, and a request naming a floor the file does not hold among them — and
-the requests it still holds, each saying whether the base holds it too: then
-main carries it, and a landing that never touched it is stale all the same.
-The base check applies it to every tier file in the tree, one the base does
-not carry included; reading the base's listing alone once let a new tier land
-holding a request, and validating nothing let a duplicate row hide a fall. -/
+/-- What the tree's copy of a baseline owes whatever the base holds: the format's faults,
+and the requests it still holds, each saying whether the base holds it too. -/
 def treeVerdict (base : Option Tsv) (t : Tsv) : Array String × Array String :=
   let inherited := (base.map heldRequests).getD #[]
   ((validate t).map (s!"the tree's file is malformed: {·}"),
@@ -803,15 +594,9 @@ and every landing is stale until one spends it or deletes it" else ""
      s!"the tree's file still holds `{l}`, a request no regeneration has applied{also}; \
 regenerate the tier with its producer, which spends it in the writing, or delete the line")
 
-/-- The base check for one tier, from the two texts: the result word and its
-reasons. A baseline committed at the base that the tree no longer carries is
-a fault — deleting the file was the other way to discard a floor — and a
-whole tier is retired only by its tombstone. A tree's file that does not read
-as the format is a fault, one that moved a floor with no new line to pay for
-it is `laundered`, and one still holding a request is `stale`: whatever it
-would pay for, it is not a file a regeneration wrote. The base's file is held
-to nothing but reading: a fault in it is main's, and no landing could clear
-it. -/
+/-- The base check for one tier, as a result word and reasons: a baseline the tree dropped
+is a fault, an unreadable file a fault, a floor moved without a new line `laundered`, a
+held request `stale`; the base's file is held only to reading. -/
 def judgeBase (baseText : String) (tipExists : Bool) (tipText : String) :
     String × Array String :=
   if !tipExists then
@@ -851,10 +636,8 @@ def render (provenance : Array String) (rows : Array Row) : String := Id.run do
     out := out ++ r.item ++ "\t" ++ toString r.value ++ "\n"
   return out
 
-/-- The porcelain line a tier's `--check` prints and the aggregate reads
-back. One line, one tier, parsed by splitting on whitespace — the same
-discipline the repository applies to a claim about a page: read the
-artifact, never the narration. -/
+/-- The porcelain line a tier's `--check` prints and the aggregate reads back, one tier
+per line. -/
 def tierLine (tier : String) (items regressed improved : Nat) (result : String) : String :=
   s!"scoreboard: tier={tier} items={items} regressed={regressed} \
 improved={improved} result={result}"
@@ -864,41 +647,24 @@ def field (line key : String) : Option String :=
   (toks.find? (·.startsWith (key ++ "="))).map (fun t =>
     ((t.drop (key.length + 1)).toString))
 
-/-- The tiers the scoreboard expects to exist. A name here missing either
-half — `testdata/scoreboard/<name>.tsv` or `scripts/<name>.lean` — is a
-**fault**, not a pass: a tier that vanishes is exactly the failure this
-file guards against, and before this list existed a landed tier could be
-deleted outright and the gate stayed green.
-
-Names beyond the ones this agent shipped are the siblings' tiers, declared
-ahead of their arrival so their absence is visible. -/
+/-- The tiers the scoreboard expects; a name here missing its baseline or producer is a
+fault. -/
 def declaredTiers : List String :=
   ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
    "htmla11y", "htmlreader", "mdtwin", "palette-oracle", "parity", "pdf-native", "purity",
    "rhythm", "schemes", "svg-native", "tikz-native", "typeset"]
 
-/-- The declared tiers that have not landed yet: only these may be absent,
-and their absence reports `missing`, which the aggregate does not gate — so
-a sibling's tier can arrive in two commits without breaking the gate in
-between.
-
-The list cannot go stale, because the selftest fails a name on it that has
-both halves: landing a tier and removing its name here are one commit. That
-is what makes the permission narrow rather than a hole the size of
-`declaredTiers`. -/
+/-- The declared tiers not landed yet, whose absence reports `missing`; the selftest fails
+a name here that has both halves. -/
 def pendingTiers : List String :=
   []
 
-/-- Build every tier producer and its test dependencies before fan-out.
-Interpreted tools otherwise read stale compiled modules. A producer that
-spawns the document executable needs it built from this tree too: `doccost`
-measures `leantex` itself. -/
+/-- The targets built before fan-out, so interpreted producers read current modules and
+`doccost` the current `leantex`. -/
 def tierImports : List String :=
   ["ScriptsModules", "TestsModules", "leantex"]
 
-/-- The `tierImports` this tree actually declares. Read off `lakefile.toml`,
-so a name that has not arrived yet is skipped instead of failing the build
-it was meant to guard. -/
+/-- The `tierImports` this tree's `lakefile.toml` declares. -/
 def buildTargets : IO (Array String) := do
   let lakefile ← if ← System.FilePath.pathExists "lakefile.toml"
     then IO.FS.readFile "lakefile.toml" else pure ""
@@ -913,10 +679,8 @@ def buildTargets : IO (Array String) := do
       | [] => pure ()
   return tierImports.toArray.filter declared.contains
 
-/-- A tier's name is `[a-z0-9-]+`. It is a file basename, the root of its
-producer's path, a `tier=` field the porcelain splits on whitespace, and a path
-git lists — and git quotes a name holding any other byte, which is how a
-deleted baseline once went unseen by the base check. -/
+/-- A tier name is `[a-z0-9-]+`: a file basename, a porcelain field, and a path git lists
+unquoted. -/
 def tierNameOk (name : String) : Bool :=
   !name.isEmpty && name.all fun c => c.isLower || c.isDigit || c == '-'
 
@@ -934,20 +698,16 @@ def shownName (name : String) : String := Id.run do
         out := (out.push '%').push hex[(b >>> 4).toNat]! |>.push hex[(b &&& 15).toNat]!
   return out
 
-/-- Does a character act on a terminal, or hide, rather than print? The C0
-controls, DEL and the C1 controls — ESC among them, whose cursor-up and
-erase-line sequences once wiped a `moved:` line a passing base check printed
-— and the Unicode format characters that reorder text (the bidirectional
-marks, embeddings, overrides and isolates) or hide it (the zero-width ones,
-the line and paragraph separators, the byte-order mark). -/
+/-- Whether a character acts on a terminal or hides rather than prints: the C0 and C1
+controls, DEL, and the Unicode format characters that reorder or hide text. -/
 def actsOnTerminal (c : Char) : Bool :=
   let n := c.toNat
   n < 0x20 || (0x7F ≤ n && n ≤ 0x9F) || n == 0x061C || (0x200B ≤ n && n ≤ 0x200F) ||
     (0x2028 ≤ n && n ≤ 0x202E) || (0x2060 ≤ n && n ≤ 0x2069) || n == 0xFEFF
 
-/-- A line as the scoreboard prints it: every character that acts rather than
-prints spelled `\u{<hex>}`, so text a file or a producer supplies reaches a
-terminal as text. Everything else, `→` and `—` included, passes unchanged. -/
+/-- A line as the scoreboard prints it: every character that acts rather than prints
+spelled `\u{<hex>}`, so supplied text reaches a terminal as text, and everything else (`→`
+and `—` included) unchanged. -/
 def printable (s : String) : String := Id.run do
   if !s.any actsOnTerminal then return s
   let mut out := ""
@@ -956,13 +716,8 @@ def printable (s : String) : String := Id.run do
     else out := out.push c
   return out
 
-/-- Every tier, and apart from them every name that is not one: the declared
-names, plus any baseline committed under `testdata/scoreboard/` that no one
-declared (a sibling's tier, landed before its name reached this list). Direct
-children only — a subdirectory holds the selftest fixtures, which are inputs
-and not tiers. A name outside `[a-z0-9-]+` is returned apart rather than
-dropped, so no caller runs it as a tier and none can overlook it: the
-aggregate faults it. -/
+/-- Every tier (the declared names and any undeclared baseline directly under
+`testdata/scoreboard/`), and apart from them every name that is no tier name. -/
 def discover : IO (Array String × Array String) := do
   let mut names : Array String := #[]
   let mut misnamed : Array String := #[]
@@ -978,14 +733,8 @@ def discover : IO (Array String × Array String) := do
     if tierNameOk n then names := names.push n else misnamed := misnamed.push n
   return (names.qsort (· < ·), misnamed.qsort (· < ·))
 
-/-- A deficit per item, from the tier's own encoding. The ranking is
-computed from committed data; nothing here is a list of what to do.
-
-`raw` measures distance from the tier's best item, and skips values below
-`rawFloor`: a negative value is a tier's way of saying "outside the
-denominator" (`parity`'s `refuses -1` is a fixture the reference engine
-cannot build), and ranking it as the worst item of the tier would put a
-measurement that does not count at the head of the queue. -/
+/-- A deficit per item from the tier's own encoding; `raw` skips values below `rawFloor`.
+-/
 def deficits (t : Tsv) : Array (String × Int) := Id.run do
   let mut out : Array (String × Int) := #[]
   match t.encoding with
@@ -1014,18 +763,8 @@ def deficits (t : Tsv) : Array (String × Int) := Id.run do
 def readFileOr (p : String) : IO String := do
   if ← System.FilePath.pathExists p then IO.FS.readFile p else return ""
 
-/-- A content key over named byte blobs: FNV-1a, 64-bit, hex. Order
-matters, and the name is hashed with the bytes, so a file renamed or
-reordered changes the key.
-
-What it is for: a tier whose numbers describe an *artifact* measured
-elsewhere — a browser's verdict on built pages, a reference engine's
-output — is only as fresh as the artifact it was measured on. Recording a
-key of that artifact, and faulting when a fresh one differs, is what stops
-the tier reporting last week's answer about this week's engine.
-
-`UInt64` throughout, never `Nat`: a `Nat` shift is an out-of-line bignum
-call, and this runs over every byte of every page. -/
+/-- A content key over named byte blobs (FNV-1a, 64-bit, hex), names and order included,
+which ties a tier measured elsewhere to the artifact it measured. -/
 def contentKey (blobs : Array (String × ByteArray)) : String := Id.run do
   let mut h : UInt64 := 0xcbf29ce484222325
   let prime : UInt64 := 0x100000001b3
@@ -1055,9 +794,8 @@ private def sha256K : Array UInt32 := #[
   0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]
 
-/-- SHA-256 (FIPS 180-4), as 64 lowercase hex digits. Computed in Lean over
-the bytes a tool reads, so what a pin is checked against is what is read,
-and no tool on `PATH` answers for it. -/
+/-- SHA-256 (FIPS 180-4) as 64 lowercase hex digits, computed in Lean so no tool answers
+for a pin. -/
 def sha256Hex (msg : ByteArray) : String := Id.run do
   let mut data := msg.push 0x80
   while data.size % 64 != 56 do
@@ -1108,10 +846,8 @@ def sha256Hex (msg : ByteArray) : String := Id.run do
       out := out.push digits[((x >>> ((7 - i).toUInt32 * 4)) &&& 0xf).toNat]!
   return out
 
-/-- One browser face the external oracle actually gave a reader: either the
-exact href and content digest it loaded, or the converter whose failure kept
-that face from the page. The record is committed beside the browser verdict;
-it is measurement data, not a theorem about a host tool. -/
+/-- One browser face the external oracle gave a reader: the exact href and content digest
+it loaded, or the converter whose failure kept it from the page. -/
 inductive BrowserFaceResult where
   | captured (size : Nat) (sha256 : String)
   | failed (tool : String)
@@ -1140,8 +876,7 @@ def resultText : BrowserFaceResult → String
 def render (face : BrowserFace) : String :=
   s!"browser-face: {face.fixture} {face.href} {resultText face.result}"
 
-/-- One committed capture line. Names and hrefs are single tokens because all
-of them are generated fixture/asset names, never author prose or host paths. -/
+/-- One committed capture line; its names and hrefs are generated single tokens. -/
 def parse (line : String) : Option BrowserFace := do
   let toks := (line.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
   let [_, fixture, href, result] := toks | none
@@ -1158,11 +893,8 @@ def parse (line : String) : Option BrowserFace := do
 
 end BrowserFace
 
-/-- Read browser-face failures from the CLI's structured diagnostic stream.
-Codes are fields, never snippets of human output or quoted message text, and
-the converter is named by the record's words or its detail, where a loss
-states the tool's own words. An unnamed or ambiguous converter remains
-unattributed. -/
+/-- Browser-face failures read from the CLI's structured diagnostic stream, by code fields
+and the record's words or detail; an unnamed or ambiguous converter stays unattributed. -/
 def browserFaceFailures (fixture log : String) : Array BrowserFace :=
   ((log.splitOn "\n").filterMap fun line => do
     let record ← (Lean.Json.parse line).toOption
@@ -1177,9 +909,8 @@ def browserFaceFailures (fixture log : String) : Array BrowserFace :=
     return BrowserFace.failed fixture
       (match tools with | [tool] => tool | _ => "unattributed")).toArray
 
-/-- The committed key of browser-converted faces. The href and the SHA-256 of
-the exact bytes are both in the input; order is canonical, so directory walk
-order cannot move the measurement. -/
+/-- The committed key of browser-converted faces, over hrefs and exact-byte digests in
+canonical order. -/
 def browserFaceKey (faces : Array BrowserFace) : String :=
   let ordered := faces.qsort fun a b =>
     if a.fixture == b.fixture then a.href < b.href else a.fixture < b.fixture
@@ -1193,8 +924,7 @@ private def browserFaceField (text name : String) : Array String :=
       some ((line.drop (name.length + 1)).toString.trimAscii.toString)
     else none).toArray
 
-/-- Parse every browser-face row, refusing even one malformed row rather than
-silently calculating a key over a subset. -/
+/-- Every browser-face row, refusing one malformed row rather than keying a subset. -/
 def browserFaces (text : String) : Except String (Array BrowserFace) := do
   let mut out : Array BrowserFace := #[]
   for raw in text.splitOn "\n" do
@@ -1205,14 +935,13 @@ def browserFaces (text : String) : Except String (Array BrowserFace) := do
       out := out.push face
   return out
 
-/-- Compact name for a rendering use in the actual HTML: image/source ordinal
-plus the SHA-256 of its exact data URL. The record never stores megabytes of
-base64; the byte digest in `BrowserFaceResult` independently covers its payload. -/
+/-- A rendering use's compact name: its image or source ordinal and the SHA-256 of its
+exact data URL. -/
 def browserFaceHref (fixture role : String) (index : Nat) (href : String) : String :=
   s!"{fixture}/{role}{index}-{sha256Hex href.toUTF8}.svg"
 
-/-- A hermetic page knows an image's position and primary/poster role before a
-host converts its bytes. Erase only that URL's digest, preserving both. -/
+/-- An image's position and role with only its URL's digest erased, which a hermetic page
+knows before conversion. -/
 def browserImageIdentity (fixture href : String) : Option String := do
   let basePath := fixture ++ "/"
   if !href.startsWith basePath || !href.endsWith ".svg" then none else
@@ -1227,8 +956,8 @@ def browserImageIdentity (fixture href : String) : Option String := do
 
 mutual
 
-/-- Independent typed-tree expectation, including hidden image uses. HTML has
-no generic fold; this structural walk records only the two image-fetch sites. -/
+/-- The two image-fetch sites of a typed HTML tree, walked structurally since HTML has no
+generic fold. -/
 def browserRefsOne (acc : Array (String × String)) : LeanTex.Core.Html.Node → Array (String × String)
   | .elem tag attrs kids =>
     let field := if tag == "img" then some ("i", "src")
@@ -1247,9 +976,8 @@ def browserRefsList (acc : Array (String × String)) : List LeanTex.Core.Html.No
 
 end
 
-/-- One required capture per SVG rendering use, not per unique payload. Raster
-uses still advance their role's ordinal. An unfulfilled picture request is a
-known SVG use: the host oracle must capture it, too, or refuse the build. -/
+/-- One required capture per SVG rendering use; an unfulfilled picture request is a known
+SVG use too. -/
 def browserExpectedFaces (fixture : String) (nodes : Array LeanTex.Core.Html.Node) :
     Array (String × String) := Id.run do
   let mut image := 0
@@ -1263,10 +991,8 @@ def browserExpectedFaces (fixture : String) (nodes : Array LeanTex.Core.Html.Nod
       out := out.push (fixture, s!"{fixture}/{role}{index}.svg")
   return out
 
-/-- Faults that stop committed pass cells certifying another set of browser
-faces. The source key is rebuilt hermetically; the content key is recomputed
-from the committed exact-byte digests. Host conversion itself remains an
-explicit report and a failed conversion is never a passing capture. -/
+/-- Faults that stop committed pass cells certifying another set of browser faces: the
+rebuilt source key and the recomputed content key must match. -/
 def browserFaceFaults (text freshSourceKey : String)
     (expected : Array (String × String) := #[]) : Array String := Id.run do
   let mut faults : Array String := #[]
@@ -1317,9 +1043,8 @@ def browserFaceFaults (text freshSourceKey : String)
         faults := faults.push s!"browser-face key {key}, committed records give {actual}"
   return faults
 
-/-- A file pinned by the sha256 of the bytes it held when it was declared.
-The line is `sha256sum`'s own format, `<64 hex>  <path>`, so a pin is made,
-and can be checked, by that one standard command. -/
+/-- A file pinned by the sha256 of the bytes it held when declared, in `sha256sum`'s `<64
+hex> <path>` format. -/
 structure Entry where
   pin : String
   path : String
@@ -1327,9 +1052,8 @@ deriving BEq
 
 def pinnedEntry (pin path : String) : String := pin ++ "  " ++ path
 
-/-- The entries of the pin list `file` holds. A line that is not a pinned
-entry is a fault, not a skip: an unpinned file is what a substituted one
-looks like. -/
+/-- The entries of the pin list `file` holds; a line that is not a pinned entry is a
+fault. -/
 def parsePins (file text : String) : Except String (Array Entry) := Id.run do
   let mut out : Array Entry := #[]
   let mut n := 0
@@ -1345,30 +1069,10 @@ def parsePins (file text : String) : Except String (Array Entry) := Id.run do
       return .error s!"{file}:{n}: not `<sha256>  <path>`; every entry carries its pin"
   return .ok out
 
-/-- The three modes every tier producer shares, so no tier can differ in
-what its `--check` means:
-
-* no argument — regenerate the baseline from a fresh measurement. A fall is
-  written only where a request in the committed file authorises exactly
-  that fall, and a vanish only where a `# retired:` line retires the item;
-  otherwise nothing is written and the exact line to add is printed. A
-  request no loss answers is refused too, rather than carried to authorise
-  some later fall. What is written carries every line forward, each request
-  it applied as a record.
-* `--check` — measure, compare against the committed baseline, write
-  nothing. The gated mode: hermetic, in-repo data only. An absent or empty
-  baseline is a **fault** here: with nothing to compare against every row
-  reads as new, so emptying the file used to pass the gate and silently
-  discard the floor. Only regeneration may start from nothing. Any change
-  fails, a rise included — record it by regenerating — and so does a
-  committed file still carrying a request (`stale`: it is not what a
-  regeneration wrote).
-* `--selftest` — the tier's own predicates against hand-written inputs.
-
-`measure` returns the provenance lines specific to this tier (tool versions,
-counts, whatever sizes the claim) and the rows. The baseline is
-`testdata/scoreboard/<tier>.tsv`; `tierMainAt` is the same with the file named,
-which is how the selftest follows the tool's own remedies end to end. -/
+/-- The three modes every tier producer shares: no argument regenerates the baseline,
+writing a fall only where a committed request authorises it; `--check` measures and
+compares, writing nothing, an absent or empty baseline being a fault; `--selftest` runs
+the tier's own predicates. -/
 def tierMainAt (path tier : String) (enc : Encoding)
     (measure : IO (Array String × Array Row)) (selftest : IO UInt32)
     (args : List String) : IO UInt32 := do
@@ -1398,9 +1102,7 @@ but {scriptPath tier} still measures it; delete the producer"])
   let rows := measured.qsort (fun a b => a.item < b.item)
   let freshFaults := validateFresh rows baseline
   if !freshFaults.isEmpty then
-    -- A tier that measured nothing has already said why on stderr — a
-    -- missing input, a freshness key that no longer matches. Reporting it
-    -- as a malformation would bury that reason under a format complaint.
+    -- A tier that measured nothing has already said why on stderr.
     if freshFaults == #["no rows"] then
       return (← fault #[s!"scoreboard: {tier} measured nothing, so there is no \
 comparison to make; the reason is above"])
@@ -1426,9 +1128,7 @@ comparison to make; the reason is above"])
     | some b => b.pendingRetirements
   let authorised := d.losses.filter (!unauth.contains ·)
   if !checking then
-    -- A fall is written only where the committed file already requests
-    -- exactly that fall, and the request is spent in the writing: it goes
-    -- back into the file as a record, which authorises nothing again.
+    -- A fall is written only as the committed file requests it; the request becomes a record.
     if !unauth.isEmpty || !unused.isEmpty then
       if !unauth.isEmpty then
         IO.eprintln s!"scoreboard: refusing to write {path}: {unauth.size} value(s) \
@@ -1477,9 +1177,7 @@ no regeneration has applied; regenerate: lake env lean --run scripts/{tier}.lean
     IO.eprintln s!"scoreboard: {tier}: {path} retires '{i}' and still holds its row; \
 regenerate: lake env lean --run scripts/{tier}.lean"
   for c in d.gains do IO.println s!"scoreboard: {tier} improved: {c.describe}"
-  -- `stale`, not `regressed`: the tree is ahead of its own floor, or the file
-  -- still carries a request. The aggregate gates it all the same, because a
-  -- floor that lags admits a silent fall back to it.
+  -- `stale`: the tree is ahead of its floor or the file holds a request; gated all the same.
   let result :=
     if !unauth.isEmpty then "regressed"
     else if !d.changes.isEmpty || !pendingL.isEmpty || !pendingR.isEmpty then "stale"
@@ -1496,11 +1194,8 @@ def tierMain (tier : String) (enc : Encoding)
     (args : List String) : IO UInt32 :=
   tierMainAt (tsvPath tier) tier enc measure selftest args
 
-/-- A tier producer's `--selftest`: run `body` with a recorder, print every
-failure it recorded, and exit on whether there were any. Five producers wrote
-this frame out in nine identical lines each, so a producer that reported a
-failure differently — or swallowed one — would have looked like the others.
-One frame: a tier's selftest is its assertions and nothing else. -/
+/-- A tier producer's `--selftest`: run `body` with a recorder, print every recorded
+failure, and exit on whether there were any. -/
 def tierSelftest (tier : String) (body : (String → Bool → IO Unit) → IO Unit) :
     IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
@@ -1514,27 +1209,15 @@ def tierSelftest (tier : String) (body : (String → Bool → IO Unit) → IO Un
 
 end Scoreboard
 
-/-! ## The HTML freshness key, built hermetically
-
-A browser matrix is only as fresh as the artifacts it measured. The ordinary
-HTML key is rebuilt in-process from in-repo inputs only — corpus, images and
-shipped faces — so it tracks the engine rather than `PATH`, font variables,
-the user cache or a TeX tree.
-
-Vector browser faces add a second contract because their bytes come from host
-converters. The hermetic half keys the HTML key, exact vector source bytes,
-page/animation request, generated href and `ImageAssets.browserFaceContract`.
-The external oracle keys the exact converted bytes under those hrefs. A host
-binary can still change its output without changing its inputs; that is an
-explicit report boundary, recorded by tool version and refreshed only by
-running the browser oracle, never disguised as a hermetic gate. -/
+/-! The HTML freshness keys, built hermetically from in-repo inputs only: the pages,
+images and shipped faces, and for vector browser faces their exact sources, hrefs and
+conversion recipe. -/
 
 namespace Scoreboard.Hermetic
 
 open LeanTex.Core LeanTex.Cli
 
-/-- Every slot and variant on face 0 — the one-face set's index, as the
-suite's `oneFaceOf` and the driver's `singleFaceIndex` spell it. -/
+/-- Every slot and variant on face 0, the one-face set's index. -/
 def oneFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
   ((List.range 3).flatMap fun slot =>
     [((slot, 400, false), 0), ((slot, 700, false), 0),
@@ -1553,8 +1236,8 @@ def loadFont (cache : IO.Ref (Array (String × Font.Font))) (path : String) :
 def isFaceFile (name : String) : Bool :=
   name.endsWith ".ttf" || name.endsWith ".otf"
 
-/-- The shipped faces, probed file by file in name order: no scan cache and
-no environment variable, so the answer is a function of the files. -/
+/-- The shipped faces, probed file by file in name order, with no scan cache or
+environment variable. -/
 def shippedFaces (dir : System.FilePath) : IO (Array FontDb.Face) := do
   let mut out : Array FontDb.Face := #[]
   for e in (← dir.readDir).qsort (·.fileName < ·.fileName) do
@@ -1562,8 +1245,8 @@ def shippedFaces (dir : System.FilePath) : IO (Array FontDb.Face) := do
       if let some f ← FontDiscovery.probe e.path.toString then out := out.push f
   return out
 
-/-- The font set a fixture's page is keyed under: the suite's shape for a
-golden fixture (`fixtureFontSet`), over the shipped faces only. -/
+/-- The font set a fixture's page is keyed under: the suite's shape over the shipped faces
+only. -/
 def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
     (faces : Array FontDb.Face) (fontsDir : System.FilePath) (doc : Ir.Doc) :
     IO Font.FontSet := do
@@ -1592,9 +1275,8 @@ def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.Fo
       fs := { fs' with fallback := fs'.fallback.push (ch, idx) }
   return fs
 
-/-- The document's images, read beside it through graphicx's extension
-resolution, with the bytes read — the page names them, so the key hashes
-them. A boundary picture has no file and stays unfulfilled. -/
+/-- The document's images read beside it through graphicx's extension resolution, with the
+bytes read; a boundary picture stays unfulfilled. -/
 def storeFor (dir : System.FilePath) (doc : Ir.Doc) (fs : Option Font.FontSet := none) :
     IO (Image.Store × Array Diag × Array (String × ByteArray) × Array (String × String)) := do
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
@@ -1609,8 +1291,7 @@ def storeFor (dir : System.FilePath) (doc : Ir.Doc) (fs : Option Font.FontSet :=
       if ← p.pathExists then
         let bytes ← IO.FS.readBinFile p
         read := read.push (cand, bytes)
-        -- An SVG takes the driver's native route with no converter: the
-        -- hermetic page is what a host with no tool ships.
+        -- An SVG takes the driver's native route with no converter.
         if Image.isSvg cand then
           let r ← Driver.svgFetch src bytes req.page doc.info.locale.tag none
           f := .decoded (if cand == src then "" else cand) r.res (some bytes) none (some bytes) none
@@ -1651,13 +1332,12 @@ private def pageSelectionKey : PdfRead.PageSelection → String
   | .last => "last"
   | .number n => s!"page:{n}"
 
-/-- A deterministic marker for a successful conversion's HTML shape. These
-bytes are only keyed and projected; they are never published as an asset. -/
+/-- A deterministic stand-in for a successful conversion's bytes, keyed and projected but
+never published. -/
 def faceStandIn (en : Image.Loaded) (p : BrowserFaces.Plan) : ByteArray :=
   s!"browser-face:{p.key}:{HtmlDoc.resolvedSrc en}".toUTF8
 
-/-- Interpret the driver's plan with deterministic success markers. The
-external oracle still has to capture real bytes and report tool failures. -/
+/-- The driver's plan interpreted with deterministic success stand-ins. -/
 def facedStore (store : Image.Store) : Image.Store :=
   { store with entries := store.entries.map fun en =>
       let p := BrowserFaces.plan en
@@ -1673,9 +1353,8 @@ def facedHrefs (name : String) (imgs : Image.Store) (k : Nat) : Option String ×
       HtmlDoc.imageAssetHref (name ++ ".assets") a.file
   (href false, href true)
 
-/-- Key captured vector inputs, the driver's shared plan, and its typed
-success projection. No filesystem read or host conversion occurs here:
-deleting or replacing a file after capture cannot change these inputs. -/
+/-- The key blobs of captured vector inputs, the driver's shared plan and its typed
+success projection; nothing is read or converted here. -/
 def browserSourceBlobs (name : String) (doc : Ir.Doc) (store : Image.Store) :
     Array (String × ByteArray) := Id.run do
   let faced := facedStore store
@@ -1712,9 +1391,8 @@ structure PageOutput where
 no fixture (`Tests.corpusExcludeMarker`). -/
 def excludeMarker : String := "excluded from the golden set"
 
-/-- Does a corpus document's header declare it no fixture: the marker within
-its opening sixteen lines, read as one run of prose with comment markers
-dropped, as the suite reads it (`Tests.declaresExcluded`)? -/
+/-- Whether a corpus document's header declares it no fixture: the marker within its first
+sixteen lines, comment markers dropped, as the suite reads it. -/
 def declaresExcluded (text : String) : Bool :=
   let header := ((text.splitOn "\n").take 16).map fun line =>
     let l := line.trimAscii.toString
@@ -1729,9 +1407,8 @@ def doorText (path : System.FilePath) : IO String := do
   return if file.endsWith ".md" then (LeanTex.Core.Encoding.readMarkdown file bytes).text
     else (LeanTex.Core.Encoding.readDocument file bytes).1.text
 
-/-- The corpus's documents, in name order: every top-level `.tex` and `.md`
-file whose header does not declare it no fixture, with its name. The suite
-holds this to its golden set (`svgBrowserSourceChecks`). -/
+/-- The corpus's documents in name order: every top-level `.tex` and `.md` file not
+declared excluded. -/
 def corpusDocs (corpus : System.FilePath) : IO (Array (String × System.FilePath)) := do
   let mut out : Array (String × System.FilePath) := #[]
   for e in ← corpus.readDir do
@@ -1741,12 +1418,8 @@ def corpusDocs (corpus : System.FilePath) : IO (Array (String × System.FilePath
     out := out.push ((e.fileName.dropEnd ext.length).toString, e.path)
   return out.qsort (·.1 < ·.1)
 
-/-- One fixture's page, or `none` where the driver would refuse to write one
-(an error its `\allow` does not accept). The sequence is the driver's: the
-front door (`Input.readDocument`: decode, the reader the file's extension
-selects, `\input` and `\data` fulfilled beside the file), one preparation, a
-picture label measured against the preamble's set, the bibliography
-fulfilled; then the emission configured as the driver configures it. -/
+/-- One fixture's page as the driver builds it, or `none` where the driver would refuse to
+write one. -/
 def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
     (faces : Array FontDb.Face) (fontsDir : System.FilePath) (name : String)
     (path : System.FilePath) : IO (Option PageOutput) := do
@@ -1766,8 +1439,7 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let (doc, alphaDiags) := Ir.resolveMathAlphas fs.mathAlphabets family doc
   let (store, imgDiags, read, titles) ← storeFor corpus doc (some fs)
-  -- A figure that names itself is the alternative the document left
-  -- undeclared, as the driver ships it.
+  -- A figure that names itself answers the alternative the document left undeclared.
   let doc := FigureAlt.titled titles doc
   let elabDiags := FigureAlt.unanswered titles doc elabDiags
   if (Diag.resolveAll doc.allow false
@@ -1793,10 +1465,8 @@ structure CorpusKeys where
   browserFaceSource : String
   expectedFaces : Array (String × String)
 
-/-- The two freshness keys over a corpus. `html` covers every hermetic page,
-image and shipped face. `browserFaceSource` additionally covers the exact
-vector inputs, generated hrefs and conversion recipe whose host-produced
-bytes the browser oracle commits. -/
+/-- The two freshness keys over a corpus: `html` over every hermetic page, image and
+shipped face, and `browserFaceSource` also over the vector inputs, hrefs and recipe. -/
 def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   let fontsDir := corpus / "fonts"
   if !(← corpus.isDir) then return .error s!"{corpus} is not a directory"
@@ -1830,8 +1500,7 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   browserSources := browserSources.push ("html-key", html.toUTF8)
   return .ok { html, browserFaceSource := Scoreboard.contentKey browserSources, expectedFaces }
 
-/-- The existing HTML-only view, retained for scoreboard probes and callers
-that do not consume the browser-face source key. -/
+/-- The HTML key alone. -/
 def corpusKey (corpus : System.FilePath) : IO (Except String String) := do
   return (← corpusKeys corpus).map (·.html)
 
@@ -1844,7 +1513,7 @@ def hermeticHtmlKeys : IO (Except String Hermetic.CorpusKeys) := do
   try Hermetic.corpusKeys "testdata/corpus"
   catch e => return .error (toString e)
 
-/-- The HTML freshness key retained as the narrow public projection. -/
+/-- The HTML freshness key alone. -/
 def hermeticHtmlKey : IO (Except String String) := do
   return (← hermeticHtmlKeys).map (·.html)
 

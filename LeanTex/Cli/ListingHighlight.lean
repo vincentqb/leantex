@@ -7,31 +7,15 @@ import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
 
-/-!
-The installed Pygments boundary, for the listing languages no native lexer
-reads (`ListingHighlight.language?`). One isolated Python process classifies a
-bounded batch; only built-in registry aliases select lexers. The document
-supplies language and source data, never Python, options, filters or paths.
-`ListingReply.decode` validates the entire response before any classification
-can reach the IR. Provider failures retain the source and name its lost
-highlighting through the driver's diagnostic builder.
--/
+/-! The installed Pygments boundary for listing languages no native lexer reads: one
+isolated Python process classifies a bounded batch, and its reply is validated whole
+before it reaches the IR. -/
 namespace LeanTex.Cli.ListingHighlight
 
 open LeanTex.Core
 
-/-- Constant program, not authored code. Python's isolated mode excludes the
-working directory, user site and PYTHONPATH. A normal installation is preferred;
-TeX Live also installs Pygments as a wheel beside its resolved latexminted
-launcher. Only that installed directory is searched, and latexminted is never
-executed. Neither provider discovery nor lexer selection reads a document path.
-
-The raw-token API bypasses Pygments' newline, tab and filter preprocessing.
-One lexer-only LF lets newline-terminated rules also classify the final line.
-The pure decoder validates that boundary and removes only its empty last line.
-Plugin discovery is disabled before importing lexer modules, including for
-built-in lexers that delegate embedded languages. The registry supplies both
-module and class names; no authored string becomes an import. -/
+/-- The constant bridge program: isolated Python, built-in registry lexers only, plugin
+discovery off, and no import named by a document. -/
 private def bridge : String := r#"import importlib
 import json
 import pathlib
@@ -96,18 +80,13 @@ private def diagnostic (request : ListingReply.Request)
     (failure : ListingReply.Failure) : Diag :=
   DriverDiag.listingHighlightUnavailable request.language failure.reason
 
-/-- The requests whose loss is the driver's to name: a language outside the
-registry of the release the mirror tracks is named where it stands, by the
-elaborator, when the installed highlighter did not classify it either
-(`LexerName.known`), so one accounting stands for it. -/
+/-- Whether the driver names a request's loss: a language outside the registry is named by
+the elaborator instead. -/
 public def driverNamed (request : ListingReply.Request) : Bool :=
-  -- premise: Tests.inlineCodeRequestChecks — a refused language outside the registry is named by the elaborator once, with no placeholder answer to hide it
+  -- premise: Tests.inlineCodeRequestChecks — the elaborator names an unregistered language once
   LexerName.known request.language
 
-/-- A decoded batch as the run keeps it: every answer and the driver's named
-refusals, but for a refusal of a language outside the registry, which leaves
-neither a placeholder answer nor a line behind — the elaborator names it
-where it stands (`driverNamed`). -/
+/-- A decoded batch as the run keeps it: every answer and the driver's named refusals. -/
 public def settle (answers : Array ListingReply.Answer)
     (failures : Array (ListingReply.Request × ListingReply.Failure)) :
     Array ListingReply.Answer × Array Diag :=
@@ -115,25 +94,19 @@ public def settle (answers : Array ListingReply.Answer)
   (answers.filter (!unnamed.contains ·.request),
     (failures.filter (driverNamed ·.1)).map fun (request, failure) => diagnostic request failure)
 
-/-- Unfinished, absent or malformed batches produce no reusable answers.
-Every affected request keeps the driver's named loss; completed per-request
-refusals instead come from the decoder alongside source-valid plain answers. -/
+/-- A batch that yields no reusable answer: every request keeps the driver's named loss.
+-/
 private def failed (requests : Array ListingReply.Request)
     (failure : ListingReply.Failure) : Array ListingReply.Answer × Array Diag :=
   (#[], (requests.filter driverNamed).map fun request => diagnostic request failure)
 
-/-- Fulfil content-keyed requests through the installed provider — the first
-python3 on PATH the OS starts, as execvp chooses it (`ToolPath.probeGo_exact`) —
-in one bounded process. Its elapsed time and captured bytes are limited by `RunBounded`; source,
-request and token ceilings are shared with the pure protocol validator. An empty
-batch starts no tool. No external output becomes diagnostic prose or authored
-code, and no answer is returned before exact reconstruction is checked. -/
+/-- Fulfil content-keyed requests in one bounded run of the first `python3` on PATH; an
+empty batch starts no tool, and no answer returns before its reconstruction is checked. -/
 public def fulfil (_file : String) (requests : Array ListingReply.Request) :
     IO (Array ListingReply.Answer × Array Diag) := do
   if requests.isEmpty then return (#[], #[])
   if !ListingReply.withinBudget requests then return failed requests .budget
-  -- Python finds its virtual environment from the invocation spelling, which
-  -- each candidate keeps: its PATH entry, anchored, joined to the name.
+  -- Python finds its virtual environment from the invocation spelling, so each candidate keeps it.
   let call (python : String) : World.ToolCall :=
     { tool := python
       args := #["-I", "-B", "-c", bridge, "requests.json", toString ListingReply.maxTokens]

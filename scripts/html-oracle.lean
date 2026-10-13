@@ -1,33 +1,7 @@
 /-
-HTML artifact oracle: what a real browser makes of every corpus page. Run
-from the repository root after `lake build`:
-
-  lake env lean --run scripts/html-oracle.lean                   regenerate the matrix, then check it
-  lake env lean --run scripts/html-oracle.lean --check [path]    check the checked-in matrix (or another file) only
-  lake env lean --run scripts/html-oracle.lean --selftest        the checker against hand-written matrices
-
-Builds every corpus document (`Scoreboard.Hermetic.corpusDocs`: each
-`testdata/corpus/*.tex` and `*.md` that is a fixture) to HTML in a scratch copy of the corpus
-(so a page sits beside the files it names, as `leantex doc.tex` leaves it),
-drives the host's cached Playwright Chromium over each page, and writes
-`testdata/oracles/html-reader-matrix.txt`: target readers, host-tool versions and
-a date, one row per feature × reader and fixture × reader, plus a separate
-browser-face source key and exact converted href/content captures. A converter
-failure is a failed capture even when removing the `<img>` would otherwise
-turn the browser's image check into `na`. This script is the matrix's only
-writer; the file has exactly a golden's exposure.
-
-Cells: `pass` — every fixture that exercises the feature holds it in that
-reader; `fail:<fixture>` — one that does not, its reason in the `#` line
-beneath; `untested` — the reader could not run, or no fixture exercises
-the feature. The check demands `pass` in every `target:` column; a
-non-target column (Firefox on this host: the cached build cannot start) is
-recorded data and gates nothing.
-
-The engine proves what it emits; a browser's behaviour is a measurement,
-never a theorem. No dependency is added: the Playwright module and browser
-are found where `npx playwright install` leaves them (`LEANTEX_PLAYWRIGHT`
-names a module directory explicitly), or the reader is `untested`.
+HTML artifact oracle: every corpus page probed in the host's cached Playwright Chromium, one
+cell per feature and fixture × reader in testdata/oracles/html-reader-matrix.txt.
+Usage: lake build && lake env lean --run scripts/html-oracle.lean [--check [path] | --selftest]
 -/
 import LeanTex
 import scripts.Board
@@ -37,8 +11,8 @@ open LeanTex.Core
 def matrixPath : String := "testdata/oracles/html-reader-matrix.txt"
 def leantexBin : String := ".lake/build/bin/leantex"
 
-/-- The readers the matrix declares as targets — the strength of the claim,
-declared by the file, not by what a host has installed. -/
+/-- The readers the matrix declares as targets, declared by the file, not by what a host
+has installed. -/
 def targetReaders : List String := ["chromium"]
 
 /-- Every reader the probe knows how to drive, in column order. -/
@@ -63,8 +37,7 @@ def hasCmd (cmd : String) : IO Bool := do
     return (← IO.Process.output { cmd, args := #["--version"] }).exitCode == 0
   catch _ => return false
 
-/-- The reader the print judgements (`print-spill`, `print-sheets`) read
-paper with, as the tools line records it: `pdftotext -v`'s first line, or
+/-- The reader the print judgements read paper with: `pdftotext -v`'s first line, or
 `pdftotext absent`. -/
 def pdftotextVersion : IO String := do
   try
@@ -82,8 +55,6 @@ def toolVersion (tool : String) (args : Array String) : IO String := do
     return if out.exitCode == 0 && !line.isEmpty then line else tool ++ " absent"
   catch _ => return tool ++ " absent"
 
--- ## The checked-in file
-
 /-- One section of the matrix: its name, its reader columns, and its rows
 (key, then one cell per column; trailing columns are data). -/
 structure Section where
@@ -95,8 +66,8 @@ structure Matrix where
   target : Array String
   sections : Array Section
 
-/-- Parse the matrix text. `#` lines are comments, except that the first
-one after a `[section]` header names the columns. -/
+/-- Parse the matrix text: `#` lines are comments, except that the first one after a
+`[section]` header names the columns. -/
 def parseMatrix (text : String) : Except String Matrix := do
   let mut target : Array String := #[]
   let mut sections : Array Section := #[]
@@ -128,9 +99,8 @@ def parseMatrix (text : String) : Except String Matrix := do
   if sections.isEmpty then throw "no sections"
   return { target, sections }
 
-/-- The gate: every cell under a `target:` reader is `pass`. Returns the
-offending cells, `section/key/reader = cell`. A target reader missing from
-a section's columns is itself an offence. -/
+/-- The gate: every cell under a `target:` reader is `pass`; returns the offending cells,
+a target reader missing from a section's columns among them. -/
 def offences (m : Matrix) : Array String := Id.run do
   let mut out : Array String := #[]
   for s in m.sections do
@@ -163,14 +133,9 @@ def checkFile (path : String) : IO UInt32 := do
     for b in bad do IO.println s!"  {b}"
     return 1
 
--- ## The probe
-
-/-- The browser-side probe, run by node with the Playwright module named in
-`PW_MODULE`. It prints one tab-separated line per (fixture, reader, feature):
-`pass`, `fail:<reason>`, or `na` when the fixture does not exercise the
-feature; `reader <name> version|unavailable <text>` lines carry the tool
-facts. Every check reads the live page — computed style, layout boxes,
-`document.fonts`, the FontFaceSet, media emulation — never the source. -/
+/-- The browser-side probe, run by node with the Playwright module in `PW_MODULE`: one
+tab-separated line per (fixture, reader, feature), `pass`, `fail:<reason>` or `na`, read
+off the live page, plus `reader` lines with the tool facts. -/
 def probeJs : String := r#"
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -1232,11 +1197,8 @@ async function runReader(name) {
 })().catch(e => { out('error', clean(String(e && e.message || e))); process.exit(4); });
 "#
 
--- ## Tools
-
-/-- The Playwright module directories to try: `LEANTEX_PLAYWRIGHT` first,
-then every `~/.npm/_npx/*/node_modules/playwright` — where
-`npx playwright install` leaves the module. Nothing is installed here. -/
+/-- The Playwright module directories to try: `LEANTEX_PLAYWRIGHT`, then every
+`~/.npm/_npx/*/node_modules/playwright`. -/
 def playwrightCandidates : IO (Array String) := do
   let mut out : Array String := #[]
   if let some p ← IO.getEnv "LEANTEX_PLAYWRIGHT" then out := out.push p
@@ -1255,9 +1217,7 @@ def moduleVersion (m : String) : IO String := do
   | v :: _ => return ((v.splitOn "\"").headD "?")
   | [] => return "?"
 
-/-- The first module whose Chromium launches on this host, with the version
-it reports; the launch is the only test that counts — a module whose browser
-revision is not in the cache throws here, and the next candidate is tried. -/
+/-- The first module whose Chromium launches on this host, with the version it reports. -/
 def findChromium (node : String) : IO (Option (String × String)) := do
   for m in ← playwrightCandidates do
     let launch := "require(process.env.PW_MODULE).chromium.launch({headless:true,args:['--no-sandbox','--disable-gpu']})" ++
@@ -1271,8 +1231,8 @@ def findChromium (node : String) : IO (Option (String × String)) := do
       return some (m, out.stdout.trimAscii.toString)
   return none
 
-/-- The numbers of the frames a deck's PDF build continues on a further page:
-the subjects of its W0384 porcelain records, each a frame's number. -/
+/-- The numbers of the frames a deck's PDF build continues on a further page: the subjects
+of its W0384 records. -/
 def spilledFrames (porcelain : String) : Array String :=
   ((porcelain.splitOn "\n").filter (hasSub · "\"code\":\"W0384\"")).toArray.filterMap fun l =>
     match (l.splitOn "\"subject\":\"").drop 1 with
@@ -1280,15 +1240,8 @@ def spilledFrames (porcelain : String) : Array String :=
     | [] => none
 where hasSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
-/-- A deck's frames that declare `[allowframebreaks]`, by the number their
-stages carry (`Ir.Doc.frameNumbers`, as the deck walk numbers them): such a
-frame accepts a continuation page, so its stage may scroll by declaration.
-`none` for a source that is not a deck. The source is read through the
-driver's front door (`LeanTex.Cli.Input.readDocument`: the decoding door,
-the surface reader, its `\input` files fulfilled beside it), so a frame an
-input file holds is read and numbered where the build numbers it; a frame is
-a top-level block of the IR, the numbering's own domain. No layout runs
-here. -/
+/-- A deck's frames that declare `[allowframebreaks]`, by the number their stages carry,
+read through the driver's front door; `none` for a source that is not a deck. -/
 def breakableFrames (path : System.FilePath) : IO (Option (Array String)) := do
   let file := path.toString
   let bytes ← match ← LeanTex.Cli.Input.readSource file with
@@ -1316,8 +1269,8 @@ def copyTree (src dst : System.FilePath) : IO Unit := do
     if let some parent := d.parent then IO.FS.createDirAll parent
     IO.FS.writeBinFile d (← IO.FS.readBinFile f)
 
-/-- Decode the data URL independently of the engine's encoder. The binary
-pipe preserves exact bytes; malformed base64 is a failed capture. -/
+/-- Decode an SVG data URL independently of the engine's encoder; malformed base64 is a
+failed capture. -/
 def svgPayload (root : System.FilePath) (href : String) : IO (Except String ByteArray) := do
   let dataPrefix := "data:image/svg+xml;base64,"
   if !href.startsWith dataPrefix then return .error "non-svg-resource"
@@ -1330,10 +1283,8 @@ def svgPayload (root : System.FilePath) (href : String) : IO (Except String Byte
   if (← child.wait) != 0 then return .error "invalid-base64"
   return .ok data
 
-/-- Read the actual file with libxml's HTML parser, then capture SVG data URLs
-by image/source ordinal. Text resembling markup does not become an image; repeated
-payloads, hidden images and print posters each retain their own rendering use.
-Converter failures remain explicit records even when no image was published. -/
+/-- The SVG data URLs of the built pages, read with libxml's HTML parser, by image or
+source ordinal, with converter failures kept as explicit records. -/
 def capturedBrowserFaces (root : System.FilePath) (fixtures : Array String)
     (failures : Array Scoreboard.BrowserFace) : IO (Array Scoreboard.BrowserFace) := do
   let mut out := failures
@@ -1355,8 +1306,6 @@ def capturedBrowserFaces (root : System.FilePath) (fixtures : Array String)
         | .ok bytes => out := out.push (Scoreboard.BrowserFace.captured fixture name bytes)
         | .error why => out := out.push { fixture, href := name, result := .failed why }
   return out
-
--- ## Aggregation
 
 structure Cell where
   fixture : String
@@ -1383,9 +1332,8 @@ def parseProbe (out : String) : Probe := Id.run do
 
 def reasonOf (v : String) : String := (v.drop "fail:".length).toString
 
-/-- The cell for one (feature, reader) over every fixture, plus the reasons
-of the fixtures that failed. A fixture the probe abandoned mid-page (an
-`error` row) fails every feature it did not report. -/
+/-- The cell for one (feature, reader) over every fixture, with the failing fixtures'
+reasons; a fixture the probe abandoned fails every feature it did not report. -/
 def featureCell (p : Probe) (fixtures : Array String) (feature reader : String) :
     String × Array String := Id.run do
   if (p.versions.find? (·.1 == reader)).isNone then return ("untested", #[])
@@ -1408,8 +1356,8 @@ def featureCell (p : Probe) (fixtures : Array String) (feature reader : String) 
   let more := if fails.size > 1 then s!"+{fails.size - 1}" else ""
   return (s!"fail:{head}{more}", fails.map fun (fx, why) => s!"{fx}: {why}")
 
-/-- The cell for one (fixture, reader): the first failing feature, and the
-features the fixture exercises. -/
+/-- The cell for one (fixture, reader): the first failing feature, and the features the
+fixture exercises. -/
 def fixtureCell (p : Probe) (fixture reader : String) : String × Array String := Id.run do
   if (p.versions.find? (·.1 == reader)).isNone then return ("untested", #[])
   let mut ex : Array String := #[]
@@ -1438,9 +1386,7 @@ def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
   out := out ++ s!"target: {String.intercalate " " targetReaders}\n"
   out := out ++ s!"tools: {tools}\n"
   out := out ++ s!"date: {date}\n"
-  -- The HTML key is hermetic. Browser conversion is host-only: its source
-  -- key binds this report to the current vector inputs, hrefs and shared
-  -- recipe; its content key binds it to the exact converted bytes below.
+  -- The HTML key is hermetic; the browser-face keys bind the vector inputs and outputs.
   out := out ++ s!"src-key: {srcKey}\n"
   out := out ++ s!"browser-face-src-key: {browserSourceKey}\n"
   out := out ++ s!"browser-face-key: {Scoreboard.browserFaceKey browserFaces}\n"
@@ -1472,11 +1418,9 @@ def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
     out := out ++ tableLine fx cells (if ex.isEmpty then "-" else String.intercalate "," ex.toList) ++ "\n"
   return out
 
-/-- The engine's reading of a code character, as the code-wrap judge reads
-it (`codeWrapJudge`): each of `Listing.wrapsBetweenChars`,
-`holdsToPrevious` and `holdsToNext` as the code point ranges it holds of,
-through the supplementary ideographic planes, so the judge and the page
-read one table. -/
+/-- The engine's reading of a code character as code point ranges
+(`Listing.wrapsBetweenChars`, `holdsToPrevious`, `holdsToNext`), so the code-wrap judge
+and the page read one table. -/
 def codeTables : String :=
   let ranges (p : Char → Bool) : String := Id.run do
     let mut out : Array String := #[]
@@ -1495,20 +1439,16 @@ def codeTables : String :=
     ranges Listing.holdsToPrevious ++ ",\"after\":" ++ ranges Listing.holdsToNext ++
     s!",\"short\":{HtmlDoc.codeShortColumns}}"
 
-/-- The page the paper judge's engine control prints (`printCode`): prose,
-then a code line holding a token wider than any sheet and a comment in a
-script that wraps between its characters, each of which a held atom would
-run past the sheet. Invented throughout. -/
+/-- The page the paper judge's engine control prints: prose, then a code line with a token
+wider than any sheet and a comment in a script wrapping between characters. -/
 def codePrintSource : String :=
   "# Printed code\n\nA paragraph of prose before the code.\n\n```python\n" ++
   "value = compute(" ++ "".pushn 'x' 140 ++ ")\n" ++
   "# この行は折り返しを確かめるための架空のコメントで、句読点の前では改行しません。" ++
   "二行目に続く文も「括弧」の中で切れません。\n```\n"
 
-/-- The page the narrow-box controls build (`printCode`, `codeWrap`): a
-breaking listing in a box a fifth of the line wide beside prose, the same
-box before a wider one, and a breaking listing of Thai with no space in
-it, whose words its dictionary finds. Invented throughout. -/
+/-- The page the narrow-box controls build: a breaking listing in a box a fifth of the
+line wide, the same box before a wider one, and a breaking Thai listing. -/
 def codeNarrowSource : String :=
   "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n" ++
   "Prose before the boxes.\n\n" ++
@@ -1525,13 +1465,10 @@ def codeNarrowSource : String :=
   "th = \"ภาษาไทยไม่มีช่องว่างระหว่างคำจึงต้องตัดบรรทัดระหว่างคำแทนการเว้นวรรค" ++
   "และสระต้องอยู่กับพยัญชนะ\"\nyear = 2567 # ๒๕๖๗\n\\end{lstlisting}\n\\end{document}\n"
 
--- ## Main
-
 def regenerate : IO UInt32 := do
   if !(← System.FilePath.pathExists leantexBin) then
     return (← die 2 s!"html-oracle: {leantexBin} not found; run lake build first")
-  -- Both freshness keys come from the tier's functions, so the matrix and
-  -- `htmlreader --check` cannot disagree about the hermetic inputs.
+  -- Both freshness keys come from the tier's functions, as `htmlreader --check` reads them.
   let keys ← match ← Scoreboard.hermeticHtmlKeys with
     | .ok keys => pure keys
     | .error e =>
@@ -1557,8 +1494,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
       let log := r.stdout ++ r.stderr
       faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
       if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
-      -- A deck's stage premise: what its PDF build does not vouch for. It
-      -- is read off TeX source; the markdown reader sets no deck.
+      -- A deck's stage premise, read off TeX source: what its PDF build does not vouch for.
       if path.extension == some "tex" then
         if let some breakable ← breakableFrames path then
           let pdf ← IO.Process.output
@@ -1568,8 +1504,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           IO.FS.writeFile (work / "corpus" / (name ++ ".unfit"))
             (String.intercalate " " (spilledFrames pdf.stdout ++ breakable).toList)
     let browserFaces ← capturedBrowserFaces (work / "corpus") fixtures faceFailures
-    -- The paper judge's engine control: a page the engine builds that no
-    -- fixture is, so no fixture's other artifacts carry its long line.
+    -- The paper judge's engine control: a page no fixture is.
     let control := work / "control"
     IO.FS.createDirAll control
     IO.FS.writeFile (control / "code-print.md") codePrintSource
@@ -1629,9 +1564,9 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     IO.FS.removeDirAll work
   checkFile matrixPath
 
-/-- The checker against matrices written by hand: a green file passes; one
-target cell `untested` or `fail:` fails it; a non-target cell gates nothing;
-a target reader without a column is itself an offence. -/
+/-- The checker against hand-written matrices: a green file passes, an `untested` or
+`fail:` target cell fails, a non-target cell gates nothing, a missing target column is an
+offence. -/
 def selftest : IO UInt32 := do
   let green := "target: chromium\n[feature]\n# feature chromium firefox\nload pass untested\n" ++
     "[fixture]\n# fixture chromium firefox exercised\ndeck pass untested load\n"
@@ -1661,8 +1596,7 @@ def selftest : IO UInt32 := do
     let bytes := "<svg/>".toUTF8
     let href := "data:image/svg+xml;base64,PHN2Zy8+"
     let pin := Scoreboard.sha256Hex href.toUTF8
-    -- No sidecars exist. Repeated bytes still represent distinct image uses,
-    -- and a print poster is distinct from its screen image.
+    -- Repeated bytes are distinct image uses, and a print poster is distinct from its screen.
     IO.FS.writeFile (root / (fixture ++ ".html"))
       ("<!doctype html><html><body><picture><source srcset=\"" ++ href ++
         "\"><img src=\"" ++ href ++ "\"></picture><img src=\"" ++ href ++
@@ -1691,10 +1625,7 @@ def selftest : IO UInt32 := do
       failures := failures + 1
     return failures
   bad := bad + captureFails
-  -- The stage judgement's premise, both halves: the PDF build's W0384
-  -- records name the frames that continue, and nothing else does; the
-  -- declared breaks are read where the build reads them, an input file's
-  -- frame included, and a source that is no deck has none.
+  -- The stage premise: only W0384 records name continuing frames; breaks read as the build does.
   let porcelain := "{\"code\":\"W0384\",\"subject\":\"7\",\"message\":\"a frame continues\"}\n" ++
     "{\"code\":\"W0384\",\"message\":\"no subject\"}\n" ++
     "{\"code\":\"W0005\",\"subject\":\"3\"}\nnot a record\n"

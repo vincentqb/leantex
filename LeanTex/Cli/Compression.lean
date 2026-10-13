@@ -10,15 +10,14 @@ namespace LeanTex.Cli.Compression
 
 open LeanTex.Core
 
-/-- The flate cache: a stream's deflation is a function of its bytes and of
-the compressor that ran, so a slot answers only the engine that wrote it. -/
+/-- The flate cache, whose slots answer only the engine that wrote them. -/
 public abbrev Cache := Engine.Cache
 
 public def cachePath (root : System.FilePath) (input : ByteArray) : System.FilePath :=
   root / "flate" / s!"{Flate.contentKey input}.answer"
 
-/-- **The key a deflation is stored under**: the format, the input's
-content key and the engine that compressed it (`SlotRecord.lookup_exact`). -/
+/-- The key a deflation is stored under: format, the input's content key and the
+compressing engine. -/
 public def slotKey (engine : String) (input : ByteArray) : Array String :=
   #["flate-v2", Flate.contentKey input, engine]
 
@@ -42,8 +41,7 @@ private def deflateAtPath (slot : Option (Cache × System.FilePath)) (input : By
     catch _ => pure ()
   return z
 
-/-- Cache failures fall back to computation. The optional computation is an
-effect seam; production uses the engine's compressor without changing its bytes. -/
+/-- Deflate through the cache; a cache failure falls back to computing. -/
 public def deflateCachedAt (root : Option Cache) (input : ByteArray)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
     IO ByteArray :=
@@ -125,8 +123,7 @@ private def mapCached (root : Option Cache) (input : α → ByteArray)
     return result job z
   let mut out := #[]
   for batch in Batch.plan (limit - 1) Prod.fst prepared.toList do
-    -- Avoid worker startup for singletons and streams below tokenize's
-    -- 64 KiB larger-table boundary.
+    -- Singletons and streams below tokenize's 64 KiB table boundary skip worker startup.
     let done ← if batch.length ≤ 1 || batch.all (fun (_, job) => (input job).size < 65536) then do
         let answers ← batch.toArray.mapM fun job => (run job).toBaseIO
         EIO.ofExcept (answers.mapM id)
@@ -135,15 +132,15 @@ private def mapCached (root : Option Cache) (input : α → ByteArray)
     out := out ++ done
   return out
 
-/-- The driver supplies rendered page bytes in source order. -/
+/-- Deflate rendered page streams through the cache, in source order. -/
 public def pageStreams (root : Option Cache) (pages : Array ByteArray)
     (limit : Nat := 4)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
     IO (Array (ByteArray × Option ByteArray)) :=
   mapCached root id (fun input z => (input, some z)) pages limit compute
 
-/-- Keep the writer's font indices, truncated zip, and last assignment
-semantics even when the supplied keep list repeats an index. -/
+/-- Deflated font programs by writer index, with the writer's truncated-zip and
+last-assignment semantics for a repeated index. -/
 public def fontZdata (root : Option Cache) (fontCount : Nat)
     (keep : Array Nat) (programs : Array (ByteArray × Bool))
     (limit : Nat := 4)
@@ -153,10 +150,7 @@ public def fontZdata (root : Option Cache) (fontCount : Nat)
     (fontJobs fontCount keep programs) limit compute
   return storeFonts fontCount done
 
-/-- Each copied page's content the writer stores, deflated through the
-cache by store entry — `Image.Store.formZ`: a figure unchanged since the
-last build reads its stream back instead of compressing it, as a page and a
-font program do. -/
+/-- Each copied page's stored content, deflated through the cache by store entry. -/
 public def formZdata (root : Option Cache) (contents : Array (Option ByteArray))
     (limit : Nat := 4)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
@@ -166,8 +160,6 @@ public def formZdata (root : Option Cache) (contents : Array (Option ByteArray))
   return done.foldl (fun out (k, z) => out.setIfInBounds k (some z))
     (Array.replicate contents.size none)
 
--- These are the partitions consumed by mapCached's cold/mixed branch.
--- The captured key is also the path read and published by deflateAtPath.
 public theorem pageBatches_exact (root : Option Cache) (pages : Array ByteArray)
     (limit : Nat) :
     (Batch.plan (limit - 1) Prod.fst (requests root id pages).toList).flatten.map Prod.snd =

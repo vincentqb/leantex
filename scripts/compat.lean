@@ -1,38 +1,7 @@
 /-
-Documented-command coverage, per package. Run from the repository root:
-
-  lake env lean --run scripts/compat.lean              regenerate the baseline
-  lake env lean --run scripts/compat.lean --check      gate against the committed one
-  lake env lean --run scripts/compat.lean --selftest   the row reader
-
-`testdata/compat-index/<pkg>.txt` carries one row per documented command of a
-package, each with the verdict the engine owes it. `lake test` probes every
-row; this tier commits the shape of the index, so a row cannot quietly
-leave it.
-
-Two items per package: `<p>.rows`, every documented command, and
-`<p>.impl`, those the engine implements. Refusals remain unimplemented rows
-in the coverage denominator.
-
-**Implemented** means the verdict is `impl` *or* `inert:…` — one definition,
-the same one `coverage` counts, because an `inert:` row is a recognised
-command that legitimately moves no ink. Two committed numbers for one fact
-with two definitions (303 here against 336 there, over the same 659 rows)
-is the defect `scripts/Gate.lean` exists to prevent; this is the definition
-that survives when the two tiers fuse.
-
-Not done here, deliberately: the review also asks for the `pkg/<p>.` item
-prefix, so these items share `coverage`'s namespace. That renames all 134
-items at once, and a rename is 134 vanishes under the ratchet — the format
-has no rename line, and inventing one to pay for a cosmetic alignment is
-the wrong order. It belongs to the commit that actually fuses the two
-tiers, which is a coordinated landing and pays the migration once.
-
-Correction to the brief that asked for `impl` and `refuse` counts: a refusal
-count cannot be ratcheted upward, because the way a refusal improves is by
-becoming an implementation — which lowers it. `rows` is the coverage claim
-and `impl` the depth claim, both monotone the right way, and `refuse` stays
-a provenance line: data, never gated.
+The compat tier: per package index, `<p>.rows` documented commands and `<p>.impl` implemented
+ones (`impl` or `inert:`, as `coverage` counts them).
+Usage: lake env lean --run scripts/compat.lean [--check | --selftest]
 -/
 import scripts.Board
 import scripts.Rung
@@ -46,8 +15,7 @@ structure Pkg where
   refuse : Nat
 deriving Inhabited
 
-/-- Count one index file's documented rows. `impl` and `inert:` form the
-numerator; refusals remain in the denominator. -/
+/-- Count one index file's documented rows and those implemented. -/
 def countRows (name : String) (rows : Array IndexRow) : Pkg :=
   { name, rows := rows.size, impl := (rows.filter (·.implemented)).size
     refuse := (rows.filter (·.refused)).size }
@@ -94,9 +62,7 @@ body inert:binds \\zzfour\n\
   let empty ← (readCompatIndexAt (System.FilePath.mk "LeanTex/Cli")).toBaseIO
   no "a compat-index input with no index files fails closed"
     (match empty with | .error _ => true | .ok _ => false)
-  -- The one definition of implemented, shared with the coverage tier: a
-  -- recognised command that legitimately moves no ink counts. Two tiers
-  -- counting the same index differently is what this pins shut.
+  -- One definition of implemented, shared with the coverage tier.
   let isImpl (v : String) : Bool := (IndexRow.mk "body" v "\\zz").implemented
   no "definition: impl counts" (isImpl "impl")
   no "definition: inert: counts -- a recognised command that moves no ink"
@@ -111,8 +77,7 @@ body inert:binds \\zzfour\n\
     (!(IndexRow.mk "body" "refuse:" "\\zz").refused)
   no "a refusal rejects an extra diagnostic-code suffix"
     (!(IndexRow.mk "body" "refuse:W0301:extra" "\\zz").refused)
-  -- The correction this tier exists to encode: a refusal becoming an
-  -- implementation must not read as a loss.
+  -- A refusal becoming an implementation must not read as a loss.
   let before := readIndex "zz" "body refuse:W0301 \\zzone\n"
   let after := readIndex "zz" "body impl \\zzone\n"
   no "a refusal remains in the documented denominator" (before.rows == 1)

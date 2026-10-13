@@ -1,35 +1,7 @@
 /-
-The scoreboard: one line per goal, and a queue computed from the deficits.
-
-  scoreboard                one porcelain line per tier; exit 1 on any regression
-  scoreboard --check        the same, quietly
-  scoreboard --check --base <rev>
-                            the gate the land tool runs: --check, plus every
-                            committed baseline held to the one committed at <rev>
-                            and every tier file the tree adds read as the format.
-                            A fall or a vanish since <rev> needs a line written
-                            since <rev>, and a file still holding a request is
-                            stale
-  scoreboard --queue        ranked deficits across every tier
-  scoreboard --bench        the speed and document-cost reports, never gated
-  scoreboard --selftest     the format, the ratchet, and the malformations
-  scoreboard --key <dir>    the HTML freshness key of a corpus directory (its
-                            `.tex` fixtures and a `fonts/` of shipped faces) —
-                            the selftest runs it under two environments
-
-A tier is discovered by convention: its name is the basename of
-`testdata/scoreboard/<tier>.tsv` and the root of `scripts/<tier>.lean`, and its
-`--check` is `lake env lean --run scripts/<tier>.lean --check`.
-
-What the aggregate reads is `--check`'s **exit status**.
-A tier may also print the porcelain line (`tierLine`), which
-adds counts; it can never turn a non-zero exit into a pass. A tier that
-exits 0 silently is `ok`.
-
-The gated path is hermetic: every tier's `--check` reads committed
-references and in-repo data only. `--bench` is the one mode that shells out
-to another engine, and it gates nothing. `--base` reads git's copy of the
-committed files at `<rev>`, with replacement objects off, and nothing else.
+The scoreboard: one porcelain line per tier from its own `--check` exit status, the base check
+against a revision, the deficit queue, and the reports.
+Usage: scoreboard [--check [--base <rev>] | --queue | --bench | --selftest | --key <dir>]
 -/
 import scripts.Board
 
@@ -48,25 +20,16 @@ deriving Inhabited
 def natField (line key : String) : Nat :=
   (((field line key).bind (·.toNat?))).getD 0
 
-/-- A tier's check in flight: its process, and the scratch directory holding
-its two output files, removed once the result is read. -/
+/-- A tier's check in flight: its process, and the scratch directory holding its two
+output files. -/
 structure Spawn where
   child : IO.Process.Child { }
   dir : System.FilePath
   out : String
   err : String
 
-/-- Run one tier's own `--check` and read its porcelain line back. The tier
-is the authority on its own numbers; this reads the line it printed, never a
-summary of it.
-
-Each check runs in its own process writing to its own files rather than to a
-pipe, so the aggregate can have every tier in flight at once without a
-reader deadlocking on a full pipe — the tiers are independent, and a landing
-gate that took one interpreter startup per tier in series took 17 s where
-this takes one. Paths reach `sh` as positional parameters, never
-interpolated into the command: a tier's name is a file basename, which is
-not this tool's to trust. -/
+/-- Run one tier's own `--check` in its own process writing to its own files, so every
+tier runs at once without a pipe deadlock; paths reach `sh` as positional parameters. -/
 def spawnTier (tier : String) : IO (Option Spawn) := do
   let hasTsv ← System.FilePath.pathExists (tsvPath tier)
   let hasScript ← System.FilePath.pathExists (scriptPath tier)
@@ -80,11 +43,8 @@ def spawnTier (tier : String) : IO (Option Spawn) := do
                 "sh", scriptPath tier, outPath, errPath] }
   return some { child, dir, out := outPath, err := errPath }
 
-/-- A tier's result from its exit status and the porcelain line it printed,
-if any. The exit status is the contract: the porcelain word can name a
-failure — `regressed`, `fault`, `stale` — and can never excuse one, so a
-non-zero exit under any other word reads `fail`, and `stale` reads as
-itself rather than as a generic failure the landing agent cannot act on. -/
+/-- A tier's result from its exit status and porcelain line: the porcelain word can name a
+failure but never excuse one, so a non-zero exit under any other word reads `fail`. -/
 def resultOf (code : UInt32) (line said : String) : String :=
   if code != 0 then
     (if said == "regressed" || said == "fault" || said == "stale" then said else "fail")
@@ -100,9 +60,7 @@ def collectTier (tier : String) (spawned : Option Spawn) : IO TierResult := do
       if !hasTsv && !hasScript then "neither the baseline nor the producer exists"
       else if !hasTsv then s!"{scriptPath tier} exists but {tsvPath tier} does not"
       else s!"{tsvPath tier} exists but {scriptPath tier} does not"
-    -- Absence is a pass only for a tier that has not landed yet, and only
-    -- while its name is on `pendingTiers`. Anything else missing a half is
-    -- a fault: deleting a landed tier used to leave the gate green.
+    -- Absence passes only for a tier on `pendingTiers`; anything else missing a half is a fault.
     if pendingTiers.contains tier && !hasTsv && !hasScript then
       return { tier, items := 0, regressed := 0, improved := 0
                result := "missing", detail := s!"{why} (declared pending)" }
@@ -113,9 +71,7 @@ def collectTier (tier : String) (spawned : Option Spawn) : IO TierResult := do
     let stderr ← readFileOr s.err
     IO.FS.removeDirAll s.dir
     let line := ((stdout.splitOn "\n").find? (·.startsWith "scoreboard: tier=")).getD ""
-    -- The spec's contract is the exit status of `--check`; a porcelain line,
-    -- when the tier prints one, adds counts and can never turn a non-zero
-    -- exit into a pass.
+    -- The exit status is the contract; a porcelain line only adds counts.
     let said := (field line "result").getD ""
     let result := resultOf code line said
     let detail := if code != 0 && line.isEmpty
@@ -127,14 +83,9 @@ def collectTier (tier : String) (spawned : Option Spawn) : IO TierResult := do
              result
              detail }
 
-/-- What the aggregate can say about a committed baseline before running its
-producer: the states no producer's answer could make pass, read by the
-aggregate itself so they hold for every tier and not only for the tiers
-built on `tierMain`. An emptied or rowless baseline has no floor, and an
-emptied sibling baseline used to pass whenever its producer exited 0. A
-tombstone (`# retired-tier:`) is a retired tier: it passes as `retired`
-while its producer is gone, and is a fault while one still measures it.
-`none` means run the producer. -/
+/-- What the aggregate decides from a baseline before running its producer: an empty or
+rowless baseline is a fault, and a tombstone passes as `retired` while no producer
+measures it; `none` means run the producer. -/
 def precheck (text : String) (hasScript : Bool) : Option (String × String) :=
   if text.trimAscii.isEmpty then
     some ("fault", "the baseline is empty, so there is no floor to check against; \
@@ -153,15 +104,13 @@ delete the producer")
           some ("fault", "the baseline holds no rows, so there is no floor to check against")
         else none
 
-/-- A result the aggregate passes: measured and clean, declared and not yet
-landed, or retired by its tombstone. -/
+/-- A result the aggregate passes: measured and clean, declared and not yet landed, or
+retired by its tombstone. -/
 def passing (result : String) : Bool :=
   result == "ok" || result == "missing" || result == "retired"
 
-/-- Build what the tiers import, once, before any of them runs. `lake env
-lean --run` builds nothing, so without this every tier measures whatever the
-last build left. A failed build is a `fault` for every tier: the answer to
-"is the debt going down" is unknown when the tree does not compile. -/
+/-- Build what the tiers import, once, before any runs, since `lake env lean --run` builds
+nothing; a failed build is a `fault` for every tier. -/
 def buildImports : IO (Option String) := do
   let targets ← buildTargets
   if targets.isEmpty then return none
@@ -172,20 +121,16 @@ def buildImports : IO (Option String) := do
     s!"lake build {String.intercalate " " targets.toList} exited {out.exitCode}"
   return some firstErr.trimAscii.toString
 
-/-- A reason or a credit under a porcelain line, as `printable` spells it: the
-text comes from a baseline, a path or a producer's stderr, none of which this
-tool wrote, and what a pass prints is where a human reads each weakening. -/
+/-- A reason or credit under a porcelain line, spelled by `printable`, since its text
+comes from files and producers this tool did not write. -/
 def printReason (l : String) : IO Unit :=
   IO.println s!"scoreboard:   {printable l}"
 
-/-- Every tier's result line, and under it the reasons of any tier that does
-not pass — under `--check` too, because the landing agent reads this output
-and a `fault` with its reason withheld is a fault nobody can act on. `quiet`
-withholds only the notes of passing tiers. -/
+/-- Every tier's result line, with the reasons of any tier that does not pass, under
+`--check` too; `quiet` withholds only passing tiers' notes. -/
 def aggregate (quiet : Bool) : IO UInt32 := do
   let (tiers, misnamed) ← discover
-  -- A name the rule refuses is a fault before anything runs: its producer
-  -- path and its porcelain line are the name, and git quotes it.
+  -- A name the rule refuses is a fault before anything runs.
   let misnamedResults : Array TierResult := misnamed.map fun m =>
     { tier := m, items := 0, regressed := 0, improved := 0, result := "fault"
       detail := s!"testdata/scoreboard/{shownName m}.tsv names no tier: a tier's name is \
@@ -227,17 +172,8 @@ measured: {err}"
     if !passing r.result then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
--- ## The base check
-
-/-- git as the base check runs it, and the only way it runs git: with
-replacement objects off. A replace ref makes git answer with another object's
-bytes for a commit, a tree or a blob, and `refs/replace/` is shared by every
-worktree of a repository — so one `git replace` from any of them laundered a
-fall, and hid a deleted baseline, past this check, and a landing tool that
-scrubs `GIT_NO_REPLACE_OBJECTS` from its children cannot switch it off from
-outside. The flag reads the objects as committed. Returns git's answer, or its
-own first words on stderr when it gives none: a base check that fails closed
-says why in the tool's words. -/
+/-- git as the base check runs it, with replacement objects off, so a replace ref cannot
+stand in for a committed object; git's answer, or its first words on stderr. -/
 def gitRead (args : Array String) : IO (Except String String) := do
   try
     let o ← IO.Process.output { cmd := "git", args := #["--no-replace-objects"] ++ args }
@@ -249,8 +185,8 @@ def gitRead (args : Array String) : IO (Except String String) := do
 def git (args : Array String) : IO (Option String) := do
   return (← gitRead args).toOption
 
-/-- A direct child of a committed baseline directory: a regular file's blob,
-or anything else under such a name. -/
+/-- A direct child of a committed baseline directory: a regular file's blob, or anything
+else under such a name. -/
 inductive Listed where
   | baseline (path oid : String)
   | notAFile (path mode kind : String)
@@ -259,16 +195,12 @@ deriving BEq
 def Listed.path : Listed → String
   | .baseline p _ | .notAFile p _ _ => p
 
-/-- Tier identity survives the fixture-directory rename. The old root is read
-only from historical commits; the working tree has one current root. -/
+/-- A baseline's current path, so tier identity survives the fixture-directory rename. -/
 def currentBaselinePath (p : String) : String :=
   s!"{baselineDir}/{((System.FilePath.mk p).fileName).getD p}"
 
-/-- Read `git ls-tree -z`: NUL-terminated `<mode> <type> <object>\t<path>`
-entries, the path as committed. `-z` is what stops git quoting a name, and
-the quoted name once slipped past the `.tsv` filter below, so its deletion
-went unseen. `none` when an entry does not read: a listing half understood is
-not one to pass on. -/
+/-- Read `git ls-tree -z` entries, paths as committed; `none` when an entry does not read.
+-/
 def readListing (listing : String) : Option (Array Listed) := Id.run do
   let mut out : Array Listed := #[]
   for e in listing.splitOn (Char.ofNat 0).toString do
@@ -286,10 +218,8 @@ def readListing (listing : String) : Option (Array Listed) := Id.run do
     | _ => return none
   return some out
 
-/-- The tree's copy of a baseline: `none` where there is none, and a fault
-where the name holds anything but a regular file. Only a regular file is what
-git commits as a floor: a symlink would reach the base as a link, which the
-base listing faults and no landing could then remove. -/
+/-- The tree's copy of a baseline: `none` where there is none, and a fault where the name
+holds anything but a regular file. -/
 def treeCopy (p : String) : IO (Except String (Option String)) := do
   let md? ← try some <$> (System.FilePath.mk p).symlinkMetadata catch _ => pure none
   let some md := md? | return .ok none
@@ -303,8 +233,8 @@ def treeCopy (p : String) : IO (Except String (Option String)) := do
 check can read; failing closed — commit the tier's baseline as a file"
   return .ok (some (← IO.FS.readFile p))
 
-/-- The tree's `testdata/scoreboard/*.tsv`, direct children, spelled as the base's
-listing spells them, sorted. -/
+/-- The tree's direct-child baselines, spelled as the base's listing spells them, sorted.
+-/
 def treeBaselines : IO (Array String) := do
   let dir : System.FilePath := baselineDir
   let mut out : Array String := #[]
@@ -313,15 +243,9 @@ def treeBaselines : IO (Array String) := do
       if e.fileName.endsWith ".tsv" then out := out.push s!"{baselineDir}/{e.fileName}"
   return out.qsort (· < ·)
 
-/-- `--check --base <rev>`: every baseline committed at `<rev>` held to the
-tree's copy (`judgeBase`), and every tier file the tree adds judged alone
-(`judgeNew`), one porcelain line per file,
-`scoreboard: base=<sha> tier=<t> result=ok|laundered|stale|fault`. The
-ratchet compares committed files with a measurement, so it cannot see a floor
-edited down by hand, or a baseline deleted and regenerated from nothing: both
-leave file and tree agreeing. The base can see them. A rev that names no
-commit fails closed, and so does a tree that is not a git repository. Every
-object is read through `gitRead`, so a replace ref cannot stand in for one. -/
+/-- `--check --base <rev>`: every baseline committed at `<rev>` held to the tree's copy
+(`judgeBase`) and every tier file the tree adds judged alone (`judgeNew`), one porcelain
+line each; a rev naming no commit, or no git repository, fails closed. -/
 def baseCheck (rev : String) : IO UInt32 := do
   let some sha := (← git #["rev-parse", "--verify", "--quiet", rev ++ "^{commit}"]).map
       (·.trimAscii.toString)
@@ -360,10 +284,7 @@ regular file, so it holds no floor this check can read; failing closed"
       bad := bad + 1
     | .baseline p oid =>
       let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
-      -- A blob git cannot read is no empty base: an empty base holds no
-      -- floor, so reading one as `""` passed any fall at all. `cat-file` of
-      -- the listed object rather than `show`: the bytes as committed, with no
-      -- textconv an attributes file could ask for.
+      -- An unreadable blob is no empty base; `cat-file` reads the bytes as committed.
       match ← gitRead #["cat-file", "blob", oid] with
       | .error why =>
         IO.println s!"scoreboard: base={short} tier={tier} result=fault"
@@ -382,14 +303,11 @@ full clone"
           let (result, reasons) := judgeBase baseText copy.isSome tipText
           IO.println s!"scoreboard: base={short} tier={tier} result={result}"
           for r in reasons do printReason r
-          -- A pass prints what it credited: the weakening a human sanctions
-          -- at landing, read off the gate's own output rather than a diff.
+          -- A pass prints what it credited, where a human sanctions each weakening.
           if result == "ok" then
             for c in creditsOf baseText tipText do printReason c
           if result != "ok" then bad := bad + 1
-  -- Every tier file the base does not carry, judged alone: it has no floor at
-  -- the base, but it is the tree's committed file all the same. Reading the
-  -- base's listing alone let a new tier land holding a request.
+  -- Every tier file the base does not carry, judged alone.
   for p in ← treeBaselines do
     if known.contains p then continue
     let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
@@ -404,27 +322,17 @@ its format, and any request it still holds"
     if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
--- ## The queue
-
-/-- Constructs held back and per-tier deficits. Their different units do
-not support a single cross-tier ranking. -/
+/-- Constructs held back and per-tier deficits, which have no single cross-tier ranking.
+-/
 def queue (limit : Nat) : IO UInt32 := do
   let mut lines : Array String := #[]
-  -- The blocker ranking a sibling commits: constructs nothing in the engine
-  -- answers, ranked by the documents they alone hold back. Read when
-  -- present, because the ranking data belongs to whoever measured it.
+  -- The committed blocker ranking, read when present.
   let blockers ← readFileOr "testdata/coverage/blockers.tsv"
   if blockers.isEmpty then
     lines := lines.push "queue: group 1 of 2 — no testdata/coverage/blockers.tsv, so no \
 construct ranking (the coverage tier writes it)"
   else
-    -- The format is `scripts/blockers.lean`'s: `#` provenance, one header
-    -- row, then `kind<TAB>construct<TAB>owner<TAB>sole<TAB>share<TAB>docs`,
-    -- the three counts integers and the kind one of three words. A line that
-    -- is none of those is a fault, and the queue stops rather than rank what
-    -- it misread: a reader that skipped what it could not parse once ranked
-    -- zero of forty rows and said nothing. Fields are not trimmed — `\ `, the
-    -- control space, is a construct whose name is one space.
+    -- blockers.tsv rows: `kind⇥construct⇥owner⇥sole⇥share⇥docs`, untrimmed; others stop the queue.
     let mut rows : Array (String × String × String × Nat × Nat × Nat) := #[]
     let mut faults : Array String := #[]
     let mut lineNo := 0
@@ -466,11 +374,7 @@ not a tier name ([a-z0-9-]+), which --check faults"
     match parse text with
     | .error e => lines := lines.push s!"queue: tier {t} unreadable: {e}"
     | .ok tsv =>
-      -- Faults about the row set, reported here rather than only at
-      -- `--check` time: a sibling's tier whose rows are not sorted parses
-      -- and gates fine today (the aggregate reads its exit status), and the
-      -- fault only bites the day it ports onto `tierMain`. Saying so now is
-      -- cheaper than saying so then.
+      -- Faults about a tier's row set, reported in the queue too.
       for f in validate tsv do
         lines := lines.push s!"queue: tier {t} baseline fault: {f}"
       if tsv.encoding.isNone then
@@ -486,10 +390,7 @@ not a tier name ([a-z0-9-]+), which --check faults"
   IO.println s!"queue: {lines.size} lines, {shown} shown — grouped, not one ranking"
   return 0
 
--- ## The speed report
-
-/-- The modules a source imports: its `import` lines, whatever modifiers
-precede the keyword, before its first line of code. -/
+/-- The modules a source imports: its `import` lines before its first line of code. -/
 def headerImports (text : String) : Array String := Id.run do
   let mut out : Array String := #[]
   let mut depth := 0
@@ -504,18 +405,13 @@ def headerImports (text : String) : Array String := Id.run do
     if let some m := words.getLast? then out := out.push m
   return out
 
-/-- What a run has after `lake build` (`defaultTargets`): the toolchain's
-modules, and the `LeanTex` library, which is all the `leantex` executable's
-root imports. -/
+/-- What `lake build`'s default targets leave built: the toolchain's modules and the
+`LeanTex` library. -/
 def defaultBuilt (m : String) : Bool :=
   ["Init", "Std", "Lean", "Lake", "LeanTex"].any fun r => m == r || m.startsWith (r ++ ".")
 
-/-- Delegate sampling and reporting to the benchmark driver: the comparison
-with lualatex, then what the invented reference documents cost
-(`--doc-cost`). Both time this host, so neither is a hermetic gate. The driver
-runs after `lake build`, as its header says, which this does first: `lake env
-lean --run` builds nothing, so it would time whatever the last build left, and
-a module the build does not make fails the run (`headerImports`). -/
+/-- Delegate to the benchmark driver, after `lake build`: the comparison with lualatex,
+then the reference documents' cost; neither is a gate. -/
 def benchReport : IO UInt32 := do
   IO.println "scoreboard: bench is a report, never a gate (it runs lualatex and times this host)."
   let built ← IO.Process.output { cmd := "lake", args := #["build"] }
@@ -534,13 +430,9 @@ def benchReport : IO UInt32 := do
       code := out.exitCode
   return code
 
--- ## Selftest
-
 def fixture (name : String) : String := s!"testdata/scoreboard/selftest/{name}.tsv"
 
-/-- Hand-written committed baselines, one per malformation `validate` must
-name. The fixture *is* the failing input: each case names the fault it must
-provoke, and the clean fixture must provoke none. -/
+/-- Hand-written committed baselines, each naming the fault `validate` must find in it. -/
 def malformations : List (String × String) :=
   [("unsorted", "out of order"),
    ("duplicate", "duplicate item"),
@@ -555,19 +447,13 @@ def malformations : List (String × String) :=
    ("tier-retired-rows", "a retired tier still holds rows"),
    ("no-rows", "no rows")]
 
-/-- Committed baselines `validate` must accept. Each is a state the tool
-writes, or asks a human to write, on the way through a fall, a vanish, or a
-tier's retirement — so refusing any of them is a wedge: a remedy the tool
-prints that the tool then rejects. -/
+/-- Committed baselines `validate` must accept, each a state the tool writes or asks a
+human to write. -/
 def wellFormed : List String :=
   ["clean", "retired", "retired-pending", "lowered", "lowered-applied",
    "lowered-reauth", "lowered-second", "chain", "chain-gap", "tier-retired"]
 
-/-- The base check's cases: the file committed at the base, the tree's file,
-and the verdict. Each laundering case is a way a floor moved with no line
-written for it since the base; each `ok` case is a move a line pays for; a
-`fault` is a tree file that does not read as the format, whatever else it
-moved; a `stale` one still holds a request. -/
+/-- The base check's cases: the base's file, the tree's file, and the verdict. -/
 def baseCases : List (String × String × String) :=
   [("clean", "clean", "ok"),
    ("clean", "raised", "ok"),
@@ -586,10 +472,7 @@ def baseCases : List (String × String × String) :=
    ("clean", "retired-pending", "stale"),
    ("clean", "lowered-unheld", "fault"),
    ("clean", "duplicate", "fault"),
-   -- A request the base holds is unspent there: the regeneration that spends
-   -- it writes a record, which is the act this landing adds, so it pays.
-   -- Before, the base's request cancelled that record and the tool's own
-   -- remedy ended at `laundered`.
+   -- A request the base holds is unspent there, so the regeneration's record pays.
    ("lowered", "lowered-applied", "ok"),
    ("retired-pending", "retired", "ok"),
    ("lowered", "lowered", "stale"),
@@ -608,13 +491,8 @@ def baseArg (args : List String) : Option (Option String) :=
   | [_] => some none
   | _ :: rev :: _ => some (some rev)
 
--- ## The base check through the path that ships
-
-/-- The environment the harness runs git and the scoreboard under: a fresh
-install's — no user or system config, so `core.quotePath` and every other
-default is git's own — and no variable naming another repository. git exports
-`GIT_DIR` and `GIT_INDEX_FILE` to a hook, and a selftest run from one would
-otherwise read the repository it checks instead of its own scratch. -/
+/-- The environment the harness runs git and the scoreboard under: a fresh install's, with
+no config and no variable naming another repository. -/
 def harnessEnv : Array (String × Option String) :=
   #[("GIT_CONFIG_GLOBAL", some "/dev/null"), ("GIT_CONFIG_NOSYSTEM", some "1"),
     ("GIT_TERMINAL_PROMPT", some "0")] ++
@@ -624,10 +502,8 @@ def harnessEnv : Array (String × Option String) :=
       "GIT_GRAFT_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE",
       "GIT_SHALLOW_FILE"].map fun n => (n, (none : Option String)))
 
-/-- The tier every harness repository carries live: a producer whose `--check`
-exits 0 whatever the file says, so the aggregate passes and the exit status of
-`--check --base` is the base check's alone, and a raw baseline with two rows to
-move. -/
+/-- The tier every harness repository carries: a producer whose `--check` always exits 0,
+so the exit status is the base check's alone, over a raw baseline of two rows. -/
 def probeTier : String := "zz-probe"
 
 def probeText : String := "# encoding: raw\nalpha\t5\nbravo\t3\n"
@@ -635,15 +511,12 @@ def probeText : String := "# encoding: raw\nalpha\t5\nbravo\t3\n"
 /-- A producer whose `--check` passes whatever its baseline says. -/
 def trivialProducer : String := "def main (_ : List String) : IO UInt32 := pure 0\n"
 
-/-- One harness case: files committed at the base beside the harness's own, the
-edit that makes the tree from the base (given the repository and the base's
-sha), the exit status `scoreboard --check --base <base>` must return, and lines
-its output must hold (given the base's 12-digit sha). -/
+/-- One harness case: files committed at the base, the edit making the tree, the exit
+status `scoreboard --check --base <base>` must return, and lines its output must hold. -/
 structure CliCase where
   label : String
   extra : List (String × String)
-  /-- Commit the baselines here, then move them to the current root before
-  editing. This exercises repository layout migrations through real git trees. -/
+  /-- Commit the baselines here, then move them to the current root before editing. -/
   baseRoot : String := baselineDir
   edit : System.FilePath → String → IO Unit
   exit : UInt32
@@ -651,8 +524,7 @@ structure CliCase where
   /-- Fragments no line of the output may hold. -/
   absent : List String := []
 
-/-- Replace `old` in a harness file, and fail the case when the file does not
-hold it: an edit that did nothing would pass a case for the wrong reason. -/
+/-- Replace `old` in a harness file, failing the case when the file does not hold it. -/
 def swapIn (dir : System.FilePath) (path old new : String) : IO Unit := do
   let s ← IO.FS.readFile (dir / path)
   unless containsSub s old do throw (IO.userError s!"{path} holds no '{old}'")
@@ -669,26 +541,22 @@ def harnessGit (dir : System.FilePath) (args : Array String) : IO String := do
 {o.stderr.trimAscii.toString}")
   return o.stdout.trimAscii.toString
 
-/-- Make the blob `path` holds at `sha` unreadable, as a blobless partial clone
-whose promisor is out of reach leaves it: the commit and its trees still
-answer, the one object does not. A fresh harness repository's objects are
-loose, one file each. -/
+/-- Make the blob `path` holds at `sha` unreadable, as an unreachable promisor leaves it.
+-/
 def unreadable (dir : System.FilePath) (sha path : String) : IO Unit := do
   let oid ← harnessGit dir #["rev-parse", s!"{sha}:{path}"]
   IO.FS.removeFile (dir / ".git" / "objects" / (oid.take 2).toString / (oid.drop 2).toString)
 
-/-- `git replace <old> <new>` in a harness repository, then read back through
-the harness's own git, whose environment leaves replacement on, that the
-replacement is in effect — `holds` over what `probe` prints — so a case cannot
-pass for want of one. -/
+/-- `git replace <old> <new>` in a harness repository, read back through replacement-on
+git so the case cannot pass without it. -/
 def replaceIn (dir : System.FilePath) (old new : String) (probe : Array String)
     (holds : String → Bool) : IO Unit := do
   let _ ← harnessGit dir #["replace", old, new]
   unless holds (← harnessGit dir probe) do
     throw (IO.userError s!"the replace ref {old} → {new} is not in effect")
 
-/-- The cases. Each refusal is a way the base check once failed open or could;
-each pass is a sanctioned act, so a check that refused everything fails too. -/
+/-- The cases: each refusal a way the base check could fail open, each pass a sanctioned
+act. -/
 def cliCases : List CliCase :=
   let probe := tsvPath probeTier
   let enc := "# encoding: raw\n"
@@ -697,9 +565,7 @@ def cliCases : List CliCase :=
   let request := "# lowered: alpha 5→4 — an invented reason\n"
   let trivial := trivialProducer
   let fall := fun d => swapIn d probe "alpha\t5\n" "alpha\t4\n"
-  -- What a passing run prints under its tier line: each weakening, and each
-  -- line new since the base that pays for one — the human gate on weakening
-  -- reads this, not a diff.
+  -- A passing run prints each weakening and each new line paying for one.
   let credits (lines : List String) := fun (s : String) =>
     says "ok" s ++ lines.map (s!"scoreboard:   " ++ ·)
   let record := "# lowered (applied): alpha 5→4 — an old reason\n"
@@ -730,9 +596,7 @@ def cliCases : List CliCase :=
      exit := 1, says := says "fault" },
    { label := "an unapplied request, the floor unmoved", extra := []
      edit := fun d _ => swapIn d probe enc (enc ++ request), exit := 1, says := says "stale" },
-   -- The request names a floor the file no longer holds, so the file does not
-   -- validate: the committed state a request carried past the fall it asked
-   -- for is.
+   -- A request naming a floor the file no longer holds does not validate.
    { label := "an unapplied request beside the fall it names", extra := []
      edit := fun d _ => do
        swapIn d probe enc (enc ++ request)
@@ -757,8 +621,7 @@ def cliCases : List CliCase :=
        IO.FS.removeFile (d / scriptPath probeTier)
      exit := 0
      says := credits ["moved: the tier's 2 rows → gone", "credited: # retired-tier: an invented reason"] },
-   -- Two credits a human decides on, printed so they can: a verbatim copy of
-   -- a record the base carries, and a line whose values are not the fall.
+   -- Two credits a human decides on: a copied base record, and a line naming another fall.
    { label := "a fall paid by a copy of a record the base carries"
      extra := [(probe, enc ++ record ++ "alpha\t5\nbravo\t3\n")]
      edit := fun d _ => do
@@ -775,9 +638,7 @@ the base carries)"] },
      exit := 0
      says := credits ["moved: alpha 5 → 4",
        "credited: # lowered (applied): alpha 1000→0 — an invented reason"] },
-   -- What a pass prints is the human's gate on weakening, so text a file
-   -- supplies reaches the screen as text: a reason carrying cursor controls
-   -- once erased the `moved:` line above it on a terminal.
+   -- Text a file supplies reaches the screen as text, terminal controls spelled out.
    { label := "a fall paid by a record whose reason carries terminal controls", extra := []
      edit := fun d _ => do
        swapIn d probe enc (enc ++ "# lowered (applied): alpha 5→4 — x\x1b[1A\x1b[2K\x9bforged\n")
@@ -792,9 +653,7 @@ the base carries)"] },
          "def main (_ : List String) : IO UInt32 := do\n  IO.eprintln \"x\\x1b[2Ky\"\n  pure 1\n"
        IO.FS.writeFile (d / tsvPath "zz-noisy") (enc ++ "alpha\t5\n")
      exit := 1, says := fun _ => ["scoreboard:   exit 1; x\\u{1b}[2Ky"], absent := ["\x1b"] },
-   -- A base blob git cannot read — a blobless partial clone whose promisor is
-   -- out of reach, simulated by deleting the loose object — once read as an
-   -- empty base, and an empty base holds no floor.
+   -- A base blob git cannot read, simulated by deleting the loose object.
    { label := "the base's blob unreadable, a fall edited by hand", extra := []
      edit := fun d sha => do
        unreadable d sha probe
@@ -802,8 +661,7 @@ the base carries)"] },
      exit := 1, says := says "fault" },
    { label := "the base's blob unreadable, nothing moved", extra := []
      edit := fun d sha => unreadable d sha probe, exit := 1, says := says "fault" },
-   -- A name git quotes: `ls-tree` without `-z` printed it in quotes, the
-   -- `.tsv` filter dropped it, and its deletion went unseen.
+   -- A name git quotes, deleted with its producer.
    { label := "a baseline under a name git quotes, deleted with its producer"
      extra := [(tsvPath "zzé", "# encoding: raw\nalpha\t3\n"), (scriptPath "zzé", trivial)]
      edit := fun d _ => do
@@ -826,11 +684,7 @@ the base carries)"] },
      extra := [("testdata/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
      edit := fun d _ => IO.FS.removeDirAll (d / "testdata/scoreboard/zz-dir.tsv")
      exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] },
-   -- A replace ref makes git answer with another object's bytes, for a blob,
-   -- a tree or a commit, and `refs/replace/` is shared by every worktree of a
-   -- repository: one `git replace` from any of them laundered a fall, and hid
-   -- a deleted baseline, past this check. One case per kind of object the
-   -- check reads.
+   -- A replace ref swaps a blob, a tree or a commit; one case per kind of object the check reads.
    { label := "a replace ref swaps the base's blob for one already holding the fall"
      extra := []
      edit := fun d sha => do
@@ -860,10 +714,7 @@ the base carries)"] },
        let new ← harnessGit d #["commit-tree", tree, "-m", "a stand-in for the base"]
        replaceIn d sha new #["cat-file", "blob", s!"{sha}:{probe}"] (containsSub · "alpha\t4")
      exit := 1, says := says "laundered" },
-   -- A tier file the base does not carry has no floor there, but it is still
-   -- the tree's committed file: it must read as the format and hold no
-   -- request. Iterating the base's listing alone let a new tier land holding
-   -- a request its producer never spent.
+   -- A tier file the base does not carry must still read as the format and hold no request.
    { label := "an unapplied request in a tier new since the base", extra := []
      edit := fun d _ => do
        IO.FS.writeFile (d / scriptPath "zz-new") trivial
@@ -888,13 +739,11 @@ the base carries)"] },
      says := fun s => [s!"scoreboard: base={s} tier=zz-new result=ok",
        "scoreboard:   new since the base: no floor there to hold it to, so it is judged \
 alone — its format, and any request it still holds"] },
-   -- The tree's own copy reads as the format too: a first reader of a
-   -- duplicated item picks one of its two floors.
+   -- The tree's own copy reads as the format too: a duplicated item hides a fall.
    { label := "a fall hidden behind a duplicate row", extra := []
      edit := fun d _ => swapIn d probe "alpha\t5\n" "alpha\t5\nalpha\t4\n"
      exit := 1, says := says "fault" },
-   -- Only a regular file is what git commits as a floor: a symlink would reach
-   -- the base as one, where no landing could hold it or remove it.
+   -- Only a regular file is a floor git commits; a symlink is refused.
    { label := "the tree's copy of a baseline is a symlink to the same text", extra := []
      edit := fun d _ => do
        IO.FS.writeFile (d / "zz-elsewhere.tsv") probeText
@@ -903,10 +752,7 @@ alone — its format, and any request it still holds"] },
          { cmd := "ln", args := #["-s", "../../zz-elsewhere.tsv", probe], cwd := some d }
        unless o.exitCode == 0 do throw (IO.userError s!"ln exited {o.exitCode}")
      exit := 1, says := says "fault" },
-   -- A base that holds a request: main carries authority nobody spent. Every
-   -- landing is stale until one spends it or deletes it, and spending it the
-   -- way the tool does — the fall made, the line written back as a record —
-   -- passes, where the base's request once cancelled that record.
+   -- A request the base holds stales every landing until spent, and spending it passes.
    { label := "a request the base holds, the tree unchanged"
      extra := [(probe, enc ++ request ++ "alpha\t5\nbravo\t3\n")]
      edit := fun _ _ => pure (), exit := 1, says := says "stale" },
@@ -929,10 +775,8 @@ base carries)"] },
      says := credits ["moved: bravo 3 → gone",
        "credited: # retired: bravo — an invented reason (spends the request the base carries)"] }]
 
-/-- Lay out one harness repository, commit it as the base, make the tree by the
-case's edit, and run the scoreboard under test there: `none` when it answered as
-the case says. Every declared tier is a tombstone in the harness, so the
-aggregate passes without spawning their producers. -/
+/-- Lay out one harness repository, commit the base, make the tree by the case's edit, and
+run the scoreboard under test there: `none` when it answered as the case says. -/
 def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
   let dir ← IO.FS.createTempDir
   try
@@ -974,18 +818,15 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
   finally
     IO.FS.removeDirAll dir
 
-/-- This binary, the scoreboard under test, for the selftest to drive through
-its own CLI. Run interpreted, this process is `lean`, which has neither
-`--base` nor `--key`; the selftest then says so rather than test another
-binary. -/
+/-- This binary, the scoreboard under test; interpreted, the process is `lean`, and the
+selftest says so. -/
 def selfBinary : IO (Except String String) := do
   let bin ← IO.appPath
   if bin.fileName == some "scoreboard" then return .ok bin.toString
   return .error s!"the selftest drives its own binary and this process is {bin}; run the \
 compiled one: lake build scoreboard && .lake/build/bin/scoreboard --selftest"
 
-/-- Every case, in parallel, against this binary: the cases drive `main`, the
-listing, the blob reads and the count exactly as a landing does. -/
+/-- Every case, in parallel, against this binary. -/
 def cliFailures : IO (Array String) := do
   let bin ← match ← selfBinary with
     | .ok b => pure b
@@ -1002,12 +843,8 @@ def cliFailures : IO (Array String) := do
     | .error e => out := out.push s!"cli: {e}"
   return out
 
-/-- The HTML key of a corpus directory as this binary's `--key` computes it,
-once under the environment as it stands and once under one that looks nothing
-alike: the font override naming another face, the font path, `HOME` and the
-caches empty, no `PATH`, another zone and locale. The selftest cannot change
-its own environment, so it asks its own binary; a key that read any of these
-would differ between the two. -/
+/-- The HTML key of a corpus directory as this binary's `--key` computes it, under the
+environment as it stands and under one that looks nothing alike. -/
 def keyUnderHosts (dir : System.FilePath) : IO (Except String (String × String)) := do
   let bin ← match ← selfBinary with
     | .ok b => pure b
@@ -1050,8 +887,7 @@ def selftest : IO UInt32 := do
   no "clean fixture declares the headroom encoding" (base.encoding == some (.headroom 1000))
   no "a baseline against itself neither loses nor gains" (ratchet base base).changes.isEmpty
 
-  -- Every malformation of a committed file fires its own fault, and none of
-  -- them is the catch-all: the message must name the kind.
+  -- Every malformation fires its own fault, named by kind.
   for (name, want) in malformations do
     let got ← readFixture name
     let msgs : Array String := match got with
@@ -1060,20 +896,17 @@ def selftest : IO UInt32 := do
     no s!"malformation {name}: nothing fired" (!msgs.isEmpty)
     no s!"malformation {name}: fired {joined msgs}, wanted '{want}'"
       (msgs.any (containsSub · want))
-  -- ... and every state the tool writes, or asks a human to write, reads.
+  -- Every state the tool writes, or asks a human to write, reads.
   for name in wellFormed do
     let t ← load name
     no s!"well-formed {name}: refused as {joined (validate t)}" (validate t).isEmpty
-  -- A request held to another floor names its remedy: the committed file is
-  -- where commonmark's three carried `# lowered:` lines stopped its landing.
+  -- A request held to another floor names its remedy.
   let unheld ← load "lowered-unheld"
   no s!"malformation lowered-unheld: names no remedy ({joined (validate unheld)})"
     ((validate unheld).any fun m =>
       containsSub m "mark it `# lowered (applied):`" && containsSub m "correct or delete it")
 
-  -- A fresh measurement is judged against the committed file it meets: a
-  -- retired item that is still measured is the fault, never the committed
-  -- file that holds a retirement beside its row.
+  -- A retired item still measured is the fault, not the retirement beside its row.
   let live ← load "retired-and-live"
   no s!"fresh: a retired item still measured is a fault ({joined (validateFresh live.rows (some live))})"
     ((validateFresh live.rows (some live)).any (containsSub · "retired and also measured"))
@@ -1084,9 +917,7 @@ def selftest : IO UInt32 := do
     ((validateFresh #[{ item := "a", value := 1 }, { item := "a", value := 2 }] none).any
       (containsSub · "duplicate item"))
 
-  -- The spec's format, which a tier written without this library also
-  -- speaks: no encoding line is gated and unranked, and an item may hold
-  -- spaces because the row is split on its tab.
+  -- The spec's format: no encoding line is gated and unranked, and an item may hold spaces.
   match ← readFixture "spec-no-encoding" with
   | .error e => no s!"spec format: a baseline with no encoding line is refused: {e}" false
   | .ok t =>
@@ -1096,13 +927,11 @@ def selftest : IO UInt32 := do
   | .ok t =>
     no "spec format: the spaced item reads whole" (t.rows.any (·.item == "alpha bravo"))
 
-  -- The four ratchet verdicts, each against the clean baseline, read off
-  -- the structured changes rather than a rendered sentence.
+  -- The four ratchet verdicts against the clean baseline, read off the structured changes.
   let verdicts : List (String × Bool × Bool) :=
     [("dropped", true, false),
      ("disappeared", true, false),
-     -- `added` under a headroom cap: an unseen item below the cap is debt
-     -- arriving under a new name, so it is a fall.
+     -- `added` under a headroom cap: an unseen item below the cap is a fall.
      ("added", true, false),
      ("raised", false, true)]
   for (name, wantLoss, wantGain) in verdicts do
@@ -1112,16 +941,12 @@ def selftest : IO UInt32 := do
 ({joined (d.losses.map (·.describe))})" (d.losses.isEmpty == !wantLoss)
     no s!"ratchet {name}: gain expected {wantGain}, got {d.gains.size}"
       (d.gains.isEmpty == !wantGain)
-    -- The tight rule: every one of the four fails `--check`, a rise
-    -- included. Before this, a rise passed and left the floor stale.
+    -- Every one of the four fails `--check`, a rise included.
     no s!"ratchet {name}: --check must fail on any change" (!d.checkPasses)
   no "ratchet: an unchanged measurement is the only state --check passes"
     (ratchet base base).checkPasses
 
-  -- Retirement through the tool. The request is the row beside its line, the
-  -- one committed state the ratchet's retirement arm reads; regenerating
-  -- drops the row and leaves the line as the record. Before this the request
-  -- was malformed, so the refusal's printed remedy wedged its tier.
+  -- Retirement through the tool: regenerating drops the row and leaves the line as the record.
   let pend ← load "retired-pending"
   let gone ← load "disappeared"
   let record ← load "retired"
@@ -1136,9 +961,7 @@ def selftest : IO UInt32 := do
     (!({ item := "alpha", old := 998, new := 0, why := "w" } : Lowered).authorises
       (.vanished "alpha" 998))
 
-  -- A headroom item the baseline never held enters at the cap, so new debt
-  -- under a new name is a fall rather than an improvement — and a request
-  -- from the cap is how a human writes it.
+  -- A headroom item new to the baseline enters at the cap, so new debt is a fall.
   let added ← load "added"
   let d := ratchet base added
   no s!"headroom: an unseen item below the cap is a fall, not an entry \
@@ -1170,15 +993,12 @@ def selftest : IO UInt32 := do
   no "lowering: the file regeneration writes holds it as a record"
     (applied.lowered.size == 1 && applied.pendingLowerings.isEmpty)
   no "lowering: the file regeneration writes is the measurement" (ratchet applied fell).changes.isEmpty
-  -- The re-authorization the parity review reproduced: a line carried
-  -- forward must never pay for a second fall, even between the same values.
+  -- A line carried forward never pays for a second fall, even between the same values.
   no "record: it authorises no further fall" (!(unauthorised applied (withAlpha fell 994)).isEmpty)
   let reauth ← load "lowered-reauth"
   no "record: carried past a recovery, it does not authorise the same fall again"
     (!(unauthorised reauth fell).isEmpty)
-  -- The second fall of one item — the second staging under one owner: the
-  -- first record is history and is not held to today's floor, and the new
-  -- request is checked against the floor the first one left.
+  -- A second fall: the first record is history; the new request meets the floor it left.
   let second ← load "lowered-second"
   no "second fall: its request authorises it" (unauthorised second (withAlpha fell 990)).isEmpty
   match d.losses[0]? with
@@ -1196,10 +1016,7 @@ def selftest : IO UInt32 := do
       ((parseLowered { w with state := .applied }.render).bind (·.toOption) ==
         some { w with state := .applied })
 
-  -- The tool's own remedies, followed to the end through the path a tier
-  -- ships (`tierMainAt`), twice for each kind — the probe shape that found
-  -- the wedges: a second fall of one item, a retirement, and a carried
-  -- record asked to pay again.
+  -- The tool's own remedies followed to the end through `tierMainAt`, twice for each kind.
   let flowDir ← IO.FS.createTempDir
   try
     let p := (flowDir / "flow.tsv").toString
@@ -1232,8 +1049,7 @@ def selftest : IO UInt32 := do
     no "flow: the request went back as a record"
       ((← says "# lowered (applied): alpha 998→997") && !(← says "# lowered: alpha"))
     no "flow: --check passes on what regeneration wrote" ((← run ["--check"]) == 0)
-    -- A request no fall answers: the one committed state only the request
-    -- arm of `stale` sees, since nothing else in the file has moved.
+    -- A request no fall answers, which only the request arm of `stale` sees.
     let unanswered := "# lowered: alpha 997→995 — a request no fall answers, an invented reason"
     add unanswered
     no "flow: a committed request no fall answers is stale under --check" ((← run ["--check"]) == 1)
@@ -1262,8 +1078,7 @@ def selftest : IO UInt32 := do
   finally
     IO.FS.removeDirAll flowDir
 
-  -- The base check: a floor moved since the base needs a line written since
-  -- the base. Each laundering case passed `--check` before this existed.
+  -- The base check: a floor moved since the base needs a line written since the base.
   for (b, t, want) in baseCases do
     let (got, why) := judgeBase (← readFileOr (fixture b)) true (← readFileOr (fixture t))
     no s!"base {b} → {t}: {got} ({joined why}), wanted {want}" (got == want)
@@ -1274,8 +1089,7 @@ def selftest : IO UInt32 := do
 ({joined emptied.2})"
     (emptied.1 == "fault" && (emptied.2.filter (containsSub · "is gone")).size == 3)
   no "base: an unreadable base is a fault" ((judgeBase "alpha\tnine\n" true cleanText).1 == "fault")
-  -- A tier file the base does not carry is judged alone: its format, then any
-  -- request it still holds.
+  -- A tier file new since the base is judged alone.
   let newVerdict (name : String) : IO String := return (judgeNew (← readFileOr (fixture name))).1
   no "new: a clean file new since the base passes" ((← newVerdict "clean") == "ok")
   no "new: a request it still holds is stale" ((← newVerdict "lowered") == "stale")
@@ -1305,8 +1119,7 @@ self-contained"])
     ((← credit "lowered-reauth" "reauth-tip") == #["moved: alpha 998 → 995"])
   no "credits: a new item below the cap is a weakening"
     ((← credit "clean" "added") == #["moved: delta entered at 3, below the cap 1000"])
-  -- A record, or a dropped row, spending a request the base holds is credited,
-  -- and says whose request it spent.
+  -- A record or dropped row spending a base request is credited, naming it.
   no s!"credits: a record spending the base's request ({joined (← credit "lowered" "lowered-applied")})"
     ((← credit "lowered" "lowered-applied") == #["moved: alpha 998 → 995",
       "credited: # lowered (applied): alpha 998→995 — an invented reason, so the fixture is \
@@ -1315,8 +1128,7 @@ self-contained (spends the request the base carries)"])
     ((← credit "retired-pending" "retired") == #["moved: alpha 998 → gone",
       "credited: # retired: alpha — the measurement it stood for is no longer made (spends \
 the request the base carries)"])
-  -- A request the landing did not add says so: main carries it, and every
-  -- landing is stale until one spends it or deletes it.
+  -- A request the landing did not add says so.
   let inherited := judgeBase (← readFileOr (fixture "lowered")) true (← readFileOr (fixture "lowered"))
   no s!"held: a request the base holds too says so ({joined inherited.2})"
     (inherited.2.any (containsSub · "the base holds it too"))
@@ -1330,10 +1142,7 @@ the request the base carries)"])
     (printable "a\u202Eb\u200Bc" == "a\\u{202e}b\\u{200b}c")
   no "printable: everything else passes unchanged"
     (printable "alpha 5→4 — é, 字" == "alpha 5→4 — é, 字")
-  -- The same check through the path that ships: `scoreboard --check --base`
-  -- spawned in throwaway repositories. Mutants that made `main` ignore the
-  -- base check, or the base check list nothing or count nothing, passed every
-  -- line above.
+  -- The same check through `scoreboard --check --base` in throwaway repositories.
   for why in ← cliFailures do no why false
 
   -- What the aggregate decides before any producer runs.
@@ -1358,8 +1167,7 @@ the request the base carries)"])
     (baseArg ["--check", "--base", "abc"] == some (some "abc") && baseArg ["--check"] == none &&
       baseArg ["--base"] == some none)
 
-  -- The HTML freshness key, over a synthetic one-fixture corpus: a function
-  -- of the files, and moved by a sentence.
+  -- The HTML key over a one-fixture corpus: a function of the files, moved by a sentence.
   let dir ← IO.FS.createTempDir
   try
     IO.FS.createDirAll (dir / "fonts")
@@ -1406,10 +1214,7 @@ the request the base carries)"])
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 
-  -- Tier discovery by convention, both halves. `--check` and the selftest
-  -- agree on every state: absence passes only for a declared-pending tier,
-  -- and a pending name whose tier has landed fails here — which is what
-  -- stops the pending list going stale.
+  -- Tier discovery: absence passes only while pending, and a landed pending name fails.
   let (tiers, misnamed) ← discover
   for m in misnamed do
     no s!"discovery: testdata/scoreboard/{shownName m}.tsv is not a tier name ([a-z0-9-]+), \
@@ -1417,8 +1222,7 @@ which --check faults" false
   for t in tiers do
     let hasTsv ← System.FilePath.pathExists (tsvPath t)
     let hasScript ← System.FilePath.pathExists (scriptPath t)
-    -- A tombstone is a retired tier's whole record: its producer is gone by
-    -- design, so one half is the state it must be in.
+    -- A tombstone is a retired tier's whole record.
     let tomb := hasTsv &&
       ((parse (← readFileOr (tsvPath t))).toOption.bind (·.tierRetired)).isSome
     if hasTsv != hasScript && !tomb then
@@ -1434,7 +1238,7 @@ faults" false
   no "discovery: every pending name is declared"
     (pendingTiers.all declaredTiers.contains)
   no "discovery: every declared name is a tier name" (declaredTiers.all tierNameOk)
-  -- The name rule, and the listing that no longer lets git quote a name.
+  -- The name rule, and a listing in which git quotes no name.
   no "name: the shipped names pass" (["compat", "zz-probe", "p5", "a-b"].all tierNameOk)
   no "name: anything outside [a-z0-9-]+ does not"
     (!(["", "zzé", "Compat", "a b", "a.b", "a_b", "a\tb"].any tierNameOk))
@@ -1454,8 +1258,7 @@ faults" false
     ((readListing s!"100644 blob\ttestdata/scoreboard/compat.tsv{nul}").isNone &&
       (readListing s!"testdata/scoreboard/compat.tsv{nul}").isNone)
 
-  -- The bench runs after `lake build`, as its header says and `--bench` does,
-  -- so it imports nothing else: a script module there failed every mode of it.
+  -- The bench imports only what `lake build` makes.
   no "bench: lake build's default targets are not the library and executable the bench's \
 imports are judged against"
     (((← readFileOr "lakefile.toml").splitOn "\n").contains
@@ -1480,12 +1283,7 @@ the build its header asks for it fails, or runs a stale module"
 {baseCases.length} base-check cases, {cliCases.length} more through `--check --base` in \
 throwaway repositories, the aggregate's own faults, the tool's printed remedies \
 followed to the end, and the key)"
-  -- Then every tier's own selftest, in parallel: one command is what a
-  -- landing runs, so the fan-out lives here rather than in a procedure
-  -- someone has to remember. Built first, as the aggregate builds: `lake env
-  -- lean --run` builds nothing, so a tier's selftest otherwise ran against
-  -- whatever its imports' last build left, and against nothing at all in a
-  -- tree where only `--check` had ever built them.
+  -- Then every tier's own selftest, in parallel, after building their imports.
   if let some err ← buildImports then
     IO.eprintln s!"FAIL the tiers' imports do not build, so no tier's selftest can run: {err}"
     return 1

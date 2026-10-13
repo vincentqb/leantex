@@ -5,9 +5,6 @@ import LeanTex.Core.Utf8
 
 namespace LeanTex.Cli.RunBounded
 
--- Operational ceilings: one minute per conversion, two seconds for a killed
--- process group's pipes to close, and 16 MiB per textual stream (a
--- converter's log).
 public def convBudgetMs : Nat := 60000
 public def convGraceMs : Nat := 2000
 public def maxCaptureBytes : Nat := 16 * 1024 * 1024
@@ -16,9 +13,7 @@ structure Capture where
   text : String := ""
   complete : Bool := false
 
-/-- How a run ended and what it printed, each stream read as UTF-8 with
-each maximal ill-formed subpart read as U+FFFD (`Utf8.decode`): a tool's
-encoding is no fact about whether it finished. -/
+/-- How a run ended and what it printed, each stream decoded as lenient UTF-8. -/
 public structure Ended where
   ran : PicCache.Ran
   out : String
@@ -28,8 +23,7 @@ public structure Ended where
 
 private def capture (h : IO.FS.Handle) (limit : Nat) : IO Capture := do
   let mut bytes := ByteArray.empty
-  -- Every nonempty read consumes at least one byte of the capture allowance;
-  -- one extra byte distinguishes EOF at the limit from truncated output.
+  -- One byte past the limit tells EOF at the limit from truncated output.
   for _ in [:limit + 1] do
     let chunk ← h.read (min 65536 (limit + 1 - bytes.size)).toUSize
     if chunk.isEmpty then return { text := (LeanTex.Core.Utf8.decode bytes).text, complete := true }
@@ -63,8 +57,6 @@ public def runBounded (tool : String) (args : Array String) (cwd : System.FilePa
     if code.isNone then code := (← child.tryWait.toBaseIO).toOption.getD none
     if (← finishedBad outT) || (← finishedBad errT) then break
     if code.isSome && (← IO.hasFinished outT) && (← IO.hasFinished errT) then
-      -- Finished task results are stable; use the captures we will return,
-      -- since either task could have failed after `finishedBad` observed it.
       complete := outT.get.toOption.any (·.complete) &&
         errT.get.toOption.any (·.complete)
       break
@@ -72,9 +64,7 @@ public def runBounded (tool : String) (args : Array String) (cwd : System.FilePa
     if elapsed ≥ budgetMs then break
     IO.sleep (min 10 (budgetMs - elapsed)).toUInt32
   unless complete do
-    -- `Child.kill` sends SIGKILL to a setsid child's whole process group, a
-    -- reaped leader's descendants included, so nothing that stays in the
-    -- group can trap it.
+    -- SIGKILL reaches the setsid child's whole process group.
     discard <| child.kill.toBaseIO
     let stop ← IO.monoMsNow
     let mut reaped := code.isSome

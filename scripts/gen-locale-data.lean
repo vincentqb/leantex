@@ -1,13 +1,9 @@
 import Std.Data.HashMap
 
 /-
-Regenerate LeanTex/Core/LocaleData.lean from babel's locale ini files.
-Run with:
-
-  lake env lean --run scripts/gen-locale-data.lean [--output path]
-
-The ini files (babel-en.ini, babel-fr.ini, babel-de.ini) are located via
-kpsewhich.
+Regenerate LeanTex/Core/LocaleData.lean from babel's locale ini files (via kpsewhich) and the
+tables below.
+Usage: lake env lean --run scripts/gen-locale-data.lean [--output path]
 -/
 
 def notice : String := "/-
@@ -102,15 +98,9 @@ structure CrefGen where
   capOne : String
   capMany : String
 
-/-- cleveref's names per language, read from cleveref.sty v0.21.4
-(2018/03/27): the `\cref@addlanguagedefs{english}` block and the `german`
-and `french` option blocks, under the package's own defaults — `abbrev`
-on (`\@cref@abbrevtrue`), `capitalise` off (`\@cref@capitalisefalse`).
-This is package data, not babel ini data, so the table lives here and
-regenerates with the rest. Order per language: section, equation,
-figure, table, algorithm (cleveref carries `\crefname{algorithm}`
-itself; algorithm2e aliases its `algocf` counter onto it), then
-`\crefrangeconjunction`'s word. -/
+/-- cleveref's names per language, from cleveref.sty v0.21.4 (2018/03/27) under its
+defaults (`abbrev` on, `capitalise` off): section, equation, figure, table, algorithm,
+then `\crefrangeconjunction`'s word. -/
 def crefData :
     List (String × (CrefGen × CrefGen × CrefGen × CrefGen × CrefGen × String)) :=
   [("en", ({ one := "section", many := "sections",
@@ -156,28 +146,18 @@ def leanStrVis (s : String) : String :=
   else if s == "\u00A0" then "\"\\u00A0\""
   else leanStr s
 
-/-- The listing caption word per tag. Not CLDR data — the babel inis carry
-no listing caption — so this table is embedded here with its sources:
-English is listings' own default (listings.sty,
-`\lst@UserCommand\lstlistingname{Listing}`); French and German are
-cleveref's language definitions (cleveref.sty, `\crefname{listing}`:
-french "Liste", ngerman "Listing"). -/
+/-- The listing caption word per tag: listings.sty's default for English, cleveref's
+`\crefname{listing}` for French and German. -/
 def listingWord : List (String × String) :=
   [("en", "Listing"), ("fr", "Liste"), ("de", "Listing")]
 
-/-- The digit-group separator per tag: the ini's `[numbers] group`, except
-English, whose ini groups by "," — plain-prose grouping. `\num`'s spelling
-is siunitx's, whose default `group-separator` is `\,`, the thin space
-(siunitx manual §"Printing numbers"), so en groups by U+2009. -/
+/-- The digit-group separator per tag: the ini's `[numbers] group`, except English, which
+takes siunitx's default thin space. -/
 def groupOf (tag iniGroup : String) : String :=
   if tag == "en" then "\u2009" else iniGroup
 
-/-- The algorithm caption word per language. Not CLDR data: the babel ini
-files caption figures and tables but not algorithms, so the word comes
-from the package that owns the convention — algorithm2e's own language
-options (`\renewcommand{\algorithmcfname}{…}` under `english`, `french`,
-and `german`; algorithm2e.sty rev. 5.3). Hand-cited here, emitted with
-the ini data so `Locale` stays total. -/
+/-- The algorithm caption word per language, from algorithm2e's language options
+(algorithm2e.sty rev. 5.3). -/
 def algorithmName (lang : String) : String :=
   match lang with
   | "fr" => "Algorithme"

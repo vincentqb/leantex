@@ -1,17 +1,7 @@
 /-
-Regenerate LeanTex/Core/PaletteData.lean: the palettes the class's default
-seeds generate at the classes' two ground depths, each shipped bundle's
-generated palette at both depths, and each colour a bundle derives — the
-generator's own answers (`SeedPalette.generate`, `SeedPalette.mutedFor`,
-`ContrastSolve.realizeNearest`), kept so no build derives a constant again.
-Run from the repository root with:
-
-  lake env lean --run scripts/gen-palette-data.lean          write the module
-  lake env lean --run scripts/gen-palette-data.lean --check  exit 1 when it is stale
-
-Nothing outside the engine is read: the seeds and relations are the engine's
-own (`Ir.ClassColors`, `Theme.builtin`), so `Tests.PaletteData.checks`
-derives every entry afresh in `lake test` too.
+Regenerate LeanTex/Core/PaletteData.lean: the palettes the classes' default seeds and each
+shipped bundle generate at both ground depths, and each colour a bundle derives.
+Usage: lake env lean --run scripts/gen-palette-data.lean [--check]
 -/
 import LeanTex.Core.Theme
 

@@ -10,16 +10,14 @@ import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.Host
 import LeanTex.Cli.World
 
-/-! Capture the resources a checked HTML page owns and publish accepted artifacts.
-The executable and its tests share this boundary without sharing an entry point. -/
+/-! Capture the resources a checked HTML page owns, and publish accepted artifacts. -/
 
 namespace LeanTex.Cli.Publication
 
 open LeanTex.Core
 
-/-- Where a declared HTML resource named `name` is read, for a document at
-`file`: beside the document unless absolute; none for a name that is no
-local file. -/
+/-- Where a declared HTML resource `name` is read for a document at `file`: beside it
+unless absolute, none for a name that is no local file. -/
 public def localPath? (file name : String) : Option System.FilePath :=
   if name.isEmpty || name.startsWith "//" || name.contains ':' then none
   else
@@ -32,12 +30,8 @@ private def htmlLocalBytes (file name : String) : IO (Except String ByteArray) :
   try return .ok (← IO.FS.readBinFile path)
   catch _ => return .error "a declared HTML resource could not be read"
 
-/-- The math renderer a run names (`--math-boundary <file>`), captured as the
-script text the page carries inline (`HtmlDoc.mathBoundaryNodes`): a local
-regular file, read through the host's one door as a command-line path is,
-from the run's directory, whose bytes are UTF-8 text the HTML parser reads
-to the script's own end — no `</script` and no `<!--`, in any case, and no
-NUL — which the closure gate refuses as well, never escapes. -/
+/-- The math renderer a run names, captured as the script text the page carries inline: a
+local regular file of UTF-8 text holding no `</script`, `<!--` or NUL. -/
 private def captureMathBoundary (name : String) : IO (Except String String) := do
   let shown := HtmlResource.referenceLabel name
   let label := "the math renderer " ++ shown
@@ -54,11 +48,8 @@ early or keep it from ending")
   if text.trimAscii.isEmpty then return .error (label ++ " holds no script")
   return .ok text
 
-/-- Capture declared local resources once — the document's stylesheet and
-icon, and the math renderer the run names, the page's only renderer: one a
-caller set in `cfg` is dropped, never shipped past the capture's checks.
-The hermetic browser freshness key uses this same snapshot; XML validation
-remains the publication boundary's job. -/
+/-- Capture declared local resources once: the document's stylesheet and icon, and the
+math renderer the run names, the page's only renderer. -/
 public def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc)
     (mathBoundary : Option String := none) :
     IO (Except String HtmlDoc.Config) := do
@@ -86,25 +77,19 @@ public def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir
     cfg := { cfg with favicon := some (name, { media, bytes }) }
   return .ok cfg
 
-/-- The bytes measured and published are one serialization of the checked
-tree. The erased witness retains resource closure without retaining the tree
-or its captured resource buffers at runtime; the renderer's text, which the
-witness's type names, is kept. -/
+/-- One serialization of a checked tree, the bytes measured and published. -/
 public structure HtmlArtifact where
   render : String
-  /-- The math renderer the page may carry, beside the deck's constant: the
-  one other script element its type admits. -/
+  /-- The math renderer the page may carry, the one other script element its type admits.
+  -/
   renderer : Option String
   render_exact : ∃ page : HtmlDoc.ClosedPage renderer, render = page.render
 
 public def HtmlArtifact.ofPage {r : Option String} (page : HtmlDoc.ClosedPage r) : HtmlArtifact :=
   { render := page.render, renderer := r, render_exact := ⟨page, rfl⟩ }
 
-/-- Every SVG resource of a page attested by the native judge's resource
-boundary (`Svg.judge`), or the first refusal: the bytes are what the page
-embeds, so the judge reads exactly what a browser would, and no tool runs,
-so every check finishes. Bytes already judged (`checked`) are not judged
-again. -/
+/-- Every SVG resource of a page attested by the native judge (`Svg.judge`), or the first
+refusal; bytes already judged in `checked` are not judged again. -/
 public def attestSvg (resources : Array HtmlResource.Embedded) (checked : Array ByteArray := #[]) :
     Except String (Array ByteArray) := do
   let mut svgChecked : Array ByteArray := checked
@@ -115,31 +100,23 @@ public def attestSvg (resources : Array HtmlResource.Embedded) (checked : Array 
       | .error r => throw ("an embedded SVG failed resource validation: " ++ r.message)
   return svgChecked
 
-/-- Capture local head resources, attest exact SVG bytes through the native
-resource boundary (`attestSvg`), then check the tree that publication will
-render. No URL is fetched, no tool runs and no output directory exists at
-this point. -/
+/-- Capture local head resources, attest SVG bytes (`attestSvg`), and check the tree
+publication will render; nothing is fetched, run or written. -/
 public def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc)
     (checked : Array ByteArray := #[]) (mathBoundary : Option String := none) :
     IO (Except String HtmlArtifact × Array Diag) := do
   let cfg ← match ← captureHtmlResources file cfg doc mathBoundary with
     | .ok cfg => pure cfg
     | .error why => return (.error why, #[])
-  -- premise: nativeFaceClosedChecks — a face the engine drew itself
-  -- (`PdfFaces.svgOf`) names only its own fragments and `data:` rasters, and
-  -- a converted face the face decision kept passed this very judge there
-  -- (`PdfFaces.answerOf`): neither is judged again.
+  -- premise: nativeFaceClosedChecks — engine-drawn and already-judged faces skip the judge
   let svgChecked ← match attestSvg (HtmlDoc.resources cfg) checked with
     | .ok checked => pure checked
     | .error why => return (.error why, #[])
   let (page, diags) := HtmlDoc.emitClosed cfg doc svgChecked
   return (page.map HtmlArtifact.ofPage, diags)
 
-/-- The only artifact write site, after acceptance. An HTML publication
-requires a checked tree and writes its own serialization, with no sidecars
-or rereads of resources captured before the gate. Each artifact's directory
-is made as it is written, and an artifact that cannot be written is E0004
-under its path, the others written: what was written, and the losses. -/
+/-- The only artifact write site, after acceptance: each artifact written with its
+directory made, an unwritable one E0004 under its path, the others still written. -/
 public def publish (outDir : Option String) (html : Option (String × HtmlArtifact))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
     IO (Array String × Array Diag) := do

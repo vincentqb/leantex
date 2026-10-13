@@ -1,11 +1,9 @@
 /-
-The invented probes of the picture subset, one per construct: what the
-`tikz-native` tier elaborates in-process and what `tikz-diff` draws with
-both engines. Data only; each consumer owns what it measures.
+The invented probes of the picture subset, one per construct, shared by `tikz-native` and
+`tikz-diff`.
 -/
-/-- A probe's kind: a `tikzpicture` body, a `tikzcd` body standing alone
-in a display, or one standing as a block outside mathematics (the tikz-cd
-manual's own spelling). -/
+/-- A probe's kind: a `tikzpicture` body, a `tikzcd` body in a display, or a `tikzcd`
+block outside mathematics. -/
 inductive ProbeKind where
   | picture
   | cd

@@ -1,38 +1,7 @@
 /-
-What a real browser held, committed as a number. Run from the repository
-root:
-
-  lake env lean --run scripts/htmlreader.lean              regenerate the baseline
-  lake env lean --run scripts/htmlreader.lean --check      gate against the committed one
-  lake env lean --run scripts/htmlreader.lean --selftest   the cell reader
-
-`scripts/html-oracle.lean` drives the browser and is
-`testdata/oracles/html-reader-matrix.txt`'s only writer; it demands `pass` in
-every target column, so it answers "is anything failing". This tier answers
-"how much passes, and is it more than last time" — which is the question a
-ratchet can carry, and which survives a matrix that legitimately holds a
-`fail:` cell with its reason beneath.
-
-This tier never launches a browser or a converter: it reads the committed
-matrix. It rebuilds the corpus in-process and compares `src-key:` with the
-HTML this tree emits. It separately compares `browser-face-src-key:` with a
-hermetic key over the vector inputs, generated hrefs, and the shared converter
-recipe. Every `browser-face:` row pins a rendering use and the SHA-256 of
-its data URL to the independently decoded payload's SHA-256 and size;
-`browser-face-key:` covers those rows. Missing, malformed, duplicated,
-stale, or failed captures are faults, so
-pass cells cannot outlive the pages or browser faces they measured.
-
-Converter output is inherently a host report: this check does not execute
-`xmllint`, `rsvg-convert`, or `pdftocairo`. A binary version change with the
-same inputs requires rerunning `scripts/html-oracle.lean`; the matrix records
-those versions and the run date. A differing hermetic key is a fault, not a
-regression: the counts are not wrong, they describe something else. Only
-target readers are counted; a non-target column is data and gates nothing.
-
-`scripts/html-oracle.lean --check` demands both `pass` in every target cell
-and valid successful browser-face captures. This tier carries the separate
-ratchet question, "how much passes, and is it more than last time."
+The htmlreader tier: the passing target cells of the committed browser matrix, its freshness
+keys held to this tree's pages and faces.
+Usage: lake env lean --run scripts/htmlreader.lean [--check | --selftest]
 -/
 import scripts.Board
 import Lean.Data.Json
@@ -115,8 +84,7 @@ lake env lean --run scripts/html-oracle.lean"
       rows := rows.push { item := s!"{c.section_}.{c.reader}.rows", value := Int.ofNat c.rows }
     else
       untested := untested + c.rows
-  -- Freshness. An empty row set is how this tier says "do not compare": the
-  -- porcelain fault comes from tierMain's own malformed-measurement path.
+  -- An empty row set says do not compare; tierMain reports the fault.
   let fresh ← hermeticHtmlKeys
   let keys ← match fresh with
     | .ok keys => pure keys
@@ -179,8 +147,7 @@ alpha       pass       untested\n"
   -- The freshness key: read off the matrix, absent when there is none.
   no "src-key: read off the line" (matrixKey "target: chromium\nsrc-key: abc123\n" == some "abc123")
   no "src-key: absent when the matrix carries none" ((matrixKey text).isNone)
-  -- The key itself: order and name are part of it, so a renamed or
-  -- reordered page changes the answer.
+  -- Order and name are part of the key, so a renamed or reordered page changes it.
   let a : Array (String × ByteArray) := #[("x", "1".toUTF8), ("y", "2".toUTF8)]
   no "key: stable over the same blobs" (contentKey a == contentKey a)
   no "key: a changed byte changes it"
@@ -190,8 +157,7 @@ alpha       pass       untested\n"
   no "key: reordering changes it"
     (contentKey a != contentKey #[("y", "2".toUTF8), ("x", "1".toUTF8)])
   no "key: 16 hex digits" ((contentKey a).length == 16)
-  -- The browser-face capture is the exact href and converted content the
-  -- browser run received. A converter regression cannot retain its key.
+  -- The capture is the exact href and content the browser received.
   let svgHref (bytes : ByteArray) :=
     ({ media := .svg, bytes } : LeanTex.Core.HtmlResource.Embedded).uri
   let imageHref (k : Nat) (bytes : ByteArray) :=

@@ -1,61 +1,21 @@
 module
 
-/-! Pure boundary outcomes and tool-version memo policy. `PictureAssets`
-captures process results; `ConvCache` stores complete drawings or refusals.
-Unfinished attempts are retried.
-
-A cache over an external tool caches the tool's whole answer, not only the
-answer that succeeded. A verdict remembered for the drawn case and dropped
-for the refused one makes the slow path the one that repeats: six
-unrenderable pictures once cost six `lualatex` startups on every build,
-4,524 ms of a 4,754 ms run, while the renderable ones warmed after the first.
-So a refusal goes in the same slot under the same content key, and the replay
-reports the identical diagnostic in the tool's own words: a cached loss is
-still named, once, at full strength.
-
-The line a cache must not cross: an attempt the tool never finished is not a
-verdict. A budget kill, a spawn that raised and a nonzero exit that left no
-log are facts about the machine, not the request, and caching one would let
-a busy minute or a missing install condemn a picture that renders. An exit
-code alone cannot make that call, since a missing tool still reaches `exec`
-and comes back as an exit code, 255 from Lean's spawn, whose forked child
-reports the failed `exec` and exits; the evidence is that the tool left a
-log.
-
-Where the driver decides: `outcome` reads one attempt as a verdict, and
-`ConvCache.Result.record?` decides what a slot keeps of it, the one record
-decision production calls (through `PictureAssets` and `ImageAssets`).
-`ConvCache.refusal_replays_exact`, `ConvCache.inconclusive_retried_exact` and
-`ConvCache.empty_retried_exact` state its cases, and
-`ConvCache.replay_record_exact` that a warm slot answers with the fresh
-attempt's outcome; that `record?` composed with `outcome` keeps exactly the
-tool's refusals and drawings is owed (U68): `record?_some_exact`. `step` and
-`remembers` below are a model of the policy that no production path calls,
-so the lemmas stated over them (`step_cold_exact`, `replay_says_exact`,
-`remembers_verdict_exact`, `overrun_retried_exact`, `unlogged_retried_exact`)
-hold of the model, not of the driver, until U68 restates the policy over
-`record?` and deletes them. The suite's `picCacheChecks` exercises both and
-holds the live half by values, needing no tool installed: the outcome
-classification, the tool's identity (`probed`) and the version memo
-(`versionStep`). -/
+/-! Pure boundary outcomes and the tool-version memo policy: a tool's refusal is an answer
+kept like a drawing, and an attempt the tool never finished is no answer and is retried.
+-/
 
 namespace LeanTex.Cli.PicCache
 
-/-- How one boundary process ended. `exited` is the tool's own exit — it
-ran to a decision; `overran` is the wall-clock budget spent with the
-process killed; `unstarted` is a spawn that raised. The last two say
-nothing about the request, only about the machine. -/
+/-- How one boundary process ended: its own exit, a budget overrun with the process
+killed, or a spawn that raised. -/
 public inductive Ran where
   | exited (code : Nat)
   | overran (seconds : Nat)
   | unstarted (err : String)
   deriving BEq, Repr
 
-/-- What the tool left behind of one attempt: its log's last words, or no
-log at all. A tool that never ran writes nothing — a spawn that reached
-`exec` and failed there still comes back as an exit code — so the log's
-presence is the platform-independent evidence that the tool formed an
-opinion rather than that the machine lacks it. -/
+/-- What the tool left of one attempt: its log's last words, or no log, the evidence that
+the tool reached an answer. -/
 public inductive Log where
   | absent
   | says (tail : String)
@@ -66,22 +26,16 @@ public def Log.tail : Log → String
   | .absent => ""
   | .says t => t
 
-/-- What the tool answered about one request. `drawn` is a PDF; `refused`
-is the tool's own no, carrying its last words verbatim; `inconclusive` is
-an attempt that never reached an answer. -/
+/-- What the tool answered about one request: a PDF, its own refusal in its last words, or
+no answer. -/
 public inductive Outcome where
   | drawn
   | refused (says : String)
   | inconclusive (says : String)
   deriving BEq, Repr
 
-/-- One attempt read as a verdict: the process's ending, whether a PDF
-landed, and what the tool left in its log. An exit the tool chose *and
-left a log for* is a verdict — nonzero with its last words, or zero with
-nothing drawn. A budget kill, a failed spawn, and a nonzero exit that left
-no log at all are not: each says something about the machine, and a machine
-without the tool installed must not be able to make a picture look
-unrenderable. -/
+/-- One attempt read as a verdict: an exit the tool chose and left a log for is one; a
+kill, a failed spawn or a nonzero exit without a log is inconclusive. -/
 public def outcome (ran : Ran) (drew : Bool) (log : Log) : Outcome :=
   let said (fallback : String) : String :=
     if log.tail.isEmpty then fallback else log.tail
@@ -103,42 +57,28 @@ public def saidOf (err : String) : String :=
   let said := (((err.splitOn "\n").map (·.trimAscii.toString)).filter (!·.isEmpty)).getLastD ""
   if said.length > saidLimit then (said.take saidLimit).toString ++ "…" else said
 
-/-- An attempt that reached no verdict and left no log names `said` too,
-the words its tool wrote last (a loader's, a wrapper's); every other
-outcome is the one `outcome` read, so the words never reach a recorded
-answer (`ConvCache.annotate_record_exact`). -/
+/-- An attempt that reached no verdict and left no log also names `said`, the words its
+tool wrote last; every other outcome is unchanged. -/
 @[expose] public def annotate (o : Outcome) (log : Log) (said : String) : Outcome :=
   match o, log with
   | .inconclusive why, .absent => if said.isEmpty then o else .inconclusive s!"{why}: {said}"
   | o, _ => o
 
-/-- What the cache keeps of an outcome: the tool's own refusal, and
-nothing else. A drawn picture is kept as its PDF, and an inconclusive
-attempt is kept not at all — so the next build retries it. -/
+/-- What the cache keeps of an outcome: the tool's own refusal, and nothing else. -/
 public def remembers : Outcome → Option String
   | .drawn => none
   | .refused says => some says
   | .inconclusive _ => none
 
-/-- What asking the tool who it is came back with. `present` is the tool's
-own answer — it ran and named a version; `absent` is every other ending,
-because none of them identifies a tool: a machine with nothing installed
-still reaches `exec` and comes back as a nonzero exit, and its stdout is
-not empty but whatever the forked child inherited, so the exit code is the
-only signal worth reading. A tool that cannot say who it is cannot have a
-slot keyed by its version, and a request it never saw is not a request it
-refused. -/
+/-- What asking the tool its version came back with: its own answer, or an absence with
+its reason. -/
 public inductive Tool where
   | absent (why : String)
   | present (version : String)
   deriving BEq, Repr
 
-/-- One `--version` attempt read as the tool's identity: a clean exit that
-named something is the tool, and nothing else is. `firstLine` is the first
-line of what the probe wrote — trusted only on a clean exit, since a failed
-`exec` hands back a child's inherited buffer rather than silence; `said`,
-the tool's last words on standard error (`saidOf`), only explains a
-nonzero exit, a loader's line among them. -/
+/-- One `--version` attempt read as the tool's identity: only a clean exit naming
+something is the tool. -/
 public def probed (ran : Ran) (firstLine : String) (said : String := "") : Tool :=
   match ran with
   | .exited 0 =>
@@ -148,12 +88,6 @@ public def probed (ran : Ran) (firstLine : String) (said : String := "") : Tool 
   | .overran s => .absent s!"no version within {s} s; killed"
   | .unstarted e => .absent e
 
-/-- **A tool that did not exit cleanly is not an identified tool.** The
-statement whose absence sent a machine with no boundary tool installed down
-the *refused* path: the probe read a nonzero exit as a version string, so a
-picture no tool had ever looked at was reported as one the tool drew
-nothing for — a dropped loss that fails the run, where the honest answer is
-the degraded one, a placeholder and a warning naming the missing tool. -/
 public theorem probed_present_exact (ran : Ran) (firstLine version said : String) :
     probed ran firstLine said = .present version ↔
       (ran = .exited 0 ∧ firstLine = version ∧ firstLine ≠ "") := by
@@ -168,9 +102,6 @@ public theorem probed_present_exact (ran : Ran) (firstLine version said : String
   | overran _ => simp [probed]
   | unstarted _ => simp [probed]
 
-/-- **A nonzero exit names no version.** The half of `probed_present_exact`
-the missing-tool machine lands on, spelled as the equation the driver's
-routing reads. -/
 public theorem probed_absent_exact (c : Nat) (hc : c ≠ 0) (firstLine said : String) :
     probed (.exited c) firstLine said = .absent (if said.isEmpty then s!"'--version' exited {c}"
       else s!"'--version' exited {c}: {said}") := by
@@ -185,18 +116,14 @@ public inductive VersionStep where
   | probe
   deriving BEq, Repr
 
-/-- Reuse a version only for its recorded, nonempty executable witness.
-The witness comprises resolved path, size and modification time; this
-assumes replacements change those observations. Result caches include both
-the witness and version, so different executables reporting the same version
-do not share answers. -/
+/-- Reuse a version only under its recorded, nonempty witness (resolved path, size,
+modification time). -/
 public def versionStep (memo : Option (String × String)) (witness : String) : VersionStep :=
   match memo with
   | some (w, v) =>
     if w = witness ∧ w ≠ "" ∧ v ≠ "" then .remembered v else .probe
   | none => .probe
 
-/-- **A version is reused only for the witness it was recorded under.** -/
 public theorem versionStep_remembered_exact (memo : Option (String × String))
     (witness version : String) :
     versionStep memo witness = .remembered version ↔
@@ -221,10 +148,6 @@ public theorem versionStep_remembered_exact (memo : Option (String × String))
       have hp : w = witness ∧ v = version := by simpa using Option.some.inj he
       exact ⟨hp.1, by rw [hp.1]; exact hw, by rw [hp.2]; exact hv⟩
 
-/-- **A tool that changed is asked again.** The upgrade half, stated as the
-equation: a witness that does not match the recorded one sends the run back
-to the tool, whose version then names fresh slots and re-renders every
-picture. -/
 public theorem versionStep_changed_exact (w witness version : String) (h : w ≠ witness) :
     versionStep (some (w, version)) witness = .probe := by
   simp [versionStep, h]
@@ -233,8 +156,7 @@ public theorem versionStep_changed_exact (w witness version : String) (h : w ≠
 recorded under, then the version the tool gave. -/
 public def versionMemo (witness version : String) : String := witness ++ "\n" ++ version
 
-/-- The two lines back, or nothing when the file is not those two lines —
-an unreadable memo asks the tool rather than guessing. -/
+/-- The memo's two lines back, or nothing when the file is not those two lines. -/
 public def readVersionMemo (text : String) : Option (String × String) :=
   match text.splitOn "\n" with
   | w :: v :: _ => if w = "" ∨ v = "" then none else some (w, v)
@@ -243,16 +165,13 @@ public def readVersionMemo (text : String) : Option (String × String) :=
 /-- Where the remembered version lives, beside the slots it names. -/
 public def versionName (toolKey : String) : String := "tool-" ++ toolKey ++ ".ver"
 
-/-- The cache slot one request takes: its content hash and the tool's
-version, so an edited picture reads a different slot and is retried, and a
-tool upgrade retries every one. -/
+/-- The cache slot one request takes: its content hash and the tool's version. -/
 public def stem (key version : String) : String := key ++ "-" ++ version
 
 /-- The drawn PDF's name in the slot. -/
 public def pdfName (key version : String) : String := stem key version ++ ".pdf"
 
-/-- The remembered refusal's name in the slot, beside the PDF: one slot
-per request, whichever way the tool answered. -/
+/-- The remembered refusal's name in the slot, beside the PDF. -/
 public def failName (key version : String) : String := stem key version ++ ".fail"
 
 /-- What a run does about one request. -/
@@ -262,18 +181,13 @@ public inductive Step where
   | run
   deriving BEq, Repr
 
-/-- The cache decides in one place: a drawn PDF serves, else a remembered
-refusal replays with the tool's own words, else the tool runs. -/
+/-- A drawn PDF serves, else a remembered refusal replays, else the tool runs. -/
 public def step (drawn : Bool) (refusal : Option String) : Step :=
   if drawn then .serve
   else match refusal with
     | some says => .replay says
     | none => .run
 
-/-- **A remembered verdict is never re-attempted.** The tool runs exactly
-when the slot holds neither a drawn PDF nor a remembered refusal — the
-invariant whose absence made every unrenderable picture pay a fresh
-process on every build, forever, while a renderable one paid once. -/
 public theorem step_cold_exact (drawn : Bool) (refusal : Option String) :
     step drawn refusal = .run ↔ (drawn = false ∧ refusal = none) := by
   unfold step
@@ -281,32 +195,16 @@ public theorem step_cold_exact (drawn : Bool) (refusal : Option String) :
   | true => simp
   | false => cases refusal <;> simp
 
-/-- **A replay carries the tool's own words.** What a remembered refusal
-reports is the string the tool gave, never a stand-in: the diagnostic
-reads the same on the second build as on the first. -/
 public theorem replay_says_exact (says : String) :
     step false (some says) = .replay says := by rfl
 
-/-- **Only the tool's own refusal is remembered.** A verdict is written
-exactly when the tool reached one and said no; a kill and a failed spawn
-write nothing, so nothing the machine did can be mistaken for something
-the request is. -/
 public theorem remembers_verdict_exact (o : Outcome) (says : String) :
     remembers o = some says ↔ o = .refused says := by
   cases o <;> simp [remembers]
 
-/-- **A killed attempt is retried.** The composition of the two halves, at
-the shape that matters: a budget overrun leaves the slot as it found it, so
-the next build runs the tool again. -/
 public theorem overrun_retried_exact (s : Nat) (drew : Bool) (log : Log) :
     remembers (outcome (.overran s) drew log) = none := by rfl
 
-/-- **A tool that left no log is retried.** The other half of the same
-guard, and the one a machine without the tool installed lands on: a spawn
-that reached `exec` and failed there comes back as an exit code like any
-other failure, so the absent log is what separates it from a verdict. Its
-diagnostic still fires — the loss is named on every build — but the slot
-stays empty, so installing the tool is all it takes. -/
 public theorem unlogged_retried_exact (c : Nat) (hc : c ≠ 0) (drew : Bool) :
     remembers (outcome (.exited c) drew .absent) = none := by
   unfold outcome remembers

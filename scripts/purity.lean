@@ -1,31 +1,13 @@
 /-
-Two counts that must stay at zero, as a tier rather than as a diff gate.
-Run from the repository root:
-
-  lake env lean --run scripts/purity.lean              regenerate the baseline
-  lake env lean --run scripts/purity.lean --check      gate against the committed one
-  lake env lean --run scripts/purity.lean --selftest   the counters
-
-The pre-commit hook rejects a *newly staged* occurrence of either keyword;
-that is a claim about a diff, and a diff gate is blind to what arrives by
-rebase, by a merge resolution, or on a branch that never met the hook. This
-tier reads the whole tree, so the number is the tree's, and it is committed.
-
-Both items use the headroom encoding, so zero occurrences reads as the
-ceiling. The keyword predicate is `bannedWord` from `scripts/Gate.lean` —
-the same definition the hook uses, because two gates that must agree about
-what counts as an occurrence read one definition (that module's own
-implementation defines the shared lexical policy).
+The purity tier: occurrences of the banned keywords across maintained sources, as headroom.
+Usage: lake env lean --run scripts/purity.lean [--check | --selftest]
 -/
 import scripts.Board
 import scripts.ProofSources
 
 open Scoreboard
 
-/-- Occurrences of the two banned keywords as code tokens, in one pass per
-file. `containsSub` is the cheap pre-filter: a line with no such substring
-cannot hold the word, and skipping the character-level strippers on it is
-what makes a whole-tree scan affordable in an interpreted script. -/
+/-- Occurrences of the two banned keywords as code tokens, with the files holding them. -/
 def countWords (files : Array String) :
     IO (Nat × Array String × Nat × Array String) := do
   let mut np := 0
@@ -60,8 +42,6 @@ def measureTier : IO (Array String × Array Row) := do
     { item := "open-holes-absent", value := debtCap - holes }])
 
 def selftest : IO UInt32 := tierSelftest "purity" fun no => do
-  -- The counter counts code tokens, and agrees with the hook's predicate
-  -- because it *is* the hook's predicate. One line each way.
   no "counter: a definition is an occurrence" (bannedWord kwPartial (kwPartial ++ " def f := 0"))
   no "counter: a comment is not" (!bannedWord kwPartial ("-- a note on " ++ kwPartial))
   no "counter: a string is not" (!bannedWord kwPartial ("  let s := \"" ++ kwPartial ++ "\""))

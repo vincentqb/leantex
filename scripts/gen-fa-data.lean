@@ -1,17 +1,7 @@
 /-
-Regenerate LeanTex/Core/FaData.lean from the fontawesome5 LaTeX package's
-mapping table and Font Awesome's own icon metadata. Run with:
-
-  lake env lean --run scripts/gen-fa-data.lean <fontawesome5-mapping.def> <icons.json>
-
-Sources (both fetched, never vendored):
-- fontawesome5-mapping.def from CTAN (fonts/fontawesome5/tex/, v5.15.4,
-  LPPL 1.3c): each `\__fontawesome_def_icon:nnnnn{\faMacro}{name}{font}{slot}{"HEX}`
-  line is the package's own LaTeX-command-to-codepoint mapping — the
-  authority for what `\faGithub` means.
-- metadata/icons.json from the FortAwesome/Font-Awesome repository
-  (5.x branch, CC BY 4.0 for metadata): the `label` field is Font Awesome's
-  curated human name per icon, used as the icon's default text alternative.
+Regenerate LeanTex/Core/FaData.lean from fontawesome5-mapping.def (CTAN, LPPL 1.3c) and Font
+Awesome's icons.json (CC BY 4.0), whose `label` is an icon's default text alternative.
+Usage: lake env lean --run scripts/gen-fa-data.lean <fontawesome5-mapping.def> <icons.json>
 -/
 import Lean.Data.Json
 

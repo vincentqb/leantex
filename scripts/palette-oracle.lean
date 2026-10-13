@@ -1,25 +1,7 @@
 /-
-The palette oracle: how near the seed generator lands to two published colour
-systems, and how far above its gates it stands. Run from the repository root:
-
-  lake env lean --run scripts/palette-oracle.lean              regenerate the baseline
-  lake env lean --run scripts/palette-oracle.lean --check      gate against the committed one
-  lake env lean --run scripts/palette-oracle.lean --selftest   the arithmetic and the readers
-
-Every light scale of Radix Colors 3.0.0 and every palette of Tailwind CSS v4
-(testdata/external/palettes, vendored with their licences and pinned by
-SHA256SUMS) seeds the generator at a deck's depth: its solid step as the
-accent (Radix 9, Tailwind 500), its darkest text step as the ink (Radix 12,
-Tailwind 950), on white paper. Each generated role is scored against the
-step that scale designs for the same use — the body and band fills against
-Radix 3 and 5 and Tailwind 100 and 200, the rule against 7 and 300, the
-accent's edge against 8 and 500, its text against 11 and 700 — as
-`1000 − 1000·mean ΔEOK` over the scales, higher nearer. A last item is the
-smallest margin, in thousandths of a ratio, that any site of any palette
-generated from the invented seed matrix keeps above its target's gate.
-
-Hermetic: in-repo data only, read through the engine's own colour readers
-(`Decl.parseColorSpec`, `Ir.Palette.resolveSpec` for Tailwind's `oklch()`).
+The palette-oracle tier: each generated role's nearness to the step Radix Colors and Tailwind
+CSS design for its use, and the least gate margin over an invented seed matrix; hermetic.
+Usage: lake env lean --run scripts/palette-oracle.lean [--check | --selftest]
 -/
 import LeanTex
 import scripts.Board

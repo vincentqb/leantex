@@ -1,17 +1,7 @@
 /-
-Regenerate LeanTex/Core/WhatwgEncodingData.lean from the vendored WHATWG
-Encoding Standard data, testdata/vendor/whatwg-encoding (see its
-PROVENANCE.txt). Run from the repository root:
-
-  lake env lean --run scripts/gen-whatwg-encoding-data.lean [--check]
-
-`encodings.json` gives every encoding's name and labels; each legacy
-single-byte encoding's `index-<name>.txt` gives the scalar of each pointer
-0–127 (byte 0x80 + pointer). A line the reader cannot read, a pointer out of
-range or twice, a label named twice, or a single-byte encoding without its
-index is refused, so a changed upstream spelling fails here instead of
-dropping a character. `--check` compares the generated text with the
-committed module and exits 1 on any difference.
+Regenerate LeanTex/Core/WhatwgEncodingData.lean from testdata/vendor/whatwg-encoding, refusing
+any line, pointer or label it cannot read exactly once.
+Usage: lake env lean --run scripts/gen-whatwg-encoding-data.lean [--check]
 -/
 import Lean.Data.Json
 

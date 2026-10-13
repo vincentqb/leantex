@@ -2,8 +2,7 @@ import LeanTex.Cli.RunBounded
 
 open LeanTex.Cli
 
--- Completion means exit plus EOF on both pipes. A descendant must not make
--- an exit-0 leader look complete, nor survive the budget by holding a pipe.
+-- Completion is exit plus EOF on both pipes, which a lingering descendant cannot fake.
 def main : IO UInt32 := do
   let failures ← IO.mkRef (#[] : Array String)
   let check (label : String) (ok : Bool) : IO Unit := do
@@ -39,9 +38,7 @@ def main : IO UInt32 := do
   let excess ← RunBounded.runBounded "/bin/sh" #["-c", "head -c 1025 /dev/zero"]
     (← IO.currentDir) 1000 100 1024
   check "capture: excess is incomplete, never a reusable prefix" (!excess.complete)
-  -- A capture can fail after the first completion observation and before
-  -- the final one. Every nonempty stream exceeds this zero-byte allowance;
-  -- concurrent quick exits exercise that window on the real task boundary.
+  -- A capture can fail between two completion observations; quick exits exercise it.
   let cwd ← IO.currentDir
   let tasks ← (List.range 4).mapM fun _ => IO.asTask (do
     let mut misreported := 0

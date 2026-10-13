@@ -1,33 +1,12 @@
 /-
-What a document costs to build: invented documents at any size, built by the
-compiled engine in a sealed environment, each build's cost read from the
-engine's own porcelain record — its milliseconds, its peak resident set size
-(`rssKiB`) — beside the artifact's bytes. The scoreboard's `doccost` tier
-(hermetic, gated) and `bench --doc-cost` (host-dependent, reported) both build
-through here, so the gate and the report measure the same documents the same
-way.
-
-The peak is the engine's own (`VmHWM` on Linux), never the spawning
-process's: `getrusage` alone let this interpreter's resident set leak into
-every child it measured.
-
-A sealed build sees what the repository ships and nothing else it could pick
-up: the document's files, the corpus's fonts staged beside it as `fonts/`, the
-corpus's invented images, an empty `HOME`, and a `PATH` that reaches no tool.
-The font scan still visits the system's standard font roots, so a cold scan's
-time is the host's; but a build whose page resolved a face from outside the
-staged set does not count (`fontsSealed`), so every artifact measured here is a
-function of the repository alone.
-
-Every document is invented: a vocabulary of plain words, placeholder names,
-`example.org` links, and the corpus's own synthetic images.
+Invented documents at any size, built by the compiled engine in a sealed environment, each
+build's milliseconds and peak RSS read from its porcelain: what `doccost` and `bench --doc-cost`
+measure.
 -/
 import Lean.Data.Json
 import scripts.PerfHistory
 
 namespace DocBench
-
-/-! ## Invented text -/
 
 def vocabulary : Array String :=
   #["alpha", "brisk", "cedar", "delta", "ember", "fable", "gamut", "harbor", "ivory", "jasper",
@@ -45,16 +24,14 @@ def capital (s : String) : String :=
 def phrase (seed len : Nat) : String :=
   String.intercalate " " ((List.range len).map fun j => word (seed * 7 + j * 3))
 
-/-- Every face a document may name: the corpus's shipped families, with the
-one-face monospace family's variants declared rather than substituted, so a
-sealed build raises no font loss at all. -/
+/-- Every face a document may name: the corpus's shipped families, the one-face monospace
+family's variants declared, so a sealed build raises no font loss. -/
 def fontsDecl (body : String) : String :=
   "\\fonts{ dir = \"fonts\", body = \"" ++ body ++ "\", sans = \"Open Sans\", " ++
   "mono = \"Source Code Pro\", math = \"Fira Math\", mono.bold = \"SourceCodePro-Regular\", " ++
   "mono.italic = \"SourceCodePro-Regular\", mono.bolditalic = \"SourceCodePro-Regular\" }\n"
 
-/-- The line an edit changes: the watch report rewrites the source with the
-next revision and times the artifact that answers it. -/
+/-- The line an edit changes, for the watch report. -/
 def revision (rev : Nat) : String := s!"Revision {rev} of the invented text."
 
 def pythonLines (seed count : Nat) : String := Id.run do
@@ -77,14 +54,10 @@ def tableRows (seed count : Nat) : String := Id.run do
       toString (i * 13 % 100) ++ "\\% \\\\\n"
   return out
 
-/-! ## The document families
+/-! The document families: each a fixed opening using every face and feature its unit
+uses, then `n` units, so what the units add is what grows. -/
 
-Each is a fixed opening that already uses every face and feature its repeated
-unit uses, then `n` units: the size-0 document carries every constant cost
-(each face embedded, each image decoded), so what `n` units add is what grows. -/
-
-/-- One paragraph in the shape the audit's styled-paragraph probes used:
-thirty words, one bold, one typewriter, one emphasised. -/
+/-- One paragraph of thirty words, one bold, one typewriter, one emphasised. -/
 def reportPara (i : Nat) : String := Id.run do
   let mut out := ""
   for j in [0:30] do
@@ -179,9 +152,7 @@ def noteBlock (i : Nat) : String :=
   | _ => if i % 30 == 5 then "![Invented colour grid](rects.png)\n\n"
       else capital (phrase i 30) ++ ".\n\n"
 
-/-- Markdown through its TeX inclusion, the one surface that declares fonts:
-the reader and the desugaring are what grows, inside a document the sealed
-build can resolve. -/
+/-- Markdown through its TeX inclusion, inside a document the sealed build can resolve. -/
 def notes (n rev : Nat) : Array (String × String) := Id.run do
   let mut md := "# Invented notes\n\n![Invented colour grid](rects.png)\n\n"
   for i in [0:6] do md := md ++ noteBlock (i + 1)
@@ -197,11 +168,9 @@ def listing (n rev : Nat) : Array (String × String) :=
     "\\begin{lstlisting}[language=Python]\n" ++ pythonLines 0 5 ++ pythonLines 5 n ++
     "\\end{lstlisting}\n\\end{document}\n")]
 
-/-- A family of invented documents: `source n rev` is the document with `n`
-repeated units at revision `rev`, its main source first. `gate` is the size
-the growth gate compares with four times it, and `far` says whether it also
-compares `4n` with `16n`; `reference` is the size of the document the report
-times. -/
+/-- A family of invented documents: `source n rev` with `n` units at revision `rev`,
+`gate` the size the growth gate compares with four times it, `far` whether it also
+compares `4n` with `16n`, `reference` the size the report times. -/
 structure Gen where
   name : String
   unit : String
@@ -210,11 +179,8 @@ structure Gen where
   far : Bool
   reference : Nat
 
-/-- The deck's, the paper's and the notes' `16n` builds are cheap (under 2 s
-here), and at sixteen times the squared size the pair sees a far smaller
-quadratic term (`growthWithin_quadratic_exact`). The report's and the
-listing's are not yet: their time grows faster than their input (3.8 s and
-8.4 s at `16n`). -/
+/-- The families; the deck's, paper's and notes' `16n` builds are cheap enough for the far
+pair. -/
 def gens : Array Gen := #[
   { name := "deck", unit := "frames", source := deck, gate := 32, far := true, reference := 64 },
   { name := "report", unit := "paragraphs", source := report, gate := 100, far := false,
@@ -225,8 +191,6 @@ def gens : Array Gen := #[
     reference := 2000 }]
 
 def formats : Array String := #["pdf", "html"]
-
-/-! ## Sealed builds -/
 
 /-- A staged document directory: the document's files at its root beside the
 corpus's fonts (`fonts/`) and images, an empty `home/`, and a `no-tools/`
@@ -260,11 +224,8 @@ def sealedEnv (s : Stage) (cache : System.FilePath) : Array (String × Option St
     ("XDG_CACHE_HOME", some cache.toString), ("LC_ALL", some "C"), ("TZ", some "UTC"),
     ("NO_COLOR", some "1"), ("LEANTEX_FONT", none), ("LEANTEX_FONT_PATH", none)]
 
-/-- The command line of a build counted by `perf`, sealed again inside it:
-`perf` puts its own directory and `/usr/bin` before the `PATH` it was given,
-which handed the engine `kpsewhich` and with it the TeX tree's fonts (191
-faces scanned where the sealed build scans 67) and cost the first counted
-build a hundred million instructions of scanning them. -/
+/-- A build counted by `perf`, sealed again inside it, since `perf` puts its own directory
+and `/usr/bin` before the `PATH` it was given. -/
 def perfArgs (perf : String) (s : Stage) (binary : System.FilePath) (args : Array String) :
     String × Array String :=
   (perf, #["stat", "-x", ",", "-e", "instructions:u", "--", "env", s!"PATH={s.noTools}",
@@ -304,8 +265,8 @@ def facesText : Option (Array String × Nat) → String
   | some (paths, scanned) => s!"{String.intercalate ", " paths.toList} of {scanned} scanned faces"
   | none => "no typed faces"
 
-/-- Every face file the build loaded lies under the staged `fonts/`, as its
-`font` phase's typed fields say. A build without them is not sealed. -/
+/-- Every face file the build loaded lies under the staged `fonts/`; a build without that
+is not sealed. -/
 def fontsSealed (s : Stage) (b : Build) : Bool :=
   match b.faces with
   | some (paths, _) =>
@@ -374,23 +335,15 @@ def build (binary : System.FilePath) (s : Stage) (cache : System.FilePath) (main
         {facesText b.faces}"
     return .ok b
 
-/-! ## Growth and size -/
-
-/-- Four times the input may add at most eight times the memory above the
-engine's fixed footprint. Linear growth reads at most 4 (`phasePeak_between`),
-a structure whose capacity doubles in between at most 8
-(`growthWithin_doubled_covers`), quadratic 16. -/
+/-- Four times the input may add at most eight times the memory above the fixed footprint:
+linear growth reads at most 4, a doubling structure 8, quadratic 16. -/
 def growthBound : Nat := 8
 
-/-- Builds of each size the gate keeps the least peak of. A peak moves with
-how many paragraph tasks happen to be in flight at once: a 128-frame deck's
-moved between 115 and 136 MiB across eight runs on a many-core host. The
-least of a few is what the document needs; what remains of the spread is far
-inside the bound, where healthy builds read under 2x of its 8x. -/
+/-- Builds of each size the gate keeps the least peak of, since a peak moves with how many
+paragraph tasks run at once. -/
 def gateRuns : Nat := 3
 
-/-- Runs the fixed footprint keeps the least peak of: it is the bound's base,
-so it must not read high, and a run that reads no document costs milliseconds. -/
+/-- Runs the fixed footprint keeps the least peak of; it is the bound's base. -/
 def footprintRuns : Nat := 8
 
 /-- Peak resident set size above the engine's fixed footprint, at `n` and
@@ -409,8 +362,6 @@ intercept plus a slope times the document's size. -/
 def phasePeak (phases : List (Nat × Nat)) (n : Nat) : Nat :=
   phases.foldl (fun m p => max m (p.1 + p.2 * n)) 0
 
-/-- However one phase hides another, four times the size moves such a peak
-between itself and four times itself. -/
 theorem phasePeak_between (phases : List (Nat × Nat)) (n : Nat) :
     phasePeak phases n ≤ phasePeak phases (4 * n) ∧
       phasePeak phases (4 * n) ≤ 4 * phasePeak phases n := by
@@ -436,21 +387,12 @@ theorem phasePeak_between (phases : List (Nat × Nat)) (n : Nat) :
         omega
   exact step phases 0 0 (Nat.le_refl 0) (Nat.zero_le _)
 
-/-- The gate accepts every peak made of phases that each grow linearly,
-standing on the fixed footprint every phase holds. The bound it replaced, drawn
-above the size-0 document, did not: a linear phase overtaking a constant one
-between `n` and `4n` read as a jump of any size, and failed a linear engine. -/
 theorem growthWithin_phasePeak_covers (fixed : Nat) (phases : List (Nat × Nat)) (n : Nat) :
     growthWithin fixed (fixed + phasePeak phases n) (fixed + phasePeak phases (4 * n)) = true := by
   have := (phasePeak_between phases n).2
   unfold growthWithin growthBound
   exact decide_eq_true (by omega)
 
-/-- The bound is eight, not four, for what an engine holds rather than what it
-needs: a structure whose capacity doubles as it fills holds between its size
-and twice it, so a run whose memory lies between a linear peak at `n` and
-twice that peak at `4n` still passes. A bound of four would fail it: an array
-full at `n` and just doubled at `4n` reads nearly 8x. -/
 theorem growthWithin_doubled_covers (fixed : Nat) (phases : List (Nat × Nat)) (held : Nat → Nat)
     (n : Nat) (lo : phasePeak phases n ≤ held n)
     (hi : held (4 * n) ≤ 2 * phasePeak phases (4 * n)) :
@@ -459,12 +401,8 @@ theorem growthWithin_doubled_covers (fixed : Nat) (phases : List (Nat × Nat)) (
   unfold growthWithin growthBound
   exact decide_eq_true (by omega)
 
-/-- What the bound sees, exactly. A term quadratic in the document's size adds
-some `q` at `n` units and `16q` at `4n`; added to a run's peaks it fails the
-run exactly when `8q` exceeds the run's headroom, what eight times the `n`
-build's memory leaves above the `4n` build's. A term `c·u²` therefore fails a
-pair measured at `n` units once `c` exceeds the headroom over `8n²`
-(`Growth.quadraticBytes`): the larger the pair, the smaller the term it sees. -/
+/-- A term quadratic in size, `q` at `n` units and `16q` at `4n`, fails a pair exactly
+when `8q` exceeds its headroom. -/
 theorem growthWithin_quadratic_exact (fixed small big q : Nat) (hs : fixed ≤ small)
     (hb : fixed ≤ big) :
     growthWithin fixed (small + q) (big + 16 * q) = true ↔
@@ -489,26 +427,21 @@ theorem halfClass_monotone {a b : Nat} (h : a ≤ b) : halfClass a ≤ halfClass
   · have hb : b ^ 8 / 2 ^ 80 ≠ 0 := by omega
     exact (Nat.le_log2 hb).2 (Nat.le_trans (Nat.log2_self_le ha) hdiv)
 
-/-- Quarter octaves of KiB: class `k` holds artifacts from `2^(k/4)` KiB up to
-the next quarter octave, every artifact under 1 KiB is class 0, and one class
-is a 19% change — coarse, so a commit's ordinary drift seldom moves it and a
-material change of weight always does. -/
+/-- Quarter octaves of KiB: class `k` holds artifacts from `2^(k/4)` KiB to the next
+quarter octave, every artifact under 1 KiB class 0; one class is a 19% change. -/
 def sizeClass (bytes : Nat) : Nat := halfClass bytes / 2
 
 theorem sizeClass_monotone {a b : Nat} (h : a ≤ b) : sizeClass a ≤ sizeClass b :=
   Nat.div_le_div_right (halfClass_monotone h)
 
-/-- The class an artifact reads against the class its baseline commits: the
-committed one while the artifact stays inside it widened by an eighth of an
-octave on each side, its own otherwise. Without the margin, an artifact a few
-bytes under a boundary moves its item on any drift at all. -/
+/-- The class an artifact reads against its committed class: the committed one while the
+artifact stays within it widened by an eighth of an octave each side, its own otherwise.
+-/
 def heldClass (committed : Option Nat) (bytes : Nat) : Nat :=
   match committed with
   | some k => if 2 * k ≤ halfClass bytes + 1 ∧ halfClass bytes ≤ 2 * k + 2 then k else sizeClass bytes
   | none => sizeClass bytes
 
-/-- Holding a class never lets a heavier artifact read lighter: the size
-encoding still points one way. -/
 theorem heldClass_monotone {committed : Option Nat} {a b : Nat} (h : a ≤ b) :
     heldClass committed a ≤ heldClass committed b := by
   have hh := halfClass_monotone h
@@ -534,10 +467,8 @@ def summaryPeak (stdout : String) : Option Nat :=
     | .ok j => if jsonStr j "event" == "summary" then jsonNat j "rssKiB" else none
     | .error _ => none
 
-/-- The engine's fixed footprint: the least peak of `runs` runs that read no
-document — the runtime and every module's initialized data, which stay
-resident through every phase of every build, so every phase's memory stands on
-it. Measured alone, before any build runs beside it. -/
+/-- The engine's fixed footprint: the least peak of `runs` runs that read no document,
+measured alone. -/
 def footprint (binary : System.FilePath) (dir : System.FilePath) (runs : Nat) :
     IO (Except String Nat) := do
   let s ← stage dir
@@ -555,11 +486,9 @@ def footprint (binary : System.FilePath) (dir : System.FilePath) (runs : Nat) :
     | some k => .ok k
     | none => .error "no footprint run"
 
-/-- One family in one format at `n` units and `4n`, after a priming build:
-each document built `runs` times — every repeat required to write the same
-bytes — the least peak of each over the fixed footprint, and the larger
-document's artifact. `pair` names the item: `rss-growth` from the gate size,
-`rss-growth-16n` from four times it. -/
+/-- One family in one format at `n` and `4n` units after a priming build: each built
+`runs` times to the same bytes, the least peak of each over the footprint, and the larger
+artifact. -/
 structure Growth where
   gen : String
   unit : String
@@ -590,9 +519,8 @@ def Growth.wallPct (g : Growth) : Nat := g.bigWall * 100 / max g.smallWall 1
 fails: the bound's slack, in KiB. -/
 def Growth.headroomKiB (g : Growth) : Nat := growthBound * (g.small - g.fixed) - (g.big - g.fixed)
 
-/-- The coefficient, in bytes per unit squared, above which a term quadratic
-in the document's size fails the item: the headroom over `8n²`
-(`growthWithin_quadratic_exact`). -/
+/-- The coefficient, in bytes per unit squared, above which a quadratic term fails the
+item: the headroom over `8n²`. -/
 def Growth.quadraticBytes (g : Growth) : Nat := g.headroomKiB * 1024 / (8 * g.n * g.n)
 
 def measureGrowth (binary : System.FilePath) (dir : System.FilePath) (gen : Gen) (format : String)
@@ -628,10 +556,7 @@ def measureGrowth (binary : System.FilePath) (dir : System.FilePath) (gen : Gen)
       fixed, small, big, smallWall, bigWall, bytes := b.artifact.size, pages := b.pages }
   return .ok (#[pairAt 0 "rss-growth"] ++ (if gen.far then #[pairAt 1 "rss-growth-16n"] else #[]))
 
-/-- The fixed footprint, then every family in every format, `width` groups at
-a time. Groups side by side disturb one another's milliseconds, which is why
-nothing gates on them, and nudge one another's peaks, which the bound has the
-slack for. -/
+/-- The fixed footprint, then every family in every format, `width` groups at a time. -/
 def measureAll (binary : System.FilePath) (root : System.FilePath) (runs width : Nat) :
     IO (Except String (Nat × Array Growth)) := do
   let fixed ← match ← footprint binary (root / "footprint") footprintRuns with
@@ -658,9 +583,7 @@ def measureAll (binary : System.FilePath) (root : System.FilePath) (runs width :
     i := stop
   return .ok (fixed, out)
 
-/-! ## The report
-
-The host's numbers: reported, recorded in the history, never gated. -/
+/-! The report: the host's numbers, recorded in the history, never gated. -/
 
 def median (xs : Array Nat) : Nat :=
   let s := xs.qsort (· < ·)
@@ -681,9 +604,8 @@ def kibOf (bytes : Nat) : String :=
 def bytesText (bytes : Nat) : String :=
   if bytes < 1024 then s!"{bytes} B" else if bytes < 1048576 then kibOf bytes else mib (bytes / 1024)
 
-/-- A reference document's builds: `runs` pairs of a cold build over an empty
-application cache and a warm one over the cache it filled; medians, and the
-warm builds' peak. -/
+/-- A reference document's builds: `runs` pairs of a cold build over an empty cache and a
+warm one over the cache it filled; medians, and the warm peak. -/
 structure Timing where
   gen : String
   n : Nat
@@ -742,11 +664,9 @@ def waitFor (t : Task (Except IO.Error α)) (ms : Nat) : IO (Option α) := do
   | .ok v => return some v
   | .error _ => return none
 
-/-- Edit to artifact: the engine watching the reference document, the main
-source replaced by its next revision (renamed into place, so the watcher never
-reads half a file), and the time until the summary of the build that answers
-it — the watcher's poll included, as a writer waits for it. Median over
-`edits`, with the rebuilds' own milliseconds. -/
+/-- Edit to artifact: the engine watching the reference document, its source replaced by
+the next revision, and the time to the answering build's summary, the median over `edits`
+with the rebuilds' own milliseconds. -/
 def editLatency (binary dir : System.FilePath) (gen : Gen) (format : String) (edits : Nat) :
     IO (Except String (Nat × Nat)) := do
   let s ← stage dir
@@ -802,13 +722,9 @@ def perfTool : IO (Option String) := do
     return if probe.exitCode == 0 then some path else none
   catch _ => return none
 
-/-- User-space instructions retired by `runs` warm builds after a priming one:
-their median, and their spread (largest less least) in basis points of the
-least. Close to the same count run to run however loaded the host is, which
-milliseconds are not; the spread is the noise the band stands above. Each
-counted build must load the very faces, out of as many scanned, as the priming
-one did, so a wrapper that leaks the host into the build fails here rather
-than inflating the count. -/
+/-- User-space instructions retired by `runs` warm builds after a priming one: their
+median and spread in basis points; each counted build must load the faces the priming one
+did. -/
 def instructions (perf : String) (binary dir : System.FilePath) (gen : Gen) (format : String)
     (runs : Nat) : IO (Except String (Nat × Nat)) := do
   let s ← stage dir
@@ -833,9 +749,8 @@ unsealed, where the sealed build loaded {facesText primed.faces}"
   let most := counts.foldl max first
   return .ok (median counts, (most - least) * 10000 / max least 1)
 
-/-- Every corpus fixture in each format, `runs` builds each, in place, sealed,
-over one primed cache: the median of the peaks its summaries state, whether or
-not the fixture wrote its artifact, and the median of its milliseconds. -/
+/-- Every corpus fixture in each format, `runs` sealed builds each over one primed cache:
+the median of the stated peaks and of the milliseconds. -/
 def corpusPeaks (binary dir : System.FilePath) (runs : Nat) :
     IO (Array (String × String × Nat × Nat)) := do
   let s ← stage dir
@@ -869,10 +784,7 @@ def corpusPeaks (binary dir : System.FilePath) (runs : Nat) :
       if !peaks.isEmpty then out := out.push (stem, format, median peaks, median mss)
   return out
 
-/-- Targets a reference document's warm build is reported against, never
-gated: the audit's budgets for a deck and for a long styled report. The
-invented deck is lighter than a working deck — no pictures, no figures, one
-listing in four frames — so its verdict is a floor, not a deck's. -/
+/-- Warm-build targets a reference document is reported against, never gated. -/
 def budgets : List (String × String × Nat) :=
   [("deck", "pdf", 400), ("deck", "html", 1200), ("report", "pdf", 2500)]
 
@@ -904,10 +816,8 @@ def say (line : String) : IO Unit := do
   IO.println line
   (← IO.getStdout).flush
 
-/-- Why `--record` may not write `history` from this run, if it may not. A row
-names a committed tree, and the committed history only trees `main` holds,
-built from themselves: a branch's commits vanish when it lands rebased, and a
-saved or stale binary measures some other tree. -/
+/-- Why `--record` may not write `history` from this run: a row names a clean commit
+`main` holds, built from itself. -/
 def recordRefusal (binary : System.FilePath) (dirty : Bool) (history : System.FilePath) :
     IO (Option String) := do
   let committed ← IO.FS.realPath historyPath

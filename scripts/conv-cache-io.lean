@@ -2,8 +2,7 @@ import LeanTex.Cli.ConvCache
 
 open LeanTex.Cli
 
--- These checks cross the real process/file boundary. Stubs name their
--- invocations so a warm answer, a replay, and a retry cannot look alike.
+-- Checks across the real process and file boundary, stubs naming their invocations.
 private def stub (payload : String) (tail : String := "") : String :=
   "#!/bin/sh\n\
 if [ \"$1\" = '-v' ]; then echo V >> \"$COUNT\"; echo 'converter 1'; exit 0; fi\n\
@@ -51,8 +50,7 @@ def main (args : List String) : IO UInt32 := do
       let memo ← IO.FS.readFile
         (cacheDir / ("tool-" ++ LeanTex.Core.Flate.contentKey "pdftocairo".toUTF8 ++ ".ver"))
       if let some (stamp, version) := PicCache.readVersionMemo memo then
-        -- Freeze the old key and envelope: v1 could record a killed process
-        -- as a refusal. Correcting new attempts must also retire that answer.
+        -- A v1 envelope may hold a killed process recorded as a refusal, which a new attempt retires.
         let recipe := "pdftocairo -svg -f 1 -l 1 <input> <output>\n<svg preserveAspectRatio=\"none\" "
         let identity := "pdftocairo\n" ++ stamp ++ "\n" ++ version
         let variant := LeanTex.Core.Flate.contentKey (String.intercalate "\u0000"
@@ -113,8 +111,7 @@ def main (args : List String) : IO UInt32 := do
         let b ← run #["font"]
         check "unembedded font: still converts without reusing a slot"
           (a.out.startsWith "OK " && b.out == a.out && (← calls count) == before + 2)
-  -- exec searches past a non-executable file or a directory. The cache
-  -- must follow the tool it reaches, including a same-banner replacement.
+  -- exec searches past non-executables, and the cache follows the tool it reaches.
   for label in #["non-executable", "directory", "current-directory"] do
     IO.FS.withTempDir fun dir => do
       let shadow := dir / "shadow"
@@ -160,8 +157,7 @@ def main (args : List String) : IO UInt32 := do
     writeTool (bin / "pdftocairo") (stub first)
     let b ← run #[]
     check "restored tool: retries" (b.out.startsWith "OK " && (← calls count) == 1)
-    -- A version command that never finishes must not hang a conversion or
-    -- grant a cache identity. Its process inherits the same bounded runner.
+    -- A version command that never finishes neither hangs a conversion nor keys a slot.
     writeTool (bin / "pdftocairo") ((stub first).replace "echo 'converter 1'"
       "trap '' TERM; while :; do :; done")
     let start ← IO.monoMsNow

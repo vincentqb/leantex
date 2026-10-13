@@ -1,51 +1,7 @@
 /-
-The external corpus: a public test suite built by this engine and by
-lualatex, measured, and every failure given a cause.
-
-  lake env lean --run scripts/external.lean                   regenerate the `external` tier
-  lake env lean --run scripts/external.lean --check           gate it (hermetic)
-  lake env lean --run scripts/external.lean --selftest        the arithmetic and the tier's cases
-  lake env lean --run scripts/external.lean --report <work> [<list>]
-      build every document <list> names (default: the committed corpus,
-      testdata/external/flashtex/documents.txt) with the engine — PDF, HTML,
-      and PDF with the face pinned to Latin Modern — and with lualatex,
-      into <work>, which must lie outside every leantex checkout; print the
-      table, and write documents.tsv, census.tsv and worklist.tsv there.
-
-*The report is not a gate.* It needs lualatex, the host's fonts and
-poppler, so it can never be hermetic; its numbers are evidence, rerun when
-wanted. *The tier is the part that needs neither*: each committed document
-elaborated in-process through the same input splice the driver uses, which
-reads only files beside the document — no face, no TeX tree. Its value per
-document is how far elaboration alone gets:
-
-  2  no error and no unknown construct (W0301/W0302)
-  1  no error, at least one unknown construct
-  0  an error diagnostic
-
-The tier's premise, that a 0 is a refusal, is the report's to check wherever
-both readings exist: it held on 216 of 216 committed documents and missed on
-1 of 1,031 upstream, where a face refuses a TAB after elaboration.
-
-*A list* is `<set><TAB><path>` lines, each path relative to the list's own
-directory, `#` lines provenance. The committed corpus's list names only
-documents lualatex builds under `-halt-on-error`, so every item is in the
-denominator.
-
-*Confinement.* The work directory is refused when it lies inside a leantex
-checkout — every worktree and every clone — so builds, rasters and tables
-never land in a tree, whatever list was read. Per-document build directories
-are numbered, never named after the document.
-
-*What a vendored corpus owes*, this one and the next: its licence verbatim
-beside it; a `PROVENANCE.txt` naming the upstream commit, what was taken,
-what was left and why — a user's own document is left, since fixtures here
-are invented; a `SHA256SUMS` over the upstream bytes that `sha256sum -c`
-checks from that directory; only documents the reference builds under
-`-halt-on-error`, so every one is in the denominator; and the reading that
-needs neither fonts nor TeX as a tier, its premise checked by the report
-wherever both readings exist. testdata/commonmark vendors its spec the same
-way.
+The external tier: each vendored flashtex document elaborated in-process, 2 clean, 1 with an
+unknown construct, 0 with an error; `--report` also builds with lualatex.
+Usage: lake env lean --run scripts/external.lean [--check | --selftest | --report <work> [<list>]]
 -/
 import LeanTex
 import scripts.Board
@@ -58,25 +14,20 @@ namespace External
 def corpusDir : String := "testdata/external/flashtex"
 def documentsPath : String := corpusDir ++ "/documents.txt"
 
-/-- The unknown-construct codes: the engine met a name nothing answers. The
+/-- The unknown-construct codes, raised where the engine meets a name nothing answers; the
 blocker ranking reads the same two. -/
 def unknownCodes : List String := ["W0301", "W0302"]
 
-/-- The codes whose loss is a face's: none found, one unusable, a glyph
-missing, a variant or a math table absent. Keyed by constructor, so the
-cause class is data and never a reading of a message. -/
+/-- The codes whose loss is a face's, keyed by constructor so the cause class is data. -/
 def fontCodes : List DiagCode :=
   [.E0401, .E0402, .E0403, .E0404, .E0405, .W0003, .W0006, .W0009, .W0011, .N0018]
-
--- ## Lists
 
 structure Doc where
   set : String
   path : String
 deriving BEq, Inhabited
 
-/-- A list's documents. A line that is not `<set><TAB><path>` is a fault,
-not a skip: a skipped line is a document silently out of the denominator. -/
+/-- A list's documents; a line that is not `<set><TAB><path>` is a fault, never a skip. -/
 def parseList (text : String) : Except String (Array Doc) := Id.run do
   let mut out : Array Doc := #[]
   let mut n := 0
@@ -91,12 +42,8 @@ def parseList (text : String) : Except String (Array Doc) := Id.run do
     | _ => return .error s!"line {n}: not `<set><TAB><path>`"
   return .ok out
 
--- ## Elaboration alone: the hermetic reading
-
-/-- Elaborate a document as the driver's front end does before any face is
-asked for: its bytes through the driver's front door (`Input.readDocument`:
-decode, lex, parse, splice `\input` and local `.sty` files, resolve
-`\data`), then elaborate. Every read is a file beside the document. -/
+/-- Elaborate a document as the driver's front end does before any face is asked for;
+every read is a file beside the document. -/
 def elaborate (file : String) : IO (Array Diag) := do
   match ← Input.readSource file with
   | .error d => return #[d]
@@ -119,16 +66,12 @@ def unknownsIn (ds : Array Diag) : Array String := Id.run do
         unless s.any (fun c => Char.toNat c < 32) || out.contains s do out := out.push s
   return out.qsort (· < ·)
 
--- ## The tier
-
-/-- The files this repository wrote beside the vendored ones. Every other
-file below the corpus directory is upstream's, pinned in `SHA256SUMS`. -/
+/-- The files this repository wrote beside the vendored ones; every other file is
+upstream's, pinned in `SHA256SUMS`. -/
 def ownFiles : List String := ["SHA256SUMS", "documents.txt", "PROVENANCE.txt"]
 
-/-- Where the corpus directory `root` stops holding upstream's bytes, read in
-both directions: a pinned file whose bytes are not its pin's, or that is
-gone, and a file no pin names. The digest is `sha256Hex`, so the check is
-hermetic: no tool answers for it. -/
+/-- Where the corpus directory stops holding upstream's bytes, read both ways: a pinned
+file whose bytes differ or are gone, and a file no pin names. -/
 def sumFaults (root : String) : IO (Array String) := do
   let sums := root ++ "/SHA256SUMS"
   let entries ← match parsePins sums (← readFileOr sums) with
@@ -171,8 +114,6 @@ under -halt-on-error when it was imported (testdata/external/flashtex/PROVENANCE
 unknown construct (W0301/W0302), 1 no error, 0 an error",
     s!"# counts: {at2} at 2, {at1} at 1, {docs.size - at2 - at1} at 0"], rows)
 
--- ## Measurements
-
 /-- An 8-bit grey raster: `pdftoppm -gray`'s binary PGM. -/
 structure Gray where
   w : Nat
@@ -182,8 +123,7 @@ deriving Inhabited
 
 def isSpace (b : UInt8) : Bool := b == 32 || b == 9 || b == 10 || b == 13
 
-/-- `P5 <w> <h> <max>` and one whitespace byte, then `w*h` samples. Only
-`max = 255` is read: that is what `pdftoppm -gray` writes. -/
+/-- A binary PGM, `max = 255` only, as `pdftoppm -gray` writes it. -/
 def Gray.parse (b : ByteArray) : Option Gray := Id.run do
   if b.size < 3 || b[0]! != 80 || b[1]! != 53 then return none
   let mut i := 2
@@ -226,9 +166,7 @@ def ligatures : List (Char × String) :=
   [('ﬀ', "ff"), ('ﬁ', "fi"), ('ﬂ', "fl"), ('ﬃ', "ffi"), ('ﬄ', "ffl"), ('ﬅ', "st"),
    ('ﬆ', "st"), ('ℎ', "h")]
 
-/-- A Mathematical Alphanumeric Symbol read as the letter or digit it
-styles: the block runs A–Z a–z per style from U+1D400 (its holes are the
-letters Letterlike Symbols already held) and 0–9 per style from U+1D7CE. -/
+/-- A Mathematical Alphanumeric Symbol read as the letter or digit it styles. -/
 def mathPlain (c : Char) : Option Char :=
   let n := c.toNat
   if 0x1D400 ≤ n && n ≤ 0x1D6A3 then
@@ -237,21 +175,16 @@ def mathPlain (c : Char) : Option Char :=
   else if 0x1D7CE ≤ n && n ≤ 0x1D7FF then some (Char.ofNat (48 + (n - 0x1D7CE) % 10))
   else none
 
-/-- A character a page is compared by: a letter or a digit, in any script.
-Punctuation and symbols are not compared — lualatex's Type 1 faces carry no
-`/ToUnicode`, so pdftotext reads their quotes, dashes and math by glyph name
-or not at all, and a difference there is the reader's, not the page's. -/
+/-- A character a page is compared by: a letter or a digit in any script, since pdftotext
+reads lualatex's Type 1 punctuation and symbols unreliably. -/
 def compared (c : Char) : Bool :=
   let n := c.toNat
   c.isAlphanum || (0xC0 ≤ n && n != 0xD7 && n != 0xF7 && !(0x2000 ≤ n && n ≤ 0x2BFF)
     && !(0xE000 ≤ n && n ≤ 0xF8FF) && n != 0xFFFD)
 
-/-- pdftotext's output as the characters a page is compared by: a hyphen
-closing a line goes with its break, ligatures and styled math letters spell
-their plain letters, ASCII case is folded, and only letters and digits
-count. Characters and not words, because the reference's Type 1 faces carry
-no `/ToUnicode`: pdftotext drops a symbol it cannot map together with the
-space beside it, and "a ⊞ b" reads as the one word "ab". -/
+/-- pdftotext's output as the characters a page is compared by: line-end hyphens joined,
+ligatures and styled math letters spelled plain, ASCII case folded, letters and digits
+only. -/
 def letters (t : String) : Array Char := Id.run do
   let t := t.replace "-\n" ""
   let mut out : Array Char := #[]
@@ -291,11 +224,8 @@ def porcelainDiags (out : String) : Array (String × String) := Id.run do
           ds := ds.push (c, (j.getObjValAs? String "severity").toOption.getD "")
   return ds
 
--- ## Causes
-
-/-- Why a document falls short, one constructor per class the worklist
-ranks. `outside` is not a failure of this engine: the reference did not
-build, so the document leaves the denominator. -/
+/-- Why a document falls short, one constructor per class the worklist ranks; `outside`
+leaves the denominator, since the reference did not build. -/
 inductive Cause where
   | outside
   | crash (exit : UInt32)
@@ -327,10 +257,8 @@ def Cause.render : Cause → String
   | .raster p => s!"raster {p}‰"
   | c => c.key
 
-/-- The owner row a cause feeds, in the round's ownership table. An unknown
-construct goes to the row of the package whose index names it
-(`definer`, read off `indexOwners`); a layout cause of a picture set to the
-picture row. -/
+/-- The owner row a cause feeds: an unknown construct goes to the package whose index
+names it, a picture's layout cause to the picture row. -/
 def Cause.owner (set : String) (definer : String → Option String) : Cause → String
   | .outside => "-"
   | .crash _ => "coordinator (a crash names no module; triage first)"
@@ -380,11 +308,9 @@ deriving Inhabited
 
 def mean (xs : Array Nat) : Nat := if xs.isEmpty then 0 else xs.foldl (· + ·) 0 / xs.size
 
-/-- Every cause one measurement shows, in the worklist's order. The
-engine's own layout causes are read off the Latin Modern build where it
-exists, so a face this engine defaults to differently from LaTeX is not
-counted as every document's layout defect: that divergence is one
-decision, reported once, not a thousand findings. -/
+/-- Every cause one measurement shows, in worklist order; layout causes are read off the
+Latin Modern build, so the engine's default face is one decision, not every document's
+defect. -/
 def causes (m : Measure) : Array Cause := Id.run do
   if m.ll != 0 then return #[.outside]
   let mut out : Array Cause := #[]
@@ -412,14 +338,12 @@ def causes (m : Measure) : Array Cause := Id.run do
     if mean rmse > rasterCeiling then out := out.push (.raster (mean rmse))
   return out
 
--- ## Running the tools
-
 structure Ran where
   exit : UInt32
   out : String
 
-/-- One bounded tool run. A tool that could not start answers 127, as
-`timeout` does for a command it cannot find. -/
+/-- One bounded tool run; a tool that could not start answers 127, as `timeout` does for a
+command it cannot find. -/
 def run (cmd : String) (args : Array String) (cwd : Option String := none)
     (secs : Nat := 180) : IO Ran := do
   try
@@ -513,18 +437,14 @@ def measureOne (bin root work : String) (n : Nat) (d : Doc) : IO Measure := do
     census := porcelainDiags lt.out
     unknowns := unknownsIn eds, alone := standing eds }
 
--- ## Where output may land
-
-/-- Does this `lakefile.toml` declare the package `leantex`? The rule
-`scripts/blockers.lean` applies to its own outputs, restated because that
-file is a program, not a library. -/
+/-- Whether this `lakefile.toml` declares the package `leantex`. -/
 def namesLeantex (lakefile : String) : Bool :=
   (lakefile.splitOn "\n").any fun l =>
     let t := String.ofList (l.toList.filter (!·.isWhitespace))
     t == "name=\"leantex\"" || t == "name='leantex'"
 
-/-- A work directory is refused when it, or any directory above it, is a
-leantex checkout. It must exist, so it can be resolved. -/
+/-- A work directory is refused when it, or any directory above it, is a leantex checkout;
+it must exist, so it can be resolved. -/
 def outsideCheckouts (dir : String) : IO (Except String String) := do
   let real ← try pure (some (← IO.FS.realPath dir).toString) catch _ => pure none
   let some real := real | return .error s!"{dir}: does not exist"
@@ -539,8 +459,6 @@ def outsideCheckouts (dir : String) : IO (Except String String) := do
     | some p => if p == cur then break else cur := p
     | none => break
   return .ok real
-
--- ## The report
 
 def tsvLine (xs : List String) : String := String.intercalate "\t" xs ++ "\n"
 
@@ -631,12 +549,8 @@ def summary (ms : Array Measure) : String := Id.run do
       toString (inn.filter (fun m => (causes m).isEmpty)).size]
   return out
 
-/-- The construct a compat-index row documents, read off its example: the
-first control word that is not `\begin`/`\end`, else the first environment
-it opens — so `\begin{tabular}{ll}\multirow{2}{*}{a}…` documents
-`\multirow`, and `\begin{align*}x\end{align*}` documents `align*`. A
-heuristic over the row's text, stated as one: the index has no field that
-names the construct. -/
+/-- The construct a compat-index row documents, read off its example: the first control
+word other than `\begin`/`\end`, else the first environment it opens. -/
 def rowConstruct (ex : String) : Option String :=
   let words := ((ex.splitOn "\\").drop 1).map fun w =>
     String.ofList (w.toList.takeWhile Char.isAlpha)
@@ -646,13 +560,8 @@ def rowConstruct (ex : String) : Option String :=
     | _ :: env :: _ => some ("env:" ++ ((env.splitOn "}").headD ""))
     | _ => none
 
-/-- Where the tree's own indexes place a construct: the kernel's documented
-command list (`testdata/coverage/latex2e-index.txt`, with its manual chapter),
-or the package whose compat index names it (`testdata/compat-index/<pkg>.txt`,
-its example's first control word or `\begin{…}`). One source of truth for
-what a construct is, read rather than restated; a construct neither names
-is `unindexed`, which is a finding about the denominators as much as about
-the engine — its absence costs coverage nothing. -/
+/-- Where the tree's own indexes place a construct: the kernel's documented command list
+or the package whose compat index names it; a construct neither names is `unindexed`. -/
 def indexOwnersOf (kernel : String) (pkgs : Array (String × String)) :
     Std.HashMap String String := Id.run do
   let mut m : Std.HashMap String String := {}
@@ -681,10 +590,8 @@ def indexOwners : IO (Std.HashMap String String) := do
     if f.endsWith ".txt" then pkgs := pkgs.push ((f.dropEnd 4).toString, ← IO.FS.readFile (dir / f))
   return indexOwnersOf kernel pkgs
 
-/-- The tier's premise, checked where both readings exist: elaboration alone
-stands at 0 exactly when the shipped build refuses (exit 1). Documents the
-reference builds only; a disagreement means the tier's 0 is not the
-refusal the report measures, and the tier's docstring would be a claim. -/
+/-- The tier's premise, checked where both readings exist: elaboration alone stands at 0
+exactly when the shipped build refuses (exit 1). -/
 def premiseMisses (ms : Array Measure) : Array String :=
   (ms.filter fun m => m.ll == 0 && (m.lt == 0 || m.lt == 1) && ((m.alone == 0) != (m.lt == 1))).map
     (·.doc.path)
@@ -733,16 +640,12 @@ of {(ms.filter (·.ll == 0)).size} documents the reference builds"
   IO.println s!"external: wrote documents.tsv, census.tsv, worklist.tsv, summary.tsv in {work}"
   return (if ms.size == docs.size then 0 else 1)
 
--- ## Selftest
-
 def selftest : IO UInt32 := tierSelftest "external" fun expect => do
-  -- Lists.
   expect "a list line is a set and a path" (parseList "# c\na\tb/c.tex\n" matches .ok #[_])
   expect "a line with no set is a fault" (parseList "b/c.tex\n" matches .error _)
   expect "an absolute path is a fault" (parseList "a\t/etc/x.tex\n" matches .error _)
   expect "a path leaving the list's directory is a fault"
     (parseList "a\t../x.tex\n" matches .error _)
-  -- Standing, over structured diagnostics.
   let unk : Diag := { kind := .W0301, message := "", subject := some "ctrl:foo" }
   let err : Diag := { kind := .E0336, message := "" }
   let note : Diag := { kind := .N0100, message := "" }
@@ -755,7 +658,6 @@ def selftest : IO UInt32 := tierSelftest "external" fun expect => do
       == #["ctrl:foo", "env:bar"])
   expect "an unknown with no subject names nothing" (unknownsIn #[{ unk with subject := none }]
     == #[])
-  -- Rasters.
   let pgm (w h : Nat) (v : UInt8) : ByteArray :=
     s!"P5\n{w} {h}\n255\n".toUTF8 ++ ByteArray.mk (Array.replicate (w * h) v)
   expect "a PGM reads back its size" ((Gray.parse (pgm 3 2 0)).map (fun g => (g.w, g.h))
@@ -769,7 +671,6 @@ def selftest : IO UInt32 := tierSelftest "external" fun expect => do
     expect "a narrower page is padded with white" (rmsePermille half white == 707)
     expect "padding is symmetric" (rmsePermille half black == rmsePermille black half)
   | _, _, _ => expect "the raster fixtures parse" false
-  -- Letters.
   expect "a line-end hyphen goes with its break" (letters "hy-\nphen" == "hyphen".toList.toArray)
   expect "ligatures spell their letters" (letters "ﬁne ﬂow" == "fineflow".toList.toArray)
   expect "punctuation and space are not compared"
@@ -782,13 +683,11 @@ def selftest : IO UInt32 := tierSelftest "external" fun expect => do
   expect "porcelain is read by field"
     (porcelainDiags "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0336\",\
 \"message\":\"code W0301\"}\n{\"event\":\"summary\"}\n" == #[("E0336", "error")])
-  -- The face pin.
   expect "the face is pinned after the class"
     (pinLatinModern "\\documentclass[a]{article}\nx" == "\\documentclass[a]{article}\n\
 \\fonts{ body = \"Latin Modern Roman\", math = \"Latin Modern Math\", mono = \"Latin Modern \
 Mono\" }\nx")
   expect "a document with no class is left alone" (pinLatinModern "x" == "x")
-  -- Causes.
   let clean : Measure := { doc := { set := "s", path := "p" }, llPages := 1, ltPages := 1
                            lmPages := 1, text := 1000, lmText := 1000 }
   expect "a clean measurement has no cause" (causes clean).isEmpty
@@ -819,7 +718,6 @@ Mono\" }\nx")
   expect "the worklist ranks by documents, then sole"
     (w.map (fun i => (i.key, i.docs, i.sole)) ==
       #[("unknown: ctrl:a", 2, 1), ("unknown: env:b", 1, 0)])
-  -- Attribution, off the indexes' own row shapes.
   let owners := indexOwnersOf "# head\nbibitem\tEnvironments\tcall\n"
     #[("multirow", "body refuse:W0301 \\begin{tabular}{ll}\\multirow{2}{*}{a} & b\\end{tabular}\n"),
       ("natbib", "# src\nbody impl \\citep{k}\nbody refuse:W0301 \\citeauthor{k}\n"),
@@ -843,7 +741,6 @@ Mono\" }\nx")
       == "coverage-honest (unindexed: in no denominator)")
   expect "a natbib unknown feeds its package row"
     ((Cause.unknown "ctrl:citeauthor").owner "s" (owners.get? ·) == "pkg-natbib")
-  -- Where output may land.
   expect "a lakefile naming leantex is a checkout"
     (namesLeantex "name = \"leantex\"\n" && !namesLeantex "name = \"other\"")
   expect "a work directory inside this checkout is refused"

@@ -1,16 +1,7 @@
 /-
-Regenerate LeanTex/Core/BibStringsData.lean: the bibliography strings
-biblatex's English localization declares — every key with its long and its
-short form — which the reference list words its strings, months and seasons
-with. Run from the repository root with:
-
-  lake env lean --run scripts/gen-bibstrings-data.lean
-
-Source, located with kpsewhich and never vendored: english.lbx's
-`\DeclareBibliographyStrings{key = {{long}{short}}, …}`, each form kept as
-the TeX it is written in (`ed\adddot`, `\S\S`, `trans\adddot\
-\lbx@sfromlang\ by`); the version stamp is biblatex.sty's `\abx@version`
-and `\abx@date`, which the localization files print as theirs.
+Regenerate LeanTex/Core/BibStringsData.lean from english.lbx's bibliography strings (via
+kpsewhich).
+Usage: lake env lean --run scripts/gen-bibstrings-data.lean
 -/
 
 def die (msg : String) : IO α := do

@@ -1,26 +1,7 @@
 /-
-The trigonometry oracle for `Gfx.Trig`, the integer CORDIC every figure
-producer shares (arcs, rotations, regular polygons). Run it when touching
-`Core/Gfx.lean`'s `Trig` or `Kit` sections:
-
-  lake build LeanTex.Core.Gfx && lake env lean --run scripts/trig-oracle.lean
-
-It recomputes the shipped constants from their definitions in binary64 —
-`atan(2⁻ⁱ)·2³⁰` for the table, `∏ 1/√(1 + 2⁻²ⁱ)·2³⁰` for the gain, `π·2³⁰` —
-and requires each to round to the shipped integer; then sweeps `cosSin`
-over angles spanning eight turns (and every multiple of an eighth turn,
-where the range reduction folds) against binary64 `cos`/`sin`, and
-`atan2` over vectors at eight magnitudes, from one unit up, against
-binary64 `atan2` of the same integer vector; and `Kit.arcEndpoint` over
-random ellipses, rotations, starts and sweeps, every piece against the
-exact ellipse SVG's conversion gives its rounded ends (`arcCentre`,
-`arcBound`). The bounds are the
-arithmetic's: 31 rotations each floor one unit of x and y and the table
-rounds each angle by half a unit — `cosSinBound` and `atanBound` below,
-each with its derivation. The first run found `atan2` 0.2° off on a vector
-of magnitude 2¹⁰, its floored shifts as coarse as the vector itself; it now
-lifts the vector first. Evidence, not a theorem: binary64 is the
-reference here, accurate to 2⁻⁵³ relative, far inside the bounds.
+The trigonometry oracle for `Gfx.Trig`'s integer CORDIC against binary64 within the derived
+bounds.
+Usage: lake build LeanTex.Core.Gfx && lake env lean --run scripts/trig-oracle.lean
 -/
 import LeanTex.Core.Gfx
 
@@ -30,19 +11,14 @@ def unitF : Float := 1073741824.0
 
 def piF : Float := 3.141592653589793
 
-/-- The largest error `cosSin` may show, in 2⁻³⁰. Each of the 31 rotations
-floors `x` and `y` once, an error vector shorter than √2 that the later
-rotations grow by at most ∏ √(1 + 2⁻²ʲ) < 1.6468 — 31·√2·1.6468 < 72.2; the
-angle left over after the last rotation, the table's 31 half-unit roundings
-and atan 2⁻³⁰, turns the unit vector by under 16.5; the gain's own rounding
-grows to under 0.9. 72.2 + 16.5 + 0.9 < 90. -/
+/-- The largest error `cosSin` may show, in 2⁻³⁰: 31 floored rotations grown by the gain
+(< 72.2), the residual angle and the table's roundings (< 16.5), and the gain's own
+rounding (< 0.9). -/
 def cosSinBound : Float := 90.0
 
-/-- The largest error `atan2` may show, in 2⁻³⁰. The vector is first lifted
-to a magnitude of at least 2³⁰ (`Trig.lift`), and rotation only grows it;
-each of the 31 floored rotations then moves it by under √2, which turns it
-by under √2 units — 31·√2 < 43.9; the table's half-unit roundings add 15.5
-and the last residual angle under 1. 43.9 + 15.5 + 1 < 61. -/
+/-- The largest error `atan2` may show, in 2⁻³⁰, the vector first lifted to at least 2³⁰:
+31 floored rotations (< 43.9), the table's roundings (15.5) and the last residual angle (<
+1). -/
 def atanBound : Float := 61.0
 
 def roundF (x : Float) : Int :=
@@ -51,14 +27,9 @@ def roundF (x : Float) : Int :=
 
 def toF (i : Int) : Float := if i < 0 then -((-i).toNat.toFloat) else i.toNat.toFloat
 
-/-- The largest distance an endpoint arc's piece may stand off its exact
-ellipse, measured along that ellipse's radius and scaled by the larger
-radius `r` (`ellipseOff`): a cubic through a quarter turn with the control
-distance 4/3·tan(δ/4) strays at most 2.73·10⁻⁴ of a circle's radius, and
-an ellipse is a circle's affine image, so of `r` (Goldapp 1991); the
-integer arithmetic — the centre and each control point rounded once, the
-chord's half floored — moves a point under 8 `Sp`, which the measure scales
-by the ellipse's eccentricity `r / s`. -/
+/-- The largest distance an endpoint arc's piece may stand off its exact ellipse, scaled
+by the larger radius `r`: a quarter-turn cubic's 2.73·10⁻⁴ (Goldapp 1991) plus 8 `Sp` of
+integer rounding scaled by the eccentricity `r / s`. -/
 def arcBound (r s : Float) : Float := 2.73e-4 * r + 8.0 * (r / s)
 
 /-- The centre and radii SVG 2 Appendix B.2.4–5 derive from an endpoint
@@ -160,10 +131,7 @@ def main : IO UInt32 := do
         worstV := (x, y)
   if worstAT > atanBound then
     failures := failures.push s!"atan2 error {worstAT} units at {worstV} exceeds {atanBound}"
-  -- Endpoint arcs: ellipses of every proportion, turned, from every start
-  -- through every sweep short of a full turn; each piece's start, middle
-  -- and end against the ellipse its two ends were read from, and the last
-  -- end exactly the declared one.
+  -- Endpoint arcs of every proportion, turn, start and sweep, each piece against its ellipse.
   let mut worstArc : Float := 0
   let mut arcCount := 0
   let mut seed : UInt64 := 0x9E3779B97F4A7C15

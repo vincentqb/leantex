@@ -1,35 +1,7 @@
 /-
-The vector model's two emitters, rasterized and compared. Run from the
-repository root:
-
-  lake build ScriptsModules && lake env lean --run scripts/gfx-diff.lean --report
-  lake env lean --run scripts/gfx-diff.lean --selftest
-
-Each synthetic figure (invented geometry, every node arm the model has
-but labels) is emitted twice. The PDF is the document writer's
-(`Pdf.write`): one page the figure's size holding it as a placed ink, its
-resources the document's figure table (`Pdf.figureTable`) — ExtGStates,
-shading patterns, forms. A figure with a raster goes through `figurePdf`
-below, a harness writer over the same table, since the document writer
-refuses a placed ink that paints a raster (`Pdf.inkRasterPage?`: a page's
-ink is a lowered picture, which paints none). Poppler's `pdftoppm`
-rasterizes the
-file at `rasterDpi`. The SVG is the standalone
-document `GfxSvg.document` spells, which Chromium screenshots at the same
-scale. The two rasters are compared by ImageMagick's DSSIM at
-pdf-oracles' `dssimScale` and `dssimTolerance`, and by the mean Oklab
-distance (ΔE_OK, ×100) between them. The raster figure does not smooth:
-renderers smooth a scaled raster with different kernels, so only
-sample-per-square rendering is a reading two of them share.
-
-`--report` prints both numbers per figure and fails when any figure's
-DSSIM exceeds the tolerance. `--selftest` injects a mutant into the SVG
-side only — butt caps squared, a clip dropped, y flipped, an alpha
-ignored, SVG's own miter limit of 4, a root gradient left in its own frame
-— each on a figure that shows it, and fails unless every mutant lands above
-the tolerance while its unmutated figure stays within. A
-report, never a gate: it needs Poppler, Chromium and ImageMagick, and a
-missing tool fails the run with its name.
+Report comparing the vector model's two emitters per synthetic figure: the PDF rasterized by
+Poppler against the SVG screenshotted by Chromium, by DSSIM and ΔE_OK.
+Usage: lake build ScriptsModules && lake env lean --run scripts/gfx-diff.lean [--report | --selftest]
 -/
 import LeanTex.Core.PdfFigures
 import LeanTex.Core.PdfContent
@@ -71,9 +43,7 @@ def figure (w h : Int) (nodes : Array (Node Empty)) (symbols : Array (Array (Nod
   { box := ((0, 0), (pt w, pt h)), clipToBox := false, nodes, outlines, symbols, rasters
     title := none, losses := #[] }
 
-/-- A two-by-two RGB checkerboard as a PNG: signature, IHDR, one IDAT of
-unfiltered rows (filter type 0) deflated by the engine's own codec, IEND —
-each chunk with its CRC-32 (ISO/IEC 15948 §5.3). -/
+/-- The CRC-32 table PNG chunks use (ISO/IEC 15948 §5.3). -/
 def crcTable : Array UInt32 := Id.run do
   let mut t : Array UInt32 := #[]
   for n in [0:256] do
@@ -198,8 +168,6 @@ def cases : Array (String × Figure Empty) := #[
   ("words", figure 120 80 #[.words "recovered text",
     .draw (.rect (pt 10) (pt 10) (pt 100) (pt 60)) none (some (stroke black (pt 3)))])]
 
-/-! ## The PDF side: a harness writer -/
-
 def ratNum (p q : Int) : String := Dim.ratString p q
 
 def rgbArr (c : Ir.Color) : String :=
@@ -208,9 +176,8 @@ def rgbArr (c : Ir.Color) : String :=
 def interp (c0 c1 : Ir.Color) : String :=
   s!"<< /FunctionType 2 /Domain [0 1] /C0 {rgbArr c0} /C1 {rgbArr c1} /N 1 >>"
 
-/-- A stop list as a PDF function over [0, 1]: the first colour before the
-first stop and the last after the last (SVG's padding), one exponential
-segment between consecutive distinct offsets, stitched (§7.10.4). -/
+/-- A stop list as a PDF function over [0, 1]: padded with the end colours as SVG pads,
+one exponential segment per pair of distinct offsets, stitched (§7.10.4). -/
 def stopsFunction (stops : Array Stop) : String :=
   match stops.toList with
   | [] => interp black black
@@ -251,9 +218,9 @@ def resPrefix : Pdf.FigRes → String
   | .shading _ => "Sh"
   | .form _ _ => "Fm"
 
-/-- One page of the figure: catalog, page tree, page, one resources
-dictionary every stream names, the content, then one object per table
-entry and per raster — classic cross-reference table. -/
+/-- One page of the figure from the harness writer, which paints rasters: one resources
+dictionary every stream names, one object per table entry and raster, a classic
+cross-reference table. -/
 def figurePdf (fig : Figure Empty) : ByteArray := Id.run do
   let ((x0, y0), (x1, y1)) := fig.box
   let place : Iso := { flipY := false, dx := -x0, dy := -y0 }
@@ -321,8 +288,7 @@ def figurePdf (fig : Figure Empty) : ByteArray := Id.run do
       streams := streams.push ("/Type /XObject /Subtype /Image /Width 1 /Height 1 \
 /ColorSpace /DeviceGray /BitsPerComponent 8", ⟨#[255]⟩)
       objs := objs.push ""
-  -- Objects in id order: four dictionaries, the content (5), then the
-  -- resources, a stream wherever `objs` holds an empty placeholder.
+  -- Objects in id order: four dictionaries, the content (5), then the resources.
   let mut out := "%PDF-1.7\n".toUTF8
   let mut offs : Array Nat := #[]
   let mut si := 0
@@ -346,10 +312,8 @@ def figurePdf (fig : Figure Empty) : ByteArray := Id.run do
   out := out ++ s!"trailer\n<< /Size {all.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".toUTF8
   return out
 
-/-- The figure through the document writer (`Pdf.writeChecked`): one page
-the figure's size holding it as a placed ink, its resources the document's
-figure table. An empty file when the writer refuses, which `pdftoppm` then
-names. -/
+/-- The figure through the document writer (`Pdf.writeChecked`) on one page of its size;
+an empty file when the writer refuses, which `pdftoppm` then names. -/
 def documentPdf (fs : Font.FontSet) (fig : Figure Empty) : ByteArray :=
   let ((x0, y0), (x1, y1)) := fig.box
   let geom : Layout.Geom := { pageW := x1 - x0, pageH := y1 - y0 }
@@ -358,13 +322,10 @@ def documentPdf (fs : Font.FontSet) (fig : Figure Empty) : ByteArray :=
   | .ok b => b
   | .error _ => ByteArray.empty
 
-/-- The writer a figure is judged through: the document writer, or the
-harness writer for a figure that paints a raster, which no page's ink
-does. -/
+/-- The writer a figure is judged through: the document writer, or the harness writer for
+a figure that paints a raster. -/
 def pdfOf (fs : Font.FontSet) (fig : Figure Empty) : ByteArray × String :=
   if fig.imageFree then (documentPdf fs fig, "document") else (figurePdf fig, "harness")
-
-/-! ## The SVG side -/
 
 /-- The figure as a standalone SVG file (`GfxSvg.document`), its rasters
 as data URLs. -/
@@ -374,8 +335,6 @@ def figureSvg (fig : Figure Empty) : String :=
         HtmlResource.base64 r.bytes
       smooth := r.smooth : GfxSvg.RasterRef }
   GfxSvg.document (fun _ e => nomatch e) rasters fig
-
-/-! ## Mutants: the SVG side only -/
 
 mutual
 
@@ -406,13 +365,13 @@ def ignoreAlpha : Node Empty → Node Empty
   | .group xf clips _ kids => .group xf clips Alpha.opaque kids
   | n => n
 
-/-- SVG's own miter limit of 4 instead of the figure's, the F4 defect. -/
+/-- SVG's own miter limit of 4 instead of the figure's. -/
 def svgMiterLimit : Node Empty → Node Empty
   | .draw g fl st => .draw g fl (st.map fun s => { s with miterLimit := 4 })
   | n => n
 
-/-- A gradient left in its own frame at the root, the defect the SVG
-emitter once had: the figure's y flipped inside the gradient alone. -/
+/-- A gradient left in its own frame at the root: the figure's y flipped inside the
+gradient alone. -/
 def flipGradients (fig : Figure Empty) : Figure Empty :=
   let ((_, y0), (_, y1)) := fig.box
   let flip (p : Paint) : Paint := match p with
@@ -455,8 +414,6 @@ def mutants : Array (String × Figure Empty × (Figure Empty → Figure Empty)) 
       (some { solid red with paint := .gradient (.linear (0, pt 10) (0, pt 70) stops3 Affine.unit) })
       none],
     flipGradients)]
-
-/-! ## Rasters and their distance -/
 
 def tool (cmd : String) (args : Array String) : IO IO.Process.Output := do
   match ← runTool cmd args with

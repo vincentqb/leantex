@@ -14,9 +14,8 @@ private def severityColor : Severity → String
   | .warning => "1;33"
   | .note => "1;36"
 
-/-- The bidirectional formatting characters: the embeddings, overrides and
-isolates (U+202A–202E, U+2066–2069) and the implicit marks (U+061C, U+200E,
-U+200F), which reorder what a reader sees without being seen. -/
+/-- The bidirectional formatting characters, which reorder what a reader sees without
+being seen. -/
 private def bidiControl (c : Char) : Bool :=
   let n := c.toNat
   n == 0x061C || n == 0x200E || n == 0x200F || (0x202A ≤ n && n ≤ 0x202E) ||
@@ -29,10 +28,8 @@ private def pushEscape (acc : String) (c : Char) : String :=
   [hex (n / 4096 % 16), hex (n / 256 % 16), hex (n / 16 % 16), hex (n % 16)].foldl String.push
     ((acc.push '\\').push 'u')
 
-/-- Keep a diagnostic's continuations attached to its header. A filename
-and trigger use literal newline escapes; other fields use indented continuations.
-Terminal controls are data, including an escape supplied by an external tool,
-and so are the bidirectional formatting characters. -/
+/-- A diagnostic field for the terminal: each newline written as `newline`, and terminal
+controls and bidirectional formatting characters escaped as data. -/
 private def humanText (newline : String) (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     match c with
@@ -48,19 +45,8 @@ private def humanText (newline : String) (s : String) : String :=
       else if bidiControl c then pushEscape acc c
       else acc.push c
 
-/-- Severity icons share the completion line's visual vocabulary. Output
-labels distinguish formats only when the run requests several outputs.
-Internal loss categories stay in porcelain records; codes and acceptance
-policy are unchanged.
-
-Formatting is separate from filtering, as in Python warnings and logging:
-https://docs.python.org/3/library/warnings.html#warnings.formatwarning
-https://docs.python.org/3/library/logging.html#formatter-objects
-Loguru likewise keeps record fields, format, filtering and serialization
-separate: https://loguru.readthedocs.io/en/stable/api/logger.html
-Only the renderer supplies terminal styling. Message text is never a format
-template. Like a Loguru callable format, newline ownership is explicit:
-this returns no final newline; the CLI sink supplies exactly one. -/
+/-- One diagnostic as human-readable lines, with no final newline; output labels appear
+only when the run writes several outputs. -/
 public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String :=
   let icon := match d.severity with
     | .error => "✖"
@@ -79,12 +65,9 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
   let trigger := match d.trigger with
     | some t => " - " ++ humanText "\\n" t.text
     | none => ""
-  -- A loss's first line carries its total; `Ui.resolve` delivers its repeats
-  -- as notes (`Diag.foldRepeats`).
   let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
   let reason := if d.message.isEmpty then "" else
     "\n  " ++ humanText "\n  " (d.message.replace "\r\n" "\n")
-  -- This site's own particulars, beside the words its line shares.
   let detail := match d.detail with
     | some text => if text.isEmpty then "" else
         "\n  " ++ humanText "\n  " (text.replace "\r\n" "\n")
@@ -104,8 +87,7 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
     | none => ""
   head ++ scope ++ location ++ trigger ++ count ++ reason ++ detail ++ recovery ++ suggestion
 
-/-- A run's verdict line. `written` names the artifacts a failed run still
-wrote, so a reader can tell them from stale ones. -/
+/-- A run's verdict line; `written` names the artifacts a failed run still wrote. -/
 public def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat)
     (written : Array String := #[]) : String :=
   let file := humanText "\\n" file
@@ -122,8 +104,7 @@ public def humanDone (color : Bool) (file output : String) (pages ms : Nat) (not
   let file := humanText "\\n" file
   let output := humanText "\\n" output
   let noun := if pages == 1 then "page" else "pages"
-  -- A translated idiom is not a problem, so it does not print by default; the
-  -- count says there is something to read, and -v is where to read it.
+  -- Notes print only under -v; the summary counts them.
   let hint := if notes == 0 then "" else
     sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
   s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms){hint}"
@@ -134,8 +115,7 @@ public def humanAccepted (color : Bool) (counts : List (String × Nat)) : String
   let noun := if total == 1 then "loss" else "losses"
   s!"{sgr color "1;33" "accepted"}: {total} {noun} ({String.intercalate ", " parts})"
 
-/-- The `--werror` verdict, printed after the outputs (which were written:
-the flag changes the exit code, never the rendering). -/
+/-- The `--werror` verdict, printed after the outputs were written. -/
 public def humanWerror (color : Bool) (file : String) (warnings ms : Nat) : String :=
   let file := humanText "\\n" file
   let noun := if warnings == 1 then "warning" else "warnings"
@@ -170,18 +150,9 @@ private def recoveryJson : Diag.Recovery → String
   | .replacedBy replacement =>
       obj [("kind", jstr "replacedBy"), ("replacement", jstr replacement)]
 
-/-- One diagnostic as a JSON line. `loss` is the declared class, so a reader
-bands without a table and without trusting `severity`, which demotion
-rewrites; `subject` is the structured key a census groups by, so no
-consumer has to group by message text. `sites` is how many of the run's
-sites the line accounts for, absent when it is 1: a repeated wording's first
-line carries its repeats and each later one 0, so the lines' counts add up to
-the run's sites (`Diag.foldRepeats_sum_exact`). `offsets` lists every byte
-offset a diagnostic names, where its message shows only the first few;
-`detail` is the site's own particulars, beside the words its line shares;
-`carries` lists the codes whose losses the record accounts for as one
-construct's one diagnostic (`Diag.carries`), so a reader keyed on such a
-code finds its loss without reading the words. -/
+/-- One diagnostic as a JSON line: `loss` its declared class, `subject` its census key,
+`sites` the sites it accounts for (absent when 1), `offsets` every byte offset it names,
+`detail` the site's particulars, and `carries` the codes whose losses it accounts for. -/
 public def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
     ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
@@ -214,9 +185,7 @@ public def porcelainDiag (d : Diag) : String :=
     else all ++ [("carries", "[" ++ ",".intercalate (d.carries.map (jstr ·.code)) ++ "]")]
   obj all
 
-/-- A `-v` phase line. `detail` can carry a tool's own words (a version
-line, a renderer's last line of standard error), so its control characters
-are spelled out as a diagnostic's are. -/
+/-- A `-v` phase line, its control characters spelled out as a diagnostic's are. -/
 public def humanPhase (name detail : String) (ms : Nat) : String :=
   s!"{humanText "\\n" name}: {humanText "\\n" detail} ({ms} ms)"
 
@@ -232,9 +201,8 @@ public def porcelainFontPhase (detail : String) (ms : Nat) (paths : Array String
     ("ms", toString ms), ("faces", "[" ++ String.intercalate "," (paths.toList.map jstr) ++ "]"),
     ("scanned", toString scanned)]
 
-/-- A summary's cost: its wall milliseconds, then the most memory the process
-held resident while the build ran, in KiB, wherever the platform measured
-one. -/
+/-- A summary's cost: wall milliseconds, then the peak resident memory in KiB where
+measured. -/
 private def costFields (ms : Nat) (rssKiB : Option Nat) : List (String × String) :=
   ("ms", toString ms) :: (rssKiB.map fun k => [("rssKiB", toString k)]).getD []
 

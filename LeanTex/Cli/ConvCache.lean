@@ -32,10 +32,6 @@ public def Result.record? (r : Result) : Option (Except String ByteArray) :=
 public theorem inconclusive_retried_exact (why : String) (bytes : ByteArray) :
     Result.record? ⟨.inconclusive why, bytes⟩ = none := by rfl
 
-/-- **An unfinished attempt's words never reach a recorded answer.** The
-words a tool printed are annotated onto an inconclusive attempt alone
-(`PicCache.annotate`; a refusal keeps its own reason), and none is recorded
-(`inconclusive_retried_exact`). -/
 public theorem annotate_record_exact (o : PicCache.Outcome) (log : PicCache.Log) (said : String)
     (bytes : ByteArray) :
     Result.record? ⟨PicCache.annotate o log said, bytes⟩ = Result.record? ⟨o, bytes⟩ := by
@@ -53,11 +49,6 @@ public def Result.replay : Except String ByteArray → Result
   | .ok bytes => { outcome := .drawn, bytes }
   | .error why => { outcome := .refused why }
 
-/-- **A warm slot answers with the fresh attempt's outcome** (`_exact`): what
-`record?` keeps of a result replays as that result's outcome and answer, so
-a caller reading the outcome cannot tell the cache from the tool, and an
-attempt that never finished is never recorded (`inconclusive_retried_exact`):
-no warm slot turns the machine's fact into the tool's refusal. -/
 public theorem replay_record_exact (r : Result) (a : Except String ByteArray)
     (h : r.record? = some a) :
     (Result.replay a).outcome = r.outcome ∧ (Result.replay a).answer = r.answer := by
@@ -77,8 +68,7 @@ public theorem replay_record_exact (r : Result) (a : Except String ByteArray)
       simp [Result.replay, Result.answer]
   | inconclusive why => simp [Result.record?] at h
 
--- One checked envelope holds either answer. Separate success/refusal files
--- allow racing writers to leave two contradictory verdicts for one slot.
+-- One envelope holds either answer, so racing writers cannot leave two verdicts for one slot.
 public def encode (answer : Except String ByteArray) : ByteArray :=
   let (tag, payload) := match answer with
     | .ok bytes => ("O", bytes)
@@ -94,10 +84,6 @@ public def decode (bytes : ByteArray) : Option (Except String ByteArray) := do
     else if header == "E" ++ key then some (.error (← String.fromUTF8? payload))
     else none
 
-/-- **A warm answer reads back as itself** (`_exact`): a decoded success is
-never empty — an envelope no longer than its header decodes to nothing — so
-replaying what `decode` returns answers exactly that, and `cached`, read off
-`cachedResult`, answers what the slot holds. -/
 public theorem replay_decode_exact (bytes : ByteArray) (a : Except String ByteArray)
     (h : decode bytes = some a) : (Result.replay a).answer = a := by
   cases a with
@@ -121,14 +107,6 @@ public theorem replay_decode_exact (bytes : ByteArray) (a : Except String ByteAr
           · simp at h
 
 public def slotName (source : ByteArray) (recipe identity : String) : String :=
-  -- v1 could remember an interrupted process as a refusal, and v2 a run
-  -- that never started (exit 126 or 127). Boundary pictures' slots are named
-  -- here too, so v3 renders each picture once more; with no tool,
-  -- PictureAssets.previous still serves the drawing of any variant. The
-  -- version is a format tag: a conversion's slot keeps the engine it
-  -- answers in its key (`slotKey`); a boundary picture's is the tool's
-  -- answer, keyed by the tool, its refusal worded as the engine that read
-  -- it worded it (`engine-identity`).
   let variant := Flate.contentKey (String.intercalate "\u0000"
     ["vector-cache-v3", LeanTex.version, recipe, identity]).toUTF8
   Flate.contentKey source ++ "-" ++ variant ++ ".answer"
@@ -136,7 +114,6 @@ public def slotName (source : ByteArray) (recipe identity : String) : String :=
 public def atomicWrite (target : System.FilePath) (bytes : ByteArray) : IO Unit :=
   AtomicFile.write target bytes
 
--- Version queries get a smaller operational budget than conversions.
 private def versionBudgetMs : Nat := 2000
 
 private def probeVersion (tool : String) : IO PicCache.Tool := do
@@ -180,20 +157,17 @@ private def cacheDir : IO (Option System.FilePath) := do
     return some dir
   catch _ => return none
 
-/-- **The key a conversion's answer is stored under**: the format, the
-source's content key, the recipe, the tools' identity, and the engine whose
-checks and post-processing read the tools' output (`SlotRecord.lookup_exact`):
-a slot another engine wrote is read afresh and replaced. -/
+/-- The key a conversion's answer is stored under: format, the source's content key,
+recipe, tool identity and engine. -/
 public def slotKey (source : ByteArray) (recipe identity engine : String) : Array String :=
   #["conversion-v1", Flate.contentKey source, recipe, identity, engine]
 
-/-- A slot's answer, whichever engine wrote it: what a reader that checks
-only a slot's integrity reads. -/
+/-- A slot's answer, whichever engine wrote it. -/
 public def decodeSlot (bytes : ByteArray) : Option (Except String ByteArray) :=
   (SlotRecord.decode bytes).bind fun (_, record) => decode record
 
-/-- `cachedResult` through the cache in `dir`, for the engine `engine`:
-with no directory or no engine, nothing is read or written. -/
+/-- `cachedResult` through the cache in `dir` for `engine`; with neither, nothing is read
+or written. -/
 public def cachedResultIn (dir : Option System.FilePath) (engine : Option String)
     (source : ByteArray) (recipe : String) (tools : Array String)
     (eligible : Bool) (produce : IO (Result × Bool)) : IO Result := do
@@ -218,9 +192,8 @@ public def cachedResultIn (dir : Option System.FilePath) (engine : Option String
             discard <| (atomicWrite path (SlotRecord.encode key record)).toBaseIO
   return got
 
-/-- The conversion's whole result, warm or fresh, so a caller can tell the
-tool's refusal from an attempt that never finished, through the engine's
-cache (`Engine.engineId`). -/
+/-- The conversion's whole result, warm or fresh, so a caller can tell a refusal from an
+unfinished attempt. -/
 public def cachedResult (source : ByteArray) (recipe : String) (tools : Array String)
     (eligible : Bool) (produce : IO (Result × Bool)) : IO Result := do
   let dir ← if eligible then cacheDir else pure none

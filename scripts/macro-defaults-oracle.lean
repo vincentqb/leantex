@@ -1,73 +1,8 @@
 import Lean
 
-/-!
-External optional-first-argument oracle. Run from the repository root:
-
-  lake build leantex
-  lake env lean --run scripts/macro-defaults-oracle.lean --selftest
-  lake env lean --run scripts/macro-defaults-oracle.lean --report --keep
-
-The default mode fails on any difference. --report permits measured engine
-differences, but NEVER a missing/failed/drifted reference or an observation
-fault. --reference-only checks the reference pins without needing leantex.
---case NAME selects names containing NAME; --engine PATH selects a binary.
-All sources, PDFs, logs and caches live in a fresh temporary directory;
---keep retains it for inspection. Each child is a fixed executable/argv
-invocation with a timeout, never a shell. Requires LuaLaTeX, kpsewhich,
-Poppler pdftotext and GNU timeout. This is an external report, not a tier.
-
-Invariant: a match requires two successful builds, two successfully read
-PDFs, and the entire extracted text of EACH equal to the fixed expectation.
-A failed observation has no text, even if a failed build left a PDF. Only
-CRLF, form feeds and outer whitespace are normalized; interior whitespace,
-glyph order, extra ink and missing ink remain significant. This reading is
-blind to pagination, outer whitespace, geometry and font appearance, not
-to the spaces inside a parenthesized argument. --selftest breaks the
-observation contract and the declared text normalization in both directions.
-
-Source basis: latex.ltx, \@star@or@long, \@xargdef, \@testopt,
-\@protected@testopt, \@yargdef, \@yargd@f, \renew@command,
-\provide@command and \@ifnextchar (TeX Live 2026). The optional outer macro
-contains its own name, the hidden helper's name and the unexpanded default.
-It is non-long in both star modes. The helper owns the body, arity and
-longness. Therefore distinct optional names are not \ifx, while a \let
-alias preserves the old default but calls the same, possibly renewed,
-helper. Body/arity/star changes alone do not change the wrapper's identity.
-A sole brace group is stripped when a delimited argument is captured,
-including the default at definition time. An ungrouped [ does not nest.
-
-All documents are invented. Expectations come from kernel source and real
-LuaLaTeX PDFs, independently of Compat or the native parser. Each successful
-case compares real PDF text from both CLIs, with the repository's Fira Sans
-and Fira Math faces. Wrapper \meaning pins and intentional paragraph-scan
-errors are explicitly reference-only: no PDF equivalence is claimed for
-an error, and a generic failed reference cannot satisfy an error pin.
-
-The hook-scope cases also pin deferred execution: hook registration does
-not execute its payload; begin-document and end-preamble payloads change
-the state the body reads. Actual braces, \begingroup and \bgroup restore
-local flags without inserting a paragraph break. End-preamble hooks run
-before begin-document hooks even when registered later. Run just these nine
-cases with --case hook-scope.
-
-The required-argument cases distinguish an argument's delimiting braces
-from an actual group in the substituted text. Flag setters and \let run
-only where the replacement uses the argument; an unused argument is inert,
-and a repeated argument executes again in the state its first use left.
-An extra pair of explicit braces remains a local scope. Run the seven cases
-for each of direct \def, direct \newcommand and their \let aliases with
---case required-argument.
-
-The forwarded-argument cases require a replacement's trailing call to read
-its caller's operand, through direct, \let, zero-argument and chained calls.
-Repeated stateful substitution pins the order before, during and after the
-call. An incomplete grouped call is reference-only, pinned to its exact
-argument-scan error. Run these nine cases with --case forwarded-argument.
-
-The opening-space cases pin LaTeX's final \ignorespaces expansion scan.
-A nonexpandable token stops it even when compatibility later removes that
-token as log-only. Run these eight cases with --case phase-space.
--/
+/-! Optional-first-argument oracle: invented documents built by LuaLaTeX and leantex, each PDF's
+text equal to an expectation pinned from latex.ltx.
+Usage: lake build leantex && lake env lean --run scripts/macro-defaults-oracle.lean [--selftest | --report] [--reference-only] [--case NAME] [--engine PATH] [--keep] -/
 
 namespace MacroDefaultsOracle
 
@@ -117,8 +52,7 @@ private def family (kind : String) : Array Probe := Id.run do
       r"\probe[X]/\probe[]" "(X)/()"
   ]
 
--- The stored default and the explicit delimited actual undergo the same
--- single-group stripping. Pins include spaces and braces verbatim.
+-- Default and explicit actual undergo the same single-group stripping; pins are verbatim.
 private def rawGroupCases : Array Probe :=
   (#[
     ("bare", "D", "D", "D"),
@@ -139,8 +73,7 @@ private def rawGroupCases : Array Probe :=
         r"WRAPPER=macro:->\@protected@testopt \probe \\probe {" ++ captured ++ "}",
         "ARG-DEFAULT=" ++ captured, "ARG-EXPLICIT=" ++ captured] }
 
--- Independently measured LuaLaTeX PDF text; the hermetic artifact guards
--- in Tests.MacroHookScope use literal expected documents for these cases.
+-- Independently measured LuaLaTeX PDF text.
 private def hookScopeCases : Array Probe := #[
   textCase "hook-scope-begin-hook-flag"
     r"\newif\ifprobeFlag\AtBeginDocument{\probeFlagtrue}"

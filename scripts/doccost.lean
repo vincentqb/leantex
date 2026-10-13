@@ -1,54 +1,7 @@
 /-
-The document-cost gate: how the engine's memory grows with a document, and
-what its artifacts weigh. Run from the repository root after
-`lake build leantex scripts.doccost`, which builds the engine it measures and
-the modules it imports (the scoreboard builds both before any tier runs, and
-`bench --doc-cost` before its report):
-
-  lake env lean --run scripts/doccost.lean              regenerate the baseline
-  lake env lean --run scripts/doccost.lean --check      gate against the committed one
-  lake env lean --run scripts/doccost.lean --report     print what each item reads, write nothing
-  lake env lean --run scripts/doccost.lean --selftest   the judges
-  lake env lean --run scripts/doccost.lean --bench [--record] [--history <path>]
-                                                        the host's numbers (`bench --doc-cost`)
-
-Every item comes from sealed builds of invented documents
-(`scripts/DocBench.lean`) — staged corpus fonts and images, no tool on `PATH`,
-an empty `HOME`, every face file a build loads a staged one — so every
-artifact, and so every size, is a function of the repository. A growth item is
-a verdict on a ratio that moves with the host's cores and load (0.9x to 1.9x
-so far); the verdict does not, while the ratio stays inside the bound's slack.
-
-* `<family>/<format>/rss-growth`: 1000 when the peak resident set size the
-  engine states for itself, above its fixed footprint (a run that reads no
-  document), grows at most eightfold from `n` units to `4n`; 999 when it does
-  not. Linear phases read at most 4x however one hides another
-  (`phasePeak_between`), and twice that where a structure's capacity doubles
-  as it fills, so the bound never fails an engine whose needs grow linearly
-  (`growthWithin_phasePeak_covers`, `growthWithin_doubled_covers`). A term
-  quadratic in the document's size fails an item exactly when its coefficient
-  exceeds the item's headroom over `8n²` (`growthWithin_quadratic_exact`),
-  which `--report` prints (the provenance states the rule, not the figures,
-  which move with the host and the run): the gate sees a quadratic term only
-  once it is heavy at these sizes. A peak is the
-  process's own, so the verdict survives what else the host runs, where
-  milliseconds would not.
-* `<family>/<format>/rss-growth-16n`: the same bound from `4n` units to `16n`,
-  for the families whose `16n` build is cheap, where it sees a quadratic term
-  ten to eighteen times smaller than the `n` pair does.
-* `<family>/<format>/size`: 1000 minus the `4n` gate document's size class,
-  in quarter octaves of KiB, held while the artifact stays within its
-  committed class widened by an eighth of an octave each way (`heldClass`), so
-  drift of a few bytes at a boundary moves nothing. An artifact a class
-  heavier is a fall, which needs a `# lowered:` line saying why the weight is
-  worth it; so does a size item a new family or format brings, since it
-  enters below the cap.
-
-Milliseconds are reported by `bench --doc-cost`, and recorded run by run in
-`testdata/perf/documents.tsv`, whose format this tier also holds.
-`testdata/probes/u106/` holds the engine changes that show the growth items'
-power: a page-quadratic allocation fails the `16n` pair that the `n` pair
-passes, a page-linear one as heavy fails neither.
+The doccost tier over DocBench's sealed builds: per family and format, whether peak RSS grows at
+most eightfold from `n` to `4n` units, and the artifact's size class.
+Usage: lake build leantex scripts.doccost && lake env lean --run scripts/doccost.lean [--check | --report | --selftest | --bench [--record] [--history <path>]]
 -/
 import scripts.Board
 import scripts.DocBench
@@ -73,10 +26,8 @@ every feature a unit does: " ++
     s!"{g.name} {g.gate}/{4 * g.gate}{if g.far then s!"/{16 * g.gate}" else ""} {g.unit}") ++
   " — invented (scripts/DocBench.lean), each built to pdf and html in a sealed environment"
 
-/-- What a growth item can see, as a rule: the figures it bounds — each
-item's headroom and least failing term — move with the host and the run, so
-the file states the rule and `--report` prints the figures, and a
-regeneration rewrites no line it did not measure differently. -/
+/-- The provenance line stating what a growth item can see, as a rule; `--report` prints
+the figures, which move with the host. -/
 def headroomLine : String :=
   "# power: a growth item fails once a quadratic memory term c·u² exceeds its headroom over \
 8n² (growthWithin_quadratic_exact); doccost --report prints each item's headroom and least \
@@ -118,10 +69,8 @@ KiB at {4 * g.n}, over a fixed footprint of {g.fixed} KiB: {DocBench.times g.rss
       return (#[documentsLine, growthRule, headroomLine, sizeRule,
         "# size classes: " ++ String.intercalate "; " classes.toList], rows)
 
-/-- Every item's reading, written nowhere: the footprint, each pair's least
-peaks, the ratio, its headroom and the least quadratic term that fails it, and
-the larger artifact's bytes and class. What the probes in
-`testdata/probes/u106/` print. -/
+/-- Every item's reading, written nowhere: the footprint, each pair's least peaks, ratio,
+headroom and least failing quadratic term, and the artifact's bytes and class. -/
 def report : IO UInt32 := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   IO.FS.withTempDir fun dir => do

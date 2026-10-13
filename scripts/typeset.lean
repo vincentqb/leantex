@@ -1,83 +1,7 @@
 /-
-The typographic quality of the pages a document ships, committed as numbers.
-Run from the repository root:
-
-  lake env lean --run scripts/typeset.lean              regenerate the baseline
-  lake env lean --run scripts/typeset.lean --check      gate against testdata/scoreboard/typeset.tsv
-  lake env lean --run scripts/typeset.lean --selftest   break each judge once
-  lake env lean --run scripts/typeset.lean --report     every fixture's counts, losses and worst lines
-  lake env lean --run scripts/typeset.lean --report <f> one fixture's
-  lake env lean --run scripts/typeset.lean --lines <f>  one fixture's lines, judged
-  lake env lean --run scripts/typeset.lean --pages <f>  one fixture's pages and what ends each
-
-A fixture is a document under `testdata/typeset/` (`.tex`, or `.md` through
-the markdown reader), invented, representative of what a class or a surface
-sets: an article, a report, a deck, a poster, a markdown report, and the
-probes that isolate one defect each.
-
-**What is built.** Each fixture is built as the driver builds a PDF and its
-HTML page — the plan `\output{ formats = pdf, html }` declares — whatever
-the fixture declares, because the tier reads both artifacts; a fixture whose
-`\output` leaves one of them out is a fault. The stages are the driver's:
-its reader, `\input` and `\data` beside it, one preparation, a picture's
-labels measured against the provisional face and settled against the final
-one, the bibliography and the reference judge, the face set by the driver's
-own resolution (`FontAssembly.buildFontSet`), the images with their ledger,
-layout, and the losses the plan decides (`PlanLoss`, which `Driver.build`
-runs too) — over the shipped faces of `testdata/corpus/fonts` only, then the
-page emitted to its typed HTML tree, in process. The page omits the label
-and math measures, which shape a picture's `viewBox` and a formula's marks
-and neither the faces the head ships nor a diagnostic. Hermetic: no tool
-runs and no host font is scanned, so a fixture that needs a tool — a listing
-in a language no built-in highlighter reads, a picture outside the rendered
-subset — is a fault, and so is `LEANTEX_FONT`, which substitutes a face for
-an undeclared document. A fixture the driver would refuse to ship (an error
-its `\allow` does not accept, an assertion that fails) is a fault, never a
-row.
-
-**What is judged**, per fixture, as headroom (`cap - count`):
-
-  overfull       body lines past the text area beyond their protrusion
-  overflow-pt    the largest such overflow, in whole points
-  off-medium     lines, picture marks and fills with ink off the page and its bleed
-  club           a paragraph's first line alone at the foot of a page
-  widow          a paragraph's last line alone at the head of a page
-  page-hyphen    a page turn inside a hyphenated word
-  ladder         hyphenated lines following two hyphenated lines
-  runt           one-word last lines of paragraphs of two lines or more
-  split-row      table rows a page break cuts
-  split-block    headings, titles, captions, figures, displays a break cuts
-  stranded-head  a heading, or a one-line paragraph set wholly in bold or
-                 introducing a display block (a lead-in), that ends a page
-                 while what it introduces opens the next
-  short-page     a page the flow continues from whose body ends more than
-                 three lines of prose above its floor
-  fallback       text runs set in a face no text slot names
-  edge-step      flush-left lines whose opening glyph hangs other than the
-                 protrusion table grants
-  degraded       loss sites the build names whose loss is `degraded`
-  pending        loss sites the build names whose loss is `pending`
-  font-dupe      font programs the HTML page ships more than once
-
-`degraded` and `pending` count the build's own diagnostics, by site, an
-accepted one included: accepting a loss quiets the report, never the fact.
-Every other judge reads the artifact alone, so a W0005 naming an overfull
-line never excuses it. A count reaching the cap is a fault: headroom must
-stay positive for the ratchet to read it.
-
-Blind spots, declared: `overfull` judges the text area, not a line's own
-measure, which `LineOut` does not carry, so a line overrunning a list's,
-a quote's or a column's narrower measure inside the area is not seen; the
-paragraph judges read the galley's paragraphs only (a table cell, a note, a
-float are not paragraphs here); `fallback` does not see a glyph borrowed
-from another text slot's face; `short-page` and `stranded-head` know a
-declared boundary only as a top-level `\newpage` or `\pagebreak`, so one
-nested in a group reads as a page the flow continues from; `stranded-head`
-reads bold off the face a line is set in, so a lead-in written bold and set
-in a regular face (no bold face shipped) counts only by the display block it
-introduces. Parity with
-lualatex and the rhythm tier stay gated beside this one; this tier reads the
-page, not its distance from another engine's.
+The typeset tier: per invented fixture under `testdata/typeset/`, built as the driver builds it,
+each judge's count of page defects (overfull lines, clubs, widows, split rows, …) as headroom.
+Usage: lake env lean --run scripts/typeset.lean [--check | --selftest | --report [<f>] | --lines <f> | --pages <f>]
 -/
 import scripts.Board
 import LeanTex.Cli.FontAssembly
@@ -95,15 +19,12 @@ open LeanTex.Core.Layout.Quality
 def typesetDir : System.FilePath := "testdata/typeset"
 def fontsDir : System.FilePath := "testdata/corpus/fonts"
 
-/-- The tier's headroom ceiling: a constant, since raising it would raise
-every item at once. The worst count on record is the `overflow-pt` row of
-the formula paragraph; `measureAll` faults any count that reaches the cap. -/
+/-- The tier's headroom ceiling; a count reaching it is a fault. -/
 def cap : Int := 10000
 
 /-- The plan every fixture is built under: a PDF and its HTML page. -/
 def plan : Array Emit := #[.pdf, .html]
 
-/-- One fixture, built. -/
 structure Built where
   geom : Layout.Geom
   fs : Font.FontSet
@@ -133,10 +54,9 @@ def toolNeeds (doc : Ir.Doc) (inline : Array (String × String) := #[]) : Array 
     #[s!"{listings} listing(s) in a language no built-in highlighter reads"]) ++
   (if pictures == 0 then #[] else #[s!"{pictures} picture(s) outside the rendered subset"])
 
-/-- The assertions the build holds a document to, judged on the pages it
-ships (`Check.all` over `Check.Shipped.ofOut`, as the driver's gate reads
-them), as failure messages. An assertion over the PDF's bytes needs a
-written file, which this tier does not write, so it is a failure here too. -/
+/-- The assertions the build holds a document to, judged on its shipped pages as the
+driver's gate reads them; an assertion over PDF bytes fails here, since none are written.
+-/
 def assertFailures (geom : Layout.Geom) (fs : Font.FontSet) (doc : Ir.Doc) (out : Layout.Out)
     (sourceDiags : Array Diag) : Array String :=
   if doc.asserts.isEmpty then #[] else
@@ -154,8 +74,7 @@ def assertFailures (geom : Layout.Geom) (fs : Font.FontSet) (doc : Ir.Doc) (out 
 artifacts, with no tool and no host scan. -/
 def build (cache : FontEnv.Cache) (faces : Array FontDb.Face) (file : String) :
     IO (Except String Built) := do
-  -- The front door, as the driver reads a document: the decoding door, the
-  -- surface the extension selects, input execution, the declaration settled.
+  -- The front door, as the driver reads a document.
   let bytes ← match ← Input.readSource file with
     | .ok bytes => pure bytes
     | .error d => return .error s!"{file}: {d.message}"
@@ -171,8 +90,7 @@ def build (cache : FontEnv.Cache) (faces : Array FontDb.Face) (file : String) :
     match ← FontAssembly.buildFontSet pre (scanOf pre) cache (.provisional wants.math) with
     | .ok (fsPre, _, _, _) => pure (some (Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre))
     | .error _ => pure none
-  -- `Driver.elaborate` with its phases off: one elaboration, the `.sty`
-  -- records, the bibliography and the reference judge.
+  -- `Driver.elaborate` with its phases off.
   let elaborate (metric : Ir.Pic.LabelMetric) :
       IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
     let (doc, ds, spans) := Elab.runPrepared file prepared earlier metric
@@ -191,8 +109,7 @@ and judges both a PDF and an HTML page"
   match ← FontAssembly.buildFontSet doc (scanOf doc) cache .settled with
   | .error d => return .error s!"{file}: no font set: {d.message}"
   | .ok (fs, doc, fontDiags, _) =>
-    -- The settle step: elaborate again where the provisional face measured
-    -- a picture's labels differently from the settled one.
+    -- Elaborate again where the provisional face measured labels differently.
     let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
     let settled := match provisional with
       | some m => FontFix.agree m metric (FontFix.probes doc.body)
@@ -444,8 +361,6 @@ room {room}{next}"
     return 0
 
 
-/-! ## Selftest -/
-
 /-- A text run of `w` points setting `cs`, its advance shared by its glyphs. -/
 def stRun (w : Int) (cs : String) (attr : Layout.Attribution := .leaf 0) (face : Nat := 0)
     (math : Bool := false) : Layout.Seg :=
@@ -687,12 +602,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
       lossSites .pending #[Diag.of .W0005 "a", Diag.of .W0307 "c"] == 1)
   no "losses: a folded record counts every site it carries"
     (lossSites .degraded #[{ Diag.of .W0005 "a" with sites := 3 }, { Diag.of .W0005 "a" with sites := 0 }] == 3)
-  -- The rows: every judge once, each reading its own count. One fixture of
-  -- gadgets, each page pair on a frame origin of its own so no boundary
-  -- joins two gadgets, whose seventeen counts are pairwise distinct: a
-  -- judge wired to another's row, or two rows swapped, reads a number its
-  -- row does not hold. Leaves: paragraphs 0 and 1, headings 2–12, and ten
-  -- table rows of two cells, 13–32.
+  -- The rows: one fixture whose seventeen counts are distinct, so a miswired judge shows.
   let mapTree : Struct.Tree :=
     { children := #[.node .paragraph #[.leaf 0 (.text "p")], .node .paragraph #[.leaf 1 (.text "q")]] ++
         (List.range 11).toArray.map (fun i => .node (.heading .h2) #[.leaf (2 + i) (.text "h")]) ++
@@ -709,8 +619,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
   let ys (n : Nat) (top : Int) : Array Int :=
     (List.range n).toArray.map fun (i : Nat) => top + 12 * (i : Int)
   let pages : Array Layout.PageOut :=
-    -- seven lines past the text area by 13, 1 … 6 pt; two lines below the
-    -- page, two picture marks and two fills past its edge
+    -- seven lines over by 13, 1 … 6 pt; two lines below the page; two marks and fills past it
     #[{ stPage ((#[13, 1, 2, 3, 4, 5, 6].map fun pt => bare (overBy pt)) ++
           #[bare (stLine 100 805 #[stRun 50 "low"]), bare (stLine 300 805 #[stRun 50 "low"])])
         (origin 0) with

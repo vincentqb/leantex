@@ -1,47 +1,7 @@
 /-
-External math-alphabet differential. Run from the repository root:
-
-  lake build leantex
-  lake env lean --run scripts/math-alphabet-diff.lean
-  lake env lean --run scripts/math-alphabet-diff.lean --point-units
-  lake env lean --run scripts/math-alphabet-diff.lean --selftest
-
-This is a report, never a hermetic gate. Work products stay below
-`.lake/math-alphabet-diff`. Ghostscript's txtwrite TextFormat=0 reads the
-complete extracted character sequence of each PDF, including every span.
-UTF-16 pairs become one scalar; multi-scalar spans retain every character.
-Malformed or absent observations are MISSING, never a first-glyph match.
-
-PASS requires equal nonempty sequences of scalar, normalized font name,
-point size and character bounding-box width. Face, size and width also have
-separate verdict columns: a face match cannot hide a size or width DIFF.
-Size is truncated to thousandths of a PDF point; width is the integer
-character box at 720 dpi (0.1 pt per unit), not the PDF pen's advance. Its
-quantization can depend on placement. Equality of these observations proves
-neither font-program identity, glyph outlines nor full page-layout parity.
-
-The generated input explicitly selects 10bp text with 12bp leading, then
-matches the math x-height. LaTeX's size10.clo default is 10 TeX points
-(72/72.27 PDF points each); LeanTex's Dim and Decl define a point as 1/72
-inch. Leaving both defaults implicit compares different physical inputs.
-The explicit bp declaration controls the input, never the PDF observations:
-rounding differences in emitted sizes and boxes still count as DIFF.
-`--point-units` replays implicit defaults, explicit 10pt and explicit 10bp
-on a text-sourced `\mathrm{d}` followed by a math-sourced `\symup{x}`, for
-each face. These twelve controls use the same reader and exact comparator;
-the unmatched inputs and remaining rounding differences stay DIFF. Their
-work products stay separately below `.lake/math-alphabet-point-units`.
-
-The preamble deliberately assigns the shipped OpenSans family to all three
-text slots. That does not test distinct serif/sans/mono faces. Only the PDF's
-six-uppercase-letter subset tag, exact Ghostscript CMap suffixes and
-documented aliases below are normalized.
-
-The four-face matrix is bounded, not full unicode-math compatibility. It
-includes nested alphabets, fallback and both source policies. It omits bm's
-bold-math-version behavior and some legacy-command Greek cases. A reference
-that fails to build, produces no text or cannot be read is not a match;
-its reason stays on the row. Renderer differences are never exemptions.
+Math-alphabet differential: each case's glyph sequence (scalar, font, size, width) from LuaLaTeX
+and leantex, read with Ghostscript's txtwrite; both set 10bp text. A report.
+Usage: lake build leantex && lake env lean --run scripts/math-alphabet-diff.lean [--point-units | --selftest]
 -/
 
 import LeanTex
@@ -61,19 +21,16 @@ structure FaceCase where
   path : String
   deriving Repr, Inhabited
 
-/-- One differential row: a math body set under a chosen source policy.
-`sym` picks the `mathX=sym` override preamble; otherwise the body runs under
-unicode-math's default (text-sourced legacy alphabets). There is
-deliberately no scalar-only field: every row compares the full glyph fact. -/
+/-- One differential row: a math body under the `mathX=sym` override preamble (`sym`) or
+unicode-math's default text-sourced policy. -/
 structure Case where
   label : String
   body : String
   sym : Bool := true
   deriving Repr, Inhabited
 
-/-- Single-scalar anchors plus sequences exercising the same reader and
-comparator. The `sym` policy overrides legacy alphabet sources; explicit
-`\sym…` commands remain symbol-sourced under either policy. -/
+/-- Single-scalar anchors plus sequences; the `sym` policy overrides legacy alphabet
+sources, and explicit `\sym…` commands stay symbol-sourced under either. -/
 def cases : List Case :=
   -- sym-source single-letter anchors
   [ { label := "bb O", body := "\\mathbb{O}" },
@@ -125,8 +82,7 @@ def cases : List Case :=
     { label := "bsym alpha", body := "\\boldsymbol{\\alpha}" },
     { label := "bsym Gamma", body := "\\boldsymbol{\\Gamma}" },
     { label := "bsym(cal A)", body := "\\boldsymbol{\\mathcal{A}}" },
-    -- text (default) policy: the legacy alphabets now project to a real
-    -- text family and the face is held to LuaLaTeX's, not just the scalar.
+    -- text (default) policy: legacy alphabets project to a text family, held to LuaLaTeX's.
     { label := "text rm d", body := "\\mathrm{d}", sym := false },
     { label := "text bf x", body := "\\mathbf{x}", sym := false },
     { label := "text it y", body := "\\mathit{y}", sym := false },
@@ -163,21 +119,18 @@ def cases : List Case :=
     { label := "symbfit X", body := "\\symbfit{X}" },
     { label := "symbfit Gamma", body := "\\symbfit{\\Gamma}" } ]
 
-/-- Read one exactly named, quoted attribute in Ghostscript's line format.
-Missing, duplicated or unterminated attributes are not observations. -/
+/-- One exactly named, quoted attribute in Ghostscript's line format; a missing,
+duplicated or unterminated one is no observation. -/
 def attrOf (line attr : String) : Option String := do
   let [_, after] := line.splitOn (" " ++ attr ++ "=\"") | none
   let value :: _ :: _ := after.splitOn "\"" | none
   some value
 
-/-- Add an alias only with evidence that the two names refer to the same
-input font file, documenting that file beside the entry. No aliases today;
-family, weight, italic and slot differences must remain differences. -/
+/-- Font-name aliases, each only with evidence that both names are one input file. -/
 def fontAlias : List (String × String) := []
 
-/-- ISO 32000 subset tags have six uppercase ASCII letters. The exact
--Identity-H/V suffix is Ghostscript's font/CMap spelling. This compares
-resource names, not the bytes of embedded font programs. -/
+/-- A font resource name without its ISO 32000 subset tag and Ghostscript's -Identity-H/V
+suffix. -/
 def normFont (s0 : String) : String :=
   let s1 := match s0.splitOn "+" with
     | [tag, rest] =>
@@ -202,8 +155,7 @@ def hexNatGo (n : Nat) : List Char → Option Nat
     let d ← hexDigit c
     hexNatGo (n * 16 + d) rest
 
-/-- Ghostscript emits one scalar or UTF-16 code unit in each char attribute.
-Decode only that spelling, not the first character of arbitrary text. -/
+/-- One char attribute's scalar or UTF-16 code unit, in Ghostscript's spelling only. -/
 def codeUnit (s : String) : Option Nat :=
   if s.startsWith "&#x" && s.endsWith ";" then
     let digits := ((s.drop 3).dropEnd 1).toString.toList
@@ -237,8 +189,8 @@ def milli (s : String) : Option Int := do
   let (mantissa, scale) ← Decl.parseDecimal s
   pure (mantissa * 1000 / (scale : Int))
 
-/-- Horizontal extent in Ghostscript's integer device coordinates. Require
-the whole box even though this report compares only its width. -/
+/-- Horizontal extent in Ghostscript's integer device coordinates, the whole box required.
+-/
 def bboxX (s : String) : Option (Int × Int) := do
   let [a, b, c, d] := (s.splitOn " ").filter (!·.isEmpty) | none
   let x0 ← a.toInt?
@@ -247,11 +199,8 @@ def bboxX (s : String) : Option (Int × Int) := do
   let y1 ← d.toInt?
   if x0 ≤ x1 && y0 ≤ y1 then some (x0, x1) else none
 
-/-- Read Ghostscript txtwrite TextFormat=0, not arbitrary XML. A bad span
-invalidates the observation, including when a later span is well formed.
-Every character survives; a UTF-16 pair gets the union of its two boxes
-(Ghostscript normally puts the width on the high unit and zero on the low).
-Span segmentation is not part of the comparison. -/
+/-- Ghostscript txtwrite TextFormat=0 read into glyph facts: a bad span invalidates the
+observation, every character survives, and a UTF-16 pair takes the union of its boxes. -/
 def parseGlyphs (xml : String) : Except String (Array GlyphFact) := do
   let mut out : Array GlyphFact := #[]
   let mut span : Option (String × Int × Nat) := none
@@ -312,8 +261,7 @@ structure Comparison where
   width : Bool
   deriving Repr, BEq
 
-/-- Each axis compares complete sequences. Face alone is blind to size and
-width; the overall verdict is not. Empty observations never pass. -/
+/-- Each axis compares complete sequences; empty observations never pass. -/
 def compareGlyphs (r e : Array GlyphFact) : Comparison :=
   { face := !r.isEmpty && r.map (fun g => (g.scalar, g.font)) == e.map (fun g => (g.scalar, g.font))
     size := !r.isEmpty && r.map (·.sizeMilli) == e.map (·.sizeMilli)
@@ -346,13 +294,10 @@ def preambleFor (c : Case) : String :=
     "\\usepackage[mathrm=sym,mathit=sym,mathbf=sym,mathsf=sym,mathtt=sym]{unicode-math}\n"
   else "\\usepackage{unicode-math}\n"
 
-/-- The physical input shared by the matrix: see `texSource` for the
-LaTeX and LeanTex unit definitions that require this declaration. -/
+/-- The physical body size both engines set (see `texSource`). -/
 def matchedBodySize : String := "\\fontsize{10bp}{12bp}\\selectfont\n"
 
-/-- Negative controls replay the old implicit setup and explicitly name
-its TeX unit. The positive input control names the shared PDF unit; it
-does not predict equality of the artifacts' rounded font sizes. -/
+/-- Point-unit controls: the implicit defaults, explicit 10pt and explicit 10bp. -/
 def pointUnitCases : List (Case × String) :=
   [({ label := "implicit defaults", body := "\\mathrm{d}\\symup{x}", sym := false }, ""),
    ({ label := "explicit 10pt", body := "\\mathrm{d}\\symup{x}", sym := false },
@@ -360,12 +305,8 @@ def pointUnitCases : List (Case × String) :=
    ({ label := "explicit 10bp", body := "\\mathrm{d}\\symup{x}", sym := false },
      matchedBodySize)]
 
-/-- The same explicit input files and physical body size in both engines.
-`size10.clo` selects 10 TeX pt; `Dim.inch` and `Decl.unitScale_consistent`
-define LeanTex's pt as bp. LaTeX's `\set@fontsize` (latex.ltx) honours the
-explicit unit, so select 10bp in the body instead of comparing defaults.
-The text slots are aliased deliberately; this matrix does not exercise
-distinct slot faces. -/
+/-- The same input files and body size in both engines: LaTeX's size10.clo sets 10 TeX pt
+and leantex's pt is bp, so the body selects 10bp. -/
 def texSource (bodyFontDir : String) (face : FaceCase) (c : Case)
     (sizeSetup : String := matchedBodySize) : String :=
   let p := System.FilePath.mk face.path
@@ -394,10 +335,7 @@ def extract (root work : System.FilePath) (tag : String)
     "-sDEVICE=txtwrite", "-dTextFormat=0", s!"-sOutputFile={xml}", pdf.toString] root
   return parseGlyphs (← IO.FS.readFile xml)
 
-/-- Positive observations and adversarial neighbours. The first twelve
-checks reproduce the review's fail-first witnesses on the old reader and
-comparator; sequence checks now retain all spans rather than requiring a
-single glyph. No external tool is needed for these guards. -/
+/-- Positive observations and adversarial neighbours, needing no external tool. -/
 def selftest : IO UInt32 := do
   let page (s : String) := "<page>\n" ++ s ++ "\n</page>\n"
   let sample := "<span bbox=\"1 2 9 12\" font=\"ABCDEF+FiraMath-Regular-Identity-H\" size=\"10.000\">\n" ++

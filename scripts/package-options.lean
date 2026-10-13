@@ -1,24 +1,8 @@
 import Tests.PackageOptions
 
-/-!
-Synthetic package-option oracle, independent of installed style packages.
-Build the imports before running:
-
-  lake build Tests.PackageOptions
-  lake env lean --run scripts/package-options.lean [--engine-only]
-
-The engine check loads a real local .sty and judges Layout.Out and typed
-HTML. The reference check builds the same invented styles with LuaLaTeX
-and reads their PDF text with pdftotext. Both compare against committed
-expectations, never against an answer produced by the resolver. TeX needs
-only its kernel/article class; all package files and caches are temporary.
-
-This checks literal scheduling, not arbitrary TeX expansion, CurrentOption,
-global class options or PassOptionsToPackage. Unknown caller options without
-a handler, or left unprocessed, must raise W0110 in the engine. LuaLaTeX
-rejects those sources; the engine ships the independently specified control
-page with that loss named, rather than claiming an error-free TeX build.
--/
+/-! Package-option oracle: literal option scheduling over a real local .sty, judged on Layout.Out
+and HTML, and the same invented styles under LuaLaTeX.
+Usage: lake build Tests.PackageOptions && lake env lean --run scripts/package-options.lean [--engine-only] -/
 
 open LeanTex.Core
 
@@ -50,8 +34,7 @@ private def referenceChecks (ref : IO.Ref (List String)) : IO Unit := do
       let text ← IO.Process.output {
         cmd := "pdftotext"
         args := #["-enc", "UTF-8", (dir / "host.pdf").toString, "-"] }
-      -- Remove only the extractor's page separator and trailing newline;
-      -- spaces within the rendered text remain significant.
+      -- Only the extractor's page separator and trailing newline go; inner spaces are significant.
       let actual := (text.stdout.replace "\x0c" "").trimAscii.toString
       t s!"LuaLaTeX {name}: PDF text '{actual}' = '{expected}'"
         (text.exitCode == 0 && actual == expected)

@@ -6,9 +6,7 @@ namespace CiteEnv
 
 open Lean
 
--- Source identifier spelling is not a lossless transport for kernel names:
--- hygienic names and components containing an escape delimiter do not parse.
--- Keep the component kind and bytes, leaf first, in both worker directions.
+-- Kernel names travel as component kind and bytes, leaf first, which identifiers cannot carry.
 inductive NamePart where
   | str (value : String)
   | num (value : Nat)
@@ -65,11 +63,8 @@ public structure Request where
   named : Array Query := #[]
   deriving FromJson, ToJson
 
-/-- A declaration a named query resolves to, and whether it forms types: an
-inductive, structure or class, a constructor, or a definition whose result
-past every binder is a sort (a type alias, a predicate). A rule document's
-pin names the check that holds a rule, and a type is vocabulary, which holds
-nothing. -/
+/-- A declaration a named query resolves to, and whether it forms types: an inductive,
+structure, class, constructor, or a definition whose result is a sort. -/
 public structure Resolved where
   name : Name
   typeFormer : Bool
@@ -84,9 +79,8 @@ public structure Response where
 
 public def moduleFile (name : String) : String := name.replace "." "/" ++ ".lean"
 
-/-- Inventory paths contain raw module components, including dashed script
-names. Construct those components directly; String.toName parses identifiers
-and rejects these names unless each component is quoted. -/
+/-- A module name from raw inventory components, dashed script names included, which
+`String.toName` would reject. -/
 def toModuleName (name : String) : Name :=
   (name.splitOn ".").foldl Name.str .anonymous
 
@@ -100,9 +94,8 @@ public def requireCompiled (modules : Array String) : IO Unit := do
       throw <| IO.userError s!"cites: no compiled {moduleFile name}. \
         Build every maintained source first: lake build '+{quoted}:olean'"
 
-/-- Import private declarations and server metadata without executing project
-initializers. Alias extension state is not initialized in this mode, but its
-persisted entries remain available. -/
+/-- Import private declarations and server metadata without running project initializers.
+-/
 def load (modules : Array String) : IO Environment := do
   requireCompiled modules
   let env ← importModules (modules.map fun name => { module := toModuleName name }) {}
@@ -122,8 +115,8 @@ def moduleIndices (env : Environment) (modules : Array String) :
     out := out.push (i, name)
   return out
 
-/-- Only compiled docstrings count. Keep the kernel name for metadata lookup,
-and the user name for the report and the declaration's namespace. -/
+/-- The compiled docstring sites of `modules`, by kernel name for lookup and by user name
+for the report. -/
 def sites (env : Environment) (modules : Array String) : IO (Array Site) := do
   let mut out := #[]
   for (i, name) in ← moduleIndices env modules do
@@ -161,10 +154,9 @@ def shortIndex (env : Environment) (modules : Array String) : IO NameIndex := do
       idx := indexName idx name aliasName
   return idx
 
-/-- The complete declarations a token names from a module and namespace.
-Restoring the declaring module lets Lean resolve its private names itself.
-A resolver answer with projection suffixes is not a declaration, and reserved
-names count only after the compiler has actually created their constants. -/
+/-- The complete declarations a token names from a module and namespace; a
+projection-suffixed answer is no declaration, and reserved names count only once created.
+-/
 def resolvedIn (env : Environment) (moduleName : String) (ns : Name)
     (opens : List OpenDecl) (token : String) : List Name :=
   ((ResolveName.resolveGlobalName (env.setMainModule (toModuleName moduleName)) {}
@@ -185,9 +177,7 @@ def verdict (env : Environment) (idx : NameIndex) (q : Query) : Verdict :=
   else if (origins idx q.token).any fun (m, ns) => resolvesIn env m ns [] q.token then .tree
   else .phantom
 
-/-- Every declaration a query's token names through either tier, each once:
-what `verdict` asks only the existence of. A pin that must name one
-declaration reads this, so two theorems sharing a short name are seen. -/
+/-- Every declaration a query's token names through either tier, each once. -/
 def resolutions (env : Environment) (idx : NameIndex) (q : Query) : Array Name := Id.run do
   let mut out : Array Name := #[]
   for n in resolvedIn env q.moduleName q.ns [] q.token do
@@ -203,8 +193,8 @@ def resolvedOf (env : Environment) (n : Name) : Resolved :=
       | some info => info.type.getForallBody.isSort
       | none => false }
 
-/-- Each worker owns one imported environment. Its process exits before the next
-batch starts, releasing Lean's imported memory regions as well as the values. -/
+/-- One batch in its own worker process, which exits before the next starts, releasing the
+imported environment. -/
 public def run (request : Request) : IO Response := do
   searchPathRef.set (request.paths.toList.map System.FilePath.mk)
   let env ← load request.modules

@@ -1,44 +1,7 @@
 /-
-Regenerate LeanTex/Core/PygmentsLexData.lean,
-testdata/highlight/pygments-rules.txt and testdata/highlight/LICENSE-Pygments
-from an installed Pygments. Run from
-the repository root with:
-
-  lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>]
-
-The interpreter defaults to `python3`. Pygments is the module it imports,
-or else the wheel TeX Live installs beside its `latexminted` launcher: the
-two places the listing provider reads it from (LeanTex/Cli/ListingHighlight.lean).
-Which Pygments a lualatex build's minted runs is the build's own choice
-(a project may pin one in a virtual environment ahead of TeX Live's), so
-the mirror tracks one release, the one the data names, and regenerating
-for another is a deliberate step: an interpreter that imports it, such as
-a virtual environment holding `pygments==<version>`, passed as `--python`.
-
-The native lexers (LeanTex/Core/Highlight/) mirror Pygments' Lean 4,
-Python, Bash and Bash-session lexers rule by rule. What they read as data
-comes from here:
-- every word list a rule matches, from the rule itself (a `words` list, or
-  an alternation whose shape the bridge checks before reading it);
-- every character class whose membership is Unicode's, probed through the
-  installed Python's `re` on all scalars: `\w`, `\s`, `\d`, and the two
-  name patterns the Lean 4 and Python lexers define;
-- the registry aliases that select each lexer, and every alias the
-  registry holds: the lexer names a listing's language may spell.
-
-What they read as code is the rule structure. The bridge writes it out,
-word lists and the large classes named rather than spelled, to
-testdata/highlight/pygments-rules.txt, and its SHA-256 into the data; the
-mirror declares the digest of the structure it implements
-(`Highlight.mirrorsRules`), and the suite holds the two equal. A Pygments
-whose rules moved regenerates a different digest, and the suite fails until
-the mirror follows.
-
-The bridge also refuses a Pygments whose `words` lists stop meaning "the
-longest listed word the suffix admits", whose ASCII class members leave
-the lexers' fast paths, whose `(?i)` prefixes fold beyond ASCII, or whose
-mirrored lexers have a `default` that pushes a state without reading,
-which the native drive (`Highlight.drive`) reads as no match.
+Regenerate LeanTex/Core/PygmentsLexData.lean and testdata/highlight's rules and licence from an
+installed Pygments: the native lexers' data and their rules' digest.
+Usage: lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>]
 -/
 import Lean.Data.Json
 
@@ -48,8 +11,8 @@ def die (msg : String) : IO α := do
   IO.eprintln msg
   IO.Process.exit 1
 
-/-- Constant program, run isolated (`-I`): no working directory, user site
-or PYTHONPATH reaches the import. -/
+/-- The constant bridge program, run isolated (`-I`) so no working directory, user site or
+PYTHONPATH reaches the import. -/
 def bridge : String := r#"import hashlib
 import json
 import keyword

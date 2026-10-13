@@ -1,46 +1,7 @@
 /-
-`land` — the landing procedure, as a one-shot scriptable command.
-
-  land new <name>          create and seed a worktree for agent/<name>
-  land check <name>        preconditions and gates, no merge
-  land <name> [--push]     land agent/<name> onto main
-  land push                publish the last landing to the remote's main
-  land retire <name>       remove a merged, clean worktree and its branch
-  land status              porcelain listing of the agent worktrees
-  land --selftest          drive the pure core over scripted observations
-  land --scratch-selftest  drive the driver against throwaway repositories
-
-Output is porcelain and nothing else: one `land: step=… result=…` line per
-step, one `land: result=…` line at the end. A value carrying whitespace or a
-quote is quoted, so a `k=v` reader cannot be walked off the end of a value.
-Exit 0 ok, 1 gate failed, 2 precondition or conflict, 3 internal, 4 landed on
-`main` but not known to be on the remote (`result=landed-unpushed`).
-Composition is left to the caller — this tool never drives a terminal, never
-prompts, and never loops.
-
-The decisions live in `scripts/LandCore.lean`; this file is only the
-boundary. Every command's output is written to
-`$(git rev-parse --git-common-dir)/land/<run-id>/<step>.log` and every fact
-the core acts on is *read back from a file* — never from a return value a
-summarizer could have shortened. Standard output and standard error go to
-separate files and only standard output is parsed: a git warning on stderr
-once became part of a "fact" and reported a clean worktree as dirty.
-
-The gates run in the run's own gate tree — a detached worktree,
-`<run dir>/tree`, made at the branch's tip as the run read it, rebased there
-onto `main` as the run read it, seeded with a copy of a `.lake`, and removed
-when the run ends — never in the branch's worktree, whose owner may commit,
-switch or edit while the landing runs. The landing never writes the branch
-or its worktree: it reads them.
-
-The landing never resolves a conflict either. A conflict outside the
-union-merged files is a refusal with exit 2 that touches nothing of the
-owner's; the branch's owner rebases and resolves it in their own worktree,
-then reruns `land check`. The tool never guesses how to reconcile conflicting
-implementations or specifications. A branch landed onto a `main` that had
-moved keeps its original commits: the ledger records the tip it read, and
-`land retire` reads that. A prose report of repository state is read from
-the ledger and the refs, as a claim about a page is read from the page.
+`land`: the landing procedure as a porcelain command over `scripts/LandCore.lean`; exit 0 ok, 1
+gate failed, 2 precondition or conflict, 3 internal, 4 landed but not known pushed.
+Usage: land new <name> | check <name> | <name> [--push] | push | retire <name> | status | --selftest | --scratch-selftest
 -/
 import scripts.LandCore
 
@@ -51,8 +12,7 @@ def trimWs (s : String) : String :=
   let cs := s.toList.dropWhile (·.isWhitespace)
   String.ofList (cs.reverse.dropWhile (·.isWhitespace)).reverse
 
-/-- Split on runs of whitespace. Spelled over characters rather than through
-a split combinator so the driver depends on no iterator API. -/
+/-- Split on runs of whitespace. -/
 def wsSplit (s : String) : List String := Id.run do
   let mut out : List String := []
   let mut cur : String := ""
@@ -71,15 +31,12 @@ structure Env where
   /-- ISO-8601 UTC, for the ledger. -/
   ts : String
   childEnv : Array (String × Option String)
-  /-- An exclusive lock on `<run dir>/alive`, held for the whole run: how
-  retention tells a live run's directory from a dead one's. Unlocked at the
-  very end of `main`, which is also what keeps the handle — and so the lock
-  — alive until then. -/
+  /-- An exclusive lock on `<run dir>/alive`, held for the whole run, which tells a live
+  run's directory from a dead one's. -/
   alive : IO.FS.Handle
 
-/-- A porcelain value: quoted when it holds whitespace, a quote, or nothing
-at all. Every `why` holds spaces and a conflicted path may, so an unquoted
-`k=v` line cannot be parsed back. -/
+/-- A porcelain value, quoted when it holds whitespace, a quote, a backslash or nothing at
+all. -/
 def pv (v : String) : String :=
   let needs := v.isEmpty || v.any fun c => c.isWhitespace || c == '"' || c == '\\'
   if !needs then v else
@@ -99,22 +56,19 @@ def sayFinal (v : Verdict) (kvs : List (String × String) := []) : IO Unit :=
   IO.println <| s!"land: result={v.name}"
     ++ String.join (kvs.map fun (k, x) => s!" {k}={pv x}")
 
-/-- What one command produced: its exit code, its standard output, and its
-standard error — kept apart, because only the first is a fact about the
-repository. -/
+/-- What one command produced: its exit code, standard output and standard error, kept
+apart since only the first two are facts about the repository. -/
 structure Ran where
   code : Nat
   out : String
   err : String
   /-- The standard output's bytes, as the run directory holds them. -/
   bytes : ByteArray := .empty
-  /-- Whether those bytes were UTF-8, so `out` is them unchanged;
-  `outputText` spelled them otherwise. -/
+  /-- Whether those bytes were UTF-8, so `out` is them unchanged. -/
   exact : Bool := true
 
-/-- Bytes spelled one-to-one as text: each well-formed UTF-8 sequence as its
-character with every backslash doubled, and each byte no sequence claims as
-`\xHH`. Two byte strings spell alike exactly when they are alike. -/
+/-- Bytes spelled one-to-one as text: each well-formed UTF-8 sequence as its character
+with backslashes doubled, every other byte as `\xHH`. -/
 def spelledText (bs : ByteArray) : String := Id.run do
   let hex (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (55 + n)
   let mut out := ""
@@ -131,35 +85,21 @@ def spelledText (bs : ByteArray) : String := Id.run do
       i := i + 1
   return out
 
-/-- A command's output as the core reads it: UTF-8 as itself, and output that
-is not — a patch holding a fixture in an 8-bit encoding, which the net
-comparison lists whole — as `spelledText` spells it. Where two outputs are
-compared and either was not UTF-8, both are read through `spelledText`, so
-they compare alike exactly when their bytes do. -/
+/-- A command's output as the core reads it: UTF-8 as itself, anything else as
+`spelledText` spells it. -/
 def outputText (bs : ByteArray) : String :=
   match String.fromUTF8? bs with
   | some s => s
   | none => spelledText bs
 
-/-- Run a command; write its two streams to separate files inside the run
-directory, read them back, and return what the files said. The read-back is
-the contract: the core is fed bytes that survived a round trip through the
-filesystem, as `outputText` spells them. Both streams are read as bytes, by
-tasks of their own so neither pipe can fill and stall the other. Children
-get a null standard input and `GIT_TERMINAL_PROMPT=0`, so a command that
-would ask a human instead fails. -/
+/-- Run a command with its two streams written to separate files in the run directory and
+read back; children get a null standard input and `GIT_TERMINAL_PROMPT=0`. -/
 def sh (e : Env) (ctr : IO.Ref Nat) (step cmd : String) (args : Array String)
     (cwd : Option String := none) : IO Ran := do
   let n ← ctr.modifyGet (fun k => (k, k + 1))
   let outPath := s!"{e.runDir}/{step}.{n}.out"
   let errPath := s!"{e.runDir}/{step}.{n}.err"
-  -- Flush before the spawn. Measured on the scratch repository: when an exec
-  -- fails, the child flushes its inherited copy of this process' unflushed
-  -- stdout buffer into the captured pipe, and those bytes come back *as the
-  -- child's stdout* — the porcelain lines appeared inside a gate log, and a
-  -- probe parsed that way would have read narration for state. The refusal
-  -- path held (the text is not a sha, so `isSha` rejects it), but the cause
-  -- is removed rather than relied upon.
+  -- Flush first: a failed exec writes the inherited stdout buffer into the captured pipe.
   (← IO.getStdout).flush
   let r : UInt32 × ByteArray × ByteArray ← try
       let child ← IO.Process.spawn
@@ -187,13 +127,9 @@ def git (e : Env) (ctr : IO.Ref Nat) (step : String) (args : Array String)
     (cwd : Option String := none) : IO Ran :=
   sh e ctr step "git" args cwd
 
--- ## Discovery
-
-/-- The variables that point git at a repository, an index, an object store,
-a ref namespace or a config other than the ones a command's working
-directory names. git's own list (`rev-parse --local-env-vars`, as of git
-2.47) plus `GIT_NAMESPACE`, which moves every ref a command reads. The driver
-asks git for the list as well, so a later git's addition is scrubbed too. -/
+/-- The variables that point git at another repository, index, object store, ref namespace
+or config: git's own list plus `GIT_NAMESPACE`; the driver also asks git for its current
+list. -/
 def repoVarsFixed : Array String := #[
   "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
@@ -201,9 +137,8 @@ def repoVarsFixed : Array String := #[
   "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR",
   "GIT_NAMESPACE"]
 
-/-- The name of every environment variable of this process that starts with
-`GIT_`, read from `/proc/self/environ` (NUL-separated `name=value`); empty
-where that file cannot be read. -/
+/-- The name of every `GIT_` environment variable of this process, read from
+`/proc/self/environ`; empty where it cannot be read. -/
 def gitVarsInEnv : IO (Array String) := do
   let bytes ← try IO.FS.readBinFile "/proc/self/environ" catch _ => pure ByteArray.empty
   let mut out : Array String := #[]
@@ -222,11 +157,7 @@ def gitVarsInEnv : IO (Array String) := do
 def childEnvVars : IO (Array (String × Option String)) := do
   let cc ← IO.getEnv "LEAN_CC"
   let lp ← IO.getEnv "LIBRARY_PATH"
-  -- Never inherited: a variable naming another repository. git exports
-  -- `GIT_DIR` and `GIT_INDEX_FILE` to a hook in every linked worktree, so a
-  -- landing started from a hook would otherwise probe, rebase and gate the
-  -- hook's repository — and a gate running `git` in the gate tree would read
-  -- the hook's index. The repository is the one the working directory names.
+  -- Never inherited: a variable naming another repository, as git exports to hooks.
   let scrub0 : Array (String × Option String) := repoVarsFixed.map (·, none)
   let r ← try
       IO.Process.output
@@ -236,8 +167,7 @@ def childEnvVars : IO (Array (String × Option String)) := do
   let asked := if r.exitCode == 0 then (wsSplit r.stdout).toArray else #[]
   let names := asked.foldl (init := repoVarsFixed) fun acc n =>
     if acc.contains n then acc else acc.push n
-  -- Never inherited either: a child that can prompt can hang a scripted
-  -- landing.
+  -- Never inherited either: a child that can prompt can hang a scripted landing.
   let mut out : Array (String × Option String) :=
     names.map (·, none) |>.push ("GIT_TERMINAL_PROMPT", some "0")
   if cc.isNone then
@@ -250,10 +180,8 @@ def childEnvVars : IO (Array (String × Option String)) := do
       out := out.push ("LIBRARY_PATH", some s!"{p}/lib:{p}/lib/lean")
   return out
 
-/-- The run directory has to exist before anything can be logged, so the
-three probes that locate it are the only commands outside `sh`. They are
-written back to `bootstrap.log` as soon as the directory exists, which is
-what keeps the "every fact from a file" claim true of them too. -/
+/-- The three probes that locate the run directory run before it exists, and are written
+back to `bootstrap.log` once it does. -/
 def mkEnv : IO (Except String Env) := do
   let childEnv ← childEnvVars
   let trace ← IO.mkRef ""
@@ -280,8 +208,7 @@ def mkEnv : IO (Except String Env) := do
         { cmd := "date", args := #["-u", "+%Y%m%dT%H%M%S%N %Y-%m-%dT%H:%M:%SZ"] }
     catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
   let stamps := wsSplit (if d.exitCode == 0 then d.stdout else "run -")
-  -- Nanoseconds after the seconds, fixed width, so run ids sort by time
-  -- within a second too; the pid, so two runs in one nanosecond still differ.
+  -- Fixed-width nanoseconds sort run ids within a second; the pid separates equal ones.
   let runId := (stamps.headD "run") ++ s!"-{← IO.Process.getPID}"
   let ts := stamps.getD 1 "-"
   let runDir := s!"{common}/land/{runId}"
@@ -294,11 +221,8 @@ def mkEnv : IO (Except String Env) := do
 def rmQuiet (p : System.FilePath) : IO Unit := do
   try IO.FS.removeDirAll p catch _ => pure ()
 
-/-- Is the run that owns this directory still running? It holds the lock on
-`alive` for its whole life, and the kernel drops that lock when the process
-ends, however it ends. A directory without the file is an older run's. A
-lock that cannot be tried is answered "live": keeping a dead run's logs a
-while longer costs disk, deleting a live run's cost a landing. -/
+/-- Whether the run owning this directory still runs, by the lock it holds on `alive` for
+its whole life; a lock that cannot be tried reads as live. -/
 def runLive (d : System.FilePath) : IO Bool := do
   if !(← (d / "alive").pathExists) then return false
   try
@@ -308,13 +232,8 @@ def runLive (d : System.FilePath) : IO Bool := do
     return !got
   catch _ => return true
 
-/-- Keep the newest run directories and drop the rest — never a live run's,
-and never this run's own. Eleven directories and 58 KB of gate logs
-accumulated in one scratch session with nothing removing them; run ids are
-timestamp-prefixed, so newest is last by name. Fifty-five `status` calls
-during one landing once deleted that landing's directory, and the landing
-died on its next log write. A dead run's gate tree is unregistered first,
-so the directory's removal leaves git no stale worktree. -/
+/-- Keep the newest run directories and drop the rest, never a live run's or this run's
+own, unregistering a dead run's gate tree first. -/
 def retainRuns (e : Env) (keep : Nat) : IO Unit := do
   let base : System.FilePath := s!"{e.common}/land"
   let entries ← try base.readDir catch _ => pure #[]
@@ -337,15 +256,13 @@ def retainRuns (e : Env) (keep : Nat) : IO Unit := do
           catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
       rmQuiet d
 
--- ## Worktree discovery
-
 structure Wt where
   path : String
   branch : String
   deriving Repr, Inhabited
 
-/-- Every worktree with its checked-out branch, parsed from the porcelain
-listing written to a file. -/
+/-- Every worktree with its checked-out branch, parsed from the porcelain listing written
+to a file. -/
 def worktrees (e : Env) (ctr : IO.Ref Nat) (step : String) : IO (Array Wt) := do
   let r ← git e ctr step #["worktree", "list", "--porcelain"]
   let mut out : Array Wt := #[]
@@ -363,9 +280,8 @@ def worktreeOf (e : Env) (ctr : IO.Ref Nat) (step name : String) : IO (Option St
   let wts ← worktrees e ctr step
   return (wts.find? (·.branch == s!"agent/{name}")).map (·.path)
 
-/-- The directory a new worktree for `name` takes: a sibling of the main
-worktree, prefixed `lt-`. Derived, never hardcoded, so a scratch repository
-exercises the same code path. -/
+/-- The directory a new worktree for `name` takes: a sibling of the main worktree,
+prefixed `LAND_WORKTREE_PREFIX` (default `lt-`). -/
 def newWorktreePath (e : Env) (name : String) : IO String := do
   let pre := (← IO.getEnv "LAND_WORKTREE_PREFIX").getD "lt-"
   let parent :=
@@ -373,8 +289,6 @@ def newWorktreePath (e : Env) (name : String) : IO String := do
     | [] => "."
     | ps => String.intercalate "/" ps
   return s!"{parent}/{pre}{name}"
-
--- ## Gates
 
 /-- One gate: a name, and the command it runs in the gate tree. -/
 structure Gate where
@@ -394,12 +308,9 @@ def GateSpecError.why : GateSpecError → String
   | .malformed e => s!"a gate list entry is not name=command: {e}"
   | .duplicate n => s!"the gate list names {n} twice"
 
-/-- A gate list: `name=cmd arg arg;name=cmd …`, run in order in the gate
-tree. One syntax and one parser for the shipped list and for a `LAND_GATES`
-override. Parsing is strict: an entry without `=` and a repeated name are
-refusals, because a dropped entry once ran one gate under a report of two
-and a repeated name ran the first gate twice while the second never ran at
-all. -/
+/-- A gate list, `name=cmd arg arg;name=cmd …`, run in order in the gate tree, one parser
+for the shipped list and a `LAND_GATES` override; an entry without `=` and a repeated name
+are refusals. -/
 def parseGates (spec : String) : Except GateSpecError (Array Gate) := do
   let entries := (spec.splitOn ";").map trimWs |>.filter (!·.isEmpty)
   let mut out : Array Gate := #[]
@@ -417,22 +328,9 @@ def parseGates (spec : String) : Except GateSpecError (Array Gate) := do
   if out.isEmpty then throw .empty
   return out
 
-/-- The gates every landing runs, in order, one per line, in the gate-list
-syntax: a new gate is one line here. An argument spelled `{main}` becomes
-the sha of `main` the run read. None may be absent: the scoreboard is on
-every base a branch can now be rebased onto, and a skip that read the
-lakefile for its name was a substring test a valid lakefile defeated.
-
-`--wfail` is how this project spells "zero warnings": scanning output for
-`warning:` is unsound, because a warm cache replays a module's logged warning
-without recompiling it and a scan of a quiet build proves nothing about the
-module that did not rebuild. Every maintained target shares
-that flag and the lakefile's proof-error setting, and the commit hook builds
-the same way (`checkCompiledTree` in scripts/precommit.lean); a plain
-`lake build` does not fail on a warning. The first build requests
-all gate executables together; `lake test` and `lake lint` then run their
-drivers in order. Lint owns the source, compiled-proof and citation audits,
-including their selftests. -/
+/-- The gates every landing runs, in order, in the gate-list syntax, `{main}` standing for
+the sha of `main` the run read; none may be absent, and `--wfail` fails a build on any
+warning. -/
 def defaultGates : List String := [
   "build=lake build --wfail LeanTex leantex Tests precommit proofcheck lint cites land scoreboard",
   "test=lake test",
@@ -443,36 +341,28 @@ def defaultGates : List String := [
   "scoreboard-base=.lake/build/bin/scoreboard --check --base {main}",
   "scoreboard-selftest=.lake/build/bin/scoreboard --selftest"]
 
-/-- The shipped list, parsed. A list that does not parse is empty, and an
-empty plan proves nothing, so no landing gets past it; the selftest names
-the fault. -/
+/-- The shipped list, parsed; a list that does not parse is empty, so no landing gets past
+it. -/
 def gateList : Array Gate :=
   match parseGates (String.intercalate ";" defaultGates) with
   | .ok gs => gs
   | .error _ => #[]
 
-/-- The plan the core is driven against: the gates' names, in order, none
-permitted to be absent. -/
+/-- The plan the core is driven against: the gates' names in order, none permitted to be
+absent. -/
 def planOf (gs : Array Gate) : Array GateSpec :=
   gs.map fun g => { name := g.name, mayAbsent := false }
 
-/-- Is the gate override permitted here? Only in a repository that opted in
-with `git config --local land.allowGateOverride true`. An exported variable
-is inherited by every later command in a shell, so an override that any
-repository honoured was one stray `export` away from weakening every landing
-on the machine. -/
+/-- Whether the gate override is permitted: only in a repository that opted in with `git
+config --local land.allowGateOverride true`. -/
 def overrideAllowed (e : Env) (ctr : IO.Ref Nat) : IO Bool := do
   let r ← git e ctr "gateset" #["config", "--local", "--get", "land.allowGateOverride"]
   return r.code == 0 && trimWs r.out == "true"
 
--- ## The ledger
-
 def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('a'.toNat + n - 10)
 
-/-- A JSON string. Every control character is escaped, not only the three a
-first draft covered: one stray byte in a git message made the whole ledger
-unparseable. -/
+/-- A JSON string, every control character escaped. -/
 def jsonStr (s : String) : String :=
   let esc := s.toList.flatMap fun c =>
     if c == '"' then ['\\', '"']
@@ -494,8 +384,7 @@ def writeLedger (e : Env) (rec : List (String × String)) : IO Bool := do
     IO.FS.createDirAll s!"{e.common}/land"
     let h ← IO.FS.Handle.mk (ledgerPath e) .append
     h.putStr line
-    -- Flushed rather than left to the handle going out of scope: the
-    -- read-back below is the check that the row is on disk.
+    -- Flushed so the read-back below checks the row is on disk.
     h.flush
     let back ← IO.FS.readFile (ledgerPath e)
     return (back.splitOn line).length > 1
@@ -515,8 +404,8 @@ def jsonField (line key : String) : Option String :=
   | none => none
   | some rest => (rest.splitOn "\"").head?
 
-/-- The last ledger line whose `verdict` is `v` — for one agent, or for any
-agent when `name` is `none` — read back from the file. -/
+/-- The last ledger line whose `verdict` is `v`, for one agent or, when `name` is `none`,
+any, read back from the file. -/
 def lastVerdict (e : Env) (v : String) (name : Option String) : IO (Option String) := do
   try
     let txt ← IO.FS.readFile (ledgerPath e)
@@ -528,8 +417,6 @@ def lastVerdict (e : Env) (v : String) (name : Option String) : IO (Option Strin
     return hits.getLast?
   catch _ => return none
 
--- ## Probes
-
 def statusClean (e : Env) (ctr : IO.Ref Nat) (step wt : String) : IO (Option Bool) := do
   let r ← git e ctr step #["status", "--porcelain"] (some wt)
   if r.code != 0 then return none
@@ -540,8 +427,8 @@ def revParse (e : Env) (ctr : IO.Ref Nat) (step rev : String)
   let r ← git e ctr step #["rev-parse", rev] cwd
   if r.code != 0 then return "" else return trimWs r.out
 
-/-- Is the worktree's `HEAD` the named branch? Read from `symbolic-ref`, so a
-detached `HEAD` is a no rather than a name that happens not to match. -/
+/-- Whether the worktree's `HEAD` is the named branch, read from `symbolic-ref` so a
+detached `HEAD` is a no. -/
 def headIs (e : Env) (ctr : IO.Ref Nat) (step wt branchRef : String) : IO Bool := do
   let r ← git e ctr step #["symbolic-ref", "--quiet", "HEAD"] (some wt)
   return r.code == 0 && trimWs r.out == branchRef
@@ -559,15 +446,9 @@ def midRebase (e : Env) (ctr : IO.Ref Nat) (step wt : String) : IO Bool := do
     System.FilePath.pathExists abs
   return (← ex a) || (← ex b)
 
-/-- The tip an earlier landing of `name` read and the commit it landed as,
-when that landing rebased the branch — so the two differ — and the branch
-still carries that tip; two empty strings otherwise. With them, whether
-`mainTip`, `main` as this run read it, holds the landed commit: the core
-counts the row only then (`landedBars`), so a landing undone by putting
-`main` back bars nothing, as `landedTipOf` already required of a retire.
-From the ledger's last `landed` row for the name, and the ancestry from git;
-`none` when git could not say whether `mainTip` holds the commit. A row
-written before rows carried `branch` answers empty. -/
+/-- The tip an earlier landing of `name` read and the commit it landed as, when that
+landing rebased the branch and the branch still carries that tip, with whether `mainTip`
+holds that commit; `none` when git cannot say. -/
 def landedFromRow (e : Env) (ctr : IO.Ref Nat) (name tip mainTip : String) :
     IO (Option (String × String × Bool)) := do
   match ← lastVerdict e "landed" (some name) with
@@ -578,19 +459,15 @@ def landedFromRow (e : Env) (ctr : IO.Ref Nat) (name tip mainTip : String) :
     if !isSha b || !isSha g || b == g then return some ("", "", false)
     let r ← git e ctr "pre-branch" #["merge-base", "--is-ancestor", b, tip] (some e.mainWt)
     if r.code != 0 then return some ("", "", false)
-    -- A commit this repository no longer has is on no `main`: the landing
-    -- was undone long enough ago for git to prune it.
+    -- A commit this repository no longer has is on no `main`.
     let v ← git e ctr "pre-branch" #["cat-file", "-e", g ++ "^{commit}"] (some e.mainWt)
     if v.code != 0 then return some (b, g, false)
     let m ← git e ctr "pre-branch" #["merge-base", "--is-ancestor", g, mainTip] (some e.mainWt)
     return (if m.code == 0 then some (b, g, true)
       else if m.code == 1 then some (b, g, false) else none)
 
-/-- The commit the last `landed` row for `name` landed as, when that row
-read exactly `tip` and the commit it landed is on `main`; empty otherwise.
-A landing onto a `main` that had moved lands rebased copies and leaves the
-branch where it was, so this — not ancestry — is what "merged" means for
-such a branch. -/
+/-- The commit the last `landed` row for `name` landed as, when that row read exactly
+`tip` and `main` holds its commit; empty otherwise. -/
 def landedTipOf (e : Env) (ctr : IO.Ref Nat) (name tip : String) : IO String := do
   match ← lastVerdict e "landed" (some name) with
   | none => return ""
@@ -601,16 +478,12 @@ def landedTipOf (e : Env) (ctr : IO.Ref Nat) (name tip : String) : IO String := 
     let r ← git e ctr "pre" #["merge-base", "--is-ancestor", g, "main"] (some e.mainWt)
     return (if r.code == 0 then g else "")
 
--- ## The gate tree
-
-/-- The gate tree: a detached worktree this run makes at the gated tip, in
-its own run directory, which nothing else writes. -/
+/-- The gate tree: a detached worktree this run makes in its own run directory, which
+nothing else writes. -/
 def treePath (e : Env) : String := s!"{e.runDir}/tree"
 
-/-- The gate tree, read back: its `HEAD`, and whether it is clean. A
-directory that is not a work tree reads as no sha: inside the git directory
-— where the run directory lives — `rev-parse HEAD` walks up and answers with
-the *main* worktree's `HEAD`, which is a sha, only not this tree's. -/
+/-- The gate tree read back: its `HEAD` and whether it is clean; a directory that is not a
+work tree reads as no sha. -/
 def readTree (e : Env) (ctr : IO.Ref Nat) (step : String) : IO (Sha × Bool) := do
   let tree := treePath e
   let inside ← git e ctr step #["rev-parse", "--is-inside-work-tree"] (some tree)
@@ -619,10 +492,8 @@ def readTree (e : Env) (ctr : IO.Ref Nat) (step : String) : IO (Sha × Bool) := 
   let clean ← statusClean e ctr step tree
   return (head, clean == some true)
 
-/-- Make the gate tree at `tip` and seed its build cache: a copy of the
-branch worktree's `.lake`, else the main worktree's. A copy, never a
-hardlink — lake rewrites files in place. A failed copy is removed rather
-than built on. -/
+/-- Make the gate tree at `tip` and seed its build cache with a copy (never a hardlink) of
+the branch worktree's `.lake`, else the main worktree's. -/
 def makeTree (e : Env) (ctr : IO.Ref Nat) (wt tip : String) : IO String := do
   let tree := treePath e
   let ra ← git e ctr "gate-tree" #["worktree", "add", "--detach", tree, tip] (some e.mainWt)
@@ -638,9 +509,8 @@ def makeTree (e : Env) (ctr : IO.Ref Nat) (wt tip : String) : IO String := do
     rmQuiet s!"{tree}/.lake"
     return "failed"
 
-/-- Remove the gate tree, and read back that it is gone from the disk and
-from the worktree list. Forced, because a tree a gate dirtied must go too:
-it is this run's, and nothing else writes it. -/
+/-- Remove the gate tree, forced, and read back that it is gone from the disk and the
+worktree list. -/
 def removeTree (e : Env) (ctr : IO.Ref Nat) : IO Unit := do
   let tree := treePath e
   let _ ← git e ctr "tree-remove" #["worktree", "remove", "--force", tree] (some e.mainWt)
@@ -651,9 +521,8 @@ def removeTree (e : Env) (ctr : IO.Ref Nat) : IO Unit := do
     [("path", tree), ("gone", if gone then "yes" else "no"),
      ("listed", if listed then "yes" else "no")]
 
-/-- Run one gate in the gate tree, reading the tree back before and after
-it. An argument spelled `{main}` becomes `mainTip`, the sha of `main` this
-run read. -/
+/-- Run one gate in the gate tree, reading the tree back before and after it; `{main}`
+becomes `mainTip`. -/
 def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip : Sha) : IO Obs := do
   let tree := treePath e
   let step := s!"gate-{g.name}"
@@ -662,19 +531,14 @@ def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip : Sha) 
   let args := g.args.map fun a => if a == "{main}" then mainTip else a
   let r ← sh e ctr step cmd args (some tree)
   let (ha, ca) ← readTree e ctr step
-  -- The tree as read around the gate: the head both reads agree on, and
-  -- clean only if both were, so a tree moved between two gates and moved
-  -- back inside the next one still reads as moved.
+  -- The tree as read around the gate: the head both reads agree on, and clean only if both were.
   let head := if hb == ha then ha else ""
   let clean := cb && ca
   if r.code != 0 then return .gateFail idx head clean
   return .gateOk idx head clean
 
--- ## The landing run
-
-/-- The landing loop: feed the core one observation per action until it
-halts. `treeLive` is set once the gate tree was asked for and cleared once
-it is removed, so the caller's `finally` removes a tree an exception left. -/
+/-- The landing loop: feed the core one observation per action until it halts; `treeLive`
+lets the caller's `finally` remove a tree an exception left. -/
 def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : String)
     (mode : Mode) (wantPush : Bool) (gates : Array Gate) (gateset : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -742,16 +606,11 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
               | _, _ => pure (.garbled "rev-list counts are not numbers")
             | other => pure (.garbled s!"rev-list counts: {other.length} fields")
       | .rebase tip onto => do
-        -- A tip that already contains the base is the reviewed result,
-        -- including its merge resolutions. Rebase would flatten those
-        -- merges and could restore deliberately discarded side changes.
-        -- Otherwise replay only the captured sha, never a moving branch.
-        -- `--no-update-refs` keeps every owner's branch outside this write.
+        -- A tip containing the base keeps its merges; else only the captured sha is replayed.
         let tree := treePath e
         let contains ← git e ctr "rebase-base" #["merge-base", "--is-ancestor", onto, tip]
           (some tree)
-        -- premise: scenarioMergedTip — both retained and discarded side
-        -- changes keep the reviewed tip, tree and ancestry on the remote.
+        -- premise: scenarioMergedTip — the reviewed tip, tree and ancestry land unchanged
         let r ← if contains.code == 0 then
             git e ctr "rebase" #["checkout", "--detach", tip] (some tree)
           else if contains.code == 1 then
@@ -772,10 +631,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
              ("mode", if contains.code == 0 then "preserve" else "replay")]
           pure (.rebaseOk head ok)
         else
-          -- Any non-zero rebase: the unmerged paths, for the refusal, and an
-          -- abort so the tree's removal starts from a tree git knows. The
-          -- tree is this run's; the owner's branch and worktree were never
-          -- touched, so there is nothing of theirs to read back or put back.
+          -- A failed rebase: the unmerged paths for the refusal, then an abort.
           let ru ← git e ctr "rebase" #["diff", "--name-only", "--diff-filter=U"] (some tree)
           let files := (ru.out.splitOn "\n").map trimWs |>.filter (!·.isEmpty)
           if ← midRebase e ctr "rebase-abort" tree then
@@ -786,9 +642,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
              ("conflict", if files.isEmpty then "none" else String.intercalate "," files)]
           pure (.rebaseFailed files.toArray)
       | .netDiff oldTip newBase newTip => do
-        -- The branch's own change runs from its fork point with the base it
-        -- was replayed onto; plumbing, so no `color.diff`, external diff or
-        -- textconv of this host's configuration reaches the listing.
+        -- The branch's change from its fork point with the new base, through plumbing.
         let rf ← git e ctr "net" #["merge-base", newBase, oldTip] (some e.mainWt)
         let fork := trimWs rf.out
         if rf.code != 0 || !isSha fork then
@@ -802,8 +656,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
           if rb.code != 0 || ra.code != 0 then
             pure (.garbled "git diff-tree for the net comparison")
           else
-            -- Where either listing is not UTF-8, both are read through one
-            -- one-to-one spelling, so the comparison is over their bytes.
+            -- Where either listing is not UTF-8, both are read through one one-to-one spelling.
             let (before, after) := if rb.exact && ra.exact then (rb.out, ra.out)
               else (spelledText rb.bytes, spelledText ra.bytes)
             let drift := netDrift (netOf before) (netOf after)
@@ -829,8 +682,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
              ("dirty", if clean then "no" else "yes")]
           match o with
           | .gateOk _ head clean =>
-            -- The line says what the core will judge: a gate whose command
-            -- passed but whose tree moved or was dirtied is a failed gate.
+            -- A gate whose command passed but whose tree moved or was dirtied is a failed gate.
             let held := head == st.gatedTip && clean
             say s!"gate-{g}" (if held then "ok" else "fail")
               (tail head clean ++ (if held then [] else [("why", "the gate tree moved or was dirtied")]))
@@ -839,8 +691,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
             say s!"gate-{g}" "fail" (tail head clean ++ [("log", s!"gate-{g}.log")]); pure o
           | _ => pure o
       | .recheckBranch => do
-        -- The owner's branch as it reads now. This run never wrote it, so a
-        -- move is the owner's, and the branch is left as they left it.
+        -- The owner's branch as it reads now; this run never wrote it.
         let tip ← revParse e ctr "post-gate" s!"refs/heads/agent/{name}" (some e.mainWt)
         say "post-gate" (if tip == st.branchTip then "ok" else "fail")
           [("tip", if tip.isEmpty then "?" else tip), ("read", st.branchTip)]
@@ -861,14 +712,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         say "announce" (if ok then "ok" else "fail") [("gated", st.gatedTip)]
         pure (if ok then .ledgerOk else .ledgerFail)
       | .fastForward tip => do
-        -- `refs/heads/main`, by that name, to exactly this commit, as a push
-        -- into this repository: git's receiving side moves only the ref it is
-        -- named, accepts nothing but a fast-forward, and with `updateInstead`
-        -- brings along the worktree that has `main` checked out — refusing,
-        -- with nothing moved, when that worktree has changes. `merge
-        -- --ff-only` moved whatever ref the main worktree's `HEAD` named, so a
-        -- switch just before it fast-forwarded another branch to the gated
-        -- tip.
+        -- `refs/heads/main` to exactly this commit by a local fast-forward push (`updateInstead`).
         let r ← git e ctr "fast-forward"
           #["push", "--porcelain",
             "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
@@ -899,17 +743,12 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         say "ledger" (if ok then "ok" else "fail") [("file", ledgerPath e)]
         pure (if ok then .ledgerOk else .ledgerFail)
       | .push tip => do
-        -- The gated tip, by sha, to the remote's `main`: never the local
-        -- `main`, which another party may have moved since it was read back.
-        -- No force of any kind, so a remote that moved on rejects it.
+        -- The gated tip, by sha, to the remote's `main`, never forced.
         let r ← git e ctr "push" #["push", "origin", s!"{tip}:refs/heads/main"] (some e.mainWt)
         if r.code == 0 then say "push" "ok" [("tip", tip)]; pure .pushOk
         else say "push" "fail" [("tip", tip), ("log", "push.log")]; pure .pushRejected
       | .readRemote => do
-        -- `git ls-remote`, not the tracking ref: git updates `origin/main`
-        -- from its own push result, so comparing against it asks the push
-        -- whether the push worked. The line whose refname is exactly
-        -- `refs/heads/main`: the pattern also matches any ref ending in it.
+        -- `git ls-remote`, not the tracking ref, read by the exact refname `refs/heads/main`.
         let r ← git e ctr "verify-push"
           #["ls-remote", "origin", "refs/heads/main"] (some e.mainWt)
         let ot := lsRemoteTip r.out "refs/heads/main"
@@ -927,9 +766,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         removeTree e ctr
         treeLive.set false
       let t1 ← IO.monoMsNow
-      -- One record per distinct fact. The push confirmation is its own
-      -- verdict, never a second `landed` row for the same run: a structured
-      -- record doubled is the defect this whole tool exists to refuse.
+      -- One record per distinct fact; the push confirmation is its own verdict.
       let base := [("ts", e.ts), ("run", e.runId), ("name", name)]
       let tail := [("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)]
       if v == .landed && wantPush then
@@ -957,8 +794,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
     | _ => pure ()
   return 3
 
-/-- One landing run. The gate tree is removed on every path out: at the
-halt, before the final line, and here after an exception. -/
+/-- One landing run, the gate tree removed on every path out. -/
 def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
     (gates : Array Gate) (gateset : String) : IO UInt32 := do
   let ctr ← IO.mkRef 0
@@ -977,13 +813,9 @@ def recField (rec key : String) : String :=
   | some w => (w.drop (key.length + 1)).toString
   | none => ""
 
-/-- One landing at a time. The lock is `flock` on a file, which the kernel
-releases when the holder ends however it ends: the directory it replaced
-outlived a landing stopped by `timeout`, and refused every landing after it
-with nothing to say whether its owner lived. The owner record beside it
-names the holding run and its pid. A record found by a run that *got* the
-lock was left by a run that died holding it: that run is recorded as
-`abandoned`, and its gate tree removed. -/
+/-- One landing at a time, by `flock` on a file the kernel releases however the holder
+ends; a record found by a run that got the lock marks a dead holder `abandoned` and
+removes its gate tree. -/
 def withLock (e : Env) (name : String) (act : IO UInt32) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   IO.FS.createDirAll s!"{e.common}/land"
@@ -1020,8 +852,6 @@ it is running: wait for it to end, or stop that process")]
   h.unlock
   return r
 
--- ## land new
-
 def landNew (e : Env) (name : String) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   let t0 ← IO.monoMsNow
@@ -1044,10 +874,7 @@ def landNew (e : Env) (name : String) : IO UInt32 := do
     sayFinal .failed [("name", name)]
     return 3
   say "worktree-add" "ok" [("branch", s!"agent/{name}")]
-  -- Seed the build cache from the main worktree: a seeded clean worktree
-  -- builds in seconds where an unseeded one recompiles the tree. Copy, never
-  -- hardlink — lake rewrites files in place, and a hardlink would corrupt the
-  -- cache it was seeded from.
+  -- Seed the build cache by copy, never hardlink: lake rewrites files in place.
   if ← System.FilePath.pathExists s!"{e.mainWt}/.lake" then
     let rs ← sh e ctr "seed" "cp"
       #["-a", "--reflink=auto", s!"{e.mainWt}/.lake", s!"{path}/.lake"]
@@ -1074,8 +901,6 @@ def landNew (e : Env) (name : String) : IO UInt32 := do
   sayFinal .created [("name", name), ("path", path), ("ms", toString (t1 - t0))]
   return 0
 
--- ## land retire
-
 def landRetire (e : Env) (name : String) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   say "run" "ok" [("id", e.runId), ("dir", e.runDir), ("mode", "retire")]
@@ -1100,9 +925,7 @@ def landRetire (e : Env) (name : String) : IO UInt32 := do
         return 3
       let rm ← git e ctr "pre"
         #["merge-base", "--is-ancestor", tip, "main"] (some e.mainWt)
-      -- A landing onto a `main` that had moved lands rebased copies and never
-      -- writes the branch, so ancestry alone would call every such branch
-      -- unmerged; the ledger says what it landed as.
+      -- Rebased copies landed, so the ledger, not ancestry, says what it landed as.
       let landedAs ← if rm.code == 0 then pure "" else landedTipOf e ctr name tip
       if rm.code != 0 && landedAs.isEmpty then
         say "pre" "fail" [("branch", s!"agent/{name}"), ("merged", "no")]
@@ -1116,8 +939,7 @@ def landRetire (e : Env) (name : String) : IO UInt32 := do
         sayFinal .failed [("name", name)]
         return 3
       say "worktree-remove" "ok" [("path", p)]
-      -- Deleted by compare-and-swap against the tip read above: a branch that
-      -- moved since is someone's work, and `update-ref` refuses to delete it.
+      -- Deleted by compare-and-swap against the tip read above.
       let rd ← git e ctr "branch-delete"
         #["update-ref", "-d", s!"refs/heads/agent/{name}", tip] (some e.mainWt)
       if rd.code != 0 then
@@ -1131,15 +953,9 @@ def landRetire (e : Env) (name : String) : IO UInt32 := do
       sayFinal .retired [("name", name)]
       return 0
 
--- ## land push
-
-/-- Publish the last landing: the way to push a landing made without
-`--push`, which a second `land <name> --push` cannot do — the branch is no
-longer ahead. `main` must read at the last `landed` row's tip, which is also
-its gated tip, so a commit on `main` that no landing gated is refused rather
-than published; the push names that sha, never `main`, and is never forced;
-and the remote is read back by its exact refname. A remote already at the
-tip is reported, and nothing is written. -/
+/-- Publish the last landing: `main` must read at the last `landed` row's tip, its gated
+tip; the push names that sha, never forced, and the remote is read back by its exact
+refname. -/
 def landPush (e : Env) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   let t0 ← IO.monoMsNow
@@ -1186,8 +1002,6 @@ def landPush (e : Env) : IO UInt32 := do
       ("ms", toString (t1 - t0))] ++ (if why.isEmpty then [] else [("why", why)]))
     return (if v == .pushed then 0 else 4)
 
--- ## land status
-
 def landStatus (e : Env) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   let wts ← worktrees e ctr "status"
@@ -1217,11 +1031,6 @@ def landStatus (e : Env) : IO UInt32 := do
   sayFinal .listed [("worktrees", toString n)]
   return 0
 
--- ## The selftest
---
--- The pure core, driven over scripted observation sequences. No repository is
--- touched: the point is that every refusal is a property of values.
-
 structure Case where
   label : String
   mode : Mode
@@ -1231,8 +1040,8 @@ structure Case where
   code : UInt32
   /-- Must the run have proposed no ref change at all? -/
   noMutation : Bool
-  /-- The gate plan the run is driven against; the shipped list unless a case
-  needs a plan of its own. -/
+  /-- The gate plan the run is driven against; the shipped list unless a case needs its
+  own. -/
   plan : Option (Array GateSpec) := none
 
 def gatePlan : Array GateSpec := planOf gateList
@@ -1244,15 +1053,12 @@ def sha4s : Sha := "4444444444444444444444444444444444444444"
 
 def okGates : List Obs := (List.range gatePlan.size).map fun i => Obs.gateOk i sha3s true
 
-/-- One file's change, as `git diff-tree -p -U0` prints it: the same change
-at two positions differs only in its `index` line and hunk headers, which
-is the comparison's whole allowance. -/
+/-- One file's change as `git diff-tree -p -U0` prints it. -/
 def netListing (idx hunk : String) (body : List String) : String :=
   s!"diff --git a/PLAN.md b/PLAN.md\nindex {idx} 100644\n--- a/PLAN.md\n+++ b/PLAN.md\n{hunk}\n"
     ++ String.join (body.map (· ++ "\n"))
 
-/-- The branch's change: a new entry under a heading its second commit
-renamed. -/
+/-- The branch's change: a new entry under a heading its second commit renamed. -/
 def netBranch : String :=
   netListing "1a2b3c4..5d6e7f8" "@@ -4,0 +5,3 @@ body a" ["+", "+### b-final", "+body b"]
 
@@ -1260,8 +1066,8 @@ def netBranch : String :=
 def netMoved : String :=
   netListing "9f8e7d6..c5b4a39" "@@ -7,0 +8,3 @@ body m" ["+", "+### b-final", "+body b"]
 
-/-- The union driver's keep-both: the draft heading the branch renamed away
-came back, and git reported no conflict. -/
+/-- The union driver's keep-both: the heading the branch renamed away came back with no
+conflict. -/
 def netUnion : String :=
   netListing "9f8e7d6..d4c3b2a" "@@ -7,0 +8,4 @@ body m"
     ["+### b-draft", "+", "+### b-final", "+body b"]
@@ -1272,8 +1078,7 @@ def netSame : Obs := .netDiffs netBranch netMoved
 def allSkippablePlan : Array GateSpec :=
   #[{ name := "a", mayAbsent := true }, { name := "b", mayAbsent := true }]
 
-/-- A plan whose second gate may be absent: the core's permission, which
-the shipped list no longer grants, still holds exactly where a plan does. -/
+/-- A plan whose second gate may be absent. -/
 def oneSkippablePlan : Array GateSpec :=
   #[{ name := "a", mayAbsent := false }, { name := "b", mayAbsent := true }]
 
@@ -1481,8 +1286,7 @@ def finalOf (acts : Array Act) : Option (Verdict × UInt32) :=
     | .halt v c _ => some (v, c)
     | _ => acc
 
-/-- What is wrong with a scripted case, or nothing. Pure, so the whole
-selftest verdict is a function of values. -/
+/-- What is wrong with a scripted case, or nothing. -/
 def caseFault (c : Case) : Option String :=
   let (fin, acts) := Land.run (State.init "probe" c.mode (c.plan.getD gatePlan) c.push) c.obs
   let mutated := acts.any Act.mutates
@@ -1497,8 +1301,7 @@ def caseFault (c : Case) : Option String :=
       some "claimed a landing that is not the gated tip"
     else none
 
-/-- The fast-forward a scripted run proposed, if any: the tip it names must
-be the tip the rebase reported, never a branch name. -/
+/-- The fast-forward a scripted run proposed, if any. -/
 def ffTipOf (acts : Array Act) : Option Sha :=
   acts.foldl (init := none) fun acc a =>
     match a with
@@ -1512,9 +1315,8 @@ def pushTipOf (acts : Array Act) : Option Sha :=
     | .push t => some t
     | _ => acc
 
-/-- The net comparison over hand-written listings: the change it must see
-through, and the changes it must not. Each pair is (before, after, the
-files the drift must name). -/
+/-- The net comparison over hand-written listings: (before, after, the files the drift
+must name). -/
 def netCases : List (String × String × String × Array String) :=
   let modeLine (m : String) :=
     s!"diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode {m}\n"
@@ -1548,9 +1350,7 @@ def selftest : IO UInt32 := do
       bad := bad + 1
       say "selftest" "fail" [("case", c.label), ("why", why)]
     | none => say "selftest" "ok" [("case", c.label)]
-  -- The theorems, exercised: some case must reach a merge, and every merge a
-  -- case reaches must name the gated tip. The proofs are in LandCore.lean;
-  -- these are the witnesses that the cases reach the guarded branch at all.
+  -- Some case must reach a merge, and every merge a case reaches must name the gated tip.
   let runs := cases.map fun c =>
     (c, Land.run (State.init "probe" c.mode (c.plan.getD gatePlan) c.push) c.obs)
   let anyMutating := runs.any fun (_, r) => r.2.any Act.mutates
@@ -1575,9 +1375,7 @@ def selftest : IO UInt32 := do
   if !(runs.any fun (_, r) => (pushTipOf r.2).isSome) then
     bad := bad + 1
     say "selftest" "fail" [("case", "coverage"), ("why", "no case reaches a push")]
-  -- The write statement, exercised over every case's trace: each write owned
-  -- in the state it was proposed from, both shared writes reached, and no
-  -- case proposing a write to a branch or a worktree the run does not own.
+  -- The write statement over every case's trace, both shared writes reached.
   let traces := cases.map fun c =>
     (c, Land.trace (State.init "probe" c.mode (c.plan.getD gatePlan) c.push) c.obs)
   let allWrites := traces.flatMap fun (_, tr) =>
@@ -1598,9 +1396,7 @@ def selftest : IO UInt32 := do
     say "selftest" "fail" [("case", "every write owned"),
       ("why", "a case writes a branch or a worktree the run does not own")]
   else say "selftest" "ok" [("case", "every write owned, and none to the owner's branch")]
-  -- The landed refusal sends the next unit to a new branch from `main` and
-  -- names no command that writes this one: the rebase it named before
-  -- dropped the landed work from a branch whose `main` had been put back.
+  -- The landed refusal sends the next unit to a new branch and writes this one nowhere.
   let barredCases : List (String × Obs × Bool) :=
     [ ("unmoved", .branchStatus 1 1 true sha2s sha2s sha3s true, false)
     , ("continued", .branchStatus 2 1 true sha2s sha1s sha3s true, true) ]
@@ -1619,8 +1415,7 @@ def selftest : IO UInt32 := do
     | _ =>
       bad := bad + 1
       say "selftest" "fail" [("case", s!"the landed refusal: {label}"), ("why", "no halt")]
-  -- The remote read-back reads exactly `refs/heads/main`: a query pattern
-  -- also matches a ref ending in it, which sorts first.
+  -- The remote read-back reads exactly `refs/heads/main`.
   let lsCases : List (String × String × Sha) :=
     [ ("the decoy sorts first", s!"{sha1s}\trefs/heads/a/refs/heads/main\n{sha2s}\trefs/heads/main\n",
         sha2s)
@@ -1685,8 +1480,7 @@ def selftest : IO UInt32 := do
   | .error e =>
     bad := bad + 1
     say "selftest" "fail" [("case", "override parses two gates"), ("why", e.why)]
-  -- The shipped list is read by that parser: every line must come back as
-  -- one gate, in order, or the landing would run a list nobody wrote.
+  -- The shipped list reads back through that parser, every line as one gate, in order.
   match parseGates (String.intercalate ";" defaultGates) with
   | .ok gs =>
     let names := defaultGates.map fun l => trimWs ((l.splitOn "=").headD "")
@@ -1702,8 +1496,7 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail" [("case", "the shipped gate list parses, one gate per line"),
       ("why", e.why)]
-  -- Every source area shares the strict build, followed by the standard
-  -- test and lint drivers. No separately permissive proof build may return.
+  -- Every source area shares the strict build, then the test and lint drivers.
   let grouped : Bool := match gateList.toList with
     | build :: test :: lint :: _ =>
       build.cmd == "lake" && build.args[0]? == some "build"
@@ -1738,10 +1531,7 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail" [("case", "ledger escaping"), ("why", "a control byte survived")]
   else say "selftest" "ok" [("case", "ledger escaping")]
-  -- The scenario harness's guard, over the argv shapes the harness runs and
-  -- the ones it must refuse. `hcall_writes_owned` says an allowed command
-  -- writes only what the run owns; these say the classifier and the path
-  -- comparison answer what that statement reads.
+  -- The scenario harness's guard over the argv shapes the harness runs and the ones it must refuse.
   let g : HGuard := { root := "/tmp/r", made := ["/tmp/r/s/remote.git"] }
   let rp := "/tmp/r/s/repo"
   let rg := "/tmp/r/s/repo/.git"
@@ -1812,32 +1602,11 @@ def selftest : IO UInt32 := do
   else sayFinal .failed [("cases", toString cases.length), ("bad", toString bad)]; return 1
 
 
--- ## The scratch scenarios
---
--- The selftest above drives the core over values; this drives the *driver*
--- over a repository. It needs git and nothing else: every scenario builds a
--- throwaway repository under a temporary directory, runs this very binary
--- against it with a one-command gate list, and asserts the verdict and the
--- refs. Each scenario is one the reviewer reproduced against a landing that
--- reported what had not happened, so a regression here is that defect back.
--- No real worktree is ever named: the tool under test may not be pointed at
--- one, and this harness structurally cannot be: every git command it runs,
--- and every run of the tool under test, passes the guard in
--- `scripts/LandCore.lean` first (`hcall_writes_owned`).
+-- The scratch scenarios: this binary driven against throwaway repositories, guarded.
 
-/-- The environment every harness child gets: each `GIT_` variable this
-process inherited removed, git's global and system configuration out of
-reach, and no transport but a local path. git exports `GIT_DIR` and
-`GIT_INDEX_FILE` to a hook in every linked worktree, so a harness started
-from one once committed its fixtures into the repository `GIT_DIR` named,
-rewrote its config and pushed its `main` to its origin; a host's
-`commit.gpgsign` or `core.hooksPath` would change what a scenario tests; and
-every repository a scenario makes is a local path, while a real remote never
-is — so `GIT_ALLOW_PROTOCOL=file` leaves git itself refusing `https`, `ssh`
-and `git://` to this process's every descendant, the tool under test and its
-gates included. -/
--- premise: scenarioNoNetwork — the variable reaches a gate the tool under test
--- runs, and git refuses the transport before it connects.
+/-- The environment every harness child gets: each inherited `GIT_` variable removed,
+global and system configuration out of reach, and `GIT_ALLOW_PROTOCOL=file`. -/
+-- premise: scenarioNoNetwork — git refuses a network transport before connecting
 def harnessEnv : IO (Array (String × Option String)) := do
   let set : Array (String × Option String) := #[("GIT_CONFIG_GLOBAL", some "/dev/null"),
     ("GIT_CONFIG_NOSYSTEM", some "1"), ("GIT_TERMINAL_PROMPT", some "0"),
@@ -1848,18 +1617,15 @@ def harnessEnv : IO (Array (String × Option String)) := do
   let unset := (names.filter fun n => !(set.any (·.1 == n))).map (·, none)
   return unset.append set
 
-/-- The guard every command of the harness is checked against: installed once
-the run's scratch root is made, canonical, and inside no checkout. Until then,
-and in any process that is not a harness run, `hgit` and `runTool` refuse
-everything. -/
+/-- The guard every harness command is checked against, installed once the scratch root is
+made; until then `hgit` and `runTool` refuse everything. -/
 initialize harnessGuard : IO.Ref (Option HGuard) ← IO.mkRef none
 
 /-- The exit status of a command the guard refused: it never ran. -/
 def refusedCode : Nat := 126
 
-/-- Spawn a command in the harness's environment, standard input closed; its
-exit code, and its standard output and error joined. Git reaches it only
-through `hgit`, and the tool under test only through `runTool`. -/
+/-- Spawn a command in the harness's environment, standard input closed: its exit code,
+and its output and error joined. -/
 private def hspawn (cmd : String) (args : Array String) (cwd : Option String)
     (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) := do
   let env ← harnessEnv
@@ -1870,20 +1636,16 @@ private def hspawn (cmd : String) (args : Array String) (cwd : Option String)
     catch ex => pure { exitCode := 127, stdout := "", stderr := toString ex }
   return (r.exitCode.toNat, trimWs (r.stdout ++ r.stderr))
 
-/-- Run a command for the harness that is not git and not the tool under
-test. Not `sh`: there is no run directory yet, and the harness asserts on
-exit codes rather than on parsed facts. -/
+/-- Run a harness command that is neither git nor the tool under test. -/
 def hrun (cmd : String) (args : Array String) (cwd : Option String)
     (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) := do
   if cmd == "git" then
     return (refusedCode, "land-harness: refused: git runs only through the guard (hgit)")
   hspawn cmd args cwd extraEnv
 
-/-- What `git rev-parse --absolute-git-dir` names from `cwd` in the harness's
-environment extended by `extraEnv`: the repository a command run there, so,
-would read and write. Standard output only; empty when git names none. -/
--- premise: scenarioHookGitDir — the repository named here is the one the
--- command then writes: the same binary, environment and directory.
+/-- What `git rev-parse --absolute-git-dir` names from `cwd` in the harness's environment
+extended by `extraEnv`; empty when git names none. -/
+-- premise: scenarioHookGitDir — the repository named is the one the command writes
 def gitDirOf (cwd : String) (extraEnv : Array (String × Option String) := #[]) : IO String := do
   let env ← harnessEnv
   let r ← try
@@ -1893,14 +1655,9 @@ def gitDirOf (cwd : String) (extraEnv : Array (String × Option String) := #[]) 
     catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
   return if r.exitCode == 0 then trimWs r.stdout else ""
 
-/-- Run git for the harness, after the guard: the argv classified from its
-directory and what git names there, and run only when every write it may make
-is the run's. A refused command never runs; it answers `refusedCode` and why.
-A bare repository `init --bare` made becomes one the run may push to. -/
--- The statement is `hcall_writes_owned` in scripts/LandCore.lean.
--- premise: scenarioGuardRefuses — a command from outside the root, a push by a
--- remote's name, a push to a repository the run did not make, a global option
--- and a fetch are each refused, and none of them wrote anything.
+/-- Run git for the harness after the guard, only when every write the classified argv may
+make is the run's; a refused command answers `refusedCode` and why. -/
+-- premise: scenarioGuardRefuses — each unowned write is refused before git runs
 def hgit (args : Array String) (cwd : String) : IO (Nat × String) := do
   let some g ← harnessGuard.get
     | return (refusedCode, "land-harness: refused: no scratch root is guarded")
@@ -1915,10 +1672,8 @@ from {cwd}: {c.refusal g}")
       harnessGuard.modify (·.map fun g => { g with made := g.made ++ [b] })
   return r
 
-/-- The URLs a push from the repository `cwd` names could reach: every
-remote's `url` and `pushurl`, read from `cwd` in the given environment. A
-`url.*.insteadOf` or `pushInsteadOf` rewrites a URL at push time, so any
-such key answers with a URL no run owns. -/
+/-- The URLs a push from the repository `cwd` could reach: every remote's `url` and
+`pushurl`; any `insteadOf` rewrite answers with a URL no run owns. -/
 def remoteUrlsOf (cwd : String) (extraEnv : Array (String × Option String)) :
     IO (List String) := do
   let env ← harnessEnv
@@ -1939,10 +1694,9 @@ def remoteUrlsOf (cwd : String) (extraEnv : Array (String × Option String)) :
   return (if ci != 1 then ["(a url.*.insteadOf rewrite, or a config git could not read)"] else [])
     ++ (if cr == 0 || cr == 1 then urls else ["(a config git could not read)"])
 
-/-- Run the tool under test from `cwd`, after the guard: its repository — as
-git names it in the environment the tool will get — inside the root, every
-remote that repository names a bare repository the run made, and a
-`LAND_SCRATCH_DIR` it is handed inside the root. -/
+/-- Run the tool under test from `cwd` after the guard: its repository inside the root,
+every remote a bare repository the run made, and its `LAND_SCRATCH_DIR` inside the root.
+-/
 def runTool (self cwd : String) (args : Array String)
     (extraEnv : Array (String × Option String)) : IO (Nat × String) := do
   let some g ← harnessGuard.get
@@ -1958,15 +1712,14 @@ def runTool (self cwd : String) (args : Array String)
     return (refusedCode, s!"land-harness: refused {self} from {cwd}: {c.refusal g}")
   hspawn self args (some cwd) extraEnv
 
-/-- A fixture step that must succeed: a scenario built on a failed setup
-command would assert about a repository it never made. -/
+/-- A fixture step that must succeed. -/
 def hgitOk (args : Array String) (cwd : String) : IO Unit := do
   let (c, o) ← hgit args cwd
   if c != 0 then
     throw (IO.userError s!"fixture: git {String.intercalate " " args.toList} exited {c}: {o}")
 
-/-- A scratch repository on `main` with one commit, opted in to gate
-overrides, plus a worktree for `agent/<name>` carrying one commit. -/
+/-- A scratch repository on `main` with one commit, opted in to gate overrides, and a
+worktree for `agent/<name>` carrying one commit. -/
 structure Scratch where
   root : String
   repo : String
@@ -2019,9 +1772,7 @@ def worktreePaths (repo : String) : IO (Array String) := do
   return ((o.splitOn "\n").filter (·.startsWith "worktree ")).toArray.map
     fun l => (l.drop "worktree ".length).toString
 
-/-- A bare `origin` holding the scratch repository's `main`. Pushed to by its
-path: the guard lets a push through only to a bare repository this run made,
-which a remote's name does not show. -/
+/-- A bare `origin` holding the scratch repository's `main`, pushed to by its path. -/
 def addRemote (s : Scratch) : IO String := do
   let remote := s!"{s.root}/remote.git"
   hgitOk #["init", "-q", "--bare", "-b", "main", remote] s.root
@@ -2031,8 +1782,7 @@ def addRemote (s : Scratch) : IO String := do
 
 def scenarioBranchMoves (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/moves" "moves"
-  -- The author commits on the branch, in its own worktree, while the gates
-  -- run: the branch no longer names the tip the landing read.
+  -- The author commits on the branch while the gates run.
   writeExe s!"{s.root}/race.sh"
     s!"#!/bin/sh\necho bad > {s.wt}/BAD && git -C {s.wt} add BAD && git -C {s.wt} commit -qm concurrent\n"
   let before ← revOf s.repo "refs/heads/main"
@@ -2076,8 +1826,8 @@ def scenarioConflict (self root : String) : IO Outcome := do
          , detail := s!"exit={code} branch={bBefore}->{bAfter} main={mBefore}->{mAfter} \
 status=[{st}] worktrees={wts.size}" }
 
-/-- A rebase that stops with nothing unmerged: a commit that cannot be
-signed stops the pick with its change staged. -/
+/-- A rebase that stops with nothing unmerged: a commit that cannot be signed stops the
+pick. -/
 def scenarioStoppedRebase (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/stopped" "stopped"
   IO.FS.writeFile s!"{s.repo}/main.txt" "main\n"
@@ -2110,10 +1860,7 @@ def scenarioLands (self root : String) : IO Outcome := do
              && wts.size == 2
          , detail := s!"exit={code} gated={tip} main-after={after} worktrees={wts.size}" }
 
-/-- A branch whose change holds a file that is not UTF-8 — a fixture in an
-8-bit encoding — lands: git lists its patch with the file's own bytes, which
-a reader insisting on UTF-8 could not read, so the net comparison once
-failed every such landing as garbled. -/
+/-- A branch whose change holds a file that is not UTF-8 lands. -/
 def scenarioLatin1 (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/latin1" "latin1"
   IO.FS.writeBinFile s!"{s.wt}/latin1.tex" ("Caf".toUTF8 ++ ⟨#[0xE9, 0x0A]⟩)
@@ -2127,10 +1874,8 @@ def scenarioLatin1 (self root : String) : IO Outcome := do
              && says out "result=landed"
          , detail := s!"exit={code} tip={tip} main-after={after}" }
 
-/-- A branch that already contains `main` carries its reviewed merge result,
-including a side commit deliberately reconciled without its old content.
-Landing preserves that exact tip, its tree and its ancestry on the remote.
-Replaying such a merge used to flatten it and could restore discarded code. -/
+/-- A branch that already contains `main` keeps its reviewed merge, its tree and its
+ancestry on the remote. -/
 def scenarioMergedTip (self root : String) (reconciled : Bool) : IO Outcome := do
   let name := if reconciled then "merge-reconciled" else "merge-kept"
   let s ← mkScratch s!"{root}/{name}" name
@@ -2159,9 +1904,7 @@ def scenarioMergedTip (self root : String) (reconciled : Bool) : IO Outcome := d
          , detail := s!"exit={code} tip={tip} main={after} remote={onRemote} \
 tree={tree}->{afterTree} side-ancestor={ancestor == 0} side-file={present}" }
 
-/-- The branch's own commit adds `BAD`; a gate that refuses `BAD` must see
-it. The gates once ran in the branch worktree, whose owner switched it to
-another branch mid-landing, and `BAD` landed under a passing gate. -/
+/-- The branch's own commit adds `BAD`, which a gate that refuses `BAD` must see. -/
 def badBranch (root name : String) : IO Scratch := do
   let s ← mkScratch root name
   IO.FS.writeFile s!"{s.wt}/BAD" "bad\n"
@@ -2195,16 +1938,14 @@ def scenarioTreeMoved (self root : String) : IO Outcome := do
              && says out "step=gate-switch result=fail" && wts.size == 2
          , detail := s!"exit={code} main-before={before} main-after={after} worktrees={wts.size}" }
 
-/-- A commit lands on `main` the instant `git push` starts — a deterministic
-stand-in for a concurrent commit in the main worktree. The push must send
-the gated tip, and the ungated commit must not reach the remote. -/
+/-- A commit lands on `main` the instant `git push` starts: the push sends the gated tip,
+and the ungated commit stays off the remote. -/
 def scenarioPushNamesTip (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/pushtip" "pushtip"
   let remote ← addRemote s
   let (_, realGit) ← hrun "sh" #["-c", "command -v git"] none
   IO.FS.createDirAll s!"{s.root}/wrap"
-  -- Only the push to `origin`: the fast-forward is a push too, into this
-  -- repository, and a commit there would make the landing refuse instead.
+  -- Only the push to `origin`, since the fast-forward is a push into this repository.
   writeExe s!"{s.root}/wrap/git"
     s!"#!/bin/sh\nif [ \"$1\" = push ] && [ \"$2\" = origin ]; then\n  \"{realGit}\" -C {s.repo} commit -q --allow-empty -m ungated\nfi\nexec \"{realGit}\" \"$@\"\n"
   let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
@@ -2217,8 +1958,8 @@ def scenarioPushNamesTip (self root : String) : IO Outcome := do
          , ok := code == 0 && onRemote == tip && ungated == "ungated" && says out "result=landed"
          , detail := s!"exit={code} gated={tip} remote={onRemote} local-main-top={ungated}" }
 
-/-- The remote's `main` moved on where this repository cannot see it: the
-push is not a fast-forward, and must fail loudly, never force. -/
+/-- The remote's `main` moved where this repository cannot see it: the push is no
+fast-forward and fails loudly. -/
 def scenarioPushNotFastForward (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/pushff" "pushff"
   let remote ← addRemote s
@@ -2238,9 +1979,8 @@ def scenarioPushNotFastForward (self root : String) : IO Outcome := do
              && says out "result=landed-unpushed"
          , detail := s!"exit={code} remote={theirs}->{onRemote} main={localMain} gated={tip}" }
 
-/-- The shape a landing found by hand: through a `merge=union` file the
-rebase kept a heading the branch had renamed away, git reported no conflict,
-and every gate passed. -/
+/-- A `merge=union` file keeps a heading the branch renamed away, with no conflict
+reported: the drift is refused. -/
 def scenarioUnionDrift (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/union" "union"
   IO.FS.writeFile s!"{s.repo}/.gitattributes" "PLAN.md merge=union\n"
@@ -2281,18 +2021,15 @@ def scenarioNoOptIn (self root : String) : IO Outcome := do
 def scenarioReserved (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/reserved" "check"
   let before ← revOf s.repo "refs/heads/main"
-  -- `land check` with no name: the branch `agent/check` exists, so a
-  -- fall-through to the bare-name form would land it.
+  -- `land check` with no name, beside an existing branch `agent/check`.
   let (code, _) ← landIn self s.repo #["check"] "t=true"
   let after ← revOf s.repo "refs/heads/main"
   return { label := "a subcommand word is not an agent name"
          , ok := code == 3 && before == after
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
-/-- A landing started with `GIT_DIR` naming another repository — as every
-hook in a linked worktree is — lands the repository its working directory
-names, runs its gates with no `GIT_DIR`, and writes nothing into the other
-one. -/
+/-- A landing started with `GIT_DIR` naming another repository lands the one its working
+directory names and writes nothing into the other. -/
 def scenarioForeignGitDir (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/foreign" "foreign"
   let target := s!"{s.root}/target"
@@ -2314,15 +2051,8 @@ def scenarioForeignGitDir (self root : String) : IO Outcome := do
          , detail := s!"exit={code} main={after} gated={tip} target={tBefore}->{tAfter} \
 target-land-dir={touched}" }
 
-/-- Retention and listings run while a landing is inside its gates. Sixty
-directories whose names sort after any run id stand in the run directory
-first, so the landing's own directory is the oldest there and the first a
-pruning pass would take: a gate then calls this very binary three times as
-`retire` (which prunes run directories) and twice as `status`. The
-landing's own directory must survive, and the landing finish. The first
-form of this scenario relied on fifty-five `retire` runs outnumbering the
-landing's directory, and passed against the defective build in two runs of
-five, because run ids within one second did not sort by time. -/
+/-- Retention and listings run while a landing is inside its gates, its own directory
+sorted first for pruning: it survives and the landing finishes. -/
 def scenarioRetention (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/retain" "retain"
   for i in [0:60] do
@@ -2341,9 +2071,8 @@ i=0\nwhile [ $i -lt 2 ]; do \"{self}\" status >/dev/null 2>&1; i=$((i+1)); done\
          , ok := code == 0 && after == tip && !run.isEmpty && kept
          , detail := s!"exit={code} main={after} gated={tip} run={run} kept={kept}" }
 
-/-- A landing killed inside a gate — a timeout, Ctrl-C, a killed agent —
-must not wedge the next one: the lock dies with it, and the next landing
-records the dead run and removes its gate tree. -/
+/-- A landing killed inside a gate does not wedge the next one, which records the dead run
+and removes its gate tree. -/
 def scenarioKilled (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/killed" "k1"
   let wt2 := s!"{s.root}/lt-k2"
@@ -2364,10 +2093,8 @@ def scenarioKilled (self root : String) : IO Outcome := do
          , detail := s!"first-exit={c1} second-exit={c2} main={after} gated={tip2} \
 worktrees={wts.size}" }
 
-/-- A `git` on `PATH` that runs `hook` (shell text) once, when the landing
-invokes `git` with arguments `cond` accepts, then runs the real git. A
-deterministic stand-in for a party acting at one instant of a landing, as the
-reviewer's probes are. -/
+/-- A `git` on `PATH` that runs `hook` once, when the landing invokes `git` with arguments
+`cond` accepts, then the real git. -/
 def gitWrapper (s : Scratch) (cond hook : String) (after : Bool := false) : IO String := do
   let (_, realGit) ← hrun "sh" #["-c", "command -v git"] none
   IO.FS.createDirAll s!"{s.root}/wrap"
@@ -2379,16 +2106,15 @@ def gitWrapper (s : Scratch) (cond hook : String) (after : Bool := false) : IO S
   let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
   return s!"{s.root}/wrap:{path}"
 
-/-- The owner's next unit, committed in the owner's own worktree by the
-wrapper: shell text for `gitWrapper`, which records the commit's sha. -/
+/-- The owner's next unit, committed in the owner's own worktree by the wrapper. -/
 def ownerCommit (s : Scratch) (realGit : String) : String :=
   s!"  echo \"the owner's next unit\" > {s.wt}/owner-work.txt\n\
   \"{realGit}\" -C {s.wt} add owner-work.txt\n\
   \"{realGit}\" -C {s.wt} commit -qm \"The owner's next unit\"\n\
   \"{realGit}\" -C {s.wt} rev-parse HEAD > {s.root}/owner-commit.txt"
 
-/-- Is the owner's commit still on the owner's branch, and its file in the
-owner's worktree, which reads clean? -/
+/-- Whether the owner's commit is still on the owner's branch, and its file in the owner's
+clean worktree. -/
 def ownerKept (s : Scratch) (branch : String) : IO (Bool × String) := do
   let oc := trimWs (← try IO.FS.readFile s!"{s.root}/owner-commit.txt" catch _ => pure "")
   let (anc, _) ← hgit #["merge-base", "--is-ancestor", oc, branch] s.repo
@@ -2397,12 +2123,8 @@ def ownerKept (s : Scratch) (branch : String) : IO (Bool × String) := do
   return (isSha oc && anc == 0 && present && st.isEmpty,
     s!"owner-commit={oc} reachable={anc == 0} file={present} status=[{st}]")
 
-/-- The branch's owner commits in their own worktree after the landing read
-the branch and just before the gated tip is prepared. The landing must keep that
-commit: a run once replayed it, read it as drift, and put the branch back at
-the tip it read first — erasing the commit from the branch and the file from
-the owner's worktree. Both a preserved tip and a replay onto changed main
-must retain the owner's subsequent commit and refuse the landing. -/
+/-- The owner commits just before the gated tip is prepared: the landing keeps that commit
+and refuses. -/
 def scenarioOwnerCommitsBeforeRebase (self root : String) (diverged : Bool := false) :
     IO Outcome := do
   let name := if diverged then "ownerbefore-rebase" else "ownerbefore"
@@ -2423,8 +2145,8 @@ def scenarioOwnerCommitsBeforeRebase (self root : String) (diverged : Bool := fa
          , ok := code == 2 && kept && before == after && says out "moved during the"
          , detail := s!"exit={code} main={before}->{after} {facts}" }
 
-/-- As above, with the owner's commit the instant the rebase ends, under
-`land check`, which lands nothing and must write nothing of the owner's. -/
+/-- As above, the owner's commit the instant the rebase ends, under `land check`, which
+must write nothing of the owner's. -/
 def scenarioOwnerCommitsAfterRebase (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/ownerafter" "own"
   IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
@@ -2441,9 +2163,8 @@ def scenarioOwnerCommitsAfterRebase (self root : String) : IO Outcome := do
          , ok := code == 0 && kept && before == after
          , detail := s!"exit={code} main={before}->{after} {facts}" }
 
-/-- The main worktree is switched to another branch at the instant of the
-fast-forward. Only `refs/heads/main` may move: the fast-forward once moved
-whatever the main worktree's `HEAD` named. -/
+/-- The main worktree switched to another branch at the fast-forward: only
+`refs/heads/main` moves. -/
 def scenarioMainSwitchedAtMerge (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/switchff" "switchff"
   hgitOk #["branch", "side", "main"] s.repo
@@ -2461,9 +2182,8 @@ def scenarioMainSwitchedAtMerge (self root : String) : IO Outcome := do
          , detail := s!"exit={code} fired={fired} side={side0}->{side1} main={main1} \
 gated={tip}" }
 
-/-- The remote holds a ref whose name ends in `refs/heads/main` and sorts
-before it. The read-back must read `refs/heads/main` itself: the first line
-`ls-remote` printed once recorded a pushed landing as unpushed. -/
+/-- The remote holds a ref ending in `refs/heads/main` that sorts first; the read-back
+reads `refs/heads/main` itself. -/
 def scenarioLsRemoteDecoy (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/decoy" "decoy"
   let remote ← addRemote s
@@ -2478,10 +2198,8 @@ def scenarioLsRemoteDecoy (self root : String) : IO Outcome := do
              && says ledger "\"verdict\":\"pushed\""
          , detail := s!"exit={code} remote={onRemote} gated={tip}" }
 
-/-- `main` moved, so the landing replays the branch's commits onto it and
-the branch keeps the originals. A decoy of the whole flow: a second landing
-of the same, unmoved branch must refuse, rather than replay commits `main`
-already holds. -/
+/-- `main` moved, so the branch lands as rebased copies; a second landing of the unmoved
+branch refuses. -/
 def scenarioRelandRefused (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/reland" "reland"
   IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
@@ -2498,17 +2216,9 @@ def scenarioRelandRefused (self root : String) : IO Outcome := do
              && says out2 "already landed"
          , detail := s!"first={c1} second={c2} branch={bTip}->{bAfter} main={main1}->{main2}" }
 
-/-- The review's q12. A landing onto a moved `main` replays the branch as
-rebased copies and leaves the branch where it was; `main` is then put back
-where it stood before that landing — a local undo, before any push. The
-branch's work is then on the branch and not on `main`, so that landing's row
-bars nothing: the unmoved branch lands again, and so, after one more undo,
-does a continued one, with both its units. The build this scenario was
-written against refused the first as "already landed" and told the second
-to `git rebase --onto main <tip>`, which dropped the landed unit from the
-branch. While `main` does hold a landing, the branch takes no further
-landing, and the refusal sends the next unit to a new branch from `main`,
-never through a rebase of this one. -/
+/-- `main` put back past a landing: the unmoved branch lands again, and after another undo
+so does a continued one; while `main` holds the landing, both are refused and sent to a
+new branch. -/
 def scenarioMainPutBack (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/putback" "own"
   IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
@@ -2526,8 +2236,7 @@ def scenarioMainPutBack (self root : String) : IO Outcome := do
   let (c2, _) ← landIn self s.repo #["own"] "t=true"
   let own2 ← onMain "own.txt"
   let g2 ← revOf s.repo "refs/heads/main"
-  -- `main` holds that landing: the unmoved branch, and then the continued
-  -- one, are refused, and pointed at a new branch.
+  -- `main` holds that landing: both branches are refused and pointed at a new one.
   let (c3, out3) ← landIn self s.repo #["own"] "t=true"
   IO.FS.writeFile s!"{s.wt}/next.txt" "next\n"
   hgitOk #["add", "next.txt"] s.wt
@@ -2551,8 +2260,8 @@ continued branch is not told to drop what main lacks"
 pointed={pointed out3} continued={c4} pointed={pointed out4} main={g2}->{g4} \
 put-back-continued={c5} own-on-main={own5} next-on-main={next5} branch={nTip}->{bAfter}" }
 
-/-- A branch landed as rebased copies is retired: the ledger, not ancestry,
-says it is merged, and the branch is deleted by compare-and-swap. -/
+/-- A branch landed as rebased copies is retired by the ledger's word and deleted by
+compare-and-swap. -/
 def scenarioRetireRebased (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/retireb" "retireb"
   IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
@@ -2566,10 +2275,8 @@ def scenarioRetireRebased (self root : String) : IO Outcome := do
          , ok := c1 == 0 && c2 == 0 && hasRef != 0 && wtGone && says out2 "result=retired"
          , detail := s!"land={c1} retire={c2} ref-left={hasRef == 0} worktree-gone={wtGone}" }
 
-/-- A landing made without `--push` is published later by `land push`, which
-names the landed sha and reads the remote back: a second `land <name>
---push` refuses, because the branch is no longer ahead, and a hand push has
-no read-back and leaves no row. -/
+/-- A landing made without `--push` is published later by `land push`, while a second
+`land <name> --push` refuses. -/
 def scenarioPushLater (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/pushlater" "later"
   let remote ← addRemote s
@@ -2585,8 +2292,8 @@ def scenarioPushLater (self root : String) : IO Outcome := do
              && says out2 "result=pushed" && says ledger "\"verdict\":\"pushed\""
          , detail := s!"land={c1} push={c2} remote={base}->{mid}->{onRemote} gated={tip}" }
 
-/-- A commit lands on `main` by hand after the last landing: `land push`
-must refuse to publish it, and the remote stays where it was. -/
+/-- A commit put on `main` by hand after the last landing: `land push` refuses to publish
+it. -/
 def scenarioPushUngated (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/pushungated" "ungated"
   let remote ← addRemote s
@@ -2600,10 +2307,8 @@ def scenarioPushUngated (self root : String) : IO Outcome := do
              && says out2 "a commit no landing gated"
          , detail := s!"land={c1} push={c2} remote={base}->{onRemote}" }
 
-/-- A repository with an origin, as the real one stood when its `main` was
-pushed unasked: `main` one commit ahead of its origin's, and a linked
-worktree on its own branch — the worktree whose hook is handed `GIT_DIR` and
-`GIT_INDEX_FILE` naming this repository. -/
+/-- A repository whose `main` is one commit ahead of its origin's, with a linked worktree
+whose hook is handed `GIT_DIR` and `GIT_INDEX_FILE`. -/
 structure Victim where
   root : String
   repo : String
@@ -2637,9 +2342,8 @@ def mkVictim (root : String) : IO Victim := do
     throw (IO.userError s!"fixture: the victim's worktree names the repository {gitDir}")
   return { root, repo, origin, wt, gitDir }
 
-/-- Everything a command could have written in the victim and its origin: the
-origin's refs; the victim's refs, config and worktrees; the linked worktree's
-`HEAD` and index, as bytes. -/
+/-- Everything a command could have written in the victim and its origin: refs, config,
+worktrees, and the linked worktree's `HEAD` and index as bytes. -/
 structure VictimState where
   origin : String
   refs : String
@@ -2667,14 +2371,8 @@ def VictimState.changed (a b : VictimState) : String :=
   | [] => "none"
   | bad => String.intercalate "," (bad.map (·.1))
 
-/-- The incident's shape. The harness is started the way a hook in a linked
-worktree starts a program — `GIT_DIR` and `GIT_INDEX_FILE` naming that
-worktree's repository, whose `main` is ahead of its origin's — and must run
-its scenarios and leave that repository and its origin as they were: the
-origin's `main` unmoved, no ref, config or worktree written. The build before
-the scrub (cfd060d3), started so on a scratch copy, pushed that repository's
-`main` to its origin, added thirteen branches and twelve worktrees, and
-rewrote its config down to `core.bare`. -/
+/-- A harness started as a hook in a linked worktree starts a program, with `GIT_DIR` and
+`GIT_INDEX_FILE` naming that repository, leaves it and its origin as they were. -/
 def scenarioHookGitDir (self root : String) : IO Outcome := do
   let v ← mkVictim s!"{root}/hookdir"
   let before ← victimState v
@@ -2693,10 +2391,8 @@ and its origin as they were"
          , detail := s!"exit={code} scenarios={ran} push-scenario={pushed} \
 changed={before.changed after}" }
 
-/-- A harness whose scratch root lies inside a checkout refuses to start: git
-discovers that checkout from any directory under the root that is not a
-repository itself, and a fixture command there would write it. The checkout
-is left as it was, and the directory holds nothing afterwards. -/
+/-- A harness whose scratch root lies inside a checkout refuses to start and leaves the
+checkout and the directory as they were. -/
 def scenarioRootInCheckout (self root : String) : IO Outcome := do
   let v ← mkVictim s!"{root}/incheckout"
   let inside := s!"{v.repo}/scratch"
@@ -2711,12 +2407,8 @@ def scenarioRootInCheckout (self root : String) : IO Outcome := do
          , ok := code == 2 && named && before == after && left == 0
          , detail := s!"exit={code} refused={named} left={left} changed={before.changed after}" }
 
-/-- The guard refuses, before git runs, each command whose writes the run does
-not own: one run from outside the root, a push by a remote's name, a push to
-a repository the run did not make bare, a global option, a fetch, and the
-tool under test in a repository with a remote the run did not make. None of
-them writes anything, and a push by path to the run's own bare repository
-still goes through. -/
+/-- The guard refuses each command whose writes the run does not own before git runs,
+while a push by path to the run's own bare repository goes through. -/
 def scenarioGuardRefuses (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/guard" "guard"
   let remote ← addRemote s
@@ -2745,12 +2437,8 @@ git runs"
          , detail := s!"refused=[{String.intercalate "," refused.toList}] tool={tool} \
 by-path={byPath} wrote={wrote}" }
 
-/-- No command the harness starts can use a network transport. Every
-repository a scenario makes is a local path and a real remote never is, so
-the harness's environment leaves git itself refusing `https`. The tool under
-test runs one gate that asks for a remote at the loopback address, on a port
-nothing answers, and that passes only when git refused the transport before
-it tried to connect. -/
+/-- No harness command can use a network transport: a gate asking for a loopback remote
+passes only when git refused the transport before connecting. -/
 def scenarioNoNetwork (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/nonet" "nonet"
   writeExe s!"{s.root}/probe.sh"
@@ -2765,21 +2453,16 @@ grep -q \"transport 'https' not allowed\" {s.root}/probe.err\n"
          , ok := code == 0 && after == tip
          , detail := s!"exit={code} main={after} gated={tip} git-said=[{said}]" }
 
-/-- Drive the driver against throwaway repositories. `LAND_SCENARIO_BINARY`
-names another build to drive instead of this one — how a scenario is shown
-to fail on the tip before its fix. The scratch root is a fresh directory
-this run creates, by its real path, under `LAND_SCRATCH_DIR` (else `/tmp`),
-and the run refuses to start, exit 2, when a repository encloses it. Under
-`LAND_SCENARIO_NESTED` — how the two scenarios that start a harness start
-it — those two are left out, so a harness never starts itself again. -/
+/-- Drive the driver against throwaway repositories under a fresh root in
+`LAND_SCRATCH_DIR` (else `/tmp`), refusing with exit 2 when a repository encloses it;
+`LAND_SCENARIO_BINARY` names another build to drive. -/
 def scratchSelftest : IO UInt32 := do
   let self ← do
     match ← IO.getEnv "LAND_SCENARIO_BINARY" with
     | some b => pure b
     | none => pure (← IO.appPath).toString
   let nested := (← IO.getEnv "LAND_SCENARIO_NESTED").isSome
-  -- A fresh directory, named by its real path: git names directories by
-  -- their real path, and the guard compares what git names.
+  -- A fresh directory named by its real path, since the guard compares the paths git names.
   let parent := (← IO.getEnv "LAND_SCRATCH_DIR").getD "/tmp"
   let made ← try
       IO.FS.createDirAll parent
@@ -2791,8 +2474,7 @@ def scratchSelftest : IO UInt32 := do
     | say "scratch-root" "fail" [("parent", parent), ("why", "no fresh directory could be made")]
       sayFinal .refused [("why", s!"no fresh scratch root under {parent}")]
       return 2
-  -- premise: scenarioRootInCheckout — a root a repository encloses is refused
-  -- here, before any command runs, and the directory is left empty.
+  -- premise: scenarioRootInCheckout — an enclosed root is refused before any command runs
   match rootFault root (← gitDirOf root) with
   | some why =>
     rmQuiet root
@@ -2831,8 +2513,7 @@ def scratchSelftest : IO UInt32 := do
     , ("nonet", scenarioNoNetwork) ] ++ (if nested then [] else starting)
   let mut outcomes : Array Outcome := #[]
   for (key, sc) in scenarios do
-    -- A fixture that could not be built is the scenario's failure, named,
-    -- never a harness that stops with the rest unrun.
+    -- A fixture that could not be built fails its scenario, named, and the rest still run.
     let o ← try sc self root
       catch ex => pure { label := key, ok := false, detail := toString ex }
     outcomes := outcomes.push o
@@ -2850,15 +2531,11 @@ def scratchSelftest : IO UInt32 := do
     sayFinal .failed [("scenarios", toString outcomes.size), ("bad", toString bad)]
     return 1
 
--- ## Entry
-
 def usage : String :=
   "usage: land new <name> | land check <name> | land <name> [--push] | land push | \
 land retire <name> | land status | land --selftest | land --scratch-selftest"
 
-/-- The subcommand words, which are not agent names. `land check` with no
-name once fell through to the bare-name form and would have landed
-`agent/check`. -/
+/-- The subcommand words, which are not agent names. -/
 def reserved : List String := ["new", "check", "retire", "status", "push"]
 
 def resolveGates (e : Env) : IO (Except String (Array Gate × String)) := do
@@ -2899,8 +2576,7 @@ def main (argv : List String) : IO UInt32 := do
         act
       let code ← match args with
         | ["status"] => do
-          -- A listing is no run: it prunes nothing and leaves no directory,
-          -- so any number of them cannot crowd a landing's out.
+          -- A listing is no run: it prunes nothing and leaves no directory.
           let c ← landStatus env
           rmQuiet env.runDir
           pure c
