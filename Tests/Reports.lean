@@ -161,7 +161,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks svgNativeBoundaryChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks
-  markdownInputHtmlChecks disclosurePrintChecks overlaySetChecks overlayStyleChecks
+  markdownInputHtmlChecks disclosurePrintChecks overlaySetChecks overlayOnlyChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
   diagnosticOriginChecks diagnosticContrastOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
@@ -1538,7 +1538,14 @@ def reports : List Report := [
     accept := ["eighteen of the guard's assertions, as the first review left them, fail on the tree at 1805d55c before the fix: for a black ink beside a yellow accent, a neutral ink beside a magenta one, and the black ink beside a declared literal, keywords and names in the ink, and beside a declared keyword its names, showing no hue, the web page painting no colour for them and the export a TeX build reads defining none; and for a violet ink beside an orange accent, keywords and names in one colour, their hues not apart",
       "the first review's guards: with its answer reverted onto 34b7ad87, three assertions fail: keywords planned over a literal its own key declares, 13° from it, names over a declared keyword, 20° from it, and two inks a channel step apart setting names in hues 132° apart, where equal arcs fell to rounding",
       "the second review's guards: with its answer reverted onto 04961d69, four assertions fail: a literal planned over a keyword its own key declares, a degree from it; names and keywords both shipping a name's declared colour; and a literal shipping an error's declared colour"]
-    state := .guarded "1805d55c" .before .author }
+    state := .guarded "1805d55c" .before .author },
+  { id := "R170", date := "2026-10-13"
+    what := "beamer's `only` overlay command covered its argument on the steps its selector does not select and kept its space, as `uncover` does, where beamer typesets the frame there as if the argument were not written: a frame whose steps swap blocks by it stood every step at the height of all of them and continued on further pages, and a formula holding it was set as its source text, selectors included"
+    pins := [check% overlayOnlyChecks, check% overlaySetChecks, check% overlayContractChecks,
+      check% overlayInputChecks]
+    accept := ["one hundred and sixteen of the guards' assertions fail with the fix reverted onto its commit: sixty-six of the reading guard's — every step whose selector leaves the argument out kept it on the page and in the web page's snap, inline, as paragraphs, as a next token, a control word and the starred onslide, in a title, an item and a cell, under a union and nested; a display, an unnumbered equation and an inline formula holding it named a loss and set as their text; the frame swapping two ten-line blocks continued on further pages; and an alternation nested at an alternative's opening set its display a line low — and fifty of the set, contract and input guards, which held the covering reading",
+      "a presentation deck whose frames swap content by it ships as many pages as its lualatex build, where it shipped more, each page the step lualatex sets there; one whose table cells it reveals ships each step's cells absent where lualatex leaves them out, its page count unchanged and lualatex's; two decks that never write it ship byte-identical PDF and HTML"]
+    state := .guarded "fcebbaa5" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
