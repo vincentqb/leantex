@@ -9,17 +9,12 @@ open LeanTex.Core
 
 namespace Tests.Schemes
 
-/-- ΔEOK between two colours, thousandths. -/
+/-- ΔEOK between two colours, in thousandths. -/
 private def deltaEMilli (a b : Ir.Color) : Nat :=
   (Nat.sqrt (ContrastSolve.deltaEOkSq a b).toNat) / 10 ^ 15
 
-/-- **The dark screen is the class's seeds carried to a dark page**: the
-undeclared document's dark colours — page, ink, muted ink, rule, accent and
-code ground — are what the class's default seeds generate there
-(`SeedPalette.classSeedsIn`), each within ΔEOK 0.03 of the constants the
-stylesheet shipped before (a zinc-900 page and zinc-400 muted ink,
-stone-50 ink, a zinc-700 rule, a blue-400 accent and a zinc-800 code
-ground, Tailwind v4's), so deleting them moved no colour visibly. -/
+/-- The dark screen is the class's seeds carried to a dark page, each colour within ΔEOK 0.03 of a
+fixed reference constant. -/
 def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let web : Ir.Palette := { classColors := { row := .web, depth := .documents } }
@@ -31,36 +26,23 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   for (r, c) in former do
     match Ir.Design.at web .dark r with
     | some d =>
-      t s!"the dark {(Ir.ColorRef.role r).key} {d.css} stands within ΔEOK 0.03 of the former {c.css}"
+      t s!"the dark {(Ir.ColorRef.role r).key} {d.css} stands within ΔEOK 0.03 of the reference {c.css}"
         (deltaEMilli d c ≤ 30)
     | none => t s!"the dark {(Ir.ColorRef.role r).key} resolves" false
 
-/-- **A scheme that cannot carry a colour is dropped, named once**: a
-mid-grey ink on a mid-grey page reads at 1.0:1, which print and the light
-screen ship as declared (the document's report names it), and neither a
-tone of the ink nor one of the page reaches SC 1.4.6's 7:1 against the
-other, so the page ships without its more-contrast light screen and names
-the ink once (W0308, `lightMore:fg@bg`); the dark screens turn the page over
-and carry the ink there. Where the colours ship as declared, the report
-that judges declared colours names the pair (W0315), and no W0308 does. Every dropped scheme is paid for
-(`Contrast.scheme_drop_accounts`). A black ink and a white alert the page
-paints on that page ship every scheme: the page moves to serve the ink and
-the alert is carried again on the moved page (`Ir.Palette.view`); an alert
-the page never paints is never judged. A deck offers its own screen and its
-more contrast; a document every scheme. Invented content. -/
+/-- A scheme that cannot carry a colour is dropped and named once (W0308). -/
 def dropChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, said) := elabStr (dvDoc "\\palette{ bg = #767676, fg = #777777 }\n" "x")
   let j := Contrast.schemeJudge doc
-  t s!"a mid-grey ink on a mid-grey page ships every scheme but its more-contrast light one \
-({j.shipped.map (·.name)})"
+  t s!"mid-grey on mid-grey ships every scheme but more-contrast light ({j.shipped.map (·.name)})"
     (j.shipped == [.print, .light, .dark, .darkMore] && j.dropped.map (·.1) == [.lightMore])
   let named := j.diags.filter (·.code == "W0308")
-  t "the colour the dropped scheme could not carry is named once, under its subject"
+  t "the uncarried colour is named once, under its subject"
     (named.size == 1 && named.all (·.subject == some "lightMore:fg@bg"))
   t "the page's HTML names it too"
     ((HtmlDoc.emit {} doc).2.any fun d => d.code == "W0308")
-  t "where the colours ship as declared, the document's report names the ink, and no W0308 does"
+  t "as-declared colours are named by the report, not W0308"
     (said.any (·.code == "W0315") &&
      !(named.any fun d => d.subject.any fun k => k.startsWith "print:" || k.startsWith "light:"))
   let (two, _) := elabStr (dvDoc "\\palette{ bg = #767676, fg = #000000, alert = #FFFFFF }\n"
@@ -81,8 +63,7 @@ def dropChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 mutual
 
-/-- Each listing box of a typed tree, with the custom properties in scope at
-it — its own declarations first, then its ancestors' — and its own style. -/
+/-- Each listing box of a typed tree with the custom properties in scope at it and its own style. -/
 def preBoxesOne (vars : List (String × String))
     (acc : Array (List (String × String) × String × Array Html.Node)) :
     Html.Node → Array (List (String × String) × String × Array Html.Node)
@@ -100,7 +81,7 @@ def preBoxesList (vars : List (String × String))
 
 end
 
-/-- A colour a CSS value spells, `#rrggbb`. -/
+/-- A colour a CSS value spells `#rrggbb`. -/
 def hexColor? (v : String) : Option Ir.Color :=
   if v.length == 7 && v.startsWith "#" then
     (({} : Ir.Palette).resolveSource none v).toOption.join
@@ -110,14 +91,8 @@ def hexColor? (v : String) : Option Ir.Color :=
 def darkGround (c : Ir.Color) : Bool :=
   decide (Contrast.contrastMilli c Ir.Color.black < Contrast.contrastMilli c Ir.Color.white)
 
-/-- **Every listing a page ships stands on its scheme's ground with every
-token legible there**, as one scheme's cascade reads the typed tree
-(`schemeRoot`, `schemeRead`): each listing box's ground — its own
-declaration, else the page's `pre` rule, else the page — and each token's
-colour, its class's rule (`tokenClassColors`) through the properties in
-scope at the box, with the box's own text colour, each at `req` or more on
-that ground, which `darkOnly` asks to be dark. The offences, each naming the
-box. -/
+/-- The listing boxes whose ground or tokens fall below `req` under scheme `s`'s cascade, or whose
+ground is not dark where `darkOnly` asks. -/
 def listingOffences (head body : Array Html.Node) (s : Ir.Scheme) (req : Nat)
     (darkOnly : Bool := false) : Array String := Id.run do
   let css := treeCssList "" head.toList
@@ -155,10 +130,8 @@ def listingOffences (head body : Array Html.Node) (s : Ir.Scheme) (req : Nat)
     | g, fg => out := out.push s!"listing {i + 1}: ground {g.map (·.css)}, text {fg.map (·.css)}"
   return out
 
-/-- **Under the dark screen every corpus listing stands on a dark ground,
-every token at 4.5:1 or more on it**, by the dark scheme's cascade over the
-typed tree (`listingOffences`): the light code slab is gone. Each corpus page
-that ships the dark scheme and holds a listing. -/
+/-- Under the dark screen every corpus listing stands on a dark ground, every token at 4.5:1 or more
+on it. -/
 def darkListingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut pages := 0
@@ -176,17 +149,13 @@ def darkListingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"dark listings: the corpus holds pages with listings that ship the dark screen ({pages})"
     (pages ≥ 3)
 
-/-- A colour value that takes the colour around the element: `inherit`, and
-`currentColor` on the `color` property itself. -/
+/-- A colour value taking the colour around the element: `inherit`, or `currentColor`. -/
 def inherits (v : String) : Bool := v == "inherit" || v.toLower == "currentcolor"
 
 mutual
 
-/-- What a typed tree paints, element by element: each element's own ground
-(its `background`), and each text's colour — the nearest colour an element
-around it states, its own `color` or its token class's (`classes`) — each
-beside the custom properties in scope there and whether an element around
-it states a ground or is a picture, which stands on a plate of its own. -/
+/-- What a typed tree paints: each ground, and each text's colour with its properties in scope and
+whether it stands on a stated ground or a picture. -/
 def paintedOne (classes : List (String × String)) (vars : List (String × String))
     (color : Option String) (grounded : Bool)
     (acc : Array (List (String × String) × String × Bool × String × Bool)) :
@@ -198,8 +167,7 @@ def paintedOne (classes : List (String × String)) (vars : List (String × Strin
     let decls := cssDecls style
     let color := ((cls.splitOn " ").findSome? (classes.lookup ·)).orElse fun _ =>
       ((lastDecl decls "color").filter (!inherits ·)).orElse fun _ => color
-    -- A picture stands on its own plate on a dark screen (the stylesheet's
-    -- `svg.picture` rule), its labels with it.
+    -- A picture stands on its own plate on a dark screen (the stylesheet's `svg.picture` rule), its labels with it.
     let grounded := grounded || (tag == "svg" && (cls.splitOn " ").contains "picture")
     let (acc, grounded) := match lastDecl decls "background" with
       | some g => (acc.push (vars, g, false, nodeTextList "" kids.toList, grounded), true)
@@ -220,9 +188,7 @@ def paintedList (classes : List (String × String)) (vars : List (String × Stri
 
 end
 
-/-- The colours a shipped page paints text in and fills with: every run's
-ink, and every fill's, rule's, decoration's and polygon's colour
-(`Layout.Out`). -/
+/-- The colours a shipped page paints text in and fills with. -/
 def shippedColors (out : Layout.Out) : Array Ir.Color × Array Ir.Color :=
   let add (acc : Array Ir.Color) (c : Ir.Color) := if acc.contains c then acc else acc.push c
   let segs := out.pages.flatMap fun p => p.lines.flatMap (·.segs)
@@ -234,15 +200,8 @@ def shippedColors (out : Layout.Out) : Array Ir.Color × Array Ir.Color :=
     | .run .. | .gap .. | .decoratedGap .. | .image .. => acc) #[]
   (inks, out.pages.foldl (fun acc p => p.fills.foldl (fun acc f => add acc f.color) acc) marks)
 
-/-- **What the printed web page paints, the PDF paints**: the printed page is
-the PDF's page, and every colour the typed tree paints a text in
-(`paintedList`: the nearest element's own `color` or token class colour,
-`tokenClassColors`, else the body rule's ink), as the print cascade reads
-it (`schemeRoot`, `schemeRead`) — with the more-contrast block in force
-where `more` says, as a reader who asks more contrast prints — is one the
-shipped page sets a run in, and every ground an element or the listing rule
-states is one the page fills or marks, or its own page (`Layout.Out`). The
-offences. -/
+/-- What the printed web page paints that the PDF does not: text colours and grounds under the print
+cascade. -/
 def printOffences (fonts : Font.FontSet) (doc : Ir.Doc) (more : Bool := false) :
     Array String := Id.run do
   let (inks, fills) := shippedColors (layoutOf fonts doc (Layout.Geom.ofPage doc.page))
@@ -250,8 +209,6 @@ def printOffences (fonts : Font.FontSet) (doc : Ir.Doc) (more : Bool := false) :
   let css := treeCssList "" head.toList
   let (root, dark) := schemeRoot css .print more
   let rules := sheetRules css
-  -- The sheet's own paint, as print reads it: the body's ground and ink,
-  -- and a listing box's ground, each where its rule holds in print.
   let ruleDecl (sel prop : String) : Option String :=
     (rules.toList.filter fun (conds, sl, _) => sl == sel && conds.all (holdsIn .print · more)).foldl
       (fun acc (_, _, decls) => (lastDecl (cssDecls decls) prop).orElse fun _ => acc) none
@@ -277,10 +234,7 @@ def printOffences (fonts : Font.FontSet) (doc : Ir.Doc) (more : Bool := false) :
       out := out.push s!"ground {c.css} ('{what}') is no fill"
   return out
 
-/-- **On every corpus page that ships print, the printed web page's colours
-are the PDF's** (`printOffences`): `@media print` restates each colour the
-print column holds, and a listing's, an epoch's and a coloured run's own
-declarations read their print values there. -/
+/-- On every corpus page that ships print, the printed web page's colours are the PDF's. -/
 def printChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let mathSet ← mathSetOf fonts
@@ -289,8 +243,7 @@ def printChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :=
   for (path, doc) in ← corpusTwinDocs do
     if !(Contrast.schemeJudge doc).shipped.contains .print then continue
     pages := pages + 1
-    -- The faces the document names, as the driver resolves them: a formula
-    -- set in a face with no math sets its colour as the PDF's own.
+    -- Faces resolved as the driver resolves them: a formula in a face with no math sets the PDF's colour.
     let fs ← fixtureFontSet fonts mathSet shipped doc
     let offences := printOffences fs doc
     t s!"print colours: {path} paints what its PDF paints: {offences.toList}" offences.isEmpty
@@ -300,13 +253,8 @@ def printChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :=
       more.isEmpty
   t s!"print colours: the corpus's pages ship print ({pages})" (pages ≥ 50)
 
-/-- **On the dark screen every colour a text states reads on the page**: on
-every corpus page that ships the dark scheme, each text whose colour an
-element states (`paintedList`: its own `color`, a token class's) and that
-stands on no ground an element states reads at 4.5:1 or more on the page,
-as the dark scheme's cascade reads both (`schemeRoot`, `schemeRead`): a
-colour no palette names rides its carrying in its one declaration
-(`HtmlDoc.Config.literal`), a formula's as a paragraph's. The offences. -/
+/-- On the dark screen every colour a text states reads at 4.5:1 or more on the page; the
+offences. -/
 def darkTextOffences (doc : Ir.Doc) : Array String := Id.run do
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
@@ -333,17 +281,8 @@ def darkTextChecks (ref : IO.Ref (List String)) : IO Unit := do
       offences.isEmpty
   t s!"dark text: the corpus's pages ship the dark screen ({pages})" (pages ≥ 50)
 
-/-- **Each scheme a reader asks for reads what the page ships for it**: for a
-document whose ink every scheme carries differently, under every declared
-list of schemes — print and the light screen with each subset of the dark
-screen and the two more-contrast schemes — and for a page whose judge drops
-one, the static cascade a reader's preferences select (`schemeRoot`,
-`schemeRead`) gives the page's ink and ground as the shipped scheme's view
-holds them; where the scheme is not shipped, as its polarity's plain screen
-does, and where the page offers that polarity nothing, as the light screen
-does — or its more scheme, for a reader asking more contrast: neither
-polarity reads the other's values, and a more-contrast scheme ships whether
-or not the other polarity's does. -/
+/-- Each scheme a reader asks for reads what the page ships for it, under every declared list of
+schemes. -/
 def subsetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let extra : List Ir.Scheme := [.dark, .lightMore, .darkMore]
@@ -352,9 +291,6 @@ def subsetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let docs := (subsets.map fun sub =>
       let list := String.intercalate ", " (([Ir.Scheme.print, .light] ++ sub).map (·.name))
       (list, dvDoc s!"\\palette\{ fg = #6E6E6E, bg = #FBFBFB }\n\\output\{ schemes = {list} }\n" "x")) ++
-    -- A scheme the judge drops (W0308, `dropChecks`' witness) reads as one
-    -- the document never asked for; a list naming a more scheme and not its
-    -- screen holds the more scheme as its floor.
     [("lightMore dropped", dvDoc "\\palette{ bg = #767676, fg = #777777 }\n" "x"),
      ("print, lightMore, dark", dvDoc ("\\palette{ fg = #6E6E6E, bg = #FBFBFB }\n" ++
         "\\output{ schemes = print, lightMore, dark }\n") "x"),
@@ -369,9 +305,6 @@ def subsetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (head, _, _) := HtmlDoc.emitTree {} doc
     let css := treeCssList "" head.toList
     for s in [Ir.Scheme.light, .dark, .lightMore, .darkMore] do
-      -- A polarity the page offers no screen of reads the floor
-      -- (`HtmlDoc.floorScheme`); under more contrast its more scheme where
-      -- that ships.
       let offers := j.shipped.contains s.base || (s.more && j.shipped.contains s)
       let s' := if offers then s else if s.more then Ir.Scheme.lightMore else .light
       let target := if j.shipped.contains s' then s'
@@ -384,12 +317,7 @@ def subsetChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"scheme subsets [{list}]: {s.name} reads {(Ir.ColorRef.role r).key} as {target.name} \
 ships it ({got.map (·.css)}, {want.map (·.css)})" (got.isSome && got == want)
 
-/-- **A picture stands on its document's page wherever the screen turns
-over**: on a declared light page the dark screen's plate under a picture is
-that page, and on a declared dark page the light screen's is that page —
-never the page the scheme carries, which a declared page reflects to the
-other polarity. Read through the cascade of the turned screen
-(`schemeRoot`, `sideOf`). Invented content. -/
+/-- A picture stands on its document's page wherever the screen turns over. -/
 def plateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, page, turned) in [("light", "F4F0E6", Ir.Scheme.dark), ("dark", "14181E", .light)] do
@@ -406,8 +334,7 @@ def plateChecks (ref : IO.Ref (List String)) : IO Unit := do
 screen ({plate.map (sideOf dark ·)}, {pictures} pictures)"
       (pictures ≥ 1 && plate.map (sideOf dark ·) == some ("#" ++ page.toLower))
 
-/-- A declaration's value with every `var(...)` reference cut out: what it
-states as itself. -/
+/-- A declaration's value with every `var(...)` reference cut out. -/
 def withoutVars (v : String) : String := Id.run do
   let mut out := ""
   let mut depth := 0
@@ -423,8 +350,7 @@ def withoutVars (v : String) : String := Id.run do
     prev := prev.push c
   return out
 
-/-- The `#rrggbb` colours a declaration's value states as itself, outside
-any `var()` reference. -/
+/-- The `#rrggbb` colours a value states outside any `var()` reference. -/
 def bareHexes (v : String) : List String :=
   ((withoutVars v).splitOn "#").drop 1 |>.filterMap fun part =>
     let hex := String.ofList (part.toList.take 6)
@@ -433,8 +359,7 @@ def bareHexes (v : String) : List String :=
 
 mutual
 
-/-- Every inline style of a typed tree outside its pictures, which stand on a
-plate of their own. -/
+/-- Every inline style of a typed tree outside its pictures. -/
 def stylesOutsidePictures (acc : Array String) : Html.Node → Array String
   | .elem t attrs kids =>
     if t == "svg" then acc else
@@ -455,16 +380,8 @@ def schemeVarReads (v : String) : List String :=
   (v.splitOn "var(--ltx--").drop 1 |>.map fun rest =>
     "--ltx--" ++ (rest.takeWhile fun c => c != ')' && c != ',').toString
 
-/-- **No colour skips its schemes**: on a page that ships a scheme carrying
-its colours, every colour a declaration states as itself — in an element's
-own style outside a picture, or in a top-level rule of the sheet — is one
-every shipped scheme ships as it is (`Ir.Design.literalIn`): a colour that
-differs between schemes rides a property its schemes restate
-(`HtmlDoc.schemeVar`), so a literal in the tree is a paint site that
-bypassed the scheme-aware spelling; and every such property a declaration
-reads is one the page states. The plate a picture stands on is the page as
-printed, a literal by design. The offences, and how many colours were
-read. -/
+/-- No colour skips its schemes: every literal colour a page states is one every shipped scheme
+ships as is; the offences and the count read. -/
 def literalOffences (doc : Ir.Doc) : Array String × Nat := Id.run do
   let j := Contrast.schemeJudge doc
   let frames := j.frames.filter (!·.home)
@@ -495,8 +412,8 @@ def literalOffences (doc : Ir.Doc) : Array String × Nat := Id.run do
             out := out.push s!"{where_} {prop}: {hex} differs in {f.scheme.name}"
   return (out, seen)
 
-/-- Every corpus page that ships a scheme carrying its colours states no
-colour that skips its schemes (`literalOffences`). -/
+/-- Every corpus page that ships a scheme carrying its colours states no colour that skips its
+schemes. -/
 def literalChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut pages := 0
@@ -506,9 +423,6 @@ def literalChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"literals: {path} states no colour that skips its schemes: {offences.toList.take 6}"
       offences.isEmpty
   t s!"literals: the corpus is read ({pages})" (pages ≥ 100)
-  -- Each paint site a literal reaches, invented: a run, a list marker, a
-  -- heading rule, a link hover (a formula's, which a page sets only with its
-  -- math face, is the corpus's: `darkTextChecks`).
   let styled (decl body : String) : String :=
     s!"\\documentclass\{article}{decl}\\begin\{document}{body}\\end\{document}"
   for (name, src) in [
@@ -521,9 +435,6 @@ def literalChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (offences, seen) := literalOffences doc
     t s!"literals: {name} rides its schemes ({seen} colours read): {offences.toList}"
       (offences.isEmpty && seen ≥ 1)
-  -- An author colour whose name is a hex word reads its own property in
-  -- every scheme the page ships, one or five: a scheme property's spelling
-  -- (`HtmlDoc.schemeVarTexts`) never reads that name back as a colour.
   for (kind, decl) in [("a one-scheme", "\\output{ schemes = light }"), ("a five-scheme", "")] do
     let (doc, _) := elabStr (styled (decl ++ "\\definecolor{facade}{HTML}{224466}")
       "A \\textcolor{facade}{stone} wall.")
@@ -534,10 +445,8 @@ def literalChecks (ref : IO.Ref (List String)) : IO Unit := do
           hasStr shown "stone" && !hasStr shown "wall" && hasStr st "color: #224466") &&
        !hasStr css "#facade")
 
-/-- The ground a rule paints an element with (`rules`: those whose conditions
-hold in the scheme judged), where one of its selectors is a compound
-selector the element matches — its tag or none, and classes the element
-holds — or one standing on its parent's, the last such rule's. -/
+/-- The ground the last matching rule of `rules` paints an element with, by tag and classes or by
+its parent's selector. -/
 def ruleGround (rules : List (String × List (String × String))) (tag : String)
     (classes : List String) (parent : String × List String) (prop : String := "background") :
     Option String :=
@@ -557,12 +466,8 @@ def ruleGround (rules : List (String × List (String × String))) (tag : String)
 
 mutual
 
-/-- Each text of a typed tree with what paints it: the custom properties in
-scope, the colour value the nearest element states (its own `color` or its
-token class's), the nearest ground an element states (its `background`, or
-a rule of the sheet's, `ruleGround`; a transparent one reads through), and
-whether it stands as large-scale text — in a heading or on a deck's stage —
-skipping pictures, which stand on a plate of their own. -/
+/-- Each text of a typed tree with its properties in scope, nearest stated colour and ground, and
+whether it is large-scale, pictures skipped. -/
 def textPaintsOne (classes : List (String × String)) (rules : List (String × List (String × String)))
     (parent : String × List String)
     (vars : List (String × String)) (color ground : Option String) (large : Bool)
@@ -598,13 +503,8 @@ def textPaintsList (classes : List (String × String)) (rules : List (String × 
 
 end
 
-/-- Each text a typed tree paints, as one scheme's cascade reads it: its
-words, and either the colour and ground it reads in there — its stated
-colour, else the page's ink, on the nearest ground an element states, else
-the page (`schemeRoot`, `schemeRead`) — or the value no cascade reads; with
-that scheme's gate for its size (`Contrast.requiredIn`: large-scale in a
-heading or on a deck's stage). A colour the document declares decorative is
-skipped, as the report exempts it. -/
+/-- Each text a typed tree paints as one scheme's cascade reads it, with that scheme's gate for its
+size; decorative colours skipped. -/
 def schemeReadings (doc : Ir.Doc) (css : String) (body : Array Html.Node) (s : Ir.Scheme) :
     Array (String × Except String (Ir.Color × Ir.Color) × Nat) := Id.run do
   let classes := tokenClassColors css
@@ -631,14 +531,8 @@ def schemeReadings (doc : Ir.Doc) (css : String) (body : Array Html.Node) (s : I
     out := out.push (text, reading, gate)
   return out
 
-/-- **The owed contract, over the artifact: a scheme that ships has every
-pair it paints at its gate.** For every scheme a page ships other than the
-ones its colours were declared for, every text the typed tree paints reads,
-as that scheme's cascade gives its colour and ground (`schemeReadings`), at
-that scheme's gate for its size, and none is left unread. The offences, by
-scheme; `edit` doctors the sheet, so a check can break the page and see the
-contract fall, and `also` names schemes the colours were declared for to
-judge as well, where they are known to read. -/
+/-- Every pair a shipped scheme paints reads at its gate, none unread; the offences by scheme,
+`edit` doctoring the sheet. -/
 def schemeContractOffences (doc : Ir.Doc) (edit : String → String := id)
     (also : List Ir.Scheme := []) : Array String := Id.run do
   let j := Contrast.schemeJudge doc
@@ -656,12 +550,8 @@ def schemeContractOffences (doc : Ir.Doc) (edit : String → String := id)
 {Contrast.contrastMilli c g} (gate {gate})"
   return out
 
-/-- **More contrast keeps what already meets it** (spec §6: passing roles
-stay): in each more-contrast scheme a page ships beside its plain screen,
-every text that already reads at the more-contrast gate on the plain screen
-reads at least as high there — a ground moved for one colour once paled a
-deck's every frame-title bar, its titles still above the gate. The
-offences. -/
+/-- More contrast keeps what already meets it: no text at the gate on the plain screen reads lower
+in its more scheme. -/
 def moreKeepsOffences (doc : Ir.Doc) : Array String := Id.run do
   let j := Contrast.schemeJudge doc
   let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -681,8 +571,7 @@ def moreKeepsOffences (doc : Ir.Doc) : Array String := Id.run do
       | _, _ => pure ()
   return out
 
-/-- The sheet without its blocks under one condition (`prelude`), each to its
-matching brace. -/
+/-- The sheet without its blocks under condition `prelude`. -/
 def dropBlocks (prelude css : String) : String :=
   match css.splitOn prelude with
   | [] => css
@@ -704,19 +593,13 @@ def contractChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"scheme contract: {path} keeps under more contrast what already meets it: \
 {lowered.toList.take 6}" lowered.isEmpty
   let deck (pre body : String) : Ir.Doc := (elabStr (dvDeck pre body)).1
-  -- moloch's ink and its frame-title bar are one colour, so a run on the bar
-  -- names its ground by role, not by colour: the alert is judged on the bar.
-  -- One tone of it serves the page and another the bar, but none both, so
-  -- the more-contrast screen drops, named, and the bar keeps its colour.
+  -- moloch's ink and bar are one colour, so no one tone serves both and the more-contrast screen drops.
   let barAlert := deck "\\theme{moloch}"
     "\\begin{frame}{Tide \\alert{Table}}Words. \\alert{Low water.}\\end{frame}"
   let barJudge := Contrast.schemeJudge barAlert
-  t s!"scheme contract: an alert on moloch's bar and page drops the more-contrast screen, \
-named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subject)}"
+  t s!"scheme contract: an alert on moloch's bar and page drops more contrast, named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subject)}"
     ((schemeContractOffences barAlert).isEmpty && !barJudge.shipped.contains .lightMore &&
      barJudge.diags.any fun d => d.subject.any (·.startsWith "lightMore:alert@"))
-  -- A colour one tone serves on a declared bar and another on the page moves
-  -- no bar: every other title keeps its contrast.
   let conflict := deck
     "\\setbeamercolor{frametitle}{bg=#2E4A62, fg=white}\\definecolor{moss}{HTML}{3F7A3A}"
     ("\\begin{frame}{Kites and \\textcolor{moss}{moss}}Words. " ++
@@ -724,8 +607,6 @@ named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subje
   t s!"scheme contract: a colour no one tone serves on a bar and the page moves no bar: \
 {moreKeepsOffences conflict |>.toList} {schemeContractOffences conflict |>.toList}"
     ((moreKeepsOffences conflict).isEmpty && (schemeContractOffences conflict).isEmpty)
-  -- A code colour the rule derives that already meets the more-contrast
-  -- gate on a standout frame's ground stays as it is there.
   let standoutCode := deck "\\usepackage{minted}"
     ("\\begin{frame}{Code}\n\\begin{minted}{python}\ndef f(x):\n    return x\n\\end{minted}\n" ++
      "\\end{frame}\n\\begin{frame}[standout]\n\\begin{minted}{python}\nreturn 3\n" ++
@@ -734,8 +615,6 @@ named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subje
 {moreKeepsOffences standoutCode |>.toList}"
     ((moreKeepsOffences standoutCode).isEmpty &&
      (Contrast.schemeJudge standoutCode).shipped.contains .lightMore)
-  -- A listing on a ground of its own inside an epoch states its code roles
-  -- itself: the epoch's restatement stands for the epoch's own code ground.
   let (panel, _) := elabStr ("\\documentclass{article}\\usepackage{minted}" ++
     "\\palette{ codekeyword = #7A2E8E }\\begin{document}Words.\n\n" ++
     "\\palette{ bg = #1C2228, fg = #E4E6E8 }Dark words.\n" ++
@@ -745,8 +624,6 @@ named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subje
 {schemeContractOffences panel |>.toList}"
     ((schemeContractOffences panel).isEmpty &&
      (Contrast.schemeJudge panel).shipped == Ir.Scheme.all)
-  -- A palette declared in one frame lasts into the next, whose own ink then
-  -- stands on that frame's dark ground: its foot and words are read there.
   let epochs := deck ""
     ("\\begin{frame}{One}Words.\\end{frame}" ++
      "\\begin{frame}{Two}\\palette{ bg = #1E2E36, fg = #E6E6E6 }Pale words.\\end{frame}" ++
@@ -755,9 +632,6 @@ named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subje
 {schemeContractOffences epochs |>.toList}"
     ((schemeContractOffences epochs).isEmpty &&
      (Contrast.schemeJudge epochs).shipped.contains .lightMore)
-  -- A bar declared between frames paints the frames after it in the web
-  -- page as on paper, in every scheme: the title it stands under reads on
-  -- it. With no bar in the opening palette, the page once painted none.
   let barEpoch := deck ""
     ("\\begin{frame}{One}Words.\\end{frame}" ++
      "\\setbeamercolor{frametitle}{bg=teal!70!black, fg=white}" ++
@@ -766,21 +640,16 @@ named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subje
   t s!"scheme contract: a bar declared between frames stands under the title it carries: \
 {barOffences.toList}"
     (barOffences.isEmpty && (Contrast.schemeJudge barEpoch).shipped.contains .lightMore)
-  -- An epoch whose seeds generate nothing at the more-contrast gates — a
-  -- grey ink no derived tone keeps 7:1 from — is carried as declared
-  -- colours are, so the scheme ships, its frames legible.
   let greyEpoch := deck ""
     ("\\begin{frame}{One}Words.\\end{frame}" ++
      "\\setbeamercolor{normal text}{fg=black!65}" ++
      "\\begin{frame}{Two}Grey words. \\alert{An alert.}\\end{frame}")
   let greySeeds := (Contrast.docPalettes greyEpoch).filter fun p => p.seeded.isSome &&
     (p.seeded.bind (Ir.Design.carrySeeds · p.classColors.depth .lightMore false)).isNone
-  t s!"scheme contract: an epoch whose seeds generate nothing there is carried as declared \
-({greySeeds.length} such): {schemeContractOffences greyEpoch |>.toList}"
+  t s!"scheme contract: an epoch whose seeds generate nothing is carried as declared ({greySeeds.length} such): {schemeContractOffences greyEpoch |>.toList}"
     (!greySeeds.isEmpty && (schemeContractOffences greyEpoch).isEmpty &&
      (Contrast.schemeJudge greyEpoch).shipped.contains .lightMore)
-  -- The judge breaks once: without its more-contrast blocks, a page's more
-  -- schemes read the AA colours, which the 7:1 gate refuses.
+  -- The judge breaks once: without the more-contrast blocks the 7:1 gate refuses the AA colours.
   let (aa, _) := elabStr
     "\\documentclass{article}\\palette{ fg = #767676 }\\begin{document}Words.\\end{document}"
   let broken := schemeContractOffences aa (dropBlocks "@media (prefers-contrast: more)")
@@ -788,10 +657,8 @@ named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subje
     ((schemeContractOffences aa).isEmpty && broken.any (·.startsWith "lightMore:") &&
      broken.any (·.startsWith "darkMore:"))
 
-/-- **High-contrast mode draws the bars the colours drew**: under
-`forced-colors: active` the page's frame-title bars, standout frames and
-block title bands carry a `CanvasText` border, a rule whose selectors stand
-on elements the deck's typed tree holds. -/
+/-- High-contrast mode draws the bars the colours drew, with `CanvasText` borders on elements the
+typed tree holds. -/
 def forcedColorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, _) := elabStr (dvDeck "" ("\\begin{frame}{Bar}\\begin{block}{Band}x\\end{block}\\end{frame}" ++

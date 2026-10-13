@@ -29,9 +29,8 @@ private def boxLe (a b : Ir.Pic.Box) : Bool :=
 private def nodeBox (g : Picture.NodeGeom) : Ir.Pic.Box :=
   ((g.x - g.a, g.y - g.b), (g.x + g.a, g.y + g.b))
 
-/-- Counterexamples to overbroad contracts: overlapping writes are
-ordered, literal punctuation is content, and math elaboration supplies
-its own character provenance. These exercise the actual public readers. -/
+/-- Counterexamples to overbroad contracts, through the public readers: overlapping writes are
+ordered, literal punctuation is content, and math elaboration supplies its own provenance. -/
 def checks (ref : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) :=
     unless ok do ref.modify (name :: ·)
@@ -54,7 +53,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   check "picture source census retains typed tokens and the selected declaration"
     (inputs == #[.literal (.symbol '['), .literal (.number (-1250)),
       .substitution "value" (.str "bound"), .math true []])
-  check "picture source census neither echoes controls nor imports unused declarations"
+  check "picture source census: no echoed controls, no unused declarations"
     (Picture.labelSources cx [("unused", .str "unreferenced")]
       [.ctrl "unbound", .other "parser-marker"] == "")
   check "picture empty source does not manufacture the floor"
@@ -102,8 +101,6 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   check "picture explicit bounding box remains authoritative"
     (tiny.box metric == (((0, 0), (0, 0)) : Ir.Pic.Box) &&
       p.box metric != tiny.box metric)
-  -- The queued node-border claim quantified over an unrelated metric.
-  -- Its lookup, emitted-label and equal-anchor hypotheses all hold here.
   let unrelated : Ir.Pic.LabelMetric := fun _ _ =>
     { w := 1000000000, height := 40, depth := 10 }
   match measured.nodes.lookup "n" with
@@ -115,8 +112,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
             !boxLe (Ir.Pic.labelInkBox x y align (unrelated content scale)) (nodeBox g)
         | _ => false)
   | none => check "picture extent counterexample emits its node" false
-  -- Equal coordinates do not identify which node owns a label: two named
-  -- nodes can share an anchor while reserving different measured widths.
+  -- Equal coordinates do not identify a label's node: two named nodes can share an anchor with different widths.
   let varying : Ir.Pic.LabelMetric := fun content _ =>
     { w := if Ir.plainText content == "wide" then 1000000000 else 100
       height := 40, depth := 10, boxHeight := 35, boxDepth := 8 }
@@ -164,10 +160,8 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     ((Picture.evalFixed cx [old, dependency, replacement]).nodes.lookup "p" !=
       (Picture.evalFixed cx [old, replacement, dependency]).nodes.lookup "p")
 
-/-- Provenance witnesses must survive actual placement and both artifact
-trees. The math callback intentionally supplies text absent from its raw
-input, and the substitution supplies text absent from its control name.
-The expected page content is written independently of the source census. -/
+/-- Provenance witnesses survive placement and both artifact trees, against page content written
+independently of the source census. -/
 def provenanceRenderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}

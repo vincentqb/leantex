@@ -4,28 +4,13 @@ public import Tests.Support
 
 public section
 
-/-! The SVG boundary and terminal projection as libxml2 and libxslt stated
-them before the native reader replaced them on the render path: kept only
-as the parity oracle's reference (`scripts/svg-check.lean`), which holds the
-native judge and projection to these verdicts over the shared matrices. No
-render path imports this module. -/
+/-! The SVG boundary and terminal projection as libxml2 and libxslt stated them, the parity oracle's
+reference (`scripts/svg-check.lean`); no render path imports it. -/
 
 namespace Tests.SvgLegacy
 
-/-- A deliberately narrow support boundary, evaluated over libxml's parsed
-XML, never the source spelling. Only fragment references are supported,
-and a raster an `<image>` carries in its own reference — a base64 PNG or
-JPEG `data:` URL (RFC 2397), the spelling pdftocairo gives every raster a
-PDF draws — which names nothing outside the file.
-CSS is plain declarations/rules without functions, escapes or at-rules.
-Color presentation attributes also admit wholly numeric `rgb()`/`rgba()`
-(CSS Color, numeric RGB notation); their alphabet cannot name a resource. This checks
-resource closure, not the validity of every numeric color spelling. Other
-presentation functions are exactly `url(#ASCII-id)`, without paint-server
-fallback syntax such as `url(#id) red`. Transforms and SMIL timing have their
-own non-resource function syntax. Animated resource/style assignments,
-scripts and foreign objects are refused. This is a refusal boundary, not a
-second XML or CSS parser. -/
+/-- The narrow support boundary over libxml's parse: fragment references and `data:` rasters only,
+plain CSS, and no scripts, foreign objects or animated resources. -/
 def supportedSvg : String :=
   let localUrl := "(starts-with(normalize-space(.),'url(#') and " ++
     "substring(normalize-space(.),string-length(normalize-space(.)),1)=')' and " ++
@@ -67,9 +52,7 @@ def supportedSvg : String :=
   "boolean(/*[local-name()='svg' and namespace-uri()='http://www.w3.org/2000/svg']) and " ++
     "not(" ++ unsupported ++ ")"
 
-/-- libxml2's SAX events, read as the old boundary read them: DTD
-declarations and entity references refuse, a parser error refuses, and an
-inert doctype is reported for removal. -/
+/-- libxml2's SAX events as the old boundary read them. -/
 def saxBoundary (sax : String) : Except String Bool := do
   let events := (sax.splitOn "\n").map (·.trimAscii.toString)
   let has := fun name => events.any (·.startsWith ("SAX." ++ name ++ "("))
@@ -84,8 +67,7 @@ def saxBoundary (sax : String) : Except String Bool := do
     throw "SVG validation received no complete XML parse"
   return has "internalSubset" || has "externalSubset"
 
-/-- The terminal-pose stylesheet the native projection (`SvgPoster.terminal`)
-replaced. -/
+/-- The terminal-pose stylesheet, `SvgPoster.terminal`'s reference. -/
 def stylesheet : String := r#"<xsl:stylesheet version="1.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:s="http://www.w3.org/2000/svg" exclude-result-prefixes="s">
@@ -235,8 +217,7 @@ def stylesheet : String := r#"<xsl:stylesheet version="1.0"
 private def run (cmd : String) (args : Array String) : IO IO.Process.Output :=
   IO.Process.output { cmd, args }
 
-/-- The old boundary's verdict on a source: libxml2's SAX pass, then its
-XPath over the parse. -/
+/-- The old boundary's verdict: libxml2's SAX pass, then its XPath over the parse. -/
 def judge (bytes : ByteArray) : IO (Except String Unit) := IO.FS.withTempDir fun dir => do
   let input := dir / "source.svg"
   IO.FS.writeBinFile input bytes
@@ -250,8 +231,7 @@ def judge (bytes : ByteArray) : IO (Except String Unit) := IO.FS.withTempDir fun
     return if xp.stdout.trimAscii.toString == "true" then .ok ()
       else .error "SVG resource boundary refuses the source"
 
-/-- The old projection's terminal pose of a source, as libxslt writes it, or
-its message. -/
+/-- The old projection's terminal pose, as libxslt writes it, or its message. -/
 def terminal (bytes : ByteArray) : IO (Except String ByteArray) := IO.FS.withTempDir fun dir => do
   let input := dir / "source.svg"
   let style := dir / "terminal.xsl"

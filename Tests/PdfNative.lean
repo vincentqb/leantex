@@ -8,19 +8,11 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-/-! # PDF figures drawn natively
-
-The reading of a PDF page onto the vector model (`PdfGfx.importPage`) and
-the web face the driver ships from it (`PdfFaces.face`): the content
-tokenizer's round trip, the faces the route decides, the closure of a
-native face, the synthetic matrix written by the engine's own PDF writer
-and read back, and the committed tool-made fixtures — cairo through
-rsvg-convert, lualatex in the shipped faces, the engine's writer — drawn
-with nothing lost. Invented content throughout. -/
+/-! PDF figures drawn natively: the importer, its web face, and the fixtures drawn with nothing
+lost. -/
 
 namespace Tests.PdfNative
 
-/-- A committed fixture of the pdf-native tier. -/
 def fixture (name : String) : IO ByteArray := IO.FS.readBinFile ("testdata/pdf-native/" ++ name)
 
 /-- An import's losses, or why it refused. -/
@@ -38,13 +30,8 @@ def faceTree (fig : Gfx.Figure Gfx.Run) : Array Html.Node :=
     (fig.rasters.map fun r => { href := PdfFaces.rasterHref r, smooth := r.smooth })
     (GfxSvg.documentIso fig.box) fig)
 
-/-- **A mark on the PDF writer's grid**: the values its operators spell in
-the frame they stand in — coordinates, widths and dashes at the thousandth
-of a point, an ellipse as its four arcs (`GfxPdf.geomOps`), a pattern's
-matrix and coordinates as the file states them — what a reader of the bytes
-gets back. Frames are composed by the reader from each `cm` as spelled, so
-they are the figure's own exactly when its transforms are on the
-nine-decimal grid, as the matrix's are. -/
+/-- A mark on the PDF writer's grid: the values its operators spell, as a reader of the bytes gets
+them back. -/
 def pdfGrid : Gfx.Mark → Gfx.Mark
   | .paint ctm g fl st clips alphas =>
     .paint ctm g.normal.quantize (fl.map Gfx.Fill.quantize) (st.map Gfx.Stroke.quantize)
@@ -55,8 +42,8 @@ where
   gridClips (clips : Array (Gfx.Affine × Gfx.Clip)) : Array (Gfx.Affine × Gfx.Clip) :=
     clips.map fun (m, c) => (m, { c with geom := c.geom.normal.quantize })
 
-/-- A content stream's tokens spelled back by the tokenizer's own writer,
-then read: the round trip `scan_render_exact` states. -/
+/-- A content stream's tokens spelled back by the tokenizer's writer and read again
+(`scan_render_exact`). -/
 def roundTrips (toks : Array PdfContentLex.Tok) : Bool :=
   let again := PdfContentLex.scan (PdfContentLex.render toks)
   again.size == toks.size && (again.zip toks).all fun (a, b) => match a, b with
@@ -68,11 +55,8 @@ def roundTrips (toks : Array PdfContentLex.Tok) : Bool :=
 end Tests.PdfNative
 
 open Tests.PdfNative in
-/-- **The content tokenizer** (ISO 32000-2 §7.8.2): operands read by the
-object reader — numbers keeping their spelling, strings their bytes,
-arrays and dictionaries whole — operators as their characters, an inline
-image's dictionary and bytes, comments and stray delimiters skipped; and
-what it reads spelled back reads the same. -/
+/-- The content tokenizer reads operands, operators and inline images, skips comments and stray
+delimiters, and what it reads spells back the same. -/
 def pdfContentLexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let toks := PdfContentLex.scan "q 1 0 0 1 72.5 -3 cm % a comment\n/F1 12 Tf [(a\\)b) -250 <0041>] TJ Q".toUTF8
@@ -111,18 +95,8 @@ def pdfContentLexChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .error _ => false)
 
 open Tests.PdfNative in
-/-- **A PDF figure's web face is native first** (`Boundary.route`, whose
-premise this is): an exact import ships the engine's drawing and never asks
-the converter; one that names a loss ships the converter's drawing with
-each loss noted (N0024) when the converter draws a face the page's check
-keeps, and the engine's lossy drawing with each loss named (W0609) when it
-does not — no converter, a failed one, or a face the check refuses or does
-not finish, whose words the line carries; a page the importer cannot read
-takes the converter's answer, a refused face kept for publication to
-refuse, or none. The premise is two builds apart: with the converter and
-without it, a lossless figure's face is the same bytes and no converter
-ran, and a lossy one names the same subjects. A face stretches onto the box
-it is shown in exactly where the PDF face does. -/
+/-- A PDF figure's web face is native first (`Boundary.route`): the converter is asked only where
+the import names a loss. -/
 def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let keeps : ByteArray → IO PicCache.Outcome := fun _ => pure .drawn
@@ -138,7 +112,7 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     let bytesOf (f : PdfFaces.Face) : Option ByteArray := f.bytes.toOption
     let subjects (f : PdfFaces.Face) : Array (Option String) := f.diags.map (·.subject)
     if lossless then
-      t s!"face route: {name} ships the same face with and without the converter, which never ran"
+      t s!"face route: {name} ships one face with or without the converter, never run"
         (bytesOf present == bytesOf absent && (bytesOf present).isSome && (← runs.get) == 0 &&
           present.diags.isEmpty && absent.diags.isEmpty)
     else
@@ -163,48 +137,40 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
       f.diags.size == 1 && f.diags.all (·.kind == .N0024) &&
       f.diags.all (·.subject == some "figure:pdf:font:type1"))
   let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first failing keeps
-  t "face route: a lossy import the converter does not draw ships its lossy drawing, the loss named"
+  t "face route: an undrawn lossy import ships its lossy drawing, loss named"
     (f.route == .nativeWithLoss && f.native && f.bytes.isOk &&
       f.diags.size == 1 && f.diags.all (·.kind == .W0609))
-  -- The converter drew, and the page's own check refused its face, or
-  -- could not finish checking it: the page carries the engine's drawing,
-  -- never a face it would refuse or omit.
   for (said, check) in [("refuses", (fun _ => pure (.refused "an external reference") :
       ByteArray → IO PicCache.Outcome)), ("does not finish", fun _ => pure (.inconclusive "the check was killed"))] do
     let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing check
-    t s!"face route: a lossy import whose converted face the check {said} ships its lossy drawing, in the check's words"
+    t s!"face route: a converted face the check {said} gives the lossy drawing, in its words"
       (f.route == .nativeWithLoss && f.native && f.bytes.isOk && f.bytes.toOption != some converted &&
         f.diags.size == 1 && f.diags.all fun d => d.kind == .W0609 &&
           (hasStr (diagWords d) "external reference" || hasStr (diagWords d) "killed"))
   let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing keeps .declared
-  t "face route: a document that refuses the converter keeps the lossy drawing, never asking it"
+  t "face route: refusing the converter keeps the lossy drawing, never asking"
     (f.route == .nativeWithLoss && f.native && (← asked.get) == 4)
-  -- The remedy follows the reason: installing the converter changes a page
-  -- on a machine without it, and repairing it one whose run did not finish;
-  -- lifting the declaration changes one the document refused it for; and
-  -- nothing changes one where the converter refused the figure, or drew a
-  -- face the page's check refuses.
   let helpOf (f : PdfFaces.Face) : String := String.join (f.diags.filterMap (·.help)).toList
   let noFace ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure none) keeps
   t s!"face route: with no converter on the machine, installing it is the remedy ({helpOf noFace})"
     (hasStr (helpOf noFace) "install poppler's pdftocairo" && noFace.diags.all (·.detail.isNone))
   let stopped ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
     (pure (some (.error (.inconclusive "pdftocairo exited 137")))) keeps
-  t s!"face route: a run that did not finish names its repair conditionally, in the run's words ({helpOf stopped})"
+  t s!"face route: an unfinished run names its repair conditionally, in its words ({helpOf stopped})"
     (hasStr (helpOf stopped) "if the reason says it cannot start" &&
       stopped.diags.all (·.detail == some "pdftocairo exited 137"))
   let verdict ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
     (pure (some (.error (.refused "pdftocairo exited 1: an invented refusal")))) keeps
-  t s!"face route: a converter's own verdict offers accepting the drawing, never an install ({helpOf verdict})"
+  t s!"face route: a converter's verdict offers acceptance, not an install ({helpOf verdict})"
     (!verdict.diags.isEmpty && !hasStr (helpOf verdict) "install" &&
       hasStr (helpOf verdict) "\\allow{W0609}" && verdict.diags.all (·.detail == some "pdftocairo exited 1: an invented refusal"))
   let unfit ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (some (.ok converted)))
     fun _ => pure (.refused "an external reference")
-  t s!"face route: where the page's check refuses the converter's face, its line offers only accepting the drawing ({helpOf unfit})"
+  t s!"face route: a face the check refuses offers only acceptance ({helpOf unfit})"
     (((helpOf unfit).splitOn "install").length == 1 && ((helpOf unfit).splitOn "convert = none").length == 1 &&
       ((helpOf unfit).splitOn "\\allow{W0609}").length > 1)
   let declared ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (some (.ok converted))) keeps .declared
-  t s!"face route: where the document refuses the converter, its line names the declaration to lift, or accepting ({helpOf declared})"
+  t s!"face route: a declared refusal names the declaration to lift, or acceptance ({helpOf declared})"
     (((helpOf declared).splitOn "install").length == 1 &&
       ((helpOf declared).splitOn "convert = none").length > 1 &&
       ((helpOf declared).splitOn "\\allow{W0609}").length > 1)
@@ -215,7 +181,7 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "face route: a page the importer refuses takes the converter's drawing"
     (f.route == .tool && f.bytes.isOk)
   let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first drawing fun _ => pure (.refused "x")
-  t "face route: a page the importer refuses keeps a refused face for publication to refuse"
+  t "face route: an unimportable page keeps a refused face for publication to refuse"
     (f.route == .refused && f.bytes.toOption == some converted)
   t "face route: the route is the boundary's one decision"
     (Boundary.route .exact .notAsked .none == .native &&
@@ -226,8 +192,7 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "face route: every loss is named once, under its feature"
     (losses.size == 1 && (FigureLoss.diags (FigureLoss.pdfLostDiag "x.pdf" .refused) losses).all
       (·.subject == some "figure:pdf:font:type1"))
-  -- The stretch rule: a sequence's poster page differs in shape from its
-  -- first frame, whose canvas the PDF form stretches it onto.
+  -- A sequence's poster page differs in shape from its first frame, whose canvas it stretches onto.
   let root (f : PdfFaces.Face) : String := match f.bytes.toOption.bind (String.fromUTF8? ·) with
     | some svg => ((svg.splitOn "<svg").getD 1 "").takeWhile (· != '>') |>.toString
     | none => ""
@@ -240,16 +205,12 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     (plain.native && ((root plain).splitOn "preserveAspectRatio").length == 1)
 
 open Tests.PdfNative in
-/-- **A face asks the host for its converter once, and only when it needs
-it** (`PdfFaces.doorWith`): faces whose import is exact never probe; lossy
-faces probe once between them, however many ask at once; and a host
-without the converter answers none — the install line, and no run. -/
+/-- A face asks the host for its converter once, and only when it needs it (`PdfFaces.doorWith`). -/
 def converterDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let probes ← IO.mkRef 0
   let runs ← IO.mkRef 0
-  -- A probe slow enough that faces asking at once all reach it before the
-  -- first answers, as a door with no lock would let them.
+  -- A probe slow enough that every face asking at once reaches it before the first answer.
   let probe (present : Bool) : IO Bool := do
     IO.sleep 20
     probes.modify (· + 1)
@@ -278,11 +239,8 @@ def converterDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
       f.diags.all fun d => d.detail.isNone && d.help.any (hasStr · "install poppler's pdftocairo"))
 
 open Tests.PdfNative in
-/-- **A native face is closed by construction**, what lets publication take
-it without the converter's validation (`Publication.prepareHtml`'s
-premise): every reference a fixture's face spells is a fragment of its own
-or a `data:` raster, every attribute has a value — an XML document, which a
-bare attribute is not — and no script, style or foreign object appears. -/
+/-- A native face is closed by construction: own fragments or `data:` rasters only, every attribute
+valued, and no script, style or foreign object. -/
 def nativeFaceClosedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for name in ["cairo-chart.pdf", "lualatex-text.pdf", "lualatex-shade.pdf",
@@ -304,13 +262,8 @@ def nativeFaceClosedChecks (ref : IO.Ref (List String)) : IO Unit := do
         ((String.fromUTF8? svg).any fun s => s.startsWith "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg ")
 
 open Tests.PdfNative Tests.GfxMatrix in
-/-- **The engine's PDF writer reads back** through its bytes: every case of
-the synthetic matrix that paints no raster, written as a one-page document
-by `Pdf.writeChecked` under the identity placement and imported, paints the
-figure's marks on the grid the writer spells them to (`pdfGrid`) — its
-operators, its resources and its forms read with PDF's meaning on the
-other side. The cases `PdfGfx.readback_id` covers are named, and each is
-held to the theorem's statement executed. -/
+/-- The engine's PDF writer reads back: each raster-free matrix case imports to its marks on the
+writer's grid (`pdfGrid`). -/
 def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let green : Ir.Color := { r := 0, g := 160, b := 0 }
@@ -340,9 +293,7 @@ def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
         t s!"readback: {name} reads back with nothing lost" imp.figure.losses.isEmpty
         t s!"readback: {name} paints the figure's marks, on the writer's grid"
           (imp.figure.marks == fig.marks.map pdfGrid)
-  -- `PdfGfx.readback_id`'s reach over the matrix: the cases whose nodes it
-  -- covers and whose operators stand on the print grid, each held to the
-  -- statement executed, the stream read with no resources at all.
+  -- The cases `PdfGfx.readback_id` covers, each held to its statement executed.
   let emitted (fig : Gfx.Figure Empty) := GfxPdf.emit names PdfGfx.noLabels PdfGfx.isoId fig
   let covered := all.filter fun (_, fig) =>
     PdfGfx.nodesPlain fig.nodes.toList && (PdfGfx.opsBack (emitted fig).toList).toArray == emitted fig
@@ -358,15 +309,8 @@ def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
       (imp.losses.isEmpty && imp.marks.map PdfGfx.markScreen == fig.marks.map PdfGfx.markScreen)
 
 open Tests.PdfNative in
-/-- **The committed fixtures draw with nothing lost**: cairo's chart
-(TrueType text, an opacity soft mask, gradients, a transparency group),
-lualatex's pictures in the shipped faces (CID-keyed CFF text, a pgf axial
-shading, text stroked by FakeBold and in outline mode), the engine's own
-writer (OpenType CFF text), the matplotlib-dialect file (Type 3 glyphs,
-marker forms, an alpha state, a clip, a soft-masked image) and the
-geometry and text dialects (degenerate shapes under each cap, inline
-images, the text state's positioning) — each glyph a stamp of its outline
-and its recovered text the figure's words. -/
+/-- The committed fixtures from cairo, lualatex, the engine's writer and the dialect files draw with
+nothing lost. -/
 def pdfFixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, words) in [("cairo-chart.pdf", "invented chart"), ("lualatex-text.pdf", "Alpha node"),
@@ -387,13 +331,12 @@ def pdfFixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   | .error _ => t "fixture: lualatex-text imports" false
   match PdfGfx.importPage (← fixture "geometry-dialect.pdf") with
   | .ok imp =>
-    -- SVG draws, and clips to, no rect of zero or negative size, and
-    -- paints a square where a square cap meets a dot PDF leaves unpainted.
+    -- SVG draws no rect of zero or negative size, and paints a square-capped dot PDF leaves unpainted.
     let rects := (attrsAll (faceTree imp.figure)).filter fun (tag, k, v) =>
       tag == "rect" && (k == "width" || k == "height") && (v == "0" || v.startsWith "-")
     t s!"fixture: the geometry dialect's face spells no rect SVG draws nothing for ({rects})" rects.isEmpty
     let svg := (String.fromUTF8? (PdfFaces.svgOf imp.figure)).getD ""
-    t "fixture: the geometry dialect's square-capped dot is left out, its round one kept"
+    t "fixture: the dialect's square-capped dot is left out, the round one kept"
       (!hasStr svg "M 140 100 L 140 100" && hasStr svg "M 160 100 Z")
   | .error _ => t "fixture: geometry-dialect imports" false
   match PdfGfx.importPage (← fixture "matplotlib-dialect.pdf") with
@@ -408,10 +351,7 @@ def pdfFixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fixture: an encrypted file is refused, not read as noise"
     ((lossesOf encryptedCanvasPdf).isOk == false)
 
-/-- **A PNG the engine writes reads back**, through the deflating encoder
-`PngEncode.probe_encode_exact` reaches only by its stream's size: the probe
-sees its size, its colour type and its depth; and the CRC, which the
-theorem does not read, is PNG's. -/
+/-- A PNG the engine writes reads back with its size, colour type and depth, under PNG's CRC. -/
 def pngEncodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let h : PngEncode.Header := { width := 3, height := 2, bitDepth := 8, colorType := 6 }
@@ -424,13 +364,8 @@ def pngEncodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "png: CRC-32 of IEND is PNG's" (PngEncode.crc32 "IEND".toUTF8 == 0xAE426082)
 
 open Tests.PdfNative in
-/-- **The glyph tables' contract** (`GlyphList` over `GlyphListData`): the
-glyph list's names read to their scalars by its naming rules; the three
-base encodings' names read through the glyph list to the scalars Unicode's
-mapping files give their codes, the one declared divergence aside; the CFF
-standard strings hold StandardEncoding's names in code order from 1, which
-is what `standardSid` counts; the Expert encoding names standard strings
-only. -/
+/-- The glyph tables' contract: glyph-list names, the three base encodings and the CFF standard
+strings read to Unicode's scalars. -/
 def glyphListChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "glyph list: names read by the list and its conventions"
@@ -438,9 +373,7 @@ def glyphListChecks (ref : IO.Ref (List String)) : IO Unit := do
       GlyphList.nameText "uni00410042" == some "AB" && GlyphList.nameText "u1F600" == some "😀" &&
       GlyphList.nameText "f_f_i" == some "ffi" && GlyphList.nameText "a.sc" == some "a" &&
       GlyphList.nameText "uniD800" == none && GlyphList.nameText "notaglyphname" == none)
-  -- The glyph list reads Mac OS Roman's 0xBD name, Omega, as the ohm sign;
-  -- Unicode's Mac OS Roman table, as Greek capital omega. Same glyph; the
-  -- text follows the encoding's table.
+  -- The declared divergence: Mac OS Roman 0xBD is the ohm sign by name, Greek capital omega by Unicode's table.
   let divergent : List (GlyphList.Base × Nat) := [(.macRoman, 0xBD)]
   for e in [GlyphList.Base.standard, .winAnsi, .macRoman] do
     let bad := (List.range 256).filter fun c =>
@@ -464,13 +397,8 @@ def glyphListChecks (ref : IO.Ref (List String)) : IO Unit := do
       n.isEmpty || (GlyphList.cffSid? n).isSome)
 
 open Tests.PdfNative in
-/-- **A PDF's simple and composite fonts select the glyphs they name**
-(§9.6.5, §9.7): the shipped Fira Sans's CFF table embedded bare
-(`FontFile3` `Type1C`) selects under WinAnsiEncoding, for every code the
-encoding names, the glyph the OpenType font's own cmap gives the code's
-scalar — through the CFF standard strings and the font's custom ones —
-and with no encoding the font's own; its text is the code's scalar.
-Vertical writing is named, not set sideways. -/
+/-- A PDF's simple and composite fonts select the glyphs they name, and vertical writing is
+named. -/
 def pdfFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let otf ← IO.FS.readBinFile "testdata/corpus/fonts/FiraSans-Regular.otf"
@@ -497,10 +425,7 @@ def pdfFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   | some l =>
     let (gs, text) := simple l
     let src := Ink.Src.ofCff cff
-    -- A name selects the glyph of that name, which may be another glyph
-    -- for the same character than the one the font's cmap picks (`mu` for
-    -- the micro sign): the selection holds when it reads to the code's
-    -- character.
+    -- A name may select another glyph of the same character than the cmap's (`mu` for the micro sign).
     let wrong := (List.range 256).filter fun c =>
       match GlyphList.Base.winAnsi.scalar? c with
       | some ch =>
@@ -511,8 +436,7 @@ def pdfFontChecks (ref : IO.Ref (List String)) : IO Unit := do
           | _ => false
         byCmap.isSome && byCmap != some 0 && !(chosen == byCmap.map PdfFont.GlyphRef.gid || reads)
       | none => false
-    t s!"pdf font: a bare CFF under WinAnsiEncoding selects a glyph of each code's character by name \
-({wrong.take 6})" wrong.isEmpty
+    t s!"pdf font: bare CFF under WinAnsi selects each code's character by name ({wrong.take 6})" wrong.isEmpty
     t "pdf font: an accented code selects its glyph and says its letter"
       ((gs[0xE9]?.getD none) == (font.gid 'é').map PdfFont.GlyphRef.gid && text[0xE9]? == some "é")
   match loaded "" with
@@ -535,18 +459,8 @@ def pdfFontChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((lossesOf vertical).toOption.any fun ls => ls.contains (.font "vertical"))
 
 open Tests.PdfNative in
-/-- **The interpreter keeps PDF's meaning where it is subtle**: optional
-content under each visibility policy and through a single group reference
-(§8.11.2.2); a Type 3 glyph that sets no colour of its own painting in the
-colour of the text that shows it, by `d1` and by `d0` (§9.6.4); a function
-held to part of its shading's domain, a stitching held to part of it, and a
-domain ending where the colour jumps, drawn with a stop where the line
-bends (§7.10); and the shadings the gradient model only approaches named,
-not drawn as if exact — an exponential function of another exponent, a
-stitching whose bounds are out of order, a colour that leaves its space
-between stops, a CMYK colour whose black and inks both change, a radial
-shading whose start circle leaves its end circle, a shading pattern that
-stops short. -/
+/-- The interpreter keeps PDF's meaning where it is subtle, and names the shadings the gradient
+model only approaches. -/
 def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ocDoc (props : String) : ByteArray := syntheticPdf #[
@@ -618,23 +532,23 @@ def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do
     s!"<< /FunctionType 3 /Domain {dom} /Bounds {bounds} /Encode {enc} /Functions [{" ".intercalate fns}] >>"
   let narrow := shading (shaded "/DeviceRGB" (seg "[1 0 0]" "[0 0 1]" "[0 0.5]") "[0 1]") "/S0 sh"
   let st := faceStops narrow
-  t s!"interpreter: a function held to part of its shading's domain stops where it is held ({st})"
+  t s!"interpreter: a function held to part of the domain stops where held ({st})"
     (lossesOf narrow == .ok #[] && st.map (·.1) == #["0", "0.5", "1"] && st[1]?.map (·.2) == st[2]?.map (·.2))
   let late := shading (shaded "/DeviceRGB" (stitching "[0.25 1]" "[0.5]" "[0 1 0 1]"
     [seg "[1 0 0]" "[0 1 0]", seg "[0 1 0]" "[0 0 1]"]) "[0 1]") "/S0 sh"
   let st := faceStops late
-  t s!"interpreter: a stitching held to part of its shading's domain stops where it is held ({st})"
+  t s!"interpreter: a stitching held to part of the domain stops where held ({st})"
     (lossesOf late == .ok #[] && st.map (·.1) == #["0", "0.25", "0.5", "1"] &&
       st[0]?.map (·.2) == st[1]?.map (·.2))
   let jump := shading (shaded "/DeviceRGB" (stitching "[0 1]" "[0.5]" "[0 1 0 1]"
     [seg "[1 0 0]" "[0 1 0]", seg "[0 0 1]" "[0 0 1]"]) "[0 0.5]") "/S0 sh"
   let st := faceStops jump
-  t s!"interpreter: a shading whose domain ends where its colour jumps ends on both colours ({st})"
+  t s!"interpreter: a domain ending at a colour jump ends on both colours ({st})"
     (lossesOf jump == .ok #[] && st.map (·.1) == #["0", "1", "1"] && st[1]?.map (·.2) != st[2]?.map (·.2))
   let early := shading (shaded "/DeviceRGB" (stitching "[0 0.75]" "[0.75]" "[0 1 0 1]"
     [seg "[1 0 0]" "[0 1 0]", seg "[0 0 1]" "[0 0 1]"]) "[0 1]") "/S0 sh"
   let st := faceStops early
-  t s!"interpreter: a stitching that ends before its shading holds its last colour past its end ({st})"
+  t s!"interpreter: a stitching ending early holds its last colour past its end ({st})"
     (lossesOf early == .ok #[] && st.map (·.1) == #["0", "0.75", "0.75", "1"] &&
       st[2]?.map (·.2) == st[3]?.map (·.2) && st[1]?.map (·.2) != st[2]?.map (·.2))
   let held := shading (shaded "/DeviceRGB" (stitching "[0.25 1]" "[0.25]" "[0 1 0 1]"
@@ -677,8 +591,7 @@ def clipGeoms : Gfx.Mark → Array Gfx.Geom
 def marksOf (pdf : ByteArray) : Array Gfx.Mark :=
   ((PdfGfx.importPage pdf).toOption.map (·.figure.marks)).getD #[]
 
-/-- A raster's pixels as 8-bit RGB, where its PNG holds them so: rows
-behind filter byte 0, as `PngEncode.encode` writes them. -/
+/-- A raster's pixels as 8-bit RGB, where its PNG holds them so (rows behind filter byte 0). -/
 def rgbPixels (r : Gfx.Raster) : Option (Array (UInt8 × UInt8 × UInt8)) := do
   let plan ← (Image.decode r.bytes).toOption
   let rows ← (Flate.inflate plan.data (r.pxW * r.pxH * 4 + r.pxH)).toOption
@@ -690,21 +603,8 @@ def rgbPixels (r : Gfx.Raster) : Option (Array (UInt8 × UInt8 × UInt8)) := do
 end Tests.PdfNative
 
 open Tests.PdfNative in
-/-- **What the graphics state carries reaches the marks it paints**: a
-constant soft mask's box clips what is painted under it, and nothing after
-`/SMask /None` or under a second mask, which replaces it (§11.6.5.2); a Type
-3 glyph's procedure paints with the alphas and line width in force
-(§9.6.4); a shading's `BBox` clips it (§8.7.4.5.1). What the model cannot
-say is named: a tiling pattern that strokes a path or fills a glyph, a
-stencil mask painted with a pattern, a JPEG under a `Decode` that remaps it.
-A CMYK colour, painted or sampled, previews as pdftoppm shows it; a
-TrueType program with no cmap shows its glyphs by their 'post' names, as
-pdftoppm draws them; a glyph stroked through its frame strokes the width,
-dash and phase the state set in user space (`PdfGfx.strokeIn_between`),
-where it once stroked them 65,536 times as wide; an `re` of negative extent
-keeps the corner order PDF traces, where it was once read as the rectangle
-it covers and its dashes moved. Each case once imported with no loss named
-and drew otherwise. -/
+/-- What the graphics state carries reaches the marks it paints, and what the model cannot say is
+named. -/
 def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let maskGroup (box : String) (ink : String) :=
@@ -784,8 +684,7 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
     fun m => match m with
       | .paint _ _ (some { paint := .solid c, .. }) _ _ _ => some (c.r, c.g, c.b)
       | _ => none
-  -- pdftoppm shows the third (73, 118, 141): its green is 118.5 exactly
-  -- here, which its decimal constants put a hair under the half.
+  -- pdftoppm shows (73, 118, 141): green is exactly 118.5 here, which its constants put just under.
   t s!"state: CMYK fills preview as pdftoppm shows them ({cmykFills})"
     (cmykFills == #[(35, 31, 32), (0, 173, 239), (73, 119, 141)])
   let cmykImage := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,
@@ -797,12 +696,11 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let samples := ((PdfGfx.importPage cmykImage).toOption.bind fun imp => imp.figure.rasters[0]?.bind rgbPixels).getD #[]
   t s!"state: CMYK samples preview as CMYK fills do ({samples})" (samples == #[(35, 31, 32), (0, 173, 239)])
   let grid : List Nat := [0, 51, 128, 200, 255]
-  t "state: a sample's CMYK preview is the exact one, at every grid point of the cube"
+  t "state: a sample's CMYK preview is exact at every grid point of the cube"
     (grid.all fun c => grid.all fun m => grid.all fun y => grid.all fun k =>
       PdfGfx.cmykRgb8 c.toUInt8 m.toUInt8 y.toUInt8 k.toUInt8 ==
         PdfGfx.cmykRgb (mkRat c 255) (mkRat m 255) (mkRat y 255) (mkRat k 255))
-  -- The test face, and the same program with its cmap's tag renamed, so the
-  -- program holds no cmap at all.
+  -- The test face, and the same program with its cmap tag renamed so it holds no cmap.
   let face ← IO.FS.readBinFile (testFonts ++ "/OpenSans-Regular.ttf")
   let noCmap := Id.run do
     let mut b := face
@@ -821,18 +719,16 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
     streamObjBin prog s!"/Length1 {prog.size} "]
   let mapped := marksOf (ttPdf face 32)
   let unmapped := marksOf (ttPdf noCmap 4)
-  t s!"state: a TrueType program with no cmap draws its glyphs by their 'post' names ({unmapped.size} of {mapped.size})"
+  t s!"state: a cmap-less TrueType program draws glyphs by 'post' names ({unmapped.size} of {mapped.size})"
     (mapped.size == 3 && unmapped == mapped)
-  -- An `re` of negative extent is the path PDF traces, from its corner
-  -- toward the negative extents: a dash pattern starts there.
+  -- An `re` of negative extent traces from its corner toward the negative extents, where a dash starts.
   let inverted := marksOf (statePdf "<< >>" "[4 2] 0 d 2 w 150 80 -100 -50 re S" #[])
   t s!"state: an re of negative extent keeps the corner order PDF traces ({repr (inverted.map fun m => match m with
       | .paint _ g _ _ _ _ => some g | _ => none)})"
     (match inverted.toList with
      | [.paint _ g _ _ _ _] => g == .path #[Gfx.Kit.rectPath (Dim.pt 150) (Dim.pt 80) (Dim.pt (-100)) (Dim.pt (-50))]
      | _ => false)
-  -- A stroked glyph's lengths stand in its frame; drawn through it, they
-  -- are the user space's: 0.5 pt wide, dashed 2 on 1 from 0.25.
+  -- A stroked glyph's lengths stand in its frame: in user space 0.5 pt wide, dashed 2 on 1 from 0.25.
   let inUser (m : Gfx.Affine) (v : Dim.Sp) : Rat := (v : Rat) * m.a / 65536
   let near (x y : Rat) : Bool := x - y ≤ mkRat 1 1000 && y - x ≤ mkRat 1 1000
   for mode in [1, 2] do
@@ -854,18 +750,8 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
           near p (mkRat 1 4))
 
 open Tests.PdfNative in
-/-- **PDF figures ship native web faces with no converter on the
-machine**: an invented cairo-made figure included by `\includegraphics`,
-and the corpus' boundary diagram, a stand-in lualatex answering its
-picture with a committed boundary PDF (`lualatex-shade.pdf`), build HTML
-with no converter on `PATH`. Neither W0605 nor W0378 fires, and the page embeds
-exactly the engine's own drawing of each page (`PdfFaces.svgOf`) — before
-faces were drawn natively, the first shipped a placeholder (W0605) and the
-second had no face at all (W0378). An include's words ride beside its face
-for find and copy, hidden from assistive technology, and are no description
-(N0376 still names an include with none declared); and a document that
-declares `\figures{ convert = none }` is never drawn by the converter — the
-premise of the driver's refusal, two builds apart by the declaration. -/
+/-- PDF figures ship native web faces with no converter on the machine, and `\figures{ convert =
+none }` never runs the converter. -/
 def nativeFigureBuildChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
@@ -905,8 +791,7 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
       return (r.exitCode, records, html)
     let named (records : Array Lean.Json) (code : String) : Bool :=
       records.any fun record => record.getObjValAs? String "code" == .ok code
-    -- An include's face stretches as its PDF form does; a boundary
-    -- picture's keeps SVG's fit, as its converted face did.
+    -- An include's face stretches as its PDF form does; a boundary picture's keeps SVG's fit.
     for (name, src, out, pdf, stretch) in [("the cairo figure", dir / "figure.tex", dir / "figure.html", chart, true),
         ("the boundary diagram", (corpus : System.FilePath), dir / "diagram.html", shade, false)] do
       let (code, records, html) ← build src out
@@ -915,41 +800,28 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
         (!named records "W0605" && !named records "W0378" && !named records "W0609")
       t s!"native faces: {name}'s page embeds the engine's own drawing, byte for byte"
         ((faceOf pdf stretch).any fun face => (html.splitOn face).length ≥ 2)
-    -- The figure's words ride the page as its PDF form carries them, for
-    -- find and copy, hidden from sight and from assistive technology; the
-    -- figure's name stays its declared alternative, and an include that
-    -- declares none is still named by N0376 — words are no description.
     let (_, _, chartHtml) ← build (dir / "figure.tex") (dir / "figure-words.html")
     let wordsOpen := "<span class=\"" ++ HtmlDoc.figureWordsClass ++ "\" aria-hidden=\"true\">"
     let carried := ((chartHtml.splitOn wordsOpen)[1]?.map fun rest => (rest.splitOn "</span>")[0]?.getD "").getD ""
-    t s!"native faces: an include's words ride beside its face, hidden from sight and assistive technology ({carried})"
+    t s!"native faces: an include's hidden words ride beside its face ({carried})"
       ((carried.splitOn "invented chart").length ≥ 2 && (chartHtml.splitOn "alt=\"An invented chart\"").length ≥ 2 &&
         (chartHtml.splitOn ("." ++ HtmlDoc.figureWordsClass ++ " {")).length == 2)
     IO.FS.writeFile (dir / "nameless.tex") (String.intercalate "\n" [
       "\\documentclass{article}", "\\begin{document}", "\\includegraphics{chart.pdf}", "\\end{document}", ""])
     let (code, records, namelessHtml) ← build (dir / "nameless.tex") (dir / "nameless.html")
-    t s!"native faces: words are no description: an include with none declared is named by N0376 (exit {code})"
+    t s!"native faces: an include with no declared description is named by N0376 (exit {code})"
       (code == 0 && named records "N0376" && (namelessHtml.splitOn wordsOpen).length == 2)
-    -- A boundary answer whose text is in a font the engine does not draw,
-    -- with no converter: a picture the rendered subset draws in part takes
-    -- the subset's drawing, its text in the document's faces (W0378 names
-    -- the face); one it draws nothing of keeps the engine's drawing, its
-    -- loss named (W0609). The first once shipped the drawing without text.
     IO.FS.writeFile (dir / "partial.tex") (String.intercalate "\n" [
       "\\documentclass{article}", "\\begin{document}", "An invented picture follows.", "",
       "\\begin{tikzpicture}", "  \\draw (0,0) rectangle (3,1);", "  \\pattern (0,0) rectangle (1,1);",
       "  \\node at (1.5,0.5) {Mark};", "\\end{tikzpicture}", "", "\\end{document}", ""])
     let (code, records, html) ← build (dir / "partial.tex") (dir / "partial.html") "type1.pdf"
-    t s!"native faces: a textless answer for a picture the subset draws in part is the subset's (exit {code})"
+    t s!"native faces: a textless answer for a partly drawn picture is the subset's (exit {code})"
       (code == 0 && named records "W0378" && !named records "W0609" && (html.splitOn "<svg").length ≥ 2 &&
         (html.splitOn "Mark").length ≥ 2)
     let (code, records, _) ← build corpus (dir / "diagram-type1.html") "type1.pdf"
-    t s!"native faces: a textless answer for a picture the subset cannot draw is the engine's, its loss named (exit {code})"
+    t s!"native faces: a textless answer for an undrawable picture is the engine's, named (exit {code})"
       (code == 0 && named records "W0609" && !named records "W0378")
-    -- The document refuses the converter by declaration: two builds of one
-    -- lossy include apart by `\figures{ convert = none }` alone. Open, the
-    -- converter is asked; refused, never, and the engine's drawing names the
-    -- loss without offering an install.
     let ranLog := dir / "converter.log"
     IO.FS.writeFile (tools / "pdftocairo") ("#!/bin/sh\nif [ \"$1\" = -v ]; then printf '%s\\n' \
 'synthetic converter 1' >&2; exit 0; fi\nprintf 'ran\\n' >> " ++ shQuote ranLog.toString ++
@@ -977,7 +849,6 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
         (r.getObjValAs? String "subject").toOption else none
     t s!"native faces: open, the converter is asked for a lossy include (exit {openCode}, {afterOpen - before} runs)"
       (openCode == 0 && afterOpen > before && subjects openRecords == #["figure:pdf:font:type1"])
-    t s!"native faces: \\figures\{ convert = none } never asks it, and names the loss on the engine's drawing \
-without offering an install (exit {refusedCode}, {afterRefused - afterOpen} runs, {lossHelp refusedRecords})"
+    t s!"native faces: \\figures\{ convert = none } never converts, names the loss, offers no install (exit {refusedCode}, {afterRefused - afterOpen} runs, {lossHelp refusedRecords})"
       (refusedCode == 0 && afterRefused == afterOpen && subjects refusedRecords == #["figure:pdf:font:type1"] &&
         named refusedRecords "W0609" && ((lossHelp refusedRecords).splitOn "install").length == 1)

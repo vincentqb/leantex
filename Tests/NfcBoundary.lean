@@ -3,15 +3,13 @@ module
 import all LeanTex.Core.Nfc
 import LeanTex.Core.NfcData
 
-/-! The normalization implementation stays private. These tests inspect its
-generated tables through a same-package import and export only runnable checks. -/
+/-! The normalization tables, inspected through a same-package import. -/
 
 namespace Tests.NfcBoundary
 
 open LeanTex.Core
 
-/-- UAX #15 idempotence over every decomposition key and table-loader byte
-accounting, supplementing the universal ASCII normalization theorem. -/
+/-- UAX #15 idempotence over every decomposition key, and the table loader's byte accounting. -/
 public def tableChecks (t : String → Bool → IO Unit) : IO Unit := do
   let acute := String.ofList ['\u0301']
   let notIdempotent := Nfc.tables.get.decomp.fold (init := #[]) fun bad k _ =>
@@ -22,8 +20,7 @@ public def tableChecks (t : String → Bool → IO Unit) : IO Unit := do
   t s!"nfc is idempotent over the decomposition keys ({notIdempotent.size} broke it)"
     notIdempotent.isEmpty
 
-  -- The loader reads past a table's end as zero. The decomposition records
-  -- have variable width, so their census accounts for bytes, not just entries.
+  -- The loader reads past a table's end as zero, so variable-width records are counted in bytes.
   let tb := Nfc.load ()
   t "nfc: every fixed-width table is a whole number of entries"
     (NfcData.ccc.toUTF8.size % 8 == 0 && NfcData.comp.toUTF8.size % 18 == 0 &&
@@ -37,8 +34,7 @@ public def tableChecks (t : String → Bool → IO Unit) : IO Unit := do
     (tb.decomp.fold (init := 0) (fun n _ parts => n + 7 + 6 * parts.size) ==
       NfcData.decomp.toUTF8.size)
 
-/-- Backslash separates normalization slices. Exercise the caller's source
-attribution predicate on every scalar and expanded decomposition in the tables. -/
+/-- The source attribution predicate over every scalar and expanded decomposition in the tables. -/
 public def escapeChecks (t : String → Bool → IO Unit)
     (prefixAgrees : String → Bool) : IO Unit := do
   let nfc := Nfc.tables.get
@@ -53,7 +49,7 @@ public def escapeChecks (t : String → Bool → IO Unit)
   t "image origin: every decomposition scalar preserves authored sites and raw triggers"
     (!decompositions.isEmpty && decompositions.all fun (scalar, _) =>
       prefixAgrees (String.ofList [Char.ofNat scalar.toNat]))
-  t "image origin: every expanded decomposition preserves authored sites and raw triggers"
+  t "image origin: every expanded decomposition keeps authored sites and raw triggers"
     (!decompositions.isEmpty && decompositions.all fun (_, parts) =>
       prefixAgrees (String.ofList parts.toList))
 

@@ -7,18 +7,7 @@ public section
 open LeanTex.Core
 open LeanTex.Core.Dim
 
-/-! Raster readers discard page selection, including zero and ordinals
-beyond the image. `luatex.def`'s `Gread@png` clears `Gin@page`, and
-`Gread@jpg` aliases it. A synthetic LuaLaTeX probe holds both dimensions
-and rendered pixels fixed across numeric page keys; injecting the other
-values at the driver entry also leaves the image unchanged. `graphicx`
-parses its surface key as a TeX integer before reaching that reader.
-
-The native guard uses invented 3×2 RGB/RGBA PNGs and a JPEG of the RGB
-grid. It checks decoded samples, the emitted PDF's image and soft mask,
-and byte-identical output under every selection constructor. PDFs retain
-physical selection and named refusals. No TeX or external image tool is
-needed to run the guard. -/
+/-! Raster readers discard page selection, as `luatex.def`'s PNG and JPEG readers do. -/
 
 private def rasterRgb : ByteArray := ⟨#[
   255, 0, 0, 0, 255, 0, 0, 0, 255,
@@ -41,8 +30,7 @@ private def rasterRgba : ByteArray := ⟨#[
   0, 0, 255, 255, 0, 64, 0, 255, 255, 192, 255, 0, 255, 255, 139, 157, 12, 118, 106, 14,
   95, 41, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]⟩
 
--- Encoded from rasterRgb: ImageMagick, 1×1 sampling, quality 100,
--- stripped metadata, density 72. The JPEG bytes must survive unchanged.
+-- rasterRgb encoded by ImageMagick at 1×1 sampling, quality 100; the bytes must survive unchanged.
 private def rasterJpeg : ByteArray := ⟨#[
   255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 72, 0, 72, 0, 0,
   255, 219, 0, 67, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -101,8 +89,7 @@ private def rasterImageDict (e : PdfRead.Entry) (color : String) : Bool :=
     e.val.get? "BitsPerComponent" == some (.int 8) &&
     e.val.get? "ColorSpace" == some (.name color)
 
-/-- Read the emitted samples through the file's own predictor declaration;
-the alpha is reached through the image's actual `/SMask` reference. -/
+/-- Whether the emitted image's samples, through its predictor and `/SMask`, are the raster's. -/
 private def rasterArtifact (b : ByteArray) (jpeg alpha : Bool) : Bool := Id.run do
   let .ok entries := PdfRead.objects b | return false
   let images := entries.val.filter (·.val.get? "Subtype" == some (.name "Image"))
@@ -147,8 +134,7 @@ private def rasterPdf (objs : Array String) : ByteArray := Id.run do
 private def rasterPdfStream (ink : String) : String :=
   s!"<< /Length {ink.utf8ByteSize} >>\nstream\n{ink}\nendstream"
 
--- Physical first page is object 5, last is object 3. Count is deliberately
--- wrong; the root's media box and resources are inherited by both leaves.
+-- Object 5 is the first page and 3 the last; `/Count` is wrong on purpose.
 private def rasterTwoPagePdf : ByteArray := rasterPdf #[
   "<< /Type /Catalog /Pages 2 0 R >>",
   "<< /Type /Pages /Kids [5 0 R 3 0 R] /Count 900 \
@@ -164,9 +150,8 @@ private def rasterSameError {α β : Type} (a : Except String α)
   | .error x, .error y => !x.isEmpty && x == y
   | _, _ => false
 
-/-- Raster page keys discard exactly: samples, geometry, transparency,
-loss ledger, and emitted PDF bytes are unchanged. The supplied bundled
-face satisfies the writer's font-slot contract; no text is painted. -/
+/-- Raster page keys discard exactly: samples, geometry, transparency, losses and PDF bytes are
+unchanged. -/
 def rasterPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (s!"raster page selection: {name}" :: ·)
@@ -201,8 +186,7 @@ def rasterPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         let artifact := rasterWrapper oneFace plan
         t s!"{tag}: emitted PDF is byte-identical" (artifact == firstPdf)
         t s!"{tag}: emitted image, mask and placement" (rasterArtifact artifact jpeg alpha)
-  -- A discarded page key must not mask a malformed raster's own error or
-  -- override a planner policy. The pre-fix generic PDF-only error did both.
+  -- A discarded page key masks no raster error and overrides no planner policy.
   let alphaDenied := (Image.probe rasterRgba).bind
     (Image.plan { softMaskPermitted := false })
   for (label, selection) in rasterSelections do

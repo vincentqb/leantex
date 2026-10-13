@@ -6,11 +6,7 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! A supported HTML spelling is a typed Markdown construct, never markup
-passed to the backend. These invented cases hold its visible content to the
-shipped tree and layout. A disclosure is one construct both artifacts read:
-the page ships the platform's element, paper sets every word expanded, and
-no artifact loses anything to name. -/
+/-! A supported HTML spelling is a typed Markdown construct, never markup passed to the backend. -/
 
 def markdownHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -20,13 +16,13 @@ def markdownHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
 \nCedar body.\n\n```\n<sample> & literal\n```\n\n- Elm item\n\
 \n</details>\n\nFir after.\n"
   let tree := mdTreeOf disclosure
-  t "a disclosure ships as the platform's element, its summary first and its body inside it"
+  t "a disclosure ships as the platform element, summary first, body inside"
     (hasStr tree "<details><summary>Amber & linen</summary><p>Cedar body.</p>")
   t "a disclosure preserves its code, list and following block"
     (mdCodeBlocks disclosure == #[some "<sample> & literal"]
       && mdCodeBlocks disclosure == mdCodeBlocks "```\n<sample> & literal\n```\n"
       && hasStr tree "<ul><li>Elm item</li></ul></details><p>Fir after.</p>")
-  t "a supported disclosure compiles and names nothing, for any artifact"
+  t "a supported disclosure compiles, naming nothing for any artifact"
     (!refused disclosure && (dvMd disclosure).isEmpty)
   t "a disclosure with no blank lines still ships its summary and body"
     (hasStr (mdTreeOf "<details>\n<summary>Grove</summary>\nHazel\n</details>\nIris\n")
@@ -38,7 +34,7 @@ def markdownHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
 <details><summary>Larch</summary><p>Moss</p></details>")
   let nested := "<details>\n<summary>Outer</summary>\nBefore\n\
 <details>\n<summary>Inner</summary>\nInside\n</details>\nAfter\n</details>\nEnd\n"
-  t "nested disclosures nest, each keeping its summary, body and the text after it"
+  t "nested disclosures each keep their summary, body and following text"
     (!refused nested
       && hasStr (mdTreeOf nested)
         "<details><summary>Outer</summary><p>Before</p>\
@@ -65,7 +61,7 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
 \\input{literal} &amp; &#60;img&#62;</summary>\nBody\n</details>\n"
   let (_, safeBody, _) := HtmlDoc.emitTree {} (elabMd quoted).1
   let rendered := Html.render (Html.elem "div" safeBody) 0
-  t "decoded summary markup remains visible escaped text in the artifact"
+  t "decoded summary markup stays visible as escaped text"
     (!refused quoted
       && hasStr rendered "&lt;script&gt;alert(7)&lt;/script&gt;"
       && hasStr rendered "\\input{literal} &amp; &lt;img&gt;"
@@ -83,12 +79,12 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
   t "a multiline block comment consumes its own lines only"
     (!refused "<!--\n# hidden\n-->\n\nUmber\n"
       && hasStr (mdTreeOf "<!--\n# hidden\n-->\n\nUmber\n") "<p>Umber</p>")
-  t "an unclosed block comment ends at the container boundary or end of input"
+  t "an unclosed block comment ends at its container or the input's end"
     (mdTreeOf "<!-- hidden\n# hidden\n" == mdTreeOf ""
       && !refused "<!-- hidden\n# hidden\n"
       && !refused "> <!-- hidden\n\nVisible\n"
       && hasStr (mdTreeOf "> <!-- hidden\n\nVisible\n") "<p>Visible</p>")
-  t "an incomplete inline comment follows ordinary literal text semantics"
+  t "an incomplete inline comment is literal text"
     (!refused "Amber <!-- incomplete\n"
       && mdTreeOf "Amber <!-- incomplete\n" == mdTreeOf "Amber \\<!-- incomplete\n"
       && hasStr (mdTreeOf "Amber <!-- incomplete\n") "<p>Amber <!– incomplete</p>")
@@ -100,7 +96,7 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
         attrs == mdCodeBlockPreAttrs && cas.isEmpty
           && plainCodeText kids == some "<!-- visible -->\n<details>"
       | _ => false)
-  t "an empty named anchor becomes a typed target and its link still resolves"
+  t "an empty named anchor is a typed target its link resolves to"
     (!refused "<a name=\"willow\"></a>\n\n[Willow](#willow)\n"
       && hasStr (mdTreeOf "<a name=\"willow\"></a>\n\n[Willow](#willow)\n")
         "id=willow"
@@ -119,7 +115,7 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
   for key in ["fern₈", "fern₉", "café", "東京", "ø-β"] do
     let src := s!"<a name=\"{key}\"></a>\n\n[Go](#{key})\n"
     let (_, body, _) := HtmlDoc.emitTree {} (elabMd src).1
-    t "a Unicode target keeps its exact key at both ends of its fragment link"
+    t "a Unicode target keeps its exact key at both ends of its link"
       (!refused src
         && (elemNodesList (· == "span") #[] body.toList).any
           (fun n => match n with
@@ -129,13 +125,9 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
           (fun n => match n with
             | .elem _ attrs _ => attrs.contains ("href", "#" ++ key)
             | _ => false))
-  t "distinct Unicode target keys do not collapse to the same native anchor"
+  t "distinct Unicode target keys keep distinct native anchors"
     (hasStr (mdTreeOf "<a id=\"fern₈\"></a><a id=\"fern₉\"></a>\n")
       "id=fern₈></span><span id=fern₉>")
-  -- `open` on a disclosure is its open state, which the element ships
-  -- (`disclosurePrintChecks`); on any other element, and beside another
-  -- attribute, it is refused like every attribute the vocabulary does not
-  -- read.
   for attrs in ["open", "hidden", "aria-hidden=\"true\"", "role=\"none\"",
       "lang=\"de\"", "style=\"display:none\"", "onclick=\"evil()\""] do
     for src in (if attrs == "open" then [] else
@@ -191,15 +183,8 @@ def mdSpanText (src : String) (d : Diag) : String :=
     | none => ""
     | some l => String.ofList (l.toList.drop (sp.pos.col - 1))
 
-/-- **Every raw HTML element is lowered or named, once — evidence for the
-loop, not a theorem.** `htmlInlineAt_accounts` states one step of the inline
-scan; the scan that resumes past each step, and the block reader around it,
-are read here over a generated family instead: tag names from the block, raw
-and phrasing vocabularies and an invented one, in four tag shapes and a
-comment, at seven sites. Every refusal stands on the `<` of one of the
-shape's tags, no site is named by two codes, and inside a paragraph the page
-is the page with the refused tags deleted, keeping exactly its bare breaks,
-and the refusals count the refused tags. -/
+/-- Every raw HTML element is lowered or named once, over a generated family of tags, shapes and
+sites. -/
 def mdHtmlAccountsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tree := docTreeOf
@@ -217,9 +202,7 @@ def mdHtmlAccountsChecks (ref : IO.Ref (List String)) : IO Unit := do
         -- A bare `<br>` is the vocabulary: carried as a break, never refused.
         let carried := tags.filter fun tg => tg == "<br>" || tg == "<br/>"
         let refusedTags := tags.filter (!carried.contains ·)
-        -- A §4.6 condition-1 block runs to its own closing tag, so inside a
-        -- disclosure body it also consumes the disclosure's `</details>`:
-        -- the disclosure is then refused, once, at its own `<`.
+        -- A §4.6 condition-1 block runs to its own closing tag, consuming an enclosing disclosure's `</details>`.
         let unclosing := site == "disclosure body" &&
           ["pre", "script", "style", "textarea"].contains n && shape != s!"<{n}>Kestrel</{n}>"
         let src := place shape
@@ -243,10 +226,6 @@ def mdHtmlAccountsChecks (ref : IO.Ref (List String)) : IO Unit := do
           bad := bad.push s!"{label}: nothing refused and nothing carried"
   t s!"every raw HTML element is lowered, or refused once at its own < \
 ({bad.size} faults; first: {bad.toList.take 3})" bad.isEmpty
-  -- A comment ships nothing and names nothing, wherever it is the whole of
-  -- its line or sits inside text: both pages and the diagnostics are those
-  -- of the document without it. Opening a line that holds text, it is the
-  -- start of a larger raw block (§4.6), refused once at its `<`.
   let some fonts ← serifFacesSet
     | t "the raw HTML accounts faces load" false
       return
@@ -264,9 +243,8 @@ def mdHtmlAccountsChecks (ref : IO.Ref (List String)) : IO Unit := do
           && shippedLinesOf fonts doc == shippedLinesOf fonts bareDoc
           && ds.map (fun d => (d.code, d.subject)) == bareDs.map (fun d => (d.code, d.subject)))
 
-/-- The two artifacts a twin row compares, and what the run named: the
-emitted HTML document's bytes, every shipped line's position, size and text,
-and each diagnostic's code and subject. -/
+/-- The emitted HTML bytes, every shipped line's position, size and text, and each diagnostic's code
+and subject. -/
 def mdArtifactsOf (fonts : Font.FontSet) (src : String) :
     String × Array (Dim.Sp × Dim.Sp × Dim.Sp × String) × Array (String × Option String) :=
   let (doc, ds) := elabMd src
@@ -276,33 +254,21 @@ def mdArtifactsOf (fonts : Font.FontSet) (src : String) :
 def mdBodyTextOf (fonts : Font.FontSet) (src : String) : Array String :=
   (bodyLines (layoutOf fonts (elabMd src).1)).map lineText
 
-/-- A context a twin row places a spelling in: what opens its first line,
-what every later line carries, and what closes its last. -/
+/-- A spelling placed in a context: what opens its first line, what every later line carries, and
+what closes its last. -/
 def mdInContext (ctx : String × String × String × String) (s : String) : String :=
   let (_, first, rest, close) := ctx
   let ls := (s.splitOn "\n").zipIdx.map fun (l, k) => (if k == 0 then first else rest) ++ l
   String.intercalate "\n" ls ++ close ++ "\n"
 
-/-- The contexts a block spelling is placed in. -/
 def mdBlockContexts : List (String × String × String × String) :=
   [("document", "", "", ""), ("list item", "- ", "  ", ""), ("quote", "> ", "> ", "")]
 
-/-- The contexts an inline spelling is placed in. -/
 def mdInlineContexts : List (String × String × String × String) :=
   mdBlockContexts ++ [("link text", "[", "", "](https://example.org)"), ("emphasis", "*", "", "*")]
 
-/-- **An HTML spelling the reader accepts ships its markdown twin.** Each
-row is spellings the vocabulary reads and the one they all lower to; in
-every context the row names, a spelling and its twin give byte-identical
-HTML, the same shipped lines (position, size and text) and the same
-diagnostics. Never the IR: a row holds the artifacts, where a reader meets
-the page. Every attribute a spelling may carry is decided here, carried by
-an existing field, honoured exactly by what ships (a premise pin), routed
-by an existing route, or the element refused — never dropped: `<details
-open>` was once refused while the closed spelling, which ships the same
-expanded page, was read, because no row had decided the attribute's fate.
-One accounting per construct names each artifact that suffers its loss,
-the markdown twin included, and none that does not. -/
+/-- An HTML spelling the reader accepts ships its markdown twin's HTML, lines and diagnostics, in
+every context its row names. -/
 def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet
@@ -324,42 +290,31 @@ def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"an accepted HTML spelling ships its twin's HTML ({label})" (ah == bh)
         t s!"an accepted HTML spelling ships its twin's lines ({label})" (al == bl)
         t s!"an accepted HTML spelling names what its twin names ({label})" (ad == bd)
-  -- The bare tag is the closed state: its page differs from the open one's
-  -- by the element's `open` alone, and paper sets both alike.
   for ctx in mdBlockContexts do
     let (oh, ol, od) := mdArtifactsOf fonts (mdInContext ctx (disclosure "<details open>"))
     let (ch, cl, cd) := mdArtifactsOf fonts (mdInContext ctx (disclosure "<details>"))
-    t s!"an open and a closed disclosure ship one page apart by `open` alone ({ctx.1})"
+    t s!"open and closed disclosures differ by `open` alone ({ctx.1})"
       (oh != ch && oh.replace "<details open>" "<details>" == ch)
     t s!"an open and a closed disclosure set the same lines on paper ({ctx.1})" (ol == cl)
-    -- A list item whose disclosure holds blank lines is loose, as CommonMark
-    -- reads its raw lines; that is the list's, named alike for both.
     t s!"an open and a closed disclosure name nothing of their own ({ctx.1})"
       (od == cd && od.all (·.2 == some "md:loose-list"))
-  -- A break before a bracket reads no length: the bracket is text.
   let (xh, _, xd) := mdArtifactsOf fonts "Alder<br>[x]\n"
   t "a <br> before a bracket ships the bracket as text"
     (hasStr xh "Alder<br>[x]" && mdBodyTextOf fonts "Alder<br>[x]\n" == #["Alder", "[x]"]
       && xd.isEmpty)
-  -- An attribute, the closing spelling and a line holding only the tag
-  -- are not the vocabulary: each is refused once, at its own `<`.
   for (src, col) in [("Alder<br class=\"k\">Birch\n", 6), ("Alder</br>Birch\n", 6),
       ("<br>\n", 1)] do
     let ds := dvMd src
     t s!"{src.replace "\n" "⏎"} is refused once, at its <"
       (ds.size == 1 && ds.all fun d => d.kind == .E0390 && d.subject == some "md:raw-html"
         && d.span.map (·.pos.col) == some col)
-  -- Markdown writes no break inside a heading; this spelling can, and both
-  -- artifacts set it: the HTML heading holds the break and the page sets
-  -- two heading lines.
   let (hh, _, hd) := mdArtifactsOf fonts "# Alder<br>Birch\n"
   t "a <br> inside a heading ships in the heading's HTML" (hasStr hh "Alder<br>Birch</h1>")
   t "a <br> inside a heading sets two heading lines"
     (mdBodyTextOf fonts "# Alder<br>Birch\n" == #["Alder", "Birch"] && hd.isEmpty)
 
-/-- Where a shipped line's text stands on the page: the left edge of its
-first glyph run and the right edge of its last, its segments walked as the
-page paints them. -/
+/-- Where a shipped line's text stands: the left edge of its first glyph run to the right edge of
+its last. -/
 def inkSpanOf (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) := Id.run do
   let mut px := l.x
   let mut first : Option Dim.Sp := none
@@ -377,12 +332,8 @@ def inkSpanOf (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) := Id.run do
     | some a, some b => some (a, b)
     | _, _ => none
 
-/-- **A break inside a table cell sets as its lines would as rows.** A
-`<br>` in a cell is a line of its own, on the page as in a browser: each
-line stands on its column's side — left, right or centred, as the delimiter
-row says — and the column is as wide as its widest line, never as the
-cell's words on one line. Held on the shipped lines, against the same words
-spelled as rows, for each side; the page's cell keeps its break. -/
+/-- A break inside a table cell sets as its lines would as rows, on the column's side, the column as
+wide as its widest line. -/
 def cellBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet
@@ -400,10 +351,6 @@ def cellBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
         ((spanOf broken w).isSome && spanOf broken w == spanOf rows w)
     t s!"a {side} cell's page keeps its break inside the cell"
       (hasStr (HtmlDoc.emit {} (elabMd broken).1).1 "Fir<br>Gorse bush</td>")
-  -- A tex natural cell holds no break and sets as it always has: on one
-  -- line, from the very items its column was measured from, the
-  -- document's hyphenation in force; a braced `\\` is a break, and its
-  -- lines stand on the column's side.
   let pats := Hyphen.english.get
   for spec in ["l", "c", "r"] do
     for words in ["anything", "article artifact", "a hyphenation candidate"] do
@@ -432,16 +379,8 @@ def mdOnceInOrder (hay : String) (ws : List String) : Bool :=
   ws.all (fun w => (hay.splitOn w).length == 2) &&
     ((ws.map at_).zip ((ws.map at_).drop 1)).all fun (a, b) => a < b
 
-/-- **A refused disclosure is accounted once.** A disclosure with no
-summary, one its input ends inside, and one its list item cuts off are each
-refused at their opening `<`, the document's one diagnostic, and each ships
-every word it held, once, in source order — with no element of its own, so
-no empty summary sets. A summary line the reader cannot read — a tag inside
-it, an attribute on it, a summary over several lines, one with no text,
-which would label the element's control with nothing — is raw HTML: refused
-at its own `<` and its lines dropped, as an HTML block's are, and that
-refusal is the disclosure's one diagnostic too, every other word still
-shipping once, in order. -/
+/-- A refused disclosure is accounted once at its opening `<`, and ships every word it held once, in
+order. -/
 def refusedDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (label, src, words, dropped, at_) in [
@@ -486,16 +425,14 @@ def refusedDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"a refused disclosure ({label}) ships no element and no empty summary"
       (!hasStr shown "<strong></strong>" && !hasStr shown "<details" && !hasStr shown "<summary")
 
-/-- The fixes the raw-HTML help names, each as the rewrite of a refused
-construct it asks the author for. The help is exactly these phrases, in
-this order, so a fix the help gains owes its rewrite here. -/
+/-- The fixes the raw-HTML help names, in order, each as the rewrite it asks of a refused
+construct. -/
 def rawHtmlFixes : List (String × (String → String)) :=
   [("write it in markdown (**bold**, *emphasis*, [text](url), ![alt](src))", fun _ => "**Kestrel**"),
    ("quote it as a code span with `...`", fun raw => s!"`{raw}`"),
    ("delete the tags", fun _ => "Kestrel")]
 
-/-- The elements a block opens: what a fix must leave as the bare word left
-it, text and phrasing aside. -/
+/-- The elements a block opens, text and phrasing aside. -/
 def mdBlockNames : List String :=
   ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "section",
     "details", "summary", "div", "pre", "table", "hr"]
@@ -508,7 +445,6 @@ def mdBlockTagsOne (acc : Array String) : Html.Node → Array String
     mdBlockTagsList (if mdBlockNames.contains tag then acc.push tag else acc) kids.toList
   | _ => acc
 
-/-- `mdBlockTagsOne` over siblings, the accumulator threaded. -/
 def mdBlockTagsList (acc : Array String) : List Html.Node → Array String
   | [] => acc
   | n :: rest => mdBlockTagsList (mdBlockTagsOne acc n) rest
@@ -519,13 +455,7 @@ end
 def mdBlockTags (doc : Ir.Doc) : Array String :=
   mdBlockTagsList #[] (HtmlDoc.emitTree {} doc).2.1.toList
 
-/-- **Every fix the raw-HTML help names keeps the refused text where it
-stood.** An inline tag pair at every site the accounts family places one,
-and a block on its own: every refusal's help is exactly `rawHtmlFixes`'
-phrases, and each fix, applied there, reads with no refusal and opens the
-blocks the bare word opens there, the word inside them. A fix that moved
-the text out of its block — a blank line around an inline tag's text splits
-its paragraph in three — fails here. -/
+/-- Every fix the raw-HTML help names keeps the refused text where it stood. -/
 def mdRawHtmlHelpChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let help := match (rawHtmlFixes.map (·.1)).reverse with
@@ -545,21 +475,7 @@ def mdRawHtmlHelpChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"'{phrase}' keeps the text in its block ({site})"
         (mdBlockTags doc == bare && hasStr (docTreeOf doc) "Kestrel")
 
-/-- **A hard break, and text that spells one, survive markdown → markdown
-in every context.** The markdown backend writes a hard break as `<br>`, which
-the reader reads back as that break wherever it stands; a backslash or two
-trailing spaces end the line instead, which a heading cannot continue and a
-container's next line continues only behind the container's prefix. Text is
-the other half: the reader reads `<br>`, a comment, an empty target, a
-disclosure and a character reference as what they spell, so text holding
-one is written escaped — and inside a code span, which reads literally, as
-it is. For each source the twin reads back with nothing raised, to the
-source's page — rendered, which tells a break from the text `<br>` — and
-is its own twin; and a tex document's breaks stay inside the constructs
-that held them while its text stays text. A table cell is held to GFM's
-spelling, every pipe escaped, and a break inside one reads back as the
-break it was. The text half is why: once the reader read `<br>`, the twin's
-unescaped text `<br>` read back as a break, with nothing raised. -/
+/-- A hard break, and text that spells one, survive markdown to markdown in every context. -/
 def mdTwinBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (ctx, src) in [("paragraph", "Alder<br>Birch\n"), ("heading", "# Alder<br>Birch\n"),
@@ -599,10 +515,6 @@ def mdTwinBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"a tex break between {a} and {b} stays inside its construct" (hasStr html s!"{a}<br>{b}")
   for shown in ["Iris&lt;br&gt;Juniper", "Kelp&lt;br&gt;Larch", "Moss&amp;lt;Nettle"] do
     t s!"a tex document's text reads back as text: {shown}" (hasStr html shown)
-  -- A run's closing break in a tex document's twin: kept inside the run
-  -- as `<br>` only where its closer still closes after one — never before
-  -- a word, through an enclosing run or a wrapper with no delimiter — so
-  -- the emphasis reads back, in a paragraph, a heading and a cell alike.
   for src in ["\\emph{\\textbf{Alder\\\\}}Birch", "\\textcolor{red}{\\emph{Alder\\\\}}Birch",
       "\\underline{\\emph{Alder\\\\}}Birch", "\\textsc{\\emph{Alder\\\\}}Birch",
       "\\section{\\emph{Alder\\\\}Birch}", "\\section{Birch\\emph{\\\\Alder}}",
@@ -613,36 +525,22 @@ def mdTwinBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"a tex run's closing break keeps its emphasis in the twin ({src}: {repr twin})"
       (backDs.isEmpty && MarkdownDoc.emit back == twin && hasStr page "Alder" &&
         (hasStr page "<em>" || hasStr page "<strong>") && !hasStr page "*")
-  -- A footnote inside code-set text keeps its mark there and its note once,
-  -- after the document, never copied into the code.
   let noted := MarkdownDoc.emit (elabStr "\\texttt{alpha\\footnote{Gamma note.}beta}\n").1
   t s!"a note inside code keeps its mark and its text once ({repr noted})"
     (hasStr noted "`alpha`[^1]`beta`" && (noted.splitOn "Gamma note.").length == 2)
-  -- A target reads back under the id the source page gives it, so a link
-  -- to it lands in the twin's page as in the source's.
   let labelled := (elabStr "\\section{Alder}\\label{sec:alder}\nSee the section.\n").1
   let twin := MarkdownDoc.emit labelled
   let (back, backDs) := elabMd twin
   t s!"a tex label's twin is a target under the page's id ({repr twin})"
     (hasStr twin "<a name=\"sec:alder\"></a>" && backDs.isEmpty &&
       hasStr (docHtmlOf labelled) "id=\"sec:alder\"" && hasStr (docHtmlOf back) "id=\"sec:alder\"")
-  -- A pipe-table row splits at every unescaped `|`, a code span's and a
-  -- destination's included, and reads `\|` back as `|` (GFM 4.10).
   let table := MarkdownDoc.emit (elabStr ("\\begin{tabular}{ll}\\texttt{a|b} & c|d\\\\" ++
     "x & \\href{https://example.org/a|b}{e}\\end{tabular}\n")).1
   t "a table cell's twin escapes every pipe it holds"
     (hasStr table "| `a\\|b` | c\\|d |" && hasStr table "| x | [e](https://example.org/a\\|b) |")
 
-/-- Hard breaks whose two artifacts disagree today, each with the file that
-owes the agreement. A run: HTML sets an empty line between two breaks, and
-so does lualatex for `\\` twice — LaTeX's break sets `\null` after itself,
-a box the next break's line keeps — while the PDF's line breaker discards
-everything between two forced breaks and steps one baseline. A break that
-opens its paragraph: HTML sets an empty first line, as CommonMark's
-`<p><br />` means, while the PDF's line breaker discards a forced break with
-nothing before it; LaTeX refuses that `\\` outright ("There's no line here
-to end") and sets nothing. Read in both directions by `breakRunAgreeChecks`:
-a row whose artifacts come to agree fails until it goes. -/
+/-- Hard breaks whose two artifacts disagree, each with the file owing the agreement; read both ways
+by `breakRunAgreeChecks`. -/
 def breakRunDebt : List (String × String) :=
   [("markdown <br><br>", "LeanTex/Core/Layout.lean"),
    ("markdown backslash breaks", "LeanTex/Core/Layout.lean"),
@@ -651,13 +549,8 @@ def breakRunDebt : List (String × String) :=
    ("markdown leading backslash break", "LeanTex/Core/Layout.lean"),
    ("tex leading break", "LeanTex/Core/Elab.lean, which keeps a break LaTeX refuses")]
 
-/-- **Hard breaks set as many lines in both artifacts**, or their
-disagreement is a `breakRunDebt` row. For a run, the HTML's line steps
-between the two words are its `<br>`s and the PDF's the baseline distance
-between them, counted in the distance one break sets. For a break that opens
-its paragraph, the HTML sets an empty first line when the paragraph opens
-with its `<br>`, and the PDF when its first word stands one break's distance
-below where it stands without the break. -/
+/-- Hard breaks set as many lines in both artifacts, or their disagreement is a `breakRunDebt`
+row. -/
 def breakRunAgreeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet

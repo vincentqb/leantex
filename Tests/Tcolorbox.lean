@@ -29,8 +29,7 @@ private def htmlFacts (doc : Ir.Doc) :
   let (_, tree, _) := HtmlDoc.emitTree {} doc
   (elemAttrsList (fun _ => true) #[] tree.toList, nodeTextList "" tree.toList)
 
-/-- The control a lowering is judged against: the native block written as
-the box it stands for (`boxedRaws`). -/
+/-- The control a lowering is judged against: the native block written as its box (`boxedRaws`). -/
 private def nativeDoc (source : String) : Ir.Doc :=
   (Elab.runRaws "probe" (wrap (boxedRaws #[] (raws source).toList))).1
 
@@ -38,8 +37,7 @@ private def samePages (fonts : Font.FontSet) (a b : Ir.Doc) : Bool :=
   reprStr (layoutOf fonts a).pages == reprStr (layoutOf fonts b).pages &&
     htmlFacts a == htmlFacts b
 
-/-- A missing body ground must not carry its dependent foreground alone.
-The artifact comparison checks both the PDF page census and typed HTML. -/
+/-- A box without a body ground does not carry its dependent foreground alone. -/
 def groundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (actual, _) := docOf "colback=black,coltext=white" "ReadableBody"
@@ -57,8 +55,7 @@ def groundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
   t "tcolorbox: both members of unsupported title pair are named"
     (titleLoss.contains "colframe" && titleLoss.contains "coltitle")
 
-/-- The helper's native output is judged through actual emitters; the
-declaration/argument reader is covered separately by `tcolorboxSourceChecks`. -/
+/-- The helper's native output, judged through the actual emitters. -/
 def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (actual, ds) := docOf
@@ -115,9 +112,8 @@ def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
     (missing.any (fun d => d.code == "E0336"))
   groundChecks ref fonts
 
-/-- Source controls compare complete PDF page models and serialized typed HTML,
-including fonts, positions, grouping and whitespace. A permitted loss still
-needs a keyed diagnostic; permitting it cannot make a missing diagnostic pass. -/
+/-- Source controls compare complete PDF page models and serialized typed HTML; a permitted loss
+still needs its keyed diagnostic. -/
 private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label pre body control : String) (loss : Option DiagCode := none)
     (trigger : Option String := none) (subject : Option String := none)
@@ -125,8 +121,7 @@ private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   let doc (p b : String) := "\\documentclass{beamer}\\theme{default}" ++ p ++
     "\\begin{document}\\begin{frame}[t]{}" ++ b ++ "\\end{frame}\\end{document}"
   let (ds, actual, html, _) := sourceArtifacts fonts (doc pre body)
-  -- The control's `{block}`s stand for the boxes the source lowers to;
-  -- where the source's own blocks are beamer's, they stay beamer's.
+  -- The control's `{block}`s stand for the boxes the source lowers to.
   let (controlDs, expected, expectedHtml, _) :=
     (if boxed then boxedSourceArtifacts else sourceArtifacts) fonts (doc "" control)
   let t := check ref
@@ -149,17 +144,13 @@ private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         (ds.filter (·.kind == code) |>.all fun d =>
           d.subject.any fun s => s == name || s.endsWith (":" ++ name))
 
-/-- Key selection precedes execution: discarded values cannot change the
-body or surrounding scope. Global definitions witness effects that closing
-an option group cannot hide; a local flag is observed inside the box.
-Retained font declarations share the body's scope, including nested boxes,
-and that scope closes before the following text. -/
+/-- Key selection precedes execution: discarded values change neither the body nor the surrounding
+scope. -/
 def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let defined := "\\ifdefined\\hiddenprobe Leaked\\else Inert\\fi"
   let chosen := "\\ifchoiceprobe Chosen\\else Default\\fi"
-  -- Positive controls show that the same effects are observable when
-  -- executed in ordinary native block content.
+  -- Positive controls: the same effects are observable in native block content.
   sourceCaseChecks ref fonts "global definition witness" ""
     ("\\begin{block}{Heading}{\\gdef\\hiddenprobe{Leaked}}" ++
       defined ++ "\\end{block}" ++ defined)
@@ -219,9 +210,7 @@ def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     ("\\begin{block}{Outer}Chosen" ++
       "\\begin{block}{Inner}Default\\end{block}Chosen\\end{block}Default")
 
-/-- Title hooks execute inside the title's savebox scope. Definitions leave
-no inline syntax behind; uses see the binding at that point, and only a
-global assignment can change the body or following text. -/
+/-- Title hooks execute inside the title's savebox scope. -/
 def tcolorboxTitleBindingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   for (definer, after) in [
@@ -246,9 +235,8 @@ def tcolorboxTitleBindingChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     "\\begin{panel}\\headingprobe\\end{panel}\\headingprobe"
     "\\begin{block}{{\\textbf{Local}}}Outer\\end{block}Outer"
 
-/-- Preparing retained fields preserves the caller's macro orders. A refused
-nested template consumes its arguments without running them and executes only
-its body, once, with the original environment's scope. -/
+/-- Preparing retained fields keeps the caller's macro order, and a refused nested template runs
+only its body, once. -/
 def tcolorboxPreparationChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   for (key, replacement, title, body) in [
@@ -307,11 +295,8 @@ def tcolorboxPreparationChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     "\\begin{block}{{OnceKept}}Inert/Scoped\\end{block}Inert/Scoped"
     (some .W0104) none (some "innerpanel")
 
-/-- tcolorbox uses ordinary environment arguments and TeX declaration scope
-(tcolorbox manual, “Creation of New Environments”). Synthetic LuaLaTeX probes
-also pin the less obvious cases: unused arguments stay inert, an empty optional
-argument overrides its default, unbraced parameters consume one token, and a
-body-local definition changes neither its title nor the surrounding scope. -/
+/-- tcolorbox environments take ordinary arguments and TeX declaration scope, as LuaLaTeX probes
+pin. -/
 def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   for (label, pre, body, control) in [
@@ -408,8 +393,6 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         "\\ifdefined\\hiddenprobe Leaked\\else Inert\\fi")
       "\\begin{block}{Heading}Body\\end{block}Inert"
       (some .W0110) (some "\\begin") (some "panel")
-  -- A refused declaration preserves the existing environment and argument
-  -- signature; its warning belongs to the definer, never the later body.
   for (label, pre, body, control, command) in [
       ("builtin declaration refused",
         "\\newtcolorbox{itemize}{title={Discarded},fontupper=\\small}",
@@ -430,9 +413,7 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     sourceCaseChecks ref fonts label pre body control (some .W0104) (some command)
   tcolorboxEffectChecks ref fonts
 
-/-- A generated box scope cannot become a frame title argument. Omitting
-the title and explicitly declaring an empty title ship identical complete
-PDF pages and typed HTML, including styles after the scope closes. -/
+/-- A generated box scope cannot become a frame title argument. -/
 def tcolorboxFrameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let pre := "\\documentclass{beamer}\\theme{default}" ++
@@ -457,8 +438,7 @@ def tcolorboxFrameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         (reprStr actual.pages == reprStr expected.pages)
       check ref (label ++ ": typed HTML") (html == expectedHtml)
 
-/-- Full declaration probes for the compatibility owner: options are
-instantiated at use, including a default and a macro defined later. -/
+/-- Declaration options are instantiated at use, a default and a later-defined macro included. -/
 def tcolorboxSourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let later := "\\newcommand{\\later}[1]{#1}"
@@ -470,8 +450,6 @@ def tcolorboxSourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     "\\begin{panel}[Chosen]{Second}SecondBody\\end{panel}" ++
     "\\end{frame}\\end{document}"
   let (actual, ds) := elabStr source
-  -- Keep the helper's native style identity in the control, including
-  -- its PDF run boundaries and typed HTML spans.
   let expected := nativeDoc
     (later ++
      "\\begin{block}{\\later{Default}: First}{\\small\\bfseries FirstBody}\\end{block}" ++

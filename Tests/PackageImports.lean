@@ -20,15 +20,8 @@ private def importRun (file src : String) :
   let (doc, ds) := Elab.runExecuted file executed (ld ++ pd ++ ds)
   return (doc, ds, records.map (·.1))
 
-/-- Importing a package again must not register its hooks again, restore
-its defaults over intervening declarations, or recurse through its file
-again. The comparison reads both artifacts; the trace counts actual style
-splices, not package names merely mentioned in the source.
-
-The option expectations are LaTeX's `\@onefilewithoptions`: a later
-subset is compatible, new options clash, and the first execution stands.
-Conflicting `\def` assignments deliberately keep TeX's source-order
-last-write rule. Only disjoint declarations are expected to commute. -/
+/-- Importing a package again registers no hook twice, restores no default and recurses nowhere;
+options follow `\@onefilewithoptions`. -/
 def packageImportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref

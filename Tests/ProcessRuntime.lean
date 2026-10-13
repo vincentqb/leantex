@@ -21,21 +21,13 @@ private def doneWithin (task : Task α) (ms : Nat) : BaseIO Bool := do
     IO.sleep 10
   IO.hasFinished task
 
-/-- What the runtime does at the process boundary, read on the real runtime.
-The exec and working-directory failures, a shell's exit for a program it
-cannot find, and the signal encoding are what `ImageAssets.runChecked`,
-`PicCache.probed` and `PicCache.outcome` decide on;
-a converter's own exit 255 must stay distinguishable, so its empty stderr is
-asserted too. `Child.kill` sends SIGKILL to a setsid child's whole process
-group, though Lean's docstring says SIGTERM, so a TERM trap never runs and a
-reaped leader's descendant dies with the group. `RunBounded`'s overrun rests
-on that kill alone and returns once the group's pipes close. -/
+/-- What the real runtime does at the process boundary, which the engine's run, probe and kill
+decisions rest on. -/
 def processRuntimeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let absent := "leantex-premise-absent-tool"
   let line := s!"could not execute external process '{absent}'"
-  -- A child that fails at exec leaves through exit(), which writes out the
-  -- standard output it inherited buffered from this process.
+  -- A child failing at exec leaves through exit(), flushing the stdout it inherited buffered.
   (← IO.getStdout).flush
   let direct ← IO.Process.output { cmd := absent, args := #["--version"] }
   t "process runtime: an unexecutable command exits 255 with the runtime's one line"
@@ -46,13 +38,13 @@ def processRuntimeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bounded.complete && bounded.ran == .exited 255 && bounded.err.trimAscii.toString == line)
   let missing := "/leantex-premise-no-such-directory"
   let lost ← IO.Process.output { cmd := "/bin/sh", args := #["-c", "exit 0"], cwd := missing }
-  t "process runtime: a working directory the child cannot enter exits 255 with its own line"
+  t "process runtime: an unenterable working directory exits 255 with its own line"
     (lost.exitCode == 255 && lost.stderr.trimAscii.toString == s!"could not change directory to {missing}")
   let signalled ← IO.Process.output { cmd := "/bin/sh", args := #["-c", "kill -TERM $$"] }
   t "process runtime: a child a signal ended exits 128 plus the signal"
     (signalled.exitCode == 143)
   let unfound ← IO.Process.output { cmd := "/bin/sh", args := #["-c", absent] }
-  t "process runtime: a shell that cannot find the program it was asked for exits 127 and says so"
+  t "process runtime: a shell missing the program exits 127 and says so"
     (unfound.exitCode == 127 && !unfound.stderr.trimAscii.isEmpty)
   let own ← IO.Process.output { cmd := "/bin/sh", args := #["-c", "exit 255"] }
   t "process runtime: a tool's own exit 255 carries no runtime line"
@@ -81,7 +73,7 @@ def processRuntimeChecks (ref : IO.Ref (List String)) : IO Unit := do
     #["-c", "trap '' TERM\n/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 30' &\nexec /bin/sleep 30"]
     (← IO.currentDir) 200 10000
   let elapsed := (← IO.monoMsNow) - start
-  t s!"process runtime: an overrun returns as its killed group's pipes close, not after the grace ({elapsed} ms)"
+  t s!"process runtime: an overrun returns as its group's pipes close, before the grace ({elapsed} ms)"
     (over.ran == .overran 0 && !over.complete && elapsed < 5200)
 
 end Tests

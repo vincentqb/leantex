@@ -2,8 +2,8 @@ module
 
 import LeanTex.Cli.SlotLoss
 
-/-! Ordinary clients read the slot and artifact decisions through their
-public records and contracts. Diagnostic wording is implementation detail. -/
+/-! Ordinary clients read the slot and artifact decisions through their public records and
+contracts. -/
 
 open LeanTex.Core LeanTex.Cli
 open LeanTex.Cli.SlotLoss

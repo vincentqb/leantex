@@ -3,7 +3,7 @@ module
 public import LeanTex.Cli.SlotLoss
 import all LeanTex.Cli.SlotLoss
 
-/-! The legacy font tests read the wording through this modern test module. -/
+/-! The legacy font tests read the wording through this module. -/
 
 namespace Tests.SlotLossWording
 

@@ -89,8 +89,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
         | ["M", x, y, "L", u, v] =>
           return (attr n "stroke", (← pt? x), (← pt? y), (← pt? u), (← pt? v))
         | _ => none
-    -- A head is pgf's `to`: two curves from one wing through the apex to the
-    -- other, stroked with round caps — its apex, then its wings.
+    -- pgf's `to` head is two curves through the apex, so its apex, then its wings.
     let svgHeads := svgPaths.filterMap fun n => do
       if attr n "stroke-linecap" != "round" then none else
         match ((attr n "d").replace "," " ").splitOn " " |>.filter (· != "") with
@@ -122,8 +121,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
       t s!"{backend} ships five shafts and five heads"
         (shafts.size == 5 && heads.size == 5)
       for (color, dx, dy) in aims do
-        -- Across the aim, a direction is level to within the spelling's
-        -- rounding: each SVG point rounds on its own.
+        -- Each SVG point rounds on its own, so a level direction is level within that rounding.
         let points := fun (x y : Int) =>
           (if dx == 0 then x.natAbs ≤ slack else x * dx > 0) &&
           (if dy == 0 then y.natAbs ≤ slack else y * dy > 0)
@@ -131,9 +129,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
           c == color && points (2 * x - u - w) (2 * y - v - z)
         t s!"{backend} {color} arrow points ({dx},{dy})" (matching.size == 1)
         for (_, x, y, u, v, w, z) in matching do
-          -- The shaft stops at the head's origin, inside the head: between
-          -- its wings and its apex. Native coordinates round below one sp;
-          -- SVG point spellings round below 0.001pt each (66sp).
+          -- Native coordinates round below one sp; SVG points below 0.001pt (66 sp) each.
           t s!"{backend} {color} head meets its shaft and has two wings"
             ((u - x) * (z - y) != (w - x) * (v - y) &&
               shafts.any fun (c, sx, sy, ex, ey) =>
@@ -212,8 +208,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
                 return (ox + (px - x0) * sw / width,
                   oy + sh - (py - y0) * sh / height)).map List.toArray
             let .ok tip := CancelAlignment.arrowTip painted | none
-            -- Six-decimal em spellings, viewport scaling and integer
-            -- division contribute at most six nearest-unit errors.
+            -- Em spellings, viewport scaling and integer division add at most six unit roundings.
             let eps := (6 * ((em + 1999999) / 2000000 + 1)).toNat
             return chars value == "0𝑔" &&
               ["width", "height", "depth"].all (fun k => attr value k == "0") &&
@@ -264,7 +259,6 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
       ((elemNodesOne (· == "header") #[] box).any fun n =>
         (elemNodesOne (· == "strong") #[] n).map (nodeTextOne "") ==
           #["Packing reminder"])
-    -- A paragraph set wholly small carries the step on its own element.
     t "box body keeps its small text and structured fraction over a radical"
       ((elemNodesOne (fun tag => tag == "span" || tag == "p") #[] box).any (fun n => match n with
         | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "size-small" &&
@@ -348,8 +342,6 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
     for url in #["https://example.org/shapes", "https://example.org/field-guide"] do
       t s!"PDF retains link destination {url}"
         (uris.contains (.str ("(" ++ url ++ ")").toUTF8))
-  -- Decoration is deliberately requested. Its honest, keyed loss stays
-  -- visible until supported; neither allowlisted code may cover other loss.
   let skipped := a.diags.filter (·.kind == .W0103)
   let decoration := a.diags.filter (·.kind == .W0110)
   t "only the unsupported tcolorbox package declaration is allowlisted"

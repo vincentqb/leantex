@@ -2,8 +2,8 @@ module
 
 import LeanTex.Cli.PictureAssets
 
-/-! The asset executor exposes requests and answers. Process execution,
-log parsing and cache replay stay behind that interface. -/
+/-! The asset executor exposes requests and answers; execution, log parsing and cache replay stay
+behind it. -/
 
 open LeanTex.Cli
 

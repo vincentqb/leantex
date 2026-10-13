@@ -15,14 +15,8 @@ def soleParaText (d : Ir.Doc) : Option String :=
       | _ => none) (some "")
   | _ => none
 
-/-- The generated TU tables (`TextSymData`) against the page. Every symbol
-row, spelled `x\name{}y`, elaborates to its scalar between the two letters
-with no diagnostic — whichever table answers it first (`Elab.escapes`,
-`Bib.charCommands`, `Lex.textSymbols`, `Compat`'s literal rewrites), so a
-hand row that shadows a generated one sets the same scalar. Every
-tuenc.def composite is the scalar NFC composes its accent and base to
-(`Bib.composeAccent`), and spelled `\accent{base}` it elaborates to that
-scalar. The shipped page carries a sample of both, set in the test face. -/
+/-- The generated TU tables (`TextSymData`) against the page: every symbol and composite elaborates
+to its scalar, whichever table answers first. -/
 def textSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let body (s : String) := s!"\\documentclass\{article}\n\\begin\{document}\n{s}\n\\end\{document}"
@@ -46,25 +40,19 @@ def textSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (d1, ds1) := elabStr (body "\\S 1 \\dag x \\v c")
   t "a symbol word swallows the space after it"
     (ds1.isEmpty && soleParaText d1 == some "§1 †x č")
-  -- The kernel's own definitions beside the TU table: latex.ltx's `\lq`
-  -- and `\rq` through the quote ligatures, and the LaTeX2e logo's word.
   let (d2, ds2) := elabStr (body "\\lq q\\rq{} \\LaTeXe")
   t "the kernel quote words and the LaTeX2e logo"
     (ds2.isEmpty && soleParaText d2 == some "‘q’ LaTeX2ε")
-  -- A `\` ending a line is `\^^M`, the control space: `i.e.\` then the
-  -- next line's first word, one space between; a blank line after it is
-  -- a paragraph end.
+  -- A `\` ending a line is the control space `\^^M`.
   let (d3, ds3) := elabStr (body "i.e.\\\n   the rest")
   t "a line ending in a backslash is the control space"
     (ds3.isEmpty && soleParaText d3 == some "i.e. the rest")
   let (d4, ds4) := elabStr (body "one\\\n\ntwo")
   t "a control space before a blank line still ends the paragraph"
     (ds4.isEmpty && d4.body.size == 2)
-  -- An accent pair with no precomposed scalar still falls through by name.
   t "an accent with no precomposed form over its base still warns"
     ((elabStr (body "\\b{a}")).2.map (·.code) == #["W0301"])
-  -- A role is invocable only while no symbol spells its name first: the
-  -- inline dispatch reads the symbol tables before the palette.
+  -- A role is invocable only while no symbol spells its name: the symbol tables are read before the palette.
   t "no shipped palette role is spelled by a text symbol"
     (Theme.builtin.all fun th => (deckBundle th).entries.toList.all fun e =>
       (Elab.escapeOf e.1.key).isNone)

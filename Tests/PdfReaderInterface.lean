@@ -10,8 +10,7 @@ import LeanTex.Core.PdfXref
 import LeanTex.Core.PdfXrefSpelling
 import LeanTex.Core.PdfRead
 
-/-! Ordinary readers share the byte rules and token scanners. Loop state
-and individual scanner steps belong to the implementation and its proofs. -/
+/-! Ordinary readers share the byte rules and token scanners; loop state stays private. -/
 
 open LeanTex.Core.PdfLex
 open LeanTex.Core.PdfRead (Obj parseVal parseVal_render_id parseVal_render_span_exact
@@ -141,8 +140,6 @@ example : ByteArray → PdfRead.PageSelection → Except String Nat :=
 example : ByteArray → PdfRead.PageSelection → Except String { f : PdfRead.Form // f.wf } :=
   fun b page => PdfRead.readForm b page
 
--- One read of a file, its object streams decoded once: the figure
--- importer's door into the object graph.
 example : ByteArray → Except String PdfRead.Doc := PdfRead.Doc.ofBytes
 example : PdfRead.Doc → PdfRead.PageSelection → Except String (Nat × PdfRead.Page) :=
   PdfRead.Doc.page

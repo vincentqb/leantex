@@ -6,8 +6,6 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- The kinds of a node array's top level, in order: the shape a
-break-once check reads. -/
 def structKinds (ns : Array Struct.Node) : Array Struct.Kind :=
   ns.filterMap fun n => match n with
     | .node k _ => some k
@@ -22,17 +20,10 @@ def structKids (ns : Array Struct.Node) : Array Struct.Node :=
 def structTexts (ns : Array Struct.Node) : Array String :=
   (Struct.leaves ns).map fun (_, l) => l.census
 
-/-- The structure tree: one backend-neutral projection of the IR, held to
-the IR's own censuses. The theorems (`structTree_text`, `_headings_covers`,
-`_alts_covers`, `_leaves_id`) close in Struct.lean; the rows here are
-their executable witnesses over every golden fixture, and one break-once
-check per major arm — the tree a backend will read must classify each IR
-constructor the way this file says, and a reclassified arm fails here by
-name. -/
+/-- The structure tree is one backend-neutral projection of the IR, held to the IR's own
+censuses. -/
 def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- the theorems, witnessed over the corpus (ir tier: the tree is an IR
-  -- projection, and these compare two IR readings, never a page)
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
     let tree := Struct.ofDoc doc
@@ -42,11 +33,9 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
       (tree.alts == Struct.irAlts doc.body)
     let ids := tree.leaves.map (·.1)
     t s!"struct {n}: leaf ids are the preorder index" (ids == Array.range ids.size)
-    -- a fixture that ships text has a tree with leaves to attribute it to
     t s!"struct {n}: text implies leaves"
       ((Ir.blocksText doc.body).isEmpty || !tree.leaves.isEmpty)
 
-  -- block arms, one each
   let para : Ir.Block := .para #[.text "one"]
   let tree1 := Struct.ofBlocks #[para]
   t "para is a paragraph over one text leaf"
@@ -66,12 +55,9 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds titled == #[.section] && structKinds (structKids titled) == #[.title, .paragraph])
   t "an untitled block invents no title node"
     (structKinds (structKids (Struct.ofBlocks #[.titled .block #[] #[para]])) == #[.paragraph])
-  -- The formula's body carries the atom its source spells, so the leaf text
-  -- witnesses the floor (`Ir.formulaFloor`) rather than the spelling: the
-  -- tagged tree is accessibility text and may not carry markup either.
   let eq := Struct.ofBlocks #[.equation #[.text "(1)"]
     #[.formula true "x" (Math.MList.ofList [.atom .ord (.sym 'x') .nil .nil false])]]
-  t "equation is a formula whose number is a label leaf after the content"
+  t "equation: a formula with its number as a label leaf after it"
     (structKinds eq == #[.formula] && structKinds (structKids eq) == #[.formula, .label]
       && structTexts eq == #["x", "(1)"])
   let code := Struct.ofBlocks #[.verbatim none "let x" {}]
@@ -85,10 +71,8 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "algorithm is code, content then comment"
     (structKinds alg == #[.code] && structTexts alg == #["a", "c"])
   t "speaker note is an aside" (structKinds (Struct.ofBlocks #[.note #[para]]) == #[.aside])
-  -- the one place a census declines a subtree: the outline stops at an
-  -- aside, while every other census still reads through it
   let buried := Struct.ofBlocks #[.note #[.section 1 false none #[.text "Buried"]]]
-  t "a heading inside a speaker note is not in the outline, but its text is"
+  t "a speaker note's heading leaves the outline but keeps its text"
     (Struct.headings buried == #[] && Struct.leafText buried == "Buried"
       && structKinds (structKids buried) == #[.heading 1])
   t "nav is a landmark" (structKinds (Struct.ofBlocks #[.nav {} #[para]]) == #[.nav])
@@ -117,7 +101,6 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[.bibliography "refs" none #[{ key := "k", marker := some "1", content := #[.text "Entry"] }]]
   t "bibliography is one entry node per item, one leaf each"
     (structKinds bib == #[.bibEntry] && structTexts bib == #["Entry"])
-  -- transparent wrappers splice, decorative and state-only arms vanish
   t "center/ragged/spaced/role/step/only/columns are transparent"
     (structKinds (Struct.ofBlocks
       #[.center #[para], .ragged .left #[para], .spaced (Ir.Sourced.bare {}) #[para], .role "r" #[para],
@@ -126,7 +109,6 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "rule, pagebreak, setPalette, setTokens produce no node"
     ((Struct.ofBlocks #[.rule default none (Ir.Sourced.bare {}), .pagebreak, .setPalette {}, .setTokens {}]).isEmpty)
 
-  -- inline arms
   let inl (x : Ir.Inline) : Array Struct.Node := structKids (Struct.ofBlocks #[.para #[x]])
   t "link is a link node over its body"
     (structKinds (inl (.link "https://example.org" #[.text "b"])) == #[.link "https://example.org"])
@@ -151,7 +133,6 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((inl (.label "k")).isEmpty && (inl .fill).isEmpty && (inl (.strut {})).isEmpty
       && (inl .pageNumber).isEmpty && (inl .pageCount).isEmpty)
 
-  -- ids: preorder across nesting, and the tree a document elaborates
   let nested := Struct.ofBlocks
     #[.section 1 false none #[.text "H"],
       .list false #[#[.para #[.text "a", .link "u" #[.text "b"]]], #[.para #[.text "c"]]],
@@ -161,16 +142,14 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
       && structTexts nested == #["H", "a", "b", "c", "Cap", ""])
   let (doc, _) := elabStr (dvDoc "" "\\section{Intro}\n\nText\\footnote{note} here.\n\n\\begin{itemize}\\item one\\end{itemize}")
   let tree := Struct.ofDoc doc
-  t "an elaborated document projects heading, paragraph with a note, and a list"
+  t "an elaborated document projects heading, noted paragraph and list"
     (structKinds tree.children == #[.heading 1, .paragraph, .list false]
       && tree.headings == #[1]
       && (structKinds (structKids (tree.children.extract 1 2))).contains .note)
 
 
-/-- An event trace of the context walk: `<d` on the way into a block at
-context `d`, `>d` on the way out, `td:s` for a text leaf. The context is the
-nesting depth, so the trace says both things a leaf fold cannot — where the
-context went, and where each container ended. -/
+/-- An event trace of the context walk: `<d` entering a block at depth `d`, `>d` leaving it, `td:s`
+a text leaf. -/
 def ctxTrace (bs : Array Ir.Block) : Array String :=
   Ir.foldCtxBlocks
     { openBlock := fun d out _ => (out.push s!"<{d}", d + 1)
@@ -181,11 +160,8 @@ def ctxTrace (bs : Array Ir.Block) : Array String :=
         | _ => (out, d + 1)
       closeInline := fun _ out _ => out } 0 #[] bs
 
-/-- The context-threading walk (`Ir.foldCtxBlocks`). `foldCtxBlock_covers`
-closes the fact that it reads exactly what `foldBlock` reads; the rows here
-witness that equality over every golden fixture, and pin the two properties
-the equality does not mention — the context descends and does not escape,
-and a container's end is observed after its content. -/
+/-- The context-threading walk (`Ir.foldCtxBlocks`) reads what `foldBlock` reads, keeps its context
+local, and ends a container after its content. -/
 def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let para : Ir.Block := .para #[.text "a"]
@@ -200,8 +176,6 @@ def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
       == #["<0", "<1", "t2:a", ">1", "<1", "t2:a", ">1", ">0"])
   t "a non-descending arm still opens and closes"
     (ctxTrace #[.pagebreak] == #["<0", ">0"])
-  -- the theorem, witnessed over the corpus: the two descents declared in
-  -- Ir.lean read the same nodes in the same order
   let fb : Array String → Ir.Block → Array String := fun out b => out.push (Ir.blockTextOne "b" b)
   let fi : Array String → Ir.Inline → Array String := fun out x => out.push (Ir.plainTextOne x)
   for n in goldenNames do
@@ -212,12 +186,7 @@ def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 
 /-- A picture's text alternative is one IR value both artifacts project
-(`Ir.Pic.Picture.alternative`): with none declared, the words its own
-labels set name its svg in the HTML and its `Figure` in the PDF alike — the
-PDF once shipped that `Figure` with no `/Alt` while the HTML named it. A
-picture that says nothing keeps what each artifact shipped: the svg the
-figure word, the `Figure` no `/Alt`; its missing alternative is still
-accounted for, whichever route drew it. -/
+(`Ir.Pic.Picture.alternative`). -/
 def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let native := "\\pictures{ tool = none }\n"
@@ -261,8 +230,6 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.imagesSansAlt captionThenBare == #[Ir.picKeyPrefix ++ "1"] &&
       captionThenBareDs.any fun d =>
         d.code == "N0376" && d.subject == some (Ir.picKeyPrefix ++ "1") && d.span.isSome)
-  -- latex-lab-tikz's keys, consumed before the subset or the boundary sees
-  -- the options: no W0334, no route the key alone would have forced.
   let svgAttr (doc : Ir.Doc) (k : String) : Array (Option String) :=
     (elemAttrsList (· == "svg") #[] (doc.body.map (HtmlDoc.blockNode {})).toList).map
       (HtmlDoc.attrOf? ·.2 k)
@@ -285,14 +252,12 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a decorative picture: no Figure, and no element holds its leaf"
     (figureAlts deco == #[] &&
      (Pdf.leafTags decoSk decoTree.leaves.size).toList == [none])
-  t "a decorative picture's svg is out of the accessibility tree and claims no role"
+  t "a decorative svg is out of the accessibility tree, with no role"
     (svgAttr deco "aria-hidden" == #[some "true"] && svgAttr deco "role" == #[none])
   for opts in ["[alt=]", "[alt={ }]", "[alt=, scale=0.5]"] do
     let (empty, eDs) := elabStr (dvDoc native (pic opts square))
     t s!"{opts} says nothing: no W0334, and both artifacts ship the undeclared state"
       (!named eDs "W0334" && svgNames empty == #[some "Figure"] && figureAlts empty == #[none])
-  -- At the boundary: the image carries the declared text, the standalone
-  -- never meets the key, and the request's hash is the picture's without it.
   let outside := "\\draw (0,0) parabola (1,1);"
   let (bWith, _) := elabStr (dvDoc "" (pic "[alt={A curve}, scale=0.5]" outside))
   let (bSans, _) := elabStr (dvDoc "" (pic "[scale=0.5]" outside))
@@ -322,7 +287,6 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the whole-document structure alternative census is non-vacuous"
     (treeAlts == Struct.irAlts three.body && treeAlts.size == 3 &&
       treeAlts.any (·.1.isNone))
-  -- latex-lab-graphic's `artifact` on an image.
   let (imgDeco, imgDs) := elabStr (dvDoc "" "\\includegraphics[artifact]{chart.png}")
   t "\\includegraphics[artifact] is read: no W0110, no N0376"
     (!named imgDs "W0110" && !named imgDs "N0376")
@@ -335,12 +299,9 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!named capDs "N0376" && imgAttr capDeco "role" == #[some "presentation"])
   t "markdown's two states for three: a decorative image reads as no text"
     (hasStr (MarkdownDoc.emit imgDeco) "![](chart.png)")
-  -- LaTeX's tagging code warns of a graphic without an alternative
-  -- (latex-lab-graphic's alt-text-missing); so does the engine, keyed by the
-  -- image, and the image ships what it always shipped.
   let (bare, bareDs) := elabStr (dvDoc "" "\\includegraphics{chart.png}")
   t "an image without an alternative is N0376 keyed by its source"
     (bareDs.any fun d => d.code == "N0376" && d.subject == some "chart.png")
-  t "an image without an alternative ships alt=\"\" and a Figure without /Alt"
+  t "an alt-less image ships alt=\"\" and a Figure without /Alt"
     (imgAttr bare "alt" == #[some ""] && imgAttr bare "role" == #[none] &&
      figureAlts bare == #[none])

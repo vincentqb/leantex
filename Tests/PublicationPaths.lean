@@ -7,12 +7,8 @@ public section
 
 namespace Tests
 
-/-- **Every artifact reaches the directory its path names, and one that
-cannot be written is a named loss.** A PDF or markdown twin whose directory
-does not exist yet is written with its directory made, as the page always
-was, and a destination no one can write (its directory a regular file) is
-E0004 under its path, once, with the system's words: the run fails with no
-uncaught exception. Both ended in an uncaught exception. -/
+/-- Every artifact reaches the directory its path names, and one that cannot be written is a named
+loss (E0004). -/
 def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
@@ -31,20 +27,16 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
     let md ← run "\\output{ formats = md }\n" #["-o", "fresh-md/notes.md"]
     check ref s!"publication writes: a markdown twin's missing directory is made ({md.exitCode}): {md.stderr}"
       (md.exitCode == 0 && (← (dir / "fresh-md" / "notes.md").pathExists))
-    -- A directory standing where the PDF goes: the page and the twin are
-    -- written, and the PDF alone is the loss.
     IO.FS.createDirAll (dir / "partial" / "source.pdf")
     let some3 ← run "\\output{ formats = html, md, pdf }\n" #["-o", "partial/", "--porcelain"]
     let lines := (some3.stdout.splitOn "\n").filter (hasStr · "\"E0004\"")
-    check ref s!"publication writes: one unwritable artifact is the one loss, and the others are written ({some3.exitCode}): {some3.stdout}"
+    check ref s!"publication writes: one unwritable artifact is the only loss, the rest written ({some3.exitCode}): {some3.stdout}"
       (some3.exitCode != 0 && lines.length == 1 && lines.all (hasStr · "partial/source.pdf") &&
         (← (dir / "partial" / "source.html").pathExists) && (← (dir / "partial" / "source.md").pathExists))
     let summary := (some3.stdout.splitOn "\n").filter (hasStr · "\"event\":\"summary\"")
     check ref s!"publication writes: the failed run's summary names what it wrote ({summary})"
       (summary.length == 1 && summary.all fun l => hasStr l "\"output\":" &&
         hasStr l "partial/source.html" && hasStr l "partial/source.md" && !hasStr l "partial/source.pdf")
-    -- A declared name with a directory: the alternate link reads the twin
-    -- from the page's directory, where it is written.
     let linked ← run "\\output{ formats = html, md, md = \"notes/the twin#1.md\" }\n" #["-o", "linked/"]
     let pageFile := dir / "linked" / "source.html"
     let page ← if ← pageFile.pathExists then IO.FS.readFile pageFile else pure ""
@@ -53,7 +45,7 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
         hasStr page "type=\"text/markdown\" href=\"notes/the%20twin%231.md\"")
     let href := LeanTex.Cli.PublicationPaths.nameHref
     let placed := LeanTex.Cli.PublicationPaths.placed
-    check ref "publication writes: a twin's link reads its name lexically, encodes what a URL reads otherwise, and names no directory"
+    check ref "publication writes: a twin's link reads its name lexically, URL-encoded, naming no directory"
       (href "./notes//a b#c?d%e:f\\g.md" == some "notes/a%20b%23c%3Fd%25e%3Af%5Cg.md" &&
         href "../up/é (1).md" == some "../up/é%20(1).md" && href "link/../t2.md" == some "t2.md" &&
         href "/rooted/x.md" == none && ["", ".", "..", "sub/", "x.md/", "a/..", "x/."].all (href · == none))
@@ -61,17 +53,14 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (placed "out" "link/../t2.md" == "out/t2.md" && placed "out" "../up.md" == "up.md" &&
         placed "." "../x.md" == "../x.md" && placed "/w/out" "notes/x.md" == "/w/out/notes/x.md" &&
         placed "out" "/abs/x.md" == "/abs/x.md" && placed "out" "sub/" == "out/sub/")
-    -- A twin declared by an absolute name is written there, and the page,
-    -- which has no address for it that -o would not change, links none.
+    -- An absolute twin has no address -o would not change, so the page links none.
     let elsewhere := dir / "elsewhere" / "twin.md"
     let rooted ← run s!"\\output\{ formats = html, md, md = \"{elsewhere}\" }\n" #["-o", "rooted/"]
     let rootedPage := dir / "rooted" / "source.html"
     let rootedText ← if ← rootedPage.pathExists then IO.FS.readFile rootedPage else pure ""
-    check ref s!"publication writes: a twin declared by an absolute name is written there and not linked ({rooted.exitCode}): {rooted.stderr}"
+    check ref s!"publication writes: an absolute twin is written there, unlinked ({rooted.exitCode}): {rooted.stderr}"
       (rooted.exitCode == 0 && (← elsewhere.pathExists) && !rootedText.isEmpty &&
         !hasStr rootedText "text/markdown")
-    -- A declared name that walks back through a link: the twin lands where
-    -- the link points, the page's own directory, not through the link.
     IO.FS.createDirAll (dir / "real-target" / "inner")
     IO.FS.createDirAll (dir / "through")
     symlink (dir / "real-target" / "inner") (dir / "through" / "link")
@@ -82,8 +71,6 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (through.exitCode == 0 && (← (dir / "through" / "t2.md").pathExists) &&
         !(← (dir / "real-target" / "t2.md").pathExists) &&
         hasStr throughText "type=\"text/markdown\" href=\"t2.md\"")
-    -- A declared name that names a directory: no twin can be written there,
-    -- and the page links none.
     let named ← run "\\output{ formats = html, md, md = \"sub/\" }\n" #["-o", "dir-twin/", "--porcelain"]
     let namedPage := dir / "dir-twin" / "source.html"
     let namedText ← if ← namedPage.pathExists then IO.FS.readFile namedPage else pure ""
@@ -93,12 +80,11 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
     IO.FS.writeFile (dir / "blocker") "a regular file where a directory would go"
     let blocked ← run "" #["-o", "blocker/out.pdf", "--porcelain"]
     let said := blocked.stdout ++ blocked.stderr
-    check ref s!"publication writes: an unwritable destination is E0004 under its path, not an uncaught exception ({blocked.exitCode}): {said}"
+    check ref s!"publication writes: an unwritable destination is E0004 under its path, no exception ({blocked.exitCode}): {said}"
       (blocked.exitCode != 0 && hasStr said "E0004" && hasStr said "blocker/out.pdf" &&
         !hasStr said "uncaught exception")
 
-/-- A host whose files are a table: each name's metadata and real path,
-and nothing else — any other question is refused. -/
+/-- A host whose files are a table of metadata and real paths, refusing any other question. -/
 def tableWorld (files : List (String × LeanTex.Cli.World.Metadata × String)) :
     (q : LeanTex.Cli.World.Ask) → LeanTex.Cli.World.Reply q
   | .metadata p => match files.lookup p with
@@ -118,15 +104,8 @@ def tableWorld (files : List (String × LeanTex.Cli.World.Metadata × String)) :
   | .createDirAll _ => .error .denied
 
 open LeanTex.Cli in
-/-- **The preflight's decision, over a host given as a table.** A
-destination that is an input's file by its real path is `same`; one that
-resolves apart from a multiply-linked input agreeing with it on every
-metadata fact is `linked`; one that resolves apart from a singly-linked
-file of the same size and time is no clash. It resolves only an input
-whose metadata agrees with a standing destination's, asks of an input
-named twice once, and with no destination standing asks nothing of any
-input: the preflight's cost is a stat per input on a rebuild, and nothing
-on a first build. -/
+/-- The preflight's same, linked or no-clash decision over a host given as a table, at a stat per
+input only on a rebuild. -/
 def overwritePlanChecks (ref : IO.Ref (List String)) : IO Unit := do
   let one : World.Metadata := { kind := .file, size := 10, mtimeSec := 5, mtimeNsec := 7, links := 1 }
   let two := { one with links := 2 }
@@ -152,18 +131,8 @@ def overwritePlanChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((asked [("out.md", one, "/w/out.md"), ("doc.md", one, "/w/doc.md")]
         #["doc.md", "doc.md"]).count (.metadata "doc.md") == 1)
 
-/-- **No artifact is written over one of the build's inputs.** A
-destination that is the document, another name of it — a link to it, a
-link to the directory above it, a hard link — or a file the document reads
-— an include, its bibliography, an image, its face, a face its font
-directory holds — or a resource it declares — its stylesheet or icon, in a
-build of any formats — is E0005 before anything is written, whatever the
-run accepts: every input keeps its bytes and no artifact appears. A
-destination that is none of them still publishes, beside a stylesheet no
-file stands at, a bibliography no file stands for, and an unrelated hard
-link. The defect: `leantex doc.md -o doc.md` replaced the source with its
-markdown twin, and `\output{ md = "doc.tex" }` replaced the source it was
-built from. -/
+/-- No artifact is written over one of the build's inputs (E0005), and a destination that is none of
+them still publishes. -/
 def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let spare ← IO.FS.realPath "testdata/corpus/fonts/SourceSerifPro-Regular.otf"
@@ -173,8 +142,7 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
     let tex (preamble body : String) : String :=
       "\\documentclass{article}\n" ++ preamble ++ "\\begin{document}\n" ++ body ++
         "\n\\end{document}\n"
-    -- Every file under a case's directory, one level of real directories
-    -- down; a link is kept by its name, its target compared where it stands.
+    -- Files one real directory level down; a link kept by name, its target compared in place.
     let snapshot (dir : System.FilePath) : IO (Array (String × ByteArray)) := do
       let mut out : Array (String × ByteArray) := #[]
       for e in ← dir.readDir do
@@ -200,8 +168,7 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       return dir
     -- A source whose markdown twin differs from it, so a write over it shows.
     let note := "# An invented note\n\nA *probe* line.\n\n* one\n* two\n"
-    -- The cases: the source and the files beside it, the arguments, the
-    -- files the build reads that must keep their bytes, and the links to make.
+    -- Each case: the source and its neighbours, the arguments, the inputs that keep their bytes, the links.
     let cases : List (String × List (String × String) × Array String × List String ×
         List (String × String × Bool)) := [
       ("a markdown source written onto itself", [("doc.md", note)],
@@ -270,8 +237,6 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
         (run.exitCode != 0 && refused.size == 1)
       check ref s!"publication inputs: {name} leaves every file as it was"
         (guarded.all (fun g => before.any (·.1 == g)) && after == before)
-    -- Destinations that are no input publish, whatever the inputs a run
-    -- with no use for them names.
     let publishes : List (String × List (String × String) × Array String × String ×
         List (String × String × Bool)) := [
       ("a distinct destination beside its source", [("doc.md", note)],
@@ -294,13 +259,8 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
         check ref s!"publication inputs: {name} keeps its source"
           ((← IO.FS.readFile (dir / "doc.md")) == text)
 
-/-- **An output name the engine cannot write is a typed refusal.** `-o`
-naming a file whose extension names no format is E0006, through the
-diagnostic stream — a porcelain record under `--porcelain`, the rendered
-form otherwise — exit 3, nothing written, and its help lists every
-extension a run can take (`Emit.all`), each of which `emitOfPath` reads
-back. The defect: the refusal was a line on plain standard error, outside
-the porcelain stream, and it named `*.pdf` and `*.html` but not `.md`. -/
+/-- An output name the engine cannot write is a typed refusal (E0006), its help listing every
+extension a run takes. -/
 def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let extensions := LeanTex.Cli.Emit.all.map fun e => "." ++ e.ext
@@ -334,9 +294,7 @@ def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"output names: a name ending in '.{e.ext}' builds ({built.exitCode}): {built.stderr}"
         (built.exitCode == 0 && (← (dir / name).pathExists))
 
-/-- Different formats must reach independent files. The CLI must reject a
-collision before any write, including existing-file and directory aliases;
-accepting diagnostics cannot authorize overwriting a different artifact. -/
+/-- Different formats reach independent files, and a collision is refused before any write. -/
 def publicationPathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"

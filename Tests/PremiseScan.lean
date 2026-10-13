@@ -6,21 +6,13 @@ public import Std.Data.HashSet
 
 public section
 
-/-!
-# Reading what the world premises are held to
-
-The machinery behind `Tests/Premises.lean`: a lexer for Lean sources that
-drops comments and reads strings, the spawn sites each source holds and the
-tools they name, and the toolchain modules the engine's imports reach. The
-registry, and the judge that holds it to what is read here, live there.
--/
+/-! The source scanner behind `Tests/Premises.lean`: a Lean lexer, the spawn sites and tools each
+source holds, and the toolchain modules the engine reaches. -/
 
 namespace Premises
 
 /-- The repository's own executables, which are Lean and no residue. -/
 def selfBin : String := ".lake/build/bin/"
-
-/-! ## Reading a source -/
 
 inductive Kind where
   | ident
@@ -30,12 +22,8 @@ inductive Kind where
   | sym
   deriving BEq, Repr, Inhabited
 
-/-- One token: an identifier (dots included), a string literal's decoded
-contents, the open or close of an interpolated string, a number, or one
-symbol. `decl` is the declaration it stands in and `ns` the namespace;
-`declares` marks the name a declaration keyword introduces, `hidden` a
-private one, and `proof` a token of a theorem, a lemma or an example, which
-no build runs. -/
+/-- One token: an identifier, a decoded string literal, an interpolation bound, a number or a
+symbol, with its declaration, namespace and role flags. -/
 structure Tok where
   kind : Kind
   text : String
@@ -69,9 +57,8 @@ private def tok (kind : Kind) (text : String) (line col : Nat) (first : Bool) : 
 private def byteAt (b : ByteArray) (i : Nat) : UInt8 :=
   if h : i < b.size then b[i] else 0
 
-/-- The tokens of a Lean source. Comments (nested block comments included)
-and char literals are dropped; plain, raw and interpolated strings are
-recognised, and the code inside an interpolation is read as code. -/
+/-- The tokens of a Lean source, comments and char literals dropped and interpolated code read as
+code. -/
 def lexRaw (src : String) : Array Tok := Id.run do
   let b := src.toUTF8
   let n := b.size
@@ -271,24 +258,20 @@ def declKeywords : List String :=
   ["def", "theorem", "abbrev", "instance", "structure", "inductive", "class", "opaque",
    "axiom", "example", "lemma", "macro", "syntax", "elab"]
 
-/-- The keywords that open a command wherever they stand, a docstring, a
-`set_option … in` or an indentation before them: Lean's reserved declaration
-keywords and its initializers. `lemma` is no keyword of core Lean (`let lemma
-:= 1` binds a name), so it opens a command only at a command's position
-(`atCommand`). -/
+/-- The keywords that open a command wherever they stand; `lemma` opens one only at a command's
+position (`atCommand`). -/
 def commandKeywords : List String :=
   ["def", "theorem", "abbrev", "instance", "structure", "inductive", "class", "opaque",
    "axiom", "example", "macro", "syntax", "elab", "initialize", "builtin_initialize"]
 
-/-- The keywords that open and close a scope, reserved like the declaration
-keywords, so each is a command wherever it stands. -/
+/-- The scope keywords, each a command wherever it stands. -/
 def scopeWords : List String := ["namespace", "section", "mutual", "end"]
 
 def modifierWords : List String :=
   ["private", "public", "protected", "noncomputable", "unsafe", "partial", "nonrec", "meta"]
 
-/-- Is the token at `k` a command's keyword: on a line whose first token
-stands at column 0, after nothing but modifiers and attribute groups? -/
+/-- Is the token at `k` a command keyword at column 0, after nothing but modifiers and
+attributes? -/
 def atCommand (ts : Array Tok) (k : Nat) : Bool := Id.run do
   let line := ts[k]!.line
   let mut j := k
@@ -320,18 +303,8 @@ def atCommand (ts : Array Tok) (k : Nat) : Bool := Id.run do
 def touches (ts : Array Tok) (k : Nat) : Bool :=
   k > 0 && ts[k - 1]!.line == ts[k]!.line && ts[k - 1]!.col + ts[k - 1]!.text.utf8ByteSize == ts[k]!.col
 
-/-- Each token's declaration and namespace, and the names declarations
-introduce, private ones marked, and whether it is a proof's: from a
-`theorem`, `lemma` or `example` command to the next command or the proof's
-`where`, whose helpers are code. A command keyword opens a command wherever
-it stands (`commandKeywords`), and so does a scope keyword, except where
-Lean reads a keyword as a name: inside an attribute (`@[…]`, `attribute
-[…]`) or a syntax quotation, as a constructor after `|`, after `.`, a
-backtick, `«` or `deriving`. `lemma` opens one only at a command's position,
-so `let lemma := …` inside a definition declares nothing; an initializer is
-a declaration named `initialize` unless it names its own. Any other token at
-column 0 ends a proof. `namespace`, `section`, `mutual` and `end` scope as
-Lean scopes them; a section and a mutual block name no namespace. -/
+/-- `lexRaw` with each token's declaration, namespace, declared name and proof flag, scoped as Lean
+scopes them. -/
 def lex (src : String) : Array Tok := Id.run do
   let ts := lexRaw src
   let mut out := ts
@@ -396,10 +369,8 @@ def stemOf (file : String) : String :=
 def moduleOf (path : String) : String :=
   (if path.endsWith ".lean" then (path.dropEnd 5).toString else path).replace "/" "."
 
-/-- One tokenised source: its identifiers indexed by last component, its
-declarations by name, and the modules it imports. A strict source is the
-engine's, where every spawn expression the scan cannot read is a fault; the
-suite and the scripts are read for the tools they name outright. -/
+/-- One tokenised source: identifiers by last component, declarations by name, its imports, and
+whether it is strict (the engine's). -/
 structure Source where
   path : String
   strict : Bool
@@ -427,18 +398,15 @@ def Source.of (path src : String) (strict : Bool := true) : Source := Id.run do
 
 def Source.named (src : Source) (name : String) : Array Nat := src.byName.getD (lastName name) #[]
 
-/-! ## Spawn sites -/
-
-/-- Where a spawner's call carries the tool: positional argument `i`, or
-the `cmd` field of the spawn record at positional argument `i`. -/
+/-- Where a spawner's call carries the tool: positional argument `i`, or the `cmd` field of the
+record there. -/
 inductive Arg where
   | pos (i : Nat)
   | cmd (i : Nat)
   deriving BEq, Repr, Inhabited
 
-/-- A function that runs the tool its call names: a runtime primitive, a
-declaration that forwards its parameter to a spawner (named by its
-namespace, as a caller spells it), or an alias, a local name bound to one. -/
+/-- A function that runs the tool its call names: a runtime primitive, a forwarding declaration, or
+a local alias. -/
 structure Spawner where
   full : String
   home : String
@@ -456,11 +424,7 @@ def Spawner.same (a b : Spawner) : Bool := a.full == b.full && a.home == b.home
 def primitives : Array Spawner :=
   #["spawn", "output", "run"].map fun p => { full := "IO.Process." ++ p, home := "", arg := .cmd 0 }
 
-/-- Does token `t` of `src` name spawner `s`? A dotted name names the
-spawner it is a dot-boundary suffix of. A bare name names it only where Lean
-resolves it there: inside its namespace, or, for a top-level declaration, in
-its file and the files importing it. A private spawner is seen in its file
-alone, and an alias by its local name in its file alone. -/
+/-- Does token `t` of `src` name spawner `s`, where Lean would resolve it? -/
 def Spawner.sees (s : Spawner) (src : Source) (t : Tok) : Bool :=
   let id := if t.text.startsWith "_root_." then (t.text.drop 7).toString else t.text
   if s.alias then src.path == s.home && id == s.full
@@ -470,20 +434,8 @@ def Spawner.sees (s : Spawner) (src : Source) (t : Tok) : Bool :=
     (if s.parent.isEmpty then src.path == s.home || src.imports.contains (moduleOf s.home)
      else t.ns == s.parent || t.ns.startsWith (s.parent ++ "."))
 
-/-- How an engine spawn expression that is no literal is resolved.
-`forwards`: it is a parameter of the enclosing declaration (or its `cmd`
-field, or the variable of a `for` over one), so that declaration is a
-spawner and its calls are sites. `derives p`: it is a local the declaration
-binds by a `let` reading its parameter `p`, which it forwards. `alias`: the
-spawner is bound to a name in this file, and every call of the name here is
-a site. `asked spawner home askers`: the tool of a run a host program asked
-(`World.Ask.run`), where the programs that ask one are `askers`,
-declarations of `home` only `spawner` calls; so `spawner` is a spawner whose
-first argument names the tool, its calls are sites, and a run asked anywhere
-else, or an asker called from anywhere else, is a fault. The rest read the
-tools from a table in the source: Elab's `picTools` with the driver's
-`pictureTool.getD` defaults; the `Op.spec` converters; `Spec.tools`, any
-tool it names beside them, with them. -/
+/-- How an engine spawn expression that is no literal is resolved: forwarded, derived, aliased,
+asked of the host, or read from a tool table. -/
 inductive Via where
   | forwards
   | derives (param : String)
@@ -501,13 +453,12 @@ structure Route where
   via : Via
 
 
-/-- What a scan reads: every source, tokenised, and the window of Elab.lean
-that declares `picTools`. -/
+/-- What a scan reads: every source, tokenised, and the window of Elab.lean that declares
+`picTools`. -/
 structure Inputs where
   files : Array Source
   picTools : String
-  /-- Every engine module's imports, read off its header, the modules the
-  scan does not lex among them. -/
+  /-- Every engine module's imports, unlexed modules included. -/
   graph : Std.HashMap String (Array String) := {}
 
 structure Site where
@@ -519,8 +470,8 @@ structure Site where
   tools : List String
   deriving Inhabited
 
-/-- The engine's sites, the suite's and scripts' sites that name their tool
-outright, theirs the scan cannot read, every spawner, and the faults. -/
+/-- The engine's sites, the suite's and scripts' sites naming their tool, those unread, every
+spawner, and the faults. -/
 structure Scan where
   sites : Array Site
   suite : Array Site
@@ -561,9 +512,8 @@ def lineIndent (ts : Array Tok) (k : Nat) : Nat := Id.run do
     col := t.col
   return col
 
-/-- The positional arguments of the application headed at `k`: tokens on
-its line, or on later lines indented past it, up to a keyword or operator.
-A named argument `(x := …)` takes no position. -/
+/-- The positional arguments of the application headed at `k`, named arguments taking no
+position. -/
 def argsAt (ts : Array Tok) (k : Nat) (need : Nat) : Array (Array Tok) := Id.run do
   let head := ts[k]!
   let ind := lineIndent ts k
@@ -605,8 +555,7 @@ def argsAt (ts : Array Tok) (k : Nat) (need : Nat) : Array (Array Tok) := Id.run
 def render (g : Array Tok) : String :=
   " ".intercalate (g.toList.map fun t => if t.kind == .str then s!"\"{t.text}\"" else t.text)
 
-/-- The `cmd` field of a spawn record group, up to the next field; a field
-abbreviation (`{ cmd, args }`) is the name itself. -/
+/-- The `cmd` field of a spawn record group, a field abbreviation being the name itself. -/
 def cmdField (g : Array Tok) : Option (Array Tok) := Id.run do
   let mut depth := 0
   for k in [0:g.size] do
@@ -640,8 +589,8 @@ def isValueUse (ts : Array Tok) (k : Nat) : Bool :=
         closing p)
   | none => false
 
-/-- The tool expression of the call at `k` (`_` for a value use), and whether
-it is a whole spawn record rather than the tool itself. -/
+/-- The tool expression of the call at `k` (`_` for a value use), and whether it is a whole spawn
+record. -/
 def exprAt (ts : Array Tok) (k : Nat) (s : Spawner) : Array Tok × String × Bool :=
   if isValueUse ts k then (#[], "_", false) else
   match s.arg with
@@ -659,8 +608,7 @@ def exprAt (ts : Array Tok) (k : Nat) (s : Spawner) : Array Tok × String × Boo
         | none => (g, render g, true)
       else (g, render g, true)
 
-/-- The tool spellings an expression states outright: one string, or an
-array of strings, which may be empty. -/
+/-- The tool spellings an expression states outright: one string, or an array of strings. -/
 def literalTools (expr : Array Tok) : Option (List String) :=
   match expr.toList with
   | [lit] => if lit.kind == .str then some [lit.text] else none
@@ -705,8 +653,8 @@ def iterated (ts : Array Tok) (decl v : String) : Option String := Id.run do
         if b.kind == .ident then return some b.text
   return none
 
-/-- The spawner a declaration becomes by handing its parameter `head` (or,
-for a record, the record whose `cmd` is the tool) to a spawn. -/
+/-- The spawner a declaration becomes by handing its parameter `head`, or a record whose `cmd` it
+is, to a spawn. -/
 def wrapperOf (src : Source) (site : Site) (head : String) (record : Bool) :
     Except String Spawner := do
   let some k := src.declAt.get? site.decl | throw s!"'{site.decl}' is no declaration the scan reads"
@@ -745,9 +693,8 @@ def letRhs (ts : Array Tok) (decl name : String) : Option (Array Tok) := Id.run 
       return some rhs
   return none
 
-/-- The spawner a declaration becomes when its spawn runs a local it binds
-from its parameter `param` alone: the `let` reads `param` and spells no
-string, which the scan could not tell from a tool. -/
+/-- The spawner a declaration becomes when it spawns a local bound from its parameter `param`
+alone. -/
 def derived (src : Source) (site : Site) (expr : Array Tok) (param : String) :
     Except String Spawner := do
   let some e := expr[0]? | throw "a derived route on a value use"
@@ -806,9 +753,7 @@ def derive (inp : Inputs) (src : Source) : Via → Except String (List String)
     return (validation ++ converters).eraseDups
   | .forwards | .derives _ | .alias _ | .asked .. => return []
 
-/-- What an `open` or `export` names: its namespaces, and which of their
-declarations it brings into scope, those its parenthesised list or its
-`renaming` names, or else all but those it hides. -/
+/-- What an `open` or `export` names: its namespaces and the declarations it brings into scope. -/
 structure OpenClause where
   names : List String
   only : Option (List String)
@@ -857,10 +802,7 @@ def openClause (ts : Array Tok) (k : Nat) : OpenClause := Id.run do
 
 def Route.key (r : Route) : String := s!"{r.file} {r.spawner} {r.expr}"
 
-/-! ## Names a suite or script binds to its tool -/
-
-/-- The top-level items of the group `g`, whose first token opens it and
-whose last closes it, split at its commas. -/
+/-- The top-level items of group `g`, split at its commas. -/
 def groupItems (g : Array Tok) : Array (Array Tok) := Id.run do
   let mut items : Array (Array Tok) := #[]
   let mut cur : Array Tok := #[]
@@ -883,10 +825,8 @@ def groupItems (g : Array Tok) : Array (Array Tok) := Id.run do
 def pathFns : List String :=
   ["IO.FS.realPath", "System.FilePath.mk", "ToolProbe.onPath", "LeanTex.Cli.ToolProbe.onPath", "onPath"]
 
-/-- The literal one result spells: a string, alone or as a path function's
-argument, behind `←`, `some`, `pure`, `return` or parentheses, with any
-`.toString` after it; or a path joined by `/` from names and strings that
-ends in a string, read as the strings it ends in, joined. -/
+/-- The literal one result spells, alone, through a path function or wrapper, or as the strings a
+`/`-joined path ends in. -/
 def resultLiteral (seg : Array Tok) : Option String := Id.run do
   let mut xs := seg
   for _ in [0:seg.size + 1] do
@@ -909,9 +849,7 @@ def resultLiteral (seg : Array Tok) : Option String := Id.run do
     let parts := ((List.range n).filter (· % 2 == 0)).reverse.map (xs[·]!)
     return some ("/".intercalate (parts.takeWhile (·.kind == .str) |>.reverse |>.map (·.text)))
 
-/-- Each result an expression can take: the arms of a `match`, the branches
-of an `if` chain, or the whole expression up to a pattern `let`'s `|`
-alternative. Conditions and patterns are no result. -/
+/-- Each result an expression can take: `match` arms, `if` branches, or the whole expression. -/
 def results (rhs : Array Tok) : Array (Array Tok) := Id.run do
   let isMatch := (rhs[0]?.map (·.text)) == some "match"
   let mut out : Array (Array Tok) := #[]
@@ -945,16 +883,13 @@ def results (rhs : Array Tok) : Array (Array Tok) := Id.run do
 def commandLike (s : String) : Bool :=
   !s.isEmpty && !s.startsWith "-" && !s.any Char.isWhitespace
 
-/-- The literals the results of `rhs` spell, or none when none spells one.
-A result that is no literal, such as a path the caller passes in, is not
-read. -/
+/-- The literals the results of `rhs` spell, or none when none spells one. -/
 def resultLiterals (rhs : Array Tok) : Option (Array String) :=
   let lits := (results rhs).filterMap fun r => (resultLiteral r).filter commandLike
   if lits.isEmpty then none else some lits
 
-/-- The last `let` before line `line` in `decl` binding `name` alone (`let`,
-`let mut`, `let some`): its line, and its right-hand side from after `:=` or
-`←` to the end of the binding. -/
+/-- The last `let` before line `line` in `decl` binding `name` alone: its line and right-hand
+side. -/
 def bindingRhs (ts : Array Tok) (decl name : String) (line : Nat) : Option (Nat × Array Tok) := Id.run do
   let mut found : Option (Nat × Array Tok) := none
   for k in [0:ts.size] do
@@ -985,10 +920,8 @@ def bindingRhs (ts : Array Tok) (decl name : String) (line : Nat) : Option (Nat 
     found := some (t.line, rhs)
   return found
 
-/-- The last `for` before line `line` in `decl` whose pattern binds `name`,
-alone or as a tuple's component: its line, and the literals it hands
-`name` from the written list it iterates, inline or bound by a `let`, or
-none when the list is not one the scan reads. -/
+/-- The last `for` before line `line` in `decl` binding `name`: its line and the literals its
+written list hands `name`. -/
 def forBinding (ts : Array Tok) (decl name : String) (line : Nat) : Option (Nat × Option (Array String)) := Id.run do
   let mut found : Option (Nat × Option (Array String)) := none
   for k in [0:ts.size] do
@@ -1030,9 +963,7 @@ def forBinding (ts : Array Tok) (decl name : String) (line : Nat) : Option (Nat 
     found := some (t.line, lits)
   return found
 
-/-- The literals the top-level constant `name` is bound to, in `src` or in
-a source it imports: a declaration with no explicit binders whose body
-after `:=` spells them as `resultLiterals` reads. -/
+/-- The literals the top-level constant `name` is bound to, in `src` or a source it imports. -/
 def constLiterals (files : Array Source) (src : Source) (name : String) : Option (Array String) := Id.run do
   for f in files do
     unless f.path == src.path || src.imports.contains (moduleOf f.path) do continue
@@ -1054,11 +985,7 @@ def constLiterals (files : Array Source) (src : Source) (name : String) : Option
     return resultLiterals body
   return none
 
-/-- The tools a suite or script spawn expression that is no literal names
-through a binding the scan reads: the nearer of a `let` and a `for` in its
-declaration, else a top-level constant, else a path joined to a literal;
-for a whole spawn record bound by a `let`, its `cmd` field read the same
-way. None when the binding is not one the scan reads. -/
+/-- The tools a suite or script spawn expression names through a binding the scan reads, or none. -/
 def boundTools (files : Array Source) (src : Source) (site : Site) (expr : Array Tok) (whole : Bool) :
     Option (List String) :=
   let byName (x : Tok) : Option (Array String) :=
@@ -1086,9 +1013,8 @@ def boundTools (files : Array Source) (src : Source) (site : Site) (expr : Array
       | none => none
   | _ => if whole then none else (resultLiteral expr).map ([·])
 
-/-- The modules that reach `home`'s module through their imports, however
-far, `home`'s own included: read off the scanned sources' headers and, for
-the engine modules not lexed, the engine's import graph. -/
+/-- The modules that reach `home`'s module through their imports, however far, `home`'s own
+included. -/
 def reachers (inp : Inputs) (home : String) : Std.HashSet String := Id.run do
   let mut imports : Std.HashMap String (Array String) := inp.graph
   for src in inp.files do
@@ -1109,18 +1035,13 @@ def reachers (inp : Inputs) (home : String) : Std.HashSet String := Id.run do
     todo := next
   return seen
 
-/-- Whether `src` can ask the host to run a tool: it reaches `home` through
-its imports however far, a re-export or a Core module among them, or names
-the run question outright. -/
+/-- Whether `src` can ask the host to run a tool, through its imports or by naming the run
+question. -/
 def asksHost (reach : Std.HashSet String) (src : Source) : Bool :=
   reach.contains (moduleOf src.path) ||
     src.toks.any fun t => t.kind == .ident && (t.text == "Ask.run" || t.text.endsWith ".Ask.run")
 
-/-- The tokens at which `src` asks the host to run a tool, outside a proof:
-`Ask.run` spelled as a name, a bare `run` inside the namespace `Ask`, or
-`.run` where a term begins, rather than a projection after a term or a
-pattern after a match arm's `|` or a `let`; the `|` of `<|` or `||` opens no
-arm. -/
+/-- The tokens at which `src` asks the host to run a tool, outside a proof. -/
 def runAsks (src : Source) : Array Nat := Id.run do
   let ts := src.toks
   let mut out := #[]
@@ -1141,10 +1062,8 @@ def runAsks (src : Source) : Array Nat := Id.run do
           unless pattern do out := out.push k
   return out
 
-/-- A run asked outside the declared askers, an asker called from outside
-the spawner and the askers, or an `open` or `export` that lets the run
-question or an asker be named bare, where the scan does not read it: what
-an `asked` route's reading rests on. -/
+/-- The faults an `asked` route's reading rests on: a run asked or an asker called outside the
+declared ones, or an `open` exposing either bare. -/
 def askFaults (inp : Inputs) (spawner home : String) (askers : List String) : Array String := Id.run do
   let parent := ".".intercalate (spawner.splitOn ".").dropLast
   let reach := reachers inp home
@@ -1179,11 +1098,8 @@ def askFaults (inp : Inputs) (spawner home : String) (askers : List String) : Ar
             s!"{src.path}:{t.line}: `{t.text} {n}` lets {names}, which only {spawner} may call, be called by a bare name the scan does not follow; qualify the call"
   return out
 
-/-- Every spawn site, closed under forwarding: each wrapper a route makes of
-an engine declaration, and each a suite or script declaration makes by
-handing its own parameter on, is itself a spawner, until none is added. An
-`open` or `export` that lets an engine spawner be called by a bare name the
-scan does not follow is a fault. -/
+/-- Every spawn site, closed under forwarding, with a fault for any bare spawner name the scan
+cannot follow. -/
 def scan (inp : Inputs) (rs : List Route) : Scan := Id.run do
   let mut spawners := primitives
   let mut fresh := primitives
@@ -1282,8 +1198,8 @@ def scan (inp : Inputs) (rs : List Route) : Scan := Id.run do
             s!"{src.path}:{src.toks[k]!.line}: an extern declaration runs code outside Lean that no row names"
   return { sites, suite, blind, spawners, faults }
 
-/-- The engine's spawn sites whose wait has no time limit, by file and
-declaration: every primitive spawn but the budget's own. -/
+/-- The engine's spawn sites whose wait has no time limit: every primitive spawn but the budget's
+own. -/
 def Scan.unbudgeted (sc : Scan) (budget : List (String × String)) : List (String × String) :=
   (sc.sites.toList.filter fun s => s.spawner.startsWith "IO.Process." && !budget.contains (s.file, s.decl))
     |>.map (fun s => (s.file, s.decl)) |>.eraseDups
@@ -1300,8 +1216,7 @@ def Scan.tools (sc : Scan) : List (String × Site) := spellings sc.sites
 
 def Scan.suiteTools (sc : Scan) : List (String × Site) := spellings sc.suite
 
-/-- Every word a scanned string spells, by its last path component: what a
-row's further tools must each be one of. -/
+/-- Every word a scanned string spells, by last path component. -/
 def mentioned (inp : Inputs) : Std.HashSet String := Id.run do
   let mut out : Std.HashSet String := {}
   for src in inp.files do
@@ -1315,15 +1230,7 @@ def mentioned (inp : Inputs) : Std.HashSet String := Id.run do
             word := ""
   return out
 
-/-! ## The toolchain the engine's imports reach
-
-The scan reads IO.Process's three spawners as its primitives, which holds
-only while nothing the engine can call starts a process another way. That
-is a fact of the toolchain's library, read here off its shipped sources. -/
-
-/-- The modules a source imports, read off its header: each `import`,
-`public import`, `meta import` and `import all` before the first command
-that is none of them, comments, `module` and `prelude` skipped. -/
+/-- The modules a source's header imports, comments, `module` and `prelude` skipped. -/
 def headerImports (text : String) : Array String :=
   let read (lines : List String) : Array String × Bool := Id.run do
     let mut out := #[]
@@ -1342,13 +1249,11 @@ def headerImports (text : String) : Array String :=
       | "import" :: m :: _ => out := out.push m
       | _ => return (out, true)
     return (out, false)
-  -- A header is short: read a prefix, and more only when the header runs
-  -- past it.
+  -- A header is short: read a prefix, and more only when the header runs past it.
   let (head, ended) := read ((text.take 2048).toString.splitOn "\n")
   if ended then head else (read (text.splitOn "\n")).1
 
-/-- Where the toolchain keeps its sources: `$LEAN_SYSROOT/src/lean`, with
-Lake's tree beside it. -/
+/-- Where the toolchain keeps its sources: `$LEAN_SYSROOT/src/lean`, with Lake's tree beside it. -/
 def toolchainRoots : IO (Except String (Array System.FilePath)) := do
   let some root ← IO.getEnv "LEAN_SYSROOT" |
     return .error "LEAN_SYSROOT names no toolchain; run the suite through lake test"
@@ -1357,9 +1262,8 @@ def toolchainRoots : IO (Except String (Array System.FilePath)) := do
     return .error s!"{src} holds no toolchain source"
   return .ok #[src, src / "lake"]
 
-/-- Every toolchain module `seeds` reach through imports and `known` does
-not already hold, with its text, or the first module whose source the
-toolchain does not ship. -/
+/-- Every toolchain module `seeds` reach and `known` lacks, with its text, or the first module the
+toolchain ships no source for. -/
 def toolchainClosure (roots : Array System.FilePath) (seeds : Array String)
     (known : Std.HashSet String := {}) : IO (Except String (Array (String × String))) := do
   let mut seen := known
@@ -1382,21 +1286,18 @@ def toolchainClosure (roots : Array System.FilePath) (seeds : Array String)
   unless todo.isEmpty do return .error "the toolchain import closure did not settle"
   return .ok out
 
-/-- IO.Process's spawners, the scan's primitives, and the module they live in. -/
+/-- IO.Process's spawners, the scan's primitives. -/
 def spawnerNames : List String := ["spawn", "output", "run"]
 
 def spawnerHome : String := "Init.System.IO"
 
-/-- Does the code token `t` call one of IO.Process's spawners: by a name
-ending in `Process.` and the spawner, or by the bare name inside
-`IO.Process`? -/
+/-- Does code token `t` call one of IO.Process's spawners? -/
 def namesSpawner (t : Tok) : Bool :=
   t.kind == .ident && !t.declares && spawnerNames.any fun s =>
     t.text.endsWith ("Process." ++ s) ||
       (t.text == s && (t.ns == "IO.Process" || t.ns.startsWith "IO.Process."))
 
-/-- The symbols the `@[extern]` attributes of `ts` bind, each with the
-declaration that follows it. -/
+/-- The symbols the `@[extern]` attributes of `ts` bind, each with the declaration that follows. -/
 def externs (ts : Array Tok) : Array (String × String) := Id.run do
   let mut out := #[]
   for k in [0:ts.size] do
@@ -1416,9 +1317,7 @@ def externs (ts : Array Tok) : Array (String × String) := Id.run do
 def startsProcess (sym : String) : Bool :=
   ["spawn", "exec", "fork"].any (hasStr sym ·)
 
-/-- Whether the `open` or `export` at `k` lets IO.Process's spawners be
-called by a bare name outside their namespace: it names `IO.Process`, or
-`Process` where IO's namespace is open around it, and does not hide them. -/
+/-- Whether the `open` or `export` at `k` lets IO.Process's spawners be called bare. -/
 def opensSpawners (ts : Array Tok) (k : Nat) : Bool :=
   let t := ts[k]!
   let clause := openClause ts k
@@ -1428,12 +1327,7 @@ def opensSpawners (ts : Array Tok) (k : Nat) : Bool :=
     n == "IO.Process" || n.endsWith ".IO.Process" || (n == "Process" && insideIO)) &&
     spawnerNames.any clause.exposes
 
-/-- Why a toolchain module can start a process the scan does not read: its
-code calls an IO.Process spawner outside their home, which is read
-declaration by declaration so that only `output` and `run` call one; it
-opens or exports IO.Process, so a bare call the scan does not follow could
-reach one; or it declares an extern whose symbol spawns, execs or forks
-other than `spawn`'s own. -/
+/-- Why a toolchain module can start a process the scan does not read. -/
 def toolchainSpawnFaults (closure : Array (String × String)) : Array String := Id.run do
   let mut out := #[]
   for (m, text) in closure do
@@ -1454,9 +1348,7 @@ def toolchainSpawnFaults (closure : Array (String × String)) : Array String := 
         out := out.push s!"{m}: {d} calls an IO.Process spawner, so the scan must read it as one"
   return out
 
-/-- The toolchain modules the engine imports: every module an engine
-source's header names outside the engine, and `Init`, which every module
-but a prelude imports. -/
+/-- The toolchain modules the engine imports, `Init` included. -/
 def engineImports : IO (Array String) := do
   let files := ((← System.FilePath.walkDir "LeanTex").filter (·.toString.endsWith ".lean")).push
     "Main.lean" |>.push "LeanTex.lean"
@@ -1469,12 +1361,7 @@ def engineImports : IO (Array String) := do
 end Premises
 
 open Premises in
-/-- **The toolchain starts a process only where the scan reads one.** Every
-toolchain module the engine's imports reach calls IO.Process's spawners
-only in their home, where `output` and `run` alone call one, and declares
-no extern that spawns, execs or forks but `spawn`'s own. An engine module
-importing Lake or a Lean module that starts a process fires, as do a
-spawner planted in the home and a forking extern. -/
+/-- The toolchain starts a process only where the scan reads one. -/
 def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let start ← IO.monoMsNow
@@ -1486,7 +1373,7 @@ def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error why => t s!"toolchain spawns: {why}" false
     | .ok closure =>
       let faults := toolchainSpawnFaults closure
-      t s!"toolchain spawns: the engine's imports reach no process start the scan does not read ({faults})"
+      t s!"toolchain spawns: the engine reaches no process start the scan misses ({faults})"
         faults.isEmpty
       t "toolchain spawns: the closure holds the spawners' home"
         (closure.any (·.1 == spawnerHome))
@@ -1505,7 +1392,7 @@ def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "toolchain spawns selftest: a forking extern fires"
         ((toolchainSpawnFaults #[("Std.Zz", "@[extern \"zz_fork\"] opaque zzFork : IO Unit\n")]).any
           (hasStr · "zz_fork"))
-      t "toolchain spawns selftest: opening IO.Process, or Process inside IO, fires, and hiding its spawners does not"
+      t "toolchain spawns selftest: opening IO.Process fires, hiding its spawners does not"
         ((toolchainSpawnFaults #[("Std.ZzOpen", "open IO.Process\n")]).any (hasStr · "Std.ZzOpen:1") &&
           (toolchainSpawnFaults #[("Std.ZzIn", "namespace IO\nopen Process in\ndef zz := 1\nend IO\n")]).any
             (hasStr · "Std.ZzIn:2") &&

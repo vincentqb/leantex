@@ -6,36 +6,19 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! # A refusal never raises an error and never adds ink
+/-! A refusal never raises an error and never adds ink. -/
 
-A construct the engine refuses by name is named once and leaves the page as
-the document without it would. Each block holds one refusal path to that
-rule, over the shipped pages; the probes are synthetic. -/
-
-/-- The shapes a definition's two bodies can split: an environment, a
-display, and inline math in both spellings — each opened in the begin body
-and closed in the end body. -/
+/-- The shapes a definition's two bodies can split: an environment, a display, and inline math in
+both spellings. -/
 def splitShapes : List (String × String) :=
   [("\\begin{center}\\small", "\\end{center}"), ("\\[", "\\]"), ("$", "$"), ("\\(", "\\)")]
 
-/-- The split-group definition: a construct opened in the begin body and
-closed in the end body, LaTeX's most common `\newenvironment` idiom. -/
+/-- A split-group definition: a construct opened in the begin body and closed in the end body. -/
 def splitGroupDef (definer name : String) (shape : String × String) : String :=
   s!"\\{definer}\{{name}}\{{shape.1}}\{{shape.2}}\n"
 
-/-- **A refused environment definition raises no error and ships no ink.**
-Every built-in environment name, redefined with the split-group idiom in
-each of its shapes, builds: its only diagnostic at the definition is W0303,
-and the page is the page of the document that never wrote the definition.
-The defect: the parse judged the definition's two bodies as document text,
-so the idiom failed the build (E0201, E0205, E0202) beside the W0303 that
-ignored it. Quantified over `Elab.builtinEnvNames` and `splitShapes`, so a
-built-in the engine gains is a row. Any refusal by name — a definition, a
-redefinition, a use — is held so, two builds apart, since a refusal that
-adds ink or fails the build is the loss it claims to avoid; a refused use
-ships its braced spelling's page (`delimitedUseChecks`). What a refused
-construct's parts owe is judged by its definer, never by the parse that read
-them (`Elab.settleSplits`). -/
+/-- A refused environment definition raises no error and ships no ink, for every built-in name and
+split shape. -/
 def refusedEnvChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let body := "Body words stand here."
@@ -56,11 +39,8 @@ def refusedEnvChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       t s!"a split redefinition with the option runs {head} is W0303 alone ({shape.1})"
         ((dvE src).all fun d => d.severity == .note || d.code == "W0303")
 
-/-- **Parked: an accepted split-group definition is not paired yet.** The
-engine elaborates an environment's two halves apart, each under its own
-argument scope, so a construct one half opens and the other closes cannot
-stand around the content: the definition keeps the parse's E0201. A row
-fails once pairing lands for its shape, and leaves with the fix. -/
+/-- Split shapes an accepted definition does not pair yet, each keeping the parse's E0201; a row
+fails once pairing lands. -/
 def splitPairingOwed : List (String × String) :=
   [("\\begin{center}", "\\end{center}"), ("\\[", "\\]"), ("$", "$"), ("\\(", "\\)")]
 
@@ -90,12 +70,7 @@ def strongTextsList (acc : Array String) : List Html.Node → Array String
 
 end
 
-/-- **A group primitive scopes what a brace pair scopes.** A weight change
-between `\begingroup` and `\endgroup` (or `\bgroup` and `\egroup`) reaches
-the words inside and stops at the closer, read off the typed HTML tree.
-The defect: both words were unknown commands, dropped as text, so the
-change leaked to the paragraph's end and a reader saw words bold that
-LaTeX sets upright. Quantified over `Compat.groupPrimitives`. -/
+/-- A group primitive scopes what a brace pair scopes. -/
 def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (o, c) in Compat.groupPrimitives do
@@ -108,8 +83,8 @@ def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"and the change stops at '\\{c}'" (strong.all fun s => !hasStr s "After words.")
     t s!"a matched '\\{o}' is no unknown command" (ds.all (·.code != "W0301"))
 
-/-- A bare use of an environment the engine gives a meaning, with the
-arguments and body it needs to build. -/
+/-- A bare use of an environment the engine gives a meaning, with the arguments and body it
+needs. -/
 def blockUse (n : String) : String :=
   let body := match n with
     | "itemize" | "enumerate" | "description" => "\\item One item"
@@ -124,20 +99,11 @@ def blockUse (n : String) : String :=
     | _ => "Block words."
   s!"\\begin\{{n}}{body}\\end\{{n}}"
 
-/-- The spellings of a scope group: the brace pair, and each group
-primitive pair. -/
+/-- The spellings of a scope group: the brace pair and each group primitive pair. -/
 def groupSpellings : List (String × String) :=
   ("{", "}") :: Compat.groupPrimitives.map fun (o, c) => (s!"\\{o} ", s!"\\{c} ")
 
-/-- **A block inside a group stays a block.** A scope group — a brace pair,
-`\begingroup … \endgroup`, `\bgroup … \egroup` — scopes declarations and
-nothing else (TeXbook ch. 5), so a block environment, a heading or a
-display inside one ships the page, the HTML and the diagnostics of the
-document without the group; with a size declaration inside, the text is
-unchanged. Quantified over the engine's block environments
-(`Elab.builtinEnvNames` read by `Elab.bodyIsBlock`) and the group spellings.
-The defect: the group was inline content, so a list or table inside one
-failed the build, a quote lost its block and an equation its number. -/
+/-- A block inside a group stays a block. -/
 def groupedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let envs := Elab.builtinEnvNames.filter fun n => Elab.bodyIsBlock #[.env n #[] {}]
@@ -184,16 +150,7 @@ def groupedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     t s!"and ships the unwrapped body's text ('{o}')"
       (pageTextOf fonts grouped == pageTextOf fonts (wrap tab))
 
-/-- **No document spells an environment name the engine makes.** A
-definer body's halves (`Parse.splitOpen`, `Parse.splitClose`), an
-`\input` file's wrapper (`Parse.inputEnv`), a generated scope
-(`Parse.scopeEnv`) and a lowered tcolorbox's box (`Tcolorbox.boxEnv`) each
-hold a character no word token holds (`Lex.special`, `Lex.isWs`), and a
-document's environment name
-is one word, so the names the engine once used are ordinary unknown
-environments. The defect: `\begin{@open:center}` was read as a split half
-and failed the build (E0201), and `\begin{@input:x.sty}` passed for a
-spliced file. -/
+/-- No document spells an environment name the engine makes. -/
 def reservedEnvNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for n in [Parse.splitOpen "center", Parse.splitClose "center",
@@ -210,13 +167,7 @@ def reservedEnvNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     t s!"and ships its page ('{n}')" (pageLines fonts (use n) == pageLines fonts unknown)
 
 
-/-- **A refused delimited definition's use ships what its braced spelling
-ships.** TeX reads a delimited parameter up to its delimiter and consumes
-the delimiter as the call's syntax; the engine refuses the definition
-(W0357), and its use is then an unknown command whose arguments are kept as
-text. Each row pairs a delimited use with the braced call it reads as, and
-the pages must agree. The defect: the delimiter was left in the stream, so
-the page showed punctuation nobody typed. -/
+/-- A refused delimited definition's use ships what its braced spelling ships. -/
 def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let pre := "\\def\\probescan#1;{\\textbf{#1}}\n\\def\\probepair#1,#2\\relax{#2}\n" ++
@@ -235,12 +186,7 @@ def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "the definitions stay refused by name"
     ((dvE (dvDoc pre "Body.")).any (·.code == "W0357"))
 
-/-- **A use reads the signature in force where it stands.** A later
-definition of the same name — undelimited, through any definer, or
-delimited anew — replaces a delimited one, so a use after it ships the page
-of the document holding only the later definition: the delimiter the use no
-longer takes is the author's ink. The defect: every use read the first
-delimited definition in the tree, and a period the author typed vanished. -/
+/-- A use reads the signature in force where it stands. -/
 def delimitedSigChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let first := "\\def\\probedot#1.{[#1]}\n"
@@ -252,13 +198,7 @@ def delimitedSigChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
         pageTextOf fonts (dvDoc (later ++ "\n") use))
 
 
-/-- Register arithmetic on a length the document set is evaluated, not
-skipped.** TeX's `\advance`, `\multiply`, `\divide` and LaTeX's
-`\addtolength` change the value a later layout reads; skipping them left
-the earlier value standing, silently, and a paragraph skip advanced by 20pt
-set 19.9 bp short per paragraph. Each row pairs the arithmetic with the
-literal value it computes, and the pages must agree; a length the rewrite
-never set is still named and skipped (W0104). -/
+/-- Register arithmetic on a length the document set is evaluated, not skipped. -/
 def registerArithChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let paras := "First words.\n\nSecond words.\n\nThird words."
@@ -285,14 +225,7 @@ def registerArithChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     ((dvE (dvDoc "\\advance\\probeunset by 2pt\n" "Body.")).any (·.code == "W0104"))
 
 
-/-- **A composed length assignment is one the length grammar reads, or it
-is named.** Register arithmetic composes the value a length holds with its
-operand; per unit, `\addtolength` and `\advance` build, and the length then
-holds exactly the sum `Decl.parseLength` reads from the two parts. A sum
-the grammar cannot read — glue, whose stretch has no place in an
-expression — builds too, and is named (W0104), the value left as set. The
-defect: the em and ex sums and every glue sum were handed to the grammar
-unread and failed the build (E0321). -/
+/-- A composed length assignment is one the length grammar reads, or it is named (W0104). -/
 def composedLengthChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let body := "First words.\n\n\\vspace{\\probegap}\nSecond words."

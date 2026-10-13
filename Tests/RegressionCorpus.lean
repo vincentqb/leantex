@@ -19,8 +19,7 @@ private def sameInventory (registered found : Array String) : Bool :=
   !registered.isEmpty && decide registered.toList.Nodup &&
     registered.all found.contains && found.all registered.contains
 
-/-- Every complete fixture has one artifact guard. Included fragments and
-local styles are exercised through their registered document entry points. -/
+/-- Every complete fixture has one artifact guard. -/
 def regressionDocumentChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "regression inventory accepts a reordered complete set"
     (sameInventory #["a", "b"] #["b", "a"])

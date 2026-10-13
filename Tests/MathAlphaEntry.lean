@@ -8,8 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- The resolver rewrites listing captions and formatted bibliography items,
-so alphabet losses there must be named beside the fallback each artifact ships. -/
+/-- Alphabet losses in listing captions and formatted bibliography items are named beside the
+fallback each artifact ships. -/
 def mathAlphaRegionChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let (sample, _) := elabStr "\\pagestyle{empty}$\\mathcal{A}\\mathcal{A}$"
@@ -44,15 +44,12 @@ def mathAlphaRegionChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO 
       ((Ir.missingMathAlphas fs.mathAlphabets resolved).isEmpty &&
         (Ir.resolveMathAlphas fs.mathAlphabets family resolved).2.isEmpty)
 
-/-- Public backend entries own normalization. Calling them on raw IR must
-ship the same glyphs and MathML as an explicit IR resolution, with the
+/-- Public backend entries normalize raw IR, shipping what explicit resolution ships, the
 whole-alphabet diagnostic charged once. -/
 def mathAlphaEntryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathTextFaces
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let bold := "font-family: var(--font-body); font-weight: 700"
-  -- The nested symbol loss is pinned by mathSymbolResetAccountingChecks;
-  -- mathChecks pins unsupported calligraphic fallback to ordinary italic.
   let rows : Array (String × Array (Nat × Char) × Array (String × String) ×
       Array (Option String)) := #[
     ("\\symbf{A}", #[(6, '𝐀')], #[("𝐀", "")], #[]),

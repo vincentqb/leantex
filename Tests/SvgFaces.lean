@@ -9,9 +9,8 @@ namespace Tests
 
 open LeanTex.Core Tests.DriverAssets
 
-/-- Preparing an image twice must keep the same published faces and native
-canvas. Conversion always consumes the captured source; a previous browser
-face cannot hide a failed new conversion. -/
+/-- Preparing an image twice keeps the same published faces and native canvas, and an earlier face
+cannot hide a failed conversion. -/
 def svgFacePreparationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let req : Image.Request := { src := "selected.pdf", page := .last, animated := true }
   let .ok (info, canvas) := Image.decodeRequest .default svgCanvasPdf req |

@@ -23,8 +23,8 @@ def loud : (q : Ask) → Reply q
   | .writeAtomic .. => .ok ()
   | .createDirAll _ => .ok ()
 
-/-- Sizes of the regular files a directory lists, and whether a variable
-is set: a program whose later questions depend on earlier replies. -/
+/-- Sizes of a directory's regular files and whether a variable is set: a program whose later
+questions depend on earlier replies. -/
 def sizes (dir : String) : Prog String := do
   match ← ask (.listDir dir) with
   | .error _ => return "unlisted"
@@ -38,20 +38,17 @@ def sizes (dir : String) : Prog String := do
     let unset ← ask (.env "LEANTEX_WORLD_CHECK_UNSET")
     return s!"{String.intercalate "," seen.toList};{unset.isSome}"
 
-/-- One spelling per directory entry: `.` components and repeated
-separators name the same place. -/
+/-- One spelling per directory entry, `.` components and repeated separators dropped. -/
 def normalPath (p : String) : String :=
   let parts := (p.splitOn "/").filter fun s => !s.isEmpty && s != "."
   (if p.startsWith "/" then "/" else "") ++ String.intercalate "/" parts
 
-/-- A fixture tool: its version line, then the path it was started by. -/
+/-- A fixture tool printing its version line, then the path it was started by. -/
 def tool (path : System.FilePath) (label : String) (exec : Bool := true) : IO Unit :=
   writeScript path s!"#!/bin/sh\nprintf '%s\\n' '{label} 1.0' \"$0\"\n" exec
 
-/-- execvp's own choice, the oracle every PATH row is held to: the command
-name spawned by Lean's runtime, which calls execvp, under that PATH from that
-directory. The kernel hands a script the path execve was given, so a
-fixture's `$0` is the candidate execvp started, read back absolute. -/
+/-- execvp's own choice, the oracle every PATH row is held to: the candidate execvp started, read
+back absolute. -/
 def execvpChoice (path : String) (cwd : System.FilePath) (name : String) :
     IO (Option String) := do
   let got ← RunBounded.runBounded name #[] cwd 10000 100 (env := #[("PATH", some path)])
@@ -65,8 +62,8 @@ def legacyStamp (p : System.FilePath) : IO String := do
   return String.intercalate "\t" [(← IO.FS.realPath p).toString, toString md.byteSize,
     toString md.modified.sec, toString md.modified.nsec]
 
-/-- A recorded program is the replay of its trace, and a world that differs
-only where the program never asked gives the same answer. -/
+/-- A recorded program is the replay of its trace, and a world differing only where it never asked
+gives the same answer. -/
 def replayChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let t := check ref
   let root := dir / "listed"
@@ -98,8 +95,8 @@ def replayChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit 
   t "world/replay: taking a witness records no run"
     (!witnessTrace.isEmpty && witnessTrace.all fun f => !f.1.isRun)
 
-/-- Every question the host can be asked comes back as a typed reply,
-however the filesystem or the tool misbehaves. -/
+/-- Every question the host can be asked comes back as a typed reply, however the filesystem or the
+tool misbehaves. -/
 def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let t := check ref
   let missing := (dir / "missing").toString
@@ -117,7 +114,7 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
   IO.FS.writeFile single "seven b"
   IO.FS.hardLink single (dir / "second")
   symlink single (dir / "named")
-  t "world/host: metadata agrees with stat and counts a file's hard links through a link to it"
+  t "world/host: metadata agrees with stat, counting hard links through a link"
     (match ← Host.answer (.metadata (dir / "named").toString), ← Host.answer (.stat single.toString) with
       | .ok md, .ok st => md.kind == .file && md.size == 7 && md.links == 2 &&
           md.size == st.size && md.mtimeSec == st.mtimeSec && md.mtimeNsec == st.mtimeNsec
@@ -179,7 +176,7 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
   let noisyStart ← IO.monoMsNow
   let noisy ← Host.answer (.run (call "/bin/sh" #["-c", "printf 'out\\376'; printf '\\377 tail' >&2; exit 3"] 10000))
   let noisySpent := (← IO.monoMsNow) - noisyStart
-  t s!"world/host: a run whose streams are not UTF-8 ends as it exited, each stray byte read as U+FFFD ({noisySpent} ms)"
+  t s!"world/host: a non-UTF-8 run ends as it exited, stray bytes read as U+FFFD ({noisySpent} ms)"
     (noisy.complete && noisy.ran == .exited 3 && noisy.out == "out\uFFFD" && noisy.err == "\uFFFD tail" &&
       noisySpent < 4000)
   let copied ← Host.answer (.run { call "/bin/sh" #["-c", "cat in/data > out.txt; pwd > where.txt; pwd; pwd -L >&2"] 10000 with
@@ -191,7 +188,7 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
       (copied.outputs.extract 0 2) == #[("out.txt", some "payload".toUTF8), ("never.txt", none)])
   t "world/host: a run's scratch directory is removed after it"
     (!scratch.isEmpty && !(← System.FilePath.pathExists scratch))
-  t s!"world/host: a reply names the run's scratch directory as <scratch>, never its random name: {copied.out}{copied.err}"
+  t s!"world/host: a reply names the scratch directory <scratch>, never its random name: {copied.out}{copied.err}"
     (copied.out == "<scratch>\n" && copied.err == "<scratch>\n" && !hasStr (copied.out ++ copied.err) "leantex-")
   let escaped ← Host.answer (.run { call "/bin/sh" #["-c", "true"] 10000 with
     inputs := #[("../escaped", "x".toUTF8)] })
@@ -203,10 +200,9 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
       #["-c", "ln -s \"$1\" out.txt; mkdir sub; ln -s \"$2\" sub/up", "sh", secret.toString, dir.toString]
       10000 with
     outputs := #["out.txt", "sub/up/outside-secret"] })
-  t "world/host: a declared output that links outside the scratch directory is no output"
+  t "world/host: a declared output linking outside the scratch is no output"
     (linked.complete && linked.ran == .exited 0 &&
       linked.outputs == #[("out.txt", none), ("sub/up/outside-secret", none)])
-  -- A directory outside every scratch directory, with a file and a subtree.
   let outsideAt (name : String) : IO (System.FilePath × IO Bool) := do
     let outside := dir / name
     IO.FS.createDirAll (outside / "keep")
@@ -215,8 +211,7 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
     return (outside, do
       return (← (outside / "outside-secret").pathExists) && (← (outside / "keep" / "file").pathExists))
   let (outside, untouched) ← outsideAt "outside"
-  -- A reply spells the scratch directory `<scratch>`, so each run below
-  -- names its real path in a file the test owns, outside it.
+  -- A reply spells the scratch directory `<scratch>`, so each run writes its real path to a file outside it.
   let whereWas (file : System.FilePath) : IO String := do
     let path := ((← (IO.FS.readFile file).toBaseIO).toOption.getD "").trimAscii.toString
     return if path.startsWith "/" then path else ""
@@ -226,10 +221,10 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
         "printf '%s' \"$d\"", "sh", outside.toString, movedAt.toString] 10000 with
     outputs := #["outside-secret"] })
   let movedScratch ← whereWas movedAt
-  t "world/host: a run that leaves a link where its scratch directory stood gets nothing outside back"
+  t "world/host: a link left where the scratch stood brings nothing outside back"
     (moved.complete && moved.ran == .exited 0 && moved.outputs == #[("outside-secret", none)] &&
       moved.out == "<scratch>")
-  t "world/host: cleanup removes a link where the scratch directory stood, and nothing it names"
+  t "world/host: cleanup removes a link where the scratch stood, not its target"
     (!movedScratch.isEmpty && (← untouched) && !(← System.FilePath.pathExists movedScratch))
   unless movedScratch.isEmpty do
     discard <| (IO.FS.removeDirAll (movedScratch ++ ".moved")).toBaseIO
@@ -240,12 +235,12 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
       "ln -s \"$1\" a/b/away && printf '%s' \"$PWD\" > \"$2\"", "sh", elsewhere.toString,
       awayAt.toString] 10000))
   let awayScratch ← whereWas awayAt
-  t "world/host: cleanup removes the links a run left, dangling or to a directory outside, and nothing they name"
+  t "world/host: cleanup removes a run's dangling or outward links, not their targets"
     (linkedAway.complete && linkedAway.ran == .exited 0 && (← kept) && !awayScratch.isEmpty &&
       !(← System.FilePath.pathExists awayScratch))
   let clashing ← Host.answer (.run { call "/bin/sh" #["-c", "true"] 10000 with
     inputs := #[("a", "file".toUTF8), ("a/b", "under a file".toUTF8)] })
-  t s!"world/host: a run whose input cannot be written never starts, and its reason names no scratch directory ({repr clashing.ran})"
+  t s!"world/host: a run with an unwritable input never starts, naming no scratch ({repr clashing.ran})"
     (match clashing.ran with
       | .unstarted why => hasStr why "<scratch>" && !hasStr why "leantex-"
       | _ => false)
@@ -268,11 +263,8 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
       | .ok d => d == here.toString
       | .error _ => false) && (← Host.answer (.env "PATH")).isSome)
 
-/-- Every PATH spelling that names a different rule, held to the path the
-fixture determines and to execvp itself, never to a shell's `command -v`,
-whose answers differ between shells. A deleted working directory is empty,
-so execvp finds nothing under a relative entry that stays inside it; the
-cache identity child checks a really removed one. -/
+/-- Every PATH spelling that names a different rule, held to the fixture's path and to execvp
+itself, never to a shell's `command -v`. -/
 def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let t := check ref
   let root ← IO.FS.realPath dir
@@ -318,7 +310,7 @@ def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :=
     (match ← under s!"{r}/decoy" (.ok r) (ToolPath.version "tool") with
       | .absent _ => true
       | .present _ => false)
-  t "world/path: one regular file's witness keeps the spelling earlier memos and slots were keyed by"
+  t "world/path: a regular file's witness keeps the legacy memo and slot spelling"
     ((← under s!"{r}/abs" (.ok r) (ToolPath.witness "tool")) == (← legacyStamp (root / "abs" / "tool")))
   t "world/path decoy: the witness stamps every regular file the name reaches"
     ((← under decoyPath (.ok r) (ToolPath.witness "tool")) ==
@@ -341,7 +333,7 @@ def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :=
     { tool := exe, args := #[], budgetMs := 10000, graceMs := 100, captureLimit := 65536,
       env := #[("PATH", none)] }
   let started ← unset (ToolPath.probe "sh" bareCall)
-  t s!"world/path: with PATH unset the probe runs the bare name and execvp's default path finds it ({started.map (·.1)})"
+  t s!"world/path: with PATH unset, execvp's default path finds the bare name ({started.map (·.1)})"
     (match started with
       | some (exe, e) => exe == "sh" && e.complete && e.ran == .exited 0
       | none => false)
@@ -354,17 +346,12 @@ def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :=
   t s!"world/path: a version question that hangs is killed within its budget ({spent} ms)"
     ((match hung with | .absent _ => true | .present _ => false) && spent < 4000)
 
-/-- The budget of a child Lean interpreter that elaborates its driver
-before running it: two minutes, since a loaded machine takes far longer
-than an idle one to read the imports, and neither child check reads the
-outer time (the probe check times its probe inside the child, and the
-scratch check reads how the run ended). -/
+/-- The budget of a child Lean interpreter that elaborates its driver first, generous since no child
+check reads the outer time. -/
 def childBudgetMs : Nat := 120000
 
-/-- The driver's own entry point, `ToolProbe.probeVersion` at its default
-budget, under a version question that never ends: a child whose PATH starts
-with a shim that sleeps. An unbounded probe holds the child past the
-parent's budget. -/
+/-- `ToolProbe.probeVersion` at its default budget returns under a version question that never
+ends. -/
 def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let (lean, leanPath) ← leanChild "world checks"
   writeScript (dir / "hang" / "leantex-hang-probe") "#!/bin/sh\nexec sleep 30\n"
@@ -385,10 +372,8 @@ def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO U
   check ref s!"world/path: the driver's version probe ends a tool that hangs: {result.out}{result.err}"
     (result.complete && result.ran == .exited 0)
 
-/-- A run under a temporary root that cannot hold its scratch directory, in a
-child whose TMPDIR names a missing directory: the reply is a run that never
-started. `IO.FS.createTempDir` ends such a process with a segmentation fault
-on Lean v4.34.1. -/
+/-- A run under a temporary root that cannot hold its scratch directory never starts, rather than
+crashing the process. -/
 def scratchChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let (lean, leanPath) ← leanChild "world checks"
   let driver := dir / "scratch.lean"
@@ -404,7 +389,7 @@ def scratchChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO
     "    | _ => 1\n"
   let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir childBudgetMs 100
     (env := #[("TMPDIR", some (dir / "no-such-root").toString), ("LEAN_PATH", some leanPath)])
-  check ref s!"world/host: a run under a missing temporary root never starts, and the host answers ({repr result.ran}): {result.out}{result.err}"
+  check ref s!"world/host: under a missing temporary root a run never starts, the host answering ({repr result.ran}): {result.out}{result.err}"
     (result.complete && result.ran == .exited 0)
 
 def checks (ref : IO.Ref (List String)) : IO Unit :=

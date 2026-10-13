@@ -128,30 +128,8 @@ import Tests.DiagFold
 import Tests.InlineCode
 import scripts.LandCore
 
-/-!
-# Every breakage the user reported, and what holds it closed
-
-The user's rule: a reported breakage gets assertions, theorems or tests that
-reproduce it, so the error is never seen again. A row here is one report as a
-value: when it came, what broke in abstract words — the construct, never the
-document — the pins to its guards, and the run that saw them fail on the
-broken tree.
-
-A pin is `DiagAudit.Pin`, so it resolves or does not compile: `thm%` carries
-the proof, `check%` elaborates the block and holds only while the suite runs
-it, a tier pin while the committed baseline holds its item. What no in-tree
-check can see — a private document's own build, a port that invokes the
-binary — is an acceptance run, named in abstract words.
-
-A report is closed only as `guarded`, naming the tree its guards failed on
-— the broken commit, or the fix reverted — and whose record says so, before
-the fix lands. What is not closed stays visible: `unwitnessed`
-(guards, but no failing run on record) and `owed` (no guard yet, the owner
-and the guard's name once it lands) are counts the suite holds in both
-directions, and an owed guard that lands fails the suite until its row is
-promoted. A green check asserting the reported behaviour keeps the defect:
-two rows once pinned a reported false W0104 as expected.
--/
+/-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
+`guarded`, and the unwitnessed and owed counts are held both ways. -/
 
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
@@ -1556,11 +1534,10 @@ def reports : List Report := [
     state := .owed "the overlay owner: an argument invisible off its steps, its space kept, in both artifacts" ["overlayVisibleChecks"] }
 ]
 
-/-- The reports guarded but never seen failing: a count that may fall and
-never rise, and falls only when this line does. -/
+/-- The reports guarded but never seen failing, a count held in both directions. -/
 def unwitnessedBaseline : Nat := 10
 
-/-- The reports not closed, the same way. -/
+/-- The reports not closed, held the same way. -/
 def owedBaseline : Nat := 5
 
 def Report.unwitnessed (r : Report) : Bool := r.state matches .unwitnessed
@@ -1588,8 +1565,7 @@ def isDate (s : String) : Bool :=
 def isAbstract (s : String) : Bool :=
   !(["/", "\\", "@", ".tex", ".sty", ".pdf", "http"].any (hasStr s ·))
 
-/-- What is wrong with a row, or nothing: its identity, its words, and a
-state its pins can carry. -/
+/-- What is wrong with a row: its identity, its words, and a state its pins can carry. -/
 def Report.faults (r : Report) (i : Nat) : List String :=
   let name := if i + 1 < 10 then s!"R0{i + 1}" else s!"R{i + 1}"
   (if r.id == name then [] else [s!"{r.id}: ids run R01, R02, … in order; expected {name}"]) ++
@@ -1605,8 +1581,7 @@ def Report.faults (r : Report) (i : Nat) : List String :=
     if r.pins.isEmpty then [s!"{r.id}: a closed report pins what holds it"] else []
   | .owed owner _ => if owner.isEmpty then [s!"{r.id}: an owed report names its owner"] else []
 
-/-- Every Lean source the tree builds but this registry, stripped to code:
-where an owed guard's name appears once it lands. -/
+/-- Every Lean source the tree builds but this registry, stripped to code. -/
 def treeText : IO String := do
   let mut text := ""
   for dir in ["LeanTex", "Tests"] do
@@ -1618,10 +1593,7 @@ def treeText : IO String := do
 end Reports
 
 open Reports in
-/-- **Every reported breakage is a row, and every row is held.** Rows are
-well formed and in order; every pin resolves; an owed guard that has landed
-fails until its row is promoted; and the unwitnessed and owed counts equal
-their baselines, so closing a report and opening one are both edits here. -/
+/-- Every reported breakage is a row, and every row is held. -/
 def reportChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let suite ← suiteText
@@ -1644,7 +1616,6 @@ def reportChecks (ref : IO.Ref (List String)) : IO Unit := do
     (unw == unwitnessedBaseline)
   let owed := (reports.filter (·.owed)).length
   t s!"reports: {owed} owed, the baseline {owedBaseline}" (owed == owedBaseline)
-  -- The judges, once each way.
   t "reports: a short or cased sha is not a commit"
     (isSha "17ac92f4" && !isSha "17ac92f" && !isSha "17AC92F4")
   t "reports: a path is not an abstract description"

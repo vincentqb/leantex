@@ -8,11 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- An ignored provision has no executable operands: a deferred hook in its
-replacement text or optional default cannot run, or receive its own note.
-The existing meaning ships the PDF bytes and typed HTML of the document
-without the provision, with exactly one discard accounting. Hooks outside
-the ignored operands still execute. -/
+/-- An ignored provision has no executable operands: the existing meaning ships the document's
+artifacts without it, with one discard accounting. -/
 def xparseIgnoredOperandsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref

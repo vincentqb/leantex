@@ -10,8 +10,8 @@ open LeanTex.Core.Dim (Sp pt)
 
 namespace ParagraphMathRhythm
 
-/-- Invented text only. Forced breaks isolate vertical geometry from the
-line breaker's choice of words. Both neighbours carry ordinary prose. -/
+/-- A paragraph around `inline` with forced breaks, so vertical geometry is independent of line
+breaking. -/
 def body (inline : String) : String :=
   "An ordinary line.\\\\\nA line with " ++ inline ++
     ".\\\\\nA further ordinary line.\\\\\nThe final ordinary line."
@@ -20,9 +20,8 @@ def source (size leading : Nat) (formula : String) : String :=
   metricDoc (s!"\\fontsize\{{size}pt}\{{leading}pt}\\selectfont\n" ++
     body ("$" ++ formula ++ "$"))
 
-/-- Outline hulls from the actual shipped runs, plus every painted math
-rule/polygon. No face-wide ascent or descent stands in for a glyph here.
-The bundled probe faces must have decodable outlines. -/
+/-- Outline hulls of the shipped runs plus every painted math rule or polygon, with no face-wide
+ascent or descent. -/
 def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Sp × Sp) := do
   let mut above := 0
   let mut below := 0
@@ -48,8 +47,7 @@ def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Sp × Sp)
 def gaps (lines : Array Layout.LineOut) : Array Sp :=
   (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
 
-/-- A visible collision check, in page coordinates. The intervals are
-outline hulls (a conservative bound on paint), not exact raster extrema. -/
+/-- A visible collision check in page coordinates, over outline hulls. -/
 def clears (fs : Font.FontSet) (lines : Array Layout.LineOut) : Except String Bool := do
   for (a, b) in lines.zip (lines.extract 1 lines.size) do
     let ia ← reach fs a
@@ -59,10 +57,8 @@ def clears (fs : Font.FontSet) (lines : Array Layout.LineOut) : Except String Bo
 
 end ParagraphMathRhythm
 
-/-- Small inline maths must not enlarge an otherwise ordinary line box
-when its measured reach fits the prose envelope. Taller maths must still
-reserve its reach. Assertions read Layout.Out;
-the font environment is the bundled serif family plus a distinct math face. -/
+/-- Small inline maths that fits the prose envelope does not enlarge its line box; taller maths
+reserves its reach. -/
 def paragraphMathRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← serifFacesSet | do
     failures ref "paragraph math rhythm: bundled faces unavailable"

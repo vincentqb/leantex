@@ -48,8 +48,7 @@ private def variables (old : List (String × String)) (style : String) :
   (declarations style).foldl (fun vars (key, value) =>
     if key.startsWith "--" then (key, value) :: vars else vars) old
 
-/-- The light screen's `:root` table: the top-level rules alone, since the
-scheme blocks nested in `@supports` and `@media` restate other screens. -/
+/-- The light screen's `:root` table, top-level rules alone. -/
 private def rootVariables (head : Array Html.Node) : List (String × String) :=
   screenRootVars (head.foldl (fun css node => match node with
     | .style s => css ++ s
@@ -85,10 +84,8 @@ private def artifactPair (fonts : Font.FontSet) (doc : Ir.Doc) : String × Strin
   let (head, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
   (reprStr (layoutOf fonts doc).pages, Html.document "en" head nodes)
 
-/-- An appended colour alias is evaluated at each standout frame's opening
-palette, reaches both direct text and named Beamer colours, and leaves the
-following ordinary frame's aliases alone. These are shipped glyph and typed
-HTML paint assertions, not elaboration snapshots. -/
+/-- An appended colour alias is evaluated at each standout frame's opening palette and leaves the
+next ordinary frame alone. -/
 def standoutPaletteChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let muted : Ir.Color := { r := 0x59, g := 0x66, b := 0x74 }
   let onDark : Ir.Color := { r := 0xA7, g := 0xB7, b := 0xC6 }
@@ -146,8 +143,7 @@ def standoutPaletteChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     check ref s!"standout palette/{name}: patch and callbacks add no paint or ink"
       (artifactPair fonts doc == unchanged)
 
-  -- A bare preamble group already has E0313. A scoped patch must add its
-  -- own refusal once without changing that baseline or installing aliases.
+  -- A bare preamble group already has E0313; a scoped patch adds its own refusal once.
   let (groupPlain, groupPlainDs) := Elab.run "standout-palette.tex" (source theme "{}")
   let (grouped, groupedDs) := Elab.run "standout-palette.tex"
     (source theme ("{" ++ aliasPatch ++ "}"))
@@ -164,8 +160,7 @@ def standoutPaletteChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   check ref "standout palette: accepted hook changes both artifacts"
     (changed.1 != unchanged.1 && changed.2 != unchanged.2)
 
-  -- Alias groups are single operands, even when they contain the native
-  -- declaration separator. They cannot inject a second palette entry.
+  -- Alias groups are single operands, even holding the native declaration separator.
   let (malformed, malformedDs) := Elab.run "standout-palette.tex"
     (source theme (patch "\\colorlet{ProbeMuted,fg}{ProbeOnDark}"))
   check ref "standout palette: malformed alias name uses the shared declaration error"

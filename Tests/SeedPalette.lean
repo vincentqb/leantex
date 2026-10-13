@@ -11,9 +11,8 @@ open LeanTex.Core
 open LeanTex.Cli
 open LeanTex.Cli.World
 
-/-! A palette generated from its seeds: the generator over invented triples
-in both polarities, the deck the native `\palette[seeds]` sets in both
-artifacts, the export a TeX build reads, and the script that writes it. -/
+/-! A palette generated from its seeds: the generator, the native `\palette[seeds]` deck in both
+artifacts, and the export a TeX build reads. -/
 
 namespace Tests.SeedPalette
 
@@ -30,10 +29,8 @@ private def generate (s : LeanTex.Core.SeedPalette.Seeds) (d : Ir.GroundDepth :=
 def deckSeeds : LeanTex.Core.SeedPalette.Seeds :=
   { ink := hex "2B2440", paper := hex "FFFFFF", accent := hex "E85D2A" }
 
-/-- Invented triples, each generating a palette or naming the role that
-cannot meet what its sites owe: an achromatic ink beside a blue accent, a
-warm ink on cream beside teal, dark papers, a yellow and an amber accent, a
-low-chroma accent, and seeds too close to read. -/
+/-- Invented triples each generate a palette or name the role that cannot meet what its sites
+owe. -/
 def tripleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ok : List (String × LeanTex.Core.SeedPalette.Seeds) := [
@@ -66,8 +63,6 @@ def tripleChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"seeds {name}: surface, band and rule stand in that order from the page"
           (Contrast.contrastMilli c.surface s.paper < Contrast.contrastMilli c.surfaceStrong s.paper &&
             Contrast.contrastMilli c.surfaceStrong s.paper < Contrast.contrastMilli c.rule s.paper)
-  -- Seeds that cannot read: the ink no farther from the paper than a grey,
-  -- and an ink the accent's inverse tones cannot meet.
   let bad : List (String × LeanTex.Core.SeedPalette.Seeds) := [
     ("ink near the paper", { ink := hex "8A8A8A", paper := hex "9A9A9A", accent := hex "E85D2A" }),
     ("mid-grey ink", { ink := hex "808080", paper := hex "FFFFFF", accent := hex "E85D2A" }),
@@ -80,9 +75,8 @@ def tripleChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error f =>
       t s!"seeds {name}: the failure names a role and why ({f.detail})" (!f.detail.isEmpty)
 
-/-- A darkening amber turns toward red by the warm turn, never further: its
-accent text's hue stands below the seed's, by at most 20° and the 8-bit
-step's turn. A cool hue holds. -/
+/-- A darkening amber turns toward red by at most 20° and the 8-bit step's turn, and a cool hue
+holds. -/
 def amberChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, accent) in [("amber", "F59E0B"), ("yellow", "FACC15"), ("dark orange", "FF8C00")] do
@@ -104,14 +98,13 @@ def amberChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "warm turn blue: a cool accent's text keeps its hue"
       (hueGap (lchOf g.colors.accentText).2 (lchOf s.accent).2 ≤ 1500)
 
-/-- The digits a value at `labOf`'s 10¹⁸ scale has after the point. -/
+/-- The digits after the point of a value at `labOf`'s 10¹⁸ scale. -/
 private def fraction (v : Int) : String :=
   let s := toString v.natAbs
   String.ofList (List.replicate (18 - s.length) '0') ++ s
 
-/-- `oklch()` and `oklab()` read as CSS Color 4 reads them: an in-gamut value
-round-trips through the 8-bit colour within one step per channel, an
-out-of-gamut one maps at its own hue, and an alpha is refused. -/
+/-- `oklch()` and `oklab()` read as CSS Color 4 reads them, round-tripping within one 8-bit step in
+gamut. -/
 def oklchChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let read (src : String) : Option Ir.Color := do
@@ -149,11 +142,8 @@ private def deckSource (pre : String) : String :=
   "\\begin{exampleblock}{Example}Mike body.\\end{exampleblock}\n" ++
   "\\end{frame}\n\\end{document}"
 
-/-- The deck the native `\palette[seeds]` sets: every block's title band and
-body fill stand at least 1.10:1 apart on the page, each a tint of its
-family's hue with chroma to show it (the grey surface before held 0.002),
-and an `\alert` in a frame title on the ink bar ships in the accent's
-inverse tone, legible there, with nothing to report. -/
+/-- The native `\palette[seeds]` deck tints every block's title band and body 1.10:1 apart in its
+hue, and alerts legibly on the title bar. -/
 def deckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let pre := "\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A }\n" ++
@@ -194,9 +184,8 @@ def deckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
   t "seed deck: the web title's alert reads the inverse role"
     (html.contains (Ir.ColorRef.role .accentOnInverse).property)
 
-/-- A declaration list with every `var()` reference replaced by what the
-root table holds for it (or its fallback), 512 references deep; a
-reference that dangles reads `<dangling>`. -/
+/-- A declaration list with every `var()` reference read through the root table, 512 deep; a
+dangling one reads `<dangling>`. -/
 private def substVars (vars : List (String × String)) (v : String) : String := Id.run do
   let mut cur := v
   for _ in [0:512] do
@@ -230,35 +219,17 @@ private def substVars (vars : List (String × String)) (v : String) : String := 
     | _ => break
   return cur
 
-/-- A page's light-screen rules outside its root table, each selector with
-its declarations' `var()` references read through that table. -/
+/-- A page's light-screen rules outside its root table, their `var()` references read through it. -/
 private def resolvedRules (html : String) : List (String × String) :=
   let css := ((html.splitOn "<style>").getD 1 "").splitOn "</style>" |>.headD ""
   let vars := screenRootVars html
   (artTopCssBlocks css).toList.filterMap fun (sel, decls) =>
     if sel == ":root" then none else some (sel, substVars vars decls)
 
-/-- **The export is the native palette's print projection**: every colour
-the include declares is the colour the native `\palette[seeds]` build
-resolves the role it names to in print, every channel of every beamer element
-it writes (`SeedPalette.beamerChannels`: the text and the canvas, the footline
-and its page number, the alert, the six block elements, the progress bar and
-the title separator) names a colour
-it declares, set at the native build's print colour for the role that
-channel paints, and the code colours `--pygments` writes are the colours the
-native build paints each code role in on the page — the values a TeX build
-consumes. Built from the include, the invented deck, which reads only
-exported roles, ships the native build's PDF bytes and typed HTML body in
-both block styles, and the light screen's rules, read through each
-stylesheet's own root table, are alike but the standout frame's, whose colours
-the include leaves to the beamer theme. What the engine derives at a use site
-is the native build's alone: a generated role's tone on a ground it does not
-read on, a code tone on the palette's own fills, and the web page's focus ring
-(both builds declare it alike here), for the include declares colours, and a
-declared colour ships as declared. -/
+/-- The export is the native palette's print projection, and a deck built from it ships the native
+build's PDF and HTML. -/
 def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- The include's values, role by role and element by element.
   for style in LeanTex.Core.SeedPalette.Blocks.all do
     let some g := (generate deckSeeds).toOption | t "export: the seeds generate" false; return
     let st : LeanTex.Core.SeedPalette.SeedState :=
@@ -293,7 +264,6 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
             | _, _ => false
           t s!"export {style.name}: '{element}' {label} is the native build's print colour"
             (declared && exported.isSome && native == exported)
-    -- The code colours a TeX build's minted reads are the native page's.
     for ls in Ir.ListingStyle.all do
       let exported := CodeExport.pageBrushes (({} : Ir.Palette).applySeeds st) ls
       let native := CodeExport.pageBrushes nd.palette ls
@@ -326,9 +296,6 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
     let (_, nb) := parts nd
     let (_, eb) := parts ed
     t s!"export {style.name}: identical typed HTML body" (nb == eb)
-    -- The light screen's rules, each `var()` read through its own sheet's
-    -- root table, are alike in both builds but the standout frame's, whose
-    -- colours the include leaves to the beamer theme.
     let rules (d : Ir.Doc) := resolvedRules (HtmlDoc.emit {} d).1
     let (rn, re) := (rules nd, rules ed)
     let differ := (rn.zip re).filter (fun (x, y) => x != y) |>.map (·.1.1)
@@ -336,15 +303,8 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
       (rn.length == re.length && rn.length > 100 &&
         differ.all (·.startsWith "section.slide.standout"))
 
-/-- **A generated palette is the palette the seeds make, under what the
-document declares**: a role the document declared before the seeds keeps its
-colour, one declared after replaces the generated colour, and a theme's
-colour gives way to the seeds' (document > generated > bundle); the default
-bundle's colours stay out of a seeded deck, whose rule, progress bar and title
-separator are the seeds' own; a generated role on the standout inversion takes
-its family's tone there, legible, with nothing to report; and `decorative`,
-which a generated palette has nothing to exempt from, is named and ignored.
-Read off the palette both artifacts resolve, `Layout.Out` and the log. -/
+/-- A generated palette is the palette the seeds make, under what the document declares (document >
+generated > bundle). -/
 def seedRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let seeds := "\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A }\n"
@@ -371,7 +331,6 @@ def seedRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
       declared plain .progressTrack == some c.accentSoft && declared plain .separator == some deckSeeds.accent)
   t "seed roles: no colour of the default bundle reaches a seeded deck"
     ((declared plain .standoutGround).isNone && (declared plain .example).isNone)
-  -- A generated role on the standout inversion: its family's tone there.
   let (so, soDs) := elabStr (deck seeds
     "\\begin{frame}[standout]\\alert{Loud} and \\textcolor{muted}{quiet}.\\end{frame}")
   let ground := (Ir.Design.ofPalette so.palette).standout.bg
@@ -386,15 +345,11 @@ def seedRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     "paper = #FFFFFF, accent = #E85D2A }\n") frame)
   t "seed roles: decorative is named once and ignored"
     ((decoDs.filter (·.code == "W0110")).size == 1)
-  -- `decorative` changes nothing a generated palette ships: the two builds
-  -- apart by the option alone install one palette and are judged alike (the
-  -- premise of its W0110).
+  -- Two builds apart by `decorative` alone install one palette: the premise of its W0110.
   let (plainSeeds, plainDs) := elabStr (deck seeds frame)
   t "seed roles: decorative leaves the generated palette and its judgement as they are"
     (decoSeeds.palette == plainSeeds.palette &&
       (decoDs.filter (·.code != "W0110")).map (·.code) == plainDs.map (·.code))
-  -- Every role door, and an author colour named like a role key, before the
-  -- seeds; the seeds' own ink, paper and accent as the latest declarations.
   let kept (pre : String) (r : Ir.Role) (c : Ir.Color) : Bool :=
     declared (elabStr (deck (pre ++ seeds) frame)).1 r == some c
   t "seed roles: an author colour named like a role key keeps no role from the seeds"
@@ -417,8 +372,8 @@ def seedRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (declared themedAfter .ink != some deckSeeds.ink &&
       (themedDs.filter (·.code == "W0348")).size ≥ 1)
 
-/-- Seeds that generate no palette are named once, by the role that fails,
-and stand as the page's text, ground and accent. -/
+/-- Seeds that generate no palette are named once by the failing role, and stand as the page's text,
+ground and accent. -/
 def failureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr (dvDoc
@@ -436,9 +391,8 @@ def failureChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A, blocks = loud }\n" "Text.")
   t "seeds failure: an unknown block style is unreadable" (style.any (·.code == "E0321"))
 
-/-- The script a TeX build's include comes from: it names every exported
-role, the eleven names it wrote before among them, and `--check` exits 0 on
-the include it writes and 1 on a stale one. -/
+/-- The script names every exported role, and its `--check` exits 0 on its own include and 1 on a
+stale one. -/
 def scriptChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tmp := (← IO.FS.realPath (← IO.currentDir)) / ".lake" / "seed-script-check"

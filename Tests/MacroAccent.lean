@@ -8,12 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- An accent consumes its operand without visiting that raw again. The
-composed text keeps the operand's semantic ancestry beneath the accent's
-owners, each invocation once. Native definitions declare the expected tree;
-the whole serialized typed HTML is compared, without dropping attributes,
-roles or whitespace. The shared glyph comparison ignores only run/leaf
-allocation, retaining placement, faces, paint, links and leading. -/
+/-- An accent consumes its operand once, the composed text keeping the operand's ancestry beneath
+the accent's owners. -/
 def macroAccentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   -- Styled controls need distinct faces even when the caller uses oneFace.

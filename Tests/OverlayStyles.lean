@@ -11,8 +11,6 @@ namespace Tests
 def styleAttr (attrs : Array (String × String)) (key : String) : String :=
   ((attrs.find? (·.1 == key)).map (·.2)).getD ""
 
-/-- Read the emitted selector attributes, not the elaborator's selector parser.
-The same numbered-state vocabulary is exercised by OverlaySets. -/
 private def styleActive (attrs : Array (String × String)) (step : Nat) : Bool :=
   if attrs.any (·.1 == "data-steps") then
     (styleAttr attrs "data-steps").splitOn " " |>.contains (toString step)
@@ -21,8 +19,8 @@ private def styleActive (attrs : Array (String × String)) (step : Nat) : Bool :
     let hi := (styleAttr attrs "data-step-last").toNat?
     lo ≤ step && (hi.map fun n => decide (step ≤ n)).getD true
 
-/-- Only the alternation carrier is erased after selecting its branch. Any
-unrelated class, style, accessibility attribute, or link remains observable. -/
+/-- Only the alternation carrier is erased after selecting its branch; every other attribute
+remains. -/
 private def styleCarrierAttrs (attrs : Array (String × String)) :
     Array (String × String) :=
   attrs.filterMap fun (key, value) =>
@@ -35,8 +33,7 @@ private def styleCarrierAttrs (attrs : Array (String × String)) :
 
 mutual
 
-/-- Project the actual typed HTML at one numbered snap. Unlike a text-only
-census, this preserves the selected branch's tags and their attributes. -/
+/-- The typed HTML at one numbered step, keeping the selected branch's tags and attributes. -/
 private def styleAtOne (step : Nat) (acc : Array Html.Node) : Html.Node → Array Html.Node
   | .text s => acc.push (.text s)
   | .style css => acc.push (.style css)
@@ -77,11 +74,8 @@ private def styleUniqueIds (tree : Array Html.Node) : Bool :=
 
 mutual
 
-/-- The only location normalization: remove an explicitly marked, empty
-hoisted anchor and its allowed ID from the original element. Original empty
-label spans remain, as do every other tag and attribute. Nested hoists can
-leave an empty marker with its ID relocated again; those markers also vanish.
-The separate ID census in styleAnchorKey retains missing/duplicate targets. -/
+/-- Removes an explicitly marked, empty hoisted anchor and its allowed id; every other tag and
+attribute remains. -/
 private def styleAnchorOne (allowed : Array String) (acc : Array Html.Node) :
     Html.Node → Array Html.Node
   | .text s => acc.push (.text s)
@@ -109,9 +103,7 @@ private def styleAnchorKey (allowed : Array String) (tree : Array Html.Node) :
   (allowed.map (fun id => (ids.filter (· == id)).size),
     styleTreeKey (styleAnchorList allowed #[] tree.toList))
 
-/-- Only IDs carried by the actual artifact's explicit relocation marker
-may move. An ID moved onto another ordinary element remains an exact-tree
-mismatch, even if its multiplicity is unchanged. -/
+/-- Only ids carried by the artifact's explicit relocation marker may move. -/
 private def styleAnchorsAgree (allowed : Array String)
     (ordinary actual : Array Html.Node) : Bool :=
   let relocated := (elemAttrsList (· == "span") #[] actual.toList).filterMap fun (_, attrs) =>
@@ -142,7 +134,7 @@ private def styleAnchorSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
     (key original != key #[anchor, node (stripped.map fun (k, v) =>
       (k, if k == "href" then "#missing" else v))] &&
       key original != key #[anchor, node (stripped.filter (·.1 != "role"))])
-  t "overlay anchor projection keeps unmarked spans and other anchor markup"
+  t "overlay anchor projection keeps unmarked spans and anchor markup"
     (key original != key #[Html.elem "span" #[] #[("id", "fnref1")], node stripped] &&
       key original != key #[Html.elem "span" #[.text "EXTRA"]
         #[("id", "fnref1"), ("data-alt-anchor", "")], node stripped] &&
@@ -150,7 +142,7 @@ private def styleAnchorSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
         #[("id", "fnref1"), ("data-alt-anchor", ""), ("class", "extra")], node stripped])
   let unmarkedOriginal := #[node attrs, Html.elem "span" #[.text "TEXT"]]
   let unmarkedMove := #[node stripped, Html.elem "span" #[.text "TEXT"] #[("id", "fnref1")]]
-  t "overlay anchor comparison refuses relocation without an explicit marker"
+  t "overlay anchor comparison refuses an unmarked relocation"
     (key unmarkedOriginal == key unmarkedMove &&
       !styleAnchorsAgree #["fnref1"] unmarkedOriginal unmarkedMove)
   t "overlay anchor comparison refuses missing and duplicate marked targets"
@@ -188,9 +180,7 @@ def styleText (out : Layout.Out) : String :=
 def styleCopies (text needle : String) : Nat :=
   (text.splitOn needle).length - 1
 
-/-- The marker has already been held to one copy by styleWitness. Reading its
-shipped glyphs lets a positive assertion distinguish a real style from two
-identically unstyled (or blank) artifacts. Markers contain no spaces. -/
+/-- The shipped glyphs of a marker, which `styleWitness` holds to one copy. -/
 def styleGlyphs (out : Layout.Out) (marker : String) : Array ShippedGlyph :=
   let glyphs := shippedBodyGlyphs out
   match (List.range glyphs.size).find? (fun i =>
@@ -198,9 +188,7 @@ def styleGlyphs (out : Layout.Out) (marker : String) : Array ShippedGlyph :=
   | some i => glyphs.extract i (i + marker.length)
   | none => #[]
 
-/-- Compare shipped pages, including the geometry of decoration rider lines,
-and selected typed HTML. The artificial clock exposes steps after a closed
-range; callers can omit it to test the style command's own frame extent. -/
+/-- Compares shipped pages, decoration rider geometry included, and the selected typed HTML. -/
 private def styleWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label native canonical : String) (steps : Nat) (markers : List String)
     (warning : Bool := false) (clock : Bool := true) :
@@ -256,9 +244,7 @@ private def styleAlt (spec styled body : String) : String :=
 private def styleCall (cmd body : String) (spec : String := "") : String :=
   "\\" ++ cmd ++ (if spec.isEmpty then "" else "<" ++ spec ++ ">") ++ "{" ++ body ++ "}"
 
-/-- The serif quartet distinguishes weight and slant; two regular faces
-add genuinely different sans and mono slots. Tests requesting weight or
-slant use the serif slot. No host font discovery is involved. -/
+/-- The serif quartet plus distinct sans and mono faces, from the shipped fixtures. -/
 private def overlayStyleFonts : IO (Option Font.FontSet) := do
   let some base ← serifFacesSet | return none
   let mut loaded := base.fonts
@@ -280,8 +266,8 @@ private structure StyleFontCase where
   tag : String := "span"
   className : String := ""
 
-/-- Every entry is selected through Elab.argStyles below; this table supplies
-independent artifact expectations, including inherited styles for resets. -/
+/-- Independent artifact expectations for every `Elab.argStyles` entry, inherited styles
+included. -/
 private def styleFontCases : List StyleFontCase :=
   [{ command := "textrm", ambient := "textsf", onFace := 0, offFace := 5, className := "rm" },
    { command := "textsf", onFace := 5, className := "sans" },
@@ -295,9 +281,8 @@ private def styleFontCases : List StyleFontCase :=
    { command := "textnormal", ambient := "textbf", onFace := 0, offFace := 1, tag := "" },
    { command := "emph", ambient := "textit", onFace := 2, offFace := 2, tag := "em" }]
 
-/-- Compare to ordinary documents so the reference cannot duplicate source
-side effects through authored alt branches. The only permitted HTML difference
-is the explicitly marked anchor relocation, held to its ID multiplicity. -/
+/-- Compares against ordinary documents; the only permitted HTML difference is the marked anchor
+relocation. -/
 private def styleEffectWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label native : String) (ordinary : List String) : IO Unit := do
   let t := check ref
@@ -374,9 +359,7 @@ private def styleEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
     (styleCall "texttt" ("\\textcolor<1,3>[RGB]{17,34,51}{" ++ first ++ "}") "2" ++ after)
     [colored ++ after, styleCall "texttt" first ++ after, colored ++ after]
 
-/-- Explicitly repeated notes in one authored arm must survive multiset
-union across alternatives. Reusing an explicit mark here intentionally repeats
-IDs; the unique-ID contract above applies to a single authored occurrence. -/
+/-- Explicitly repeated notes in one arm survive the multiset union across alternatives. -/
 private def styleRepeatedNotes (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let arm (n : Nat) := String.intercalate " "
@@ -400,12 +383,11 @@ private def styleRepeatedNotes (ref : IO.Ref (List String)) (fonts : Font.FontSe
           styleCopies (styleText page) "RepeatProbe7" == count && !glyphs.isEmpty &&
           glyphs.all (fun g => g.glyph > 0 && g.advance > 0))
 
-/-- Conditional mono punctuation is checked against ordinary documents,
-including text below another font/decor wrapper. No alt supplies the oracle. -/
+/-- Conditional mono punctuation matches ordinary documents, under another font or decoration
+wrapper too. -/
 private def stylePunctuationChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let body := "``PUNCT''--A---B... \\uline{``INNER''--C}"
-  -- Keep the frame name independent of the first reveal: the body is the oracle.
   let source (s : String) := deck169Frame
     ("\\frametitle{Punctuation}\n" ++
       styleCall "textrm" ("StartGuard " ++ s ++ " EndGuard") ++ "\n\n\\uncover<3>{ClockMarker}")
@@ -432,14 +414,10 @@ private def stylePunctuationChecks (ref : IO.Ref (List String)) (fonts : Font.Fo
         (styleGlyphs page "PUNCT").all (·.face == if selected then 6 else 0) &&
         styleTagCount html "code" == if selected then 1 else 0)
 
-/-- Native overlay styles retain one body on every step and only select the
-style. All visual claims read Layout.Out or the typed HTML artifact; the
-reference is an explicit alternation through the existing native command. -/
+/-- Native overlay styles keep one body on every step and select only the style. -/
 def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   styleAnchorSelfChecks ref
-  -- Hold the projection's declared blind spot in both directions: only
-  -- inactive alternatives and their carrier attributes disappear.
   let selected := Html.elem "strong" #[.text "PROBE"]
   let carrier := Html.elem "span" #[selected]
     #[("class", "alt alt-set"), ("data-steps", "2 4"), ("hidden", "hidden")]
@@ -449,7 +427,7 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (styleAt 3 #[carrier]).isEmpty)
   let marked := Html.elem "span" #[selected]
     #[("class", "alt alt-set author"), ("data-steps", "2"), ("aria-hidden", "true")]
-  t "overlay style projection keeps unrelated class and accessibility attributes"
+  t "style projection keeps unrelated class and accessibility attributes"
     (styleTreeKey (styleAt 2 #[marked]) == styleTreeKey #[Html.elem "span" #[selected]
       #[("class", "author"), ("aria-hidden", "true")]] &&
       styleTreeKey (styleAt 2 #[marked]) != styleTreeKey #[selected])
@@ -495,8 +473,6 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
           t (label ++ s!": missing step {i + 1}") false
           continue
         decorationCheck (label ++ s!" step {i + 1}") cmd "STYLEPROBE" selected page html
-    -- The operand is a single character adjacent to the selector. A whole
-    -- Raw.word's TeX character-token semantics is a separate compatibility issue.
     let pages ← styleWitness ref fonts ("overlay style adjacent " ++ cmd)
       (guard ("\\" ++ cmd ++ "<2>Q{TAIL}"))
       (guard (styleAlt "2" (styleCall cmd "Q") "Q" ++ "{TAIL}")) 2
@@ -550,8 +526,6 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (scope (styleAlt "2" (styleCall cmd "Q") "Q" ++ "{TAIL}")) 2
       ["StartGuard", "QTAIL", "EndGuard"] (clock := false)
 
-  -- beamerbaseoverlay.sty declares emph with a trailing overlay and
-  -- presentation emphasis forces italic even inside italic text.
   for ambient in ["", "textit"] do
     let scope (body : String) := styleCall "textrm" (guard
       (if ambient.isEmpty then body else styleCall ambient body))
@@ -564,9 +538,6 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
           (·.face == if i == 1 || ambient == "textit" then 2 else 0) &&
           styleTagCount html "em" == (if ambient == "textit" then 1 else 0) +
             (if i == 1 then 1 else 0))
-  -- Beamer's emph is a plain italic wrapper: unlike textit, it does not
-  -- insert font-command corrections. LuaLaTeX box/glyph probes confirm the
-  -- declaration spelling below on either side of adjacent upright text.
   for ambient in ["", "textit"] do
     let scope (body : String) := styleCall "textrm" (guard
       (if ambient.isEmpty then body else styleCall ambient body))
@@ -606,8 +577,6 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
           (((elemAttrsList (· == "span") #[] html.toList).filter fun (_, attrs) =>
             (styleAttr attrs "style").startsWith "color:").size == if selected then 1 else 0)
 
-  -- Each nested selector affects its own style, even when the other style
-  -- is inactive. The linked body and the always-on font survive both arms.
   let inner := "\\href{https://example.org/overlay}{\\textbf{STYLEPROBE}}"
   let innerAlt := styleAlt "1,3" (styleCall "uline" inner) inner
   let nested ← styleWitness ref faceSet "overlay nested link font and selectors"
@@ -641,8 +610,6 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (styleTagCount html "strong" == (if i == 1 || i == 2 then 1 else 0) &&
         styleTagCount html "em" == (if i == 0 || i == 2 then 1 else 0))
 
-  -- Refusing a selector is accounted for once and retains the native
-  -- command's body, as an unsupported explicit alt retains its first arm.
   for spec in ["+-", "2,x"] do
     for cmd in ["sout", "uline", "underline"] ++ Elab.argStyles.map (·.1) do
       let _ ← styleWitness ref faceSet ("overlay refused " ++ cmd ++ " <" ++ spec ++ ">")

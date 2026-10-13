@@ -10,8 +10,7 @@ namespace Tests
 
 namespace MintedSettings
 
-/-- Invented source only. Real tabs, interior blank lines and HTML
-metacharacters must survive the typed artifact's code text. -/
+/-- Tabs, interior blank lines and HTML metacharacters the code text must keep. -/
 def source : String := "A\tB\nAAAA\tC\nAA\tD\tE\n\n  <node>&\"value\""
 
 def listing (options : String := "") (language : String := "text")
@@ -21,7 +20,7 @@ def listing (options : String := "") (language : String := "text")
 
 mutual
 
-/-- Read the code containers the typed artifact actually emits. -/
+/-- The code containers the typed artifact emits. -/
 def preNodesOne (acc : Array Html.Node) : Html.Node → Array Html.Node
   | .text _ | .style _ | .script _ _ => acc
   | n@(.elem tag _ kids) =>
@@ -43,16 +42,14 @@ def preStyle (n : Html.Node) : String :=
     (((attrs.find? (·.1 == "style")).map (·.2)).getD "").replace " " ""
   | _ => ""
 
-/-- Font and tab declarations are on the actual pre element; no stylesheet
-rule sizes code, so its code child inherits the selected size. -/
+/-- Font and tab declarations sit on the pre element, whose code child inherits the size. -/
 def htmlSettings (n : Html.Node) (factor : String) (tab : Nat) (wrap : Bool) : Bool :=
   let s := preStyle n
   hasStr s ("font-size:" ++ factor ++ "em") &&
     hasStr s s!"tab-size:{tab}" &&
     (hasStr s "white-space:pre-wrap" == wrap)
 
-/-- Ignore token paint when comparing settings: syntax highlighting has
-its own tests. Read positions, content, face and size from shipped lines. -/
+/-- Shipped lines' positions, content, face and size, token paint ignored. -/
 def pageSettings (out : Layout.Out) :=
   (bodyLines out).map fun l =>
     (l.x, l.y, metricRunsAt l, l.segs.filterMap fun s => match s with
@@ -78,12 +75,8 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
 
 end MintedSettings
 
-/-- LuaLaTeX (minted 3 / FancyVerb) synthetic probe:
-global < lexer < environment; lexer lookup is case sensitive; groups and
-environments restore defaults; repeated declarations update individual
-keys. `fontsize=\small` selects the step, whereas bare `small` prints
-literal text without changing size and must not silently select a step.
-These checks assert Layout.Out and the typed HTML, never an IR dump. -/
+/-- minted settings resolve global < lexer < environment, scoped and per key, as a LuaLaTeX probe
+shows. -/
 def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some bytes ← findFont | failures ref "minted settings: body fixture font missing"
@@ -129,12 +122,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "minted auto: inherits a scoped named size"
     (hasSize (dvDoc "" ("{\\small\n" ++ code "fontsize=auto" "text" simple ++ "}")) 9)
 
-  -- LuaLaTeX/FancyVerb selects the listing's own size and baseline skip:
-  -- at the article 10pt base, footnotesize is 8/9.5pt, and minted's fvextra
-  -- takes 0.25pt off the space after every source line (`Ir.fvextraLineOverlap`:
-  -- 9.215bp measured), twice after the first (8.966bp); a 10pt body strut
-  -- must not hold these lines at 12pt. Explicit \fontsize keeps its declared
-  -- skip exactly.
+  -- footnotesize is 8/9.5pt; fvextra takes 0.25pt after every source line, twice after the first (`Ir.fvextraLineOverlap`).
   for (step, pt, ratio) in [("normalsize", 10, "1.175"), ("small", 9, "1.194"),
       ("footnotesize", 8, "1.156"), ("scriptsize", 7, "1.107")] do
     let src := dvDoc "" (code ("fontsize=\\" ++ step) "text"
@@ -156,7 +144,6 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
       (MintedSettings.html explicit).1.any fun n =>
         hasStr (MintedSettings.preStyle n) "line-height:13pt;")
   -- A deck magnifies every physical font length by the same stage share.
-  -- Fixed CSS points here left code behind while its surrounding prose grew.
   for ratio in ["169", "43"] do
     let src := "\\documentclass[aspectratio=" ++ ratio ++ "]{slides}\n" ++
       "\\begin{document}\\begin{frame}{}\n{\\fontsize{8pt}{13pt}\\selectfont Intro.\n\n" ++
@@ -205,11 +192,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lst (opts : String) :=
     "\\begin{lstlisting}[" ++ opts ++ "]\n" ++ simple ++ "\n\\end{lstlisting}\n"
   let lstDefaults := "\\lstset{basicstyle=\\ttfamily\\small,tabsize=3,breaklines=true}"
-  -- Listings sets its lines at the size's own skip, minted at fvextra's
-  -- overlap under it, so the comparison is listing against listing; and
-  -- listings wraps with its own 20 pt continuation indent, which minted's
-  -- wrap does not carry, so the global keys are held to the same keys
-  -- stated locally, and to minted's size, tab and wrap.
+  -- Listings and minted differ in skip and wrap indent, so each is compared with its own kind.
   t "listing defaults: basicstyle size/tab/wrap reach both artifacts"
     (same (dvDoc lstDefaults (lst ""))
         (dvDoc "" (lst "basicstyle=\\ttfamily\\small,tabsize=3,breaklines=true")) &&
@@ -287,8 +270,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let realWrap := rendered (narrowLines "Alpha Bravo Charlie Delta Echo\nFoxtrot\nGolf")
   t "minted breaks: a genuinely split declared line still raises W0386"
     ((bodyLines realWrap).size > 3 && realWrap.diags.any fun d => d.kind == .W0386)
-  -- A wrapped source line's continuation keeps the step's own skip; fvextra
-  -- takes its overlap after each source line only, twice after the first.
+  -- A continuation keeps the step's own skip; fvextra's overlap follows each source line only.
   t "minted wrapping: continuation baselines use the selected listing size"
     (let skip := Ir.stepSkip (Ir.stepLead Ir.sizeSkipScale "footnotesize" (Dim.pt 10)) 0
      let gaps := baselinePitches realWrap

@@ -10,12 +10,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- Filename quoting is resolved before either surface chooses an extension.
-LuaLaTeX removes paired quotes even inside a name, trims surrounding spaces
-on names with an extension, and retains a trailing space before an inferred
-extension. Spaces within a name are preserved. The selected
-file must reach the actual PDF and HTML between its neighbours; a missing
-file must name the normalized path at the including source's position. -/
+/-- Filename quoting resolves as LuaLaTeX resolves it before either surface chooses an extension,
+and the file ships between its neighbours. -/
 def quotedInputFilenameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some bytes ← findFont | failures ref "quoted input: missing fixture font"
@@ -94,10 +90,8 @@ def quotedInputFilenameChecks (ref : IO.Ref (List String)) : IO Unit := do
         d.span.any fun sp =>
           sp.file == (dir / "strict fragment.md").toString && sp.pos.line == 3)
 
-/-- Included files use their surface's filename contract and one read-error
-contract. LuaLaTeX's `\input` tries a `.tex` suffix, whereas `\markdownInput`
-honours an explicit extension. Malformed bytes and unreadable paths must
-return diagnostics rather than escape as IO exceptions. -/
+/-- Included files follow their surface's filename contract, and unreadable bytes or paths return
+diagnostics. -/
 def inputFileChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   IO.FS.withTempDir fun dir => do
@@ -131,11 +125,8 @@ def inputFileChecks (ref : IO.Ref (List String)) : IO Unit := do
               (d.span.any (·.file == (dir / name).toString) ||
                 hasStr d.message (dir / name).toString))
 
-/-- An included fragment ships between its neighbours in PDF layout and the
-typed HTML tree. Literal Markdown never becomes TeX input, and losses keep
-the source file and line that can be corrected. Failed on the tree before
-the file reader understood `\markdownInput`, including the empty-file and
-missing-file cases that a nonempty happy-path probe cannot distinguish. -/
+/-- An included markdown fragment ships between its neighbours in both artifacts, its losses at its
+own file and line. -/
 def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
   quotedInputFilenameChecks ref
   inputFileChecks ref
@@ -172,9 +163,7 @@ def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
           t s!"markdown input {label}/{deck}: HTML ships {text}" (hasStr htmlText text)
         t s!"markdown input {label}/{deck}: HTML preserves literal code"
           (hasStr htmlText literal)
-        -- Verbatim spaces are positioned, glyphless runs: the text census
-        -- alone cannot witness them. Compare every run's text, offset and
-        -- width with the same literal written as a native typed listing.
+        -- Verbatim spaces are glyphless runs, so every run's text, offset and width is compared.
         let codeRuns (o : Layout.Out) : Option (Array (Nat × String × Dim.Sp × Dim.Sp)) :=
           ((bodyLines o).find? fun l => hasStr (lineText l) "\\input{never}").map fun l =>
             (lineRuns l).map fun (f, text, x, w) => (f, text, x - l.x, w)
@@ -223,8 +212,7 @@ def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "markdown input: package options do not silently configure another dialect"
       (packageDs.any (·.kind == .W0110))
 
-/-- The lines a written PDF sets, each its runs' text at one baseline, in
-page order: what the file itself states, read back. -/
+/-- The lines a written PDF sets, each its runs' text at one baseline, in page order. -/
 def pdfLineTexts (pdf : ByteArray) : Array String :=
   match readArtifact pdf with
   | .error _ => #[]
@@ -236,11 +224,7 @@ def pdfLineTexts (pdf : ByteArray) : Array String :=
       | none => lines := lines.push (run.y, run.text)
     return lines.map (·.2)
 
-/-- **Markdown included in tex reads its HTML as the markdown read alone
-does.** `\markdownInput` reads through the same `Md.read`, so a note's
-carried break and its refused tags reach the host's two artifacts exactly as
-they reach the note's own: the same lines in the PDF the host writes and in
-the note's, the same typed HTML, and each refusal at the note's own line. -/
+/-- Markdown included in tex reads its HTML as the markdown read alone does. -/
 def markdownInputHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some bytes ← findFont | failures ref "markdown input HTML: missing fixture font"
@@ -268,16 +252,7 @@ def markdownInputHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         && (hostDs.filter (·.kind == .E0390)).all fun d =>
           d.span.any (·.file == (dir / "note.md").toString))
 
-/-- **A disclosure is one construct both artifacts read, and paper sets it
-expanded.** The HTML page ships the platform's element — its summary first,
-then its body inside it, `open` exactly where the markdown's tag carries it —
-so its collapse is the reader's; the page sets the summary as a bold line
-above the body, every word in order, open or not, exactly as its
-bold-summary spelling sets; the print sheet shows the body whether or not it
-was opened; and the markdown twin writes the element back, which its reader
-reads to the same document. No artifact loses anything, so nothing is named:
-in a markdown document, in markdown a tex host includes, and for each
-artifact the driver writes, the twin included. -/
+/-- A disclosure is one construct both artifacts read, and paper sets it expanded. -/
 def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet
@@ -298,22 +273,19 @@ def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr twin (opener ++ "\n<summary>Amber</summary>\n") && (elabMd twin).1.body == doc.body
         && (elabMd twin).2.isEmpty)
     t s!"{opener}: no artifact loses anything, and nothing is named" ds.isEmpty
-    -- A disclosure opening a list item takes the item's marker, as the
-    -- bold-summary spelling's first paragraph does, in a bullet and an
-    -- ordered list.
     for (marker, label) in [("-", "bullet"), ("1.", "ordered")] do
       let pad := String.ofList (List.replicate (marker.length + 1) ' ')
       let item := s!"{marker} {opener}\n{pad}<summary>Amber</summary>\n\n{pad}Cedar\n{pad}</details>\n" ++
         s!"{marker} Birch\n"
       let flat := s!"{marker} **Amber**\n\n{pad}Cedar\n{marker} Birch\n"
-      t s!"{opener}: a disclosure opening a {label} item sets the item's marker beside its summary"
+      t s!"{opener}: a disclosure opening a {label} item takes its marker beside the summary"
         (shippedLinesOf fonts (elabMd item).1 == shippedLinesOf fonts (elabMd flat).1)
   let css := HtmlDoc.baseCss {} (elabMd ("<details>" ++ body)).1
   let print := ((css.splitOn "@media print {").drop 1).headD ""
   t "the print sheet shows a closed disclosure's body and no toggle marker"
     (hasStr ((print.splitOn "\n}\n").headD "") "details::details-content { content-visibility: visible; }"
       && hasStr ((print.splitOn "\n}\n").headD "") "summary { list-style: none; }")
-  t "the driver reports for each artifact it writes, the markdown twin included"
+  t "the driver reports for each artifact, the markdown twin included"
     (DriverAssets.diagnosticOutputs #[.pdf] == #[.pdf]
       && DriverAssets.diagnosticOutputs #[.html] == #[.html]
       && DriverAssets.diagnosticOutputs #[.md] == #[.md]
@@ -322,7 +294,7 @@ def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
     IO.FS.writeFile (dir / "note.md") ("<details>" ++ body)
     let (host, ds) ← elabInputSrc (dir / "host.tex").toString
       (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{note.md}")
-    t "a tex host ships its note's disclosure as the element and names no loss"
+    t "a tex host ships its note's disclosure as the element, no loss"
       (hasStr (docTreeOf host) (element "<details>") && ds.all (·.severity == .note))
 
 end Tests

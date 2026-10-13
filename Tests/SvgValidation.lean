@@ -12,17 +12,15 @@ namespace Tests
 
 open LeanTex.Core
 
-/-- The engine's own drawing of a source's pose as a standalone SVG — what
-an external rasterizer reads to compare two sources' ink. A figure with no
-text needs no faces. -/
+/-- The engine's own drawing of a source's pose as a standalone SVG, for an external rasterizer to
+compare. -/
 def svgNativeDocument (bytes : ByteArray) (atEnd : Bool := false) : Except String ByteArray := do
   let pose ← SvgPoster.pose bytes atEnd
   let fig := (Svg.importTree pose).fig
   pure (GfxSvg.document (fun _ _ => Html.text "") #[] fig).toUTF8
 
-/-- Check the actual converter output, not the outer image box: a PDF
-poster must stretch its own viewBox when placed on the first-frame canvas,
-as the native PDF form does. Browser paint is the companion external oracle. -/
+/-- A converted PDF poster stretches its own viewBox onto the first-frame canvas, as the native PDF
+form does. -/
 def svgPosterCanvasChecks (ref : IO.Ref (List String)) : IO Unit := do
   let poster ← LeanTex.Cli.ImageAssets.pdfSvg svgCanvasPdf .last
   match poster with
@@ -34,12 +32,11 @@ def svgPosterCanvasChecks (ref : IO.Ref (List String)) : IO Unit := do
       let parsed ← IO.Process.output { cmd := "xmllint", args := #["--nonet", "--nocatalogs",
         "--xpath", "boolean(/*[local-name()='svg' and @viewBox='0 0 60 120' and @preserveAspectRatio='none'])",
         file.toString] }
-      check ref "converted PDF poster stretches the selected page to the animation canvas"
+      check ref "the converted poster stretches the selected page to the canvas"
         (parsed.exitCode == 0 && parsed.stdout.trimAscii.toString == "true")
 
-/-- Exercise extension lookup at the driver's one-read capture site.
-Accepted companions publish byte-for-byte; an unsafe or absent companion
-keeps the converted PDF poster. Lowercase retains precedence when both exist. -/
+/-- Companion lookup at the driver's one-read capture site: accepted companions publish
+byte-for-byte, unsupported or absent ones keep the converted poster. -/
 def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
@@ -92,12 +89,7 @@ def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
             pure ((← IO.FS.readBinFile (input / "sequence.SVG")) == bytes)
           else pure true))
 
-/-- **A moving figure's still face never asks the converter.** The engine
-draws the figure whole, so print and reduced motion show the engine's
-drawing of its pose: a converter that fails every SVG it is given, and logs
-each call, is never called, and the page ships the authored animation with
-its still face and no loss. This oracle needs the built CLI, not a mock
-store. -/
+/-- A moving figure's still face never asks the converter. -/
 def svgFailureDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let path := (← IO.getEnv "PATH").getD ""
@@ -139,9 +131,8 @@ exit 19\n"
         | .ok t => (SvgPoster.tracksOne #[] t).isEmpty && !bytesContain poster "<animate"
         | .error _ => false)
 
-/-- A source whose outside resources a drawing would silently discard is
-refused by the native judge before anything draws it. All inputs are
-synthetic and all references missing. -/
+/-- A source whose outside resources a drawing would discard is refused by the native judge before
+anything draws it. -/
 def svgValidationConverterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let rect := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   for (name, body) in [
@@ -150,9 +141,8 @@ def svgValidationConverterChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"SVG route refuses {name} before losing its ink"
       (svgBoundaryError (SvgPoster.pose (svgDocument body) false))
 
-/-- An exporter's external doctype is an identifier, not a request to
-load its DTD. Adding it must retain the drawn figure in both artifacts.
-The actual driver and installed converters witness this boundary. -/
+/-- An exporter's external doctype is an identifier, not a request to load its DTD, and the figure
+still draws in both artifacts. -/
 def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
@@ -205,8 +195,8 @@ def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"SVG doctype {name}: captured source remains unchanged"
         ((← IO.FS.readBinFile (input / "figure.svg")) == bytes)
 
-/-- An external identifier must not supply missing entity values or paint
-defaults. Compare rendered pixels while the owned DTD's defaults change. -/
+/-- An external identifier supplies no entity values or paint defaults, compared by rendered
+pixels. -/
 def svgDtdDependencyChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let dtd := dir / "outside.dtd"
@@ -244,10 +234,8 @@ def svgDtdDependencyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (rasters.size == 5 && !rasters[0]!.isEmpty &&
         (rasters.toList.take 4).all (· == rasters[0]!) && rasters[4]! != rasters[0]!)
 
-/-- The narrow supported subset and its encoded counterexamples, through
-the native judge, and the converter's still face of a moving source. This
-oracle needs librsvg, xmllint and Poppler; it must be invoked explicitly on
-a host providing those tools. -/
+/-- The supported subset and its counterexamples through the native judge; needs librsvg, xmllint
+and Poppler on the host. -/
 def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgPosterCanvasChecks ref
   svgCompanionDriverChecks ref

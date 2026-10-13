@@ -21,8 +21,7 @@ private def annotationCheck (ref : IO.Ref (List String)) (name : String)
     (ok : Bool) : IO Unit :=
   unless ok do ref.modify (name :: ·)
 
-/-- Put the same content in body, caption, picture, and furniture regions.
-The expected document is built independently with source-free content. -/
+/-- The same content in body, caption, picture and furniture regions. -/
 private def annotationDoc (xs : Array Inline) (source : Option Span) : Doc :=
   { head := some xs, foot := some xs, logo := some xs
     headline := some { title := xs, author := xs, institute := xs }
@@ -44,11 +43,8 @@ private def annotationDoc (xs : Array Inline) (source : Option Span) : Doc :=
       .verbatim none "first\nsecond" { source := source, caption := some (1, xs) },
       .picture { shapes := #[.label 0 0 xs { r := 20, g := 30, b := 40 } 1000 .center] }] }
 
-/-- Locations carry diagnostic provenance without adding a semantic leaf,
-changing backend structure, or stopping a generic traversal. Erasure rejoins
-adjacent text inside each semantic region and clears listing provenance.
-The author-font case fails before the generic furniture map includes it.
-These checks can run without the elaborator or layout integration suite. -/
+/-- Locations carry diagnostic provenance without adding a semantic leaf, changing backend structure
+or stopping a generic traversal. -/
 def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := annotationCheck ref
   let span : Span := { file := "invented.tex", pos := { line := 3, col := 5 } }

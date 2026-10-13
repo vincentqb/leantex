@@ -8,10 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Undelimited arguments are substituted before a live replacement text is
-run (TeXbook chapter 20). Each case compares all shipped text and the typed
-HTML's visible text with its literal control, including text after the call.
-The definitions themselves never install the names in their bodies. -/
+/-- Undelimited arguments are substituted before a live replacement text runs, compared against
+literal controls on both artifacts. -/
 def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -61,15 +59,8 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       ("\\ifdefined\\installedprobe Leaked\\else Absent\\fi{} \\installerprobe" ++
         "\\ifdefined\\installedprobe Present\\else Missing\\fi{} \\installedprobe{} Tail")
       "Absent Present Installed Tail"
-  -- LuaLaTeX takes Different for significant replacement spaces (also
-  -- inside groups) and for a paragraph versus a space. Positions, runs of
-  -- horizontal whitespace and whitespace ending a control word do not count.
-  -- Read the chosen branch from both artifacts: trimming their whitespace
-  -- cannot hide a wrong comparison of whitespace in the stored definitions.
-  -- A blank line after a control word equals explicit \par; after a
-  -- character its first end-of-line also supplies a space before \par.
-  -- Three newlines make two paragraph tokens, with that initial space
-  -- only after a character (LuaLaTeX; TeXbook chapter 8).
+  -- LuaLaTeX counts significant replacement spaces and a paragraph against a space as different; positions and whitespace runs do not count.
+  -- A blank line after a control word is `\par`; after a character it is a space and `\par`.
   for (label, left, right, expected) in #[
       ("ifx leading space", " #1", "#1", "Different"),
       ("ifx trailing space", "#1 ", "#1", "Different"),
@@ -92,8 +83,7 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       ("ifx control symbol space", "\\! #1", "\\!#1", "Different")] do
     page label ("\\def\\firstprobe#1{" ++ left ++ "}\\def\\secondprobe#1{" ++ right ++ "}")
       "\\ifx\\firstprobe\\secondprobe Same\\else Different\\fi{} Tail" (expected ++ " Tail")
-  -- Binding can split a run of character tokens across Raw.word nodes.
-  -- LuaLaTeX still compares the installed text with literal ab as Equal.
+  -- Binding may split a character run across `Raw.word` nodes; LuaLaTeX still reads it as equal.
   page "ifx expanded adjacent words"
     ("\\def\\installerprobe#1{\\def\\firstprobe{a#1}}" ++
       "\\installerprobe{b}\\def\\secondprobe{ab}")
@@ -104,11 +94,7 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     "\\branchprobe{12} Tail" "Hit Tail"
   page "argument newline" "\\def\\branchprobe#1#2{\\ifnum#1=1 #2\\else Miss\\fi}"
     "\\branchprobe 1\n{Hit} Tail" "Hit Tail"
-  -- Significant parameter spaces are delimiters (TeXbook chapter 20).
-  -- LuaLaTeX ships Hit Tail for each call below. Our declared boundary is
-  -- whole-definition refusal, W0357, with the call's arguments preserved:
-  -- neither the conditional nor a nested definition may execute. A nested
-  -- body belongs to that one refusal, never an additional W0104.
+  -- Parameter spaces are delimiters; the engine refuses the whole definition (W0357), keeping the call's arguments.
   let refused (label pre body expected : String) (called : Bool) : IO Unit := do
     let source := dvDoc pre body
     let (doc, ds) := elabStr source
@@ -140,8 +126,7 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   refused "delimited nested definition invoked" delimitedInstall
     "\\installerprobe Value!\\ifdefined\\installedprobe Present\\else Missing\\fi{} Tail"
     "Value Missing Tail" true
-  -- A parameterized numeric macro is not a constant. The conditional
-  -- reader must not consume its body without the argument TeX would read.
+  -- A parameterized numeric macro is no constant: its body needs the argument TeX would read.
   let unknown := dvDoc "" "\\def\\numberprobe#1{1}\\ifnum\\numberprobe=1 Bad\\else Other\\fi"
   t "macro arguments: a numeric macro with unbound arguments stays unread"
     ((elabStr unknown).2.all (·.code != "N0114"))

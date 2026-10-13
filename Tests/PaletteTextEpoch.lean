@@ -41,12 +41,7 @@ private structure Ink where
   color : Option String
   ownerColor : Option String
 
--- Inspect inherited concrete paint in the typed artifact. A custom property
--- alone does not repaint an inherited CSS color; the browser witness checks
--- that distinction against the same layout runs.
--- A colour an element states through its roles is read as the light screen
--- reads it: its `var()` chain through the custom properties in scope and any
--- `light-dark()` pair on its light side (`lightValue`).
+-- A stated colour is read as the light screen reads it: its `var()` chain and `light-dark()` light side.
 mutual
   private def htmlInksIn (vars : List (String × String)) (color ownerColor : Option String)
       (out : Array Ink) : List Html.Node → Array Ink
@@ -79,8 +74,7 @@ private def epochLineForeground (out : Layout.Out) (marker : String) : Option Ir
       | _ => none
     colors[0]?.filter fun color => colors.all (· == color)
 
-/-- Read the marked source glyphs, excluding generated list markers and
-furniture. A paragraph wrapper is optional; its source ink is not. -/
+/-- The foreground of the marked source glyphs, generated list markers and furniture excluded. -/
 private def markerForeground (out : Layout.Out) (marker : String) : Option Ir.Color :=
   let colors := out.pages.flatMap (·.lines) |>.filter (! ·.furniture) |>.flatMap fun line =>
     line.segs.filterMap fun seg => match seg with
@@ -99,10 +93,8 @@ private def listSource (env : String) : String :=
 
 private def para (text : String) : Ir.Block := .para #[.text text]
 
-/-- Palette declarations follow the same flow boundaries as PDF layout.
-The list cases exercise source elaboration and paragraph elision;
-the remaining cases cross the ordinary container exits and the isolated
-column/note boundaries. Each assertion reads the emitted artifacts. -/
+/-- Palette declarations follow the same flow boundaries as PDF layout, read off the emitted
+artifacts. -/
 private def containerEpochChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let brown : Ir.Color := { r := 128, g := 64, b := 0 }
@@ -156,10 +148,8 @@ private def containerEpochChecks (ref : IO.Ref (List String))
       check ref s!"palette scope/{name}: HTML {marker}"
         (ink.size == 1 && ink.all (·.color == some expected))
 
-/-- Foreground epochs repaint inherited plain, math and code ink after a
-body exit and in ordinary flow. Erasing the foreground repaints the shared
-default. The guard compares actual typed HTML leaves with shipped layout
-runs; neither a palette snapshot nor a CSS token by itself can pass it. -/
+/-- Foreground epochs repaint inherited plain, math and code ink after a body exit and in ordinary
+flow. -/
 def paletteTextEpochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let brown : Ir.Color := { r := 128, g := 64, b := 0 }
   for body in [true, false] do
@@ -181,9 +171,6 @@ def paletteTextEpochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       let pdf := epochLineForeground out marker
       check ref s!"palette text epoch/{name}: layout {marker}"
         (pdf == some expected)
-      -- An erased foreground repaints the shared default: the PDF's printed
-      -- ink, and on the light screen the screen's own, as every undeclared
-      -- word there reads.
       let screen := if expected == Ir.Color.black then
           Ir.Design.at { classColors := doc.palette.classColors } .light .ink
         else pdf

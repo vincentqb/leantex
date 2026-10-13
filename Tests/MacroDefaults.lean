@@ -8,10 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- LaTeX's optional first argument is selected and substituted before a
-replacement text runs. Definitions and defaults remain inert until use;
-an explicit empty argument differs from an omitted one. The witnesses read
-both artifacts, including the source after each call. -/
+/-- LaTeX's optional first argument is selected and substituted before a replacement text runs, and
+an explicit empty argument differs from an omitted one. -/
 def macroDefaultChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let page (label pre body expected : String) : IO Unit :=
@@ -136,11 +134,8 @@ def macroDefaultChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       "\\newcommand\\textprobe[1][\\choiceprobetrue]{\\ifchoiceprobe T\\else F\\fi#1\\ifchoiceprobe T\\else F\\fi}")
     "\\textprobe" "FT"
 
-/-- A deferred call observes the state at its execution phase. Settlement,
-refusal recovery and delimiter recovery must preserve that same boundary.
-LaTeX's opening ignore-space scan stops at a nonexpandable command, even
-when compatibility later removes that command. These guards compare both
-complete artifacts with controls, including their internal whitespace. -/
+/-- A deferred call observes the state at its execution phase, through settlement and both
+recoveries. -/
 def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -214,10 +209,7 @@ def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         r"\IfClassLoadedTF{article}{}{Hidden} /T", "T/T"),
       ("paragraph stops scan", r"\AtBeginDocument{T}", r"\par/T", "T\\par/T")] do
     same ("macro phase whitespace " ++ label) (article pre body) (article "" expected)
-  -- The kernel's \space is an expandable, zero-argument space. It cannot
-  -- claim a following bracket as an option, and its copied meaning scopes.
-  -- Declare the optional calls' roles through native identities, without
-  -- reproducing the TeX lookahead or moving the following space into a call.
+  -- The kernel's \space is an expandable zero-argument space and claims no following bracket.
   same "macro kernel space optional lookahead"
     (article
       r"\newcommand{\probe}[1][D]{(#1)}\def\probeOption{[E]}\let\?\probe"
@@ -242,8 +234,7 @@ def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   same "macro kernel space following refusal stays named"
     (article "" r"A\space[\unreadspaceprobe{Y}]B")
     (article "" r"A [\unreadspaceprobe{Y}]B") ["W0301"]
-  -- A style value is reparsed after definitions enter the elaborator.
-  -- That fragment inherits their names, never a fresh kernel meaning.
+  -- A style value is reparsed after definitions enter, so it inherits their names.
   for definer in [r"\def\space{Q}", r"\define\space(){Q}"] do
     let style (marker : String) :=
       definer ++ r"\style{itemize}{marker={" ++ marker ++ "}}"

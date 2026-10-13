@@ -16,10 +16,8 @@ private def property (styles key : String) : Option String :=
     | [k, v] => if k.trimAscii.toString == key then some v.trimAscii.toString else old
     | _ => old) none
 
-/-- Read only the emitted nested `var(--key, fallback)` colour grammar.
-Reconstruction rejects anything outside that grammar instead of silently
-normalizing it. Variables in these probes are concrete palette colours;
-browser computed-style checks independently witness the cascade. -/
+/-- A colour read through the emitted nested `var(--key, fallback)` grammar, refusing anything
+outside it. -/
 private def colorValue (vars : Ir.Palette) (value : String) : Option Ir.Color := do
   let choices := ((value.replace "var(" "").replace ")" "").splitOn ","
     |>.map (·.trimAscii.toString)
@@ -34,9 +32,8 @@ private def colorValue (vars : Ir.Palette) (value : String) : Option Ir.Color :=
         (({} : Ir.Palette).resolveSource none key).toOption.join
       else none
 
-/-- One pass of custom-property declarations over a scope's variables, in
-order: a later declaration of a name replaces an earlier one, `initial`
-removes it. -/
+/-- One pass of custom-property declarations over a scope's variables, later replacing earlier and
+`initial` removing. -/
 private def variablesPass (inherited : Ir.Palette) (style : String) : Ir.Palette :=
   (style.splitOn ";").foldl (fun vars decl =>
     match decl.splitOn ":" with
@@ -52,13 +49,12 @@ private def variablesPass (inherited : Ir.Palette) (style : String) : Ir.Palette
           | none => vars
     | _ => vars) inherited
 
-/-- A scope's custom properties as the cascade computes them: an alias may
-name a property declared after it in the scope, so the passes repeat until
-every alias the registry's strata allow has resolved. -/
+/-- A scope's custom properties as the cascade computes them, passes repeated until every alias
+resolves. -/
 private def variables (inherited : Ir.Palette) (style : String) : Ir.Palette :=
   (List.range 4).foldl (fun vars _ => variablesPass vars style) inherited
 
-/-- The page's own `:root` properties, light scheme: the top-level rules. -/
+/-- The page's own light-scheme `:root` properties, top-level rules only. -/
 private def rootVars (css : String) : Ir.Palette :=
   variables {} (String.intercalate ";" (cssRulesOf css ":root"))
 
@@ -78,10 +74,8 @@ private def sheet (cfg : HtmlDoc.Config) (doc : Ir.Doc) : String :=
   let (head, _, _) := HtmlDoc.emitTree cfg doc
   treeCssList "" head.toList
 
-/-- Artifact invariant: native furniture fallbacks project `Design` even
-when a palette omits a channel. Removing a flow ground preserves absence
-when no native surface exists; declared CSS tokens and author rules retain
-their priority. This reads the CSS and elements actually shipped. -/
+/-- Native furniture fallbacks project `Design` even when a palette omits a channel, declared tokens
+and author rules keeping priority. -/
 public def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let dark : Ir.Color := { r := 21, g := 38, b := 55 }
@@ -105,8 +99,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     for (key, role) in [("background", Ir.Role.standoutGround), ("color", .standoutInk)] do
       t s!"theme CSS/{name}: standout {key} projects the resolver"
         (ruleColor css "section.slide.standout" key (rootVars css) == light role)
-    -- Add only the activating ground: the absent ink must inherit by the
-    -- same rule the shared design declares.
+    -- Add only the activating ground: the absent ink inherits by the shared design's rule.
     let pal := (pal.declareKey "frametitlebg" dark).declareKey "titlepagebg" dark
     let css := sheet {} (probe pal)
     let light (r : Ir.Role) := Ir.Design.at pal .light r
@@ -125,8 +118,6 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     .setPalette empty, .para #[.text "RESET"]] }
   for mode in [HtmlDoc.CssMode.own, .none, .bulma] do
     let (head, body, _) := HtmlDoc.emitTree { css := mode } reset
-    -- The light screen's reading of each style: a restated default reads
-    -- the screen's page in every scheme the page ships.
     let roots := screenRootVars (treeCssList "" head.toList)
     let styles := (elemStylesList #[] body.toList).map fun (x, style) =>
       (x, lightStyleAll roots style)
@@ -151,18 +142,12 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "theme CSS: the author's rule remains last"
     (treeCssList "" head.toList |>.endsWith author)
   let bulma := sheet { css := .bulma } (probe empty)
-  -- Bulma's primary reads a declared sheet's or the document's `--primary`
-  -- first, as it did before the registry, then the focus role's own
-  -- property, so an override of either reaches it; the property is the
-  -- registry's.
   t "theme CSS: Bulma's default accent is the native contrast palette"
     (property (String.intercalate ";" (cssRulesOf bulma ":root")) "--bulma-primary" ==
         some "var(--primary, var(--ltx-accent))" &&
       ruleColor bulma ":root" "--ltx-accent" empty == Ir.Design.at empty .light .focus)
 
-/-- A palette declared inside a structural scope still belongs to the frame
-it precedes. These authored scopes take different generic emitter paths;
-the nested scope also carries the epoch through another element. -/
+/-- Palettes declared inside structural scopes, each belonging to the frame it precedes. -/
 private def wrappedEpochSources : List (String × String) :=
   [("conditional", "\\begin{ifbackend}{html,pdf}\n", "\\end{ifbackend}\n"),
    ("centered", "\\begin{center}\n", "\\end{center}\n"),
@@ -183,11 +168,8 @@ private def wrappedEpochSources : List (String × String) :=
           (if background then "\\palette{bg=#E0E8F0}\n" else "\\palette{fg=#503010}\n") ++
           frame ++ stop ++ "\\end{document}\n")
 
-/-- Authored palette epochs before each kind of frame. The first frame
-remains in the opening palette; the second carries the changed palette.
-A separate revealed paragraph (the subtitle on a title page) exercises
-the stepped path without changing the marked text's own ink. Structural
-scopes must preserve the same paint ownership as the direct path. -/
+/-- Palette epochs before each kind of frame: the first frame in the opening palette, the second in
+the changed one. -/
 public def epochSources : List (String × String) :=
   let direct := ("" :: Theme.builtin.map (·.name)).flatMap fun theme =>
     [false, true].flatMap fun background =>
@@ -219,11 +201,7 @@ private structure StagePaint where
   ink : Option Ir.Color
   deriving BEq
 
--- This small cascade reader handles the stage selectors the emitter ships:
--- the shared stage rule, the more specific frame kind, then inline paint.
--- Variables inherit through a slide track, but its computed color does not
--- override a declaration on the child stage. Chromium independently checks
--- the same authored artifacts in screen and print media.
+-- The stage cascade: the shared stage rule, the frame kind, then inline paint; a track's colour never overrides its stage's.
 mutual
   private def stagePaints (css : String) (vars : Ir.Palette) (acc : Array StagePaint) :
       List Html.Node → Array StagePaint
@@ -253,8 +231,8 @@ mutual
     | .text _ | .style _ | .script .. => acc
 end
 
-/-- Read the full-page fill and actual glyph ink of the marked frame from
-native output. Every revealed page must agree; an absent fill stays absent. -/
+/-- The marked frame's full-page fill and glyph ink from native output, agreeing on every revealed
+page. -/
 public def epochNativePaint (out : Layout.Out) (doc : Ir.Doc) (marker : String) :
     Option (Option Ir.Color × Ir.Color) := do
   let geom := Layout.Geom.ofPage doc.page
@@ -275,12 +253,8 @@ public def epochNativePaint (out : Layout.Out) (doc : Ir.Doc) (marker : String) 
     let paint ← paints.head?
     if paints.all (· == paint) then some paint else none
 
-/-- A body palette declaration must reach the frame's own paint resolver.
-Ordinary page paint must not override a standout/title surface, irrespective
-of whether the stage stands alone, inside an overlay track, or within
-structural scopes. Compare the
-typed artifact's effective stage paint with shipped native page/glyph paint,
-and retain the author's later rules at the same selectors. -/
+/-- A body palette declaration reaches the frame's own paint resolver, and ordinary page paint never
+overrides a standout or title surface. -/
 public def epochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (name, source) in epochSources do
     let (doc, ds) := Elab.run "theme-epoch.tex" source

@@ -7,9 +7,8 @@ public section
 open LeanTex.Core LeanTex.Core.Dim
 open LeanTex.Core.PdfRead (Obj)
 
-/-- Resolve the link's destination through the actual PDF page references.
-An annotation holding a URI fragment is not an internal PDF destination
-(ISO 32000-2 §§12.3.2, 12.6.4.2). -/
+/-- The link's destination resolved through the PDF's page references; a URI fragment is no internal
+destination. -/
 private def linkDestination (pdf : ByteArray) :
     Except String (Option (Nat × Array Obj)) := do
   let es ← PdfRead.objects pdf
@@ -35,10 +34,8 @@ private def pageGeometry (out : Layout.Out) :=
   out.pages.map fun p => p.lines.filterMap fun l =>
     if l.furniture then none else some (l.x, l.y, l.setWidth, lineText l)
 
-/-- A target is zero-ink metadata tied to the line that actually ships it.
-Links before the target, a target in a continued paragraph, and targets in
-columns all navigate using the final page order. The guard reads PDF objects,
-not the writer's URL field; target neutrality is checked on shipped lines. -/
+/-- A target is zero-ink metadata tied to the line that ships it, and every link navigates by the
+final page order. -/
 def pdfDestinationChecks (ref : IO.Ref (List String))
     (fs : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -96,8 +93,7 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
       (match dest, line with
        | .ok (some (_, ds)), some line =>
          let geom := Layout.Geom.ofPage doc.page
-         -- PDF coordinates are rounded to a millipoint, independently read
-         -- from the emitted numeric objects; the line is from the bare control.
+         -- PDF coordinates round to a millipoint; the expected line comes from the bare control.
          let tolerance := (spPerPt + 999) / 1000
          ds[1]? == some (.name "XYZ") && ds[4]? == some .null &&
            (match ds[2]?.bind Obj.sp?, ds[3]?.bind Obj.sp? with
@@ -107,8 +103,6 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
                   (Layout.segsInk fs line.segs).1)).natAbs ≤ tolerance.toNat
             | _, _ => false)
        | _, _ => false)
-  -- A markdown target is the same resolving site: the empty `<a>` the reader
-  -- reads lowers to `\hypertarget`, and a fragment link reaches its page.
   let filler := String.join (List.replicate 60 "Earlier words fill the page.\n\n")
   let (mdoc, mds) := elabMd ("[Jump to target.](#destination)\n\n" ++ filler ++
     "<a name=\"destination\"></a>TARGET words.\n")

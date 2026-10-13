@@ -6,14 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- The document's own reference list, `thebibliography` (classes.dtx),
-against its citations: resolved with no `.bib` file requested. Kernel
-numbering — the list counter steps only for an entry without a label
-(latex.ltx `\@bibitem` against `\@lbibitem`), so `\bibitem[X]` cites as X
-and the next unlabelled entry takes the next number; natbib's author-year
-labels (`Knuth(1984)`) cite as names and year; a key no entry answers is
-W0351. The checks read the resolved IR (`Bib.apply` with no sources, as a
-build runs it) and the shipped page. -/
+/-- The document's own `thebibliography` resolves its citations with no `.bib` file, numbered as the
+kernel numbers it. -/
 def ownBibChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let doc (pre body : String) :=
@@ -27,7 +21,7 @@ def ownBibChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .para xs => Ir.plainText xs
     | _ => ""
   t "thebibliography requests no .bib file" (Ir.bibRefs d0).isEmpty
-  t "thebibliography's citations resolve, with no diagnostic but newblock's note"
+  t "thebibliography resolves with no diagnostic but newblock's note"
     ((ds0 ++ ds).all (·.severity == Severity.note))
   t "kernel numbering: a label cites as written and steps no counter"
     ((d.body[0]?.map paraText) == some "Citing [1] and [X, 2].")

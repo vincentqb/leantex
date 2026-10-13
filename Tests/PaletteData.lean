@@ -8,13 +8,7 @@ open LeanTex.Core
 
 namespace Tests.PaletteData
 
-/-- **The kept palettes are the generator's own answers**: each class
-default palette in each screen scheme beside the class's seeds as the scheme
-carries them, each shipped bundle's generated palette in each screen scheme,
-and each colour a bundle derives from a lineage colour, as `PaletteData`
-keeps them, equals a fresh derivation (`SeedPalette.generate`,
-`ContrastSolve.realizeNearest`), and every value a bundle realizes is kept,
-so no build derives a constant again and none reads a stale one. -/
+/-- The kept palettes are the generator's own answers, and every value a bundle realizes is kept. -/
 def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let depths : List Ir.GroundDepth := [.documents, .decks]

@@ -2,9 +2,8 @@ module
 
 import LeanTex.Core.Parse
 
-/-! Ordinary consumers use the raw tree, readers, source spelling, wrappers,
-and provenance contracts. Delimiter state and scanning helpers stay private.
-Only the reductions used by Compat and Elab belong to the interface. -/
+/-! Ordinary consumers use the raw tree, readers, source spelling, wrappers and provenance
+contracts; scanning state stays private. -/
 
 open LeanTex.Core
 open LeanTex.Core.Parse
@@ -81,7 +80,6 @@ example (name : String) (p : Pos) :
 example (raws : Array Raw) (i : Nat) (h : raws.size ≤ i) : skipSpaces raws i = i := by
   rw [skipSpaces.eq_def]
   simp only [show ¬ i < raws.size from Nat.not_lt_of_ge h, dite_false]
--- Elab's scanning contract uses the exported functional induction principle.
 example (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raws i := by
   fun_induction skipSpaces raws i <;> omega
 

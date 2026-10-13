@@ -6,9 +6,8 @@ import LeanTex.Core.ColorContract
 import LeanTex.Core.BibContract
 import LeanTex.Core.MarkdownDoc
 
-/-! Presentation consumers use theme values, colour resolution, and the
-Markdown emitter. Installation accumulators and serialization helpers are
-private; contracts remain available through ordinary imports. -/
+/-! Presentation consumers use theme values, colour resolution and the Markdown emitter; their
+helpers stay private. -/
 
 open LeanTex.Core
 open LeanTex.Core.Ir

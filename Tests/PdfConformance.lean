@@ -8,29 +8,10 @@ public section
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open LeanTex.Core.PdfRead (Obj Entry)
 
-/-! # The PDF conformance gate
+/-! The PDF conformance gate: the reference walk, determinism and the reader matrix, over the
+written bytes. -/
 
-Three judgements over the bytes `Pdf.write` emits, none of them a reading
-of the writer's intent. The reference walk follows every edge of the
-written graph — trailer `/Root` and `/Info`, catalog, page tree, contents,
-fonts down to their programs, XObjects and their soft masks, a form's own
-resources, metadata, outlines, annotations — through `PdfRead.objects`, so
-an id the cross-reference does not list, or one at or past the trailer's
-`/Size`, is refused by name. The determinism row is the one checker behind
-"the artifact is a function of the document": the same inputs write the
-same bytes, and no date or absolute path is among them. The matrix gate
-reads `testdata/oracles/reader-matrix.txt` the way a golden is read: the
-file's own `target:` line names the readers a feature must `pass` on, and
-`untested` or `fail:*` in a target column fails; a column off the target
-line gates nothing, and what this host has installed is never asked. The
-features a fixture reaches come from the writer's own typed census
-(`Pdf.features`, over the inputs `write` reads — `features_mem` closes
-the row set), checked here against a parsed reading of the written
-objects, so a feature the writer starts emitting enters the matrix as a
-row with no `pass`, and the fixture that reaches it fails by name. -/
-
-/-- What a reference is expected to name, so the walk knows which keys to
-follow from the object it reaches. -/
+/-- What a reference is expected to name, which selects the keys the walk follows. -/
 inductive Role where
   | catalog
   | pagesNode
@@ -39,9 +20,7 @@ inductive Role where
   | xobject
   | outlineNode
   | annot
-  /-- A structure tree node: the root or an element (ISO 32000-2 §14.7.2). -/
   | structNode
-  /-- The parent tree's number tree (§14.7.5.4). -/
   | parentTree
   | leaf
   deriving BEq, Repr
@@ -58,10 +37,7 @@ def Role.name : Role → String
   | .parentTree => "parent tree"
   | .leaf => "stream"
 
-/-- The references a resources dictionary names, one level: the
-dictionary itself when it is shared (indirect, ISO 32000-2 §7.7.3.3), its
-`/Font` and `/XObject` entries, and the ExtGStates, patterns and shadings a
-figure names (each a direct dictionary or one hop). -/
+/-- The references a resources dictionary names, one level deep. -/
 def resourceRefs (es : Array Entry) (res : Obj) : Array (Role × Nat) := Id.run do
   let mut out : Array (Role × Nat) := match res with
     | .ref n _ => #[(.leaf, n)]
@@ -76,8 +52,7 @@ def resourceRefs (es : Array Entry) (res : Obj) : Array (Role × Nat) := Id.run 
     | _ => pure ()
   return out
 
-/-- The references one object names under its role. Direct values are
-descended here, eagerly, so only references enter the worklist. -/
+/-- The references one object names under its role, direct values descended eagerly. -/
 def edgesOf (es : Array Entry) (role : Role) (o : Obj) : Array (Role × Nat) := Id.run do
   let mut out : Array (Role × Nat) := #[]
   let push (r : Role) (v : Option Obj) : Array (Role × Nat) → Array (Role × Nat) :=
@@ -124,7 +99,6 @@ def edgesOf (es : Array Entry) (role : Role) (o : Obj) : Array (Role × Nat) := 
     if let some (.arr xs) := o.get? "Dest" then
       out := push .pagesNode xs[0]? out
   | .structNode =>
-    -- Kids: element references, or marked-content references naming a page.
     match o.get? "K" with
     | some (.arr xs) =>
       for x in xs do
@@ -152,20 +126,15 @@ def edgesOf (es : Array Entry) (role : Role) (o : Obj) : Array (Role × Nat) := 
   | .leaf => pure ()
   return out
 
-/-- What the walk found: every object id reached from the trailer, in
-visiting order, and every listed object it never reached that is not the
-file's own bookkeeping (an object or cross-reference stream). -/
+/-- Every object id reached from the trailer, in visiting order, and every listed non-bookkeeping
+object never reached. -/
 structure Walk where
   visited : Array Nat
   unreached : Array Nat
   deriving Repr
 
-/-- The reference walk over a read file: from the trailer's `/Root` and
-`/Info`, every edge `edgesOf` names, each reference checked to land on a
-listed object below `/Size`. A visited set over the ids makes back-edges
-(`/Parent`, `/Prev`) no-ops; the loop is bounded by the entry count, and
-a worklist still holding work past it can only be naming ids the table
-does not list. -/
+/-- The reference walk from the trailer's `/Root` and `/Info`, each reference checked to land on a
+listed object below `/Size`. -/
 def refWalk (trailer : Obj) (es : Array Entry) : Except String Walk := Id.run do
   let size? := ((trailer.get? "Size").bind Obj.int?).map (·.toNat)
   let mut work : Array (Role × Nat × String) := #[]
@@ -193,9 +162,6 @@ def refWalk (trailer : Obj) (es : Array Entry) : Except String Walk := Id.run do
         return .error s!"reference walk: {via} names object {n}, at or past the trailer's /Size {size}"
     let some e := es.find? (·.num == n)
       | return .error s!"reference walk: {via} names object {n}, which the cross-reference does not list"
-    -- A reached stream under the filters the reader owns decodes, or the
-    -- reference resolves to bytes no reader can use; a foreign filter (an
-    -- image's DCT) is data the census records, not a decode.
     if (PdfCensus.filtersOf e.val).all (· == "FlateDecode") then
       if let .error err := e.decoded then
         return .error s!"reference walk: object {n} ({via}): {err}"
@@ -214,14 +180,10 @@ def refWalk (trailer : Obj) (es : Array Entry) : Except String Walk := Id.run do
       | _ => some e.num
   return .ok { visited, unreached }
 
-/-- The walk over a file's bytes: `PdfRead.objects` first (every object
-under its spelled number, `objects_num_covers`), then the graph. -/
 def walkPdf (pdf : ByteArray) : Except String Walk := do
   let es ← PdfRead.objects pdf
   let trailer ← PdfRead.trailer pdf
   refWalk trailer es.val
-
--- ## The reader matrix
 
 /-- One matrix cell: `pass`, `fail:<reason>`, or `untested`. -/
 inductive Verdict where
@@ -241,9 +203,8 @@ def Verdict.render : Verdict → String
   | .untested => "untested"
   | .fail r => s!"fail:{r}"
 
-/-- `testdata/oracles/reader-matrix.txt`, parsed: the target readers, the
-reader columns of the `[feature]` section, its rows, and the `[profile]`
-rows keyed by (profile, fixture). `tools:` and `date:` are not read. -/
+/-- The parsed reader matrix: target readers, feature columns and rows, and `[profile]` rows keyed
+by profile and fixture. -/
 structure Matrix where
   target : Array String
   readers : Array String
@@ -301,9 +262,8 @@ def readMatrix (text : String) : Except String Matrix := do
   if readers.isEmpty then throw "reader matrix: no reader columns"
   return { target, readers, features, profiles }
 
-/-- The matrix gate: every feature named must be `pass` on every reader
-the file's `target:` line names. Each failure names the feature, the
-reader, and the cell; a reader off the target line is never consulted. -/
+/-- Every named feature must be `pass` on every reader the `target:` line names; each failure names
+feature, reader and cell. -/
 def featureGate (m : Matrix) (features : List String) : Array String := Id.run do
   let mut out : Array String := #[]
   for f in features do
@@ -314,18 +274,10 @@ def featureGate (m : Matrix) (features : List String) : Array String := Id.run d
       | none => out := out.push s!"{f} on {r}: no cell"
   return out
 
-/-- The `[profile]` cell for a profile on a fixture. -/
 def Matrix.profile (m : Matrix) (profile fixture : String) : Option Verdict :=
   (m.profiles.find? fun (p, f, _) => p == profile && f == fixture).map (·.2.2)
 
-/-- The features a produced file spells for itself (raw bytes with every
-flate stream inflated beside them, `pdfText`): the spelled oracle of the
-typed census. `copiedGraph` has no spelling of its own — its objects are
-another producer's — `objStmMulti` is a count of streams, not a spelling,
-a transparency group's spelling can stand inside a copied graph too, and
-the three the writer never emits (`tabs`, `brotli`, `jpx`) have none yet;
-`emittedFeatures` covers what is listed here, and the parsed reading below
-the rest. -/
+/-- The features a produced file spells for itself: the spelled oracle of the typed census. -/
 def featureSpellings : List (Pdf.Feature × String) := [
   (.xrefStream, "/Type /XRef"),
   (.objStm, "/Type /ObjStm"),
@@ -342,8 +294,6 @@ def featureSpellings : List (Pdf.Feature × String) := [
   (.markedContent, "\nEMC"),
   (.structTree, "/Type /StructTreeRoot")]
 
-/-- The features a produced PDF reaches, by spelling, from its text read
-once. -/
 def emittedFeaturesOf (text : ByteArray) : List Pdf.Feature :=
   featureSpellings.filterMap fun (f, spelling) =>
     if bytesContain text spelling then some f else none
@@ -354,8 +304,6 @@ def emittedFeatures (pdf : ByteArray) : List Pdf.Feature :=
 
 mutual
 
-/-- Does a value name any indirect object? A copied resource graph is
-non-empty exactly when the form's `/Resources` does. -/
 def objHasRef : Obj → Bool
   | .ref _ _ => true
   | .arr xs => objsHaveRef xs.toList
@@ -377,10 +325,8 @@ def kvsHaveRef : List (String × Obj) → Bool
 
 end
 
-/-- The features read off the parsed objects (`PdfRead.objects`): the
-artifact-side reading of every feature the writer can emit today, what
-the suite holds the typed census (`Pdf.features`, computed from `write`'s
-inputs) against on every fixture. -/
+/-- The features read off the parsed objects: the artifact-side reading the typed census is held
+against. -/
 def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
   let kinds := es.map fun e => PdfCensus.kindOf e.val
   let has (k : PdfCensus.Kind) : Bool := kinds.contains k
@@ -405,13 +351,11 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
     match PdfCensus.deref es ((o.get? "Annots").getD .null) with
     | .arr xs => xs.any fun a => uriAction (PdfCensus.deref es a)
     | _ => false
-  -- The pages' shared resources: what the writer's own figure forms name.
   let pageRes : Option Obj := (es.find? fun e => PdfCensus.kindOf e.val == .page).bind
     (·.val.get? "Resources")
   let copiedGraph : Bool := es.any fun e =>
     PdfCensus.kindOf e.val == .form && e.val.get? "Resources" != pageRes &&
       objHasRef ((e.val.get? "Resources").getD .null)
-  -- A page's content, decoded, opens a marked sequence.
   let markedContent : Bool := es.any fun e =>
     PdfCensus.kindOf e.val == .page &&
       (match e.val.get? "Contents" with
@@ -422,9 +366,6 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
             | _ => false
           | none => false
         | _ => false)
-  -- The writer's own transparency groups: a form isolated by its group
-  -- (§11.6.6) that names the shared resources the pages name; a copied
-  -- page's graph is the source's, and stays under `copiedGraph`.
   let transparencyGroup : Bool := es.any fun e =>
     PdfCensus.kindOf e.val == .form && pageRes.isSome && e.val.get? "Resources" == pageRes &&
       nameIs ((PdfCensus.deref es ((e.val.get? "Group").getD .null)).get? "S") "Transparency"
@@ -448,29 +389,19 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
     (.transparencyGroup, transparencyGroup)]
   return feats.filterMap fun (f, b) => if b then some f else none
 
-/-- The parsed reading of a file's bytes, as matrix row names. -/
 def parsedFeatureNames (pdf : ByteArray) : Except String (List String) :=
   (PdfRead.objects pdf).map fun es => (featuresOfEntries es.val).map Pdf.Feature.name
 
-/-- Every feature the census can name, as matrix rows: each has a row, and
-a mutated row is what breaks the gate once. -/
 def writerFeatures : List String := Pdf.Feature.all.map Pdf.Feature.name
 
-/-- The five readers the matrix's `target:` line must name: the three host
-readers of the first slice and the two browser engines. -/
 def targetReaders : Array String := #["poppler", "ghostscript", "pypdf", "pdfium", "pdfjs"]
 
-/-- The strings a deterministic artifact never carries: dates, and the
-metadata keys whose values are dates or instance ids. -/
+/-- The strings a deterministic artifact never carries: dates, and metadata keys whose values are
+dates or instance ids. -/
 def volatileSpellings : List String :=
   ["/CreationDate", "/ModDate", "xmp:CreateDate", "xmp:ModifyDate", "xmpMM:"]
 
-/-- Six mutants of a written file, each breaking one thing the walk
-reads: truncated at 60 %, `startxref` off by one, one cross-reference row
-byte flipped, a stream's `/Length` one short, one byte of a content
-stream's deflate corrupted, and an object stream whose header pairs are
-swapped (the hand-built `objStmPdf`, the file on which the swap moves no
-offset). -/
+/-- Six mutants of a written file, each breaking one thing the walk reads. -/
 def walkMutants (pdf : ByteArray) : Option (Array (String × ByteArray)) := do
   let sx ← findBytes pdf "startxref\n"
   let x ← (PdfRead.readXref pdf).toOption
@@ -499,17 +430,12 @@ def walkMutants (pdf : ByteArray) : Option (Array (String × ByteArray)) := do
     ("content deflate byte corrupted", flipByte pdf (cData + 5)),
     ("object stream ids swapped", objStmPdf true)]
 
-/-- The three judgements over the written bytes: the reference walk over
-every golden fixture and the six mutants it refuses by name; the artifact
-as a function of the document (twice-written equality, no dates, no
-absolute path); the reader matrix read as data, the gate broken once on a
-mutated copy, and the per-fixture feature table complete over the golden
-set and consistent with the file's spellings. -/
+/-- The reference walk, determinism and the reader matrix, held over the written bytes of every
+golden fixture. -/
 def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
   let cwd ← IO.currentDir
-  -- The matrix, read once; its gate over every writer feature.
   let matrixText ← try IO.FS.readFile "testdata/oracles/reader-matrix.txt" catch _ => pure ""
   t "reader matrix present (run: lake env lean --run scripts/pdf-oracles.lean)"
     (!matrixText.isEmpty)
@@ -532,7 +458,6 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t "reader matrix: pdf/a-4 and pdf/ua-2 rows exist for the four reference fixtures"
       (["deck", "resume", "trio-card", "images"].all fun f =>
         (m.profile "pdf/a-4" f).isSome && (m.profile "pdf/ua-2" f).isSome)
-    -- The gate breaks once: one target cell set to `untested` in memory.
     let mutated := (matrixText.splitOn "\n").map fun l =>
       if l.startsWith "xref-stream " then
         String.intercalate " " ((fields l).toList.map fun w => if w == "pass" then "untested" else w)
@@ -543,14 +468,11 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"reader matrix gate breaks on untested in a target column: {gaps}"
         (gaps.size == m.target.size && gaps.all fun g => hasStr g "xref-stream" && hasStr g "untested")
     | .error e => t s!"mutated matrix parses: {e}" false
-    -- A column off the target line gates nothing, whatever it says.
     let offTarget : Matrix := { m with target := #["qpdf"] }
     t "reader matrix: an off-target column is never demanded"
       (!(featureGate offTarget ["xref-stream"]).isEmpty)
     let noTarget : Matrix := { m with target := #[] }
     t "reader matrix: with no target nothing is gated" (featureGate noTarget writerFeatures).isEmpty
-  -- Every fixture: the walk, the typed census against the bytes, the
-  -- gate over what it reaches, determinism.
   let mut reached : Array String := #[]
   for a in arts do
     let n := a.name
@@ -565,9 +487,6 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"pdf walk {n}: every listed object is reached: {w.unreached}" w.unreached.isEmpty
       t s!"pdf walk {n}: reaches the page count"
         (w.visited.size ≥ out.pages.size + 2)
-    -- The typed census (the writer's inputs) and the parsed reading (the
-    -- written objects) name the same features; the spelled reading agrees
-    -- on every feature it can spell.
     let typed := (Pdf.features geom oneFace out.pages store out.outline).map Pdf.Feature.name
     let parsed := (a.objs.map fun es => (featuresOfEntries es).map Pdf.Feature.name).toOption.getD []
     t s!"pdf features {n}: typed census {typed} = parsed bytes {parsed}"
@@ -587,18 +506,12 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"pdf deterministic {n}: no {v}" (!bytesContain text v)
     t s!"pdf deterministic {n}: no absolute source path"
       (!bytesContain text (cwd / goldenFile n).toString)
-  -- The gate over every feature the golden set reaches, as one statement.
   if let .ok m := matrix? then
     let gaps := featureGate m reached.toList
-    t s!"reader matrix gate: every feature the golden set reaches passes every target reader: {gaps}"
+    t s!"reader matrix gate: every golden-set feature passes every target reader: {gaps}"
       gaps.isEmpty
-  t s!"pdf features: the golden set reaches marked content, a soft mask, a copied graph, a DCT image, several object streams"
+  t s!"pdf features: the golden set reaches marked content, soft masks, copied graphs, DCT and object streams"
     (["marked-content", "smask", "copied-graph", "dct", "objstm-multi"].all reached.contains)
-  -- The figure forms also get a page of their own, apart from the corpus's
-  -- translucent captions: an alpha group's and a symbol's (the synthetic
-  -- matrix's figures). The census names the forms the file carries — a
-  -- census that read only copied pages' bases once left them unnamed —
-  -- and the typed census and the parsed bytes agree on every row.
   let figInks : Array Layout.InkOut := #[4, 5].filterMap fun i =>
     (Tests.GfxMatrix.cases[i]?).map fun c =>
       { fig := c.2.lift, place := { flipY := true, dx := Dim.pt 50, dy := Dim.pt 300 }, leaf := none }
@@ -612,7 +525,6 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       !figTyped.contains "copied-graph")
   t s!"pdf features figures: typed census {figTyped} = parsed bytes {figParsed}"
     (figTyped.all figParsed.contains && figParsed.all figTyped.contains)
-  -- The mutants, through the walk: one corpus document with images.
   let src ← IO.FS.readFile "testdata/corpus/images.tex"
   let (doc, _) ← elabFixture "images" src
   let geom := Layout.Geom.ofPage doc.page
@@ -640,7 +552,6 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (match walkPdf (objStmPdf false) with
        | .ok w => w.visited.size == 4 && w.unreached.isEmpty
        | .error _ => false)
-  -- The walk itself breaks once: a dangling reference, and one past /Size.
   let dangling : Array Entry := #[
     { num := 1, loc := .direct 0, header := 1, val := .dict #[("Type", .name "Catalog"),
         ("Pages", .ref 2 0)], stream := none }]

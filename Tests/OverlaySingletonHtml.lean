@@ -11,10 +11,7 @@ namespace Tests
 private def singletonAttr (attrs : Array (String × String)) (key : String) : String :=
   ((attrs.find? (·.1 == key)).map (·.2)).getD ""
 
-/-- The emitted page must connect a one-reveal frame to its selector rules.
-Reading only `data-steps` falsely certified the old page: its section had
-no numbered state, and a one-reveal deck emitted no membership rules.
-The browser witness checks the same pages with and without motion. -/
+/-- The emitted page connects a one-reveal frame to its selector rules. -/
 def overlaySingletonHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (property, off, moving) in

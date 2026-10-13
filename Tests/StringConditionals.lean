@@ -8,9 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- A string test consumes its two inert operands and executes exactly one
-branch in the caller's scope. Native controls retain complete page geometry
-and the serialized typed HTML, including macro ownership and whitespace. -/
+/-- A string test consumes its two operands and executes exactly one branch in the caller's
+scope. -/
 private def stringConditionalArtifacts (ref : IO.Ref (List String))
     (fonts : Font.FontSet) (label pre body control : String)
     (controlPre : Option String := none) (boxed : Bool := false) : IO Unit := do
@@ -18,7 +17,6 @@ private def stringConditionalArtifacts (ref : IO.Ref (List String))
   let expectedSource := dvDoc
     ("\\pagestyle{empty}\\usepackage{etoolbox}" ++ controlPre.getD pre) control
   let (ds, actual, html, text) := sourceArtifacts fonts source
-  -- A tcolorbox's control writes the box it lowers to as a `{block}`.
   let (cds, expected, expectedHtml, expectedText) :=
     (if boxed then boxedSourceArtifacts else sourceArtifacts) fonts expectedSource
   let t := check ref
@@ -28,11 +26,8 @@ private def stringConditionalArtifacts (ref : IO.Ref (List String))
   t s!"string conditional {label}: typed HTML" (html == expectedHtml)
   t s!"string conditional {label}: visible text" (text == expectedText)
 
-/-- Literal comparison witnesses measured under LuaLaTeX with etoolbox's
-`\ifstrequal` (`etoolbox.sty`, string tests): both operands are detokenized
-without expansion. Leading/trailing spaces and brace tokens remain, control
-words carry their delimiter space, control symbols do not, and `#` doubles.
-The expected branch is held by both artifacts, not an elaboration dump. -/
+/-- `\ifstrequal` compares both operands detokenized, without expansion, as measured under
+LuaLaTeX. -/
 def stringConditionalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let pre := "\\def\\leftprobe{Value}\\def\\rightprobe{Value}"
   for (label, left, right, equal) in #[

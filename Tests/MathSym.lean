@@ -6,12 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-/-- The table's atoms (each name's first row in `MathParse.ctrlAtom`, the one
-`lookup` answers) that Fira Math, the shipped math face, has no glyph for:
-each sets from a fallback face that has one, or is dropped and named
-(E0405). An atom whose scalar the face lacks is here, and every name here
-is such an atom — both ways, so the list is the face's coverage and not a
-guess about it. -/
+/-- The table's atoms Fira Math has no glyph for, both ways: each sets from a fallback face or is
+dropped and named (E0405). -/
 def firaGaps : List String :=
   ["star", "setminus", "Re", "Im", "wp", "top", "bot", "vdots", "ddots", "bigcup", "bigcap",
    "bigvee", "bigwedge", "bigoplus", "bigotimes", "amalg", "asymp", "bigodot", "bigsqcup",
@@ -32,16 +28,14 @@ def firaGaps : List String :=
    "Finv", "Game", "ltimes", "rtimes", "succapprox", "precapprox", "digamma",
    "lmoustache", "rmoustache"]
 
-/-- Hand rows of `MathParse.ctrlAtom` that shadow a generated row saying
-otherwise: the hand row is what the engine sets, and the difference is a
-decision recorded here, both ways — an undeclared disagreement fails, and
-so does a declaration whose rows have come to agree. -/
+/-- Hand rows of `MathParse.ctrlAtom` that shadow a generated row saying otherwise, declared both
+ways. -/
 def handDivergences : List (String × String) :=
   [("bullet", "the engine sets U+2219 BULLET OPERATOR, the binary operator; \
 unicode-math sets U+2022 BULLET, its \\smblkcircle")]
 
-/-- The index rows of one package whose call is exactly one math symbol,
-`$\name$`: name ↦ verdict, in file order. -/
+/-- The index rows of one package whose call is one math symbol `$\name$`: name and verdict, in file
+order. -/
 def symbolRows (text : String) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   for line in text.splitOn "\n" do
@@ -57,8 +51,8 @@ def symbolRows (text : String) : Array (String × String) := Id.run do
 
 mutual
 
-/-- The MathML leaves of an emitted tree, in document order: each `mo`,
-`mi` or `mn` with the text it carries. -/
+/-- The MathML leaves of an emitted tree in document order: each `mo`, `mi` or `mn` with its
+text. -/
 def mathLeavesOne (acc : Array (String × String)) : Html.Node → Array (String × String)
   | .text _ => acc
   | .style _ => acc
@@ -73,9 +67,7 @@ def mathLeavesList (acc : Array (String × String)) : List Html.Node → Array (
 
 end
 
-/-- A kernel relation absent from a manual index still reaches both
-surfaces as mathematics. Each long double arrow keeps its scalar and the
-adjacent exponent, including in an alignment row. -/
+/-- A kernel relation absent from a manual index still reaches both surfaces as mathematics. -/
 def longArrowReportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for (name, scalar) in [("Longleftarrow", '⟸'), ("Longrightarrow", '⟹'),
@@ -110,24 +102,7 @@ def symbolCalls (src : String) : Array String :=
     if !name.isEmpty && (piece.toList.drop name.length).head? == some '$' then some name
     else none
 
-/-- The symbol table against its sources and the shipped math face.
-
-The index side: `testdata/compat-index/<pkg>.txt` carries one row per symbol
-command the package declares (`MathSymData.<pkg>`, read off the package file
-by the generator), and a row is `impl` exactly when the table sets the name
-and `refuse:W0012` exactly when it refuses it — a missing row, a stray one or
-a verdict the table contradicts fails. The table side: a hand row that
-shadows a generated one says the same or is a declared divergence, since
-`lookup` returns the hand row and a disagreement would be a silent override;
-no symbol row is a name the parser reads structurally, where the row would
-be dead or would change what a script argument means; and a refused name is
-unknown to the parser, which is what makes its W0012 the refusal it
-declares. The face side: every atom the table sets has a glyph in the
-shipped math face or is one of `firaGaps`, and every gap listed is a name
-the table sets and the face lacks, so the list holds both ways; a gap
-reaches the page as a named loss, never as silence. A symbol's scalar is
-held to lualatex's by its line in the parity fixtures `amssymb` and
-`mathsym` (the parity tier). -/
+/-- The symbol table against its package indices, its hand rows and the shipped math face. -/
 def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (pkg, documented) in [("amsfonts", MathSymData.amsfonts), ("amssymb", MathSymData.amssymb)] do
@@ -150,11 +125,10 @@ def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
     | some (cls', c') => cls != cls' || c != c'
     | none => false
   for (n, _, _) in disagree do
-    t s!"\\{n}: the hand row shadows a generated row that says otherwise, undeclared"
+    t s!"\\{n}: an undeclared hand row shadows a disagreeing generated row"
       (handDivergences.any (·.1 == n))
   for (n, _) in handDivergences do
-    t s!"handDivergences lists \\{n}, but no hand row of that name shadows a generated row \
-that says otherwise"
+    t s!"handDivergences lists \\{n}, but no hand row of that name disagrees"
       (disagree.any (·.1 == n))
   for (n, _, _) in gen do
     t s!"\\{n} is a symbol row the parser reads structurally first"
@@ -166,7 +140,6 @@ that says otherwise"
   let fira ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraMath-Regular.otf")) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"math symbols: FiraMath unparsable: {e}")
-  -- The atoms `lookup` answers: each name's first row.
   let effective := MathParse.ctrlAtom.foldl (fun acc r =>
     if acc.any (·.1 == r.1) then acc else acc.push r) #[]
   let uncovered := effective.filter fun (_, _, c) => (fira.gid c).isNone
@@ -176,8 +149,6 @@ and firaGaps does not say so" (firaGaps.contains n)
   for n in firaGaps do
     t s!"firaGaps lists \\{n}, which Fira Math covers or the table does not set"
       (uncovered.any (·.1 == n))
-  -- A gap on the page: the scalar is not inked and one E0405 accounts for
-  -- it; a covered symbol inks its own scalar from the math face.
   let some fontData ← findFont
     | failures ref "math symbols: no corpus font"
   let .ok font := Font.parse fontData
@@ -189,15 +160,11 @@ and firaGaps does not say so" (firaGaps.contains n)
     t "a symbol the math face lacks is not inked" (!ink.contains c)
     t "a symbol the math face lacks is named once (E0405)"
       ((ds.filter (·.code == "E0405")).size == 1)
-  | none => failures ref "math symbols: \\boxplus is no longer a Fira Math gap; pick another probe"
+  | none => failures ref "math symbols: \\boxplus is not a Fira Math gap; pick another probe"
   let (ink, ds) := inkedScalars fs "$a \\leqslant b$"
   t "a covered symbol inks its own scalar" (ink.contains '\u2A7D')
   t "a covered symbol raises no glyph loss"
     (!ds.any fun d => d.code == "E0405" || d.code == "W0009")
-  -- The parity fixtures' engine halves, in HTML: the MathML leaves are the
-  -- table's atoms in the source's order — each scalar, under the leaf its
-  -- class maps to. The parity tier holds the PDF of the same sources to
-  -- lualatex's scalars, so the two artifacts agree through the one table.
   for fixture in ["amssymb", "mathsym"] do
     let src ← IO.FS.readFile s!"testdata/parity/{fixture}.tex"
     let calls := symbolCalls src

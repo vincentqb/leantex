@@ -15,8 +15,8 @@ private def tableSource (env cell : String) : String :=
     ("\\begin{" ++ env ++ "}" ++ args ++ "\\toprule\n" ++ cell ++
       "\\\\\n\\bottomrule\\end{" ++ env ++ "}")
 
-/-- Direct and macro spellings of a spanning cell have the same table
-context, HTML span, and shipped geometry in every supported table environment. -/
+/-- Direct and macro spellings of a spanning cell have the same table context, HTML span and shipped
+geometry. -/
 def tableContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let spans (doc : Ir.Doc) := doc.body.flatMap fun b =>

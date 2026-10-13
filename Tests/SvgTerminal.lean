@@ -8,14 +8,12 @@ public import Tests.Support
 
 public section
 
-/-! External source-only image oracle. No generated PDF, frame sequence or
-cached conversion is present when the real driver starts. -/
+/-! A source-only image oracle: no generated PDF, frame sequence or cached conversion exists when
+the driver starts. -/
 
 namespace Tests
 
-/-- Read the raw RGB raster Poppler wrote, on pixel boundaries. Looking for
-three bytes at every offset would also count transitions from white to black
-as red, even on a page with no coloured ink. -/
+/-- The red and black pixels of Poppler's raw RGB raster, read on pixel boundaries. -/
 private def terminalInk (file : System.FilePath) : IO (Nat × Nat) := do
   let bytes ← IO.FS.readBinFile file
   let mut start := 0
@@ -36,10 +34,8 @@ private def terminalInk (file : System.FilePath) : IO (Nat × Nat) := do
     if bytes[i]! == 0 && bytes[i + 1]! == 0 && bytes[i + 2]! == 255 then blue := blue + 1
   return (red, blue)
 
-/-- Build both artifacts from two SVGs alone. The moving square starts
-invisible and ends red; its native PDF and print face must paint the end,
-while the browser receives the unchanged animation. The other source is an
-extensionless static include. -/
+/-- Both artifacts from two SVGs alone: the moving square's PDF and print face paint its end pose,
+the browser the unchanged animation. -/
 def svgTerminalDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
@@ -72,8 +68,6 @@ def svgTerminalDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
     let html ← IO.FS.readFile (dir / "figure.html")
     check ref "source-only SVG: both HTML images have reachable source attributes"
       ((html.splitOn "<img ").length == 3 && (html.splitOn "data-image-src=").length == 1)
-    -- The page embeds what it shows: every image and still face is a data
-    -- URI of the page itself, read back here.
     let embedded (attr : String) : IO (Array ByteArray) := do
       let mut out : Array ByteArray := #[]
       for piece in (html.splitOn s!"{attr}=\"").drop 1 do
@@ -140,12 +134,8 @@ private def terminalRaster (dir : System.FilePath) (name : String)
   if raster.isEmpty then throw <| IO.userError s!"SVG terminal raster {name} is empty"
   return raster
 
-/-- `.last` owes the pose immediately before a synchronized cycle ends.
-Unsupported tracks return a boundary error, even when their last token
-looks valid — natively and through the converter's still face. Accepted
-tracks import to the marks of an independently authored static pose,
-distinct from the base drawing's, and the engine's drawing of that pose
-rasterizes, under librsvg, to the target's pixels. Requires librsvg. -/
+/-- `.last` owes the pose just before a synchronized cycle ends, unsupported tracks are a boundary
+error, and the pose rasterizes to its target; requires librsvg. -/
 def svgTerminalBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, body) in svgTerminalRefused do
     let source := (svgDocument (width := 32) (height := 16)) body

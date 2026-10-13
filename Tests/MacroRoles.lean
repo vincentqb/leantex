@@ -49,15 +49,12 @@ private structure MacroRoleCase where
   body : String
   control : String
   owned : Array (String × List String)
-  /-- One occurrence can straddle a declaration and need two emitted
-  wrappers. Simple nested/adjacent calls have exact, equal bounds. -/
+  /-- One occurrence can straddle a declaration and need two emitted wrappers; simple calls have
+  exact bounds. -/
   counts : Array (String × Nat × Nat)
 
-/-- Executing a parameterized macro preserves its semantic name: the typed
-HTML still exposes its class, and its declared rhythm reaches the shipped
-lines exactly as for a native definition. That annotation is not a TeX
-group or an argument boundary; the last primitive in replacement text may
-still read the following source. All sources are invented. -/
+/-- Executing a parameterized macro keeps its semantic name in the typed HTML and its declared
+rhythm on the shipped lines. -/
 def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let classes (source : String) : Array String :=
@@ -330,8 +327,7 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
         expectedOut.pages.map (fun p => (p.lines.filter (!·.furniture)).map lineInk))
     t (label ++ ": exact glyph positions and paint")
       (shippedBodyGlyphs out == shippedBodyGlyphs expectedOut)
-    -- Space has no provenance. Its exact presence is checked above; the
-    -- positioned characters must have exactly these owners, in this order.
+    -- Space has no provenance; its presence is checked above.
     let owned := c.owned.flatMap fun (text, parents) =>
       (text.toList.filter (!·.isWhitespace)).toArray.map (·, parents)
     t (label ++ ": exact typed HTML role ancestry") (html.glyphs == owned)
@@ -339,9 +335,6 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
       let count := (html.roles.filter (·.1 == name)).size
       t (label ++ s!": {name} wrapper count in [{lo}, {hi}]") (lo ≤ count && count ≤ hi)
 
-  -- A terminal substitution needs no recursive expansion. A later binding
-  -- that still needs conditional execution remains outside the serial
-  -- bound: its genuinely lost state change must still be named.
   let effectful := dvDoc
     ("\\newif\\ifroleprobe\\newcommand\\outerrole[1]{O\\innerrole{#1}E}" ++
       "\\newcommand\\innerrole[1]{\\roleprobetrue#1}")
@@ -360,8 +353,7 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
       shippedBodyGlyphs (layoutOf fs effectDoc) !=
         shippedBodyGlyphs (layoutOf fs effectControl))
 
-  -- Metadata is transparent to a text parameter's predicate, but paint
-  -- nested under that metadata still violates the text-only contract.
+  -- Metadata is transparent to a text parameter's predicate, but paint nested under it breaks the text-only contract.
   for (styleName, styled) in #[
       ("font", "\\textbf{#1}"), ("color", "\\textcolor{blue}{#1}"),
       ("size", "{\\large #1}")] do
@@ -389,8 +381,7 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
     t (label ++ ": exactly one consumer and argument owner")
       (html.roles.map (·.1) == #["readtext", "wordrole"])
 
-  -- A deferred paragraph skip is spent when that paragraph is flushed,
-  -- even if its raws elaborate to nothing and blocks.size never grows.
+  -- A deferred paragraph skip is spent when its paragraph is flushed, even if its raws elaborate to nothing.
   for (prefixName, prefixText) in #[
       ("discarded whitespace", " \n  "), ("empty group", "{}"), ("space group", "{ }")] do
     for (startName, start) in #[("text first", ""), ("paragraph end first", "\\par")] do

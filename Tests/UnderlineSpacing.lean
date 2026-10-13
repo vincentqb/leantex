@@ -7,8 +7,7 @@ public section
 open LeanTex.Core
 open LeanTex.Core.PdfRead (Obj)
 
-/-- Positive interior spacing of a shipped text line. The closing fill and
-line-breaking spaces are absent; authored horizontal spacing is included. -/
+/-- The positive interior spacing of a shipped text line, authored horizontal spacing included. -/
 private def spacingGaps (line : Layout.LineOut) : Array (Dim.Sp × Dim.Sp) := Id.run do
   let mut x := line.x
   let mut seen := false
@@ -28,8 +27,7 @@ private def spacingGaps (line : Layout.LineOut) : Array (Dim.Sp × Dim.Sp) := Id
     | .poly _ _ => pure ()
   return gaps
 
-/-- Actual decoration rectangles in trim coordinates (y down), independent
-of the source flag that requested them. -/
+/-- The decoration rectangles a line ships, in trim coordinates. -/
 private def spacingPaint (line : Layout.LineOut) : Array (Ir.Decoration × Layout.Fill) := Id.run do
   let mut x := line.x
   let mut paint := #[]
@@ -44,7 +42,7 @@ private def spacingPaint (line : Layout.LineOut) : Array (Ir.Decoration × Layou
     | .poly _ _ => pure ()
   return paint
 
-/-- Resolve annotations from their owning pages, including inline dictionaries. -/
+/-- The annotations of every page, inline dictionaries included. -/
 private def spacingLinkAnnots (pdf : ByteArray) : Except String (Array Obj) := do
   let es ← PdfRead.objects pdf
   let mut links := #[]
@@ -110,9 +108,8 @@ private def spacingWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         action.get? "URI" == some (.str "(https://example.org/spacing)".toUTF8))
     | .error e => t (label ++ ": PDF links: " ++ e) false
 
-/-- Multiword underline must paint the set space, in native layout and in
-the emitted PDF, without changing spacing, line breaks, glyphs or links.
-Every phrase is synthetic; the oracle reads shipped rectangles. -/
+/-- A multiword underline paints the set space, on the page and in the PDF, changing no spacing,
+break, glyph or link. -/
 def underlineSpacingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let geom : Layout.Geom := {}
   let phrase := "Amber Cedar Stone"
@@ -142,8 +139,6 @@ def underlineSpacingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let plain := layoutOf fonts (elabStr phrase).1 geom
   check ref "plain spacing has no decoration" (((bodyLines plain).flatMap spacingPaint).isEmpty)
 
-  -- A shared framefooter containing only an automatic link (no explicit
-  -- underline), then the explicit spelling through the same furniture path.
   let wrapper := "\\newenvironment{framefooter}[1]" ++
     "{\\setbeamertemplate{frame footer}{#1}}{\\setbeamertemplate{frame footer}{}}"
   for (label, footer) in

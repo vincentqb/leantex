@@ -6,11 +6,8 @@ public section
 
 open LeanTex.Core
 
-/-- SVG label baselines and native page baselines project the same measured
-IR band, for every alignment, face and size. Browser baseline keywords
-previously guessed a second band and put the letters at different heights.
-The guards read emitted SVG attributes and `Layout.Out`, including source
-nodes split into lines and nodes with a declared text box. Invented content. -/
+/-- SVG label baselines and native page baselines project the same measured IR band for every
+alignment, face and size. -/
 def pictureHtmlBaselineChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -58,9 +55,6 @@ def pictureHtmlBaselineChecks (ref : IO.Ref (List String))
                 == some "alphabetic")
             t (name ++ " retains horizontal anchoring")
               ((labels[0]?.bind fun (_, attrs) => HtmlDoc.attrOf? attrs "text-anchor") == some anchor)
-    -- A source node's lines and declared text height/depth have already
-    -- been seated by Picture. HTML must preserve every resulting baseline,
-    -- including under transform shape, with the driver's same metric.
     for opts in #["", "font=\\bfseries", "font=\\itshape",
         "text height=2ex,text depth=0.5ex"] do
       for alignment in #["center", "left", "right"] do
@@ -88,9 +82,7 @@ def pictureHtmlBaselineChecks (ref : IO.Ref (List String))
           t (name ++ " SVG lines use alphabetic baselines")
             (labels.all fun (_, attrs) =>
               HtmlDoc.attrOf? attrs "dominant-baseline" == some "alphabetic")
-  -- With no font environment the existing zero metric declares no band.
-  -- Keep the source anchor exactly, without asking a browser to guess a
-  -- different band; measured callers above supply the driver contract.
+  -- With no font environment the zero metric declares no band, and the source anchor stays exact.
   for (side, align, _) in alignments do
     let pic : Ir.Pic.Picture := {
       shapes := #[.label (Dim.pt 7) (Dim.pt 3) #[.text "Amber"] Ir.Color.black 1000 align]

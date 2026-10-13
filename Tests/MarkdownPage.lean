@@ -6,40 +6,31 @@ public section
 
 open LeanTex.Core
 
-/-! **A markdown page is set for the characters it holds.**
-
-A markdown source declares no page, so the engine's default is the whole of
-its geometry, and the article's 26-pica measure left a long generated report
-with two-inch margins around 61 characters of its face. The invariant is
-over what ships: the shipped lines' measure and characters per line on
-`Layout.Out` in every shipped text face, and the typed HTML's measure. Every
-word here is invented. -/
+/-! A markdown page is set for the characters it holds. -/
 
 namespace Tests.MarkdownPage
 
-/-- Invented prose: ordinary English words of ordinary lengths, enough of
-them to set many full lines. -/
+/-- Ordinary English words, enough to set many full lines. -/
 def prose : String :=
   String.intercalate " " (List.replicate 12
     "The river bends past the old mill where quiet water gathers fallen \
 leaves, and the morning light settles slowly on the stones along the bank.")
 
-/-- The characters (spaces included) of every shipped body line set to the
-full measure: the lines a measure claim is about. -/
+/-- The characters, spaces included, of every shipped body line set to the full measure. -/
 def fullLineChars (out : Layout.Out) (measure : Dim.Sp) : Array Nat :=
   (bodyLines out).filterMap fun l =>
     if l.setWidth + Dim.pt 1 ≥ measure then some (lineText l).length else none
 
 def avg (xs : Array Nat) : Nat := if xs.isEmpty then 0 else xs.foldl (· + ·) 0 / xs.size
 
-/-- The page: the markdown measure on both artifacts, and in every shipped
-text face a line length inside the readable band. -/
+/-- The markdown measure on both artifacts, and in every shipped text face a line length inside the
+readable band. -/
 def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mdDoc := (elabMd (prose ++ "\n")).1
   let texDoc := (elabStr (dvDoc "" prose)).1
   let width (d : Ir.Doc) : Dim.Sp := d.page.width - 2 * d.page.hmargin
-  t "a markdown page takes the markdown text block, the article page its own"
+  t "markdown takes the markdown text block, an article its own"
     (width mdDoc == Ir.markdownTextBlock && width texDoc == Ir.articleTextBlock)
   t "a declared page geometry still keeps every value it names"
     (width (elabStr (dvDoc "\\page{ hmargin = 100pt }\n" prose)).1 == Dim.pt 412)

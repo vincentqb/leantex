@@ -9,20 +9,18 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Adding SVG candidates must not change which existing PDF or raster
-source wins an extensionless request. In particular a companion SVG must
-not shadow an uppercase PDF that can supply the selected poster. -/
+/-- Adding SVG candidates changes no existing PDF or raster source's win for an extensionless
+request. -/
 def svgSourcePrecedenceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let candidates := Image.sourceCandidates "sequence"
   for ext in ["pdf", "png", "jpg", "jpeg", "PDF", "PNG", "JPG", "JPEG"] do
     check ref s!"SVG lookup preserves the existing .{ext} source"
       (candidates.find? (fun p => p == "sequence." ++ ext || p == "sequence.svg") ==
         some ("sequence." ++ ext))
-  check ref "SVG lookup still accepts both SVG extensions after existing formats"
+  check ref "SVG lookup accepts both SVG extensions after existing formats"
     (candidates.filter (Image.isSvg ·) == ["sequence.svg", "sequence.SVG"])
 
-/-- Filenames cannot change embedded primary or media-selected image URLs.
-A space in `srcset` would otherwise disable the fallback as a descriptor. -/
+/-- Filenames cannot change embedded primary or media-selected image URLs. -/
 def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let source := "moving figure,#?%20é.svg"
@@ -39,7 +37,7 @@ def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let images := elemAttrsList (· == "img") #[] tree.toList
   let sources := elemAttrsList (· == "source") #[] tree.toList
   let embedded := "data:image/svg+xml;base64,PHN2Zy8+"
-  t "SVG primary URL depends on bytes, not the filename or output directory"
+  t "SVG primary URL depends on bytes, not filename or output directory"
     (images.any fun (_, attrs) => attrs.contains ("src", embedded))
   t "SVG print and reduced-motion srcset is one embedded URL"
     (sources.any fun (_, attrs) =>
@@ -50,11 +48,7 @@ def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (images.size == 1 && facts.imgs == 1 && facts.imgsUnnamed == 0 &&
       facts.hiddenTabStops == 0)
 
-/-- A browser may retain a successful but blank image response across
-document builds. The typed page must change that URL when its published
-bytes change, including an independently selected print poster. Equal
-published bytes keep their URL; a clock or an unrelated source does not
-participate in the image's cache identity. -/
+/-- An image URL changes exactly when its published bytes change. -/
 def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let blank := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"/>".toUTF8
@@ -101,9 +95,8 @@ def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "image refresh: long filenames do not change the typed page's embedded resources"
       (links en == links posterUpdated)
 
-/-- The first poster keeps the base drawing, while the last asks for the
-terminal pose (`SvgPoster.pose`). Later numbered frames need a PDF sequence.
-This selection contract is independent of the installed conversion tools. -/
+/-- The first poster keeps the base drawing and the last asks for the terminal pose
+(`SvgPoster.pose`). -/
 def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (page, terminal) in [(PdfRead.PageSelection.first, false), (.number 1, false),
       (.last, true)] do
@@ -115,9 +108,8 @@ def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .error err => hasStr err "requires a PDF frame sequence"
         | .ok _ => false)
 
-/-- An SVG's PDF form is its print face, not evidence that the browser
-should receive a PDF. The typed page must link a published SVG, with its
-text alternative, even though layout reads vector PDF geometry. -/
+/-- An SVG's PDF form is its print face; the typed page links the published SVG with its text
+alternative. -/
 def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgSourcePrecedenceChecks ref
   svgAssetUrlChecks ref
@@ -140,9 +132,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     (srcs == #["data:image/svg+xml;base64,PHN2Zy8+"])
   t "SVG browser face has no PDF-only placeholder diagnostic"
     (!(diags.any (·.code == "W0605")))
-  -- The native decode can succeed before the mandatory browser poster
-  -- conversion fails. Neither a .svg extension nor captured moving bytes
-  -- can certify the missing static face.
+  -- The native decode can succeed before the browser poster conversion fails.
   let reason := "rsvg-convert exited 19: poster unavailable"
   for (src, href) in [("diagram.svg", ""), ("diagram.pdf", ""), ("diagram", "diagram.svg")] do
     let failed : Image.Store := { entries := #[
@@ -172,10 +162,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"failed browser conversion {src}: an absent HTML include has no loss"
       (!(hiddenDs.any (·.code == "W0605")))
 
-  -- A resolved filename is not a request identity: selected pages,
-  -- animation posters and extensionless aliases can share it. The shipped
-  -- placeholders must retain the exact entry and its own failure, even
-  -- when a different request precedes it in the store or is PDF-only.
+  -- A resolved filename is no request identity: pages, posters and aliases can share it.
   let selected : Image.Store := { entries := #[
     { src := "sequence.pdf", page := .number 1, info, webError := some "page one failed" },
     { src := "sequence.pdf", page := .number 2, info, webError := some "page two failed" },

@@ -9,8 +9,7 @@ open LeanTex.Core
 
 namespace MarkdownHeadings
 
-/-- Both artifacts and the Markdown twin project one bounded IR rank.
-The actual emitted HTML tree and PDF roles are read back below. -/
+/-- Both artifacts and the Markdown twin project one bounded IR rank. -/
 theorem heading_artifacts_agree (level : Ir.HeadingLevel) :
     HtmlDoc.headingTag level = "h" ++ toString (Ir.headingRank level) ∧
     Pdf.headingTag level = "H" ++ toString (Ir.headingRank level) ∧
@@ -19,15 +18,14 @@ theorem heading_artifacts_agree (level : Ir.HeadingLevel) :
   refine ⟨rfl, Pdf.heading_type_projects level, ?_⟩
   simp [MarkdownDoc.headingMarker]
 
-/-- Serialization cannot emit an empty or seven-hash heading marker. This
-is the IR rank bound projected through the serializer, not a sample. -/
+/-- Serialization emits no empty or seven-hash heading marker. -/
 theorem heading_marker_between (level : Ir.HeadingLevel) :
     1 ≤ (MarkdownDoc.headingMarker level).toList.length ∧
       (MarkdownDoc.headingMarker level).toList.length ≤ 6 := by
   simpa [MarkdownDoc.headingMarker] using Ir.headingRank_between level
 
-/-- Invented, short enough that every heading and its following paragraph
-fit on one page. The rank oracle is the source's literal hash count. -/
+/-- Headings with their following paragraphs on one page; each rank is the source's literal hash
+count. -/
 def source : String :=
   "# Amber\n\nFirst body.\n\n## Birch\n\nSecond body.\n\n### Cedar\n\nThird body.\n\n\
 #### Dogwood\n\nFourth body.\n\n##### Elm\n\nFifth body.\n\n###### Fir\n\nSixth body.\n"
@@ -45,9 +43,8 @@ def headings (doc : Ir.Doc) : Array (String × String) :=
 
 end MarkdownHeadings
 
-/-- Rank and text are checked on the shipped HTML tree, the layout, and
-the serialized PDF structure. A title is independently tested alongside
-all six body ranks; it cannot consume a rank and turn the last into H7. -/
+/-- Rank and text hold on the shipped HTML tree, the layout and the PDF structure, a title beside
+all six body ranks. -/
 def markdownHeadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabMd MarkdownHeadings.source
@@ -69,7 +66,7 @@ def markdownHeadingChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"Markdown serialization preserves the rank of {title}"
       ((exported.splitOn "\n").contains (marker ++ " " ++ title))
   let titledLines := (MarkdownDoc.emit titled).splitOn "\n"
-  t "the Markdown twin keeps title and body h1 separate without shifting h6"
+  t "the Markdown twin keeps title and body h1 apart, h6 unshifted"
     ((titledLines.filter (·.startsWith "# ")) == ["# Document title", "# Amber"]
       && titledLines.contains "###### Fir"
       && !titledLines.any (·.startsWith "####### "))

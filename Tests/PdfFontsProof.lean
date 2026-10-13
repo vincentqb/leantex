@@ -17,14 +17,8 @@ private def twoFacePage : Layout.PageOut :=
         .run 0 .black none 0 #[(1, 'A', 0)] 0 {} {} 0 none default,
         .run 1 .black none 0 #[(1, 'B', 0)] 0 {} {} 0 none default] }] }
 
-/-- Exercise the actual checked producer and its structural census with
-both font-program dictionary shapes, both PDF versions, and full/subset
-names. Invented program bytes witness transport and reference recovery;
-they make no claim about sfnt validity or viewer rendering.
-
-Malformed source names are refused by the producer itself. The separate
-`pdfBoundsChecks` block reads the census of a 65536-entry outline, past
-the compressed-object ceiling the fixed-width xref once imposed. -/
+/-- The checked producer and its census over both font-program dictionary shapes, both PDF versions
+and full and subset names. -/
 def pdfFontsProofChecks (failures : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) : IO Unit := do
     unless ok do failures.modify (name :: ·)

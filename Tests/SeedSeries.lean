@@ -8,10 +8,7 @@ public section
 open LeanTex.Core
 open LeanTex.Cli
 
-/-! A chart's series colours generated from a palette's seeds: the generator
-over invented seeds in both polarities and its refusals, and the export the
-script writes. What every generated series meets — its contrast, its gap,
-its first series and a count's prefix — is `SeedSeries`' theorems'. -/
+/-! A chart's series colours generated from a palette's seeds, and the export the script writes. -/
 
 namespace Tests.SeedSeries
 
@@ -23,10 +20,8 @@ private def generated (s : SeedPalette.Seeds) (n : Nat) : Except String (List Ir
   let g ← SeedSeries.generate s t p n
   return g.series
 
-/-- Invented seeds in both polarities each generate the most series, in
-farthest-point sampling's order — each pick no farther from what was taken
-before it than the pick before — and the export names each in order; a
-count of none, and one past the most, are refused. -/
+/-- Seeds in both polarities generate the most series in farthest-point order, and counts of none or
+past the most are refused. -/
 def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let white := Ir.Color.white
@@ -48,13 +43,10 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error e => t s!"series, {label}: the most series generate, not fail: {e}" false
     | .ok most =>
       t s!"series, {label}: the most series generate" (most.length == SeedSeries.maxCount)
-      -- Each pick stands nearer what was taken before it than the pick
-      -- before it did, the taken set only growing: farthest-point
-      -- sampling's own order, which no pick out of it keeps.
       let near (k : Nat) : Int :=
         ((most.take k).map Oklab.labOf ++ [Oklab.labOf s.ink]).foldl
           (fun m x => min m (Oklab.distSq (Oklab.labOf (most.getD k Ir.Color.black)) x)) (10 ^ 38)
-      t s!"series, {label}: each pick stands no farther from those before it than the pick before"
+      t s!"series, {label}: each pick is no farther from its predecessors than the pick before"
         ((List.range (most.length - 2)).all fun k => near (k + 2) ≤ near (k + 1))
       let decls := SeedSeries.declarations "Probe" most
       t s!"series, {label}: the export names every series in order"
@@ -65,9 +57,8 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "series: a count of none is refused" (generated s 0 |>.toOption).isNone
   t "series: a count past the most is refused" (generated s (SeedSeries.maxCount + 1) |>.toOption).isNone
 
-/-- The script writes the series it is asked for after the palette, its
-`--check` passes the include it wrote and fails one of another count, and a
-count it cannot generate is a usage error. -/
+/-- The script writes the series asked for after the palette, its `--check` holds, and an
+ungeneratable count is a usage error. -/
 def seriesScriptChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tmp := (← IO.FS.realPath (← IO.currentDir)) / ".lake" / "seed-series-check"

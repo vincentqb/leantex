@@ -22,16 +22,8 @@ structure Probe where
   source : String
   pins : Array (String × Paint) := #[]
 
-/- Shell syntax references: POSIX.1-2024, Shell Command Language §2.2–2.3,
-https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html
-and Bash 5.3 manual §3.1.2, §3.5.3–3.5.4, §3.6.6,
-https://www.gnu.org/software/bash/manual/bash.html.
-The simple colour pins read a type's ink, its role's. Variables are
-identifiers and set in the ink, apart from literal strings, without
-fixing a Pygments subtype's colour. Complex constructs owe conservation here. -/
+/- Shell syntax per POSIX.1-2024 §2.2–2.3 and the Bash 5.3 manual. -/
 def shellProbes : Array Probe := #[
-  -- EOF and LF must give comments the same class ink in both artifacts.
-  -- The trailing spaces and tab remain authored source, even at EOF.
   { name := "final-inline",
     source := "echo first  # earlier\n\n\tprintf last\t  # terminal  ",
     pins := #[("# earlier", .ink .comment), ("# terminal", .ink .comment)] },
@@ -72,8 +64,7 @@ def visible (c : Char) : Bool := !c.isWhitespace && c != '\u00a0'
 
 def visibleText (s : String) : Array Char := s.toList.toArray.filter visible
 
-/-- A unique source occurrence fixes the glyph positions being judged:
-another occurrence elsewhere with the right colour cannot satisfy a pin. -/
+/-- The one source occurrence of `needle`, so another occurrence cannot satisfy a pin. -/
 def witnessIndex? (source needle : String) : Option Nat := Id.run do
   let text := visibleText source
   let word := visibleText needle
@@ -85,8 +76,8 @@ def witnessIndex? (source needle : String) : Option Nat := Id.run do
       found := some i
   return found
 
-/-- The paint of `name`'s glyphs inside the one occurrence of `context`,
-`name` standing `skip` visible characters into it. -/
+/-- The paint of `name`'s glyphs inside the one occurrence of `context`, `skip` visible characters
+in. -/
 def namePaint? (source context name : String) (skip : Nat) (glyphs : Array (Char × α)) :
     Option (Array α) := do
   let start ← witnessIndex? source context
@@ -101,8 +92,7 @@ def witnessPaint? (source needle : String) (glyphs : Array (Char × α)) :
 
 mutual
 
-/-- Read inherited token paint from the typed code subtree, including nested
-strong/em elements and text split across several spans. -/
+/-- Inherited token paint over the typed code subtree, nested elements and split spans included. -/
 def htmlPaintOne (color : Option String) (acc : Array (Char × Option String)) :
     Html.Node → Array (Char × Option String)
   | .text text => acc ++ text.toList.toArray.map (·, color)
@@ -154,9 +144,8 @@ end Tests.ShellHighlight
 
 namespace Tests
 
-/-- The external boundary is tested as data: arbitrary class names cannot
-inject markup or paint, and neither token offsets nor text may change source.
-No installed Python module or document code runs in this check. -/
+/-- The external reply is data: class names cannot inject markup or paint, and no offset or text may
+change the source. -/
 def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let project := LeanTex.Core.ListingHighlight.Kind.ofPygments
@@ -209,7 +198,7 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
     ShellHighlight.shellTokenJson 0 "Token.Operator" "-",
     ShellHighlight.shellTokenJson 1 "Token.Operator" ">",
     ShellHighlight.shellTokenJson 2 "Token.Name" "x"]]
-  t "listing reply: adjacent pieces of one type share a token, as a native lexer's lines do"
+  t "listing reply: adjacent pieces of one type share a token"
     (match ListingReply.decode #[split] splitBody with
       | .ok (as, ds) => ds.isEmpty && as.size == 1 && as.all fun a =>
         a.tokens == #[#[{ kind := .operator, text := "->" }, { kind := ⟨"Name"⟩, text := "x" }]]
@@ -239,7 +228,7 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (as.all fun a => a.tokens.flatten.all fun token =>
         (Listing.ink {} none token.kind).isNone && (Listing.ink {} none token.kind (style := some .friendly)).isNone)
   -- The lexer boundary may be part of the final token or a separate token.
-  -- Deliberately bypass normalization here to include authored trailing LFs.
+  -- Bypass normalization to keep authored trailing LFs.
   for source in ["", "\n", "\n\n", "\n\techo λ😀  ", "echo x\n\n", "# tail\t  "] do
     let r : ListingReply.Request := { language := "bash", source }
     let boundary := ShellHighlight.shellTokenJson source.length "Token.Text" "\n"
@@ -365,10 +354,8 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "listing reply: native Lean, Python and shell listings need no external request"
     ([native, lean, bash, friendly, markdown].all fun d => (ListingReply.requests d).isEmpty)
 
-/-- Fail-before artifact guard, independent of native versus external lexing.
-The optional fulfiller is the CLI's effects-as-data seam; the default reads
-the elaborator's own result. Tests never execute a shell, lexer or plugin.
-Parent integration supplies the chosen fulfiller and registers this check. -/
+/-- Listing highlighting reaches both artifacts whichever fulfiller lexes; tests never execute a
+shell, lexer or plugin. -/
 def shellHighlightChecks (ref : IO.Ref (List String))
     (fulfil : Ir.Doc → IO Ir.Doc := pure) : IO Unit := do
   let t := check ref
@@ -379,7 +366,6 @@ def shellHighlightChecks (ref : IO.Ref (List String))
     let aliases := if probe.name == "basic" || probe.name.startsWith "final-" then
       ["bash", "sh", "shell"] else ["bash"]
     for language in aliases do
-      -- The style each listing declares; a markdown fence declares none.
       let inputs : List (String × Option Ir.ListingStyle × Ir.Doc × Array Diag) := [
         ("minted/default", some .default,
           ShellHighlight.minted language .default probe.source),
@@ -423,8 +409,7 @@ def shellHighlightChecks (ref : IO.Ref (List String))
             let ink := own.getD fg
             t s!"{label}/{needle}: Layout.Out ships its class ink"
               (laid.any fun colors => !colors.isEmpty && colors.all (· == ink))
-            -- Black may be the PDF graphics state's initial ink: a run in
-            -- the listing's own ink owes no redundant colour operator.
+            -- Black may be the initial PDF ink, so a run in the listing's own ink owes no colour operator.
             if own.isSome then
               t s!"{label}/{needle}: emitted PDF contains its class paint"
                 (bytesContain pdf ink.pdfFill)
@@ -433,8 +418,6 @@ def shellHighlightChecks (ref : IO.Ref (List String))
                 if own.isNone then color.isNone
                 else color.any fun css => hasStr css (HtmlDoc.cssColor ink))
           | .variable =>
-            -- A variable is an identifier: it sets in the listing's ink,
-            -- apart from the literal it may stand in.
             t s!"{label}/{needle}: variables set in the ink, apart from literal strings"
               (fg != literal && laid.any fun colors =>
                 !colors.isEmpty && colors.all (· == fg))

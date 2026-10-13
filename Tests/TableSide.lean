@@ -8,9 +8,8 @@ open LeanTex.Core LeanTex.Core.Dim
 
 namespace Tests
 
-/-- The cells of every row of an emitted tree, in row order: each cell's
-first class, the side class it states (`HtmlDoc.cellClasses`), the covered
-`\multicolumn` cells having no element of their own. -/
+/-- Each row's cells in an emitted tree, by first class and side class (`HtmlDoc.cellClasses`);
+covered `\multicolumn` cells have no element. -/
 private def rowCellSides (nodes : Array Html.Node) : Array (Array (Option String)) :=
   (elemNodesList (· == "tr") #[] nodes.toList).map fun tr => match tr with
     | .elem _ _ kids => kids.filterMap fun k => match k with
@@ -21,10 +20,7 @@ private def rowCellSides (nodes : Array Html.Node) : Array (Array (Option String
       | _ => none
     | _ => #[]
 
-/-- The scopes a table can stand in, as the source spells them and as the
-page and the stylesheet read them: none, `flushleft`, `center`,
-`flushright`, and the declarations `\centering`, `\raggedright` and
-`\raggedleft`. -/
+/-- The scopes a table can stand in, as source, page and stylesheet read them. -/
 private def tableScopes : List (String × String × String) :=
   [("no scope", "", ""),
    ("flushleft", "\\begin{flushleft}", "\\end{flushleft}"),
@@ -34,22 +30,21 @@ private def tableScopes : List (String × String × String) :=
    ("raggedright", "{\\raggedright ", "\\par}"),
    ("raggedleft", "{\\raggedleft ", "\\par}")]
 
-/-- A `lcr` table whose rows differ in width in every column, plus a `p`
-column whose cells are one short line each. Every word is invented. -/
+/-- An `lcr` table whose rows differ in width in every column, plus a `p` column of one short line
+per cell. -/
 private def sideTable : String :=
   "\\begin{tabular}{lcrp{0.2\\linewidth}}\n" ++
   "LeftLongCell & MiddleLongCell & RightLongCell & ParLongCell \\\\\n" ++
   "Lf & Md & Rt & Pa \\\\\n" ++
   "\\end{tabular}"
 
-/-- A `p` cell whose paragraph wraps over several lines. Every word is
-invented. -/
+/-- A `p` cell whose paragraph wraps over several lines. -/
 private def wrapTable : String :=
   "\\begin{tabular}{p{5cm}}\nSeveral invented words make a box long enough to " ++
   "wrap across a few lines so the edges show whether it justifies. \\\\\n\\end{tabular}"
 
-/-- The wrapping paragraph's lines on the first page, the lead line left
-out: each line's left edge and the right edge of its last glyph run. -/
+/-- The wrapping paragraph's lines on the first page, lead line excluded: each left edge and last
+run's right edge. -/
 private def wrapLines (out : Layout.Out) : Array (Dim.Sp × Dim.Sp) :=
   let lines := ((out.pages[0]?.map (·.lines)).getD #[]).filter fun l =>
     !l.furniture && hasGlyphRun l && !hasStr (lineText l) "Lead"
@@ -65,21 +60,8 @@ private def edgeSpread (xs : Array Dim.Sp) : Dim.Sp :=
   | some x => xs.foldl max x - xs.foldl min x
   | none => 0
 
-/-- **A cell sets by its column spec, whatever scope its table stands in**
-(`Ir.cellSpec`; `Pdf.table_cell_side_agree`). On the page an `l` cell's
-lines start at its column's left edge, an `r` cell's end at its right edge,
-a `c` cell's centres coincide and a `p` cell starts flush left, under every
-scope and in both a flow and a frame; in the typed tree every cell — `left`
-included — carries its spec's side class first, and the stylesheet's rule
-for each side class declares that side. And a `p` cell justifies whatever
-scope its table stands in: its wrapped lines all end at the cell's right
-edge, as lualatex sets them under `\raggedright` (`\@arrayparboxrestore`
-zeroes `\rightskip`). The defects it names: a text column under
-`\centering` centred in the HTML, where a cell that stated nothing inherited
-its scope's `text-align`, while the page set it flush left; under
-`\raggedleft` the page set an `l` column's cells flush right, the scope's
-side leaking into each cell's paragraph; and under `\raggedright` a wrapped
-`p` cell set ragged, the scope's justification leaking the same way. -/
+/-- A cell sets by its column spec, whatever scope its table stands in (`Ir.cellSpec`;
+`Pdf.table_cell_side_agree`). -/
 def tableSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let wants : Array String := #["bt-left", "bt-center", "bt-right", "bt-left"]
@@ -94,8 +76,7 @@ def tableSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
         (3 ≤ ends.size && edgeSpread ends ≤ Dim.pt 1 / 10)
     for (kind, wrap) in [("article", fun (body : String) => dvDoc "" body),
         ("frame", fun body => deck169Frame body)] do
-      -- A lead line first: a group opening a frame body is beamer's title
-      -- argument, as `\begin{frame}{...}` reads it.
+      -- A lead line first: a group opening a frame body is beamer's title argument.
       let src := wrap ("Lead line.\n\n" ++ opening ++ sideTable ++ closing)
       let (doc, ds) := elabStr src
       t s!"table side {kind} {scope}: the source elaborates without loss"
@@ -124,24 +105,13 @@ def tableSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"table side {kind} {scope}: the p column's cells start flush left"
         ((x "ParLongCell").isSome && x "ParLongCell" == x "Pa")
 
-/-- A 4 cm paragraph column under a modifier, one wrapping cell. Every word
-is invented. -/
+/-- A 4 cm paragraph column under a modifier, with one wrapping cell. -/
 private def raggedTable (modifier : String) : String :=
   "\\begin{tabular}{" ++ modifier ++ "p{4cm}}\nSeveral invented words make a cell long " ++
   "enough to wrap across a few lines so the edges show whether it justifies. \\\\\n\\end{tabular}"
 
-/-- **A paragraph column sets as its modifier declares** (`Ir.ColSpec.ragged`,
-`Layout.cellParagraph`). Under lualatex (array manual §1) a bare `p` cell
-justifies, `>{\raggedright\arraybackslash}p` sets its lines ragged from one
-left edge, `>{\raggedleft\arraybackslash}p` ragged against one right edge,
-and `>{\centering\arraybackslash}p` centres each line in the column, none of
-them wider than the column's 4 cm; the HTML cell states the same side. On an
-`l`, `c` or `r` column the same declarations change nothing — the cell sets
-no paragraph — so `>{\raggedleft}l` stays flush left. The defects it names:
-the page justified all three modified paragraph columns flush left, set the
-`>{\centering}` column's first line on a measure wider than the column, over
-its neighbour, and set a modified `l` column flush right or centred in both
-artifacts. -/
+/-- A paragraph column sets as its modifier declares (`Ir.ColSpec.ragged`, `Layout.cellParagraph`),
+and a natural column ignores it. -/
 def tableRaggedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let width := Dim.mm 40
@@ -171,8 +141,6 @@ def tableRaggedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       let (_, body, _) := HtmlDoc.emitTree {} doc
       t s!"table ragged {kind} {name}: the HTML cell states the declared side"
         (rowCellSides body == #[#[some side]])
-    -- On a natural column a side declaration changes nothing: lualatex sets
-    -- `>{\raggedleft}l`, `>{\centering}l` and `l<{\raggedleft}` flush left.
     let natural := "\\begin{tabular}{>{\\raggedleft}l>{\\centering}ll<{\\raggedleft}}\n" ++
       "Abundance & Carousel & Elephant \\\\\nBit & Dot & Fig \\\\\n\\end{tabular}"
     let (doc, _) := elabStr (wrap ("Lead line.\n\n" ++ natural))
@@ -185,15 +153,8 @@ def tableRaggedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       (rowCellSides body == #[#[some "bt-left", some "bt-left", some "bt-left"],
         #[some "bt-left", some "bt-left", some "bt-left"]])
 
-/-- **A table's rows stand the print leading apart in both artifacts**
-(`HtmlDoc.printLeadingMilli`, `HtmlDoc.printLeading_exact`). On the page,
-consecutive one-line rows' baselines are `Ir.leadingFor` of the table's size
-apart, as LaTeX's `\@arstrutbox` is one `\baselineskip`; in the stylesheet
-the formal table declares the same ratio as its `line-height`, under the
-default spread and a declared `\linespread` alike. The defect it names: the
-HTML rows inherited the screen's prose lead (`bodyLeadingMilli`, 1.45), so
-a deck's table stood a fifth taller on its stage than on its page and its
-last rows fell below the stage while the PDF page held it. -/
+/-- A table's rows stand the print leading apart in both artifacts (`HtmlDoc.printLeadingMilli`,
+`HtmlDoc.printLeading_exact`). -/
 def tableLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let rows := "\\begin{tabular}{l}\nRowOne \\\\\nRowTwo \\\\\nRowThree \\\\\n\\end{tabular}"
@@ -213,13 +174,7 @@ def tableLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
          | some a, some b, some d => b - a == pitch && d - b == pitch
          | _, _, _ => false)
 
-/-- A formal table's lengths as lualatex sets them, by class: `\the` of each
-in a synthetic preamble after `\usepackage{booktabs}`, before any face is
-declared (TeX Live 2026), in sp. A deck measures booktabs' em and ex in
-Latin Modern Sans (lmsans10's x-height is 0.444 of its size), an article in
-Latin Modern Roman (0.431), each at its option's `\normalsize` — 10.95 pt
-under `11pt`, beamer's default; `\tabcolsep` and `\doublerulesep` are the
-class's own 6pt and 2pt. -/
+/-- A formal table's lengths in sp as lualatex sets them after `\usepackage{booktabs}`, by class. -/
 private def tableLengthsLualatex : List (String × String × List (String × String)) :=
   let weights10 := [("heavyrulewidth", "0.80002"), ("lightrulewidth", "0.50003"),
     ("cmidrulewidth", "0.29999"), ("cmidrulekern", "5.0")]
@@ -240,28 +195,26 @@ private def tableLengthsLualatex : List (String × String × List (String × Str
       ("lightrulewidth", "0.60004"), ("cmidrulewidth", "0.35999"), ("cmidrulekern", "6.0")] ++
        fixed)]
 
-/-- A printed `\the` value in points as TeX reads it back: the nearest
-65536th. -/
+/-- A printed `\the` value in points read back as TeX reads it: the nearest 65536th. -/
 private def spOfPt (printed : String) : Int :=
   match Decl.parseDecimal printed with
   | some (m, sc) => (m * 65536 * 2 + (sc : Int)) / (2 * (sc : Int))
   | none => 0
 
-/-- A small formal table under every kind of rule. Every word is invented. -/
+/-- A small formal table under every kind of rule. -/
 private def ruledTable : String :=
   "\\begin{tabular}{lr}\n\\toprule\nHeadWord & Count \\\\\n\\midrule\n" ++
   "FirstRow & 12 \\\\\n\\cmidrule(lr){1-2}\nSecondRow & 34 \\\\\n\\bottomrule\n\\end{tabular}"
 
-/-- A table's source in a class's synthetic document, after a lead line: in
-a frame for a deck, in the body otherwise. -/
+/-- A table's source in a class's synthetic document after a lead line: in a frame for a deck, in
+the body otherwise. -/
 private def ruledSource (kind cls pre : String) (table : String := ruledTable) : String :=
   let body := "Lead line.\n\n" ++ table
   if kind.startsWith "deck" then
     cls ++ pre ++ "\\begin{document}\n\\begin{frame}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
   else cls ++ pre ++ "\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
-/-- A rule's fallback in an emitted stylesheet: the value `var(--name, …)`
-falls back to, as the formal table's rules spell it. -/
+/-- The value an emitted stylesheet's `var(--name, …)` falls back to. -/
 private def fallbackOf (css name : String) : Option String :=
   match (css.splitOn s!"var(--{name}, ").drop 1 with
   | rest :: _ => some ((rest.splitOn ")").headD "").trimAscii.toString
@@ -273,9 +226,8 @@ private def milliOf (value unit : String) : Option Int := do
   let (m, sc) ← Decl.parseDecimal (value.dropEnd unit.length).toString
   return m * 1000 / (sc : Int)
 
-/-- Whether a stylesheet length spells `want` as its share of the document's
-basis, to the printed milli: milli-percent of the stage height on a deck,
-milli-rem of the class size elsewhere. -/
+/-- Whether a stylesheet length spells `want` as its share of the document's basis: stage height on
+a deck, class size elsewhere. -/
 private def statesShare (doc : Ir.Doc) (v : String) (want : Dim.Sp) : Bool :=
   match HtmlDoc.lengthBasisOf doc with
   | .stage h => (milliOf v "vh").any fun m =>
@@ -283,29 +235,8 @@ private def statesShare (doc : Ir.Doc) (v : String) (want : Dim.Sp) : Bool :=
   | .classSize s => (milliOf v "rem").any fun m =>
     m * s ≤ want * 1000 && want * 1000 < (m + 1) * s
 
-/-- **A table's lengths are lualatex's, in both artifacts.** booktabs fixes
-its rule weights and seps once, as it loads, in the preamble's font — Latin
-Modern at the class's `\normalsize`, never the table's own face or size —
-and the page sets an undeclared table by exactly those values
-(`Layout.tableLength`, within TeX's rounding of `.65`, `.08` and their peers
-to a 65536th), under `10pt`, `11pt` and `12pt` alike: a table declaring them
-through `\setlength` ships the very page of the one declaring nothing. A
-length the preamble declares in em or ex is fixed there too
-(`Ir.PreambleFace.fixTableLengths`), as `\setlength` evaluates it: `1ex` is
-4.31pt in a 10pt article however small its table sets. The stylesheet states
-the same values (`Pdf.table_length_agree`) as their share of the document's
-basis (`HtmlDoc.lengthBasisOf`): a deck's stage, the unit its type is set
-in, and elsewhere the class size, its body text's 1 rem; a declared table
-length, in the preamble or in a frame, takes the spelling of its default.
-The defects it names: the page resolved booktabs' `.65ex` in the document's
-body face, so a deck set in a face with a tall x-height opened its rules
-0.5pt wider than lualatex; it read `11pt` as 11pt where LaTeX's size file
-sets 10.95pt; a preamble's `1ex` resolved in the table's own face and size;
-the deck's stage spelled `\tabcolsep` in paper points, under half its share
-of the PDF page; and an article's stylesheet spelled the rule gaps in points,
-a 10pt article's at 0.23 of its body text where the page sets 0.28. Only
-table lengths are fixed this way: the preamble's other lengths still resolve
-where they are read, and fixing them alike is pending work. -/
+/-- A table's lengths are lualatex's in both artifacts (`Layout.tableLength`,
+`Pdf.table_length_agree`), preamble em and ex lengths fixed in the preamble's font. -/
 def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for (kind, cls, lengths) in tableLengthsLualatex do
@@ -320,8 +251,7 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let (declDoc, _) := elabStr (ruledSource kind cls declared)
     let c := censusOf #[] (layoutOf oneFace doc)
     let d := censusOf #[] (layoutOf oneFace declDoc)
-    -- Each length is within TeX's rounding of lualatex's, and a position sums
-    -- the lengths above it: 32 sp bounds the table's dozen.
+    -- Each length is within TeX's rounding and a position sums a dozen, so 32 sp bounds it.
     let near (a b : Option Dim.Sp) : Bool := match a, b with
       | some x, some y => (x - y).natAbs ≤ 32
       | _, _ => false
@@ -337,9 +267,7 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       let fb := fallbackOf page name
       t s!"table length {kind} {name}: the stylesheet's fallback states the page's length as its share ({fb})"
         (fb.any (statesShare doc · want))
-  -- A table length the preamble declares in em or ex is fixed in the
-  -- preamble's font: lualatex prints 4.31pt for 1ex and 5.0pt for .5em in a
-  -- 10pt article, inside a `\small` table too.
+  -- lualatex prints 4.31pt for 1ex and 5.0pt for .5em in a 10pt article, in a `\small` table too.
   let article := "\\documentclass{article}\n\\usepackage{booktabs}\n"
   let small := "{\\small\n" ++ ruledTable ++ "\n\\par}"
   let (rel, _) := elabStr (ruledSource "article" article
@@ -354,9 +282,6 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "table length: a small table under a preamble's 1ex ships the page of its 4.31pt"
     ((pageRuleSegs cr 0).size == 4 && pageRuleSegs cr 0 == pageRuleSegs ca 0 &&
       ["HeadWord", "FirstRow", "SecondRow"].all fun w => lineYOf cr 0 w == lineYOf ca 0 w)
-  -- A deck that declares a table length its default already holds ships the
-  -- stylesheet it shipped without the declaration's spelling changing, in its
-  -- preamble and in a frame alike.
   let deckSrc (pre inner : String) :=
     "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++ pre ++
       "\\begin{document}\n\\begin{frame}\n" ++ inner ++ ruledTable ++
@@ -369,26 +294,14 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "table length deck: a frame's declared tabcolsep is spelled as its default"
     ((fallbackOf plain "tabcolsep").any fun v => hasStr inFrame s!"--tabcolsep: {v}")
 
-/-- The two rule-to-baseline distances of `ruledTable` as lualatex sets
-them, by class, in printed points (`\showbox` of the tabular, TeX Live
-2026): a row under a rule stands `\belowrulesep` and the strut's height
-(`\@arstrutbox`, 8.39996pt of a 12pt `\baselineskip`) below the rule, and a
-rule under a row stands the strut's depth (3.60004pt) and `\aboverulesep`
-below the row's baseline. -/
+/-- The two rule-to-baseline distances of `ruledTable` as lualatex's `\showbox` prints them, by
+class. -/
 private def tableStrutLualatex : List (String × String × String × String) :=
   [("deck", "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usepackage{booktabs}\n",
      "11.28593", "5.37601"),
    ("article", "\\documentclass{article}\n\\usepackage{booktabs}\n", "11.20143", "5.32401")]
 
-/-- **A table's rows stand on LaTeX's row strut** (`Layout.strutBox`,
-`Layout.tableStrut`). Every row of a tabular carries `\@arstrut` and the
-rows stack flush, so beside a rule a row stands on the strut, not on its
-glyphs: on the page every row of `ruledTable` stands lualatex's distance
-below the rule above it, and every rule lualatex's distance below the row
-above it, to a few scaled points (TeX rounds `.7` to a 65536th). The defect
-it names: a row beside a rule stood on its glyphs' cap height and the face's
-descent, so with booktabs' seps at lualatex's values the printed rule gaps
-came out a point and a half tighter than lualatex's. -/
+/-- A table's rows stand on LaTeX's row strut (`Layout.strutBox`, `Layout.tableStrut`). -/
 def tableStrutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for (kind, cls, under, over) in tableStrutLualatex do
@@ -399,8 +312,7 @@ def tableStrutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let near (got want : Dim.Sp) : Bool := (got - want).natAbs ≤ 8
     t s!"table strut {kind}: the page ships four rules and three rows"
       (rules.size == 4 && rows.length == 3)
-    -- rule k stands above row k, and row k above rule k + 1; a rule's
-    -- segment is its band's bottom and thickness
+    -- rule k stands above row k, and row k above rule k + 1; a rule's segment is its band's bottom and thickness
     let pairs : List (Dim.Sp × Option Dim.Sp × Option Dim.Sp) :=
       (rows.zip (List.range 3)).map fun (y, k) =>
         (y, (rules[k]?).map (fun (r : Dim.Sp × Dim.Sp) => r.1),
@@ -410,18 +322,8 @@ def tableStrutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     t s!"table strut {kind}: each rule stands lualatex's distance below the row above it"
       (pairs.all fun (y, _, below) => below.any fun top => near (top - y) (spOfPt over))
 
-/-- **A face declared before booktabs loads is a named loss** (W0398).
-booktabs measures its rule paddings in the font current where it loads; the
-engine measures them in Latin Modern (`Ir.PreambleFace`), which is that font
-exactly when the preamble family's face is declared after the load. A main
-face declared before the load in an article, or a sans face before it in a
-deck, fires W0398 once in place of the native note, keyed to the package;
-the same declaration after the load, or a main face before it in a deck
-(whose preamble font is sans), fires nothing. And the warning's premise, two
-builds apart by the gate's own condition: a table under the face declared
-before the load and under the face declared after it ships byte-identical
-pages, so the engine measures no declared face anywhere and the warning
-silences nothing it would otherwise handle. -/
+/-- A face declared before booktabs loads is a named loss (W0398), and the warning's premise holds
+two builds apart. -/
 def tableFaceOrderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let booktabsDiags (cls pre post : String) : Array Diag :=

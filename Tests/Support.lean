@@ -39,8 +39,8 @@ def svgBoundaryError (result : Except String α) : Bool :=
   | .error err => (err.splitOn "SVG resource boundary").length > 1
   | .ok _ => false
 
-/-- An independent encoder for captured resource checks. The command reads
-only synthetic bytes or the repository's test assets. -/
+/-- An independent encoder of `data` as a `data:` URL of type `mime`, for captured resource
+checks. -/
 def htmlDataOracle (mime : String) (data : ByteArray) : IO String :=
   IO.FS.withTempDir fun dir => do
     let path := dir / "payload"
@@ -50,9 +50,7 @@ def htmlDataOracle (mime : String) (data : ByteArray) : IO String :=
       throw <| IO.userError "the HTML containment byte oracle requires base64"
     return "data:" ++ mime ++ ";base64," ++ out.stdout
 
-/-- Independently read an artifact's captured bytes, including binary font
-programs. The pipe stays binary: decoding through a `String` would replace
-invalid UTF-8 and corrupt the very program whose metadata the tests inspect. -/
+/-- An artifact's `data:` URL decoded to its type and bytes, kept binary. -/
 def htmlDataDecode (href : String) : IO (String × ByteArray) := do
   let [header, payload] := href.splitOn "," |
     throw <| IO.userError "expected one embedded resource"
@@ -71,8 +69,7 @@ def htmlDataDecode (href : String) : IO (String × ByteArray) := do
       throw <| IO.userError "the published resource contains invalid base64"
     return (mime, data)
 
-/-- Follow the emitted inline SVG reference and independently decode its
-bytes. These synthetic pages have one image per role; no sidecar can supply it. -/
+/-- The bytes of the page's inline SVG reference, decoded independently. -/
 def svgPublishedAsset (html : String) (_output : System.FilePath)
     (tag attr : String) : IO (String × ByteArray) := do
   let [_, tail] := html.splitOn ("<" ++ tag ++ " ") |
@@ -88,8 +85,8 @@ def svgPublishedAsset (html : String) (_output : System.FilePath)
     throw <| IO.userError "expected an embedded SVG reference"
   return (href, data)
 
-/-- A one-file PDF of the given objects' bytes, numbered from 1, the first
-the catalog: a classic cross-reference table and trailer. -/
+/-- A PDF of the given objects' bytes, numbered from 1 with the first the catalog, under a classic
+cross-reference table. -/
 def syntheticPdfBin (objects : Array ByteArray) (trailerExtra : String := "") : ByteArray := Id.run do
   let mut out := "%PDF-1.7\n".toUTF8
   let mut offsets : Array Nat := #[]
@@ -104,12 +101,11 @@ def syntheticPdfBin (objects : Array ByteArray) (trailerExtra : String := "") : 
   return out ++ s!"trailer\n<< /Size {objects.size + 1} /Root 1 0 R {trailerExtra}>>\n\
     startxref\n{xref}\n%%EOF\n".toUTF8
 
-/-- A one-file PDF of the given objects, numbered from 1, the first the
-catalog: a classic cross-reference table and trailer over invented bytes. -/
+/-- `syntheticPdfBin` over the objects' spellings. -/
 def syntheticPdf (objects : Array String) (trailerExtra : String := "") : ByteArray :=
   syntheticPdfBin (objects.map String.toUTF8) trailerExtra
 
-/-- A stream object over bytes, its dictionary's other entries `dict`. -/
+/-- A stream object over bytes, `dict` its dictionary's other entries. -/
 def streamObjBin (body : ByteArray) (dict : String := "") : ByteArray :=
   s!"<< /Length {body.size} {dict}>>\nstream\n".toUTF8 ++ body ++ "\nendstream".toUTF8
 
@@ -117,8 +113,8 @@ def streamObjBin (body : ByteArray) (dict : String := "") : ByteArray :=
 def streamObj (body : String) (dict : String := "") : String :=
   s!"<< /Length {body.utf8ByteSize} {dict}>>\nstream\n{body}\nendstream"
 
-/-- A one-page figure PDF whose text is in an embedded Type 1 program: the
-importer draws its paths and names the font a loss. Invented content. -/
+/-- A one-page figure whose text is in an embedded Type 1 program, which the importer names a
+loss. -/
 def type1FigurePdf : ByteArray := syntheticPdf #[
   "<< /Type /Catalog /Pages 2 0 R >>",
   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -130,9 +126,8 @@ def type1FigurePdf : ByteArray := syntheticPdf #[
   "<< /Type /FontDescriptor /FontName /Placeholder /Flags 32 /FontFile 7 0 R >>",
   streamObj "%!PS-AdobeFont-1.0: Placeholder" "/Length1 31 /Length2 0 /Length3 0 "]
 
-/-- `svgCanvasPdf`'s pages in a file whose trailer declares encryption: the
-PDF backend copies the page as it does any, and the figure importer refuses
-it, so its web face is the converter's or none. -/
+/-- `svgCanvasPdf`'s pages under a trailer declaring encryption, which the figure importer
+refuses. -/
 def encryptedCanvasPdf : ByteArray :=
   let stream (ink : String) := s!"<< /Length {ink.utf8ByteSize} >>\nstream\n{ink}\nendstream"
   syntheticPdf #[
@@ -144,8 +139,7 @@ def encryptedCanvasPdf : ByteArray :=
     stream "1 0 0 rg 0 0 60 120 re f",
     "<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>"] "/Encrypt 7 0 R "
 
-/-- A synthetic two-page sequence: a wide blue first frame and a tall red
-poster. No fonts or outside resources participate in its conversion. -/
+/-- A two-page sequence: a wide blue first frame and a tall red poster. -/
 def svgCanvasPdf : ByteArray := Id.run do
   let stream (ink : String) :=
     s!"<< /Length {ink.utf8ByteSize} >>\nstream\n{ink}\nendstream"
@@ -169,10 +163,7 @@ def svgCanvasPdf : ByteArray := Id.run do
   return (text ++ s!"trailer\n<< /Size {objects.size + 1} /Root 1 0 R >>\n\
     startxref\n{xref}\n%%EOF\n").toUTF8
 
-/-- The PNG row filters forward (ISO/IEC 15948 §9.2), one type per row via
-`ft`: the synthesizer that hands the engine's unfilter and residual split
-every filter, every geometry, so their statements can be exercised on
-inputs the engine never wrote itself. -/
+/-- PNG row filters applied forward (ISO/IEC 15948 §9.2), one type per row by `ft`. -/
 def pngFilter (px : ByteArray) (pxH rowBytes bpp : Nat) (ft : Nat → Nat) : ByteArray := Id.run do
   let sample (r i : Nat) : Nat := (px[r * rowBytes + i]?.getD 0).toNat
   let mut out := ByteArray.emptyWithCapacity (px.size + pxH)
@@ -195,8 +186,8 @@ def pngFilter (px : ByteArray) (pxH rowBytes bpp : Nat) (ft : Nat → Nat) : Byt
       out := out.push (UInt8.ofNat ((sample r i + 256 - pred) % 256))
   return out
 
-/-! Synthetic PNGs, byte by byte: the decoder reads structure, not CRCs or
-pixel data, so CRC slots are zero and an IDAT payload may be arbitrary. -/
+/-! Synthetic PNGs, byte by byte: the decoder reads structure, not CRCs or pixel data, so CRC slots
+are zero. -/
 
 def be32 (n : Nat) : List UInt8 :=
   [UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
@@ -212,8 +203,7 @@ def pngSigBytes : List UInt8 := [137, 80, 78, 71, 13, 10, 26, 10]
 
 def mkPng (chunks : List UInt8) : ByteArray := bytes (pngSigBytes ++ chunks)
 
-/-- Does `needle` occur verbatim inside `hay`? The pass-through witness: a
-source stream reaching the artifact byte for byte. -/
+/-- Does `needle` occur verbatim inside `hay`? -/
 def containsBytes (hay needle : ByteArray) : Bool := Id.run do
   if needle.size == 0 || hay.size < needle.size then return false
   for i in [0:hay.size - needle.size + 1] do
@@ -225,15 +215,14 @@ def containsBytes (hay needle : ByteArray) : Bool := Id.run do
     if ok then return true
   return false
 
-/-- xorshift64*: deterministic, dependency-free (as in scripts/kp-fuzz.lean).
-Returns the new state and the output value. -/
+/-- xorshift64*: the next state and the output value. -/
 def nextRand (s : UInt64) : UInt64 × UInt64 :=
   let x := s ^^^ (s >>> 12)
   let x := x ^^^ (x <<< 25)
   let x := x ^^^ (x >>> 27)
   (x, x * 2685821657736338717)
 
-/-- Draw a value below `bound`, threading the state. -/
+/-- A value below `bound`, threading the state. -/
 def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
   let (s', v) := nextRand s
   ((v % UInt64.ofNat bound).toNat, s')
@@ -244,16 +233,13 @@ def toks (s : String) : List Lex.Tok :=
 def elabStr (s : String) : Ir.Doc × Array Diag :=
   Elab.run "t" s
 
-/-- A source elaborated with its locations kept, as a build lays it out: the
-document whose page losses stand at their sites, and its diagnostics. -/
+/-- A source elaborated with its locations kept, as a build lays it out. -/
 def elabLocated (file src : String) : Ir.Doc × Array Diag :=
   let prepared := Elab.prepare file (Parse.parse file (Lex.lex file src).1).1
   let (doc, ds, _) := Elab.runPrepared file prepared
   (doc, ds)
 
-/-- The first elaborated formula in a document's paragraphs, equations,
-and centred display blocks (a display alignment sets under `.center`):
-enough reach for a one-formula snippet. -/
+/-- The first elaborated formula in a block's paragraphs, equations or centred displays. -/
 def blockFormula (b : Ir.Block) : Option Math.MList :=
   let inls := match b with
     | .para content => content
@@ -263,8 +249,7 @@ def blockFormula (b : Ir.Block) : Option Math.MList :=
     | .formula _ _ body => some body
     | _ => none
 
-/-- A block with any display context it rides in (`Ir.DisplayCtx`) taken
-off: the display itself. -/
+/-- A block without the display context it rides in (`Ir.DisplayCtx`). -/
 def unwrapDisplay (b : Ir.Block) : Ir.Block := (Ir.displayCtxOf b).2
 
 def firstFormula (d : Ir.Doc) : Option Math.MList :=
@@ -272,17 +257,14 @@ def firstFormula (d : Ir.Doc) : Option Math.MList :=
     | .center bs => bs.findSome? blockFormula
     | b => blockFormula b
 
-/-- A *markdown* source through the one elaborator: the markdown door
-(`Surface.read`), then `Elab.runRaws` — the same path `leantex doc.md`
-takes. -/
+/-- A markdown source through the markdown door and the one elaborator, as `leantex doc.md` runs
+it. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown "t.md" s
   Elab.runRaws "t.md" raws ds
 
-/-- How a witness runs: its source as written or transformed (`rep`, a
-witness written twice, `Tests.twice`), and elaborated as the span-free
-helpers elaborate or with its sources kept (`located`), as the driver keeps
-them for the layout's diagnostics. -/
+/-- How a witness runs: its source as written or transformed (`rep`), with or without its locations
+(`located`). -/
 structure WitnessRun where
   rep : String → String := id
   located : Bool := false
@@ -307,29 +289,17 @@ def WitnessRun.elabMarkdown (w : WitnessRun) (src : String) : Ir.Doc × Array Di
 /-- Diagnostics of a markdown source. -/
 def dvMd (s : String) (w : WitnessRun := {}) : Array Diag := (w.elabMarkdown s).2
 
-/-! ## The markdown doors
-
-Two ways a markdown file reaches the one elaborator: alone, as a document,
-and included in a tex host through `\markdownInput`. The door checks
-(`Tests/MarkdownDoors.lean`) and the CommonMark classifier
-(`scripts/commonmark.lean`) read these builders, one copy. -/
-
 /-- A reader that answers no request. -/
 def nullReader : Compat.InputReader Id := fun _ context => (none, context)
 
-/-- A markdown file as a document of its own: its door, then execution and
-elaboration as the driver runs a document. The null reader is exact here:
-a markdown file's raws lie in a vocabulary that holds no input or package
-request (`Md.desugar_vocabulary_mem`), so no request reaches a reader. -/
+/-- A markdown file as a document of its own, executed and elaborated as the driver runs one; no
+request reaches the null reader. -/
 def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown f t
   Elab.runExecuted f (Elab.executeInputs nullReader f raws) ds
 
-/-- The included door's reader, pure: `\markdownInput{name}` is answered
-with the markdown door's fragment of the file `files` maps the name to,
-resumed in the requesting context as the driver resumes it; every other
-request is left unanswered. The fragment's own diagnostics accumulate in
-the state, where the driver's input log keeps them. -/
+/-- The included door's reader: `\markdownInput{name}` answered with the markdown fragment of the
+file `files` maps it to. -/
 def mdFileReader (files : List (String × String × String)) :
     Compat.InputReader (StateM (Array Diag)) := fun request context => do
   if request.command != "markdownInput" then return (none, context)
@@ -341,32 +311,24 @@ def mdFileReader (files : List (String × String × String)) :
     let (answer, context) := Elab.resumeInput nullReader context request.file sub
     return (some answer, context)
 
-/-- A tex host through its door, executed with the included door's reader:
-the host's reading diagnostics, then the reader's, the driver's order. -/
+/-- A tex host through its door, executed with the included door's reader. -/
 def includedDoc (hostFile host : String) (files : List (String × String × String)) :
     Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .tex hostFile host
   let (executed, readDs) := (Elab.executeInputs (mdFileReader files) hostFile raws).run #[]
   Elab.runExecuted hostFile executed (ds ++ readDs)
 
-/-- A markdown file alone as a document named `docFile`: its door's
-fragment and nothing else — no preamble, no host, no reader. Named as a
-host, it is the file alone under that host's surface, the document the
-neutral host's is held to; named as the file itself, it is the markdown
-door's own document with its raws wrapped as the file they came from. -/
+/-- A markdown file alone as a document named `docFile`: its fragment and nothing else. -/
 def aloneDoc (docFile f t : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.fragment .markdown f t {}
   Elab.runExecuted docFile (Elab.executeInputs nullReader docFile raws) ds
 
-/-- The neutral host: an article whose body is one `\markdownInput` and
-nothing else, so the include stands as the body's block sequence. -/
+/-- An article whose body is one `\markdownInput` and nothing else. -/
 def neutralHost (name : String) : String :=
   "\\documentclass{article}\\usepackage{markdown}\\begin{document}\\markdownInput{" ++ name ++
     "}\\end{document}"
 
-/-- The neutral host as a source is usually written: each command on a line
-of its own and a blank line either side of the include, so the include
-stands among the blank source the include theorems allow
+/-- The neutral host with each command on a line of its own and blank lines around the include
 (`Elab.sourceBlank`). -/
 def spacedNeutralHost (name : String) : String :=
   "\\documentclass{article}\n\\usepackage{markdown}\n\n\\begin{document}\n\n\\markdownInput{" ++
@@ -374,12 +336,8 @@ def spacedNeutralHost (name : String) : String :=
 
 mutual
 
-/-- One node as its tag, attributes and text, flattened — with its closing
-tag, so the string states *nesting* and not only presence. Without the
-closing tags a row could only ask whether a tag appeared anywhere: the
-weakest row here passed on the letter `h` occurring in the tree, while the
-heading it was about shipped inside the list item above it. The accumulator
-threads so the walk is linear. -/
+/-- One node as its tag, attributes, text and closing tag, flattened so the string states
+nesting. -/
 def mdFlattenOne (acc : String) (n : Html.Node) : String :=
   match n with
   | .text s => acc ++ s
@@ -399,23 +357,17 @@ end
 /-- A page's HTML body as the typed tree. -/
 def docNodesOf (doc : Ir.Doc) : Array Html.Node := (HtmlDoc.emitTree {} doc).2.1
 
-/-- The tags and text a document's page carries, in order, flattened as
-`mdFlatten` flattens: what a row comparing two documents' pages — or one
-document reached two ways — reads. -/
+/-- The tags and text a document's page carries, in order, flattened. -/
 def docTreeOf (doc : Ir.Doc) : String := mdFlatten "" (docNodesOf doc).toList
 
-/-- The tags and text a markdown source's page carries, in order: enough to
-state what shipped and where, which is what every defect below was about. -/
+/-- The tags and text a markdown source's page carries, in order. -/
 def mdTreeOf (src : String) : String := docTreeOf (elabMd src).1
 
-/-- A page's HTML body rendered, its text escaped: what tells a hard break
-(`<br>`) from the text `<br>` (`&lt;br&gt;`), which the flattened tree spells
-alike. -/
+/-- A page's HTML body rendered, its text escaped, telling a `<br>` from the text `<br>`. -/
 def docHtmlOf (doc : Ir.Doc) : String := Html.render (Html.elem "div" (docNodesOf doc)) 0
 
-/-- The sites the raw-HTML family places a construct at: inside a paragraph,
-opening a paragraph's line, as its own block, inside each container, and
-inside a heading. -/
+/-- The sites the raw-HTML family places a construct at: in a paragraph, opening a line, as a block,
+in each container and in a heading. -/
 def mdHtmlSites : List (String × (String → String)) :=
   [("mid-paragraph", fun s => s!"Alder {s} Birch\n"),
    ("line start", fun s => s!"{s} Alder\n"),
@@ -427,7 +379,7 @@ def mdHtmlSites : List (String × (String → String)) :=
 
 mutual
 
-/-- Every `<pre>` of a tree, in document order, the accumulator threaded. -/
+/-- Every `<pre>` of a tree, in document order. -/
 def mdPresOne (acc : Array Html.Node) (n : Html.Node) : Array Html.Node :=
   match n with
   | .elem "pre" _ _ => acc.push n
@@ -442,25 +394,14 @@ def mdPresList (acc : Array Html.Node) : List Html.Node → Array Html.Node
 
 end
 
-/-- The attributes of an unconfigured fence's `<pre>`: the verbatim size,
-leading, tab and wrapping settings, and a tab stop so a keyboard can reach
-and scroll it (`HtmlDoc.a11yFacts`). Named once, so a backend change fails
-the fence rows at this line rather than at four literals. The exact
-attribute check also rejects leaked language text or an attribute hiding
-the code. A markdown fence sets as its surface's code does
-(`Ir.Surface.listing`): at `\footnotesize`, `0.8em`, on that size's own
-leading (9.5 pt over 8, `Ir.stepSkip`), wrapping its long lines with their
-continuations hung 20 pt in, a run wider than a line parted between its
-atoms (`overflow-wrap`). -/
+/-- The exact attributes of an unconfigured fence's `<pre>`. -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
   #[("style", "font-size: 0.8em; line-height: 1.187; tab-size: 8; white-space: pre-wrap; \
 overflow-wrap: break-word; text-indent: 20pt hanging each-line;"),
     ("tabindex", "0")]
 
-/-- A plain code block's text: its text, and the atoms the page holds on one
-line (`HtmlDoc.codeTokClass`), with the class a box too narrow for them
-releases or without (`HtmlDoc.codeLongTokClass`), read through — `none`
-where it carries any other element, such as a highlighter's ink. -/
+/-- A plain code block's text read through its held atoms, `none` where it carries any other
+element. -/
 def plainCodeText (kids : Array Html.Node) : Option String :=
   kids.foldl (fun acc k => acc.bind fun t => match k with
     | .text s => some (t ++ s)
@@ -469,13 +410,8 @@ def plainCodeText (kids : Array Html.Node) : Option String :=
       then some (t ++ s) else none
     | _ => none) (some "")
 
-/-- The page's code blocks, in order, each as the one text its `<code>`
-holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`
-whose only child is a `<code>` with no attribute holding its text — one text node, or text and the atoms the page holds on one line (`plainCodeText`) — and
-`none` for any other shape: a node before or after the `<code>`, an
-attribute leaked onto either element, content split or nested. A needle
-anchored at `</code></pre>` passed a page whose every `<pre>` opened with
-leaked text. -/
+/-- The page's code blocks in order, each its text when the block is exactly a plain `<pre>` holding
+one bare `<code>`, else `none`. -/
 def mdCodeBlocks (src : String) : Array (Option String) :=
   let (doc, _) := elabMd src
   let (_, body, _) := HtmlDoc.emitTree {} doc
@@ -511,18 +447,12 @@ def deck169Body (body : String) : String :=
 def deck169Frame (body : String) : String :=
   deck169Body ("\\begin{frame}\n" ++ body ++ "\n\\end{frame}")
 
-/-- The golden set's markdown fixtures: `testdata/corpus/<n>.md`, read by the
-markdown reader as `leantex doc.md` reads them, and held to every check the
-golden set is. -/
+/-- The golden set's markdown fixtures, `testdata/corpus/<n>.md`. -/
 def mdGoldenNames : List String :=
   ["md-code", "md-emphasis", "md-headings", "md-images", "md-links", "md-lists",
    "md-quotes", "md-readme", "md-rules", "md-table"]
 
-/-- The golden set: every fixture `runGoldens` elaborates and every name
-`censusTable` must carry a row for. Written out rather than globbed so a
-golden run's membership is visible here, and held to `testdata/corpus` by
-`corpusCoverageChecks` — a fixture on disk is in this list or its own header
-says why not. -/
+/-- The golden set: every fixture `runGoldens` elaborates and `censusTable` must carry a row for. -/
 def goldenNames : List String :=
   ["affine-lengths", "paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "deck1610", "themed", "latex-idioms", "wrapper",
@@ -545,28 +475,23 @@ def goldenNames : List String :=
    "md-include", "md-include-deck", "palette-seeds"] ++
   mdGoldenNames
 
--- KP test helpers: word/glue/forced-break item builders and a brute-force
--- optimum to cross-check the DP against.
-
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
 def tikzPicture (body : String) : String :=
   "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}"
 
-/-- The fonts the repository ships, beside the fixtures that name them. Every
-font-dependent check runs on these and only these, so `lake test` sees the
-same faces on every host — a Mac with nothing installed included. -/
+/-- The fonts the repository ships, which every font-dependent check uses, so every host sees the
+same faces. -/
 def testFonts : String := "testdata/corpus/fonts"
 
-/-- The environment of a sealed run of the shipped binary under `dir`: a cache
-and a home of its own, a `PATH` that reaches no tool, and no face named from
-outside the document. -/
+/-- The environment of a sealed run under `dir`: its own cache and home, a `PATH` reaching no tool,
+and no outside face. -/
 def sealedRunEnv (dir : System.FilePath) : Array (String × Option String) :=
   #[("XDG_CACHE_HOME", some (dir / "cache").toString),
     ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
     ("LEANTEX_FONT", none), ("LEANTEX_FONT_PATH", none)]
 
-/-- The next summary record a watcher writes on `h`, or `none` at the end of
-its output or once `budgetMs` pass without one. -/
+/-- The next summary record a watcher writes on `h`, or `none` at its end or after `budgetMs`
+without one. -/
 def watcherSummary (h : IO.FS.Handle) (budgetMs : Nat := 60000) : IO (Option String) := do
   let task ← IO.asTask (prio := .dedicated) do
     repeat
@@ -596,17 +521,14 @@ def findFont : IO (Option ByteArray) := do
     return some (← IO.FS.readBinFile p)
   return none
 
-/-- A script fixture its owner may run, or with `exec := false` one no one
-may: the same regular file with no execute bit. -/
+/-- A script fixture its owner may run, or with `exec := false` one no one may. -/
 def writeScript (path : System.FilePath) (body : String) (exec : Bool := true) : IO Unit := do
   if let some parent := path.parent then IO.FS.createDirAll parent
   IO.FS.writeFile path body
   IO.setAccessRights path { user := ⟨true, true, exec⟩ }
 
-/-- The engine this build made, run in `dir` over `args` with `font` the face
-it sets in and its caches under `cache`, sealed as `sealedRunEnv` seals a
-run: a home of its own, a `PATH` that reaches no tool, and no font root
-named from outside. How a CLI check runs it. -/
+/-- This build's engine run in `dir` over `args`, sealed as `sealedRunEnv` seals a run, with `font`
+its face and `cache` its caches. -/
 def engineRun (dir : System.FilePath) (args : Array String) (font cache : System.FilePath) :
     IO IO.Process.Output := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
@@ -616,23 +538,21 @@ def engineRun (dir : System.FilePath) (args : Array String) (font cache : System
       ("HOME", some (cache / "home").toString), ("PATH", some (cache / "no-tools").toString),
       ("LEANTEX_FONT_PATH", none)] }
 
-/-- A symbolic link at `link` naming `target`: Lean has no call that makes one. -/
+/-- A symbolic link at `link` naming `target`. -/
 def symlink (target link : System.FilePath) : IO Unit := do
   let out ← IO.Process.output { cmd := "ln", args := #["-s", target.toString, link.toString] }
   unless out.exitCode == 0 do throw <| IO.userError s!"ln -s failed: {out.stderr}"
 
-/-- The Lean interpreter on PATH, and the `LEAN_PATH` under which a child
-`lean --run` imports this build's modules: how the checks that need a
-process of their own run their drivers. `what` names those checks. -/
+/-- The Lean interpreter on PATH and the `LEAN_PATH` under which a child `lean --run` imports this
+build; `what` names the caller. -/
 def leanChild (what : String) : IO (System.FilePath × String) := do
   let some lean ← ToolProbe.onPath "lean" |
     throw <| IO.userError s!"{what} require the Lean interpreter on PATH"
   let libraries ← IO.FS.realPath ".lake/build/lib/lean"
   return (lean, libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD "")
 
-/-- `scripts/palette.lean` run with `args` as a child `lean --run` of this
-build, in the repository's root, bounded to two minutes: how the export's
-script checks run it. -/
+/-- `scripts/palette.lean` run with `args` as a bounded child of this build, in the repository's
+root. -/
 def paletteScript (args : Array String) : IO RunBounded.Ended := do
   let (lean, leanPath) ← leanChild "the palette script's checks"
   let dir ← IO.FS.realPath (← IO.currentDir)
@@ -643,9 +563,8 @@ def paletteScript (args : Array String) : IO RunBounded.Ended := do
 def shQuote (text : String) : String :=
   "'" ++ text.replace "'" "'\\''" ++ "'"
 
-/-- A boundary renderer that names its version and draws by copying a
-given PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
-holding nothing else still runs it. -/
+/-- A boundary renderer that names its version and draws by copying `pdf` beside a log, using shell
+builtins and `/bin/cp` alone. -/
 def fakeRenderer (pdf : System.FilePath) : String :=
   "#!/bin/sh\n" ++
   "if [ \"$1\" = --version ]; then\n" ++
@@ -655,8 +574,7 @@ def fakeRenderer (pdf : System.FilePath) : String :=
   "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
   "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
 
-/-- A build's diagnostics as its porcelain records them: each record's code
-and severity. -/
+/-- A build's diagnostics as its porcelain records them: code and severity. -/
 def porcelainCodes (stdout : String) : Array (String × String) :=
   (((stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun l =>
     (Lean.Json.parse l).toOption.bind fun j =>
@@ -664,8 +582,7 @@ def porcelainCodes (stdout : String) : Array (String × String) :=
       else some ((j.getObjValAs? String "code").toOption.getD "",
         (j.getObjValAs? String "severity").toOption.getD "")).toArray
 
-/-- A PDF-to-SVG converter that names its version and converts by copying
-one SVG to the output it is given (`-svg <input> <output>`). -/
+/-- A PDF-to-SVG converter that names its version and converts by copying `svg` to its output. -/
 def fakeConverter (svg : System.FilePath) : String :=
   "#!/bin/sh\n" ++
   "if [ \"$1\" = -v ]; then\n" ++
@@ -674,8 +591,7 @@ def fakeConverter (svg : System.FilePath) : String :=
   "fi\n" ++
   "/bin/cp " ++ shQuote svg.toString ++ " \"$3\" || exit 3\n"
 
-/-- One of the suite's shipped faces by file name, parsed; `none` when the
-file is missing or does not parse. -/
+/-- One of the suite's shipped faces by file name, parsed, or `none`. -/
 def loadTestFont (file : String) : IO (Option Font.Font) := do
   let p := testFonts ++ "/" ++ file
   unless ← System.FilePath.pathExists p do return none
@@ -683,9 +599,7 @@ def loadTestFont (file : String) : IO (Option Font.Font) := do
   | .ok f => return some f
   | .error _ => return none
 
-/-- Does a produced file contain this ASCII run? PDF content streams are the
-only witness that a face or a size reached the output, and the file as a whole
-is not valid UTF-8, so the search is over bytes. -/
+/-- Does a produced file contain this ASCII run, searched over bytes? -/
 def bytesContain (hay : ByteArray) (needle : String) : Bool := Id.run do
   let n := needle.toUTF8
   if n.size == 0 || hay.size < n.size then return false
@@ -698,13 +612,7 @@ def bytesContain (hay : ByteArray) (needle : String) : Bool := Id.run do
     if ok then return true
   return false
 
-/-- The written PDF with every `/FlateDecode` stream the writer emitted
-inflated and appended: the view a `bytesContain` assertion reads now that
-content, object and metadata streams really compress. Raw facts (header,
-xref spelling, filter names) stay visible — the raw bytes lead — and
-every compressed stream's plain text follows. The writer's own spelling
-(`/Length {n} >>\nstream\n`) is the anchor; a stream whose dictionary
-names no flate filter is skipped as already plain. -/
+/-- The written PDF with every `/FlateDecode` stream inflated and appended after the raw bytes. -/
 def pdfText (pdf : ByteArray) : ByteArray := Id.run do
   let pat := " >>\nstream\n".toUTF8
   let mut out := pdf
@@ -737,52 +645,36 @@ def pdfText (pdf : ByteArray) : ByteArray := Id.run do
         i := dataOff + len
   return out
 
-/-- Re-verify a produced PDF through the engine's own reader
-(`PdfRead.objects`): the cross-reference followed, every listed object
-fetched and checked against the number the file spells for it
-(`objects_num_covers` — direct offsets and object-stream headers alike,
-where the earlier byte walk read type-1 rows only), and every stream the
-reader can decode inflated. Returns the number of objects verified at a
-direct offset — the count the byte walk returned. -/
+/-- A produced PDF re-read through `PdfRead.objects`, every listed object checked and every
+decodable stream inflated; the count verified at a direct offset. -/
 def checkXref (pdf : ByteArray) : Except String Nat := do
   let es ← PdfRead.objects pdf
   let mut verified := 0
   for e in es.val do
     if let .direct _ := e.loc then
       verified := verified + 1
-    -- Streams under the filters the reader owns decode, or the file is
-    -- refused where the byte walk would have read past the fault. Foreign
-    -- filters (an image's DCT) are data the census records, not decodes.
+    -- Streams under the reader's filters decode or the file is refused; a foreign filter is data.
     let fs := PdfCensus.filtersOf e.val
     if fs.all (· == "FlateDecode") then
       if let .error err := e.decoded then
         throw s!"object {e.num}: {err}"
   return verified
 
-/-- A fixture file's text as the driver's decoding door reads it: a
-byte-order mark skipped, a byte that is not text replaced, a line ended at
-CR as at LF, and a tex file's own preamble declaration of its encoding
-honoured. A fixture the suite reads past the door would read differently
-from the binary the moment it carried any of them. -/
+/-- A fixture file's text as the driver's decoding door reads it. -/
 def fixtureText (path : String) : IO String := do
   let bytes ← IO.FS.readBinFile path
   return if path.endsWith ".md" then (Encoding.readMarkdown path bytes).text
     else (Encoding.readDocument path bytes).1.text
 
-/-- A source whose file includes are fulfilled before elaboration. The
-filename establishes the input directory even when the source itself is
-held in memory, so synthetic probes and file fixtures use the same path. -/
+/-- A source whose file includes are fulfilled before elaboration, `file` setting the input
+directory. -/
 def elabInputSrc (file src : String) : IO (Ir.Doc × Array Diag) := do
   let (raws, readDs) := Surface.read .tex file src
   let (executed, inputDs, _) ← Input.expandInputs file raws
   return Elab.runExecuted file executed (readDs ++ inputDs)
 
-/-- A `testdata/corpus/sty-parity` fixture run the way the driver runs it: the
-input execution (`Input.expandInputs`) first, so a local `.sty` beside the
-fixture is read at its use, then elaboration, then the N0020 records built from the
-splice records exactly as `Main.frontend` builds them — the counts do not
-exist before elaboration. Shared because two blocks drive this directory:
-the `\input`-parity cases and the theme-loading family. -/
+/-- A `sty-parity` fixture run as the driver runs it: inputs expanded, elaborated, and its N0020
+records built as `Main.frontend` builds them. -/
 def runStyParity (name : String) :
     IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
   let path := s!"testdata/corpus/sty-parity/{name}.tex"
@@ -794,13 +686,8 @@ def runStyParity (name : String) :
     Compat.styRead (srcF.getD path) sty pos ds
   return (doc, inputDs ++ ds, spliced)
 
-/-- A fixture elaborated the way the driver builds it: its includes
-fulfilled from the corpus directory at their use (`Input.expandInputs`), the
-`\data` effect fulfilled before elaboration (the expansion needs the records
-where `\begin{foreach}` stands), then elaboration, then the `.bib`
-bibliography effect — the same fulfilments `Main` performs, so an include,
-data or bibliography fixture exercises the pipeline the documents run.
-Fixtures that request none pass through untouched. -/
+/-- A fixture elaborated as the driver builds it: includes, `\data` and the bibliography fulfilled
+where `Main` fulfils them. -/
 def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let file := s!"{n}.tex"
   let (raws, readDiags) := Surface.read .tex file src
@@ -824,23 +711,11 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     if ← System.FilePath.pathExists path then
       sources := sources.push (srcName, ← fixtureText path)
   let (doc, bibDiags) := Bib.resolve file prepared sources doc
-  -- The fixture's document is the source-free view `runPreparedFinal`
-  -- returns, the reference list's entries included.
+  -- The source-free view `runPreparedFinal` returns, reference entries included.
   return (Ir.eraseLocations doc, diags ++ bibDiags)
 
-/-- A document elaborated and its bibliography resolved the way a build
-resolves them (`Cli.Driver.elaborate`), its `.bib` sources the named texts,
-in the driver's four parts: the result, the document's diagnostics as
-elaboration reports them, the reference list's, and the reference judge's
-over the result (`Bib.refJudge`), none tallied. The source is read through
-its door, executed and prepared as the driver prepares a document
-(`Elab.prepareExecuted`); every field is read by the document's own
-elaborator over that one preparation (`Bib.resolve`), and the list's
-references resolve against the document's labels (`Bib.resolveListRefs`).
-The document returned is the source-free view; resolution reads the located
-one, as the driver's does, and where a list's fields set notes the document
-is elaborated once more knowing how many (`Prepared.listNotes`), as the
-driver elaborates it. -/
+/-- A document elaborated and its bibliography resolved as a build resolves them
+(`Cli.Driver.elaborate`), in the driver's four parts. -/
 def bibBuildRun (src : String) (bibs : Array (String × String)) :
     Ir.Doc × Array Diag × Array Diag × Array Diag :=
   let file := "t.tex"
@@ -872,22 +747,17 @@ def bibResolve (src : String) (bibs : Array (String × String)) :
   let (doc, ds, bds) := bibBuildParts src bibs
   (doc, Diag.tallySites ds, bds)
 
-/-- `bibBuildRun` with the run's losses accounted once, by the driver's own
-accounting (`Bib.accountFront`): a loss the list repeats after the body
-named it is a note, the reference judge reads after both, and every site is
-tallied together. -/
+/-- `bibBuildRun` with the run's losses accounted once by the driver's own accounting
+(`Bib.accountFront`). -/
 def bibBuild (src : String) (bibs : Array (String × String)) : Ir.Doc × Array Diag :=
   let (doc, ds, bds, refs) := bibBuildRun src bibs
   (doc, Bib.accountFront ds bds #[] refs)
 
-/-- A golden fixture's source file: its surface's extension under
-`testdata/corpus`. -/
+/-- A golden fixture's source file under `testdata/corpus`, with its surface's extension. -/
 def goldenFile (n : String) : String :=
   s!"testdata/corpus/{n}.{if mdGoldenNames.contains n then "md" else "tex"}"
 
-/-- A golden fixture elaborated through its own surface's reader: the
-markdown reader for a markdown fixture, which requests no data and no
-bibliography; `elabFixture`'s fulfilments for a `.tex` one. -/
+/-- A golden fixture elaborated through its own surface's reader. -/
 def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
   let src ← fixtureText (goldenFile n)
   if mdGoldenNames.contains n then
@@ -896,11 +766,8 @@ def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
     return Elab.runRaws file raws ds
   else elabFixture n src
 
-/-- The corpus documents a markdown twin is measured over, each as the
-driver elaborates it, by path: every tex fixture with its includes, data
-and bibliography fulfilled (`elabFixture`), and every markdown fixture of
-the golden set through its door (`goldenDoc`). The twin tier and the reader
-hop read this one list. -/
+/-- The corpus documents a markdown twin is measured over, each as the driver elaborates it, by
+path. -/
 def corpusTwinDocs : IO (Array (String × Ir.Doc)) := do
   let mut names : Array String := #[]
   for f in ← System.FilePath.readDir "testdata/corpus" do
@@ -945,123 +812,69 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
         unless g == out do
           fail s!"golden {n}: mismatch, {firstDiff g out} (if intended, run: lake exe Tests --update)"
 
-/-- The shipped-page census over `Layout.Out`: the observable facts a page
-claim may cite (AGENTS.md § Layout and design). Chars come from the set
-glyph runs — gaps become single spaces and lines join with one space, so a
-phrase survives a line break but not a hyphenation. `covered` collects the
-runs painted in one of the document's own covered colours
-(`coveredColorsOf`: the plain cover plus the per-colour cover of every
-palette entry). Deliberately thin: it grows toward
-the role census `Check.Shipped` is heading for; what `censusChecks`
-enforces today is coverage — no fixture enters the golden set witnessed by
-its IR dump alone. -/
+/-- One shipped line of the page census over `Layout.Out`: the observable facts a page claim may
+cite. -/
 structure CensusLine where
   x : Dim.Sp
-  /-- The line's baseline, in layout coordinates (y grows downward): what a
-  fact about vertical order or a declared gap reads. -/
+  /-- The line's baseline, in layout coordinates (y down). -/
   y : Dim.Sp
-  /-- The largest set size among the line's glyph runs (0 on a glyphless
-  line): what a fact about a declared display size reads. -/
+  /-- The largest set size among the line's glyph runs (0 on a glyphless line). -/
   size : Dim.Sp
-  /-- The line's set width, so a fact can judge its right edge — where a
-  footer's right slot must sit whatever the left slot holds. -/
+  /-- The line's set width. -/
   width : Dim.Sp
   text : String
-  /-- The line stands in the reserved margin band by design
-  (`Layout.LineOut.furniture`): running head and foot, chrome slots, the
-  logo — and the margin line numbers. -/
+  /-- The line stands in the reserved margin band by design (`Layout.LineOut.furniture`). -/
   furniture : Bool := false
-  /-- A counted body line (`Layout.LineOut.counted`): a galley text line
-  the line-number census counts — what a margin number attaches to. -/
+  /-- A counted body line (`Layout.LineOut.counted`). -/
   counted : Bool := false
-  /-- The face every glyph run on the line sets in, in run order: the
-  `FontSet` index the layout resolved. What a fact about *which family*
-  ink sets in reads — a picture's node label must set in the face the
-  body sets in, and only the shipped run can say which face that was
-  (`Picture.labelFace_agree`'s page side). Under a one-face set every
-  entry is 0 and the channel says nothing; `twoSlotOf` is the set that
-  distinguishes the slots. -/
+  /-- The face each glyph run sets in, in run order: the page side of `Picture.labelFace_agree`. -/
   runFonts : Array Nat := #[]
 
 structure CensusPage where
   lines : Array CensusLine
   covered : String
   rules : Nat
-  /-- Every rule segment shipped on the page, in line order: its line's
-  baseline and its thickness — what the title-bar facts read (a bar at its
-  declared weight, above or below the title's line). -/
+  /-- Every rule segment on the page, in line order: baseline and thickness. -/
   ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
   /-- Typed decoration segments in line order: kind, baseline, width,
   thickness, raise, and colour. -/
   decorations : Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) := #[]
   fills : Nat
-  /-- Every fill rectangle shipped on the page, in paint order — what the
-  cut-mark facts read (marks inside the bleed strip, none in the gap,
-  duplex-symmetric). -/
+  /-- Every fill rectangle on the page, in paint order. -/
   fillRects : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
-  /-- Picture paths shipped on the page: every mark of every picture's ink
-  — a node outline, an edge, a tip, a rectangle fill — in paint order. -/
+  /-- The picture paths on the page, every mark of every picture's ink, in paint order. -/
   paths : Nat
-  /-- Every shipped path's stroke, in paint order: its colour and width.
-  What a fact about an inherited picture-level key reads — a key set on
-  the picture and again on the path must leave the path's own value on the
-  page (`Picture.inherit_inner_exact`), and only the artifact can say so.
-  An unstroked path (a node's fill alone) contributes nothing. -/
+  /-- Every shipped path's stroke colour and width, in paint order; an unstroked path contributes
+  none. -/
   pathStrokes : Array (Ir.Color × Dim.Sp) := #[]
-  /-- Every shipped path's extent, in paint order: a circle's diameter, a
-  rectangle's own width and height, a segment chain's or a tip's bounding
-  box. What a fact about a size key set at more than one level reads — a
-  node whose `minimum size` is declared by the picture, by `every node`,
-  and by its own bracket ships exactly one of the three
-  (`Picture.merge_own_exact`, `Picture.merge_every_exact`), and only the
-  page can say which. -/
+  /-- Every shipped path's extent, in paint order. -/
   pathSpans : Array (Dim.Sp × Dim.Sp) := #[]
-  /-- Every shipped path's bounding box, in paint order: `(x, y, w, h)` in
-  page coordinates. `pathSpans` is its extent half; this adds *where* the
-  path stands, which is what a fact about relative node placement reads —
-  `left=of` and `right=of` are claims about position, and a node's
-  resolved centre is only visible on the page
-  (`Picture.placeRel_exact`, `Picture.place_order_agree`). -/
+  /-- Every shipped path's bounding box `(x, y, w, h)` in page coordinates, in paint order, where
+  `Picture.placeRel_exact` and `Picture.place_order_agree` are read. -/
   pathBoxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
-  /-- The drawn figures the page places — an image box the store holds a
-  shaped figure for — and their text, run by run, in placement order: what
-  a fact about a figure's labels shipping reads. -/
+  /-- The drawn figures the page places, and their text run by run, in placement order. -/
   figures : Nat := 0
   figureText : String := ""
-  /-- Every shipped path's subpaths in paint order, each its segment count,
-  with whether its stroke is dashed: what a fact about a joined chain reads
-  — one subpath of two segments joins at its corner, where two subpaths of
-  one segment each would cap it. A rectangle or an ellipse has none. -/
+  /-- Every shipped path's subpaths in paint order, each its segment count and whether it is
+  dashed. -/
   pathRuns : Array (Array Nat × Bool) := #[]
-  /-- Image boxes shipped on the page: an embedded figure, or a boundary
-  request's box (fulfilled or placeholder) — what the diagram-boundary
-  row reads to pin that the request ships ink where the picture stood. -/
+  /-- Image boxes shipped on the page: embedded figures and boundary request boxes. -/
   images : Nat := 0
-  /-- Filled polygons shipped in the page's lines — a formula's cancel
-  strikes and arrowheads — as their points in page coordinates (y down):
-  what the cancel facts read, the strike's corners and the arrowhead's
-  tip against the struck ink. -/
+  /-- Filled polygons in the page's lines, as points in page coordinates (y down). -/
   polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
 
 def CensusPage.text (p : CensusPage) : String :=
   String.intercalate " " (p.lines.toList.map (·.text))
 
-/-- The colours covering can paint in a document: the plain cover (runs
-with no colour of their own) and the per-colour cover of every palette
-entry — computed from the same `Design.cover` layout reads. A fixed point
-(`cov.of c == c`, e.g. the page colour itself: covering toward `bg` moves
-nothing) is excluded: it covers nothing, and keeping it would read active
-ink painted in that colour as covered. -/
+/-- The colours covering can paint in a document (`Design.cover`), fixed points excluded. -/
 def coveredColorsOf (doc : Ir.Doc) : Array Ir.Color :=
   let cov := (Ir.Design.ofDoc doc).cover
   (doc.palette.entries.filterMap fun (_, c) =>
     let covered := cov.of c
     if covered == c then none else some covered).push cov.plain
 
-/-- A page's picture marks in layout coordinates, in paint order: each draw
-of each ink, its geometry carried by the ink's placement. A picture's marks
-stand in its own frame (`ctm` the identity), so the placement is the whole
-map. -/
+/-- A page's picture marks in layout coordinates, in paint order, each placed by its ink's
+placement. -/
 def pageInkMarks (p : Layout.PageOut) :
     Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
   p.inks.flatMap fun k => k.fig.marks.filterMap fun mk => match mk with
@@ -1085,9 +898,8 @@ def nodeDrawsList {L : Type} (acc : Array (Gfx.Geom × Option Gfx.Fill × Option
 
 end
 
-/-- A page's picture draws in layout coordinates, in paint order, each
-geometry as the figure states it (a circle a circle) carried by its ink's
-placement: what a test about a shipped shape reads. -/
+/-- A page's picture draws in layout coordinates, in paint order, each geometry as the figure states
+it. -/
 def pageDraws (p : Layout.PageOut) : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
   p.inks.flatMap fun k =>
     (nodeDrawsList #[] k.fig.nodes.toList).map fun (g, fl, st) => (g.mapIso k.place, fl, st)
@@ -1104,8 +916,7 @@ def strokeColor? (s : Gfx.Stroke) : Option Ir.Color :=
   | .solid c => some c
   | .gradient _ => none
 
-/-- A path's segments with their start points, in layout coordinates: the
-edge segments a stroked path draws. -/
+/-- A path's segments with their start points, in layout coordinates. -/
 def subpathSegs (subs : Array Gfx.Subpath) : Array Ir.Pic.PathSeg :=
   subs.flatMap fun sp => Id.run do
     let mut out : Array Ir.Pic.PathSeg := #[]
@@ -1117,29 +928,24 @@ def subpathSegs (subs : Array Gfx.Subpath) : Array Ir.Pic.PathSeg :=
       cur := sg.endPt
     return out
 
-/-- A shape's ink read back as a circle the subset draws: centre, radius,
-stroke, fill. -/
+/-- A shape's ink read back as a circle: centre, radius, stroke, fill. -/
 def shapeCircle? : Ir.Pic.Shape →
     Option (Dim.Sp × Dim.Sp × Dim.Sp × Option Gfx.Stroke × Option Gfx.Fill)
   | .ink (.draw (.ellipse x y rx _) fl st) => some (x, y, rx, st, fl)
   | _ => none
 
-/-- A shape's ink read back as a frame or a fill the subset draws: its min
-corner, extents, stroke and fill. -/
+/-- A shape's ink read back as a frame or fill: min corner, extents, stroke, fill. -/
 def shapeFrame? : Ir.Pic.Shape →
     Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Option Gfx.Stroke × Option Gfx.Fill)
   | .ink (.draw (.rect x y w h) fl st) => some (x, y, w, h, st, fl)
   | _ => none
 
-/-- Is a draw an arrow tip's mark rather than a path's own stroke? A tip is
-filled (`latex`, `stealth`, arrows.meta's `Latex` and `Stealth`) or
-stroked with round caps (`to`, the Computer Modern arrow), where the path a
-tip ends is pgf's butt-capped line. -/
+/-- Is a draw an arrow tip's mark, filled or round-capped, rather than a path's butt-capped
+stroke? -/
 def isTipDraw (fl : Option Gfx.Fill) (st : Option Gfx.Stroke) : Bool :=
   fl.isSome || (st.map (·.cap != .butt)).getD false
 
-/-- A shape's ink read back as an edge the subset draws: its segments, its
-stroke, and whether a tip ends it. -/
+/-- A shape's ink read back as an edge: segments, stroke, and whether a tip ends it. -/
 def shapeEdge? : Ir.Pic.Shape → Option (Array Ir.Pic.PathSeg × Gfx.Stroke × Bool)
   | .ink (.group _ _ _ kids) =>
     match kids.toList with
@@ -1149,16 +955,14 @@ def shapeEdge? : Ir.Pic.Shape → Option (Array Ir.Pic.PathSeg × Gfx.Stroke × 
     | _ => none
   | _ => none
 
-/-- The segments of a page's picture edges — its stroked paths — in paint
-order, in layout coordinates. -/
+/-- The segments of a page's stroked picture paths, in paint order, in layout coordinates. -/
 def edgeSegs (p : Layout.PageOut) : Array Ir.Pic.PathSeg :=
   (pageDraws p).foldl (fun acc (g, fl, st) => match g, st with
     | .path subs, some _ => if isTipDraw fl st then acc else acc ++ (subpathSegs subs)
     | _, _ => acc) #[]
 
-/-- A placed mark's extent as the page census reads it: a rectangle's own
-box, a path's box over its endpoints (start and segment ends, not control
-points) — a circle's arcs end on its bounding square. -/
+/-- A placed mark's extent as the census reads it: a rectangle's box, a path's box over its
+endpoints. -/
 def markExtent : Gfx.Geom → Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp
   | .rect x y w h => (x, y, w, h)
   | .ellipse cx cy rx ry => (cx - rx, cy - ry, 2 * rx, 2 * ry)
@@ -1225,9 +1029,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
             for (_, r) in fig.labels do
               figureText := figureText ++ r.text ++ " "
         | .poly pts _ => polys := polys.push (pts.map fun (x, y) => (px + x, l.y - y))
-      -- The census asks where the text block stands, so a protruded
-      -- line reports its measure edge: the ink deliberately hangs
-      -- `l.hang` left of it (`Layout.protrudeLeft`).
+      -- A protruded line reports its measure edge; its ink hangs `l.hang` left of it.
       lines := lines.push { x := l.x + l.hang, y := l.y, size := runSize
                             width := l.setWidth, text := chars
                             furniture := l.furniture, counted := l.counted
@@ -1263,12 +1065,10 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
-/-- A diagnostic's words and its site's particulars, as its log line shows
-them: what a check that reads a site's measure or colour reads. -/
+/-- A diagnostic's words and its site's particulars, as its log line shows them. -/
 def diagWords (d : Diag) : String := d.message ++ (d.detail.map ("\n" ++ ·)).getD ""
 
-/-- The opening tags of a page's failed-face placeholders: the spans that
-carry `data-image-src`. -/
+/-- The opening tags of a page's failed-face placeholders, those carrying `data-image-src`. -/
 def placeholderTags (html : String) : List String :=
   ((html.splitOn "<span ").drop 1).filterMap fun rest =>
     let tag := (rest.splitOn ">").headD ""
@@ -1284,17 +1084,12 @@ def attrIn (tag name : String) : Option String :=
 def labelled (tag : String) : Bool :=
   (attrIn tag "aria-label").any (!·.isEmpty)
 
-/-- Does a compat-index row's call load the row's own package? Then the
-scaffold does not load it a second time: a duplicate load puts the call's
-whole effect in the baseline as well, and a `\usepackage{times}` row could
-not witness anything. The decision is read off the row's own text — never a
-list of package names here, which would drift from the directory. -/
+/-- Does a compat-index row's call load the row's own package, read off the row's text? -/
 def compatRowSelfLoads (pkg call : String) : Bool :=
   hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
 
-/-- The document a compat-index row elaborates as: the call at its declared
-place, with the package loaded unless the call loads it itself. A frame
-uses a presentation class and loads an ordinary package in its preamble. -/
+/-- The document a compat-index row elaborates as: the call at its place, its package loaded unless
+the call loads it. -/
 def compatRowSrc (pkg place call : String) : String :=
   let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
   if place == "pre" then
@@ -1307,8 +1102,7 @@ def compatRowSrc (pkg place call : String) : String :=
   else
     s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
 
-/-- Count whole names whose preceding source passes `keep`. A name inside
-a longer identifier or following a dot is never a separate occurrence. -/
+/-- Whole-name occurrences of `word` whose preceding source passes `keep`. -/
 def wordCountWhere (text word : String) (keep : String → Bool) : Nat := Id.run do
   let parts := (text.splitOn word).toArray
   let nameChar (c : Char) : Bool :=
@@ -1322,9 +1116,8 @@ def wordCountWhere (text word : String) (keep : String → Bool) : Nat := Id.run
     if leftOk && rightOk && keep before then n := n + 1
   return n
 
-/-- How many times `word` stands in `text` as a whole name: not inside a
-longer identifier, and not as a field after a dot — a call to
-`pdfStreamChecks` is no call to `StreamChecks`. -/
+/-- How many times `word` stands in `text` as a whole name, not inside an identifier or after a
+dot. -/
 def wordCount (text word : String) : Nat :=
   wordCountWhere text word fun _ => true
 
@@ -1334,9 +1127,7 @@ def censusText (c : Array CensusPage) : String :=
 def pageHas (c : Array CensusPage) (i : Nat) (needle : String) : Bool :=
   (c[i]?.map fun p => hasStr p.text needle).getD false
 
-/-- How many times `needle` is inked on page `i`. The census counts what
-shipped, so a construct that put its content on the page twice reads as 2
-here — `pageHas` cannot tell one copy from two. -/
+/-- How many times `needle` is inked on page `i`. -/
 def pageOccurs (c : Array CensusPage) (i : Nat) (needle : String) : Nat :=
   (c[i]?.map fun p => (p.text.splitOn needle).length - 1).getD 0
 
@@ -1354,33 +1145,27 @@ def lineXOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :
 def lineYOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.y)
 
-/-- The largest run size of the first shipped line on page `i` containing
-`needle`: what a declared display size sets. -/
+/-- The largest run size of the first shipped line on page `i` containing `needle`. -/
 def lineSizeOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.size)
 
-/-- The rule segments shipped on page `i`, in line order: (baseline,
-thickness) pairs. -/
+/-- The rule segments shipped on page `i`, in line order: (baseline, thickness). -/
 def pageRuleSegs (c : Array CensusPage) (i : Nat) : Array (Dim.Sp × Dim.Sp) :=
   (c[i]?.map (·.ruleSegs)).getD #[]
 
-/-- The right edge (x plus set width) of the first shipped line on page `i`
-containing `needle`: where a footer's right slot must end. -/
+/-- The right edge of the first shipped line on page `i` containing `needle`. -/
 def lineRightOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map
     fun l => l.x + l.width
 
-/-- The glyph text of one shipped line: each run's characters in order,
-a gap as one space (`gapAsSpace := false` reads the bare glyphs — a page
-number's centring gaps are not its text). -/
+/-- The glyph text of one shipped line, a gap as one space unless `gapAsSpace := false`. -/
 def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
   l.segs.foldl (fun s seg => match seg with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
     | .gap _ _ | .decoratedGap _ _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 
-/-- A shipped line's runs, left to right: the face index, the glyphs, and the
-run's left edge and width on the page. -/
+/-- A shipped line's runs, left to right: face index, glyphs, left edge and width. -/
 def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) := Id.run do
   let mut out := #[]
   let mut x := l.x
@@ -1395,8 +1180,7 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
     | .image _ w _ => x := x + w
   return out
 
-/-- Whether a shipped line sets any glyph: a link's underline or a rule ships
-as a line of its own that sets none. -/
+/-- Whether a shipped line sets any glyph. -/
 def hasGlyphRun (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
@@ -1406,19 +1190,14 @@ def hasGlyphRun (l : Layout.LineOut) : Bool :=
 def noDroppedGlyph (out : Layout.Out) : Bool :=
   !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
 
-/-- A line's text as a reader sees it: `lineText`, but a glyphless run — a
-tie, which ships as a box a space wide (Layout's no-break-space arm) —
-reads as the space the page shows. -/
+/-- A line's text as a reader sees it: `lineText`, a glyphless tie read as a space. -/
 def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
   | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
     if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c, _) => s.push c) s
   | .gap _ _ | .decoratedGap _ _ _ => s.push ' '
   | _ => s) ""
 
-/-- The furniture baselines (head y, foot y) a geometry owes under `font`'s
-ink and a declared gap: functions of the geometry alone
-(`furnHeadY`/`furnFootY` take no content) — what the shipped furniture
-lines must stand at (`furniture_symmetric`'s realisation). -/
+/-- The head and foot furniture baselines a geometry owes under `font`'s ink and a declared gap. -/
 def furnYs (font : Font.Font) (geom : Layout.Geom)
     (gap : Option Dim.Sp := none) : Dim.Sp × Dim.Sp :=
   let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
@@ -1429,9 +1208,7 @@ def furnYs (font : Font.Font) (geom : Layout.Geom)
 
 mutual
 
-/-- The text content of an emitted HTML node, for the agreement census: the
-typed tree's characters with the markup stripped — the HTML side of what
-`censusOf` reads off the PDF's shipped lines. -/
+/-- The text content of an emitted HTML node, markup stripped. -/
 def nodeTextOne (acc : String) : Html.Node → String
   | .text s => acc ++ s
   | .style _ => acc
@@ -1446,11 +1223,7 @@ end
 
 mutual
 
-/-- The first `mathvariant` attribute an emitted tree declares, in document
-order: the MathML `.styled` arm sets `("mathvariant", style.mathvariant)` on
-the `mi`/`mn` leaf, so this pulls the semantic variant a resolved text-style
-scalar carries (the twin of the PDF face-slot selection). `none` when no node
-declares one. -/
+/-- The first `mathvariant` attribute an emitted tree declares, in document order. -/
 def mathvariantOne : Html.Node → Option String
   | .text _ => none
   | .style _ => none
@@ -1470,10 +1243,7 @@ end
 
 mutual
 
-/-- The first `style` attribute an emitted tree declares, in document order:
-the MathML `.styled` arm sets `("style", style.css)` on the leaf, so this
-pulls the CSS a resolved text-style scalar carries (the browser-honoured
-twin of the PDF face-slot selection). `none` when no node declares one. -/
+/-- The first `style` attribute an emitted tree declares, in document order. -/
 def styleOne : Html.Node → Option String
   | .text _ => none
   | .style _ => none
@@ -1493,14 +1263,8 @@ end
 
 mutual
 
-/-- The text an emitted page *shows*, as the artifact itself says it: the
-typed tree's characters with every `hidden` subtree dropped — what the UA
-stylesheet's `[hidden] { display: none }` removes, and so the HTML twin of
-a shipped PDF page's ink. `nodeTextOne` reads the whole tree, which is the
-declaration; this reads what a reader with no snap state sees
-(`HtmlDoc.altPairNodes`). The distinction is what the
-census could not make when overlay alternation put both groups inside one
-visible wrapper. `snapTextList` reads one snap. -/
+/-- The text an emitted page shows a reader with no snap state (`HtmlDoc.altPairNodes`), every
+`hidden` subtree dropped. -/
 def shownTextOne (acc : String) : Html.Node → String
   | .text s => acc ++ s
   | .style _ => acc
@@ -1552,23 +1316,17 @@ def snapTextList (k : Nat) (acc : String) : List Html.Node → String
 
 end
 
-/-- How many times `needle` is declared in an emitted tree: `pageOccurs`'s
-twin over the HTML artifact. -/
+/-- How many times `needle` is declared in an emitted tree. -/
 def treeOccurs (nodes : Array Html.Node) (needle : String) : Nat :=
   ((nodeTextList "" nodes.toList).splitOn needle).length - 1
 
-/-- How many times `needle` is *shown* by an emitted tree, hidden subtrees
-excluded: the HTML side of `pageOccurs`, and the check that was missing
-when an alternation shipped both its groups on one page. -/
+/-- How many times `needle` is shown by an emitted tree, hidden subtrees excluded. -/
 def treeShownOccurs (nodes : Array Html.Node) (needle : String) : Nat :=
   ((shownTextList "" nodes.toList).splitOn needle).length - 1
 
 mutual
 
-/-- Every chrome footer in the emitted deck, in document order, as its two
-slots' text: the HTML side of the footline fact. The spans carry their
-declared side as a class (`Ir.Chrome.footBand` through `emitTree`), and the
-stylesheet pins each to its edge. -/
+/-- Every chrome footer in the emitted deck, in document order, as its two slots' text. -/
 def slideFootsOne (acc : Array (String × String)) : Html.Node → Array (String × String)
   | .text _ => acc
   | .style _ => acc
@@ -1594,10 +1352,7 @@ def slideFootsList (acc : Array (String × String)) :
 
 end
 
-/-- Every chrome footer the PDF ships, in page order, as its two slots' text:
-`PageOut.foot` is the one footline declaration resolved per page
-(`Ir.Chrome.footBand`), each slot naming its side, and the physical pass
-applied exactly as the final layout pass applies it. -/
+/-- Every chrome footer the PDF ships, in page order, as its two slots' text. -/
 def pdfFoots (out : Layout.Out) : Array (String × String) := Id.run do
   let mut res : Array (String × String) := #[]
   let total := out.pages.size
@@ -1610,16 +1365,14 @@ def pdfFoots (out : Layout.Out) : Array (String × String) := Id.run do
         (text .right).trimAscii.toString)
   return res
 
-/-- Adjacent equal pairs collapsed: the pages of one stepped frame share
-their footer, and the HTML has one section per frame. -/
+/-- Adjacent equal pairs collapsed, as a stepped frame's pages share one footer. -/
 def dedupConsecutive (xs : Array (String × String)) : Array (String × String) :=
   xs.foldl (fun acc p => if acc.back? == some p then acc else acc.push p) #[]
 
 mutual
 
-/-- Every character a tree's text nodes hold, in order, with the styles of
-the elements around it, innermost last, each with its element's preorder
-index, and the next index. -/
+/-- Every character a tree's text holds, in order, with the styles and preorder indices of the
+elements around it. -/
 def shownCharsOne (styles : List (String × Nat)) (acc : Array (Char × List (String × Nat)) × Nat) :
     Html.Node → Array (Char × List (String × Nat)) × Nat
   | .text s => (s.toList.foldl (fun a c => a.push (c, styles)) acc.1, acc.2)
@@ -1636,12 +1389,8 @@ def shownCharsList (styles : List (String × Nat)) (acc : Array (Char × List (S
   | [] => acc
   | k :: rest => shownCharsList styles (shownCharsOne styles acc k) rest
 
-/-- Every element of an emitted tree with its subtree text and its own
-style attribute, for the epoch checks: which node carries a redefinition
-is a fact of the typed tree, never of a rendered string. Each ordinary
-declaration a style states through its roles is read as the light screen
-reads it against the custom properties in scope (`lightStyle`); the
-custom properties themselves stand as written. -/
+/-- Every element with its subtree text and its style as the light screen reads it against the
+properties in scope. -/
 def elemStylesIn (vars : List (String × String)) (acc : Array (String × String)) :
     Html.Node → Array (String × String)
   | .text _ => acc
@@ -1662,9 +1411,7 @@ end
 
 mutual
 
-/-- Every element of an emitted tree with its subtree text and its own
-style attribute as written, for the epoch checks: which node carries a
-redefinition is a fact of the typed tree, never of a rendered string. -/
+/-- Every element with its subtree text and its own style as written. -/
 def elemStylesOne (acc : Array (String × String)) : Html.Node → Array (String × String)
   | .text _ => acc
   | .style _ => acc
@@ -1680,32 +1427,23 @@ def elemStylesList (acc : Array (String × String)) : List Html.Node → Array (
 
 end
 
-/-- **A contrast report a bundle's lineage owes**: a colour its source
-declares short of its need (`Theme.reported`, moloch's alert) ships exactly,
-as lualatex sets it, and the document's report names its pairing, or its
-covered form, where a document uses it. A probe that reads clean otherwise
-raises these and nothing else. -/
+/-- Is a diagnostic a contrast report a bundle's lineage owes (`Theme.reported`)? -/
 def reportedContrast (d : Diag) : Bool :=
   (d.kind == .W0315 || d.kind == .W0345) && d.subject.any fun k =>
     Theme.builtin.any fun th => th.reported.any fun r =>
       let key := (Ir.ColorRef.role r).key
       k.startsWith (key ++ ":") || k == "covered:" ++ key
 
-/-- Every character a list of nodes holds, with its elements' styles and
-which element declares each. -/
+/-- Every character a list of nodes holds, with its elements' styles. -/
 def shownChars (nodes : List Html.Node) : Array (Char × List (String × Nat)) :=
   (shownCharsList [] (#[], 0) nodes).1
 
-/-- Every element with its style as the light screen reads it
-(`elemStylesIn`), from no custom property in scope. -/
+/-- Every element with its style as the light screen reads it, from no property in scope. -/
 def elemLightStyles (nodes : List Html.Node) : Array (String × String) :=
   elemStylesListIn [] #[] nodes
 
-/-- The source with string literals, char literals, and comments blanked, so
-the emission scan below reads code proper: a code named in a docstring or a
-help text is a mention, not an emission. Line comments, nested block
-comments, `\"` escapes, and char literals (whose `'\"'` would otherwise read
-as opening a string) are tracked. -/
+/-- The source with string literals, char literals and comments blanked, so a scan reads code
+proper. -/
 def stripNonCode (src : String) : String := Id.run do
   let cs := src.toList.toArray
   let mut out := ""
@@ -1747,8 +1485,6 @@ def stripNonCode (src : String) : String := Id.run do
         inLine := true
         i := i + 2
       else if c == '\'' && cs[i + 1]? == some '\\' then
-        -- an escaped char literal ('\n', '\\', '\"', '\u00a0'): skip to its
-        -- closing quote
         let mut j := i + 2
         for _ in [0:8] do
           if cs[j]? == some '\'' then break
@@ -1757,7 +1493,6 @@ def stripNonCode (src : String) : String := Id.run do
           out := out.push ' '
         i := j + 1
       else if c == '\'' && cs[i + 2]? == some '\'' && cs[i + 1]? != some '\'' then
-        -- a plain char literal ('x')
         out := out ++ "   "
         i := i + 3
       else if c == '"' then
@@ -1777,8 +1512,7 @@ def isDiagCode (s : String) : Bool :=
     (k == 'E' || k == 'W' || k == 'N') && [a, b, c, d].all Char.isDigit
   | _ => false
 
-/-- The `DiagCode` constructors a stripped source applies: every dot-applied
-code-shaped token (`.E0304`, `DiagCode.E0502`). -/
+/-- The `DiagCode` constructors a stripped source applies, by dot-applied code-shaped tokens. -/
 def appliedCodes (stripped : String) : List String := Id.run do
   let mut out : List String := []
   for part in (stripped.splitOn ".").drop 1 do
@@ -1787,10 +1521,8 @@ def appliedCodes (stripped : String) : List String := Id.run do
       out := tok :: out
   return out
 
-/-- The engine's sources as the emission scans read them: every `LeanTex/`
-module and the driver, path-sorted, with the codes each applies. The
-registry itself (`Diag.lean`) names every code and emits none, so it is
-left out. -/
+/-- The engine's sources, path-sorted, with the codes each applies; `Diag.lean`, which names every
+code, left out. -/
 def codeSources : IO (Array (String × List String)) := do
   let mut files := (← System.FilePath.walkDir "LeanTex").filter
     (·.toString.endsWith ".lean")
@@ -1808,19 +1540,15 @@ def pushBe16 (b : ByteArray) (v : Nat) : ByteArray :=
 def pushBe32 (b : ByteArray) (v : Nat) : ByteArray :=
   pushBe16 (pushBe16 b (v / 65536 % 65536)) (v % 65536)
 
-/-- A standalone font's tables as its directory names them: tag, checksum
-and bytes, in directory order. -/
+/-- A standalone font's tables in directory order: tag, checksum and bytes. -/
 def fontTables (f : ByteArray) : Array (Nat × Nat × ByteArray) :=
   (Array.range (Ink.u16 f 4)).map fun k =>
     let e := 12 + 16 * k
     let off := Ink.u32 f (e + 8)
     (Ink.u32 f e, Ink.u32 f (e + 4), f.extract off (off + Ink.u32 f (e + 12)))
 
-/-- A font collection of standalone font files, packed as the OpenType
-spec lays one out: the `ttcf` header and one offset per face, every face's
-directory with its offsets made absolute, then every table at its
-four-byte boundary — an encoder of this check's own, so the engine's
-reader is not judged by its own writer. -/
+/-- A font collection packed from standalone fonts as the OpenType spec lays one out, by an encoder
+independent of the engine. -/
 def packCollection (fonts : Array ByteArray) : ByteArray := Id.run do
   let faces := fonts.map fontTables
   let mut pos := 12 + 4 * fonts.size
@@ -1849,10 +1577,8 @@ def packCollection (fonts : Array ByteArray) : ByteArray := Id.run do
         out := out.push 0
   return out
 
-/-- A document laid out as the driver hands it to the backends: math
-alphabet scopes resolve against the selected face before the fallback census
-or layout sees their scalars. Resolution diagnostics lead layout diagnostics,
-as they do in the driver. -/
+/-- A document laid out as the driver hands it to the backends, math alphabet scopes resolved
+first. -/
 def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
     (pats : Option Hyphen.Patterns := none)
@@ -1862,9 +1588,8 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
   let out := Layout.run geom fonts pats doc imgs
   { out with diags := alphaDiags ++ out.diags }
 
-/-- A document set as the driver sets the pages it ships, through the
-overflow ladder (`Layout.runFitted`), its math alphabet scopes resolved first
-as `layoutOf` resolves them. -/
+/-- A document set through the overflow ladder (`Layout.runFitted`), resolved as `layoutOf` resolves
+it. -/
 def fittedOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
     (pats : Option Hyphen.Patterns := none)
@@ -1874,16 +1599,8 @@ def fittedOf (fonts : Font.FontSet) (doc : Ir.Doc)
   let f := Layout.runFitted geom fonts pats doc imgs
   { f with out := { f.out with diags := alphaDiags ++ f.out.diags } }
 
-/-- The font set a golden fixture lays out under in the suite: `oneFace`,
-plus the math face a build would resolve — `mathSet` (the shipped Fira
-Math) when the fixture declares a math face, else `FontDiscovery.pickMathFace`
-over the shipped corpus faces when the document reaches math — plus a
-fallback face per Private Use Area scalar an icon needs, found the way a
-build finds it (the scan over the shipped corpus). Everything else keeps
-the deliberately minimal set: the stand-in degradations are themselves
-under test (`listChecks`), and a broader map would silently upgrade them.
-The census and the attribution checks both lay out the corpus through
-this one resolution. -/
+/-- The font set a golden fixture lays out under: `oneFace`, the math face a build would resolve,
+and fallback faces for icon scalars. -/
 def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)
     (doc : Ir.Doc) : IO Font.FontSet := do
   let fs ← if doc.fonts.math.isSome then pure mathSet
@@ -1917,8 +1634,7 @@ def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face
     | .error _ => pure ()
   return fs
 
-/-- The shipped Fira Math beside `oneFace` in the math slot: what a fixture
-that declares a math face lays out under. -/
+/-- The shipped Fira Math beside `oneFace` in the math slot. -/
 def mathSetOf (oneFace : Font.FontSet) : IO Font.FontSet := do
   let fira ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraMath-Regular.otf")) with
     | .ok f => pure f
@@ -1928,10 +1644,8 @@ def mathSetOf (oneFace : Font.FontSet) : IO Font.FontSet := do
     math := some oneFace.fonts.size
     mathAlphabets := fira.mathAlphabetCoverage {} }
 
-/-- The four shipped Source Serif faces in every slot — regular 0, bold 1,
-italic 2, bold italic 3 — and Fira Math as the math face, 4: a set in which
-a run's face index says its weight, its slant, and whether it is maths.
-`none` when a face does not load. -/
+/-- The four shipped Source Serif faces in slots 0–3 and Fira Math in 4, so a run's face index says
+its weight, slant and whether it is maths. -/
 def serifFacesSet : IO (Option Font.FontSet) := do
   let mut loaded : Array Font.Font := #[]
   for n in #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
@@ -1949,16 +1663,11 @@ def serifFacesSet : IO (Option Font.FontSet) := do
     math := some 4
     mathAlphabets := loaded[4]!.mathAlphabetCoverage {} }
 
-/-- Every shipped line, furniture included, in page order: what a claim
-about absolute placement (a fil sandwich, a frame's vertical distribution)
-reads. `bodyLines` is this with the furniture filtered out. -/
+/-- Every shipped line, furniture included, in page order. -/
 def allLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines)
 
-/-- The document's own flow lines, shipped: every line except engine-placed
-furniture (`LineOut.furniture` — running content, the plain page number).
-What a claim about the body's setting means; a furniture claim reads the
-flag this filters out. -/
+/-- Every shipped line but engine-placed furniture, in page order. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
@@ -1966,15 +1675,12 @@ def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
 def codeFenceLines (fonts : Font.FontSet) (lang code : String) : Array Layout.LineOut :=
   bodyLines (layoutOf fonts (elabMd ("```" ++ lang ++ "\n" ++ code ++ "\n```\n")).1)
 
-/-- The distances between consecutive body baselines, in page order: the
-line pitches a page shipped. -/
+/-- The distances between consecutive body baselines, in page order. -/
 def baselinePitches (out : Layout.Out) : Array Dim.Sp :=
   let lines := bodyLines out
   (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
 
-/-- Every shipped line's position, size and text, furniture included, in
-page order: what "two documents set the same page" means to a row that
-compares them. -/
+/-- Every shipped line's position, size and text, furniture included, in page order. -/
 def shippedLinesOf (fonts : Font.FontSet) (doc : Ir.Doc) :
     Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
   (allLines (layoutOf fonts doc)).map fun l => (l.x, l.y, l.size, lineText l)
@@ -2001,10 +1707,8 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
     | .image _ w _ => x := x + w
   return out
 
-/-- A body glyph's shipped position and paint, independent of run segmentation
-and structure-leaf numbering. Positions and unexpanded advances are exact sp
-values; x excludes page bleed, y includes the run's raise, and line numbers
-count only body lines within each page. -/
+/-- A body glyph's shipped position and paint, independent of run segmentation and leaf
+numbering. -/
 structure ShippedGlyph where
   page : Nat
   line : Nat
@@ -2023,9 +1727,7 @@ structure ShippedGlyph where
   ground : Option Ir.Color
   deriving BEq, Repr
 
-/-- Body glyphs in paint order, retaining every field of `ShippedGlyph`.
-RoleShaping holds this coordinate arithmetic to the existing artifact pen
-model and checks the emitted PDF with that model's unchanged spelling bound. -/
+/-- Body glyphs in paint order, every `ShippedGlyph` field kept. -/
 def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
   let mut acc := #[]
   for (page, p) in out.pages.zipIdx do
@@ -2050,9 +1752,7 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
 
 namespace ShippedInk
 
-/-- Outline hull in page coordinates with y pointing upward. Control
-points are included; these are measured bounds, not raster extrema.
-Neither baseline zero nor logical advance belongs to the hull. -/
+/-- An outline hull in page coordinates, y up, control points included. -/
 structure InkBounds where
   left : Dim.Sp
   bottom : Dim.Sp
@@ -2073,8 +1773,7 @@ def InkBounds.union (a b : InkBounds) : InkBounds :=
   { left := min a.left b.left, bottom := min a.bottom b.bottom
     right := max a.right b.right, top := max a.top b.top }
 
-/-- Disjoint interiors of quantized outline hulls. This is a conservative
-ink-separation check, not a claim that intersecting hulls imply raster contact. -/
+/-- Disjoint interiors of quantized outline hulls: a conservative ink-separation check. -/
 def InkBounds.disjoint (a b : InkBounds) : Bool :=
   a.right ≤ b.left || b.right ≤ a.left || a.top ≤ b.bottom || b.top ≤ a.bottom
 
@@ -2085,9 +1784,7 @@ def polygonHull (points : Array (Dim.Sp × Dim.Sp)) : Option InkBounds := do
   let (x, y) ← points[0]?
   return points.foldl (fun b (px, py) => b.union ⟨px, py, px, py⟩) ⟨x, y, x, y⟩
 
-/-- Decode the shipped glyph independently of the layout's bounds helper.
-Every point uses its actual pen position, size and baseline. Missing
-outline evidence fails; an empty or zero-area hull contributes no ink. -/
+/-- A shipped glyph's outline hull at its pen, size and baseline; missing outlines fail. -/
 def glyphInk (fonts : Font.FontSet) (g : ShippedGlyph) :
     Except String (Option InkBounds) := do
   let some font := fonts.fonts[g.face]? | throw "target face is missing"
@@ -2104,17 +1801,13 @@ def glyphInk (fonts : Font.FontSet) (g : ShippedGlyph) :
       bounds := some (match bounds with | none => point | some b => b.union point)
   return bounds.filter fun b => b.left < b.right && b.bottom < b.top
 
-/-- Whether a shipped glyph has outline commands. Empty-outline spaces
-still belong to the source census and advance the pen, but paint no ink.
-An undecodable outline is a failed measurement rather than an empty one. -/
+/-- Whether a shipped glyph has outline commands; an undecodable outline fails. -/
 def glyphPaints (fonts : Font.FontSet) (g : ShippedGlyph) : Except String Bool := do
   let some font := fonts.fonts[g.face]? | throw "target face is missing"
   let some cmds := font.inkSrc.get.cmdsAt g.glyph | throw "target outline is missing"
   return !cmds.isEmpty
 
-/-- Union only the target glyphs' ink, ignoring decoded empty outlines.
-Starting from the first painted glyph is essential for an annotation whose
-entire visible contents are raised; a space's baseline must not join it. -/
+/-- The union of the target glyphs' ink, empty outlines ignored. -/
 def targetInk (fonts : Font.FontSet) (glyphs : Array ShippedGlyph) :
     Except String InkBounds := do
   let mut bounds : Option InkBounds := none
@@ -2126,8 +1819,7 @@ def targetInk (fonts : Font.FontSet) (glyphs : Array ShippedGlyph) :
   let some ink := bounds | throw "target has no painted glyphs"
   return ink
 
-/-- Polygon origins from the actual line pen, advancing through every
-width-bearing segment, including rules. Vertices stay relative to that pen. -/
+/-- Polygon origins from the line pen, advancing through every width-bearing segment. -/
 def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.Sp)) := Id.run do
   let mut pen := line.x
   let mut polys := #[]
@@ -2139,7 +1831,7 @@ def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.
     | .poly points _ => polys := polys.push (pen, points)
   return polys
 
-/-- Shipped polygons in the same upward page coordinates as `glyphInk`. -/
+/-- Shipped polygons in `glyphInk`'s upward page coordinates. -/
 def polygonsAt (line : Layout.LineOut) : Array (Array (Dim.Sp × Dim.Sp)) :=
   (polygonPens line).map fun (pen, points) =>
     points.map fun (x, y) => (pen + x, y - line.y)
@@ -2195,28 +1887,22 @@ def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :
     | _ => #[]
   (ink, out.diags)
 
-/-- The glyphs a source's body lines ship, in page order — the instrument for
-a claim about what a page shows, read off `Layout.Out` rather than an IR
-dump. `geom` defaults to the document's own page; pass one to judge a source
-against a fixed measure. -/
+/-- The glyphs a source's body lines ship, in page order; `geom` defaults to the document's own
+page. -/
 def pageTextOf (fonts : Font.FontSet) (src : String)
     (geom : Option Layout.Geom := none) : String :=
   let (d, _) := elabStr src
   String.join ((bodyLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
     (lineText ·))
 
-/-- The same over *every* line, furniture included: what a title bar or a
-running foot ships is on the page too, so an absence claim belongs here
-rather than in `pageTextOf`. -/
+/-- The glyphs every shipped line of a source sets, furniture included. -/
 def allTextOf (fonts : Font.FontSet) (src : String)
     (geom : Option Layout.Geom := none) : String :=
   let (d, _) := elabStr src
   String.join ((allLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
     (lineText ·))
 
-/-- Both complete artifacts of a synthetic source, with their diagnostics
-and visible HTML text. Comparing the pages and serialized typed tree keeps
-positions, paragraph boundaries, attributes and whitespace observable. -/
+/-- Both complete artifacts of a source, with diagnostics and visible HTML text. -/
 def sourceArtifacts (fonts : Font.FontSet) (source : String) :
     Array Diag × Layout.Out × String × String :=
   let (doc, ds) := elabStr source
@@ -2226,10 +1912,7 @@ def sourceArtifacts (fonts : Font.FontSet) (source : String) :
     shownTextList "" tree.toList)
 
 mutual
-/-- A control's `{block}`s spelled as the box a tcolorbox lowers to
-(`Tcolorbox.boxEnv`): the native block surface, in the environment only the
-lowering opens, so a lowered box compares against the block it is written
-as. -/
+/-- A control's `{block}`s renamed to the box a tcolorbox lowers to (`Tcolorbox.boxEnv`). -/
 -- conserves: none — renames an environment in a test's control raws.
 def boxedRaw : Parse.Raw → Parse.Raw
   | .env n body p =>
@@ -2248,8 +1931,7 @@ def boxedRaws (acc : Array Parse.Raw) : List Parse.Raw → Array Parse.Raw
   | r :: rest => boxedRaws (acc.push (boxedRaw r)) rest
 end
 
-/-- `sourceArtifacts` of a control whose `{block}`s stand for lowered boxes
-(`boxedRaw`). -/
+/-- `sourceArtifacts` of a control whose `{block}`s stand for lowered boxes. -/
 def boxedSourceArtifacts (fonts : Font.FontSet) (source : String) :
     Array Diag × Layout.Out × String × String :=
   let (toks, lexDiags) := Lex.lex "t" source
@@ -2260,9 +1942,8 @@ def boxedSourceArtifacts (fonts : Font.FontSet) (source : String) :
   (ds ++ out.diags ++ hds, out, Html.document "en" head tree,
     shownTextList "" tree.toList)
 
-/-- A source and its literal control must ship the same visible text in
-both artifacts, without losing a construct. Whitespace is ignored here:
-these checks judge argument and branch selection, not line breaking. -/
+/-- A source and its literal control ship the same visible text in both artifacts, whitespace
+aside. -/
 def sourceTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label source control : String) : IO Unit := do
   let ink (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
@@ -2278,10 +1959,7 @@ def sourceTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) (w : WitnessRun := {}) : Array Diag := (w.elab src).2
 
-/-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
-count — the mechanical first cut the user asked for, needing no judgement
-about any rule: group every diagnostic by its cause site and look at the
-groups larger than one. -/
+/-- Spans carrying more than one diagnostic, as code pairs with their count. -/
 def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   for d in ds do
@@ -2291,47 +1969,39 @@ def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
         unless out.contains pair do out := out.push pair
   return out
 
-/-- The shipped-page census of a source laid out with `fonts`: which ink
-each page carries, the artifact a claim about a branch or a label reads. -/
+/-- The shipped-page census of a source laid out with `fonts`. -/
 def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=
   let (doc, _) := elabStr src
   censusOf (coveredColorsOf doc) (layoutOf fonts doc)
 
-/-- The laid-out lines of a source, baseline and text: what a claim that two
-spellings set one page reads. -/
+/-- The laid-out lines of a source: baseline and text. -/
 def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
   (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
 
-/-- Every shipped line of a source, position, size and text: what a claim
-that two spellings ship one page reads, horizontal placement included. -/
+/-- Every shipped line of a source: position, size and text. -/
 def shippedLines (fonts : Font.FontSet) (src : String) :
     Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
   (censusOfSrc fonts src).flatMap fun p => p.lines.map fun l => (l.x, l.y, l.size, l.text)
 
-/-- A source elaborated as the driver elaborates it: against the label
-measurement layout sets with (`Layout.labelMetric`), so a node's extent is
-measured from its letters rather than taken as nothing. -/
+/-- A source elaborated as the driver elaborates it, against the label measurement layout sets
+with. -/
 def elabMeasured (fonts : Font.FontSet) (s : String) : Ir.Doc × Array Diag :=
   let (toks, lds) := Lex.lex "t" s
   let (raws, pds) := Parse.parse "t" toks
   Elab.runRaws "t" raws (lds ++ pds)
     (Layout.labelMetric (Layout.Geom.ofPage (Elab.run "t" s).1.page) fonts)
 
-/-- Does a block of the document's title block satisfy `p`? The block may
-stand inside its alignment wrapper, so the probe looks one level into
-`.center`. -/
+/-- Does a block of the document's title block, or one inside its `.center` wrapper, satisfy `p`? -/
 def inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
   doc.body.any fun b => p b ||
     (match b with | .center xs => xs.any p | _ => false)
 
-/-- Diagnostics after layout too, through the same pre-layout alphabet
-resolution as every test artifact. -/
+/-- Diagnostics after layout too, through the same alphabet resolution. -/
 def dvL (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
   ds ++ (layoutOf fonts doc).diags
 
-/-- Diagnostics after layout through the overflow ladder (`fittedOf`), as
-the driver reports them. -/
+/-- Diagnostics after layout through the overflow ladder (`fittedOf`). -/
 def dvF (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
   ds ++ (fittedOf fonts doc).out.diags
@@ -2341,9 +2011,7 @@ def dvH (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
   ds ++ (HtmlDoc.emit {} doc).2
 
-/-- A one-face set: every slot and variant maps to index 0. Both
-fontSuiteChecks and the layout dispatch build their set through this one
-def, so the two can never drift. -/
+/-- A one-face set: every slot and variant maps to index 0. -/
 def oneFaceOf (font : Font.Font) : Font.FontSet := {
   fonts := #[font]
   index := ((List.range 3).flatMap fun slot =>
@@ -2351,28 +2019,22 @@ def oneFaceOf (font : Font.Font) : Font.FontSet := {
      ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
 }
 
-/-- The shipped Fira Sans as a one-face set (`oneFaceOf`): the face the
-frame and footline checks lay their invented decks out in, as their
-lualatex measurements loaded it for every face; `none` where it does not
-parse. -/
+/-- The shipped Fira Sans as a one-face set, or `none`. -/
 def shippedFira : IO (Option Font.FontSet) := do
   match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
   | .ok f => pure (some (oneFaceOf f))
   | .error _ => pure none
 
-/-- The shipped Fira Sans as the one face it is, for a check that builds its
-own set from it; `none` where it does not parse. -/
+/-- The shipped Fira Sans as a face, or `none`. -/
 def shippedFiraFont : IO (Option Font.Font) := do
   match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
   | .ok f => pure (some f)
   | .error _ => pure none
 
-/-- A measurement in thousandths of a point, as the frame checks write
-lualatex's baselines and their tolerances. -/
+/-- A measurement in thousandths of a point. -/
 def ptMilli (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
 
-/-- An invented 10 pt beamer deck under `theme`, each frame naming its options
-and holding its body: the spelling the frame checks measure lualatex on. -/
+/-- A 10 pt beamer deck under `theme`, each frame its options and body. -/
 def beamerDeck (theme : String) (frames : List (String × String)) : String :=
   s!"\\documentclass[10pt]\{beamer}\n{theme}\\begin\{document}\n" ++
   String.join (frames.map fun (opt, body) =>
@@ -2393,11 +2055,8 @@ def cssEmMilli (v : String) : Option Int := do
 /-- Two lengths within `slack` of each other. -/
 def withinSp (slack a b : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
 
-/-- Two faces in two slots: the roman slot (0) and the sans slot (1) hold
-different files, so a claim about *which family* ink set in has something
-to read. `oneFaceOf` maps every slot to one file and cannot tell a serif
-run from a sans one — the set a font-role fact needs is this one.
-`CensusLine.runFonts` is the channel. -/
+/-- Two faces in two slots, roman (0) and sans (1), so a run's face says its family
+(`CensusLine.runFonts`). -/
 def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
   fonts := #[roman, sans]
   index := ((List.range 3).flatMap fun slot =>
@@ -2406,8 +2065,7 @@ def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
      ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
 }
 
-/-- Two faces: the text slots (0 and 1) one file and the typewriter slot
-(2) another, so code and prose are told apart by the face a run sets in. -/
+/-- Two faces: the text slots (0 and 1) one file and the typewriter slot (2) another. -/
 def monoSlotOf (text mono : Font.Font) : Font.FontSet := {
   fonts := #[text, mono]
   index := ((List.range 3).flatMap fun slot =>
@@ -2445,8 +2103,7 @@ def hueGap (h h' : Int) : Int :=
   let d := (h - h' + 540000) % 360000 - 180000
   if d < 0 then -d else d
 
-/-- A shipped bundle's palette as a deck installs it: its seeds generated,
-its relations realized (`Theme.realize`). -/
+/-- A shipped bundle's palette as a deck installs it (`Theme.realize`). -/
 def deckBundle (th : Theme.Theme) : Ir.Palette := th.realize .decks
 
 /-- moloch's progress bar as a deck installs it: its fill and its track. -/
@@ -2455,13 +2112,11 @@ def molochProgress (_ : Unit) : Ir.Color × Ir.Color :=
   | some p => (p.fg, p.bg)
   | none => (Ir.Color.black, Ir.Color.black)
 
-/-- A registry role's colour where nothing declares it, in one scheme: the
-screen stylesheet's own value (`Ir.Role.row`'s columns). -/
+/-- A registry role's undeclared colour in one scheme (`Ir.Role.row`'s columns). -/
 def screenColor (s : Ir.Scheme) (r : Ir.Role) : Ir.Color :=
   (Ir.Design.at {} s r).getD Ir.Color.black
 
-/-- The declarations of every stylesheet rule whose selector is `sel`
-exactly, in order: the texts between their braces. -/
+/-- The declarations of every stylesheet rule whose selector is exactly `sel`, in order. -/
 def cssRulesOf (css sel : String) : List String :=
   (css.splitOn "}").filterMap fun chunk =>
     match chunk.splitOn "{" with
@@ -2469,16 +2124,13 @@ def cssRulesOf (css sel : String) : List String :=
       if (s.splitOn "\n").getLast!.trimAscii.toString == sel then some decls else none
     | _ => none
 
-/-- The declarations of the first stylesheet rule whose selector is `sel`
-exactly: the text between its braces. -/
+/-- The declarations of the first stylesheet rule whose selector is exactly `sel`. -/
 def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
 
-/-- A length in sp as thousandths of a point, rounded to nearest: what the
-layout checks print and compare against a reference's three decimals. -/
+/-- A length in sp as thousandths of a point, rounded to nearest. -/
 def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
 
-/-- A selector list's parts, split at its top-level commas (a comma inside
-`:is(…)` or `:has(…)` belongs to its part). -/
+/-- A selector list's parts, split at its top-level commas. -/
 def cssSelParts (sel : String) : List String := Id.run do
   let mut parts : Array String := #[]
   let mut cur := ""
@@ -2492,19 +2144,14 @@ def cssSelParts (sel : String) : List String := Id.run do
     else cur := cur.push c
   return (parts.push cur.trimAscii.toString).toList
 
-/-- A CSS length in `rem` as thousandths of a rem — the unit every boundary
-of the gap sheet is written in (`HtmlDoc.screenMilli`) — or nothing for any
-other spelling. -/
+/-- A CSS length in `rem` as thousandths of a rem, or nothing for any other spelling. -/
 def remMilliOf (value : String) : Option Int := do
   let value := value.trimAscii.toString
   guard (value.endsWith "rem")
   let (m, sc) ← Decl.parseDecimal (value.dropEnd 3).toString
   return m * 1000 / (sc : Int)
 
-/-- The custom properties a stylesheet's top-level `:root` rules declare —
-the light screen's table, since a rule nested in an `@media` block is not
-top-level — newest first, so `List.lookup` reads the declaration the
-cascade keeps. -/
+/-- The custom properties a stylesheet's top-level `:root` rules declare, newest first. -/
 def screenRootVars (css : String) : List (String × String) :=
   (cssRulesOf css ":root").foldl (fun vars block =>
     (block.splitOn ";").foldl (fun vars decl =>
@@ -2514,8 +2161,7 @@ def screenRootVars (css : String) : List (String × String) :=
         if k.startsWith "--" then (k, v.trimAscii.toString) :: vars else vars
       | _ => vars) vars) []
 
-/-- The colour each token class's rule reads (`HtmlDoc.tokenRules`): every
-top-level `:is(.tok-…)` rule's classes, each beside its `color` value. -/
+/-- The colour each token class's rule reads (`HtmlDoc.tokenRules`). -/
 def tokenClassColors (css : String) : List (String × String) :=
   (sheetRules css).toList.flatMap fun (conds, sel, decls) =>
     if !conds.isEmpty || !sel.startsWith ":is(.tok-" then [] else
@@ -2524,9 +2170,8 @@ def tokenClassColors (css : String) : List (String × String) :=
         ((c.trimAscii.toString.drop 1).toString, v)
     | none => []
 
-/-- A style attribute with each ordinary declaration's value read on one
-side of the `light-dark()` pairs (`schemeRead`) against `vars`, the custom
-properties themselves kept as written. -/
+/-- A style with each ordinary declaration read on one side of its `light-dark()` pairs against
+`vars`. -/
 def sideStyle (dark : Bool) (vars : List (String × String)) (style : String) : String :=
   "; ".intercalate ((style.splitOn ";").filterMap fun decl =>
     match decl.splitOn ":" with
@@ -2538,10 +2183,8 @@ def sideStyle (dark : Bool) (vars : List (String × String)) (style : String) : 
 
 mutual
 
-/-- An element with its style as one scheme reads it: every ordinary
-declaration through the custom properties in scope (`sideStyle`), and a
-token's colour, which its class's rule states (`tokenClassColors`), written
-first as its own `color`. -/
+/-- An element with its style as one scheme reads it, and a token's class colour written first as
+its own. -/
 def schemeTreeOne (dark : Bool) (classes : List (String × String)) (vars : List (String × String)) :
     Html.Node → Html.Node
   | .elem t attrs kids =>
@@ -2568,10 +2211,7 @@ def schemeTreeList (dark : Bool) (classes : List (String × String)) (vars : Lis
 
 end
 
-/-- **A typed tree as one scheme paints it**: each style's declarations read
-through the custom properties in scope from the `:root` that scheme's
-cascade gives (`schemeRoot`), and each token's class colour written as its
-own (`schemeTreeOne`). -/
+/-- A typed tree as one scheme paints it (`schemeRoot`, `schemeTreeOne`). -/
 def schemeTree (head body : Array Html.Node) (s : Ir.Scheme) : Array Html.Node :=
   let css := treeCssList "" head.toList
   let (root, dark) := schemeRoot css s
@@ -2583,10 +2223,8 @@ def emitIn (cfg : HtmlDoc.Config) (doc : Ir.Doc) (s : Ir.Scheme) :
   let (head, body, ds) := HtmlDoc.emitTree cfg doc
   (head, schemeTree head body s, ds)
 
-/-- A CSS value with its `var()` references chased through a property
-table, eight references deep: `var(--x)` reads the table's `--x`, and
-`var(--x, fb)` reads `fb` where the table has no `--x`. `none` where a
-reference dangles. -/
+/-- A CSS value with its `var()` references chased through a property table, eight deep; `none`
+where one dangles. -/
 def chaseCssValue (vars : List (String × String)) (value : String) : Option String :=
   (List.range 8).foldl (fun acc _ => acc.bind fun v =>
     if v.startsWith "var(" && v.endsWith ")" then
@@ -2599,9 +2237,8 @@ def chaseCssValue (vars : List (String × String)) (value : String) : Option Str
           if rest.isEmpty then none else some (String.intercalate "," rest).trimAscii.toString
     else some v) (some value)
 
-/-- Read a CSS stage length and compare its share to the shipped PDF
-length. One printed milli-percent is the rounding bound, independently of
-viewport height. -/
+/-- Whether a CSS stage length's share matches the shipped PDF length, within one printed
+milli-percent. -/
 def cssStageLength (style key : String) (length height : Dim.Sp) : Bool :=
   ((style.splitOn ";").findSome? fun decl => do
     let [name, value] := decl.splitOn ":" | none
@@ -2612,17 +2249,15 @@ def cssStageLength (style key : String) (length height : Dim.Sp) : Bool :=
     return m * 1000 / (sc : Int)).any fun m =>
       m * height ≤ length * 100000 && length * 100000 < (m + 1) * height
 
-/-- The read-side census of produced PDF bytes, for a claim about what a
-file carries (fonts embedded, filters, page count) — `PdfCensus.census`
-with its refusal surfaced as the test's own failure text. -/
+/-- The read-side census of produced PDF bytes (`PdfCensus.census`), its refusal as the test's
+failure text. -/
 def pdfCensusOf (pdf : ByteArray) : Except String PdfCensus.Census :=
   PdfCensus.census pdf
 
 
 mutual
 
-/-- Every element of a tree whose tag `want` accepts, in document order.
-Keep the typed node so guards can inspect child order as well as attributes. -/
+/-- Every element of a tree whose tag `want` accepts, in document order, as typed nodes. -/
 def elemNodesOne (want : String → Bool) (acc : Array Html.Node) :
     Html.Node → Array Html.Node
   | .elem tag attrs kids =>
@@ -2644,8 +2279,7 @@ def slideStages (body : Array Html.Node) : Array Html.Node :=
     | .elem _ attrs _ => ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains "slide"
     | .text _ | .style _ | .script .. => false
 
-/-- The `flex-grow` a stage's direct children declare, in document order: the
-frame's spacers, a fill's box, a container holding fills. -/
+/-- The `flex-grow` a stage's direct children declare, in document order. -/
 def stageGrows (stage : Html.Node) : Array String :=
   match stage with
   | .elem _ _ kids => kids.filterMap fun node => match node with
@@ -2657,7 +2291,7 @@ def stageGrows (stage : Html.Node) : Array String :=
     | .text _ | .style _ | .script .. => none
   | .text _ | .style _ | .script .. => #[]
 
-/-- Attribute guards are a projection of the same element census. -/
+/-- Each accepted element's tag and attributes, in document order. -/
 def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String × String)))
     (nodes : List Html.Node) : Array (String × Array (String × String)) :=
   (elemNodesList want #[] nodes).foldl (fun a n => match n with
@@ -2668,9 +2302,7 @@ def elemAttrsOne (want : String → Bool) (acc : Array (String × Array (String 
     (node : Html.Node) : Array (String × Array (String × String)) :=
   elemAttrsList want acc [node]
 
-/-- The formulas of an emitted tree, in document order: the elements that
-carry their source in `data-tex` — a paragraph's `math` root, a picture
-label's row inside its carrier. -/
+/-- The formulas of an emitted tree, in document order: the elements carrying `data-tex`. -/
 def formulaElems (body : Array Html.Node) : Array Html.Node :=
   (elemNodesList (fun _ => true) #[] body.toList).filter fun n =>
     match n with
@@ -2683,33 +2315,26 @@ def docPictures (doc : Ir.Doc) : Array Ir.Pic.Picture :=
     | .picture p => acc.push p
     | _ => acc) (fun acc _ => acc) #[] doc.body
 
-/-- An article whose one picture, drawn by the engine, holds a node at
-(-1,1) labelled `label` under the node options `opts`. -/
+/-- An article whose one picture holds a node at (-1,1) labelled `label` under the options
+`opts`. -/
 def mathLabelSource (label opts : String) : String :=
   "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
   "\\begin{tikzpicture}\n\\node[" ++ opts ++ "] at (-1,1) {" ++ label ++
   "};\n\\end{tikzpicture}\n\\end{document}"
 
-/-- An article whose one picture, drawn by the engine, is a drawn node around
-`content`. -/
+/-- An article whose one picture is a drawn node around `content`. -/
 def drawnNodeSource (content : String) : String :=
   "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
   "\\begin{tikzpicture}\n\\node[draw] at (0,0) {" ++ content ++
   "};\n\\end{tikzpicture}\n\\end{document}"
 
-/-- Every value the elements `want` accepts declare for attribute `key`, in
-document order: `elemAttrsOne`'s elements, read for one attribute. -/
+/-- Every value the accepted elements declare for attribute `key`, in document order. -/
 def attrValuesOf (want : String → Bool) (key : String) (n : Html.Node) : Array String :=
   (elemAttrsOne want #[] n).filterMap fun (_, attrs) => (attrs.find? (·.1 == key)).map (·.2)
 
 
-/-- Every innermost declaration block a stylesheet carries, as its selector
-text paired with its declarations. Brace-depth scanned rather than split on
-`}`, so a nested at-rule's inner blocks come out under their own selectors
-(the backend writes the paged deck's bar inside `@media screen`) and the
-at-rule's prelude never reads as one. Total by construction: the loop is
-bounded by the length and every step advances the position. Each block
-carries the number of at-rules it nests in. -/
+/-- Every innermost declaration block of a stylesheet: its at-rule depth, selector and
+declarations. -/
 def artCssRules (css : String) : Array (Nat × String × String) := Id.run do
   let mut out : Array (Nat × String × String) := #[]
   let mut sels : Array String := #[]
@@ -2731,18 +2356,16 @@ def artCssRules (css : String) : Array (Nat × String × String) := Id.run do
 /-- Every innermost declaration block, as its selector and declarations. -/
 def artCssBlocks (css : String) : Array (String × String) := (artCssRules css).map (·.2)
 
-/-- The blocks outside every at-rule: the light screen's rules, where an
-`@media` block restates the dark scheme's or the print sheet's values. -/
+/-- The blocks outside every at-rule: the light screen's rules. -/
 def artTopCssBlocks (css : String) : Array (String × String) :=
   (artCssRules css).filterMap fun (d, b) => if d == 0 then some b else none
 
-/-- The declarations of every innermost block a stylesheet carries for the
-selector `sel` exactly, nested at-rule blocks included (`artCssBlocks`). -/
+/-- The declarations of every innermost block for selector `sel` exactly, nested at-rules
+included. -/
 def cssBlocksFor (css sel : String) : List String :=
   ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
 
-/-- The value the first declaration of `key` in a declaration list gives,
-if one does; a value may hold a colon of its own (`url(data:…)`). -/
+/-- The value of the first declaration of `key` in a declaration list. -/
 def cssDeclOf (decls key : String) : Option String :=
   (decls.splitOn ";").findSome? fun d =>
     match d.splitOn ":" with
@@ -2751,8 +2374,7 @@ def cssDeclOf (decls key : String) : Option String :=
       else none
     | [] => none
 
-/-- A selector list's top-level parts, a comma inside a parenthesized
-argument (`:is(h1, h2)`) kept in its part. -/
+/-- A selector list's top-level parts, a comma inside parentheses kept in its part. -/
 def cssSelectorParts (sel : String) : List String := Id.run do
   let mut parts : Array String := #[]
   let mut cur := ""
@@ -2766,13 +2388,7 @@ def cssSelectorParts (sel : String) : List String := Id.run do
     else cur := cur.push c
   return (parts.push cur.trimAscii.toString).toList
 
-
-/-! ### The natbib fixtures the bibliography check blocks share -/
-
-/-- The synthetic bibliography natbib's rows cite: invented people and
-venues, one entry per name shape a citation prints differently — three
-authors (`et al.`, and all three starred), one, two, and a lowercase
-particle (`\Citet` capitalizes it). -/
+/-- The bibliography natbib's rows cite, one entry per name shape a citation prints differently. -/
 def natbibBib : String :=
   "@article{alpha2019, author = {Ann Alpha and Bob Beta and Cy Gamma},\n\
     title = {A study of invented widgets}, journal = {Journal of Examples},\n\
@@ -2785,10 +2401,8 @@ def natbibBib : String :=
   @article{pome2018, author = {Quill de Pome}, title = {Lowercase particles},\n\
     journal = {Example Letters}, year = {2018}}\n"
 
-/-- Entries whose label names and year coincide, so plainnat.bst's
-`forward.pass`/`reverse.pass` give them letters, one more year by the same
-names, one other author, and two entries the `\nocite` rows name:
-invented people and titles. -/
+/-- Entries whose label names and year coincide, so plainnat.bst gives them letters, plus the
+`\nocite` rows' entries. -/
 def natbibLabelBib : String :=
   "@article{gam2019a, author = {Gil Gamma and Hal Eta}, title = {An early invented result},\n\
     journal = {Journal of Examples}, year = {2019}}\n\
@@ -2801,9 +2415,7 @@ def natbibLabelBib : String :=
   @misc{kap2017, author = {Kai Kappa}, title = {An invented note}, year = {2017}}\n\
   @misc{lam2016, author = {Lu Lambda}, title = {An entry no citation names}, year = {2016}}\n"
 
-/-- The calls as one document, each in its own paragraph `Lk <call> end.`;
-the style is declared in the preamble, where natbib reads it back at
-`\begin{document}`. -/
+/-- The calls as one document, each in its own paragraph, the style declared in the preamble. -/
 def natbibSrc (pre style : String) (calls : List String) : String := Id.run do
   let mut body := ""
   for call in calls, k in [1:calls.length + 1] do
@@ -2811,8 +2423,7 @@ def natbibSrc (pre style : String) (calls : List String) : String := Id.run do
   return s!"\\documentclass\{article}\n{pre}\n\\bibliographystyle\{{style}}\n\
     \\begin\{document}\n{body}\\bibliography\{refs}\n\\end\{document}\n"
 
-/-- An HTML page's text as a reader gets it: tags dropped, the entities
-the escaper writes read back, a no-break space a space. -/
+/-- An HTML page's text as a reader gets it: tags dropped, escaped entities read back. -/
 def htmlVisibleText (page : String) : String := Id.run do
   let mut out := ""
   let mut inTag := false
@@ -2823,9 +2434,7 @@ def htmlVisibleText (page : String) : String := Id.run do
   return ((((out.replace "&lt;" "<").replace "&gt;" ">").replace "&nbsp;" " ").replace
     "&amp;" "&").replace "\u00A0" " "
 
-/-- The reference list's shipped lines, one array per entry: the lines after
-the References heading that set glyphs (a link's underline ships as a
-sibling line of rules), split where the leaf changes. -/
+/-- The reference list's shipped lines, one array per entry. -/
 def bibEntryLines (lines : Array Layout.LineOut) : Array (Array Layout.LineOut) := Id.run do
   let start := ((lines.findIdx? (lineText · == "References")).map (· + 1)).getD lines.size
   let mut out : Array (Array Layout.LineOut) := #[]
@@ -2841,8 +2450,7 @@ namespace Tests.World
 
 open LeanTex.Cli.World
 
-/-- A world read off a trace, `dflt` answering every question the trace
-does not hold. -/
+/-- A world read off a trace, `dflt` answering every other question. -/
 def traceWorld (tr : List Fact) (dflt : (q : Ask) → Reply q) : (q : Ask) → Reply q :=
   fun q => match tr.find? (·.1 == q) with
     | some ⟨q', r⟩ => if h : q' = q then h ▸ r else dflt q
@@ -2859,8 +2467,7 @@ def quiet : (q : Ask) → Reply q
   | .writeAtomic .. => .error .absent
   | .createDirAll _ => .error .absent
 
-/-- The host with PATH and the working directory replaced: every other
-question is the machine's. -/
+/-- The host with PATH and the working directory replaced. -/
 def hybrid (path : Option String) (cwd : Except Failure String) : (q : Ask) → BaseIO (Reply q)
   | .env "PATH" => pure path
   | .cwd => pure cwd
@@ -2873,8 +2480,7 @@ end Tests.World
 
 namespace FontScan
 
-/-- A scan record: a family, a corner and its pitch, at a path, nothing
-read from a file — the face the scan would have recorded there. -/
+/-- A scan record: a family, a corner and its pitch at a path, read from no file. -/
 def face (family : String) (fixed : Bool) (bold italic : Bool := false)
     (path : String := family ++ ".otf") : FontDb.Face :=
   { path, family, subfamily := "Regular", bold, italic, fixedPitch := fixed
@@ -2892,17 +2498,12 @@ def runFace (out : Layout.Out) (needle : String) : Option Nat :=
     (lineRuns l).findSome? fun (f, s, _, _) => if hasStr s needle then some f else none
 
 end FontScan
-/-! ## The SVG boundary's matrices
-
-What the resource boundary admits and refuses, and what the terminal-pose
-projection reads and refuses: the matrices the native reader is held to in
-the suite and the external parity oracle reads against libxml2 and libxslt,
-one list each, invented. -/
+/-! The SVG boundary's matrices, shared by the suite and the external parity oracle. -/
 
 /-- The red square the refusal bodies stand beside. -/
 def svgRedSquare : String := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
 
-/-- A one-pixel opaque PNG, its bytes spelled out (an invented raster). -/
+/-- A one-pixel opaque PNG, its bytes spelled out. -/
 def tinyPng : ByteArray := bytes [
   0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
   0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
@@ -2910,8 +2511,7 @@ def tinyPng : ByteArray := bytes [
   0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
   0x44, 0xAE, 0x42, 0x60, 0x82]
 
-/-- Bodies the boundary admits; `svgBoundaryWidened` names the ones the
-boundary libxml2's XPath stated refused. -/
+/-- Bodies the boundary admits; `svgBoundaryWidened` names those libxml2's XPath refused. -/
 def svgBoundaryAdmitted : List (String × String) :=
   let rect := svgRedSquare
   let moving := "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
@@ -2944,16 +2544,8 @@ def svgBoundaryAdmitted : List (String × String) :=
     ("numeric colour with alpha in a style attribute",
       "<rect width=\"20\" height=\"20\" style=\"fill: rgba(255, 0, 0, 0.5)\"/>")]
 
-/-- Whether an admitted body is one of the native reader's widenings of the
-boundary libxml2's XPath stated, which that boundary refused: a `data:`
-image beyond the base64 PNG or JPEG an `<image>`'s reference spelled there —
-of no declared type, percent-encoded, outside the base64 alphabet, or named
-by `src`; a local reference to an id that holds `~` — the separator the
-engine's own figure ids hold, so its own figures pass its own judge; and
-CSS that spells a function the reader reads without fetching anything — a
-fragment `url(#id)` and a numeric `rgb()`/`rgba()`, where that boundary
-refused any parenthesis in CSS, which exporters' style attributes and
-sheets spell constantly. -/
+/-- Whether an admitted body is a native widening of the libxml2 XPath boundary: a broader `data:`
+image, a local id holding `~`, or a fetch-free CSS function. -/
 def svgBoundaryWidened (name : String) : Bool :=
   ["data image of no declared type", "data image unencoded", "data image as a source",
     "data image outside the base64 alphabet",
@@ -2985,14 +2577,12 @@ def svgBoundaryRefused : List (String × String) :=
     ("script", "<script>fetch('tile.png')</script>"),
     ("event handler", "<rect onload=\"fetch('tile.png')\"/>")]
 
-/-- A string's characters as the bytes an ASCII-compatible single-byte
-encoding writes them in, `high` naming the byte each non-ASCII character
-takes. -/
+/-- A string's characters as an ASCII-compatible single-byte encoding writes them, `high` giving
+each non-ASCII byte. -/
 def singleBytes (s : String) (high : Char → UInt8) : ByteArray :=
   ⟨s.toList.toArray.map fun c => if c.toNat < 128 then c.toNat.toUInt8 else high c⟩
 
-/-- A string as UTF-16 code units in the order `be` says, after a byte-order
-mark when `bom`. -/
+/-- A string as UTF-16 code units in `be` order, after a byte-order mark when `bom`. -/
 def utf16Bytes (s : String) (be bom : Bool) : ByteArray := Id.run do
   let mut out : ByteArray := if !bom then .empty else if be then ⟨#[0xFE, 0xFF]⟩ else ⟨#[0xFF, 0xFE]⟩
   for c in s.toList do
@@ -3003,8 +2593,7 @@ def utf16Bytes (s : String) (be bom : Bool) : ByteArray := Id.run do
       out := if be then (out.push a).push b else (out.push b).push a
   return out
 
-/-- A string as UTF-32 big-endian code units, after a byte-order mark when
-`bom`. -/
+/-- A string as UTF-32 big-endian code units, after a byte-order mark when `bom`. -/
 def utf32Bytes (s : String) (bom : Bool) : ByteArray := Id.run do
   let mut out : ByteArray := if bom then ⟨#[0x00, 0x00, 0xFE, 0xFF]⟩ else .empty
   for c in s.toList do
@@ -3019,9 +2608,8 @@ def svgDeclared (encoding text : String) : String :=
     s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"20\">" ++
     s!"<text x=\"2\" y=\"15\">{text}</text></svg>"
 
-/-- Whole sources in the encodings an SVG is written in, with whether the
-reader admits each and, where it does, the text its drawing sets.
-`svgBoundaryNarrowed` names the ones it refuses that libxml2 reads. -/
+/-- Whole sources in the encodings an SVG is written in, with whether the reader admits each and the
+text it sets. -/
 def svgBoundaryEncodings : List (String × ByteArray × Option String) :=
   let curly : Char → UInt8 := fun c => if c == '“' then 0x93 else if c == '”' then 0x94 else 0x3F
   [("windows-1252", singleBytes (svgDeclared "windows-1252" "“quoted”") curly,
@@ -3048,11 +2636,8 @@ def svgBoundaryEncodings : List (String × ByteArray × Option String) :=
       (fun _ => 0xDB), none),
    ("a lone UTF-16 surrogate", utf16Bytes (svgDeclared "UTF-16" "a") false true ++ ⟨#[0x00, 0xD8]⟩, none)]
 
-/-- The encoded sources the native reader refuses and libxml2, through
-iconv, reads: the multi-byte encodings and UTF-32 as its declaration names
-it, which the reader names and refuses — save the file as UTF-8. A UTF-32
-byte-order mark libxml2 refuses too (2.15: "Document is empty"), so that
-row is one both readers refuse. -/
+/-- The encoded sources the native reader refuses and libxml2 reads: the multi-byte encodings and
+declared UTF-32. -/
 def svgBoundaryNarrowed (name : String) : Bool := ["Shift_JIS", "UTF-32"].contains name
 
 /-- Whole sources the reader refuses, around `drawing`. -/

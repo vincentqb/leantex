@@ -10,8 +10,7 @@ namespace Tests
 
 mutual
 
-/-- Actual typed HTML text at a snap: the first component is present text,
-the second is its uncovered subset. No source or IR is consulted. -/
+/-- The typed HTML text present at a step, and its uncovered subset. -/
 private def overlayTextOne (k : Nat) (covered : Bool)
     (acc : String × String) : Html.Node → String × String
   | .text s => (acc.1 ++ s, if covered then acc.2 else acc.2 ++ s)
@@ -33,8 +32,7 @@ end
 
 mutual
 
-/-- Count the typed tree's actual paging destinations, including a stepless
-frame's own snap. A selector alone cannot create a reachable reveal step. -/
+/-- The typed tree's paging destinations, a stepless frame's own included. -/
 private def overlaySnapsOne (acc : Nat) : Html.Node → Nat
   | .text _ | .style _ | .script _ _ => acc
   | .elem _ attrs kids =>
@@ -130,9 +128,8 @@ private def pageMarks (p : Layout.PageOut) : Array String :=
       String.join (l.segs.toList.map segMark)) ++
     p.fills.map reprStr ++ (pageInkMarks p).map reprStr
 
-/-- A union selects exactly its numbered steps on both artifacts. Covering
-keeps its one body, alternation replaces it with exactly one other body.
-Every expectation is over the shipped layout or the emitted typed tree. -/
+/-- A union selects exactly its numbered steps on both artifacts; covering keeps its one body and
+alternation replaces it with one other. -/
 def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let cases : List (String × List Bool) :=
@@ -199,9 +196,6 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     "\\onslide<2-3> BlueMarker\n\\end{overprint}") unionSteps true
   witness "nested selectors" "\\uncover<1,3-4>{\\uncover<1-2,4>{AmberMarker}}"
     unionSteps false
-  -- A frame's title and subtitle share the extent established by its body.
-  -- Each selected title reaches the shipped page once; both source branches
-  -- stand once in HTML while only the selected branch is shown at each snap.
   for (spec, active) in
       [("1,4", unionSteps), ("1-4", [true, true, true, true]),
        ("2,4", [false, true, false, true]),
@@ -216,8 +210,7 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     sourceWitness ("frame title argument " ++ spec)
       (deck169Body ("\\begin{frame}{" ++ title ++ "}\nBodyMarker\n\\uncover<" ++
         toString active.length ++ ">{ClockMarker}\n\\end{frame}")) active true
-  -- LuaLaTeX gives a title-only <1,4> four pages: the title's endpoints
-  -- create the frame's steps even when its body has no overlay.
+  -- LuaLaTeX gives a title-only <1,4> four pages: the title's endpoints make the frame's steps.
   for (spec, active) in
       [("1,4", unionSteps), ("1-4", [true, true, true, true]),
        ("2,4", [false, true, false, true]),
@@ -232,8 +225,6 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     sourceWitness ("title argument only " ++ spec)
       (deck169Body ("\\begin{frame}{" ++ title ++ "}\nBodyMarker\n\\end{frame}"))
       active true
-  -- HTML furniture inside the sticky stage uses the same finite extent.
-  -- Its source branches remain single nodes, including at an open range end.
   for cmd in ["framefoot", "logo"] do
     for (spec, active) in
         [("1,4", unionSteps), ("1-4", [true, true, true, true]),

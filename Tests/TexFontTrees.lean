@@ -24,9 +24,8 @@ def treeRoots (path : Option String) (home : Option String) (stats : List (Strin
     stats.map fun (p, st) => (⟨.stat p, .ok st⟩ : Fact)
   (TexFontTrees.roots home).run (World.traceWorld facts World.quiet)
 
-/-- The rule over invented layouts: the program found through its links, its
-trees by the layout it sits in, OpenType directories before TrueType ones,
-and only directories that exist, each once. -/
+/-- The rule over invented layouts: the program found through its links, its trees by layout,
+OpenType before TrueType, each existing directory once. -/
 def texFontTreeLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   let tl := [("/links/lualatex", fileAt "/tl/2099/bin/x86_64-linux/luahbtex"),
     ("/tl/2099/texmf-dist/fonts/opentype", dirAt "/tl/2099/texmf-dist/fonts/opentype"),
@@ -122,8 +121,7 @@ def texFontTreeLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     (TexFontTrees.parent "/a/b" == "/a" && TexFontTrees.parent "/a" == "/" &&
       TexFontTrees.parent "/" == "/")
 
-/-- The rule on a layout laid out on disk, links and all: the font scan
-finds the faces of its trees. -/
+/-- The rule on a layout laid out on disk, links included: the font scan finds its trees' faces. -/
 def texFontTreeDiskChecks (ref : IO.Ref (List String)) : IO Unit := do
   let corpus ← IO.FS.realPath testFonts
   IO.FS.withTempDir fun tmp => do
@@ -148,12 +146,8 @@ def texFontTreeDiskChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"tex fonts on disk: the scan finds both trees' faces: {families}"
       (families.contains "Fira Sans" && families.contains "Open Sans")
 
-/-- A build and a font listing by `binary` under a `PATH` holding only a
-`lualatex`, a `kpsewhich` and an `sh` that each leave a mark when run, in
-TeX Live's layout with the invented Example Icons in its tree, which the
-document declares as its mono family, the child's environment the
-scenario's alone: the build's and the listing's outputs, and the marks
-left. -/
+/-- A build and a font listing by `binary` under a `PATH` of marking `lualatex`, `kpsewhich` and
+`sh`, in TeX Live's layout with an invented face; the outputs and marks. -/
 def texFontTreeMarks (binary : String) : IO (IO.Process.Output × IO.Process.Output × List String) := do
   let corpus ← IO.FS.realPath testFonts
   IO.FS.withTempDir fun tmp => do
@@ -183,11 +177,7 @@ def texFontTreeMarks (binary : String) : IO (IO.Process.Output × IO.Process.Out
     let left ← System.FilePath.readDir marks
     return (built, listed, (left.map (·.fileName)).toList.mergeSort (· ≤ ·))
 
-/-- No process starts for the TeX font directories, and the driver searches
-them (`texFontTreeMarks`): the build resolves, and the font listing names,
-the family only the TeX tree holds. The driver before the rule ran `sh`
-there on every build, failed the build with E0403 and listed no family of
-that tree. -/
+/-- No process starts for the TeX font directories, and the driver still searches them. -/
 def texFontTreeNoProcessChecks (ref : IO.Ref (List String)) : IO Unit := do
   let make ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   check ref s!"tex fonts no process: the CLI builds: {make.stdout}{make.stderr}" (make.exitCode == 0)

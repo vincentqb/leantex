@@ -3,9 +3,8 @@ module
 import LeanTex.Core.MathParse
 import LeanTex.Core.Loop
 
-/-! Ordinary consumers can construct the formula environment, classify the
-reported notes, call both readers and use their containment contract.
-Token scanning and recovery state are implementation details. -/
+/-! Ordinary consumers build the formula environment, classify notes, call both readers and use
+their containment contract. -/
 
 open LeanTex.Core
 open LeanTex.Core.Math
@@ -55,8 +54,8 @@ example (display : Bool) (raws : Array Parse.Raw) (env : Env)
         (Ir.floorNamedArgs.lookup command).isSome :=
   mathContain_accounts display raws formula notes parsed
 
-/-- The parity suites enumerate these vocabularies to cover every supported
-spelling. Ordinary clients may read them without unfolding their implementation. -/
+/-- The parity suites enumerate these vocabularies; clients read them without unfolding the
+implementation. -/
 example : Char → Char := italicVar
 example : List (String × MathClass × Char) := ctrlAtom
 example : List (String × String) := ctrlWord

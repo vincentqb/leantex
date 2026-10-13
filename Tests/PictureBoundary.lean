@@ -10,9 +10,7 @@ open LeanTex.Core
 
 namespace PictureBoundary
 
-/-- The driver's first pass, before a missing boundary answer withdraws a
-partly native picture. Request checks must inspect the request that the
-driver actually tries to fulfil. -/
+/-- The driver's first pass, before a missing boundary answer withdraws a partly native picture. -/
 def firstPass (src : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
   let (toks, lds) := Lex.lex "t" src
   let (raws, pds) := Parse.parse "t" toks
@@ -30,16 +28,14 @@ private def node (label : String) : String :=
 private def canonical (src : String) : String :=
   Parse.rawSrc (Parse.parse "t" (Lex.lex "t" src).1).1
 
-/-- Invented input for the independent LuaLaTeX acceptance check. Its
-paragraph skip must reach TeX as a skip, never as the native block command;
-its alert must use the text/color bridge shared with native labels. -/
+/-- Input for the LuaLaTeX acceptance check: its paragraph skip reaches TeX as a skip, its alert
+through the text-colour bridge. -/
 def standaloneSource : String :=
   dvDoc "\\theme{moloch}\n"
     (picture (node "Upper\\par\\smallskip Lower \\alert{Bright} {\\color{blue}Blue}"))
 
-/-- A routed picture remains TeX source while native alert/text-color
-labels keep their existing artifact. No external tool is needed by these
-request and typed-HTML checks. -/
+/-- A routed picture stays TeX source while native alert and text-colour labels keep their
+artifact. -/
 def pictureBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for command in ["\\smallskip", "\\medskip", "\\bigskip",
@@ -75,7 +71,7 @@ def pictureBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.pictureRefs inlineDoc == Ir.pictureRefs literalDoc)
   let (styledDoc, _, _) := firstPass standaloneSource
   let styledReq := requestText styledDoc
-  t "the fulfilment input keeps the skip and bridges alert with a declared color"
+  t "fulfilment keeps the skip and bridges alert to a declared color"
     ((Ir.pictureRefs styledDoc).size == 1 && hasStr styledReq "\\smallskip" &&
       hasStr styledReq "\\textcolor {alert}" && !hasStr styledReq "\\bfseries" &&
       hasStr styledReq "\\definecolor{alert}" && hasStr styledReq "\\color {blue}" &&
@@ -103,11 +99,8 @@ def pictureBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
 private def parseRaws (file s : String) : Array Parse.Raw :=
   (Parse.parse file (Lex.lex file s).1).1
 
-/-- An invented deck: a local style requires a beamer theme and a beamer
-add-on beside a picture package, a TikZ library, a colour and an unknown
-package, and the deck loads a colour theme of its own and a presentation
-tool's package beside a page-layout one; its one picture is outside the
-rendered subset. -/
+/-- A deck whose local style and preamble load themes, add-ons, picture packages, a library, a
+colour and an unknown package, around one picture outside the subset. -/
 def wrapperDeck : Ir.Doc :=
   let sty := "\\ProvidesPackage{probestyle}\n\\RequirePackage{beamerthememoloch}\n" ++
     "\\RequirePackage{beamerprobetools}\n" ++
@@ -121,20 +114,15 @@ def wrapperDeck : Ir.Doc :=
     #[("probestyle", parseRaws "probestyle.sty" sty)]
   (Elab.runRawsSpanned "t" raws).1
 
-/-- **The standalone carries what its picture reads, never the class's or the
-theme's.** A theme presupposes beamer, which a standalone never is, so its
-load failed the boundary on its first `\useinnertheme` and the picture fell
-back to the rendered subset; an add-on named for beamer stops a standalone
-the same way, and a presentation tool's package on the hyperref beamer
-loads. -/
+/-- The standalone carries what its picture reads, never the class's or the theme's packages. -/
 def pictureWrapperChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let req := requestText wrapperDeck
   t "a deck's picture states its boundary request" ((Ir.pictureRefs wrapperDeck).size == 1)
-  t "no theme or class package reaches the standalone, through a local style or directly"
+  t "no theme or class package reaches the standalone, directly or via a style"
     (!hasStr req "moloch" && !hasStr req "beamerprobetools" && !hasStr req "colortheme" &&
       !hasStr req "pdfpc")
-  t "a package loaded beside one of the class's still rides, alone on its line"
+  t "a package loaded beside a class package rides, alone on its line"
     (hasStr req "\\usepackage{pgfpages}")
   t "the picture's libraries, packages and colours still ride"
     (hasStr req "\\usetikzlibrary{arrows.meta}" && hasStr req "\\usepackage{pgfplots}" &&
@@ -149,21 +137,14 @@ def pictureWrapperChecks (ref : IO.Ref (List String)) : IO Unit := do
         Compat.boundaryRides &&
       !Compat.boundaryRides "tikz" && !Compat.boundaryRides "")
 
-/-- The hosts a picture ships on: a boundary tool that answers its version,
-then refuses every picture with a log (`refused`) or exits 3 leaving none
-(`unfinished`), or a document that keeps its pictures to the rendered subset
-(`declined`, `\pictures{ tool = none }`, so no tool is asked). -/
+/-- The hosts a picture ships on: a tool refusing with a log (`refused`), one exiting with none
+(`unfinished`), or `\pictures{ tool = none }` (`declined`). -/
 private def shipHosts : List (String × String × String) :=
   [("refused", "", "printf '%s\\n' '! Undefined control sequence.' > pic.log\nexit 1\n"),
    ("unfinished", "", "exit 3\n"),
    ("declined", "\\pictures{ tool = none }\n", "exit 3\n")]
 
-/-- Invented pictures, per host: one the rendered subset draws in part, with
-a construct outside the subset and an expression it cannot read; one it
-draws nothing of; the first shape written twice; and one the subset draws in
-part standing in a table cell's line, which it never sets. Each as written in the
-document, with the code its one line carries there and what that line's help
-quotes: the tool's words, the machine's, or the declaration. -/
+/-- Pictures per host, each with the code its one line carries and what that line's help quotes. -/
 private def shipPictures : List (String × String × String × String × Nat × String) :=
   let block (body : String) : String := "\\begin{tikzpicture}" ++ body ++ "\\end{tikzpicture}\n\n"
   let part := block ("\\node at (0,0) {Alpha};\\pgfmathsetmacro{\\even}{mod(1,2)==0}" ++
@@ -181,22 +162,8 @@ private def shipPictures : List (String × String × String × String × Nat × 
    ("declined", "drawn in part", "W0419", part, 1, "tool = none"),
    ("declined", "drawn in part, twice", "W0419", twice, 2, "tool = none")]
 
-/-- **A picture no renderer draws whole never costs the document.** The
-whole driver, run on a host whose boundary tool answers its version and
-then refuses every picture with a log, on one whose tool never finishes,
-and on a document that declares no tool: the PDF and the HTML page are each
-written, the run exits 0, and each picture's loss is one warning at its
-first line, carrying the count of the places it stands — the subset's
-incomplete drawing (W0419, whose message carries every construct the subset
-left out) or the placeholder (W0382, which the page labels; an attempt that
-never finished is never the subset's drawing, and neither is a picture in a
-line, which the subset never sets) — never a refusal of the
-subset's beside it, and never an error. A repeat site keeps its line as a
-note, and the page's run, which reads the tool's refusal back from the
-cache, names it the same way. The run once exited 1 and wrote nothing, on
-the unreadable expression the subset could not evaluate or on the tool's
-own refusal, and still did under the declaration. The caller supplies an
-already-built binary. -/
+/-- A picture no renderer draws whole never costs the document: both artifacts ship, the run exits
+0, and each loss is one warning at its first line; the caller supplies a built binary. -/
 def pictureShipChecks (ref : IO.Ref (List String))
     (binary : System.FilePath := ".lake/build/bin/leantex")
     (font : System.FilePath := "testdata/corpus/fonts/OpenSans-Regular.ttf") : IO Unit := do
@@ -257,7 +224,7 @@ def pictureShipChecks (ref : IO.Ref (List String))
           let html ← if ← output.pathExists then IO.FS.readFile output else pure ""
           let tags := placeholderTags html
           let drawings := (html.splitOn "<svg").length - 1
-          t s!"{art}: the page shows the subset's drawing or a labelled placeholder, never a request key"
+          t s!"{art}: subset drawing or labelled placeholder, never a request key"
             (!hasStr html (" src=\"" ++ Ir.picSrcPrefix) &&
               if code == "W0382" then tags.length == copies && tags.all labelled && drawings == 0
               else drawings == copies && tags.isEmpty)

@@ -6,11 +6,8 @@ public section
 
 open LeanTex.Core
 
-/-- Compare native layout and the actual PDF with an explicitly painted
-control. Removing marked-content lines permits the control to omit an
-unused alternative's structural leaves; text, colour and geometry remain.
-The controls use a 100% colour mix for anonymous, quantized PDF paint,
-including the bullet of a wholly covered item. -/
+/-- Compares native layout and the PDF with an explicitly painted control, marked-content lines
+removed. -/
 private def singletonWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (pre label body control : String) (markers : List (String × Ir.Color)) : IO Unit := do
   let t := check ref
@@ -55,9 +52,8 @@ private def singletonWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     | .error e, _ => t (here ++ ": PDF read: " ++ e) false
     | _, .error e => t (here ++ ": control PDF read: " ++ e) false
 
-/-- A one-page frame still evaluates overlays at step one. Empty selectors
-cover their payload once, active selectors preserve it, and alternation
-ships only the selected branch, alone or between other frames. -/
+/-- A one-page frame evaluates overlays at step one: empty selectors cover once, active ones keep,
+alternation ships the selected branch. -/
 def overlaySingletonChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let seed := (elabStr (deck169Frame "")).1
   let design := Ir.Design.ofDoc seed

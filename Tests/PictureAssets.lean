@@ -81,9 +81,8 @@ private def pictureAssetDrawn (got : PictureAssets.Answer) (expected : ByteArray
     (cached : Bool) : Bool :=
   got.result.outcome == .drawn && got.result.bytes == expected && got.cached == cached
 
-/-- Actual foreground processes, captured PDFs and checksummed cache records.
-The file handshake witnesses overlap; its bounded polling only prevents a
-broken implementation from hanging the suite. No elapsed-time claim is made. -/
+/-- Real foreground processes, captured PDFs and checksummed cache records; the polling only keeps a
+broken implementation from hanging the suite. -/
 def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
   IO.FS.withTempDir fun temporary => do
     let root ← IO.FS.realPath temporary
@@ -103,7 +102,7 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     let second ← IO.asTask run .dedicated
     let one ← IO.wait first
     let two ← IO.wait second
-    t "picture assets: independent identical requests both return their complete captured PDF"
+    t "picture assets: identical independent requests both return the whole captured PDF"
       (one.toOption.any (pictureAssetDrawn · expected false) &&
         two.toOption.any (pictureAssetDrawn · expected false))
     let firstCwd ← pictureAssetLines (root / "first.cwd")
@@ -117,14 +116,14 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
         !(← (root / "timed-out").pathExists))
     t "picture assets: exactly two cold render processes ran"
       ((← pictureAssetLines calls).count "render" == 2)
-    t "picture assets: concurrent writers leave one whole checked answer and no staging residue"
+    t "picture assets: concurrent writers leave one checked answer, no staging residue"
       (name.endsWith ".answer" && (← pictureAssetNames cache) == #[name] &&
         ConvCache.decode (← pictureAssetRead slot) == some (.ok expected))
 
     IO.FS.writeFile (root / "mode") "draw"
     let before ← pictureAssetLines calls
     let warm ← run
-    t "picture assets: a checked cache hit returns the captured PDF without running the tool"
+    t "picture assets: a checked cache hit returns the captured PDF, the tool not run"
       (pictureAssetDrawn warm expected true && (← pictureAssetLines calls) == before)
 
     let encoded := ConvCache.encode (.ok expected)
@@ -144,14 +143,14 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
           (← pictureAssetNames cache) == #[name])
 
     let (otherTool, otherStamp, otherVersion) ← pictureAssetInstall root "renderer-b"
-    t "picture assets: distinct executable paths really report the same version banner"
+    t "picture assets: distinct executable paths report the same version banner"
       (tool != otherTool && stamp != otherStamp && version == otherVersion)
     let otherName := PictureAssets.slotName pictureAssetWrapped otherTool otherStamp otherVersion
     let otherExpected := pictureAssetPdf "renderer-b"
     let otherCalls := root / "renderer-b.calls"
     let other ← PictureAssets.fulfil (some cache)
       otherTool otherStamp otherVersion pictureAssetWrapped
-    t "picture assets: a same-version tool at another path cannot reuse the first tool's answer"
+    t "picture assets: a same-version tool at another path cannot reuse the first's answer"
       (name != otherName && pictureAssetDrawn other otherExpected false &&
         (← pictureAssetLines otherCalls).count "render" == 1 &&
         ConvCache.decode (← pictureAssetRead (cache / otherName)) == some (.ok otherExpected) &&
@@ -202,14 +201,13 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     IO.FS.createDir renameCache
     IO.FS.createDir (renameCache / name)
     let got ← PictureAssets.fulfil (some renameCache) tool stamp version pictureAssetWrapped
-    t "picture assets: a failed cache rename preserves captured bytes and removes staging files"
+    t "picture assets: a failed cache rename keeps the captured bytes and removes staging"
       (pictureAssetDrawn got expected false && (← pictureAssetNames renameCache) == #[name])
     let got ← PictureAssets.fulfil none tool stamp version pictureAssetWrapped
     t "picture assets: rendering with no cache still returns the exact captured bytes"
       (pictureAssetDrawn got expected false)
 
-    -- TeX engines select their format from the invoked name. Resolving a
-    -- symlink for identity must not replace that name when executing it.
+    -- TeX engines select their format from the invoked name, so identity resolution keeps the name.
     let aliasPath := root / "renderer-format"
     symlink tool aliasPath
     t "picture assets: the synthetic format alias is a working symlink"
@@ -229,14 +227,12 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     let unrelated := PictureAssets.slotName (pictureAssetWrapped ++ "% unrelated source\n")
       tool stamp version
     IO.FS.writeBinFile (history / unrelated) encoded
-    t "picture assets: previous ignores raw PDFs, refusals, corrupt records and unrelated source keys"
+    t "picture assets: previous ignores raw PDFs, refusals, corrupt records and unrelated keys"
       ((← PictureAssets.previous history sourceKey) == none)
     IO.FS.writeBinFile (history / name) encoded
     t "picture assets: previous returns only the matching checked success bytes"
       ((← PictureAssets.previous history sourceKey) == some expected)
 
-    -- A request's files stand where its standalone spells them, inside the
-    -- scratch, and their bytes are part of the request's key.
     IO.FS.writeFile (root / "mode") "inputs"
     let inputs : Array (String × ByteArray) :=
       #[("figures/thumb.png", "thumbnail bytes".toUTF8), ("../up.png", "upper bytes".toUTF8)]

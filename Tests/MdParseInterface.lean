@@ -2,8 +2,8 @@ module
 
 import LeanTex.Core.MdParse
 
-/-! Ordinary consumers construct and inspect the markdown AST and call the
-document reader. Scanners and intermediate parser state stay private. -/
+/-! Ordinary consumers build and inspect the markdown AST and call the document reader; parser state
+stays private. -/
 
 open LeanTex.Core
 

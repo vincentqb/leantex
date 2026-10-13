@@ -7,11 +7,8 @@ public section
 
 open LeanTex.Core
 
-/-- The privacy gate's matcher over invented terms: reading the list, case
-and diacritic folding, whole-word boundaries and case breaks, phrases across
-white space and separators, the TeX, escape and binary readings, paths, and
-the lines a hit is placed on. Hermetic: the clone's own denylist is the
-gate's to read (scripts/precommit.lean), never this suite's. -/
+/-- The privacy matcher over invented terms: list reading, folding, word boundaries, phrases, the
+TeX, escape and binary readings, paths and line placement. -/
 def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := check ref s!"privacy matcher: {name}" ok
   let list := "# invented terms only\n\n  Zorblax  \ncase:KRYX\nQuintel   Varn\n" ++
@@ -42,7 +39,7 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
       hit "a/Zorblax/b")
   t "a cased term keeps case"
     (hit "KRYX" && hit "the KRYX unit" && !hit "Kryx" && !hit "kryx" && !hit "KRYXS")
-  t "a phrase matches across white space, separators and case, or run together"
+  t "a phrase matches across spaces, separators and case, or run together"
     (hit "Quintel Varn" && hit "quintel  varn" && hit "Quintel\nVarn" &&
       hit "Quintel\t\tVarn" && hit "Quintel\u00A0Varn" && hit "QuintelVarn" &&
       hit "quintelvarn" && hit "Quintel-Varn" && hit "quintel_varn" && hit "quintel.varn" &&
@@ -62,13 +59,13 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
     (m.textLines "a\nZorblax b Zorblax\nc\nKRYX" == #[2, 4] &&
       m.textLines "\n\n\nzorblax\n" == #[4] && m.textLines "x Quintel\nVarn" == #[1] &&
       m.textLines "" == #[])
-  t "TeX's accent and letter commands, groups, ties and hyphens are read through"
+  t "TeX accents, letter commands, groups, ties and hyphens are read through"
     (hit "Z\\\"orblax" && hit "Zorbl\\'{a}x" && hit "Zorbl{\\'a}x" && hit "Zor\\-blax" &&
       hit "{Z}orblax" && hit "Zorbla\\c{x}" && hit "H\\'{a}ps\\'e" && hit "Quintel~Varn" &&
       hit "Qu\\'{\\i}ntel Varn" && hit "Gr\\o tvik" && !hit "Zorbl\\'{e}x")
   t "a command whose name runs on into the word is no accent"
     (!hit "\\vzorblax" && !hit "\\czorblax")
-  t "an accent symbol reads past the blanks before its letter, as its macro does"
+  t "an accent symbol reads past blanks before its letter"
     (hit "Z\\\" orblax" && hit "Z\\'  orblax" && hit "Haps\\' e" && hit "Haps\\'\t{e}" &&
       !hit "Zor\\- blax" && !hit "Zor\\/ blax")
   t "Lean escapes and character references are decoded"
@@ -96,7 +93,7 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
   let u (s : String) : List UInt8 := s.toUTF8.toList
   let cp := Privacy.Matcher.ofTerms (Privacy.parseTerms "Ko\u0161ar\nHaps\u00E9\n")
   let legacy := bytes [u "x\n", u "Haps", [0xE9], u " y\nKo", [0x9A], u "ar\n"]
-  t "a line that is not UTF-8 is read as lenient UTF-8 and as Windows-1252"
+  t "a non-UTF-8 line is read as lenient UTF-8 and as Windows-1252"
     (Privacy.segmentReadings legacy ==
         #["x\nHaps\uFFFD y\nKo\uFFFDar\n", "x\nHaps\u00E9 y\nKo\u0161ar\n"] &&
       Privacy.segmentReadings "a\u00E9\n".toUTF8 == #["a\u00E9\n"] &&
@@ -115,9 +112,7 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
     (m.pathHit "docs/zorblax-notes.md" && m.pathHit "Zorblax/x.lean" &&
       m.pathHit "docs/quintel-varn.md" && m.pathHit "src/QuintelVarn.lean" &&
       !m.pathHit "docs/zorblaxes.md")
-  -- Compressed content, built with the engine's own deflate (a zlib
-  -- stream): a raw deflate body is the zlib stream without its two header
-  -- bytes and four-byte check.
+  -- A raw deflate body is the zlib stream less its two header bytes and four-byte check.
   let zlib (s : String) : List UInt8 := (LeanTex.Core.Flate.deflate s.toUTF8).toList
   let raw (s : String) : List UInt8 :=
     let z := LeanTex.Core.Flate.deflate s.toUTF8
@@ -164,7 +159,7 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
     [0x50, 0x4B, 0x03, 0x04, 20, 0, 0, 0] ++ le2 method ++ [0, 0, 0, 0, 0, 0, 0, 0] ++
       le2 data.length ++ [0, 0] ++ le2 data.length ++ [0, 0] ++ le2 name.length ++ le2 0 ++
       u name ++ data
-  t "a zip archive's members are read, stored or deflated, and a container inside one"
+  t "zip members are read, stored or deflated, and nested containers too"
     ((m.blobHits (bytes [member 8 "word/document.xml" (raw "<w:t>Zorblax</w:t>")])).binary &&
       (m.blobHits (bytes [member 0 "a.txt" (u "x"), member 0 "b.txt" (u "Zorblax")])).binary &&
       (m.blobHits (bytes [member 0 "inner.gz"
@@ -180,12 +175,8 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
       Nfc.decompose '\u01D6' == #['u', '\u0308', '\u0304'] &&
       Nfc.combiningClass '\u0301' == 230 && Nfc.combiningClass 'a' == 0)
 
-/-- The privacy gate over invented answers git could give: the diff headers
-it reads back, the per-commit records of `git log`, the findings it prints,
-and the masking that keeps a finding from naming the term it found. The
-gate itself only gathers these answers (scripts/precommit.lean), so a term
-one unpushed commit adds and a later one removes, a path that holds a term,
-and a header git quoted are judged here as the gate judges them. -/
+/-- The privacy gate over invented git answers: diff headers, per-commit log records, printed
+findings and their masking. -/
 def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := check ref s!"privacy gate: {name}" ok
   let m := Privacy.Matcher.ofTerms (Privacy.parseTerms "Zorblax\nQuintel Varn\n")
@@ -203,7 +194,7 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "added lines keep their file through plain, quoted and spaced headers"
     (Privacy.addedLines diff == #[("x.md", 2, "one"), ("x.md", 3, "two"),
       ("we\"ird.md", 1, "three"), ("a b.md", 1, "four")])
-  t "a header without the pinned b/ prefix names no file, so its lines are lost"
+  t "a header without the pinned b/ prefix names no file; its lines are lost"
     (Privacy.addedLines "diff --git x x\n--- x\n+++ x\n@@ -0,0 +1 @@\n+Zorblax\n" == #[])
   t "added lines join into runs by file and consecutive line"
     (Privacy.addedRuns #[("a", 3, "x"), ("a", 4, "y"), ("a", 7, "z"), ("b", 8, "w")] ==
@@ -241,7 +232,7 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
     (msgs == #[s!"{leadA}its message, line 3"])
   let staged := m.addedFindings
     "diff --git a/q.md b/q.md\n--- a/q.md\n+++ b/q.md\n@@ -4,0 +5,2 @@\n+Quintel\n+Varn\n" ""
-  t "a phrase wrapped across two added lines is one finding, on its first line"
+  t "a phrase wrapped over two added lines is one finding, on the first"
     (staged == #["  q.md:5"])
   t "a path's components that hold a term are masked, and only those"
     (m.maskPath "testdata/zorblax/notes.md" == s!"testdata/{dots}/notes.md" &&
@@ -254,7 +245,7 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let latin := Privacy.Matcher.ofTerms (Privacy.parseTerms "Haps\u00E9\n")
   let legacyLine : ByteArray := ⟨"diff --git a/l.txt b/l.txt\n--- a/l.txt\n+++ b/l.txt\n".toUTF8.data ++
     "@@ -0,0 +1,2 @@\n+ok\n+by Haps".toUTF8.data ++ #[0xE9] ++ "\n".toUTF8.data⟩
-  t "an added line that is not UTF-8 is read as Windows-1252 too, and found once"
+  t "a non-UTF-8 added line is read as Windows-1252 too, found once"
     (latin.diffFindings legacyLine "" == #["  l.txt:2"] &&
       latin.diffFindings "diff --git a/u.txt b/u.txt\n--- a/u.txt\n+++ b/u.txt\n@@ -0,0 +1 @@\n+Haps\u00E9\n".toUTF8 ""
         == #["  u.txt:1"])
@@ -266,7 +257,7 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
     s!"\n\x00{shaB}\nClean\n".toUTF8.data⟩
   t "a message that is not UTF-8 is read as Windows-1252 too"
     (latin.messageFindingsOf legacyMsg == #[s!"{leadA}its message, line 3"])
-  t "a name that says its text is compressed is read as a blob, and only such a name"
+  t "only a name saying its text is compressed is read as a blob"
     (Privacy.opaqueName "fig/a.PDF" && Privacy.opaqueName "notes.docx" &&
       Privacy.opaqueName "x.tar.gz" && !Privacy.opaqueName "notes.md" &&
       !Privacy.opaqueName "pdf" && Privacy.blobRow "-\t-\tfig.bin" == some "fig.bin" &&

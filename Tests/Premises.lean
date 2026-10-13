@@ -12,36 +12,8 @@ import Tests.MachineLoss
 import Tests.EngineCache
 import scripts.LandCore
 
-/-!
-# The world premises: what leantex assumes of everything that is not Lean
-
-Below the driver stand the Lean runtime, the host and the programs the
-engine, the suite and the scripts spawn. A row here is one assumption about
-that residue, as a value: what it is, how far it reaches (a build's ordinary
-path, a fallback, an oracle, development), the one sentence it asserts, what
-relies on it, and what tries to falsify it, the check it is owed, or why no
-check can exist. A premise is a theorem's hypothesis or a row here, never an
-axiom.
-
-A check stands on a row only if it runs the residue the row is about: the
-real runtime, the real filesystem, the real tool, and fails when the
-premise does. A test of the code that relies on the premise, driven by a
-stand-in (a simulated runner, an invented witness, a decoder fed invented
-output), tries the consumer and is not a check of the premise; nor is a
-check that reads the tool's committed output against itself.
-
-`premiseChecks` holds the rows to the source (`Tests/PremiseScan.lean` reads
-it). It reads every spawn site of the engine: the runtime's spawn
-primitives, every function that forwards a tool it was handed to one of
-them, and the host programs that ask `Host.answer` to run one, through the
-one program a route declares may ask (proofs, which no build runs, are no
-site). Each tool an engine site can run needs a render- or fallback-reach
-row, and each such row a site that still runs its tool. It reads the suite
-and the scripts the same way for the tools they name, outright or through a
-binding it can read, each of which needs a row of any reach.
-`toolchainSpawnChecks` holds the scan's own premise: the toolchain the
-engine's imports reach starts a process only through those primitives.
--/
+/-! World premises: one row per assumption leantex makes of the runtime, the host and the programs
+it spawns, held to the source by `premiseChecks`. -/
 
 open LeanTex.Core LeanTex.Cli
 open DiagAudit (Pin suiteText)
@@ -49,8 +21,8 @@ open Tests (listingProviderChecks htmlContainedSvgColorChecks publicationPathChe
 
 namespace Premises
 
-/-- What stands outside Lean. A tool is filed under one spelling; a spawn
-spelling reaches the row whose spelling has the same last path component. -/
+/-- What stands outside Lean; a spawn spelling reaches the row whose spelling shares its last path
+component. -/
 inductive Residue where
   | runtime
   | tool (name : String)
@@ -58,10 +30,8 @@ inductive Residue where
   | oracle (name : String)
   | dev (name : String)
 
-/-- How far a premise reaches. `render`: a build that meets the input runs
-it, because no native path reads that input. `fallback`: a build runs it only
-where a native path declined. `oracle` and `dev`: only a report, an oracle or
-a development script runs it. -/
+/-- How far a premise reaches: `render` runs on every build meeting the input, `fallback` where a
+native path declined, `oracle` and `dev` only in reports and scripts. -/
 inductive Reach where
   | render
   | fallback
@@ -69,8 +39,7 @@ inductive Reach where
   | dev
   deriving BEq, Repr
 
-/-- A declaration a statement leans on, pinned by elaborating it where the
-row is written, so a rename fails the build. -/
+/-- A declaration a statement leans on, pinned by elaboration so a rename fails the build. -/
 structure Decl where
   name : Lean.Name
   seen : Unit
@@ -80,8 +49,8 @@ syntax "decl%" ident : term
 macro_rules
   | `(decl% $n) => `(Premises.Decl.mk $(Lean.quote n.getId) (let _ := @$n; ()))
 
-/-- What relies on a premise: a theorem that takes it as a hypothesis, or a
-gate, by file and declaration, whose `-- premise:` marker names `pin`. -/
+/-- What relies on a premise: a theorem taking it as a hypothesis, or a gate whose premise marker
+names `pin`. -/
 inductive Consumer where
   | thm (pin : Pin)
   | gate (file decl : String) (pin : Pin)
@@ -89,23 +58,12 @@ inductive Consumer where
 def Consumer.pin : Consumer → Pin
   | .thm p | .gate _ _ p => p
 
-/-- A theorem consumer pins a theorem; a gate pins what its marker names, a
-check or a theorem. -/
+/-- A theorem consumer pins a theorem; a gate pins a check or a theorem. -/
 def Consumer.wellPinned : Consumer → Bool
   | .thm p => (p matches .thm ..)
   | .gate _ _ p => !(p matches .tier ..)
 
-/-- One world assumption. `consumers` take it as a hypothesis or gate on
-it; `transfers` are theorems proved of pure values that state a fact of the
-shipped run only while it holds; `guards` the validators that check every
-reply it covers, so a tool row premises what the tool draws and never what
-enters the IR. `sites` are the declarations, by file, whose decision rests on
-it, and `tools` the further spellings an oracle or development row covers.
-`checks` (blocks the suite runs), `scriptChecks` (blocks a script runs) and
-`scripts` try to falsify it; `owed` is the check that could and is not
-written yet; `unchecked` says why no check can exist. `retiring` names the
-units whose landing removes the premise, and so owes this row's edit in the
-same commit. -/
+/-- One world assumption, with what relies on it, what tries to falsify it, and what it is owed. -/
 structure Premise where
   name : String
   residue : Residue
@@ -131,19 +89,16 @@ def Premise.tool? (p : Premise) : Option String :=
 def Premise.watched (p : Premise) : Bool :=
   !(p.checks.isEmpty && p.scriptChecks.isEmpty && p.scripts.isEmpty)
 
-/-- A spawn whose wait has no time limit, by file and declaration, with the
-units retiring it: what `host-bounded` excepts by name. -/
+/-- Spawns whose wait has no time limit, by file and declaration, with the units retiring them. -/
 def unbudgeted : List (String × String × List String) := []
 
-/-- host-bounded's exception clause, read off the exceptions, so the
-statement names each one while it stands and none once it is gone. -/
+/-- host-bounded's exception clause, read off the exceptions. -/
 def exceptedClause (excepted : List (String × String × List String)) : String :=
   match excepted.map fun (f, d, _) => s!"{stemOf f}.{d}" with
   | [] => ""
   | names => s!", except the unbudgeted spawns in {" and ".intercalate names}"
 
-/-- The rows: the runtime and the host, the engine's tools, then the oracles
-and development. -/
+/-- The rows: the runtime and the host, the engine's tools, then the oracles and development. -/
 def registry : List Premise := [
   { name := "lean-runtime", residue := .runtime, reach := .render
     statement := "The compiled runtime runs each definition as its kernel-checked meaning and each BaseIO primitive as one step of the opaque world token that Init/System/ST.lean threads, with out-of-memory, signals and runtime faults outside the model."
@@ -390,8 +345,8 @@ def registry : List Premise := [
     sites := [("scripts/precommit.lean", "main")]
     unchecked := some "The trampoline is what starts the gate, so a trampoline that skips it shows only as a commit no gate saw." }]
 
-/-- Tool rows of render reach, rows no check can falsify, and rows owed a
-check: counts that fall and rise only when this file says so. -/
+/-- Counts held in both directions: tool rows of render reach, unfalsifiable rows, rows owed a
+check. -/
 def renderToolBaseline : Nat := 2
 def uncheckedBaseline : Nat := 8
 def owedBaseline : Nat := 22
@@ -399,9 +354,7 @@ def owedBaseline : Nat := 22
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]
 
-/-- Every engine spawn expression that is no literal, by file, spawner and
-expression as written. A site no route reads, and a route no site uses, are
-both faults. -/
+/-- Every engine spawn expression that is no literal, by file, spawner and expression as written. -/
 def routes : List Route := [
   ⟨"LeanTex/Cli/RunBounded.lean", "IO.Process.spawn", "tool", .forwards⟩,
   ⟨"LeanTex/Cli/RunBounded.lean", "LeanTex.Cli.RunBounded.runBounded", "args.cmd", .forwards⟩,
@@ -423,8 +376,6 @@ def routes : List Route := [
   ⟨"LeanTex/Cli/ImageAssets.lean", "LeanTex.Cli.ImageAssets.runChecked", "spec.tool", .converters⟩,
   ⟨"LeanTex/Cli/PictureAssets.lean", "LeanTex.Cli.RunBounded.runBounded", "command", .derives "tool"⟩,
   ⟨"LeanTex/Cli/PictureAssets.lean", "LeanTex.Cli.PictureAssets.produce", "tool", .forwards⟩]
-
-/-! ## The registry against the scan -/
 
 def engineReach (r : Reach) : Bool := r == .render || r == .fallback
 
@@ -480,16 +431,14 @@ def judge (rows : List Premise) (excepted : List (String × String × List Strin
 def isKebab (s : String) : Bool :=
   !s.isEmpty && s.all fun c => c.isLower || c.isDigit || c == '-'
 
-/-- One self-contained sentence in the repository's public voice. -/
+/-- The faults of `s` as one self-contained sentence in the public voice. -/
 def sentenceFaults (what s : String) : List String :=
   let home := ["/ho" ++ "me/", "/Us" ++ "ers/", "/lo" ++ "cal/", "~/"]
   (if s.isEmpty || !s.endsWith "." then [s!"{what} is not one sentence ending in a period"] else []) ++
   (if hasStr s ". " || hasStr s "\n" then [s!"{what} holds more than one sentence"] else []) ++
   (if home.any (hasStr s ·) then [s!"{what} names a home directory"] else [])
 
-/-- What is wrong with a row on its own: its identity, its words, and the
-agreement of its fields. A row nothing tries names the check it is owed or
-why none can exist, and a row no check can falsify owes none. -/
+/-- What is wrong with a row on its own: its identity, its words and its fields' agreement. -/
 def Premise.faults (p : Premise) : List String :=
   (if isKebab p.name then [] else [s!"'{p.name}' is not a kebab-case name"]) ++
   sentenceFaults s!"{p.name}'s statement" p.statement ++
@@ -532,16 +481,13 @@ def uncheckedCount (rows : List Premise) : Nat := (rows.filter (·.unchecked.isS
 
 def owedCount (rows : List Premise) : Nat := (rows.filter (·.owed.isSome)).length
 
-/-- Rows owed a check, split by whether anything tries them yet. -/
+/-- Rows owed a check that nothing tries yet. -/
 def owedFirst (rows : List Premise) : Nat := (rows.filter fun p => p.owed.isSome && !p.watched).length
 
 def owedFurther (rows : List Premise) : Nat := (rows.filter fun p => p.owed.isSome && p.watched).length
 
-/-! ## Gates and script checks against the source -/
-
-/-- Whether declaration `decl` of `file` carries a `-- premise:` marker whose
-pin is `pin`, read as the hook reads one: the first word after the colon,
-by its last component. -/
+/-- Whether declaration `decl` of `file` carries a premise marker whose pin, read as the hook reads
+it, is `pin`. -/
 def gateMarked (inp : Inputs) (texts : List (String × String)) (file decl pin : String) : Bool := Id.run do
   let some src := inp.files.find? (·.path == file) | return false
   let some text := (texts.find? (·.1 == file)).map (·.2) | return false
@@ -557,25 +503,21 @@ def gateMarked (inp : Inputs) (texts : List (String × String)) (file decl pin :
     | _ => pure ()
   return false
 
-/-- The token that opens the command token `k` stands in: the nearest one
-before it that is first on its line at column 0. -/
+/-- The token opening the command that token `k` stands in. -/
 def commandHead (ts : Array Tok) (k : Nat) : Option Tok := Id.run do
   for m in [0:k + 1] do
     let t := ts[k - m]!
     if t.first && t.col == 0 then return some t
   return none
 
-/-- Whether `script` runs the block `block`: an identifier the scan read in
-it names the block, outside a declaration of it and outside an `open`,
-`export` or `import`, which name a block without running it. -/
+/-- Whether `script` runs block `block`, outside its declaration and any `open`, `export` or
+`import`. -/
 def scriptCalls (inp : Inputs) (script block : String) : Bool :=
   match inp.files.find? (·.path == script) with
   | none => false
   | some src => (src.named block).any fun k =>
       !src.toks[k]!.declares &&
         !((commandHead src.toks k).any fun h => ["open", "export", "import"].contains h.text)
-
-/-! ## The scan broken once each way -/
 
 def Inputs.edit (inp : Inputs) (path : String) (f : String → String) (raw : String) : Inputs :=
   { inp with files := inp.files.map fun src =>
@@ -584,15 +526,13 @@ def Inputs.edit (inp : Inputs) (path : String) (f : String → String) (raw : St
 def Inputs.add (inp : Inputs) (path text : String) (strict : Bool := true) : Inputs :=
   { inp with files := inp.files.push (Source.of path text strict) }
 
-/-- A planted tool's row, of render reach, so a plant that spawns `tool`
-needs no row of the real registry. -/
+/-- A planted tool's row of render reach. -/
 def plantedRow (tool : String) (retiring : List String := []) : Premise :=
   { name := "zz-" ++ basename tool, residue := .tool tool, reach := .render
     statement := "A planted tool answers as its plant says."
     sites := [("LeanTex/Cli/ZzPlanted.lean", "zz")]
     unchecked := some "The tool is planted.", retiring }
 
-/-- A planted development row, covering `tool` among its further tools. -/
 def plantedDevRow (tool : String) : Premise :=
   { name := "zz-dev", residue := .dev "zz", reach := .dev
     statement := "A planted development tool answers as its plant says."
@@ -603,21 +543,11 @@ def plantedDevRow (tool : String) : Premise :=
 def namingExcepted (excepted : String) : List Premise :=
   registry.map fun p => if p.name == "host-bounded" then { p with statement := p.statement ++ " " ++ excepted } else p
 
-/-- Whether a mutation broke what it names and nothing else: each fault it
-added names one of `needles`, and each needle is named by a fault it added.
-A mutation that must stay quiet names none, and so adds none. -/
+/-- Whether a mutation's added faults all name, and are all named by, `needles`. -/
 def broke (added : Array String) (needles : List String) : Bool :=
   needles.all (fun n => added.any (hasStr · n)) && added.all fun f => needles.any (hasStr f ·)
 
-/-- Each mutation, and whether it broke what it names and nothing else. A
-mutation's faults are the ones it adds to the faults of the tree it mutates,
-so a selftest fires on its own plant alone, whatever else that tree holds.
-Every plant is synthetic: a planted source, row, route or budget exception,
-a declaration appended to a file the scan must read, a scan of planted
-sources alone, or the deletion of whichever engine tool row the registry
-holds first. None names a site, a table or a row of the tree, which other
-units rework, so a unit that rewrites them owes no edit here. `texts` are the
-files the mutations append to, as read. -/
+/-- Each synthetic mutation, and whether it broke what it names and nothing else. -/
 def mutations (inp : Inputs) (texts : List (String × String)) (words : Std.HashSet String) :
     List (String × Bool) :=
   let raw (path : String) := ((texts.find? (·.1 == path)).map (·.2)).getD ""
@@ -634,8 +564,6 @@ def mutations (inp : Inputs) (texts : List (String × String)) (words : Std.Hash
   let budgetFile := (budgetSites.head?.map (·.1)).getD ""
   let rowed (tool : String) (i : Inputs) (exc : List (String × String × List String)) (needles : List String) :=
     broke (added (registry ++ [plantedRow tool]) exc i routes) needles
-  -- Planted sources scanned alone, their own spawns the budget, with host-bounded the one
-  -- row beside the planted ones.
   let bounded := (registry.find? (·.name == "host-bounded")).toList
   let alone (files : List (String × String)) (budget : List (String × String)) (window : String)
       (rs : List Route) (rows : List Premise) :=
@@ -653,8 +581,6 @@ def mutations (inp : Inputs) (texts : List (String × String)) (words : Std.Hash
   let picSite := ("LeanTex/Cli/ZzPic.lean",
     "def zzPic (pictureTool : String) : IO Unit := discard <| IO.Process.output { cmd := pictureTool, args := #[] }")
   let picBudget := [("LeanTex/Cli/ZzPic.lean", "zzPic")]
-  -- A planted host vocabulary: `go` asks the run, `zzProbe` hands it the tool,
-  -- and the planted interpreter's spawn reads the run's tool.
   let askedWorld := [("LeanTex/Cli/ZzWorld.lean",
       "namespace LeanTex.Cli.ZzWorld\n" ++
       "def go (call : String → ToolCall) (cs : List String) : Prog Unit := .ask (.run (call \"x\")) fun _ => .pure ()\n" ++
@@ -667,8 +593,6 @@ def mutations (inp : Inputs) (texts : List (String × String)) (words : Std.Hash
   let askedRoute : Route := ⟨"LeanTex/Cli/ZzHost.lean", "IO.Process.output", "call.tool",
     .asked "LeanTex.Cli.ZzWorld.zzProbe" "LeanTex/Cli/ZzWorld.lean" ["go"]⟩
   let askedBudget := [("LeanTex/Cli/ZzHost.lean", "zzAnswer")]
-  -- A declaration laid out so no command-position rule sees it, after a
-  -- theorem, a budget exception and an asker, each of which would claim it.
   let layouts := [("a docstring before it on its line", "/-- zz -/ "), ("an indentation", "  "),
     ("a set_option ... in before it on its line", "set_option maxHeartbeats 400 in ")]
   let wait (tool : String) := s!"discard <| IO.Process.output \{ cmd := \"{tool}\", args := #[] }"
@@ -1048,9 +972,8 @@ def rowMutations : List (String × Bool) :=
 end Premises
 
 open Premises in
-/-- Whether `decl` is declared in `file`: by the scan's tokens for a Lean
-source it read, else by a line that opens with the declaration, after its
-modifiers, in Lean's spelling or Python's. -/
+/-- Whether `decl` is declared in `file`, by the scan's tokens or by a declaration line in Lean or
+Python. -/
 def premiseSiteResolves (inp : Inputs) (file decl : String) : IO Bool := do
   if let some src := inp.files.find? (·.path == file) then
     return (src.named decl).any fun k =>
@@ -1065,19 +988,15 @@ def premiseSiteResolves (inp : Inputs) (file decl : String) : IO Bool := do
     | _ => false
 
 open Premises in
-/-- The pure core's modules the scan lexes: those that spell a spawner's
-namespace, and those that reach the host's vocabulary through their
-imports, which could ask it for a run. -/
+/-- The pure core's modules the scan lexes: those spelling a spawner's namespace or reaching the
+host's vocabulary. -/
 def coreRead (first : Inputs) (core : Array (String × String)) (needles : List String) :
     Array (String × String) :=
   let hosted := reachers first "LeanTex/Cli/World.lean"
   core.filter fun (p, s) => needles.any (s.contains ·) || hosted.contains (moduleOf p)
 
 open Premises in
-/-- What the scan reads of the files as read: the engine's `engine` (every
-module outside the pure core, the library's root module, the driver's entry
-point, and each core module `coreRead` picks), then the suite's and the
-scripts' `lax`. Each file lexes on its own task. -/
+/-- What the scan reads: the engine's modules, then the suite's and the scripts'. -/
 def assemble (engine lax : Array (String × String)) : Inputs :=
   let lexAll (files : Array (String × String)) (strict : Bool) : Array Source :=
     (files.map fun (p, s) => Task.spawn fun _ => Source.of p s strict).map Task.get
@@ -1087,8 +1006,6 @@ def assemble (engine lax : Array (String × String)) : Inputs :=
     | _ :: after :: _ => "def picTools" ++ (after.take 400).toString
     | _ => ""
   let outside := engine.filter fun (p, _) => !p.startsWith "LeanTex/Core/"
-  -- Every engine module's imports, the pure core's included, so a run asked
-  -- through a re-export or from a core module is reached however far.
   let graph : Std.HashMap String (Array String) :=
     engine.foldl (fun g (p, s) => g.insert (moduleOf p) (headerImports s)) {}
   let first : Inputs := { files := lexAll outside true, picTools := window, graph }
@@ -1099,8 +1016,7 @@ def assemble (engine lax : Array (String × String)) : Inputs :=
   { first with files := first.files ++ lexAll core true ++ laxTasks.map Task.get }
 
 open Premises in
-/-- What the scan reads (`assemble`), with the raw text of each file outside
-the core. -/
+/-- What the scan reads, with the raw text of each file outside the core. -/
 def premiseInputs : IO (Inputs × List (String × String)) := do
   let leanIn (dir : String) : IO (Array System.FilePath) := do
     return (← System.FilePath.walkDir dir).filter (·.toString.endsWith ".lean")
@@ -1118,9 +1034,8 @@ def premiseInputs : IO (Inputs × List (String × String)) := do
   return (assemble engine lax, (outside ++ lax).toList)
 
 open Premises in
-/-- What of `rows` does not resolve: a pin, a gate's `-- premise:` marker, a
-script check its script does not run, a script that is not there, or a site
-not declared where the row says. -/
+/-- What of `rows` does not resolve: a pin, a gate's premise marker, a script check, a script or a
+site. -/
 def deadPins (rows : List Premise) (inp : Inputs) (texts : List (String × String)) (suite : String) :
     IO (Array String) := do
   let mut dead : Array String := #[]
@@ -1147,14 +1062,7 @@ def deadPins (rows : List Premise) (inp : Inputs) (texts : List (String × Strin
   return dead
 
 open Premises in
-/-- **Every world premise is a row, and every row is held.** Rows are well
-formed and their pins, scripts and sites resolve: a gate a row names carries
-its `-- premise:` marker, and a script check is a block its script runs;
-every tool an engine spawn site can run has a render- or fallback-reach row,
-and every such row a site; every tool the suite or a script spawns by name
-has a row; every spawn with no time limit is one host-bounded names. The
-render-path tool, unchecked and owed counts are baselines held in both
-directions, and the scan is broken once each way. -/
+/-- Every world premise is a row, and every row is held. -/
 def premiseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let start ← IO.monoMsNow
@@ -1175,12 +1083,11 @@ def premiseChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("LeanTex/Core/ZzVia.lean", "module\npublic import LeanTex.Cli.World\n"),
       ("LeanTex/Core/ZzPure.lean", "module\npublic import LeanTex.Core.Ir\n")]
     #[("Tests/ZzSuite.lean", "def zz := 1\n")]
-  t "premises: the scan reads a core module that reaches the host's vocabulary however far, and no other"
+  t "premises: the scan reads exactly the core modules reaching the host's vocabulary"
     ((synthetic.files.map fun f => (f.path, f.strict)) == #[("LeanTex/Cli/World.lean", true),
       ("LeanTex/Core/ZzAsks.lean", true), ("LeanTex/Core/ZzVia.lean", true), ("Tests/ZzSuite.lean", false)])
   for path in ["LeanTex/Cli/Driver.lean", "LeanTex.lean", (budgetSites.head?.map (·.1)).getD ""] do
     t s!"premises: {path}, which selftests append to, is read" (texts.any (·.1 == path))
-  -- The resolvers once each way, in an engine source, a script and Python.
   for (file, decl, expected) in [("LeanTex/Cli/RunBounded.lean", "runBounded", true),
       ("LeanTex/Cli/RunBounded.lean", "zzNoSuchRun", false), ("scripts/land.lean", "main", true),
       ("scripts/land.lean", "zzNoSuchMain", false), ("scripts/gen-test-icons.py", "main", true)] do
@@ -1197,7 +1104,7 @@ def premiseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let caller := "scripts/zz-caller.lean"
   let calls (text : String) (block : String) := scriptCalls (inp.add caller text false) caller block
   let runs := "def main : IO Unit := do\n  let ref ← IO.mkRef []\n  zzBlockChecks ref\n"
-  t "premises: a script check is a block the script runs, and no block it only opens or exports"
+  t "premises: a script check is a block the script runs, not one it opens or exports"
     (calls ("open Tests (zzBlockChecks)\n\n" ++ runs) "Tests.zzBlockChecks" &&
       !calls runs "Tests.zzOtherChecks" &&
       !calls "open Tests (zzBlockChecks)\nexport Tests (zzBlockChecks)\n\ndef main : IO Unit := pure ()\n"

@@ -12,23 +12,13 @@ def strokedSegs (oneFace : Font.FontSet) (src : String) : Array (Array Ir.Pic.Pa
     | .path subs, some _ => some (subpathSegs subs)
     | _, _ => none
 
-/-- Two coordinates within the rounding two separately rounded offsets can
-differ by. -/
+/-- Two coordinates within the two sp separately rounded offsets can differ by. -/
 def near2 (a b : Dim.Sp) : Bool := decide (a - b ≤ 2 ∧ b - a ≤ 2)
 
-/-- **A path's long tail draws what TikZ's path keys say.** The invariant
-whose absence sent a picture to the boundary for one key: `rounded
-corners` turns every corner with pgf's curve (`\pgfprocess@@specialround`:
-the sides stop `r` short, the controls 0.5522847 of the way in); a scope
-transforms the coordinates its statements spell — shift, scale and rotate
-composed in the order written — and sets keys for them, both ending with
-the scope; `arc` continues the path along an ellipse; `shorten` stops the
-path short of its ends, its tip where it stops; and the opacity keys set
-the paints' own alphas. Read off `Layout.Out` and the typed SVG, each
-against its explicit spelling or pgf's own arithmetic. Invented content. -/
+/-- A path's long tail draws what TikZ's path keys say: rounded corners, scopes, arcs, shorten and
+opacity. -/
 def tikzLongTailChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- Rounded corners: the corner is a curve, the sides stop r short of it.
   let r := Dim.mm 2
   let corner := picDoc "" "\\draw[rounded corners=2mm] (0,0) -- (2,0) -- (2,1);"
   t "rounded corners: no loss is named" (lossesOf corner).isEmpty
@@ -47,7 +37,6 @@ def tikzLongTailChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ((lossesOf box).isEmpty && match (strokedSegs oneFace box).toList with
       | [segs] => (segs.filter fun s => s matches .cubic ..).size == 4
       | _ => false)
-  -- Scopes.
   let inScope (opts body : String) := picDoc "" ("\\begin{scope}[" ++ opts ++ "]" ++ body ++
     "\\end{scope}\\draw (0,0) -- (0,0.5);")
   let plain (body : String) := picDoc "" (body ++ "\\draw (0,0) -- (0,0.5);")
@@ -71,7 +60,6 @@ def tikzLongTailChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "scope: its keys set its statements' strokes, and end with it"
     ((lossesOf styled).isEmpty && (shownOf oneFace styled).strokes ==
       #[(grid, Ir.Pic.thickWidth), (Ir.Color.black, Ir.Pic.thinWidth)])
-  -- Arcs: from the current point along the circle, its end the next point.
   let arc := picDoc "" "\\draw (0,0) arc (0:90:1) -- (-1,2);"
   t "arc: no loss is named" (lossesOf arc).isEmpty
   t "arc: a quarter circle ends a radius up and a radius back, where the path goes on"
@@ -81,7 +69,6 @@ def tikzLongTailChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
          near2 (x0 - x1) (Dim.mm 10) && near2 (y0 - y1) (Dim.mm 10) && lx == x1 && ly == y1
        | _ => false
      | _ => false)
-  -- Shorten.
   for (name, written, explicit) in #[
       ("the end", "\\draw[shorten >=2mm] (0,0) -- (1,0);", "\\draw (0,0) -- (0.8,0);"),
       ("the start", "\\draw[shorten <=2mm] (0,0) -- (1,0);", "\\draw (0.2,0) -- (1,0);"),
@@ -91,7 +78,6 @@ def tikzLongTailChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     t s!"shorten: {name}: no loss is named" (lossesOf w).isEmpty
     t s!"shorten: {name}: ships the explicit page"
       ((shownOf oneFace w).close (shownOf oneFace (picDoc "" explicit)))
-  -- Opacity: the paints' own alphas, on the page and in the typed SVG.
   let alphaOf (src : String) : Array (Option Nat × Option Nat) :=
     (drawsOf oneFace src).map fun (_, fl, st) =>
       (fl.map (·.alpha.val), st.map (·.alpha.val))

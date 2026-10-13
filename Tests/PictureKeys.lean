@@ -6,8 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- A synthetic article holding one picture: `pre` in the preamble, `opts`
-the picture's own bracket, `body` its statements. -/
+/-- An article holding one picture: `pre` in the preamble, `opts` its bracket, `body` its
+statements. -/
 def picDoc (pre opts body : String) : String :=
   "\\documentclass{article}\\pictures{ tool = none }" ++ pre ++ "\\begin{document}\n" ++
   "\\begin{tikzpicture}" ++ opts ++ "\n" ++ body ++ "\n\\end{tikzpicture}\n\\end{document}"
@@ -17,23 +17,15 @@ def shippedWidths (oneFace : Font.FontSet) (src : String) : Array Dim.Sp :=
   ((layoutOf oneFace (elabStr src).1).pages[0]?.map fun p =>
     (pageDraws p).filterMap fun (_, _, st) => st.map (·.width)).getD #[]
 
-/-- Does the source name any picture loss? Over the structured diagnostic. -/
+/-- Does the source name any picture loss? -/
 def picLoss (src : String) : Bool :=
   (elabStr src).2.any fun d => d.code == "W0334" || d.code == "E0333"
 
-/-- Every value the HTML of a document's body declares for `key`. -/
+/-- Every value a document's body HTML declares for `key`. -/
 def bodyAttrValues (doc : Ir.Doc) (key : String) : Array String :=
   doc.body.foldl (fun acc b => acc ++ attrValuesOf (fun _ => true) key (HtmlDoc.blockNode {} b)) #[]
 
-/-- **A declared line width is the width pgf strokes.** tikz.code.tex
-(lines 1575–1581) defines the seven named widths as `line width=<w>`
-styles, so a name and the key it abbreviates stroke one width, at every
-level a picture reads a key: a path's bracket, a node's, the picture's and
-an `every path` style — the inner setting winning, as in pgf. A `\tikzset`
-line outside every picture sets none: `\pgfpicture` resets the width to
-0.4 pt before its contents run. The defect named `semithick` a dropped key
-and stroked it at 0.4 pt; every claim here is over the shipped page
-(`Layout.Out`) or the SVG the same IR emits. Invented content. -/
+/-- A declared line width is the width pgf strokes, at every level a picture reads a key. -/
 def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let named : List (String × Dim.Sp) :=
@@ -54,10 +46,7 @@ def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let every := picDoc "" "[every path/.style={semithick}]" "\\draw (0,0) -- (2,0);"
   t "a width the picture or every path sets reaches the path"
     ([pic, every].all fun s => shippedWidths oneFace s == #[Dim.pt 3 / 5] && !picLoss s)
-  -- `\pgfpicture` sets the line width to 0.4 pt before anything the picture
-  -- declares (pgfcorescopes.code.tex, `\pgf@picture`), so a `\tikzset` line
-  -- outside every picture sets no picture's width, and lualatex strokes
-  -- such a document at 0.4 pt.
+  -- `\pgfpicture` resets the width to 0.4 pt, so a `\tikzset` outside every picture sets none.
   t "a tikzset line outside every picture sets no width: the picture starts at 0.4 pt"
     (shippedWidths oneFace set == #[Ir.Pic.thinWidth] && !picLoss set)
   let inner := picDoc "" "[ultra thick]" "\\draw[thin] (0,0) -- (2,0);"
@@ -72,15 +61,8 @@ def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "the SVG strokes the declared width"
     ((bodyAttrValues doc "stroke-width").contains (Dim.pt 3 / 5).toPtString)
 
-/-- **A node's `font=` sets its label in the fonts it names, at the size the
-document's own ladder gives each size switch.** TikZ runs the key's value
-before the node's text (tikz.code.tex, the `font` option), so a size switch
-means what it means in the document's paragraphs — the step a venue's
-redefinition read out, where it did — and a series or shape switch is that
-face. The defect expanded a redefined `\small` through the picture's macro
-table, named the key as dropped and set the label at the body size; a run of
-two switches was dropped whole. Asserted over the shipped page and the SVG.
-Invented content. -/
+/-- A node's `font=` sets its label in the fonts it names, at the size the document's own ladder
+gives each switch. -/
 def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let venue := "\\makeatletter\\renewcommand{\\small}{\\@setfontsize\\small{8.5}{10}}\\makeatother"
@@ -91,7 +73,7 @@ def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let c := censusOfSrc oneFace src
     words.map (lineSizeOf c 0)
   let node := doc venue "\\node[font=\\small] at (0,0) {Nodeword};"
-  t "font=\\small sets a node at the size the document's \\small sets, and names nothing"
+  t "font=\\small sets a node at the document's \\small size, naming nothing"
     ((match sizes node ["Smallword", "Nodeword"] with
       | [some a, some b] => a == b && a == Dim.pt 17 / 2
       | _ => false) && !picLoss node)
@@ -116,24 +98,21 @@ def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       !picLoss (doc "" "\\node[font=\\itshape] at (0,0) {Nodeword};"))
 
 
-/-- The deepest reach below the baseline of a word's glyphs, set in `font`
-at `size`: the depth of the TeX box the word makes. -/
+/-- The depth of the TeX box a word set in `font` at `size` makes. -/
 def wordDepth (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
   word.toList.foldl (fun d c =>
     match (font.gid c).bind font.yExtent with
     | some (lo, _) => max d (-lo * size / (font.unitsPerEm : Int))
     | none => d) 0
 
-/-- The highest reach above the baseline of a word's glyphs, set in `font`
-at `size`: the height of the TeX box the word makes. -/
+/-- The height of the TeX box a word set in `font` at `size` makes. -/
 def wordHeight (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
   word.toList.foldl (fun d c =>
     match (font.gid c).bind font.yExtent with
     | some (_, hi) => max d (hi * size / (font.unitsPerEm : Int))
     | none => d) 0
 
-/-- The height of an SVG's viewBox in the emitted page, in sp (to the
-thousandth of a point the emitter writes). -/
+/-- The height of an SVG's viewBox in the emitted page, in sp. -/
 def viewBoxHeight (page : String) : Option Dim.Sp := do
   let rest ← (page.splitOn "viewBox=\"0 0 ")[1]?
   let v ← (rest.splitOn "\"")[0]?
@@ -141,16 +120,8 @@ def viewBoxHeight (page : String) : Option Dim.Sp := do
   let (m, sc) ← Decl.parseDecimal h
   pure (m * Dim.pt 1 / sc)
 
-/-- **A node's box is its text box plus inner sep, as TikZ's** (pgf's
-`\pgfnodeparttextbox`; tikz.code.tex, `\tikz@fig@continue`, where `text
-height` and `text depth` set the box's `\ht` and `\dp`). A declared text box
-is the node's, exactly: its north and south anchors stand one inner sep
-beyond the declared height above the label's baseline and the declared depth
-below it. An undeclared one is the glyphs' own, so a picture reserves below
-a label with no descender its inner sep and no more — not the face's descent
-as well (review F9). The defect named both keys dropped and measured every
-border from the face's band. Asserted over the shipped page, and the SVG's
-box. Invented content. -/
+/-- A node's box is its text box plus inner sep, as TikZ's: a declared text box exactly, an
+undeclared one the glyphs' own. -/
 def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let font := oneFace.body
@@ -158,8 +129,6 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let size := (Layout.Geom.ofPage (elabStr (picDoc "" "" "")).1.page).fontSize
   let ex := font.xHeight * size / (font.unitsPerEm : Int)
   let sep := Picture.innerSep size
-  -- The label's baseline and the first point of the first two paths, on the
-  -- page (y down): the anchors those paths start from.
   let anchors (src : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp) := do
     let (doc, _) := elabMeasured oneFace src
     let page ← (layoutOf oneFace doc).pages[0]?
@@ -173,7 +142,7 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let declared := picDoc "" ""
     ("\\node[text height=2ex, text depth=0.5ex] (a) at (0,0) {Label};\n" ++
      "\\draw (a.north) -- (0,2);\n\\draw (a.south) -- (0,-2);")
-  t "a declared text box puts the node's anchors one inner sep beyond it, and names nothing"
+  t "a declared text box sets the anchors one inner sep out, naming nothing"
     ((match anchors declared with
       | some (base, north, south) =>
         near (base - north) (2000 * ex / 1000 + sep) && near (south - base) (500 * ex / 1000 + sep)
@@ -189,7 +158,7 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     let b ← lineYOf c 0 "Below."
     pure (b - a)
   let deeper := wordDepth font size "vowelp" - wordDepth font size "vowel"
-  t "the room a picture keeps below a label is the label's own depth, not the face's descent"
+  t "a picture keeps the label's own depth below it, not the face's descent"
     (match room "vowel", room "vowelp" with
      | some a, some b => decide (0 < deeper) && near (b - a) deeper
      | _, _ => false)
@@ -203,13 +172,7 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      | _, _ => false)
 
 
-/-- **A node's `align=` sets its lines as the key says, and `every text node
-part` is read** (tikz.code.tex: `align` chooses `left`, `flush left`,
-`right`, `flush right`, `center` or `flush center`; `every text node part`
-is the style the text part of every node runs). Lines broken with `\\` stand
-flush left, flush right or centred within the widest line, and the block
-stays where centring put it. The defect named both as dropped keys. Asserted
-over the shipped lines. Invented content. -/
+/-- A node's `align=` sets its lines as the key says, and `every text node part` is read. -/
 def pictureAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
@@ -243,8 +206,7 @@ def pictureAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       | none => false) && !picLoss edge)
 
 
-/-- Consecutive segments meet end to start, and the last ends where the first
-began: a closed chain. -/
+/-- Consecutive segments meet end to start and the last ends where the first began. -/
 def closedChain (ss : Array Ir.Pic.PathSeg) : Bool :=
   let ends : Ir.Pic.PathSeg → (Dim.Sp × Dim.Sp) × (Dim.Sp × Dim.Sp)
     | .line x1 y1 x2 y2 => ((x1, y1), (x2, y2))
@@ -255,15 +217,7 @@ def closedChain (ss : Array Ir.Pic.PathSeg) : Bool :=
     | some a, some b => a.2 == b.1
     | _, _ => false
 
-/-- **A drawn rectangle and a closed path are drawn** (pgf manual §14.4, the
-rectangle operation; §14.2, `cycle`, which closes the path back to its
-subpath's start). `\draw (a) rectangle (b)` strokes the box its corners span
-as one closed outline; `-- cycle` draws the side back to the start, and the
-PDF strokes the polygon as one subpath, so no corner is two caps. The defect
-refused both: the rectangle named its statement outside the subset and
-dropped it, and `cycle` failed as an unreadable endpoint (E0333), so a closed
-shape shipped nothing. Asserted over the shipped page, the PDF's path
-operators and the SVG. Invented content. -/
+/-- A drawn rectangle and a closed path are drawn, each as one closed subpath. -/
 def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -292,14 +246,8 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (moves == 1)
 
 
-/-- **A drawn node with no minimum ships the outline pgf draws: its text box
-plus two inner seps** (pgfmoduleshapes.code.tex: the `rectangle` shape's
-`\northeast`, the `circle` shape's `\radius`), per axis the declared minimum
-where that is larger, and an edge meets that outline. The defect shipped the
-text bare and named the outline as outside the subset. Asserted over the
-shipped paths' extents and boxes, against the same text with no inner sep, so
-the claim is about the rule and not about one face's metrics. Invented
-content. -/
+/-- A drawn node with no minimum ships pgf's outline, its text box plus two inner seps, and an edge
+meets it. -/
 def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let paths (src : String) : Array (Dim.Sp × Dim.Sp) × Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
@@ -333,8 +281,7 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
        decide (r * r ≤ (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) + 2 * r + 2 ∧
          (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) ≤ (r + 1) * (r + 1) + 2 * r + 2)
      | _, _ => false)
-  -- An edge between two drawn nodes starts and ends one outer sep (half
-  -- the line width) past their outlines.
+  -- An edge between two drawn nodes starts and ends one outer sep (half the line width) past their outlines.
   let (_, boxes) := paths (picDoc "" ""
     ("\\node[draw] (a) at (0,0) {Aa};\\node[draw] (b) at (3,0) {Bb};\n" ++
      "\\draw (a) -- (b);"))
@@ -347,18 +294,7 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      | _, _, _ => false)
 
 
-/-- **A drawn node stands its outline on the node's position, and its text
-inside it** (pgfmoduleshapes.code.tex: the `rectangle` shape's `center`
-anchor is the middle of its text box, `.5\wd` across and `.5\ht − .5\dp` up,
-and `\pgfmultipartnode` shifts the shape so that anchor lands on the node's
-coordinate). So two drawn nodes at one height stand their outlines on one
-centre line whatever letters they hold, an edge between them is level, a
-`right=of` chain keeps the line, and each outline holds its letters one
-inner sep in on every side. The defect centred each outline on its own
-letters and left the letters where a bare label stands them, so a node
-holding `g` stood 2 bp above one holding `A`, the edge between them slanted,
-and every `right=of` step climbed by the difference. Asserted over the
-shipped page, in the suite's own face. Invented content. -/
+/-- A drawn node stands its outline on the node's position, and its text inside it. -/
 def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -376,7 +312,7 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     | none => false
   let pair := pageOf ("\\node[draw] (a) at (0,0) {A};\\node[draw] (b) at (3,0) {g};\n" ++
     "\\draw (a) -- (b);")
-  t "two drawn nodes at one height stand their outlines on one centre line, whatever their letters"
+  t "drawn nodes at one height share a centre line, whatever their letters"
     ((pair.map fun p => level (frames p)).getD false)
   t "the edge between them is level"
     ((pair.map fun p => (pageDraws p).any fun (g, _, st) => match g, st with
@@ -390,8 +326,6 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     "\\node[draw, right=of d] (e) {A};")
   t "a right=of chain of drawn nodes keeps one centre line"
     ((chain.map fun p => (frames p).size == 3 && level (frames p)).getD false)
-  -- The letters inside: one inner sep from the outline to the glyphs' own
-  -- top, and one from their bottom to the outline, as pgf seats a text box.
   let size := (Layout.Geom.ofPage (elabStr (picDoc "" "" "")).1.page).fontSize
   let sep := Picture.innerSep size
   let font := oneFace.body
@@ -406,17 +340,7 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       decide (0 < wordDepth font size "g"))
 
 
-/-- **A drawn node's anchors stand half a line width beyond its border**
-(pgf's `outer sep`, pgfmoduleshapes.code.tex: `outer xsep` and `outer ysep`
-start at `.5\pgflinewidth` and are added to the rectangle's `\northeast` and
-`\southwest` and to the circle's `\radius`, while the drawn path stays on the
-border). So an edge between two drawn nodes starts and stops on the outer
-edges of their strokes, `below=of` parts two outlines by the node distance
-and two outer seps, a thicker node's outer sep is half its own width, and
-`outer sep=0pt` puts the anchors back on the outline. The defect had no
-outer sep: every anchor sat on the stroke's centre line, and a `below=of`
-gap stood 0.40 bp short of lualatex's. Asserted over the shipped page.
-Invented content. -/
+/-- A drawn node's anchors stand half a line width beyond its border (pgf's `outer sep`). -/
 def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -436,8 +360,6 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
           some (min x1 x2, max x1 x2)
         | _, _ => none
       | _, _ => none
-  -- The gaps from the left outline's right side to the edge's start, and
-  -- from the edge's end to the right outline's left side.
   let gaps (opts : String) : Option (Dim.Sp × Dim.Sp) := do
     let p ← pageOf ("\\node[draw" ++ opts ++ "] (a) at (0,0) {A};\\node[draw" ++ opts ++
       "] (b) at (3,0) {B};\n\\draw (a) -- (b);")
@@ -446,7 +368,7 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     let (x1, x2) ← edgeXs p
     pure (x1 - (ax + aw), bx - x2)
   let half := Ir.Pic.thinWidth / 2
-  t "an edge between two drawn nodes stops half a line width outside each outline"
+  t "an edge between drawn nodes stops half a line width outside each"
     (match gaps "" with
      | some (g1, g2) => near g1 half && near g2 half
      | none => false)
@@ -459,7 +381,7 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
       | some (g1, g2) => near g1 0 && near g2 0
       | none => false) && !picLoss (picDoc "" "" "\\node[draw, outer sep=0pt] at (0,0) {A};"))
   let below := pageOf "\\node[draw] (c) at (0,0) {A};\\node[draw, below=of c] (f) {x};"
-  t "below=of parts two drawn outlines by the node distance and two outer seps"
+  t "below=of parts two outlines by the node distance plus two outer seps"
     (match below.map frames with
      | some fs => match fs[0]?, fs[1]? with
        | some (_, cy, _, ch), some (_, fy, _, _) => near (fy - (cy + ch)) (Dim.mm 10 + 2 * half)
@@ -467,18 +389,8 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
      | none => false)
 
 
-/-- **An attempt that never finished is no answer, so it changes nothing.**
-The cached-answer rule, carried through the withdrawal: a budget kill, a
-spawn that raised and a nonzero exit that left no log are facts about the
-machine (`PicCache.outcome`), so the request is neither remembered nor
-withdrawn to the rendered subset's drawing. It stands as W0382 under the
-picture's source, and the page carries the placeholder a failed render
-leaves, never a different drawing. Only an answer withdraws: no tool at all
-(W0379), or the tool's own no. The defect withdrew every refusal alike, so a
-tool that crashed shipped the subset's drawing, its cause a note printed
-only under `-v`. The driver's own chain, run as values: the outcome an
-ending reads as, the ending the withdrawal reads, and what stands. Invented
-content. -/
+/-- An attempt that never finished is no answer: it is neither remembered nor withdrawn, and stands
+as W0382 with the placeholder. -/
 def boundaryUnfinishedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let id := Ir.picHash "\\draw[rounded corners] (0,0) rectangle (1,1);"
@@ -504,16 +416,8 @@ def boundaryUnfinishedChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Boundary.withdraw #[id] #[(src, .answered cold none)]).ids == #[id])
 
 
-/-- **The HTML face shows a drawing wherever the engine has one.** A picture
-routed to the boundary ships the tool's PDF on the page and the SVG
-converted from that PDF in the HTML. Where no converter ran (W0378) the
-image has nothing to show but its request key, so a picture the rendered
-subset draws in part is withdrawn from the HTML face alone
-(`Boundary.htmlWithdraw`) and drawn there by the subset, the PDF keeping the
-tool's drawing. The defect shipped `<img src="leantex-pic:…">`, a request key
-as an image source: a broken image where the engine had drawn the picture
-itself one round before. Asserted over the HTML tree of the document the
-driver emits for that face. Invented content. -/
+/-- The HTML face shows a drawing wherever the engine has one, the subset's where no converter
+ran. -/
 def pictureHtmlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := dvDoc "" ("\\begin{tikzpicture}\\draw (0,0) parabola (3,1);\n" ++
@@ -530,10 +434,10 @@ def pictureHtmlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elems d).filter fun (tag, attrs) =>
       tag == "img" && attrs.any fun (k, v) => k == "src" && v.startsWith Ir.picSrcPrefix).size
   let drawings (d : Ir.Doc) : Nat := ((elems d).filter (·.1 == "svg")).size
-  t "a routed picture the subset draws in part is a fallback, its HTML the request's image"
+  t "a partly drawn routed picture is a fallback, its HTML the request's image"
     (!rs.fallbacks.isEmpty && keyImages routed == 1 && drawings routed == 0)
   let ids := Boundary.htmlWithdraw rs.fallbacks #[img]
-  t "a routed picture whose SVG did not convert is withdrawn from the HTML face"
+  t "an unconverted routed picture is withdrawn from the HTML face"
     (ids == rs.fallbacks)
   t "one whose SVG converted is not"
     (Boundary.htmlWithdraw rs.fallbacks #[]).isEmpty
@@ -542,20 +446,7 @@ def pictureHtmlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (keyImages face == 0 && drawings face == 1)
 
 
-/-- **A picture inside a line of text stands in that line, or is named.**
-TeX sets `\tikz` as a box of its line, bottom on the baseline (pgfmanual
-§12.2.1), in a table cell, in a group's text and in a command's expansion
-alike. The boundary's image is such a box, so where the boundary is open a
-picture in a line ships as the image the boundary draws there, and the
-sentence around it stays one line, and a refused request keeps the
-placeholder that marks the place, since the subset, which sets pictures only
-as blocks, cannot stand in for it there; where the boundary is closed, or
-the picture's request was withdrawn, the picture is named and not drawn. A command whose
-body is a picture, expanded as a block, breaks its sentence as a picture
-written there does, and is named the same way. The defect drew nothing in a
-cell or a group, under W0307's false "not implemented", and split a sentence
-around a command with no diagnostic. Read off the shipped lines and the
-structured diagnostics. Invented content. -/
+/-- A picture inside a line of text stands in that line, or is named. -/
 def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -574,15 +465,13 @@ def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     | _ => acc) #[]
   let noW0307 (ds : Array Diag) : Bool := ds.all (·.code != "W0307")
   let (cd, cds, _) := firstPass cell
-  t "a picture in a table cell ships the boundary's image in its cell, and no W0307"
+  t "a picture in a table cell ships the boundary image there, no W0307"
     ((cellImages cd).size == 1 && (Ir.pictureRefs cd).size == 1 && noW0307 cds)
   let (gd, gds, _) := firstPass group
   let gc := censusOf (coveredColorsOf gd) (layoutOf oneFace gd)
-  t "a picture in a group's text stands in its sentence's line, and no W0307"
+  t "a picture in a group's text stands in its line, no W0307"
     ((Ir.pictureRefs gd).size == 1 && noW0307 gds &&
       gc.any fun p => p.lines.any fun l => hasStr l.text "Gamma" && hasStr l.text "delta")
-  -- Where the boundary is closed, or the picture's request was withdrawn,
-  -- the picture is named where it stands and not drawn.
   let named (ds : Array Diag) : Bool :=
     ds.any fun d => d.code == "W0334" &&
       (d.subject.map (·.startsWith "picture:inline:")).getD false
@@ -590,10 +479,6 @@ def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let (xd, xds) := elabStr closed
   t "with the boundary closed, a picture in a cell is named and not drawn"
     (named xds && noW0307 xds && (Ir.pictureRefs xd).isEmpty && (cellImages xd).size == 0)
-  -- A request in a line is never the subset's to stand in for, which sets
-  -- a picture only as a block: refused, it keeps the image whose
-  -- placeholder marks the place. Withdrawn all the same — with a block's
-  -- request of the same picture — it takes the closed door.
   let (wd, wds) := elabStr cell
   t "a request in a cell is never withdrawn on its own: its image keeps the place"
     ((firstPass cell).2.2.fallbacks.isEmpty && (cellImages wd).size == 1 && !named wds &&
@@ -603,10 +488,9 @@ def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let (raws, pds) := Parse.parse "t" toks
   let (twd, tds, _) := Elab.runPrepared "t" (Elab.prepare "t" raws) (lds ++ pds) (fun _ _ => {})
     #[twin]
-  t "a withdrawn picture in a cell is named and not drawn, under the key the driver reads"
+  t "a withdrawn picture in a cell is named, undrawn, under the driver's key"
     (!twin.isEmpty && named tds && noW0307 tds && (cellImages twd).size == 0 &&
       tds.any fun d => d.code == "W0334" && Boundary.inlineOf twin d)
-  -- A command whose body is a picture, expanded as a block in a sentence.
   let cmd := dvDoc "\\newcommand{\\dotmark}{\\tikz\\fill (0,0) rectangle (0.15,0.15);}\n"
     "Gamma \\dotmark{} delta."
   t "a command whose body is a picture names the sentence it breaks"

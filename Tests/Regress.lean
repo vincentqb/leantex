@@ -4,21 +4,14 @@ public import Tests.Backends
 
 public section
 
-/-!
-# Guards for reported breakages that shipped without one
-
-Each block reproduces one report of `Tests/Reports.lean` whose fix landed
-with no check, asserted over the artifact, and failing on the tree the
-report was about.
--/
+/-! Guards for reported breakages whose fix landed without one, each failing on the reported
+tree. -/
 
 open LeanTex.Core
 
 mutual
 
-/-- The deck stages in an emitted tree, and how many of them stand inside
-another stage: a `section` classed `slide` or `section-page`, the element the
-paged deck sizes to the viewport. -/
+/-- The deck stages in an emitted tree, and how many stand inside another stage. -/
 def stagesOne (inStage : Bool) (acc : Nat × Nat) : Html.Node → Nat × Nat
   | .text _ => acc
   | .style _ => acc
@@ -35,13 +28,7 @@ def stagesList (inStage : Bool) (acc : Nat × Nat) : List Html.Node → Nat × N
 
 end
 
-/-- **A page model nests no page: a title page inside the author's own frame
-is one stage.** The report: a deck's HTML front page rendered nearly blank,
-its title matter a full viewport down, while its PDF page was right — the
-title arm opened a frame inside the frame the author wrote, and each became a
-viewport-high stage. Over the typed HTML tree: for each spelling of the idiom
-in both slide classes, no stage stands inside a stage and the HTML has as
-many stages as the PDF has pages; and no golden fixture nests a stage. -/
+/-- A page model nests no page: a title page inside the author's own frame is one stage. -/
 def nestedStageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
@@ -70,10 +57,7 @@ def nestedStageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     seen := seen + n
     t s!"{a.name}: no stage stands inside a stage ({nested} of {n})" (nested == 0)
   t s!"the corpus ships stages, so the walk above can see one ({seen})" (seen > 0)
-  -- Parked, owed by `Elab.flattenFrame`: a *titled* frame around the title
-  -- page keeps its nesting, so this spelling still ships a stage inside a
-  -- stage (and a PDF page of its own for the outer frame, where beamer sets
-  -- one page). The row fails once the flatten reaches it; delete it then.
+  -- Parked on `Elab.flattenFrame`: a titled frame around the title page still nests; the row fails once it does not.
   let (n, nested, pages) := stages "\\begin{frame}{Welcome}\n\\titlepage\n\\end{frame}"
     "\\documentclass[aspectratio=169]{slides}"
   t s!"parked: a titled frame around a title page still nests a stage \

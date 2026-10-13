@@ -51,10 +51,8 @@ private def flexSource (c : FlexCase) : String :=
   dvDoc ("\\usepackage{tabularx,booktabs}\n\\newcommand{\\Cell}{" ++ c.span ++ "}\n")
     (if c.nested then "\\begin{minipage}{200pt}" ++ body ++ "\\end{minipage}" else body)
 
-/-- Feasible spans participate in the X budget. The shipped full rules must
-reach the declared target, to the division remainder of fewer than one sp
-per X column, with every span's content retained. A macro keeps this guard
-independent of Compat's handling of a direct multicolumn in tabularx. -/
+/-- Feasible spans take part in the X budget: the full rules reach the declared target within a sp
+per X column, every span's content kept. -/
 def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for c in flexCases do
@@ -83,9 +81,7 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       ((ds ++ out.diags).all fun d =>
         !d.code.startsWith "E" && !#["W0301", "W0302", "W0337", "W0338"].contains d.code)
 
-/-- An impossible target keeps a one-em X column, as `TX@error@width`
-(tabularx.sty). Its size follows the font in force; no fixed minimum or
-zero-width placeholder can satisfy these shipped-rule witnesses. -/
+/-- An impossible target keeps a one-em X column (`TX@error@width`), sized in the font in force. -/
 def tableFlexOverflowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for points in #[8, 12, 18] do

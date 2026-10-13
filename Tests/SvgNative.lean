@@ -8,25 +8,21 @@ public import Tests.Support
 
 public section
 
-/-! The native SVG reader's boundary and import, hermetic: the resource
-boundary libxml's SAX events and XPath used to state, held over the parsed
-tree with the same verdicts — the one widening is a `data:` PNG or JPEG
-image — and the importer's reading of invented figures, asserted over the
-figure's marks, never a dump. -/
+/-! The native SVG reader's boundary and importer, hermetic, asserted over parsed trees and figure
+marks. -/
 
 namespace Tests
 
 open LeanTex.Core LeanTex.Core.Gfx
 
-/-- The judge's verdict, as the boundary error the old checks read. -/
+/-- The judge's verdict as a boundary error. -/
 def svgJudged (bytes : ByteArray) : Except String Unit :=
   match Svg.judge bytes with
   | .ok _ => .ok ()
   | .error r => .error r.message
 
-/-- The boundary matrix the XPath/SAX boundary held, ported: every construct
-it admitted is admitted, every one it refused is refused, with the boundary
-named in the reason. -/
+/-- The resource boundary matrix: every admitted construct admitted, every refused one refused with
+its boundary named. -/
 def svgNativeBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, body) in svgBoundaryAdmitted do
     check ref s!"native SVG boundary admits {name}" (svgJudged (svgDocument body)).toBool
@@ -44,7 +40,7 @@ def svgNativeBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("declaration", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>")] do
     check ref s!"native SVG reader drops the inert {name} prolog"
       (svgJudged (prolog ++ drawing).toUTF8).toBool
-  check ref "native SVG reader refuses a parsed entity reference even with a DTD named"
+  check ref "native SVG reader refuses a parsed entity even with a DTD named"
     !(svgJudged ("<!DOCTYPE svg SYSTEM \"outside.dtd\">" ++
       String.fromUTF8! (svgDocument "<rect fill=\"&outside;\"/>")).toUTF8).toBool
   check ref "native SVG reader names the DTD boundary"
@@ -52,8 +48,7 @@ def svgNativeBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .error r => hasStr r.message "DTD declarations and external entities"
       | .ok _ => false)
 
-/-- The invented figures, in name order: every SVG under `testdata/svg`
-and `testdata/corpus/figures`. -/
+/-- The invented figures under `testdata/svg` and `testdata/corpus/figures`, in name order. -/
 def svgFixtureFiles : IO (Array System.FilePath) := do
   let mut out : Array System.FilePath := #[]
   for dir in ["testdata/svg", "testdata/corpus/figures"] do
@@ -61,12 +56,8 @@ def svgFixtureFiles : IO (Array System.FilePath) := do
       if e.fileName.endsWith ".svg" then out := out.push e.path
   return out
 
-/-- A tree written by the canonical writer reads back as it stands, for
-every construct the writer spells: references in attributes and text,
-white space the reader would normalize, empty and nested elements. The
-theorem `Xml.parse_render_id` holds the first half for every tree with ASCII
-names; the judged tree's spelling, through its namespaces, is this check's
-alone. -/
+/-- A tree written by the canonical writer reads back as it stands, for every construct the writer
+spells. -/
 def xmlRoundTripChecks (ref : IO.Ref (List String)) : IO Unit := do
   let trees : List Xml.Node := [
     .elem "svg" #[("xmlns", "http://www.w3.org/2000/svg")] #[],
@@ -74,9 +65,7 @@ def xmlRoundTripChecks (ref : IO.Ref (List String)) : IO Unit := do
     .elem "p:q" #[("xmlns:p", "urn:x"), ("p:r", "é ✓")] #[.elem "s" #[] #[.text " "], .text "t"]]
   for t in trees do
     check ref s!"XML round trip: {repr t}" (Xml.parse (Xml.render t) == .ok t)
-  -- Every invented figure's parse reads back from its canonical spelling,
-  -- and so does its judged tree — what the converter reads in place of the
-  -- authored bytes, so the converter draws the tree the engine judged.
+  -- The judged tree's spelling is what the converter reads in place of the authored bytes.
   for f in ← svgFixtureFiles do
     let bytes ← IO.FS.readBinFile f
     match Xml.parse bytes, Svg.judge bytes with
@@ -89,8 +78,8 @@ def xmlRoundTripChecks (ref : IO.Ref (List String)) : IO Unit := do
          | .error _ => false)
     | _, _ => check ref s!"XML round trip: {f.fileName.getD ""} parses" false
 
-/-- A text's length is bounded however the file spells it: a reference or
-a CDATA section counts toward the text budget as literal characters do. -/
+/-- A text's length is bounded however the file spells it, references and CDATA counted as literal
+characters. -/
 def xmlBudgetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bud : Xml.Budget := { Xml.Budget.standard with text := 8 }
   let refused (body : String) : Bool :=
@@ -107,7 +96,7 @@ def xmlBudgetChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "XML budget: a CDATA section of nine exceeds it" (refused "<![CDATA[abcdefghi]]>")
   check ref "XML budget: a CDATA section after text counts with it" (refused "abcde<![CDATA[abcd]]>")
 
-/-- What one invented figure's import paints. -/
+/-- What one figure's import paints, and its losses. -/
 def svgMarks (body : String) (w h : Nat := 20) : Array Mark × Array Gfx.Loss :=
   match Svg.importBytes (svgDocument body w h) with
   | .exact i | .lossy i => (i.fig.marks, i.fig.losses)
@@ -116,8 +105,7 @@ def svgMarks (body : String) (w h : Nat := 20) : Array Mark × Array Gfx.Loss :=
 /-- The importer's reading of invented figures, over their marks. -/
 def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
   let px (n : Int) : Int := n * Svg.pxSp
-  -- A rect: one fill mark, its geometry in user space under the root's
-  -- flip into the figure's y-up frame.
+  -- A rect's geometry is in user space under the root's flip into the y-up frame.
   let (ms, ls) := svgMarks "<rect x=\"2\" y=\"3\" width=\"4\" height=\"5\" fill=\"#ff0000\"/>"
   check ref "SVG import: a rect is one exact mark" (ls.isEmpty && ms.size == 1)
   check ref "SVG import: the rect's geometry is its attributes in user space"
@@ -133,7 +121,6 @@ def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ms.any fun m => match m with
       | .paint _ _ none (some s) _ _ => s.width == px 2 && s.miterLimit == 4 && s.join == .miter
       | _ => false)
-  -- A gradient fill, resolved against the shape's box.
   let (ms, ls) := svgMarks "<defs><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\"/>\
     <stop offset=\"1\" stop-color=\"blue\"/></linearGradient></defs>\
     <rect width=\"20\" height=\"10\" fill=\"url(#g)\"/>"
@@ -143,27 +130,22 @@ def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .gradient (.linear _ _ stops _) => stops.size == 2
         | _ => false
       | _ => false)
-  -- A clip path and a group opacity reach the marks as clips and alphas.
   let (ms, ls) := svgMarks "<clipPath id=\"c\"><rect width=\"5\" height=\"5\"/></clipPath>\
     <g opacity=\"0.5\" clip-path=\"url(#c)\"><rect width=\"20\" height=\"20\"/></g>"
   check ref "SVG import: a clip and an opacity reach the mark"
     (ls.isEmpty && ms.any fun m => match m with
       | .paint _ _ _ _ clips alphas => clips.size == 1 && alphas.size == 1 && alphas[0]?.map (·.val) == some 500
       | _ => false)
-  -- A use paints its symbol once per use.
   let (ms, ls) := svgMarks "<defs><path id=\"p\" d=\"M0 0h4v4z\"/></defs>\
     <use href=\"#p\" fill=\"green\"/><use href=\"#p\" x=\"10\" fill=\"green\"/>"
   check ref "SVG import: two uses paint the shared symbol twice" (ls.isEmpty && ms.size == 2)
-  -- A reference cycle is named, never followed for ever.
   let (_, ls) := svgMarks "<g id=\"a\"><use href=\"#b\"/></g><g id=\"b\"><use href=\"#a\"/></g>"
   check ref "SVG import: a use cycle is a named loss" (ls.contains (.element "use cycle"))
-  -- A raster image.
   let (ms, ls) := svgMarks s!"<image href=\"data:image/png;base64,{HtmlResource.base64 tinyPng}\" \
     width=\"10\" height=\"10\"/>"
   check ref "SVG import: a data PNG is one raster mark" (ls.isEmpty && ms.any fun m => match m with
     | .raster _ 0 _ _ => true
     | _ => false)
-  -- Text is a run with its face request.
   match Svg.importBytes (svgDocument "<text x=\"1\" y=\"10\" font-family=\"Example Sans, sans-serif\" \
       font-weight=\"bold\" text-anchor=\"middle\">Hi <tspan fill=\"red\">there</tspan></text>") with
   | .exact i =>
@@ -175,7 +157,6 @@ def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "SVG import: a run with no position of its own follows the one before"
       (runs.any fun r => r.text == "there" && r.follows)
   | _ => check ref "SVG import: text imports exactly" false
-  -- What the importer does not give its meaning is a keyed loss.
   for (name, body, loss) in [
       ("filter", "<filter id=\"f\"/><rect width=\"5\" height=\"5\" filter=\"url(#f)\"/>", Gfx.Loss.property "filter"),
       ("mask", "<mask id=\"m\"/><rect width=\"5\" height=\"5\" mask=\"url(#m)\"/>", .property "mask"),
@@ -196,7 +177,7 @@ def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"SVG import names the {name} it does not draw" (ls.contains loss)
 
 
-/-- A tree's marks, after an optional projection to its terminal pose. -/
+/-- A tree's marks, optionally projected to its terminal pose. -/
 def svgPose (bytes : ByteArray) (last : Bool) : Except String (Array Mark) := do
   let t ← match Svg.judge bytes with
     | .ok t => pure t
@@ -204,9 +185,8 @@ def svgPose (bytes : ByteArray) (last : Bool) : Except String (Array Mark) := do
   let t ← if last then SvgPoster.terminal t else pure t
   return (Svg.importTree t).fig.marks
 
-/-- The terminal-pose matrix the XSLT stylesheet held, ported: a timeline
-the projection does not read is refused, naming it; an accepted one paints
-exactly the independently authored static pose, and not the base drawing. -/
+/-- The terminal-pose matrix: an unread timeline is refused by name, an accepted one paints exactly
+the authored static pose. -/
 def svgPosterNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let doc (body : String) := svgDocument (width := 32) (height := 16) body
   for (name, body) in svgTerminalRefused do
@@ -223,19 +203,15 @@ def svgPosterNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"native SVG poster {name}: the last pose differs from the base drawing" (first != last)
     | _, _, _ => check ref s!"native SVG poster {name}: every pose reads" false
 
-/-- Symbols nested `depth` deep, each using the one below it twice: the
-figure paints 2^(depth-1) copies of one square once expanded. -/
+/-- Symbols nested `depth` deep, each using the one below twice: 2^(depth-1) copies of one
+square. -/
 def nestedUses (depth : Nat) : ByteArray := Id.run do
   let mut defs := "<g id=\"s0\"><rect width=\"1\" height=\"1\"/></g>"
   for i in [1:depth] do
     defs := defs ++ s!"<g id=\"s{i}\"><use href=\"#s{i - 1}\"/><use href=\"#s{i - 1}\" x=\"0.5\"/></g>"
   return svgDocument (width := 40) (height := 40) s!"<defs>{defs}</defs><use href=\"#s{depth - 1}\"/>"
 
-/-- **Uses that multiply are bounded.** A figure whose nested uses expand
-past the import's budget keeps what it paints itself and drops its uses,
-the drop named — its drawing, and every walk a backend makes over it,
-stays within the budget however deep the nesting — while a figure within
-the budget keeps every use. -/
+/-- Uses that multiply are bounded: past the import's budget a figure drops its uses, named. -/
 def svgExpansionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let small := Svg.importTree ((Svg.judge (nestedUses 8)).toOption.getD (.text ""))
   let deep := Svg.importTree ((Svg.judge (nestedUses 24)).toOption.getD (.text ""))
@@ -246,13 +222,7 @@ def svgExpansionChecks (ref : IO.Ref (List String)) : IO Unit := do
       deep.fig.marks.size ≤ Svg.Budget.standard.expanded)
 
 
-/-- **Every property the importer meets keeps its treatment**
-(`Svg.propertyTable`): one that is a loss unless harmless is named when
-declared otherwise and silent at each harmless value; an inert one moves
-no mark and names nothing, whatever it is set to. The invariant whose
-absence let a figure import exact while the importer ignored its
-`transform-origin`, its `linearRGB` gradients and its preserved white
-space. -/
+/-- Every property the importer meets keeps its treatment (`Svg.propertyTable`). -/
 def propertyTreatmentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let rect (style : String) := s!"<rect width=\"10\" height=\"10\" fill=\"red\" style=\"{style}\"/>"
   let (m0, l0) := svgMarks (rect "")
@@ -276,9 +246,7 @@ def propertyTreatmentChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (_, ls) := svgMarks (rect s!"{p}: {h}")
       check ref s!"CSS property {p}: '{h}' names nothing" (!ls.contains (.property p))
 
-/-- `transform-origin` is a transform about a point, in every spelling:
-lengths, keywords, percentages of the viewport — the drawing of the same
-transform written about the point. -/
+/-- `transform-origin` is a transform about a point, in every spelling. -/
 def transformOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let about := svgMarks "<rect x=\"40\" y=\"40\" width=\"20\" height=\"20\" transform=\"rotate(45 50 50)\"/>"
     (w := 100) (h := 100)
@@ -301,8 +269,8 @@ def transformOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, ls) := svgMarks "<text x=\"1\" y=\"10\" style=\"white-space: pre\">a  b</text>"
   check ref "white-space: preserved white space is named" (ls.contains (.property "white-space"))
 
-/-- The `font` shorthand is its longhands, each unsaid one reset; a system
-font or a variant the importer does not set is named. -/
+/-- The `font` shorthand is its longhands, each unsaid one reset; a system font or an unset variant
+is named. -/
 def fontShorthandChecks (ref : IO.Ref (List String)) : IO Unit := do
   match Svg.importBytes (svgDocument "<text x=\"1\" y=\"10\" font-weight=\"bold\" \
       style=\"font: italic 12px/1.5 'Example Sans', sans-serif\">Hi</text>") with
@@ -321,10 +289,8 @@ def fontShorthandChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, ls) := svgMarks "<text x=\"1\" y=\"10\" style=\"font: small-caps 12px serif\">Hi</text>"
   check ref "font shorthand: small capitals are named" (ls.contains (.property "font-variant"))
 
-/-- Path data reads linearly, whatever its numbers spell: a number keeps
-`maxSig` significant digits and reads the rest as a shift of its point; one
-past the reader's range stops the path, named; a fraction below it reads
-as zero; and a long path reads whole. -/
+/-- Path data reads linearly whatever its numbers spell, a number past the range stopping the path,
+named. -/
 def pathDataBudgetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let long := String.ofList (List.replicate 60 '7')
   check ref "path data: a number keeps its significant digits and its magnitude"
@@ -349,7 +315,6 @@ def pathDataBudgetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let segments := String.join (List.replicate 50000 "l1 1")
   let (cmds, stop) := PathData.parse ("M0 0" ++ segments)
   check ref "path data: a path of fifty thousand segments reads whole" (stop == .done && cmds.size == 50001)
-  -- Writing reads back as written.
   let samples : List (Array PathData.Cmd) := [
     #[.move false ⟨0, 0⟩ ⟨-15, 1⟩, .line true ⟨1234567, 3⟩ ⟨-5, 0⟩, .close],
     #[.move true ⟨7, 0⟩ ⟨7, 2⟩, .arc false ⟨5, 0⟩ ⟨25, 1⟩ ⟨-30, 0⟩ true false ⟨1, 0⟩ ⟨0, 4⟩,
@@ -361,10 +326,8 @@ def pathDataBudgetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (PathData.parse (PathData.render cs) == (cs, .done))
 
 
-/-- **An SVG's bytes read in the encoding they name** (`svgBoundaryEncodings`):
-each admitted source's drawing sets its text as spelled, and each refused
-one is refused with what refused it named — a narrowed one with the advice
-to save it as UTF-8. The tables the decoders read hold their contract. -/
+/-- An SVG's bytes read in the encoding they name (`svgBoundaryEncodings`), and a refused one names
+what refused it. -/
 def svgEncodingChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref s!"WHATWG tables hold their contract: {(WhatwgEncoding.dataFaults ()).toList.take 3}"
     (WhatwgEncoding.dataFaults ()).isEmpty
@@ -388,26 +351,21 @@ def svgEncodingChecks (ref : IO.Ref (List String)) : IO Unit := do
     | some _, _ => check ref s!"encoding {name}: read exactly" false
     | none, _ => check ref s!"encoding {name}: refused" false
 
-/-- Whether two paints are one: a colour exactly; a gradient by kind, its
-stops and frame respelled. -/
+/-- Whether two paints are one: a colour exactly, a gradient by kind, stops and frame. -/
 def paintAgrees : Paint → Paint → Bool
   | .solid a, .solid b => a == b
   | .gradient _, .gradient _ => true
   | _, _ => false
 
-/-- How far the spelling's half-thousandth of a unit moves a mark's box,
-through its frame: each coordinate the writer spells is within half a
-thousandth of a user unit of its value, `pxSp` sp of the importer's local
-frame per unit, imaged by the mark's own matrix; plus a sp each way for
-`Box.image`'s outward rounding. -/
+/-- How far the writer's half-thousandth spelling moves a mark's box through its frame, plus a sp
+each way for rounding. -/
 def readbackBound (ctm : Affine) : Int :=
   let abs (q : Rat) : Rat := if q < 0 then -q else q
   let scale := max (abs ctm.a + abs ctm.c) (abs ctm.b + abs ctm.d)
   Rat.ceil (scale * (Svg.pxSp : Rat) / 2000) + 2
 
-/-- Two marks agree under the readback: one kind, one paint, rule, alphas
-and clip count, and the readback's geometry box within its bound of the
-source's. -/
+/-- Two marks agree under the readback: kind, paint, rule, alphas and clip count, and geometry
+within the bound. -/
 def marksAgree (a b : Mark) : Bool :=
   let near (x y : Option Box) (t : Int) : Bool := match x, y with
     | some ((x0, y0), (x1, y1)), some ((u0, v0), (u1, v1)) =>
@@ -431,14 +389,8 @@ def marksAgree (a b : Mark) : Bool :=
   | .raster _ _ ca aa, .raster _ _ cb ab => ca.size == cb.size && aa == ab
   | _, _ => false
 
-/-- **The writer's SVG reads back through the reader** — the executable
-oracle the readback statement waits on: every invented figure the importer
-draws whole, written as a standalone document with its labels left out
-(`GfxSvg.document`), imports exactly again, its box within the spelling's
-half-thousandth of a point and its marks the same marks in order
-(`marksAgree`). A drawing the HTML page inlines is that
-spelling, so a construct the writer spells and the reader refuses or
-reads otherwise is a page the engine could not read back. -/
+/-- The writer's SVG reads back through the reader: every figure drawn whole imports exactly
+again. -/
 def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut read := 0
   for f in ← svgFixtureFiles do
@@ -450,8 +402,7 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       match Svg.importBytes doc with
       | .exact j =>
         read := read + 1
-        -- The writer spells the box in points to a thousandth, so a box off
-        -- that grid (a size in millimetres) reads back within half of one.
+        -- The writer spells the box to a thousandth of a point, so a box off that grid reads back within half of one.
         let ((x0, y0), (x1, y1)) := i.fig.box
         let ((u0, v0), (u1, v1)) := j.fig.box
         check ref s!"SVG readback {name}: the box reads back within the spelling's half-thousandth of a point"
@@ -475,27 +426,20 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       (i.fig.marks.all fun m => marksAgree m m && !marksAgree m (moved m))
   | _ => check ref "SVG readback: the probe imports" false
 
-/-- A paint's solid colour as its channels, for the assertions below. -/
+/-- A paint's solid colour as its channels. -/
 def solidRgb (p : Paint) : Option (Nat × Nat × Nat) :=
   match p with
   | .solid c => some (c.r.toNat, c.g.toNat, c.b.toNat)
   | .gradient _ => none
 
-/-- The paint marks of an import whose fill and stroke are the named
-colours (`none` for an absent paint). -/
+/-- The paint marks whose fill and stroke are the named colours (`none` for an absent paint). -/
 def paintsWith (ms : Array Mark) (fill stroke : Option (Nat × Nat × Nat)) : Nat :=
   (ms.filter fun m => match m with
     | .paint _ _ f s _ _ =>
       (f.bind (solidRgb ·.paint)) == fill && (s.bind (solidRgb ·.paint)) == stroke
     | _ => false).size
 
-/-- **A use's instantiated element carries its own declarations** (SVG 2
-§5.6.3): the symbol or nested svg a use names stands in the use's shadow
-tree, so its presentation attributes, its class rules and its `color` stand
-over the use's style and reach its children. A symbol sprite in the common
-icon form — `fill="none" stroke="currentColor"` on the symbol — strokes in
-each use's colour. The defect walked the children under the use's style and
-skipped the symbol's: the squares filled black, unstroked. -/
+/-- A use's instantiated element carries its own declarations (SVG 2 §5.6.3). -/
 def svgShadowStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let red := some (255, 0, 0)
   let blue := some (0, 0, 255)
@@ -546,11 +490,8 @@ def markAndClipBoxes (m : Mark) : Option (Box × Box) :=
     | none => none
   | .shading _ _ _ => none
 
-/-- **A clip in object units reads the clipped element's own box**
-(CSS Masking 1 §6.1): a use's content, an image's viewport, a shape's
-geometry; where no box is known before shaping — text — the clip is a named
-loss and the text is still drawn. The defect asked the box of a use, an
-image and text and, given none, drew nothing and named nothing. -/
+/-- A clip in object units reads the clipped element's own box; text, whose box comes after shaping,
+is a named loss and still drawn. -/
 def svgObjectClipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let half := "<clipPath id=\"half\" clipPathUnits=\"objectBoundingBox\"><rect width=\"0.5\" height=\"1\"/></clipPath>"
   let near (a b : Int) : Bool := (a - b).natAbs ≤ 2
@@ -583,12 +524,7 @@ def svgObjectClipChecks (ref : IO.Ref (List String)) : IO Unit := do
         i.fig.labels.any fun (_, r) => hasStr r.text "Clipped")
   | _ => check ref "SVG object clip: text clipped in object units is a named loss" false
 
-/-- **A CSS string ends at its line** (CSS Syntax 3 §4.3.5): a newline in
-a string is a bad string, and what follows it is read as CSS, so the judge
-reads it too. XML admits no form feed, so a line feed and a carriage return
-are the line ends an SVG can hold. A declaration hidden behind a string a line end cut once
-passed the judge and reached every real CSS reader, a network reference
-among them. -/
+/-- A CSS string ends at its line (CSS Syntax 3 §4.3.5), so the judge reads what follows as CSS. -/
 def cssLineEndChecks (ref : IO.Ref (List String)) : IO Unit := do
   let hidden := "fill:url(http://example.invalid/p.svg#g) green"
   for (name, body) in [
@@ -615,11 +551,7 @@ where
   lb : String := "{"
   rb : String := "}"
 
-/-- **A gradient stop takes its own place in the cascade**: a rule whose
-selector climbs through the gradient element reaches its stops, and a
-stop's `currentColor` is its own `color`, inherited down the gradient's
-ancestors, never the referencing shape's. The defect matched stops against
-no ancestors, and read the shape's colour. -/
+/-- A gradient stop takes its own place in the cascade, its `currentColor` its own. -/
 def svgStopStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let stops (ms : Array Mark) : Array (Nat × Nat × Nat) :=
     ms.foldl (fun acc m => match m with
@@ -638,14 +570,7 @@ def svgStopStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref s!"SVG stop style: a stop's currentColor is its own inherited colour ({repr ls})"
     (ls.isEmpty && stops ms == #[(0, 0, 255), (255, 0, 0)])
 
-/-- **What the importer does not draw is a named loss, never a silent
-one**: text in a script set right to left or joined by contextual shaping,
-which figure text sets character by character left to right; a CSS
-property a browser applies to text or the root's box from CSS alone, at a
-value that changes something; and a nested viewport's own transform, which
-the drawing carries. The defects drew Hebrew reversed and Arabic unjoined
-as exact figures, and dropped `text-transform`, a root background and a
-nested transform with nothing named. -/
+/-- What the importer does not draw is a named loss, never a silent one. -/
 def svgUndrawnNamedChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, word) in [("Hebrew", "שלום"), ("Arabic", "سلام"), ("Devanagari", "नमस्ते")] do
     let (_, ls) := svgMarks s!"<text x=\"1\" y=\"10\">{word}</text>" 60 20
@@ -673,9 +598,7 @@ def svgUndrawnNamedChecks (ref : IO.Ref (List String)) : IO Unit := do
       | some (b, _) => b.1.1 == px 5
       | none => false)
 
-/-- **A line feed in figure text is a space**, as CSS Text sets white space
-under `white-space: normal` and every browser draws it; SVG 1.1 dropped
-it, joining the words on either side. -/
+/-- A line feed in figure text is a space. -/
 def svgTextSpaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   match Svg.importBytes (svgDocument "<text x=\"1\" y=\"10\">Hello\n  world</text>" 80 20) with
   | .exact i =>
@@ -683,9 +606,7 @@ def svgTextSpaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       (i.fig.labels.map (·.2.text) == #["Hello world"])
   | _ => check ref "SVG text space: the text imports exact" false
 
-/-- **An exporter's boilerplate title names no figure**: a tool's name, an
-artboard identifier or a one-word label is no description, so the figure's
-missing alternative is still named (N0376); words a person wrote are its
+/-- An exporter's boilerplate title names no figure, so N0376 still names its missing
 alternative. -/
 def svgTitleWordsChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (title, names) in [("Gnuplot", false), ("Produced by GNUPLOT 5.4 patchlevel 2", false),

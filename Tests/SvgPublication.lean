@@ -12,11 +12,8 @@ namespace Tests
 
 open LeanTex.Core LeanTex.Cli.Publication Tests.DriverAssets
 
-/-- A boundary face is decided from the captured PDF bytes — the engine's
-own drawing of them where their import is exact, their conversion where it
-names a loss (`PdfFaces.face`). A stale unkeyed sibling cannot answer for
-it, and a cache replacement between preparation and acceptance cannot
-change the published artifact. -/
+/-- A boundary face is decided from the captured PDF bytes, never by a stale sibling or a cache
+replacement. -/
 def svgPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let decided ← LeanTex.Cli.PdfFaces.face "probe" svgCanvasPdf .first
     (some <$> LeanTex.Cli.ImageAssets.picFaceAnswer svgCanvasPdf) LeanTex.Cli.ImageAssets.validateSvgResult
@@ -50,7 +47,6 @@ def svgPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       let page ← match result with
         | .ok page => pure page
         | .error why => throw <| IO.userError ("the captured boundary SVG did not close: " ++ why)
-      -- Neither location remains trustworthy by the time acceptance ends.
       IO.FS.writeFile cached "changed after preparation"
       IO.FS.writeFile sibling "<svg>changed after preparation</svg>"
       let target := output / "figure.html"

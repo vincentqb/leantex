@@ -29,14 +29,13 @@ private def source (shrink : Bool) : String :=
 private def labels (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap fun p => p.lines.filter fun l => names.contains (lineText l)
 
-/-- Every picture draw on the pages, in paint order, with its picture's
-leaf, in layout coordinates. -/
+/-- Every picture draw on the pages, in paint order, with its picture's leaf, in layout
+coordinates. -/
 private def draws (out : Layout.Out) :
     Array (Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
   out.pages.flatMap fun p => p.inks.flatMap fun k =>
     (nodeDrawsList #[] k.fig.nodes.toList).map fun (g, fl, st) => (k.leaf, g.mapIso k.place, fl, st)
 
-/-- A picture's rectangle fill: a filled rectangle with no stroke. -/
 private def plainFill : Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke → Bool
   | (_, .rect .., some _, none) => true
   | _ => false
@@ -45,8 +44,7 @@ private def fills (out : Layout.Out) := (draws out).filter plainFill
 
 private def paths (out : Layout.Out) := (draws out).filter (!plainFill ·)
 
-/-- Independent observations of a shipped draw: constructor, dimensions,
-segment kinds and every endpoint/control point. Translation changes only y. -/
+/-- A shipped draw's constructor, dimensions, segment kinds and every point. -/
 private def coordinates : Gfx.Geom → Nat × Array Dim.Sp × Array (Dim.Sp × Dim.Sp)
   | .ellipse x y rx ry => (0, #[rx, ry], #[(x, y)])
   | .rect x y w h => (1, #[w, h], #[(x, y)])
@@ -68,8 +66,7 @@ private def fillShift (before after : Option Nat × Gfx.Geom × Option Gfx.Fill 
   pathShift before after dy
 
 private def close (a b : Dim.Sp) : Bool :=
-  -- Each PDF coordinate is rounded to .001 pt. Comparing two box edges
-  -- and two baselines can accumulate four such rounding errors.
+  -- Each PDF coordinate rounds to .001 pt; two edges and two baselines accumulate four roundings.
   (a - b).natAbs ≤ (4 * (Dim.spPerPt / 1000 + 1)).toNat
 
 private def boxShift (bh ah : Dim.Sp) (before after : ArtBox) (dy : Dim.Sp) : Bool :=
@@ -79,19 +76,14 @@ private def boxShift (bh ah : Dim.Sp) (before after : ArtBox) (dy : Dim.Sp) : Bo
 
 end PictureShrink
 
-/-- One page owes one glue-set ratio, but each picture owns the shrink
-preceding it. Its labels, rectangle fills, outlines, circles, straight and
-curved edges, and arrowheads must move together. These invented pictures
-have 0, 4 and 12 pt of preceding shrink; a 6 pt deficit moves them by
-0, 2 and 6 pt. The PDF reader independently checks the bytes' coordinates.
-With no deficit, declaring shrink must leave the PDF byte-identical. -/
+/-- Each picture moves by the shrink preceding it, all its marks together, and shrink with no
+deficit leaves the PDF byte-identical. -/
 def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabMeasured oneFace (PictureShrink.source true)
   let geom := Layout.Geom.ofPage doc.page
   let roomy := layoutOf oneFace doc geom
-  -- Each picture's full-height fill encloses its marks, so the last one's
-  -- bottom is the page builder's final natural bottom.
+  -- The last picture's full-height fill bottom is the page's natural bottom.
   let naturalBottom := (PictureShrink.fills roomy).foldl (fun y f => match f.2.1 with
     | .rect _ fy _ fh => max y (fy + fh)
     | _ => y) 0
@@ -152,8 +144,7 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
          | [ra], [rb] => PictureShrink.close ra.x rb.x &&
            PictureShrink.close (b.mediaH - rb.y) (a.mediaH - ra.y + dy)
          | _, _ => false)
-      -- PDF paints each picture's marks in source order, its rectangle
-      -- fill first. Every box edge is read from PDF operators.
+      -- PDF paints each picture's marks in source order, its rectangle fill first.
       let indices := (Array.range 6).map (fun k => 6 * i + k)
       t s!"picture shrink: PDF {name} fill and all paths follow its label"
         (indices.all fun k => match a.boxes[k]?, b.boxes[k]? with

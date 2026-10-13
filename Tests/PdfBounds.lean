@@ -8,20 +8,8 @@ public section
 
 open LeanTex.Core
 
-/-- The writer's storage domain past the ceiling the fixed `/W [1 4 2]`
-layout once imposed: one object stream indexed by two bytes refused a
-file needing more than 65536 compressed objects. The large input uses
-only invented outline titles and no external fonts or resources; the
-refusal the CLI reports as E0607 is the producer's own, on an invented
-face name. These executable witnesses supplement the universal field
-theorems; they are not proof premises. Parent registration calls this
-block.
-
-Its large value depends on a runtime read before any closure captures it:
-a closed term a loop's closure captures can be copied into the loop's
-specialized body and rebuilt once per element, and this block's
-65,536-entry plan, captured by one `find?` as a closed term, held
-`lake test` for 25 minutes instead of 3. -/
+/-- The writer's object-stream storage beyond 65536 compressed objects, and its refusal outside its
+domain. -/
 def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) : IO Unit := do
     unless ok do failures.modify (name :: ·)
@@ -39,8 +27,7 @@ def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
       | _, _ => false)
   check "PDF bounds: a small file writes one object stream"
     (small.chunks.length == 1 && small.table.nStm == 1)
-  -- The count is read through a ref: as a closed term, the plan could be
-  -- copied into a loop's specialized body and rebuilt once per element.
+  -- Read through a ref, so no loop closure copies the plan as a closed term.
   let count ← IO.mkRef 65536
   let outline := Array.replicate (← count.get) ({ title := "Synthetic" } : Layout.OutlineEntry)
   let large := Pdf.prepare {} fs #[] {} {} outline
@@ -82,9 +69,6 @@ def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
     (match Pdf.writeChecked {} fs #[] {} {} outline, largeChecked with
       | .ok a, .ok b => a == b
       | _, _ => false)
-  -- A real refusal, through the producer and the registry: a face whose
-  -- name no PDF name spells is outside the writer's domain, and the CLI
-  -- reports the producer's own error as E0607.
   let bad : Font.FontSet := { fonts := #[{ (default : Font.Font) with
     psName := "λ", unitsPerEm := 1000, numGlyphs := 2, widths := #[500, 500] }] }
   match Pdf.writeChecked {} bad #[] {} {} #[] #[] ⟨#[]⟩ #[] #[("invented program".toUTF8, false)] with

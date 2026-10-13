@@ -8,15 +8,15 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests.TikzCoverage
 
-/-- A document holding one picture under the declared refusal, so what the
-subset draws is what ships. -/
+/-- A document holding one picture under the declared refusal, so what the subset draws is what
+ships. -/
 def picDoc (opts body : String) (pre : String := "") : String :=
   "\\documentclass{article}\n\\pictures{ tool = none }\n" ++ pre ++
     "\\palette{ grid = #2A6F4E }\n\\begin{document}\n\\begin{tikzpicture}" ++ opts ++ "\n" ++
     body ++ "\n\\end{tikzpicture}\n\\end{document}"
 
-/-- What a page of pictures shows, read off `Layout.Out`: each line's text
-and position, each mark's box, stroke and runs. -/
+/-- What a page of pictures shows: each line's text and position, each mark's box, stroke and
+runs. -/
 structure Shown where
   lines : Array (String × Dim.Sp × Dim.Sp)
   boxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp)
@@ -32,8 +32,7 @@ def shownOf (oneFace : Font.FontSet) (src : String) : Shown :=
       strokes := p.pathStrokes, runs := p.pathRuns }
   | none => { lines := #[], boxes := #[], strokes := #[], runs := #[] }
 
-/-- Two shown pages agree within the rounding two separately rounded offsets
-can differ by: two sp per coordinate. -/
+/-- Agreement within two sp per coordinate, the rounding of two separately rounded offsets. -/
 def Shown.close (a b : Shown) : Bool :=
   let near (x y : Dim.Sp) : Bool := decide (x - y ≤ 2 ∧ y - x ≤ 2)
   a.lines.size == b.lines.size && a.boxes.size == b.boxes.size &&
@@ -53,7 +52,6 @@ def svgOf (src : String) : Array String × Array (Array (String × String)) :=
       | _ => none) #[]
   (ds, texts)
 
-/-- The losses the subset named. -/
 def lossesOf (src : String) : Array Diag :=
   (elabStr src).2.filter fun d => d.code == "W0334" || d.code == "E0333" || d.code == "W0012"
 
@@ -73,20 +71,7 @@ def drawsOf (oneFace : Font.FontSet) (src : String) :
 end Tests.TikzCoverage
 
 open Tests.TikzCoverage in
-/-- **A tree is placed as pgf's growth function places it.** The invariant
-whose absence sent every `child` to the boundary: TikZ's tree syntax
-(manual §21) is a node and its children, each child `level distance` from
-its parent's centre along the growth direction and the `n` siblings spread
-`sibling distance` apart across it (tikz.code.tex, `\tikz@grow@direction`),
-each joined to its parent by an `edge from parent` path. So a tree ships
-exactly the page its explicit spelling ships — nodes at the computed
-positions, `\draw (parent) -- (child)` for each edge — on `Layout.Out` and
-in the typed SVG alike: growth up flips the sibling order, `grow'` turns it
-back, a level style sets a level's spread, `missing` keeps its slot, an
-`edge from parent[draw=none]` draws no edge, the `edge from parent` style's
-tips stand at the parent, and a child's default name is pgf's
-`<parent>-<k>`. Invented content; each explicit position is the growth
-function's arithmetic and a LuaLaTeX probe of the same tree. -/
+/-- A tree is placed as pgf's growth function places it, shipping its explicit spelling's page. -/
 def tikzTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let dist := "[level distance=10mm, sibling distance=20mm]"
@@ -122,20 +107,12 @@ the edge style's tip stands at the parent",
       (let a := shownOf oneFace w; let b := shownOf oneFace e
        !a.lines.isEmpty && a.close b)
     t s!"tree: {name}: the typed SVG ships the explicit tree" (svgOf w == svgOf e)
-  -- A tree construct outside the subset is named, never dropped in silence.
   t "tree: child foreach is named"
     ((lossesOf (picDoc dist "\\node {R} child foreach \\x in {1,2} {node {\\x}};")).any
       fun d => d.code == "W0334" && hasStr d.message "child foreach")
 
 open Tests.TikzCoverage in
-/-- **A picture's statements read the colour and the font declared around
-them.** The invariant whose absence routed every picture that grouped its
-paths under `\textcolor`, `\color` or beamer's `\alert`: pgf's current
-colour (`.`) is TeX's colour in force, so a path or a node's text with no
-colour of its own sets in it, and a declaration holds to the end of its
-group (TeXbook ch. 5); a font or size declaration sets every node after it
-the same way. Read off `Layout.Out`: the stroke a path ships and the run a
-label sets. Invented content. -/
+/-- A picture's statements read the colour and the font declared around them. -/
 def tikzScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let grid : Ir.Color := { r := 42, g := 111, b := 78 }
@@ -152,7 +129,6 @@ def tikzScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let label := picDoc "" "\\textcolor{grid}{\\node at (0,0) {G};}\\node at (1,0) {K};"
   t "colour: a node's text sets in the colour in force"
     (runColorOf oneFace label "G" == some grid && runColorOf oneFace label "K" == some Ir.Color.black)
-  -- beamer's \alert over a statement: the slides class's alert colour.
   let deck := "\\documentclass{slides}\n\\theme{moloch}\n\\pictures{ tool = none }\n\\begin{document}\n" ++
     "\\begin{frame}{T}\n\\begin{tikzpicture}\n\\alert{\\draw (0,0) -- (1,0);}\\draw (0,1) -- (1,1);\n" ++
     "\\end{tikzpicture}\n\\end{frame}\n\\end{document}"
@@ -162,7 +138,6 @@ def tikzScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (!(deckDs.any fun d => d.code == "W0334") && alertInk != Ir.Color.black &&
       ((censusOf #[] (layoutOf oneFace deckDoc)).flatMap (·.pathStrokes)).map (·.1) ==
         #[alertInk, Ir.Color.black])
-  -- Size: the picture's font= and a declaration among the statements.
   let sizeOf (src : String) (needle : String) := lineSizeOf (censusOf #[] (layoutOf oneFace (elabStr src).1)) 0 needle
   let picFont := picDoc "[font=\\scriptsize]" "\\node at (0,0) {A};"
   let nodeFont := picDoc "" "\\node[font=\\scriptsize] at (0,0) {A};"
@@ -170,25 +145,15 @@ def tikzScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((sizeOf picFont "A").isSome && sizeOf picFont "A" == sizeOf nodeFont "A")
   let declSize := picDoc "" "{\\small\\node at (0,0) {A};}\\node at (2,0) {B};"
   let nodeSmall := picDoc "" "\\node[font=\\small] at (0,0) {A};\\node at (2,0) {B};"
-  t "size: a declaration among the statements sets the nodes after it in its group"
+  t "size: a declaration among the statements sets later nodes in its group"
     ((lossesOf declSize).isEmpty && sizeOf declSize "A" == sizeOf nodeSmall "A" &&
       sizeOf declSize "B" == sizeOf nodeSmall "B" && sizeOf declSize "A" != sizeOf declSize "B")
 
 open Tests.TikzCoverage in
-/-- **A path's operations draw what TikZ's path grammar says.** The
-invariant whose absence routed a picture of dots and a computation graph:
-`circle (r)` and `ellipse (a and b)` are closed curves about the current
-point (manual §14.6), `\fill` of one is the curve filled and `\filldraw`
-both; an arrow specification is two ends, `<-` a tip at the start and `<->`
-one at each (§16.2); `draw=none` strokes nothing; a `coordinate` names a
-point and reaches no box (§17.2.1); `above` and its siblings are the
-opposite anchor standing on the coordinate, a length shifting it (§17.5.2).
-Read off `Layout.Out` and the typed SVG; each explicit spelling is TikZ's
-own equivalence. Invented content. -/
+/-- A path's operations draw what TikZ's path grammar says. -/
 def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let grid : Ir.Color := { r := 42, g := 111, b := 78 }
-  -- Circles and ellipses: the figure's own geometry, filled or stroked.
   let dot := picDoc "" "\\fill (1,1) circle (2pt);"
   t "circle: a filled circle ships one filled ellipse of its radius, no stroke"
     ((lossesOf dot).isEmpty && match (drawsOf oneFace dot).toList with
@@ -221,7 +186,6 @@ def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     ((elabStr oval).1.body.foldl (fun n b =>
       n + (attrValuesOf (fun tag => tag == "ellipse" || tag == "circle") "cx"
         (HtmlDoc.blockNode {} b)).size) 0 == 1)
-  -- Tips at either end.
   let tipsOf (src : String) : Nat := (drawsOf oneFace src).foldl (fun n (g, fl, st) =>
     match g with
     | .path _ => if isTipDraw fl st then n + 1 else n
@@ -236,11 +200,9 @@ def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "tips: a two-ended specification draws both tips" ((lossesOf twin).isEmpty && tipsOf twin == 2)
   let latexBack := picDoc "" "\\draw[latex-] (0,0) -- (2,0);"
   t "tips: a named start tip draws" ((lossesOf latexBack).isEmpty && tipsOf latexBack == 1)
-  -- draw=none.
   let hidden := picDoc "" "\\draw[draw=none] (0,0) -- (1,0);\\node[draw, draw=none] at (0,1) {A};"
   t "draw=none: neither the path nor the node's outline strokes"
     ((lossesOf hidden).isEmpty && (shownOf oneFace hidden).boxes.isEmpty)
-  -- Coordinates.
   let viaCoord := picDoc "" "\\coordinate (c) at (1,1);\\draw (0,0) -- (c);"
   let direct := picDoc "" "\\draw (0,0) -- (1,1);"
   t "coordinate: an edge to a coordinate is the edge to its point"
@@ -248,7 +210,6 @@ def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let far := picDoc "" "\\coordinate (k) at (5,5);\\draw (0,0) -- (1,1);"
   t "coordinate: a coordinate reaches no box"
     ((shownOf oneFace far).close (shownOf oneFace direct) && svgOf far == svgOf direct)
-  -- Placement anchors.
   let above := picDoc "" "\\node[above] at (0,0) {A};\\draw (0,0) -- (1,0);"
   let south := picDoc "" "\\node[anchor=south] at (0,0) {A};\\draw (0,0) -- (1,0);"
   t "anchor: above is the south anchor on the coordinate"

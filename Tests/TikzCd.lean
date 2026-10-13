@@ -6,14 +6,12 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-/-- An invented three-object diagram in tikz-cd's own syntax, both arrow
-spellings: the bracket form with a quoted label, and the brace form with a
-direction group and a label group. -/
+/-- A three-object diagram in tikz-cd's syntax, with both arrow spellings. -/
 def cdDiagram : String :=
   "\\begin{tikzcd} Alpha \\arrow[r, \"f\"] & Beta \\arrow{d}{g} \\\\ & Gamma \\end{tikzcd}"
 
-/-- The three displays a diagram stands alone in: `\[…\]`, `equation*`, and an
-unnumbered alignment — every one the reference talks wrote one in. -/
+/-- The three displays a diagram stands alone in: `\[…\]`, `equation*` and an unnumbered
+alignment. -/
 def cdDisplaysOf (d : String) : List (String × String) :=
   [("a bracket display", "\\[" ++ d ++ "\\]"),
    ("equation*", "\\begin{equation*}" ++ d ++ "\\end{equation*}"),
@@ -21,28 +19,17 @@ def cdDisplaysOf (d : String) : List (String × String) :=
 
 def cdDisplays : List (String × String) := cdDisplaysOf cdDiagram
 
-/-- The same diagram with an arrow key the native reader does not draw (a
-hooked tail): the one the boundary still draws. -/
+/-- The diagram with an arrow key the native reader does not draw (a hooked tail). -/
 def cdLossy : String :=
   "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"f\", hook] & \\mathrm{Beta} \\arrow{d}{g} " ++
     "\\\\ & \\mathrm{Gamma} \\end{tikzcd}"
 
-/-- The diagram with upright cells and labels, whose text a page census
-reads back as written. -/
+/-- The diagram with upright cells and labels, whose text a page census reads back as written. -/
 def cdUpright : String :=
   "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"\\mathrm{f}\"] & \\mathrm{Beta} " ++
     "\\arrow{d}{\\mathrm{g}} \\\\ & \\mathrm{Gamma} \\end{tikzcd}"
 
-/-- **A commutative diagram standing alone in a display ships a picture.**
-The invariant whose absence set every diagram of the reference talks as
-its own source text under W0012: a `tikzcd` is TikZ ink set as display
-mathematics, so the boundary draws it — one request of the diagram's own
-kind, its standalone opening `tikzcd` outside any `tikzpicture` — and the
-display ships the boundary's box with no text floor, on the PDF page and
-in the HTML display alike. Where no tool draws it, or the document refused
-the boundary, the display keeps the floor it had, named: a diagram is never
-a placeholder. A diagram beside other mathematics stays the formula's. The
-page claims read `Layout.Out` and the typed HTML tree; invented content. -/
+/-- A commutative diagram standing alone in a display ships a picture, never a placeholder. -/
 def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pre := "\\usepackage{tikz-cd}\n"
@@ -87,8 +74,6 @@ def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
        !hasStr (censusText page) "arrow")
     t s!"the HTML display holds the request's image: {form}"
       (displayImgs doc == 1)
-  -- Every other door draws the diagram natively and names what it could
-  -- not draw: never a placeholder, never the formula's text.
   let bracket := "\\[" ++ cdLossy ++ "\\]"
   let (closed, closedDs) := elabStr (dvDoc ("\\pictures{ tool = none }\n" ++ pre) bracket)
   t "with the boundary refused, the diagram draws natively, its loss named"
@@ -102,21 +87,13 @@ def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let (mixed, mixedDs, _) := firstPass (dvDoc pre ("\\[ x + " ++ cdDiagram ++ "\\]"))
   t "a diagram beside other mathematics stays the formula's floor, named"
     ((Ir.pictureRefs mixed).isEmpty && mixedDs.any (·.code == "W0012"))
-  -- A numbered alignment owes its number, so it keeps the formula's door,
-  -- named as the formula's floor is.
+  -- A numbered alignment owes its number, so it keeps the formula's door.
   let (numbered, numberedDs, _) := firstPass (dvDoc pre
     ("\\begin{align}" ++ cdDiagram ++ "\\end{align}"))
   t "a numbered alignment's diagram keeps the formula's door, named"
     ((Ir.pictureRefs numbered).isEmpty && numberedDs.any (·.code == "W0012"))
 
-/-- **A boundary standalone compiles what its document compiled, at the size
-its picture stands at.** The invariant whose absence withdrew seven of the
-reference talks' ten diagrams to their text floor: the standalone met an
-operator the document declared with `\DeclareMathOperator`, a length it
-declared and set, and beamer's `\alert`, none of which it had — and set
-every diagram at ten points under a `\large` in an eleven-point deck. Each
-door is held over the request the driver fulfils (`Ir.pictureRefs`), its
-inputs over `Ir.pictureInputs`; invented content. -/
+/-- A boundary standalone compiles what its document compiled, at the size its picture stands at. -/
 def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let firstPass (src : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
@@ -127,7 +104,6 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Ir.pictureRefs (firstPass src).1)[0]?).map (·.2)).getD ""
   let pre := "\\usepackage{amsmath}\n\\usepackage{tikz-cd}\n"
   let display (body : String) : String := "\\[" ++ body ++ "\\]"
-  -- The class takes the document's body size; ten points opens as it did.
   let ten := reqOf (dvDoc pre (display cdLossy))
   let eleven := reqOf ("\\documentclass[11pt]{article}\n" ++ pre ++
     "\\begin{document}\n" ++ display cdLossy ++ "\n\\end{document}")
@@ -135,7 +111,6 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr ten "\\documentclass{standalone}\n\\usepackage{tikz}\n")
   t "an eleven-point document's standalone takes its body size"
     (hasStr eleven "\\documentclass[11pt]{standalone}")
-  -- The size in force where the diagram stands is the standalone's.
   let largeSrc := dvDoc pre ("{\\large\n" ++ display cdLossy ++ "\n}")
   let large := reqOf largeSrc
   t "a diagram under a size switch is drawn at that size"
@@ -146,7 +121,6 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a body size the class holds no option for is set by its own switch"
     (Ir.pictureSwitch { fontSize := Dim.pt 9 } none ==
       some s!"\\fontsize\{{(Dim.pt 9).toPtString}pt}\{{(Ir.leadingFor (Dim.pt 9)).toPtString}pt}\\selectfont")
-  -- The document's own operators and lengths ride to the standalone.
   let ops := reqOf (dvDoc (pre ++ "\\DeclareMathOperator{\\gradient}{grad}\n" ++
       "\\newlength{\\thumbside}\\setlength{\\thumbside}{.5in}\n")
     (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\", hook] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
@@ -154,16 +128,14 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr ops "\\renewcommand{\\gradient}{\\operatorname{grad}}")
   t "a length the document declared and set is the standalone's, guarded"
     (hasStr ops "\\ifdefined\\thumbside\\else\\newlength{\\thumbside}\\fi\\setlength{\\thumbside}{.5in}")
-  -- beamer's alert is a slides document's, and its colour rides with it.
   let alerted := reqOf ("\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n\\begin{frame}\n" ++
     display "\\begin{tikzcd} A \\arrow[r, hook] & \\alert{B} \\end{tikzcd}" ++ "\n\\end{frame}\n\\end{document}")
-  t "a slides document's diagram that alerts carries the alert and its colour"
+  t "an alerting slides diagram carries the alert and its colour"
     (hasStr alerted "\\RenewDocumentCommand{\\alert}{d<>m}" && hasStr alerted "\\definecolor{alert}")
   t "an article's standalone carries no alert of beamer's"
     (!hasStr ten "\\alert")
-  -- The files a request reads, as its standalone spells them.
   let inputs := Ir.pictureInputs ("\\includegraphics [keepaspectratio,width=\\thumbside ]" ++
     "{figures/thumb.png}\\includegraphics{plain}\\includegraphicsx{other}" ++
     "\\includegraphics*{figures/thumb.png}\\newcommand\\pic[1]{\\includegraphics{#1}}")
-  t "a request's inputs are the files its \\includegraphics calls name, once each"
+  t "a request's inputs are its \\includegraphics files, once each"
     (inputs == #["figures/thumb.png", "plain"])

@@ -4,8 +4,8 @@ import LeanTex.Core.PdfStruct
 import LeanTex.Core.PdfRowRecovery
 import LeanTex.Core.PdfAgreement
 
-/-! Ordinary consumers use typed content operations and structure
-projections without depending on rendering, allocation, or traversal helpers. -/
+/-! Ordinary consumers use typed content operations and structure projections without the writer's
+helpers. -/
 
 namespace Tests.PdfInterfaces
 
@@ -97,7 +97,7 @@ example (geom : Layout.Geom) (fonts : Font.FontSet) (pages : Array Layout.PageOu
       Pdf.write geom fonts pages info images outline streams tree operations programs = bytes :=
   Pdf.writeChecked_exact geom fonts pages info images outline streams tree operations programs bytes
 
-/-- Typed publishers can inspect every refusal without reading serializer internals. -/
+/-- Typed publishers inspect every refusal without the serializer's internals. -/
 example (error : Pdf.WriteError) : Nat :=
   match error with
   | .byteOffset bytes => bytes

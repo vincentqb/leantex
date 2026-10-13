@@ -17,10 +17,8 @@ private structure MacroForwardCase where
   visible : String
   roles : Array (String × Nat)
 
-/-- Expansion reads arguments from the caller, executes each substituted
-occurrence in source order, and owns only the resulting ink. The complete
-serialized typed tree observes role ancestry, separators and whitespace;
-the shipped glyph census retains exact positions and paint. -/
+/-- Expansion reads arguments from the caller, executes each occurrence in order and owns only the
+resulting ink. -/
 private def macroForwardArtifacts (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (c : MacroForwardCase) : IO Unit := do
   let source := dvDoc ("\\pagestyle{empty}" ++ c.pre) c.body
@@ -48,9 +46,8 @@ private def macroForwardArtifacts (ref : IO.Ref (List String)) (fonts : Font.Fon
   unless ds.all (·.severity == .note) do
     IO.println s!"{label}: {repr (ds.filter (·.severity != .note))}"
 
-/-- A forwarded call has the same argument/state semantics as its direct
-spelling. The stateful repeated-argument expectations are witnessed by
-synthetic LuaLaTeX pages: `AX/T/Z` and `AUnset/AB/T/Z`. -/
+/-- A forwarded call has the argument and state semantics of its direct spelling, as LuaLaTeX pages
+witness. -/
 def macroForwardArgumentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let native (name : String) := "\\define\\" ++ name ++ "(a: content){\\a}"
   let variants := #[
@@ -121,8 +118,7 @@ def macroForwardArgumentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     ] : Array MacroForwardCase) do
     macroForwardArtifacts ref fonts c
 
-  -- Settlement is speculative; a malformed actual use must still account
-  -- for its unread arguments.
+  -- Settlement is speculative; a malformed use must still account for its unread arguments.
   let missing := dvDoc
     "\\newcommand\\wordprobe[1]{#1}\\def\\zeroprobe{\\wordprobe}"
     "\\zeroprobe"
@@ -130,9 +126,8 @@ def macroForwardArgumentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     ((elabStr missing).2.any fun d =>
       d.code == "W0104" && d.subject == some "cond:arguments:wordprobe")
 
-/-- Settling a reusable zero-argument replacement must leave each
-parameterized child's role fresh at every use, without owning the wrapper.
-Includes the forwarding checks, so the suite has one entry point. -/
+/-- Settling a zero-argument replacement leaves each parameterized child's role fresh at every use;
+the suite's one forwarding entry point. -/
 def macroForwardingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   macroForwardArgumentsChecks ref fonts
   let native (name : String) := "\\define\\" ++ name ++ "(a: content){\\a}"
@@ -161,7 +156,6 @@ def macroForwardingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     controlBody := "A\\wordprobe{\\textbf{X}}\\wordprobe{\\textbf{X}}/Z"
     visible := "AXX/Z", roles := #[("wordprobe", 2), ("maketitle", 0)] }
 
-  -- Builtin refusals still keep native ink.
   for (label, replacement) in #[
       ("empty", ""), ("unknown", "\\begingroup\\unreadprobe\\endgroup")] do
     let pre := "\\title{Title}\\author{Author}\\date{}"

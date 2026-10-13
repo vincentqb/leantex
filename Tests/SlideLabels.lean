@@ -8,8 +8,7 @@ open LeanTex.Core
 
 namespace SlideLabels
 
-/-- An empty alias leaves a section divider's ID unspecified. All other
-aliases are the authored frame slug or the existing reveal spacer ID. -/
+/-- Expected labels; an empty alias leaves a section divider's id unspecified. -/
 private structure Expected where
   snaps : Array (String × String)
   pageMarkers : Array String
@@ -21,8 +20,8 @@ private structure Expected where
 private def attr (attrs : Array (String × String)) (key : String) : Option String :=
   (attrs.find? (·.1 == key)).map (·.2)
 
-/-- Inspect emitted elements and shipped page ink. In particular, no expected
-number is computed from the document's frame census: that is what broke. -/
+/-- Reads emitted elements and shipped ink, computing no expected number from the document's frame
+census. -/
 private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (name : String) (input : Ir.Doc × Array Diag) (expected : Expected) : IO Unit := do
   let (doc, ds) := input
@@ -45,7 +44,7 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (labels == expected.snaps.map (·.2))
   t "canonical labels are unique"
     (labels.toList.eraseDups.length == labels.size)
-  t "authored slugs and reveal spacer IDs still identify their original snaps"
+  t "authored slugs and reveal spacer IDs identify their original snaps"
     (snaps.size == expected.snaps.size &&
       expected.snaps.toList.zipIdx.all fun ((alias, _), i) =>
         alias.isEmpty || (snaps[i]?.bind fun attrs => attr attrs "id") == some alias)
@@ -59,7 +58,7 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (tracks.map (fun attrs => attr attrs "data-slide-label") ==
       expected.tracks.map (some ∘ Prod.snd))
   let collisions := htmlDs.filter (·.code == "W0327")
-  t "different-target alias collisions are named once by their shadowed fragment"
+  t "a cross-target alias collision is named once by its shadowed fragment"
     (collisions.size == expected.shadowedFragments.size &&
       expected.shadowedFragments.all fun fragment =>
         (collisions.filter (·.subject == some fragment)).size == 1)
@@ -105,9 +104,7 @@ private def mixedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
 
 private def numericAliasChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit :=
-  -- The first frame's authored #2 conflicts with the second frame's canonical
-  -- number; the authored #1 and dotted-title slug #1-2 must also survive.
-  -- A no-title deck still starts its canonical sequence at 1.1, not 0 or 2.
+  -- The first frame's authored #2 conflicts with the second frame's canonical number.
   verify ref fonts "numeric aliases without a title page" (elabStr (deck169 fractionTheme
     ("\\begin{frame}{2}DigitAlpha\n\n\\pause\nDigitBeta\\end{frame}\n" ++
      "\\begin{frame}[standout]{1.2}DottedBody\\end{frame}\n" ++
@@ -189,8 +186,7 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let body :=
     "\\section{RepeatSection}\n\\begin{frame}{One}FirstBody\\end{frame}\n" ++
     "\\section{RepeatSection}\n\\begin{frame}{Two}SecondBody\\end{frame}"
-  -- Without sectionProgress these headings still ship ink, but are not HTML
-  -- snap stages. Do not equate that deck's physical page count with its snaps.
+  -- Without sectionProgress these headings ship ink but are no snap stages.
   verify ref fonts "sections without progress" (elabStr (deck169 "\\theme{default}" body)) {
     snaps := #[("one", "1"), ("two", "2")]
     pageMarkers := #["RepeatSection", "FirstBody", "RepeatSection", "SecondBody"]
@@ -203,8 +199,6 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     pageFooters := #[none, some ("", "1"), none, some ("", "2")]
     htmlFooters := #[("", "1"), ("", "2")]
   }
-  -- A prior heading with no divider must not consume section-0. The palette
-  -- change is read at each stage, not just from the document's final palette.
   verify ref fonts "only emitted dividers consume section labels" (elabStr (deck169
     "\\theme{default}"
     ("\\section{UnmarkedSection}\n\\begin{frame}{One}FirstBody\\end{frame}\n" ++
@@ -221,9 +215,7 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
 
 private def repeatedTitleChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
-  -- The surface currently consumes only the first \maketitle / \titlepage.
-  -- Compose copies of a source-elaborated title frame to exercise repeated
-  -- emitted title pages without making a parser change part of this test.
+  -- The surface reads only the first title, so repeated title pages are composed from copies.
   let (title, titleDs) := elabStr (deck169
     (fractionTheme ++ "\\title{TitleEcho}") "\\maketitle")
   let (first, firstDs) := elabStr (deck169 fractionTheme
@@ -257,8 +249,6 @@ private def collisionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
     htmlFooters := #[("", "1 / 3"), ("", "2 / 3"), ("", "3 / 3")]
     shadowedFragments := #["titlepage", "section-0", "2"]
   }
-  -- Both old reveal spacers are still present. They belong to the main
-  -- frame, whereas the canonical appendix routes belong to later frames.
   verify ref fonts "appendix labels shadow main reveal aliases" (elabStr (deck169
     (fractionTheme ++ "\\usepackage{appendixnumberbeamer}")
     ("\\begin{frame}{Appendix}MainAlpha\n\n\\pause\nMainBeta\\end{frame}\n" ++
@@ -312,7 +302,7 @@ private def linkChecks (ref : IO.Ref (List String)) : IO Unit := do
     attr attrs "href"
   t "typed anchors preserve every authored canonical and legacy href"
     (hrefs == targets.map ("#" ++ ·))
-  t "stepped, semantic and appendix fragments including first-step aliases resolve"
+  t "stepped, semantic and appendix fragments resolve, first-step aliases too"
     (!htmlDs.any (·.code == "W0326"))
   let (missing, _) := elabStr (source
     "\\href{#missing-slide}{Missing}\\href{#missing-slide}{Again}")
@@ -320,8 +310,7 @@ private def linkChecks (ref : IO.Ref (List String)) : IO Unit := do
   let unresolved := missingDs.filter (·.code == "W0326")
   t "a nonexistent fragment is still named once"
     (unresolved.size == 1 && unresolved.all (fun d => hasStr d.message "#missing-slide"))
-  -- The exemption needs a shipped deck script. A static article has neither
-  -- those canonical routes nor their targets, even though their names parse.
+  -- The exemption needs a shipped deck script; a static article has no canonical routes.
   let (article, _) := elabStr (dvDoc "\\theme{default}"
     ("\\href{#1.1}{Step}\\href{#titlepage}{Title}" ++
      "\\href{#section-0}{Section}\\href{#appendix-1}{Appendix}"))
@@ -334,10 +323,8 @@ private def linkChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 end SlideLabels
 
-/-- Canonical fragments and authored aliases over typed HTML, with logical
-frame counts independently witnessed by shipped page order and footer ink.
-The caller can use `findFont` and `oneFaceOf` from Tests.Support, so these
-invented decks need only the checked-in corpus font. -/
+/-- Canonical fragments and authored aliases over the typed HTML, frame counts witnessed by page
+order and footer ink. -/
 def slideLabelChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   SlideLabels.mixedChecks ref fonts
   SlideLabels.numericAliasChecks ref fonts

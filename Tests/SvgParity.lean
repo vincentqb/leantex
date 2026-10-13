@@ -7,15 +7,8 @@ public import LeanTex.Core.SvgPoster
 
 public section
 
-/-! **The native reader against the tools it replaced.** Over the shared
-matrices, the native judge (`Svg.judge`) answers as libxml2's SAX pass and
-XPath did, but for the declared widenings (`svgBoundaryWidened`) — a
-`data:` image the XPath's base64 PNG or JPEG reference did not spell, a
-local reference to an engine figure id, a fragment or numeric colour
-function in CSS — and the native terminal projection
-(`SvgPoster.terminal`) refuses what libxslt's stylesheet refused and, where
-both read a timeline, ends in a pose whose import paints the marks the
-stylesheet's output paints. External: needs xmllint and xsltproc. -/
+/-! The native judge and terminal projection answer as libxml2 and libxslt did over the shared
+matrices, but for the declared widenings (`svgBoundaryWidened`); needs xmllint and xsltproc. -/
 
 namespace Tests
 

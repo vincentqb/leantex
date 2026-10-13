@@ -6,12 +6,11 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- The shipped pages of a document, as one comparable value: two documents
-set the same artifact exactly when these agree. -/
+/-- The shipped pages of a document as one comparable value. -/
 def pagesOf (fonts : Font.FontSet) (src : String) : String :=
   reprStr (layoutOf fonts (elabStr src).1).pages
 
-/-- A body each parameter's site reads, invented text throughout. -/
+/-- A body each parameter's site reads. -/
 def settingsBodies : List (String × String) :=
   [("paras", "Alpha words here.\n\nBravo words here.\n\nCharlie words here."),
    ("figure", "Alpha words.\n\n\\begin{figure}[h]\\centering\nBravo box.\n" ++
@@ -40,9 +39,8 @@ def settingsBodies : List (String × String) :=
    ("displaylong", "Alpha words before this display reach past it.\n\\[ x = y \\]\n" ++
       "Bravo words after.")]
 
-/-- One probe per `Compat.paramSites` row an engine site carries: the
-LaTeX spelling, the native spelling of the same value, and the body that
-reads it. -/
+/-- One probe per carried `Compat.paramSites` row: the LaTeX spelling, the native spelling of the
+same value, and the body that reads it. -/
 def paramProbes : List (String × String × String × String) :=
   [("parskip", "\\setlength{\\parskip}{19pt}", "\\page{ parskip = 19pt }", "paras"),
    ("textwidth", "\\setlength{\\textwidth}{4in}", "\\page{ textwidth = 4in }", "paras"),
@@ -81,31 +79,15 @@ def paramProbes : List (String × String × String × String) :=
    ("leftmarginiv", "\\setlength{\\leftmarginiv}{41pt}",
      "\\style{itemize4}{ indent = 41pt }\\style{enumerate4}{ indent = 41pt }", "list4")]
 
-/-- Does a row's site carry the value onto the page? The rows every probe
-must cover: a page key, a token, a list level the engine nests to. -/
+/-- Does a row's site carry the value onto the page: a page key, a token, or a list level the engine
+nests to? -/
 def carried : Compat.ParamSite → Bool
   | .page _ | .token _ => true
   | .listIndent l => l ≤ 4
   | .sizeReset _ | .listReset | .unmodelled _ => false
 
-/-- **A LaTeX length setting lands where LaTeX's own code puts it.**
-`Compat.paramSites` gives each kernel and booktabs length its site, and
-every claim is checked on the shipped page (`Layout.Out`), quantified over
-the table:
-
-- a row that claims an engine site is carried: the setting sets exactly the
-  page its native spelling sets, and a different page from the same
-  document without it — so a row naming a token nobody reads fails here,
-  the shape that left `\leftmargini` and `\skip\footins` declared and
-  unread;
-- a row LaTeX itself overrides before anything reads it — `\normalsize` at
-  `\begin{document}`, `\@listi` at every list — sets the page the document
-  sets without it, and says so in a note;
-- a row no engine site reads is named where it stands (W0104, keyed by the
-  parameter) and sets nothing.
-
-The table and the probes close in both directions: a carried row without
-a probe fails, and so does a probe naming no carried row. -/
+/-- A LaTeX length setting lands where LaTeX's own code puts it, for every `Compat.paramSites` row,
+on the shipped page. -/
 def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre body : String) : String :=
@@ -138,8 +120,7 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       ((dvE src).any fun d => d.code == "N0100" &&
         d.subject == some s!"ctrl:nothing:setlength:{n}")
   -- In the body a display skip stands until the next size change: its token.
-  -- A line ending short of the formula spends the short skips, a longer one
-  -- the others, so each probe reaches the display its skip is read by.
+  -- A line ending short of the formula spends the short skips, a longer one the others.
   for (n, bodyKey) in [("abovedisplayskip", "displaylong"), ("belowdisplayskip", "displaylong"),
       ("abovedisplayshortskip", "display"), ("belowdisplayshortskip", "display")] do
     let body := bodyOf bodyKey
@@ -147,17 +128,12 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     t s!"a body '\\{n}' sets the page its token sets"
       (set == pagesOf oneFace (doc "" (s!"\\tokens\{ {n} = 31pt }\n\n" ++ body)))
     t s!"a body '\\{n}' moves the display it reaches" (set != pagesOf oneFace (doc "" body))
-  -- Every row no site reads is named where it stands, once per parameter.
   for (n, site) in Compat.paramSites do
     if let .unmodelled _ := site then
       let ds := dvE (doc s!"\\setlength\{\\{n}}\{7pt}" "Alpha words.")
       t s!"'{n}' is named where it is set"
         ((ds.filter fun d => d.code == "W0104" &&
           d.subject == some s!"ctrl:setlength:{n}").size == 1)
-  -- And sets nothing, which is what the warning says: over a body every
-  -- probe reads, the page is the document's without it. A row the engine
-  -- does read fails here, the shape that named `\partopsep` "not honoured"
-  -- while `Ir.partopsepFor` spent it.
   let every := String.intercalate "\n\n" (settingsBodies.map (·.2))
   for (n, site) in Compat.paramSites do
     if let .unmodelled _ := site then
@@ -171,12 +147,8 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       flush.any (·.subject == some "ctrl:nothing:setlength:parindent"))
 
 
-/-- **A parameter set in a style file the document loads is the style's
-business**, the premise `Compat.setLength` demotes on: the page is the one
-the same setting ships from the document's own file, and only the
-diagnostic's severity moves — a warning where the author wrote it, a note
-where a venue's file did, which N0020 names once. Two builds differing by
-the gate's own condition, so a demotion hiding a difference fails here. -/
+/-- A parameter set in a loaded style file ships the page its document spelling ships; only the
+diagnostic's severity moves. -/
 def paramDemoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let sub (file src : String) : Array Parse.Raw := (Parse.parse file (Lex.lex file src).1).1
@@ -188,20 +160,14 @@ def paramDemoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       { line := 2, col := 1 }] ++ tail)
   let (dOwn, dsOwn) := Elab.runRaws "main.tex" (head ++ sub "main.tex" setting ++ tail)
   let named (ds : Array Diag) := ds.filter (·.subject == some "ctrl:setlength:footnotesep")
-  t "a parameter set in a style file ships the page it ships from the document"
+  t "a style file's parameter ships the page the document's does"
     (reprStr (layoutOf oneFace dSty).pages == reprStr (layoutOf oneFace dOwn).pages)
-  t "a parameter set in a style file is a note there and a warning in the document"
+  t "a style file's parameter is a note, the document's a warning"
     ((named dsSty).map (·.severity) == #[.note] && (named dsOwn).map (·.severity) == #[.warning])
 
 
-/-- **A redefined `\normalsize` sets the document's display skips, and a
-size command in the preamble sets nothing.** `\begin{document}` runs
-`\normalsize` (measured under lualatex), so the display skips a venue's
-redefinition assigns are the body's — the page is the one their native
-tokens set, and not the one the same redefinition without them sets — and a
-`\normalsize` or `\small` standing at the preamble's top level is gone by
-the first line, as LaTeX's is, said in a note instead of an unknown-command
-warning. Asserted on the shipped page. -/
+/-- A redefined `\normalsize` sets the document's display skips, and a size command in the preamble
+sets nothing. -/
 def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre body : String) : String :=
@@ -216,7 +182,7 @@ def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let native := "\\page{ fontsize = 10pt, leading = 0.913 }" ++
     "\\tokens{ abovedisplayskip = 3pt plus 2pt minus 1pt, belowdisplayskip = abovedisplayskip }"
   let set := pagesOf oneFace (doc (redef skips) body)
-  t "a redefined \\normalsize sets the page its native size and display skips set"
+  t "a redefined \\normalsize ships as its native size and skips do"
     (set == pagesOf oneFace (doc native body))
   t "a redefined \\normalsize's display skips move the page"
     (set != pagesOf oneFace (doc (redef "") body))
@@ -227,28 +193,20 @@ def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"a preamble '\\{name}' says what LaTeX does with it, and is not unknown"
       ((dvE src).any (·.subject == some s!"ctrl:nothing:size:{name}") &&
         !(dvE src).any (·.code == "W0301"))
-  -- A skip copied from one the class set is read through the length door:
-  -- the class's value is unknown here, so the copy is named once and the
-  -- skip keeps its value — which is the copy, since the class's two are one.
+  -- A copy of a class skip is unknown here: named once, the skip keeping its value.
   let copy := doc (redef "\\belowdisplayskip\\abovedisplayskip\n") body
   let cds := dvE copy
   t "a redefined \\normalsize copying a skip it does not set builds"
     (!cds.any (·.severity == .error))
-  t "a redefined \\normalsize copying a skip it does not set names the copy once"
+  t "a \\normalsize copying a skip it does not set names the copy once"
     ((cds.filter (·.code == "W0104")).map (·.subject) ==
       #[some "ctrl:setlength:belowdisplayskip:value"])
-  t "a redefined \\normalsize copying a skip it does not set ships the page without the copy"
+  t "a \\normalsize copying a skip it does not set ships the page without it"
     (pagesOf oneFace copy == pagesOf oneFace (doc (redef "") body))
 
 
-/-- **A counter set in the preamble holds where the body starts, and
-`secnumdepth` decides which headings number.** LaTeX's counter commands are
-preamble-legal (ltcounts.dtx), so they move to the body's start and the one
-counter arm reads them in flow order. A heading deeper than `secnumdepth`
-neither numbers nor steps (ltsect.dtx `\@sect`, measured under lualatex: a
-subsection hidden at depth 1 leaves the next numbered one `1.1`), and the
-footnote and equation counters start where they were set. Asserted on the
-shipped page, against the document spelled with the number by hand. -/
+/-- A counter set in the preamble holds where the body starts, and `secnumdepth` decides which
+headings number. -/
 def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre body : String) : String :=
@@ -272,26 +230,23 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a preamble counter command is not unknown"
     (!(dvE (doc "\\setcounter{secnumdepth}{1}\\stepcounter{footnote}" heads)).any
       (·.code == "W0301"))
-  t "a preamble counter the engine does not keep is named as it is in the body"
+  t "an unkept preamble counter is named as in the body"
     ((dvE (doc "\\setcounter{tocdepth}{2}" heads)).any fun d =>
       d.code == "W0104" && d.subject == some "ctrl:setcounter:tocdepth")
-  -- A value held in a register: the kernel's constants read as the
-  -- integers they are (plain.tex), any other register is named once and
-  -- the counter keeps its value — never an error.
+  -- Kernel constant registers read as their integers (plain.tex); any other register is named once.
   let zero := doc "\\makeatletter\\setcounter{secnumdepth}{\\z@}\\makeatother" heads
   t "a counter set to '\\z@' builds and reads zero"
     (!(dvE zero).any (·.severity == .error) &&
       pagesOf oneFace zero == pagesOf oneFace (doc "\\setcounter{secnumdepth}{0}" heads))
   t "a counter set to '\\z@' moves the page" (pagesOf oneFace zero != pagesOf oneFace (doc "" heads))
   let reg := doc "\\makeatletter\\setcounter{secnumdepth}{\\@tempcnta}\\makeatother" heads
-  t "a counter set to a register it cannot read builds, named once on its value"
+  t "a counter set to an unreadable register builds, named once"
     (!(dvE reg).any (·.severity == .error) &&
       ((dvE reg).filter (·.code == "W0104")).map (·.subject) ==
         #[some "ctrl:setcounter:secnumdepth:value"])
   t "a counter set to a register it cannot read keeps its value"
     (pagesOf oneFace reg == pagesOf oneFace (doc "" heads))
-  -- `secnumdepth` past three numbers the run-in levels (classes.dtx:
-  -- `\paragraph` is level four, `\subparagraph` five), each after its parent.
+  -- `secnumdepth` past three numbers the run-in levels (`\paragraph` four, `\subparagraph` five), each after its parent.
   let runIn := "\\section{Alpha}\\subsection{Bravo}\\subsubsection{Charlie}\n" ++
     "\\paragraph{Delta} Echo words.\n\n\\subparagraph{Foxtrot} Golf words."
   let four := censusOfSrc oneFace (doc "\\setcounter{secnumdepth}{4}" runIn)
@@ -303,17 +258,7 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (!pageHas (censusOfSrc oneFace (doc "" runIn)) 0 "1.1.1.1")
 
 
-/-- **A list level's parameters are its class macro's, run where a list of
-that depth opens.** `\list` calls `\@listi` … `\@listvi` for its depth
-(ltlists.dtx), so a redefinition assigning `\leftmargin`, `\topsep`,
-`\itemsep` and `\parsep` sets that level's indent, opening space and gap
-between items, over the values the enclosing level left. The outermost is
-the one trap, measured under lualatex: a class's `\normalsize` does
-`\let\@listi\@listI` and `\begin{document}` runs it, so a preamble
-`\@listi` stands only under a redefined `\normalsize` that omits the reset
-— as a venue style's does — and otherwise sets exactly the page the
-document sets without it. Asserted on the shipped page against the native
-styles spelled with the values. -/
+/-- A list level's parameters are its class macro's, run where a list of that depth opens. -/
 def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre body : String) : String :=
@@ -347,13 +292,10 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "a redefined \\@listii moves the page"
     (second != pagesOf oneFace (doc "\\setlength{\\leftmarginii}{30pt}" body))
   let ds := dvE (doc listii body)
-  t "a list level's arithmetic is read with it, and what it sets unread is named once"
+  t "a list level's arithmetic is read with it; unread settings are named once"
     (!ds.any (·.subject == some "ctrl:advance") &&
       (ds.filter (·.subject == some "ctrl:setlength:labelwidth")).size == 1)
-  -- A body assignment between two lists reaches the second in LaTeX
-  -- exactly when the level's macro leaves the parameter be: the preamble's
-  -- styles are judged on the preamble alone, and a reach the engine's
-  -- per-level lists cannot follow is named.
+  -- A body assignment between two lists reaches the second only where the level's macro leaves it be.
   let between (set : String) : String :=
     "Alpha words.\n\\begin{itemize}\n\\item One.\n\\item Two.\n\\end{itemize}\n" ++ set ++
       "\nBravo words.\n\\begin{itemize}\n\\item Three.\n\\item Four.\n\\end{itemize}\nCharlie."
@@ -375,17 +317,8 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
 
 
 
-/-- **Every LaTeX-valid length setting builds: one the door reads is the
-value it holds, and one it cannot read is named once and changes nothing.**
-The door evaluates a value where it stands, as TeX copies a register's value
-(a kernel parameter the document set, `\medskipamount`, `-\x`,
-`\dimexpr … \relax`, TeX's own `\parskip 6pt`), and the page is the one the
-literal spelling sets. A value it cannot evaluate — a kernel parameter's
-class value, infinite glue, a command that measures text — is W0104 once,
-keyed on the parameter, and the page is the one the document ships without
-the setting: never an error, never stray text. The list idiom, a setting
-before a list's first `\item`, builds the same way. Asserted on the shipped
-page and the structured diagnostics. -/
+/-- Every LaTeX-valid length setting builds: one the door reads holds its value, one it cannot read
+is named once and changes nothing. -/
 def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -440,8 +373,7 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       ((ds.filter fun d => d.code == "W0104").map (·.subject) ==
         #[some s!"ctrl:setlength:{n}:value"])
     t s!"'{pre}' ships the page the document ships without it" (pagesOf oneFace src == bare)
-  -- A definition's body runs where the command is used: nothing in it is
-  -- judged where it is defined, whatever it copies.
+  -- A definition's body runs where the command is used, so nothing in it is judged where it is defined.
   for pre in ["\\newcommand{\\probesize}{\\setlength{\\belowdisplayskip}{\\abovedisplayskip}}",
       "\\newcommand{\\probesize}{\\belowdisplayskip\\abovedisplayskip}",
       "\\newcommand{\\probesize}{\\addtolength{\\parskip}{2pt}}"] do
@@ -453,7 +385,7 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let idiom := doc "" (listBody "\\setlength{\\itemsep}{0pt}")
   let ids := dvE idiom
   t "a length set before a list's first item builds" (!ids.any (·.severity == .error))
-  t "a length set before a list's first item is named once, as spacing only that list"
+  t "a length before a list's first item is named once, spacing that list only"
     ((ids.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:itemsep"])
   t "a length set before a list's first item keeps the list's level spacing"
     (pagesOf oneFace idiom == pagesOf oneFace (doc "" (listBody "")))
@@ -472,12 +404,8 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "a counter set to another's value builds" (!(dvE valued).any (·.severity == .error))
 
 
-/-- **An assignment is the value later arithmetic reads only where TeX makes
-it: not in a definition's body, which runs where the command is used, and not
-past the group or environment it stands in** (TeXbook ch. 24: assignments
-are local to their group). Measured as the gap a `\vspace` of the length
-sets on the shipped page, against the document that sets the value LaTeX
-computes (lualatex: 11pt in every row). -/
+/-- An assignment is the value later arithmetic reads only where TeX makes it: not in a definition's
+body, not past its group. -/
 def registerScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -507,12 +435,7 @@ def registerScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (eleven != pagesOf oneFace (doc "" ""))
 
 
-/-- **A parameter a command reads as its operand is not assigned.** TeX's
-own `⟨variable⟩[=]⟨value⟩` opens a statement, and a register standing
-where a command reads a dimension — after `\ifdim`, after a factor —
-is that command's operand (TeXbook ch. 20 and 24), so the page is the one
-the document ships without the construct. The shape `\ifdim\parskip=0pt`
-once set the paragraph gap to zero under a note claiming the assignment. -/
+/-- A parameter a command reads as its operand is not assigned. -/
 def operandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre : String) : String :=
@@ -528,14 +451,7 @@ def operandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
 
 
 
-/-- **A list parameter set in a list's body is that list's, as `\list`
-reads it.** `\list` spends `Compat.listSpent` where the list opens and its
-items read `Compat.listPerItem` (ltlists.dtx), so a setting before the first
-`\item` builds and ships the page the list ships without it: said in a note
-where LaTeX discards it too, named once where only that list would follow
-it, never content before the first item. pandoc's `\tightlist` is two such
-settings behind one macro, read where it is used. Quantified over both
-tables, on the shipped page and the structured diagnostics. -/
+/-- A list parameter set in a list's body is that list's, as `\list` reads it. -/
 def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre lead : String) : String :=
@@ -570,10 +486,8 @@ def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
 
 
 
-/-- The lengths LaTeX's kernel and standard classes declare for a document
-to set (latex.ltx, classes.dtx, size10.clo; usrguide's lengths), each
-decided in `Compat.paramSites`, a kernel skip amount the door reads
-(`Compat.kernelSkip`), handled by its own arm, or owed. -/
+/-- The lengths LaTeX's kernel and standard classes declare for a document to set, each decided in
+`Compat.paramSites`, read by the door, handled by its own arm, or owed. -/
 def kernelLengthNames : List String :=
   ["paperwidth", "paperheight", "textwidth", "textheight", "oddsidemargin", "evensidemargin",
    "topmargin", "headheight", "headsep", "footskip", "marginparwidth", "marginparsep",
@@ -588,29 +502,14 @@ def kernelLengthNames : List String :=
    "doublerulesep", "fboxsep", "fboxrule", "unitlength", "smallskipamount", "medskipamount",
    "bigskipamount"]
 
-/-- The kernel lengths no row decides yet: each still lands as a token of
-its own name, which no engine site reads. Owed, and held in both
-directions — a row that decides one fails here until it leaves this list.
-`\textheight` waits on the page model: as a `\page` key it forfeits a flow
-page's own margins (the measure widens) and centres the block, where
-LaTeX keeps its top edge. -/
+/-- The kernel lengths no row decides yet, held in both directions. -/
 def openKernelLengths : List String :=
   ["paperwidth", "paperheight", "textheight", "oddsidemargin", "evensidemargin", "topmargin",
    "headheight", "marginparwidth", "marginparsep", "marginparpush", "columnseprule",
    "columnwidth", "linewidth", "topskip", "textfloatsep", "intextsep", "dblfloatsep",
    "dbltextfloatsep", "lineskip", "lineskiplimit", "parfillskip", "mathindent"]
 
-/-- **A kernel length is decided where it is set, and read where it is a
-value.** The table closes over the kernel's lengths, less the owed list, in
-both directions. The text block's measure is the page's (`\textwidth`,
-`\headsep`, `\footskip` are `\page` keys). A value naming the measure reads
-it where the elaborator can, and is named once, never an error, where it
-cannot: a flow class whose page declares no measure settles its text block
-after the preamble — the premise the door's gate rests on, held here as two
-builds — and `\linewidth`, which holds the class's `\textwidth` in the
-preamble (measured under lualatex), is that only where the class fixes its
-text block at load. A skip amount the document set is what its command
-skips (`\medskip` is `\vspace\medskipamount`, ltspace.dtx). -/
+/-- A kernel length is decided where it is set, and read where it is a value. -/
 def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let decided (n : String) : Bool :=
@@ -645,7 +544,7 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       pagesOf oneFace fixed == pagesOf oneFace (frame "\\setlength{\\leftmargini}{0.1\\textwidth}"))
   t "a class that fixes its text block: '\\linewidth' moves the page"
     (pagesOf oneFace fixed != pagesOf oneFace (frame ""))
-  t "the gate's premise: an undeclared flow page withholds 'textwidth', a declared one offers it"
+  t "the gate's premise: only a declared flow page offers 'textwidth'"
     (fails (dvE (doc "article" "\\tokens{ probe = 0.1 * textwidth }" list)) &&
       !fails (dvE (doc "article" "\\page{ hmargin = 2cm }\\tokens{ probe = 0.1 * textwidth }" list)))
   let body := doc "article" "" ("\\newlength{\\probew}\\setlength{\\probew}{0.1\\linewidth}\n" ++ list)
@@ -662,7 +561,7 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (medium == pagesOf oneFace (skip "" "\\block[before = 20pt]{}"))
   t "'\\medskip' of a set amount moves the page" (medium != pagesOf oneFace (skip "" "\\medskip"))
   let late := doc "article" "" ("\\setlength{\\textwidth}{4in}\n" ++ list)
-  t "a body '\\textwidth' moves no line, as LaTeX's does not, and says so in a note"
+  t "a body '\\textwidth' moves no line and says so in a note"
     (pagesOf oneFace late == pagesOf oneFace (doc "article" "" list) &&
       !(dvE late).any (fun d => d.code == "W0340" || d.code == "W0104") &&
       (dvE late).any (·.subject == some "ctrl:nothing:setlength:textwidth"))

@@ -170,11 +170,8 @@ private def alphaRootCases : Array AlphaRootCase := #[
     source := "\\[\\sqrt{\\mathsf{Hq}\\mathrm{L}}\\]"
     roots := #[{ body := "HqL", style := .display false }] }]
 
-/-- Text alphabet sizes and advances follow the surrounding text size;
-radical bars clear every operand's own font outline, including nested roots
-and scripts. Both the shipped layout and native PDF are judged. The PDF
-reading uses its font resources, embedded glyph ids/outlines, Tf sizes,
-and viewer advances, independently of the layout's extent computation. -/
+/-- Text alphabet sizes follow the surrounding text, and radical bars clear every operand's outline,
+on the layout and the native PDF. -/
 def mathAlphaGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let .ok fs ← alphaGeometryFonts | failures ref "math alpha geometry: shipped fonts"; return

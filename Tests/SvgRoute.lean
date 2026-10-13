@@ -7,18 +7,14 @@ public import Tests.Artifact
 
 public section
 
-/-! The native SVG route through the driver's own decision and the PDF
-writer: a drawn figure is a form whose text sets in the document's faces,
-a lossy one reaches the converter only as the canonical spelling of its
-parse, and the document's `\figures` declaration is the converter's door.
-Only the process boundary is simulated: the converter is a function the
-check hands in. -/
+/-! The native SVG route through the driver's decision and the PDF writer; only the converter is
+simulated. -/
 
 namespace Tests
 
 open LeanTex.Core LeanTex.Cli
 
-/-- An invented figure with a line of sans text and a rotated mono label. -/
+/-- A figure with a line of sans text and a rotated mono label. -/
 def svgTextFixture : ByteArray :=
   ("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\" " ++
    "font-family=\"Example Display, sans-serif\">" ++
@@ -27,7 +23,7 @@ def svgTextFixture : ByteArray :=
    "<text transform=\"translate(10 50) rotate(-90)\" font-family=\"monospace\">axis</text>" ++
    "</svg>").toUTF8
 
-/-- An invented figure with a filter, which the engine does not draw. -/
+/-- A figure with a filter, which the engine does not draw. -/
 def svgFilterFixture : ByteArray :=
   ("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"20\">" ++
    "<!-- an authored comment no converter needs -->" ++
@@ -49,13 +45,10 @@ def opsList (acc : Array Pdf.ContentOp) : List Pdf.ContentOp → Array Pdf.Conte
 
 end
 
-/-- Every content operator, bodies included. -/
 def allOps (ops : Array Pdf.ContentOp) : Array Pdf.ContentOp := opsList #[] ops.toList
 
-/-- **A drawn SVG is a native form whose text sets in the document's sans
-face**: the figure's form paints its text as `TJ` in the sans face's font
-resource, asserted over the store the layout read and the operators the
-writer emits — no converter is consulted. -/
+/-- A drawn SVG is a native form whose text sets in the document's sans face, with no converter
+consulted. -/
 def svgNativePdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let some sansData ← (some <$> IO.FS.readBinFile "testdata/corpus/fonts/FiraSans-Regular.otf")
     | check ref "native SVG PDF: the shipped sans face reads" false
@@ -72,7 +65,7 @@ def svgNativePdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let (en, _) := Image.fulfilOne req (.decoded "" f.res none none (some svgTextFixture) none)
   let imgs := FigureStore.attach { entries := #[en] } #[some f.drawn]
   let (imgs, notes) := FigureStore.settle fs imgs
-  check ref "native SVG PDF: a family the document lacks falls through to its generic, unreported"
+  check ref "native SVG PDF: a missing family falls to its generic, unreported"
     (notes.isEmpty)
   check ref "native SVG PDF: every glyph of the sans text sets in the sans face"
     (match imgs.shaped[0]? with
@@ -108,12 +101,7 @@ def svgNativePdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   check ref "native SVG PDF: the written file names no image XObject for the figure"
     (!bytesContain pdf "/Subtype /Image")
 
-/-- **The route a figure takes depends on its import, never on the host
-alone** (the premise the driver's gate names): a lossless figure ships the
-same drawing with or without a converter and never calls it; a lossy one
-names every loss under one subject whichever drew it, and the converter
-receives the canonical spelling of the parse, never the authored bytes. A
-refused figure never reaches the converter. -/
+/-- The route a figure takes depends on its import, never on the host alone. -/
 def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let calls ← IO.mkRef (#[] : Array ByteArray)
   let pdfPlan : Except PicCache.Outcome Image.Plan :=
@@ -123,14 +111,12 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     return pdfPlan
   let failing : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan) := fun _ _ =>
     return .error (.refused "rsvg-convert exited 1: an invented failure")
-  -- Lossless: one drawing, no call.
   let withTool ← Driver.svgFetch "a.svg" svgTextFixture .first "en" (some (.always fake))
   let without ← Driver.svgFetch "a.svg" svgTextFixture .first "en" none
   check ref "figure route: a lossless figure never calls the converter" ((← calls.get).isEmpty)
   check ref "figure route: a lossless figure ships one drawing with or without the converter"
     ((withTool.vector.map (·.marks)) == (without.vector.map (·.marks)) && withTool.vector.isSome &&
       withTool.diags.isEmpty && without.diags.isEmpty)
-  -- Lossy: the converter draws it, the loss named as the reason.
   let converted ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" (some (.always fake))
   let sent ← calls.get
   check ref "figure route: a lossy figure asks the converter once" (sent.size == 1)
@@ -143,19 +129,14 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "figure route: the converted figure names its loss as the reason (N0024)"
     (converted.diags.all (·.code == "N0024") &&
       subjects converted.diags == #["figure:svg:property:filter"])
-  -- Lossy, no converter: the engine's drawing, every loss named.
   let degraded ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" none
   check ref "figure route: with no converter the engine's drawing ships, never a placeholder"
     (degraded.vector.isSome && degraded.res.toBool)
-  check ref "figure route: with no converter every loss is named under the same subject (W0609)"
+  check ref "figure route: with no converter every loss is named under one subject (W0609)"
     (degraded.diags.all (·.code == "W0609") && subjects degraded.diags == subjects converted.diags)
-  -- A converter that fails leaves the engine's drawing, named.
   let failed ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" (some (.always failing))
   check ref "figure route: a failed conversion ships the engine's drawing with the loss named"
     (failed.vector.isSome && subjects failed.diags == subjects degraded.diags)
-  -- The help follows why no converter drew the figure: a declared refusal
-  -- is the document's to lift, a missing converter one to install, and a
-  -- failed one says why in its own words.
   let absent : Driver.Converter := fun _ _ => pure none
   let missing ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" (some absent)
   check ref "figure route: a declared refusal's help says how to lift it, and not to install"
@@ -166,10 +147,9 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
       missing.diags.all fun d => d.code == "W0609" && d.help.any (hasStr · "install librsvg"))
   check ref "figure route: a failed converter's own words say why"
     (failed.diags.all fun d => d.detail == some "rsvg-convert exited 1: an invented failure")
-  check ref "figure route: a converter's own verdict offers accepting the drawing, never an install"
+  check ref "figure route: a converter's verdict offers acceptance, not an install"
     (!failed.diags.isEmpty && failed.diags.all fun d =>
       d.help.any (hasStr · "\\allow{W0609}") && !(d.help.any (hasStr · "install")))
-  -- A refusal never reaches the converter.
   calls.set #[]
   let refused ← Driver.svgFetch "c.svg" (svgDocument "<script>alert(1)</script>") .first "en" (some (.always fake))
   check ref "figure route: a refused figure never reaches the converter"
@@ -180,9 +160,8 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .ok _ => false)
 
 
-/-- An invented figure whose text forms paint: a translucent caption, a
-caption beside a square in a translucent group, and a caption a `use`
-paints. -/
+/-- A figure whose text forms paint: a translucent caption, a caption in a translucent group, and a
+caption a `use` paints. -/
 def svgFormTextFixture : ByteArray :=
   ("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"300\" height=\"120\" viewBox=\"0 0 300 120\">" ++
    "<rect width=\"300\" height=\"120\" fill=\"#ffffff\"/>" ++
@@ -192,12 +171,7 @@ def svgFormTextFixture : ByteArray :=
    "<defs><g id=\"tag\"><text x=\"0\" y=\"0\" font-size=\"14\">Inside a reused group</text></g></defs>" ++
    "<use href=\"#tag\" x=\"10\" y=\"95\"/></svg>").toUTF8
 
-/-- **Every glyph a figure's form paints stands inside the form's box**,
-read off the written file: a translucent caption (a transparency group's
-form), a caption beside a square in a translucent group, and a caption a
-`use` paints (a symbol's form) — each once set in a form whose box held
-only its paths, or nothing, so the viewer clipped the text away while the
-text layer still held it. -/
+/-- Every glyph a figure's form paints stands inside the form's box, read off the written file. -/
 def svgFormTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let f ← Driver.svgFetch "captions.svg" svgFormTextFixture .first "en" none
   check ref "form text: the captions figure imports exactly" (f.vector.isSome && f.diags.isEmpty)
@@ -214,16 +188,13 @@ def svgFormTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     check ref s!"form text: every caption glyph is read ({seen})" (seen ≥ 50)
     check ref s!"form text: every glyph stands inside its form's box: {offences.toList.take 3}"
       offences.isEmpty
-  -- The judge breaks once: the same file read with every form's box
-  -- emptied clips every glyph.
+  -- The judge breaks once: the same file with every form's box emptied clips every glyph.
   match formGlyphOffences pdf fonts (fun _ => #[0, 0, 0, 0]) with
   | .ok (seen, offences) =>
     check ref "form text: an emptied box is an offence for every glyph" (seen ≥ 50 && offences.size == seen)
   | .error e => check ref s!"form text: the emptied file reads back: {e}" false
 
-/-- **The host is asked for the converter only when a figure needs it**,
-and once: figures the engine draws whole never probe, the first lossy one
-does, and the next reads the answer kept. -/
+/-- The host is asked for the converter only when a figure needs it, and once. -/
 def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let probes ← IO.mkRef 0
   let probe : IO Bool := do
@@ -242,11 +213,7 @@ def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "converter probe: a refusing document offers no converter"
     ((← Driver.svgConverterWith probe (fun _ _ => return pdfPlan) false).isNone && (← probes.get) == 1)
 
-/-- **A character no face covers is a figure loss** (W0609), never an
-error: the figure's route was taken before the faces settled, so the
-engine's drawing ships without it, named under the figure. The defect
-raised E0405, which failed a build whose host lacked a face for a figure's
-text. -/
+/-- A character no face covers is a figure loss (W0609), never an error. -/
 def svgGlyphGapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let bytes := svgDocument "<text x=\"1\" y=\"10\" font-family=\"sans-serif\">Gap 漢</text>" 60 20
   let doc := (elabStr "\\includegraphics[alt={An invented gap}]{gap.svg}").1
@@ -260,9 +227,7 @@ def svgGlyphGapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (ds.any fun d => d.code == "W0609" && d.subject == some "figure:svg:font:U+6F22")
   check ref "SVG glyph gap: no error stops the build" (ds.all (·.severity != .error))
 
-/-- **A link a figure holds is named once** (N0027), whichever route draws
-the figure: the figure draws the link's content, exact, so no converter is
-asked for it, and the drawing carries no link. -/
+/-- A link a figure holds is named once (N0027), whichever route draws the figure. -/
 def svgLinkNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bytes := svgDocument ("<rect id=\"x\" width=\"1\" height=\"1\"/>" ++
     "<a href=\"#x\"><rect width=\"9\" height=\"9\" fill=\"red\"/></a>" ++
@@ -274,8 +239,8 @@ def svgLinkNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
     (f.diags.map (·.code) == #["N0027"] &&
       f.diags.all (·.subject == some "figure:svg:note:a link"))
 
-/-- `\figures{ convert = none }` is the converter's declared refusal: open
-by default, refused by the declaration, and nothing else accepted. -/
+/-- `\figures{ convert = none }` is the converter's declared refusal: open by default, and nothing
+else accepted. -/
 def figuresDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "figures declaration: the converter door is open by default"
     (elabStr "x").1.figureConvert
@@ -293,11 +258,7 @@ def figuresDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "figures declaration: an unknown key is named" (ds.any fun d => hasStr d.message "colour")
 
 
-/-- **A family the document's roles do not answer is set in the sans face,
-named once** — and only then: two builds of one figure differing only by
-the family it names (an invented display family, then the generic, then
-the role's own family name) set the same face, and only the first reports
-it (N0026, its subject the family). -/
+/-- A family the document's roles do not answer is set in the sans face and named once (N0026). -/
 def svgFontMatchChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let figure (family : String) : ByteArray :=
     (s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"20\">" ++
@@ -339,8 +300,7 @@ def doNames (content : ByteArray) : Array String := Id.run do
     | _ => last := none
   return out
 
-/-- Every XObject a file's forms and pages invoke that their own resources
-do not name: a viewer's "unknown XObject". -/
+/-- Every XObject a file's forms and pages invoke that their resources do not name. -/
 def danglingXObjects (pdf : ByteArray) : Except String (Array String) := do
   let es := (← PdfRead.objects pdf).val
   let deref := PdfCensus.deref es
@@ -369,8 +329,8 @@ def danglingXObjects (pdf : ByteArray) : Except String (Array String) := do
       unless names.contains n do out := out.push n
   return out
 
-/-- The image XObjects a file holds, by width, height and whether a reader
-may smooth them, and every name a form's content invokes. -/
+/-- A file's image XObjects by width, height and smoothing, and every name a form's content
+invokes. -/
 def imagesAndFormNames (pdf : ByteArray) : Except String (Array (Nat × Nat × Bool) × Array String) := do
   let es := (← PdfRead.objects pdf).val
   let mut imgs : Array (Nat × Nat × Bool) := #[]
@@ -387,17 +347,7 @@ def imagesAndFormNames (pdf : ByteArray) : Except String (Array (Nat × Nat × B
       | _ => pure ()
   return (imgs, names)
 
-/-- **A figure's raster is drawn in its own form, as a page's image is.**
-The engine's drawing of a figure with an embedded PNG, with no converter:
-the import is exact, the raster planned as an included PNG is, and the
-store holds it as an entry of its own after the request's, owned by the
-figure. The PDF embeds it once, as an image XObject of the PNG's size that
-the figure's form paints by the name its entry gives it, and every
-XObject the file invokes is one its resources name. The page's `<img>`
-keeps the authored bytes, where the browser draws the raster, and the
-raster's entry ships no asset of its own (the premise of `imageShips`).
-A raster the planner refuses leaves the figure without it, the drop named
-(W0609). -/
+/-- A figure's raster is drawn in its own form, as a page's image is. -/
 def svgRasterFigureChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let figure (png : String) : ByteArray := svgDocument (width := 40) (height := 40)
     ("<rect width=\"40\" height=\"40\" fill=\"#dddddd\"/>" ++
@@ -424,7 +374,6 @@ def svgRasterFigureChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     (match imagesAndFormNames pdf with
      | .ok (ims, names) => ims == #[(1, 1, true)] && names.contains "Ri2"
      | .error _ => false)
-  -- A raster no reader may smooth keeps its samples square in the PDF too.
   let crisp := svgDocument (width := 40) (height := 40)
     (s!"<image href=\"data:image/png;base64,{HtmlResource.base64 tinyPng}\" width=\"40\" height=\"40\" " ++
      "image-rendering=\"pixelated\"/>")
@@ -437,8 +386,6 @@ def svgRasterFigureChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     (match imagesAndFormNames cpdf with
      | .ok (ims, _) => ims == #[(1, 1, false)]
      | .error _ => false)
-  -- A store that gave the raster no entry of its own — the driver never
-  -- builds one — still writes a file that names nothing it lacks.
   let unslotted := (FigureStore.settle fonts
     (FigureStore.attach { entries := #[en] } #[some { f.drawn with plans := #[] }])).1
   let updf := Pdf.write (Layout.Geom.ofPage doc.page) fonts (layoutOf fonts doc (imgs := unslotted)).pages {}
@@ -456,8 +403,7 @@ def svgRasterFigureChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     ((HtmlDoc.imageAssets imgs).size == 1 &&
       (HtmlDoc.imageResources imgs).map (·.bytes) == #[bytes] &&
       hasStr (String.fromUTF8! bytes) (HtmlResource.base64 tinyPng))
-  -- A PNG the importer reads and the planner refuses: the tiny one,
-  -- interlaced (its header's last byte, and the header's checksum).
+  -- The tiny PNG made interlaced (its header's last byte and checksum), which the planner refuses.
   let interlaced := ((tinyPng.set! 28 1).set! 29 0xE7 |>.set! 30 0x70 |>.set! 31 0x63).set! 32 0x48
   check ref "raster figure: the interlaced PNG probes and does not plan"
     ((Image.probe interlaced).toBool && !(Image.decode interlaced).toBool)
@@ -467,8 +413,6 @@ def svgRasterFigureChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
         !v.marks.isEmpty).getD false && refused.plans.isEmpty &&
       refused.diags.any fun d => d.code == "W0609" &&
         d.subject == some (FigureLoss.subject "svg" FigureLoss.rasterLoss))
-  -- An image that names nothing draws nothing, in a browser as here, so the
-  -- engine's drawing lacks nothing and no converter is asked for it.
   for (name, img) in [("no reference", "<image width=\"4\" height=\"4\"/>"),
       ("a data source and no reference", "<image src=\"data:image/png;base64," ++
         HtmlResource.base64 tinyPng ++ "\" width=\"4\" height=\"4\"/>")] do

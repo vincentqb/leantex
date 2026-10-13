@@ -15,10 +15,8 @@ private def roleLeafGlyphText (out : Layout.Out) (id : Nat) : String :=
         if k == id then gs.foldl (fun s (_, c, _) => s.push c) s else s
       | _ => s) s) ""
 
-/-- Semantic roles can split a word's structure leaves, but do not change
-its shaping or legal hyphenation points. Compare the actual shipped glyphs;
-also hold each leaf's ink to its own census so joining words cannot erase
-the attribution that tagged PDF reads. Styled controls keep their faces. -/
+/-- Semantic roles split a word's structure leaves without changing its shaping or hyphenation
+points, and each leaf keeps its ink census. -/
 def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let artifact (fonts : Font.FontSet) (label : String) (doc : Ir.Doc) (out : Layout.Out)
@@ -85,8 +83,7 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (shippedBodyGlyphs splitOut == shippedBodyGlyphs joinedOut)
   artifact fonts "role shaping hyphenated" hyphenated splitOut geom
   artifact fonts "role shaping hyphenated control" joined joinedOut geom
-  -- Expansion rounds whole-word coordinates. Changing the structure leaves
-  -- must not restart that rounding, even inside a leaf with several glyphs.
+  -- Expansion rounds whole-word coordinates; splitting structure leaves must not restart that rounding.
   for (name, parts, hanging) in (#[
       ("scalar leaves", #["A", "B", "T", "a", "i", "l"], false),
       ("long leaves", #["AB", "Tail"], false),

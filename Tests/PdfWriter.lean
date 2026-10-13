@@ -14,10 +14,8 @@ private def fieldFile (w : Pdf.Xref.Widths) (row : ByteArray) : ByteArray :=
     (.stream s!"/Type /XRef /Size 2 /W [1 {w.first} {w.second}] /Index [0 2] /Root 1 0 R" data)
   out ++ s!"startxref\n{head.size}\n%%EOF\n".toUTF8
 
-/-- The reader consumes the fields at the widths the PDF writer declares,
-including offsets past 4 GiB and stream indices past one byte once a
-width holds them. The out-of-domain case witnesses why the universal
-field law requires each value to fit its declared width. -/
+/-- The reader consumes fields at the widths the PDF writer declares, offsets past 4 GiB and indices
+past one byte included. -/
 def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let w142 : Pdf.Xref.Widths := ⟨4, 2⟩
@@ -105,7 +103,6 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
     t "PDF xref: index width bound is necessary" (match x.locs.get? 1 with
       | some (.inStm 1 0) => true
       | _ => false)
-  -- The complete writer, not just individual field encoders.
   let (doc, _) := Elab.run "synthetic.tex" "A small file."
   let pages := (layoutOf fs doc).pages
   for pages in [#[], pages] do

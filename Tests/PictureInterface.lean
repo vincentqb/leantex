@@ -2,9 +2,8 @@ module
 
 import LeanTex.Core.Picture
 
-/-! Ordinary picture clients can pass source, styles, measurement callbacks,
-and placement values through the public API and apply its contracts.
-Token scanning, label-recovery state, and macro expansion stay internal. -/
+/-! Ordinary picture clients pass source, styles, measurement callbacks and placements through the
+public API; scanning state stays internal. -/
 
 open LeanTex.Core
 open LeanTex.Core.Dim

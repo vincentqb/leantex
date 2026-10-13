@@ -6,10 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- A document of `natbibSrc` calls on a page wide enough that no entry or
-citation line breaks, resolved against `bib`: the shipped body lines, the
-reference list's entries (each entry's lines joined), the HTML a reader
-gets, and the diagnostics of both passes. -/
+/-- The shipped body lines, reference entries, HTML and diagnostics of `natbibSrc` calls resolved
+against `bib`, on a page wide enough to break no line. -/
 def natbibShip (oneFace : Font.FontSet) (bib pre style : String) (calls : List String) :
     Array String × Array String × String × Array Diag :=
   let geometry := "\n\\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]{geometry}"
@@ -19,11 +17,8 @@ def natbibShip (oneFace : Font.FontSet) (bib pre style : String) (calls : List S
     (bibEntryLines lines).map fun e => String.intercalate " " (e.toList.map lineInk),
     htmlVisibleText (HtmlDoc.emit {} doc).1, eds ++ ds)
 
-/-- `\citetext` in each mode natbib reads: the preamble, the style, the
-calls, the lines lualatex set for them, and how each reference-list entry
-opens (TeX Live 2026, natbib 8.31b, bibtex 0.99e, through `pdftotext`). The
-entries cited only inside `\citetext` are listed, at the place their first
-citation gives them. -/
+/-- Each `\citetext` mode: preamble, style, calls, the lines lualatex sets, and how each entry
+opens. -/
 def citetextModes : List (String × String × List String × List String × List String) :=
   let nested := ["\\citetext{see \\citealp{delta2021}, or even better \\citealp{eps2020}}",
     "\\citep{alpha2019}"]
@@ -43,11 +38,8 @@ def citetextModes : List (String × String × List String × List String × List
     ["\\citetext{priv.\\ comm.}", "\\citetext{see \\citealp{delta2021}}"],
     ["L1 (priv. comm.) end.", "L2 (see Delta, 2021) end."], [delta])]
 
-/-- A shipped gap reads as one space with or without decoration.
-The citation has both linked interword gaps and a glyphless tie; reading
-either gap representation must retain natbibRows' TeX-referenced
-`\citep[see][p.~5]` line, while removing the linked spaces must remain
-distinguishable. -/
+/-- A shipped gap reads as one space with or without decoration, and removing the linked spaces
+stays distinguishable. -/
 def citationInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, _) := bibBuild (natbibSrc "\\usepackage{natbib}" "unsrtnat"
@@ -72,14 +64,8 @@ def citationInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     | _ => true }
   t "citation ink: losing linked spaces changes the reading" (lineInk joined != want)
 
-/-- **`\citetext` is natbib's `\NAT@open#1\NAT@close`** (natbib.sty:739):
-its body is body text set between the citation brackets, so a citation
-inside it is a citation like any other — its entry enters the reference list
-at its first citation's place and its marks render under the document's
-punctuation (natbib.dtx, §Extended Citation Commands: `\citetext{see
-\citealp{jon90}, or even better \citealp{jam91}}`). On the shipped page and
-in the HTML, in every mode, with no diagnostic: a nested citation that ships
-`?` is a loss, and one no diagnostic names is a silent one. -/
+/-- `\citetext` sets its body between the citation brackets, so a citation inside it is a citation
+like any other. -/
 def citetextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   citationInkChecks ref oneFace
   let t := check ref
@@ -96,9 +82,7 @@ def citetextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         (entries.toList.zip list).all fun (e, w) => e.startsWith w)
 
 
-/-- The body of each `\nocite` placement document and of its control, the
-same document without the `\nocite`: two paragraphs, or a paragraph and the
-list. -/
+/-- Each `\nocite` placement body and its control without the `\nocite`. -/
 def nocitePlacements : List (String × String × String) :=
   let first := "First paragraph words, citing \\citet{alpha2019}.\n\n"
   [("alone", first ++ "\\nocite{delta2021}\n\nSecond paragraph words.\n\n",
@@ -107,15 +91,8 @@ def nocitePlacements : List (String × String × String) :=
      first ++ "Second paragraph words.\n\n"),
    ("before the list", first ++ "\\nocite{*}\n", first)]
 
-/-- **A `\nocite` in vertical mode starts no paragraph**: LaTeX's `\nocite`
-sets no ink and a space in vertical mode is dropped, so a paragraph holding
-nothing else is never begun — the page is the page of the document without
-it (lualatex: 11.96 bp between the two paragraphs with and without, and the
-same gap above the list). Measured on the shipped page as the baseline step
-from the first paragraph to the line the next block sets (an empty
-paragraph ships a glyphless line of its own, so the next line is not the
-measure), and in the HTML as its paragraph count; the entries it names
-still enter the list. -/
+/-- A `\nocite` in vertical mode starts no paragraph, and the entries it names still enter the
+list. -/
 def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let build (body : String) : Array Layout.LineOut × String × Array Diag :=
@@ -142,13 +119,8 @@ def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
 
 
-/-- The styles the engine does not format, under a bare natbib: the lines
-lualatex set for four calls (TeX Live 2026, natbib 8.31b, bibtex 0.99e,
-through `pdftotext`). `apalike` has no natbib row, so natbib's own load
-punctuation stands; `chicago`'s row is those same values; `named`, `agsm`
-and `cospar` were measured over plainnat.bst copies of those names, so the
-lines differ from plainnat's by natbib's row alone; a `[square]` load shuts
-the door on any row. -/
+/-- The lines lualatex sets for four calls under each style the engine does not format, under a bare
+natbib. -/
 def natbibRowModes : List (String × String × List String) :=
   let round := ["L1 (Alpha et al., 2019; Delta, 2021) end.", "L2 Alpha et al. (2019) end.",
     "L3 (see Alpha et al., 2019, p. 5) end.", "L4 Delta (2021); Epsilon and Zeta (2020) end."]
@@ -167,12 +139,7 @@ def natbibRowModes : List (String × String × List String) :=
     ["L1 [Alpha et al., 2019; Delta, 2021] end.", "L2 Alpha et al. [2019] end.",
      "L3 [see Alpha et al., 2019, p. 5] end.", "L4 Delta [2021]; Epsilon and Zeta [2020] end."])]
 
-/-- **A style's citations take natbib's row for its name, or none**: natbib
-gives a style its `\bibstyle@<name>` row whatever formats the list, and a
-name it has no row for leaves its declared punctuation standing
-(natbib.sty:206–234). The engine formats an unknown style's list as
-unsrtnat's, which W0353 names once; its citations are natbib's, on the
-shipped page and in the HTML. -/
+/-- A style's citations take natbib's row for its name, or none. -/
 def natbibRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let calls := ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}",
@@ -188,9 +155,8 @@ def natbibRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
 
 
-/-- The calls the `sort`/`compress` rows set: the four entries cited once in
-order (so their numbers are 1–4), then runs, gaps, a repeat, a textual
-citation and the forms that wrap their keys without brackets. -/
+/-- The calls the `sort` and `compress` rows set: four entries cited in order, then runs, gaps, a
+repeat and the bracketless forms. -/
 def natbibSortCalls : List String :=
   ["\\citep{alpha2019} \\citep{delta2021} \\citep{eps2020} \\citep{pome2018}",
    "\\citep{eps2020,alpha2019,delta2021}", "\\citep{pome2018,alpha2019,eps2020,delta2021}",
@@ -199,9 +165,7 @@ def natbibSortCalls : List String :=
    "\\citealp{alpha2019,delta2021,eps2020}", "\\citep{alpha2019,delta2021,delta2021,eps2020}",
    "\\citenum{alpha2019,delta2021,eps2020}"]
 
-/-- One configuration per row: the preamble, the style, the calls, and the
-lines lualatex set for them (TeX Live 2026, natbib 8.31b, bibtex 0.99e,
-through `pdftotext`). -/
+/-- One configuration per row: preamble, style, calls and the lines lualatex sets. -/
 def natbibSortModes : List (String × String × List String × List String) :=
   [("\\usepackage[numbers,sort&compress]{natbib}", "unsrtnat", natbibSortCalls,
     ["[1] [2] [3] [4]", "[1–3]", "[1–4]", "[1, 2]", "Alpha et al. [1], Epsilon and Zeta [3]",
@@ -222,13 +186,7 @@ def natbibSortModes : List (String × String × List String × List String) :=
     ["\\citep{eps2020}", "\\citep{delta2021,eps2020,alpha2019}"],
     ["[Epsilon and Zeta, 2020]", "[Epsilon and Zeta, 2020, Delta, 2021, Alpha et al., 2019]"])]
 
-/-- **natbib's `sort` and `compress` are implemented, not named**: `sort`
-sets a citation's keys in reference-list order in either mode, and
-`compress` joins a numbered citation's runs of three or more — `[1–3, 5]`
-— where it wraps its keys (`\citep`, `\citealp`, `\citenum`), never in a
-textual one, a repeated number breaking the run (natbib.sty `\NAT@sort@cites`,
-`\NAT@citexnum`). On the shipped page and in the HTML, against lualatex,
-with no option named as dropped. -/
+/-- natbib's `sort` and `compress` are implemented, not named. -/
 def natbibSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for (pre, style, calls, want) in natbibSortModes do
@@ -242,10 +200,7 @@ def natbibSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
 
 
-/-- biblatex's citation commands, one paragraph each, over `natbibBib`: every
-form the index marks implemented, a noted form of each bracket kind, and
-one, two and three keys where biblatex's list separators differ from
-natbib's. -/
+/-- biblatex's citation commands over `natbibBib`, one paragraph each. -/
 def biblatexCalls : List String :=
   ["\\parencite{alpha2019}", "\\textcite{eps2020}", "\\citeauthor{alpha2019}",
    "\\parencite{alpha2019,delta2021}", "\\cite{delta2021}", "\\citeyear{delta2021}",
@@ -254,10 +209,8 @@ def biblatexCalls : List String :=
    "\\textcite{delta2021,eps2020,pome2018}", "\\cite{alpha2019,delta2021}",
    "\\citeauthor{alpha2019,eps2020}", "\\citeyear{alpha2019,delta2021}"]
 
-/-- One configuration per row: the load options and the lines lualatex set
-for `biblatexCalls` (TeX Live 2026, biblatex 3.21, biber 2.22, through
-`pdftotext`). The numeric numbers are biblatex's `nty` order, which sorts
-`de Pome` under P. -/
+/-- One configuration per row: load options and the lines lualatex and biber set for
+`biblatexCalls`. -/
 def biblatexModes : List (String × List String) :=
   let names := "Alpha, Beta, and Gamma"
   [("style=authoryear",
@@ -277,15 +230,7 @@ def biblatexModes : List (String × List String) :=
      "Delta [3], Epsilon and Zeta [2], and Pome [4]", "[1, 3]", s!"{names}, Epsilon and Zeta",
      "2019, 2021"])]
 
-/-- **biblatex's citations are biblatex's**, not natbib's by another name: up
-to three label names (`maxcitenames`), a name's von part dropped
-(`useprefix=false`), the author-year name and year apart by a space
-(`\nameyeardelim`), a bare author-year `\cite`, a textual list's last key
-after `and`, and the list numbered in biblatex's own `nty` order — on the
-shipped page and in the HTML, against lualatex and biber. Over entries that
-share their names and year, biblatex's letters follow its `nyt` order (`A
-later…` before `An early…`), repeat names whole, and stay out of
-`\citeyear`. -/
+/-- biblatex's citations are biblatex's, not natbib's by another name. -/
 def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let letters := ("style=authoryear", natbibLabelBib,
@@ -311,9 +256,7 @@ def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
 
 
-/-- `\citestyle{name}` under a bare natbib and plainnat: the lines lualatex
-set for `natbibRowChecks`' four calls (TeX Live 2026, natbib 8.31b). A name
-natbib has no row for leaves its load values, the door shut all the same. -/
+/-- `\citestyle{name}` under a bare natbib and plainnat: the lines lualatex sets for four calls. -/
 def natbibCiteStyleModes : List (String × List String) :=
   let round := ["L1 (Alpha et al., 2019; Delta, 2021) end.", "L2 Alpha et al. (2019) end.",
     "L3 (see Alpha et al., 2019, p. 5) end.", "L4 Delta (2021); Epsilon and Zeta (2020) end."]
@@ -323,11 +266,8 @@ def natbibCiteStyleModes : List (String × List String) :=
    ("agsm", ["L1 (Alpha et al. 2019, Delta 2021) end.", "L2 Alpha et al. (2019) end.",
      "L3 (see Alpha et al. 2019, p. 5) end.", "L4 Delta (2021), Epsilon and Zeta (2020) end."])]
 
-/-- **`\citestyle` sets natbib's row for its name, and `\shortcites` asks
-nothing the engine does not already do** (natbib.sty: `\citestyle` runs
-`\bibstyle@<name>` and shuts the door; `\shortcites` exempts keys from
-`longnamesfirst`, and every citation here is short). On the shipped page
-and in the HTML, against lualatex, with no diagnostic. -/
+/-- `\citestyle` sets natbib's row for its name, and `\shortcites` asks nothing the engine does not
+already do. -/
 def natbibCiteStyleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let calls := ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}",

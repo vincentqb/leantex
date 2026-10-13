@@ -3,10 +3,8 @@ module
 import LeanTex.Core.ListMark
 import LeanTex.Core.Struct
 
-/-! Ordinary clients can build markers, read the semantic tree and use its
-census contracts. The reduction checks pin exactly the bodies read by
-HtmlDoc, Elab, Layout and PdfStruct; the negative checks keep the supporting
-decoders, numbering step and alternative-census implementation private. -/
+/-! Ordinary clients build markers, read the semantic tree and use its census contracts; the
+supporting implementation stays private. -/
 
 open LeanTex.Core
 
@@ -79,8 +77,6 @@ example (kind : Struct.Kind) (kids : Array Struct.Node) :
 example : (Struct.Leaf.picture .decorative).held = false := rfl
 example : Struct.Kind.outlineDescends .aside = false := rfl
 
--- The exposed block equation can name its title builder, but ordinary
--- clients cannot unfold that builder's implementation.
 example : Array Ir.Inline → Array Struct.Node := Struct.titleRaw
 
 example (_xs : Array Ir.Inline) : True := by

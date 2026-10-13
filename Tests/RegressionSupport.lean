@@ -8,7 +8,7 @@ open LeanTex.Core
 
 namespace Tests.Regression
 
-/-- Both artifacts from one complete, invented document and one font set. -/
+/-- Both artifacts from one complete document and one font set. -/
 structure Artifact where
   doc : Ir.Doc
   fonts : Font.FontSet
@@ -19,15 +19,15 @@ structure Artifact where
   pdf : ByteArray
   diags : Array Diag
 
-/-- Each document names the artifact facts that distinguish its template.
-Expected warnings are checked in both directions; errors are never accepted. -/
+/-- A document with the artifact facts that distinguish its template; warnings checked both ways,
+errors never accepted. -/
 structure Case where
   path : String
   warnings : Array DiagCode := #[]
   check : IO.Ref (List String) → Artifact → IO Unit
 
-/-- The fixture environment keeps text variants, mathematical coverage,
-and a real fixed-pitch code face independent of host font discovery. -/
+/-- The fixture fonts: text variants, math coverage and a fixed-pitch face, independent of host
+discovery. -/
 def fontSet : IO (Option Font.FontSet) := do
   let some fs ← serifFacesSet | return none
   let path := testFonts ++ "/SourceCodePro-Regular.otf"
@@ -46,9 +46,8 @@ private def htmlConfig (fonts : Font.FontSet) (geom : Layout.Geom) : HtmlDoc.Con
   mathEm := fun measures ss st => Layout.mathEm geom fonts ss st (some measures)
   mathTextEm := fun measures ss st => Layout.mathTextEm geom fonts ss st (some measures) }
 
-/-- Expand local inputs once, then elaborate with measured labels and emit
-both backends using the driver's font callbacks. Fonts are bundled, so the
-test cannot silently substitute a host-dependent or unmeasured layout. -/
+/-- Both artifacts of a document, its inputs expanded once and labels measured, with the driver's
+font callbacks. -/
 def compile (fonts : Font.FontSet) (path : String) : IO Artifact := do
   let (tokens, lexDs) := Lex.lex path (← fixtureText path)
   let (raws, parseDs) := Parse.parse path tokens
@@ -65,8 +64,7 @@ def compile (fonts : Font.FontSet) (path : String) : IO Artifact := do
     pdf := driverPdf fonts geom doc out
     diags := ds ++ alphabetDs ++ out.diags ++ htmlDs }
 
-/-- Check publication validity before the document-specific visible facts.
-Resource closure is checked over the actual tree, including embedded fonts. -/
+/-- Publication validity, then the document's visible facts. -/
 def runCase (ref : IO.Ref (List String)) (fonts : Font.FontSet) (c : Case) : IO Unit := do
   let a ← compile fonts c.path
   for d in a.diags do
@@ -74,7 +72,7 @@ def runCase (ref : IO.Ref (List String)) (fonts : Font.FontSet) (c : Case) : IO 
       (d.severity != .error &&
         (d.severity != .warning || c.warnings.contains d.kind))
   for code in c.warnings do
-    check ref s!"{c.path}: expected warning {code.code} no longer fires"
+    check ref s!"{c.path}: expected warning {code.code} does not fire"
       (a.diags.any fun d => d.kind == code && d.severity == .warning)
   check ref s!"{c.path}: ships PDF pages" (!a.out.pages.isEmpty)
   check ref s!"{c.path}: PDF cross-references resolve" (checkXref a.pdf).isOk

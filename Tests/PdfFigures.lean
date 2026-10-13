@@ -32,14 +32,8 @@ def isPattern : Pdf.FigRes → Bool
 end Tests.PdfFigures
 
 open Tests.PdfFigures Tests.GfxMatrix in
-/-- **The figure-resource table over the synthetic matrix**, asserted over
-the typed operators: renaming moves no mark (`Pdf.nameOps_marks_id`,
-executed), every name the renamed operators spell is a place in the table
-(`Pdf.nameOps_names_covers`), every occurrence of a name names one resource
-(`Pdf.nameOps_occ_agree`); a symbol used twice is one form both uses name;
-equal requests share one entry; and two gradients that differ only in a
-stop colour's PDF rider are two patterns, because requests compare field
-by field. Invented geometry. -/
+/-- The figure-resource table over the synthetic matrix: renaming moves no mark, every name is a
+table place, and equal requests share one entry. -/
 def pdfFiguresChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, fig) in cases do
@@ -74,12 +68,8 @@ def pdfFiguresChecks (ref : IO.Ref (List String)) : IO Unit := do
     (redCmyk == red && ((table riders).filter isPattern).size == 2)
 
 open Tests.GfxMatrix in
-/-- **The document writer spells the figure-resource table**: a page whose
-inks name an ExtGState, a shading pattern and forms (the matrix's
-gradient, alpha group and symbol figures) writes one resources object the
-page names, every name its content stream and its forms spell resolves in
-that dictionary, and every form names the same resources — read back
-through the engine's own reader. Invented geometry. -/
+/-- The document writer spells the figure-resource table: one resources object in which every page,
+stream and form name resolves. -/
 def pdfFigureWriterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let figs := #[1, 4, 5].filterMap fun i => (cases[i]?).map (·.2)

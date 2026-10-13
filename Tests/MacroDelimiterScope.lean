@@ -8,11 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Delimiter signatures follow execution scope: a real group or environment
-restores its incoming locals and retains every explicit global write, even
-one later shadowed locally. Input wrappers are transparent; top-level hook
-definitions persist in preamble, end-hook, begin-hook, body order. A refused
-call still ships its braced recovery in both complete artifacts. -/
+/-- Delimiter signatures follow execution scope, and a refused call still ships its braced recovery
+in both artifacts. -/
 def macroDelimiterScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref

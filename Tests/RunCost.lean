@@ -7,14 +7,8 @@ public section
 
 open LeanTex.Cli
 
-/-- Every porcelain summary states what the run cost: its milliseconds and the
-engine's own peak resident set size (`rssKiB`), the field the document-cost
-gate and report read (`scripts/doccost.lean`, `bench --doc-cost`). Checked on
-the three records a run can end with — a written artifact, a refusal, and the
-`--werror` verdict — read back from the shipped binary's own output. Under
-`-v` a run's `font` phase also names, as typed fields, the face files its font
-set loaded and how many faces it chose from: what the gate holds every build
-to, where the phase's detail is prose. -/
+/-- Every porcelain summary states the run's milliseconds and the engine's own peak resident set
+(`rssKiB`). -/
 def runCostChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref
@@ -26,7 +20,7 @@ def runCostChecks (ref : IO.Ref (List String))
     (Render.porcelainDone "a.tex" "a.pdf" 3 17 none ==
       "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":true,\"output\":\"a.pdf\"," ++
       "\"pages\":3,\"errors\":0,\"ms\":17}")
-  t "summary cost: a partial publication's summary carries what it wrote and its peak"
+  t "summary cost: a partial publication states what it wrote and its peak"
     (Render.porcelainSummary "a.tex" false 1 17 #["a.html"] (some 5) ==
       "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"output\":\"a.html\",\"errors\":1,\"ms\":17,\"rssKiB\":5}")
   t "summary cost: a refusal and a werror verdict carry it too"
@@ -65,10 +59,7 @@ def runCostChecks (ref : IO.Ref (List String))
         else none
       t s!"summary cost: the {name} run's summaries each state a peak ({peaks})"
         (peaks.length == summaries && peaks.all (·.any (1024 ≤ ·)))
-    -- The peak is the run's own, never the spawning process's: across fork and
-    -- exec, getrusage's maximum carries the parent's resident set into the
-    -- child (a 300 MB parent made a trivial run read 314 MB). Every platform
-    -- is held to it, the one whose answer is not Linux's high-water mark most.
+    -- getrusage's maximum carries a parent's resident set across fork and exec.
     let held ← (← IO.FS.Handle.mk "/dev/zero" .read).read (USize.ofNat (256 * 1048576))
     let out ← IO.Process.output {
       cmd := binary.toString
@@ -95,13 +86,12 @@ its own peak ({peak} KiB)"
     let scanned := verbose.head?.bind fun j => (j.getObjValAs? Nat "scanned").toOption
     let loaded ← (paths.getD #[]).toList.mapM fun (p : String) => do
       return ((← (IO.FS.realPath (System.FilePath.mk p)).toBaseIO).toOption.map (·.toString)).getD p
-    t s!"faces: a verbose run's font phase names the one face file it loaded ({paths}) out of \
-the {scanned} it scanned"
+    t s!"faces: the -v font phase names its one loaded face ({paths}) of {scanned} scanned"
       (verbose.length == 1 && loaded == [staged.toString] && scanned.any (1 ≤ ·))
     t "faces: a run that is not verbose writes no font phase" (← fontPhases #[]).isEmpty
 
-/-- The memory a running process holds resident now, in KiB: the `VmRSS`
-line of its `/proc/<pid>/status`, where the platform has one. -/
+/-- The resident memory of a running process in KiB, from `/proc/<pid>/status` where the platform
+has one. -/
 private def residentKiB (pid : UInt32) : IO (Option Nat) := do
   let .ok status ← (IO.FS.readFile s!"/proc/{pid}/status").toBaseIO | return none
   return (status.splitOn "\n").findSome? fun line =>
@@ -111,22 +101,7 @@ private def residentKiB (pid : UInt32) : IO (Option Nat) := do
       | _ => none
     else none
 
-/-- A watcher's records reach its reader as each build ends, not when the
-process exits: the first build's summary, then the summaries of the rebuilds
-that answer two edits, each read from a pipe while the watcher still runs. A
-reader on a pipe — an editor, or `bench --doc-cost` timing edit to artifact —
-has no other way to learn that a rebuild happened.
-
-The peak each states is the one `Driver.watch` documents. The first build's is
-the process's own, on every platform. A rebuild's is reset as it starts, so it
-is the most the watcher held from then on, and that counts what the watcher
-already held: each rebuild's peak is at least the resident set read just
-before its edit, to within a thirty-second, since the sample is read a moment
-before the reset. The reset is what holds a rebuild to its own span: the
-second short rebuild, once the long revision's memory has been returned to
-the system, reads below that revision's peak, which the watcher's lifetime
-peak never could. Where the
-platform cannot reset a peak, a rebuild states none. -/
+/-- A watcher's records reach a reader as each build ends, and each rebuild states its own peak. -/
 def watchDeliveryChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref
@@ -158,8 +133,7 @@ def watchDeliveryChecks (ref : IO.Ref (List String))
         t s!"watch: the first build states its peak ({long} KiB)" (long.any (1024 ≤ ·))
         let mut rebuilds : Array (String × Option Nat) := #[]
         for rev in [1, 2] do
-          -- Past a coarse filesystem's mtime granule, then renamed into place so
-          -- the watcher never reads half a file.
+          -- Wait past the mtime granule, and rename into place so the watcher never reads half a file.
           IO.sleep 1100
           let held ← residentKiB child.pid
           IO.FS.writeFile (dir / "watched.next") (text rev 1)
@@ -171,16 +145,14 @@ def watchDeliveryChecks (ref : IO.Ref (List String))
         if ← RunCost.resetPeak then
           for (line, held) in rebuilds, k in [1:rebuilds.size + 1] do
             let peak := summaryPeak line
-            t s!"watch: rebuild {k} states a peak ({peak} KiB) counting the {held} KiB the watcher \
-  held as it began"
+            t s!"watch: rebuild {k}'s peak ({peak} KiB) counts the {held} KiB held as it began"
               (match peak, held with
                | some p, some h => 31 * h ≤ 32 * p
                | some _, none => true
                | none, _ => false)
           if let some (last, _) := rebuilds[1]? then
             let short := summaryPeak last
-            t s!"watch: the second short rebuild ({short} KiB) reads below the long revision's \
-  peak ({long} KiB), which the watcher's lifetime peak never does"
+            t s!"watch: the second short rebuild ({short} KiB) reads below the long revision's peak ({long} KiB)"
               (match long, short with
                | some a, some b => 8 * b < 7 * a
                | _, _ => false)

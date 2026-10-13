@@ -11,12 +11,11 @@ open LeanTex.Cli
 
 namespace Tests
 
-/-- A memo reuses only a complete, intact answer. Publishing a replacement
-must leave existing readers and older writers on their original file. -/
+/-- A memo reuses only a complete, intact answer, and publishing a replacement leaves existing
+readers and older writers on their original file. -/
 def toolMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
-    -- Publishing beside a writable destination must not depend on the
-    -- system temporary directory. Only the child's environment changes.
+    -- Only the child's environment changes: publishing must not need the system temporary directory.
     let some lean ← ToolProbe.onPath "lean" |
       throw <| IO.userError "atomic publication checks require the Lean interpreter"
     let driver := dir / "publication.lean"
@@ -76,8 +75,7 @@ def toolMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "tool memo: a new reader gets the complete replacement"
       (warm == .present versionB && (← IO.FS.readBinFile memo) != before)
 
-    -- A legacy writer has flushed a valid-looking prefix but still owns its
-    -- handle. Its eventual suffix cannot alter the newly published memo.
+    -- A legacy writer still holds its handle; its eventual suffix cannot alter the published memo.
     IO.FS.withFile memo .write fun writer => do
       writer.putStr (PicCache.versionMemo stampA "converter 1")
       writer.flush
@@ -108,8 +106,6 @@ def toolMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "tool memo: successful and failed publications clean their staging files"
       ((← dir.readDir).all fun entry => !entry.fileName.endsWith ".part")
 
-    -- ConvCache's public publisher retains the same byte-for-byte replacement
-    -- and cleanup behaviour after its implementation is shared with ToolProbe.
     let target := dir / "conversion.answer"
     let old := ConvCache.encode (.error "synthetic previous refusal")
     let next := ConvCache.encode (.ok "synthetic conversion answer".toUTF8)

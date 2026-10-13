@@ -6,13 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- Endpoint spelling conserves the shipped path: foreach substitution,
-relative coordinates and additive calc coordinates agree with their explicit
-coordinates. A midway label stays attached to its segment on either side of
-the endpoint; a trailing label without a position stands at the endpoint.
-An orthogonal midway label stays at the corner even when a leg has zero length.
-Unsupported operations and options still name their losses.
-All content is invented; the witnesses read Layout.Out and typed SVG. -/
+/-- Path spellings (foreach, relative and calc coordinates) ship the same path as their explicit
+coordinates, and labels keep their place. -/
 def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let nodes :=
@@ -44,8 +39,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let close (a b : Array (Nat × Array Int)) : Bool :=
     a.size == b.size && (a.zip b).all fun ((ka, xs), (kb, ys)) =>
       ka == kb && xs.size == ys.size && (xs.zip ys).all fun (x, y) =>
-        -- Two separately rounded offsets differ from one rounded sum by
-        -- at most two sp; the page's y flip preserves that bound.
+        -- Two rounded offsets differ from one rounded sum by at most two sp.
         decide (x - y ≤ 2 ∧ y - x ≤ 2)
   let svg (body : String) (opts : String := "") : Array String :=
     (elabStr (src body opts)).1.body.foldl (fun acc b =>
@@ -100,9 +94,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     ("calc numeric sum and subtraction",
       "\\draw ($(1,2)+(2,-1)-(1,0)$) -- ($(3,1)+(1,2)$);",
       "\\draw (2,1) -- (4,3);", 1, 0),
-    -- TikZ manual §13.5: a factor before a term, a partway step by a
-    -- fraction or by a length, and a coordinate in lengths; a LuaLaTeX
-    -- probe places each explicit form.
+    -- Expected forms follow TikZ manual §13.5, placed by a LuaLaTeX probe.
     ("calc partway",
       "\\draw ($(0,0)!0.5!(4,2)$) -- (4,0);", "\\draw (2,1) -- (4,0);", 1, 0),
     ("calc factors",
@@ -146,9 +138,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
         match n with
         | .elem _ attrs _ => some attrs
         | .text _ | .style _ | .script _ _ => none
-  -- PGF §17.8 and tikz@timer@vhline/hvline: pos=.5 is the corner,
-  -- irrespective of either leg's length. A LuaLaTeX probe confirms every
-  -- corner below, including the reversals and the zero-leg endpoints.
+  -- pos=.5 is the corner whatever either leg's length (PGF §17.8).
   for (name, start, op, finish, corner) in #[
       ("vh", "(0,0)", "|-", "(3,2)", "(0,2)"),
       ("vh reverse", "(3,2)", "|-", "(0,0)", "(3,0)"),
@@ -166,8 +156,6 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       let tag := " node[midway,above] {Tag} "
       let written := "\\draw " ++ start ++ " " ++ op ++
         (if trailing then " " else tag) ++ finish ++ (if trailing then tag else "") ++ ";"
-      -- An explicit endpoint fixes the expected position independently of
-      -- the orthogonal operation's interpolation and leg simplification.
       let explicit := "\\path (0,0) -- " ++ corner ++ " node[above] {Tag};"
       t s!"path syntax: orthogonal {name}, trailing={trailing}, Layout.Out corner"
         ((labelPoints written).size == 1 && (labelPoints explicit).size == 1 &&
@@ -197,7 +185,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       | _, _ => false)
   let rotated := "\\draw[->] ($(n.west)+(-0.7,0)$) -- ($(w.west)+(-0.7,0)$) " ++
     "node[midway,rotate=90,above] {Tag};"
-  t "path syntax: unsupported rotation still names its loss and keeps edge and label"
+  t "path syntax: unsupported rotation names its loss, keeps edge and label"
     (counts (page rotated) == (1, 1) &&
       (bodyLines (page rotated)).any (lineText · == "Tag") &&
       (losses rotated).any (fun d => d.code == "W0334" && hasStr d.message "'rotate'") &&

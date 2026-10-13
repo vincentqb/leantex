@@ -14,10 +14,8 @@ private structure Case where
   pages : Array String
   folios : Array (Option Nat)
 
-/-- Synthetic article probes, checked against LuaLaTeX: classes.dtx's
-titlepage opens with thispagestyle empty and page = 1, then resets page = 1
-after its closing newpage in oneside mode. Empty style expires at shipout,
-not at an environment boundary or a newpage that ships nothing. -/
+/-- Article title-page cases: the empty page style expires at shipout, and the folio resets after
+the closing page in oneside mode. -/
 private def cases : Array Case := #[
   { name := "leading"
     body := "\\begin{titlepage}Title.\\end{titlepage}After.\\newpage Later."
@@ -82,21 +80,11 @@ end
 
 end TitlePageLifecycle
 
-/-- **No environment's rewrite is an argument of the command before it.**
-An environment the rewrite turns into a group — a language switch, a
-refused column form — stands where `\begin` stood, and after a command and
-its braced arguments it reads as it does after plain words: the paragraph
-it continues keeps going, the list inside it is a list, nothing recovers,
-and behind a picture the sentence the picture breaks is named as it is
-after plain words (W0334), the place the rewrite keeps being no
-environment of the paragraph. The defect took such a group for one more
-argument of the command, set its list as text and its paragraph break as
-nothing. -/
+/-- No environment's rewrite is read as an argument of the command before it. -/
 def environmentArgumentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  -- A link's own line carries its gaps and no glyph, where its paragraph's
-  -- line stands; only the lines that set text are compared.
+  -- A link's own line sets no glyph; only lines that set text are compared.
   let text (out : Layout.Out) : List String :=
     (((allLines out).filter fun l => !l.furniture && !l.segs.isEmpty).toList.map
       fun l => (lineText l).trimAscii.toString).filter (!·.isEmpty)
@@ -108,8 +96,6 @@ def environmentArgumentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontS
         "\\begin{otherlanguage}{french}Premier paragraphe.\n\nSecond paragraphe.\\end{otherlanguage}"),
       ("a refused column form around a list",
         "\\begin{paracol}{3}\\begin{itemize}\\item Un.\\item Deux.\\end{itemize}\\end{paracol}")] do
-    -- Behind a picture, the sentence the picture breaks runs on past the
-    -- environment, and is named as it is after plain words (W0334).
     for (opening, behind) in [("Before ", ""),
         ("\\begin{tikzpicture}\\draw (0,0) -- (1,0);\\end{tikzpicture} ", " behind a picture")] do
       for (lead, plain) in [("\\textbf{Bold}", "Bold"), ("\\href{https://example.org}{Link}", "Link")] do
@@ -125,9 +111,8 @@ def environmentArgumentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontS
           (text (layoutOf oneFace doc) == text (layoutOf oneFace controlDoc) &&
             ds.map (·.code) == controlDs.map (·.code))
 
-/-- Artifact guards for article titlepage's page-local empty style and folio
-resets. Running furniture is read from shipped glyphs; continuous HTML is
-read as typed nodes, with every body paragraph and its order preserved. -/
+/-- The title page's page-local empty style and folio resets, read from shipped glyphs and the typed
+HTML. -/
 def titlePageLifecycleChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -165,13 +150,6 @@ def titlePageLifecycleChecks (ref : IO.Ref (List String))
       t (label ++ ": continuous typed HTML keeps the control's element structure")
         (TitlePageLifecycle.tagsList #[] tree.toList ==
           TitlePageLifecycle.tagsList #[] controlTree.toList)
-  -- A titlepage after a command and its braced arguments is no argument of
-  -- that command: `\begin` is a command, so no argument scan reaches the
-  -- body, and the rewrite keeps its place (`Compat.pushRewritten`). Its page
-  -- opens as it does after plain words, and nothing recovers. The defect read
-  -- the environment's group as one more argument, set it in the paragraph,
-  -- and named its page marks as an unknown command and a page break out of
-  -- place.
   for (lead, plain) in [("\\href{https://example.org}{Link}", "Link"), ("\\textbf{Bold}", "Bold"),
       ("Some text\\\\", "Some text")] do
     for inner in ["Title.", "Title.\n\nSubtitle."] do
@@ -190,8 +168,7 @@ def titlePageLifecycleChecks (ref : IO.Ref (List String))
             (TitlePageLifecycle.bodyText out i).trimAscii ==
                 (TitlePageLifecycle.bodyText control i).trimAscii &&
               out.pages[i]?.map (·.pageState) == control.pages[i]?.map (·.pageState))
-  -- Unstarred ProcessOptions in article.cls applies oneside, then twoside,
-  -- in class declaration order. Both written orders therefore keep twoside.
+  -- article.cls processes oneside before twoside, so either written order keeps twoside.
   for options in ["oneside", "twoside", "oneside,twoside", "twoside,oneside"] do
     let reset := options == "oneside"
     let body :=
@@ -213,8 +190,6 @@ def titlePageLifecycleChecks (ref : IO.Ref (List String))
         (TitlePageLifecycle.furniture out i == expected)
       t s!"titlepage lifecycle {options}: logical folio on physical page {i + 1}"
         (out.pages[i]?.map (·.pageState.folio) == some folios[i]!)
-  -- Physical `from` gates and total pages keep their existing meaning when
-  -- the folio resets: after the titlepage, page four is still physical four.
   let (gdoc, _) := elabStr (dvDoc
     (TitlePageLifecycle.page ++
       "\\runninghead[from=4]{Head\\pagenumber}" ++
@@ -236,8 +211,7 @@ def titlePageLifecycleChecks (ref : IO.Ref (List String))
     (TitlePageLifecycle.furniture logo 1 == #[])
   t "titlepage lifecycle: titlepage restores declared head foot and logo"
     (TitlePageLifecycle.furniture logo 2 == #["Head1", "Foot1", "Mark"])
-  -- Automatic pagination consumes empty style at the same shipment boundary
-  -- as an explicit newpage. The title body must span at least three pages.
+  -- The title body must span at least three pages.
   let titleBody := String.intercalate "\n\n"
     ((List.range 24).map fun i => s!"Entry {i + 1}.")
   let (sdoc, _) := elabStr (dvDoc

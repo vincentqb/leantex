@@ -6,9 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Cli Tests.TikzCoverage
 
-/-- The head a one-segment arrow ships and the shaft it ends, in layout
-coordinates: the shaft's two ends, then the head's geometry, fill and
-stroke. -/
+/-- The shaft's two ends, then the head's geometry, fill and stroke, of a one-segment arrow in
+layout coordinates. -/
 def arrowParts (oneFace : Font.FontSet) (src : String) :
     Option ((Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
   match (drawsOf oneFace src).toList with
@@ -18,28 +17,18 @@ def arrowParts (oneFace : Font.FontSet) (src : String) :
     | _ => none
   | _ => none
 
-/-- **Every tip is its own declaration.** The invariant whose absence drew
-every head as one straight-sided triangle: a tip is what pgf declares it to
-be — the `->` shorthand's head is pgf's `to` (pgfcorearrows.code.tex, `<->
-/.tip = {To}`), a stroked curve at 0.8 of the line width with round caps
-whose apex and cap reach the path's end, or arrows.meta's Computer Modern
-arrow where the document loads arrows.meta; `latex` is a filled shape with
-curved sides, its apex on the end; `stealth` a filled dart with its notch at
-the line's end; arrows.meta's `Latex` filled and stroked, its mitred apex
-on the end. Each shaft stops where its tip's line end stands. Read off
-`Layout.Out`, against pgf's own arithmetic; invented content. -/
+/-- Every arrow tip is drawn as pgf declares it, and each shaft stops at its tip's line end. -/
 def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let lw : Dim.Sp := Ir.Pic.thinWidth
   let a : Dim.Sp := Dim.pt 28 / 100 + lw * 3 / 10
   let near (x y : Dim.Sp) (tol : Nat := 3) : Bool := (x - y).natAbs ≤ tol
   let line := "(0,0) -- (1,0);"
-  -- `->`: pgf's `to`.
   match arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line)) with
   | some ((x0, _, x1, _), .path #[sub], none, some st) =>
     let tipEnd := Dim.pt 21 / 100 + lw * 625 / 1000
     let ends := x0 + Dim.mm 10
-    t "to: the shorthand's head is stroked, round, at 0.8 of the line width, two curves"
+    t "to: a stroked, round head at 0.8 of the line width, two curves"
       (st.cap == .round && st.join == .round && st.width == lw * 8 / 10 && !sub.closed &&
         sub.segs.size == 2)
     t "to: its apex and its round cap reach the path's end"
@@ -49,9 +38,6 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     t "to: the shaft stops at the head's origin, its tip end short of the end"
       (near x1 (ends - tipEnd))
   | _ => t "to: the shorthand ships a shaft and a stroked head" false
-  -- `<-` is `->` on the side run the other way (`reversedTip_exact`, here
-  -- through the whole statement reader): the same head at the same point,
-  -- the shaft between the same two points, run backwards.
   for (tipSpec, fwdSpec) in [("<-", "->"), ("latex-", "-latex"), ("stealth-", "-stealth")] do
     match arrowParts oneFace (picDoc "" s!"\\draw[{tipSpec}] (0,0) -- (1,0.5);"),
         arrowParts oneFace (picDoc "" s!"\\draw[{fwdSpec}] (1,0.5) -- (0,0);") with
@@ -59,7 +45,6 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       t s!"reversed tip: '{tipSpec}' draws the head '{fwdSpec}' draws on the side run backwards"
         (h == h' && f == f' && s == s' && a0 == c1 && b0 == d1 && a1 == c0 && b1 == d0)
     | _, _ => t s!"reversed tip: '{tipSpec}' and '{fwdSpec}' each ship a shaft and a head" false
-  -- With arrows.meta loaded, the shorthand is its Computer Modern arrow.
   let metaDoc := picDoc "" ("\\draw[->] " ++ line) "\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n"
   t "Computer Modern Rightarrow: arrows.meta names no unknown command and no loss"
     ((elabStr metaDoc).2.all fun d => d.code != "W0301" && d.code != "W0334")
@@ -73,9 +58,6 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
        | some (.cubic _ _ (ax, _)) => near ax (ends - lw / 2) && near x1 (ends - lw)
        | _ => false)
   | _ => t "Computer Modern Rightarrow: the shorthand ships a shaft and a stroked head" false
-  -- tikz-cd loads arrows.meta itself (tikzlibrarycd.code.tex), so a document
-  -- that loads the package, or its library, draws every `->` as one that
-  -- names arrows.meta does.
   let metaArrow := arrowParts oneFace metaDoc
   for (how, pre) in [("the tikz-cd package", "\\usepackage{tikz-cd}\n"),
       ("the package with options", "\\usepackage[all]{tikz-cd}\n"),
@@ -86,7 +68,6 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line) "\\usepackage{tikz}\n\\usetikzlibrary{calc}\n")
       == arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line)) &&
       arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line)) != metaArrow)
-  -- `latex`: filled, curved sides, its apex on the end.
   match arrowParts oneFace (picDoc "" ("\\draw[-latex] " ++ line)) with
   | some ((x0, _, x1, _), .path #[sub], some _, none) =>
     let ends := x0 + Dim.mm 10
@@ -95,7 +76,6 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     t "latex: its apex on the end, the shaft stopping nine units short"
       (near sub.start.1 ends && near x1 (ends - 9 * a))
   | _ => t "latex: the tip ships a shaft and a filled head" false
-  -- `stealth`: a filled dart, its notch where the shaft stops.
   match arrowParts oneFace (picDoc "" ("\\draw[-stealth] " ++ line)) with
   | some ((x0, _, x1, _), .path #[sub], some _, none) =>
     let ends := x0 + Dim.mm 10
@@ -105,7 +85,6 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
         | some (.line (nx, _)) => near nx x1
         | _ => false)
   | _ => t "stealth: the tip ships a shaft and a filled head" false
-  -- arrows.meta's `Latex`: filled and stroked, its mitred apex on the end.
   match arrowParts oneFace (picDoc "" ("\\draw[-Latex] " ++ line)) with
   | some ((x0, _, _, _), .path #[sub], some _, some st) =>
     let len := Dim.pt 3 + lw * 45 / 10

@@ -49,11 +49,8 @@ private def ground (a : Artifact) (page : Nat) (color : Ir.Color) : Bool :=
     f.color == color && f.x ≤ 0 && f.y ≤ 0 &&
       f.x + f.w ≥ a.geom.pageW && f.y + f.h ≥ a.geom.pageH
 
-/-- Does `text` stand in `nodes` as whole runs of ink that elements whose
-style declares `css` paint: every character of it inside such an element,
-and no such element reaching past either end of it, however the page parts
-a run's characters into elements (a code atom's, `HtmlDoc.codeLineNodes`) —
-so `def` is not found inside a painted `default`. -/
+/-- Does `text` stand in `nodes` as whole runs of ink painted by elements whose style declares
+`css`? -/
 private def styled (nodes : List Html.Node) (text css : String) : Bool :=
   let chars := shownChars nodes
   let want := text.toList.toArray
@@ -250,8 +247,6 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
   title ref name a "Small Tools for Paper Shapes" "Practice Group"
   check ref s!"{name}: section page" (textAt a 1 == #["Small counting tools"])
   let codes := elemNodesList (· == "code") #[] a.body.toList
-  -- Each token's colour as the printed page paints it (`schemeTree`): its
-  -- class's rule, through the code role the page states.
   let lightCodes := elemNodesList (· == "code") #[] (schemeTree a.head a.body .print).toList
   let css := treeCssList "" a.head.toList
   check ref s!"{name}: both native listing languages"
@@ -269,9 +264,6 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
     check ref s!"{name}: {lang} exact HTML source, indentation and terminal comment"
       (code.map (nodeTextOne "") == #[String.intercalate "\n" source.toList] &&
         treeShownOccurs code comment == 1)
-    -- The code roles from the deck's palette: comments its muted text (the
-    -- theme's, derived from its ink), literals its example colour, keywords
-    -- a tone of its ink's hue.
     painted ref name a page comment { r := 0x60, g := 0x76, b := 0x7A }
     check ref s!"{name}: {lang} native keyword and string ink"
       (tokenPaint a page source[0]! "def" { r := 0x34, g := 0x5d, b := 0x94 } &&
@@ -280,17 +272,13 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
       (styled lightCode.toList "def" "color: #345d94" &&
         styled lightCode.toList "\"square\"" "color: #008080" &&
         styled lightCode.toList comment "color: #60767a")
-    -- A literal and a comment ship as the palette roles the rule reads
-    -- them from: the page states each code role as that role's property,
-    -- so a reader's restyle of the role reaches the code.
     check ref s!"{name}: {lang} HTML literals and comments read the palette's roles"
       (hasStr css "--ltx-codeliteral: var(--ltx-example);" &&
         hasStr css "--ltx-codecomment: var(--ltx-muted);")
 
 end Tests.RegressionDecks
 
-/-- Standalone TeX entries; local style and section files are dependencies.
-The common harness owns publication validity and diagnostics. -/
+/-- Standalone TeX entries; local style and section files are dependencies. -/
 def Tests.RegressionDecks.cases : Array Tests.Regression.Case := #[
   { path := "testdata/regression/decks/workshop.tex", check := Tests.RegressionDecks.workshop },
   { path := "testdata/regression/decks/overlays.tex", check := Tests.RegressionDecks.overlays },

@@ -43,11 +43,8 @@ private def delimiterCheck (ref : IO.Ref (List String)) (name : String)
     (ok : Bool) : IO Unit := do
   unless ok do ref.modify (("math delimiter triggers: " ++ name) :: ·)
 
-/-- The source index must retain a math opener's stored lexical evidence,
-at its exact file, line and column. Delayed typed records use positions
-read by the real lexer; neither their message nor the math display flag
-supplies a spelling. The collector must not invent evidence for synthetic
-math, and it must continue to descend into the formula's body. -/
+/-- The source index keeps a math opener's lexical evidence at its exact file, line and column, and
+invents none for synthetic math. -/
 public def mathDelimiterTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
   for f in delimiterFixtures do
     let file := "synthetic/delimiter-" ++ f.name ++ ".tex"
@@ -87,8 +84,7 @@ public def mathDelimiterTriggerChecks (ref : IO.Ref (List String)) : IO Unit := 
     if f.name == "definition" then
       t "the macro invocation retains its written owner"
         (sources[(file, 2, 1)]? == some "\\request")
-  -- Input wrappers are the driver's parsed-file boundary. The same
-  -- coordinates in two files must keep distinct delimiter spellings.
+  -- The same coordinates in two files keep distinct delimiter spellings.
   let root := "synthetic/delimiter-root.tex"
   let child := "synthetic/delimiter-child.tex"
   let rootSource := "\n  \\(x\\)"
@@ -113,9 +109,6 @@ public def mathDelimiterTriggerChecks (ref : IO.Ref (List String)) : IO Unit := 
       let attributed := sources.attribute original
       t (kind.code ++ " retains the file, exact position and opener")
         (decide (attributed.span = original.span) && attributed.triggerText == some spelling)
-  -- A display flag is not lexical evidence. Erasing the evidence from
-  -- a real opener must not turn either kind of synthetic math into a
-  -- guessed dollar or escaped delimiter.
   let some token := rootTokens.find? (·.pos.command == some "\\(") |
     delimiterCheck ref "synthetic guard has a real source position" false
     return
@@ -205,11 +198,8 @@ private def dollarAt (file : String) (site : DelimiterSite) (source : Option Spa
   source.any fun s => s.file == file && s.pos.line == site.line &&
     s.pos.col == site.col && s.pos.command == some site.spelling
 
-/-- Read real files through the frontend used by `leantex build` and `dump`:
-UTF-8 decoding, extension selection, input execution, preparation and
-elaboration all participate. Formula modes and original opening delimiters
-must then survive the same font assembly that produces N0016 and N0018.
-Escaped, commented, verbatim and Markdown dollars remain outside this path. -/
+/-- Formula modes and their opening delimiters survive the real frontend and the font assembly
+behind N0016 and N0018. -/
 public def mathDollarSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let faces ← LeanTex.Cli.FontDiscovery.scanRootsIn none ["testdata/corpus/fonts"]
   let scan : LeanTex.Cli.FontAssembly.FaceScan :=

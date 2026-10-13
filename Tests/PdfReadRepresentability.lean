@@ -2,10 +2,7 @@ import LeanTex.Core.PdfReadProof
 
 open LeanTex.Core
 
-/-! Domain regression pins complement the universal round-trip theorem.
-Rejected cases carry proofs about the independent syntactic domain; the
-runtime checks separately witness the former contract's failures. The
-domain is sufficient, not a claim that every excluded spelling fails. -/
+/-! Representability pins beside the universal round-trip theorem. -/
 
 namespace PdfReadRepresentability
 
@@ -100,8 +97,6 @@ private def primitives : List Certified := [
     change Obj.StringSpelling (60 :: [48,97,32,102,102,32,49] ++ [62])
     exact .hex (by decide))⟩]
 
-/-- Rejection is inherited by both container positions; a valid outer
-constructor cannot hide an invalid descendant or dictionary key. -/
 private theorem rejected_array {o : Obj} (h : ¬ o.Representable) :
     ¬ (Obj.arr #[o]).Representable := by
   intro hr

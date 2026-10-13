@@ -2,9 +2,8 @@ module
 
 import LeanTex.Core.TitleTemplate
 
-/-! A title-template consumer reads a declared template and emits its native
-spelling. Token scanners and their mutable parsing state are implementation
-details, unavailable through an ordinary import. -/
+/-! A title-template consumer reads a declared template and emits its native spelling; scanners stay
+private. -/
 
 open LeanTex.Core
 

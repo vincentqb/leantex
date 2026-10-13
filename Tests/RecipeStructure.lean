@@ -25,8 +25,6 @@ private def pdfLinkTargets (pdf : ByteArray) : Except String (Array Obj) := do
       | _ => pure ()
   return out
 
-/-- How many page objects the PDF carries: the physical page count the
-artifact ships. -/
 private def pdfPageCount (pdf : ByteArray) : Except String Nat := do
   let es ← PdfRead.objects pdf
   return (es.val.filter fun e => PdfCensus.kindOf e.val == .page).size
@@ -35,30 +33,20 @@ private def countTag (tag : String) : Html.Node → Nat
   | .text _ | .style _ | .script _ _ => 0
   | .elem t _ kids => (if t == tag then 1 else 0) + kids.foldl (fun n k => n + countTag tag k) 0
 
-/-- Count anchors nested inside another anchor. An `<a>` descending from an
-`<a>` is invalid interactive nesting and a keyboard trap (HTML content model;
-WCAG SC 4.1.2): a block link must never emit one, which is what refusing a
-nested wrapper secures. -/
+/-- The number of anchors nested inside another anchor. -/
 private def anchorInAnchor (inside : Bool) : Html.Node → Nat
   | .text _ | .style _ | .script _ _ => 0
   | .elem t _ kids =>
     (if inside && t == "a" then 1 else 0)
       + kids.foldl (fun n k => n + anchorInAnchor (inside || t == "a") k) 0
 
-/-- The text an anchor subtree contributes to its accessible name: every text
-leaf below an `<a>`. Content outside every anchor contributes nothing. -/
+/-- The text of the text leaves below an anchor; text outside every anchor contributes nothing. -/
 private def anchorInnerText (inside : Bool) : Html.Node → String
   | .text s => if inside then s else ""
   | .style _ | .script _ _ => ""
   | .elem t _ kids => kids.foldl (fun s k => s ++ anchorInnerText (inside || t == "a") k) ""
 
-/-- **A recognized content wrapper consumes its target and preserves a block body.**
-Hyperref defines `\hyperlink{target}{text}` and `\hypertarget{target}{text}` as
-two-group wrappers (hyperref.sty, `\def\hyperlink` and `\def\hypertarget`).
-Their content may be a box: the wrapper's name group is configuration, while
-the second group is recursively elaborated through the ordinary minipage and
-table paths. The page assertion reads `Layout.Out`; the web assertions read
-the typed tree. -/
+/-- A recognized content wrapper consumes its target and preserves a block body. -/
 def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -71,11 +59,11 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     "\\end{minipage}}")
   let (doc, ds) := elabStr src
   let cascade := ["W0301", "W0302", "E0336", "E0311"]
-  t "internal link wrappers produce no unknown-command or wrapper cascade"
+  t "link wrappers raise no unknown-command or wrapper cascade"
     (ds.all fun d => !cascade.contains d.code)
   let out := layoutOf oneFace doc
   let pageText := " ".intercalate ((allLines out).toList.map lineText)
-  t "internal link wrappers preserve both nested minipage and table bodies on the page"
+  t "link wrappers ship nested minipage and table bodies"
     (["Target panel.", "Alpha", "Delta", "Linked panel.", "One", "Four"].all
       (hasStr pageText ·))
   let anchorBody := "\\begin{minipage}{.42\\textwidth}Anchor position.\\end{minipage}"
@@ -101,7 +89,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   t "the typed HTML tree carries exactly one matching internal link"
     (ids.contains "panel" && hrefs == #["#panel"])
   let pdf := Pdf.write (Layout.Geom.ofPage doc.page) oneFace out.pages doc.info
-  t "the PDF artifact carries exactly one resolved internal block-link annotation"
+  t "the PDF carries one resolved internal block-link annotation"
     (match pdfLinkTargets pdf with
      | .ok targets => targets.size == 1 && (targets[0]? matches some (Obj.arr _))
      | .error _ => false)
@@ -113,14 +101,10 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let nestedTrees := nestedDoc.body.map (HtmlDoc.blockNode {})
   let nestedHrefs := nestedTrees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
-  t "a nested link keeps the inner link and truthfully refuses only the outer wrapper"
+  t "a nested link keeps the inner and refuses only the outer"
     ((nestedDs.filter (·.code == "W0104")).size == 1 &&
       nestedHrefs.contains "https://example.org" && !nestedHrefs.contains "#outer" &&
       nestedTrees.foldl (fun n tree => n + treeShownOccurs #[tree] "Outer words") 0 == 1)
-  -- A multi-paragraph wrapper with text on either side: one authored link
-  -- identity spans both paragraphs (never one wrapper per inline leaf), and
-  -- the surrounding siblings stay outside the one region, one annotation,
-  -- and the one anchor.
   let msrc := dvDoc "\\usepackage{hyperref}\n" (
     "Before the link.\n\n" ++
     "\\hyperlink{multi}{First linked paragraph.\n\n" ++
@@ -129,7 +113,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let (mdoc, mds) := elabStr msrc
   let linkBlocks := Ir.foldBlocks (fun n b => n + (if b matches .link _ _ then 1 else 0))
     (fun n _ => n) 0 mdoc.body
-  t "a multi-paragraph wrapper is one block link, no unknown-command cascade"
+  t "multi-paragraph wrapper: one block link, no unknown-command cascade"
     (mds.all (fun d => !cascade.contains d.code) && linkBlocks == 1)
   let mout := layoutOf oneFace mdoc
   let mLinks := (mout.pages[0]?.map (·.links)).getD #[]
@@ -139,7 +123,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let mOutside (names : List String) (rect : Layout.LinkRect) : Bool :=
     ((allLines mout).filter (fun l => names.any (hasStr (lineText l) ·))).all
       fun l => l.y < rect.y || l.y > rect.y + rect.h
-  t "the multi-paragraph link is one region spanning both paragraphs, not its siblings"
+  t "multi-paragraph link: one region over both paragraphs, not its siblings"
     (match mLinks[0]? with
      | some rect =>
        mLinks.size == 1 && rect.target == "#multi" &&
@@ -147,27 +131,19 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
          mOutside ["Before the link.", "After the link."] rect
      | none => false)
   let mpdf := Pdf.write (Layout.Geom.ofPage mdoc.page) oneFace mout.pages mdoc.info
-  t "the multi-paragraph link is exactly one PDF annotation, siblings carry none"
+  t "multi-paragraph link: exactly one PDF annotation, none on siblings"
     (pdfLinkTargets mpdf == .ok #[.str "(multi)".toUTF8])
   let mtrees := mdoc.body.map (HtmlDoc.blockNode {})
   let mhrefs := mtrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let mAnchorText := mtrees.foldl (fun s n => s ++ anchorInnerText false n) ""
-  t "one HTML anchor wraps both linked paragraphs and excludes the surrounding text"
+  t "multi-paragraph link: one HTML anchor over both paragraphs, not the text around"
     (mhrefs == #["#multi"] &&
       hasStr mAnchorText "First linked paragraph." && hasStr mAnchorText "Second linked paragraph." &&
       !hasStr mAnchorText "Before the link." && !hasStr mAnchorText "After the link.")
-  -- Accessibility: a block link's anchor carries an accessible name (its own
-  -- text) and no anchor ever nests inside another — the invalid interactive
-  -- nesting the nested-wrapper refusal exists to prevent.
   t "the block link is accessible: a named anchor with no nested interactive anchor"
     (!mAnchorText.isEmpty &&
       mtrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0 &&
       nestedTrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0)
-  -- User-definition precedence: `href`/`link`/`hyperlink`/`hypertarget` are
-  -- `renderedBuiltins`, which the block dispatch (like the inline dispatch)
-  -- must handle by its literal arm only AFTER `lookupUser` fails. A document
-  -- that redefines one with a block-shaped use is the user's command, not
-  -- the built-in link: no `#dest` anchor, the redefinition's own output.
   let (rdoc, rds) := elabStr (dvDoc
     "\\usepackage{hyperref}\n\\renewcommand{\\hyperlink}[2]{Redefined lead: #2}\n"
     "\\hyperlink{dest}{Alpha words.\\par Beta words.}")
@@ -176,18 +152,10 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let rTrees := rdoc.body.map (HtmlDoc.blockNode {})
   let rHrefs := rTrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let rText := " ".intercalate ((allLines (layoutOf oneFace rdoc)).toList.map lineText)
-  t "a redefined block link name is the user's command, consulted before the built-in arm"
+  t "a redefined block link name is the user's command, not the built-in"
     (rLinks == 0 && !rHrefs.contains "#dest" &&
       hasStr rText "Redefined lead:" && hasStr rText "Alpha words." && hasStr rText "Beta words." &&
       rds.all (fun d => !cascade.contains d.code))
-  -- A `\hfill` run of `\hyperlink`-wrapped minipages is ONE columns row: the
-  -- flow-transparent wrapper is read through for the row (width and row
-  -- participation from the minipage inside) while the wrapper stays around
-  -- the tile's content, so each column is one `.link` to its own target.
-  -- The row stands at the
-  -- same baseline and column origins as the unlinked three-minipage row, and
-  -- each tile gets one link rectangle over its OWN ink only — not the gutter
-  -- or a neighbour (`Layout.Out`), with one `<a>` per tile (typed HTML).
   let linkTiles :=
     "\\hyperlink{ta}{\\begin{minipage}{0.3\\textwidth}Tile Apple.\\begin{tabular}{ll}A&B\\\\C&D\\end{tabular}\\end{minipage}}\\hfill\n" ++
     "\\hyperlink{tb}{\\begin{minipage}{0.3\\textwidth}Tile Berry.\\begin{tabular}{ll}E&F\\\\G&H\\end{tabular}\\end{minipage}}\\hfill\n" ++
@@ -199,14 +167,14 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let (ldoc, lds) := elabStr (dvDoc "\\usepackage{hyperref}\n" linkTiles)
   let (bdoc, _) := elabStr (dvDoc "\\usepackage{hyperref}\n" bareTiles)
   let lcols := ldoc.body.findSome? fun b => match b with | .columns cs => some cs | _ => none
-  t "a hfill run of linked minipages is one columns row of three linked columns"
+  t "an hfill run of linked minipages is one row of three linked columns"
     (match lcols with
      | some cs => cs.size == 3 &&
          (cs.map fun c => match c.2.toList with
            | [.link target _] => some target
            | _ => none) == #[some "#ta", some "#tb", some "#tc"]
      | none => false)
-  t "the linked row has three block links and no unknown-command cascade"
+  t "linked row: three block links, no unknown-command cascade"
     (lds.all (fun d => !cascade.contains d.code) &&
       Ir.foldBlocks (fun n b => n + (if b matches .link _ _ then 1 else 0))
         (fun n _ => n) 0 ldoc.body == 3)
@@ -229,13 +197,13 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let sorted := rects.qsort (fun a b => decide (a.x < b.x))
   let covers (r : Layout.LinkRect) (x : Dim.Sp) : Bool :=
     decide (r.x ≤ x) && decide (x ≤ r.x + r.w)
-  t "the hfill linked row ships exactly three disjoint link rectangles with a gutter between"
+  t "linked row: three disjoint link rectangles with gutters between"
     (rects.size == 3 &&
       (match sorted[0]?, sorted[1]?, sorted[2]? with
        | some r0, some r1, some r2 =>
          decide (r0.x + r0.w < r1.x) && decide (r1.x + r1.w < r2.x)
        | _, _, _ => false))
-  t "each link rectangle covers its own tile's ink and neither the gutter nor a neighbour"
+  t "linked row: each link rectangle covers its own tile's ink only"
     (match lineX lout "Tile Apple.", lineX lout "Tile Berry.", lineX lout "Tile Cherry.",
          sorted[0]?, sorted[1]?, sorted[2]? with
      | some xa, some xb, some xc, some r0, some r1, some r2 =>
@@ -243,20 +211,15 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
        covers r1 xb && !covers r1 xa && !covers r1 xc &&
        covers r2 xc && !covers r2 xa && !covers r2 xb
      | _, _, _, _, _, _ => false)
-  t "the three link rectangles carry the three distinct tile targets left to right"
+  t "linked row: the rectangles carry the three tile targets left to right"
     (sorted.map (·.target) == #["#ta", "#tb", "#tc"])
   let ltrees := ldoc.body.map (HtmlDoc.blockNode {})
   let lhrefs := ltrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
-  t "the typed HTML row carries one anchor per tile with the three targets"
+  t "linked row: typed HTML has one anchor per tile, three targets"
     (lhrefs == #["#ta", "#tb", "#tc"] &&
       ltrees.foldl (fun n tree => n + countTag "a" tree) 0 == 3)
 
-/-- **Paracol's two flows are one typed columns row.** The installed package
-sets each column's width from `\columnratio`, gives the final column the
-remainder, and makes bare `\switchcolumn` advance cyclically while `[n]`
-selects column n (paracol.sty, `\pcol@setcolwidth@r` and
-`\pcol@com@switchcolumn`). Repeated switches append to each independent
-flow. Assertions read the IR, Layout.Out, and typed HTML. -/
+/-- Paracol's two flows are one typed columns row. -/
 def recipeParacolChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -267,12 +230,12 @@ def recipeParacolChecks (ref : IO.Ref (List String))
     "\\switchcolumn[0]\nLeft second.\n\\end{paracol}")
   let (doc, ds) := elabStr src
   let cascade := ["W0103", "W0301", "W0302", "E0336", "E0311"]
-  t "paracol's supported two-flow family produces no package or wrapper cascade"
+  t "paracol's two-flow family raises no package or wrapper cascade"
     (ds.all fun d => !cascade.contains d.code)
   let cols := doc.body.findSome? fun b => match b with
     | .columns cs => some cs
     | _ => none
-  t "columnratio shares the measure after reserving the class's column gap"
+  t "columnratio splits the measure less the class's column gap"
     ((cols.map fun cs => cs.map (fun c => c.1.resolve (Dim.pt 200))) ==
       some #[some (Dim.pt 665 / 10), some (Dim.pt 1235 / 10)])
   let out := layoutOf oneFace doc
@@ -295,17 +258,12 @@ def recipeParacolChecks (ref : IO.Ref (List String))
       trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1)
   let (starDoc, starDs) := elabStr (dvDoc "\\usepackage{paracol}\n"
     "\\begin{paracol}{2}Left.\\switchcolumn*[Spanning words.]Right.\\end{paracol}")
-  t "a synchronized switch is one truthful refusal with its text preserved"
+  t "a synchronized switch is one refusal that keeps its text"
     ((starDs.filter (·.code == "W0104")).size == 1 &&
       starDs.all (fun d => !["W0301", "W0302", "E0336"].contains d.code) &&
       ((Ir.blocksText starDoc.body).splitOn "Spanning words.").length == 2)
 
-/-- **A tabularx X column receives the target's remaining width.** The
-installed package rewrites X to a paragraph column, repeatedly choosing its
-width so the table reaches the first argument (`tabularx.sty`,
-`\TX@endtabularx`, `\TX@arith`, and `\tabularxcolumn`). The target is the
-enclosing measure when written as `\linewidth`, including inside a
-minipage. Assertions read Layout.Out and the typed HTML table. -/
+/-- A tabularx X column receives the target's remaining width. -/
 def recipeTabularxChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -315,7 +273,7 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
     "End & Short value.\\end{tabularx}\\end{minipage}")
   let (doc, ds) := elabStr src
   let cascade := ["W0103", "W0301", "W0302", "W0104", "E0336", "E0311"]
-  t "tabularx and X produce no package, environment, or column-type cascade"
+  t "tabularx and X raise no package, environment or column-type cascade"
     (ds.all fun d => !cascade.contains d.code)
   let out := layoutOf oneFace doc
   let census := censusOf (coveredColorsOf doc) out
@@ -336,7 +294,7 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
   let probeCols : Array Ir.ColSpec :=
     #[{ width := .natural, align := .left },
       { width := .flex (.frac 1000), align := .left }]
-  t "X receives exactly the target remainder after the natural column and pads"
+  t "X receives the target less the natural column and pads, exactly"
     (Layout.tableColWidths 10 1000 100 probeCols #[#[100, 200]] #[] == #[100, 860])
   let trees := doc.body.map (HtmlDoc.blockNode {})
   let tableStyles := trees.foldl
@@ -347,14 +305,7 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
       tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
 
-/-- **The typed HTML `<col>` widths are the per-column shares of the target,
-measure-free (`Ir.tableColShares`).** HTML leaves natural `l`/`c`/`r`
-columns to CSS `auto` (no `<col>` width; their cells carry `bt-nowrap` so
-auto-layout cannot squeeze them to min-content) and give only sized `p{…}`
-and flexible `X` columns an explicit width: a sized column its fraction of
-the target, each `X` an equal part of the remainder. The percentages are the
-`percentCss` of the shared IR value, so relative declarations retain their ratio. These are CSS auto-layout
-hints; font-dependent natural widths and cell padding remain browser inputs. Assertions read the typed HTML tree. -/
+/-- Typed HTML `<col>` widths are the target's per-column shares (`Ir.tableColShares`). -/
 def recipeTabularxSharesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let render := fun (src : String) =>
@@ -371,7 +322,7 @@ def recipeTabularxSharesChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a sized p-column takes its fraction and X takes the remainder"
     (colStylesOf "\\begin{tabularx}{\\linewidth}{p{0.3\\linewidth}X}A & B\\end{tabularx}"
       == #["width: 30%", "width: 70%"])
-  t "a natural column mixed with X stays auto; X takes the full flex share"
+  t "a natural column beside X stays auto; X takes the whole flex share"
     (colStylesOf "\\begin{tabularx}{\\linewidth}{lX}A & B\\end{tabularx}"
       == #["width: 100%"])
   t "a natural column's cells carry the nowrap class"
@@ -382,16 +333,7 @@ def recipeTabularxSharesChecks (ref : IO.Ref (List String)) : IO Unit := do
         "\\begin{tabularx}{\\linewidth}{>{\\raggedleft\\arraybackslash}X}A\\end{tabularx}").any
       (hasStr · "bt-right"))
 
-/-- **Array `>{decl}` and `<{decl}` column modifiers set a column's
-alignment.** The array package reads a `>{...}` group before a column and a
-`<{...}` group after it (array manual §1-2); `\raggedright`, `\raggedleft`,
-and `\centering` select the column's horizontal alignment and
-`\arraybackslash` is inert inside the group. The common flexible recipe
-column `>{\raggedright\arraybackslash}X` must stay a flexible target-width
-column whose alignment follows the modifier, and must raise no
-unreadable-type (W0104) or short-row (W0337) cascade. An effect the group
-carries that the engine does not model is named once. Assertions read the
-shared table IR (`Ir.ColSpec`). -/
+/-- Array `>{decl}` and `<{decl}` column modifiers set a column's alignment. -/
 def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let firstTable := fun (doc : Ir.Doc) =>
@@ -400,20 +342,18 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => acc) (fun acc _ => acc) #[] doc.body)[0]?
   let isFlex := fun (w : Ir.ColWidth) => match w with | .flex _ => true | _ => false
   let cascade := ["W0104", "W0337", "W0338", "W0103", "W0301", "W0302"]
-  -- A raggedright X: one flexible, left-aligned column, no cascade.
   let (d1, ds1) := elabStr (dvDoc "\\usepackage{tabularx}\n"
     "\\begin{tabularx}{\\linewidth}{>{\\raggedright\\arraybackslash}X}Key.\\end{tabularx}")
-  t "a raggedright X column stays flexible, left-aligned, with no cascade"
+  t "a raggedright X stays flexible and left-aligned, no cascade"
     (match firstTable d1 with
      | some (cols, _, _) =>
        cols.size == 1 && cols[0]?.map (·.align) == some .left &&
        ((cols[0]?.map (·.width)).any isFlex) &&
        ds1.all (fun d => !cascade.contains d.code)
      | none => false)
-  -- Mixed l then a centring X.
   let (d2, ds2) := elabStr (dvDoc "\\usepackage{tabularx}\n"
     "\\begin{tabularx}{\\linewidth}{l>{\\centering\\arraybackslash}X}A & B.\\end{tabularx}")
-  t "a mixed l and centring-X spec yields a natural-left then a flexible-centre column"
+  t "l then centring X: a natural left and a flexible centred column"
     (match firstTable d2 with
      | some (cols, _, _) =>
        cols.size == 2 &&
@@ -421,7 +361,6 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
        cols[1]?.map (·.align) == some .center && ((cols[1]?.map (·.width)).any isFlex) &&
        ds2.all (fun d => !cascade.contains d.code)
      | none => false)
-  -- Raggedleft on a p column.
   let (d3, ds3) := elabStr (dvDoc ""
     "\\begin{tabular}{>{\\raggedleft\\arraybackslash}p{3cm}}x\\end{tabular}")
   t "raggedleft on a p column sets right alignment with no cascade"
@@ -430,17 +369,15 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
        cols.size == 1 && cols[0]?.map (·.align) == some .right &&
        ds3.all (fun d => !cascade.contains d.code)
      | none => false)
-  -- An unsupported effect is named once; the column still stands.
   let (d4, ds4) := elabStr (dvDoc ""
     "\\begin{tabular}{>{\\bfseries}c}a\\end{tabular}")
-  t "an unsupported modifier effect is named once and the column stands"
+  t "an unsupported modifier effect is named once; the column stands"
     (match firstTable d4 with
      | some (cols, _, _) =>
        cols.size == 1 && cols[0]?.map (·.align) == some .center &&
        (ds4.filter (·.code == "W0104")).size == 1 &&
        ds4.all (fun d => d.code != "W0337")
      | none => false)
-  -- A post `\arraybackslash` modifier is inert.
   let (d5, ds5) := elabStr (dvDoc ""
     "\\begin{tabular}{c<{\\arraybackslash}}a\\end{tabular}")
   t "a post arraybackslash modifier is inert and raises no cascade"
@@ -449,53 +386,34 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
        cols.size == 1 && cols[0]?.map (·.align) == some .center &&
        ds5.all (fun d => !cascade.contains d.code)
      | none => false)
-  -- An `@{}` gap after a modified X drops the right pad.
   let (d6, ds6) := elabStr (dvDoc "\\usepackage{tabularx}\n"
     "\\begin{tabularx}{\\linewidth}{>{\\raggedright\\arraybackslash}X@{}}k.\\end{tabularx}")
-  t "an @{} gap after a modified X column drops the right pad with no cascade"
+  t "an @{} gap after a modified X drops the right pad, no cascade"
     (match firstTable d6 with
      | some (cols, _, padR) =>
        cols.size == 1 && padR == false && ds6.all (fun d => !cascade.contains d.code)
      | none => false)
 
-/-- **The article `titlepage` environment is an isolated flow page.** The
-installed class opens a fresh page and another at the close
-(`classes.dtx`, `\titlepage`). Its empty page style and page-counter reset
-are not covered here; the engine still owes those page-scoped settings.
-This engine lowers the
-environment before the block knot to the `\pagebreak` the flow already names
-around the body carried in a group — so there is no unknown-environment
-cascade, the body elaborates through the ordinary top-level block paths at
-the document's own flow geometry (its left margin, where LuaLaTeX sets
-ordinary titlepage text, the author's `\vfill` controlling the vertical
-split), a declaration inside ends at the close, and adjacent or boundary
-breaks close only a page holding content so no blank page is left. Assertions
-read the shipped pages (`Layout.Out`), the IR, the PDF page objects, and the
-typed HTML tree. -/
+/-- The article `titlepage` environment is an isolated flow page. -/
 def recipeTitlePageChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let page := "\\page{ width = 420pt, height = 600pt, hmargin = 54pt, vmargin = 48pt }\n"
   let cascade := ["W0302", "W0301", "E0336", "E0311"]
-  -- Middle: a title page between lead and tail matter — exactly three pages,
-  -- the two `\clearpage` boundaries LuaLaTeX's `titlepage` sets.
   let src := dvDoc page
     ("Lead page.\\begin{titlepage}\nTop marker.\n\\vfill\nBottom marker." ++
       "\\end{titlepage}Tail page.")
   let (doc, ds) := elabStr src
-  t "titlepage is recognized with no unknown-environment or wrapper cascade"
+  t "titlepage raises no unknown-environment or wrapper cascade"
     (ds.all fun d => !cascade.contains d.code)
   let out := layoutOf oneFace doc
   let census := censusOf (coveredColorsOf doc) out
-  t "a title page between matter opens and closes exactly one physical page"
+  t "a title page between matter is exactly one physical page"
     (out.pages.size == 3 && pageHas census 0 "Lead page." &&
       pageHas census 1 "Top marker." && pageHas census 1 "Bottom marker." &&
       pageHas census 2 "Tail page." &&
       pageOccurs census 1 "Top marker." == 1 && pageOccurs census 2 "Tail page." == 1)
-  -- LuaLaTeX sets ordinary titlepage text left-aligned at the text margin,
-  -- the author's `\vfill` controlling the vertical split; the markers land at
-  -- the document's hmargin with the bottom pushed well below the top.
-  t "titlepage body uses the document's own flow geometry (left margin, author vfill)"
+  t "titlepage body keeps the flow's left margin and the author's vfill"
     (match lineXOf census 1 "Top marker.", lineXOf census 1 "Bottom marker.",
         lineYOf census 1 "Top marker.", lineYOf census 1 "Bottom marker." with
      | some xt, some xb, some yt, some yb =>
@@ -506,23 +424,20 @@ def recipeTitlePageChecks (ref : IO.Ref (List String))
   t "the PDF artifact carries exactly the three physical pages"
     (pdfPageCount pdf == .ok 3)
   let (html, _) := HtmlDoc.emit {} doc
-  t "typed HTML keeps the title page body as one continuous semantic flow"
+  t "typed HTML keeps the title page body as one continuous flow"
     (["Lead page.", "Top marker.", "Bottom marker.", "Tail page."].all (hasStr html ·))
-  -- Leading: no blank page before.
   let (fdoc, fds) := elabStr (dvDoc page "\\begin{titlepage}\nTitle only.\\end{titlepage}Body after.")
   let fout := layoutOf oneFace fdoc
   let fcensus := censusOf (coveredColorsOf fdoc) fout
   t "a leading title page leaves no blank page before it"
     (fds.all (fun d => !cascade.contains d.code) && fout.pages.size == 2 &&
       pageHas fcensus 0 "Title only." && pageHas fcensus 1 "Body after.")
-  -- Trailing: no blank page after.
   let (ldoc, lds) := elabStr (dvDoc page "Body before.\\begin{titlepage}\nColophon.\\end{titlepage}")
   let lout := layoutOf oneFace ldoc
   let lcensus := censusOf (coveredColorsOf ldoc) lout
   t "a trailing title page leaves no blank page after it"
     (lds.all (fun d => !cascade.contains d.code) && lout.pages.size == 2 &&
       pageHas lcensus 0 "Body before." && pageHas lcensus 1 "Colophon.")
-  -- Empty body: adjacent breaks make no blank page; the two sides stay apart.
   let (edoc, eds) := elabStr (dvDoc page "Before.\\begin{titlepage}\\end{titlepage}After.")
   let eout := layoutOf oneFace edoc
   let ecensus := censusOf (coveredColorsOf edoc) eout
@@ -531,7 +446,6 @@ def recipeTitlePageChecks (ref : IO.Ref (List String))
     (eds.all (fun d => !cascade.contains d.code) && eout.pages.size == 2 &&
       pageHas ecensus 0 "Before." && pageHas ecensus 1 "After." &&
       etrees.foldl (fun n tree => n + countTag "section" tree) 0 == 0)
-  -- Nested block content stays block-shaped on the title page's own page.
   let nsrc := dvDoc page
     ("\\begin{titlepage}\n\\begin{center}Centered head.\\end{center}\n" ++
       "\\begin{itemize}\\item First point.\\item Second point.\\end{itemize}" ++
@@ -541,20 +455,18 @@ def recipeTitlePageChecks (ref : IO.Ref (List String))
   let ncensus := censusOf (coveredColorsOf ndoc) nout
   let listBlocks := Ir.foldBlocks
     (fun n b => n + (if b matches .list .. then 1 else 0)) (fun n _ => n) 0 ndoc.body
-  t "nested block content inside a title page stays block-shaped on its page"
+  t "nested blocks in a title page stay block-shaped on its page"
     (nds.all (fun d => !cascade.contains d.code) && nout.pages.size == 2 &&
       ["Centered head.", "First point.", "Second point."].all (pageHas ncensus 0 ·) &&
       pageHas ncensus 1 "After matter." && listBlocks >= 1 &&
       (match lineYOf ncensus 0 "First point.", lineYOf ncensus 0 "Second point." with
        | some y1, some y2 => y1 < y2
        | _, _ => false))
-  -- A declaration inside the title page applies there and is restored after:
-  -- the group that carries the body scopes it to the close.
   let (ddoc, _) := elabStr (dvDoc page "\\begin{titlepage}\\Large Big title.\\end{titlepage}Plain tail.")
   let dcensus := censusOf (coveredColorsOf ddoc) (layoutOf oneFace ddoc)
   let (pdoc, _) := elabStr (dvDoc page "Plain tail.")
   let pcensus := censusOf (coveredColorsOf pdoc) (layoutOf oneFace pdoc)
-  t "a size declaration inside a title page applies there and is restored after"
+  t "a size declaration in a title page applies there, not after"
     (match lineSizeOf dcensus 0 "Big title.", lineSizeOf dcensus 1 "Plain tail.",
         lineSizeOf pcensus 0 "Plain tail." with
      | some big, some tail, some plain => big > tail && tail == plain
@@ -563,8 +475,7 @@ def recipeTitlePageChecks (ref : IO.Ref (List String))
 
 
 mutual
-/-- Collect every PDF fill rectangle's colour, width, and height, descending
-into marked-content sequences. A through-line lowers to one such fill. -/
+/-- Every PDF fill rectangle's colour, width and height, marked-content sequences included. -/
 private def pdfFillsOne (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
     Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
   | .fill color _ _ w h => out.push (color, w, h)
@@ -577,11 +488,7 @@ private def pdfFillsList (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
   | op :: rest => pdfFillsList (pdfFillsOne out op) rest
 end
 
-/-- **Strikeout is a shared decoration, not a suppressed package warning.**
-Installed ulem fixes text-mode `\sout` at a `0.55ex` bottom (above the
-baseline) and `0.4pt` thickness from the command-entry face and colour, where
-`\uline` sits below the baseline. These checks read the IR, `Layout.Out`, the
-typed HTML tree, PDF operators, and the accessibility facts — never a dump. -/
+/-- Strikeout is a shared decoration, not a suppressed package warning. -/
 def recipeUlemChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -593,7 +500,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   t "sout has a typed line-through IR wrapper"
     ((elabStr "\\sout{x}").1.body == #[.para #[.decorated .lineThrough #[.text "x"]]])
   let bareDs := (elabStr (dvDoc "\\usepackage{ulem}\n" "\\emph{x}")).2
-  t "bare ulem keeps one precise emphasis diagnostic, no unknown-command"
+  t "bare ulem keeps one emphasis diagnostic, no unknown-command"
     ((bareDs.filter (·.code == "W0103")).size == 1 &&
       bareDs.any (fun d => hasStr d.message "emph") &&
       !bareDs.any (·.code == "W0301"))
@@ -614,7 +521,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
         if decorations.lineThrough.isSome then n + w else n
       | .decoratedGap w _ _ => n + w
       | .gap .. | .decoration .. | .rule .. | .image .. | .poly .. => n) 0) 0
-  t "strikeout covers words and interword gaps at the shared through-line band"
+  t "strikeout covers words and gaps at the shared through-line band"
     (!strikeSegs.isEmpty && strikeWidth == sourceWidth &&
       strikeSegs.all fun (_, w, thickness, raise, color) =>
         w > 0 && thickness == Layout.lineThroughThickness &&
@@ -623,7 +530,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   let underlineOut := layoutOf oneFace (elabStr "\\underline{aqa}").1
   let underlineSegs := (metricDecorationSegs underlineOut).filter
     fun (kind, _, _, _, _) => kind == .underline
-  t "line-through cannot pass by substituting below-baseline underline geometry"
+  t "line-through is not underline geometry below the baseline"
     (!underlineSegs.isEmpty &&
       strikeSegs.all (fun (_, _, _, raise, _) => raise > 0) &&
       underlineSegs.all (fun (_, _, _, raise, _) => raise < 0))
@@ -637,7 +544,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
     | _ => none
   let strikeColors := (metricDecorationSegs nestedOut).filterMap
     fun (kind, _, _, _, color) => if kind == .lineThrough then some color else none
-  t "strike keeps its entry colour while nested style, colour, and link survive"
+  t "strike keeps its entry colour; nested style, colour and link survive"
     (!nestedDs.any (fun d => d.code == "W0103" || d.code == "W0301" || d.severity == .error) &&
       !runColors.isEmpty && runColors.any (· != runColors[0]!) &&
       !strikeColors.isEmpty && strikeColors.all (· == runColors[0]!) &&
@@ -648,7 +555,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   let nestedTrees := nestedDoc.body.map (HtmlDoc.blockNode {})
   let (nestedHtml, _) := HtmlDoc.emit {} nestedDoc
   let facts := HtmlDoc.a11yFacts true false nestedTrees
-  t "typed HTML keeps s, link, emphasis, colour, and derives line-through CSS"
+  t "typed HTML keeps s, link, emphasis and colour, with line-through CSS"
     (nestedTrees.foldl (fun n tree => n + countTag "s" tree) 0 == 1 &&
       nestedTrees.foldl (fun n tree => n + countTag "a" tree) 0 == 1 &&
       nestedTrees.foldl (fun n tree => n + countTag "em" tree) 0 == 1 &&
@@ -660,7 +567,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   let tree := Struct.ofDoc (Layout.pdfView doc)
   let pdfFills := (Pdf.pageOps (Layout.Geom.ofPage doc.page) oneFace out.pages {} tree).flatMap
     fun ops => pdfFillsList #[] ops.toList
-  t "every typed through-line becomes one PDF fill rule of its colour, width, and weight"
+  t "each through-line is one PDF fill of its colour, width and weight"
     (!strikeSegs.isEmpty &&
       strikeSegs.all fun (_, w, thickness, _, color) => pdfFills.contains (color, w, thickness))
   match pdfLinkTargets
@@ -678,7 +585,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
     let strikeYs := (bodyLines multi).filterMap fun l =>
       if l.segs.any (· matches .decoration .lineThrough ..) then some l.y else none
     textYs.size >= 2 && textYs.size == strikeYs.size && textYs.all strikeYs.contains
-  t "explicit and automatic multiline bodies draw one through-line per baseline"
+  t "explicit and automatic multiline: one through-line per baseline"
     (multilineOk (multiline "\\sout{First line\\\\Second line}") &&
       multilineOk (multiline "\\sout{alpha beta gamma delta epsilon zeta eta theta}"))
 
@@ -687,12 +594,6 @@ def recipeUlemChecks (ref : IO.Ref (List String))
     (both.any (fun (kind, _, _, _, _) => kind == .underline) &&
       both.any (fun (kind, _, _, _, _) => kind == .lineThrough))
 
-  -- Drawn decoration must reach every finalized line path, not only body
-  -- paragraphs: a strike inside a footnote (body ink on a note-flagged
-  -- line) and inside a running foot (furniture) each paints its
-  -- through-line from the one owner (`Layout.decorationRiders`, applied in
-  -- `furnishPage`). HTML strikes the same IR node on the note (agreement);
-  -- furniture has no HTML counterpart, so its agreement is Layout.Out + PDF.
   let throughOf (ls : Array Layout.LineOut) :
       Array (Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
     ls.flatMap fun l => l.segs.filterMap fun s => match s with
@@ -715,50 +616,36 @@ def recipeUlemChecks (ref : IO.Ref (List String))
       fnDs.all (·.severity != .error))
   t "the footnote through-line becomes a PDF fill" (paintedInPdf fnDoc fnOut)
   let (fnHtml, _) := HtmlDoc.emit {} fnDoc
-  t "HTML strikes the same footnote text, kept accessible (PDF and HTML agree)"
+  t "HTML strikes the same footnote text, kept accessible"
     (hasStr fnHtml "<s>" && hasStr fnHtml "crossed")
 
   let rfSrc := dvDoc "\\runningfoot{p. \\sout{draft} \\pagenumber}" "Body text stands here."
   let (rfDoc, rfDs) := elabStr rfSrc
   let rfOut := layoutOf oneFace rfDoc
   let rfFurnStrike := throughOf (rfOut.pages.flatMap (·.lines.filter (·.furniture)))
-  t "a strike inside a running foot paints a through-line on the furniture line"
+  t "a strike in a running foot paints a through-line on that line"
     (!rfFurnStrike.isEmpty &&
       rfFurnStrike.all (fun (w, _, raise, _) => w > 0 && raise > 0) &&
       rfDs.all (·.severity != .error))
   t "the running-foot through-line becomes a PDF fill" (paintedInPdf rfDoc rfOut)
 
-  -- No double paint: the one owner replaced the body paragraph's own
-  -- sibling, so the single-line body strike paints exactly one through-line
-  -- overlay — a second finalized line carrying the decoration would mean a
-  -- duplicate.
   let bodyThrough := (bodyLines out).filter fun l =>
     l.segs.any (· matches .decoration .lineThrough ..)
-  t "the body strike paints exactly one through-line overlay (no double paint)"
+  t "the body strike paints exactly one through-line overlay"
     (bodyThrough.size == 1)
 
 
-/-- **A block link's nested text carries the inline link's two affordances;
-an image-only body carries none.** An inline link paints its body in the
-kind's declared ink (`Styles.linkInk`: `urlcolor` for `\href`, `linkcolor`
-for internal `\hyperlink`) and underlines it (`Layout`'s `.link` arm, WCAG
-2.2 SC 1.4.1 — never colour alone, never nothing). A block link's nested
-text must carry the same, applied once per text-bearing run, so the two
-backends read one afforded body. An image-only body has no text to mark, so
-it carries no invisible-only decoration: its affordance is the reachable,
-named `<a>` wrapping the `<img>`'s own name. These checks read `Layout.Out`,
-the typed HTML tree, and the PDF operators — never a dump. -/
+/-- A block link's nested text carries the inline link's two affordances; an image-only body carries
+none. -/
 def recipeLinkAffordChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let cascade := ["W0301", "W0302", "E0304", "E0336", "E0311"]
   let magenta : Ir.Color := { r := 255, g := 0, b := 255 }
-  -- A multi-paragraph `\href` is a block link; under colorlinks its kind is
-  -- `url` (magenta). Its nested text must ship magenta and underlined.
   let tsrc := dvDoc "\\usepackage[colorlinks]{hyperref}\n"
     "\\href{https://example.org}{First linked line.\n\nSecond linked line.}"
   let (tdoc, tds) := elabStr tsrc
-  t "a text block link elaborates with no unknown-command or wrapper cascade"
+  t "a text block link raises no unknown-command or wrapper cascade"
     (tds.all fun d => !cascade.contains d.code && d.severity != .error)
   let tout := layoutOf oneFace tdoc
   let linkRunColors := (bodyLines tout).flatMap fun l => l.segs.filterMap fun s => match s with
@@ -766,18 +653,13 @@ def recipeLinkAffordChecks (ref : IO.Ref (List String))
     | _ => none
   let underlineSegs := (metricDecorationSegs tout).filter
     fun (kind, _, _, _, _) => kind == .underline
-  -- Layout.Out: every glyph run of the link's body is in the kind's ink, and
-  -- the body is underlined — the two affordances, together.
-  t "PAGE: a text block link paints its nested text in link ink and underlines it"
+  t "PAGE: a text block link's nested text is in link ink and underlined"
     (!linkRunColors.isEmpty && linkRunColors.all (· == magenta) && !underlineSegs.isEmpty)
-  -- Layout.Out: the block link still ships its one whole-block annotation.
   t "PAGE: the text block link ships one link rectangle to its target"
     (match tout.pages[0]?.bind (·.links[0]?) with
      | some rect => (tout.pages[0]?.map (·.links.size == 1)).getD false &&
          rect.target == "https://example.org"
      | none => false)
-  -- PDF: the underline lowers to a fill of the link ink, and the annotation
-  -- carries the URL — decoration and annotation agree with the page.
   let tree := Struct.ofDoc (Layout.pdfView tdoc)
   let pdfFills := (Pdf.pageOps (Layout.Geom.ofPage tdoc.page) oneFace tout.pages {} tree).flatMap
     fun ops => pdfFillsList #[] ops.toList
@@ -787,26 +669,22 @@ def recipeLinkAffordChecks (ref : IO.Ref (List String))
   let tpdf := Pdf.write (Layout.Geom.ofPage tdoc.page) oneFace tout.pages tdoc.info
   t "PDF: the text block link carries one annotation to its target"
     (pdfLinkTargets tpdf == .ok #[.str "(https://example.org)".toUTF8])
-  -- HTML: the same two affordances — the anchor, the underline tag, and the
-  -- ink span — on the link's own text, so both backends agree.
   let ttrees := tdoc.body.map (HtmlDoc.blockNode {})
   let threfs := ttrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let (thtml, _) := HtmlDoc.emit {} tdoc
-  t "HTML: a text block link carries href, an underline tag, and the ink span"
+  t "HTML: a text block link carries href, an underline tag and the ink span"
     (threfs == #["https://example.org"] &&
       ttrees.foldl (fun n tree => n + countTag "u" tree) 0 >= 1 &&
       hasStr thtml (HtmlDoc.cssColor magenta))
-  -- An image-only block link: no text to mark, so no invisible-only
-  -- decoration — the affordance is the reachable, named anchor.
   let isrc := dvDoc "\\usepackage{graphicx}\n\\usepackage[colorlinks]{hyperref}\n"
     "\\href{https://example.org}{\\begin{center}\\includegraphics[alt={Site logo}]{logo.png}\\end{center}}"
   let (idoc, ids) := elabStr isrc
-  t "an image-only block link elaborates with no unknown-command or wrapper cascade"
+  t "image-only block link: no unknown-command or wrapper cascade"
     (ids.all fun d => !cascade.contains d.code && d.severity != .error)
   let iout := layoutOf oneFace idoc
   let iUnderline := (metricDecorationSegs iout).filter
     fun (kind, _, _, _, _) => kind == .underline
-  t "PAGE: an image-only block link carries no underline and one link rectangle"
+  t "PAGE: an image-only block link has no underline and one rectangle"
     (iUnderline.isEmpty &&
       (match iout.pages[0]?.bind (·.links[0]?) with
        | some rect => (iout.pages[0]?.map (·.links.size == 1)).getD false &&
@@ -815,6 +693,6 @@ def recipeLinkAffordChecks (ref : IO.Ref (List String))
   let itrees := idoc.body.map (HtmlDoc.blockNode {})
   let ihrefs := itrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let ialts := itrees.foldl (fun acc n => acc ++ attrValuesOf (· == "img") "alt" n) #[]
-  t "HTML: an image-only block link is a reachable named anchor with no underline"
+  t "HTML: an image-only block link is a reachable named anchor, no underline"
     (ihrefs == #["https://example.org"] && ialts.contains "Site logo" &&
       itrees.foldl (fun n tree => n + countTag "u" tree) 0 == 0)

@@ -11,9 +11,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- The converter's process boundary, simulated: it records each spawn,
-insists on receiving the canonical spelling of a parse (never an authored
-comment), writes a PDF drawing, and answers with the failure set for it. -/
+/-- The converter's simulated process boundary: it records each spawn, insists on the canonical
+parse, writes a drawing and answers with its failure. -/
 private def svgToolRunner (calls : IO.Ref (Array String))
     (failure : IO.Ref (Option (Except IO.Error IO.Process.Output))) (writes : IO.Ref Bool)
     (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
@@ -29,16 +28,8 @@ private def svgToolRunner (calls : IO.Ref (Array String))
   if let some result ← failure.get then return ← EIO.ofExcept result
   return { exitCode := 0, stderr := "", stdout := "" }
 
-/-- **A figure asks the converter only for what the engine does not draw,
-and its answer never decides whether the page has a figure.** An exact
-figure runs no tool. A lossy one asks librsvg once, with the canonical
-parse: drawn, the converter's drawing ships and N0024 names why it was
-asked; missing or failing, the engine's drawing ships with every loss named
-(W0609), carrying the tool's own words — the dependency and PATH recovery
-when it could not start, the exit and its stderr when it ran — and the
-same source draws whole once the tool is back. Only the process boundary
-is simulated: the native judge, import, conversion recipe, PDF read,
-fulfilment and layout are real. -/
+/-- A figure asks the converter only for what the engine does not draw, and its answer never decides
+whether the page has a figure. -/
 def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let still := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
   let lossy := svgDocument
@@ -66,9 +57,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   check ref "SVG tools: an exact figure asks no tool and ships the engine's drawing"
     ((← calls.get).isEmpty && exact.vector.isSome && exact.diags.isEmpty &&
       placed exact still == #[some 0])
-  -- A converter that cannot start: Lean's exec failure, a spawn that raised,
-  -- a shared library the loader cannot find (127), and a wrapper whose
-  -- command cannot run (126).
+  -- Converters that cannot start: exec failure, a raised spawn, a missing library (127), an unrunnable wrapper (126).
   let exited (code : UInt32) (stderr : String) : Except IO.Error IO.Process.Output :=
     .ok { exitCode := code, stdout := "", stderr }
   let unstarted : List (String × Except IO.Error IO.Process.Output) := [
@@ -113,24 +102,22 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (failed.vector.isSome && !failed.diags.isEmpty && failed.diags.all fun d =>
         d.code == "W0609" && hasStr (diagWords d) s!"rsvg-convert exited {code}: {stderr}" &&
           !hasStr (diagWords d) "brew install")
-    -- The remedy follows the answer: an exit the converter chose is its
-    -- verdict on the figure, which no install changes; a high exit may be a
-    -- run that never finished, whose repair the reason would name.
+    -- A chosen exit is the converter's verdict; a high exit may be a run that never finished.
     let helps := failed.diags.filterMap (·.help)
     if code < 126 then
-      check ref s!"SVG converter verdict {code}/{stderr} offers accepting the drawing, never an install ({helps})"
+      check ref s!"SVG converter verdict {code}/{stderr} offers acceptance, not an install ({helps})"
         (!helps.isEmpty && helps.size == failed.diags.size && helps.all fun h =>
           !hasStr h "install" && hasStr h "\\allow{W0609}")
     else
-      check ref s!"SVG converter run {code}/{stderr} that may not have finished names its repair conditionally ({helps})"
+      check ref s!"SVG maybe-unfinished run {code}/{stderr} names its repair conditionally ({helps})"
         (!helps.isEmpty && helps.size == failed.diags.size && helps.all fun h =>
           hasStr h "if the reason says it cannot start" && hasStr h "\\allow{W0609}")
   failure.set (some (.error (IO.Error.resourceExhausted none 24 "open files")))
   let exhausted ← Driver.svgFetch req.src lossy .first "en" (some converter)
-  check ref "SVG process resource failure keeps its evidence without install advice"
+  check ref "SVG resource failure keeps its evidence, no install advice"
     (exhausted.vector.isSome && !exhausted.diags.isEmpty && exhausted.diags.all fun d =>
       hasStr (diagWords d) "open files" && !hasStr (diagWords d) "brew install")
-  check ref "SVG process resource failure is a run that did not finish, its repair named conditionally"
+  check ref "SVG resource failure is an unfinished run, its repair conditional"
     (exhausted.diags.all fun d => (d.help.map (hasStr · "if the reason says it cannot start")).getD false)
   -- A bounded run's own error already names the tool it ran.
   failure.set (some (.error (IO.userError "rsvg-convert: incomplete output within the run's budget")))
@@ -139,7 +126,6 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     (!overrun.diags.isEmpty && overrun.diags.all fun d =>
       hasStr (diagWords d) "rsvg-convert: incomplete output" &&
         !hasStr (diagWords d) "rsvg-convert: rsvg-convert:")
-  -- A run that exits 0 and writes nothing says so, never a reader's error.
   failure.set none
   writes.set false
   let silent ← Driver.svgFetch req.src lossy .first "en" (some converter)

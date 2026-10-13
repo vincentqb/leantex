@@ -6,9 +6,8 @@ public section
 
 open LeanTex.Core.PdfRead
 
-/-- Mutations of the raw spellings accepted by the object encoder.
-The round-trip guarantee itself is `Obj.encodable_render_exact`; these
-checks hold the executable boundary to its intended accepted domain. -/
+/-- Mutations of the raw spellings the object encoder accepts, held to its intended domain
+(`Obj.encodable_render_exact`). -/
 def pdfEncodingChecks (failures : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) : IO Unit := do
     unless ok do failures.modify (name :: ·)

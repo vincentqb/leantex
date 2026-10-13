@@ -10,8 +10,7 @@ namespace Tests.ThemePalette
 private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
   unless ok do ref.modify (name :: ·)
 
--- Ordinary module clients can use the contract without importing a
--- renderer's implementation or reducing a sampled generated palette.
+-- Ordinary clients use the contract without a renderer's implementation or a sampled palette's reduction.
 example {s : SeedPalette.Seeds} {t : SeedPalette.Targets} (p : SeedPalette.Generated s t) :
     ∀ x ∈ SeedPalette.sites s t p.colors, x.2.2.2 ≤ Contrast.contrastMilli x.2.1 x.2.2.1 :=
   (SeedPalette.generated_sites_contract p).1
@@ -28,10 +27,8 @@ example (pal : Ir.Palette) (st : SeedPalette.SeedState) (keep : Ir.Role → Bool
 
 private def hex (r g b : UInt8) : Ir.Color := { r, g, b }
 
-/-- Invented seeds in both polarities. The contract breaks a palette whose
-text equals its ground, whose essential edge equals a ground it stands on,
-or whose band stands no farther from the page than its body; the export
-keeps each named role at its generated colour. -/
+/-- The palette contract breaks a palette whose text equals its ground, whose essential edge equals
+its ground, or whose band is no farther from the page than its body. -/
 public def checks (ref : IO.Ref (List String)) : IO Unit := do
   let dark := hex 25 42 61
   let accent := hex 196 106 119

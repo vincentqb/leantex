@@ -8,21 +8,15 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- A synthetic formula and the scalars its two artifacts must carry.
-PDF paint order puts the superscript before the subscript; MathML's typed
-tree orders them the other way. Every expectation is independent of the
-alphabet resolver and was measured with unicode-math's default TeX style. -/
+/-- A formula and the scalars its PDF (paint order) and MathML (tree order) must carry. -/
 structure MathAlphaSemanticCase where
   name : String
   formula : String
   expected : String
   htmlExpected : Option String := none
 
-/-- Greek's ordinary capitals/lowercase, final sigma and the six variant
-slots, plus the capital theta symbol and ∂/∇. Latin and digits
-distinguish default `symbf` from `symbfit`: default bold is upright except
-for lowercase Greek and ∂. These are observed Unicode scalars, not
-calls to the production mapping. -/
+/-- Greek letters, final sigma, the six variant slots, capital theta, ∂ and ∇, and Latin and digits
+under `symbf` and `symbfit`. -/
 def mathAlphaSemanticCases : Array MathAlphaSemanticCase := Id.run do
   let upper := "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"
   let lower := "αβγδεζηθικλμνξοπρςστυφχψω"
@@ -55,8 +49,6 @@ def mathAlphaSemanticCases : Array MathAlphaSemanticCase := Id.run do
         name := command ++ "-" ++ kind
         formula := "\\" ++ command ++ "{" ++ source ++ "}"
         expected := expected[i]! }
-    -- Control spellings cover all existing named lowercase Greek, with
-    -- epsilon/phi's TeX slot convention and varkappa from the generated table.
     let controls :=
       "\\alpha\\beta\\gamma\\delta\\varepsilon\\zeta\\eta\\theta\\iota\\kappa" ++
       "\\lambda\\mu\\nu\\xi ο\\pi\\rho\\varsigma\\sigma\\tau\\upsilon\\varphi" ++
@@ -83,9 +75,7 @@ def mathAlphaSemanticCases : Array MathAlphaSemanticCase := Id.run do
 
 mutual
 
-/-- Inspect the typed MathML leaves, including each `mathvariant`: a
-correct plain Greek scalar without `normal` would be re-italicized by the
-browser. This reads artifacts, never the math IR or its alphabet table. -/
+/-- The typed MathML leaves, with their `mathvariant`. -/
 private def mathAlphaLeaves (acc : Array Html.Node) : Html.Node → Array Html.Node
   | n@(.elem tag _ kids) =>
     if tag == "mi" || tag == "mn" then acc.push n
@@ -98,17 +88,16 @@ private def mathAlphaLeavesList (acc : Array Html.Node) : List Html.Node → Arr
 
 end
 
-/-- A forced symbol alphabet has no text-family CSS, and each identifier's
-literal scalar is protected from MathML's automatic italic transformation. -/
+/-- A forced symbol alphabet carries no text-family CSS, and each identifier is protected from
+automatic italics. -/
 private def mathAlphaLeafNormal : Html.Node → Bool
   | .elem tag attrs _ =>
     !(attrs.any (·.1 == "style")) &&
       (tag != "mi" || (attrs.find? (·.1 == "mathvariant")).map (·.2) == some "normal")
   | .text _ | .style _ | .script _ _ => false
 
-/-- Exercise the actual document-sourced command, including both sides of
-a nested upright/default-bold boundary. Reuse the independently observed
-inventory, not the production alphabet map. -/
+/-- Cases through the document-sourced legacy command, on both sides of a nested upright and
+default-bold boundary. -/
 def mathAlphaLegacyAliasCases : Array MathAlphaSemanticCase :=
   ((mathAlphaSemanticCases.filter fun row => row.name.startsWith "symbf-").map fun row =>
     { row with
@@ -150,11 +139,7 @@ private def mathAlphaArtifact (ref : IO.Ref (List String)) (fs : Font.FontSet)
       pure #[]
   return { glyphs, pdf, leaves := mathAlphaLeavesList #[] body.toList }
 
-/-- `mathbf=sym` must make the legacy and forced commands agree at all
-three artifact observations, while explicit/default text policy keeps the
-body's bold face for Latin letters and digits. Policy tests must use the
-legacy command itself: changing policy around forced commands alone cannot
-detect an alias divergence. -/
+/-- Under `mathbf=sym` the legacy and forced commands agree in all three artifact readings. -/
 private def mathAlphaLegacyAliasChecks (ref : IO.Ref (List String))
     (fs : Font.FontSet) : IO Unit := do
   for row in mathAlphaLegacyAliasCases do
@@ -200,11 +185,8 @@ private def mathAlphaLegacyAliasChecks (ref : IO.Ref (List String))
         (mathTextLeavesList #[] a.leaves.toList ==
           expected.toList.toArray.map fun c => (String.singleton c, css))
 
-/-- The real elaboration-to-artifact path: an alias must select the
-observed Greek range, the selected Fira face must paint those glyph IDs,
-the written PDF must decode to those scalars, and typed MathML must agree.
-Both default text policy and explicitly symbol-sourced legacy policy leave
-the forced `sym…` aliases invariant. -/
+/-- An alias selects the observed Greek range, the selected face paints those glyphs, the PDF
+decodes to those scalars, and MathML agrees. -/
 def mathAlphaSemanticsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← serifFacesSet |
     failures ref "math alphabet semantics: shipped fonts must load"
@@ -243,9 +225,6 @@ def mathAlphaSemanticsChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref (label ++ " keeps symbol scalars literal in MathML")
         (!leaves.isEmpty && leaves.all mathAlphaLeafNormal)
 
-  -- Removing one canonical Greek range changes only the alias that uses
-  -- it. In particular, upright bold coverage cannot pay for default bold
-  -- lowercase Greek; the existing N0018 loss must name that selection.
   for missing in [none, some Math.MathAlphabet.bfit, some Math.MathAlphabet.bf] do
     let coverage : Math.MathAlphabetCoverage := { fs.mathAlphabets with
       covered := fs.mathAlphabets.covered.filter fun (a, r) =>

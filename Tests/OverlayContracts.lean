@@ -8,10 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- The selector's emitted carriers and stylesheet must agree on the same
-numbered states. Zero and reversed endpoints cannot use the range fast path:
-its CSS enumerates positive, ordered endpoints. Expectations are authored
-finite sets, independent of the IR selector evaluator. -/
+/-- The selector's emitted carriers and stylesheet agree on the same numbered states; zero and
+reversed endpoints never take the range fast path. -/
 private def overlayBoundaryContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for (spec, selected, other, activeFirst) in
@@ -71,10 +69,8 @@ private def contractIsRule (rules : Array (String × String))
 private def contractPercent (value : String) : Option Nat := do
   if !value.endsWith "%" then none else (value.dropEnd 1).toString.toNat?
 
-/-- Read the emitted floor rules at a numbered snap. In particular, a range's
-start is reached only if its actual CSS selector names it; zero is not silently
-accepted by a second numeric range model. Reduce and print overrides are not
-part of this screen reading. -/
+/-- The emitted floor rules' carrier at a numbered step, a range's start reached only where its CSS
+selector names it. -/
 private def contractCarrier (rules : Array (String × String)) (k : Nat)
     (attrs : Array (String × String)) : Option (Bool × Nat) := do
   let classes := (styleAttr attrs "class").splitOn " "
@@ -117,8 +113,7 @@ private def contractCarrier (rules : Array (String × String)) (k : Nat)
   if display != "none" && display != "contents" then none
     else some (display != "none", opacity)
 
-/-- The two descendant selectors reset different carriers. Read each emitted
-selector's opacity; a missing reset leaves the original product intact. -/
+/-- Each emitted reset selector's opacity at a step; a missing reset leaves the original product. -/
 private def contractReset (rules : Array (String × String)) (k : Nat)
     (isEnd : Bool) : Option Nat := do
   let parent := s!"html[data-deck-script] [data-snapped=\"{k}\"] " ++
@@ -176,10 +171,8 @@ private def contractHtmlList (rules : Array (String × String)) (k : Nat)
 
 end
 
-/-- Composition witnesses have authored readings, not an evaluator of overlay
-source as their oracle. Layout equality includes color and placement; the HTML
-reader multiplies actual carrier opacities instead of reducing them to covered.
-This does not claim the PDF's Oklab blend equals HTML's sRGB compositing. -/
+/-- Overlay composition matches authored readings on the layout and on the HTML's multiplied carrier
+opacities. -/
 def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   overlayBoundaryContractChecks ref fonts
   let t := check ref
@@ -236,7 +229,7 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let readInk (tree : Array Html.Node) (rules : Array (String × String)) := do
     let leaves ← contractHtmlList rules 1 false false (1, 1) #[] #[] tree.toList
     return (leaves.filter fun leaf => hasStr leaf.text "InkProbe").map (·.opacity)
-  t "overlay reader sees an emitted opacity change at the same numbered state"
+  t "overlay reader sees an emitted opacity change at the same step"
     ((readInk readerTree readerRules).isSome && readInk readerTree changedRules == some #[(7, 100)] &&
       readInk readerTree readerRules != readInk readerTree changedRules)
   t "overlay reader refuses a missing finite opacity rule"
@@ -246,7 +239,7 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let nestedRules := rulesOf nestedSource
   let withoutReset := nestedRules.filter fun (sel, _) =>
     !hasStr sel ":is(.step, .step-set):not"
-  t "overlay reader detects double paint when the emitted ancestor reset is removed"
+  t "overlay reader detects double paint without the ancestor reset"
     (readInk nestedTree nestedRules == readInk readerTree readerRules &&
       (readInk nestedTree withoutReset).isSome &&
       readInk nestedTree withoutReset != readInk nestedTree nestedRules)

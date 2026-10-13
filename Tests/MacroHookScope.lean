@@ -12,8 +12,7 @@ private def scopeCase (label pre body expected : String) (control : String := ex
     String × String × String × String × String :=
   (label, pre, body, expected, control)
 
--- These nine expectations are pinned independently to LuaLaTeX's emitted
--- PDF text by scripts/macro-defaults-oracle.lean --case hook-scope.
+-- Pinned to LuaLaTeX by scripts/macro-defaults-oracle.lean --case hook-scope.
 private def macroHookScopeCases : Array (String × String × String × String × String) := #[
   scopeCase "begin-hook-flag"
     r"\newif\ifprobeFlag\AtBeginDocument{\probeFlagtrue}"
@@ -49,9 +48,7 @@ private def macroHookScopeCases : Array (String × String × String × String ×
     r"\bgroup\probeFlagtrue\ifprobeFlag T\else F\fi\egroup/\ifprobeFlag T\else F\fi" "T/F"
 ]
 
--- The argument delimiters do not execute as a group. Only an additional
--- group in the replacement retains local scope. The external oracle pins
--- these same seven expectations for all four direct/alias definition forms.
+-- Argument delimiters are no group; only a group in the replacement keeps scope local.
 private def requiredArgumentScopeCases : Array (String × String × String × String × String) :=
   #["def", "newcommand"].flatMap fun kind => #[false, true].flatMap fun alias =>
     let route := kind ++ if alias then "-alias" else ""
@@ -107,21 +104,13 @@ private def copiedHelperCases : Array (String × String × String × String × S
       if grouped then "T/F" else "T",
       if grouped then r"\passprobe{T}/F" else "T")
 
-/-- Deferred hooks read and change the state at execution, while actual
-TeX groups restore local flags without splitting the surrounding paragraph.
-Required macro arguments execute after substitution, not during scanning.
-Compare complete laid-out pages and serialized typed HTML against literal
-text with explicitly declared native identity roles. Role ownership and
-run attribution remain visible, alongside page/line boundaries, positioning,
-paint, attributes and whitespace. Positive controls prevent matching two
-empty artifacts. -/
+/-- Deferred hooks act at execution, TeX groups restore local flags without splitting the paragraph,
+and required arguments execute after substitution. -/
 def macroHookScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let article (pre body : String) := dvDoc (r"\pagestyle{empty}" ++ pre) body
   let artifacts := sourceArtifacts fonts
-  -- Native identities declare the expected ownership independently of the
-  -- TeX substitution/hook machinery being tested; no artifact is normalized.
   let roles := String.join (["probe", "passprobe", "aliasprobe"].map fun name =>
     "\\define \\" ++ name ++ "(word: content){\\word}")
   let probes := macroHookScopeCases ++ requiredArgumentScopeCases ++ copiedHelperCases

@@ -2,8 +2,7 @@ module
 
 import LeanTex.Cli.Publication
 
-/-! Ordinary publishers carry the checked HTML witness and typed diagnostics.
-Local resource capture details are not part of the public boundary. -/
+/-! Ordinary publishers carry the checked HTML witness and typed diagnostics. -/
 
 open LeanTex.Core LeanTex.Cli LeanTex.Cli.Publication
 

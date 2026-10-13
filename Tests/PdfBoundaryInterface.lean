@@ -3,8 +3,8 @@ module
 import LeanTex.Core.PdfEncoding
 import LeanTex.Core.PdfFooter
 
-/-! The encoding boundary exports its input check and universal contracts.
-Ordinary clients do not depend on recursive scanner or container helpers. -/
+/-! The encoding boundary exports its input check and universal contracts, not its scanner
+helpers. -/
 
 open LeanTex.Core.PdfRead
 

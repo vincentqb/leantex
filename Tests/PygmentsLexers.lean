@@ -43,12 +43,12 @@ def snippetPaths : IO (Array String) := do
       out := out.push f.path.toString
   return out
 
-/-- The directory a snippet stands in names its listing language. -/
+/-- The listing language a snippet's directory names. -/
 def aliasOf (path : String) : String :=
   ((path.splitOn "/").reverse.drop 1).headD ""
 
-/-- Python `re`'s answer found the way `re` finds it, by backtracking: the
-reference the session lexer's simulation is held to. -/
+/-- Python `re`'s answer found by backtracking, the reference the session lexer's simulation is held
+to. -/
 def backtrack (s : Src) (lim : Nat) : Console.Re → Nat → (Nat → Option Nat) → Option Nat
   | .empty, i, k => k i
   | .cls p, i, k => if i < lim && s.sat i p then k (i + 1) else none
@@ -80,7 +80,7 @@ def strings (alphabet : Array Char) (n : Nat) : Array String := Id.run do
     level := grown
   return out
 
-/-- A string of up to `n` scalars drawn from `alphabet`, threading the seed. -/
+/-- A string of up to `n` scalars from `alphabet`, threading the seed. -/
 def randomString (alphabet : Array Char) (n : Nat) (seed : UInt64) : String × UInt64 := Id.run do
   let (len, s0) := rand seed (n + 1)
   let mut s := s0
@@ -91,8 +91,7 @@ def randomString (alphabet : Array Char) (n : Nat) (seed : UInt64) : String × U
     out := out.push (alphabet.getD i 'a')
   return (out, s)
 
-/-- A pattern of the session lexer's shape, at most `depth` deep, over a
-few classes of `a`, `b` and newline. -/
+/-- A pattern of the session lexer's shape, at most `depth` deep. -/
 def randomRe (depth : Nat) (seed : UInt64) : Console.Re × UInt64 :=
   let classes : Array (Char → Bool) :=
     #[(· == 'a'), (· == 'b'), (fun c => c == 'a' || c == 'b'), (· != '\n')]
@@ -114,8 +113,7 @@ def randomRe (depth : Nat) (seed : UInt64) : Console.Re × UInt64 :=
     (.alt a b, s)
   | 0, _ => (.empty, s)
 
-/-- The first occurrence of `w`'s first `k` scalars at or after `fromPos`:
-a backreference's search, scanned from every position. -/
+/-- The first occurrence of `w`'s first `k` scalars at or after `fromPos`. -/
 def findPrefix (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Nat := Id.run do
   if k == 0 then return some fromPos
   if k > w.size then return none
@@ -129,8 +127,7 @@ def findPrefix (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Nat
     if hit then return some j
   return none
 
-/-- The heredoc search the way the regex reads it: the delimiter's
-prefixes, longest first, each searched for from past its own length. -/
+/-- The heredoc search as the regex reads it: delimiter prefixes, longest first. -/
 def heredocByPrefixes (s : Src) (p : Nat) : Option Nat := Id.run do
   if !(s.is p '<' && s.is (p + 1) '<') then return none
   let mut a := p + 2
@@ -147,11 +144,8 @@ def heredocByPrefixes (s : Src) (p : Nat) : Option Nat := Id.run do
 
 end PygmentsLexers
 
-/-- The native lexers against Pygments' own streams for the invented
-snippets, recorded by `scripts/highlight-diff.lean --record`: token for
-token, start, type and text. The record covers every snippet and every
-lexer, came from the Pygments and the Python the data was generated under,
-and the mirror implements the rule structure that data was read beside. -/
+/-- The native lexers match Pygments' recorded streams for the invented snippets, token for
+token. -/
 def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let json ← match Json.parse (← IO.FS.readFile PygmentsLexers.recorded) with
@@ -187,10 +181,10 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
     (files.all seen.contains && seen.all files.contains)
   t "pygments lexers: every native lexer has a recorded snippet"
     (Lexer.all.all lexers.contains)
-  t "pygments lexers: a Lean proof hole is Generic.Error, as Pygments' Lean 4 lexer types it"
+  t "pygments lexers: a Lean proof hole is Generic.Error"
     ((PygmentsLexers.native .lean4 "theorem t : p := sorry").any fun (_, k, text) =>
       k == Ty.genericError && text == "sorry")
-  t "pygments lexers: a step that neither reads nor pops still ends, the fallback taking each scalar"
+  t "pygments lexers: a step reading and popping nothing ends, the fallback taking each scalar"
     (drive () (fun _ m => m) (Src.ofString "a\nb") ==
         #[⟨0, 1, Ty.error⟩, ⟨1, 2, Ty.whitespace⟩, ⟨2, 3, Ty.error⟩] &&
       drive () (fun _ m => m.push ()) (Src.ofString "ab") == #[⟨0, 1, Ty.error⟩, ⟨1, 2, Ty.error⟩])
@@ -206,10 +200,8 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((["ruby", "c", "lean3", "pycon", "", "py thon"] : List String).all
       fun n => (Lexer.ofName? n).isNone)
 
-/-- The session lexer's prompt match and the Bash heredoc search, which
-answer what Python's backtracking answers without backtracking, against
-that backtracking: every short line over the scalars the prompt pattern
-divides on, random longer ones, and random patterns of its shape. -/
+/-- The session lexer's prompt match and the Bash heredoc search answer what Python's backtracking
+answers, without backtracking. -/
 def pygmentsLinearChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let promptAnswer (line : String) : Option Nat × Option Nat :=

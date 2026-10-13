@@ -9,18 +9,8 @@ public section
 open LeanTex.Core
 open LeanTex.Core.Dim
 
-/-! Representation invariants (ISO 32000-2 §7.3.8, §7.5.7, §7.7.3.3):
-an ordinary stream's length integer has the same meaning inline, at a
-direct offset, or in an object stream. A page's content array has the same
-ordered members inline, at a direct offset, or in an object stream.
-Empty arrays stay empty and repeated stream references stay repeated.
-These changes of representation preserve the imported drawing and the
-actual PDF the writer ships, including copied resource stream bytes.
-
-Object streams bootstrap from inline or directly stored length integers:
-§7.5.7 excludes their length objects from object streams. A reference
-chain, a cyclic bootstrap, or a non-integer cannot become a stream length.
-All source PDFs here are invented and carry drawing operators only. -/
+/-! Representation invariants (ISO 32000-2 §7.3.8, §7.5.7, §7.7.3.3): inline, direct and
+object-stream spellings ship the same drawing, and a stream length is never a chain or a cycle. -/
 
 private def objectStream (raw : ByteArray) (length : String)
     (attrs : String := "") : ByteArray :=
@@ -33,9 +23,8 @@ private def objectXrefRow (tag target slot : Nat) : ByteArray :=
     UInt8.ofNat (target >>> 16), UInt8.ofNat (target >>> 8), UInt8.ofNat target,
     UInt8.ofNat (slot >>> 8), UInt8.ofNat slot]⟩
 
-/-- Each pack gets a stream and an ordinary integer holding its length.
-The optional overrides deliberately make malformed bootstrap/xref cases.
-Packing order differs from object order so index zero is no special case. -/
+/-- A PDF of `bodies`, each pack an object stream with an ordinary length integer; the overrides
+make malformed cases. -/
 private def objectPdf (bodies : Array ByteArray) (packs : Array (Array Nat) := #[])
     (streamXref : Bool := true) (indirectBootstrap : Bool := false)
     (bootstrap : Array (Option String) := #[])
@@ -153,9 +142,8 @@ private def objectDrawing (members : Array Nat) : ByteArray :=
   members.foldl (fun out n =>
     out ++ (if n == 4 then objectInkA else objectInkB).toUTF8.push 10) ByteArray.empty
 
-/-- Sources and expected decoded drawings for the optional external
-renderer oracle as well as the hermetic check below. No host PDF tools
-are needed to construct or judge these cases. -/
+/-- Sources and expected decoded drawings, for the hermetic check and the external renderer
+oracle. -/
 def pdfReadObjectFixtures : Array (String × ByteArray × ByteArray) := Id.run do
   let mut out := #[]
   for length in [LengthShape.inline, .indirect, .compressed] do
@@ -196,8 +184,8 @@ private def objectResolve (es : Array PdfRead.Entry) (obj : PdfRead.Obj) :
   | .ref n _ => (es.find? (·.num == n)).map (·.val)
   | other => some other
 
-/-- Follow the emitted resource references; the nested form must retain
-both its encoded payload and its decoded drawing, plus its graphics state. -/
+/-- The emitted resource references, a nested form keeping its payload, drawing and graphics
+state. -/
 private def objectResources (es : Array PdfRead.Entry) (obj : PdfRead.Obj)
     (tile : PdfRead.Entry) : Option Bool := do
   let res ← objectResolve es (← obj.get? "Resources")
@@ -231,9 +219,8 @@ private def objectErrorIs {α : Type} (result : Except String α) (expected : St
   | .ok _ => false
   | .error message => message == expected
 
-/-- Representation changes preserve actual shipped drawing/resource
-streams; malformed chains and object-stream bootstrap cycles terminate
-in a named refusal. Kept additive for independent suite registration. -/
+/-- Representation changes preserve the shipped drawing and resource streams, and malformed chains
+and bootstrap cycles end in a named refusal. -/
 def pdfReadObjectsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (s!"PDF object forms: {name}" :: ·)
@@ -241,8 +228,7 @@ def pdfReadObjectsChecks (ref : IO.Ref (List String)) : IO Unit := do
       (← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf") |
     t "bundled wrapper font parses" false
     return
-  -- These pages contain only drawing operators. Reuse the empty glyph
-  -- subset through the writer's existing font-program cache path.
+  -- Drawing-only pages reuse the empty glyph subset through the writer's font cache.
   let program := FontSubset.program font #[]
   let fonts : Font.FontSet :=
     { fonts := #[font], zdata := #[some (Flate.deflate program.1)] }
@@ -264,8 +250,6 @@ def pdfReadObjectsChecks (ref : IO.Ref (List String)) : IO Unit := do
         (match Image.decode bytes with
         | .ok p => p.form.any (fun g => wrap g == artifact)
         | .error _ => false)
-  -- Byte-identical output across representation changes, separately for
-  -- encoded and unencoded resources (their payloads must remain verbatim).
   for filtered in [false, true] do
     let .ok baseline := PdfRead.readForm
         (objectPdf (objectBodies .inline .stream filtered)) |

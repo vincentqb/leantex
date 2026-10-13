@@ -28,9 +28,8 @@ private def inputSelectors (html : Array Html.Node) : Array (Array (String × St
       ["data-step", "data-step-last", "data-steps"].contains key
     if selected.isEmpty then none else some selected
 
-/-- Equivalent surface calls must ship the same numbered pages and HTML
-selector attributes. The positive text assertion prevents two empty artifacts
-from passing; glyph equality also observes covered colour and placement. -/
+/-- Equivalent surface calls ship the same numbered pages and HTML selector attributes, with
+positive text. -/
 private def inputEquivalent (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label source canonical : String) (probeCopies : Nat := 3) : IO Unit := do
   -- Fix the frame extent before a source can redefine the clock's name; the
@@ -51,10 +50,7 @@ private def inputEquivalent (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (inputAttrs html "id" == inputAttrs wantHtml "id" &&
       inputAttrs html "href" == inputAttrs wantHtml "href")
 
-/-- A selected alert has one authored body, hence one note and label effect.
-The following note must still be 2. Read the shipped note ink and all HTML
-IDs, including hidden alternatives: a selected branch alone cannot certify
-that elaboration did not execute its body twice. -/
+/-- A selected alert has one authored body, hence one note and one label effect. -/
 private def inputAlertEffects (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let body := "FirstProbe\\footnote{FirstNote}\\label{input-label}"
   let after := " SecondProbe\\footnote{SecondNote} \\hyperlink{input-label}{LabelLink}"
@@ -80,9 +76,8 @@ private def inputAlertEffects (ref : IO.Ref (List String)) (fonts : Font.FontSet
         ((ids.filter (· == id)).size == 1)
     check ref (label ++ ": no phantom third note") (!ids.contains "fn3")
 
-/-- The native families share the same cover boundary. In particular the
-label of a description item and the title of a block are covered with their
-body; prefix and final selector slots produce identical artifacts. -/
+/-- The native families share one cover boundary; prefix and final selector slots ship identical
+artifacts. -/
 private def inputNativeFamilies (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for kind in ["block", "alertblock", "exampleblock"] do
     let bare := "\\begin{" ++ kind ++ "}{Heading}Probe\\end{" ++ kind ++ "}"
@@ -117,8 +112,7 @@ private def inputNativeFamilies (ref : IO.Ref (List String)) (fonts : Font.FontS
 private def inputAttr (attrs : Array (String × String)) (key : String) : String :=
   ((attrs.find? (·.1 == key)).map (·.2)).getD ""
 
-/-- Read the artifact's selector vocabulary; covering carriers remain present.
-Only the display-level alternative carriers can remove their descendants. -/
+/-- Whether an alternative is shown at a step, by the artifact's selector vocabulary. -/
 private def inputAltShown (attrs : Array (String × String)) (step : Nat) : Bool :=
   let classes := (inputAttr attrs "class").splitOn " "
   if classes.contains "alt-set" then
@@ -151,10 +145,7 @@ private def inputPageLinks (page : Layout.PageOut) : Array String :=
       | .run _ _ link .. => link
       | _ => none
 
-/-- Beamer's native targets use only (beamerbaseoverlay.sty, lines 631–632):
-excluded steps have no body ink, link, or destination. Ordinary only currently
-covers in this engine, so it is a reference for the included reading alone;
-the independent absence assertions below judge the excluded reading. -/
+/-- Beamer's native targets use `\only`: excluded steps have no body ink, link or destination. -/
 private def inputNativeTargetRemoval (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   for name in ["hyperlink", "hypertarget"] do
@@ -218,9 +209,8 @@ private def inputNativeTargetRemoval (ref : IO.Ref (List String))
                     inputAttrs view "id" == inputAttrs wantView "id" &&
                     inputAttrs view "href" == inputAttrs wantView "href")
 
-/-- Every new native boundary reads fragments at use, including a titled
-body reached through a macro. Refused fragments retain the page and the
-state following the call; they cannot execute a definition or flag setter. -/
+/-- Every native boundary reads fragments at use; refused fragments keep the page and the following
+state and execute nothing. -/
 private def inputNativeFragments (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for kind in ["block", "alertblock", "exampleblock"] do
     let bare := "\\begin{" ++ kind ++ "}{Heading}Probe\\end{" ++ kind ++ "}"
@@ -263,10 +253,8 @@ private def inputNativeFragments (ref : IO.Ref (List String)) (fonts : Font.Font
         !(inputSelectors html).any (fun attrs => attrs.contains ("data-steps", "1 3")) &&
         ((inputText out).splitOn "Probe").length == 4)
 
-/-- Beamer's newcommand<> wrappers remember the last selector through their
-ordinary arguments (beamer@foundspec / beamer@finalspec). Only/alt consume one
-selector, and a final slot never skips a space. These guards failed on
-f6d3a50 before the review correction. -/
+/-- Beamer's `\newcommand<>` wrappers remember the last selector through their ordinary arguments;
+only and alt consume one selector. -/
 private def inputSelectorWindows (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for name in ["alert", "emph"] do
     let want := "\\" ++ name ++ "<2>{Probe}"
@@ -284,9 +272,8 @@ private def inputSelectorWindows (ref : IO.Ref (List String)) (fonts : Font.Font
       ("font wrapper has no final selector", "\\textbf{Probe}<1,3>", "\\textbf{Probe}{<1,3>}", 3)] do
     inputEquivalent ref fonts label source want copies
 
-/-- A selector reads a finite graph of parameterless text definitions at the
-use. Reusing a dependency is not a cycle. An unread fragment must reach the
-unsupported-selector boundary without running its definitions or setters. -/
+/-- A selector reads a finite graph of parameterless text definitions at use; an unread fragment
+reaches the unsupported-selector boundary without running anything. -/
 private def inputSelectorFragments (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let names := (List.range 24).map fun n => "Step" ++ String.ofList (List.replicate n 'x')
   let (defs, first) := names.foldr (fun name (defs, next) =>
@@ -314,9 +301,7 @@ private def inputSelectorFragments (ref : IO.Ref (List String)) (fonts : Font.Fo
     check ref (label ++ ": refusal preserves shipped body and state")
       (out.pages.size == 3 && inputText out == inputText expected)
 
-/-- Surface-boundary regression entry; standalone callers need only the
-shipped one-face font set. Guards were run against e5a5428a before the fix;
-this module does not depend on the parallel overlay-contract work. -/
+/-- Overlay input checks; callers need only the shipped one-face font set. -/
 def overlayInputChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   inputAlertEffects ref fonts
   inputSelectorWindows ref fonts

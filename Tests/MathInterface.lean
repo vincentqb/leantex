@@ -4,9 +4,7 @@ import LeanTex.Core.Math
 import LeanTex.Core.MathMl
 import LeanTex.Core.MathSymData
 
-/-! Ordinary consumers share the typed math AST, its semantic operations and
-contracts, and the MathML projection. Unicode table machinery, resolution
-walkers and node-construction helpers remain private to their owners. -/
+/-! Consumers share the typed math AST, its operations and contracts, and the MathML projection. -/
 
 open LeanTex.Core
 open LeanTex.Core.Math

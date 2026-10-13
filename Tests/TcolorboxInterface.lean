@@ -2,8 +2,7 @@ module
 
 import LeanTex.Core.Tcolorbox
 
-/-! Native lowering exposes its prepared content, capture boundary, and body
-contract. Key scanning and selection state remain implementation details. -/
+/-! Native lowering exposes its prepared content, capture boundary and body contract. -/
 
 open LeanTex.Core
 open LeanTex.Core.Parse
@@ -45,7 +44,6 @@ example (options body : Array Raw) (pos : Pos) :
     CarriesBody (lower options body pos).raws body pos :=
   lower_body_covers options body pos
 
--- A client can read the contract's witness without unfolding the lowerer.
 example (options body : Array Raw) (pos : Pos) :
     ∃ title decls, Raw.env boxEnv
       #[.group title pos, .group (decls ++ body) pos] pos ∈

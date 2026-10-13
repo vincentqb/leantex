@@ -20,17 +20,8 @@ private def runsOf (out : Layout.Out) : Array (String × Ir.Color) :=
 private def cssRole (css : String) (r : Ir.Role) : Option String :=
   chaseCssValue (screenRootVars css) (HtmlDoc.roleRef r)
 
-/-- **What an undeclared document and a shipped bundle show.** moloch draws
-its progress bar, title separator and alerted text in its lineage colour,
-exactly as lualatex writes it, the alert's pairing named by the report
-where it is used; a bundle stating no seeds derives its muted step by the
-generated rule; an undeclared list marks its
-items in one colour on the page and in the HTML; an undeclared article's
-HTML stands on the white its PDF prints, which paints no page and sets
-every word in black; a markdown note's fenced code stands on its code
-ground in both artifacts; and an undeclared deck's blocks are tinted cards,
-each title band and body a tint at least 1.10:1 apart. Read off the shipped
-pages, the PDF's operators and the typed HTML. Invented content. -/
+/-- What an undeclared document and a shipped bundle show on the page, in the PDF's operators and in
+the typed HTML. -/
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   -- moloch's lineage, as lualatex writes it: `0.92157 0.50587 0.10588 rg`.
@@ -42,9 +33,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t "moloch: the title separator draws lualatex's lineage operator"
     (bytesContain mpdf "0.92157 0.50587 0.10588 rg")
   let lineage := Ir.Color.ofHtml 0xEB 0x81 0x1B
-  -- Its alerted text is that colour itself, as lualatex sets it, and the
-  -- document's contrast report names the pairing where it is used: a
-  -- declared colour is reported, never repainted.
+  -- A declared colour is reported, never repainted.
   let (adoc, _) := elabStr ("\\documentclass[aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
     "\\begin{document}\n\\begin{frame}{One}Probe \\alert{alerted} words.\\end{frame}\n" ++
     "\\end{document}")
@@ -56,9 +45,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     d.severity == .warning && d.subject.any (hasStr · "alert")
   t s!"moloch: the report names the alert's pairing once ({alertSays.map (·.code)})"
     (alertSays.size == 1)
-  -- A bundle that states no seeds derives its secondary ink as a generated
-  -- palette's: the quietest tone of its ink's family that reads at 4.6:1 on
-  -- its page, never a fixed mix.
+  -- A seedless bundle's muted ink is the quietest tone of its ink's family at 4.6:1 on its page.
   for th in [Theme.moloch, Theme.plain, Theme.gemini] do
     let pal := th.realize .decks
     match Ir.Design.declared? pal .muted, Ir.Design.declared? pal .ink,
@@ -69,16 +56,12 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       t s!"{th.name}: its muted {m.css} reads at 4.6:1 on its page, and no further"
         (4600 ≤ Contrast.contrastMilli m page && Contrast.contrastMilli m page ≤ 4700)
     | _, _, _ => t s!"{th.name}: its muted, ink and page resolve" false
-  -- The roles a bundle ships short of their need are exactly the ones its
-  -- lineage's source declares so: every listed role falls short where a
-  -- class installs the bundle, and every short site's role is listed.
   for th in Theme.builtin do
     let short := Theme.installs.flatMap fun c => Theme.shipped.flatMap fun sc =>
       (Ir.Design.sites (Theme.installedAt th c) sc).filterMap fun st =>
         if st.passes then none else some st.role
     t s!"{th.name}: the roles it ships short of their need are the ones it reports"
       (short.all th.reported.contains && th.reported.all short.contains)
-  -- An undeclared list: one marker colour on the page and in the HTML.
   let (ldoc, _) := elabStr (dvDoc "" ("Probe words.\n\\begin{itemize}\n\\item First\n" ++
     "\\item Second\n\\end{itemize}"))
   let lout := layoutOf fonts ldoc
@@ -86,7 +69,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let lcss := (HtmlDoc.emit {} ldoc).1
   t s!"an undeclared list: the page and the HTML mark it in one colour ({bullets.map (·.css)}, {cssRole lcss .marker})"
     (!bullets.isEmpty && bullets.all fun c => cssRole lcss .marker == some (HtmlDoc.cssColor c))
-  -- An undeclared article: the HTML on white, the PDF unpainted and black.
   let (adoc, _) := elabStr (dvDoc "" "Probe words in an undeclared article.")
   let ageom := Layout.Geom.ofPage adoc.page
   let aout := layoutOf fonts adoc ageom
@@ -96,7 +78,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t "an undeclared article: the PDF paints no page and sets its words in black"
     (aout.pages.all (·.fills.isEmpty) && (runsOf aout).all (·.2 == Ir.Color.black) &&
       !bytesContain apdf " rg\n" && !bytesContain apdf " k\n")
-  -- A markdown note's fenced code: its code ground in both artifacts.
   let (mddoc, _) := elabMd "Probe words.\n\n```\nalpha = 1\nbravo = 2\n```\n"
   let ground := Ir.Design.at mddoc.palette .print .codeSurface
   let mdout := layoutOf fonts mddoc
@@ -105,7 +86,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t "a markdown note: the HTML paints the same ground"
     ((ground.map HtmlDoc.cssColor) == cssRole (HtmlDoc.emit {} mddoc).1 .codeSurface &&
       ground.isSome)
-  -- A code ground an epoch declares: painted under the listing in both artifacts.
   let tint := Ir.Color.ofHtml 0xEE 0xF2 0xE8
   let (edoc, _) := elabStr (dvDoc "" ("Fern words.\n\\palette{ tint = #EEF2E8 }\n" ++
     "\\begin{verbatim}\nfrond = 1\n\\end{verbatim}"))
@@ -123,8 +103,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
         (own.lookup "background").any fun v =>
           lightValue (own ++ screenRootVars ecss) v == HtmlDoc.cssColor tint
       | _ => false)
-  -- The muted row: one relation both artifacts read — the ink on LaTeX's
-  -- rows, one generated tone on the web's and under a generated bundle.
   let docOf (src : Option String) : Ir.Doc := match src with
     | some s => (elabStr s).1
     | none => (elabMd "Probe words.\n").1
@@ -143,7 +121,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     t s!"{what}: its muted is its ink, in print and on screen"
       ([Ir.Scheme.print, .light].all fun s =>
         Ir.Design.at doc.palette s .muted == Ir.Design.at doc.palette s .ink)
-  -- An undeclared deck: tinted cards on every block.
   let (ddoc, _) := elabStr ("\\documentclass[aspectratio=169]{beamer}\n\\begin{document}\n" ++
     "\\begin{frame}{Cards}\n\\begin{block}{Plain}Kilo body.\\end{block}\n" ++
     "\\begin{alertblock}{Alerted}Lima body.\\end{alertblock}\n" ++
@@ -162,13 +139,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
           (5 * 10 ^ 15 ≤ (lchOf fill).1)
     | _, _ => t s!"an undeclared deck: the {kind} block has a band and a body" false
 
-/-- **A generated palette's inks give way where the document declares**: a
-ground the document declares takes back the inks generated for another —
-installed by the class's default bundle, a bundle named outright, the
-document's own seeds, or a beamer channel — so a title reads on its declared
-bar with nothing to report; and a deck that declares its own ink or paper
-takes the default bundle over them, its cards and their text the document's
-own colours. -/
+/-- A generated palette's inks give way where the document declares a ground, ink or paper. -/
 def yieldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let deck (pre : String) := "\\documentclass[aspectratio=169]{beamer}\n" ++ pre ++
@@ -213,14 +184,7 @@ def yieldChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.Design.at inked.palette .print .blockBodyInk == some purple &&
       Ir.Design.at inked.palette .print .blockTitleInk == some purple)
 
-/-- **A bundle's generated palette follows the seeds a deck declares, through
-every door**: a deck's own ink alone, its page alone (its ink then the
-bundle's paper, so it reads), its page through `\pagecolor`, its page and
-ink after the bundle is named, and a body epoch's page and ink each take
-cards generated from what the deck declares; seeds the generator refuses
-leave the bundle's own palette under the document, its alert and example
-kept; and an epoch that gives a bar back its generated ground gives its
-title back the generated ink. Invented content. -/
+/-- A bundle's generated palette follows the seeds a deck declares, through every door. -/
 def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let deck (pre body : String) := "\\documentclass[aspectratio=169]{beamer}\n" ++ pre ++
@@ -239,7 +203,6 @@ def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _, _, _, _ => false
   let quiet (ds : Array Diag) : Bool :=
     ds.all fun d => !(["W0304", "W0315", "W0330", "W0345"].contains d.code)
-  -- A page alone: the ink is the bundle's paper, so it reads.
   let (bgOnly, ds) := elabStr (deck "\\palette{ bg = #101418 }\n" cards)
   t "a deck's own dark page: its ink reads there and its cards are its page's tints"
     (darkCards bgOnly.palette && (Ir.Design.at bgOnly.palette .print .ink).any fun i =>
@@ -258,7 +221,6 @@ def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a named bundle under a deck's ink: its cards' titles and bodies are set in it"
     (Ir.Design.at inked.palette .print .blockTitleInk == some purple &&
       Ir.Design.at inked.palette .print .blockBodyInk == some purple)
-  -- A body epoch's page and ink.
   let (epoch, ds) := elabStr (deck "" ("\\begin{frame}{Light}\\begin{block}{Plain}Kilo.\\end{block}\\end{frame}\n" ++
     "\\palette{ bg = #101418, fg = #E8E8E8 }\n" ++ cards))
   let epochs := epoch.body.filterMap fun b => match b with
@@ -268,7 +230,6 @@ def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
     (epochs.any fun p => darkCards p &&
       Ir.Design.at p .print .blockBodyInk == some (Ir.Color.ofHtml 0xE8 0xE8 0xE8))
   t "a body epoch's page and ink: nothing to report" (quiet ds)
-  -- Seeds the generator refuses: the bundle's own palette under the document.
   let (refused, ds) := elabStr (deck "\\palette{ fg = #666666 }\n"
     ("\\begin{frame}{Cards}Dust \\alert{flare}.\n\\begin{exampleblock}{Example}Mike.\\end{exampleblock}\n" ++
       "\\end{frame}"))
@@ -279,7 +240,6 @@ def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
       Ir.Design.at refused.palette .print .ink == some (Ir.Color.ofHtml 0x66 0x66 0x66))
   t "seeds a deck declares that generate nothing: no colour goes missing"
     (ds.all fun d => d.code != "W0304")
-  -- A bar given back its generated ground takes back its generated ink.
   let (trip, _) := elabStr (deck "" ("\\begin{frame}{One}\\begin{alertblock}{A}One.\\end{alertblock}\\end{frame}\n" ++
     "\\palette{ alerttitlebg = #333333 }\n" ++
     "\\begin{frame}{Two}\\begin{alertblock}{A}Two.\\end{alertblock}\\end{frame}\n" ++
@@ -289,7 +249,7 @@ def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .setPalette p => some p
     | _ => none
   let generated := Ir.Design.at trip.palette .print .alertTitleInk
-  t s!"an epoch that gives a bar back its generated ground gives back its generated ink ({generated.map (·.css)})"
+  t s!"an epoch restoring a bar's generated ground restores its generated ink ({generated.map (·.css)})"
     (generated.isSome && Ir.Design.declared? trip.palette .alertTitleBar ==
         some (Ir.Color.ofHtml 0xCA 0xE1 0xFF) &&
       (trips.back?.any fun p => Ir.Design.at p .print .alertTitleInk == generated) &&

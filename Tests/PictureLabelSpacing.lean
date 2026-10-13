@@ -19,9 +19,8 @@ structure Witness where
   text : String
   deriving Repr
 
-/-- Read the label's outline hull and the path's midpoint and tangent from
-the shipped page. The only text in these probes belongs to the label.
-Page paths use downward y; the witness uses upward y throughout. -/
+/-- The label's outline hull and the path's midpoint and tangent, read off the shipped page in
+upward y. -/
 def pathLabelWitness (fonts : Font.FontSet) (src : String) : Except String Witness := do
   let (doc, ds) := elabMeasured fonts src
   if ds.any (fun d => d.code == "W0334" || d.severity == .error) then
@@ -52,20 +51,16 @@ def pathLabelSource (picOpts pathOpts labelOpts body endpoint : String)
     (s!"\\draw[{pathOpts}] (0,0) {operation} node[{labelOpts}] " ++
       "{" ++ body ++ "} " ++ endpoint ++ ";")
 
-/-- Vertical distance from the outside of a horizontal stroke to the
-nearest outline of the whole label, including descenders and later lines. -/
+/-- The vertical distance from a horizontal stroke's outside to the nearest outline of the whole
+label. -/
 def Witness.gap (w : Witness) (above : Bool) : Dim.Sp :=
   (if above then w.ink.bottom - w.anchor.2 else w.anchor.2 - w.ink.top) - w.width / 2
 
 end PictureLabelSpacing
 
 open PictureLabelSpacing in
-/-- A font-relative default reads the surrounding dimension font; `font=`
-and body switches change the text only. Explicit separation wins, a style name is its expansion,
-and reversing either path direction or auto side reverses the attachment.
-All assertions read shipped glyph outlines and strokes. Integer font
-scaling, centre rounding and page translation contribute at most four sp;
-the tolerance is arithmetic, not a perceptual tuning threshold. -/
+/-- A path label's default separation reads the surrounding dimension font, explicit separation
+wins, and reversing a direction or side reverses the attachment, within four sp of rounding. -/
 def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for body in ["MAP", "gyp", "MAP\\\\gyp"] do
@@ -78,9 +73,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
           match pathLabelWitness fonts src with
           | .error e => t s!"path-label witness: {e}" false
           | .ok w =>
-            -- pgfmoduleshapes.code.tex: inner ysep=.3333em;
-            -- outer ysep=.5\pgflinewidth. Subtracting the half stroke
-            -- above leaves the declared inner clearance.
+            -- inner ysep is .3333em and outer ysep .5\pgflinewidth, so the half stroke leaves the inner clearance.
             let expected := w.em * 3333 / 10000
             t s!"whole label clears {auto}/{stroke}/{labelOpts}/{body}"
               ((w.gap above - expected).natAbs ≤ 4)
@@ -113,8 +106,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     (match pathLabelWitness fonts direct, pathLabelWitness fonts named with
      | .ok a, .ok b => a.ink == b.ink && a.anchor == b.anchor && a.text == b.text
      | _, _ => false)
-  -- In TikZ's auto algorithm a diagonal selects a corner: both axes
-  -- clear the anchor. Cardinal-only placement misses one of these axes.
+  -- In TikZ's auto algorithm a diagonal selects a corner: both axes clear the anchor.
   for (endpoint, left, up) in
       [("(4,2)", true, true), ("(4,-2)", false, true),
        ("(-4,2)", true, false), ("(-4,-2)", false, false)] do
@@ -127,8 +119,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       -- Horizontal glyph bearings can add room inside the logical width.
       t "a diagonal auto label clears the anchor in both coordinates"
         (dx + 4 ≥ gap && (dy - gap).natAbs ≤ 4)
-  -- A cubic with a horizontal chord has a downward tangent at its middle.
-  -- The local tangent selects the upper-right corner, not merely above.
+  -- A cubic with a horizontal chord has a downward tangent at its middle, selecting the upper-right corner.
   match pathLabelWitness fonts (pathLabelSource "" "auto" "" "MAP" "(4,0)" "to[out=100,in=0]") with
   | .error e => t s!"curved label: {e}" false
   | .ok w =>
@@ -137,8 +128,6 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     t "a curved auto label attaches according to its local tangent"
       (w.ink.left - w.anchor.1 + 4 ≥ gap &&
        (w.ink.bottom - w.anchor.2 - gap).natAbs ≤ 4)
-  -- PGF's dimension-font probe: either ordering of `font=` and a length,
-  -- and a switch inside the text, retain the surrounding em and ex.
   for (opts, body, unit) in
       [("", "\\Large MAP", ""),
        ("font=\\Large,inner sep=1em", "MAP", "em"),

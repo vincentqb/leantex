@@ -3,8 +3,7 @@ module
 import all LeanTex.Core.TitleTemplate
 import LeanTex.Core.Lex
 
-/-! Scanner unit checks use the same-package private interface. Artifact
-coverage remains in `titleSlotShipChecks`. -/
+/-! Scanner unit checks through the same-package private interface. -/
 
 open LeanTex.Core
 

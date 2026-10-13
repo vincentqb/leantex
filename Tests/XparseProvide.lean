@@ -8,12 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- ltcmd/xparse §1: provision binds only an undefined command. An existing
-user or builtin meaning survives, and the unused signature and body neither
-execute nor become ink. Compare typed HTML and shipped layout against the
-same document using NewDocumentCommand for a fresh name, or omitting the
-provision of an existing name. These probes are synthetic; the heading-body
-idiom also distinguishes keeping a builtin from applying its unused body. -/
+/-- `\ProvideDocumentCommand` binds only an undefined command; an existing meaning survives and the
+unused body neither runs nor inks. -/
 def xparseProvideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -40,8 +36,6 @@ def xparseProvideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     t s!"xparse provide {label}: the layout witness reaches the reader"
       ((bodyLines page).any fun line => hasStr (lineText line) ink)
 
-  -- Fresh provision uses the existing command-signature subset. Mandatory,
-  -- optional and parameter order are witnessed where the command is used.
   let fresh : Array (String × String × String × String × String) := #[
     ("zero arguments", "", "Chosen", "\\providedprobe", "Chosen"),
     ("mandatory argument", "m", "Chosen #1", "\\providedprobe{token}", "Chosen token"),
@@ -66,8 +60,6 @@ def xparseProvideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     ("renewed definition", "\\NewDocumentCommand{\\providedprobe}{m}{First #1}" ++
       "\\RenewDocumentCommand{\\providedprobe}{m}{Existing #1}"),
     ("earlier provision", "\\ProvideDocumentCommand{\\providedprobe}{m}{Existing #1}")]
-  -- The unused signature differs in arity and contains a default. Nested
-  -- definitions and unsupported commands in an unused body must stay inert.
   let unused := "\\ProvideDocumentCommand{\\providedprobe}{D<>{UnusedDefault} +m}" ++
     "{\\unusedcommand{UnusedBody}\\newcommand{\\unusedbinding}{UnusedDefinition}}"
   for (label, pre) in definitions do
@@ -89,8 +81,6 @@ def xparseProvideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (article "\\newcommand{\\providedprobe}[1]{Existing #1}"
       "Lead \\providedprobe{token} Tail") "Existing token Tail"
 
-  -- The conditional pass runs before the rewrite. It must not read,
-  -- warn about, or collect definitions from an ignored replacement text.
   let conditionalBody := "\\iftrue Unused\\fi"
   samePage "builtin unused conditional"
     (article ("\\ProvideDocumentCommand{\\textbf}{m}{" ++ conditionalBody ++ "}")
@@ -117,8 +107,6 @@ def xparseProvideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       samePage (label ++ if body.isEmpty then " empty body" else " unused body")
         (article (pre ++ provided) call) (article pre call) ink
 
-  -- The keep decision precedes interpretation of a recognized body idiom.
-  -- Otherwise an ignored provision of section still changes its style.
   let sectionBody := "\\@startsection{section}{1}{0pt}{5pt}{7pt}{\\itshape}"
   let call := "\\section{Kept heading}Body Tail"
   for definer in #["ProvideDocumentCommand", "providecommand"] do

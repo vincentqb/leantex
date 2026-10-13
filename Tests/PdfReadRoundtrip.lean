@@ -8,9 +8,8 @@ public section
 
 open LeanTex.Core
 
-/-! Counterexamples to the former round-trip premise: a decimal point,
-an opening string delimiter, or a nonempty name alone does not make an
-object's spelling reversible. These exercise the public reader and writer. -/
+/-! Counterexamples to `formerPrimitivePremise`: a decimal point, an opening delimiter or a nonempty
+name alone does not make a spelling reversible. -/
 
 private def formerPrimitivePremise : PdfRead.Obj → Bool
   | .real raw => raw.contains '.'

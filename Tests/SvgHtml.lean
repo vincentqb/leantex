@@ -12,20 +12,14 @@ public import Tests.CorpusStore
 
 public section
 
-/-! The native SVG route on the HTML page: a still figure the engine draws
-whole and that sets text ships as the page's own SVG with live text in the
-document's role families; one that moves, draws with a loss, embeds a
-raster or sets no text keeps its authored bytes in an `<img>`; a moving
-figure's still face is the engine's drawing of its pose with its text as
-the faces' outlines. Asserted over the typed tree the page serializes and
-the bytes it embeds. -/
+/-! The native SVG route on the HTML page: inline SVG for still text figures, authored bytes
+otherwise, and a moving figure's still face drawn by the engine. -/
 
 namespace Tests
 
 open LeanTex.Core LeanTex.Cli
 
-/-- A face set with the three roles apart: the serif body, the sans, the
-mono — so a figure's family list visibly picks its role. -/
+/-- A face set with the serif body, sans and mono roles apart. -/
 def threeRoleFonts : IO (Option Font.FontSet) := do
   let load (name : String) : IO (Option Font.Font) := do
     let bytes ← IO.FS.readBinFile ("testdata/corpus/fonts/" ++ name)
@@ -37,8 +31,8 @@ def threeRoleFonts : IO (Option Font.FontSet) := do
                 index := #[((0, 400, false), 0), ((0, 700, false), 0), ((1, 400, false), 1),
                   ((1, 700, false), 1), ((2, 400, false), 2), ((2, 700, false), 2)] }
 
-/-- One source's store, as the driver builds it: fetched natively with no
-converter, fulfilled, shaped, and — when it moves — given its still face. -/
+/-- One source's store as the driver builds it: fetched natively, fulfilled, shaped, and given a
+still face when it moves. -/
 def svgStore (fs : Font.FontSet) (src : String) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first) (convert : Option Driver.Converter := none) :
     IO Image.Store := do
@@ -60,11 +54,8 @@ def svgTexts (body : Array Html.Node) : Array (Array (String × String) × Strin
     | .elem _ attrs kids => some (attrs, nodeTextList "" kids.toList)
     | _ => none
 
-/-- **A still figure that sets text is the page's own SVG**: no `<img>`, a
-named `<svg>` whose every run is a `<text>` in its role's family, at the
-resolved face's weight, each glyph at the pen x the shaping gave — the
-same scalars the PDF sets. Its tree closes as a page, and the judge finds
-no unnamed SVG. -/
+/-- A still figure that sets text is the page's own SVG, each run a `<text>` in its role's family at
+the shaped pen positions. -/
 def svgInlineChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "inline figure: the three shipped role faces parse" false
   let imgs ← svgStore fs "chart.svg" svgTextFixture
@@ -104,9 +95,8 @@ def svgInlineChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (closed, _) ← Publication.prepareHtml "figure.tex" { imgs, fonts := some fs } doc
   check ref "inline figure: the page closes over its resources" closed.toBool
 
-/-- **What keeps its authored bytes**: a figure that sets no text, one the
-engine draws with a loss, and one embedding a raster each ship as an
-`<img>` of the authored source, never as inline SVG. -/
+/-- A textless figure, a lossy one and one embedding a raster ship as an `<img>` of the authored
+source. -/
 def svgImgChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "img figure: the role faces parse" false
   let raster := svgDocument
@@ -123,8 +113,7 @@ def svgImgChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((elemAttrsList (· == "svg") #[] body.toList).isEmpty && imgsShipped.size == 1 &&
         (HtmlDoc.imageResources imgs).any (·.bytes == bytes))
 
-/-- An invented moving figure with a clipped ground and a line of sans
-text holding a space. -/
+/-- A moving figure with a clipped ground and a line of sans text holding a space. -/
 def svgMovingTextFixture : ByteArray :=
   ("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"30\">" ++
    "<defs><clipPath id=\"half\"><rect width=\"60\" height=\"30\"/></clipPath></defs>" ++
@@ -133,11 +122,8 @@ def svgMovingTextFixture : ByteArray :=
    "<animate attributeName=\"opacity\" values=\"0;1\" dur=\"2s\"/></rect>" ++
    "<text x=\"24\" y=\"20\" font-family=\"sans-serif\">Moving text</text></svg>").toUTF8
 
-/-- **A moving figure keeps its animation, and its still face is the
-engine's drawing**: the `<img>` carries the authored bytes inside the print
-and reduced-motion switch, whose source is a static SVG the native judge
-admits, its text the faces' outlines — one definition per distinct glyph,
-one use per glyph set, and no `<text>`. -/
+/-- A moving figure keeps its animation, and its still face is the engine's drawing, its text as
+outlines. -/
 def svgPosterFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "moving figure: the role faces parse" false
   let imgs ← svgStore fs "moving.svg" svgMovingTextFixture
@@ -149,8 +135,6 @@ def svgPosterFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
         a.contains ("media", "print, (prefers-reduced-motion: reduce)"))
   check ref "moving figure: the browser receives the authored animation"
     ((HtmlDoc.imageResources imgs).any (·.bytes == svgMovingTextFixture))
-  -- Drawn at the end of its animation, the figure still moves: the pose
-  -- holds no animation, the authored tree does.
   let atEnd ← svgStore fs "moving.svg" svgMovingTextFixture (page := .last)
   check ref "moving figure: drawn at its last pose, it still has its still face"
     ((atEnd.entries[0]?).any fun en => en.moving && en.posterSvg.isSome)
@@ -174,9 +158,7 @@ def svgPosterFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((FigureOutline.outlined fs fig).box == fig.box)
   | _, _ => check ref "moving figure: the store carries a still face and a shaped figure" false
 
-/-- **A run that would paint in a way the engine-set text does not is a
-loss**: a gradient fill and an outline stroke on text are named, so the
-figure is not drawn as though they were there. -/
+/-- A run painted with a gradient fill or an outline stroke is a named loss. -/
 def svgTextPaintLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let gradient := svgDocument
     ("<defs><linearGradient id=\"g\"><stop stop-color=\"red\"/><stop offset=\"1\" stop-color=\"blue\"/>" ++
@@ -191,13 +173,8 @@ def svgTextPaintLossChecks (ref : IO.Ref (List String)) : IO Unit := do
         ((Svg.importTree t).fig.losses.contains loss)
     | .error e => check ref s!"text paint {name}: the figure reads ({e})" false
 
-/-- **A figure that names itself is the alternative the document did not
-declare** — the driver's gate, two builds apart. Two figures differing only
-by their `<title>`: with it, the shipped document's image is described by
-the title (one IR value, so both artifacts' name), the page names the
-figure by it, and N0376 stays silent; without it, N0376 names the image and
-the alternative stays undeclared. A declared alternative wins over a
-title. -/
+/-- A figure's `<title>` is the alternative the document did not declare, two builds apart; a
+declared alternative wins. -/
 def svgTitleAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "figure title: the role faces parse" false
   let figure (title : String) : ByteArray :=
@@ -233,11 +210,8 @@ def svgTitleAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "figure title: a declared alternative stands over the title"
     (alts declDoc == #[.described "A declared name"] && !declDiags.any (·.kind == .N0376))
 
-/-- **A figure's words are the words it shows.** A wholly transparent group
-and a wholly transparent fill paint nothing, so neither the PDF's text nor
-the page's live text carries them — an animated figure's frames that its
-still pose hides once all reached a reader's text extraction — while a
-hidden run still moves the run that follows it in its chunk. -/
+/-- A figure's words are the words it shows: transparent text sets no run but still moves the
+next. -/
 def svgInvisibleTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "invisible text: the role faces parse" false
   let bytes := svgDocument (width := 120) (height := 40)
@@ -270,26 +244,16 @@ def svgInvisibleTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     (shows.foldl (· + ·) 0 == 2)
 
 
-/-- An invented moving figure with a filter the engine does not draw. -/
+/-- A moving figure with a filter the engine does not draw. -/
 def svgMovingFilterFixture : ByteArray :=
   svgDocument ("<filter id=\"soft\"><feGaussianBlur stdDeviation=\"2\"/></filter>" ++
     "<circle cx=\"10\" cy=\"10\" r=\"5\" fill=\"red\" filter=\"url(#soft)\">" ++
     "<animate attributeName=\"r\" values=\"5;8;5\" dur=\"2s\" repeatCount=\"indefinite\"/></circle>")
 
-/-- **A figure's loss is named in every output its drawing ships in**, and
-only there — the premises `FigureLoss.shipsIn` and
-`FigureSvg.drawingShipsIn` state. Two builds of a still lossy figure
-differing only by the converter ship the same HTML, its authored bytes in an
-image, and name nothing for the HTML; a moving one's still face (print,
-reduced motion) is the drawing its route chose, so with no converter the
-engine's drawing — without the feature — and its loss is named for the HTML
-too, and with one the converter's, the reason named. A note on the engine's
-drawing (a link it does not carry, a family it sets in the document's face)
-is named for the HTML exactly where the page ships that drawing inline. -/
+/-- A figure's loss is named in every output its drawing ships in, and only there. -/
 def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "output scope: the role faces parse" false
-  -- A converter that draws, answering the figure's own natural size, so the
-  -- page cannot tell which drew it by its box.
+  -- A converter drawing at the figure's natural size, so the box cannot tell which drew it.
   let natural ← Driver.svgFetch "f.svg" svgFilterFixture .first "en" none
   let fake : Driver.Converter := .always fun _ _ => return natural.res.mapError .inconclusive
   let page (imgs : Image.Store) (src : String) : String :=
@@ -313,16 +277,10 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "output scope: a moving figure the converter drew names its reason for the HTML"
     ((Diag.forOutputs #[.html] movingTool.diags).any fun d =>
       d.code == "N0024" && d.subject == some "figure:svg:property:filter")
-  -- What the HTML's still face is: the engine's drawing, without the filter.
   let imgs ← svgStore fs "moving.svg" svgMovingFilterFixture
   check ref "output scope: the moving figure's still face is the engine's drawing, unfiltered"
     ((imgs.entries[0]?.bind (·.posterSvg)).any fun p =>
       !hasStr (String.fromUTF8! p) "filter" && hasStr (String.fromUTF8! p) "<circle")
-  -- A note on the text the engine's drawing sets is named where that drawing
-  -- ships: an inline figure's page is the drawing, and a figure kept as its
-  -- authored bytes leaves the browser to set its text in its own faces. A
-  -- link is carried by neither: an SVG a page shows as an image is drawn
-  -- and never followed.
   let linked (extra : String) : ByteArray := svgDocument
     ("<rect id=\"x\" width=\"1\" height=\"1\"/>" ++ extra ++
       "<a href=\"#x\"><text x=\"2\" y=\"15\" font-family=\"Example Grotesk\">Label 漢</text></a>")
@@ -348,12 +306,8 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
       (namedIn .pdf "N0026" && glyphIn .pdf)
 
 
-/-- **The corpus's figures ship as the page's own SVG where they can**: in
-the HTML of the SVG corpus fixture, each still figure that sets text is an
-inline `<svg>` named by its `<title>`, the moving one keeps its authored
-bytes in an image inside the print and reduced-motion switch, its still
-face a source the native judge admits, and the one embedding a raster
-keeps its authored bytes in an image of its own. -/
+/-- The corpus's figures ship as the page's own SVG where they can, the moving and raster ones as
+images. -/
 def svgCorpusHtmlChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let src ← IO.FS.readFile "testdata/corpus/svg-figures.tex"
   let (doc, _) ← elabFixture "svg-figures" src
@@ -361,8 +315,6 @@ def svgCorpusHtmlChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let shipped ← FontDiscovery.scanRoots [testFonts]
   let fs ← fixtureFontSet oneFace mathSet shipped doc
   let store ← corpusStore doc (some fs)
-  -- A figure's own title is the alternative the document leaves undeclared,
-  -- as the driver reads it off the figure it drew.
   let doc := corpusTitled doc store
   let (_, body, _) := HtmlDoc.emitTree { imgs := store, fonts := some fs } doc
   let svgs := elemAttrsList (· == "svg") #[] body.toList
@@ -371,17 +323,14 @@ def svgCorpusHtmlChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   check ref "corpus HTML: each inline figure is named by its title"
     (named "An invented line chart of a measured value" && named "Three invented captions" &&
       named "Two invented shaded squares")
-  check ref "corpus HTML: the moving figure keeps an image inside its still-face switch, the raster figure its own"
+  check ref "corpus HTML: the moving figure's image is in its switch, the raster figure's alone"
     ((elemAttrsList (· == "picture") #[] body.toList).size == 1 &&
       (elemAttrsList (· == "img") #[] body.toList).size == 2)
   check ref "corpus HTML: the moving figure's still face is a source the native judge admits"
     (store.entries.any fun en => en.moving && (en.posterSvg.any fun p => (Svg.judge p).toBool))
 
 
-/-- **A glyph past the Basic Multilingual Plane cannot shift the pens after
-it**: a run setting one places every glyph in a `tspan` of its own, at its
-pen, whatever a browser counts a surrogate pair as; a run within the plane
-keeps one `x` per character. -/
+/-- A glyph past the Basic Multilingual Plane cannot shift the pens after it. -/
 def svgAstralTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ink : Option Gfx.Fill := some { paint := .solid { r := 0, g := 0, b := 0 }, rule := .nonzero, alpha := Gfx.Alpha.opaque }
   let run (cs : List (Char × Dim.Sp)) : Gfx.Shaped :=

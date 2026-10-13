@@ -38,9 +38,8 @@ private def preparedChecksAgainst (ref : IO.Ref (List String))
   t s!"tcolorbox colors: {label}: supported retained content"
     ((ds ++ actual.diags ++ hds).all (·.severity == .note))
 
-/-- The capture boundary receives only selected, supported color operands.
-Rejected captures stay named and cannot leak their raw arguments into either
-artifact. Source lookup and hook ordering are checked separately below. -/
+/-- The capture boundary receives only selected, supported colour operands, and rejected captures
+stay named without leaking. -/
 def tcolorboxColorPreparedChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let capture (key : String) (value : Array Parse.Raw) :
@@ -80,8 +79,8 @@ def tcolorboxColorPreparedChecks (ref : IO.Ref (List String))
   preparedChecksAgainst ref fonts "unsupported paint pairs" prepared
     "\\begin{block}{Heading}Body\\end{block}"
 
-/-- Native controls keep the declaration scopes and compare complete shipped
-PDF page models and typed HTML. No color or macro wrapper is normalized away. -/
+/-- Native controls keep the declaration scopes and compare complete PDF page models and typed
+HTML. -/
 private def caseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label pre body control : String) (refused : Array String := #[]) : IO Unit := do
   let (ds, actual, html, _) := sourceArtifacts fonts (document pre body)
@@ -99,11 +98,8 @@ private def caseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       (ds.any fun d => d.kind == .W0110 && d.subject == some "tcolorbox:panel" &&
         d.triggerText == some "\\begin" && hasStr d.message key)
 
-/-- tcolorbox 6.9.0 captures color keys at each use, before executing font
-hooks. Its savebox selects that captured color before the font hook, so a
-hook's explicit color wins. LuaLaTeX probes of `current@color` pin both
-orders, late lookup after declaration, and restoration after local font
-definitions. These checks hold the actual artifacts to native controls. -/
+/-- tcolorbox captures colour keys at each use before its font hooks, so a hook's explicit colour
+wins, as LuaLaTeX probes pin. -/
 def tcolorboxColorSourceChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   for key in ["coltext", "colupper"] do

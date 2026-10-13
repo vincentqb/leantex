@@ -8,10 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- A definition stores its replacement text. Only invoking it installs
-the definitions that text contains (TeXbook, chapters 20 and 24).
-The witnesses read shipped layout and typed HTML, including a provision
-between storing an installer and invoking it. -/
+/-- A definition stores its replacement text; only invoking it installs the definitions that text
+contains. -/
 def macroBindingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref

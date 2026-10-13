@@ -8,10 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Synthetic local styles measured against LuaLaTeX's ltclass option
-machinery. The expected text is committed independently of the resolver.
-Bodies register literal begin-document ink so order and multiplicity are
-observable on both shipped surfaces, without a TeX expansion runtime. -/
+/-- A local style's option case, measured against LuaLaTeX, whose bodies ink begin-document text so
+order and multiplicity are observable. -/
 structure PackageOptionCase where
   name : String
   passed : String
@@ -25,11 +23,8 @@ def packageOptionDeclare (name ink : String) : String :=
 def packageOptionDefault (ink : String) : String :=
   "\\DeclareOption*{\\AtBeginDocument{" ++ ink ++ "}}\n"
 
-/-- Declaration order, caller order and default order are three different
-orders. In particular, a starred process repeats a repeated caller option;
-an unstarred process runs each declared name once, using its latest body at
-its first declaration's position. Executing defaults does not consume them;
-processing does. Unknown defaults do not call the catch-all. -/
+/-- Declaration, caller and default order as three different orders, starred and unstarred
+processing included. -/
 def packageOptionCases : Array PackageOptionCase := Id.run do
   let ab := packageOptionDeclare "a" "A" ++ packageOptionDeclare "b" "B"
   let fallback := packageOptionDefault "U"
@@ -102,11 +97,8 @@ def packageOptionSource (passed body : String) : String :=
   "\\documentclass{article}\n\\usepackage[" ++ passed ++ "]{pkgoptionsprobe}\n" ++
     "\\pagestyle{empty}\n\\begin{document}" ++ body ++ "\\end{document}\n"
 
-/-- Unknown caller options are losses, including options left unprocessed
-at the end of a package. The expected diagnostics name the package, option
-and source line; line 1 names an unprocessed load, other lines its process
-site. LuaLaTeX must independently reject every case with a live loss.
-An absent catch-all differs from an explicitly declared empty one. -/
+/-- An unknown caller option's expected diagnostic: package, option and source line (1 for an
+unprocessed load). -/
 structure PackageOptionDiagCase where
   name : String
   passed : String := "u"
@@ -188,12 +180,8 @@ def packageOptionDiagSource (c : PackageOptionDiagCase) : String :=
 def packageOptionChildStyle : String :=
   "\\ProvidesPackage{pkgoptionschild}\n\\ProcessOptions*\\relax\n"
 
-/-- The option resolver must preserve the actual local-style splice's
-execution order, multiplicity and body boundaries on Layout.Out and the
-typed HTML tree. An unselected body stays inert; a selected unsupported
-body keeps its existing explicit refusal. No assertion reads an IR dump.
-Run by scripts/package-options.lean until the parent wires this block into
-the suite; the test-module-only edit keeps that integration independent. -/
+/-- The option resolver preserves the local style splice's execution order, multiplicity and body
+boundaries on both artifacts. -/
 def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -227,8 +215,6 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       t s!"package options {c.name}: no error or unsupported command"
         (ds.all fun d => d.severity == .note && d.refused.isNone)
 
-    -- Selection schedules a body, never interprets a TeX program inside
-    -- it. The unsupported operation is still named at its style-file site.
     for (name, body, code) in [
         ("expanding-definition", "\\edef\\optionprobe{Unused}", "W0357"),
         ("package-error", "\\PackageError{pkgoptionsprobe}{Unused}{Unused}", "W0387"),
@@ -267,9 +253,7 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         ((losses.zip c.unhandled).all fun (d, pkg, option, _) =>
           hasStr d.message pkg && hasStr d.message option)
 
-/-- Standalone engine entry used by the synthetic comparison script.
-The parent suite can supply its shared fonts to `packageOptionChecks`;
-this entry needs only the shipped fixture face. -/
+/-- Standalone entry for the synthetic comparison script, needing only the shipped fixture face. -/
 def packageOptionFailures : IO (List String) := do
   let some bytes ← findFont | throw <| IO.userError "shipped fixture font is missing"
   let .ok font := Font.parse bytes | throw <| IO.userError "shipped fixture font is invalid"

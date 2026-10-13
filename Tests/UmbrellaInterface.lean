@@ -2,9 +2,8 @@ module
 
 import LeanTex
 
-/-! The public umbrella keeps its existing parser, document, artifact and
-CLI library interfaces. Re-exporting a module does not expose its private
-implementation or mutable state. -/
+/-! The public umbrella keeps its parser, document, artifact and CLI interfaces without exposing
+private state. -/
 
 open LeanTex.Core LeanTex.Cli
 

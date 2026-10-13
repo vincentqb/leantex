@@ -3,8 +3,8 @@ module
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfFlateProof
 
-/-! Consumers can classify the bytes a PDF carries and apply stream
-round-trip contracts without importing scanner or proof implementation. -/
+/-! Consumers classify a PDF's bytes and apply stream round-trip contracts without the scanner's
+implementation. -/
 
 open LeanTex.Core
 open PdfRead

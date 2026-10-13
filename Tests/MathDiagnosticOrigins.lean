@@ -9,10 +9,8 @@ open LeanTex.Core LeanTex.Cli LeanTex.Cli.FontAssembly
 
 namespace Tests
 
-/-- Where a note must point: the written token that opened its formula, or
-the written call whose replacement holds it, with the trigger the lexer
-recorded there; or no position at all, for a formula no file holds the
-opener of. -/
+/-- Where a note must point: the written token that opened its formula, the written call whose
+replacement holds it, or no position. -/
 private inductive MathOrigin where
   | at (line col : Nat) (trigger : Option String)
   | unlocated
@@ -101,28 +99,22 @@ private def mathOriginFixtures : Array MathOriginFixture := #[
     alphabets := #[("cal", .at 6 7 (some "\\("))]
     declared := true },
   { name := "no-formulas", body := "Ordinary text.", face := none },
-  -- Dollar formulas retain the authored opener, just as control delimiters do.
   { name := "dollar-source"
     body := "First $x$.\n\nLater $\\mathcal{A}$."
     face := some (.at 4 7 (some "$"))
     alphabets := #[("cal", .at 6 7 (some "$"))] },
-  -- A picture label's formula is located at its opener, as a paragraph's is.
   { name := "picture-label"
     preamble := "\\pictures{tool=none}\n"
     body := "\\begin{tikzpicture}\n\\node at (0,0) {Label $\\mathcal{A}$};\n\
       \\end{tikzpicture}"
     face := some (.at 6 23 (some "$"))
     alphabets := #[("cal", .at 6 23 (some "$"))] },
-  -- A macro the compatibility pass expands in a label is located at its
-  -- written call, as in a paragraph.
   { name := "picture-label-call"
     preamble := "\\pictures{tool=none}\n\\newcommand{\\request}{$\\mathcal{A}$}\n"
     body := pictureCall
     face := some (.at 7 23 (some "\\request"))
     alphabets := #[("cal", .at 7 23 (some "\\request"))] },
-  -- A definition the picture walk expands itself is re-read from its text,
-  -- whose coordinates index that text, not a file: its formula's notes name
-  -- no position, never one in the picture's file.
+  -- A definition the picture walk expands is re-read from its own text, so its formula names no position.
   { name := "picture-label-xparse"
     preamble := "\\pictures{tool=none}\n\\NewDocumentCommand{\\request}{}{$\\mathcal{A}$}\n"
     body := pictureCall
@@ -133,15 +125,12 @@ private def mathOriginFixtures : Array MathOriginFixture := #[
     body := pictureCall
     face := some .unlocated
     alphabets := #[("cal", .unlocated)] },
-  -- Beside a written formula, the written one keeps its opener and the
-  -- expanded one borrows no site from it.
   { name := "picture-label-xparse-beside"
     preamble := "\\pictures{tool=none}\n\\NewDocumentCommand{\\request}{}{$\\mathcal{A}$}\n"
     body := "\\begin{tikzpicture}\n\\node at (0,0) {$x$};\n\
       \\node at (2,0) {Label \\request};\n\\end{tikzpicture}"
     face := some (.at 7 17 (some "$"))
     alphabets := #[("cal", .unlocated)] },
-  -- A document style's formula is located where the style wrote it.
   { name := "picture-style"
     preamble := "\\pictures{tool=none}\n" ++ styleLine ++ "\n"
     body := "\\begin{tikzpicture}\n\\node[lab] at (0,0);\n\\end{tikzpicture}"
@@ -156,8 +145,8 @@ private def mathOriginSource (family : String) (f : MathOriginFixture) : String 
 private def mathOriginParse (file text : String) : Array Parse.Raw :=
   (Parse.parse file (Lex.lex file text).1).1
 
-/-- `root` with an included file's raws spliced in: before its document, or
-at the end of the document's body. -/
+/-- `root` with an included file's raws spliced in, before its document or at the end of its
+body. -/
 private def spliceInput (root : Array Parse.Raw) (file : String)
     (child : Array Parse.Raw) (inBody : Bool) : Array Parse.Raw :=
   let input : Parse.Raw := .env (Parse.inputEnv file) child {}
@@ -168,9 +157,8 @@ private def spliceInput (root : Array Parse.Raw) (file : String)
     let k := (root.findIdx? fun r => r matches .env "document" _ _).getD root.size
     root.extract 0 k ++ #[input] ++ root.extract k root.size
 
-/-- The written-token index the frontend takes before expansion: what the
-driver reads a note's trigger off (`SourceTriggers.attribute`), so a
-relocated replacement token reports the spelling of the call it stands at. -/
+/-- The written-token index the frontend takes before expansion, which the driver reads a note's
+trigger off. -/
 private def writtenTokens (file : String) (raws : Array Parse.Raw) : Compat.SourceTriggers :=
   (Elab.prepare file raws).sourceTriggers
 
@@ -179,22 +167,13 @@ private def mathOriginAt (file : String) : MathOrigin → Diag → Bool
     s.file == file && s.pos.line == line && s.pos.col == col
   | .unlocated, d => d.span.isNone
 
-/-- Font resolution must retain the actual requesting formula's source.
-N0016 selects a nonempty, painted math request, while each N0018 selects the
-first formula missing that alphabet, independently of earlier supported
-formulas and other alphabet losses. These are authored reader-to-assembly
-checks with a hermetic font scan, each note read as the driver reports it
-(`writtenTokens`); no message parsing or invented IR spans supply the
-expected origins. A picture label's formula is located where its opener was
-written — the picture's own body, or the file that wrote the style setting
-it — and nowhere when the walk read it out of a definition's text. -/
+/-- Font resolution keeps the requesting formula's source: N0016 names a painted math request and
+each N0018 the first formula missing its alphabet. -/
 def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let faces ← FontDiscovery.scanRootsIn none [testFonts]
   let scan : FaceScan := { faces, docDirs := [], dirs := #[], diags := #[] }
   let cache ← FontEnv.Cache.mk'
-  -- Both N0016 producers participate: a designed companion and the first
-  -- available MATH face. These fixtures declare text families, so an ambient
-  -- LEANTEX_FONT cannot redirect them.
+  -- The fixtures declare text families, so an ambient LEANTEX_FONT cannot redirect them.
   for family in ["Open Sans", "Fira Sans"] do
     for f in mathOriginFixtures do
       let file := "synthetic/math-origin-" ++ f.name ++ ".tex"
@@ -235,7 +214,6 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         (plainDiags.all fun d => d.span.isNone && d.trigger.isNone)
       t "a second resolution remains silent"
         ((Ir.resolveMathAlphas fs.mathAlphabets mathFamily resolved).2.isEmpty)
-  -- An included formula retains the included file, not the root's location.
   let file := "synthetic/included-math.tex"
   let child := mathOriginParse file "First \\(x\\).\n\nLater \\(\\mathcal{A}\\)."
   let root := mathOriginParse "synthetic/root.tex" "\\fonts{body=\"Open Sans\"}"
@@ -248,9 +226,6 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"math origins include: {repr kind} keeps the child origin and trigger"
       (diags.any fun d => d.kind == kind &&
         mathOriginAt file (.at line 7 (some "\\(")) d && d.triggerText == some "\\(")
-  -- A document style's formula is located in the file that wrote the style,
-  -- wherever the picture applying it stands: the style an included file
-  -- wrote, and the root's style applied in a picture an included file holds.
   let picture := "\\begin{tikzpicture}\n\\node[lab] at (0,0);\n\\end{tikzpicture}"
   for (name, rootFile, preamble, body, childFile, child, inBody, owner, line) in [
       ("included style", "synthetic/style-root.tex", "", picture,
@@ -271,8 +246,7 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"math origins {name}: {repr kind} names the style's own file and opener"
         (diags.any fun d => d.kind == kind &&
           mathOriginAt owner (.at line 43 (some "$")) d && d.triggerText == some "$")
-  -- A provisional request can precede source elaboration. Such a request
-  -- must remain unlocated, rather than borrowing an unrelated text span.
+  -- A provisional request precedes elaboration and stays unlocated.
   let (preamble, _, _) := Elab.runRawsSpanned "synthetic/provisional.tex"
     (mathOriginParse "synthetic/provisional.tex" "\\fonts{body=\"Open Sans\"}\nText.")
   let .ok (_, _, provisional, _) ← buildFontSet preamble scan cache (.provisional true) |

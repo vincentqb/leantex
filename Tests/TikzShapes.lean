@@ -23,44 +23,32 @@ end
 def figsOf (oneFace : Font.FontSet) (src : String) : Array (Gfx.Figure (Nat × Nat)) :=
   (layoutOf oneFace (elabStr src).1).pages.flatMap fun p => p.inks.map (·.fig)
 
-/-- A figure's draws in the figure's own frame: geometry and paint read in
-the one frame a gradient's map is stated in. -/
+/-- A figure's draws, geometry and paint, in the figure's own frame. -/
 def figDraws (oneFace : Font.FontSet) (src : String) :
     Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
   (figsOf oneFace src).flatMap fun f => nodeDrawsList #[] f.nodes.toList
 
-/-- **A picture's long tail draws what TikZ's keys say: its shadings, clips,
-shapes, tips, labels, pins, fits and braces.** The invariant whose absence
-sent a picture to the boundary for one key: a shading is pgf's —
-`\pgfshadepath` fits the shading's middle 50 bp to the path's box and
-tikz.code.tex declares its stops; a clip clips what follows it in its scope
-and only the clip path counts toward the picture's size; an ellipse and a
-diamond node are pgflibraryshapes.geometric's outlines about their text;
-`Stealth` is arrows.meta's dart at its defaults; `label=` and `pin=` hang a
-node beyond their node's border at their angle; `fit` covers what it names;
-and a brace is pgflibrarydecorations.pathreplacing's. Read off
-`Layout.Out`, elaborated as the driver does where a node's letters matter;
-invented content. -/
+/-- A picture's long tail draws what TikZ's keys say: shadings, clips, shapes, tips, labels, pins,
+fits and braces. -/
 def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let grid : Ir.Color := { r := 42, g := 111, b := 78 }
-  -- Shadings.
   let axial := picDoc "" "\\shade[left color=grid, right color=white] (0,0) rectangle (2,1);"
   t "shade: an axial shading names no loss" (lossesOf axial).isEmpty
-  t "shade: its stops are pgf's: the right colour to a quarter, the mix at the half, the left from three quarters"
+  t "shade: pgf's stops: right colour to a quarter, mix at half, left from three quarters"
     (match (figDraws oneFace axial).toList with
      | [(_, some { paint := .gradient (.linear _ _ stops _), .. }, _)] =>
        stops.map (·.color) == #[Ir.Color.white, Ir.Color.white, Ir.Color.mix grid 50 Ir.Color.white,
          grid, grid] && stops.map (·.offset.val) == #[0, 16384, 32768, 49152, 65536]
      | _ => false)
-  t "shade: its frame sets the left colour on the box's left edge and the right colour on its right"
+  t "shade: the left colour on the box's left edge, the right on its right"
     (match (figDraws oneFace axial).toList with
      | [(.rect x y w h, some { paint := .gradient (.linear _ _ _ xf), .. }, _)] =>
        xf.apply (0, (Dim.pt 25 : Rat)) == ((x : Rat), (y : Rat) + (h : Rat) / 2) &&
          xf.apply (0, -(Dim.pt 25 : Rat)) == ((x : Rat) + (w : Rat), (y : Rat) + (h : Rat) / 2)
      | _ => false)
   let radial := picDoc "" "\\shade[inner color=white, outer color=grid] (0,0) circle (1);"
-  t "shade: a radial shading runs from the box's centre, inner to outer at half its radius"
+  t "shade: radial from the box's centre, inner to outer at half its radius"
     (match (figDraws oneFace radial).toList with
      | [(.ellipse ex ey _ _, some { paint := .gradient (.radial c0 r0 c1 r1 stops xf), .. }, _)] =>
        c0 == (0, 0) && r0 == 0 && c1 == (0, 0) && r1 == Dim.pt 50 &&
@@ -68,7 +56,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
          stops.map (·.offset.val) == #[0, 32768, 65536] && xf.apply (0, 0) == ((ex : Rat), (ey : Rat))
      | _ => false)
   let ball := picDoc "" "\\shade[ball color=grid] (0,0) circle (1);"
-  t "shade: a ball's highlight starts 10 bp up and left of its centre, its stops mixed from its colour"
+  t "shade: a ball's highlight starts 10 bp up-left of centre, stops mixed from its colour"
     (match (figDraws oneFace ball).toList with
      | [(_, some { paint := .gradient (.radial c0 _ _ _ stops _), .. }, _)] =>
        c0 == (-(Dim.pt 10), Dim.pt 10) &&
@@ -80,7 +68,6 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((lossesOf shadedraw).isEmpty && match (figDraws oneFace shadedraw).toList with
      | [(_, some { paint := .gradient _, .. }, some _)] => true
      | _ => false)
-  -- Clips.
   let clipped := picDoc "" "\\clip (0,0) rectangle (1,1);\\fill[grid] (0,0) circle (1);"
   t "clip: no loss is named" (lossesOf clipped).isEmpty
   t "clip: what follows paints inside one group the clip rectangle clips"
@@ -111,18 +98,13 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let leak := picDoc "" "{\\clip (0,0) rectangle (1,1);}\\fill (0,0) circle (1);"
   t "clip: one inside a group, which pgf carries past it, is named"
     ((lossesOf leak).any fun d => d.code == "W0334" && hasStr d.message "clip")
-  -- A node written between two fills in a clip's scope keeps its place
-  -- between them, as in pgf: each run of ink its own group the clip path
-  -- clips, the label standing between the runs. The invariant whose absence
-  -- moved every label after all the clip's ink, so a fill the node preceded
-  -- painted under it in both artifacts.
   let order := picDoc "" ("\\clip (0,0) rectangle (2,2);\\fill[blue] (0,0) rectangle (1,1);" ++
     "\\node at (1,1) {a};\\fill[red] (0,0) rectangle (2,2);")
   let kind : Gfx.Node (Nat × Nat) → String := fun n => match n with
     | .label _ => "label"
     | .group _ cs _ _ => if cs.isEmpty then "group" else "clip"
     | _ => "other"
-  t "clip: a node between two fills keeps its place between them on the PDF's page"
+  t "clip: a node between two fills stays between them on the PDF page"
     ((lossesOf order).isEmpty && match (figsOf oneFace order).toList with
      | [f] => f.nodes.toList.map kind == ["clip", "label", "clip"]
      | _ => false)
@@ -134,10 +116,6 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     | _ => []
   t "clip: and on the web page"
     ((svgKids order).filter (· != "defs") == ["g", "text", "g"])
-  -- The web page paints the same, read over the typed HTML tree: each
-  -- shading a gradient element carrying pgf's stops, which the shape it
-  -- fills names; each clip a `clipPath` the clipped group names. The
-  -- emissions this subset first makes reachable from a picture.
   let htmlOf (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
   let tagged (tag : String) (body : Array Html.Node) : Array Html.Node :=
     elemNodesList (· == tag) #[] body.toList
@@ -165,7 +143,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   match (tagged "clipPath" clipBody).toList with
   | [c] =>
     let id := (attrOf c "id").getD ""
-    t "html: a clip is one clipPath, in the user space of what it clips, holding the rectangle"
+    t "html: a clip is one clipPath in its target's user space, holding the rectangle"
       (attrOf c "clipPathUnits" == some "userSpaceOnUse" && (tagged "rect" #[c]).size == 1)
     t "html: the group the clip clips names it, and holds the clipped circle"
       (!id.isEmpty && (tagged "g" clipBody).any fun g =>
@@ -173,9 +151,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           ((tagged "circle" #[g]).size + (tagged "ellipse" #[g]).size +
             (tagged "path" #[g]).size) == 1)
   | _ => t "html: a clip ships one clipPath" false
-  -- Node shapes, against the rectangle about the same letters: an ellipse's
-  -- radii are its half extents times 1.4142136, a diamond's half diagonals
-  -- their sum, less 0.414213 outer seps.
+  -- An ellipse's radii are the rectangle's half extents × 1.4142136; a diamond's half diagonals their sum.
   let boxesOf (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
     ((censusOf #[] (layoutOf oneFace (elabMeasured oneFace src).1))[0]?.map (·.pathBoxes)).getD #[]
   let rectB := boxesOf (picDoc "" "\\node[draw] at (0,0) {aa};")
@@ -189,7 +165,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | some (_, _, rw, rh), some (_, _, ew, eh) =>
        near2 (ew / 2) (rw / 2 * 14142136 / 10000000) && near2 (eh / 2) (rh / 2 * 14142136 / 10000000)
      | _, _ => false)
-  t "diamond: its half diagonals are the rectangle's half extents summed, a fraction of a line width in"
+  t "diamond: half diagonals sum the rectangle's half extents, a line-width fraction in"
     (match rectB[0]?, diaB[0]? with
      | some (_, _, rw, rh), some (_, _, dw, dh) =>
        let sum := rw / 2 + rh / 2
@@ -197,9 +173,8 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        near2 (dw / 2) (sum - inset) && near2 (dh / 2) (sum - inset)
      | _, _ => false)
   let toEll := picDoc "" "\\node[ellipse, draw] (e) at (0,0) {aa};\\draw (3,2) -- (e);"
-  -- The anchors stand one outer sep, half the line width, beyond the drawn
-  -- ellipse (the shape's `\radius` adds it), so the edge ends on that one.
-  t "ellipse: an edge to it ends on the ellipse its anchors stand on, not on its bounding box"
+  -- The anchors stand one outer sep beyond the drawn ellipse, so the edge ends there.
+  t "ellipse: an edge ends on its anchors' ellipse, not its bounding box"
     (match ((layoutOf oneFace (elabMeasured oneFace toEll).1).pages.flatMap pageDraws).toList with
      | [(.ellipse cx cy rx0 ry0, _, _), (.path subs, _, _)] =>
        match (subpathSegs subs).toList with
@@ -213,7 +188,6 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
          decide (lhs - rhs ≤ rhs / 1000 ∧ rhs - lhs ≤ rhs / 1000)
        | _ => false
      | _ => false)
-  -- arrows.meta's Stealth at its defaults, against pgf's own arithmetic.
   let stealth := picDoc "" "\\draw[-Stealth] (0,0) -- (1,0);"
   t "Stealth: no loss is named" (lossesOf stealth).isEmpty
   let lw : Float := (Ir.Pic.thinWidth.toNat.toFloat) / 65536
@@ -224,7 +198,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let front := alw / 2 * Float.sqrt (1 + 4 * (len / wid) * (len / wid))
   let insetMiter := alw / 2 * Float.sqrt (1 + 4 * (ins / wid) * (ins / wid))
   let sp (x : Float) : Dim.Sp := (x * 65536).round.toInt64.toInt
-  t "Stealth: its dart is closed, filled and stroked, its front one front miter short of the end"
+  t "Stealth: a closed, filled, stroked dart, its front a miter short of the end"
     (match (drawsOf oneFace stealth).toList with
      | [(.path shaft, none, some _), (.path #[dart], some _, some _)] =>
        match (subpathSegs shaft).toList with
@@ -234,7 +208,6 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
            decide ((x1 - (tipEnd - sp len + sp (ins + insetMiter - alw / 4))).natAbs ≤ 3)
        | _ => false
      | _ => false)
-  -- label= and pin=.
   let linesOf (src : String) : Array CensusLine :=
     ((censusOf #[] (layoutOf oneFace (elabMeasured oneFace src).1))[0]?.map (·.lines)).getD #[]
   let lineOf (src s : String) : Option CensusLine := (linesOf src).find? (·.text.trimAscii.toString == s)
@@ -259,7 +232,6 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let coordLabel := picDoc "" "\\coordinate[label=below:x] (c) at (0,0);\\draw (c) -- (1,0);"
   t "label: a coordinate's label stands below its point by the angle's sector"
     ((lossesOf coordLabel).isEmpty && (lineOf coordLabel "x").isSome)
-  -- fit.
   let fit := picDoc "" "\\node (a) at (0,0) {a};\\node (b) at (2,1) {b};\\node[draw, fit=(a) (b)] {};"
   t "fit: no loss is named" (lossesOf fit).isEmpty
   t "fit: its frame covers both nodes' letters, one inner sep and more out"
@@ -268,7 +240,6 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        fx < a.x && a.x + a.width < fx + fw && fx < b.x && b.x + b.width < fx + fw &&
          fy < b.y && a.y < fy + fh
      | _, _, _ => false)
-  -- The brace.
   let brace := picDoc "" "\\draw[decorate, decoration={brace, amplitude=4pt}] (0,0) -- (2,0);"
   t "brace: no loss is named" (lossesOf brace).isEmpty
   t "brace: two lines and four curves, its tip the amplitude up at the middle"
@@ -285,10 +256,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        | [.cubic _ y0 _ _ _ _ _ _, _, .cubic _ _ _ _ _ _ _ ty, _, _, _] => decide (ty > y0)
        | _ => false
      | _ => false)
-  -- The ground a label stands on: a translucent fill is no opaque ground —
-  -- it is composited over what it covers at its alpha, as both artifacts
-  -- paint it — and an opaque one is its own colour. The invariant whose
-  -- absence took a `fill opacity` fill's colour as the label's ground.
+  -- A translucent fill composites over what it covers, so it is no opaque ground.
   let blue : Ir.Color := { r := 0, g := 0, b := 255 }
   let wash : Ir.Pic.Shape := .ink (.draw (.rect 0 0 100 100)
     (some { paint := .solid blue, rule := .nonzero, alpha := ⟨200, by decide⟩ }) none)

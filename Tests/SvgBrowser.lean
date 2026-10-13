@@ -5,12 +5,11 @@ namespace Tests
 
 open LeanTex.Core LeanTex.Cli Scoreboard
 
-/-- Source keys and expected browser identities read captured inputs. The
-filesystem may change after capture, but that cannot alter this build. -/
+/-- Source keys and expected browser identities read captured inputs, so later filesystem changes
+cannot alter the build. -/
 def svgBrowserSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let docs ← Hermetic.corpusDocs "testdata/corpus"
-  check ref s!"hermetic corpus: the browser oracle's documents are the golden set, \
-markdown included: {docs.map (·.1)}"
+  check ref s!"hermetic corpus: the browser oracle reads the golden set, markdown included: {docs.map (·.1)}"
     (docs.map (·.1) == (goldenNames.toArray.qsort (· < ·)))
   IO.FS.withTempDir fun dir => do
     let moving := svgDocument

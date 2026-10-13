@@ -8,14 +8,8 @@ public section
 open LeanTex.Core
 open LeanTex.Core.Dim
 
-/-! The selection invariant: page ordinals follow `/Kids` depth-first,
-regardless of object numbers or `/Count`; each selected leaf carries its
-nearest inherited boxes, resources, and rotation. A nonzero effective
-rotation is refused identically whether direct or indirect, on an ancestor or leaf;
-the nearest declaration, including zero, overrides its ancestors without
-affecting siblings. A missing ordinal or an encountered cycle is refused,
-never replaced by a different page. All PDFs below are invented, with
-drawing operators instead of fonts or external files. -/
+/-! Page selection follows `/Kids` depth-first with inherited boxes, resources and rotation; a
+missing ordinal or a cycle is refused. -/
 
 private def selectionPdf (objs : Array String) : ByteArray := Id.run do
   let mut out := "%PDF-1.7\n"
@@ -42,10 +36,8 @@ private def middleInkB := "15 10 25 15 re f Q"
 private def lastInk := "q 0 0 1 rg 20 30 90 40 re f /Tile Do Q"
 private def tileInk := "q /Opacity gs 0 0 3 4 re f Q"
 
-/-- Leaves are objects 15, 4, 6, in that order. The empty trailing branch
-is deliberate: the final kid is not necessarily a page. Boxes and resource
-dictionaries include indirect values, sibling overrides, and an unused
-self-reference in a resource form (legal graph sharing, not a page cycle). -/
+/-- A nested page tree whose leaves are objects 15, 4 and 6 in order, with an empty trailing branch
+and inherited, overridden and shared resources. -/
 private def nestedSelectionPdf (cropped : Bool) (count : Nat := 1) : ByteArray :=
   let branchCrop := if cropped then " /CropBox [5 7 105 67]" else ""
   let leafCrop := if cropped then " /CropBox [95 65 15 10]" else ""
@@ -103,8 +95,7 @@ private def selectedResources (f : PdfRead.Form) (n : Nat) : Bool :=
   f.wf && f.objects.size == (if n == 1 then 2 else if n == 2 then 0 else 3) &&
     (f.objects.filterMap (·.stream)) == (if n == 3 then #[tileInk.toUTF8] else #[])
 
-/-- The writer retains face zero even on an image-only page. Supply a
-parsed bundled face so its resource map and embedded program are valid. -/
+/-- The writer keeps face zero even on an image-only page, so a parsed bundled face is supplied. -/
 private def selectedWrapper (font : Font.Font) (f : { f : PdfRead.Form // f.wf }) :
     ByteArray :=
   let plan : Image.Plan := { pxW := 0, pxH := 0, form := some f }
@@ -120,8 +111,8 @@ private def selectionResolve (es : Array PdfRead.Entry) (obj : PdfRead.Obj) :
   | .ref n _ => (es.find? (·.num == n)).map (·.val)
   | other => some other
 
-/-- Inspect the actual form's resource references in the emitted file,
-including its transitive, self-referencing resource form. -/
+/-- The emitted form's resource references, its transitive self-referencing resource form
+included. -/
 private def wrapperResources (es : Array PdfRead.Entry) (obj : PdfRead.Obj)
     (n : Nat) : Option Bool := do
   let res ← selectionResolve es (← obj.get? "Resources")
@@ -163,9 +154,8 @@ private def malformedSelectionPdf (kids : String) (nested : String := "[]") : By
     selectionStream "0 0 5 10 re f",
     s!"<< /Type /Pages /Parent 2 0 R /Kids {nested} /Count 1 >>"]
 
-/-- The middle page has two ancestors; its siblings only inherit the root.
-Keeping content and geometry fixed makes zero overrides comparable over
-the emitted wrapper bytes. -/
+/-- A tree whose middle page has two rotating ancestors and whose siblings inherit only the root,
+with fixed content and geometry. -/
 private def rotationSelectionPdf (root branch leaf : Option Int)
     (indirect : Bool × Bool × Bool := (false, false, false)) : ByteArray :=
   let (rootRef, branchRef, leafRef) := indirect
@@ -190,9 +180,8 @@ private def selectionErrorHas {α : Type} (result : Except String α)
   | .ok _ => false
   | .error message => words.all fun word => (message.splitOn word).length > 1
 
-/-- Native PDF poster page selection: invented nested trees, inherited
-geometry and resources, emitted form read-back, and named refusals.
-The wrapper uses a bundled font; the source PDFs carry drawings only. -/
+/-- Native PDF poster page selection over nested trees, inherited geometry and resources, read back,
+with named refusals. -/
 def pdfPageSelectionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (s!"PDF page selection: {name}" :: ·)
@@ -345,8 +334,7 @@ def pdfPageSelectionChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "number 1 is out of range on an empty tree"
     (selectionErrorHas (PdfRead.readForm empty (.number 1)) ["page", "1", "out of range", "0"] &&
      selectionErrorHas (PdfRead.pageNumber empty (.number 1)) ["page", "1", "out of range", "0"])
-  -- Retain the reader's finite visit bound even for malformed inline
-  -- children. Exhausting it after a leaf must not certify that leaf as last.
+  -- Exhausting the reader's visit bound after a leaf must not certify that leaf as last.
   let inlineBranches := String.intercalate " " (List.replicate 12 "<< /Kids [] >>")
   let oversized := malformedSelectionPdf s!"[3 0 R {inlineBranches} 3 0 R]"
   t "last refuses an unfinished traversal"
