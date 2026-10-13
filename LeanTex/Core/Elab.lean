@@ -3739,11 +3739,15 @@ private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
     (edges : Bool × Bool) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
   if name == Compat.alertMark false then return #[.styled .bold inner]
   if name != Compat.alertMark true then return Ir.fontCmdInlines style edges inner
-  -- beamer's `\alert` sets the `alerted text` role, not a colour named `alert`.
+  -- beamer's `\alert` sets the `alerted text` role, not a colour named `alert`; a mark under it
+  -- where the palette declares one.
   match Ir.Design.declared? ctx.palette .alert with
   | some c =>
     recordColorSpan ctx "alert" c true pos
-    return #[coloredRun ctx c (some (.role .alert)) inner]
+    match Ir.Design.declared? ctx.palette .alertMark with
+    | some m =>
+      return #[.decorated (.highlight m (some (.role .alertMark))) #[.colored c (some (.role .alert)) inner]]
+    | none => return #[coloredRun ctx c (some (.role .alert)) inner]
   | none =>
     warnPaletteMiss ctx "alert" pos
     return #[.styled .bold inner]

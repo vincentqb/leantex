@@ -20,8 +20,30 @@ private def generated (s : SeedPalette.Seeds) (n : Nat) : Except String (List Ir
   let g ← SeedSeries.generate s t p n
   return g.series
 
-/-- Seeds in both polarities generate the most series in farthest-point order, and counts of none or
-past the most are refused. -/
+/-- The least ΔEOK the first `n` series keep between any two of them for
+the nearest simulated reader (`SeedSeries.views`), at `labOf`'s scale. -/
+private def leastGap (series : List Ir.Color) (n : Nat) : Nat :=
+  let xs := series.take n
+  xs.zipIdx.foldl (fun m (c, i) => xs.zipIdx.foldl (fun m (c', j) =>
+    if i < j then
+      Oklab.Vision.all.foldl (fun m v =>
+        min m (Nat.sqrt (Oklab.distSq (Oklab.labIn v c) (Oklab.labIn v c')).toNat)) m
+    else m) m) (10 ^ 30)
+
+/-- Whether a colour's hue is warm, within a quarter turn of vermilion's. -/
+private def warmOf (c : Ir.Color) : Bool :=
+  let l := Oklab.labOf c
+  let d := (Oklab.hueMilli l.a l.b - 40000) % 360000
+  decide (min d (360000 - d) < 90000)
+
+/-- How far ten series stand apart for the nearest simulated reader, at
+least: 2.5 JNDs (`Oklab.okJnd`), what the invented seeds' tens keep with
+room above the contract's two. -/
+private def tenGap : Nat := 5 * 10 ^ 16
+
+/-- Invented seeds generate the most series, alternating warm and cool, none disliked, `minGap`
+apart for every reader and ten `tenGap` apart, the export naming each in order, and refuse a count
+of none or one past the most. -/
 def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let white := Ir.Color.white
@@ -43,11 +65,15 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error e => t s!"series, {label}: the most series generate, not fail: {e}" false
     | .ok most =>
       t s!"series, {label}: the most series generate" (most.length == SeedSeries.maxCount)
-      let near (k : Nat) : Int :=
-        ((most.take k).map Oklab.labOf ++ [Oklab.labOf s.ink]).foldl
-          (fun m x => min m (Oklab.distSq (Oklab.labOf (most.getD k Ir.Color.black)) x)) (10 ^ 38)
-      t s!"series, {label}: each pick is no farther from its predecessors than the pick before"
-        ((List.range (most.length - 2)).all fun k => near (k + 2) ≤ near (k + 1))
+      t s!"series, {label}: each of a chart of ten's picks is of the temperature the one before it was not"
+        (((most.take 10).zip ((most.take 10).drop 1)).all fun (c, c') => warmOf c != warmOf c')
+      t s!"series, {label}: no series stands in the disliked region"
+        (most.all fun c => !ContrastSolve.disliked c)
+      t s!"series, {label}: each pair stands apart, and each but the first from the ink, for every reader"
+        ((most.zipIdx.all fun (c, i) => most.zipIdx.all fun (c', j) =>
+            i ≥ j || SeedSeries.apart c c') && (most.drop 1).all fun c => SeedSeries.apart c s.ink)
+      t s!"series, {label}: ten series stand {tenGap} apart for the nearest reader"
+        (tenGap ≤ leastGap most 10)
       let decls := SeedSeries.declarations "Probe" most
       t s!"series, {label}: the export names every series in order"
         (most.zipIdx.all fun (c, i) => hasStr decls ("\\definecolor{ProbeSeries" ++ toString (i + 1) ++

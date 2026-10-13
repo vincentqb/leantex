@@ -42,7 +42,8 @@ private meta def flags : Flags → List String → Except String (Flags × List 
     | none => .error s!"unknown block style '{name}'; use tonal or strong"
   | f, "--depth" :: "documents" :: rest => flags { f with depth := .documents } rest
   | f, "--depth" :: "decks" :: rest => flags { f with depth := .decks } rest
-  | _, "--depth" :: name :: _ => .error s!"unknown depth '{name}'; use documents or decks"
+  | f, "--depth" :: "posters" :: rest => flags { f with depth := .posters } rest
+  | _, "--depth" :: name :: _ => .error s!"unknown depth '{name}'; use documents, decks or posters"
   | f, "--pygments" :: style :: rest => flags { f with pygments := some style } rest
   | f, "--series" :: n :: rest =>
     match n.toNat? with
@@ -77,7 +78,7 @@ public meta def main (args : List String) : IO UInt32 := do
     | _ => pure args
   let [stem, ink, paper, accent] := args
     | IO.eprintln ("usage: palette.lean [--beamer-blocks] [--blocks tonal|strong] " ++
-        "[--depth documents|decks] [--pygments STYLE] [--series N] [--check FILE] Prefix " ++
+        "[--depth documents|decks|posters] [--pygments STYLE] [--series N] [--check FILE] Prefix " ++
         "(INK PAPER ACCENT | --seeds colors.json)")
       return 2
   if stem.isEmpty || !(stem.toList.all fun c => c.isAlpha && c.toNat < 128) then

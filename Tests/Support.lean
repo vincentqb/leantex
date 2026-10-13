@@ -472,7 +472,7 @@ def goldenNames : List String :=
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
-   "md-include", "md-include-deck", "palette-seeds"] ++
+   "md-include", "md-include-deck", "palette-seeds", "alert-mark"] ++
   mdGoldenNames
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
@@ -601,6 +601,14 @@ def paletteScript (args : Array String) : IO RunBounded.Ended := do
   let dir ← IO.FS.realPath (← IO.currentDir)
   RunBounded.runBounded lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir 120000 100
     (env := #[("LEAN_PATH", some leanPath)])
+
+/-- The most chroma the gamut holds at a colour's own lightness and hue, at
+`labOf`'s scale. -/
+def edgeChroma (c : Ir.Color) : Nat :=
+  let l := Oklab.labOf c
+  let dir := Oklab.ofLch 0 (4 * 10 ^ 17) (Oklab.hueMilli l.a l.b)
+  let e := Oklab.Okl.toGamut { L := l.L, a := dir.a, b := dir.b, f := Oklab.fracOne }
+  Nat.sqrt (Oklab.chromaSq e.lab).toNat
 
 /-- `text` quoted as one word for `/bin/sh`. -/
 def shQuote (text : String) : String :=

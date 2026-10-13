@@ -8,7 +8,7 @@ import LeanTex.Core.ContrastSolve
 
 /-! A palette generated from its seeds: ink, paper and accent shipped exactly, every other role
 derived in Oklab by stated rules (Radix's gray pairing, Tailwind's chroma growth, Material 3's
-tonal rule) and checked against the contrast its sites owe. -/
+tonal rule) at its use's floor in its medium on a light paper (WCAG 2.2), checked against it. -/
 
 namespace LeanTex.Core.SeedPalette
 
@@ -44,10 +44,8 @@ public def Blocks.name : Blocks → String
   | .tonal => "tonal"
   | .strong => "strong"
 
-/-- The ratios a palette is generated to, ×1000: the grounds' ratios to the
-page (a neutral body and band, a rule, the accent's wash and band), the
-least ratio between a band and the body below it, and the targets its text
-and non-text inks meet. -/
+/-- The ratios a palette is generated to, ×1000: its grounds' to the page, a band's to its body,
+text's on the page (`text`) and on the ink (`inverse`), and marks' (`edge`). -/
 public structure Targets where
   body : Nat
   band : Nat
@@ -56,6 +54,7 @@ public structure Targets where
   soft : Nat
   pair : Nat
   text : Nat
+  inverse : Nat
   edge : Nat
   deriving Repr, BEq, Inhabited
 
@@ -63,21 +62,23 @@ public structure Targets where
 up to 0.007. -/
 public def margin : Nat := 100
 
-/-- A light page: the class's ground depth, text at 4.6:1, edges at 3.1:1. -/
+/-- A light page: the class's ground depth, text and marks at the medium's floors themselves
+(WCAG 2.2 SC 1.4.3, SC 1.4.11), and text on the ink at 4.6:1. -/
 @[expose] public def Targets.light (d : GroundDepth) : Targets :=
   { body := d.body, band := d.band, rule := d.rule, wash := d.body, soft := d.band,
-    pair := d.pair, text := aaText + margin, edge := aaNonText + margin }
+    pair := d.pair, text := d.text, inverse := aaText + margin, edge := aaNonText }
 
 /-- A dark page: grounds further apart, and text at 6.5:1, where WCAG 2 understates how faint
 light text on a dark ground reads; the values are calibrated to the screen `Tests.Schemes` holds. -/
 @[expose] public def Targets.dark : Targets :=
   { body := 1190, band := 1400, rule := 1700, wash := 1120, soft := 1300, pair := 1100,
-    text := 6500, edge := aaNonText + margin }
+    text := 6500, inverse := 6500, edge := aaNonText + margin }
 
 /-- The same polarity where the reader asks more contrast: text at SC 1.4.6's 7:1 and edges at
 4.5:1, each plus `margin`, rules at 3:1. -/
 @[expose] public def Targets.more (t : Targets) : Targets :=
-  { t with rule := 3000, text := aaaText + margin, edge := moreNonText + margin }
+  { t with
+    rule := 3000, text := aaaText + margin, inverse := aaaText + margin, edge := moreNonText + margin }
 
 /-- Whether the paper is the darker of the two seeds. -/
 @[expose] public def Seeds.dark (s : Seeds) : Bool := decide (luminance s.paper < luminance s.ink)
@@ -239,6 +240,9 @@ public structure Colors where
   alertBand : Color
   exampleText : Option Color
   exampleBand : Color
+  /-- The ground an alert stands on where the accent serves the page as a
+  container (`Seeds.container`): the accent itself. -/
+  alertMark : Option Color := none
   deriving Repr, BEq, Inhabited
 
 /-- A registry role's colour in a generated palette: the seeds as given, the
@@ -263,6 +267,7 @@ derived roles, and nothing for a role generation does not set. -/
   | .alertBandInk => some c.alertBand
   | .exampleBandInk => some c.exampleBand
   | .rule => some c.rule
+  | .alertMark => c.alertMark
   | .covered | .marker | .codeSurface | .paper | .printInk
   | .frameTitleBar | .frameTitleInk | .frameSubtitleInk | .sectionTitleInk | .footBand | .footInk
   | .blockTitleBar | .alertTitleBar | .exampleTitleBar
@@ -290,13 +295,14 @@ and accent, and nothing for a role generation derives. -/
   | .blockBodyGround | .alertBodyGround | .exampleBodyGround
   | .standoutGround | .standoutInk | .titlePageGround | .titlePageInk | .separator
   | .progressFill | .progressTrack | .sectionProgressFill | .sectionProgressTrack
-  | .codeInk | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError => none
+  | .codeInk | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError
+  | .alertMark => none
 
 /-- The palette roles generation derives: every role it sets but the seeds. -/
 @[expose] public def derivedRoles : List Ir.Role :=
   [.muted, .alert, .example, .rule, .focus, .surface, .surfaceStrong, .accentWash, .accentSoft,
    .accentText, .accentEdge, .mutedOnInverse, .accentOnInverse, .diagramMuted, .alertBandInk,
-   .exampleBandInk]
+   .exampleBandInk, .alertMark]
 
 /-- The palette roles generation sets: the seeds' three, then what it derives. -/
 @[expose] public def tierRoles : List Ir.Role := [.page, .ink, .accent] ++ derivedRoles
@@ -316,7 +322,7 @@ title separator in the accent. -/
      (.exampleTitleBar, .surfaceStrong), (.exampleTitleInk, .exampleBandInk),
      (.exampleBodyGround, .surface), (.exampleBodyInk, .ink)]
   | .strong =>
-    let onAccent := decide (t.text ≤ contrastMilli s.ink s.accent)
+    let onAccent := decide (t.inverse ≤ contrastMilli s.ink s.accent)
     [(.blockTitleBar, .ink), (.blockTitleInk, .page),
      (.blockBodyGround, .accentWash), (.blockBodyInk, .ink),
      (.alertTitleBar, if onAccent then .accent else .ink),
@@ -351,27 +357,33 @@ public def blockPairs (s : Seeds) (t : Targets) (c : Colors) (b : Blocks) : List
     let cg ← Colors.role s c g
     pure (cf, cg)
 
+/-- The grounds an ink facing the page is solved on: the paper, and on a dark page its fills too,
+a light page's fills taking their family's tone at use (`SeedState.toneOn`). -/
+public def facing (s : Seeds) (fills : List Color) : List Color :=
+  s.paper :: (if s.dark then fills else [])
+
 /-- The sites a generated palette creates: each derived ink on every ground
 it stands on, with the target it owes, under the role it is reported by. -/
 public def sites (s : Seeds) (t : Targets) (c : Colors) : List (Ir.Role × Color × Color × Nat) :=
+  let face (r : Ir.Role) (i : Color) (fills : List Color) (target : Nat) :
+      List (Ir.Role × Color × Color × Nat) :=
+    (facing s fills).map fun g => (r, i, g, target)
   [(.ink, s.ink, s.paper, t.text), (.ink, s.ink, c.surface, t.text),
-   (.ink, s.ink, c.surfaceStrong, t.text), (.ink, s.ink, c.accentWash, t.text),
-   (.muted, c.muted, s.paper, t.text), (.muted, c.muted, c.surface, t.text),
-   (.muted, c.muted, c.accentWash, t.text),
-   (.diagramMuted, c.diagramMuted, s.paper, t.edge), (.diagramMuted, c.diagramMuted, c.surface, t.edge),
-   (.diagramMuted, c.diagramMuted, c.surfaceStrong, t.edge),
-   (.mutedOnInverse, c.mutedOnInverse, s.ink, t.text),
-   (.accentText, c.accentText, s.paper, t.text), (.accentText, c.accentText, c.surface, t.text),
-   (.accentText, c.accentText, c.accentWash, t.text),
-   (.accentEdge, c.accentEdge, s.paper, t.edge), (.accentEdge, c.accentEdge, c.surface, t.edge),
-   (.accentEdge, c.accentEdge, c.accentSoft, t.edge),
-   (.accentOnInverse, c.accentOnInverse, s.ink, t.text),
-   (.alert, c.alert, s.paper, t.text), (.alert, c.alert, c.surface, t.text),
-   (.alert, c.alert, c.accentWash, t.text),
-   (.alertBandInk, c.alertBand, c.accentSoft, t.text),
+   (.ink, s.ink, c.surfaceStrong, t.text), (.ink, s.ink, c.accentWash, t.text)] ++
+  face .muted c.muted [c.surface, c.accentWash] t.text ++
+  face .diagramMuted c.diagramMuted [c.surface, c.surfaceStrong] t.edge ++
+  [(.mutedOnInverse, c.mutedOnInverse, s.ink, t.inverse)] ++
+  face .accentText c.accentText [c.surface, c.accentWash] t.text ++
+  face .accentEdge c.accentEdge [c.surface, c.accentSoft] t.edge ++
+  [(.accentOnInverse, c.accentOnInverse, s.ink, t.inverse)] ++
+  face .alert c.alert [c.surface, c.accentWash] t.text ++
+  [(.alertBandInk, c.alertBand, c.accentSoft, t.text),
    (.exampleBandInk, c.exampleBand, c.surfaceStrong, t.text)] ++
-  match c.exampleText with
-  | some e => [(.example, e, s.paper, t.text), (.example, e, c.surface, t.text)]
+  (match c.exampleText with
+   | some e => face .example e [c.surface] t.text
+   | none => []) ++
+  match c.alertMark with
+  | some m => [(.alert, c.alert, m, aaText)]
   | none => []
 
 /-- How far above its target a ground may stand: a fiftieth of the target. -/
@@ -475,6 +487,22 @@ private def firstFailure (s : Seeds) (t : Targets) (c : Colors) : Option Failure
         some { role := .alertTitleBar, detail := "a block title does not read on its bar" }
       else none
 
+/-- Whether the accent serves a light page as a container, as Material 3's Fidelity keeps its
+source colour: its own text tone would be disliked or keep under half its chroma, and the ink reads
+on it at 4.5:1. -/
+public def Seeds.container (s : Seeds) (t : Targets) : Bool :=
+  !s.dark && s.alert.isNone && !decide (t.text ≤ contrastMilli s.accent s.paper) &&
+    decide (aaText ≤ contrastMilli s.ink s.accent) &&
+    match solveInk ((accentFamily s.accent).inkRaw none) [s.paper] t.text true with
+    | some c => ContrastSolve.disliked c || decide (2 * chromaOf c < chromaOf s.accent)
+    | none => true
+
+/-- A warm-turned tone where it stays out of the disliked region, else the family's own hue's. -/
+private def unturnedIfDisliked (turned own : Option Color) : Option Color :=
+  match turned with
+  | some c => if ContrastSolve.disliked c then own else some c
+  | none => own
+
 /-- Solve every derived role, in the order each one's grounds exist. -/
 private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
   let dark := s.dark
@@ -493,48 +521,59 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
   let neutralInk := n.inkRaw none
   let accentInk := a.inkRaw warmA
   let muted ← need .muted "no neutral tone reads on the page and its fills"
-    (solveInk neutralInk [s.paper, surface, accentWash] t.text light)
+    (solveInk neutralInk (facing s [surface, accentWash]) t.text light)
   let diagramMuted ← need .diagramMuted "no neutral tone stands out from the page and its fills"
-    (solveInk neutralInk [s.paper, surface, surfaceStrong] t.edge light)
+    (solveInk neutralInk (facing s [surface, surfaceStrong]) t.edge light)
   let mutedOnInverse ← need .mutedOnInverse "no neutral tone reads on the ink"
-    (solveInk neutralInk [s.ink] t.text dark)
-  let accentText ← need .accentText "no accent tone reads on the page and its fills"
-    (seedOr s.accent [s.paper, surface, accentWash] t.text
-      (solveInk accentInk [s.paper, surface, accentWash] t.text light))
-  let accentEdge ← need .accentEdge "no accent tone stands out from the page and its fills"
-    (seedOr s.accent [s.paper, surface, accentSoft] t.edge
-      (solveInk accentInk [s.paper, surface, accentSoft] t.edge light))
+    (solveInk neutralInk [s.ink] t.inverse dark)
+  let container := s.container t
+  let ownInk := a.inkRaw none
+  let accentText ← if container then pure s.ink else
+    need .accentText "no accent tone reads on the page and its fills"
+      (seedOr s.accent (facing s [surface, accentWash]) t.text
+        (unturnedIfDisliked (solveInk accentInk (facing s [surface, accentWash]) t.text light)
+          (solveInk ownInk (facing s [surface, accentWash]) t.text light)))
+  let accentEdge ← if container then pure s.ink else
+    need .accentEdge "no accent tone stands out from the page and its fills"
+      (seedOr s.accent (facing s [surface, accentSoft]) t.edge
+        (unturnedIfDisliked (solveInk accentInk (facing s [surface, accentSoft]) t.edge light)
+          (solveInk ownInk (facing s [surface, accentSoft]) t.edge light)))
   let accentOnInverse ← need .accentOnInverse "no accent tone reads on the ink"
-    (seedOr s.accent [s.ink] t.text (solveInk (a.inkRaw none) [s.ink] t.text dark))
+    (seedOr s.accent [s.ink] t.inverse (solveInk (a.inkRaw none) [s.ink] t.inverse dark))
   let alert ← match s.alert with
     | none => pure accentText
     | some al =>
       let fam := accentFamily al
       let warm := if dark then none else warmOf al
       need .alert "no alert tone reads on the page and its fills"
-        (seedOr al [s.paper, surface, accentWash] t.text
-          (solveInk (fam.inkRaw warm) [s.paper, surface, accentWash] t.text light))
+        (seedOr al (facing s [surface, accentWash]) t.text
+          (unturnedIfDisliked (solveInk (fam.inkRaw warm) (facing s [surface, accentWash]) t.text light)
+            (solveInk (fam.inkRaw none) (facing s [surface, accentWash]) t.text light)))
   let alertFam := (s.alert.map accentFamily).getD a
   let alertWarm := if dark then none else warmOf (s.alert.getD s.accent)
-  let alertBand ← need .alertBandInk "no alert tone reads on the accent's band"
-    (seedOr alert [accentSoft] t.text
-      (solveInk (alertFam.inkRaw alertWarm) [accentSoft] t.text light))
+  let alertBand ← if container then pure s.ink else
+    need .alertBandInk "no alert tone reads on the accent's band"
+      (seedOr alert [accentSoft] t.text
+        (unturnedIfDisliked (solveInk (alertFam.inkRaw alertWarm) [accentSoft] t.text light)
+          (solveInk (alertFam.inkRaw none) [accentSoft] t.text light)))
   let exampleText ← match s.exampleColor with
     | none => pure none
     | some ex =>
       let fam := accentFamily ex
       let warm := if dark then none else warmOf ex
       some <$> need .example "no example tone reads on the page and its fills"
-        (seedOr ex [s.paper, surface] t.text
-          (solveInk (fam.inkRaw warm) [s.paper, surface] t.text light))
+        (seedOr ex (facing s [surface]) t.text
+          (unturnedIfDisliked (solveInk (fam.inkRaw warm) (facing s [surface]) t.text light)
+            (solveInk (fam.inkRaw none) (facing s [surface]) t.text light)))
   let exampleFam := (s.exampleColor.map accentFamily).getD n
   let exampleWarm := if dark then none else s.exampleColor.bind warmOf
   let exampleBand ← need .exampleBandInk "no example tone reads on the band"
     (seedOr (exampleText.getD muted) [surfaceStrong] t.text
-      (solveInk (exampleFam.inkRaw exampleWarm) [surfaceStrong] t.text light))
+      (unturnedIfDisliked (solveInk (exampleFam.inkRaw exampleWarm) [surfaceStrong] t.text light)
+        (solveInk (exampleFam.inkRaw none) [surfaceStrong] t.text light)))
   return { surface, surfaceStrong, rule, accentWash, accentSoft, muted, diagramMuted,
            mutedOnInverse, accentText, accentEdge, accentOnInverse, alert, alertBand, exampleText,
-           exampleBand }
+           exampleBand, alertMark := if container then some s.accent else none }
 
 /-- Generate a palette from its seeds at the given targets; a CMYK seed is refused. -/
 public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) := do
@@ -548,10 +587,11 @@ public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) :
     | some f => .error f
     | none => fail .surface "the palette does not meet its contract"
 
-/-- The secondary ink an ink and page derive, by a generated palette's muted rule. -/
+/-- The secondary ink an ink and page derive, by a generated palette's muted rule at a document's
+floor. -/
 public def mutedFor (ink paper : Color) : Option Color :=
   let s : Seeds := { ink, paper, accent := ink }
-  solveInk ((neutralFamily s).inkRaw none) [paper] (s.targets .decks).text (!s.dark)
+  solveInk ((neutralFamily s).inkRaw none) [paper] (s.targets .documents).text (!s.dark)
 
 /-- The seeds the engine's own colours are generated from where a document declares none. -/
 @[expose] public def classSeeds : Seeds :=
@@ -736,13 +776,19 @@ public def beamerChannels (st : SeedState) : List (String × Option Ir.Role × O
         | .fg => (e, some r, none)
         | .bg => (e, none, some r)]) []
 
-/-- The export: an xcolor colour for each role the registry names for export, in registry order. -/
+/-- The export: an xcolor colour for each role the registry names for export, in registry order,
+and an accent's mark under its role's key too. -/
 public def declarations (stem : String) (st : SeedState) : String :=
-  String.join (Ir.Role.all.filterMap fun r => do
+  let defs := String.join (Ir.Role.all.filterMap fun r => do
     let n ← r.row.exportName
     let c ← Colors.role st.seeds st.colors r
     pure ("\\definecolor{" ++ stem ++ n ++ "}{HTML}{" ++ Color.hexByte c.r ++ Color.hexByte c.g ++
       Color.hexByte c.b ++ "}\n"))
+  -- the mark under its role's key too, which both engines read (`Ir.Role.ofXcolor?`)
+  let mark := match st.colors.alertMark, Ir.Role.alertMark.row.key, Ir.Role.alertMark.row.exportName with
+    | some _, some key, some n => "\\colorlet{" ++ key ++ "}{" ++ stem ++ n ++ "}\n"
+    | _, _, _ => ""
+  defs ++ mark
 
 /-- The export with every beamer element the palette writes bound to its channels' colours. -/
 public def beamerDeclarations (stem : String) (st : SeedState) : String :=
@@ -752,10 +798,10 @@ public def beamerDeclarations (stem : String) (st : SeedState) : String :=
     "\\setbeamercolor{" ++ e ++ "}{" ++ ",".intercalate parts ++ "}\n")
 
 public theorem generated_beamer_contract {s : Seeds} {t : Targets} (p : Generated s t)
-    (ht : aaText ≤ t.text) (b : Blocks) {element : String} {fg bg : Ir.Role}
+    (b : Blocks) {element : String} {fg bg : Ir.Role}
     (h : (element, fg, bg) ∈ beamerBlocks s t b) {cf cg : Color}
     (hf : Colors.role s p.colors fg = some cf) (hg : Colors.role s p.colors bg = some cg) :
-    aaText ≤ contrastMilli cf cg :=
-  Nat.le_trans ht ((generated_sites_contract p).2 b _ (beamerBlocks_pair h hf hg))
+    t.text ≤ contrastMilli cf cg :=
+  (generated_sites_contract p).2 b _ (beamerBlocks_pair h hf hg)
 
 end LeanTex.Core.SeedPalette

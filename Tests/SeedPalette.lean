@@ -75,11 +75,18 @@ def tripleChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error f =>
       t s!"seeds {name}: the failure names a role and why ({f.detail})" (!f.detail.isEmpty)
 
-/-- A darkening amber turns toward red by at most 20° and the 8-bit step's turn, and a cool hue
-holds. -/
+/-- A darkening amber turns toward red by at most 20° and the 8-bit step's turn, a cool hue holds,
+and a yellow whose floor tone is disliked serves as a container and sets no text. -/
 def amberChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  for (name, accent) in [("amber", "F59E0B"), ("yellow", "FACC15"), ("dark orange", "FF8C00")] do
+  let y : LeanTex.Core.SeedPalette.Seeds :=
+    { ink := hex "1C1917", paper := hex "FFFFFF", accent := hex "FACC15" }
+  match generate y with
+  | .error _ => t "warm turn yellow: generates" false
+  | .ok g =>
+    t "warm turn yellow: a yellow serves as a container, its text the ink"
+      (y.container (y.targets .decks) && g.colors.accentText == y.ink)
+  for (name, accent) in [("amber", "F59E0B"), ("dark orange", "FF8C00")] do
     let s : LeanTex.Core.SeedPalette.Seeds :=
       { ink := hex "1C1917", paper := hex "FFFFFF", accent := hex accent }
     match generate s with

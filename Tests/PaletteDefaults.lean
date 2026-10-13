@@ -45,7 +45,8 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     d.severity == .warning && d.subject.any (hasStr · "alert")
   t s!"moloch: the report names the alert's pairing once ({alertSays.map (·.code)})"
     (alertSays.size == 1)
-  -- A seedless bundle's muted ink is the quietest tone of its ink's family at 4.6:1 on its page.
+  -- A seedless bundle's muted ink is the quietest tone of its ink's family at a document's 4.5:1 on
+  -- its page.
   for th in [Theme.moloch, Theme.plain, Theme.gemini] do
     let pal := th.realize .decks
     match Ir.Design.declared? pal .muted, Ir.Design.declared? pal .ink,
@@ -53,13 +54,13 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     | some m, some ink, some page =>
       t s!"{th.name}: its muted {m.css} is its ink's derived by the generated rule"
         (some m == SeedPalette.mutedFor ink page && m != ink.mix 70 page)
-      t s!"{th.name}: its muted {m.css} reads at 4.6:1 on its page, and no further"
-        (4600 ≤ Contrast.contrastMilli m page && Contrast.contrastMilli m page ≤ 4700)
+      t s!"{th.name}: its muted {m.css} reads at 4.5:1 on its page, and no further"
+        (4500 ≤ Contrast.contrastMilli m page && Contrast.contrastMilli m page ≤ 4600)
     | _, _, _ => t s!"{th.name}: its muted, ink and page resolve" false
   for th in Theme.builtin do
     let short := Theme.installs.flatMap fun c => Theme.shipped.flatMap fun sc =>
       (Ir.Design.sites (Theme.installedAt th c) sc).filterMap fun st =>
-        if st.passes then none else some st.role
+        if st.passesAt c.depth.stage then none else some st.role
     t s!"{th.name}: the roles it ships short of their need are the ones it reports"
       (short.all th.reported.contains && th.reported.all short.contains)
   let (ldoc, _) := elabStr (dvDoc "" ("Probe words.\n\\begin{itemize}\n\\item First\n" ++

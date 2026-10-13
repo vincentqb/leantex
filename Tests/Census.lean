@@ -1334,7 +1334,14 @@ def censusRows7 :
   ("cond-ifnum", condBranchRow ["Holding branch ships.", "Failing branch ships."]
     ["Holding branch hidden.", "Failing branch hidden."]),
   ("cond-loaded", condBranchRow ["Loaded branch ships.", "Unloaded branch ships."]
-    ["Loaded branch hidden.", "Unloaded branch hidden."])]
+    ["Loaded branch hidden.", "Unloaded branch hidden."]),
+  ("alert-mark", fun _ c => [
+    ("pages", c.size == 1),
+    ("the alerted words ship", pageHas c 0 "marked"),
+    ("the alert's mark ships in the accent, under the short alert and each line of the long one",
+      (c[0]?.map fun p => decide (3 ≤ (p.decorations.filter fun d => match d.1 with
+        | .highlight col _ => col == Ir.Color.ofHtml 0xFA 0xCC 0x15
+        | .underline | .lineThrough => false).size)).getD false)])]
 
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/

@@ -200,31 +200,48 @@ A palette can be generated from three seeds, an ink, a paper and one accent:
 ```
 
 The seeds ship as given; every other colour is derived from them in Oklab
-and holds what its uses owe, 0.10 above WCAG 2.2's ratios: tinted grounds
-for block titles and bodies (a neutral of the ink's or the paper's hue, and
-the accent's own), a muted ink, the accent as text and as an edge on those
-grounds, and their tones on the ink. A darkening amber or yellow turns
-toward orange, at most 20°; any other hue holds. `blocks = tonal` (the
+and holds what its uses owe: tinted grounds for block titles and bodies (a
+neutral of the ink's or the paper's hue, and the accent's own), a muted ink,
+the accent as text and as an edge on those grounds, and their tones on the
+ink. On a light paper, a colour set on the paper stands at its use's floor
+in its medium and no further, so it keeps the most colour its hue holds
+there: a deck's text and marks at WCAG 2.2's large-scale 3:1, a document's
+and a poster's text at 4.5:1 and their marks at 3:1, and an accent that
+meets its floor ships as given. Text on the ink stands at 4.6:1; on a dark
+paper, text stands at 6.5:1 and every other colour 0.10 above WCAG 2.2's
+ratios. No colour the seeds derive is one of the dark yellow-greens Material
+3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone
+below 65). A darkening amber turns toward orange, at most 20°, where that
+keeps it out of them; any other hue holds. An accent whose own tone at its
+text floor would be one of them, or keep less than half its colour — a
+yellow on white — serves the page as a container instead, as Material's
+Fidelity scheme keeps a brand colour: it never sets as text, and `\alert`
+sets in the ink on a mark of the accent itself, which both the PDF and the
+page paint behind the text and break with it across lines. The mark is the
+`alertmark` role, which any palette may declare. `blocks = tonal` (the
 default) sets block titles in the ink on a tinted band over a lighter body;
 `blocks = strong` sets them on the ink over an accent wash. An `alert`, an
-`example` or a `neutral` seed may be named too. A deck's grounds stand
-further from its page than a document's. The rule, the progress bar and the
+`example` or a `neutral` seed may be named too. A deck's and a poster's
+grounds stand further from their page than a document's. The rule, the progress bar and the
 title separator are the seeds' too, and a deck that generates its palette
 takes none of its default theme's colours. A generated colour standing on a
 ground it does not read on — a frame-title or block bar, the standout frame —
 takes its family's tone there, and highlighted code takes colours derived
 from the same palette, one tone wherever the listing stands: errors in the
 alert, comments in the muted ink, literals in a named example's colour, and
-otherwise keywords, names and literals each in a hue of its own, spaced
-around the hue circle from the ink's and the alert's. Keywords keep the
-ink's hue where it stands 60° or more from every other hue the code sets
-in, and a code role the palette declares under its own key ships as
-declared and the others are spaced around it. Where nothing the code sets
-in shows a hue, keywords and names stay in the ink; on a ground where no
-tone of a role's hue reads as it does on the page, such as the standout
-frame, the role sets in the listing's own ink; and two arcs within a few
-degrees of each other are chosen between by width, so seeds a step apart
-can move a role's hue across the circle. The seeds'
+otherwise keywords, names and literals each in a hue of its own, a quarter
+turn from one another and from the alert's (or the mark's) around the hue
+circle, all in one lightness band at the palette's text floor with the most
+colour each hue holds there, as Solarized's accents share one; a quarter
+among the disliked yellow-greens turns toward orange out of them, and
+where the alert is the ink on a mark, errors take the mark's hue. Keywords take the
+quarter nearest the ink's hue where the ink shows one, and a code role the
+palette declares under its own key ships as declared and holds the quarter
+nearest its hue. Where nothing the code sets in shows a hue, keywords and
+names stay in the ink; on a ground where no tone of a role's hue reads as it
+does on the page, such as the standout frame, the role sets in the listing's
+own ink; and an ink whose hue stands halfway between two quarters can move
+its keywords from one to the other with a step of its seed. The seeds'
 ink, paper and accent declare the page's text, ground and accent, so the later
 of a seed and the document's own declaration of that role wins. Any other
 colour the document declares, before `\palette[seeds]` or after it, keeps its
@@ -247,14 +264,19 @@ Load `colors.tex` after the Beamer theme. It defines one colour per role
 (`SlideInk`, `SlidePaper`, `SlideAccent`, `SlideMuted`, `SlideMutedOnDark`,
 `SlideDiagramMuted`, `SlideSurface`, `SlideSurfaceStrong`, `SlideAccentWash`,
 `SlideAccentSoft`, `SlideAccentText`, `SlideAccentEdge`, `SlideAccentOnDark`,
-`SlideAlert`, `SlideAlertTitle`, `SlideExampleTitle`) and binds beamer's
-`normal text`, `background canvas`, `footline`, `page number in head/foot`,
-`alerted text`, six block elements, `progress bar` and `title separator` to
-them.
+`SlideAlert`, `SlideAlertTitle`, `SlideExampleTitle`, and `SlideAlertMark`
+where the accent serves as a container) and binds beamer's `normal text`,
+`background canvas`, `footline`, `page number in head/foot`, `alerted text`,
+six block elements, `progress bar` and `title separator` to them.
 Use `SlideAccent` for decoration and `SlideAccentText` for text on
 `SlidePaper` or `SlideSurface`; `SlideAccentEdge` for essential strokes;
-`SlideAccentOnDark` for text on `SlideInk`. `--blocks strong` picks the
-strong block style, and `--depth documents` a document's lighter grounds.
+`SlideAccentOnDark` for text on `SlideInk`; and, where `SlideAlertMark` is
+defined, set an alert on it (lua-ul's `\highLight[alertmark]`), as leantex
+does: the export names the mark `alertmark` too, which leantex reads as the
+role. `--blocks strong` picks the
+strong block style, `--depth documents` a document's lighter grounds and
+text floor, and `--depth posters` a deck's grounds with a document's text
+floor, as a poster takes them.
 For a saved palette, replace the three RGB arguments with `--seeds
 colors.json`, where the JSON object has exactly `ink`, `paper` and `accent`
 hex strings. `--check colors.tex` prints nothing and exits 1 when the file
@@ -276,12 +298,19 @@ or names the exported colours under the code roles' own keys
 Add `--series N`, from 1 to 16, to export colours for a chart's N series,
 `SlideSeries1` to `SlideSeriesN`, at the depth `--depth` names. The first is
 `SlideAccentText`, which is `SlideAlert`, so a chart's subject stands in the
-colour of the page's alerts. Each next one is the hue and tone farthest from
-every series before it and from the ink, so a chart of fewer series reads
-the first ones whatever N is, and a series keeps its colour from chart to
-chart. Every series stands out from the paper as a mark, at 3.1:1 or more,
-the first reads on it as text, and no two stand within ΔEOK 0.04 of each
-other, nor any but the first within that of the ink.
+colour of the page's alerts (the ink, where the accent serves as a
+container). Each next one is, of every hue at its tone at the marks' floor
+and three steps beyond it, away from the yellow-greens and pure red, the one
+farthest from every series before it and from the ink as
+the nearest of four readers sees it — typical vision and simulated
+protanopia, deuteranopia and tritanopia (Machado, Oliveira and Fernandes,
+2009) — of the other temperature than the one before it where one stands
+far enough, as Okabe and Ito's Color Universal Design asks. A chart of fewer
+series reads the first ones whatever N is, and a series keeps its colour
+from chart to chart. Every series stands out from the paper as a mark, at
+3:1 on a light paper and 3.1:1 on a dark one; the first reads on it as text,
+and no two stand within ΔEOK 0.04 of each other, nor any but the first
+within that of the ink, for any of the four readers.
 
 ## Images and code
 

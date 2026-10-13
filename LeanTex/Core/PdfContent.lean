@@ -273,6 +273,9 @@ public structure TextSt where
   pen : Option Pen := none
   widths : Array (Array Int) := #[]
   rules : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
+  /-- The marks the lines carried (`Ir.Decoration.isMark`), in page coordinates, painted under the
+  text after the page's fills. -/
+  marks : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
   /-- The filled polygons the lines carried, in page coordinates. -/
   polys : Array (Ir.Color × Array (Sp × Sp)) := #[]
   images : Array ImgOut := #[]
@@ -457,8 +460,12 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx 
 
 private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
     (og : Origin) (st : TextSt) : Seg → TextSt
-  | .rule w thickness raise color | .decoration _ w thickness raise color =>
+  | .rule w thickness raise color =>
     { st with rules := st.rules.push (color, st.x, ypdf + raise, w, thickness), x := st.x + w }
+  | .decoration kind w thickness raise color =>
+    let r := (color, st.x, ypdf + raise, w, thickness)
+    { st with rules := if kind.isMark then st.rules else st.rules.push r
+              marks := if kind.isMark then st.marks.push r else st.marks, x := st.x + w }
   | .poly pts color =>
     { st with polys := st.polys.push (color, pts.map fun (px, py) => (st.x + px, ypdf + py)) }
   | .image idx w h =>
@@ -771,8 +778,8 @@ stream order from 0. -/
 public def numberMarks (ops : Array ContentOp) : Array ContentOp :=
   (ContentOp.numberList 0 #[] ops.toList).1
 
-/-- One page's operations: fills, picture paths with their labels, the text object, images, then
-rules, each painting operator under one wrapper. -/
+/-- One page's operations: fills, the lines' marks, picture paths with their labels, the text
+object, images, then rules, each painting operator under one wrapper. -/
 public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
@@ -782,8 +789,10 @@ public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array I
   let st := (bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }
   let images := st.images.map (imageOp ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
+  let marks := st.marks.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
-  (artifactBlock none fills ++ middle) ++ artifactBlock (some .layout) (rules ++ st.polys.map polyOp)
+  ((artifactBlock none fills ++ artifactBlock (some .layout) marks) ++ middle) ++
+    artifactBlock (some .layout) (rules ++ st.polys.map polyOp)
 
 /-- `contentOps` with no marked content. -/
 public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
@@ -795,7 +804,8 @@ public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Ar
   let st := (bodyLines page).foldl (stepLinePlain geom remap imgMap tags) { widths }
   let images := st.images.map (imageOpPlain ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
-  let body := (fills ++ paths).push (.text st.ops)
+  let marks := st.marks.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
+  let body := ((fills ++ marks) ++ paths).push (.text st.ops)
   (body ++ images) ++ (rules ++ st.polys.map polyOp)
 
 private def TextItem.runs : TextItem → List (Array Nat)
@@ -2926,14 +2936,18 @@ public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array 
     rw [← hpo]; exact congrArg TextSt.ops hp
   have himg := congrArg TextSt.images hp
   have hrul := congrArg TextSt.rules hp
+  have hmrk := congrArg TextSt.marks hp
   have hpol := congrArg TextSt.polys hp
-  simp only [TextSt.plain] at himg hrul hpol
+  simp only [TextSt.plain] at himg hrul hmrk hpol
   simp only [Array.toList_push, ContentOp.inkList_append,
     artifactBlock_ink, inkGroups_ink geom ix _ tags page.inks hset, Array.toList_map,
-    Array.toList_append, ContentOp.inkList, ContentOp.ink, hops, himg, hrul, hpol, List.append_nil]
+    Array.toList_append, ContentOp.inkList, ContentOp.ink, hops, himg, hrul, hmrk, hpol,
+    List.append_nil]
   rw [inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)
       (geom.bleed + geom.pageH - f.y - f.h) f.w f.h) _ (fun f => by simp [ContentOp.ink]),
     inkList_map _ (imageOpPlain ix figs) _ (imageOp_ink ix figs),
+    inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
+      ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
     inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
     inkList_map _ polyOp _ (fun p => by simp [polyOp, ContentOp.ink])]
@@ -3067,8 +3081,9 @@ public theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array 
   unfold contentOps numberMarks
   intro o ho
   simp only [Array.mem_append] at ho
-  rcases ho with (hf | hm) | hr
+  rcases ho with ((hf | hk) | hm) | hr
   · rw [mem_artifactBlock hf]; rfl
+  · rw [mem_artifactBlock hk]; rfl
   · refine ContentOp.numberList_wrapped _ _ _ (by simp) ?_ o hm
     intro o ho
     simp only [Array.mem_toList_iff, Array.mem_append, Array.mem_push, Array.mem_map] at ho
@@ -3421,17 +3436,26 @@ public theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths 
       rcases ho with ⟨t, _, rfl⟩ | ⟨p, _, rfl⟩
       · exact Or.inl ⟨_, _, _, _, _, rfl⟩
       · exact Or.inr ⟨_, _, _, _, rfl⟩)
-  have hmid : ∀ (a m c : Array ContentOp),
+  have hK := fillBlock_contentOpens (some .layout)
+    (((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).marks.map
+      fun (c, x, y, w, h) => ContentOp.fill c x y w h)
+    (fun o ho => by
+      simp only [Array.mem_map] at ho
+      obtain ⟨t, _, rfl⟩ := ho
+      exact Or.inl ⟨_, _, _, _, _, rfl⟩)
+  have hmid : ∀ (a k m c : Array ContentOp),
       contentOpens (ContentOp.linesList a.toList) = [] →
+      contentOpens (ContentOp.linesList k.toList) = [] →
       contentOpens (ContentOp.linesList c.toList) = [] →
-      pageMarks ((a ++ m) ++ c) = pageMarks m := by
-    intro a m c ha hc
+      pageMarks (((a ++ k) ++ m) ++ c) = pageMarks m := by
+    intro a k m c ha hk hc
     rw [pageMarks_eq_contentOpens, pageMarks_eq_contentOpens]
     unfold lines
-    rw [Array.toList_append, Array.toList_append, ContentOp.linesList_append,
-      ContentOp.linesList_append, contentOpens_append, contentOpens_append, ha, hc]
+    rw [Array.toList_append, Array.toList_append, Array.toList_append, ContentOp.linesList_append,
+      ContentOp.linesList_append, ContentOp.linesList_append, contentOpens_append,
+      contentOpens_append, contentOpens_append, ha, hk, hc]
     simp
-  rw [hmid _ _ _ hA hC]
+  rw [hmid _ _ _ _ hA hK hC]
   exact numberMarks_mcids_exact _
 
 /-- The pagination artifacts at the top of a text object. -/

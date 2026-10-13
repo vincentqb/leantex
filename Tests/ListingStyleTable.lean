@@ -355,7 +355,8 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
           | some p => if p.declared then
               ground == d.bg && p.role.any fun key => Ir.Design.declared? (deckBundle theme) key == some p.color
             else p.role == some (Ir.Role.ofCode role) &&
-              Contrast.contrastMilli (Listing.defaultInk ground p.color) ground ≥ Contrast.aaText
+              Contrast.contrastMilli (Listing.fitInk (CodeColor.codeFloor (deckBundle theme) ground)
+                ground p.color) ground ≥ CodeColor.codeFloor (deckBundle theme) ground
           | none => true)
   let palette := "\\palette{fg=#202440,bg=#FFFFFF,alert=#B01030,muted=#5A6068,example=#1A6A3A}"
   let some fonts ← serifFacesSet | failures ref "code roles: the serif faces load"
@@ -445,8 +446,13 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Theme.builtin.all fun th => (deckBundle th).entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
-/-- A generated palette's code is complete: keywords, names and literals in hues 60° or more apart,
-comments in the muted step and errors in the alert, alike in both artifacts and the TeX export. -/
+/-- How far apart every coloured code role stands from the ink and from every other: five JNDs, a
+declared reading. -/
+def codeGap : Int := 5 * (Oklab.okJnd : Int)
+
+/-- A generated palette's code is complete and vivid: keywords, names and literals a quarter turn
+apart in one band at the text floor, `codeGap` apart, comments quiet, alike in both artifacts and
+the TeX export. -/
 def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "seeded code: the serif faces load"
@@ -464,18 +470,28 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let key (k : String) (r : ListingHighlight.Role) (c : Ir.Color) :
       String × List (ListingHighlight.Role × Ir.Color) :=
     (s!"\\palette\{ {k} = {c.css} }\n", [(r, c)])
-  for (label, seeds, (more, declared), inkHue) in [
-      ("a black ink and a yellow accent", black, ("", []), false),
+  -- A quarter turn, less the rounding of 8-bit colours; and less too the
+  -- disliked region's width and a degree, where a slot moves out of it.
+  let quarter : Int := 88000
+  let moved : Int := 64000
+  for (label, seeds, (more, declared), inkHue, spread) in [
+      ("a black ink and a yellow accent", black, ("", []), false, quarter),
       ("a neutral ink and a magenta accent", "ink = #1A1A1A, paper = #FFFFFF, accent = #C026D3",
-        ("", []), false),
-      ("a violet ink and an orange accent", violet, ("", []), true),
-      ("a declared literal", black, key "codeliteral" .literal (Ir.Color.ofHtml 0x15 0x80 0x3D), false),
-      ("a declared keyword", black, key "codekeyword" .keyword (Ir.Color.ofHtml 0xBE 0x18 0x5D), false),
+        ("", []), false, quarter),
+      ("a violet ink and an orange accent", violet, ("", []), true, quarter),
+      ("a teal accent a quarter turn from the disliked yellow-greens",
+        "ink = #3B2F2A, paper = #FBF6EC, accent = #0D9488", ("", []), false, moved),
+      ("a declared literal", black, key "codeliteral" .literal (Ir.Color.ofHtml 0x15 0x80 0x3D), false,
+        quarter),
+      ("a declared keyword", black, key "codekeyword" .keyword (Ir.Color.ofHtml 0xBE 0x18 0x5D), false,
+        quarter),
       ("a declared keyword at the literal's hue", violet,
-        key "codekeyword" .keyword (Ir.Color.ofHtml 0x04 0x78 0x57), false),
-      ("a declared name", black, key "codename" .name (Ir.Color.ofHtml 0x00 0x63 0x44), false),
-      ("a declared error", black, key "codeerror" .error (Ir.Color.ofHtml 0x2B 0x58 0x8C), false),
-      ("a declared listing ink", black, key "codeink" .ink (Ir.Color.ofHtml 0x14 0x53 0x2D), false)] do
+        key "codekeyword" .keyword (Ir.Color.ofHtml 0x04 0x78 0x57), false, quarter),
+      ("a declared name", black, key "codename" .name (Ir.Color.ofHtml 0x00 0x63 0x44), false, quarter),
+      ("a declared error", black, key "codeerror" .error (Ir.Color.ofHtml 0x2B 0x58 0x8C), false,
+        quarter),
+      ("a declared listing ink", black, key "codeink" .ink (Ir.Color.ofHtml 0x14 0x53 0x2D), false,
+        quarter)] do
     let (doc, ds) := build seeds more
     t s!"seeded code, {label}: the listing elaborates clean" (ds.all (·.severity != .error))
     let (_, typed) := codePaints fonts doc
@@ -483,31 +499,49 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let d := Ir.Design.ofPalette doc.palette
     let alert := Ir.Design.declared? doc.palette .alert
     let muted := Ir.Design.declared? doc.palette .muted
+    let floor := (doc.palette.seeded.map (·.targets.text)).getD 0
     match paints doc, alert with
     | [some kw, some nm, some lit, some cm, some err, some ink], some al =>
-      let hued := [kw, nm, lit]
       let shipped : List (ListingHighlight.Role × Ir.Color) :=
         [(.keyword, kw), (.name, nm), (.literal, lit), (.comment, cm), (.error, err), (.ink, ink)]
+      let isDeclared (r : ListingHighlight.Role) := declared.any (·.1 == r)
+      let derived := ([(ListingHighlight.Role.keyword, kw), (.name, nm), (.literal, lit)].filter
+        fun (r, _) => !isDeclared r).map (·.2)
+      let held := (declared.filter fun (r, _) => r != .ink && r != .error).map (·.2)
+      let coloured := [kw, nm, lit, err]
       t s!"seeded code, {label}: keywords, names and literals each set in a colour of their own"
-        (hued.all (· != d.fg) && hued.all (· != ink) && kw != nm && nm != lit && kw != lit)
-      t s!"seeded code, {label}: each shows a hue"
-        (hued.all fun c => Oklab.okJnd ≤ chromaOf c)
-      let apart := (hued ++ [err]).zipIdx
-      t s!"seeded code, {label}: their hues stand 60° or more apart, and from the error's"
-        (apart.all fun (c, i) => apart.all fun (c', j) => i == j || hueCosMilli c c' ≤ 500)
-      t s!"seeded code, {label}: names, literals and errors stand 60° or more from a hued listing ink"
-        (chromaOf ink < Oklab.okJnd || [nm, lit, err].all fun c => hueCosMilli c ink ≤ 500)
-      t s!"seeded code, {label}: each derived one reads at the code tone on the page"
-        (hued.all fun c => CodeColor.codeTone ≤ Contrast.contrastMilli c d.bg || declared.any (·.2 == c))
-      t s!"seeded code, {label}: comments set in the generated muted step, errors in the alert"
-        (some cm == muted && (err == al || declared.any (·.1 == .error)))
+        ([kw, nm, lit].all (· != d.fg) && [kw, nm, lit].all (· != ink) && kw != nm && nm != lit &&
+          kw != lit)
+      t s!"seeded code, {label}: each derived one shows a hue"
+        (derived.all fun c => Oklab.okJnd ≤ chromaOf c)
+      let apart := (derived ++ [err]).zipIdx
+      t s!"seeded code, {label}: the derived hues stand a quarter turn apart, and from the error's"
+        (apart.all fun (c, i) => apart.all fun (c', j) => i == j || spread ≤ hueGap (hueOf c) (hueOf c'))
+      t s!"seeded code, {label}: a derived hue stands an eighth of a turn from a declared one"
+        (derived.all fun c => held.all fun c' => 43000 ≤ hueGap (hueOf c) (hueOf c'))
+      t s!"seeded code, {label}: each derived one stands at the text floor on the paper, on the gamut's edge, out of the disliked region"
+        (decide (0 < floor) && derived.all fun c =>
+          let r := Contrast.contrastMilli c d.bg
+          decide (floor ≤ r ∧ r < floor + 150) && edgeChroma c ≤ chromaOf c + Oklab.okJnd / 2 &&
+            !ContrastSolve.disliked c)
+      t s!"seeded code, {label}: every coloured role stands apart from the ink and from every other"
+        ((coloured.zipIdx.all fun (c, i) => coloured.zipIdx.all fun (c', j) =>
+            i == j || c == c' || codeGap * codeGap ≤ ContrastSolve.deltaEOkSq c c') &&
+          coloured.all fun c => codeGap * codeGap ≤ ContrastSolve.deltaEOkSq c ink)
+      -- Where the alert is the ink on a mark, errors take the mark's hue at the floor.
+      let marked := (Ir.Design.declared? doc.palette .alertMark).isSome
+      t s!"seeded code, {label}: comments set in the quiet muted step, errors in the alert or the mark's hue"
+        (some cm == muted && chromaOf cm < 2 * Oklab.okJnd &&
+          (err == al && !marked || isDeclared .error ||
+            marked && err != ink && Oklab.okJnd ≤ chromaOf err && !ContrastSolve.disliked err))
       t s!"seeded code, {label}: a role its own key declares ships as declared"
         (declared.all fun (r, c) => shipped.lookup r == some c)
       t s!"seeded code, {label}: the web page sets each role in the PDF's colour"
         ([("def", kw), ("len", nm), ("synthetic", lit), ("remark", cm), ("NotImplementedError", err)].all
           fun (w, c) => (html w).any fun p => p.color.any (hasStr · (HtmlDoc.cssColor c)))
       if inkHue then
-        t s!"seeded code, {label}: keywords keep the ink's own hue" (hueCosMilli kw d.fg ≥ 990)
+        t s!"seeded code, {label}: keywords take the slot nearest the ink's hue"
+          (hueGap (hueOf kw) (hueOf d.fg) ≤ 45000)
       let exported := CodeExport.pageBrushes doc.palette .default
       t s!"seeded code, {label}: the export colours every role but the ink, as the page does"
         ([(ListingHighlight.Role.keyword, kw), (.name, nm), (.literal, lit), (.comment, cm),
@@ -529,7 +563,7 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       let native := CodeExport.pageBrushes doc.palette .default
       t s!"seeded code, {label}: the script's palette paints the native page's code"
         (ListingHighlight.Role.all.all fun r => (script.get r).ink == (native.get r).ink)
-  -- Two inks a channel step apart plan their code alike where their arcs tie exactly.
+  -- Two inks a channel step apart plan their code alike: keywords take the slot nearest the ink's.
   let (near, _) := build "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A" ""
   let (next, _) := build "ink = #2C2440, paper = #FFFFFF, accent = #E85D2A" ""
   match paints near, paints next with

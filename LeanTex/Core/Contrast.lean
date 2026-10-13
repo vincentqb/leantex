@@ -219,7 +219,16 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .role _ body => usesInlines cx acc body.toList
   | .link _ body =>
     usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
-  | .decorated _ body => usesInlines cx acc body.toList
+  | .decorated kind body =>
+    match kind with
+    | .underline | .lineThrough => usesInlines cx acc body.toList
+    -- marked text stands on its mark, a ground of its own
+    | .highlight c nm =>
+      let role := match nm with
+        | some (.role r) => some r
+        | _ => none
+      usesInlines { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the mark",
+                            groundRole := role } acc body.toList
   | .onSteps spec body =>
     usesInlines { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
   -- An alternative is inked at full colour or not at all, so it makes no palette pending.
@@ -960,11 +969,13 @@ public theorem defaulted_ink_cannot_escape (doc : Doc)
   simp only [docDiags, Array.size_append]
   omega
 
-/-- Every pair the palette's design ships in print meets its need, `reported` roles aside. -/
-public def paletteContract (pal : Palette) (reported : List Role := []) : Bool :=
-  (Design.sites pal .print).all fun st => st.passes || reported.contains st.role
+/-- Every pair the palette's design ships in print meets its need at the medium's size, `reported`
+roles aside. -/
+public def paletteContract (pal : Palette) (reported : List Role := []) (stage : Bool := false) :
+    Bool :=
+  (Design.sites pal .print).all fun st => st.passesAt stage || reported.contains st.role
 
-/-- Every listing ink of every shipped style is text-AA on each listing ground of the bundle. -/
+/-- Every listing ink of every shipped style reads at the bundle's code floor on each listing ground. -/
 public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
   (none :: ListingStyle.all.map some).all fun style =>

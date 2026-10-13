@@ -1,0 +1,62 @@
+class slides
+page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
+palette bg #FFFFFF
+palette fg #1C1917
+palette accent #FACC15
+palette muted #999487
+palette alert #1C1917
+palette rule #D8D3C5
+palette focus #1C1917
+palette surface #F3F1EB
+palette surface-strong #E6E1D4
+palette accent-wash #F9F2DA
+palette accent-soft #F2E1AB
+palette accent-text #1C1917
+palette accent-edge #1C1917
+palette muted-on-inverse #878376
+palette accent-on-inverse #FACC15
+palette diagram-muted #999487
+palette alert-band-ink #1C1917
+palette example-band-ink #858073
+palette alertmark #FACC15
+palette blocktitlebg #E6E1D4
+palette blocktitlefg #1C1917
+palette blockbodybg #F3F1EB
+palette blockbodyfg #1C1917
+palette alerttitlebg #F2E1AB
+palette alerttitlefg #1C1917
+palette alertbodybg #F9F2DA
+palette alertbodyfg #1C1917
+palette exampletitlebg #E6E1D4
+palette exampletitlefg #858073
+palette examplebodybg #F3F1EB
+palette examplebodyfg #1C1917
+palette progressfg #FACC15
+palette progressbg #F2E1AB
+palette separator #FACC15
+token progressheight 1pt
+token frametitlepadding 840/1000em
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer right framenumber
+frame
+  title
+    text "A Marked Frame"
+  para
+    text "Plain words and "
+    decoration highlight alertmark #FACC15
+      color alert #1C1917
+        text "marked words"
+    text " close the line."
+  columns
+    column 113.386pt
+      para
+        decoration highlight alertmark #FACC15
+          color alert #1C1917
+            text "A longer alert that the narrow box breaks across its lines."
+-- diagnostics
+note[N0100] 11:17 '\alert' → the alert colour
+note[N0100] 14:1 '\alert' → the alert colour

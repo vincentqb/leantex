@@ -1,0 +1,18 @@
+% Invented text. A deck whose accent, a yellow on white, serves the page as
+% a container: an alert sets in the ink on a mark of the accent itself, and
+% the mark breaks with a long alert across its lines.
+\documentclass{slides}
+
+\palette[seeds]{ ink = #1C1917, paper = #FFFFFF, accent = #FACC15 }
+
+\begin{document}
+
+\begin{frame}{A Marked Frame}
+Plain words and \alert{marked words} close the line.
+
+\begin{minipage}{4cm}
+\alert{A longer alert that the narrow box breaks across its lines.}
+\end{minipage}
+\end{frame}
+
+\end{document}

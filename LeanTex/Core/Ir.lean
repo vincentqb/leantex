@@ -2520,7 +2520,16 @@ end OverlaySpec
 public inductive Decoration where
   | underline
   | lineThrough
+  /-- A mark behind the text, breaking with it across lines: the ground's colour and its palette
+  name. -/
+  | highlight (color : Color) (name : Option ColorRef)
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- Whether a decoration is a mark, painted under its text rather than over
+it. -/
+@[expose] public def Decoration.isMark : Decoration → Bool
+  | .underline | .lineThrough => false
+  | .highlight _ _ => true
 
 public inductive Inline where
   | text (s : String)
@@ -6697,7 +6706,7 @@ public structure ClassRecord where
   without a `\maketitle`. -/
   headline : Bool := false
   /-- How far the class's tinted grounds stand from its page when a palette is
-  generated from seeds. -/
+  generated from seeds, and its text's floor: a document's, a deck's stage or a poster's board. -/
   groundDepth : GroundDepth := .documents
   /-- What the class asks of the colours nothing declares. -/
   colorRow : ClassRow := .latex
@@ -6816,7 +6825,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       schemes := .own
       preambleSans := true
       headline := true
-      groundDepth := .decks
+      groundDepth := .posters
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
 the trim; declare \\assert{ text.in_area } to take control"
@@ -8927,6 +8936,11 @@ private def dumpInline (ind : String) (x : Inline) : String :=
     let label := match kind with
       | .underline => "underline"
       | .lineThrough => "line-through"
+      | .highlight c name =>
+        let hex := s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+        match name with
+        | some n => s!"highlight {n.key} {hex}"
+        | none => s!"highlight {hex}"
     s!"{ind}decoration {label}\n" ++ dumpInlines (ind ++ "  ") body
   | .onSteps spec body =>
     s!"{ind}{dumpOverlayRange "step" spec}\n" ++ dumpInlines (ind ++ "  ") body
@@ -9747,6 +9761,11 @@ public structure Site where
 @[expose] public def Site.passes (st : Site) : Bool :=
   decide (Contrast.requiredIn st.scheme st.need ≤ Contrast.contrastMilli st.ink st.ground)
 
+/-- A site's pair meets its need at its medium's size (`Need.atStage`). -/
+@[expose] public def Site.passesAt (stage : Bool) (st : Site) : Bool :=
+  decide (Contrast.requiredIn st.scheme (st.need.atStage stage) ≤
+    Contrast.contrastMilli st.ink st.ground)
+
 /-- The site one role ships in a scheme, when its row pairs it with a ground,
 its presence holds and its ink resolves. -/
 @[expose] public def Design.site? (pal : Palette) (s : Scheme) (r : Role) : Option Site :=
@@ -10298,12 +10317,18 @@ public theorem Palette.applySeedsUnder_seeds_exact (pal : Palette) (st : SeedPal
     unfold Palette.declareSeeded
     rw [Palette.declare_last_wins]
 
-/-- A run coloured by a generated role, on a ground it does not read on: its family's tone there. -/
+/-- The text target a generated run owes on a ground: the ink's own on the ink, the page's
+elsewhere. -/
+@[expose] public def groundNeed (st : SeedPalette.SeedState) (g : Color) : Nat :=
+  if g == st.seeds.ink then st.targets.inverse else st.targets.text
+
+/-- A run coloured by a generated role, on a ground it does not read on at `groundNeed`: its
+family's tone there. -/
 public def Palette.groundRun (pal : Palette) (g : Color) (x : Inline) : Inline :=
   match x, pal.seeded with
   | .colored c (some (.role r)) body, some st =>
     if SeedPalette.Colors.role st.seeds st.colors r == some c && Design.declared? pal r == some c &&
-        decide (Contrast.contrastMilli c g < st.targets.text) then
+        decide (Contrast.contrastMilli c g < groundNeed st g) then
       match st.toneOn r g with
       | some (c', ref) => .colored c' (ref.map ColorRef.role) body
       | none => x
@@ -10922,6 +10947,14 @@ public def altUnreachable (doc : Doc) : Nat :=
     | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
     | .bibliography _ _ _ => n
 
+/-- A decoration as a covered step shows it: a mark quieted by the cover, as
+the text it stands behind is; a rule as it is, in the run's covered ink. -/
+private def Decoration.dimmed (d : Decoration) (cover : Cover) (pending : Bool) : Decoration :=
+  match d with
+  | .underline => .underline
+  | .lineThrough => .lineThrough
+  | .highlight c nm => if pending then .highlight (cover.of c) none else .highlight c nm
+
 mutual
 
 /-- One overlay walk in two modes: off, step `k` of the frame's overlay,
@@ -11055,7 +11088,8 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .located n body => .located n (dimInlineList cover k pending #[] body.toList)
   | .role n body => .role n (dimInlineList cover k pending #[] body.toList)
   | .link u body => .link u (dimInlineList cover k pending #[] body.toList)
-  | .decorated kind body => .decorated kind (dimInlineList cover k pending #[] body.toList)
+  -- a covered mark is quieted with the text it stands behind
+  | .decorated kind body => .decorated (kind.dimmed cover pending) (dimInlineList cover k pending #[] body.toList)
   -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
     if !pending && spec.pending k then

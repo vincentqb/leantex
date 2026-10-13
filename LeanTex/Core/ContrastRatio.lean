@@ -72,6 +72,13 @@ public def aaNonText : Nat := 3000
 public theorem required_le_aaText (n : Ir.Need) : required n ≤ aaText := by
   cases n <;> decide
 
+/-- **A medium's text floor is what the judge asks of its text**: the
+ratio text owes at the medium's size (`Need.atStage`). -/
+public theorem depth_text_exact (d : GroundDepth) :
+    d.text = required (Need.text.atStage d.stage) := by
+  cases d with
+  | mk _ _ _ _ stage => cases stage <;> rfl
+
 /-- SC 1.4.6 (AAA), normal text: 7:1. -/
 public def aaaText : Nat := 7000
 /-- SC 1.4.6 (AAA), large-scale text: 4.5:1. -/

@@ -5385,10 +5385,13 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         #[("href", "#" ++ a), ("style", "color: inherit")])
     | none => acc.push (Html.text text)
   | .decorated kind body =>
-    let tag := match kind with
-      | .underline => "u"
-      | .lineThrough => "s"
-    acc.push (Html.elem tag (inlineNodesInto cfg #[] body.toList))
+    match kind with
+    | .underline => acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
+    | .lineThrough => acc.push (Html.elem "s" (inlineNodesInto cfg #[] body.toList))
+    -- an inline background breaks with its text across lines, as the PDF's mark does
+    | .highlight c name =>
+      acc.push (Html.elem "mark" (inlineNodesInto cfg #[] body.toList)
+        #[("style", "background-color: " ++ cfg.paint name c ++ "; color: inherit")])
   | .onSteps spec body =>
     acc.push (overlayNode "span" cfg.overlaySteps spec (inlineNodesInto cfg #[] body.toList))
   | .altSteps spec firstPage otherPage =>
@@ -7181,6 +7184,7 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
   let carry (c : Ir.Color) : Ir.Color :=
     (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk req ground c)
   let fit := if f.home then Listing.defaultInk ground else Listing.fitInk req ground
+  let fitRole := if f.home then Listing.fitInk (CodeColor.codeFloor v ground) ground else fit
   -- schemes shipping the palette as declared share one resolution per ground
   let reuse := known.bind fun (g, rs) => if f.home && g == ground then some rs else none
   let roles := match reuse with
@@ -7191,10 +7195,10 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
     let homePaints := if f.flip || f.home then none
       else some (CodeColor.resolve cfg.pal ground spec.style)
     let derived (r : ListingHighlight.Role) (c : Ir.Color) : Ir.Color :=
-      let again := fit c
+      let again := fitRole c
       match homePaints.bind (·.get r) with
       | some hp =>
-        let h := Listing.defaultInk ground hp.color
+        let h := Listing.fitInk (CodeColor.codeFloor cfg.pal ground) ground hp.color
         if req ≤ Contrast.contrastMilli h ground &&
             Contrast.contrastMilli again ground ≤ Contrast.contrastMilli h ground then h else again
       | none => again

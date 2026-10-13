@@ -14,7 +14,7 @@ palette exampletitlebg #F5F6FA
 palette standoutfg #FFFFFF
 palette standoutbg #000000
 palette separator #273C75
-palette muted #757575
+palette muted #767676
 palette covered 30%
 runningfoot
   text "An Invented Workshop 2099"

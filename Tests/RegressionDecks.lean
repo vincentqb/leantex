@@ -264,14 +264,14 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
     check ref s!"{name}: {lang} exact HTML source, indentation and terminal comment"
       (code.map (nodeTextOne "") == #[String.intercalate "\n" source.toList] &&
         treeShownOccurs code comment == 1)
-    painted ref name a page comment { r := 0x60, g := 0x76, b := 0x7A }
+    painted ref name a page comment { r := 0x61, g := 0x77, b := 0x7C }
     check ref s!"{name}: {lang} native keyword and string ink"
       (tokenPaint a page source[0]! "def" { r := 0x34, g := 0x5d, b := 0x94 } &&
         tokenPaint a page source[2]! "\"square\"" { r := 0, g := 0x80, b := 0x80 })
     check ref s!"{name}: {lang} HTML token colours"
       (styled lightCode.toList "def" "color: #345d94" &&
         styled lightCode.toList "\"square\"" "color: #008080" &&
-        styled lightCode.toList comment "color: #60767a")
+        styled lightCode.toList comment "color: #61777c")
     check ref s!"{name}: {lang} HTML literals and comments read the palette's roles"
       (hasStr css "--ltx-codeliteral: var(--ltx-example);" &&
         hasStr css "--ltx-codecomment: var(--ltx-muted);")

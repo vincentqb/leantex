@@ -3,14 +3,17 @@
 # radix: 31 light scales, 3.0.0; scored 31
 # tailwind: 25 palettes, v4.3.3; scored 25
 # gates: 24 palettes from the invented matrix at both depths
-gates.least-margin	100
-radix.accent-edge	834
-radix.accent-text	974
+# lowered (applied): gates.least-margin 100→0 — a generated colour on a light paper now stands at its floor, never 0.10 above it, as the user asked of colours on white
+# lowered (applied): radix.accent-text 974→961 — the accent's text tone stands at a document's 4.5:1 floor, no longer 0.10 above it, so it is a step lighter than Radix 11
+# lowered (applied): tailwind.accent-text 923→900 — the accent's text tone stands at a document's 4.5:1 floor, no longer 0.10 above it, so it is a step lighter than Tailwind 700
+gates.least-margin	0
+radix.accent-edge	874
+radix.accent-text	961
 radix.rule	928
 radix.surface	983
 radix.surface-strong	963
-tailwind.accent-edge	943
-tailwind.accent-text	923
+tailwind.accent-edge	975
+tailwind.accent-text	900
 tailwind.rule	917
 tailwind.surface	973
 tailwind.surface-strong	949

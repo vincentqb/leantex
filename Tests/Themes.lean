@@ -537,7 +537,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     (mDoc.chrome.footerLeft == none &&
      mDoc.chrome.footerRight == some .frameNumber)
   t "moloch derives its muted step from its ink, by the generated rule"
-    (mDoc.palette.find? "muted" == some { r := 0x60, g := 0x76, b := 0x7A })
+    (mDoc.palette.find? "muted" == some { r := 0x61, g := 0x77, b := 0x7C })
   t "plain declares the same footer"
     ((elabStr (deck169 "\\theme{plain}" frame)).1.chrome.hasFooter)
   t "a deck opted out by name has no chrome"
@@ -736,7 +736,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ _ _ _ _ => c == ({ r := 0x60, g := 0x76, b := 0x7A } : Ir.Color)
+           | .run _ c _ _ _ _ _ _ _ _ _ => c == ({ r := 0x61, g := 0x77, b := 0x7C } : Ir.Color)
            | _ => false
      | none => false)
   let para := String.intercalate " " (List.replicate 120 "filler words run on")
@@ -1848,7 +1848,7 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "themed design reads the declared separator"
     (themed.separator == lineage)
   t "themed design reads the muted step the bundle derives"
-    (themed.muted == { r := 0x60, g := 0x76, b := 0x7A })
+    (themed.muted == { r := 0x61, g := 0x77, b := 0x7C })
   let half := designOf "\\theme{default}\\palette{ standoutbg = #102030 }"
   t "half-declared standout defaults its fg from the page"
     (half.standout == { fg := Ir.Color.white, bg := { r := 0x10, g := 0x20, b := 0x30 } })

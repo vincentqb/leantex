@@ -89,11 +89,12 @@ def tailwindScales (text : String) : List Scale := Id.run do
 def deltaMilli (a b : Ir.Color) : Int :=
   (Nat.sqrt (Oklab.distSq (Oklab.labOf a) (Oklab.labOf b)).toNat : Int) * 1000 / 10 ^ 18
 
-/-- The roles scored and the step each system designs for the same use. -/
-def scored : List (String × (SeedPalette.Colors → Ir.Color) × String × String) :=
-  [("surface", (·.surface), "3", "100"), ("surface-strong", (·.surfaceStrong), "5", "200"),
-   ("rule", (·.rule), "7", "300"), ("accent-edge", (·.accentEdge), "8", "500"),
-   ("accent-text", (·.accentText), "11", "700")]
+/-- The roles scored, the depth each is generated at (the accent's text at a document's, owing
+4.5:1), and the step each system designs for the same use. -/
+def scored : List (String × (SeedPalette.Colors → Ir.Color) × Ir.GroundDepth × String × String) :=
+  [("surface", (·.surface), .decks, "3", "100"), ("surface-strong", (·.surfaceStrong), .decks, "5", "200"),
+   ("rule", (·.rule), .decks, "7", "300"), ("accent-edge", (·.accentEdge), .decks, "8", "500"),
+   ("accent-text", (·.accentText), .documents, "11", "700")]
 
 /-- One system's scores: per role, the summed ΔEOK and how many scales gave one. -/
 def scoreSystem (scales : List Scale) (solid ink : String) (radix : Bool) :
@@ -103,14 +104,17 @@ def scoreSystem (scales : List Scale) (solid ink : String) (radix : Bool) :
   for s in scales do
     let (some accent, some text) := (s.step solid, s.step ink) | continue
     let seeds : SeedPalette.Seeds := { ink := text, paper := Ir.Color.white, accent }
-    match SeedPalette.generate seeds (seeds.targets .decks) with
-    | .error f => skipped := skipped ++ [s!"{s.name} ({(Ir.ColorRef.role f.role).key})"]
-    | .ok g =>
+    match SeedPalette.generate seeds (seeds.targets .decks), SeedPalette.generate seeds
+        (seeds.targets .documents) with
+    | .error f, _ | _, .error f => skipped := skipped ++ [s!"{s.name} ({(Ir.ColorRef.role f.role).key})"]
+    | .ok deck, .ok doc =>
       acc := acc.map fun (r, sum, n) =>
         match scored.find? (·.1 == r) with
-        | some (_, get, rs, ts) =>
+        | some (_, get, depth, rs, ts) =>
           match s.step (if radix then rs else ts) with
-          | some want => (r, sum + deltaMilli (get g.colors) want, n + 1)
+          | some want =>
+            let colors := if depth == .documents then doc.colors else deck.colors
+            (r, sum + deltaMilli (get colors) want, n + 1)
           | none => (r, sum, n)
         | none => (r, sum, n)
   return (acc, skipped)
@@ -136,7 +140,7 @@ def gateMargin : Int × Nat := Id.run do
       if let .ok g := SeedPalette.generate s t then
         made := made + 1
         for (_, i, gr, r) in SeedPalette.sites s t g.colors do
-          let gate := if r ≥ t.text then Contrast.aaText else Contrast.aaNonText
+          let gate := if r ≥ Contrast.aaText then Contrast.aaText else Contrast.aaNonText
           least := min least ((Contrast.contrastMilli i gr : Int) - gate)
   return (least, made)
 

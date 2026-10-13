@@ -161,7 +161,7 @@ public theorem shippedFailures_clear_contract (defaultGround : Color) (required 
 /-- A text segment; any other paint may overlap a glyph's ground. -/
 private def textOnly : Seg → Bool
   | .run _ _ _ _ _ _ _ decorations _ _ _ =>
-    !decorations.underline && decorations.lineThrough.isNone
+    !decorations.underline && decorations.lineThrough.isNone && decorations.highlight.isNone
   | .gap .. => true
   | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => false
 

@@ -57,15 +57,16 @@ public theorem groundInk_declared_exact (pal : Palette) (ground inherited c : Co
     (h : Design.declared? pal .codeInk = some c) : groundInk pal ground inherited = c := by
   simp [groundInk, h]
 
-/-- A paint's colour on the actual ground: stated colours as stated, derived ones fitted here. -/
-private def shipped (bg : Color) (p : CodeColor.Paint) : Color :=
-  if p.declared || p.styled then p.color else defaultInk bg p.color
+/-- A paint's colour on the actual ground: stated colours as stated, derived ones fitted here to the
+palette's code floor. -/
+private def shipped (floor : Nat) (bg : Color) (p : CodeColor.Paint) : Color :=
+  if p.declared || p.styled then p.color else fitInk floor bg p.color
 
 /-- One type's colour on the actual ground. -/
 public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
     (style : Option ListingStyle := none) : Option Color :=
   let bg := ground.getD (Design.printPage pal)
-  (paint pal bg style kind).map (shipped bg)
+  (paint pal bg style kind).map (shipped (codeFloor pal bg) bg)
 
 /-- A role's weights around a token's text, nested as `\PYG@do` nests them. -/
 private def weighted (look : Look) (text : String) : Inline :=
@@ -88,12 +89,12 @@ public structure Brush where
   deriving Repr, BEq
 
 /-- A role's brush, from its resolved paint. -/
-private def roleBrush (d : Design) (bg : Color) (covered : Option Color)
+private def roleBrush (d : Design) (floor : Nat) (bg : Color) (covered : Option Color)
     (r : ListingHighlight.Role) (p : Option CodeColor.Paint) : Brush :=
   let look : Look := { bold := r.weights.1, italic := r.weights.2 }
   match p with
   | some p =>
-    let c := shipped bg p
+    let c := shipped floor bg p
     let c := if covered.isSome then ({ d with bg := bg }).cover.of c else c
     -- Covered ink is literal: a CSS role would replace the per-token mixture.
     { look, ink := some c, role := if covered.isSome then none else p.role.map .role }
@@ -105,7 +106,7 @@ public def roleBrushes (pal : Palette) (ground covered : Option Color) (style : 
   let d := Design.ofPalette pal
   let bg := ground.getD d.bg
   let paints := resolve pal bg style
-  RoleTable.ofFn fun r => roleBrush d bg covered r (paints.get r)
+  RoleTable.ofFn fun r => roleBrush d (codeFloor pal bg) bg covered r (paints.get r)
 
 public def brush (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle)
     (k : Kind) : Brush :=
@@ -489,14 +490,15 @@ public theorem inlineCode_source_exact (pal : Palette) (ground : Option Color)
   rw [← Array.foldl_toList, inlineFold_text, paintLine_tokens_exact]
   simp [plainText, plainTextList, lineText, Array.foldl_toList]
 
-/-- Every colour a listing ships and the palette does not declare is text AA on the listing's
-ground. -/
+/-- Every colour a listing ships and the palette does not declare reads at the palette's code floor
+on the listing's ground. -/
 public def contract (pal : Palette) (ground : Option Color) (style : Option ListingStyle := none) :
     Bool :=
   let bg := ground.getD (Design.printPage pal)
   let paints := resolve pal bg style
   ListingHighlight.Role.all.all fun r => match paints.get r with
-    | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)
+    | some p => p.declared ||
+        decide (codeFloor pal bg ≤ Contrast.contrastMilli (shipped (codeFloor pal bg) bg p) bg)
     | none => true
 
 /-- Whether a character is Thai's or Lao's, which a browser wraps between words (UAX #14 SA). -/

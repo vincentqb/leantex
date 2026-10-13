@@ -453,6 +453,8 @@ public structure DecorationSource where
 public structure ActiveDecorations where
   underline : Bool := false
   lineThrough : Option DecorationSource := none
+  /-- A mark's colour and its command-entry source, whose face sets the band. -/
+  highlight : Option (Ir.Color × DecorationSource) := none
   deriving Repr, BEq, Inhabited
 
 /-- One resolved decoration band: `raise` is its bottom
@@ -468,6 +470,8 @@ to their fallback face (`Bool`), spaces carry a resolved band. -/
 public structure Decorations (U : Type := Bool) [Inhabited U] where
   underline : U := default
   lineThrough : Option DecorationRule := none
+  /-- A mark behind the text, its band the command-entry face's. -/
+  highlight : Option DecorationRule := none
   deriving Repr, BEq, Inhabited
 
 /-- An inline formula's ambient text metrics at `size`
@@ -1391,6 +1395,12 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       flatten mathOk noteOk st
         { sty with decorations :=
             { sty.decorations with lineThrough := some sty.decorationSource } } body
+    -- marked text stands on its mark: the run's ground is the mark's
+    | .highlight c _ =>
+      flatten mathOk noteOk st
+        { sty with decorations :=
+            { sty.decorations with highlight := some (c, sty.decorationSource) }
+                   ground := some c } body
   -- The PDF dims pending content by recolouring copies before layout; a step is pure grouping.
   | .onSteps _ body => flatten mathOk noteOk st sty body
   | .altSteps spec firstPage otherPage =>
@@ -3924,11 +3934,28 @@ private def DecorationSource.rule (src : DecorationSource) (base xHeight textW t
   { color := src.color, thickness := lineThroughThickness,
     raise := lineThroughRaise ex }
 
+/-- A mark's band at its command-entry face: descender to ascender, as a browser paints an inline
+background. -/
+private def DecorationSource.markRule (src : DecorationSource) (color : Ir.Color)
+    (base xHeight textW textH : Sp) (fs : FontSet) : DecorationRule :=
+  let basis := base * src.scale / 1000
+  let xBasis := xHeight * src.scale / 1000
+  let values := MeasureValues.horizontal textW textH
+  let size := match src.fontSize with
+    | some e => max 1 (e.resolveWidth values basis xBasis)
+    | none => basis
+  let font := fs.get (fs.lookup src.slot src.weight.css src.italic)
+  let upem : Int := max 1 font.unitsPerEm
+  { color, thickness := (font.ascent - font.descent) * size / upem,
+    raise := font.descent * size / upem }
+
 private def TextStyle.resolvedDecorations (sty : TextStyle)
     (base xHeight textW textH : Sp) (fs : FontSet) : Decorations :=
   { underline := sty.decorations.underline
     lineThrough := sty.decorations.lineThrough.map
-      (·.rule base xHeight textW textH fs) }
+      (·.rule base xHeight textW textH fs)
+    highlight := sty.decorations.highlight.map fun (c, src) =>
+      src.markRule c base xHeight textW textH fs }
 
 /-- The per-face underline band for a glyph run or an
 authored space, its bottom measured up from the baseline. -/
@@ -3941,11 +3968,13 @@ private def underlineRule (font : Font) (size : Sp) (color : Ir.Color) : Decorat
 private def Decorations.resolve (d : Decorations) (font : Font) (size : Sp)
     (color : Ir.Color) : Decorations (Option DecorationRule) :=
   { underline := if d.underline then some (underlineRule font size color) else none
-    lineThrough := d.lineThrough }
+    lineThrough := d.lineThrough
+    highlight := d.highlight }
 
 private def Item.ofDecoratedGlue (g : Glue) (d : Decorations) (font : Font)
     (size : Sp) (color : Ir.Color) : Item :=
-  if d.underline || d.lineThrough.isSome then .decoratedGlue g (d.resolve font size color)
+  if d.underline || d.lineThrough.isSome || d.highlight.isSome then
+    .decoratedGlue g (d.resolve font size color)
   else .glue g
 
 /-- One flatten token into the accumulator: its ink becomes
@@ -13022,6 +13051,34 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
     | .poly _ _ => pure ()
   return out
 
+/-- A placed line's marks: a `.decoration` seg under each marked run and space, a gap elsewhere. -/
+private def markSegs (segs : Array Seg) : Array Seg := Id.run do
+  unless segs.any (fun s => match s with
+      | .run _ _ _ _ _ _ _ decorations _ _ _ => decorations.highlight.isSome
+      | .decoratedGap _ _ decorations => decorations.highlight.isSome
+      | _ => false) do
+    return #[]
+  let mut out : Array Seg := #[]
+  for seg in segs do
+    match seg with
+    | .run _ _ _ w _ _ _ decorations _ _ _ =>
+      match decorations.highlight with
+      | some paint =>
+        out := out.push (Seg.decoration (.highlight paint.color none) w paint.thickness paint.raise
+          paint.color)
+      | none => out := out.push (Seg.gap w false)
+    | .decoratedGap w _ decorations =>
+      match decorations.highlight with
+      | some paint =>
+        out := out.push (Seg.decoration (.highlight paint.color none) w paint.thickness paint.raise
+          paint.color)
+      | none => out := out.push (.gap w false)
+    | .gap w _ => out := out.push (.gap w false)
+    | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
+    | .image _ w _ => out := out.push (.gap w false)
+    | .poly _ _ => pure ()
+  return out
+
 /-- The drawn-decoration riders of a placed line, underline then line-through, each an
 overlay at the line's origin; the one site turning a line's decorations into paint. -/
 public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
@@ -13029,6 +13086,40 @@ public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
                 note := l.note, furniture := l.furniture }
+
+/-- A placed line's mark rider, painted under it, banded as the decoration riders are. -/
+public def markRiders (l : LineOut) : Array LineOut :=
+  #[markSegs l.segs].filterMap fun paint =>
+    if paint.isEmpty then none
+    else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
+                note := l.note, furniture := l.furniture }
+
+@[simp] public theorem markRiders_uncounted (l : LineOut) :
+    ∀ r ∈ markRiders l, r.counted = false := by
+  intro r hr
+  simp only [markRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
+@[simp] public theorem markRiders_band (l : LineOut) :
+    ∀ r ∈ markRiders l, r.furniture = l.furniture ∧ r.note = l.note := by
+  intro r hr
+  simp only [markRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
+@[simp] public theorem markRiders_unattributed (l : LineOut) :
+    ∀ r ∈ markRiders l, r.leaf = none := by
+  intro r hr
+  simp only [markRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
 
 @[simp] public theorem decorationRiders_uncounted (fs : FontSet) (l : LineOut) :
     ∀ r ∈ decorationRiders fs l, r.counted = false := by
@@ -13076,16 +13167,36 @@ private theorem appendRiders_selected (fs : FontSet) (l : LineOut) (lines : Arra
     simpa only [Id.run, pure, ForInStep.value, Array.filter_push, hselect r hr, Bool.false_eq_true,
       reduceIte] using hout
 
-/-- The final decoration pass: each line followed by its drawn riders. -/
+private def appendMarks (l : LineOut) (lines : Array LineOut) : Array LineOut := Id.run do
+  let mut out := lines
+  for r in markRiders l do
+    out := out.push r
+  return out
+
+private theorem appendMarks_selected (l : LineOut) (lines : Array LineOut)
+    (select : LineOut → Bool) (hselect : ∀ r ∈ markRiders l, select r = false) :
+    (appendMarks l lines).filter select = lines.filter select := by
+  unfold appendMarks
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv (fun out : Array LineOut => out.filter select = lines.filter select)
+    (fun r out => pure (.yield (out.push r))) (markRiders l) lines
+  · rfl
+  · intro r hr out hout
+    simpa only [Id.run, pure, ForInStep.value, Array.filter_push, hselect r hr, Bool.false_eq_true,
+      reduceIte] using hout
+
+/-- The final decoration pass: each line after its marks and before its drawn riders. -/
 public def paintLines (fs : FontSet) (lines : Array LineOut) : Array LineOut := Id.run do
   let mut out : Array LineOut := Array.mkEmpty lines.size
   for l in lines do
+    out := appendMarks l out
     out := out.push l
     out := appendRiders fs l out
   return out
 
 private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
-    (select : LineOut → Bool) (hselect : ∀ l r, r ∈ decorationRiders fs l → select r = false) :
+    (select : LineOut → Bool) (hselect : ∀ l r, r ∈ decorationRiders fs l → select r = false)
+    (hmarks : ∀ l r, r ∈ markRiders l → select r = false) :
     (paintLines fs lines).filter select = lines.filter select := by
   unfold paintLines
   simp only [Array.forIn_pure_yield_eq_foldl]
@@ -13095,12 +13206,12 @@ private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
     (motive := fun i (out : Array LineOut) =>
       (out.filter select).toList = (lines.toList.take i).filter select)
     (init := Array.mkEmpty lines.size)
-    (f := fun out l => appendRiders fs l (out.push l))
+    (f := fun out l => appendRiders fs l ((appendMarks l out).push l))
     (by simp)
     (by
       intro i out hout
       rw [appendRiders_selected fs _ _ select (hselect _)]
-      rw [Array.filter_push]
+      rw [Array.filter_push, appendMarks_selected _ _ select (hmarks _)]
       rw [List.take_succ_eq_append_getElem (by simp)]
       simp only [List.filter_append, List.filter_cons, List.filter_nil]
       split <;> simp_all)
@@ -13112,13 +13223,16 @@ public theorem paintLines_attributed_projects (fs : FontSet) (lines : Array Line
     (paintLines fs lines).filter (fun l => l.leaf.isSome) =
       lines.filter (fun l => l.leaf.isSome) := by
   apply paintLines_selected
-  intro l r hr
-  simp [decorationRiders_unattributed fs l r hr]
+  · intro l r hr
+    simp [decorationRiders_unattributed fs l r hr]
+  · intro l r hr
+    simp [markRiders_unattributed l r hr]
 
 public theorem paintLines_counted_projects (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).filter (·.counted) = lines.filter (·.counted) := by
   apply paintLines_selected
-  exact fun l r hr => decorationRiders_uncounted fs l r hr
+  · exact fun l r hr => decorationRiders_uncounted fs l r hr
+  · exact fun l r hr => markRiders_uncounted l r hr
 
 private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Int)
     (spans : List (Int × Int)) (out : Array Seg)
@@ -13201,6 +13315,57 @@ private theorem decorationRiders_noGlyph (fs : FontSet) (l : LineOut) :
   · cases Option.some.inj hr
     exact hg
 
+private theorem markSegs_noGlyph (segs : Array Seg) :
+    ∀ s ∈ markSegs segs, s.NoGlyph := by
+  unfold markSegs
+  dsimp only [Id.run, bind, pure, Id]
+  split
+  · apply Loop.forIn_array_inv (fun out : Array Seg => ∀ s ∈ out, s.NoGlyph)
+    · simp
+    · intro seg hseg out hout
+      have push (t : Seg) (ht : t.NoGlyph) : ∀ s ∈ out.push t, s.NoGlyph := by
+        intro s hs
+        rcases Array.mem_push.mp hs with hs | rfl
+        · exact hout s hs
+        · exact ht
+      cases seg with
+      | run fi c link w glyphs sz leading decorations raise ground attr =>
+        cases hp : decorations.highlight <;>
+          simp only [hp, Id.run, ForInStep.value] <;> exact push _ True.intro
+      | decoratedGap w word decorations =>
+        cases hp : decorations.highlight <;>
+          simp only [hp, Id.run, ForInStep.value] <;> exact push _ True.intro
+      | gap w word | decoration kind w thickness raise color | rule w thickness raise color
+        | image store w height => exact push _ True.intro
+      | poly pts color => exact hout
+  · simp
+
+private theorem markRiders_noGlyph (l : LineOut) :
+    ∀ r ∈ markRiders l, ∀ s ∈ r.segs, s.NoGlyph := by
+  intro r hr
+  obtain ⟨paint, hp, hr⟩ := Array.mem_filterMap.mp hr
+  have hg : ∀ s ∈ paint, s.NoGlyph := by
+    simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hp
+    rcases hp with rfl
+    exact markSegs_noGlyph l.segs
+  split at hr
+  · simp at hr
+  · cases Option.some.inj hr
+    exact hg
+
+private theorem sourceBound_appendMarks {n : Nat} (l : LineOut) (lines : Array LineOut)
+    (h : ∀ l ∈ lines, l.furniture = false → l.SourceBound n) :
+    ∀ r ∈ appendMarks l lines, r.furniture = false → r.SourceBound n := by
+  unfold appendMarks
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv
+    (fun out : Array LineOut => ∀ r ∈ out, r.furniture = false → r.SourceBound n)
+  · exact h
+  · intro rider hr out hout r hm hf
+    rcases Array.mem_push.mp hm with hm | rfl
+    · exact hout r hm hf
+    · exact Or.inr (markRiders_noGlyph l r hr)
+
 private theorem sourceBound_appendRiders {n : Nat} (fs : FontSet) (l : LineOut)
     (lines : Array LineOut)
     (h : ∀ l ∈ lines, l.furniture = false → l.SourceBound n) :
@@ -13227,7 +13392,7 @@ private theorem sourceBound_paintLines {n : Nat} (fs : FontSet) (lines : Array L
     apply sourceBound_appendRiders
     intro r hr hf
     rcases Array.mem_push.mp hr with hr | rfl
-    · exact hout r hr hf
+    · exact sourceBound_appendMarks l out hout r hr hf
     · exact h r hl hf
 
 private def Spacing.Paragraph.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
@@ -20228,25 +20393,41 @@ private theorem appendRiders_toList (fs : FontSet) (l : LineOut)
   simp only [Array.forIn_pure_yield_eq_foldl]
   simp [← Array.foldl_toList]
 
+private theorem appendMarks_toList (l : LineOut) (lines : Array LineOut) :
+    (appendMarks l lines).toList = lines.toList ++ (markRiders l).toList := by
+  unfold appendMarks
+  simp only [Array.forIn_pure_yield_eq_foldl]
+  simp [← Array.foldl_toList]
+
 private theorem paintLines_toList (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).toList =
-      lines.toList.flatMap (fun l => l :: (decorationRiders fs l).toList) := by
+      lines.toList.flatMap
+        (fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList) := by
   unfold paintLines
   simp only [Array.forIn_pure_yield_eq_foldl]
   have h := Array.foldl_induction
     (as := lines)
     (motive := fun i (out : Array LineOut) =>
       out.toList = (lines.toList.take i).flatMap
-        (fun l => l :: (decorationRiders fs l).toList))
+        (fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList))
     (init := Array.mkEmpty lines.size)
-    (f := fun out l => appendRiders fs l (out.push l))
+    (f := fun out l => appendRiders fs l ((appendMarks l out).push l))
     (by simp)
     (by
       intro i out hout
-      rw [appendRiders_toList, Array.toList_push, hout]
+      rw [appendRiders_toList, Array.toList_push, appendMarks_toList, hout]
       rw [List.take_succ_eq_append_getElem (by simp)]
       simp [List.flatMap_append, List.append_assoc])
   simpa [← Array.length_toList] using h
+
+private theorem marks_rise {a b : LineOut} (h : LineRise a b) :
+    LinesRise (markRiders a).toList (markRiders b).toList := by
+  simp only [markRiders, Array.toList_filterMap,
+    List.filterMap_cons, List.filterMap_nil, h.segs, h.size]
+  by_cases hm : (markSegs b.segs).isEmpty = true
+  all_goals simp only [hm, ite_true]
+  · exact .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil
 
 private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
     LinesRise (decorationRiders fs a).toList (decorationRiders fs b).toList := by
@@ -20263,11 +20444,12 @@ private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
 
 private theorem paint_rise (fs : FontSet) {as bs : List LineOut}
     (h : LinesRise as bs) :
-    LinesRise (as.flatMap fun l => l :: (decorationRiders fs l).toList)
-      (bs.flatMap fun l => l :: (decorationRiders fs l).toList) := by
+    LinesRise (as.flatMap fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList)
+      (bs.flatMap fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList) := by
   induction h with
   | nil => exact .nil
-  | cons hl _ ih => exact (LinesRise.cons hl (riders_rise fs hl)).append ih
+  | cons hl _ ih =>
+    exact ((marks_rise hl).append (LinesRise.cons hl (riders_rise fs hl))).append ih
 
 /-- A segment's text glyphs, white space, NBSP and soft hyphens excluded. -/
 public def textInk : Seg → List Char
@@ -20313,13 +20495,19 @@ private theorem furniture_ink_empty (fs : FontSet) (lines : Array LineOut) :
     List.filter_flatMap]
   apply List.flatMap_eq_nil_iff.mpr
   intro l hl
-  simp only [List.filter_cons, inkLine, furnitureLine, Bool.not_true,
-    Bool.false_and, Bool.false_eq_true, reduceIte]
-  apply List.filter_eq_nil_iff.mpr
-  intro r hr
-  have hb := decorationRiders_band fs (furnitureLine l) r
-    (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
-  simp [inkLine, hb.1, furnitureLine]
+  simp only [List.filter_append, List.filter_cons, inkLine, furnitureLine, Bool.not_true,
+    Bool.false_and, Bool.false_eq_true, reduceIte, List.append_eq_nil_iff]
+  constructor
+  · apply List.filter_eq_nil_iff.mpr
+    intro r hr
+    have hb := markRiders_band (furnitureLine l) r
+      (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
+    simp [inkLine, hb.1, furnitureLine]
+  · apply List.filter_eq_nil_iff.mpr
+    intro r hr
+    have hb := decorationRiders_band fs (furnitureLine l) r
+      (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
+    simp [inkLine, hb.1, furnitureLine]
 
 private theorem furnishLines_ink_projects (fs : FontSet)
     (before body after : Array LineOut) :

@@ -1,11 +1,11 @@
 module
 
 public import LeanTex.Core.SeedPalette
-import LeanTex.Core.CodeColor
 public import LeanTex.Core.ContrastSolve
 
 /-! A chart's categorical series colours generated from a palette's seeds: the accent text first,
-then farthest-point sampling in ΔEOK (Gonzalez 1985) over hues at mark and text tones. -/
+then farthest-point sampling (Gonzalez 1985) for the nearest of four simulated readers (Okabe & Ito's
+Color Universal Design; Machado, Oliveira & Fernandes 2009). -/
 
 namespace LeanTex.Core.SeedSeries
 
@@ -26,73 +26,110 @@ private def minGapText : String :=
   let c := minGap / 10 ^ 16
   s!"ΔEOK 0.{if c < 10 then "0" else ""}{c}"
 
-/-- The candidates' chroma: the accent's own, never below the code hues'. -/
-public def chroma (accent : Color) : Int := max CodeColor.codeChroma (SeedPalette.chromaOf accent)
+/-- A colour as each simulated reader sees it, typical vision first (`Oklab.Vision.all`). -/
+public def views (c : Color) : List Lab := Vision.all.map (labIn · c)
 
-/-- How far from the grey's lightness a tone's boundary is looked for first: 0.06 of the axis. -/
-private def guessSpan : Int := 6 * 10 ^ 16
+/-- The least ΔEOK² between two colours' readings, reader by reader. -/
+private def viewSq (v w : List Lab) : Int :=
+  (v.zip w).foldl (fun m (x, y) => min m (distSq x y)) (10 ^ 38)
 
-/-- The tone of hue `h` at chroma `C` nearest the paper that meets `target` on it, or `none`. -/
-private def toneAt (paper : Color) (dark : Bool) (target : Nat) (C h : Int) : Option Color :=
-  let dir := ofLch 0 C h
-  let at_ (L : Int) : Color := (Okl.toGamut { L, a := dir.a, b := dir.b, f := fracOne }).toColor
-  let pass (L : Int) : Bool := decide (target ≤ contrastMilli (at_ L) paper)
-  let far : Int := if dark then 10 ^ 18 else 0
-  let guess := ContrastSolve.greyLightness (ContrastSolve.luminanceAt paper target dark)
-  if pass far then some (at_ (ContrastSolve.bisectNear pass 20 (labOf paper).L far guess guessSpan))
-  else none
+/-- Whether two colours stand `minGap` apart for every simulated reader. -/
+public def apart (c c' : Color) : Bool :=
+  Vision.all.all fun v => decide (minGap * minGap ≤ distSq (labIn v c) (labIn v c'))
 
-/-- The candidates in tie-breaking order: every hue in `hueStep` steps from the accent's, at the
-mark tone then the text tone. -/
-private def candidates (s : SeedPalette.Seeds) (t : SeedPalette.Targets) : Array (Color × Lab) :=
+/-- Whether a hue is warm, within a quarter turn of vermilion's OKLCH 40°: magentas through yellow. -/
+private def warmHue (h : Int) : Bool :=
+  let d := (h - 40000) % 360000
+  decide (min d (360000 - d) < 90000)
+
+/-- Whether a colour's hue is warm (`warmHue`). -/
+private def warm (c : Color) : Bool :=
+  let l := labOf c
+  warmHue (hueMilli l.a l.b)
+
+/-- Whether a hue stands within 7.5° of sRGB red's OKLCH 29.2°, which Okabe and Ito replace by
+vermilion (https://jfly.uni-koeln.de/color/). -/
+private def pureRed (h : Int) : Bool :=
+  let d := (h - 29200) % 360000
+  decide (min d (360000 - d) < 7500)
+
+/-- Whether a hue is a yellow-green, from the disliked region's warm edge to OKLCH 150°: the hues
+Okabe and Ito's palette leaves between its yellow and its bluish green. -/
+private def yellowGreen (h : Int) : Bool :=
+  decide (ContrastSolve.dislikedLo ≤ h ∧ h ≤ 150000)
+
+/-- The tones a hue offers, in steps of 0.10 lightness away from the paper from its floor band, so
+neighbours of one temperature part by lightness (Okabe & Ito). -/
+private def toneSteps : List Int := [0, 1, 2, 3]
+
+/-- A candidate: its colour, its readings (`views`) and whether it is warm. -/
+private abbrev Cand := Color × List Lab × Bool
+
+/-- The candidates in tie-breaking order: each hue in `hueStep` steps at its `toneSteps` meeting the
+marks' floor, off pure red, the yellow-greens and the disliked region. -/
+private def candidates (s : SeedPalette.Seeds) (t : SeedPalette.Targets) : Array Cand :=
   let l := labOf s.accent
   let h0 := hueMilli l.a l.b
-  let C := chroma s.accent
+  let away : Int := if s.dark then 10 ^ 17 else -(10 ^ 17)
   (List.range (360000 / hueStep)).foldl (fun acc k =>
     let h := (h0 + (hueStep * k : Nat)) % 360000
-    [t.edge, t.text].foldl (fun acc target =>
-      match toneAt s.paper s.dark target C h with
-      | some c => acc.push (c, labOf c)
-      | none => acc) acc) #[]
+    if pureRed h || yellowGreen h then acc
+    else
+      let L0 := ContrastSolve.bandL t.edge [s.paper] h
+      toneSteps.foldl (fun acc j =>
+        let c := ContrastSolve.edgeAt h (L0 + j * away)
+        if decide (t.edge ≤ contrastMilli c s.paper) && !ContrastSolve.disliked c then
+          acc.push (c, views c, warm c)
+        else acc) acc) #[]
 
-/-- The least ΔEOK² from a value to any taken one. -/
-private def nearestSq (l : Lab) (taken : List Lab) : Int :=
-  taken.foldl (fun m x => min m (distSq l x)) (10 ^ 38)
+/-- The least ΔEOK² from a candidate's readings to any taken one's. -/
+private def nearestSq (v : List Lab) (taken : List (List Lab)) : Int :=
+  taken.foldl (fun m x => min m (viewSq v x)) (10 ^ 38)
 
-/-- The candidate whose nearest taken value stands farthest, the earliest
-among equals. -/
-private def farthest (cands : Array (Color × Lab)) (taken : List Lab) : Option (Color × Lab) :=
-  (cands.foldl (fun (best : Option (Color × Lab × Int)) (c, l) =>
-    let d := nearestSq l taken
-    match best with
-    | some (_, _, bd) => if bd < d then some (c, l, d) else best
-    | none => some (c, l, d)) none).map fun (c, l, _) => (c, l)
+/-- The candidate `keep` admits whose nearest taken value stands farthest, the earliest among equals. -/
+private def farthestOf (cands : Array Cand) (taken : List (List Lab)) (keep : Cand → Bool) :
+    Option (Cand × Int) :=
+  cands.foldl (fun (best : Option (Cand × Int)) c =>
+    if keep c then
+      let d := nearestSq c.2.1 taken
+      match best with
+      | some (_, bd) => if bd < d then some (c, d) else best
+      | none => some (c, d)
+    else best) none
+
+/-- The farthest candidate of the other temperature than the last pick where one stands `minGap`
+apart, else the farthest of either: Okabe and Ito alternate warm and cool. -/
+private def farthest (cands : Array Cand) (taken : List (List Lab)) (lastWarm : Bool) :
+    Option Cand :=
+  match farthestOf cands taken (fun c => c.2.2 != lastWarm) with
+  | some (c, d) => if minGap * minGap ≤ d then some c else (farthestOf cands taken fun _ => true).map (·.1)
+  | none => (farthestOf cands taken fun _ => true).map (·.1)
 
 /-- Farthest-point sampling: `n` more series, each the `farthest` candidate
 from every value taken so far. -/
-private def pick (cands : Array (Color × Lab)) : Nat → List Lab → Array Color → Array Color
-  | 0, _, acc => acc
-  | n + 1, taken, acc =>
-    match farthest cands taken with
-    | some (c, l) => pick cands n (l :: taken) (acc.push c)
+private def pick (cands : Array Cand) : Nat → List (List Lab) → Bool → Array Color → Array Color
+  | 0, _, _, acc => acc
+  | n + 1, taken, w, acc =>
+    match farthest cands taken w with
+    | some (c, v, w') => pick cands n (v :: taken) w' (acc.push c)
     | none => acc
 
-private theorem pick_acc (cands : Array (Color × Lab)) :
-    ∀ (n : Nat) (taken : List Lab) (acc : Array Color),
-      pick cands n taken acc = acc ++ pick cands n taken #[]
-  | 0, _, acc => by simp [pick]
-  | n + 1, taken, acc => by
+private theorem pick_acc (cands : Array Cand) :
+    ∀ (n : Nat) (taken : List (List Lab)) (w : Bool) (acc : Array Color),
+      pick cands n taken w acc = acc ++ pick cands n taken w #[]
+  | 0, _, _, acc => by simp [pick]
+  | n + 1, taken, w, acc => by
     simp only [pick]
     split
-    · rw [pick_acc cands n _ (acc.push _), pick_acc cands n _ (#[].push _)]
+    · rw [pick_acc cands n _ _ (acc.push _), pick_acc cands n _ _ (#[].push _)]
       simp
     · simp
 
-private theorem pick_take (cands : Array (Color × Lab)) :
-    ∀ (m n : Nat) (taken : List Lab),
-      (pick cands (m + n) taken #[]).toList.take m = (pick cands m taken #[]).toList
-  | 0, _, _ => by simp [pick]
-  | m + 1, n, taken => by
+private theorem pick_take (cands : Array Cand) :
+    ∀ (m n : Nat) (taken : List (List Lab)) (w : Bool),
+      (pick cands (m + n) taken w #[]).toList.take m = (pick cands m taken w #[]).toList
+  | 0, _, _, _ => by simp [pick]
+  | m + 1, n, taken, w => by
     rw [Nat.add_right_comm]
     simp only [pick]
     split
@@ -104,7 +141,8 @@ private theorem pick_take (cands : Array (Color × Lab)) :
 private def seriesOf (s : SeedPalette.Seeds) (t : SeedPalette.Targets) (p : SeedPalette.Generated s t)
     (n : Nat) : List Color :=
   let cands := if n ≤ 1 then #[] else candidates s t
-  p.colors.accentText :: (pick cands (n - 1) [labOf p.colors.accentText, labOf s.ink] #[]).toList
+  p.colors.accentText ::
+    (pick cands (n - 1) [views p.colors.accentText, views s.ink] (warm p.colors.accentText) #[]).toList
 
 private theorem seriesOf_take (s : SeedPalette.Seeds) (t : SeedPalette.Targets)
     (p : SeedPalette.Generated s t) {k n : Nat} (hk : 1 ≤ k) (hn : k ≤ n) :
@@ -121,15 +159,15 @@ private theorem seriesOf_take (s : SeedPalette.Seeds) (t : SeedPalette.Targets)
     by_cases h2 : k + 1 + n ≤ 1
     · omega
     · simp only [h1, h2, ite_false]
-      exact (pick_take _ k n _).symm
+      exact (pick_take _ k n _ _).symm
 
 /-- The contract a generated series carries: marks stand out from the paper, the first reads as
-text, no two nearer than `minGap`, none after the first near the ink. -/
+text, and no two, nor any after the first and the ink, stand within `minGap` for any reader. -/
 public def contract (paper ink : Color) (t : SeedPalette.Targets) (series : List Color) : Bool :=
   (series.all fun c => decide (t.edge ≤ contrastMilli c paper)) &&
   (series.head?.all fun c => decide (t.text ≤ contrastMilli c paper)) &&
-  decide (series.Pairwise fun c c' => minGap * minGap ≤ ContrastSolve.deltaEOkSq c c') &&
-  ((series.drop 1).all fun c => decide (minGap * minGap ≤ ContrastSolve.deltaEOkSq c ink))
+  decide (series.Pairwise fun c c' => apart c c' = true) &&
+  ((series.drop 1).all fun c => apart c ink)
 
 /-- Generated series: the colours, and the proof they meet the contract. -/
 public structure Generated (s : SeedPalette.Seeds) (t : SeedPalette.Targets) where
@@ -145,7 +183,8 @@ public def generate (s : SeedPalette.Seeds) (t : SeedPalette.Targets)
   else if (seriesOf s t p n).length ≠ n then
     .error s!"the candidates gave {(seriesOf s t p n).length} of {n} series"
   else if h : contract s.paper s.ink t (seriesOf s t p n) = true then .ok ⟨seriesOf s t p n, h⟩
-  else .error s!"{n} series do not all stand {minGapText} apart and from the ink"
+  else .error s!"{n} series do not all stand {minGapText} apart and from the ink, for typical \
+vision and simulated protanopia, deuteranopia and tritanopia"
 
 private theorem generate_ok {s : SeedPalette.Seeds} {t : SeedPalette.Targets}
     {p : SeedPalette.Generated s t} {n : Nat} {g : Generated s t} (h : generate s t p n = .ok g) :
@@ -200,14 +239,19 @@ public theorem generated_series_contract {s : SeedPalette.Seeds} {t : SeedPalett
     (g : Generated s t) :
     (∀ c ∈ g.series, t.edge ≤ contrastMilli c s.paper) ∧
       (∀ c, g.series.head? = some c → t.text ≤ contrastMilli c s.paper) ∧
-      (g.series.Pairwise fun c c' => minGap * minGap ≤ ContrastSolve.deltaEOkSq c c') ∧
-      ∀ c ∈ g.series.drop 1, minGap * minGap ≤ ContrastSolve.deltaEOkSq c s.ink := by
+      (g.series.Pairwise fun c c' => apart c c' = true) ∧
+      ∀ c ∈ g.series.drop 1, apart c s.ink = true := by
   have h := g.valid
   simp only [contract, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
   obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := h
   refine ⟨h1, fun c hc => ?_, h3, h4⟩
   rw [hc] at h2
   simpa using h2
+
+public theorem apart_exact {c c' : Color} (h : apart c c' = true) :
+    ∀ v ∈ Vision.all, minGap * minGap ≤ distSq (labIn v c) (labIn v c') := by
+  intro v hv
+  exact of_decide_eq_true (List.all_eq_true.mp h v hv)
 
 /-- The export: an xcolor colour per series, `<stem>Series<k>` from 1, in generated order. -/
 public def declarations (stem : String) (series : List Color) : String :=

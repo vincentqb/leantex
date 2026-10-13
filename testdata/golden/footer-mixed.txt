@@ -13,7 +13,7 @@ palette progressbg #D6C6B7
 palette separator #EB811B
 palette standoutfg #FAFAFA
 palette standoutbg #23373B
-palette muted #60767A
+palette muted #61777C
 palette covered 31%
 token progressheight 1pt
 token frametitlepadding 840/1000em

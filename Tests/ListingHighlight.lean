@@ -230,7 +230,7 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
     let grounds := [none, some d.standout.bg] ++
       (d.titlepage.toList.map fun pair => some pair.bg)
     for style in [Ir.ListingStyle.default, .friendly] do
-      t s!"listing style: {repr style} text AA on every {theme.name} ground"
+      t s!"listing style: {repr style} text at the code floor on every {theme.name} ground"
         (grounds.all fun ground => Listing.contract (deckBundle theme) ground (style := some style))
   let some bytes ← findFont | failures ref "listing friendly: fixture font missing"
   let .ok font := Font.parse bytes | failures ref "listing friendly: fixture font invalid"
@@ -685,7 +685,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
     (codes.size == 1 && nodeTextOne "" codes[0]! == code &&
       (ListingHighlight.coloredSpansList #[] codes.toList).isEmpty)
   for theme in Theme.builtin do
-    t s!"highlight palette: text AA on every {theme.name} listing ground"
+    t s!"highlight palette: text at the code floor on every {theme.name} listing ground"
       (Contrast.listingContract (deckBundle theme))
     let standout := { (elabStr (dvDeck ""
         ("\\begin{frame}[standout]\n\\begin{minted}{python}\n" ++ code ++
@@ -701,7 +701,8 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
         text.trimAscii.toString == "\"hello\"" && hasStr style (HtmlDoc.cssColor literal))
     t s!"highlight standout: {theme.name} PDF draws legible local ink"
       (glyphs.any (fun (c, color) => c == 'h' && color == literal) &&
-       glyphs.all (fun (_, color) => Contrast.contrastMilli color ground ≥ Contrast.aaText))
+       glyphs.all (fun (_, color) =>
+         Contrast.contrastMilli color ground ≥ CodeColor.codeFloor (deckBundle theme) ground))
     let doc := { ListingHighlight.sourceDoc "python" "def value(): return \"x\""
       with palette := deckBundle theme }
     let active := layoutOf fonts doc

@@ -5,6 +5,7 @@ public import LeanTex.Core.CodeRole
 public import LeanTex.Core.PygmentsStyle
 public import LeanTex.Core.ContrastRatio
 import LeanTex.Core.Oklab
+import LeanTex.Core.ContrastSolve
 
 /-! The colour each listing code role paints in, resolved at one site (`resolve`) for both
 backends: a role's own key, else one rule over the palette's roles, else the listing style. -/
@@ -80,24 +81,6 @@ private def openHue : List (Int × Int) → Option (Int × Int)
     let s := (u.1 * norm w + w.1 * norm u, u.2 * norm w + w.2 * norm u)
     if s == (0, 0) then some (-u.2, u.1) else some (-s.1, -s.2)
 
-/-- Arcs within a degree of the widest count as wide as it. -/
-private def arcSlack : Int := 1000
-
-/-- The middle of the widest arc a list of hues (millidegrees) leaves open, the earliest-listed
-hue's arc winning within `arcSlack`. -/
-private def openArc (hs : List Int) : Option Int :=
-  let width (h : Int) : Int :=
-    hs.foldl (fun w h' => let d := (h' - h) % 360000; if d == 0 then w else min w d) 360000
-  let widest := hs.foldl (fun w h => max w (width h)) 0
-  (hs.find? fun h => widest ≤ width h + arcSlack).map fun h => (h + width h / 2) % 360000
-
-example : openArc [88000, 268000] = some 178000 := by decide
-example : openArc [88000, 268000, 178000] = some 358000 := by decide
-example : openArc [255000, 42000] = some 148500 := by decide
-example : openArc [255000, 165000, 30001] = some 322500 := by decide
-example : openArc [255000, 165000, 29999] = some 322499 := by decide
-example : openArc [] = none := by decide
-
 /-- The colour at Oklab lightness `L` and chromatic coordinates `(a, b)`. -/
 private def lab (a b L : Int) : Color := Oklab.toColorOfLab { L, a, b }
 
@@ -157,12 +140,18 @@ text AA where they leave no lightness for it. -/
 private def hueTone (grounds : List Color) (v : Int × Int) : Option Color :=
   (toneOn codeTone grounds v).orElse fun _ => toneOn Contrast.aaText grounds v
 
-/-- The grounds a derived hue's tone must read on: the listing's own, and under seeds the paper
-and the block fills. -/
+/-- The grounds a derived hue's tone must read on: the listing's own, and under seeds the paper. -/
 public def toneGrounds (pal : Palette) (ground : Color) : List Color :=
   match pal.seeded with
-  | some st => (ground :: [st.seeds.paper, st.colors.surface, st.colors.accentWash]).eraseDups
+  | some st => (ground :: [st.seeds.paper]).eraseDups
   | none => [ground]
+
+/-- The contrast a derived colour reads at on its ground: under seeds the ink's own target on the
+ink and the medium's text floor elsewhere (`GroundDepth.text`), else text AA. -/
+public def codeFloor (pal : Palette) (ground : Color) : Nat :=
+  match pal.seeded with
+  | some st => if ground == st.seeds.ink then st.targets.inverse else st.targets.text
+  | none => Contrast.aaText
 
 /-- What the rule reads a role's colour from the palette as. -/
 public inductive Derived where
@@ -182,13 +171,17 @@ private structure Reads where
   alert : Option Color
   ex : Option Color
   muted : Option Color
+  /-- The alert's mark (`alertmark`): an accent that serves the page as a
+  container, whose hue the code turns from where the alert is the ink. -/
+  mark : Option Color
 
 private def reads (pal : Palette) : Reads :=
   let fg := Design.declared? pal .ink
   let alert := (Design.declared? pal .alert).filter fun a => some a != fg
   { fg, alert
     ex := (Design.declared? pal .example).filter fun e => some e != fg && some e != alert
-    muted := (Design.declared? pal .muted).filter fun m => some m != alert }
+    muted := (Design.declared? pal .muted).filter fun m => some m != alert
+    mark := Design.declared? pal .alertMark }
 
 /-- The hues the code already sets in: the ink's where it shows one, and
 the alert's. -/
@@ -243,47 +236,61 @@ private def familyOf (p : Reads) (grounds : List Color) (literal : Option (Int �
     | some c => .color c
     | none => .ink
 
-/-- A direction's hue, in millidegrees. -/
-private def hueOfDir (v : Int × Int) : Int := Oklab.hueMilli v.1 v.2
+/-- The three hues a quarter turn on from an anchor, counter-clockwise, in
+millidegrees. -/
+private def slotsOf (anchor : Int) : List Int :=
+  [1, 2, 3].map fun k => (anchor + 90000 * k) % 360000
 
-/-- The direction of a hue (millidegrees) at the palette's derived chroma. -/
-private def dirOfHue (p : Reads) (h : Int) : Int × Int :=
-  let l := Oklab.ofLch 0 p.chroma h
-  (l.a, l.b)
+/-- How far apart two hues stand, the short way round, in millidegrees. -/
+private def hueDist (h h' : Int) : Int :=
+  let d := (h - h') % 360000
+  min d (360000 - d)
 
-/-- A derived hue's tone on the grounds, or the ink where none reads. -/
-private def tonedDir (p : Reads) (grounds : List Color) (v : Int × Int) : Derived :=
-  (hueTone grounds (scaled p.chroma v)).elim .ink .color
+/-- A colour's hue in millidegrees, where it shows one. -/
+private def hueMilliOf? (c : Color) : Option Int := (hue? c).map fun v => Oklab.hueMilli v.1 v.2
 
-/-- The literal under a palette generated from seeds: a named example's
-(`literalOf`), else the middle of the widest arc the code's fixed hues leave
-open, else the rule's own. -/
-private def seededLiteral (p : Reads) (grounds : List Color) (literal : Derived × Option (Int × Int))
-    (fixed : List (Int × Int)) : Derived × Option (Int × Int) :=
-  match p.ex, (openArc (fixed.map hueOfDir)).map (dirOfHue p) with
-  | none, some v => (tonedDir p grounds v, some v)
-  | _, _ => literal
+/-- The slot nearest a hue, the earliest among equals. -/
+private def nearestSlot (slots : List Int) (h : Int) : Option Int :=
+  slots.foldl (fun best x => match best with
+    | some b => if hueDist x h < hueDist b h then some x else best
+    | none => some x) none
 
-/-- The literal, keywords and names under seeds, each a hue of its own planned around the code's
-fixed hues. -/
-private def seededPlan (p : Reads) (grounds : List Color) (literal : Derived × Option (Int × Int))
-    (declared : ListingHighlight.Role → Option Color) : Derived × Derived × Derived :=
-  let ships (r : ListingHighlight.Role) (planned : Option (Int × Int)) : Option (Int × Int) :=
+/-- A hue's band tone at the floor on the grounds, out of the disliked region, else the ink. -/
+private def vivid (floor : Nat) (grounds : List Color) (h : Int) : Derived :=
+  (ContrastSolve.bandClear floor grounds h).elim .ink .color
+
+/-- The literal, keywords and names under seeds, at the band tones of the slots a quarter turn
+on from the error's hue (its key's, the alert's, the mark's, else the ink's). -/
+private def seededPlan (p : Reads) (grounds : List Color) (floor : Nat)
+    (literal : Derived × Option (Int × Int)) (declared : ListingHighlight.Role → Option Color) :
+    Derived × Derived × Derived :=
+  let shipHue (r : ListingHighlight.Role) (planned : Option Int) : Option Int :=
     match declared r with
-    | some c => hue? c
+    | some c => hueMilliOf? c
     | none => planned
-  let ink := ships .ink (p.fg.bind hue?)
-  let others := (ships .error (p.alert.bind hue?)).toList ++ ((declared .comment).bind hue?).toList ++
-    [ListingHighlight.Role.keyword, .name, .literal].filterMap fun r => (declared r).bind hue?
-  let lit := seededLiteral p grounds literal (ink.toList ++ others)
-  let around := others ++ (ships .literal lit.2).toList
-  let keyword := (ink.filter fun u => around.all (clear u)).orElse
-    fun _ => (openArc ((ink.toList ++ around).map hueOfDir)).map (dirOfHue p)
-  let name := (openArc ((ink.toList ++ around ++ (ships .keyword keyword).toList).map hueOfDir)).map
-    (dirOfHue p)
-  match p.fg with
-  | none => (lit.1, .none, .none)
-  | some _ => (lit.1, keyword.elim .ink (tonedDir p grounds), name.elim .ink (tonedDir p grounds))
+  let ink := shipHue .ink (p.fg.bind hueMilliOf?)
+  let marked := (p.mark.bind hueMilliOf?).map ContrastSolve.clearHue
+  let anchor := ((shipHue .error (p.alert.bind hueMilliOf?)).orElse fun _ => marked).orElse fun _ => ink
+  let inked : Derived := if p.fg.isSome then .ink else .none
+  match anchor with
+  | none => (literal.1, inked, inked)
+  | some e =>
+    let slots := slotsOf e
+    let held := ([ListingHighlight.Role.keyword, .name, .literal].filterMap fun r =>
+        (declared r).bind hueMilliOf?) ++
+      (if (declared .literal).isNone then (p.ex.bind hueMilliOf?).toList else [])
+    let free := slots.filter fun x => !(held.filterMap (nearestSlot slots)).contains x
+    let keyword := if (declared .keyword).isSome then none else match ink with
+      | some ih => nearestSlot free ih
+      | none => if free.contains ((e + 180000) % 360000) then some ((e + 180000) % 360000) else free.head?
+    let free := free.filter (some · != keyword)
+    let lit := if p.ex.isSome || (declared .literal).isSome then none else free.head?
+    let free := free.filter (some · != lit)
+    let name := if (declared .name).isSome then none else free.head?
+    let derived (h : Option Int) : Derived := if p.fg.isSome then h.elim .ink (vivid floor grounds) else .none
+    ((match p.ex, lit with
+      | none, some h => vivid floor grounds h
+      | _, _ => literal.1), derived keyword, derived name)
 
 /-- The quietest tone of the ink's hue that reads as text on every ground, else the ink. -/
 private def quietInk (f : Color) (grounds : List Color) : Derived :=
@@ -299,10 +306,15 @@ private def commentOf (p : Reads) (grounds : List Color) : Derived :=
   | none, some f => quietInk f grounds
   | none, none => .none
 
-private def errorOf (p : Reads) : Derived :=
+/-- Errors in the alert, or under seeds whose alert is the ink on a mark, the mark's hue's band
+tone. -/
+private def errorOf (pal : Palette) (p : Reads) (grounds : List Color) (floor : Nat) : Derived :=
   match p.alert with
   | some _ => .role .alert
-  | none => .none
+  | none =>
+    match pal.seeded, p.mark.bind hueMilliOf? with
+    | some _, some h => vivid floor grounds (ContrastSolve.clearHue h)
+    | _, _ => .none
 
 private theorem familyOf_none {p : Reads} {grounds : List Color} {l : Option (Int × Int)}
     (h : familyOf p grounds l = .none) : p.fg = none := by
@@ -317,33 +329,36 @@ private theorem elim_ink_ne_none {α : Type} (o : Option α) (f : α → Derived
   | none => simp
   | some a => exact hf a
 
-private theorem tonedDir_ne_none (p : Reads) (grounds : List Color) (v : Int × Int) :
-    tonedDir p grounds v ≠ .none :=
+private theorem vivid_ne_none (floor : Nat) (grounds : List Color) (h : Int) :
+    vivid floor grounds h ≠ .none :=
   elim_ink_ne_none _ _ fun _ => by simp
 
-private theorem seededPlan_keywords_none {p : Reads} {grounds : List Color}
+private theorem seededPlan_keywords_none {p : Reads} {grounds : List Color} {floor : Nat}
     {l : Derived × Option (Int × Int)} {declared : ListingHighlight.Role → Option Color}
-    (h : (seededPlan p grounds l declared).2.1 = .none ∨ (seededPlan p grounds l declared).2.2 = .none) :
+    (h : (seededPlan p grounds floor l declared).2.1 = .none ∨
+      (seededPlan p grounds floor l declared).2.2 = .none) :
     p.fg = none := by
-  unfold seededPlan at h
-  dsimp only at h
-  split at h
-  · assumption
-  · rcases h with h | h <;> exact absurd h (elim_ink_ne_none _ _ (tonedDir_ne_none p grounds))
+  cases hf : p.fg with
+  | none => rfl
+  | some f =>
+    exfalso
+    unfold seededPlan at h
+    simp only [hf, Option.isSome_some, ite_true] at h
+    split at h
+    · rcases h with h | h <;> simp at h
+    · rcases h with h | h <;> exact elim_ink_ne_none _ _ (vivid_ne_none floor grounds) h
 
-private theorem seededLiteral_none {p : Reads} {grounds : List Color} {l : Derived × Option (Int × Int)}
-    {fixed : List (Int × Int)} (h : (seededLiteral p grounds l fixed).1 = .none) : l.1 = .none := by
-  unfold seededLiteral at h
-  split at h
-  · exact absurd h (tonedDir_ne_none p grounds _)
-  · exact h
-
-private theorem seededPlan_literal_none {p : Reads} {grounds : List Color}
+private theorem seededPlan_literal_none {p : Reads} {grounds : List Color} {floor : Nat}
     {l : Derived × Option (Int × Int)} {declared : ListingHighlight.Role → Option Color}
-    (h : (seededPlan p grounds l declared).1 = .none) : l.1 = .none := by
+    (h : (seededPlan p grounds floor l declared).1 = .none) : l.1 = .none := by
   unfold seededPlan at h
   dsimp only at h
-  split at h <;> exact seededLiteral_none h
+  split at h
+  · exact h
+  · dsimp only at h
+    split at h
+    · exact absurd h (vivid_ne_none floor grounds _)
+    · exact h
 
 private theorem literalOf_none {p : Reads} {grounds : List Color}
     (h : (literalOf p grounds).1 = .none) : p.ex = none ∧ p.hues = [] := by
@@ -379,22 +394,23 @@ private theorem commentOf_none {p : Reads} {grounds : List Color}
   · exact absurd h (quietInk_ne_none _ _)
   · rename_i hm hf; exact ⟨hm, hf⟩
 
-private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = none := by
+private theorem errorOf_none {pal : Palette} {p : Reads} {grounds : List Color} {floor : Nat}
+    (h : errorOf pal p grounds floor = .none) : p.alert = none := by
   unfold errorOf at h
   split at h
   · simp at h
   · assumption
 
-/-- The literal, keywords and names: the rule's own, or under seeds `seededPlan`'s. -/
-private def planOf (pal : Palette) (p : Reads) (grounds : List Color)
+/-- The literal, keywords and names: the rule's own, or under seeds `seededPlan`'s at `floor`. -/
+private def planOf (pal : Palette) (p : Reads) (grounds : List Color) (floor : Nat)
     (literal : Derived × Option (Int × Int)) : Derived × Derived × Derived :=
   match pal.seeded with
-  | some _ => seededPlan p grounds literal fun r => Design.declared? pal (Ir.Role.ofCode r)
+  | some _ => seededPlan p grounds floor literal fun r => Design.declared? pal (Ir.Role.ofCode r)
   | none => let family := familyOf p grounds literal.2; (literal.1, family, family)
 
 private theorem planOf_keywords_none {pal : Palette} {p : Reads} {grounds : List Color}
-    {l : Derived × Option (Int × Int)}
-    (h : (planOf pal p grounds l).2.1 = .none ∨ (planOf pal p grounds l).2.2 = .none) :
+    {floor : Nat} {l : Derived × Option (Int × Int)}
+    (h : (planOf pal p grounds floor l).2.1 = .none ∨ (planOf pal p grounds floor l).2.2 = .none) :
     p.fg = none := by
   unfold planOf at h
   split at h
@@ -402,7 +418,8 @@ private theorem planOf_keywords_none {pal : Palette} {p : Reads} {grounds : List
   · exact familyOf_none (by dsimp only at h; rcases h with h | h <;> exact h)
 
 private theorem planOf_literal_none {pal : Palette} {p : Reads} {grounds : List Color}
-    {l : Derived × Option (Int × Int)} (h : (planOf pal p grounds l).1 = .none) : l.1 = .none := by
+    {floor : Nat} {l : Derived × Option (Int × Int)} (h : (planOf pal p grounds floor l).1 = .none) :
+    l.1 = .none := by
   unfold planOf at h
   split at h
   · exact seededPlan_literal_none h
@@ -413,9 +430,10 @@ each shared value computed once. -/
 public def derive (pal : Palette) (ground : Color) : RoleTable Derived :=
   let p := reads pal
   let grounds := toneGrounds pal ground
-  let plan := planOf pal p grounds (literalOf p grounds)
+  let floor := codeFloor pal ground
+  let plan := planOf pal p grounds floor (literalOf p grounds)
   { ink := .ink, keyword := plan.2.1, name := plan.2.2, literal := plan.1
-    comment := commentOf p grounds, error := errorOf p }
+    comment := commentOf p grounds, error := errorOf pal p grounds floor }
 
 public theorem derive_none_opens (pal : Palette) (ground : Color) (r : ListingHighlight.Role)
     (h : (derive pal ground).get r = .none) : opens pal r = true := by

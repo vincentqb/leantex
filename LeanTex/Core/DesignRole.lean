@@ -82,25 +82,36 @@ scheme starts from. -/
   | .lightMore => "lightMore"
   | .darkMore => "darkMore"
 
-/-- How far a class's tinted grounds stand from its page, as WCAG 2.2 ratios
-to it ×1000: a body fill, a title band, a rule, and the least ratio a band
-keeps to the body below it (`SeedPalette.Targets`). -/
+/-- How far a class's grounds stand from its page as WCAG 2.2 ratios ×1000, and whether its
+medium is a stage, whose text is judged as large-scale (`Need.atStage`). -/
 public structure GroundDepth where
   body : Nat
   band : Nat
   rule : Nat
   pair : Nat
+  stage : Bool
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The medium's text floor on a light page, ×1000: large-scale text's 3:1 on a stage, normal
+text's 4.5:1 elsewhere (WCAG 2.2 SC 1.4.3, `Contrast.depth_text_exact`). -/
+@[expose] public def GroundDepth.text (d : GroundDepth) : Nat := if d.stage then 3000 else 4500
 
 /-- A document's: a body at GitHub's code ground on white (1.06:1), a band at 1.15:1, rules at
 Tailwind slate-300's 1.49:1, the band 1.07:1 from the body. -/
 @[expose] public def GroundDepth.documents : GroundDepth :=
-  { body := 1060, band := 1150, rule := 1490, pair := 1070 }
+  { body := 1060, band := 1150, rule := 1490, pair := 1070, stage := false }
 
-/-- A deck's and a poster's: grounds near Radix slate steps 3 and 5 on white (1.14:1, 1.31:1),
-the band 1.10:1 from the body. -/
+/-- A deck's: grounds near Radix slate steps 3 and 5 on white (1.14:1, 1.31:1), the band 1.10:1
+from the body, its stage text large-scale. -/
 @[expose] public def GroundDepth.decks : GroundDepth :=
-  { body := 1120, band := 1300, rule := 1490, pair := 1100 }
+  { body := 1120, band := 1300, rule := 1490, pair := 1100, stage := true }
+
+/-- A poster's: a deck's grounds, read across a room too, on a printed
+board, whose text the judge holds as a page's. -/
+@[expose] public def GroundDepth.posters : GroundDepth := { GroundDepth.decks with stage := false }
+
+/-- The depths the classes stand at, each once. -/
+@[expose] public def GroundDepth.all : List GroundDepth := [.documents, .decks, .posters]
 
 /-- What a class asks of colours nothing declares: LaTeX's classes print secondary ink in the
 ink, the web's keep a quieter one and tinted verbatim. -/
@@ -144,6 +155,7 @@ public inductive Role where
   | standoutGround | standoutInk | titlePageGround | titlePageInk | separator
   | progressFill | progressTrack | sectionProgressFill | sectionProgressTrack
   | codeInk | codeKeyword | codeName | codeLiteral | codeComment | codeError
+  | alertMark
   deriving Repr, DecidableEq, Inhabited, Hashable
 
 @[expose] public def Role.titleBar : TitledKind → Role
@@ -397,6 +409,8 @@ white paper. -/
   | .codeLiteral => keyed "codeliteral" .text (some .codeSurface) (every .code) (judged := .uses)
   | .codeComment => keyed "codecomment" .text (some .codeSurface) (every .code) (judged := .uses)
   | .codeError => keyed "codeerror" .text (some .codeSurface) (every .code) (judged := .uses)
+  | .alertMark => keyed "alertmark" .decorative none (every .absent) (judged := .uses)
+      (exportName := some "AlertMark") (noun := some "the alert's mark")
 
 /-- A role's stratum: one more than the deepest role its defaults read, in any scheme. -/
 @[expose] public def Role.depth : Role → Nat
@@ -407,7 +421,7 @@ white paper. -/
   | .focus => 1
   | .frameTitleBar | .footBand | .blockTitleBar | .alertTitleBar | .exampleTitleBar => 0
   | .titlePageGround | .progressFill => 0
-  | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError => 0
+  | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError | .alertMark => 0
   | .muted | .codeInk | .frameTitleInk | .sectionTitleInk | .paper | .printInk => 1
   | .blockTitleInk | .alertTitleInk | .exampleTitleInk => 1
   | .blockBodyInk | .alertBodyInk | .exampleBodyInk => 1
@@ -473,12 +487,12 @@ public theorem Role.judged_page : Role.all.filter (fun r => r.row.judged == .pag
   | .blockBodyInk | .alertBodyInk | .exampleBodyInk | .blockBodyGround
   | .alertBodyGround | .exampleBodyGround | .standoutGround | .standoutInk
   | .titlePageGround | .titlePageInk | .separator | .progressFill | .progressTrack
-  | .sectionProgressFill | .sectionProgressTrack => none
+  | .sectionProgressFill | .sectionProgressTrack | .alertMark => none
 
-/-- The role an xcolor colour of a key declares: only a listing code role; any other name stays
-an author colour. -/
+/-- The role an xcolor colour of a key declares: a listing code role or the alert's mark; any other
+name stays an author colour. -/
 @[expose] public def Role.ofXcolor? (k : String) : Option Role :=
-  (Role.ofKey? k).filter fun r => (Role.code? r).isSome
+  (Role.ofKey? k).filter fun r => (Role.code? r).isSome || r == .alertMark
 
 public theorem Role.code?_ofCode (r : ListingHighlight.Role) : (Role.ofCode r).code? = some r := by
   cases r <;> rfl

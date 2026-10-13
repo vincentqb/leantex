@@ -219,4 +219,89 @@ public theorem reflect_between (home page c : Color) :
   exact ⟨_, hg.2.1, hg.2.2.1,
     Nat.le_trans hg.2.2.2.1 (Nat.le_of_eq (Nat.mul_div_cancel_left _ (by decide))), rfl⟩
 
+/-! ## A hue's tone at a floor -/
+
+/-- A chroma past any sRGB colour's (blue's 0.31), so a hue's direction mapped into the gamut
+stands on its edge. -/
+private def edgeReach : Int := 4 * 10 ^ 17
+
+/-- The tone of hue `h` (millidegrees) at lightness `L` with the most chroma
+the gamut holds there. -/
+public def edgeAt (h L : Int) : Color :=
+  let dir := Oklab.ofLch 0 edgeReach h
+  (Oklab.Okl.toGamut { L, a := dir.a, b := dir.b, f := Oklab.fracOne }).toColor
+
+/-- A colour where it clears `req` on every ground. -/
+private def clearing (req : Nat) (grounds : List Color) (c : Color) : Option Color :=
+  if grounds.all fun g => decide (req ≤ contrastMilli c g) then some c else none
+
+private theorem clearing_contract {req : Nat} {grounds : List Color} {c c' : Color}
+    (h : clearing req grounds c = some c') : ∀ g ∈ grounds, req ≤ contrastMilli c' g := by
+  unfold clearing at h
+  split at h
+  · rename_i hp
+    cases h
+    intro g hg
+    exact of_decide_eq_true (List.all_eq_true.mp hp g hg)
+  · cases h
+
+/-- Whether the first ground is light: a tone reads on it toward black. -/
+private def lightFirst (grounds : List Color) : Bool :=
+  match grounds with
+  | g :: _ => decide (contrastMilli Color.white g < contrastMilli Color.black g)
+  | [] => true
+
+/-- The lightness of the gamut-edge tone of hue `h` nearest the paper that clears `req`: the floor
+sets the tone, the gamut the chroma (Material 3's tonal rule at Leonardo's contrast target). -/
+public def bandL (req : Nat) (grounds : List Color) (h : Int) : Int :=
+  let pass (L : Int) : Bool := (clearing req grounds (edgeAt h L)).isSome
+  if lightFirst grounds then bisect pass 60 (10 ^ 18) 0 else bisect pass 60 0 (10 ^ 18)
+
+/-- Hue `h`'s tone at the floor `req` on every ground, so hues at one floor share a lightness band
+as Solarized's accents do (https://ethanschoonover.com/solarized/). -/
+public def bandOn (req : Nat) (grounds : List Color) (h : Int) : Option Color :=
+  clearing req grounds (edgeAt h (bandL req grounds h))
+
+/-- **A band tone clears what it was asked to on every ground.** -/
+public theorem bandOn_contract {req : Nat} {grounds : List Color} {h : Int} {c : Color}
+    (hv : bandOn req grounds h = some c) : ∀ g ∈ grounds, req ≤ contrastMilli c g :=
+  clearing_contract hv
+
+/-! ## The disliked region -/
+
+/-- The disliked region's hues, in millidegrees of OKLCH (`dislikedOk`). -/
+public def dislikedLo : Int := 86700
+
+public def dislikedHi : Int := 110400
+
+/-- Material 3's disliked dark yellow-greens (DislikeAnalyzer after Palmer & Schloss, PNAS 2010)
+as an OKLCH box holding every 8-bit colour it flags (`scripts/dislike-oracle.lean`). -/
+public def disliked (c : Color) : Bool :=
+  let l := Oklab.labOf c
+  let h := Oklab.hueMilli l.a l.b
+  decide (dislikedLo ≤ h) && decide (h ≤ dislikedHi) &&
+    decide ((36 * 10 ^ 15) * (36 * 10 ^ 15) ≤ Oklab.chromaSq l) && decide (luminance c ≤ 3343000)
+
+/-- `h` outside the disliked region's hues, else a degree past its warm edge, toward orange as a
+darkening yellow turns. -/
+public def clearHue (h : Int) : Int :=
+  if dislikedLo ≤ h ∧ h ≤ dislikedHi then dislikedLo - 1000 else h
+
+/-- Hue `h`'s band tone at `req`, or, where it stands in the disliked region,
+the band tone of the hue just past its warm edge (`clearHue`). -/
+public def bandClear (req : Nat) (grounds : List Color) (h : Int) : Option Color :=
+  (bandOn req grounds h).bind fun c => if disliked c then bandOn req grounds (clearHue h) else some c
+
+/-- **A cleared band tone clears what it was asked to on every ground.** -/
+public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {c : Color}
+    (hv : bandClear req grounds h = some c) : ∀ g ∈ grounds, req ≤ contrastMilli c g := by
+  unfold bandClear at hv
+  cases hb : bandOn req grounds h with
+  | none => simp [hb] at hv
+  | some c0 =>
+    simp only [hb, Option.bind_some] at hv
+    split at hv
+    · exact bandOn_contract hv
+    · cases hv; exact bandOn_contract hb
+
 end LeanTex.Core.ContrastSolve

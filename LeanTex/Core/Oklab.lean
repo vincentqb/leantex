@@ -89,18 +89,20 @@ public structure Lab where
   b : Int
   deriving Repr, BEq
 
-/-- sRGB to Oklab with Ottosson's matrices at 10¹⁰, rows normalised so a grey has `a = b = 0`;
-no division. -/
-public def labOf (c : Color) : Lab :=
-  let x := channelLinear.getD c.r.toNat 0
-  let y := channelLinear.getD c.g.toNat 0
-  let z := channelLinear.getD c.b.toNat 0
+/-- Linear sRGB channels at `channelLinear`'s 10⁷ scale to Oklab at `labOf`'s scale. -/
+public def labOfLinear (x y z : Nat) : Lab :=
   let l : Int := icbrt (10 * (4122214708 * x + 5363325363 * y + 514459929 * z))
   let m : Int := icbrt (10 * (2119034982 * x + 6806995451 * y + 1073969567 * z))
   let s : Int := icbrt (10 * (883024619 * x + 2817188376 * y + 6299787005 * z))
   { L := 100 * (2104542553 * l + 7936177850 * m - 40720468 * s)
     a := 100 * (19779984951 * l - 24285922050 * m + 4505937099 * s)
     b := 100 * (259040371 * l + 7827717662 * m - 8086758033 * s) }
+
+/-- sRGB to Oklab with Ottosson's matrices at 10¹⁰, rows normalised so a grey has `a = b = 0`;
+no division. -/
+public def labOf (c : Color) : Lab :=
+  labOfLinear (channelLinear.getD c.r.toNat 0) (channelLinear.getD c.g.toNat 0)
+    (channelLinear.getD c.b.toNat 0)
 
 /-- `f`% of `c` over the rest of `bg` per coordinate at the 10²⁰ scale: CSS
 `color-mix(in oklab, c f%, bg)`. -/
@@ -181,7 +183,7 @@ public def okJnd : Nat := 2 * 10 ^ 16
 
 public theorem labOf_achromatic (c : Color) (hg : c.g = c.r) (hb : c.b = c.r) :
     (labOf c).a = 0 ∧ (labOf c).b = 0 := by
-  simp only [labOf, hg, hb]
+  simp only [labOf, labOfLinear, hg, hb]
   grind
 
 public theorem hue_preserved (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = bg.r) :
@@ -272,6 +274,40 @@ public def Okl.luminance (o : Okl) : Nat :=
 /-- ΔEOK², at `labOf`'s scale squared. -/
 public def distSq (p q : Lab) : Int :=
   (p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)
+
+/-- A colour vision the engine simulates: typical and the three dichromacies at full severity
+(Machado, Oliveira & Fernandes, IEEE TVCG 15(6), 2009). -/
+public inductive Vision where
+  | typical
+  | protan
+  | deutan
+  | tritan
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- Every simulated vision, the typical first. -/
+public def Vision.all : List Vision := [.typical, .protan, .deutan, .tritan]
+
+/-- Machado, Oliveira & Fernandes's severity-1.0 matrix on linear sRGB, ×10⁶, row-major. -/
+private def Vision.matrix : Vision → Array Int
+  | .typical => #[1000000, 0, 0, 0, 1000000, 0, 0, 0, 1000000]
+  | .protan => #[152286, 1052583, -204868, 114503, 786281, 99216, -3882, -48116, 1051998]
+  | .deutan => #[367322, 860646, -227968, 280085, 672501, 47413, -11820, 42940, 968881]
+  | .tritan => #[1255528, -76749, -178779, -78411, 930809, 147602, 4733, 691367, 303900]
+
+/-- A colour as a reader of vision `v` sees it, in Oklab: its linear channels through the vision's
+matrix, clamped into the gamut. -/
+public def labIn (v : Vision) (c : Color) : Lab :=
+  match v with
+  | .typical => labOf c
+  | _ =>
+    let x : Int := channelLinear.getD c.r.toNat 0
+    let y : Int := channelLinear.getD c.g.toNat 0
+    let z : Int := channelLinear.getD c.b.toNat 0
+    let m := v.matrix
+    let ch (i : Nat) : Nat :=
+      (max 0 (min 10000000 ((m.getD (3 * i) 0 * x + m.getD (3 * i + 1) 0 * y +
+        m.getD (3 * i + 2) 0 * z) / 1000000))).toNat
+    labOfLinear (ch 0) (ch 1) (ch 2)
 
 /-- How far the shipped colour stands from the value it ships for, squared. -/
 public def Okl.clipErrSq (o : Okl) : Int := distSq (labOf o.toColor) o.lab

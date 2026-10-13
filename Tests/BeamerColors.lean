@@ -318,5 +318,5 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     ((treeCssOne "" separatorHtml).contains "--ltx-separator: #582347" &&
       !colorLoss separatorDs "title separator")
   for theme in Theme.builtin do
-    t s!"beamer colors: {theme.name} satisfies the extended design contrast contract"
-      (Contrast.paletteContract (deckBundle theme) theme.reported)
+    t s!"beamer colors: {theme.name} satisfies the extended design contrast contract on a deck's stage"
+      (Contrast.paletteContract (deckBundle theme) theme.reported (stage := true))

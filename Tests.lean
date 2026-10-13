@@ -174,6 +174,8 @@ import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
 import Tests.SeedSeries
+import Tests.PaletteFloor
+import Tests.AlertMark
 import Tests.ColourSolve
 import Tests.ThemePalette
 import Tests.ThemeCss
@@ -507,6 +509,9 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.SeedPalette.scriptChecks ref
   Tests.SeedSeries.seriesChecks ref
   Tests.SeedSeries.seriesScriptChecks ref
+  Tests.PaletteFloor.floorChecks ref
+  Tests.AlertMark.containerChecks ref
+  Tests.AlertMark.markChecks ref
   Tests.ColourSolve.checks ref
   titleTemplateOptionalChecks ref oneFace
   titleTemplateColorChecks ref oneFace
