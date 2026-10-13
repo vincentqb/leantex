@@ -1704,6 +1704,8 @@ keeps once (`Layout.uniqueDiags`)")
     ["W0352"] ++
   unexercisedAs "a judgement of the bibliography style, made once per list"
     ["W0353"] ++
+  unexercisedAs "one record per scheme, colour and ground, which the repetition paints again"
+    ["W0308"] ++
   unexercisedAs "a judgement of the reference list's language, made once per list"
     ["W0421"] ++
   unexercisedAs "a judgement of the reference list's collation, made once per list"

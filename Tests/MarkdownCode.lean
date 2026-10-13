@@ -543,13 +543,16 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
       | #[(text, held, _)] => text == long && held == #["value", "compute"]
       | _ => false)
   -- A run that is one held unit carries the class on its own element: no
-  -- element of the page's own around the run's ink.
+  -- element of the page's own around the run's ink, which the run states in
+  -- its style or, where the page ships its schemes, through its token's
+  -- class (`tok-`).
   let (kwDoc, _) := elabMd "```python\ndef handler(event):\n```\n"
   let ownClass := (elemNodesList (fun _ => true) #[] (docNodesOf kwDoc).toList).any fun n =>
     match n with
     | .elem _ attrs _ =>
-      attrs.any (fun (k, v) => k == "class" && (v.splitOn " ").contains HtmlDoc.codeTokClass) &&
-        attrs.any (·.1 == "style")
+      let classes := ((attrs.find? (·.1 == "class")).map (·.2.splitOn " ")).getD []
+      classes.contains HtmlDoc.codeTokClass &&
+        (attrs.any (·.1 == "style") || classes.any (·.startsWith "tok-"))
     | _ => false
   t "a run held whole takes the class on its own element"
     (ownClass &&
