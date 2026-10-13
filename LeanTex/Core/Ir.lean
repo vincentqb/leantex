@@ -23,73 +23,31 @@ namespace LeanTex.Core.Ir
 
 open LeanTex.Core LeanTex.Core.Dim
 
-/-- The base font size every relative measure hangs off. It lives in the IR
-because both backends read it: layout sets body text at this size, and HTML
-derives its content measure from the page's text width in these units. -/
 @[expose] public def baseFontSize : Sp := Dim.pt 10
 
-/-- The leading ratio, per-mille: baselines sit at 6⁄5 of the size — the
-routine text setting, 10/12 of Bringhurst's "settings such as 9/11, 10/12,
-11/13 and 12/15 are routine" (Elements §2.2.1). It lives in the IR because
-both backends read it: `leadingFor` applies it to every baseline distance
-the PDF sets (the math grid included), and the HTML stylesheet emits it as
-the heading line-height. -/
+/-- Baseline distance as a per-mille of the font size. -/
 @[expose] public def leadingMilli : Nat := 1200
 
-/-- Baseline distance for a size: `leadingMilli` of it, scaled by the page's
-`leading` factor (`\linespread`'s home). The factor is where a document
-declares the extra lead a wide measure wants; the engine never raises it
-silently.
-
-This is also the vertical rhythm's unit: the leading — not the font size —
-"is the basic rhythmical unit" (Bringhurst §2.2.2), and it is a definition,
-not a stored value — the rhythm moves with `\page{ fontsize }` and
-`\linespread` because every reader re-derives it from its governing
-context. It lives here, with the tokens it governs, because a guarantee
-about tokens both backends read belongs where the tokens live, not inside
-one consumer: the rhythm theorems below range over it, and each backend
-owes its own realization of the gaps they quantize. -/
+/-- Baseline distance for a size: `leadingMilli` of it, scaled by the page's `leading` factor. -/
 @[expose] public def leadingFor (size : Sp) (factor : Nat := 1000) : Sp :=
   size * (leadingMilli : Int) / 1000 * factor / 1000
 
-/-- The rhythm's working quantum: the half-unit. Bringhurst §2.2.2 permits
-half-lines in the measured intervals; every declared default vertical gap
-is an integer number of these, which `default_rhythm_multiples` and
-`caption_gaps_rhythm` state over the shipped defaults. -/
 @[expose] public def rhythmQuantum (size : Sp) (factor : Nat := 1000) : Sp :=
   leadingFor size factor / 2
 
-/-- The default gap between peer paragraphs: one rhythm quantum of the
-governing size, half its leading (6pt at the 10pt base, 6.6pt at the
-slides 11pt). Derivation-closed in the base size by construction —
-`parskip_is_quantum` is `rfl` at every base — which is what makes a
-uniform `\page{ fontsize }` scale the whole design (`\linespread` moves
-the lines it declares, not the default gaps: the gap quantizes on the
-base rhythm). A document declares its own through
-`\page{ parskip = ... }`. -/
+/-- The default gap between peer paragraphs: one rhythm quantum of the governing size. -/
 @[expose] public def parskipDefault (size : Sp) : SymGlue :=
   { width := Dim.Length.ofSp (rhythmQuantum size) }
 
-/-- TeX's own `\parskip` where nothing declares one: latex.ltx's
-`\parskip 0pt plus 1pt`, which the standard classes keep. What `\@trivlist`
-and `\@item` spend at a list's edge (`Layout.Geom.texParskip`), and what a
-document's `\vspace{\parskip}` reads (`texParskipOf`), as against the
-engine's own paragraph mark (`parskipDefault`), which stands in for an
-indent TeX sets nowhere there. -/
+/-- TeX's own `\parskip` where nothing declares one: latex.ltx's `\parskip 0pt plus 1pt`. -/
 public def texParskipDefault : SymGlue := { stretch := Dim.Length.ofSp (Dim.pt 1) }
 
-/-- The rhythm quantum is positive at any body size of at least 1pt: the
-one key fact every default-gap theorem consumes, proved once over the
-arithmetic (`omega` over bare `Int`, the `slides_lines_survive_bands`
-pattern) instead of once per consumer. -/
 public theorem rhythmQuantum_pos (size : Int) (h : Dim.pt 1 ≤ size) :
     0 < rhythmQuantum size := by
   have hx : (65536 : Int) ≤ size := h
   show 0 < size * 1200 / 1000 * 1000 / 1000 / 2
   omega
 
-/-- The comparison twin: the half-unit is strictly under the full unit, so
-`≤` and `<` orderings between quantum multiples both read off this pair. -/
 public theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
     rhythmQuantum size < 2 * rhythmQuantum size := by
   have hx : (65536 : Int) ≤ size := h
@@ -97,31 +55,19 @@ public theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
     < 2 * (size * 1200 / 1000 * 1000 / 1000 / 2)
   omega
 
-/-- The default space between a cut mark's inner end and the trimmed page:
-0.075 in, wider than the 1/16 in that published guillotine cutting
-tolerances give as their outer bound (PrintNinja's pre-press guide,
-Smartpress's cutting tolerance), so a cut within tolerance never meets a
-mark. `\page{ mark-gap = ... }` overrides. -/
+/-- The default gap between a cut mark's inner end and the trim, wider than
+guillotine cutting tolerance (1/16 in). -/
 public def cutMarkGap : Sp := inch 3 / 40
 
-/-- The default cut-mark thickness: a 0.5 bp hairline. This engine reads
-`bp` as `pt` (`Decl.unitScaleBase`), so the value is 0.5 pt in sp.
-`\page{ mark-thickness = ... }` overrides. -/
+/-- The default cut-mark thickness: a 0.5 bp hairline, with `bp` read as `pt`. -/
 public def cutMarkThickness : Sp := pt 1 / 2
 
-/-- The line-through rule thickness, 0.4 pt: ulem's default `\ULthickness`
-(ulem.sty, 2019/11/18, `\def\ULthickness{0.4pt}`). The one source both
-backends read — the PDF lowers a strike segment at this weight
-(`Layout.lineThroughThickness` aliases this), and the HTML derives its
-`text-decoration-thickness` from the same value (`HtmlDoc`), so a strike
-is one weight on either artifact. -/
+/-- The line-through rule thickness both backends draw: ulem's default `\ULthickness`. -/
 @[expose] public def lineThroughThickness : Sp := pt 2 / 5
 
-/-- One rule a document draws on every page from a shipout hook
-(`\AddToHook{shipout/background}{\put(x,y){\rule{w}{h}}}`, the kernel's
-picture whose reference point is the page's top-left corner): its box in
-medium coordinates, x right and y down from the medium's top-left corner,
-and the palette name it is inked in. -/
+/-- One rule a document draws on every page from a shipout hook: its box in
+medium coordinates, x right and y down from the top-left corner, and its
+palette name. -/
 public structure DrawnRule where
   x : Sp
   y : Sp
@@ -134,203 +80,91 @@ public structure DrawnRule where
 public structure PageSpec where
   width : Sp := pt 612
   height : Sp := pt 792
-  /-- The vertical inch is a stated choice, not a derivation: the
-  copy-fitting table that replaces the horizontal inch
-  (`articleTextBlock`) sets only the measure, and no authority the engine
-  follows names a vertical margin, so the letter-paper office convention
-  stands. The horizontal default is replaced by the elaborator for an
-  undeclared article page. -/
   vmargin : Sp := inch 1
   hmargin : Sp := inch 1
-  /-- The body size, `\page{ fontsize = 11pt }` or the class option. The
-  `slides` class defaults to `slidesFontSize`; everything else to
-  `baseFontSize`. -/
+  /-- The body size, from `\page{ fontsize }` or the class option. -/
   fontSize : Sp := baseFontSize
-  /-- Line spacing as a factor over the default 1.2, in thousandths, so
-  `\linespread{1.15}` has a home: what every line's leading reads. A
-  `\page` declaration composes it from `spread` and `bodySkip`, as LaTeX's
-  `\selectfont` stretches the `\baselineskip` a size command sets. -/
+  /-- Line spacing as a factor over the default 1.2, in thousandths. -/
   leading : Nat := 1000
-  /-- `\linespread` (`\page{ leading = … }`), in thousandths: the stretch
-  over whatever `\baselineskip` the body's size sets. -/
+  /-- `\linespread` (`\page{ leading = … }`), in thousandths. -/
   spread : Nat := 1000
-  /-- The body's `\baselineskip` as a class's `\normalsize` declares it
-  (`\page{ baselineskip = … }`): `leading` is then its share of the 6⁄5
-  rule at the body size, times `spread`, resolved at the body size the
-  declaration ends on. `none` keeps the 6⁄5 rule. -/
+  /-- The body's `\baselineskip` as a class's `\normalsize` declares it;
+  `none` keeps the 6⁄5 rule. -/
   bodySkip : Option Sp := none
-  /-- The gap between peer paragraphs, with its rubber; `none` is the
-  engine's default. LaTeX classes declare `0pt`, `\parskip` and the parskip
-  package their own. -/
+  /-- The gap between peer paragraphs, with its rubber; `none` is the engine's default. -/
   parskip : Option SymGlue := none
-  /-- Whether the measure is checked against the readable band (W0201).
-  `\page{ measure = free }` declares that the document takes responsibility
-  for its line length and silences the diagnostic. -/
+  /-- Whether the measure is checked against the readable band;
+  `\page{ measure = free }` turns the check off. -/
   measureChecked : Bool := true
-  /-- Bleed: how far past the trim edge the physical PDF page extends on
-  every side, for print finishing. The page keeps its declared trim size
-  here; only the PDF writer grows the medium and records the trim box.
-  The print convention is 3 mm per edge (0.125 in at US shops). -/
+  /-- How far past the trim edge the PDF page extends on every side, for print finishing. -/
   bleed : Sp := 0
-  /-- Whether the pages ship printer's cut marks (`\page{ marks = cut }`):
-  eight hairlines inside the bleed strip, derived from the trim and bleed
-  (`Layout.cutMarks`), never placed by hand. Off by default — a print
-  shop that wants only the declared page boxes gets only boxes. -/
+  /-- Whether the pages ship printer's cut marks (`\page{ marks = cut }`). -/
   marks : Bool := false
-  /-- The clearance between a cut mark's inward end and the trim line it
-  stops short of (`\page{ mark-gap = ... }`); `cutMarkGap` holds the
-  default and its source. -/
+  /-- The clearance between a cut mark's inward end and the trim line
+  (`\page{ mark-gap = ... }`). -/
   markGap : Sp := cutMarkGap
-  /-- The cut marks' stroke thickness (`\page{ mark-thickness = ... }`);
-  `cutMarkThickness` holds the default and its source. -/
+  /-- The cut marks' stroke thickness (`\page{ mark-thickness = ... }`). -/
   markThickness : Sp := cutMarkThickness
-  /-- The document's size ladder, when a venue's refused size
-  redefinitions were read out (per-mille of the body, `setStep`'s door;
-  `PageSpec.scale` resolves). `none` is the engine's `sizeScale`. -/
+  /-- The document's size ladder, per mille of the body; `none` is the engine's `sizeScale`. -/
   sizes : Option (List (String × Nat)) := none
-  /-- The document's skip column: each named size's `\baselineskip`, per
-  mille of the body size, where the document declares one — its class's
-  `\normalsize` (`\page{ baselineskip = … }`), a venue's refused size
-  command's `\@setfontsize` third argument (`setSkip`'s door).
-  `PageSpec.skipScale` resolves; `none` is size10.clo's (`sizeSkipScale`). -/
+  /-- Each named size's declared `\baselineskip`, per mille of the body size;
+  `none` is size10.clo's. -/
   skips : Option (List (String × Nat)) := none
-  /-- Whether paragraphs may hyphenate; `none` takes the class default —
-  on for `article` and `slides`, off for `card`, where a two-line name
-  broken with a hyphen is never what anyone means. -/
+  /-- Whether paragraphs may hyphenate; `none` takes the class default. -/
   hyphenate : Option Bool := none
-  /-- Whether paragraphs justify; `none` takes the class default. Off for
-  `card`: below the 40-character working minimum for justified text
-  (Bringhurst), a measure must be set ragged — at card width no line has
-  the stretch justification needs, and forcing it gives the breaker only
-  overfull answers. -/
+  /-- Whether paragraphs justify; `none` takes the class default. -/
   justify : Option Bool := none
-  /-- Whether the ragged setting `justify` turns off is LaTeX's
-  `\raggedright` (`\@flushglue`, `\rightskip 0pt plus 1fil`): lines fill
-  first, unhyphenated, as TeX breaks them when no line can be loose. On for
-  a frame — beamer.cls declares `\raggedright` among its defaults — and off
-  for the engine's own ragged page (`card`), which balances its lines. -/
+  /-- Whether the ragged setting `justify` turns off is LaTeX's `\raggedright`
+  (`\rightskip 0pt plus 1fil`). -/
   raggedFil : Bool := false
-  /-- Whether boundary glyphs protrude into the margin so the optical edge
-  is straight — microtype's character protrusion (Thành, "Margin kerning
-  and font expansion with pdfTeX", TUGboat 22(3); microtype manual §2),
-  on by default as microtype's own `protrusion=true` is. `\page{
-  protrusion = off }` or `\microtypesetup{protrusion=false}` opts out;
-  `none` takes the default. -/
+  /-- Whether boundary glyphs protrude into the margin (microtype's character
+  protrusion); `none` takes the default, on. -/
   protrude : Option Bool := none
-  /-- Whether font boxes may expand within microtype's ±2% so the breaker
-  gains a third degree of freedom (Thành, TUGboat 22(3); microtype manual
-  §2), on by default as microtype's own `expansion=true` is. `\page{
-  expansion = off }` or `\microtypesetup{expansion=false}` opts out;
-  `none` takes the default. -/
+  /-- Whether font boxes may expand within microtype's ±2%; `none` takes the default, on. -/
   expand : Option Bool := none
   /-- Whether pages carry the physical page number, centred in the foot;
-  `none` takes the class default (`ClassRecord.pageNumbers`). This is
-  LaTeX's `plain` page style, spelled natively: `\page{ numbers = on }`
-  is `\pagestyle{plain}`, `off` is `\pagestyle{empty}`'s number half. -/
+  `none` takes the class default. -/
   numbers : Option Bool := none
-  /-- Whether counted body lines carry margin line numbers — lineno's
-  `\linenumbers`, spelled natively `\page{ linenumbers = on }`. A declared
-  flag, never a default: no class turns it on. Only the paged artifact
-  draws the numbers — a line is a paged-media fact, and the HTML twin has
-  no fixed lines to number, so it emits nothing (the recorded divergence;
-  testdata/compat-index/lineno.txt carries it too). -/
+  /-- Whether counted body lines carry margin line numbers (lineno's `\linenumbers`). -/
   linenumbers : Option Bool := none
-  /-- Print only line numbers divisible by this modulus, still counting
-  every line — lineno's `\modulolinenumbers[n]`, whose counter initialises
-  to 5 (lineno.sty, the user-commands section). `none` prints every
-  counted line. -/
+  /-- Print only line numbers divisible by this modulus (lineno's
+  `\modulolinenumbers[n]`); `none` prints every counted line. -/
   lineModulo : Option Nat := none
-  /-- The body-side furniture gap, in ink terms: the distance from the
-  running head's and foot's body-side ink edge to the body area — one knob,
-  both sides, which is what makes a flipped stack line up
-  (`Layout.furniture_symmetric`). The natural declarations are rhythm
-  multiples (`default_rhythm_multiples`' family: the half-unit 6 pt, the
-  unit 12 pt at the 10 pt base). `none` is the default: the furniture
-  hangs from half the margin and the body keeps its margin. -/
+  /-- The distance from the running head's and foot's body-side ink edge to the body area. -/
   furnitureGap : Option Sp := none
-  /-- LaTeX's `\headsep`, as declared (the geometry key): it positions the
-  header's *baseline* against the body. `Layout` reads it into the ink gap
-  with the baseline-to-ink correction applied once (`furnGapOfSep`). -/
+  /-- LaTeX's `\headsep`, as declared: it positions the header's baseline against the body. -/
   headsep : Option Sp := none
-  /-- LaTeX's `\footskip`, as declared: baseline to baseline, from the text
-  area's floor to the foot's baseline, as LaTeX reads it
-  (`Layout.latexFootY`); its declared difference from `headsep` is
-  N0021's. -/
+  /-- LaTeX's `\footskip`, as declared: from the text area's floor to the foot's baseline. -/
   footskip : Option Sp := none
-  /-- LaTeX's `\flushbottom` (`some true`) or `\raggedbottom` (`some
-  false`), natively `\page{ bottom = flush }`: whether a page the page
-  builder broke stretches its glue to stand its last baseline on the text
-  area's floor. `none` is the class's own, ragged for the flow classes, as
-  article.cls declares for a one-sided document. -/
+  /-- LaTeX's `\flushbottom` (`some true`) or `\raggedbottom` (`some false`);
+  `none` is the class's own. -/
   flushBottom : Option Bool := none
-  /-- The rules the document draws on every page (`DrawnRule`), in the
-  order drawn. Eight that are exactly the cut marks of one trim declare
-  that trim (`Layout.drawnTrim`). Only the paged artifact draws them: a
-  rule anchored to the page's corner is a paged-media fact, and the HTML
-  twin has no page corner to anchor it to — the recorded divergence cut
-  marks and page boxes already make. -/
+  /-- The rules the document draws on every page, in the order drawn. -/
   drawn : Array DrawnRule := #[]
-  /-- The document declares page boxes in a spelling the engine cannot
-  evaluate — a page attribute assigned at shipout, as `\pdfvariable
-  pageattr` is, whose values an `\edef` computes — so the trim its drawn
-  cut marks cut stands for them (`Layout.drawnTrim`). Undeclared, drawn
-  marks declare no trim, as in LaTeX, whose file then has no box but the
-  medium. Natively `\page{ trim = marks }`. -/
+  /-- Whether the document declares page boxes the engine cannot evaluate, so
+  that its drawn cut marks stand for the trim. -/
   trimMarked : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- The `\parskip` TeX spends on a page: the one the document or its class
-declares, else the kernel's (`texParskipDefault`). -/
 public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
 
-/-- The `\baselineskip` in force at a page's body size: the engine's one
-leading (`leadingFor` at the body size, under the page's `\linespread`
-factor), the distance two lines of body text stand apart. -/
 public def baselineSkipOf (spec : PageSpec) : Sp := leadingFor spec.fontSize spec.leading
 
-/-- The text block of an undeclared letter page: 26 picas (312 pt).
-Bringhurst's copy-fitting table sets a text face whose lowercase alphabet
-runs 130 pt — the middle of the 10 pt text-face range — on a measure of
-about 26 picas for a single column (Elements of Typographic Style §2.1.2
-and its table, as abridged in the memoir manual, Table 2.2). The
-word-processor inch this replaces gave a 468 pt line, roughly a hundred
-characters at 10 pt — the measure the band diagnostic exists to catch. A
-document that declares any `\page` geometry keeps every value it named. -/
+/-- The text block of an undeclared letter page: 26 picas, Bringhurst's
+copy-fitting measure for a 10 pt text face. -/
 public def articleTextBlock : Sp := pt 312
 
-/-- The text block of a markdown page: 32 picas (384 pt). A markdown source
-declares no page, so this is the whole of its geometry, and it is set by
-characters per line, not inherited from the article's 26 picas — 61
-characters of the face a markdown page sets in. Through the copy-fitting
-fit the readable-band judge reads (W0201; memoir manual eqs. 2.1–2.2) it
-sets 75 characters of DejaVu Sans, the first family an undeclared document
-takes (`FontDb.defaultFamilies`), whose lowercase alphabet runs 146.5 pt at
-10 pt: the upper bound Bringhurst gives continuous text (Elements §2.1.2).
-In the narrowest family of that list, the Helvetica class (127.3 pt, TeX
-Gyre Heros), it sets 85, the low end of the 85–90 he allows discontinuous
-text — the code, lists and tables most markdown documents are made of — so
-every default family lands inside the band, 75 to 85. -/
+/-- The text block of a markdown page: 32 picas, which keeps every default
+family within 75 to 85 characters per line. -/
 public def markdownTextBlock : Sp := pt 384
 
-/-- The surfaces a document or an included file can be written in: the tex
-reader's or the markdown reader's, each read through its one door
-(`Surface.read`). A markdown source can declare nothing — no page, no faces, no
-listing keys — so what its surface defaults is the whole of those settings
-for its documents: the text block (`textBlock`) and how code sets
-(`Surface.listing`); its typewriter face is the driver's default read with
-no lualatex answer to keep (`FontDb.monoPick`, which reads `FontDb.monoFor`
-for it). One decision, the path's extension
-(`ofPath`), read by the driver to pick the reader and by the elaborator to
-record the surface in the document; a markdown fragment a tex document
-includes is set as that document's surface sets it — but for its tables,
-whose fit is the construct's own (`ColSpec.narrows`), not a default. -/
+/-- The surface a document or an included file is written in. -/
 public inductive Surface where
   | tex
   | markdown
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The surface a path's extension selects for a document: `.md` reads as
-markdown, everything else as tex. -/
+/-- `.md` reads as markdown, everything else as tex. -/
 public def Surface.ofPath (file : String) : Surface :=
   if file.endsWith ".md" then .markdown else .tex
 
@@ -339,33 +173,12 @@ public def Surface.textBlock : Surface → Sp
   | .tex => articleTextBlock
   | .markdown => markdownTextBlock
 
-/-- The slides stage and its defaults, beamer's own where beamer names one:
-128×96 mm (the guide's "slides are by default only 128mm by 96mm large"),
-160×90 mm at `aspectratio=169`, side text margins of 1 cm ("the left and
-right margins, which default to 1 cm"), and an 11 pt base — beamer's
-documented default font size, chosen so that "between 10 and 20 lines
-should fit on each slide" and it is "difficult to fit too much onto a
-slide" (beamer user guide §5.6.1, §18.2.1). The vertical margin is the
-engine's own, for the pages that carry no footline — a section page, a
-standout, the title page, an unthemed deck; a page that carries moloch's
-footline takes beamer's own text area instead, the paper's top edge down to
-the footline (`Layout.footFloor`). Being the engine's own, it is derived,
-not chosen: two lines of the slides context's own rhythm (its earlier
-spelling, 9 mm, missed that by 0.888 pt — a free scalar for no reason).
-The lines-per-slide theorem in Layout is what holds these numbers
-together. -/
+/-- Beamer's default slides stage, 128×96 mm. -/
 @[expose] public def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
 @[expose] public def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
 
-/-- The slides stages, beamer's `aspectratio` table entire (beamer user
-guide §8.1, the `aspectratio=` class option; the millimetre pairs are
-`beamer.cls`'s own: 1610 → 160×100, 169 → 160×90, 149 → 140×90,
-141 → 148.5×105, 54 → 125×100, 32 → 135×90, 43 → 128×96). Each row is
-named by its ratio as `\page{ size = ... }` spells it — `√2:1` by beamer's
-own digits `141` — and `slidesStageNamed` matches with the colon elided,
-so `aspectratio=169` and the native `16:9` select one row. The lines-fit
-contract (`Layout.slides_lines_in_band`) quantifies over every row:
-adding a stage is entering that contract. -/
+/-- Beamer's `aspectratio` table: each stage named by its ratio, with
+`beamer.cls`'s millimetre pairs. -/
 @[expose] public def slidesStages : Array (String × Sp × Sp) :=
   #[("4:3", slidesStage43),
     ("16:9", slidesStage169),
@@ -375,8 +188,7 @@ adding a stage is entering that contract. -/
     ("5:4", Dim.mm 125, Dim.mm 100),
     ("3:2", Dim.mm 135, Dim.mm 90)]
 
-/-- The stage a ratio name selects, colon elided on both sides: `16:9`,
-`169`, and beamer's option digits agree on one row. -/
+/-- The stage a ratio name selects, colon elided on both sides. -/
 public def slidesStageNamed (name : String) : Option (Sp × Sp) :=
   let strip := fun (s : String) => String.ofList (s.toList.filter (· != ':'))
   (slidesStages.find? fun r => strip r.1 == strip name).map (·.2)
@@ -385,72 +197,41 @@ public def slidesHMargin : Sp := Dim.mm 10
 @[expose] public def slidesFontSize : Sp := Dim.pt 11
 @[expose] public def slidesVMargin : Sp := 2 * leadingFor slidesFontSize
 
-/-- The article page's vertical inch, restated as rhythm: the letter-paper
-office convention (`PageSpec.vmargin`'s docstring) happens to be exactly
-six units of the base context's leading — 72 pt over 12 pt — so the
-default page's vertical frame is on the grid it did not know it was on.
-Held here so neither side drifts: an edit to the base leading or the
-margin that breaks the coincidence must say which convention it is
-keeping. -/
 public theorem vmargin_on_rhythm :
     ({} : PageSpec).vmargin = 6 * leadingFor baseFontSize := by decide
 
-/-- The card class's legibility floor: an angular x-height of 0.2° at the
-40 cm hand-held distance is 1.4 mm, the bound of the fluent-reading range
-in Legge & Bigelow 2011. The class implies `text.xheight >=` this;
-`card_floor_within_scale` ties it to the size scale. -/
+/-- The card class's legibility floor: a 1.4 mm x-height, 0.2° at a 40 cm
+reading distance (Legge & Bigelow 2011). -/
 public def cardXHeightFloor : Sp := Dim.mm100 140
-/-- The poster class's body size: beamerposter's scale-1 normalsize,
-24.88 pt — the size10.clo ladder magnified for its A0 calibration
-(beamerposter.sty v1.13, the fontscale table's base row). `scale=` and
-the named sizes multiply it through `\page{ fontsize }`. -/
+/-- The poster class's body size: beamerposter's scale-1 normalsize, 24.88 pt. -/
 public def posterFontSize : Sp := Dim.pt 2488 / 100
 
-/-- The poster class's legibility floor: the same 3.5 mrad angular
-x-height bound as the card's (the fluent-reading range, Legge & Bigelow
-2011), at a 1 m viewing distance — 3.5 mm. No authority fixes how far a
-reader stands from a poster, so the distance is derived from the body
-size the class already sources: beamerposter's scale-1 A0 normalsize is
-24.88 pt (`posterFontSize`), whose x-height at a text face's typical
-0.437 x/em is 3.8 mm — fluent at 3.5 mrad out to ~1.1 m. So 1 m is the
-stated convention (a poster's body is read up close; titles carry
-further), and the floor accepts the calibration it is derived from at
-every scale ≥ 1 while still catching an unscaled 10 pt article body
-pasted on a board. A document's own `\assert{ text.xheight >= ... }`
-takes control. -/
+/-- The poster class's legibility floor: the card's angular x-height bound at
+a 1 m viewing distance. -/
 public def posterXHeightFloor : Sp := Dim.mm100 350
 
-/-- Equality for a lookup that selects source-bearing data. Screen equality
-is intentionally weaker; any selection that can carry a PDF rider uses this
-relation instead. -/
+/-- Equality for a lookup that selects source-bearing data, stronger than screen equality. -/
 public def Color.sameSource (a b : Color) : Bool :=
   a == b && a.pdfModel == b.pdfModel
 
-/-- A source-equal selection cannot exchange its PDF device provenance. -/
 public theorem Color.sameSource_pdfModel_exact (a b : Color) :
     a.sameSource b = true → (a.pdfModel == b.pdfModel) = true := by
   simp [Color.sameSource]
 
-/-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`,
-then the package's TeX-scaled conversion to an HTML byte. -/
+/-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`, scaled to an HTML byte. -/
 private def Color.cmykPreviewByte (v k : Decl.ColorComponent) : UInt8 :=
   let scale := v.scale * k.scale
   let used := min scale (v.num * k.scale + k.num * v.scale)
   ({ num := scale - used, scale := scale } : Decl.ColorComponent).unitByte
 
-/-- A CMYK value used by the engine's thousandth mix arithmetic. The exact
-source constructor below uses the same preview rule while retaining finer
-components for PDF. -/
+/-- A CMYK colour from components in thousandths, for the engine's mix arithmetic. -/
 public def Color.ofCmyk (c m y k : Nat) : Color :=
   let part (v : Nat) : Decl.ColorComponent := { num := min 1000 v, scale := 1000 }
   let black := part k
   { r := cmykPreviewByte (part c) black, g := cmykPreviewByte (part m) black,
     b := cmykPreviewByte (part y) black, cmyk := some (c, m, y, k) }
 
-/-- The colour model a colour was declared in — read off the rider, never
-stored twice. Every colour operation is closed in its first operand's
-model (`mix_model_exact`), so a print colour reaches the PDF in the model
-the document wrote it in, whatever expression it travelled through. -/
+/-- The colour model a colour was declared in, read off its rider. -/
 public inductive Color.Model where
   | srgb
   | cmyk
@@ -461,10 +242,7 @@ public def Color.model (c : Color) : Color.Model :=
   | some _ => .cmyk
   | none => .srgb
 
-/-- Thousandths as a PDF decimal: 830 ↦ "0.83". Built structurally over the
-digit list so a statement over the printed form can close by evaluation
-(`pdfMilli_decode`): `String.dropEndWhile`'s position recursion blocks
-kernel reduction. -/
+/-- Thousandths as a PDF decimal: 830 ↦ "0.83". -/
 public def Color.pdfMilli (v : Nat) : String :=
   let v := min v 1000
   if v == 0 then "0" else if v == 1000 then "1"
@@ -473,52 +251,44 @@ public def Color.pdfMilli (v : Nat) : String :=
     let ds := List.replicate (3 - ds.length) '0' ++ ds
     "0." ++ String.ofList (ds.reverse.dropWhile (· == '0')).reverse
 
-/-- An 8-bit channel in thousandths, rounded half up: the one quantization
-between the IR's sRGB bytes and the PDF's decimals. 256 values land on 256
-distinct thousandths (`milli_inj`), so the PDF never merges two inks the
-HTML keeps apart. -/
+/-- An 8-bit channel in thousandths, rounded half up. -/
 public def Color.milli (v : UInt8) : Nat := (v.toNat * 1000 + 127) / 255
 
-/-- An HTML byte triple keeps its exact screen bytes and the five-decimal
-DeviceRGB values xcolor converts them to (`Decl.ColorComponent.xcolorRgb`). -/
+/-- An HTML byte triple, keeping its exact screen bytes and xcolor's
+five-decimal DeviceRGB values. -/
 public def Color.ofHtml (r g b : UInt8) : Color :=
   let part (v : UInt8) : Decl.ColorComponent := { num := v.toNat, scale := 1 }
   { r := r, g := g, b := b,
     pdfModel := some (.rgb (part r).xcolorRgb (part g).xcolorRgb (part b).xcolorRgb) }
 
-/-- An RGB-range source keeps decimal components until the PDF driver's
-0–255 conversion and projects each independently to the HTML byte view. -/
+/-- An RGB-range source, keeping decimal components for the PDF and projecting
+each to an HTML byte. -/
 public def Color.ofRgbByte (r g b : Decl.ColorComponent) : Color :=
   { r := r.rgbByte, g := g.rgbByte, b := b.rgbByte,
     pdfModel := some (.rgb r.pdfRgb g.pdfRgb b.pdfRgb) }
 
-/-- A unit-rgb source keeps its exact components for PDF and uses xcolor's
-fixed-point HTML projection for the shared screen view. -/
+/-- A unit-rgb source, keeping exact components for the PDF and using xcolor's
+fixed-point projection on screen. -/
 public def Color.ofRgbUnit (r g b : Decl.ColorComponent) : Color :=
   { r := r.unitByte, g := g.unitByte, b := b.unitByte,
     pdfModel := some (.rgb r.pdfUnit g.pdfUnit b.pdfUnit) }
 
-/-- A gray source remains DeviceGray in PDF instead of becoming three equal
-RGB channels; its screen preview is the same xcolor byte projection. -/
+/-- A gray source: DeviceGray in the PDF, xcolor's byte projection on screen. -/
 public def Color.ofGray (v : Decl.ColorComponent) : Color :=
   { r := v.unitByte, g := v.unitByte, b := v.unitByte,
     pdfModel := some (.gray v.pdfUnit) }
 
-/-- A source CMYK value retains all decimal digits for DeviceCMYK. The
-thousandth tuple is only the existing arithmetic projection used by mixes. -/
+/-- A source CMYK value, keeping every decimal digit for DeviceCMYK. -/
 public def Color.ofCmykSource (c m y k : Decl.ColorComponent) : Color :=
   { r := cmykPreviewByte c k, g := cmykPreviewByte m k, b := cmykPreviewByte y k,
     pdfModel := some (.cmyk c.pdfUnit m.pdfUnit y.pdfUnit k.pdfUnit),
     cmyk := some (c.milli, m.milli, y.milli, k.milli) }
 
-/-- PDF wants components in 0–1; three decimals is finer than 8-bit input. -/
+/-- Components in 0–1 at three decimals, finer than 8-bit input. -/
 @[expose] public def Color.pdfComponents (c : Color) : String :=
   pdfMilli (milli c.r) ++ " " ++ pdfMilli (milli c.g) ++ " " ++ pdfMilli (milli c.b)
 
-/-- The fill-colour operation for this colour. Explicit source models keep
-their device operator and exact validated components; native byte colours use
-the established DeviceRGB projection, and legacy CMYK values keep their
-thousandth rider. -/
+/-- The PDF fill-colour operation for this colour, in its source model's device operator. -/
 public def Color.pdfFill (c : Color) : String :=
   match c.pdfModel with
   | some (.rgb r g b) => s!"{r} {g} {b} rg"
@@ -529,8 +299,7 @@ public def Color.pdfFill (c : Color) : String :=
       s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} k"
     | none => s!"{c.pdfComponents} rg"
 
-/-- The stroke-colour twin of `pdfFill`, with the corresponding uppercase
-PDF operators. -/
+/-- The stroke-colour twin of `pdfFill`. -/
 public def Color.pdfStroke (c : Color) : String :=
   match c.pdfModel with
   | some (.rgb r g b) => s!"{r} {g} {b} RG"
@@ -541,23 +310,16 @@ public def Color.pdfStroke (c : Color) : String :=
       s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} K"
     | none => s!"{c.pdfComponents} RG"
 
-/-- A colour declared in a model round-trips to that model in a backend
-that supports it: the components the document declared are the components
-the PDF paints with, exactly — never an RGB re-interpretation. -/
 public theorem Color.cmyk_components_kept (c m y k : Nat) :
     (Color.ofCmyk c m y k).cmyk = some (c, m, y, k) ∧
     (Color.ofCmyk c m y k).pdfFill
       = s!"{pdfMilli c} {pdfMilli m} {pdfMilli y} {pdfMilli k} k" := by
   exact ⟨rfl, rfl⟩
 
-/-- A native byte colour with no explicit device rider paints through the
-established DeviceRGB projection. -/
 public theorem Color.pdfFill_srgb (c : Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     c.pdfFill = s!"{c.pdfComponents} rg" := by
   simp [Color.pdfFill, hm, hc]
 
-/-- Each exact source model selects its own PDF operator and keeps the
-validated component spellings. -/
 public theorem Color.pdf_models_exact (r g b c m y k : Decl.ColorComponent) :
     (Color.ofRgbUnit r g b).pdfFill = s!"{r.pdfUnit} {g.pdfUnit} {b.pdfUnit} rg" ∧
     (Color.ofGray r).pdfFill = s!"{r.pdfUnit} g" ∧
@@ -566,7 +328,7 @@ public theorem Color.pdf_models_exact (r g b c m y k : Decl.ColorComponent) :
   exact ⟨rfl, rfl, rfl⟩
 
 /-- The reader of `pdfMilli`'s output: `"1"` ↦ 1000, `"0.d…"` ↦ the digits
-padded to three, anything else 0. Exists for `pdfMilli_decode`. -/
+padded to three, anything else 0. -/
 public def Color.decodeMilli (s : String) : Nat :=
   match s.toList with
   | '0' :: '.' :: ds =>
@@ -574,7 +336,6 @@ public def Color.decodeMilli (s : String) : Nat :=
       (fun acc d => acc * 10 + (d.toNat - '0'.toNat)) 0
   | cs => if cs == ['1'] then 1000 else 0
 
-/-- Every thousandth the PDF can print reads back as itself. -/
 public theorem Color.pdfMilli_decode : ∀ v < 1001, decodeMilli (pdfMilli v) = v := by
   have digitZero (n : Nat) : (n.digitChar == '0') = (n == 0) := by
     apply Bool.eq_iff_iff.mpr
@@ -630,7 +391,6 @@ public theorem Color.pdfMilli_decode : ∀ v < 1001, decodeMilli (pdfMilli v) = 
           Nat.toNat_digitChar_sub_48_of_lt_ten hr]
         omega
 
-/-- 256 channel values land on 256 distinct thousandths. -/
 public theorem Color.milli_inj (a b : UInt8) (h : milli a = milli b) : a = b := by
   have ha : a.toNat < 256 := a.toNat_lt
   have hb : b.toNat < 256 := b.toNat_lt
@@ -642,19 +402,12 @@ public theorem Color.milli_lt (a : UInt8) : milli a < 1001 := by
   simp only [milli]
   omega
 
-/-- The colour printer's marks paint in. ISO 32000-2 §8.6.6.4 names the
-special colorant `All` — "useful for purposes such as painting
-registration targets", ink on every separation — and DeviceCMYK 1,1,1,1
-is its device spelling when the document declares print colours: the
-marks then render on all four plates, as ISO 12647-conforming proofs
-expect of registration marks. A document that declares no CMYK colour
-has no separations to register, so its honest mark colour is plain
-black. -/
+/-- The colour printer's marks paint in: the `All` colorant, DeviceCMYK
+1,1,1,1, when the document declares print colours, else black. -/
 public def Color.registration (printModel : Bool) : Color :=
   if printModel then Color.ofCmyk 1000 1000 1000 1000 else Color.black
 
-/-- Named lengths declared by `\tokens`, in declaration order so a later
-token may be defined in terms of an earlier one. -/
+/-- Named lengths declared by `\tokens`, in declaration order. -/
 public structure Tokens where
   entries : Array (String × SymGlue) := #[]
   deriving Repr, BEq, Inhabited
@@ -662,43 +415,18 @@ public structure Tokens where
 public def Tokens.find? (t : Tokens) (name : String) : Option SymGlue :=
   (t.entries.find? (·.1 == name)).map (·.2)
 
-/-- A resolved value beside the declaration it was resolved from. The
-engine resolves a token at elaboration because the page needs a length;
-the HTML needs the *name* as well, since a rule can only defer to a
-reader's override by referencing the custom property by name
-(`var(--separatorgap, …)`). A field carrying the bare value therefore
-reaches one backend complete and the other blind — the shape that left
-five declared tokens wired to nothing while `separator`, whose name rode
-beside its colour on the same constructor, worked.
-
-The name belongs here rather than inside `SymGlue` because provenance is
-a property of the *reference*, not of the length: `SymGlue.add` has no
-answer for the name of a sum of two tokens, and a derived `BEq` over a
-value carrying its origin would call two equal lengths unequal. A
-computed glue is `none` by construction, which is the honest answer. -/
+/-- A resolved value beside the declaration it was resolved from. -/
 public structure Sourced (α : Type) where
   value : α
-  /-- The declared name the value came from, when it came from one. -/
   token : Option String
   deriving Repr, BEq, Inhabited
 
-/-- A value with no declaration behind it: a computed glue, a class
-default, an engine rhythm quantum. -/
 @[expose] public def Sourced.bare {α : Type} (v : α) : Sourced α := { value := v, token := none }
 
-/-- A token read for a value a backend will show, which is the only kind
-of read that needs the name: the answer carries the name it was asked
-for, so nothing downstream can resolve a token and forget where it came
-from. `Tokens.find?` stays for the reads whose answer is consumed
-arithmetically and has no name to keep. -/
+/-- A token lookup whose answer carries the name it was asked for, for a value a backend shows. -/
 public def Tokens.findSourced? (t : Tokens) (name : String) : Option (Sourced SymGlue) :=
   (t.find? name).map fun g => { value := g, token := some name }
 
-/-- The lookup names what it was asked for and changes nothing else: the
-value is `find?`'s, and the name is the key. This is what holds the
-provenance channel honest — a `findSourced?` that dropped or renamed the
-key would fail here rather than silently emitting a rule no reader can
-override. -/
 public theorem findSourced?_names (t : Tokens) (name : String) :
     (t.findSourced? name).map (·.value) = t.find? name ∧
       ∀ s ∈ t.findSourced? name, s.token = some name := by
@@ -708,17 +436,10 @@ public theorem findSourced?_names (t : Tokens) (name : String) :
     cases h : t.find? name <;> simp [Tokens.findSourced?, h] at hs
     exact hs ▸ rfl
 
-/-- Replace-on-redeclare: a later declaration overrides, keeping one entry
-per name. The one install mechanism — a document's `\tokens` and a theme's
-bundle go through the same door. -/
+/-- Replace-on-redeclare: a later declaration overrides, keeping one entry per name. -/
 public def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
   { entries := (t.entries.filter (·.1 != key)).push (key, g) }
 
-/-- The two halves of keyed last-wins, over the one keyed store both
-`Tokens.declare` and `Palette.declare` are built on: the declared value is
-the one read back, and a redeclaration collapses — declaring a key twice is
-declaring the later value once. Public: `Theme`'s install fold runs the
-same store step, so its lemmas consume these rather than re-proving them. -/
 public theorem declare_find_eq {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
     ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k) = some (k, v) := by
   have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
@@ -734,8 +455,6 @@ private theorem declare_collapse {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Ar
   rw [Array.filter_push]
   simp
 
-/-- The locality half over the same store: a declaration changes exactly
-the key it names — every other key reads back as before. -/
 public theorem declare_keeps {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k k' : κ) (v : α)
     (h : k' ≠ k) :
     ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k') = xs.find? (·.1 == k') := by
@@ -752,45 +471,23 @@ public theorem declare_keeps {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array 
     simpa using fun hk => h hk.symm
   simp [hkk]
 
-/-- Keyed last-wins, read side (T2): `\tokens{ k = v }` means `find? k` is
-`v`, whatever was declared before. -/
 public theorem Tokens.declare_last_wins (t : Tokens) (k : String) (g : SymGlue) :
     (t.declare k g).find? k = some g := by
   unfold declare find?
   rw [declare_find_eq]
   rfl
 
-/-- Keyed last-wins, write side (T2): redeclaring a key overwrites — the
-earlier value leaves no residue, so same-key order is the only order two
-`\tokens` blocks carry. -/
 public theorem Tokens.declare_overwrite (t : Tokens) (k : String) (g g' : SymGlue) :
     (t.declare k g).declare k g' = t.declare k g' := by
   unfold declare
   rw [declare_collapse]
 
-/-- An override changes exactly what it names (T2's locality half, the
-`Tokens` twin of `Palette.declare_keeps_others`): every other token
-resolves as it did before. -/
 public theorem Tokens.declare_keeps_others (t : Tokens) (k k' : String) (g : SymGlue)
     (h : k' ≠ k) : (t.declare k g).find? k' = t.find? k' := by
   unfold declare find?
   rw [declare_keeps _ _ _ _ h]
 
--- Table rule weights and paddings: booktabs' documented defaults
--- (booktabs.dtx v1.61803398, §"The code": `\heavyrulewidth=.08em
--- \lightrulewidth=.05em \cmidrulewidth=.03em \belowrulesep=.65ex
--- \aboverulesep=.4ex \abovetopsep=0pt \belowbottomsep=0pt
--- \cmidrulekern=.5em \defaultaddspace=.5em`). booktabs is this engine's
--- table layout, not a package: "what distinguishes these from plain LaTeX
--- tables is the default use of additional space above and below rules, and
--- rules of varying 'thickness'" (booktabs.dtx §Introduction) — the padding
--- is part of the rule, never left to the author. Em/ex-relative as the
--- package spells them, and resolved as it assigns them: once, in the
--- preamble's font (`PreambleFace`), so a table at any size, in any face,
--- keeps the lengths lualatex gives it (2.88597pt of `\belowrulesep` in a
--- 10pt deck, 2.80147pt in a 10pt article). Each is overridable through
--- `\tokens{ <latex name> = ... }` under its LaTeX name, which resolves where
--- the table stands, as a `\setlength` in the body does.
+-- Table rule weights and paddings: booktabs.dtx defaults, resolved in the preamble's font.
 
 /-- `\toprule`/`\bottomrule` weight: booktabs `\heavyrulewidth` (.08em). -/
 public def heavyRuleWidth : Dim.Length := { em := 80 }
@@ -804,9 +501,7 @@ public def belowRuleSep : Dim.Length := { ex := 650 }
 /-- Space over a rule, under the content above it: booktabs `\aboverulesep`
 (.4ex). -/
 public def aboveRuleSep : Dim.Length := { ex := 400 }
-/-- Space over a `\toprule`: zero — "which seems sensible for a rule
-designed to go at the top" (booktabs.dtx); the float's own caption gap
-owns that space here. -/
+/-- Space over a `\toprule`: zero, as booktabs' `\abovetopsep`. -/
 public def aboveTopSep : Dim.Length := {}
 /-- Space under a `\bottomrule`: zero, as booktabs' `\belowbottomsep`. -/
 public def belowBottomSep : Dim.Length := {}
@@ -815,25 +510,14 @@ public def belowBottomSep : Dim.Length := {}
 public def cmidRuleKern : Dim.Length := { em := 500 }
 /-- `\addlinespace` default: booktabs `\defaultaddspace` (.5em). -/
 public def defaultAddSpace : Dim.Length := { em := 500 }
-/-- Half the gap between two table columns: LaTeX's `\tabcolsep` — "the
-columns in a tabular environment are separated by 2\tabcolsep", 6pt
-(classes.dtx §Array and tabular). An `@{}` in the column spec deletes the
-outer pad, as in LaTeX. -/
+/-- Half the gap between two table columns: LaTeX's `\tabcolsep`, 6pt. -/
 public def tabColSep : Dim.Length := { sp := Dim.pt 6 }
-/-- The gap between text columns: LaTeX's `\columnsep`, 10pt
-(classes.dtx §Multicolumn). Paracol subtracts it before sharing the
-remaining measure (`\pcol@setcolwidth@r`). -/
+/-- The gap between text columns: LaTeX's `\columnsep`, 10pt. -/
 public def columnSep : Dim.Length := { sp := Dim.pt 10 }
-/-- Two stacked full rules separate by LaTeX's `\doublerulesep`, 2pt
-(classes.dtx §Array and tabular) — drawn, but warned: "never use double
-rules" (booktabs.dtx §The layout of formal tables). -/
+/-- The gap between two stacked full rules: LaTeX's `\doublerulesep`, 2pt. -/
 public def doubleRuleSep : Dim.Length := { sp := Dim.pt 2 }
 
-/-- The lengths a formal table reads, under their LaTeX names, each with the
-default it takes undeclared. One table both backends read — the layout's
-rows and rules (`Layout.tableLength`), the stylesheet's fallbacks
-(`HtmlDoc.tableLengthFallback`) — so the length a page sets its table by is
-the length the stage states. -/
+/-- The lengths a formal table reads, under their LaTeX names, each with its undeclared default. -/
 public def tableLengths : List (String × Dim.Length) :=
   [("tabcolsep", tabColSep), ("doublerulesep", doubleRuleSep),
    ("heavyrulewidth", heavyRuleWidth), ("lightrulewidth", lightRuleWidth),
@@ -841,15 +525,11 @@ public def tableLengths : List (String × Dim.Length) :=
    ("aboverulesep", aboveRuleSep), ("belowrulesep", belowRuleSep),
    ("abovetopsep", aboveTopSep), ("belowbottomsep", belowBottomSep)]
 
-/-- A table length's default (`tableLengths`); zero for a name it lacks. -/
+/-- A table length's default; zero for a name `tableLengths` lacks. -/
 public def tableLengthDefault (name : String) : Dim.Length :=
   (tableLengths.lookup name).getD {}
 
-/-- latex.ltx's three vertical skip registers at their kernel values, the
-same in every class (ltspace.dtx, as plain.tex sets them): what `\smallskip`,
-`\medskip` and `\bigskip` spend, and beamer's block template above its title
-box and below its body box (beamerinnerthemedefault.sty, `\medskipamount`
-and `\smallskipamount`), where the document never sets them. -/
+/-- The kernel values of latex.ltx's `\smallskipamount`, `\medskipamount` and `\bigskipamount`. -/
 public def kernelSkip : String → Option SymGlue
   | "smallskipamount" =>
     some { width := .ofSp (Dim.pt 3), stretch := .ofSp (Dim.pt 1), shrink := .ofSp (Dim.pt 1) }
@@ -859,129 +539,57 @@ public def kernelSkip : String → Option SymGlue
     some { width := .ofSp (Dim.pt 12), stretch := .ofSp (Dim.pt 4), shrink := .ofSp (Dim.pt 4) }
   | _ => none
 
-/-- The one resolving site for a skip register: the value the document set
-it to (`\setlength{\medskipamount}`, a token of the register's name), else
-the kernel's. Both backends read it — the PDF walk around a block, the HTML
-gap sheet's block boundaries — as TeX's `\vskip\medskipamount` reads the
-register in force. -/
+/-- A skip register's value: the document's setting where declared, else the kernel's. -/
 public def skipAmount (tokens : Tokens) (name : String) : SymGlue :=
   (tokens.find? name).getD ((kernelSkip name).getD {})
 
-/-- The three rule weights are a hierarchy, not three loose numbers: "the
-top and bottom rules are heavier than the middle rule, which is in turn
-heavier than the subrule" (booktabs.dtx §Introduction, of its own first
-example). A weight edit that flattens the hierarchy fails the build. -/
 public theorem rule_weights_ordered :
     0 < cmidRuleWidth.em ∧ cmidRuleWidth.em < lightRuleWidth.em ∧
     lightRuleWidth.em < heavyRuleWidth.em := by decide
 
-/-- A rule clears more below than above: booktabs' `\belowrulesep` (.65ex)
-against `\aboverulesep` (.4ex) — a rule binds to the content it closes and
-clears the content it heads, which is exactly the "space above and below
-rules" the package exists to add. -/
 public theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < belowRuleSep.ex := by
   decide
 
--- Float and caption separation. LaTeX's rule has a side to it, not just
--- an ordering: `\caption` pays `\abovecaptionskip` (10pt, classes.dtx
--- 10pt option) between the float's object and its caption, and
--- `\belowcaptionskip` (0pt) on the caption's far side — the text side is
--- the float separation the text already has (`\intextsep`, 12pt). For a
--- caption above its table the caption package's `tableposition=top`
--- swaps the pair (caption manual §2.2; venue classes do it by hand), so
--- the caption gap stays on the OBJECT side whichever side the caption
--- stands. A symmetric gap would double-count one side and starve the
--- other. The engine keeps that shape — `captionsep` is the object-side
--- gap, `floatsep` both text-side gaps (`Layout.floatPlan`) — and
--- quantizes both to the vertical rhythm (Bringhurst §2.2.2,
--- `default_rhythm_multiples` below): the caption gap is the half-unit
--- (6pt at the 10pt base, the rhythm-aligned stand-in for LaTeX's 10pt,
--- which is a multiple of nothing here), the float gap one full unit
--- (12pt, exactly `\intextsep`). No authority fixes the caption gap's
--- absolute value; the half-unit is the smallest rhythm multiple that
--- keeps LaTeX's ordering.
-
-/-- Gap between a float's object and its caption — the object side only;
-the caption's text side is `floatSepDefault` (the sourcing note above).
-One rhythm quantum of the governing size. Overridable as
-`\tokens{ captionsep = ... }` or the caption package's `skip=` key. -/
+/-- Gap between a float's object and its caption, on the object side only: one
+rhythm quantum of the governing size. -/
 @[expose] public def captionSepDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size } }
-/-- Gap between a float and the text around it: one full rhythm unit of
-the governing size. Overridable as `\tokens{ floatsep = ... }`. -/
+/-- Gap between a float and the text around it: one full rhythm unit of the governing size. -/
 @[expose] public def floatSepDefault (size : Sp) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 
-/-- Gap between the last body line and the footnote region: `\skip\footins`
-(classes.dtx, the 10pt option: 9pt plus 4pt minus 2pt), quantized to the
-rhythm — two quanta, one full leading. The quantized value lies inside the
-source glue's own range (7..13pt at the 10pt base, `footins_within_glue`),
-so it is a length LaTeX's own glue could set. Overridable as
-`\tokens{ footins = ... }`. -/
+/-- Gap between the last body line and the footnote region: `\skip\footins`,
+quantized to one leading. -/
 public def footinsDefault (size : Sp) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 
-/-- The quantized `\skip\footins` is on the rhythm and inside the source
-glue's own rubber range at the base it was sourced at: 9−2 ≤ 12 ≤ 9+4 pt.
-An edit that moves the default off the grid or outside what the LaTeX glue
-could legally set fails the build here. -/
 public theorem footins_within_glue :
     (footinsDefault baseFontSize).width.sp = 2 * rhythmQuantum baseFontSize ∧
     Dim.pt 7 ≤ (footinsDefault baseFontSize).width.sp ∧
     (footinsDefault baseFontSize).width.sp ≤ Dim.pt 13 := by
   refine ⟨rfl, ?_, ?_⟩ <;> decide
 
-/-- The space a trivlist environment — `{center}`, `{flushleft}`,
-`{flushright}` (ltlists.dtx: `\center` is `\trivlist\centering\item`) —
-opens against the text above and below it:
-LaTeX's top-level `\topsep`, which the size file's `\@listi` sets
-(size10.clo:218 `8pt plus 2pt minus 4pt`, size11.clo:218 `9pt plus 3pt
-minus 5pt`, size12.clo:218 `10pt plus 4pt minus 6pt`) and beamer keeps at top
-level — its own `\@listi` (beamerbaselocalstructure.sty:152) is invoked only
-inside a list, measured under lualatex as `8.0pt plus 2.0pt minus 4.0pt` in
-a 10pt frame. Quantized to the rhythm as the display skip is: one quantum,
-inside each size file's own range (`trivlist_between`), with size10's rubber
-proportions (a fifth of the body stretch, two fifths shrink). `\partopsep`
-(size10.clo:215, 2–3 pt in article; 0 in beamer, beamerbaselocalstructure
-.sty:164) is added by LaTeX only where the environment opens a new
-paragraph; lists and quotes spend it (`partopsepFor`, `inParagraphRole`),
-and this quantized space does not.
-Overridable as `\tokens{ topsep = ... }` or `\setlength{\topsep}{...}`. -/
+/-- The space a trivlist environment opens above and below: LaTeX's top-level
+`\topsep`, quantized to one rhythm quantum. -/
 @[expose] public def trivlistSkipDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size }
     stretch := { sp := size / 5 }
     shrink := { sp := size * 2 / 5 } }
 
-/-- The trivlist space's token name, as `\tokens` and `\setlength` spell it. -/
 public def trivlistSkipName : String := "topsep"
 
-/-- The one resolving site for a trivlist's space: the document's token
-where declared, else the rhythm default at the governing size. Both
-backends read it — the PDF walk around a trivlist, the HTML base sheet's
-`var(--topsep, …)` fallback the same default. -/
+/-- A trivlist's space: the document's token where declared, else the rhythm
+default at the governing size. -/
 public def trivlistSkip (tokens : Tokens) (size : Sp) : SymGlue :=
   (tokens.find? trivlistSkipName).getD (trivlistSkipDefault size)
 
-/-- natbib's hanging indent for an author-year reference list, `\bibhang`
-(natbib.sty:637–638, `\setlength{\bibhang}{1em}`): the list's
-`\leftmargin`, with `\itemindent` its negative (`\NAT@bibsetup`,
-natbib.sty:642–644), so an entry's first line stands at the margin and
-its continuation lines one hang in. A numbered list hangs its labels
-instead (`\NAT@bibsetnum`, natbib.sty:627). The document's token where
-declared — `\setlength{\bibhang}` spells it — else natbib's value; both
-backends read it. -/
+/-- natbib's hanging indent for an author-year reference list, `\bibhang`. -/
 public def bibHangName : String := "bibhang"
 
 public def bibHang (tokens : Tokens) : SymGlue :=
   (tokens.find? bibHangName).getD { width := { em := 1000 } }
 
-/-- natbib's gap between reference-list entries, `\bibsep`: the list's
-`\itemsep`, its `\parsep` zero (`\NAT@bibsetup`). natbib reads the default
-from the class's first-level list when it loads (natbib.sty:639–640,
-`\itemsep` plus `\parsep` of `\@listi`): size10.clo:216–219 sets each to
-`4pt plus 2pt minus 1pt`, size11.clo `4.5pt plus 2pt minus 1pt`,
-size12.clo `5pt plus 2.5pt minus 1pt`. Another base keeps size10's
-proportions of its own size. -/
+/-- natbib's gap between reference-list entries, `\bibsep`. -/
 public def bibSepName : String := "bibsep"
 
 public def bibSepDefault (size : Sp) : SymGlue :=
@@ -992,178 +600,112 @@ public def bibSepDefault (size : Sp) : SymGlue :=
   else if size == Dim.pt 12 then g (Dim.pt 10) (Dim.pt 5) (Dim.pt 2)
   else g (size * 4 / 5) (size * 2 / 5) (size / 5)
 
-/-- The one resolving site for the gap between reference-list entries: the
-document's token where declared (`\setlength{\bibsep}`), else natbib's
-default at the governing size; `bibList_default_exact` (BibContract.lean)
-holds the undeclared values. -/
+/-- The gap between reference-list entries: the document's `\bibsep` where
+declared, else natbib's default at the governing size. -/
 public def bibSep (tokens : Tokens) (size : Sp) : SymGlue :=
   (tokens.find? bibSepName).getD (bibSepDefault size)
 
-/-- The role a trivlist environment's body rides in: the environment
-opens space (`\topsep` above and below), the `\centering` and `\raggedright`
-declarations open none, and both elaborate to the same `.center` or
-`.ragged` scope — so the environment's scope is wrapped in this engine role,
-as a title slot's is (`titleSlotRole`). A name no document command can
-spell (it carries a hyphen), so no authored role collides with it. -/
+/-- The role a trivlist environment's body rides in, marking the `\topsep` it opens. -/
 public def trivlistRole : String := "trivlist-env"
 
-/-- The role a list or a quote rides in when its `\begin` follows the
-text of an open paragraph with no blank line or `\par` between: LaTeX's
-`\@trivlist` finds horizontal mode there and adds no `\partopsep` to the
-environment's `\topsep`, above or below (latex.ltx:15871-15878), where in
-vertical mode — after a blank line, another list, a scope's start — it
-does (`partopsepFor`). A name no document command can spell (it carries a
-hyphen), as `trivlistRole`'s is. -/
+/-- The role a list or quote rides in when it opens inside a paragraph, where
+LaTeX adds no `\partopsep`. -/
 public def inParagraphRole : String := "in-paragraph"
 
-/-- The role `\vspace*` rides in, an empty marker just before the space it
-keeps: LaTeX's `\@vspacer` sets a zero rule ahead of the space
-(latex.ltx:9374-9390), and a rule is where TeX's page builder stops
-discarding at a page's top, so the space after it stays there, with
-`\topskip` above the rule — the page's first item. A fact of the paged
-artifact alone: a continuous medium has no page top. A name no document
-command can spell (it carries a hyphen), as `trivlistRole`'s is. -/
+/-- The role `\vspace*` rides in: an empty marker that keeps the space after it at a page's top. -/
 public def pageAnchorRole : String := "page-anchor"
 
-/-- The role `\nointerlineskip` rides in, an empty marker: TeX's
-`\prevdepth` set to −1000 pt (latex.ltx `\def\nointerlineskip
-{\prevdepth-\@m\p@}`), so the next box on the vertical list takes no
-interline glue (TeXbook ch. 12). A fact of the paged artifact alone. -/
+/-- The role `\nointerlineskip` rides in: an empty marker after which the next
+box takes no interline glue. -/
 public def noInterlineRole : String := "no-interline"
 
-/-- The role a primitive `\vskip` rides in, an empty marker just after its
-skip: TeX's `\vskip` leaves its own glue as `\lastskip`, where `\vspace`
-leaves zero (latex.ltx's `\@vspace` closes on `\vskip\z@skip`), so an
-element's `\addvspace` after it takes the larger of the two (`\@xaddvskip`)
-instead of adding. A fact of the paged artifact's skip arithmetic. A name no
-document command can spell (it carries a space). -/
+/-- The role a primitive `\vskip` rides in: an empty marker after its skip,
+which a following `\addvspace` combines with. -/
 public def primitiveSkipRole : String := "primitive vskip"
 
 
-/-- The role a frame's `[squeeze]` rides in, an empty marker opening the
-frame's body: beamer's `\beamer@cramped`, which every list the frame opens
-runs as it starts, `\itemsep0pt\topsep0.5pt` (beamerbaseframesize.sty:21-22,
-beamerbaselocalstructure.sty:207, 270, 311). A name no document command can
-spell (it carries a space). -/
+/-- The role a frame's `[squeeze]` rides in: an empty marker opening the body,
+for beamer's cramped list spacing. -/
 public def squeezeRole : String := "frame squeeze"
 
-/-- The same spacing set by the overflow ladder (`frameFit`) on a frame the
-page could not set at its glue's natural size, for the web deck alone: a web
-stage has no glue to shrink, and beamer's squeezed list spacing is the floor
-its list glue shrinks to (`Layout.runFitted`). -/
+/-- The squeezed list spacing as the overflow ladder sets it on an overfull
+frame, for the web deck alone. -/
 public def squeezeFitRole : String := "frame squeeze fit"
 
-/-- What every name the overflow ladder marks a frame with starts with
-(`fitMarkRole`). -/
 public def fitMarkPrefix : String := "frame fit "
 
-/-- The overflow ladder's first setting marks every frame not declared
-breakable this way (`Layout.runFitted`): the page stands it overfull
-whatever its overrun, to measure how far past its text area it reaches. -/
+/-- The overflow ladder's first-pass mark: the page stands the frame overfull
+to measure its overrun. -/
 public def fitMeasureRole : String := fitMarkPrefix ++ "measure"
 
-/-- The overflow ladder's decision that a frame's overlay step `step` stands
-overfull within the gap above its footline (`frameFit`, `Layout.runFitted`):
-the page sets it there rather than continue it. -/
+/-- The overflow ladder's decision that overlay step `step` stands overfull
+within the gap above its footline. -/
 public def fitOverhangRole (step : Nat) : String := fitMarkPrefix ++ s!"overhang {step}"
 
-/-- The overflow ladder's decision that a frame's overlay step `step`
-continues on the next page (`frameFit`, `Layout.runFitted`): the page
-continues it, and the ladder names it with the overrun it measured. -/
+/-- The overflow ladder's decision that overlay step `step` continues on the next page. -/
 public def fitContinuesRole (step : Nat) : String := fitMarkPrefix ++ s!"continues {step}"
 
 /-- Whether a role is one of the overflow ladder's marks. -/
 @[expose] public def fitMarkRole (n : String) : Bool := n.startsWith fitMarkPrefix
 
-/-- A declaration at a page boundary, independent of the page's ground and
-vertical distribution. `empty` suppresses running furniture on one shipped
-page; a boundary that ships nothing cannot spend that suppression.
-Source: article.cls's `titlepage` sets `\thispagestyle{empty}` and page 1
-on entry, then page 1 again after the closing `\newpage` in oneside mode. -/
+/-- A declaration at a page boundary, independent of the page's ground and vertical distribution. -/
 public structure PageOpening where
   folio : Option Nat := none
   empty : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- The logical folio and running style of the page being built. Physical
-page indices and the total page count are separate: resetting the folio
-does not remove or renumber an already shipped sheet. -/
+/-- The logical folio and running style of the page being built. -/
 public structure PageState where
   folio : Nat := 1
   furniture : Bool := true
   deriving Repr, BEq, Inhabited
 
-/-- Apply only the opening's declarations. A reset does not restore an
-empty style that has not yet reached shipout (`ltoutput.dtx`'s special
-page-style flag is consumed by `\@outputpage`, not by `\newpage`). -/
+/-- Apply only the opening's declarations; a reset keeps an empty style that has not yet shipped. -/
 public def PageState.applyOpening (s : PageState) (opening : PageOpening) : PageState :=
   { folio := opening.folio.getD s.folio
     furniture := s.furniture && !opening.empty }
 
-/-- Ship one physical page: advance its logical folio and restore the
-ordinary running style, as `\@outputpage` does. -/
+/-- Ship one physical page: advance its logical folio and restore the ordinary
+running style, as `\@outputpage` does. -/
 public def PageState.ship (s : PageState) : PageState :=
   { folio := s.folio + 1, furniture := true }
 
-/-- A page opening changes exactly its declared counter and can only
-suppress furniture; an unspent empty style survives a counter-only reset. -/
 public theorem PageState.opening_contract (s : PageState) (opening : PageOpening) :
     (s.applyOpening opening).folio = opening.folio.getD s.folio ∧
       (s.applyOpening opening).furniture = (s.furniture && !opening.empty) :=
   ⟨rfl, rfl⟩
 
-/-- Shipment, rather than an empty boundary, advances the folio and
-consumes the page-local style. The paged artifact projects this transition. -/
 public theorem PageState.ship_contract (s : PageState) :
     s.ship.folio = s.folio + 1 ∧ s.ship.furniture = true := ⟨rfl, rfl⟩
 
-/-- Reserved roles for article titlepage's two boundary declarations. A
-space makes either name impossible as an authored control word. -/
+/-- Reserved roles for article titlepage's two boundary declarations,
+unspellable as control words. -/
 public def titlePageBeginRole : String := "titlepage begin"
 public def titlePageEndRole : String := "titlepage end"
 
-/-- The one shared reading of titlepage's boundary roles. The end role is
-emitted only in oneside mode; twoside keeps the post-titlepage folio. -/
+/-- The page opening a titlepage boundary role declares. -/
 public def pageOpeningOfRole? (n : String) : Option PageOpening :=
   if n == titlePageBeginRole then some { folio := some 1, empty := true }
   else if n == titlePageEndRole then some { folio := some 1 }
   else none
 
-/-- Even an empty titlepage requests an empty first shipped page: its
-closing counter reset cannot cancel the opening style. -/
 public theorem titlepage_empty_exact (s : PageState) :
     (s.applyOpening { folio := some 1, empty := true }).applyOpening
         { folio := some 1 } = { folio := 1, furniture := false } := by
   simp [PageState.applyOpening]
 
-/-- The engine roles that mark a fact of the page model and carry no
-content: HTML, markdown and the structure tree read them as nothing. -/
+/-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n
 
-/-- Every declared opening is a page-model mark, with no continuous-medium
-content of its own. HTML projects this fact instead of interpreting a
-titlepage's spelling independently. -/
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
   simp [pageMarkerRole, h]
 
-/-- The inline role a description item's label rides in, first in the item's
-first paragraph and followed by `\labelsep` (latex.ltx `description`:
-`\list{}{\labelwidth\z@ \itemindent-\leftmargin
-\let\makelabel\descriptionlabel}`, the label `\normalfont\bfseries`). The
-page sets that paragraph with the label run in at the list's outer margin
-and every further line at the item's indent; HTML sets the item as a
-`<dt>`/`<dd>` pair. A name no document command can spell (it carries a
-hyphen), so no authored role collides with it. -/
+/-- The inline role a description item's label rides in, first in the item's first paragraph. -/
 public def descLabelRole : String := "description-label"
 
-/-- **The quantized trivlist space lies inside every size file's glue.** One
-quantum at LaTeX's three standard bodies sits between `\topsep`'s own
-minimum and maximum there — 4..10 pt at 10 pt, 4..12 pt at 10.95 pt,
-4..14 pt at 12 pt — so the engine's default is a length each class's own
-glue could have set. -/
 public theorem trivlist_between :
     Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 10)).width.sp ∧
       (trivlistSkipDefault (Dim.pt 10)).width.sp ≤ Dim.pt 10 ∧
@@ -1173,26 +715,16 @@ public theorem trivlist_between :
       (trivlistSkipDefault (Dim.pt 12)).width.sp ≤ Dim.pt 14 := by
   decide
 
-/-- Where a class's list spacing comes from: the size file of the standard
-classes for the body size, beamer's own list family, which a deck and a
-poster inherit (beamerposter loads beamer), or the web's, where a list is a
-block like a paragraph and its items stand one leading apart — what the
-HTML base sheet sets, and what a webpage's print twin follows. -/
+/-- Where a class's list spacing comes from: the standard classes' size file,
+beamer's list family, or the web's. -/
 public inductive ListLineage where
   | sizeFile
   | beamer
   | web
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- One list level's vertical parameters, LaTeX's `\@list⟨n⟩` (ltlists.dtx):
-`topsep` above and below the list, taken by `\addvspace` with the
-surrounding paragraph's `\parskip` on top (`\@trivlist`, `\@item`,
-`\@endparenv`); `itemsep` before every item after the first; and `parsep`,
-which is `\parskip` inside the list (`\list` sets `\parskip\parsep`), so two
-items stand `itemsep + parsep` apart and two paragraphs of one item
-`parsep`. `partopsep` is the level's own `\partopsep` where its
-`\@list⟨n⟩` sets it (size10.clo:233, level three), `none` where the value in
-force stands (`partopsepFor`). -/
+/-- One list level's vertical parameters, LaTeX's `\@list⟨n⟩`; `partopsep` is
+`none` where the value in force stands. -/
 public structure ListSkips where
   topsep : SymGlue
   itemsep : SymGlue
@@ -1205,9 +737,8 @@ private def ptsGlue (w st sh : Int) : SymGlue :=
   { width := { sp := Dim.pt w / 100 }, stretch := { sp := Dim.pt st / 100 },
     shrink := { sp := Dim.pt sh / 100 } }
 
-/-- The sourced list levels, verbatim: per lineage, size file and level one
-to three. A deeper level keeps the third's values, because `\@listiv` and
-beyond set margins only, so the values in force stand. -/
+/-- The sourced list levels per lineage, size file and level one to three; a
+deeper level keeps the third's values. -/
 private def listSkipsTable : ListLineage → Nat → Nat → ListSkips
   -- size10.clo:216-233
   | .sizeFile, 10, 1 => ⟨ptsGlue 800 200 400, ptsGlue 400 200 100, ptsGlue 400 200 100, none⟩
@@ -1227,21 +758,14 @@ private def listSkipsTable : ListLineage → Nat → Nat → ListSkips
   -- beamerbaselocalstructure.sty:152-163
   | .beamer, _, 1 => ⟨ptsGlue 300 200 250, ptsGlue 300 200 300, {}, none⟩
   | .beamer, _, _ => ⟨ptsGlue 200 100 200, ptsGlue 0 100 0, ptsGlue 0 100 0, none⟩
-  -- the web's: no list space of its own (`listSkips` answers `none`)
   | .web, _, _ => ⟨{}, {}, {}, none⟩
 
-/-- The size file a body size reads: the standard classes' `10pt`, `11pt`
-and `12pt` options, and the nearest of them for any other size. -/
+/-- The size file a body size reads: `10pt`, `11pt` or `12pt`, the nearest for any other size. -/
 private def sizeFileOf (size : Sp) : Nat :=
   if size < Dim.pt 21 / 2 then 10 else if size < Dim.pt 23 / 2 then 11 else 12
 
-/-- **The one resolving site for a list level's spacing**: the lineage's
-sourced values at the body size and nesting level, `none` for the web's,
-where a list opens only the peer gap a paragraph would. At 10, 11 and
-12 pt they are the size file's own. A body size no size file sets scales
-its nearest file's values with the type; LaTeX has no value there, and the
-engine's other defaults follow the type the same way. beamer's values do
-not depend on the size, as its `\@listi` does not. -/
+/-- A list level's spacing: the lineage's sourced values at the body size and
+nesting level, `none` for the web's. -/
 public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSkips :=
   let lv := min (max level 1) 3
   match l with
@@ -1257,50 +781,28 @@ public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSk
                 parsep := s.parsep.scale size base.toNat
                 partopsep := s.partopsep.map (·.scale size base.toNat) }
 
-/-- The web's lineage sets no list skips, at any size or level. -/
 public theorem listSkips_web_exact (size : Sp) (level : Nat) :
     listSkips .web size level = none := by
   simp only [listSkips]
 
 /-- The class options a display's size file is read from, each with the
-`\normalsize` its file sets (`\@xipt` is 10.95 pt, `\@xivpt` 14.4 pt,
-`\@xviipt` 17.28 pt, `\@xxpt` 20.74 pt: ltplain's values). -/
+`\normalsize` its file sets. -/
 private def displayOptions : List (Nat × Sp) :=
   [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
    (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
 
-/-- The top-level `\topsep` the size file of each beamer class option
-leaves in force as it loads, running its `\@listi`: size8.clo and
-size9.clo:145 `6pt plus 2pt minus 3pt` (extsizes' files, which beamer.cls
-loads for `8pt` and `9pt`), size10.clo:218 `8pt plus 2pt minus 4pt`,
-size11.clo:218 `9pt plus 3pt minus 5pt`, size12.clo:218 `10pt plus 4pt minus
-6pt`, size14.clo:145 `12pt plus 5pt minus 7pt`, size17.clo:145 `14pt plus 6pt
-minus 8pt`, size20.clo:145 `16pt plus 7pt minus 9pt`. -/
+/-- The top-level `\topsep` each beamer class option's size file leaves in force. -/
 private def beamerTopsepTable : List (Nat × SymGlue) :=
   [(8, ptsGlue 600 200 300), (9, ptsGlue 600 200 300), (10, ptsGlue 800 200 400),
    (11, ptsGlue 900 300 500), (12, ptsGlue 1000 400 600), (14, ptsGlue 1200 500 700),
    (17, ptsGlue 1400 600 800), (20, ptsGlue 1600 700 900)]
 
-/-- The class option a beamer body declares: the option whose point size,
-or the `\normalsize` its file sets (10.95, 14.4, 17.28 and 20.74 pt), is the
-body; otherwise beamer's documented default, `11pt` — a poster's body is
-beamerposter's scaled type over beamer's own size file, whose skips the
-package leaves in force. -/
+/-- The class option a beamer body declares, else beamer's default `11pt`. -/
 private def beamerOptionOf (size : Sp) : Nat :=
   ((displayOptions.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
 
-/-- **The one resolving site for a trivlist's space in a lineage**, at the
-list depth it stands in. In beamer's lineage, outside a list, the document's
-token where declared, else LaTeX's own top-level `\topsep` — the size file's
-of the class option (`beamerTopsepTable`), since beamer's `\@listi`
-(beamerbaselocalstructure.sty:151-154) runs only inside a list — measured
-under lualatex as `8pt plus 2pt minus 4pt` above and below a `{center}` in
-a 10pt frame; inside a list at depth `n`, the `\topsep` beamer's
-`\@list⟨n⟩` sets there (`listSkips`: 3 pt, then 2 pt), which no preamble
-declaration survives. Elsewhere the rhythm's quantum (`trivlistSkip`). A
-frame distributes its content instead of setting it on the text grid the
-quantum keeps, so a deck spends LaTeX's value. Both backends read it: the
-PDF walk around a trivlist and the web deck's `--topsep`. -/
+/-- A trivlist's space in a lineage at the list depth it stands in; outside
+beamer's lineage, `trivlistSkip`. -/
 public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
     SymGlue :=
   match l with
@@ -1310,24 +812,13 @@ public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (dept
     else ((listSkips .beamer size depth).map (·.topsep)).getD top
   | .sizeFile | .web => trivlistSkip tokens size
 
-/-- Outside beamer's lineage the trivlist's space is the one every class
-reads (`trivlistSkip`), at every depth. -/
 public theorem trivlistSkipFor_trivlistSkip_exact (l : ListLineage) (tokens : Tokens)
     (size : Sp) (depth : Nat) (h : l ≠ .beamer) :
     trivlistSkipFor l tokens size depth = trivlistSkip tokens size := by
   cases l <;> simp_all [trivlistSkipFor]
 
-/-- **The one resolving site for a float's space against the text**, at
-the list depth it stands in, with whether the paragraph gap stands on top
-of it: a declared `\floatsep` (`\tokens{ floatsep = ... }`) alone where the
-document sets one; in beamer's lineage, where a figure or a table is the
-`{center}` its environment opens (beamerbaselocalstructure.sty:550-559,
-`\par\nobreak\begin{center}`), the trivlist's space there
-(`trivlistSkipFor`) with the paragraph gap on top of it, as a trivlist
-spends it — measured under lualatex, a frame's `\parskip` moves the text
-after a figure by itself; elsewhere the rhythm's float unit
-(`floatSepDefault`). Both backends read it: the PDF float plan's text-side
-gaps and the web deck's `--floatsep`. -/
+/-- A float's space against the text at its list depth, with whether the
+paragraph gap stands on top of it. -/
 public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
     SymGlue × Bool :=
   match tokens.find? "floatsep", l with
@@ -1335,11 +826,7 @@ public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth 
   | none, .beamer => (trivlistSkipFor l tokens size depth, true)
   | none, .sizeFile | none, .web => (floatSepDefault size, false)
 
-/-- The class's `\partopsep`, the value in force where no list level sets
-its own: size10.clo:215 `2pt plus 1pt minus 1pt`, size11.clo:215
-`3pt plus 1pt minus 1pt`, size12.clo:215 `3pt plus 2pt minus 2pt`, scaled
-with the type off the three bodies as `listSkips` scales; beamer's is zero
-(beamerbaselocalstructure.sty:164), and the web's lists open none. -/
+/-- The class's `\partopsep` where no list level sets its own. -/
 public def partopsepDefault (l : ListLineage) (size : Sp) : SymGlue :=
   match l with
   | .sizeFile =>
@@ -1351,21 +838,14 @@ public def partopsepDefault (l : ListLineage) (size : Sp) : SymGlue :=
     if size == Dim.pt f then g else g.scale size (Dim.pt f).toNat
   | .beamer | .web => {}
 
-/-- **The one resolving site for a list's `\partopsep`**, the space
-`\@trivlist` adds to `\topsep` where the list opens in vertical mode: the
-level's own where its `\@list⟨n⟩` sets it — size10/11/12.clo:233, so a
-level-three list takes 1pt whatever the document declared — else a
-declared `\partopsep` (`\setlength`, `\tokens`), else the class's
-(`partopsepDefault`). -/
+/-- A list's `\partopsep`, which `\@trivlist` adds to `\topsep` where the list
+opens in vertical mode. -/
 public def partopsepFor (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) : SymGlue :=
   match (listSkips l size level).bind (·.partopsep) with
   | some g => g
   | none => (tokens.find? "partopsep").getD (partopsepDefault l size)
 
-/-- The four glues a size file's `\normalsize` sets around display math:
-`\abovedisplayskip` and `\belowdisplayskip`, and the short pair TeX takes
-instead when the line before the display ends left of the formula
-(TeXbook ch. 19; tex.web §1203). -/
+/-- The four glues a size file's `\normalsize` sets around display math. -/
 public structure DisplaySkips where
   above : SymGlue
   below : SymGlue
@@ -1373,12 +853,7 @@ public structure DisplaySkips where
   belowShort : SymGlue
   deriving Repr, BEq
 
-/-- The size files' display skips, verbatim, keyed by the class option's
-point size: size10.clo:49-52, size11.clo:49-52 and size12.clo:49-52 for
-the standard classes (KOMA's scrsize1Xpt.clo and memoir's mem1X.clo set the
-same rows), and extsizes' size8, size9, size14, size17 and size20.clo:13-16
-for beamer's other options (beamer.cls:155-166 inputs those files). Every
-file sets `\belowdisplayskip \abovedisplayskip`. -/
+/-- The size files' display skips, verbatim, keyed by the class option's point size. -/
 private def displaySkipsTable : Nat → DisplaySkips
   | 8 | 9 => ⟨ptsGlue 800 400 400, ptsGlue 800 400 400, ptsGlue 0 300 0, ptsGlue 500 300 300⟩
   | 10 => ⟨ptsGlue 1000 200 500, ptsGlue 1000 200 500, ptsGlue 0 300 0, ptsGlue 600 300 300⟩
@@ -1388,12 +863,8 @@ private def displaySkipsTable : Nat → DisplaySkips
   | 17 => ⟨ptsGlue 1500 400 800, ptsGlue 1500 400 800, ptsGlue 0 400 0, ptsGlue 800 400 300⟩
   | _ => ⟨ptsGlue 1700 500 800, ptsGlue 1700 500 800, ptsGlue 0 500 0, ptsGlue 1000 500 400⟩
 
-/-- The `\normalsize` a class option's size file sets, for a body declared
-at that option's point size: `11pt` sets 10.95 pt (size11.clo's `\@xipt`),
-`14pt` 14.4 pt; a size that is no option's point size is its own. What a
-package measures in the preamble is measured at this size
-(`PreambleFace.ofClass`): booktabs under `11pt` fixes `\heavyrulewidth` at
-0.876 pt, .08 of 10.95 pt (lualatex). -/
+/-- The `\normalsize` a class option's size file sets for a body at that
+option's point size; any other size is its own. -/
 public def optionNormalSize (size : Sp) : Sp :=
   ((displayOptions.find? fun o => Dim.pt o.1 == size).map (·.2)).getD size
 
@@ -1404,10 +875,8 @@ private def displaySizeFileOf (size : Sp) : Nat :=
     if (size - Dim.pt o.1).natAbs < (size - Dim.pt best.1).natAbs then (o.1, o.2) else best)
     (10, Dim.pt 10)).1
 
-/-- The display skips at a body size: the size file's own where the body is
-the option's point size or the `\normalsize` its file sets; otherwise the
-nearest file's, scaled with the type, as `listSkips` scales — LaTeX has no
-value there. -/
+/-- The display skips at a body size: the size file's own at an option's size,
+else the nearest file's scaled with the type. -/
 public def displaySkipsAt (size : Sp) : DisplaySkips :=
   let f := displaySizeFileOf size
   let s := displaySkipsTable f
@@ -1421,23 +890,17 @@ public def displaySkipsAt (size : Sp) : DisplaySkips :=
 /-- `\abovedisplayskip` at a body size, the long skip. -/
 public def displaySkipDefault (size : Sp) : SymGlue := (displaySkipsAt size).above
 
-/-- `\abovedisplayskip` at the base size: size10.clo's 10 pt. -/
 public theorem displaySkipDefault_base_exact :
     (displaySkipDefault baseFontSize).width.sp = Dim.pt 10 := by
   decide
 
-/-- The four display-skip token names, as `\tokens` and `\setlength` spell
-them. -/
 public def displaySkipAbove : String := "abovedisplayskip"
 public def displaySkipBelow : String := "belowdisplayskip"
 public def displaySkipAboveShort : String := "abovedisplayshortskip"
 public def displaySkipBelowShort : String := "belowdisplayshortskip"
 
-/-- **The one resolving site for the display skips**: each of the four the
-document's token where declared, else the size file's at the governing
-size. Both backends read it (`Layout`'s display arm; the HTML base sheet
-emits the long pair's tokens with these defaults as their `var()`
-fallbacks). -/
+/-- The display skips: each the document's token where declared, else the size
+file's at the governing size. -/
 public def displaySkipsFor (tokens : Tokens) (size : Sp) : DisplaySkips :=
   let d := displaySkipsAt size
   { above := (tokens.find? displaySkipAbove).getD d.above
@@ -1445,37 +908,17 @@ public def displaySkipsFor (tokens : Tokens) (size : Sp) : DisplaySkips :=
     aboveShort := (tokens.find? displaySkipAboveShort).getD d.aboveShort
     belowShort := (tokens.find? displaySkipBelowShort).getD d.belowShort }
 
-/-- The long skip above a display; see `displaySkipsFor`. -/
 public def displayAbove (tokens : Tokens) (size : Sp) : SymGlue := (displaySkipsFor tokens size).above
 
-/-- The long skip below a display; see `displaySkipsFor`. -/
 public def displayBelow (tokens : Tokens) (size : Sp) : SymGlue := (displaySkipsFor tokens size).below
 
-/-- **The display skips are the size file's** (`_exact`): an undeclared
-document at the standard classes' three bodies reads size10/11/12.clo's
-rows whole, the short pair included — the token layer adds nothing. -/
 private theorem displaySkips_default_exact :
     displaySkipsFor {} (Dim.pt 10) = displaySkipsTable 10 ∧
     displaySkipsFor {} (Dim.pt 11) = displaySkipsTable 11 ∧
     displaySkipsFor {} (Dim.pt 12) = displaySkipsTable 12 := ⟨rfl, rfl, rfl⟩
 
-/-- Where a display stands in its paragraph: the facts TeX's display
-placement reads (tex.web §1145-1146, §1199-1206) that the block's shape
-does not carry, recorded by elaboration from the source. `inPar`: text of
-the same paragraph precedes it, so `\predisplaysize` is measured on that
-paragraph's last line; otherwise amsmath's `$$` opens the paragraph and TeX
-sets an empty line first. `parEnd`: a paragraph break follows, so the next
-paragraph opens with its own separation; otherwise the text after the
-display continues the paragraph. `align`: a display alignment (`align`,
-`gather`), which §1206 always spaces with the long skips and whose rows
-amsmath sets on its strut. `afterEnv`: in vertical mode the display opens
-right after a list/quote/theorem end, whose `\endtrivlist` leaves `\@endpe`
-set so the opening `\everypar` takes the indent box back (ltlists.dtx:
-`\@doendpe`) — TeX sets no empty line, exactly as after a heading
-(`\@afterheading`). This is the fact the walk read wrongly from its owed
-glue, which a `\vspace` fills too; elaboration knows the preceding
-environment and a space does not. The default is the common case, a display
-inside a paragraph that runs on after it. -/
+/-- Where a display stands in its paragraph: the facts TeX's display placement
+reads that the block's shape does not carry. -/
 public structure DisplayCtx where
   inPar : Bool := true
   parEnd : Bool := false
@@ -1483,30 +926,22 @@ public structure DisplayCtx where
   afterEnv : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The role a display's context rides in: a name no document command can
-spell (it carries a hyphen, as `inParagraphRole` does). -/
+/-- The role a display's context rides in, a name no document command can spell. -/
 public def DisplayCtx.role (c : DisplayCtx) : String :=
   "display-" ++ (if c.inPar then "p" else "v") ++ (if c.parEnd then "e" else "c") ++
     (if c.align then "a" else "f") ++ (if c.afterEnv then "n" else "o")
 
-/-- Every display context, for reading a role back. -/
 public def DisplayCtx.all : List DisplayCtx :=
   [false, true].flatMap fun p => [false, true].flatMap fun e => [false, true].flatMap fun a =>
     [false, true].map fun v => { inPar := p, parEnd := e, align := a, afterEnv := v }
 
-/-- The context a role names, if it is a display's. -/
 public def DisplayCtx.ofRole? (n : String) : Option DisplayCtx :=
   DisplayCtx.all.find? (·.role == n)
 
-/-- A display's role reads back as its context (`_exact`). -/
 public theorem DisplayCtx.ofRole?_role_exact (c : DisplayCtx) : DisplayCtx.ofRole? c.role = some c := by
   cases c with
   | mk p e a v => cases p <;> cases e <;> cases a <;> cases v <;> decide
 
-/-- A list opening a paragraph adds the class's `\partopsep` at the top
-level and its level-three reset below: 2, 3 and 3 pt at the three standard
-bodies (size10/11/12.clo:215), 1pt at level three (:233) whatever the
-document declared, and beamer's zero. -/
 public theorem partopsep_exact :
     (partopsepFor .sizeFile (Dim.pt 10) 1 {}).width.sp = Dim.pt 2 ∧
     (partopsepFor .sizeFile (Dim.pt 11) 1 {}).width.sp = Dim.pt 3 ∧
@@ -1515,11 +950,6 @@ public theorem partopsep_exact :
     (partopsepFor .beamer (Dim.pt 11) 1 {}).width.sp = 0 := by
   decide
 
-/-- At the three standard body sizes a list's spacing is the size file's,
-exactly: `\topsep` 8, 9, 10 pt and `\itemsep + \parsep` 8, 9, 10 pt at the
-top level (size10/11/12.clo:216-219), and beamer's `\topsep` and
-`\itemsep` are 3 pt with a zero `\parsep` (beamerbaselocalstructure
-.sty:152-155). -/
 public theorem listSkips_exact :
     ((listSkips .sizeFile (Dim.pt 10) 1).map fun s =>
       (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 8, Dim.pt 8) ∧
@@ -1531,60 +961,46 @@ public theorem listSkips_exact :
       (s.topsep.width.sp, s.itemsep.width.sp, s.parsep.width.sp)) = some (Dim.pt 3, Dim.pt 3, 0) := by
   decide
 
-/-- How a theorem-like block spends its space (`thmSkips`): the trivlist
-its spelling opens, and the lengths it sets before its `\item`. -/
+/-- How a theorem-like block spends its space: the trivlist its spelling opens
+and the lengths it sets before its `\item`. -/
 public inductive ThmSpace where
-  /-- latex.ltx `\@begintheorem` is `\trivlist` itself: `\topsep`, with
-  `\partopsep` where it opens in vertical mode, and TeX's `\parskip` on
-  top, above and below. -/
+  /-- latex.ltx `\@begintheorem`: `\topsep`, with `\partopsep` in vertical
+  mode and `\parskip` on top. -/
   | kernel
-  /-- amsthm.sty `\@thm` under plain and definition: `\@topsep` is
-  `\thm@preskip` and `\@topsepadd` is `\thm@postskip`, both `\topsep`
-  (`\thm@space@setup`), so no `\partopsep`; and above no `\parskip`, which
-  `\deferred@thm@head`'s `\addvspace{-\parskip}` takes back. -/
+  /-- amsthm under plain and definition: `\topsep` above and below, no
+  `\partopsep`, and no `\parskip` above. -/
   | ams
-  /-- amsthm's remark style: `\th@remark` halves both
-  (`\divide\thm@preskip\tw@`). -/
+  /-- amsthm's remark style, which halves both. -/
   | amsHalf
-  /-- amsthm's `proof`: `\topsep6\p@\@plus6\p@` over `\partopsep`,
-  always, since its `\par` puts the `\trivlist` in vertical mode. -/
+  /-- amsthm's `proof`: `\topsep6\p@\@plus6\p@` over `\partopsep`, always. -/
   | proof
   deriving Repr, BEq, DecidableEq, Inhabited
 
 public def ThmSpace.all : List ThmSpace := [.kernel, .ams, .amsHalf, .proof]
 
-/-- The engine role a theorem-like block rides in, one per `ThmSpace`: a
-trivlist whose space is its spelling's. A name no document command can
-spell (it carries a hyphen), as `trivlistRole`'s is. -/
+/-- The engine role a theorem-like block rides in, one per `ThmSpace`. -/
 public def thmSpaceRole : ThmSpace → String
   | .kernel => "trivlist-kernel"
   | .ams => "trivlist-ams"
   | .amsHalf => "trivlist-remark"
   | .proof => "trivlist-proof"
 
-/-- The space a theorem role names. -/
 public def thmSpaceOf? (n : String) : Option ThmSpace :=
   ThmSpace.all.find? (thmSpaceRole · == n)
 
-/-- A theorem-like block's space above its head and below its last line,
-and whether TeX's `\parskip` stands on top of the space above. -/
+/-- A theorem-like block's space above its head and below its last line, and
+whether `\parskip` stands on top of the space above. -/
 public structure ThmSkips where
   above : SymGlue
   below : SymGlue
   parskipAbove : Bool
   deriving Repr, BEq
 
-/-- amsthm's proof: `\topsep6\p@\@plus6\p@` (amsthm.sty:433), whatever the
-body size. -/
+/-- amsthm's proof `\topsep` (amsthm.sty:433), whatever the body size. -/
 public def proofTopsep : SymGlue := { width := { sp := Dim.pt 6 }, stretch := { sp := Dim.pt 6 } }
 
-/-- **The one resolving site for a theorem-like block's space**, read by
-both backends: the `\topsep` in force where it stands — `\@listi`'s at top
-level, which `\normalsize` sets, else the enclosing list level's
-(`listSkips`) — spent as its spelling spends it (`ThmSpace`), `\partopsep`
-through `partopsepFor`. `vertical` says whether the block opens in vertical
-mode, which only the kernel's reads. `none` for the web's lineage, whose
-theorems are the trivlist block (`trivlistSkip`). -/
+/-- A theorem-like block's space: the `\topsep` in force where it stands,
+spent as its spelling spends it. -/
 public def thmSkips (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
     (k : ThmSpace) (vertical : Bool) : Option ThmSkips :=
   (listSkips l size level).map fun sk =>
@@ -1601,12 +1017,6 @@ public def thmSkips (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens
       let g := proofTopsep.add pts
       ⟨g, g, true⟩
 
-/-- **A theorem-like block's space is LaTeX's** at the three standard bodies
-(`_exact`): the kernel's `\topsep` over `\partopsep` after a blank line —
-10, 12, 13 pt — and `\topsep` alone in a paragraph; amsthm's `\topsep`
-above and below plain and definition, no `\parskip` above, half of it for
-remark; the proof's 6 pt over `\partopsep`, 8, 9, 9 pt (size10/11/12.clo:
-215–218, amsthm.sty:74–76, 229–233, 433); none on the web's lineage. -/
 public theorem thmSkips_exact :
     ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 10) ∧
     ((thmSkips .sizeFile (Dim.pt 11) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 12) ∧
@@ -1624,16 +1034,7 @@ public theorem thmSkips_exact :
     thmSkips .web (Dim.pt 10) 1 {} .ams true = none := by
   decide
 
-/-- A list level's `\leftmargin⟨n⟩` in thousandths of an em of the class
-base: the standard classes' one-column stack, 2.5, 2.2, 1.87, 1.7, 1 and
-1 em (classes.dtx; article.cls:323-336, and scrartcl.cls:6752-6758 sets
-the same), and beamer's 2 em at its three levels
-(beamerbaselocalstructure.sty:144-146; beamer defines no fourth, so a
-deeper level keeps the third's). The web's lineage declares none: its
-lists hang the engine's own indent (`Layout.Geom.listIndent`). The em is
-the body size: lualatex's first level stands 25, 27.37 and 30 pt in at the
-10, 11 and 12 pt options. A two-column page's 2 em first level is not
-modelled. -/
+/-- A list level's `\leftmargin⟨n⟩` in thousandths of an em of the class base. -/
 public def leftMarginMilli : ListLineage → Nat → Option Nat
   | .sizeFile, 1 => some 2500
   | .sizeFile, 2 => some 2200
@@ -1643,27 +1044,17 @@ public def leftMarginMilli : ListLineage → Nat → Option Nat
   | .beamer, _ => some 2000
   | .web, _ => none
 
-/-- **The one resolving site for a list level's `\leftmargin`**: the
-lineage's stack at the body size and nesting level — `\@listdepth`, over
-every list and quotation — where the lineage declares one. Both artifacts
-read it: the page's list, quotation and description margins, and the
-sheet's padding (`HtmlDoc.listIndentCss`), in the em it is spelled in. A
-document's own `\leftmargin⟨n⟩` rides in the token of that name
-(`leftMarginName`), which both read first, as every `\list` of that level
-reads the length in LaTeX. -/
+/-- A list level's `\leftmargin`: the lineage's stack at the body size and
+nesting level, where the lineage declares one. -/
 public def leftMargin (l : ListLineage) (size : Sp) (level : Nat) : Option Sp :=
   (leftMarginMilli l (max level 1)).map fun m => size * (m : Int) / 1000
 
-/-- The length a document declares a level's margin in: `\leftmargini`
-to `\leftmarginvi`, the kernel's six (latex.ltx `\@listdepth` reads at
-most six), a deeper level reading the sixth. -/
+/-- The length a level's margin is declared in: `\leftmargini` to
+`\leftmarginvi`, a deeper level reading the sixth. -/
 public def leftMarginName (level : Nat) : String :=
   "leftmargin" ++ (match min (max level 1) 6 with
     | 1 => "i" | 2 => "ii" | 3 => "iii" | 4 => "iv" | 5 => "v" | _ => "vi")
 
-/-- At the 10 pt base a list level's margin is the class's own, exactly:
-25, 22, 18.7 and 17 pt at the standard classes' four levels, and beamer's
-20 pt at each of its three. -/
 public theorem leftMargin_exact :
     leftMargin .sizeFile (Dim.pt 10) 1 = some (Dim.pt 25) ∧
     leftMargin .sizeFile (Dim.pt 10) 2 = some (Dim.pt 22) ∧
@@ -1673,209 +1064,86 @@ public theorem leftMargin_exact :
     leftMargin .web (Dim.pt 10) 1 = none := by
   decide
 
-/-- The heading's default spaces, their own tokens rather than the
-parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
-2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that
-zeroes the peer gap must not silently zero the heading's. The
-rhythm-aligned stand-ins are one full unit above and the half-unit below
-(the heading and peer rows of `rhythmGapQuanta`), the same ordering. A
-document with a larger declared parskip keeps the walk's 2-quanta growth
-(the walk takes the larger); a declared `\style{section}{ before/after }`
-overrides entirely. -/
+/-- The heading's default space above: one full rhythm unit, a token of its
+own rather than a multiple of the parskip. -/
 public def headingBeforeDefault (size : Sp) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
-/-- The heading's default space below: the half-unit. See
-`headingBeforeDefault`. -/
+/-- The heading's default space below: the half-unit. -/
 public def headingAfterDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size } }
 
-/-- A heading binds to the text it introduces: its default space above is
-at least its space below (Hochuli, Detail in Typography, on section
-openings: more space above the heading than below it; article.cls's
-3.5ex/2.3ex is the same ordering at 1.52), both on the rhythm, and neither
-zero. That the space above is exactly twice the quantum is
-`rhythm_table_exact`'s heading row, stated once there. W0202 is the
-declared-values half of the same rule; this is the defaults' half, and an
-edit that inverts them fails the build here. -/
 public theorem heading_space_above_ge_below (size : Int) (h : Dim.pt 1 ≤ size) :
     (headingAfterDefault size).width.sp ≤ (headingBeforeDefault size).width.sp ∧
     (headingAfterDefault size).width.sp = rhythmQuantum size ∧
     0 < (headingAfterDefault size).width.sp :=
   ⟨Int.le_of_lt (rhythmQuantum_lt_double size h), rfl, rhythmQuantum_pos size h⟩
 
-/-- The default vertical rhythm is one system, not three numbers: the peer
-gap (`parskipDefault`, 6pt at the 10pt base) is the rhythm quantum — half
-the base leading — so the heading's default space above, `2 × parskip` in
-the block walk, is exactly one full rhythm unit, and every default gap is a
-multiple of the half-unit (Bringhurst §2.2.2: add vertical space in
-measured intervals, multiples of the basic leading). The positivity
-conjunct is what makes a heading's space above strictly exceed its space
-below. Stated here, over the declared tokens, because both backends
-realize these gaps: the PDF's placement and the HTML base stylesheet each
-owe the theorem that what they ship equals what this layer declares. -/
 public theorem default_rhythm_multiples (size : Int) (h : Dim.pt 1 ≤ size) :
     (parskipDefault size).width.sp = rhythmQuantum size ∧
     0 < (parskipDefault size).width.sp :=
   ⟨rfl, rhythmQuantum_pos size h⟩
 
-/-- The anchor, `rfl` by derivation at every base: the peer gap IS the
-rhythm quantum, because it is defined as it — no absolute constant
-survives in the default, which is the soundness of mapping a poster's
-`scale=` onto `\page{ fontsize }`. -/
 public theorem parskip_is_quantum (size : Sp) :
     (parskipDefault size).width.sp = rhythmQuantum size := by rfl
 
-/-- At the shipped article base the leading is even, so the half-unit
-halves it exactly. The slides 11pt leading is odd in sp (865075), so its
-quantum rounds down half an sp — invisible ink, stated rather than
-implied; the exactness is per-base, the derivation universal
-(`parskip_is_quantum`). -/
 public theorem parskip_halves_leading_at_bases :
     2 * (parskipDefault baseFontSize).width.sp = leadingFor baseFontSize := by
   decide
 
-/-- Caption and float gaps sit on the same rhythm: the caption gap — the
-object-side gap, the sourcing note above `captionSepDefault` — is the
-half-unit (one `parskip`), the float gap — both text-side gaps — the full
-unit (two, which is also exactly LaTeX's `\intextsep` 12pt, classes.dtx
-10pt option), and the caption binds tighter to its object than the float
-to its page — the ordering LaTeX's own `\abovecaptionskip` 10pt <
-`\intextsep` 12pt states (classes.dtx). Which physical side each value
-lands on is `Layout.floatPlan`'s statement; this one holds the values. A
-default edit that breaks the quantization or the ordering fails the
-build; this is the user-visible "spacing around tables and figures"
-contract, stated over the values the engine ships. -/
 public theorem caption_gaps_rhythm (size : Int) (h : Dim.pt 1 ≤ size) :
     (captionSepDefault size).width.sp = rhythmQuantum size ∧
     (floatSepDefault size).width.sp = 2 * rhythmQuantum size ∧
     (captionSepDefault size).width.sp < (floatSepDefault size).width.sp :=
   ⟨rfl, rfl, rhythmQuantum_lt_double size h⟩
 
-/-- The title block's author strut: two rhythm units of line box for the
-author's name. The NeurIPS-lineage `.sty` sets `\rule{\z@}{24\p@}` in the
-author `tabular` — and 24pt at the 10pt body *is* exactly 2u, a rhythm
-multiple already, so the engine's value coincides with the venue's there.
-Spelled in em so it re-derives from the body size, as the rhythm does —
-but em-resolution floors, so the general equality with quantum multiples
-is FALSE off the shipped bases: at size = 65538 sp the em-resolved value
-and `4 * rhythmQuantum` differ (by ≤ 3 sp, whenever `size·1200/1000` is
-odd). The exactness theorems below stay per-base `decide` for that
-reason; the derivation is universal, the equality is not. -/
+/-- The title block's author strut: two rhythm units of line box for the author's name. -/
 public def titleAuthorStrut : SymGlue := { width := { em := 2 * leadingMilli } }
 
-/-- The gap after the whole title block, before the abstract or the text:
-two rhythm units, shrinkable by the half-unit — a little rubber, as the
-lineage's `\vskip 0.3in \@minus 0.1in` has. The venue's 21.7pt (shrunk
-floor 14.5pt) becomes the engine's 24pt (floor 18pt) at the 10pt body:
-the grid lands 2.3pt over what the venue eyeballed. -/
+/-- The gap after the whole title block: two rhythm units, shrinkable by the half-unit. -/
 public def titleBlockAfter : SymGlue :=
   { width := { em := 2 * leadingMilli }, shrink := { em := leadingMilli / 2 } }
 
-/-- The gap between a title bar and the type it cuts: three rhythm quanta
-(1½ leadings), the same on both sides. Under the placement convention
-(`Layout.interlineFor`) the gap runs to the type's *body* — the cap line
-above the text, the baseline below it — so equal declared gaps are equal
-visible gaps by definition (Hochuli, *Detail in Typography*, "Rules": a
-rule relates to the type it cuts; Bringhurst §2.2.2 for the unit). The
-venue contributes only the bars' weights; a document declares its own
-asymmetry through `\style{titlepage}{ rule-above-gap = … }`. Spelled in
-em, with `titleAuthorStrut`'s rounding caveat: exactness is per-base. -/
+/-- The gap between a title bar and the type it cuts: three rhythm quanta, the
+same on both sides. -/
 public def titleBarGap : SymGlue := { width := { em := 3 * leadingMilli / 2 } }
 
-/-- LaTeX's `\strutbox` height at a size: 0.7 of its baselineskip
-(ltfssbas.dtx, `\set@fontsize`: `\vrule\@height.7\baselineskip
-\@depth.3\baselineskip`). What moloch's frametitle box is built from: the
-box opens with a strut of `\ht\strutbox` in the frametitle font and pads
-it by the same amount above and below (beamerouterthememoloch.dtx,
-`\moloch@frametitlestrut@start`/`@end`,
-`\moloch@frametitle@margin@top`/`@bottom`). -/
+/-- LaTeX's `\strutbox` height at a size: 0.7 of its baselineskip. -/
 public def frameTitleStrut (titleSize : Sp) : Sp := leadingFor titleSize * 7 / 10
 
-/-- The frametitle padding moloch's outer theme declares, as the token the
-bundle installs: `\moloch@frametitle@margin@top = \moloch@frametitle@margin@bottom
-= \ht\strutbox` measured after `\usebeamerfont{frametitle}` — so the
-length is em of the *title's* size (0.7 of its leading), and the layout
-resolves it there (`Layout` reads `frametitlepadding` at the title size),
-not at the body's. A bundle declaring the token gets moloch's box; a bar
-declared with no token keeps the engine's generic half-body pad. -/
+/-- The frametitle padding: `\ht\strutbox` of the title's font, in em of the title's size. -/
 public def frameTitlePadding : SymGlue := { width := { em := 7 * leadingMilli / 10 } }
 
-/-- moloch's frame-title side margins (beamerouterthememoloch.sty:134-135,
-`\moloch@frametitle@margin@left` and `@right`): 0.85 of `\ht\strutbox` in
-the frametitle font, the title's inset from the paper's left edge and its
-measure's from the right, the bar's colour box being as wide as the paper
-— measured under lualatex as 8.30 bp at `\large` and 10.67 bp at `\Large`
-in a 10pt deck. Both backends read it: the page's title line and the web
-deck's title padding. -/
+/-- The frame title's side margins: 0.85 of `\ht\strutbox` in the frametitle font. -/
 public def frameTitleInset (titleSize : Sp) : Sp := frameTitleStrut titleSize * 85 / 100
 
-/-- The step a frame title with no bar sets at: `Large`, the step beamer's
-default font theme gives frame titles (beamerfontthemedefault.sty:73,
-`\setbeamerfont{frametitle}{parent=structure,size=\Large}`). Both backends
-read it: the page's bar-less title and the box it stands in, the web deck's
-title box. -/
+/-- The step a frame title with no bar sets at: beamer's default font theme's `\Large`. -/
 public def plainFrameTitleStep : String := "Large"
 
 /-- Where beamer's default frametitle box ends below the title's last
-baseline (beamerouterthemedefault.sty:169-180): the title line closes on a
-`\strut`, three tenths of its `\baselineskip` deep, and the box closes
-`\vskip-1ex` after it, in the title's font — a title with no bar of its
-own stands in this box, whose bottom the body's opening skip follows.
-`ex` is the title font's x-height at the title's size. Both backends read
-it: the page's body opening and the web deck's title bottom. -/
+baseline: a strut's depth, less 1ex. -/
 public def defaultFrameTitleBelow (titleSize : Sp) (leading : Nat) (ex : Sp) : Sp :=
   leadingFor titleSize leading * 3 / 10 - ex
 
 
-/-- The skip outside a title bar — above the top one, below the bottom
-one: one rhythm quantum. -/
+/-- The skip outside a title bar, above the top one and below the bottom one: one rhythm quantum. -/
 public def titleBarSkip : SymGlue := { width := { em := leadingMilli / 2 } }
 
-/-- The author block joins the rhythm (`default_rhythm_multiples`' family):
-the strut and the post-block gap are half-unit multiples of the body
-leading — four quanta each, the gap's shrink one — so the title block
-stays the engine's typography while the venue chooses only that the
-furniture exists (and the author's weight). Per-base `decide`, and it must
-stay so: em-resolution floors, so this equality is false at general sizes
-(65538 sp is a counterexample; `titleAuthorStrut`'s caveat). -/
 public theorem title_author_rhythm :
     titleAuthorStrut.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
     titleBlockAfter.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
     titleBlockAfter.shrink.resolve baseFontSize 0 = rhythmQuantum baseFontSize := by
   decide
 
-/-- The title bars join the rhythm too (`default_rhythm_multiples`'
-family): the gap either side of a bar is three quanta, the skip outside
-it one — every default around the title block is a half-unit multiple,
-and an edit that moves a token off its multiple fails the build here.
-Per-base `decide`, as `title_author_rhythm`: the general equality is
-false off-base (em-resolution floors). -/
 public theorem title_bar_rhythm :
     titleBarGap.width.resolve baseFontSize 0 = 3 * rhythmQuantum baseFontSize ∧
     titleBarSkip.width.resolve baseFontSize 0 = rhythmQuantum baseFontSize := by
   decide
 
-/-- The declared rhythm multiples, one table both backends realize from: at
-each kind of default block boundary, how many quanta the gap is. The PDF's
-tokens are held to it (`rhythm_table_exact`; the heading row is the block
-walk's `2 × parskip`), and the HTML base stylesheet computes its margins
-from it — a backend that re-spelled a multiple would be a backend no
-theorem covers. The quantum differs per context (the print leading against
-the screen leading), which is exactly the statement: a boundary's multiple
-is declared once; each backend realizes it in its own context's unit.
-A display is not a row: its space is TeX's, measured from the baselines
-(`displaySkipsFor` and the page's interline rule), never a multiple. -/
+/-- The rhythm multiple of each kind of default block boundary, the one table
+both backends realize. -/
 @[expose] public def rhythmGapQuanta : List (String × Nat) :=
   [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("trivlist", 2)]
 
-/-- The table and the tokens agree: each declared default gap is its row's
-multiple of the quantum, and the heading row is twice the peer row — the
-walk's `parskip.add parskip` spelled as a multiple. The trivlist row is the
-boundary's whole gap: the peer gap *and* the environment's own space on top
-of it, because TeX contributes `\parskip` when the following paragraph
-starts, after the trivlist's `\addvspace` already stands. An edit that
-moves a token off its declared multiple, or drops a row a backend reads,
-fails the build here. -/
 public theorem rhythm_table_exact (size : Sp) :
     ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum size
       = (parskipDefault size).width.sp ∧
@@ -1894,35 +1162,24 @@ public theorem rhythm_table_exact (size : Sp) :
       headingBeforeDefault, trivlistSkipDefault, Dim.Length.ofSp,
       List.lookup] <;> omega
 
-/-- The key a pairing is reported under — the name it was used under, the
-colour, the ground — as the `subject` of its contrast warning, so one
-pairing used at many runs is one loss with a count. -/
+/-- The key a pairing is reported under: its name, colour and ground, as its
+contrast warning's `subject`. -/
 public def inkKey (role : String) (declared ground : Color) : String :=
   let hex (c : Color) := s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
   s!"{role}:{hex declared}@{hex ground}"
 
 /-- The colours a document and its bundles declare, in declaration order:
-author colours (`\definecolor`, `\colorlet`, a `\palette` key no role owns)
-and roles, one kind each (`ColorRef`), so no author name ever binds a role. -/
+author colours and roles, one kind each. -/
 public structure Palette where
   entries : Array (ColorRef × Color) := #[]
-  /-- `covered = <n>%`: the fraction of each covered run's own ink over
-  the surface — beamer's `\setbeamercovered{transparent=<n>}`, and the
-  per-bundle knob the covered contract ranges over. `none` takes
-  `coveredFractionDefault`. -/
+  /-- `covered = <n>%`: each covered run's ink fraction over the surface,
+  beamer's `\setbeamercovered{transparent=<n>}`. -/
   coveredFraction : Option Nat := none
-  /-- Entries declared under `\palette[decorative]{...}`: deliberately
-  low-contrast — a watermark, a dimmed aside — and exempt from the pairing
-  diagnostic, the way WCAG 2.2 SC 1.4.3 exempts pure decoration. -/
+  /-- Entries declared under `\palette[decorative]{...}`, exempt from the pairing diagnostic. -/
   decorative : Array ColorRef := #[]
-  /-- The generated palette its roles were installed from
-  (`\palette[seeds]`), kept so a generated role on another ground can take
-  its family's tone there (`Palette.groundRun`). -/
+  /-- The generated palette its roles were installed from (`\palette[seeds]`). -/
   seeded : Option SeedPalette.SeedState := none
-  /-- The class's defaults where nothing declares a role (`Role.row`'s
-  fallbacks read its row, and the class's default seeds its depth): set
-  once from the document's class and surface, so every palette a document
-  derives — an epoch's, a bundle's install — carries it. -/
+  /-- The class's defaults where nothing declares a role. -/
   classColors : ClassColors := {}
   deriving Repr, BEq, Inhabited
 
@@ -1938,12 +1195,8 @@ public def Palette.colors (p : Palette) : Array (String × Color) :=
 
 section DesignResolve
 
-/-! The one door a name in a colour expression goes through, beside the
-resolver below: an author colour of that name, else the role its key names. -/
-
-/-- What a name in a colour expression reads: an author colour of that
-name, else the declared role whose key it is — `\definecolor` wins over a
-role exactly as it wins over xcolor's base names. -/
+/-- What a name in a colour expression reads: an author colour of that name,
+else the declared role whose key it is. -/
 public def Palette.refOf? (p : Palette) (name : String) : Option ColorRef :=
   if (p.lookup (.color name)).isSome then some (.color name)
   else (Role.ofKey? name).bind fun r =>
@@ -1955,9 +1208,7 @@ public def Palette.find? (p : Palette) (name : String) : Option Color :=
 
 end DesignResolve
 
-/-- Replace-on-redeclare: a later declaration overrides, keeping one entry
-per name. The one install mechanism — a document's `\palette` and a theme's
-bundle go through the same door. -/
+/-- Replace-on-redeclare: a later declaration overrides, keeping one entry per name. -/
 @[expose] public def Palette.declare (p : Palette) (ref : ColorRef) (c : Color)
     (decorative : Bool := false) : Palette :=
   { p with
@@ -1973,32 +1224,26 @@ public def Palette.declareKey (p : Palette) (key : String) (c : Color)
     (decorative : Bool := false) : Palette :=
   p.declare (ColorRef.ofKey key) c decorative
 
-/-- Remove one name while leaving every unrelated declaration in its
-current epoch. Used by a page-ground reset when the opening document palette
-had no explicit ground. -/
+/-- Remove one name, leaving every other declaration as it stands. -/
 public def Palette.erase (p : Palette) (ref : ColorRef) : Palette :=
   { p with entries := p.entries.filter (·.1 != ref)
            decorative := p.decorative.filter (· != ref) }
 
 /-- Restore one name from an opening palette: its original value and
-classification when present, absence when the opening palette inherited the
-class default. -/
+classification when present, else its absence. -/
 public def Palette.restore (p opening : Palette) (ref : ColorRef) : Palette :=
   match opening.lookup ref with
   | some c => p.declare ref c (opening.decorative.contains ref)
   | none => p.erase ref
 
-/-- Two palettes that resolve every name alike, whatever order their entries
-were declared in: the same values, decorative names and cover. -/
+/-- Two palettes that resolve every name alike, whatever order their entries were declared in. -/
 @[expose] public def Palette.sameAs (a b : Palette) : Bool :=
-  -- Entries alike in order resolve alike; only a reordered palette pays the
-  -- quadratic name-by-name reading, which every group's end would otherwise.
+  -- Equal entry order is the fast path; only a reordered palette pays the quadratic reading.
   (a.entries == b.entries && a.decorative == b.decorative ||
     (a.entries ++ b.entries).all (fun (k, _) => a.lookup k == b.lookup k) &&
       (a.decorative ++ b.decorative).all (fun k => a.decorative.contains k == b.decorative.contains k)) &&
     a.coveredFraction == b.coveredFraction
 
-/-- Erasing a name makes it absent, not a guessed replacement colour. -/
 public theorem Palette.erase_exact (p : Palette) (ref : ColorRef) :
     (p.erase ref).lookup ref = none := by
   simp only [Palette.erase, Palette.lookup]
@@ -2009,7 +1254,6 @@ public theorem Palette.erase_exact (p : Palette) (ref : ColorRef) :
     simpa using hne
   simp [hnone]
 
-/-- Erasing one name preserves every other lookup. -/
 public theorem Palette.erase_keeps_others (p : Palette) (ref other : ColorRef)
     (h : other ≠ ref) : (p.erase ref).lookup other = p.lookup other := by
   unfold Palette.erase Palette.lookup
@@ -2024,8 +1268,6 @@ public theorem Palette.erase_keeps_others (p : Palette) (ref other : ColorRef)
     · simp [hx]
   rw [hpred]
 
-/-- A reset reads exactly as the opening palette read, whether that means a
-concrete document colour or the class's undeclared default. -/
 public theorem Palette.restore_exact (p opening : Palette) (ref : ColorRef) :
     (p.restore opening ref).lookup ref = opening.lookup ref := by
   cases h : opening.lookup ref with
@@ -2036,15 +1278,12 @@ public theorem Palette.restore_exact (p opening : Palette) (ref : ColorRef) :
     rw [declare_find_eq]
     rfl
 
-/-- Keyed last-wins for colours (T2), the same statement `\tokens` carries:
-the declared colour is the one resolved. -/
 public theorem Palette.declare_last_wins (p : Palette) (ref : ColorRef) (c : Color) :
     (p.declare ref c).lookup ref = some c := by
   unfold declare lookup
   rw [declare_find_eq]
   rfl
 
-/-- Declaring a colour resolves to that colour for either decorative flag. -/
 public theorem Palette.declare_find_exact (p : Palette) (ref : ColorRef)
     (color : Color) (decorative : Bool) :
     (p.declare ref color decorative).lookup ref = some color := by
@@ -2052,29 +1291,17 @@ public theorem Palette.declare_find_exact (p : Palette) (ref : ColorRef)
   rw [declare_find_eq]
   rfl
 
-/-- Redeclaring a colour overwrites without residue (T2) — the door theme
-bundles and documents share, so "override the theme's entry" is exact, not
-approximate. -/
 public theorem Palette.declare_overwrite (p : Palette) (ref : ColorRef) (c c' : Color) :
     (p.declare ref c).declare ref c' = p.declare ref c' := by
   unfold declare
   rw [declare_collapse]
   simp
 
-/-- An override changes exactly what it names, the locality half: every
-other name resolves as it did before, whether or not the declaration is
-decorative. With `declare_last_wins` above this is the whole per-key
-layering contract — every layer (engine default, theme bundle, document
-declaration; values, not expressions, per the `Theme` docstring and PLAN
-2026-09-17) installs through this one door, and the statement's absence is
-what let a document's `\muted` erase a theme role silently. -/
 public theorem Palette.declare_keeps_others (p : Palette) (ref other : ColorRef) (c : Color)
     (d : Bool) (h : other ≠ ref) : (p.declare ref c d).lookup other = p.lookup other := by
   unfold declare lookup
   rw [declare_keeps _ _ _ _ h]
 
-/-- Restoring a page-ground name preserves every unrelated body declaration,
-whether the opening palette supplies that name or leaves it absent. -/
 public theorem Palette.restore_keeps_others (p opening : Palette) (ref other : ColorRef)
     (h : other ≠ ref) : (p.restore opening ref).lookup other = p.lookup other := by
   unfold Palette.restore
@@ -2082,14 +1309,11 @@ public theorem Palette.restore_keeps_others (p opening : Palette) (ref other : C
   | none => exact p.erase_keeps_others ref other h
   | some c => exact p.declare_keeps_others ref other c _ h
 
-/-- Restoring one name never changes the palette's cover fraction. -/
 public theorem Palette.restore_keeps_covered (p opening : Palette) (ref : ColorRef) :
     (p.restore opening ref).coveredFraction = p.coveredFraction := by
   unfold Palette.restore
   cases opening.lookup ref <;> rfl
 
-/-- The restored name carries the opening declaration's decorative
-classification when it exists, and no stale exemption when it does not. -/
 public theorem Palette.restore_decorative_exact (p opening : Palette) (ref : ColorRef) :
     (p.restore opening ref).decorative.contains ref =
       ((opening.lookup ref).isSome && opening.decorative.contains ref) := by
@@ -2101,47 +1325,32 @@ public theorem Palette.restore_decorative_exact (p opening : Palette) (ref : Col
         simp [Palette.restore, h, Palette.declare, hd, hp]
     · simp [Palette.restore, h, Palette.declare, hd]
 
-/-- A colour override never touches the covered fraction. -/
 public theorem Palette.declare_keeps_covered (p : Palette) (ref : ColorRef) (c : Color)
     (d : Bool) : (p.declare ref c d).coveredFraction = p.coveredFraction := by rfl
 
-/-- The decorative exemption rides with the declaration: a plain
-redeclaration removes its name from the exempt set, so re-declaring a
-colour without the opt-out restores the contrast check. The exemption is
-WCAG 2.2 SC 1.4.3's decoration exemption, and it excuses the declared
-value — a property of one declaration, never of the name forever: before
-this statement a stale exemption outlived the value it excused, and a
-redeclared colour shipped illegible in silence. -/
 public theorem declare_decorative_rides (p : Palette) (ref : ColorRef) (c : Color) :
     (p.declare ref c false).decorative.contains ref = false := by
   simp [Palette.declare]
 
-/-- The other direction: declaring decorative exempts the name. -/
 public theorem declare_decorative_names (p : Palette) (ref : ColorRef) (c : Color) :
     (p.declare ref c true).decorative.contains ref = true := by
   simp only [Palette.declare, ite_true]
   by_cases h : ref ∈ p.decorative <;> simp [h]
 
-/-- An expression name reads its author colour before any role. -/
 public theorem Palette.find?_color_first (p : Palette) (n : String) (c : Color)
     (h : p.lookup (.color n) = some c) : p.find? n = some c := by
   simp [Palette.find?, h]
 
-/-- `pct`% of `x` over the rest of `y`, rounded half up — the one mixing
-step, in whichever unit the model's components come in. -/
+/-- `pct`% of `x` over the rest of `y`, rounded half up. -/
 private def Color.mixStep (x y pct : Nat) : Nat := (x * pct + y * (100 - pct) + 50) / 100
 
-/-- xcolor's `!` mix in sRGB: per 8-bit channel, rounded. The RGB path
-of `mix`, bytewise the function every theme bundle was mixed with. -/
+/-- xcolor's `!` mix in sRGB: per 8-bit channel, rounded. -/
 private def Color.mixSrgb (a : Color) (pct : Nat) (b : Color) : Color :=
   let ch (x y : UInt8) : UInt8 := UInt8.ofNat (mixStep x.toNat y.toNat pct)
   { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
 
-/-- A colour's components in the CMYK model: its own when declared there,
-otherwise xcolor's rgb→cmy→cmyk conversion (manual §6.2: `cmy = 1 − rgb`,
-`k = min(c, m, y)`, then each of c, m, y less `k`), over the same
-thousandths `pdfComponents` prints — so white is `(0,0,0,0)` and the
-conversion is exact on the quantized channels. -/
+/-- A colour's components in the CMYK model: its own when declared there, else
+xcolor's rgb→cmy→cmyk conversion. -/
 private def Color.toCmyk (c : Color) : Nat × Nat × Nat × Nat :=
   match c.cmyk with
   | some q => q
@@ -2152,48 +1361,33 @@ private def Color.toCmyk (c : Color) : Nat × Nat × Nat × Nat :=
     let k := min cy (min m y)
     (cy - k, m - k, y - k, k)
 
-/-- xcolor's `!` mix in CMYK: per declared component, exactly, the second
-operand brought into the model by `toCmyk`. The result is a CMYK
-declaration (`ofCmyk`), so its preview and its PDF paint follow the same
-two rules every declared print colour follows. -/
+/-- xcolor's `!` mix in CMYK: per declared component, the second operand converted by `toCmyk`. -/
 private def Color.mixCmyk (a : Nat × Nat × Nat × Nat) (pct : Nat) (b : Color) : Color :=
   let q := b.toCmyk
   Color.ofCmyk (mixStep a.1 q.1 pct) (mixStep a.2.1 q.2.1 pct)
     (mixStep a.2.2.1 q.2.2.1 pct) (mixStep a.2.2.2 q.2.2.2 pct)
 
-/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in
-`a`'s model (xcolor manual §2.3.2: an expression is evaluated in the model
-of its first colour). -/
+/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in `a`'s model. -/
 public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
   match a.cmyk with
   | some q => mixCmyk q pct b
   | none => mixSrgb a pct b
 
-/-- Mixing is closed in the first operand's model: a CMYK-first expression
-stays CMYK, an RGB-first one stays RGB — the xcolor rule as an equation
-over the engine's `mix`. -/
 public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
     (a.mix pct b).model = a.model := by
   unfold Color.mix Color.model
   cases a.cmyk <;> rfl
 
-/-- On the sRGB path `mix` is `mixSrgb`, bytewise the per-channel function
-of before — what keeps every RGB-only theme bundle's value, and so every
-contrast contract's `decide`, exactly where it was. -/
 private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none) :
     a.mix pct b = a.mixSrgb pct b := by
   simp [Color.mix, h]
 
-/-- A CMYK-first mix keeps every component the arithmetic says, exactly:
-the rider of the result is the per-component step over the declared
-operands. -/
 private theorem Color.mix_cmyk_exact (a b : Color) (pct : Nat) (q : Nat × Nat × Nat × Nat)
     (h : a.cmyk = some q) :
     (a.mix pct b).cmyk = some (mixStep q.1 b.toCmyk.1 pct, mixStep q.2.1 b.toCmyk.2.1 pct,
       mixStep q.2.2.1 b.toCmyk.2.2.1 pct, mixStep q.2.2.2 b.toCmyk.2.2.2 pct) := by
   simp [Color.mix, h, Color.mixCmyk, Color.ofCmyk]
 
-/-- The blanks a palette expression's parts are trimmed of. -/
 public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
 /-- A colour name an expression reads as itself: no `!` mix operator and no
@@ -2202,27 +1396,18 @@ public def plainName (n : String) : Bool :=
   !n.toList.contains '!' && (n.toList.head?.all fun c => !asciiBlank c) &&
     (n.toList.getLast?.all fun c => !asciiBlank c)
 
-/-- The `!`-separated parts of a palette expression, each trimmed of ASCII
-whitespace: structural recursion the kernel evaluates, so a contract over
-`Palette.resolve` can close by `decide` — `String.splitOn`'s well-founded
-recursion blocks kernel reduction. Behaviour matches
-`(expr.splitOn "!").map (·.trimAscii.toString)` on every expression. -/
+/-- The `!`-separated parts of a palette expression, each trimmed of ASCII whitespace. -/
 private def bangParts (cur : List Char) : List Char → List String
   | [] => [trimmed cur]
   | c :: rest =>
     if c == '!' then trimmed cur :: bangParts [] rest
     else bangParts (c :: cur) rest
 where
-  /-- `cur` holds the segment reversed; trim both ends of the restored order. -/
+  /-- `cur` holds the segment reversed. -/
   trimmed (cur : List Char) : String :=
     String.ofList (((cur.dropWhile asciiBlank).reverse).dropWhile asciiBlank)
 
-/-- xcolor's base colours, "always available" once the package loads
-(xcolor manual §4.1, Table 1) — and the engine accepts xcolor natively,
-so the names hold everywhere a colour expression resolves. Values are the
-manual's rgb definitions scaled to sRGB bytes, rounded half up. A declared
-palette entry of the same name wins, exactly as `\definecolor` overrides
-in xcolor (`Palette.resolve` asks `find?` first). -/
+/-- xcolor's base colours (manual §4.1, Table 1), as sRGB bytes. -/
 private def xcolorBase (s : String) : Option Color :=
   match s with
   | "black" => some Color.black
@@ -2246,21 +1431,12 @@ private def xcolorBase (s : String) : Option Color :=
   | "lightgray" => some { r := 191, g := 191, b := 191 }
   | _ => none
 
-/-- One atom of a palette expression: a declared entry first, then xcolor's
-base colours — the single reader every name in an expression goes through. -/
+/-- One atom of a palette expression: a declared entry first, then xcolor's base colours. -/
 private def Palette.atom (p : Palette) (s : String) : Option Color :=
   (p.find? s).orElse fun _ => xcolorBase s
 
-/-- A palette expression: a name, or xcolor's `!` mix folding left —
-`a!30!b` is 30% of `a` over `b`, and a trailing `a!30` mixes toward white,
-so `black!2` is a near-white. xcolor's base colours are always available
-(`xcolorBase`), and a declared entry of any of their names wins —
-xcolor's `\definecolor{black}` overrides too — so a name means one thing
-wherever it resolves: `find?` is the single reader of the entries, and
-every atom here goes through it first. Before that rule, a palette naming
-an entry `black` painted the declared colour where `find?` resolved and
-pure black where a mix or `\textcolor` did
-(`Theme.resolve_find_exact` is the contract). -/
+/-- A palette expression: a name, or xcolor's `!` mix folding left, where a
+trailing `a!30` mixes toward white. -/
 public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
   let rec go (c : Color) : List String → Option Color
     | [] => some c
@@ -2282,10 +1458,7 @@ public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
     | some c => go c rest
     | none => none
 
-/-- Resolve one typed colour specification to the single `Color` value both
-backends consume. Named/no-model input delegates to the existing xcolor
-expression resolver; every numeric model becomes a concrete value here and
-nowhere else. -/
+/-- Resolve one typed colour specification to the `Color` both backends consume. -/
 public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .named expr => p.resolve expr
   | .html r g b => some (Color.ofHtml r g b)
@@ -2296,20 +1469,14 @@ public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .oklab L a b => (Decl.ColorSpec.oklab L a b).okLab?.map Oklab.ofLab
   | .oklch L C H => (Decl.ColorSpec.oklch L C H).okLab?.map Oklab.ofLab
 
-/-- Parsing and resolution are one public door for source colour syntax.
-Callers choose their diagnostic for an unsupported/malformed model or an
-unresolved name, but no caller converts components independently. -/
+/-- Parse and resolve a colour given in source syntax, optionally under a model. -/
 public def Palette.resolveSource (p : Palette) (model : Option String) (src : String) :
     Except Decl.ColorSpecError (Option Color) := do
   return p.resolveSpec (← Decl.parseColorSpec model src)
 
-/-- The typed resolver preserves the established no-model expression
-semantics exactly. -/
 public theorem Palette.resolveSpec_named_exact (p : Palette) (expr : String) :
     p.resolveSpec (.named expr) = p.resolve expr := by rfl
 
-/-- Every concrete model projects by construction at the one resolving site,
-retaining the source device operator while exposing one screen preview. -/
 public theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
     (x y z c m k : Decl.ColorComponent) :
     p.resolveSpec (.html r g b) = some (Color.ofHtml r g b) ∧
@@ -2319,8 +1486,6 @@ public theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
     p.resolveSpec (.cmyk c m y k) = some (Color.ofCmykSource c m y k) := by
   exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
-/-- The mixing fold never leaves the model it started in: every step is a
-`mix` whose first operand is the accumulator (`mix_model_exact`). -/
 private theorem Palette.resolve_go_model_exact (p : Palette) :
     ∀ (parts : List String) (c c' : Color), Palette.resolve.go p c parts = some c' →
       c'.model = c.model
@@ -2346,11 +1511,6 @@ private theorem Palette.resolve_go_model_exact (p : Palette) :
           rw [this, Color.mix_model_exact]
         · exact absurd h (by simp)
 
-/-- A palette expression resolves in the model of its first atom, whatever
-the expression mixes in after it: `press!50!ink2` is a CMYK colour when
-`press` is, `brand!50!press` an RGB one when `brand` is (xcolor manual
-§2.3.2). Stated over the expression's own head, as `bangParts` splits it,
-and over `atom`, the reader `resolve` itself uses for it. -/
 private theorem Palette.resolve_model_exact (p : Palette) (expr : String) (c : Color)
     (h : p.resolve expr = some c) :
     ∃ first rest a, bangParts [] expr.toList = first :: rest ∧
@@ -2364,10 +1524,8 @@ private theorem Palette.resolve_model_exact (p : Palette) (expr : String) (c : C
       exact ⟨first, rest, a, hparts, ha, Palette.resolve_go_model_exact p rest a c h⟩
     · exact absurd h (by simp)
 
-/-- A two-colour mix as its parts: `a!P!b`, or `a!P` over white — the one
-step of xcolor's grammar whose weight a contrast repair can move without
-touching the colours the author named. `none` for a bare name, a longer
-chain, or a malformed expression. -/
+/-- A two-colour mix as its parts, `a!P!b` or `a!P` over white; `none` for a
+bare name, a longer chain or a malformed expression. -/
 public def Palette.mixParts (p : Palette) (expr : String) : Option (Color × Nat × Color) :=
   match bangParts [] expr.toList with
   | [first, pctS] => (p.atom first).bind fun a => pctS.toNat?.bind fun pct =>
@@ -2376,18 +1534,12 @@ public def Palette.mixParts (p : Palette) (expr : String) : Option (Color × Nat
       if pct > 100 then none else (p.atom second).map fun b => (a, pct, b)
   | _ => none
 
-/-- The mix expression with its weight replaced and its colours as written:
-the spelling a re-weighted mix is reported in. -/
+/-- The mix expression with its weight replaced and its colours as written. -/
 public def mixReweighed (expr : String) (pct : Nat) : String :=
   match bangParts [] expr.toList with
   | first :: _ :: rest => String.intercalate "!" (first :: toString pct :: rest)
   | parts => String.intercalate "!" parts
 
-/-- **A mix's parts are the mix `resolve` computes.** The parts reader is a
-second reading of the grammar `Palette.resolve` owns, so it is held to it:
-whatever parts it returns mix to exactly the colour the expression
-resolves to, and a re-weighting of those parts is a re-weighting of the
-author's own mix, not of a colour the reader invented. -/
 public theorem Palette.mixParts_exact {p : Palette} {e : String} {a b : Color} {pct : Nat}
     (h : p.mixParts e = some (a, pct, b)) : p.resolve e = some (a.mix pct b) := by
   unfold Palette.mixParts at h
@@ -2426,33 +1578,21 @@ public theorem Palette.mixParts_exact {p : Palette} {e : String} {a b : Color} {
             simp [Palette.resolve.go, hp, hq, hb, ha]
   · exact absurd h (by simp)
 
-/-- Font families a document asks for, as declared by `\fonts`. `dirs` are
-directories of font files the document ships, relative to the document, so a
-document that carries its fonts renders the same on every host. Every `dir`
-declared is kept: fontspec's `Path=` may name a different one per face. -/
+/-- Font families a document asks for, as declared by `\fonts`. -/
 public structure FontSpec where
   body : Option String := none
   sans : Option String := none
   mono : Option String := none
-  /-- The math face (`\fonts{ math = ... }`, fontspec's `\setmathfont`):
-  resolved like any named face, and required to carry an OpenType MATH
-  table to be used. -/
+  /-- The math face (`\fonts{ math = ... }`, fontspec's `\setmathfont`), which
+  must carry an OpenType MATH table. -/
   math : Option String := none
-  /-- unicode-math's option-driven alphabet sources. The default is the
-  package's (`text` for roman, italic, bold, sans and mono); explicit
-  `=sym` values survive compatibility rewriting as typed policy. -/
+  /-- unicode-math's option-driven alphabet sources. -/
   mathSources : Math.MathAlphabetSources := {}
   dirs : Array String := #[]
-  /-- Families the document names beside the three slots, as fontspec's
-  `\newfontfamily\cmd{Family}` declares them: the command and the family,
-  in declaration order, each the slot `familySlotBase + i` (`Style.family`
-  selects it), its declared faces in `faces` under that slot. -/
+  /-- Families the document names beside the three slots (fontspec's
+  `\newfontfamily\cmd{Family}`), in declaration order. -/
   families : Array (String × String) := #[]
-  /-- Per-variant faces the document named (fontspec's `UprightFont=`,
-  `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`, `FontFace={series}{shape}`):
-  `(slot, weight, italic)` → the face name, resolved like any other named
-  face and winning over the family's own variant. The weight is a series's
-  CSS number (`Weight.css`). -/
+  /-- Per-variant faces the document named: `(slot, weight, italic)` to a face name. -/
   faces : Array ((Nat × Nat × Bool) × String) := #[]
   deriving Repr, BEq, Inhabited
 
@@ -2463,35 +1603,25 @@ public def familySlotBase : Nat := 3
 public def FontSpec.familySlot (s : FontSpec) (name : String) : Option Nat :=
   (s.families.findIdx? (·.1 == name)).map (· + familySlotBase)
 
-/-- The family a declared slot names. -/
 public def FontSpec.slotFamily (s : FontSpec) (slot : Nat) : Option String :=
   if slot < familySlotBase then none else (s.families[slot - familySlotBase]?).map (·.2)
 
-/-- Declare a family by its command: a redeclaration keeps the command's
-slot and replaces the family (fontspec's `\setfontfamily` and
-`\renewfontfamily` redefine the command in place). -/
+/-- Declare a family by its command: a redeclaration keeps the command's slot
+and replaces the family. -/
 public def FontSpec.declareFamily (s : FontSpec) (name family : String) : FontSpec :=
   if s.families.any (·.1 == name) then
     { s with families := s.families.map fun (n, f) => if n == name then (n, family) else (n, f) }
   else { s with families := s.families.push (name, family) }
 
-/-- Replace-on-redeclare, the same door `Tokens.declare` and
-`Palette.declare` are: a later declaration of the same variant overrides,
-keeping one entry per `(slot, weight, italic)`. Sourced: fontspec (v2.9,
-§"Choosing additional fonts") — each `\setmainfont`/`BoldFont=` call
-*replaces* the family's setup for that shape; the last one given is the one
-used. -/
+/-- Replace-on-redeclare: a later declaration of the same variant overrides,
+keeping one entry per `(slot, weight, italic)`. -/
 public def FontSpec.declareFace (s : FontSpec) (variant : Nat × Nat × Bool)
     (face : String) : FontSpec :=
   { s with faces := (s.faces.filter (·.1 != variant)).push (variant, face) }
 
-/-- The face the document declared for one slot variant, if any. -/
 public def FontSpec.faceFor (s : FontSpec) (slot weight : Nat) (italic : Bool) : Option String :=
   (s.faces.find? (·.1 == (slot, weight, italic))).map (·.2)
 
-/-- The last-declared face is the one resolved (the fontspec rule above,
-mirroring `declare_overwrite` for tokens): redeclaring a variant is an
-override, never a silently first-wins accident. -/
 public theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Nat × Bool)
     (f : String) : (s.declareFace v f).faceFor v.1 v.2.1 v.2.2 = some f := by
   have hnone : (s.faces.filter (·.1 != v)).find? (·.1 == (v.1, v.2.1, v.2.2)) = none := by
@@ -2506,55 +1636,41 @@ public theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Nat × 
   rw [Array.find?_push, hnone]
   simp
 
-/-- What the reader must be able to reach in place of a non-text element:
-`judged` is today's rule — the alt judges name a missing alternative and
-`accessibility = AA` reads them; `required` asks the artifact itself to
-carry the alternative as reader-visible structure, which only an artifact
-with an alternative channel can honour. -/
+/-- What the reader must be able to reach in place of a non-text element. -/
 public inductive AltPolicy where
   | judged
   | required
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The colour the reader is meant to see: `device` leaves the numbers to
-the reader's device, today's rule; `srgb` asks that the artifact define
-its colours as sRGB. -/
+/-- The colour the reader is meant to see: `device` leaves the numbers to the
+device, `srgb` defines them as sRGB. -/
 public inductive ColorIntent where
   | device
   | srgb
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- Whether the artifact carries the faces it was set in: `embedded`, the
-faces travel with the artifact (embedded in the PDF, shipped beside the
-page); `none`, the document accepts that something else owns them — a
-site's stylesheet. -/
+/-- Whether the artifact carries the faces it was set in: `embedded` travels
+with the artifact, `none` leaves them to something else. -/
 public inductive FontPolicy where
   | embedded
   | none
   deriving Repr, @[expose] BEq, DecidableEq, Inhabited
 
 /-- The semantic output contract: facts about the artifact the reader must
-get, declared once in `\output` and read by every backend against its own
-realization record. Every default is today's behaviour, so an undeclared
-document builds exactly as before. `fonts` is the one field with no
-default of its own: undeclared, `Doc.fontPolicy` derives it from the
-stylesheet story the document told. -/
+get, declared in `\output` and read by every backend. -/
 public structure OutputContract where
   alternatives : AltPolicy := .judged
   color : ColorIntent := .device
   fonts : Option FontPolicy := none
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- How a backend carries alternatives: `none` (the PDF today: alt text has
-no channel until the artifact is tagged), `attribute` (HTML's `alt`). -/
+/-- How a backend carries alternatives: `none`, or `attribute` (HTML's `alt`). -/
 public inductive AltReal where
   | none
   | attribute
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- How a backend carries colour: `device` (the PDF writes device colour
-with no output intent), `srgbByDefinition` (CSS colours are sRGB by the
-specification, so the HTML meets `srgb` with nothing to do). -/
+/-- How a backend carries colour: `device`, or `srgbByDefinition` (CSS colours are sRGB). -/
 public inductive ColorReal where
   | device
   | srgbByDefinition
@@ -2581,11 +1697,7 @@ public inductive MathReal where
   | mathmlCore
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- One backend's realization record: values only, the `ClassRecord`
-discipline. The values are backend vocabulary living here because both
-backends must read one type and this module cannot import a backend;
-each constant lives in its own backend (`Pdf.profile`, `HtmlDoc.profile`).
-`scripting` and `math` are recorded but no contract key reads them yet. -/
+/-- One backend's realization record: values only. -/
 public structure Realization where
   alternatives : AltReal
   color : ColorReal
@@ -2602,13 +1714,11 @@ public structure Unmet where
   realized : String
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The closed key list of the contract — the facts `unmet` can name and
-the keys `\output` accepts for them. -/
+/-- The closed key list of the contract: the facts `unmet` can name and the
+keys `\output` accepts. -/
 public def OutputContract.facts : List String := ["alternatives", "color", "fonts"]
 
-/-- One fact judged: unmet when the realization cannot honour the
-declaration. Written as one door so `unmet_covers` reads the fact key off
-the call, never off the message. -/
+/-- One fact judged: unmet when the realization cannot honour the declaration. -/
 private def OutputContract.judge (fact declared realized : String) (met : Bool) :
     Option Unmet :=
   if met then none else some { fact, declared, realized }
@@ -2621,12 +1731,7 @@ private theorem OutputContract.judge_fact {fact declared realized : String} {met
   · exact absurd h (by simp)
   · cases h; rfl
 
-/-- The facts this artifact does not realize, one entry per unmet key.
-`alternatives = required` needs an alternative channel; `color = srgb`
-needs colours defined as sRGB; `fonts = embedded` is met by either way of
-carrying faces, so it is unmet by no realization recorded today — the
-markdown twin's record, when it exists, is where that arm fires.
-`fonts = none` and every default ask nothing. -/
+/-- The facts this artifact does not realize, one entry per unmet key. -/
 public def OutputContract.unmet (c : OutputContract) (r : Realization) : Array Unmet :=
   #[judge "alternatives" "required" "no alternative channel"
       (match c.alternatives, r.alternatives with
@@ -2645,13 +1750,10 @@ public def OutputContract.unmet (c : OutputContract) (r : Realization) : Array U
         | some .embedded, .embeds => true
         | some .embedded, .ships => true)].filterMap id
 
-/-- The undeclared contract asks nothing of any realization. -/
 public theorem OutputContract.unmet_default_exact (r : Realization) :
     ({} : OutputContract).unmet r = #[] := by
   simp [unmet, judge]
 
-/-- Every unmet fact names a key of the closed list (`_covers`): a
-diagnostic's `subject` is always one of the keys `\output` accepts. -/
 public theorem OutputContract.unmet_covers (c : OutputContract) (r : Realization) :
     ∀ u ∈ c.unmet r, u.fact ∈ OutputContract.facts := by
   intro u hu
@@ -2660,9 +1762,7 @@ public theorem OutputContract.unmet_covers (c : OutputContract) (r : Realization
   simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hj
   rcases hj with rfl | rfl | rfl <;> rw [judge_fact hju] <;> simp [facts]
 
-/-- Each unmet fact is one W0701 whose `subject` is the fact's key: the
-warning is per artifact and per fact, never merged, so a document that
-declares two facts a backend lacks is told twice, once each. -/
+/-- One W0701 per unmet fact, with the fact's key as its `subject`. -/
 public def contractDiags (us : Array Unmet) : Array Diag :=
   us.map fun u =>
     Diag.of .W0701
@@ -2670,8 +1770,6 @@ public def contractDiags (us : Array Unmet) : Array Diag :=
       (help := some s!"drop '{u.fact} = {u.declared}' from '\\output', or build a format that carries it")
       (subject := some u.fact)
 
-/-- One diagnostic per unmet fact (`_accounts`): the census of unmet facts
-and the warnings reporting them are the same count. -/
 public theorem contract_accounts (us : Array Unmet) : (contractDiags us).size = us.size :=
   Array.size_map ..
 
@@ -2682,47 +1780,29 @@ public inductive ClassSchemes where
   | own
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- What to build, as declared by `\output`: the document carries its own
-build intent, the way `\documentclass` already does. Names stay strings here
-so the core does not know the CLI's option types. -/
+/-- What to build, as declared by `\output`. -/
 public structure OutputSpec where
   formats : Array String := #[]
-  /-- The colour schemes the HTML page offers (`schemes = print, light,
-  dark`): an artifact declaration, as `formats` is; `none` takes the class's
-  (`ClassRecord.schemes`). -/
+  /-- The colour schemes the HTML page offers
+  (`schemes = print, light, dark`); `none` takes the class's. -/
   schemes : Option (Array Scheme) := none
-  /-- The semantic contract the artifacts are held to (`OutputContract`);
-  every key defaults to today's behaviour. -/
   contract : OutputContract := {}
-  /-- The conformance profiles the PDF is held to (`profiles = pdf/a-4,
-  pdf/ua-2`): a set of registered names, each implying the assertion
-  `pdf.profile = <name>`, judged on the census of the built bytes. Names
-  stay strings here for the reason `formats` does; the PDF contract module
-  owns the table they index. -/
+  /-- The conformance profiles the PDF is held to
+  (`profiles = pdf/a-4, pdf/ua-2`), each implying a `pdf.profile` assertion.
+  -/
   profiles : Array String := #[]
   css : Option String := none
-  /-- A local stylesheet the driver captures relative to the document.
-  Its rules follow the engine's styles, so the named sheet wins ties.
-  Checked HTML publication refuses uncaptured rendering dependencies. -/
+  /-- A local stylesheet the driver captures relative to the document, whose
+  rules win ties with the engine's styles. -/
   stylesheet : Option String := none
-  /-- The markdown twin's written file name (`md = "llms.txt"`): the twin
-  exists for the llms.txt convention (llmstxt.org), whose name is fixed,
-  and the HTML head's alternate link must name the file as served — a
-  build that renames the output after the fact breaks that link, so the
-  name is declared where the build intent lives. Undeclared, the twin
-  takes the source's stem. -/
+  /-- The markdown twin's file name as served (`md = "llms.txt"`). -/
   md : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- One format onto the list, dedup by name: the pure half of
-`applyOutput`'s formats walk, extracted so the no-duplicates statement
-ranges over the function the engine runs. -/
+/-- One format onto the list, dedup by name. -/
 public def OutputSpec.addFormat (o : OutputSpec) (f : String) : OutputSpec :=
   { o with formats := if o.formats.contains f then o.formats else o.formats.push f }
 
-/-- A format list never grows a duplicate (T4): `formats = pdf, pdf` and a
-second `\output` block naming `pdf` again are one entry — the list-append
-half of the surface stays a set. -/
 public theorem OutputSpec.addFormat_nodup (o : OutputSpec) (f : String)
     (h : o.formats.toList.Nodup) : (o.addFormat f).formats.toList.Nodup := by
   unfold addFormat
@@ -2739,13 +1819,10 @@ public theorem OutputSpec.addFormat_nodup (o : OutputSpec) (f : String)
     subst hxy
     simpa [Array.contains_iff_mem] using hx
 
-/-- One profile onto the set, dedup by name: the pure half of
-`applyOutput`'s profiles walk, `addFormat`'s twin. -/
+/-- One profile onto the set, dedup by name. -/
 public def OutputSpec.addProfile (o : OutputSpec) (p : String) : OutputSpec :=
   { o with profiles := if o.profiles.contains p then o.profiles else o.profiles.push p }
 
-/-- A profile set never grows a duplicate: `profiles = pdf/a-4, pdf/a-4` is
-one entry and one implied assertion — the declaration is a set. -/
 public theorem OutputSpec.addProfile_nodup (o : OutputSpec) (p : String)
     (h : o.profiles.toList.Nodup) : (o.addProfile p).profiles.toList.Nodup := by
   unfold addProfile
@@ -2762,56 +1839,38 @@ public theorem OutputSpec.addProfile_nodup (o : OutputSpec) (p : String)
     subst hxy
     simpa [Array.contains_iff_mem] using hx
 
-/-- Document metadata, as declared by `\pdfmeta` — the one record every
-surface derives from. The PDF reads title/author/subject/keywords into its
-Info dictionary and XMP, and `url` into XMP `dc:identifier`; the HTML head
-reads all of them plus `image` and `favicon`; the markdown twin reads title
-and subject as its llms.txt preamble. `image` and `favicon` are web-surface
-facts with no PDF meaning; nothing else here is per-backend. -/
+/-- Document metadata, as declared by `\pdfmeta`: the one record every surface derives from. -/
 public structure Meta where
   title : Option String := none
   author : Option String := none
   subject : Option String := none
   keywords : Option String := none
-  /-- The document's canonical URL: `<link rel="canonical">` (RFC 6596) and
-  the Open Graph `og:url` in HTML, `dc:identifier` in the PDF's XMP. -/
+  /-- The document's canonical URL: `<link rel="canonical">` and `og:url` in
+  HTML, `dc:identifier` in the PDF's XMP. -/
   url : Option String := none
   /-- A representative image for link previews: `og:image`. -/
   image : Option String := none
   /-- The page icon: `<link rel="icon">`. -/
   favicon : Option String := none
-  /-- The document's main language, a BCP 47 tag: babel's package options
-  declare it (last option = main, babel's rule), `\pdfmeta{ language = .. }`
-  spells it natively. Both artifacts declare it — `<html lang>` and the
-  PDF catalog `/Lang` — and every language-reading site (captions,
-  hyphenation patterns, quotes) resolves through it. -/
+  /-- The document's main language, a BCP 47 tag, from babel's options or
+  `\pdfmeta{ language = .. }`. -/
   language : Option String := none
-  /-- The PDF version the document declares (`\DocumentMetadata{
-  pdfversion = 1.7 }`, natively `\pdfmeta{ version = "1.7" }`): `1.7`
-  writes a PDF 1.7 file — the header, and the structure tree in 1.7's one
-  standard namespace with the 2.0-only types role-mapped onto 1.7's
-  (`Pdf.pdf17Role`). Undeclared, or `2.0`, the file is PDF 2.0. -/
+  /-- The PDF version the document declares
+  (`\DocumentMetadata{ pdfversion = 1.7 }` or `\pdfmeta{ version = "1.7" }`).
+  -/
   pdfVersion : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- The document's resolved main locale: the declared language when a
-record ships for it, English otherwise (the site that declared the tag
-named the miss, W0368). One resolving site, read by both backends. -/
+/-- The document's main locale: the declared language when a record ships for
+it, English otherwise. -/
 public def Meta.locale (m : Meta) : Locale :=
   (m.language.bind Locale.forTag).getD Locale.en
 
-/-- The OpenType features both backends apply, one record: the PDF path
-applies them to the glyphs it sets, the HTML path requests them of the
-browser (`font-kerning`), so the artifacts cannot disagree —
-`features_agree` holds by construction, the two emissions being two
-projections of one value. `kern` defaults on, HarfBuzz's own default
-set; a `\tokens` knob arrives with the features it gates, and until
-then the record is the engine's one constant. -/
+/-- The OpenType features both backends apply, one record. -/
 public structure Features where
   kern : Bool := true
   deriving Repr, BEq, Inhabited
 
-/-- The features in force: the one resolving site. -/
 public def features : Features := {}
 
 public inductive CmpOp where
@@ -2843,25 +1902,15 @@ public def CmpOp.holds : CmpOp → Int → Int → Bool
 public inductive AssertKind where
   | pages (op : CmpOp) (n : Int)
   | fontsAllEmbedded
-  /-- Every piece of ink inside the margins. On a card the margins are the
-  print safe zone, so this is "nothing risks the trim". -/
+  /-- Every piece of ink inside the margins. -/
   | textInArea
   /-- The smallest x-height set anywhere is at least this, judged from each
-  run's font at its size: the legibility floor is an angular x-height, so
-  the check reads the metric the source speaks in. -/
+  run's font at its size. -/
   | minXHeight (min : Sp)
-  /-- The document conforms to the engine's judged WCAG 2.2 AA rows: no
-  accessibility fact the judges name (a failing contrast pair, an image
-  with no text alternative, a broken heading outline) and a declared
-  language. Facts the engine cannot judge (a PDF's tagged reading order,
-  browser rendering) are outside the assertion and stay named in PLAN,
-  never implied passes. -/
+  /-- The document conforms to the engine's judged WCAG 2.2 AA rows and declares a language. -/
   | accessibilityAA
-  /-- The PDF satisfies the named conformance profile's contract, judged
-  on the read-side census of the bytes just built — implied by
-  `\output{ profiles = <name> }`, one per name, never declared directly.
-  It fails with the violated rules as its actual; nothing claims the
-  profile in the file until the writer reads the contract. -/
+  /-- The PDF satisfies the named conformance profile, judged on the census of
+  the built bytes; implied by `\output{ profiles = <name> }`. -/
   | pdfProfile (name : String)
   deriving Repr, BEq, Inhabited
 
@@ -2874,22 +1923,7 @@ public def AssertKind.source : AssertKind → String
   | .pdfProfile name => s!"pdf.profile = {name}"
 
 /-- The emitted artifacts an assertion is judged on, in `OutputSpec.formats`'
-own vocabulary (`"pdf"`, `"html"`, `"md"`; strings, so the core learns no
-CLI type). Empty means the assertion reads no artifact:
-
-| kind | reads | judged on |
-|---|---|---|
-| `pages`, `textInArea`, `minXHeight` | none | the layout, whatever is emitted — facts of `Layout.run`, which runs unconditionally and is a function of the document |
-| `accessibilityAA` | none | the document and its judged diagnostics, neither per artifact |
-| `fontsAllEmbedded` | `pdf`, `html` | each emitted artifact: the PDF by the census of its bytes, the HTML by the faces it ships beside the page |
-| `pdfProfile` | `pdf` | the PDF alone, by the census of its bytes against the profile's contract |
-
-The driver judges a non-empty `reads` against what the run emits, and a
-run emitting none of them fails the assertion loud rather than passing it
-vacuously (`assert_reads_shipped`). No class implies `fontsAllEmbedded`, so
-that failure is reachable only from a document that asked; `pdfProfile` is
-implied by `profiles =`, so `formats = html, profiles = pdf/a-4` fails
-there too. -/
+vocabulary; empty reads no artifact. -/
 public def AssertKind.reads : AssertKind → Array String
   | .pages _ _ => #[]
   | .fontsAllEmbedded => #["pdf", "html"]
@@ -2898,10 +1932,6 @@ public def AssertKind.reads : AssertKind → Array String
   | .accessibilityAA => #[]
   | .pdfProfile _ => #["pdf"]
 
-/-- The assertions whose subject is bytes are the ones that read
-artifacts: the font one reads exactly the two that carry faces, a profile
-one reads exactly the PDF (`_accounts` shape: the per-artifact judgement
-is paid for by a named artifact list). -/
 public theorem assert_reads_shipped :
     (∀ k : AssertKind, k.reads ≠ #[] ↔ k = .fontsAllEmbedded ∨ ∃ n, k = .pdfProfile n) ∧
     AssertKind.reads .fontsAllEmbedded = #["pdf", "html"] ∧
@@ -2912,32 +1942,18 @@ public theorem assert_reads_shipped :
 public structure Assertion where
   kind : AssertKind
   span : Option Span := none
-  /-- Failure guidance. A class-implied assertion says which contract fired
-  and how declaring intent takes control of it. -/
+  /-- Guidance shown when the assertion fails. -/
   help : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- The weight axis: the nine NFSS series values (LaTeX News 31, "Improved
-load-times for expl3 … New or improved commands": the standardised weight
-codes; fntguide §2.2's series axis) the surface can select —
-`\fontseries`, fontspec's `FontFace={series}{shape}{font}`. It lives in
-the IR because both backends read it: the PDF resolves a face per weight
-(`FontSet.lookup`), the HTML emits the numeric value per run. -/
+/-- The weight axis: the nine NFSS series values. -/
 public inductive Weight where
   | ul | el | l | sl | m | sb | b | eb | ub
   deriving Repr, BEq, DecidableEq
 
 public instance : Inhabited Weight := ⟨.m⟩
 
-/-- The CSS/OpenType numeric value of each series (CSS Fonts 4 §2.2 /
-OpenType OS/2 `usWeightClass`, the same registry: 100 Thin, 200
-Extra-light, 300 Light, 400 Normal, 600 Semi-bold, 700 Bold, 800
-Extra-bold, 900 Black). `m` is NFSS's *default* series — the regular
-weight, 400, not the registry's 500 "Medium" — and `sl` (semi-light) has
-no slot in the nine-step table; 350 is DirectWrite's `SemI_LIGHT`, the
-one registry that names it. No single authority numbers all nine, so
-those two placements are this table's decision; the round-trip theorem
-below is what makes the assignment a bijection onto its image. -/
+/-- The CSS/OpenType numeric value of each series (CSS Fonts 4 §2.2, OS/2 `usWeightClass`). -/
 public def Weight.css : Weight → Nat
   | .ul => 100
   | .el => 200
@@ -2949,13 +1965,10 @@ public def Weight.css : Weight → Nat
   | .eb => 800
   | .ub => 900
 
-/-- Every series, in weight order — what `ofCss` searches and the
-round-trip theorem quantifies over. -/
+/-- Every series, in weight order. -/
 public def Weight.all : List Weight := [.ul, .el, .l, .sl, .m, .sb, .b, .eb, .ub]
 
-/-- The series nearest a numeric weight (a face's `usWeightClass`), ties
-to the lighter: the inverse direction of the bijection, total over every
-input. -/
+/-- The series nearest a numeric weight, ties to the lighter. -/
 public def Weight.ofCss (n : Nat) : Weight :=
   (Weight.all.foldl (init := Weight.ul) fun best w =>
     let d := fun v : Weight => max v.css n - min v.css n
@@ -2973,17 +1986,11 @@ public def Weight.series : Weight → String
   | .eb => "eb"
   | .ub => "ub"
 
-/-- The NFSS width codes (fntguide §2.2: the width half of a series
-value). The engine has no width axis; parsing names them so a
-`\fontseries{bx}` honours its weight and can say what the `x` asked for. -/
+/-- The NFSS width codes, the width half of a series value (fntguide §2.2). -/
 private def seriesWidthCodes : List String :=
   ["uc", "ec", "sc", "c", "sx", "ex", "ux", "x"]
 
-/-- Parse an NFSS series value into its weight and width halves
-(fntguide §2.2: a series combines a weight code and a width code, each
-dropped when medium — `bx` is bold extended, `c` is medium condensed,
-`m` is both). Longest weight code first, so `sb` is semi-bold, never
-`s`+garbage. `none` when the string is no series value at all. -/
+/-- Parse an NFSS series value into its weight and width halves, longest weight code first. -/
 public def Weight.parseSeries (s : String) : Option (Weight × String) :=
   if s == "m" then some (.m, "") else
   let codes : List Weight := [.ul, .el, .sl, .sb, .eb, .ub, .l, .b]
@@ -2993,20 +2000,10 @@ public def Weight.parseSeries (s : String) : Option (Weight × String) :=
     if rest.isEmpty || seriesWidthCodes.contains rest then some (w, rest)
     else none
   | none =>
-    -- No weight half: the whole value must be a width code at medium
-    -- weight (`c`, `x`, …).
     if seriesWidthCodes.contains s then some (.m, s) else none
 
-/-- Bold, where a Bool is the question (WCAG 2.2's large-text criterion,
-`FontDb.resolve`'s satisfaction check): the registry's own boundary, 700. -/
 public def Weight.isBold (w : Weight) : Bool := 700 ≤ w.css
 
-/-- The two directions of the series↔number map compose to the identity:
-each series is the nearest series to its own number, which is what makes
-`css` a bijection onto its image and `ofCss` its inverse there. The parse
-half — `parseSeries w.series = some (w, "")` — is String-typed, which the
-kernel cannot reduce, so it is pinned by an executable check in
-Tests/FontMath rather than stated here. -/
 public theorem Weight.ofCss_css_id : ∀ w : Weight, ofCss w.css = w := by
   intro w; cases w <;> rfl
 
@@ -3018,133 +2015,71 @@ public inductive Style where
   | emph
   | sans
   | normal
-  /-- The roman (serif) family: NFSS's `\rmfamily`/`\textrm`, the body slot.
-  Family selection only — series and shape stand. -/
+  /-- The roman family: NFSS's `\rmfamily`/`\textrm`; series and shape stand. -/
   | roman
-  /-- The medium series: `\mdseries`/`\textmd` turns bold off without
-  touching family or shape. -/
+  /-- The medium series: `\mdseries`/`\textmd`, turning bold off. -/
   | medium
-  /-- A series off the bold/medium corners: `\fontseries{l}` and the runs
-  a `FontFace={series}{shape}` declaration is selected for. `.bold` and
-  `.medium` stay their own constructors — they are the two spellings LaTeX
-  gives names to — and `Style.weight?` is the one map all three project
-  through, so the backends cannot disagree on what a series means. -/
+  /-- A series other than bold or medium, as `\fontseries{l}` selects. -/
   | series (w : Weight)
-  /-- The upright shape: `\upshape`/`\textup`. NFSS shapes are exclusive
-  (fntguide §2.2: upright, italic, slanted, small caps are one axis), so
-  selecting upright clears italic and small caps both. -/
+  /-- The upright shape: `\upshape`/`\textup`, clearing italic and small caps. -/
   | upright
-  /-- A family the document declared beside the three slots (fontspec's
-  `\newfontfamily\cmd{Family}`, `FontSpec.families`), by its slot: family
-  selection only, as `\sffamily` is — series and shape stand. -/
+  /-- A family the document declared beside the three slots, by its slot; series and shape stand. -/
   | family (slot : Nat)
   | size (name : String)
-  /-- `\fontsize{size}{leading}\selectfont`: both dimensions stay affine
-  until the run's local measure and current font metrics are known. -/
+  /-- `\fontsize{size}{leading}\selectfont`, both dimensions affine until the
+  run's measure and font metrics are known. -/
   | fontSize (size leading : Affine Measure)
   /-- A language switch (BCP 47 tag): `\foreignlanguage`, `\selectlanguage`,
-  babel's `otherlanguage`. Not a new `Inline` constructor — every walk
-  already recurses through `.styled` generically, and the attribute is
-  pure markup (`langWrap_text`): hyphenation patterns and the artifacts'
-  span-level language declarations read it, ink never moves. -/
+  babel's `otherlanguage`. -/
   | lang (tag : String)
   deriving Repr, BEq
 
-/-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
-the IR because both backends read it: they must agree on what `\Huge` means.
-
-The values are LaTeX's own (`size10.clo`: 5, 7, 8, 9, 10, 12, 14.4, 17.28,
-20.74, 24.88 pt), which above `normalsize` is a geometric modular scale of
-ratio 1.2 — TeX's `\magstep` — to per-mille rounding, and below it takes the
-traditional smaller steps down to the fixed footnote and script sizes. The
-theorems after the table are what make it a scale rather than a list of
-numbers: it is strictly monotone, every step's ratio stays inside a stated
-band, and the display steps really are ×1.2. -/
+/-- The LaTeX 10pt size scale (size10.clo), per mille of the surrounding size. -/
 @[expose] public def sizeScale : List (String × Nat) :=
   [("tiny", 500), ("scriptsize", 700), ("footnotesize", 800), ("small", 900),
    ("normalsize", 1000), ("large", 1200), ("Large", 1440), ("LARGE", 1728),
    ("huge", 2074), ("Huge", 2488)]
 
-/-- A named step of the scale applied to a base size — the one resolving
-site for `base * step / 1000`, so the backends and the layout cannot
-drift on what a named size means. A name off the scale is the base
-itself: the identity factor, `normalsize`'s. -/
+/-- A named step of the scale applied to a base size; a name off the scale is the base itself. -/
 @[expose] public def scaleStep (base : Sp) (name : String) : Sp :=
   base * ((sizeScale.lookup name).getD 1000) / 1000
 
-/-- Each named step's `\baselineskip`, per mille of the body size: the
-second argument of size10.clo's `\@setfontsize` rows (`\tiny` 5/6 pt,
-`\scriptsize` 7/8, `\footnotesize` 8/9.5, `\small` 9/11, `\normalsize`
-10/12, `\large` 12/14, `\Large` 14.4/18, `\LARGE` 17.28/22, `\huge`
-20.74/25, `\Huge` 24.88/30), each measured under lualatex as the line pitch
-of a paragraph set wholly in the step. A size command sets both lengths,
-so the leading belongs to the step, not to a ratio of its type: the 6⁄5
-rule (`leadingFor`) sets a `\footnotesize` line 0.1 pt loose and a
-`\LARGE` one 1.3 pt tight. The ladder is size10.clo's at every body
-(`sizeScale`), and so is this column. -/
+/-- Each named step's `\baselineskip`, per mille of the body size:
+size10.clo's `\@setfontsize` second arguments. -/
 @[expose] public def sizeSkipScale : List (String × Nat) :=
   [("tiny", 600), ("scriptsize", 800), ("footnotesize", 950), ("small", 1100),
    ("normalsize", 1200), ("large", 1400), ("Large", 1800), ("LARGE", 2200),
    ("huge", 2500), ("Huge", 3000)]
 
-/-- The `\normalsize` row of a skip column: the body's own `\baselineskip`,
-per mille of the body size — the row every step's leading is read against
-(`stepLead`). size10.clo's 1200 off the column, and never below one. -/
+/-- The `\normalsize` row of a skip column, per mille of the body size: 1200
+off the column, and never below one. -/
 @[expose] public def skipBody (skips : List (String × Nat)) : Nat :=
   max 1 ((skips.lookup "normalsize").getD 1200)
 
-/-- **A named step's leading at a base**: the base's leading (`leadingFor`,
-before `\linespread`) in the proportion the skip column in force gives the
-step's row to its `\normalsize` row (`skipBody`) — the `\baselineskip` a
-size command sets with its size, against the body's own. Under size10.clo's
-column (`sizeSkipScale`) at the body that is the file's own length
-(`\footnotesize` 9.5 pt at 10 pt). Under a document's column — a class's
-`\normalsize` (`\page{ baselineskip = … }`) or a venue's `\@setfontsize`
-rows — the page's factor carries the body's declared skip, so a step the
-document declares stands at its declared skip and every other step at
-size10.clo's own length (`stepLead_ratio_between`). On a display base — a
-heading's or a title's size, which the step scales — the leading scales
-with the type it leads. `none` off the column. -/
+/-- A named step's leading at a base: the base's leading in the proportion the
+skip column gives the step's row to its `\normalsize` row. -/
 @[expose] public def stepLead (skips : List (String × Nat)) (step : String) (base : Sp) :
     Option Sp :=
   (skips.lookup step).map fun (l : Nat) => leadingFor base * (l : Int) / (skipBody skips : Int)
 
-/-- **The baseline distance a run sets at** — the one resolving site the
-page's line boxes and the deck's line heights read: the leading of the
-named step it was set under (`stepLead`), any other size the 6⁄5 rule of
-its own size (`leadingFor`), both under the page's factor, which LaTeX's
-`\selectfont` applies (`\linespread`) to whatever `\baselineskip` the size
-command left. -/
+/-- The baseline distance a run sets at: its named step's leading, else the
+6⁄5 rule of its own size. -/
 @[expose] public def stepSkip (lead : Option Sp) (size : Sp) (factor : Nat := 1000) : Sp :=
   match lead with
   | some l => l * factor / 1000
   | none => leadingFor size factor
 
-/-- A run under no size command sets at the 6⁄5 rule of its own size. -/
 @[simp] public theorem stepSkip_none_exact (size : Sp) (factor : Nat) :
     stepSkip none size factor = leadingFor size factor := rfl
 
-/-- **The leading a run's line box takes**: its paragraph's leading — the
-step the paragraph is set at (`lead`, `stepLead` at its base) over its
-nominal size — in the run's proportion to that size; under no step, the
-6⁄5 rule of the run's own size, which is the same proportion. LaTeX reads
-`\baselineskip` once, at `\par`, and a run adds only its ink, so a run never
-carries a leading of its own: a `{\small …}` run inside a body paragraph
-leads in the body's proportion to its smaller type, and its box stays inside
-the paragraph's strut whatever skip column the page reads
-(`runLead_between`). A unitless CSS line height is the same rule — the one
-an inline element inherits from the block it stands in, so the HTML's runs
-read this proportion too. A run larger than its paragraph grows its box in
-the same proportion, as CSS's does, where TeX keeps the `\baselineskip`
-until the ink collides: pending work. -/
+/-- The leading a run's line box takes: its paragraph's leading, in the run's
+proportion to the paragraph's size. -/
 @[expose] public def runLead (lead : Option Sp) (nominal size : Sp) (factor : Nat := 1000) :
     Sp :=
   match lead with
   | some l => l * size / max nominal 1 * factor / 1000
   | none => leadingFor size factor
 
-/-- A run at its paragraph's own size leads at the paragraph's leading,
-exactly (`_exact`). -/
 public theorem runLead_exact (lead : Option Int) (nominal : Int) (h : 0 < nominal)
     (factor : Nat) : runLead lead nominal nominal factor = stepSkip lead nominal factor := by
   cases lead with
@@ -3154,8 +2089,6 @@ public theorem runLead_exact (lead : Option Int) (nominal : Int) (h : 0 < nomina
     simp only [runLead, stepSkip, hm]
     rw [Int.mul_ediv_cancel _ (by omega)]
 
-/-- A larger run never leads less than a smaller one (`_monotone`), under any
-step's leading the paragraph carries. -/
 public theorem runLead_monotone (lead : Option Int) (nominal : Int) (factor : Nat) (a b : Int)
     (hl : ∀ l, lead = some l → 0 ≤ l) (hab : a ≤ b) :
     runLead lead nominal a factor ≤ runLead lead nominal b factor := by
@@ -3175,10 +2108,6 @@ public theorem runLead_monotone (lead : Option Int) (nominal : Int) (factor : Na
     apply Int.ediv_le_ediv (by omega)
     exact Int.mul_le_mul_of_nonneg_left hab h0
 
-/-- **A run no larger than its paragraph leads within its paragraph's
-leading** (`_between`): between nothing and the leading the paragraph's own
-lines stand at (`stepSkip`), so a smaller run's box never reaches past the
-paragraph's strut by a leading of its own, under any step, column or factor. -/
 public theorem runLead_between (lead : Option Int) (nominal : Int) (factor : Nat) (s : Int)
     (hn : 0 < nominal) (hl : ∀ l, lead = some l → 0 ≤ l) (hs : 0 ≤ s) (hsn : s ≤ nominal) :
     0 ≤ runLead lead nominal s factor ∧
@@ -3191,27 +2120,13 @@ public theorem runLead_between (lead : Option Int) (nominal : Int) (factor : Nat
   · rw [← runLead_exact lead nominal hn factor]
     exact runLead_monotone lead nominal factor s nominal hl hsn
 
-/-- The size file's two columns — each row's size (`sizeScale`) and its
-leading (`sizeSkipScale`) — name the same steps in the same order: a step
-with a size has a leading and none is invented. -/
 public theorem sizeSkipScale_names_exact :
     sizeSkipScale.map (·.1) = sizeScale.map (·.1) := by decide
 
-/-- Every step's leading lies between 8⁄7 of its size (`\scriptsize`'s,
-the tightest the size file sets) and 9⁄7 (`\LARGE`'s 22/17.28 is the
-loosest): no step sets its lines closer than the type and none drifts
-from the size file's proportions. -/
 public theorem sizeSkipScale_between :
     ∀ p ∈ sizeScale, ∀ q ∈ sizeSkipScale, p.1 = q.1 →
       8 * p.2 ≤ 7 * q.2 ∧ 7 * q.2 ≤ 9 * p.2 := by decide
 
-/-- **A step leads in its column's proportion to the body**, over every skip
-column the page reads (`PageSpec.skipScale`: size10.clo's, a class's, a
-venue's): the step's leading times the column's `\normalsize` row is the
-base's leading times the step's row, to the floor of one division — so a
-step stands to the body as its declared `\baselineskip` stands to the
-body's, whichever column declared them, and the page's factor scales both
-alike. -/
 public theorem stepLead_ratio_between (skips : List (String × Nat)) (step : String)
     (base : Sp) (k : Nat) (hk : skips.lookup step = some k) :
     ∃ l, stepLead skips step base = some l ∧
@@ -3225,12 +2140,6 @@ public theorem stepLead_ratio_between (skips : List (String × Nat)) (step : Str
   · exact Int.ediv_mul_le _ (Int.ne_of_gt hn)
   · exact Int.lt_ediv_add_one_mul_self _ hn
 
-/-- **A step's lines clear their type on every base**: under size10.clo's
-columns, whatever base a named step scales — the body, a heading's size, a
-title's — its leading (`stepLead`) stands above the type it leads
-(`scaleStep`), and by no more than the size file's loosest proportion, 9⁄7,
-to the rounding of the integer divisions. The floor of a hundred sp is
-what strictness costs under that rounding. -/
 public theorem stepLead_between (base : Int) (hb : 100 ≤ base) :
     ∀ p ∈ sizeScale, ∃ l, stepLead sizeSkipScale p.1 base = some l ∧
       scaleStep base p.1 < l ∧ 7 * l ≤ 9 * scaleStep base p.1 + 9 := by
@@ -3260,9 +2169,6 @@ public theorem stepLead_between (base : Int) (hb : 100 ≤ base) :
     | (show base * 2488 / 1000 < base * 1200 / 1000 * 3000 / 1200 ∧
         7 * (base * 1200 / 1000 * 3000 / 1200) ≤ 9 * (base * 2488 / 1000) + 9; omega)
 
-/-- At the body's own step any column is the 6⁄5 rule exactly: a paragraph
-that names `\normalsize` sets where an undeclared one does, whatever skip
-its `\normalsize` row declares — the page's factor already carries it. -/
 public theorem stepSkip_normalsize_exact (skips : List (String × Nat)) (n : Nat)
     (hn : skips.lookup "normalsize" = some n) (hpos : 1 ≤ n) (body : Sp) (factor : Nat) :
     stepSkip (stepLead skips "normalsize" body) body factor = leadingFor body factor := by
@@ -3280,25 +2186,16 @@ public theorem stepSkip_normalsize_exact (skips : List (String × Nat)) (n : Nat
     Int.mul_ediv_cancel _ (by decide)
   rw [h1000]
 
-/-- A skip column with one row replaced: the door the document's own skips
-— a class's `\normalsize`, a venue's `\@setfontsize` rows — come in through.
-A name off the column leaves it as it was. -/
+/-- A skip column with one row replaced; a name off the column leaves it as it was. -/
 public def setSkip (skips : List (String × Nat)) (name : String) (row : Nat) :
     List (String × Nat) :=
   skips.map fun p => if p.1 == name then (p.1, row) else p
 
-/-- A declared length's row in a skip column: its share of the body size, per
-mille, rounded — the arithmetic the size ladder's own door reads a declared
-size through. The length comes a thousandfold (`milli` sp: `Dim.pt` of a
-milli-point argument, or a length times 1000), so a `\@setfontsize` argument
-in hundredths of a point loses nothing before the one division. -/
+/-- A declared length's per-mille share of the body size, rounded, the length
+given a thousandfold. -/
 public def skipRowOf (milli body : Sp) : Nat :=
   ((milli + body / 2) / max body 1).toNat
 
-/-- **A declared skip reads back as itself** (`_between`): the row a declared
-`\baselineskip` lands as, applied to the body it was read against, stands
-within half a per-mille share of the body of the length declared — the
-column holds what the document wrote, to its rounding. -/
 public theorem skipRowOf_between (milli body : Int) (hs : 0 ≤ milli) (hb : 0 < body) :
     (skipRowOf milli body : Int) * body ≤ milli + body / 2 ∧
       milli + body / 2 < ((skipRowOf milli body : Int) + 1) * body := by
@@ -3308,51 +2205,25 @@ public theorem skipRowOf_between (milli body : Int) (hs : 0 ≤ milli) (hb : 0 <
   exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hb), Int.lt_ediv_add_one_mul_self _ hb⟩
 
 /-- The size a document title sets at when no `titlepage` font template
-declares one: the one resolving site, so the two backends read one
-function rather than each naming a step. A flow page takes `LARGE`
-(classes.dtx's `\@maketitle` sets `{\LARGE \@title \par}`); a deck takes
-`Large`, one step below (beamerfontthemedefault.sty,
-`\setbeamerfont{title}{size=\Large, parent=structure}`, the step
-beamerfontthememoloch.sty re-declares for its own lineage). Reading the
-flow step on a deck set its title 20% large, enough to re-flow a title
-line whose breaks the author declared. -/
+declares one: `\LARGE` on a flow page, `\Large` on a deck. -/
 @[expose] public def titleSize (base : Sp) (slides : Bool) : Sp :=
   scaleStep base (if slides then "Large" else "LARGE")
 
-/-- The furniture ink-clearance floor (`Layout.inkClearance`): TeX's own
-collision floor, `\lineskip=1pt` (TeXbook p.78), the one value both
-artifacts read. -/
 @[expose] public def inkClearance : Sp := Dim.pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
 
-/-- Heading display sizes from the type scale, never loose constants:
-article.cls sets `\section` in `\Large`, `\subsection` in `\large`, and
-`\subsubsection` in `\normalsize` (classes.dtx, §Sectioning), so the
-hierarchy holds at every base size. Deeper ranks keep the body size rather
-than shrink below readable text; their structural rank stays distinct in
-both artifacts. The page sets its titles with it (`Layout.sectionSize`) and
-the contrast report judges them at it. -/
+/-- Heading display sizes from the type scale: `\section` in `\Large`,
+`\subsection` in `\large`, `\subsubsection` in `\normalsize`. -/
 @[expose] public def headingSize (base : Sp) : HeadingLevel → Sp
   | .title | .h1 => scaleStep base "LARGE"
   | .h2 => scaleStep base "Large"
   | .h3 => scaleStep base "large"
   | .h4 | .h5 | .h6 => base
 
-/-- The reach below its bar's top of moloch's section-page template's last
-line, the subsection title's strut (`\strut` before
-`\ifx\insertsubsectionhead\@empty`, beamerinnerthememoloch.dtx): its baseline
-one `\baselineskip` of the subsection title's `\large` under the bar's top,
-its depth three tenths of that below — where the content box beamer centres
-ends. The one value both backends read: the PDF's skip after the bar
-(`Layout.collectSection`) and the web section page's closing box, at the
-body's em (`HtmlDoc.themeCss`, `sectionPageStrut_between`). -/
+/-- The reach below its bar's top of the section-page template's last line,
+the subsection title's strut. -/
 public def sectionPageStrut (size : Int) (factor : Nat := 1000) : Int :=
   leadingFor (scaleStep size "large") factor * 13 / 10
 
-/-- **The web's em of the section-page strut is the page's, at every body**
-(`_between`): at the engine's leading the strut the PDF sets at a body of
-`size` stands within four sp under that body's share of the strut at the
-milli-em the web emits (`sectionPageStrut 1000`, an em of the section
-page's body) — the floors of the three steps, no more. -/
 public theorem sectionPageStrut_between (size : Int) :
     size * sectionPageStrut 1000 / 1000 - 4 ≤ sectionPageStrut size ∧
       sectionPageStrut size ≤ size * sectionPageStrut 1000 / 1000 := by
@@ -3365,71 +2236,37 @@ public theorem sectionPageStrut_between (size : Int) :
   rw [hs, hs]
   omega
 
-/-- Adjacent steps of the scale, in order: what the scale theorems below
-quantify over. -/
+/-- Adjacent steps of the scale, in order. -/
 public def sizeScaleSteps : List (Nat × Nat) :=
   (sizeScale.map (·.2)).zip (sizeScale.map (·.2)).tail
 
-/-- The scale is strictly monotone: a larger name is a larger size, so a
-document can rank two declared sizes by rank alone. -/
 public theorem sizeScale_monotone : ∀ p ∈ sizeScaleSteps, p.1 < p.2 := by decide
 
-/-- Every step's ratio lies in [10⁄9, 7⁄5]: no two adjacent sizes collapse
-into each other (at least a major second apart) and no step jumps more than
-`tiny`'s catch-up to `scriptsize` (a ratio band, the modular-scale property,
-stated over the integers). -/
 public theorem sizeScale_ratio_band :
     ∀ p ∈ sizeScaleSteps, 10 * p.1 ≤ 9 * p.2 ∧ 5 * p.2 ≤ 7 * p.1 := by decide
 
-/-- `normalsize` is the identity: the scale is anchored at the body size. -/
 public theorem sizeScale_normalsize : sizeScale.lookup "normalsize" = some 1000 := by decide
 
-/-- Above `normalsize` the scale is geometric with ratio 1.2 to per-mille
-rounding: each step is `\magstep`'s minor-third ratio, |6a − 5b| ≤ 4‰. -/
 public theorem sizeScale_display_geometric :
     ∀ p ∈ sizeScaleSteps, 1000 ≤ p.1 →
       6 * p.1 ≤ 5 * p.2 + 4 ∧ 5 * p.2 ≤ 6 * p.1 + 4 := by decide
 
-/-- The card's contract and the type scale agree at the card's own base
-size: at the conventional x-height ratio (half the nominal size, the
-fallback the shipped-ink judge uses for a font that declares none), every
-scale step from `footnotesize` up clears the 1.4 mm legibility floor the
-class implies — the class never states an assertion its own defaults
-violate, and what fails (`scriptsize`, `tiny`) is exactly what the
-assertion exists to catch on the shipped pages. -/
 public theorem card_floor_within_scale :
     ∀ p ∈ sizeScale, 800 ≤ p.2 →
       baseFontSize * (p.2 : Int) / 1000 / 2 ≥ cardXHeightFloor := by decide
 
-/-- The poster's mirror of `card_floor_within_scale`: at the same
-half-nominal fallback ratio, every scale step from `footnotesize` up on
-beamerposter's scale-1 body (`posterFontSize`) clears the 1 m fluent-
-reading floor — the class never states an assertion the calibration it is
-derived from violates, and what fails (`scriptsize`, `tiny`, or a body
-pasted in unscaled from an article) is what the assertion exists to catch. -/
 public theorem poster_floor_within_scale :
     ∀ p ∈ sizeScale, 800 ≤ p.2 →
       posterFontSize * (p.2 : Int) / 1000 / 2 ≥ posterXHeightFloor := by decide
 
-/-- Whether a ladder never decreases in its named order — what the size
-read-out door demands of a venue's ladder. Non-strict where the engine's
-own scale is strict (`sizeScale_monotone`): a venue may set two
-neighbouring sizes equal (the NeurIPS lineage sets `\footnotesize` =
-`\small` = 9 pt), and what the door refuses is disorder — a larger name
-set smaller. `sizeScale` itself is ordered (`sizeScale_stepsOrdered`),
-and `size_ladder_monotone` extends the property to every ladder the door
-accepts. -/
+/-- Whether a ladder never decreases in its named order. -/
 public def stepsOrdered (scale : List (String × Nat)) : Bool :=
   ((scale.map (·.2)).zip (scale.map (·.2)).tail).all fun p => p.1 ≤ p.2
 
 public theorem sizeScale_stepsOrdered : stepsOrdered sizeScale = true := by decide
 
-/-- Replace one named step of a ladder — the door a venue's refused
-`\@setfontsize` size commands are read through, per-mille of the body.
-`none` when the name is off the ladder or the replaced ladder would no
-longer be ordered: LaTeX's own scale is ordered by design (size10.clo's
-values), and the engine's size comparisons assume it, so a venue step
-that breaks the order keeps the built-in instead, named. -/
+/-- Replace one named step of a ladder, per mille of the body; `none` when the
+name is off the ladder or the ladder would no longer be ordered. -/
 public def setStep (scale : List (String × Nat)) (name : String) (f : Nat) :
     Option (List (String × Nat)) :=
   if (scale.lookup name).isNone then none
@@ -3437,9 +2274,6 @@ public def setStep (scale : List (String × Nat)) (name : String) (f : Nat) :
     let s' := scale.map fun p => if p.1 == name then (p.1, f) else p
     if stepsOrdered s' then some s' else none
 
-/-- Every ladder `setStep` accepts is ordered in the named order: the
-read-out cannot admit a venue that sets `\small` larger than
-`\normalsize` — that step keeps the built-in (W0361 names it). -/
 public theorem size_ladder_monotone (scale : List (String × Nat)) (name : String)
     (f : Nat) (s' : List (String × Nat)) (h : setStep scale name f = some s') :
     stepsOrdered s' = true := by
@@ -3451,13 +2285,7 @@ public theorem size_ladder_monotone (scale : List (String × Nat)) (name : Strin
     next hm => injection h with h'; subst h'; exact hm
     next => exact absurd h (by simp)
 
-/-- Replace several named steps at once, judged as one ladder — the door a
-venue's whole read-out goes through first: per-step application through
-`setStep` depends on the order the venue wrote its redefinitions in (a
-ladder shrunk from `\small` down is refused at `\small` against the
-engine's still-standing `\footnotesize`), and a venue's ladder is one
-declaration, not a sequence. `none` when the replaced ladder disorders;
-the caller then salvages step by step and the offenders are named. -/
+/-- Replace several named steps at once, judged as one ladder. -/
 public def setStepsAll (scale : List (String × Nat)) (steps : List (String × Nat)) :
     Option (List (String × Nat)) :=
   let s' := scale.map fun q => match steps.lookup q.1 with
@@ -3465,8 +2293,6 @@ public def setStepsAll (scale : List (String × Nat)) (steps : List (String × N
     | none => q
   if stepsOrdered s' then some s' else none
 
-/-- The batch door's half of `size_ladder_monotone`: a venue ladder
-accepted whole is ordered whole. -/
 public theorem size_ladder_monotone_all (scale steps : List (String × Nat))
     (s' : List (String × Nat)) (h : setStepsAll scale steps = some s') :
     stepsOrdered s' = true := by
@@ -3476,21 +2302,16 @@ public theorem size_ladder_monotone_all (scale steps : List (String × Nat))
   next hm => injection h with h'; subst h'; exact hm
   next => exact absurd h (by simp)
 
-/-- The size ladder in force for a document: its own, read from a venue's
-size commands, or the engine's scale. The one resolving site — a consumer
-of a named size step reads the ladder from here (or the `Geom` copy of
-it), never `sizeScale` directly, now that a document may own the ladder. -/
+/-- The size ladder in force for a document: its own, read from a venue's size
+commands, or the engine's scale. -/
 public def PageSpec.scale (p : PageSpec) : List (String × Nat) :=
   p.sizes.getD sizeScale
 
-/-- The skip column in force for a document: its own, or size10.clo's. The
-one resolving site every step's leading reads (`stepLead`), so the page's
-line boxes and the deck's line heights cannot read two columns. -/
+/-- The skip column in force for a document: its own, or size10.clo's. -/
 public def PageSpec.skipScale (p : PageSpec) : List (String × Nat) :=
   p.skips.getD sizeSkipScale
 
-/-- `scaleStep` over a document's ladder: the same integer arithmetic, the
-scale a parameter. A name off the ladder is the base itself. -/
+/-- `scaleStep` over a document's ladder; a name off the ladder is the base itself. -/
 public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
   base * ((scale.lookup name).getD 1000) / 1000
 
@@ -3515,14 +2336,8 @@ public def Style.label : Style → String
   | .lang tag => s!"lang:{tag}"
 
 
-/-- What a resolved cross-reference renders (`refText`): LaTeX's bare
-number (`\ref`) and parenthesised equation number (`\eqref`), and
-cleveref's forms (cleveref manual v0.21.4 §2) — the kind's locale name
-before the number (`\cref`/`\Cref` — `cap` picks the capitalised name,
-which English also unabbreviates), the first key of a `\crefrange` pair
-(plural name, number, the range conjunction), the label format alone
-(`\labelcref`, also the range pair's second key), and the name alone
-(`\namecref`/`\nameCref`). -/
+/-- What a resolved cross-reference renders: `\ref`'s bare number, `\eqref`'s
+parenthesised one, or a cleveref form. -/
 public inductive RefForm where
   | plain
   | paren
@@ -3532,9 +2347,7 @@ public inductive RefForm where
   | name (cap : Bool)
   deriving Repr, BEq
 
-/-- What a field citation prints of its entry instead of its label
-(biblatex manual §3.8.4): its title (`\citetitle`), its URL (`\citeurl`),
-its date (`\citedate`), or the whole entry (`\fullcite`). -/
+/-- What a field citation prints of its entry instead of its label (biblatex manual §3.8.4). -/
 public inductive CiteField where
   | title
   | url
@@ -3542,18 +2355,8 @@ public inductive CiteField where
   | full
   deriving Repr, BEq, Inhabited
 
-/-- The natbib command a citation was written with — natbib.sty's command
-table (`\DeclareRobustCommand\citet` and its siblings), each one setting
-which parts print and whether brackets wrap them: `\citet` (textual),
-`\citep` (parenthetical), `\cite` (`auto`: textual in author-year mode,
-parenthetical in numbers mode, natbib.sty `\NAT@cites`), `\citealt` and
-`\citealp` (the two without brackets), `\citeauthor`, `\citeyear`,
-`\citeyearpar`, `\citenum` (the list position alone), `\citetext`
-(natbib.sty's `\NAT@open#1\NAT@close`: the elaborator sets its body as body
-text between two `bracket` marks, so a citation inside it is a citation like
-any other), and the kernel's `\nocite` (its keys enter the list, and nothing
-prints). Which punctuation draws them is the bibliography's to decide
-(`Bib.renderCite`). -/
+/-- The natbib command a citation was written with, which sets the parts that
+print and whether brackets wrap them. -/
 public inductive CiteCmd where
   | textual
   | paren
@@ -3566,19 +2369,13 @@ public inductive CiteCmd where
   | num
   | text
   | nocite
-  /-- One citation bracket, natbib's `\NAT@open` when `opening` and its
-  `\NAT@close` otherwise: the marks `\citetext` sets around its body. -/
+  /-- One citation bracket: natbib's `\NAT@open` when `opening`, else `\NAT@close`. -/
   | bracket (opening : Bool)
-  /-- A field of the entry in place of its label (`CiteField`). -/
   | field (f : CiteField)
   deriving Repr, BEq, Inhabited
 
-/-- What a citation declares beside its keys: the command, the starred
-form's full author list (`\citet*`), the capitalized form (`\Citet`), and
-the optional notes — one `[...]` is the note after the citation, two are
-the notes before and after it (natbib.sty's header: `\citep[see][p.~5]`).
-A note is its elaborated text: natbib sets it as written, and nothing in a
-citation's rendering reads structure inside one. -/
+/-- What a citation declares beside its keys: the command, the starred and
+capitalized forms, and the optional notes. -/
 public structure CiteForm where
   cmd : CiteCmd
   full : Bool := false
@@ -3587,13 +2384,7 @@ public structure CiteForm where
   post : String := ""
   deriving Repr, BEq, Inhabited
 
-/-- natbib's citation commands (natbib.sty's command table), each with the
-form it selects: `\citefullauthor` is `\citeauthor*` there, and the
-capitalized five are the only ones natbib defines; the kernel's `\cite` and
-`\nocite` are read through the same rows, with natbib or without it, and so
-are biblatex's field citations (`CiteField`; a star is `\citetitle*`'s full
-title). The one naming site — the elaborator reads a command through it and
-the dump spells a form back through it. -/
+/-- natbib's citation commands, each with the form it selects. -/
 public def natbibCites : List (String × CiteForm) :=
   [("citet", { cmd := .textual }), ("citep", { cmd := .paren }),
    ("cite", { cmd := .auto }), ("citealt", { cmd := .alt }),
@@ -3614,11 +2405,7 @@ public def CiteForm.command (f : CiteForm) : String :=
   if let .bracket o := f.cmd then (if o then "NAT@open" else "NAT@close")
   else ((natbibCites.find? fun (_, g) => g.cmd == f.cmd && g.up == f.up).map (·.1)).getD "cite"
 
-/-- The weight a style selects, when it touches the axis: the one map
-`.bold`, `.medium`, `.series`, and `.normal`'s reset project through.
-Layout's `applyStyle` follows it exactly (`weight_agree` in Layout.lean),
-and the HTML emission reads the same `w` its `.series` arm carries — so
-the face a run selects is one function of the style in both backends. -/
+/-- The weight a style selects, when it touches the axis. -/
 @[expose] public def Style.weight? : Style → Option Weight
   | .bold => some .b
   | .medium => some .m
@@ -3626,36 +2413,28 @@ the face a run selects is one function of the style in both backends. -/
   | .normal => some .m
   | _ => none
 
-/-- The text alternative a non-text object declares (WCAG 2.2 SC 1.1.1;
-ISO 32000-2 §14.9.3; the LaTeX Tagging Project's `alt=`/`artifact` keys).
-Three states, never a string: an empty string cannot say whether nothing
-was said or the object is decoration. -/
+/-- The text alternative a non-text object declares (WCAG 2.2 SC 1.1.1, ISO 32000-2 §14.9.3). -/
 public inductive Alt where
   | undeclared
   | decorative
   | described (text : String)
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The one site that builds a described alternative from text: blank text
-is nothing said, so `alt=` and `alt={ }` stay `.undeclared`. -/
+/-- A described alternative from text; blank text stays `.undeclared`. -/
 public def Alt.declare (s : String) : Alt :=
   if s.trimAscii.toString.isEmpty then .undeclared else .described s.trimAscii.toString
 
-/-- The text a described alternative carries, `""` for the other two: what
-a reader with only a string to fill (a link's reading, markdown) takes. -/
+/-- The text a described alternative carries, `""` for the other two. -/
 public def Alt.text : Alt → String
   | .described t => t
   | .undeclared | .decorative => ""
 
-/-- An alternative as the IR dump spells it after its node: nothing when
-undeclared, so a document that declares none dumps as it always did. -/
+/-- An alternative as the IR dump spells it after its node: nothing when undeclared. -/
 public def Alt.dumpSuffix : Alt → String
   | .undeclared => ""
   | .decorative => " artifact"
   | .described t => s!" alt {t.quote}"
 
-/-- No described alternative reads as nothing: `declare` refuses blank
-text. -/
 public theorem Alt.declare_nonempty (s t : String) (h : Alt.declare s = .described t) :
     ¬ t.isEmpty := by
   unfold Alt.declare at h
@@ -3666,16 +2445,12 @@ public theorem Alt.declare_nonempty (s t : String) (h : Alt.declare s = .describ
     subst h
     exact hne
 
-/-- Is a step's content pending on page `k`: before its range starts, or
-past its declared end (`\uncover<2>` covers on 1 and again from 3, exactly
-as beamer's transparent covering does). Pending content dims; it is never
-hidden. -/
+/-- Whether a step's content is pending on page `k`: before its range starts
+or past its declared end. -/
 @[expose] public def stepPending (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
   k < n || (match last with | some u => k > u | none => false)
 
-/-- A nonempty union of numbered intervals. The selector stores no content:
-repeated or overlapping intervals never duplicate the body it selects.
-`none` is an open end, not the frame's current last step. -/
+/-- A nonempty union of numbered intervals; `none` is an open end. -/
 public structure OverlaySpec where
   first : Nat
   last : Option Nat
@@ -3699,27 +2474,23 @@ namespace OverlaySpec
 public def reachesOther (s : OverlaySpec) (steps : Nat) : Bool :=
   (List.range steps).any fun i => !s.showsFirst (i + 1)
 
-/-- Interval order cannot change where a nested pause starts counting. -/
 public def start (s : OverlaySpec) : Nat := s.more.foldl (fun n r => min n r.1) s.first
 
-/-- Explicit numbered endpoints determine the frame's extent; an open end
-extends through that extent without inventing an extra page. -/
+/-- The frame's extent from the explicit numbered endpoints; an open end adds no page. -/
 public def maxStep (s : OverlaySpec) : Nat :=
   s.more.foldl (fun n r => max n (max r.1 (r.2.getD r.1)))
     (max s.first (s.last.getD s.first))
 
 public def union (s t : OverlaySpec) : OverlaySpec := { s with more := s.more ++ t.ranges }
 
-/-- Enumerate the frame, not the selector's intervals: a numbered step
-appears once even when several intervals select it. -/
+/-- The frame's numbered steps that satisfy `p`, each once. -/
 public def numberedSteps (steps : Nat) (p : Nat → Bool) : List Nat :=
   ((List.range steps).map (· + 1)).filter p
 
 public def selectedSteps (s : OverlaySpec) (steps : Nat) : List Nat :=
   numberedSteps steps s.selects
 
-/-- The finite projection of either arm in page-order storage. Visibility,
-replacement and conditional styling share these same numbered steps. -/
+/-- The numbered steps on which one arm of an alternation shows, in page-order storage. -/
 public def pageSteps (s : OverlaySpec) (steps : Nat) (first : Bool) : List Nat :=
   numberedSteps steps fun k => s.showsFirst k == first
 
@@ -3739,8 +2510,6 @@ public theorem union_comm_agree (s t : OverlaySpec) (k : Nat) :
     (s.union t).selects k = (t.union s).selects k := by
   simp [union_selects_exact, Bool.or_comm]
 
-/-- Nested covering is conjunction of selection, regardless of which
-operations carry the selectors. A covered ancestor stays covered. -/
 public theorem pending_nested_exact (s t : OverlaySpec) (k : Nat) :
     (s.pending k || t.pending k) = !(s.selects k && t.selects k) := by
   simp [pending, Bool.not_and]
@@ -3752,14 +2521,10 @@ public theorem pending_nested_exact (s t : OverlaySpec) (k : Nat) :
 public theorem showsFirst_id (s : OverlaySpec) : s.showsFirst 1 = true := by
   simp [showsFirst]
 
-/-- Store alternatives in first-page order, regardless of which side of
-an exact selector contains step one. Every alternation constructor uses
-this bridge from the author's active/otherwise order to artifact order. -/
+/-- Alternatives in first-page order, whichever side of the selector contains step one. -/
 public def pageOrder {α : Type} (s : OverlaySpec) (active otherwise : α) : α × α :=
   if s.pending 1 then (otherwise, active) else (active, otherwise)
 
-/-- Selecting from page-order storage recovers the author's chosen arm at
-every step, for any payload and any union of numbered intervals. -/
 public theorem pageOrder_select_exact {α : Type} (s : OverlaySpec) (k : Nat)
     (active otherwise : α) :
     (if s.showsFirst k then (s.pageOrder active otherwise).1
@@ -3768,7 +2533,6 @@ public theorem pageOrder_select_exact {α : Type} (s : OverlaySpec) (k : Nat)
   by_cases hk : s.selects k = true <;> by_cases hfirst : s.selects 1 = true <;>
     simp_all [pageOrder, showsFirst, pending]
 
-/-- No numbered page is lost or added by a finite artifact projection. -/
 public theorem numberedSteps_mem (steps k : Nat) (p : Nat → Bool) :
     k ∈ numberedSteps steps p ↔ 1 ≤ k ∧ k ≤ steps ∧ p k = true := by
   simp only [numberedSteps, List.mem_filter, List.mem_map, List.mem_range]
@@ -3795,8 +2559,6 @@ public theorem pageSteps_mem (s : OverlaySpec) (steps k : Nat) (first : Bool) :
       1 ≤ k ∧ k ≤ steps ∧ s.showsFirst k = first := by
   simp [pageSteps, numberedSteps_mem]
 
-/-- Exactly one arm reaches each numbered page. This is independent of
-the arms' payload, so it also covers nested or newly added modifiers. -/
 public theorem pageSteps_partition_contract (s : OverlaySpec) (steps k : Nat)
     (hk : 1 ≤ k) (hsteps : k ≤ steps) :
     ((s.pageSteps steps true).contains k || (s.pageSteps steps false).contains k) = true ∧
@@ -3814,49 +2576,26 @@ public inductive Decoration where
 public inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
-  /-- An elaborated formula: atoms with TeX's classes and scripts, ready to
-  measure against a MATH face. `src` is carried whole so the HTML backend's
-  boundary emission and every plain-text reading stay exactly what `.math`
-  gives them — a formula's meaning lives in `body`, its spelling in `src`.
-  Math the elaborator cannot yet model stays `.math`, warned by name. -/
+  /-- An elaborated formula: atoms with TeX's classes and scripts, with its
+  source `src` carried whole. -/
   | formula (display : Bool) (src : String) (body : Math.MList)
   | styled (style : Style) (body : Array Inline)
-  /-- `name` is the palette entry this came from, when it had one, so the
-  HTML backend can emit `var(--name)` and let a host page override it. -/
+  /-- `name` is the palette entry the colour came from, when it had one. -/
   | colored (color : Color) (name : Option ColorRef) (body : Array Inline)
-  /-- Diagnostic provenance only. Every semantic reading traverses `body`
-  unchanged; the span neither styles content nor adds a semantic leaf.
-  Source-free compilation removes this wrapper with `eraseLocations`. -/
+  /-- Diagnostic provenance only: every semantic reading traverses `body` unchanged. -/
   | located (span : Span) (body : Array Inline)
-  /-- An authored role: the expansion of a document-defined command with at
-  least one parameter (`\muted{...}` under `\define \muted(word: content)`),
-  wrapped so the name survives into the artifact as an addressable
-  annotation — the class hook. A 0-ary definition is a spelling, not a
-  classifier of an argument, and is not wrapped. Layout and the PDF page
-  are transparent to it (`role_transparent_layout`): the annotation is
-  HTML's, until tagged PDF gives it a structure element to ride. -/
+  /-- An authored role: the expansion of a document-defined command with a
+  parameter, wrapped so its name survives into the artifact. -/
   | role (name : String) (body : Array Inline)
-  /-- `\href{url}{body}`: a hyperlink. Becomes an `<a>` in HTML and a Link
-  annotation in PDF, so the URL rides the IR rather than a backend. -/
+  /-- `\href{url}{body}`: a hyperlink. -/
   | link (url : String) (body : Array Inline)
-  /-- `\label{key}`: the anchor a cross-reference lands on. Elaboration
-  binds it to the nearest preceding numbered thing in flow order (a
-  heading, a captioned float, a numbered equation) and records the binding
-  in the label table; the node itself ships no ink — HTML emits an empty
-  anchor element whose id is `labelAnchor key`, every other consumer passes
-  it through. -/
+  /-- `\label{key}`: the anchor a cross-reference lands on. -/
   | label (key : String)
-  /-- `\ref{key}` / `\eqref{key}` / cleveref's family: a cross-reference.
-  Elaboration emits it unresolved — `text = "??"`, LaTeX's own spelling,
-  `target = none` — and `resolveRefs` fills the text and the anchor once
-  the whole document's labels are known, so backends only render: PDF sets
-  `text`, HTML links it to `target`. `form` is what resolution renders
-  (`refText`): the bare number, `\eqref`'s parentheses, or a cleveref
-  form carrying the target kind's locale name. -/
+  /-- `\ref{key}`, `\eqref{key}` or cleveref's family: a cross-reference,
+  emitted as `text = "??"` and `target = none` until `resolveRefs` fills both.
+  -/
   | ref (key : String) (form : RefForm) (text : String) (target : Option String)
-  /-- A drawn text decoration. Geometry is resolved from the active face by
-  layout; backends preserve the typed kind rather than inferring it from a
-  generic rule. -/
+  /-- A drawn text decoration, its geometry resolved from the active face by layout. -/
   | decorated (kind : Decoration) (body : Array Inline)
   /-- `\hfill`: stretch that pushes what follows to the far margin. -/
   | fill
@@ -3871,91 +2610,27 @@ public inductive Inline where
   /-- `\\`, carrying LaTeX's optional extra space: `\\[1ex]`. -/
   | linebreak (extra : SymGlue)
   /-- A strut, LaTeX's `\rule{\z@}{h}`: a zero-width prop that makes its
-  line's box at least `h` tall above the baseline. It ships no ink and no
-  text — layout raises the line, the other backends keep an empty carrier —
-  so it owes no census fact. The author line of a styled title block
-  carries one (`ElementStyle.authorStrut`). -/
+  line's box at least `h` tall above the baseline. -/
   | strut (height : SymGlue)
-  /-- TeX's italic correction, `\/`: a kern as wide as the italic
-  correction of the word glyph before it (zero in an upright face), which
-  also parts that glyph from a space's pair kern. `maybe` is ltfntcmd's
-  `\maybe@ic`, what a text-font command sets at the edges of its argument
-  (`\check@icl`, `\check@icr`): the correction is made only where the face
-  in force is upright, and it lifts a space the glyph was followed by. It
-  ships no ink and no text. -/
+  /-- TeX's italic correction, `\/`; `maybe` is ltfntcmd's `\maybe@ic`, made
+  only where the face in force is upright. -/
   | italicCorr (maybe : Bool)
   /-- Overlay content crisp exactly on the selector's steps (`\uncover<2>`,
-  `<2->`, `<2-3>`, `<1,4>`): outside the union it dims, never hides, so no
-  step reflows the slide (PLAN M5). Zero metric impact — a pure grouping
-  both backends may recolor or tag. -/
+  `<2->`, `<2-3>`, `<1,4>`), dimmed elsewhere, never hidden. -/
   | onSteps (spec : OverlaySpec) (body : Array Inline)
-  /-- Overlay *alternation* (`\alt<2>{a}{b}`): exactly one of the two groups
-  is inked per step page. The declared exception to dim-not-hide (PLAN M5):
-  dimming is a quieter version of the truth for `step`, but two
-  alternatives dimmed side by side are a *different* page, and one a reader
-  reads as content — `\alt<2>{apple}{banana}` rendered "applebanana". Nor
-  can a pair of `step` nodes carry it: the complement of a mid-deck range
-  is two ranges, so a pair also showed nothing at all past the range's end.
-
-  The groups are stored in PAGE order, not spec order: `firstPage` is what
-  step 1 ships and `otherPage` what the steps on the far side of the spec
-  ship, so `\alt<2>{a}{b}` stores `b` first. Elaboration decides the order
-  once, where the spec is parsed, and every walk after it reads both groups
-  left to right — which is why the text census, the PDF structure tree and
-  the pages agree with no walk testing the range. Spec order put the tree's
-  reading order backwards from the handout's: page 1's ink landed under a
-  leaf whose census was the other alternative, and the second leaf was
-  named by no page at all.
-
-  Consequences, both real and both paid here: an `alt` frame's step pages
-  differ in content, so they do not share a text census the way `step`
-  pages do, and the line reflows between steps when the groups differ in
-  width — which is what replacement means. The document-level
-  census carries both alternatives (`plainTextOne`), the page's carries
-  the one the step inks (`OverlaySpec.showsFirst`, read by the layout walk beside the
-  dim walk — dimming recolours and never selects, so `dimInline_text` stays
-  true). -/
+  /-- Overlay alternation (`\alt<2>{a}{b}`): exactly one of the two groups is
+  inked per step page, stored in page order. -/
   | altSteps (spec : OverlaySpec) (firstPage : Array Inline)
       (otherPage : Array Inline)
-  /-- An external image (`\includegraphics`, and what a `figure` or a deck
-  logo reduces to): a box of raster content. `src` is the path as written —
-  the file itself is the driver's effect, surfaced through `imageRefs` and
-  fulfilled as an `Image.Store` — and `alt` is the text alternative the
-  author declared (`alt={...}`, `artifact`, or a figure's caption filled in
-  by `setAltBlocks`), the one value both backends project. -/
+  /-- An external image (`\includegraphics`); `src` is the path as written. -/
   | image (src : String) (size : Image.Spec) (alt : Alt)
-  /-- An icon (`\faGithub`, `\faIcon{arrow-up}` — the spellings the
-  fontawesome5 package defines): one glyph in an icon face, resolved like
-  any other scalar through the per-scalar fallback chain, so a document
-  that ships or installs the icon font renders it and one that does not
-  gets the coverage diagnostic naming the scalar. `label` is the required
-  text alternative (WCAG 2.2 SC 1.1.1): icon glyphs live in the Private
-  Use Area, which assistive technology cannot read, so an icon without a
-  text alternative is unrepresentable by construction. HTML hides the
-  glyph from AT and carries the label as the accessible name; the
-  markdown twin renders the label itself. -/
+  /-- An icon (`\faGithub`, `\faIcon{arrow-up}`): one glyph in an icon face, with its text label. -/
   | icon (scalar : Char) (label : String)
-  /-- A citation (`\cite`, natbib's `\citep`/`\citet` and their family): the
-  keys of one citation group, as written, and the form it was written in.
-  Elaboration emits it unresolved — the `.bib` file is the driver's effect —
-  and resolution (`Bib.apply`) *replaces* the node with the bibliography's
-  own inlines: marks linked to their entries, brackets and separators per
-  the document's natbib punctuation, so no backend ever reads a citation
-  form. A node a backend still sees is one no bibliography resolved; it
-  renders `citeMark` per key, LaTeX's own spelling for an undefined
-  citation, and W0351 or the missing-file diagnostic has already said
-  why. -/
+  /-- A citation (`\cite`, natbib's `\citep`/`\citet` and family): one
+  citation group's keys as written, and its form. -/
   | cite (form : CiteForm) (keys : Array String)
-  /-- `\footnote{...}`: a note set at the foot of the page its mark lands
-  on. `num` is the resolved mark number — elaboration assigns it in flow
-  order through `footnoteMark` (`\footnote[n]` overrides without stepping
-  the counter, LaTeX's own semantics; `footnote_numbers_gapless` is the
-  numbering contract). The body is inline content only: a paragraph break
-  inside a note is set as a space, named (W0371) — a block body would put
-  an Inline→Block edge into the elaboration termination knot and grow
-  every Inline-only walk a Block companion. The body is document text and
-  survives every walk (`footnoteWrap_text`); the mark digit is generated ink,
-  excluded from the census as `citeMark` is. -/
+  /-- `\footnote{...}`: a note set at the foot of the page its mark lands on;
+  `num` is the resolved mark number. -/
   | footnote (num : Option Nat) (body : Array Inline)
   deriving Repr, BEq, Inhabited
 
@@ -3969,15 +2644,13 @@ public inductive Inline where
   .altSteps ⟨n, last, []⟩ firstPage otherPage
 
 
-/-- An alternation in source order; the shared page-order bridge is the
-only place its active and otherwise arms change positions. -/
+/-- An alternation in source order, stored in page order. -/
 public def Inline.alternate (spec : OverlaySpec) (active otherwise : Array Inline) : Inline :=
   let (firstPage, otherPage) := spec.pageOrder active otherwise
   .altSteps spec firstPage otherPage
 
-/-- Which edges of a text-font command get an italic correction, factored
-over the surface token predicates so prose and native picture labels read
-the same ltfntcmd rule. -/
+/-- Which edges of a text-font command get an italic correction, over the
+surface's token predicates. -/
 public def fontCmdEdges {α : Type} (isSpace isNocorr : α → Bool)
     (reads : Option α → Bool) (body : List α) (next? : Option α) : Bool × Bool :=
   match body.dropWhile isSpace with
@@ -3985,45 +2658,29 @@ public def fontCmdEdges {α : Type} (isSpace isNocorr : α → Bool)
   | first :: rest => (!isNocorr first && reads body.head?,
       !rest.any isNocorr && reads next?)
 
-/-- The inline sequence one text-font command contributes: its selected
-face, the argument-side correction under that face, and the trailing
-correction under the surrounding face. -/
+/-- The inlines one text-font command contributes: its face, the argument-side
+correction, and the trailing correction under the surrounding face. -/
 @[expose] public def fontCmdInlines (style : Style) (edges : Bool × Bool)
     (inner : Array Inline) : Array Inline :=
   let run : Inline := .styled style (if edges.1 then #[.italicCorr true] ++ inner else inner)
   if edges.2 then #[run, .italicCorr true] else #[run]
 
-/-- The anchor a reference-list entry carries in HTML and its citations
-link to (`#` prefixed): one naming site, read by the resolver's link
-construction and the backend's id emission, so the two cannot drift. -/
+/-- The anchor a reference-list entry carries in HTML and its citations link to. -/
 public def bibAnchor (key : String) : String := "ref-" ++ key
 
-/-- What an unresolved citation shows for each key: LaTeX's rendering for
-an undefined citation. The one definition site backends and census read. -/
+/-- What an unresolved citation shows for each key, as LaTeX renders an undefined citation. -/
 public def citeMark : String := "?"
 
-/-- The text an unresolved citation is worth: one mark per key, comma
-separated — `\cite{a,b}` with no bibliography shows `?, ?`, one visible
-gap per promised entry. -/
+/-- The text an unresolved citation shows: one mark per key, comma separated. -/
 public def citeMarks (keys : Array String) : String :=
   String.intercalate ", " (keys.toList.map fun _ => citeMark)
 
-/-- How far a footnote mark's baseline stands above its line's, per mille
-of the surrounding size, the mark itself set at the `scriptsize` step of
-`sizeScale`. The authority this constant stands in for is the face's own
-OS/2 `ySuperscriptYOffset` (OpenType spec, OS/2 table): `Font` does not
-parse it yet — it reads sCapHeight and sxHeight only — so one named value,
-a third of an em, holds the raise until it does (PLAN § Owed obligations
-records the parse). -/
+/-- How far a footnote mark's baseline stands above its line's, per mille of
+the surrounding size. -/
 public def markRaise : Nat := 333
 
-/-- How a frame distributes its leftover vertical space: beamer's frame
-options `[t]`/`[c]`/`[b]` on `\begin{frame}`. `center` is beamer's default
-(user guide §8.1: the `c` option "is the default behavior"). `golden` is
-the title page's declaration — beamer's centring composed with moloch's
-golden-ratio glue (`golden_composes_center`) — and only `\maketitle`
-produces it: a golden frame is the title page, whose content is display
-furniture. -/
+/-- How a frame distributes its leftover vertical space: beamer's
+`[t]`/`[c]`/`[b]`, or `golden`, the title page's. -/
 public inductive VAlign where
   | top
   | center
@@ -4031,20 +2688,11 @@ public inductive VAlign where
   | golden
   deriving Repr, BEq, Inhabited
 
-/-- The fixed opening skip before a frame's body, separate from its
-distributable space: beamerbaseframe.sty's title box ends with
-`\vskip0.25em` (line 126), and `[t]` adds `.2cm` (line 263). Centred
-frames add only fil glue (beamerinnerthememoloch.sty:455). Resolve the em
-at the frame's body size, even when its first block has larger type.
-PDF reads this on ordinary frame openings; HTML projects it on titled,
-non-standout frames before distributing spare space. -/
+/-- The fixed opening skip before a frame's body, separate from its distributable space. -/
 public def frameBodySkip (hasTitle : Bool) (valign : VAlign) : Length :=
   { sp := if valign matches .top then Dim.mm 2 else 0
     em := if hasTitle then 250 else 0 }
 
-/-- The title contributes one quarter of the body size; top alignment
-contributes the fixed top skip. Neither depends on the first body's
-construct, its paint padding, or how much flexible space remains. -/
 public theorem frameBodySkip_exact (hasTitle : Bool) (valign : VAlign)
     (size : Sp) :
     (frameBodySkip hasTitle valign).resolve size 0 =
@@ -4055,72 +2703,40 @@ public theorem frameBodySkip_exact (hasTitle : Bool) (valign : VAlign)
   cases hasTitle <;> cases valign <;>
     simp [frameBodySkip, Length.resolve, hquarter, Int.add_comm]
 
-/-- moloch's title-page template glue, in thousandths of a fil unit:
-`\vspace{0pt plus 1.618fil}` and `\vfil` above the title matter against
-`\vspace{0pt plus 1fil}` below it (beamerinnerthememoloch.dtx, the
-"golden ratio spacing" of its `title page` template). The template's own
-numbers, and *not* the page's distribution: the template sets its glue
-inside a frame that contributes centring glue of its own, and the two
-lists are one vertical list, so the units add (`golden_composes_center`).
--/
+/-- The title-page template's glue above and below the title matter, in
+thousandths of a fil unit. -/
 @[expose] public def titlePageTemplateGlue : Nat × Nat := (2618, 1000)
 
 /-- A frame's own distribution composed with a template's glue, both in
-thousandths of one fil unit in one vertical list: the units add. What a
-page-opening path's declared distribution is — a template's ratio is never
-the page's on its own. -/
+thousandths of a fil unit: the units add. -/
 @[expose] public def composeGlue (frame template : Nat × Nat) : Nat × Nat :=
   (frame.1 + template.1, frame.2 + template.2)
 
 /-- Whose frame-alignment keys a deck's frames read: the glue
-`\beamer@frametopskip` and `\beamer@framebottomskip` hold for each of
-`[t]`, `[c]` and `[b]`. A bundle's value (`Theme.frameKeys`), never a
-document's: beamer documents reach the keys only through a theme. -/
+`\beamer@frametopskip` and `\beamer@framebottomskip` hold. -/
 public inductive FrameKeys where
-  /-- beamer's own (beamerbaseframe.sty:256-272): `[c]` sets `0pt plus
-  1fill` above the body against `0pt plus 1.5fill` below it, `[t]` `.2cm
-  plus .5\paperheight` above — finite, so it takes no share of a leftover
-  infinite glue stretches into — against `0pt plus 1fill` below, `[b]`
-  `0pt plus 1fill` above and nothing below: all of `\vfill`'s order. -/
+  /-- beamer's own keys (beamerbaseframe.sty:256-272): `[c]` sets
+  `0pt plus 1fill` above against `0pt plus 1.5fill` below. -/
   | beamer
-  /-- moloch's inner theme redefines `[c]` alone (beamerinnerthememoloch.sty:
-  454-460): `0pt plus 1fil` on either side, an order below `\vfill`'s;
-  `[t]` and `[b]` stay beamer's. -/
+  /-- moloch's inner theme, which redefines `[c]` alone: `0pt plus 1fil` on either side. -/
   | moloch
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A frame's own leftover-space glue above and below its body, in
-thousandths of `\vfill`'s stretch (`0pt plus 1fill`, ltspace.dtx), and
-whether it is of `\vfill`'s order. TeX stretches only the highest order of
-infinity present (TeXbook ch. 12, "glue set"), so glue that `joins` shares
-the leftover with a body's `\vfill` in proportion to the stretch each
-states, and glue that does not yields all of it to any `\vfill`. -/
+/-- A frame's own leftover-space glue above and below its body, in thousandths
+of `\vfill`'s stretch, and whether it is of `\vfill`'s order. -/
 public structure FrameGlue where
   above : Nat
   below : Nat
   joins : Bool
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The measure a moloch section page centres its title and progress bar
-in: `0.7875\linewidth` (beamerinnerthememoloch.sty:345, the `progressbar`
-section page's minipage), the line width being the frame's text width.
-Both backends read it: the page's title measure and bar, the web deck's
-section-page title and bar. -/
+/-- The measure a section page centres its title and progress bar in: `0.7875\linewidth`. -/
 public def sectionPageMeasure (textWidth : Sp) : Sp := textWidth * 7875 / 10000
 
-/-- `\vfill`'s stretch, `0pt plus 1fill`, in the thousandths `FrameGlue`
-states a frame's own glue in: one fill's weight beside a frame's shares. -/
+/-- `\vfill`'s stretch, `0pt plus 1fill`, in `FrameGlue`'s thousandths. -/
 @[expose] public def fillUnit : Nat := 1000
 
-/-- The glue a declared alignment sets under a deck's keys (`FrameKeys`):
-top-flush 0:1000 and bottom-flush 1000:0, of `\vfill`'s order under every
-keys; centring beamer's 1000:1500 of that order, or moloch's 1000:1000 an
-order below; and the title page's 3618:2000 — moloch's centring composed
-with its title-page template (`composeGlue`, `golden_composes_center`), of
-the template's fil order. The one table both artifacts must honour:
-`Layout.VDist.of` projects it onto the PDF page, `HtmlDoc.vdistShares` onto
-the deck's flex spacers, and `vdist_shares_agree` in Tests states the
-agreement. -/
+/-- The glue a declared alignment sets under a deck's keys. -/
 @[expose] public def VAlign.glue (keys : FrameKeys) : VAlign → FrameGlue
   | .top => ⟨0, fillUnit, true⟩
   | .center => match keys with
@@ -4131,47 +2747,25 @@ agreement. -/
     let g := composeGlue (fillUnit, fillUnit) titlePageTemplateGlue
     ⟨g.1, g.2, false⟩
 
-/-- A breakable `[c]` frame's glue: beamer's autobreak skips,
-`0pt plus .4\paperheight` above against `0pt plus .6\paperheight` below
-(beamerbaseframe.sty:259-260, which `\beamer@frametopskipautobreak` and
-`@framebottomskipautobreak` hold for a frame declaring `allowframebreaks`,
-beamerbaseframe.sty:145-146), the same under moloch's keys
-(beamerinnerthememoloch.sty:457-458): finite, so the leftover splits two to
-three without a fill and any `\vfill` takes all of it. `[t]` and `[b]` keep
-their own glue, their autobreak skips being the same. -/
+/-- A breakable `[c]` frame's glue: beamer's autobreak skips, `.4\paperheight`
+above against `.6\paperheight` below. -/
 @[expose] public def autobreakCentre : FrameGlue := ⟨fillUnit, fillUnit * 3 / 2, false⟩
 
-/-- The glue a frame spends: its alignment's under the keys it reads, a
-breakable centred frame's beamer's autobreak skips (`autobreakCentre`). -/
+/-- The glue a frame spends: its alignment's under its keys, or beamer's
+autobreak skips for a breakable centred frame. -/
 @[expose] public def frameGlue (keys : FrameKeys) (breakable : Bool) (v : VAlign) : FrameGlue :=
   if breakable && (v matches .center) then autobreakCentre else v.glue keys
 
-/-- The keys a frame reads: the deck's, except a standout frame's, which is
-moloch's `standout` key and sets moloch's own `[c]`
-(beamerinnerthememoloch.sty:465) under whatever keys the deck's theme sets. -/
+/-- The keys a frame reads: the deck's, except a standout frame's, which sets moloch's own `[c]`. -/
 @[expose] public def frameKeysOf (keys : FrameKeys) (standout : Bool) : FrameKeys :=
   if standout then .moloch else keys
 
 /-- The shares of a page's leftover vertical space above and below its
-content, per declared alignment under a deck's keys: the ratio form of
-`VAlign.glue`. -/
+content: the ratio form of `VAlign.glue`. -/
 @[expose] public def VAlign.shares (keys : FrameKeys) (v : VAlign) (breakable : Bool := false) :
     Nat × Nat :=
   ((frameGlue keys breakable v).above, (frameGlue keys breakable v).below)
 
-/-- The title page's split is moloch's centring composed with the template's
-glue, never the template's numbers alone: the frame contributes one fil unit
-on each side and moloch's template 1.618 + 1 above against 1 below, so the
-page distributes 3618:2000 — above share 3618/5618 — whatever keys the deck's
-frames read, as the engine sets moloch's `title page` template for every
-deck. beamer's default template is another — a `[c]` frame whose template
-opens and closes on `\vfill`s — which the engine does not set: a deck on
-beamer's own theme takes moloch's title page. The decomposition is what makes the
-constant sourced rather than fitted: both halves are independently sourced
-(the frame's centring to beamerinnerthememoloch.sty:454-460, the template's
-glue to beamerinnerthememoloch.dtx), and reading the template alone is the
-defect this states away — it put 2618/3618 of the leftover above and set
-the title matter a visible band too low. -/
 public theorem golden_composes_center (keys : FrameKeys) :
     VAlign.golden.shares keys =
       composeGlue (VAlign.center.shares .moloch) titlePageTemplateGlue := by
@@ -4179,15 +2773,13 @@ public theorem golden_composes_center (keys : FrameKeys) :
 
 namespace Pic
 
-/-- The two line widths the subset strokes: pgf manual §15.3.1 — `thin`,
-0.4 pt, is every path's default, `thick` is 0.8 pt. Widths are graphic
-state, not geometry: `scale=` never touches them, as in pgf. -/
+/-- The line widths the subset strokes (pgf manual §15.3.1): `thin`, every
+path's default, and `thick`. -/
 public def thinWidth : Sp := Dim.pt 2 / 5
 public def thickWidth : Sp := Dim.pt 4 / 5
 
-/-- A dash pattern by name; the backends emit the sourced rhythms — pgf
-manual §15.3.2: `dashed` is on 3 pt off 3 pt, `dotted` on the line width
-off 1 pt (the `densely dotted` rhythm; the subset keeps one dotted form). -/
+/-- A dash pattern by name: `dashed` is on 3 pt off 3 pt, `dotted` on the line
+width off 1 pt (pgf manual §15.3.2). -/
 public inductive Dash where
   | solid
   | dashed
@@ -4201,29 +2793,22 @@ public structure Stroke where
   dash : Dash := .solid
   deriving Repr, BEq, Inhabited
 
-/-- One segment of a stroked edge, endpoints spelled explicitly (no
-current-point state): a straight line, or a cubic Bézier with its two
-control points. -/
+/-- One segment of a stroked edge, endpoints explicit: a straight line or a
+cubic Bézier with its two control points. -/
 public inductive PathSeg where
   | line (x1 y1 x2 y2 : Sp)
   | cubic (x1 y1 c1x c1y c2x c2y x2 y2 : Sp)
   deriving Repr, BEq, Inhabited
 
-/-- The declared box of a segment. A cubic lies in the convex hull of its
-four control points (de Casteljau), so the join of their boxes bounds
-the drawn curve. -/
+/-- The declared box of a segment, which bounds the drawn curve: a cubic lies
+in its control points' convex hull. -/
 public def PathSeg.box : PathSeg → (Sp × Sp) × (Sp × Sp)
   | .line x1 y1 x2 y2 => ((min x1 x2, min y1 y2), (max x1 x2, max y1 y2))
   | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
     ((min (min x1 c1x) (min c2x x2), min (min y1 c1y) (min c2y y2)),
      (max (max x1 c1x) (max c2x x2), max (max y1 c1y) (max c2y y2)))
 
-/-- An arrow tip as three concrete corner points: a filled triangle
-standing in for pgf's curved `latex` tip (a stated approximation — the
-extents match pgflibraryarrows' declaration, apex 9 units ahead and back
-corners 3 behind at ±3.75, unit 0.28pt + 0.3·line width; the curved
-sides do not). Elaboration precomputes the points so neither backend
-does geometry. -/
+/-- An arrow tip as three corner points: a filled triangle standing in for pgf's `latex` tip. -/
 public structure Tip where
   x1 : Sp
   y1 : Sp
@@ -4233,10 +2818,8 @@ public structure Tip where
   y3 : Sp
   deriving Repr, BEq, Inhabited
 
-/-- Where a label stands relative to its point: TikZ's default anchors
-the node's centre there; the placement options put the named side of the
-label against the point (pgf manual §17.5.2 — `right` is `anchor=west`,
-the label standing right of the point, and so around). -/
+/-- Where a label stands relative to its point: centred, TikZ's default
+anchor, or with its named side against the point. -/
 public inductive LabelAlign where
   | center
   /-- `right`: the label's west edge on the point. -/
@@ -4250,21 +2833,12 @@ public inductive LabelAlign where
   deriving Repr, BEq, Inhabited
 
 /-- One shape of an elaborated picture, in picture coordinates: sp with y
-growing upward, as TikZ has it. The elaborator evaluates everything before
-the IR — loops unrolled, expressions reduced, colours resolved, `scale=`
-applied — so a shape is concrete ink both backends place without reading
-the surface again. -/
+growing upward, as TikZ has it. -/
 public inductive Shape where
-  /-- A text label whose box is centred on `(x, y)` — TikZ's default node
-  anchor — at `scale` per mille of the body size. The body is inline
-  content, so a node's `{$X$}` renders through the math layer exactly as
-  it would in a paragraph. -/
+  /-- A text label whose box is centred on `(x, y)`, at `scale` per mille of the body size. -/
   | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
       (align : LabelAlign)
-  /-- Ink: one node of the vector model — a fill, an outline, a stroked path
-  with its tips, a group carrying a frame, clips or an opacity — which both
-  backends emit as the figure's own (`Gfx.ofPicture`). A label is never ink:
-  `Gfx.Node Empty` holds none. -/
+  /-- One node of the vector model, which both backends emit as the figure's own. -/
   | ink (n : Gfx.Node Empty)
   deriving Repr, BEq, Inhabited
 
@@ -4272,14 +2846,11 @@ public inductive Shape where
 @[expose] public def solidFill (c : Color) : Gfx.Fill :=
   { paint := .solid c, rule := .nonzero, alpha := Gfx.Alpha.opaque }
 
-/-- pgf's miter limit, PDF's initial value (pgf manual §15.3.1: pgf leaves
-the limit at the PDF default of 10). -/
+/-- pgf's miter limit, PDF's initial value of 10 (pgf manual §15.3.1). -/
 @[expose] public def pgfMiterLimit : Rat := 10
 
 /-- A picture stroke in the model: pgf's butt caps, miter joins and miter
-limit, its declared colour and width, and its dash rhythm — pgf manual
-§15.3.2: `dashed` is on 3 pt off 3 pt, `dotted` on the line width off 1 pt
-(the `densely dotted` rhythm the subset keeps). -/
+limit, with the declared colour, width and dash. -/
 @[expose] public def strokeOf (k : Stroke) : Gfx.Stroke :=
   { paint := .solid k.color, width := k.width, cap := .butt, join := .miter
     miterLimit := pgfMiterLimit
@@ -4289,8 +2860,8 @@ limit, its declared colour and width, and its dash rhythm — pgf manual
       | .dotted => #[k.width, Dim.pt 1]
     phase := 0, alpha := Gfx.Alpha.opaque }
 
-/-- An edge's segments as subpaths: a segment that starts where the last
-ended continues its subpath, any other opens a new one. -/
+/-- An edge's segments as subpaths: a segment that starts where the last ended
+continues its subpath. -/
 @[expose] public def edgeSubpaths (segs : Array PathSeg) : Array Gfx.Subpath :=
   let step (acc : Array Gfx.Subpath) (sg : PathSeg) : Array Gfx.Subpath :=
     let (start, seg) : Gfx.Pt × Gfx.Seg := match sg with
@@ -4307,15 +2878,12 @@ ended continues its subpath, any other opens a new one. -/
 @[expose] public def tipSubpath (t : Tip) : Gfx.Subpath :=
   { start := (t.x1, t.y1), segs := #[.line (t.x2, t.y2), .line (t.x3, t.y3)], closed := true }
 
-/-- A filled rectangle: `(x, y)` one corner, `(x + w, y + h)` the other —
-its ink the rectangle with sorted corners, filled. -/
+/-- A filled rectangle with corners `(x, y)` and `(x + w, y + h)`. -/
 @[expose] public def Shape.rect (x y w h : Sp) (color : Color) : Shape :=
   .ink (.draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
     (some (solidFill color)) none)
 
-/-- A node's circular outline: centre and radius, stroked and/or filled.
-The radius is the declared minimum's half — pgf manual §"Shapes" has
-extent = max(minimum, text + 2·inner sep) per axis. -/
+/-- A node's circular outline: centre and radius, stroked and/or filled. -/
 @[expose] public def Shape.circle (x y r : Sp) (stroke : Option Stroke) (fill : Option Color) :
     Shape :=
   .ink (.draw (.ellipse x y (max r (-r)) (max r (-r))) (fill.map solidFill) (stroke.map strokeOf))
@@ -4327,10 +2895,8 @@ extents, stroked and/or filled. -/
   .ink (.draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
     (fill.map solidFill) (stroke.map strokeOf))
 
-/-- A stroked edge (`\draw (a) -- (b)`): segments in order — continuing
-ones share a subpath, so interior vertices join — optionally ending in an
-arrow tip filled in the stroke's colour. Endpoints are concrete: border
-anchoring already happened at elaboration. -/
+/-- A stroked edge (`\draw (a) -- (b)`): segments in order, optionally ending
+in an arrow tip filled in the stroke's colour. -/
 @[expose] public def Shape.edge (segs : Array PathSeg) (stroke : Stroke) (tip : Option Tip) :
     Shape :=
   .ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque
@@ -4358,8 +2924,8 @@ public def fillDump : Option Gfx.Fill → String
       alphaDump f.alpha
   | none => ""
 
-/-- A stroke as the IR goldens spell it: what differs from pgf's butt caps
-and miter joins at limit 10, and the dash as its pattern. -/
+/-- A stroke as the IR goldens spell it: what differs from pgf's defaults, and
+the dash as its pattern. -/
 public def strokeDump : Option Gfx.Stroke → String
   | some k =>
     let dash := if k.dash.isEmpty then "" else
@@ -4378,9 +2944,7 @@ public def strokeDump : Option Gfx.Stroke → String
 
 private def ptDump (p : Gfx.Pt) : String := s!"({p.1.toPtString},{p.2.toPtString})"
 
-/-- A geometry as the IR goldens spell it: a rectangle and an ellipse by
-their extents, a path by its points — `--` a line, `~` a curve's end, `z`
-a closed subpath. -/
+/-- A geometry as the IR goldens spell it: `--` a line, `~` a curve's end, `z` a closed subpath. -/
 public def geomDump : Gfx.Geom → String
   | .rect x y w h => s!"rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString}"
   | .ellipse cx cy rx ry =>
@@ -4393,7 +2957,7 @@ public def geomDump : Gfx.Geom → String
 
 mutual
 
--- conserves: none — a debugging spelling of the IR, not a rewrite.
+-- conserves: none — a debug dump.
 /-- One ink node's lines in the IR goldens, a group's kids indented. -/
 public def dumpNode (ind : String) (acc : String) : Gfx.Node Empty → String
   | .draw g fl st => acc ++ s!"{ind}draw {geomDump g}{fillDump fl}{strokeDump st}\n"
@@ -4413,31 +2977,23 @@ public def dumpNodeList (ind : String) (acc : String) : List (Gfx.Node Empty) �
 
 end
 
-/-- Repaint a shape, keeping its geometry and text: how a picture dims
-under an overlay cover. -/
+/-- Repaint a shape, keeping its geometry and text. -/
 @[expose] public def Shape.recolor (f : Color → Color) : Shape → Shape
   | .label x y t c sc al => .label x y t (f c) sc al
   | .ink n => .ink (Gfx.Node.recolorOne f id n)
 
-/-- A box in picture coordinates: min corner, then max corner — the one
-box type of the vector model (`Gfx.Box`), whose join, order and hull it
-reads. -/
+/-- A box in picture coordinates: min corner, then max corner. -/
 public abbrev Box := Gfx.Box
 
 
-/-- Translate a measured interval beside an anchor. A positive direction
-puts its lower edge one gap beyond the anchor; a negative direction puts
-its upper edge one gap before it. A zero direction centres the interval.
-The bounds name the attachment: text ink, advance, or a line box is the
-caller's choice, never an incidental font descent. -/
+/-- Translate a measured interval beside an anchor: a positive direction puts
+its lower edge one gap beyond, a negative its upper edge one gap before, zero
+centres it. -/
 public def Box.axisOffset (anchor lo hi gap direction : Sp) : Sp :=
   if 0 < direction then anchor + gap - lo
   else if direction < 0 then anchor - gap - hi
   else anchor - (lo + hi) / 2
 
-/-- Exact clearance in either direction, and centring within one scaled
-point when no direction is requested. Quantified over arbitrary bounds
-and gaps: the two axes of a box instantiate the same constraint. -/
 public theorem Box.axisOffset_contract (anchor lo hi gap direction : Int) :
     (0 < direction → lo + axisOffset anchor lo hi gap direction = anchor + gap) ∧
     (direction < 0 → hi + axisOffset anchor lo hi gap direction = anchor - gap) ∧
@@ -4453,17 +3009,12 @@ public theorem Box.axisOffset_contract (anchor lo hi gap direction : Int) :
     · simp only [axisOffset, ite_eq_right hp, ite_eq_right hn]
       omega
 
-/-- Attach a whole box, preserving its internal rhythm. Corner placement
-applies the interval constraint to both axes; side placement centres the
-unconstrained axis. The result is a translation, not a new measurement. -/
+/-- Attach a whole box beside an anchor by translation: corner placement
+constrains both axes, side placement centres the other. -/
 public def Box.attachOffset (box : Box) (anchor direction gap : Sp × Sp) : Sp × Sp :=
   (axisOffset anchor.1 box.1.1 box.2.1 gap.1 direction.1,
    axisOffset anchor.2 box.1.2 box.2.2 gap.2 direction.2)
 
-/-- Both components of the actual attachment satisfy the interval
-contract: the requested endpoint is placed exactly, or the doubled centre
-is within one scaled point of the anchor's. Gaps remain signed; this is
-placement, not a non-overlap claim about arbitrary bounds. -/
 public theorem Box.attachOffset_contract (box : Box) (anchor direction gap : Sp × Sp) :
     let offset := attachOffset box anchor direction gap
     let onAxis (a lo hi g d shift : Int) : Prop :=
@@ -4475,53 +3026,30 @@ public theorem Box.attachOffset_contract (box : Box) (anchor direction gap : Sp 
   ⟨axisOffset_contract anchor.1 box.1.1 box.2.1 gap.1 direction.1,
    axisOffset_contract anchor.2 box.1.2 box.2.2 gap.2 direction.2⟩
 
-/-- A label line's measured ink: the width it sets to, and how far its
-glyphs reach above and below its baseline. A font question, so it is a
-value the measuring side supplies rather than something a shape can
-answer — see `LabelMetric`. -/
+/-- A label line's measured ink: its set width and how far its glyphs reach
+above and below its baseline. -/
 public structure LabelInk where
   w : Sp := 0
   height : Sp := 0
   depth : Sp := 0
-  /-- How far the glyphs themselves reach above and below the baseline: the
-  TeX box the text makes (pgf's text box), which a node's border holds. The
-  band above places the letters and reads no glyph; this is their reach. -/
+  /-- How far the glyphs reach above and below the baseline: the TeX box the
+  text makes, which a node's border holds. -/
   boxHeight : Sp := 0
   boxDepth : Sp := 0
-  /-- The face's x-height at the label's size: what `ex` means in a node's
-  options, as TeX reads it (fontdimen 5). -/
+  /-- The face's x-height at the label's size, what `ex` means in a node's options. -/
   ex : Sp := 0
-  /-- The math face's axis height and fraction rule thickness at the label's
-  size (MATH table, `AxisHeight`, `FractionRuleThickness`), and its script
-  scale in thousandths (`ScriptPercentScaleDown`): what a diagram centres
-  its cells on, strokes its arrows at and sets its labels at, as tikz-cd
-  reads the font's axis height, its rule thickness and script style. Zero
-  where no math face is resolved. -/
+  /-- The math face's axis height, fraction rule thickness and script scale at
+  the label's size, from its MATH table; zero without a math face. -/
   axis : Sp := 0
   rule : Sp := 0
   script : Nat := 0
   deriving Repr, BEq, Inhabited
 
-/-- What a label's content sets to at a per-mille size: the measurement
-the box of a label needs and the IR cannot make.
-
-**The picture walk has no face, and cannot be given one.** The driver
-builds the font set *from* the elaborated document (`\fonts` is a preamble
-declaration), so at the moment a node is placed there is nothing to
-measure against; only layout, which receives the resolved set, can answer.
-So the extent enters as a function here and every statement about it is
-universally quantified over the measurement — the box facts hold whatever
-the face turns out to be, and each artifact's version is that one fact
-projected through the metric it can supply. -/
+/-- What a label's content sets to at a per-mille size, a measurement the IR cannot make. -/
 public abbrev LabelMetric := Array Inline → Nat → LabelInk
 
 /-- Where a label's ink stands around its anchor, given its extents: the
-anchor decides which point of the box sits on `(x, y)` (pgf manual §17.5.2
-— the `anchor=` key), and this is the one site that says so. Layout sets
-each label line by reading it and the bounding box bounds the ink by
-reading it, so the box a picture reserves and the box its ink lands in
-cannot drift apart. Written arm by arm rather than as offsets, so each
-anchor's box reads off the page. -/
+anchor decides which point of the box sits on `(x, y)`. -/
 private def labelInkSpan (x y : Sp) (align : LabelAlign) (w tall : Sp) : Box :=
   match align with
   | .center => ((x - w / 2, y - tall / 2), (x - w / 2 + w, y - tall / 2 + tall))
@@ -4530,11 +3058,6 @@ private def labelInkSpan (x y : Sp) (align : LabelAlign) (w tall : Sp) : Box :=
   | .south => ((x - w / 2, y), (x - w / 2 + w, y + tall))
   | .north => ((x - w / 2, y - tall), (x - w / 2 + w, y))
 
-/-- The anchor is inside the ink: a measured box always holds the point it
-hangs from, so widening a label from its anchor to its ink can only grow a
-hull. The arithmetic is spelled over bare `Int` binders because `omega`
-does not read a `Sp`-typed term — the same workaround the `Box` proofs
-below record. -/
 private theorem labelInkSpan_covers_anchor (x y : Sp) (align : LabelAlign) (w tall : Sp)
     (hw : 0 ≤ w) (ht : 0 ≤ tall) :
     Gfx.Box.le ((x, y), (x, y)) (labelInkSpan x y align w tall) := by
@@ -4549,49 +3072,25 @@ private theorem labelInkSpan_covers_anchor (x y : Sp) (align : LabelAlign) (w ta
   · exact ⟨(half x w hw).1, Int.le_refl y, (half x w hw).2, grow y tall ht⟩
   · exact ⟨(half x w hw).1, full y tall ht, (half x w hw).2, Int.le_refl y⟩
 
-/-- Where a label's measured ink stands around its anchor. Negative
-extents are clamped away: a metric that answers nonsense may not shrink
-the box below the anchor the shape declares. -/
+/-- Where a label's measured ink stands around its anchor, negative extents clamped away. -/
 public def labelInkBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
   labelInkSpan x y align (max m.w 0) (max (m.height + m.depth) 0)
 
-/-- **Where a label's baseline sits.** The top of its ink box less its
-height — the line placement's own arithmetic, read off one site so the box a
-picture reserves and the baseline a line is set on cannot disagree.
-
-This is the number the wobble is about. Under TeX's node centring the
-baseline is `−(ht − dp)/2` of the *measured* box, so depth enters with
-slope ½ and a word with a descender floats up: 1.155 pt between `candle`
-and `misty` in Latin Modern at 10 pt (pgf manual §17.5.1 calls it
-"wobbles" and offers `anchor=mid` against it). Here `height` and `depth`
-split the face's declared cap-to-descent band at the run's size, never the
-glyphs present (`Layout.label_centre_glyph_free`), so the same arithmetic
-is content-blind and the wobble is zero; the split puts the band's middle
-half an x-height above the baseline, so a centred label hangs from `mid`,
-the manual's own anchor, and `labelBaseline_between` quantifies the seat. -/
+/-- Where a label's baseline sits: the top of its ink box less its height. -/
 public def labelBaseline (y : Sp) (align : LabelAlign) (m : LabelInk) : Sp :=
   (labelInkBox 0 y align m).2.2 - m.height
 
-/-- The baseline is the box's, at whatever x the box was measured at: the
-placement reads `box top − height` and this says that expression is
-`labelBaseline`, so neither can drift from the other without failing here.
-Spelled over bare `Int` binders per arm because `omega` does not read an
-`Sp`-typed goal — the workaround `labelInkSpan_covers_anchor` records. -/
 public theorem labelBaseline_box_exact (x y : Sp) (align : LabelAlign) (m : LabelInk) :
     labelBaseline y align m = (labelInkBox x y align m).2.2 - m.height := by
   cases align <;> rfl
 
-/-- The text's measured TeX box on its resolved baseline, without adding
-the anchor or the font band to its vertical extent. Attachments read this
-box so a descender, a second line, or a font change cannot eat their gap. -/
+/-- The text's measured TeX box on its resolved baseline, without the anchor
+or the font band in its vertical extent. -/
 public def labelTextBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
   let band := labelInkBox x y align m
   let b := labelBaseline y align m
   ((band.1.1, b - m.boxDepth), (band.2.1, b + m.boxHeight))
 
-/-- Translating a label's coordinates translates its whole measured text
-box exactly. The shared baseline and ink-box arithmetic commute with the
-same offset for every alignment and metric, including rounded dimensions. -/
 public theorem labelTextBox_translate_exact (x y : Sp) (align : LabelAlign) (m : LabelInk)
     (offset : Sp × Sp) :
     let box := labelTextBox x y align m
@@ -4602,20 +3101,11 @@ public theorem labelTextBox_translate_exact (x y : Sp) (align : LabelAlign) (m :
     simp [labelTextBox, labelBaseline, labelInkBox, labelInkSpan,
       Int.sub_eq_add_neg, Int.add_assoc, Int.add_left_comm, Int.add_comm]
 
-/-- **Where a label's glyphs stand**: the TeX box its text makes, on the
-baseline the band places — the band's width, and the glyphs' own reach above
-and below that baseline (`LabelInk.boxHeight`/`boxDepth`) — held to cover the
-anchor it hangs from. This, not the band, is the ink a picture's box holds:
-the band is a placement reference, deeper than a word with no descender
-sets anything, and pgf's natural box holds a node's text box, not its
-font's. -/
+/-- Where a label's glyphs stand: the TeX box its text makes, on the baseline the band places. -/
 @[expose] public def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
   let box := labelTextBox x y align m
   ((box.1.1, min y box.1.2), (box.2.1, max y box.2.2))
 
-/-- The anchor is inside the glyphs' box, as it is inside the band
-(`labelInkSpan_covers_anchor`): widening a label from its anchor to its
-glyphs can only grow a hull. -/
 public theorem labelGlyphBox_covers (x y : Sp) (align : LabelAlign) (m : LabelInk) :
     Gfx.Box.le ((x, y), (x, y)) (labelGlyphBox x y align m) := by
   have hx := labelInkSpan_covers_anchor x y align (max m.w 0) (max (m.height + m.depth) 0)
@@ -4624,9 +3114,6 @@ public theorem labelGlyphBox_covers (x y : Sp) (align : LabelAlign) (m : LabelIn
   have hi : ∀ a b : Int, a ≤ max a b := by intro a b; omega
   exact ⟨hx.1, lo _ _, hx.2.2.1, hi _ _⟩
 
-/-- Every measured vertical extent held by the label's metrics remains
-inside its glyph box on the resolved baseline. Taking the hull with the
-anchor can only enlarge that box, for every alignment. -/
 public theorem labelGlyphBox_covers_extent (x y : Sp) (align : LabelAlign) (m : LabelInk)
     (hi lo : Sp) (hhi : hi ≤ m.boxHeight) (hlo : lo ≤ m.boxDepth) :
     (labelGlyphBox x y align m).1.2 ≤ labelBaseline y align m - lo ∧
@@ -4637,28 +3124,10 @@ public theorem labelGlyphBox_covers_extent (x y : Sp) (align : LabelAlign) (m : 
   exact ⟨Int.le_trans bottom (Int.sub_le_sub_left hlo _),
     Int.le_trans (Int.add_le_add_left hhi _) top⟩
 
-/-- **A label's baseline does not read its set width.** So the advances of
-the glyphs it sets — which face, which kerning, which characters — cannot
-move it vertically: the horizontal measurement and the vertical placement
-are separate channels, and only the first is a function of the text. The
-companion half, that `height` and `depth` are declared metrics rather than
-ink, is `Layout.label_centre_glyph_free`. -/
 public theorem labelBaseline_width_id (y w : Sp) (align : LabelAlign) (m : LabelInk) :
     labelBaseline y align { m with w := w } = labelBaseline y align m := by
   cases align <;> rfl
 
-/-- **The uniform seat, quantified.** A centred label's baseline stands
-`(depth − height)/2` from its anchor, to within the single scaled point the
-box's odd unit is assigned by (1 sp = 1/65536 pt). No glyph term appears, so
-this is the *whole* vertical story for a centred label: one number per
-(face, size).
-
-With the band split at its x-height midpoint (`Layout.labelVStep`) that is
-half the face's x-height below the anchor: the seat pgf's `mid` anchor gives
-every node, and TeX's own for a box of x-height letters. Split at the face's
-baseline instead, the band seated a word of capitals half the face's
-descent above where lualatex sets it — 1.67 pt at 10 pt in Source Serif
-Pro, 1.46 in Open Sans, 1.32 in Fira Sans. -/
 public theorem labelBaseline_between (y : Sp) (m : LabelInk)
     (h : 0 ≤ m.height + m.depth) :
     y + (m.depth - m.height) / 2 ≤ labelBaseline y .center m ∧
@@ -4673,30 +3142,12 @@ public theorem labelBaseline_between (y : Sp) (m : LabelInk)
     intro a b c hbc; omega
   exact step y m.height m.depth h
 
-/-- The componentwise join of two measurements: what a line carrying both
-would set to. A metric-only run — a phantom, whose box is its argument's
-and whose ink is nothing — enters exactly here, and `max` is why it can be
-inert. -/
+/-- The componentwise join of two measurements: what a line carrying both would set to. -/
 public def LabelInk.join (a b : LabelInk) : LabelInk :=
   { w := max a.w b.w, height := max a.height b.height, depth := max a.depth b.depth
     boxHeight := max a.boxHeight b.boxHeight, boxDepth := max a.boxDepth b.boxDepth
     ex := max a.ex b.ex }
 
-/-- **The one surviving channel, bounded — and shut where it matters.** A
-label carrying an extra metric box sets between what it set alone and the
-join of the two: the phantom can grow the band, never shrink it. And where
-the phantom's metrics are already covered by the label's own — which is what
-a `\vphantom{y}` written beside a descender-less word *is*, the argument set
-in the running face at the running size — the join is the original box and
-nothing moves at all.
-
-This is the compatibility guarantee, and note it names no command: it is
-idempotence of `max`, so every hand fix whose metrics the label already
-declares is inert by construction rather than by a special case. The engine
-is stricter still — a picture label's `\vphantom` group is dropped before it
-reaches the IR (`Picture.phantomCtrl`), so not even a dominated box arrives —
-but that is a surface decision, and this is the fact that holds whatever the
-surface does. -/
 public theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : LabelInk) :
     Gfx.Box.le (labelInkBox x y align m) (labelInkBox x y align (m.join p)) ∧
       (p.w ≤ m.w → p.height ≤ m.height → p.depth ≤ m.depth →
@@ -4730,26 +3181,16 @@ public theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : Lab
     unfold labelInkBox
     rw [ew, eh, ed]
 
-/-- The box a group that clips reaches: its clips' own geometry through its
-frame, since what it paints stands inside them — and pgf counts the clip
-path, not what follows it (pgfcorepathusage.code.tex: a clip ends
-`relevantforpicturesize`). `none` for any other node. -/
+/-- The box a clipping group reaches: its clips' own geometry through its frame. -/
 @[expose] public def clipHull : Gfx.Node Empty → Option Box
   | .group xf clips _ _ => Gfx.hullOf (fun (c : Gfx.Clip) => c.geom.hull.map (Gfx.Box.image xf)) clips
   | .draw .. | .use .. | .stamp .. | .image .. | .label _ | .words _ => none
 
-/-- Repainting moves no clip: a group's frame and clips are what its box
-reads, and a repaint keeps both. -/
 public theorem clipHull_recolor_id (f : Color → Color) (n : Gfx.Node Empty) :
     clipHull (Gfx.Node.recolorOne f id n) = clipHull n := by
   cases n <;> rfl
 
-/-- The declared box of a shape, corners sorted. A label's box is its
-anchor point — its text extent is a font question layout answers, so
-`Shape.inkBox` is the measured form and this is what the IR knows on its
-own. A picture's declared box bounds every fill entirely and every label
-at its anchor (`box_in_bbox`); the ink of a label stands proud of it,
-which is what the measured box exists to close. -/
+/-- The declared box of a shape, corners sorted; a label's box is its anchor point. -/
 public def Shape.box : Shape → Box
   | .label x y _ _ _ _ => ((x, y), (x, y))
   | .ink n =>
@@ -4759,23 +3200,15 @@ public def Shape.box : Shape → Box
 
 public structure Picture where
   shapes : Array Shape := #[]
-  /-- The box `\useasboundingbox` declared, corners sorted: the picture's
-  size is this box whatever its marks do (pgf manual §15.8, "use as
-  bounding box") — ink may stand outside it, and nothing is clipped. -/
+  /-- The box `\useasboundingbox` declared, corners sorted: the picture's size
+  whatever its marks do. -/
   declared : Option Box := none
-  /-- Every node's border — its text extent plus `inner sep` — drawn or
-  not: pgf adds a node's shape to the natural bounding box whether or not
-  the path paints it (§17.2.2), so a diagram of undrawn nodes is one inner
-  sep larger on every side than its letters. -/
+  /-- Every node's border, its text extent plus `inner sep`, drawn or not. -/
   borders : Array Box := #[]
   /-- The height the surrounding line's baseline passes through, in picture
-  coordinates, when the picture declares one (`baseline=`, pgf manual
-  §12.2.1: a length, a coordinate or a node anchor; the bare key is 0pt).
-  Otherwise the box's bottom edge stands on the baseline. -/
+  coordinates, when the picture declares one (`baseline=`). -/
   baseline : Option Sp := none
-  /-- The alternative the author declared on the picture (`alt={...}` or
-  `artifact` in its option list, latex-lab-tikz's keys); the one a reader
-  gets is `alternative`, which falls back to the picture's own words. -/
+  /-- The alternative the author declared on the picture (`alt={...}` or `artifact`). -/
   alt : Alt := .undeclared
   deriving Repr, BEq, Inhabited
 
@@ -4783,8 +3216,7 @@ public structure Picture where
   { p with shapes := p.shapes.map (·.recolor f) }
 
 /-- The solid colour a geometry's fill paints at a point, when the geometry
-holds it: a rectangle's box, a circle's disc, an ellipse's interior. A path
-is not asked: its interior is a question of winding no fill ground reads. -/
+holds it; a path is not asked. -/
 public def geomFillAt (x y : Sp) (c : Color) : Gfx.Geom → Option Color
   | .rect rx ry w h => if rx ≤ x ∧ x ≤ rx + w ∧ ry ≤ y ∧ y ≤ ry + h then some c else none
   | .ellipse cx cy rx ry =>
@@ -4795,12 +3227,8 @@ public def geomFillAt (x y : Sp) (c : Color) : Gfx.Geom → Option Color
     else none
   | .path _ => none
 
-/-- A paint over the ground it covers, at the paint's alpha: per sRGB
-channel, `a`‰ of the paint and the rest of the ground, rounded — source-over
-with a constant alpha, as both artifacts composite a fill (ISO 32000-2
-§11.3.3; Compositing and Blending 1 §5.1), in the sRGB the contrast
-contracts read. An opaque paint is its own colour whatever it covers; a
-translucent one over a ground the walk cannot name names none. -/
+/-- A paint over the ground it covers at the paint's alpha: source-over per
+sRGB channel, rounded. -/
 public def _root_.LeanTex.Core.Ir.Color.over (c : Color) (a : Gfx.Alpha) :
     Option Color → Option Color
   | some u =>
@@ -4812,15 +3240,8 @@ public def _root_.LeanTex.Core.Ir.Color.over (c : Color) (a : Gfx.Alpha) :
 
 mutual
 
--- conserves: none — a reading: the ground a node leaves at one point.
-/-- The ground one node leaves at a point over the ground `under` it paints
-on: a solid fill holding the point composites over it at its alpha
-(`Color.over`); a plain group's kids in order, as the painter's algorithm
-has it; a group that fades its kids, their ground faded over `under` at the
-group's alpha — exact under normal blending, an isolated group's coverage
-being its kids'. A group that moves or clips its kids is not read: whether
-its ink covers the point is not a question this walk answers, so the ground
-it stands on stands. -/
+-- conserves: none — a point reading.
+/-- The ground one node leaves at a point over the ground `under` it paints on. -/
 public def inkGroundAt (x y : Sp) (under : Option Color) : Gfx.Node Empty → Option Color
   | .draw g (some { paint := .solid c, alpha, .. }) _ =>
     match geomFillAt x y c g with
@@ -4852,34 +3273,27 @@ public def Shape.groundAt (x y : Sp) (under : Option Color) : Shape → Option C
   | .label _ _ _ _ _ _ => under
   | .ink n => inkGroundAt x y under n
 
-/-- The ground a label's ink stands on: `base`, the ground the picture
-stands on, with every shape drawn before the label composited over it where
-it paints the label's anchor (`inkGroundAt`) — a node's own fill sits under
-its label, a translucent one blended over what it covers. -/
+/-- The ground a label's ink stands on: `base` with every shape drawn before
+the label composited over it at the label's anchor. -/
 public def fillUnder (base : Option Color) (drawn : Array Shape) (x y : Sp) : Option Color :=
   drawn.foldl (fun g s => s.groundAt x y g) base
 
-/-- The inline content each label sets, for the font-scalar walk: every
-glyph — text or math — a picture can ask a face for is here. -/
+/-- The inline content each label sets: every glyph a picture can ask a face for. -/
 public def Picture.labelContents (p : Picture) : Array (Array Inline) :=
   p.shapes.filterMap fun s => match s with
     | .label _ _ content _ _ _ => some content
     | .ink _ => none
 
-/-- A shape with its label content through `f`; geometry, colour and every
-other shape stay. -/
+/-- A shape with its label content through `f`; everything else stays. -/
 @[expose] public def Shape.mapLabel (f : Array Inline → Array Inline) : Shape → Shape
   | .label x y content c scale align => .label x y (f content) c scale align
   | .ink n => .ink n
 
-/-- Every label's content through one inline rewrite: the picture face of
-the generic maps (`mapBlocksPic`), for a pass that must reach the text a
-label paints as it reaches a caption's. -/
+/-- Every label's content through one inline rewrite. -/
 @[expose] public def Picture.mapLabels (f : Array Inline → Array Inline) (p : Picture) :
     Picture :=
   { p with shapes := p.shapes.map (·.mapLabel f) }
 
-/-- A label rewrite rewrites exactly the label contents, in order. -/
 private theorem Picture.labelContents_mapLabels (f : Array Inline → Array Inline)
     (p : Picture) : (p.mapLabels f).labelContents = p.labelContents.map f := by
   simp only [Picture.mapLabels, Picture.labelContents, Array.filterMap_map,
@@ -4888,7 +3302,6 @@ private theorem Picture.labelContents_mapLabels (f : Array Inline → Array Inli
   funext s
   cases s <;> rfl
 
-/-- Two label rewrites compose into one. -/
 private theorem Picture.mapLabels_comp (f g : Array Inline → Array Inline) (p : Picture) :
     (p.mapLabels g).mapLabels f = p.mapLabels (f ∘ g) := by
   simp only [Picture.mapLabels, Array.map_map]
@@ -4896,36 +3309,22 @@ private theorem Picture.mapLabels_comp (f g : Array Inline → Array Inline) (p 
   funext s
   cases s <;> rfl
 
-/-- The box a shape's **ink** occupies, given a measurement. Every arm but
-the label's is the declared box: a fill, an outline and a stroked edge are
-their own geometry, and only text has an extent the IR cannot compute — the
-glyphs' own box on the baseline the band places (`labelGlyphBox`). -/
+/-- The box a shape's ink occupies, given a measurement: the declared box for
+every shape but a label. -/
 @[expose] public def Shape.inkBox (m : LabelMetric) : Shape → Box
   | .label x y content _ scale align => labelGlyphBox x y align (m content scale)
   | s@(.ink _) => s.box
 
--- The Place proofs state their arithmetic over bare `Int` binders because
--- `omega` does not see through the `Sp` abbreviation (the same workaround
--- `furnitureBand`'s proof records in Layout).
+-- Proofs below spell `Int`, not `Sp`: `omega` does not see through the abbreviation.
 
 /-- The half-extents a label of this width and height asks of the node it
-hangs on: how far its ink reaches either side of the anchor, read off
-`labelInkSpan` so this and the box a picture reserves cannot disagree about
-where a label's ink stands. An anchored label is not symmetric about its
-anchor — a `west` label puts its whole width to the right of it — so each
-axis takes the larger reach, which is what a *centred* extent must cover. -/
+hangs on, read off `labelInkSpan`. -/
 public def labelHalfExtent (align : LabelAlign) (w tall : Sp) : Sp × Sp :=
   let ((x0, y0), (x1, y1)) := labelInkSpan 0 0 align w tall
   (max (-x0) x1, max (-y0) y1)
 
-/-- The box a node of these half-extents occupies: the centred extent a
-relative placement leaves `node distance` between, border to border. -/
 @[expose] public def nodeExtentBox (x y a b : Sp) : Box := ((x - a, y - b), (x + a, y + b))
 
-/-- A label's ink is inside the extent its own reach asks for. The
-arithmetic is spelled over bare `Int` binders and applied, because `omega`
-does not read an `Sp`-typed goal — the workaround `labelInkSpan_covers_anchor`
-records, one lemma per anchor shape rather than one per anchor. -/
 private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
     Gfx.Box.le (labelInkSpan x y align w tall)
       (nodeExtentBox x y (labelHalfExtent align w tall).1
@@ -4947,40 +3346,20 @@ private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
   · exact ⟨(mid x w).1, (near y tall).1, (mid x w).2, (near y tall).2⟩
   · exact ⟨(mid x w).1, (far y tall).1, (mid x w).2, (far y tall).2⟩
 
-/-- A wider extent covers more: what makes the declared minimum a floor
-rather than an alternative to the measurement. -/
 public theorem nodeExtentBox_monotone (x y a b a' b' : Sp) (ha : a ≤ a') (hb : b ≤ b') :
     Gfx.Box.le (nodeExtentBox x y a b) (nodeExtentBox x y a' b') := by
   have step : ∀ v p q : Int, p ≤ q → v - q ≤ v - p ∧ v + p ≤ v + q := by
     intro v p q h; omega
   exact ⟨(step x a a' ha).1, (step y b b' hb).1, (step x a a' ha).2, (step y b b' hb).2⟩
 
-/-- **The extent a node registers, given a measurement.** The half-extents
-every relative placement measures border to border from: the declared
-minimum, or the label's own reach where the text stands proud of it. The
-minimum alone is what a walk with no face knows, and it is *zero* for a node
-body that declared none — which is why `right =of` parted node centres and
-long labels landed on top of one another.
-
-One site, so the extent a node registers and the extent a placement reads
-are the same number; `nodeExtent_covers` is the fact it exists for. -/
+/-- The half-extents a node registers given a measurement: the declared
+minimum, or the label's own reach where it stands proud of it. -/
 @[expose] public def nodeExtent (m : LabelMetric) (content : Array Inline) (scale : Nat)
     (align : LabelAlign) (declA declB : Sp) : Sp × Sp :=
   let ink := m content scale
   let (a, b) := labelHalfExtent align (max ink.w 0) (max (ink.height + ink.depth) 0)
   (max declA a, max declB b)
 
-/-- **A node's registered extent covers its label's ink.** Whatever face
-resolves — the statement is quantified over the measurement, as every box
-fact here is — a label standing at a node's anchor is inside the extent that
-node places against. This is what makes the exact border arithmetic
-(`Picture.placeRight_border_exact` and its three siblings) exact about the
-right box: two nodes one `node distance` apart by these borders part the
-*text* they set by at least that much, so neither can overlap the other.
-
-The declared minimum is a floor, never a ceiling (`nodeExtentBox_monotone`):
-a node declaring more than its text keeps what it declared, which is the pgf
-reading — extent = max(minimum, text extent), manual §"Shapes". -/
 public theorem nodeExtent_covers (m : LabelMetric) (content : Array Inline) (scale : Nat)
     (align : LabelAlign) (declA declB x y : Sp) :
     Gfx.Box.le (labelInkBox x y align (m content scale))
@@ -4990,20 +3369,6 @@ public theorem nodeExtent_covers (m : LabelMetric) (content : Array Inline) (sca
   exact Gfx.Box.le_trans (labelHalfExtent_covers align x y _ _)
     (nodeExtentBox_monotone x y _ _ _ _ (grow _ declA) (grow _ declB))
 
-/-- **Growth moves the border, never the letters.** Enlarging what a node
-declares — `minimum width`, `minimum height` — grows the box every relative
-placement measures from, and leaves every baseline on the page exactly where
-it was. The two halves are stated together because the guarantee is the
-pair: the extent is monotone in what was declared
-(`nodeExtentBox_monotone` through `nodeExtent`), and the label's placement
-does not read the declaration at all.
-
-That second half is a non-occurrence, proved by `rfl` and load-bearing as
-`doc_geometry_uniform` is: `labelInkBox` and `labelBaseline` take the
-measurement and the anchor and nothing else, so a change that let a declared
-minimum reach the letters would fail to compile here. It is the frame/letter
-separation TeX cannot offer — under node centring the box *is* the reference,
-so growing one moves the other. -/
 public theorem centre_independent_of_growth (m : LabelMetric) (content : Array Inline)
     (scale : Nat) (align : LabelAlign) (declA declB declA' declB' x y : Sp)
     (hA : declA ≤ declA') (hB : declB ≤ declB') :
@@ -5017,18 +3382,6 @@ public theorem centre_independent_of_growth (m : LabelMetric) (content : Array I
   have step : ∀ p q r : Int, p ≤ q → max p r ≤ max q r := by intro p q r h; omega
   exact nodeExtentBox_monotone x y _ _ _ _ (step _ _ _ hA) (step _ _ _ hB)
 
-/-- **What the extent is for: a relative placement parts text.** Two nodes
-whose centres stand `sep` apart *plus* both half-extents — which is what
-`right =of` computes, and what `Picture.placeRight_border_exact` says
-exactly — set label ink that does not overlap, for any positive separation
-and whatever face resolves. The defect this closes is the composition
-failing at its input: the arithmetic was exact about an extent of zero, so
-three labels in a row landed on top of one another.
-
-A separation rather than a containment, so a new shape by the naming
-registry's leave: it is the fact `nodeExtent_covers` exists *for*, and it
-reads as the containment used twice — A's ink ends inside A's extent, B's
-begins inside B's, and the extents are `sep` apart by construction. -/
 public theorem nodeExtent_separates (m : LabelMetric) (ca cb : Array Inline)
     (sa sb : Nat) (alignA alignB : LabelAlign) (aA aB bA bB : Sp)
     (x y sep : Sp) (hsep : 0 < sep) :
@@ -5046,82 +3399,45 @@ public theorem nodeExtent_separates (m : LabelMetric) (ca cb : Array Inline)
     intro p u q s b v a h1 h2 h3 h4; omega
   exact chain _ _ _ sep _ x _ ha hb hsep rfl
 
-/-- The hull of a per-shape box over a picture, read through `Gfx.Box.hull` so
-a caller that needs the boxes themselves — to compare them pairwise, say —
-computes them once and folds the same way. -/
+/-- The hull of a per-shape box over a picture. -/
 public def Picture.boxFold (p : Picture) (f : Shape → Box) : Box :=
   Gfx.Box.hull (p.shapes.map f)
 
-/-- The picture's bounding box: the join of its shapes' declared boxes. -/
 public def Picture.bbox (p : Picture) : Box := p.boxFold Shape.box
 
-/-- Every label's ink box, in shape order: what a pairwise comparison
-reads, and what the measured hull folds. One measurement per label. -/
+/-- Every label's ink box, in shape order, one measurement per label. -/
 public def Picture.inkBoxes (p : Picture) (m : LabelMetric) : Array Box :=
   p.shapes.map (Shape.inkBox m)
 
-/-- The picture's **ink** box under a measurement: the hull of its shapes'
-ink boxes, so a node label's set text is inside it and not merely its
-anchor. This is the box a caller must reserve; `bbox` is what the IR knows
-with no face. -/
+/-- The picture's ink box under a measurement: the hull of its shapes' ink boxes. -/
 public def Picture.inkBbox (p : Picture) (m : LabelMetric) : Box :=
   Gfx.Box.hull (p.inkBoxes m)
 
-/-- The per-shape hull covers every shape's box. -/
 public theorem Picture.boxFold_covers (p : Picture) (f : Shape → Box) (s : Shape)
     (h : s ∈ p.shapes) : Gfx.Box.le (f s) (p.boxFold f) :=
   Gfx.Box.hull_covers _ (f s) (Array.mem_map_of_mem h)
 
-/-- The picture stays in its declared box: the bounding box contains the
-declared box of every shape it emits (labels bound at their anchors, see
-`Shape.box`). -/
 public theorem Picture.box_in_bbox (p : Picture) (s : Shape) (h : s ∈ p.shapes) :
     Gfx.Box.le s.box p.bbox := p.boxFold_covers Shape.box s h
 
-/-- **A picture's box contains its ink.** The invariant the engine lacked:
-`box_in_bbox` bounds every *shape*, and a label's shape is a point, so the
-declared hull of a diagram of node labels is the hull of their anchors —
-narrower than the text by half a label at each edge. A caller that
-reserves that box paints outside it, and the overrun check that reads it
-measures a box which fits while glyphs leave the page.
-
-Stated over an arbitrary measurement, because the measurement is the one
-thing the IR cannot supply (`LabelMetric`): whatever face resolves, the
-ink of every shape is inside the box computed with that face. Each
-artifact's version is this fact projected through the metric it can
-answer. -/
 public theorem Picture.inkBbox_covers (p : Picture) (m : LabelMetric) (s : Shape)
     (h : s ∈ p.shapes) : Gfx.Box.le (s.inkBox m) (p.inkBbox m) :=
   Gfx.Box.hull_covers _ (s.inkBox m) (Array.mem_map_of_mem h)
 
-/-- **The natural box**: what TikZ reserves when nothing is declared — every
-mark's ink (`inkBoxes`, so a label's letters and not its anchor) and every
-node's border (`borders`: the text extent plus `inner sep`, which pgf's
-bounding box includes even for a node no path draws). -/
+/-- The natural box TikZ reserves when nothing is declared: every mark's ink
+and every node's border. -/
 public def Picture.natural (p : Picture) (m : LabelMetric) : Box :=
   Gfx.Box.hull (p.inkBoxes m ++ p.borders)
 
-/-- **The box a picture occupies**: the declared box when `\useasboundingbox`
-gave one, else the natural box. The one IR value both backends read — the
-PDF reserves and places by it, the SVG's `viewBox` is it — so the two
-artifacts cannot size one picture two ways (`Pdf.picture_box_agree`,
-`HtmlDoc.pictureViewBox_projects`). -/
+/-- The box a picture occupies: the declared box when `\useasboundingbox` gave
+one, else the natural box. -/
 public def Picture.box (p : Picture) (m : LabelMetric) : Box :=
   p.declared.getD (p.natural m)
 
-/-- **A picture occupies exactly its declared box** (pgf manual §15.8): with
-a declaration in force the box is that box, whatever the measurement and
-whatever the marks — so a figure that declares room for nodes a later
-frame adds keeps its place, and its ink sits where the declaration puts
-it, off-centre when the box extends past the ink. -/
 public theorem Picture.box_declared_exact (p : Picture) (m : LabelMetric) (b : Box)
     (h : p.declared = some b) : p.box m = b := by
   simp [Picture.box, h]
 
-/-- **A label rewrite its measurement cannot see moves no box** (`_id`):
-every ink box, the natural box and so the picture's box stay where they
-were. What lets a pass rewrite label content after elaboration placed the
-picture — alphabet resolution does — without moving the box placement read. -/
 public theorem Picture.mapLabels_box_id (m : LabelMetric) (f : Array Inline → Array Inline)
     (hm : ∀ content scale, m (f content) scale = m content scale) (p : Picture) :
     (p.mapLabels f).box m = p.box m := by
@@ -5133,9 +3449,6 @@ public theorem Picture.mapLabels_box_id (m : LabelMetric) (f : Array Inline → 
   simp only [Picture.box, Picture.natural, hboxes]
   rfl
 
-/-- **Repainting moves no box** (`_id`): every shape's ink box reads its
-geometry and its label's measurement, never its paint, so a picture dimmed
-under an overlay cover occupies the box it occupied lit. -/
 public theorem Picture.recolor_box_id (p : Picture) (f : Color → Color) (m : LabelMetric) :
     (p.recolor f).box m = p.box m := by
   have hs : ∀ s : Shape, (s.recolor f).inkBox m = s.inkBox m := by
@@ -5150,23 +3463,16 @@ public theorem Picture.recolor_box_id (p : Picture) (f : Color → Color) (m : L
   simp only [Picture.box, Picture.natural, hb]
   rfl
 
-/-- **Where a picture stands on its line**: how far above its box's bottom
-edge the declared baseline runs (pgf manual §12.2.1), held inside the box;
-with nothing declared, the bottom edge is on the line. The one value both
-backends set a picture on its baseline by — the PDF's depth below the line
-(`Layout.placePicture`), the SVG's `vertical-align` (`HtmlDoc.pictureSvg`). -/
+/-- How far above its box's bottom edge a picture's declared baseline runs,
+held inside the box; zero when undeclared. -/
 public def Picture.rise (p : Picture) (m : LabelMetric) : Sp :=
   (p.baseline.map fun yb =>
     max 0 (min ((p.box m).2.2 - (p.box m).1.2) (yb - (p.box m).1.2))).getD 0
 
-/-- The clamp `rise` applies, over bare `Int` so `omega` reads it. -/
 private theorem clampRise_between (lo hi yb : Int) (h : lo ≤ hi) :
     0 ≤ max 0 (min (hi - lo) (yb - lo)) ∧ max 0 (min (hi - lo) (yb - lo)) ≤ hi - lo := by
   omega
 
-/-- **The baseline runs through the box**: a picture's rise lies between its
-box's bottom edge and its top, whatever it declared — a baseline declared
-above the picture is its top edge on the line, one below it its bottom. -/
 public theorem Picture.rise_between (p : Picture) (m : LabelMetric)
     (h : (p.box m).1.2 ≤ (p.box m).2.2) :
     0 ≤ p.rise m ∧ p.rise m ≤ (p.box m).2.2 - (p.box m).1.2 := by
@@ -5175,10 +3481,6 @@ public theorem Picture.rise_between (p : Picture) (m : LabelMetric)
   | some yb => exact clampRise_between _ _ _ h
   | none => exact ⟨Int.le_refl 0, Int.sub_nonneg.mpr h⟩
 
-/-- **Otherwise its box covers every mark**: with nothing declared, every
-shape's ink and every node's border lies inside the box, whatever face
-resolves. `inkBbox_covers` is the ink half of the old box; the borders are
-what made TikZ's box one inner sep larger than the engine's. -/
 public theorem Picture.box_covers (p : Picture) (m : LabelMetric) (h : p.declared = none) :
     (∀ s ∈ p.shapes, Gfx.Box.le (s.inkBox m) (p.box m)) ∧
       (∀ b ∈ p.borders, Gfx.Box.le b (p.box m)) := by
@@ -5187,23 +3489,14 @@ public theorem Picture.box_covers (p : Picture) (m : LabelMetric) (h : p.declare
   · exact Gfx.Box.hull_covers _ _ (Array.mem_append_left _ (Array.mem_map_of_mem hs))
   · exact Gfx.Box.hull_covers _ _ (Array.mem_append_right _ hb)
 
-/-- The measured box loses nothing the declared box held: a shape's own
-geometry is its ink box unchanged, and a label's anchor is inside the
-measured box its ink occupies, so widening to the ink can only grow the
-hull. Every containment `box_in_bbox` gave still holds of `inkBbox`. -/
 public theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Gfx.Box.le s.box (s.inkBox m) := by
   cases s with
   | label x y content color scale align =>
     exact labelGlyphBox_covers x y align _
   | ink _ => exact Gfx.Box.le_refl _
 
-/-- Where a picture lands on a page: the map from picture coordinates
-(y up) to layout coordinates (y down). The elaborator has already applied
-`scale=`, so what is left is a translation and the y reflection — affine
-with unit determinant, hence exactly invertible over sp
-(`ofPage_toPage`/`toPage_ofPage`), monotone in x and antitone in y
-(`toPage_box`): a shape's placed box is the transform of its declared box,
-corner for corner, so a diagram cannot silently drift off its slot. -/
+/-- Where a picture lands on a page: the translation and y reflection from
+picture coordinates (y up) to layout coordinates (y down). -/
 public structure Place where
   /-- Page x where the picture's `xmin` lands (its left edge). -/
   x0 : Sp
@@ -5216,15 +3509,10 @@ public structure Place where
 @[expose] public def Place.toPage (t : Place) (u : Sp × Sp) : Sp × Sp :=
   (t.x0 + (u.1 - t.xmin), t.yTop + (t.ymax - u.2))
 
-/-- The placement as the vector model's integer isometry: a translation and
-the y reflection. -/
+/-- The placement as the vector model's integer isometry. -/
 @[expose] public def Place.toIso (t : Place) : Gfx.Iso :=
   { flipY := true, dx := t.x0 - t.xmin, dy := t.yTop + t.ymax }
 
-/-- **Today's placement is an isometry** (`_exact`): `toPage` is
-`Place.toIso` applied, point for point — so the exact inverse and the
-containment below are the isometry's, and every mark the vector model
-places lands where `toPage` put it. -/
 public theorem Place.affine_exact (t : Place) (u : Sp × Sp) : t.toPage u = t.toIso.apply u := by
   obtain ⟨ux, uy⟩ := u
   have hx : ∀ a b c : Int, a + (c - b) = c + (a - b) := by intro a b c; omega
@@ -5235,7 +3523,6 @@ public theorem Place.affine_exact (t : Place) (u : Sp × Sp) : t.toPage u = t.to
 public def Place.ofPage (t : Place) (q : Sp × Sp) : Sp × Sp :=
   (t.xmin + (q.1 - t.x0), t.ymax - (q.2 - t.yTop))
 
-/-- Reading a page point back is the isometry's inverse. -/
 public theorem Place.ofPage_iso_exact (t : Place) (q : Sp × Sp) : t.ofPage q = t.toIso.inv.apply q := by
   obtain ⟨qx, qy⟩ := q
   have hx : ∀ a b c : Int, a + (c - b) = c + -(b - a) := by intro a b c; omega
@@ -5243,9 +3530,6 @@ public theorem Place.ofPage_iso_exact (t : Place) (q : Sp × Sp) : t.ofPage q = 
   simp only [ofPage, toIso, Gfx.Iso.inv, Gfx.Iso.apply, ↓reduceIte]
   exact Prod.ext (hx _ _ _) (hy _ _ _)
 
-/-- The placement transform loses nothing (`_id`): every page point
-recovers its picture point exactly — the isometry's inverse undoing it
-(`affine_exact`, `ofPage_iso_exact`). -/
 public theorem Place.ofPage_toPage (t : Place) (u : Sp × Sp) : t.ofPage (t.toPage u) = u := by
   rw [affine_exact, ofPage_iso_exact, Gfx.Iso.inv_apply_id]
 
@@ -5256,11 +3540,6 @@ public theorem Place.toPage_ofPage (t : Place) (q : Sp × Sp) : t.toPage (t.ofPa
   simp only [toPage, ofPage, Prod.mk.injEq]
   exact ⟨hx _ _ _, hy _ _ _⟩
 
-/-- The transform preserves containment: a picture point inside a declared
-box lands inside that box's transform — x keeps its order, y reverses, as
-the isometry `affine_exact` names does, so the placed box's top-left corner
-is the declared box's `(xmin, ymax)`. With `box_in_bbox` this is why no
-shape escapes the placed picture. -/
 public theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
     (hx1 : b.1.1 ≤ u.1) (hx2 : u.1 ≤ b.2.1) (hy1 : b.1.2 ≤ u.2) (hy2 : u.2 ≤ b.2.2) :
     (t.toPage (b.1.1, b.2.2)).1 ≤ (t.toPage u).1
@@ -5274,8 +3553,7 @@ public theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
 
 end Pic
 
-/-- Horizontal alignment of a table column's cells: `l`, `c`, `r`; also the
-side a scope sets its boxes on (`slackHalves`). -/
+/-- Horizontal alignment of a table column's cells, and the side a scope sets its boxes on. -/
 public inductive HAlign where
   | left
   | center
@@ -5288,14 +3566,8 @@ public inductive HAlign where
   | .center => "center"
   | .right => "right"
 
-/-- How many halves of a line's slack stand before a box its scope sets —
-a tabular, a picture, a lone minipage: none flush left, one centred, both
-flush right. TeX sets such a box in a line like a word, so the scope's
-`\leftskip` and `\rightskip` place it (ltmiscen.dtx: `center` is
-`\trivlist\centering`, and `\centering` sets both skips to `\@flushglue`;
-`flushright` sets `\leftskip` alone). Both backends read the side through
-this one value: the page's offset (`boxOffset`) and the stylesheet's
-margins (`HtmlDoc.box_margins_agree`). -/
+/-- How many halves of a line's slack stand before a box its scope sets: none
+flush left, one centred, both flush right. -/
 @[expose] public def HAlign.slackHalves : HAlign → Nat
   | .left => 0
   | .center => 1
@@ -5305,46 +3577,27 @@ margins (`HtmlDoc.box_margins_agree`). -/
 slack the box leaves. -/
 public def HAlign.boxOffset (h : HAlign) (slack : Int) : Int := slack * h.slackHalves / 2
 
-/-- **A box its scope sets never leaves the measure** (`_between`): with the
-slack non-negative, the offset lies between flush left and flush right. -/
 public theorem HAlign.boxOffset_between (h : HAlign) (s : Int) (hs : 0 ≤ s) :
     0 ≤ h.boxOffset s ∧ h.boxOffset s ≤ s := by
   cases h <;> simp only [boxOffset, slackHalves] <;> omega
 
-/-- Which edge of the measure a ragged scope's lines hang from: LaTeX's two
-ragged settings, named for what is *flush* rather than what is ragged —
-`\raggedright` is ragged on the right and flush left, `\raggedleft` the
-mirror, and the spellings invite exactly that confusion. Two values, so a
-ragged scope cannot claim to be centred: `center` is its own block, and a
-centred line leaves equal slack on both sides where a flush line leaves it
-all on one. -/
+/-- Which edge of the measure a ragged scope's lines hang from: `\raggedright`
+is flush left, `\raggedleft` flush right. -/
 public inductive FlushSide where
   | left
   | right
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The declared side as the `ElementStyle.align` vocabulary both backends
-already read — one resolving site, so the page's origin and the
-stylesheet's `text-align` cannot name different edges from one IR value
-(`ragged_sides_agree`). -/
+/-- The declared side in the `ElementStyle.align` vocabulary both backends read. -/
 @[expose] public def FlushSide.align : FlushSide → String
   | .left => "left"
   | .right => "right"
 
-/-- The declared side as the page's line origin: `Layout.Geom.flushRight`'s
-value. The layout walk reads this and nothing else about the side, so the
-placement arithmetic has one source (`ragged_sides_agree`). -/
+/-- The declared side as the page's line origin. -/
 public def FlushSide.flushRight : FlushSide → Bool
   | .left => false
   | .right => true
 
-/-- The two readings of one declared side agree: the page hangs a scope's
-lines from the right edge exactly when the stylesheet declares the right
-edge. These are the only two functions a backend may learn the side
-through — Layout reads `flushRight`, the HTML rule reads `align` — so an
-artifact cannot align an edge the other does not, whatever either emitter
-does downstream. The `backend_gaps_agree` shape: two projections of one IR
-value, stated on the IR because both artifacts must honour it. -/
 public theorem ragged_sides_agree (s : FlushSide) :
     s.flushRight = true ↔ s.align = "right" := by
   cases s <;> simp [FlushSide.flushRight, FlushSide.align]
@@ -5354,18 +3607,12 @@ public theorem ragged_sides_agree (s : FlushSide) :
   | .left => .left
   | .right => .right
 
-/-- The dump spelling, and the only place a ragged side is named in a
-golden. -/
+/-- The dump spelling of a ragged side. -/
 public def FlushSide.label : FlushSide → String
   | .left => "left"
   | .right => "right"
 
-/-- LaTeX's four ragged-setting spellings and the side each makes flush —
-the one naming site, so the declaration form, the environment form and the
-inline diagnostic cannot disagree about which edge a name asks for.
-`\raggedright` and `{flushleft}` are the same setting (ltmiscen.dtx:
-`{flushleft}` is a trivlist under `\raggedright`), and `\raggedleft` and
-`{flushright}` its mirror. -/
+/-- LaTeX's four ragged-setting spellings and the side each makes flush. -/
 public def raggedSideOf? : String → Option FlushSide
   | "raggedright" | "flushleft" => some .left
   | "raggedleft" | "flushright" => some .right
@@ -5376,8 +3623,7 @@ public def percentCss (permille : Nat) : String :=
   (if permille % 10 == 0 then s!"{permille / 10}"
    else s!"{permille / 10}.{permille % 10}") ++ "%"
 
-/-- The total affine width a flexible table targets in its enclosing
-measure. It remains typed until each backend supplies that local measure. -/
+/-- The total affine width a flexible table targets in its enclosing measure. -/
 public inductive TableTarget where
   | sized (width : Affine Measure)
   deriving Repr, BEq, Inhabited
@@ -5388,15 +3634,12 @@ public inductive TableTarget where
 @[match_pattern, expose] public def TableTarget.abs (w : Sp) : TableTarget :=
   .sized (.lit { width := .ofSp w })
 
-/-- Resolve a flexible table target against its local horizontal measure. -/
 public def TableTarget.resolve (target : TableTarget) (measure : Sp) : Sp :=
   match target with
   | .sized e => max 0 (e.resolveWidth (MeasureValues.horizontal measure 0))
 
-/-- A table column's declared width. `natural` sizes to the widest cell;
-`sized` carries the shared affine length until the table measure is known;
-`flex` receives an equal share of its target left after fixed columns and
-gaps. -/
+/-- A table column's declared width: `natural` to the widest cell, `sized` an
+affine length, `flex` an equal share of what fixed columns and gaps leave. -/
 public inductive ColWidth where
   | natural
   | sized (width : Affine Measure)
@@ -5409,27 +3652,8 @@ public inductive ColWidth where
 @[match_pattern, expose] public def ColWidth.abs (w : Sp) : ColWidth :=
   .sized (.lit { width := .ofSp w })
 
-/-- A box's declared width: `{minipage}`/`\parbox`/`{column}`'s mandatory
-argument. `frac` is a factor of the enclosing measure in per mille
-(`.45\textwidth`, and a token or document command that spells one), `abs` an
-absolute length (`60pt`), and `share` the width a `{column}` leaves
-undeclared — an equal part of whatever the declared boxes leave over.
-
-Its own type rather than `ColWidth`, on meaning. A table's `natural` column
-sizes *down* to its widest cell; a box's undeclared width grows *up* to fill
-the leftover measure. One constructor answering both would make one of the
-two readings false at every site, which is the `role`-versus-salvage
-argument (PLAN 2026-09-24) in a second place.
-
-`abs` is a length and stays one until layout, rather than being divided into
-per mille against the page's measure where it is parsed. A per-mille value
-is *relative*, so fixing its reference at elaboration is only right for a
-box at the top level: a 60pt box inside a `.45\textwidth` column, converted
-against the page and re-applied to the column, comes out at 45% of 60pt. The
-reference a width is relative to is known at placement and nowhere earlier —
-the `Sourced` entry's finding (PLAN 2026-09-24) one layer over, where
-resolving in the wrong layer forced an operator to invent an answer it could
-not have. -/
+/-- A box's declared width (`{minipage}`, `\parbox`, `{column}`): `share` an
+equal part of what declared boxes leave, `sized` an affine length. -/
 public inductive BoxSize where
   | share
   | sized (width : Affine Measure)
@@ -5441,14 +3665,8 @@ public inductive BoxSize where
 @[match_pattern, expose] public def BoxSize.abs (w : Sp) : BoxSize :=
   .sized (.lit { width := .ofSp w })
 
-/-- Which point of a box stands on the baseline of the row it is set in —
-the `[pos]` a box declares (latex.ltx `\@iiiparbox`: `t` builds a `\vtop`,
-whose reference point is its first line's baseline; `b` a `\vbox`, its last
-line's; `c` a `\vcenter`, its middle; beamer's `column` adds `T`, the top
-edge). A picture's baseline is its bottom edge unless it declares one
-(`Pic.Picture.baseline`). `top` is also what a box that declares nothing
-gets: the engine's row sets undeclared boxes top-aligned, where LaTeX
-centres a minipage and beamer its columns — a standing divergence. -/
+/-- Which point of a box stands on the baseline of its row, the `[pos]` it
+declares; an undeclared box stands `top`. -/
 public inductive BoxPos where
   | top
   | first
@@ -5456,9 +3674,7 @@ public inductive BoxPos where
   | last
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- What a box in a row declares: its width and the point it stands on the
-row's baseline by. The type kept the width's name so the row's walks stay
-untouched; `share`, `frac` and `abs` build an undeclared-position box. -/
+/-- What a box in a row declares: its width and the point it stands on the row's baseline by. -/
 public structure BoxWidth where
   size : BoxSize
   pos : BoxPos := .top
@@ -5471,14 +3687,7 @@ public structure BoxWidth where
 @[match_pattern, expose] public def BoxWidth.abs (w : Sp) : BoxWidth :=
   ⟨.abs w, .top⟩
 
-/-- The declared width against a known measure: the width the box is set at.
-One resolving site, read by the page's column arithmetic, so a box's measure
-is a function of its declaration and the measure it stands in and of nothing
-else. A declared width past the enclosing measure is clamped to it: a box
-cannot be wider than what contains it, and a document that asks is answered
-by the measure rather than by ink off the page. `share` resolves to nothing
-here — the leftover is not a function of one column — and the caller divides
-it (`Layout`'s `shareW`). -/
+/-- The declared width against a known measure: the width the box is set at. -/
 public def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
   match w.size with
   | .share => none
@@ -5486,11 +3695,7 @@ public def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
     let values := MeasureValues.horizontal measure 0
     some (min measure (max 0 (e.resolveWidth values)))
 
-/-- The declared width as a CSS grid track, structured: the same three
-readings the page resolves, before they are spelled
-(`boxWidth_tracks_agree`). Structured rather than a string, so the
-agreement between the two backends' readings is a statement about values
-and not about formatting. -/
+/-- The declared width as a CSS grid track, structured, before it is spelled. -/
 public inductive Track where
   | free
   | percent (permille : Nat)
@@ -5498,10 +3703,8 @@ public inductive Track where
   | affine (e : Affine Measure)
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The track a declared width takes: a fraction is a percentage of the
-grid's own width, which is the enclosing measure; an absolute length is that
-length; a shared column takes a free fraction of the leftover, which is what
-`1fr` means. -/
+/-- The track a declared width takes: a fraction a percentage, a length
+itself, a shared column a free fraction of the leftover. -/
 public def BoxWidth.trackOf (w : BoxWidth) : Track :=
   match w.size with
   | .share => .free
@@ -5554,8 +3757,7 @@ private def affineTrackCss (e : Affine Measure) (horizontalUnit : String) : Stri
       else out ++ " + " ++ term) first
     if terms.size == 1 then body else "calc(" ++ body ++ ")"
 
-/-- One track, spelled. The only site a grid track's units are written, read
-by the HTML backend. -/
+/-- One grid track, spelled in CSS. -/
 public def Track.css : Track → String
   | .free => "1fr"
   | .percent p => percentCss p
@@ -5563,8 +3765,7 @@ public def Track.css : Track → String
   | .affine e => affineTrackCss e "%"
 
 /-- An affine local measure in a property whose percentages would use the
-wrong axis (font size, line height, block size): `cqi` is the nearest
-query container's inline measure. -/
+wrong axis: `cqi` is the nearest query container's inline measure. -/
 public def Track.contextCss (e : Affine Measure) : String :=
   affineTrackCss e "cqi"
 
@@ -5572,64 +3773,35 @@ public def Track.contextCss (e : Affine Measure) : String :=
 public def TableTarget.css : TableTarget → String
   | .sized e => Track.css (.affine e)
 
-/-- Does this declaration name a width at all? The question the census and
-the diagnostics ask, so `share` is named once rather than tested as a
-constructor at each site. -/
+/-- Whether the declaration names a width at all. -/
 public def BoxWidth.declared (w : BoxWidth) : Bool :=
   match w.size with
   | .share => false
   | .sized _ => true
 
-/-- Is this the leftover's track — the one whose width is not the box's own
-declaration but what the declared boxes leave? -/
+/-- Whether this is the leftover's track, whose width is what the declared boxes leave. -/
 public def Track.isFree : Track → Bool
   | .free => true
   | .percent _ | .length _ | .affine _ => false
 
-/-- The page's resolution and the stylesheet's track are two readings of one
-declared width, and they agree on which declarations name a width: a
-fraction and a length resolve against any measure and take a sized track, a
-shared column resolves to nothing and takes the free track. The
-`backend_gaps_agree` shape — stated on the IR because both artifacts must
-honour it, with `HtmlDoc.gridTracks` and `Layout`'s column arithmetic as its
-two projections. -/
 public theorem boxWidth_tracks_agree (w : BoxWidth) (measure : Sp) :
     (w.resolve measure).isSome = w.declared ∧
       w.trackOf.isFree = !w.declared := by
   rcases w with ⟨s, _⟩
   cases s <;> exact ⟨rfl, rfl⟩
 
-/-- One column of a table, from the `tabular` column spec. A `p` column
-wraps its cells at the declared width; `l`/`c`/`r` set each cell as one
-unbreakable line. -/
+/-- One column of a table, from the `tabular` column spec: a `p` column wraps
+at its width, `l`/`c`/`r` cells set as one line. -/
 public structure ColSpec where
   width : ColWidth
   align : HAlign
-  /-- A wrapping column's paragraphs set ragged on `align`'s side: its
-  `>{…}`/`<{…}` modifier declared `\raggedright`, `\raggedleft` or
-  `\centering` (array manual §1). A bare `p` cell justifies — its `\vtop`
-  runs `\@arrayparboxrestore`, which zeroes `\leftskip` and `\rightskip`
-  (latex.ltx) — and a declaration in the modifier sets those skips again
-  inside the cell, so `>{\raggedright}p` sets ragged where `p` justifies. -/
+  /-- A wrapping column's paragraphs set ragged on `align`'s side, as a `>{…}` modifier declared. -/
   ragged : Bool := false
-  /-- A natural column that narrows as a web table's does: a markdown
-  table's (`Parse.markdownTableEnv`), whose source declares no width and
-  whose page cannot scroll. Too wide for its measure, its table shares the
-  measure as a browser's automatic table layout shares it
-  (`Layout.fitColumns`), each such column keeping its widest unbreakable
-  run, and a cell its column cannot hold on one line wraps ragged on its
-  side (`Layout.narrowedCell`); the HTML cell then wraps too, carrying no
-  `bt-nowrap` (`HtmlDoc.cellClasses`). A tex `l`, `c` or `r` column never
-  narrows: LaTeX sets its every cell on one line. -/
+  /-- A natural column that narrows as a web table's does: a markdown table's. -/
   narrows : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- Relative table-track hints, in permille of the flexible target. Natural
-columns measure their own content; sized columns with the target's reference
-have its relative width, and flexible columns split the remaining share.
-Unresolved expressions retain their affine track. These are structural hints,
-not final physical widths: padding, natural content, and spanning cells enter
-the backend's sizing algorithm separately. -/
+/-- Relative table-track hints in permille of the flexible target; `none` for a natural column. -/
 public def tableColShares (cols : Array ColSpec) (target : TableTarget) : Array (Option Nat) :=
   match target with
   | .sized te =>
@@ -5652,15 +3824,12 @@ public def tableColShares (cols : Array ColSpec) (target : TableTarget) : Array 
             if m == tm then some (p * 1000 / tperm) else none
           | .flex _ => some flexShare
 
-/-- `tableColShares` answers one share per column. -/
 public theorem tableColShares_count_exact (cols : Array ColSpec) (target : TableTarget) :
     (tableColShares cols target).size = cols.size := by
   unfold tableColShares
   repeat' split
   all_goals simp
 
-/-- A natural column is excluded from the target split: it carries no share
-(`none`), the typed statement of "naturals are left to `auto`". -/
 public theorem tableColShares_natural_exact (cols : Array ColSpec) (target : TableTarget)
     (j : Nat) (c : ColSpec) (hget : cols[j]? = some c) (hc : c.width = .natural) :
     (tableColShares cols target)[j]? = some none := by
@@ -5668,8 +3837,6 @@ public theorem tableColShares_natural_exact (cols : Array ColSpec) (target : Tab
   repeat' split
   all_goals simp [hget, hc]
 
-/-- Flexible tracks receive equal relative hints. This does not claim equality
-of final widths after each backend measures content and applies span constraints. -/
 public theorem tableColShares_flex_contract (cols : Array ColSpec) (target : TableTarget)
     (i j : Nat) (ci cj : ColSpec) (ti tj : TableTarget)
     (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
@@ -5679,13 +3846,7 @@ public theorem tableColShares_flex_contract (cols : Array ColSpec) (target : Tab
   repeat' split
   all_goals simp [hi, hj, hwi, hwj]
 
-/-- A horizontal rule (or declared row gap) inside a table, booktabs'
-vocabulary: `top` and `bottom` draw at `heavyRuleWidth`, `mid` at
-`lightRuleWidth`, and each carries its documented padding
-(`aboveTopSep`/`aboveRuleSep` over it, `belowRuleSep`/`belowBottomSep`
-under). `cmid` is `\cmidrule`: `cmidRuleWidth` across columns `a`–`b`
-(1-based, inclusive), each end trimmed by `cmidRuleKern` when its flag is
-set. `gap` is `\addlinespace` (and `\\[len]`): no ink, declared space. -/
+/-- A horizontal rule or declared row gap inside a table, in booktabs' vocabulary. -/
 public inductive TableRule where
   | top
   | mid
@@ -5694,14 +3855,8 @@ public inductive TableRule where
   | gap (space : SymGlue)
   deriving Repr, BEq, Inhabited
 
-/-- `\multicolumn{n}{spec}{…}`: the cell at `col` (0-based) of row `row`
-spans `n` columns and sets by its own column `spec` (its alignment, and a
-`p{…}` width when it declares one). The `n − 1` cells it covers stay in
-`rows`, empty, so rectangularity holds as before and every text walk reads
-the spanning text once. Its width follows TeX's rule for a spanned entry
-(tex.web §801, $w_j=\max_{i≤j}(w_{ij}-\sum_{i≤k<j}(t_k+w_k))$): a span
-enters no single column's maximum, and when it is wider than the columns it
-covers plus their gaps, the excess goes to the last covered column. -/
+/-- `\multicolumn{n}{spec}{…}`: the cell at `col` of row `row` spans `n`
+columns and sets by its own `spec`. -/
 public structure ColSpan where
   row : Nat
   col : Nat
@@ -5713,36 +3868,20 @@ public structure ColSpan where
 public def cellSpan? (spans : Array ColSpan) (i j : Nat) : Option ColSpan :=
   spans.find? fun s => s.row == i && s.col == j
 
-/-- The spec a cell sets by, the one resolving site both backends read
-(`Layout.cellSide`, `HtmlDoc.cellSideClassOf`): a `\multicolumn` head's own
-spec, else its column's, else — a cell past the declared columns — a
-natural left one. The spec alone decides: a tabular sets each entry in a box
-of its own — an `l`/`c`/`r` entry an `\hfil`-padded `\hbox`, a `p` entry a
-`\vtop` whose `\@arrayparboxrestore` zeroes `\leftskip` and `\rightskip`
-(latex.ltx) — so the side of the scope the table stands in never reaches a
-cell. -/
+/-- The spec a cell sets by: a `\multicolumn` head's own, else its column's,
+else a natural left one. -/
 public def cellSpec (cols : Array ColSpec) (spans : Array ColSpan) (i j : Nat) : ColSpec :=
   match cellSpan? spans i j with
   | some s => s.spec
   | none => cols[j]?.getD { width := .natural, align := .left }
 
-/-- The row index of the first `mid` rule in document order, if any: the
-List companion of the header scan below, so the two facts about it are
-inductions. -/
+/-- The row index of the first `mid` rule in document order, if any. -/
 public def firstMidRow : List (Nat × TableRule) → Option Nat
   | [] => none
   | (k, .mid) :: _ => some k
   | _ :: rest => firstMidRow rest
 
-/-- booktabs' head, as one IR fact both backends read: the rows before the
-first `\midrule` (booktabs.dtx §Rules: "\midrule … separates the header
-from the body"). A table with no mid rule declares no header; a mid rule
-written before the first row (`\hline`'s frame) heads nothing; a mid
-rule index beyond the rows clamps, so the count is a prefix length of
-`rows`. `cmid` and `gap` never count — a `\cmidrule` groups columns and
-`\addlinespace` is air. The HTML backend ships exactly this prefix as
-`<thead>`/`<th>` (`HtmlDoc.th_iff_header_row`); the tagged-PDF `/TH` cells
-read the same number. -/
+/-- booktabs' head: the rows before the first `\midrule`; no mid rule, no header. -/
 public def tableHeaderRows (rows : Array (Array (Array Inline)))
     (rules : Array (Nat × TableRule)) : Nat :=
   ((firstMidRow rules.toList).map fun k => min k rows.size).getD 0
@@ -5762,8 +3901,6 @@ public theorem firstMidRow_eq_none_of_no_mid (rules : List (Nat × TableRule))
     | cmid a b l rt => exact ih hrest
     | gap s => exact ih hrest
 
-/-- The header count is a prefix length of `rows`: never below zero (a
-`Nat`), never past the last row. -/
 public theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
     (rules : Array (Nat × TableRule)) :
     0 ≤ tableHeaderRows rows rules ∧ tableHeaderRows rows rules ≤ rows.size := by
@@ -5773,8 +3910,6 @@ public theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
   | none => exact Nat.zero_le _
   | some k => exact Nat.min_le_right _ _
 
-/-- No mid rule, no header: a `\toprule`/`\bottomrule` frame, a
-`\cmidrule`, or an `\addlinespace` alone never promotes a row. -/
 public theorem tableHeaderRows_zero_of_no_mid (rows : Array (Array (Array Inline)))
     (rules : Array (Nat × TableRule)) (h : ∀ p ∈ rules, p.2 ≠ .mid) :
     tableHeaderRows rows rules = 0 := by
@@ -5783,25 +3918,18 @@ public theorem tableHeaderRows_zero_of_no_mid (rows : Array (Array (Array Inline
     (fun p hp => h p (Array.mem_toList_iff.mp hp))]
   rfl
 
-/-- What a float wraps: `{figure}` or `{table}`, or a `{subfigure}`/
-`{subtable}` box inside one (`sub`). The kinds differ in name and in which
-counter numbers them (`numberFloats`); the caption and separation
-machinery is one. -/
+/-- What a float wraps: `{figure}`, `{table}`, or a `{subfigure}`/`{subtable}` box inside one. -/
 public inductive FloatKind where
   | figure
   | table
   | sub
-  /-- An `{algorithm}` float: numbered by its own counter, captioned with
-  the locale's algorithm word (`Locale.algorithm`, algorithm2e's
-  `\algorithmcfname`). -/
+  /-- An `{algorithm}` float, numbered by its own counter. -/
   | algorithm
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- What an algorithm's input/output line declares (algorithm2e's
-`\SetKwInput` defaults: `\KwIn`/`\KwOut`/`\KwData`/`\KwResult`,
-algorithm2e.sty §defaults; algorithmicx's `\Require`/`\Ensure` land on
-`input`/`output`). `named` is a document-defined `\SetKwInOut` label —
-the author's own word, carried as declared. -/
+`\KwIn`/`\KwOut`/`\KwData`/`\KwResult`, algorithmicx's `\Require`/`\Ensure`).
+-/
 public inductive AlgIo where
   | input
   | output
@@ -5810,12 +3938,8 @@ public inductive AlgIo where
   | named (label : String)
   deriving Repr, BEq, Inhabited
 
-/-- The block forms an algorithm line can open, closed: algorithm2e's
-`\SetKwFor`/`\SetKwIF`/`\SetKwRepeat` defaults and algorithmicx's
-`\For`…`\EndFor` family both parse onto these. The opener selects the
-keyword pair the backends generate (`AlgWords`); a closer carries its
-opener so `repeat` can close on `until` with its condition while every
-other block closes on `end`. -/
+/-- The block forms an algorithm line can open, onto which algorithm2e and
+algorithmicx both parse. -/
 public inductive AlgOpen where
   | forLoop
   | forEach
@@ -5828,9 +3952,7 @@ public inductive AlgOpen where
   | procedure
   deriving Repr, BEq, Inhabited
 
-/-- One pseudocode line's kind. The keywords a kind implies are generated
-text from the locale keyword table (`algWords`), like caption prefixes —
-never stored in the line, so the census reads declarations only. -/
+/-- One pseudocode line's kind; its keywords are generated from the locale's keyword table. -/
 public inductive AlgKind where
   | statement
   | io (kind : AlgIo)
@@ -5839,10 +3961,8 @@ public inductive AlgKind where
   | ret
   deriving Repr, BEq, Inhabited
 
-/-- One pseudocode line: its nesting depth, its kind, the author's content
-(a `\For` condition, a statement's text), and an optional end-of-line
-comment (`\tcc`/`\tcp`, algorithmicx `\Comment`). Content and comment are
-document text and censused; the kind's keywords are generated. -/
+/-- One pseudocode line: its nesting depth, its kind, the author's content and
+an optional end-of-line comment. -/
 public structure AlgLine where
   depth : Nat
   kind : AlgKind
@@ -5850,16 +3970,7 @@ public structure AlgLine where
   comment : Option (Array Inline)
   deriving Repr, BEq, Inhabited
 
-/-- The algorithm keyword table for one language: the words the backends
-generate around a line's declared content. Sourced from algorithm2e's own
-keyword defaults — English from `\algocf@defaults@common`
-(`\SetKwFor{For}{for}{do}{end for}`, `\SetKwIF{If}{ElseIf}{Else}{if}{then}
-{else if}{else}{end if}`, `\SetKwRepeat{Repeat}{repeat}{until}`,
-`\SetKwInput{KwIn}{Input}` and family, `\SetKw{Return}{return}`), French
-and German from the sty's `french`/`german` keyword blocks, and the
-function/procedure words from the language options' `\@algocf@procname`/
-`\@algocf@funcname`. Closers are the `shortend` form ("end"), the
-package's own default option set (`\ExecuteOptions{…,lined,shortend}`). -/
+/-- The algorithm keyword table for one language, from algorithm2e's own keyword defaults. -/
 public structure AlgWords where
   forKw : String
   foreachKw : String
@@ -5881,9 +3992,7 @@ public structure AlgWords where
   procedureKw : String
   deriving Repr, BEq, Inhabited
 
-/-- The keyword table a locale tag selects — en, fr, de, per the sources
-on `AlgWords`; any other tag reads English, exactly the caption-word
-fallback W0368 already names for the locale record itself. -/
+/-- The keyword table a locale tag selects: en, fr, de, any other tag English. -/
 public def algWords (tag : String) : AlgWords :=
   match (tag.splitOn "-").headD tag with
   | "fr" =>
@@ -5911,16 +4020,13 @@ public def algWords (tag : String) : AlgWords :=
       resultKw := "Result", functionKw := "Function"
       procedureKw := "Procedure" }
 
-/-- Every word a keyword table can generate, for the font-coverage
-precompute: the faces must cover the generated keywords exactly as they
-cover generated caption prefixes. -/
+/-- Every word a keyword table can generate, for font coverage. -/
 public def AlgWords.all (w : AlgWords) : List String :=
   [w.forKw, w.foreachKw, w.whileKw, w.doKw, w.ifKw, w.thenKw, w.elseIfKw,
    w.elseKw, w.repeatKw, w.untilKw, w.endKw, w.returnKw, w.inputKw,
    w.outputKw, w.dataKw, w.resultKw, w.functionKw, w.procedureKw]
 
-/-- The opener's keyword pair: the word before the condition and the word
-after it (`for … do`, `if … then`; `else` and `repeat` stand alone). -/
+/-- The opener's keyword pair: the word before the condition and the word after it. -/
 public def AlgOpen.words (w : AlgWords) : AlgOpen → String × Option String
   | .forLoop => (w.forKw, some w.doKw)
   | .forEach => (w.foreachKw, some w.doKw)
@@ -5932,8 +4038,7 @@ public def AlgOpen.words (w : AlgWords) : AlgOpen → String × Option String
   | .function => (w.functionKw, none)
   | .procedure => (w.procedureKw, none)
 
-/-- The io line's label word. A `named` label is the author's declared
-word, kept as declared. -/
+/-- The io line's label word; a `named` label is the author's word as declared. -/
 public def AlgIo.word (w : AlgWords) : AlgIo → String
   | .input => w.inputKw
   | .output => w.outputKw
@@ -5969,13 +4074,8 @@ public def AlgKind.name : AlgKind → String
   | .closer o => s!"close {o.name}"
   | .ret => "return"
 
-/-- One algorithm line as display inlines — the one site both backends
-read, so the page and the HTML list item spell a line identically
-(`algorithm_lines_agree` is the statement). Keywords set bold
-(algorithm2e's `\KwSty` default `\textbf`); the comment sets in the muted
-role between algorithm2e's own `/* … */` fences (`\tcc`'s default
-comment style); `semis` closes statement, io and return lines with the
-`;` algorithm2e prints for `\;` unless `\DontPrintSemicolon`. -/
+/-- One algorithm line as display inlines: keywords bold, the comment muted,
+`semis` closing statements with `;`. -/
 public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
     (l : AlgLine) : Array Inline := Id.run do
   let bold (s : String) : Inline := .styled .bold #[.text s]
@@ -5984,8 +4084,6 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
   match l.kind with
   | .statement =>
     out := l.content
-    -- A statement whose content is only anchors (a `\label` line under
-    -- the caption) shows no stray semicolon: the anchor ships, invisibly.
     semi := !l.content.all (· matches Inline.label _)
   | .io k =>
     out := #[bold (k.word w ++ ":"), .text " "] ++ l.content
@@ -6019,28 +4117,17 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
       (#[Inline.text "/* "] ++ c ++ #[Inline.text " */"]))
   return out
 
-/-- Pad each table row to `n` cells with empty cells, the door elaboration
-takes to the rectangularity `.table` declares. The same statement shape as
-the alignment grid's `MRows.pad_rectangular` (one property, two
-consumers), restated here because a table's cell is `Array Inline`, not a
-math list. -/
+/-- Pad each table row to `n` cells with empty cells. -/
 public def padTableRows (rows : Array (Array (Array Inline))) (n : Nat) :
     Array (Array (Array Inline)) :=
   rows.map fun r => r ++ Array.replicate (n - r.size) #[]
 
-/-- Padding conserves content exactly: each padded row is the original's
-cells followed by empties — nothing dropped, nothing reordered. -/
 public theorem padTableRows_cells (rows : Array (Array (Array Inline))) (n i : Nat)
     (h : i < rows.size) :
     (padTableRows rows n)[i]'(by simpa [padTableRows] using h)
       = rows[i] ++ Array.replicate (n - rows[i].size) #[] := by
   simp [padTableRows]
 
-/-- A padded grid is rectangular: every row of `padTableRows rows n` has
-exactly `n` cells when none had more — the invariant every walk over
-`.table` trusts (`cols.size` is every row's size), sourced from the same
-need as the alignment grid's: a column's alignment point is one x for
-every row. -/
 public theorem padTableRows_rectangular (rows : Array (Array (Array Inline))) (n : Nat)
     (h : ∀ r ∈ rows, r.size ≤ n) :
     ∀ r ∈ padTableRows rows n, r.size = n := by
@@ -6051,18 +4138,8 @@ public theorem padTableRows_rectangular (rows : Array (Array (Array Inline))) (n
   simp [Array.size_append]
   omega
 
-/-- A pinned-to-the-viewport placement for a web element: CSS
-`position: fixed` with a declared corner and offset (CSS Positioned Layout
-Module Level 3 §3.3: a fixed-positioned box is attached to the viewport).
-A printed page has no viewport, so the PDF and the markdown twin ignore a
-pin by construction — their walks read the nav's body only (said once
-here, not per consumer). `reveal` keeps the element hidden until the page
-has scrolled past `revealBy` (undeclared: one viewport). The engine's
-reveal changes opacity and visibility only — a fade, not motion, so it
-needs no reduced-motion form (WCAG 2.2 SC 2.3.3 covers motion animation);
-a declared `motion` style key stays the way to animate it, with its guard.
-An undeclared offset is 0 — the exact corner — which is the identity, not
-a design constant; declare one to stand off the edge. -/
+/-- A viewport-pinned placement for a web element: CSS `position: fixed` with
+a declared corner and offset. -/
 public structure Pin where
   /-- `true` pins to the top edge, `false` to the bottom. -/
   top : Bool
@@ -6073,40 +4150,26 @@ public structure Pin where
   revealBy : Option SymGlue := none
   deriving Repr, BEq, Inhabited
 
-/-- What a `{nav}` landmark declares about itself, beside its body.
-`label` names the landmark instance (`aria-label`): a landmark role used
-more than once on a page needs a unique label per instance (W3C ARIA
-Authoring Practices, Landmark Regions), and W0325 counts only unlabeled
-navs. `pin` is the pinned placement above. -/
+/-- What a `{nav}` landmark declares about itself beside its body; `label`
+names the landmark instance (`aria-label`). -/
 public structure NavSpec where
   label : Option String := none
   pin : Option Pin := none
   deriving Repr, BEq, Inhabited
 
-/-- One reference-list entry, resolved: its key (the HTML anchor and what
-`\cite` spells), the marker the style shows beside it (the position for a
-numeric style, nothing for author-year lists, which mark no entries), and
-its content formatted per the style. `Bib.apply` builds these; a backend
-only structures them. -/
+/-- One reference-list entry, resolved: its key, the marker the style shows
+beside it, and its content. -/
 public structure BibItem where
   key : String
   marker : Option String
   content : Array Inline
-  /-- The label is one a BibTeX style writes (`\bibitem[label]`, `alpha`'s
-  `[Eps20]`): LaTeX sets it flush left in the label column (latex.ltx
-  `\@lbibitem`, `\item[\@biblabel{#1}\hfill]`), where a number takes the
-  list's right-aligned `\makelabel`, and so do biblatex's labels, a
-  shorthand among them (`\hss` before each). Both backends read it. -/
+  /-- Whether the label is one a BibTeX style writes (`\bibitem[label]`), set
+  flush left in the label column. -/
   labelFlush : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- The token grammar a listing's declared language must fit before either
-text artifact may carry it: an ASCII lowercase letter, then lowercase
-letters, digits, `+`, `#`, `-`, `.` — `python`, `c++`, `c#`, `objective-c`.
-Small on purpose: the token lands in an HTML class attribute and in a
-CommonMark fence info string (§4.5: no backtick), and a spelling outside
-the grammar — listings' `[LaTeX]TeX` dialect form, a space, a brace — is
-named at elaboration and reaches neither, never as raw attribute text. -/
+/-- The token grammar a listing's declared language must fit: an ASCII
+lowercase letter, then lowercase letters, digits, `+`, `#`, `-`, `.`. -/
 public def listingLangOk (s : String) : Bool :=
   match s.toList with
   | [] => false
@@ -6114,24 +4177,16 @@ public def listingLangOk (s : String) : Bool :=
     c.isLower && rest.all fun d =>
       d.isLower || d.isDigit || d == '+' || d == '#' || d == '-' || d == '.'
 
-/-- A listing language the grammar admits: the IR cannot hold a token
-`listingLangOk` rejects, so every construction is validated by its type.
-`listingLang?` is the one site that mints one from an author's spelling. -/
+/-- A listing language the grammar admits. -/
 public abbrev ListingLang := { s : String // listingLangOk s = true }
 
-/-- An author's language spelling normalized to the token both artifacts
-carry: trimmed, ASCII-lowercased (`Python` and `python` name one language,
-as listings' case-insensitive `language=` key does), and admitted only when
-the grammar holds — `none` names the spelling the caller diagnoses. -/
+/-- An author's language spelling, trimmed and ASCII-lowercased, admitted only
+when the grammar does. -/
 public def listingLang? (raw : String) : Option ListingLang :=
   let s := raw.trimAscii.toString.toLower
   if h : listingLangOk s = true then some ⟨s, h⟩ else none
 
-/-- The Pygments styles a listing may select, each painted from its own
-table (`PygmentsStyleData`, resolved by `PygmentsStyle`), independent of
-lexical classification. Pygments style names are case-sensitive;
-unsupported names remain a frontend option diagnostic, never an implicit
-default selection. -/
+/-- The Pygments styles a listing may select, each painted from its own table. -/
 public inductive ListingStyle where
   | default
   | friendly
@@ -6151,35 +4206,15 @@ public def ListingStyle.ofName? (name : String) : Option ListingStyle :=
   let name := name.trimAscii.toString
   ListingStyle.all.find? (·.name == name)
 
-/-- How a listing's environment spaces it from its neighbours, as its
-package sets it: `{verbatim}` is a trivlist (latex.ltx `\@verbatim`), its
-`\topsep` the trivlist's at its depth (`trivlistSkipFor`); `{minted}`'s code
-is fancyvrb's `\list` with no items one level down
-(fancyvrb.sty `\FV@List`: `\FV@ListVSpace` and `\@endparenv` spend its
-`\@topsepadd`), its level's `\topsep` taking the larger of its
-neighbour's. Measured under lualatex: 8 and 3 pt from a paragraph in a
-beamer frame at 10 pt. `{lstlisting}`'s `\medskipamount` above and below
-(listings.sty's `aboveskip` and `belowskip`, 6 pt there) is not yet a
-frame. `none` spaces it as a paragraph — a markdown document's code
-(`Surface.markdown`), which no package sets, and a listing whose class does
-not space its frame as TeX does (`ListingFrame.onPage`). Both backends read
-it: the PDF walk's space around the code and the HTML sheet's rules on its
-element; and the display after it reads its `\@endpe` (`Block.leavesEndPe`). -/
+/-- How a listing's environment spaces it from its neighbours, as its package sets it. -/
 public inductive ListingFrame where
   | none
   | trivlist
   | list
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The frame a listing stands in on a page: its environment's (`env`) where
-the class spaces that frame as TeX does, else `none`, the paragraph spacing,
-whose block leaves no `\@endpe`. A trivlist stands its `\topsep` on top of
-the page's paragraph gap, which is TeX's `\parskip` only where a class or
-document declares one — the article's and the poster's are the engine's
-rhythm mark — and its `\topsep` is TeX's only under beamer's lineage (the
-size file's trivlists keep the quantized one, `trivlistSkipFor`); fancyvrb's
-list stands its level's `\topsep` over TeX's own `\parskip`, wherever the
-class has list levels (`listSkips`). -/
+/-- The frame a listing stands in on a page: its environment's where the class
+spaces it as TeX does, else `none`. -/
 public def ListingFrame.onPage (surface : Surface) (lists : ListLineage)
     (parskip : Option Dim.SymGlue) : ListingFrame → ListingFrame
   | .trivlist =>
@@ -6190,165 +4225,77 @@ public def ListingFrame.onPage (surface : Surface) (lists : ListLineage)
 /-- Where a listing the layout wraps itself (`ListingSpec.breakIndent`) may
 end a line. -/
 public inductive ListingWrap where
-  /-- listings.sty's own rule (`breaklines`, under its default
-  `breakatwhitespace=false`, lstmisc.sty): a discretionary after every output
-  unit — a run of letters and the digits that continue it, a run of other
-  characters with the digits among them, a space, and the run a `)` closes
-  (listings.sty `\lst@AppendLetter`, `\lst@ProcessDigit`, `\lst@AppendOther`,
-  `\lst@AppendSpecialSpace`; lstmisc.sty `\lst@breakProcessOther`) — each
-  line filled to its last unit that fits, as a LuaLaTeX probe sets it. One
-  declared departure, for alignment: listings carries the white space a wrap
-  falls before onto the continuation, a space one column past the break
-  indent and a tab its columns, and where that no longer leaves the next
-  unit room, sets the unit a line further; the engine drops it, as TeX drops
-  the glue at a break, so every continuation stands at its declared indent.
-  The bound is that white space's columns; `codeTokenWrapChecks` holds the
-  page to listings' lines without it and to each continuation's indent. -/
+  /-- listings.sty's own rule (`breaklines`, default
+  `breakatwhitespace=false`): a break after every output unit. -/
   | units
-  /-- Whitespace first: the last space that fits, else the last boundary
-  between two fallback tokens that is a boundary of the highlighter's type
-  runs, or lies inside a type run wider than a continuation line. A markdown
-  fence's (`Surface.listing`): a source line breaks between its words before
-  anything else, and a fallback token — a name, an operator, a number — is
-  never parted. -/
+  /-- Whitespace first: the last space that fits, else the last fitting
+  boundary between highlighter type runs. -/
   | whitespaceFirst
   deriving Repr, BEq, Inhabited
 
-/-- What a code listing declares beside its content — the delta between
-`{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
-manual: the `caption` key, lstmisc's `numbers` key; minted's `linenos`).
-`caption` carries the resolved number with the declared text: every
-captioned listing numbers, assigned at elaboration in flow order exactly
-as equation numbers are (listings steps `\thelstlisting` per captioned
-listing); a captionless listing is `none`, unnumbered. The number rides
-beside the declared text, never inside it — the "Listing n: " prefix is
-backend furniture spelled at `Ir.listingCaption`, one site for both
-artifacts. `numbers` is `numbers=left` / `linenos`: each line's number as
-furniture beside it, generated ink outside the census as a list's markers
-are. `language` is listings' `language=` key or minted's mandatory
-argument, normalized (`listingLang?`): one fact the HTML `code` element's
-class and the markdown fence's info string both project (`htmlClass`,
-`fenceInfo`, `listing_language_agree`). `highlight` holds Pygments token
-types, assigned once during elaboration; both backends consume the same
-segments. A bare `{verbatim}` is the default value everywhere. -/
+/-- What a code listing declares beside its content: the delta between
+`{verbatim}` and `{lstlisting}` or `{minted}`. -/
 public structure ListingSpec where
-  /-- Authentic source start for diagnostics on listing lines and tokens.
-  It does not participate in highlighting, sizing, or backend emission. -/
+  /-- Source start for diagnostics on listing lines and tokens; it plays no
+  part in highlighting, sizing or emission. -/
   source : Option Span := none
   caption : Option (Nat × Array Inline) := none
   numbers : Bool := false
   language : Option ListingLang := none
-  /-- The highlighting style the document declared, which both backends
-  pass to the one shared token painter: its colours ship as it states them.
-  `none` paints from the default style's table as the engine's own choice,
-  fitted to the ground the listing stands on. -/
+  /-- The highlighting style the document declared; `none` paints from the default style's table. -/
   style : Option ListingStyle := none
-  /-- minted's `bgcolor`: the listing's own ground, fvextra's colour box
-  behind every source line across the line width (`\FV@BGColor@List`), with
-  the name it was spelled by when it names one. -/
+  /-- minted's `bgcolor`: the listing's own ground, with the name it was spelled by. -/
   ground : Option (Color × Option ColorRef) := none
-  /-- One segment array per normalized source line. Empty means plain text.
-  `tokenLines` validates the text before either backend consumes this cache. -/
+  /-- One segment array per normalized source line; empty means plain text. -/
   highlight : Array (Array ListingHighlight.Token) := #[]
-  /-- Resolved size declaration, using the ordinary size resolving sites.
-  Bare `verbatim` inherits the ambient size in force (LaTeX's
-  `\verbatim@font` is `\normalfont\ttfamily`: mono family, no size change);
-  minted/listings inherit it too unless their options select a named LaTeX
-  step. The default is the body size — the neutral ambient — so a spec
-  built with no elaboration context never forces a size of its own. -/
+  /-- The listing's resolved size declaration; bare `verbatim` inherits the ambient size. -/
   fontSize : Style := .size "normalsize"
   /-- FancyVerb/listings default: eight columns between tab stops. -/
   tabSize : Nat := 8
   /-- FancyVerb/listings default: source lines do not wrap. -/
   breakLines : Bool := false
-  /-- What the listing's package takes off the space after each source
-  line: fvextra's `fvextraLineOverlap` for a minted listing, zero for a
-  bare `verbatim` and for listings' own. -/
+  /-- What the listing's package takes off the space after each source line:
+  fvextra's `fvextraLineOverlap` for minted, else zero. -/
   lineOverlap : Sp := 0
-  /-- Every code line carries a `\strut`, so its box is that strut's at
-  least, whatever its glyphs: minted's lines under `breaklines`, which
-  fvextra sets each as `\parbox[t]{…}{\noindent\strut … \strut}`
-  (`\FV@ListProcessLine@Break`). Its unbroken lines are bare `\hbox`es,
-  their glyphs' boxes, as verbatim's are. A colour box around the code ends
-  on the last line's box. -/
+  /-- Whether every code line carries a `\strut`, as minted's lines under `breaklines` do. -/
   lineStrut : Bool := false
-  /-- How a wrapping listing's continuation stands in past its own line's
-  indentation, as listings.sty's does (`breakindent`, with `breakautoindent`
-  on): the layout then breaks each source line itself, where `wrapAt`
-  allows, so every declared line holds and none re-flows. `none` leaves a
-  wrap to the paragraph breaker, which names the re-flow (W0386) — minted's,
-  whose fvextra continuation carries a break symbol this engine does not
-  draw. -/
+  /-- How far a wrapping listing's continuation stands in past its line's
+  indentation (listings' `breakindent`). -/
   breakIndent : Option Sp := none
-  /-- Where the layout's own wrap may end a line (`ListingWrap`): listings'
-  units, a tex listing's, by default. -/
+  /-- Where the layout's own wrap may end a line. -/
   wrapAt : ListingWrap := .units
   /-- How the environment spaces the code from its neighbours. -/
   frame : ListingFrame := .none
   deriving Repr, BEq, Inhabited
 
-/-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt (fvextra.sty,
-`\fvset{backgroundcolorboxoverlap=0.25pt}`): the `\vspace{-0.25pt}` its
-`\FV@bgcoloroverlap` sets after every source line it processes, a
-background colour declared or not. minted 3 sets its code through
-fvextra, so a minted listing's source lines stand this much under their
-size's `\baselineskip` — measured under lualatex at 9.215 bp for
-`\footnotesize`'s 9.5 pt, where a bare `verbatim` stands 9.464, and its
-first two lines twice as much, 8.966 bp — while the lines one wrapped
-source line breaks into keep the skip itself, and the gap after the
-listing is a bare `verbatim`'s. -/
+/-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt: the `\vspace` it takes
+back after every source line. -/
 public def fvextraLineOverlap : Sp := Dim.pt 1 / 4
 
-/-- listings.sty's continuation indent: `breakindent` defaults to 20 pt
-(listings.dtx, `\lst@Key{breakindent}{20pt}`), and a LuaLaTeX probe sets a
-continuation 20 pt past its line's own indentation. -/
+/-- listings.sty's continuation indent: `breakindent` defaults to 20 pt. -/
 public def listingBreakIndent : Sp := pt 20
 
-/-- What a listing sets with before its own keys: on a tex document LaTeX's
-defaults, the ambient size and no wrapping. A markdown document declares no
-listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
-which the markdown page's measure holds 79 to 80 monospaced columns (the
-0.6 em advance of every default typewriter face, to within 0.003 em) — the
-80-column line most code is written to (PEP 8's limit is 79) — and wraps a
-longer line with listings' continuation indent: paper has no scroll, so
-every character a wrap can reach does. It wraps whitespace first
-(`ListingWrap.whitespaceFirst`), where listings breaks at whichever of its
-units fills the line: at a space where one fits — inside a string or a
-comment too — else between two fallback tokens, which in a typed run only a
-run wider than a line admits; a fallback token, a name, an operator such as
-`:=` or a number, is never parted (`codeWraps_breaks_mem`), and one wider
-than the line runs on, as listings sets a unit wider than its line. The HTML's
-`<pre>` keeps its padding inside the same measure, so a browser at 16 px
-holds about 72 of those columns and wraps the rest. -/
+/-- What a listing sets with before its own keys: LaTeX's defaults on tex;
+`\footnotesize`, wrapped whitespace first, on markdown. -/
 public def Surface.listing : Surface → ListingSpec
   | .tex => {}
   | .markdown =>
     { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent
       wrapAt := .whitespaceFirst }
 
-/-- The declared language as the bare token, `none` when none is declared:
-the one IR fact both text projections below read. -/
+/-- The declared language as the bare token, `none` when none is declared. -/
 public def ListingSpec.langToken (spec : ListingSpec) : Option String :=
   spec.language.map (·.val)
 
-/-- The HTML projection of the declared language: the `code` element's
-class under the HTML standard's own convention (§4.5.15 `code`: a class
-prefixed `language-` names the computer language). `none` when no language
-is declared — the element then carries no class at all. -/
+/-- The declared language as the `code` element's class, `language-<token>`;
+`none` when undeclared. -/
 public def ListingSpec.htmlClass (spec : ListingSpec) : Option String :=
   spec.langToken.map ("language-" ++ ·)
 
-/-- The markdown projection of the declared language: the fenced code
-block's info string (CommonMark §4.5), empty when no language is declared —
-the fence then opens bare. -/
+/-- The declared language as a fenced code block's info string, empty when undeclared. -/
 public def ListingSpec.fenceInfo (spec : ListingSpec) : String :=
   spec.langToken.getD ""
 
-/-- One declared language, two projections of one IR value: a declared
-token reaches the HTML class as `language-<token>` and the markdown info
-string as the token itself; an absent language reaches neither. Both
-backends read `htmlClass` and `fenceInfo` and nothing else, so an artifact
-that carried a language the other did not is unrepresentable. -/
 public theorem listing_language_agree (spec : ListingSpec) :
     (spec.language = none → spec.htmlClass = none ∧ spec.fenceInfo = "") ∧
     (∀ l, spec.language = some l →
@@ -6361,236 +4308,92 @@ public theorem listing_language_agree (spec : ListingSpec) :
 
 public inductive Block where
   | para (content : Array Inline)
-  /-- A heading. `number` is the section's resolved number ("2", "2.1",
-  "A.2" after `\appendix`), assigned at elaboration in flow order — article
-  numbers unstarred levels 1–3 (classes.dtx §Sectioning, secnumdepth 3);
-  slides and card documents, and every starred form, carry `none`. The
-  number rides beside the title, never inside it, so a backend renders it
-  as its own structural piece (classes.dtx's `\@seccntformat`: number then
-  `\quad`) and the HTML anchor still derives from the title text alone —
-  numbering a section must not move its anchor. -/
+  /-- A heading; `number` is the section's resolved number, assigned at
+  elaboration in flow order. -/
   | section (level : HeadingLevel) (starred : Bool) (number : Option String) (title : Array Inline)
   | list (ordered : Bool) (items : Array (Array Block))
   | center (body : Array Block)
-  /-- Unjustified setting for a scope, hanging from the side it declares.
-  Flush left is `\flushleft` and `\raggedright`'s meaning (ltmiscen.dtx:
-  `{flushleft}` is a trivlist under `\raggedright`); flush right is
-  `{flushright}`/`\raggedleft`'s. The lines break ragged on the other edge;
-  with `center` these are the alignments a page can declare per block, and
-  the side rides here because line placement resolves an origin
-  (`Layout.Geom.flushRight`) that a direction-free node could not name. -/
+  /-- Unjustified setting for a scope, hanging from the side it declares. -/
   | ragged (flush : FlushSide) (body : Array Block)
-  /-- `\block[before = <len>]{...}`: content with declared space above.
-  The glue rides as `Sourced` so a token-declared gap reaches the HTML
-  with the name a reader would override (`var(--subtitlegap, …)`); a
-  computed or class-default gap carries `none`. -/
+  /-- `\block[before = <len>]{...}`: content with declared space above. -/
   | spaced (before : Sourced SymGlue) (body : Array Block)
   /-- The block half of `Inline.role`: a document-defined command whose
-  expansion is block content (`\entry{...}` producing whole paragraphs)
-  keeps its authored name the same way — `<div class="u-name">` in HTML,
-  a transparent group everywhere else. -/
+  expansion is block content keeps its authored name. -/
   | role (name : String) (body : Array Block)
-  /-- One hyperlink over block-shaped content. HTML's anchor has a
-  transparent content model and may wrap flow content, but may contain no
-  interactive descendant; elaboration refuses that nesting before this node
-  is built. The paged backend records one rectangle over the body's placed
-  ink on each page the body reaches, since a PDF annotation belongs to one
-  page. -/
+  /-- One hyperlink over block-shaped content, which holds no interactive descendant. -/
   | link (target : String) (body : Array Block)
-  /-- `{quote}`/`{quotation}`: a quotation set off from the text by
-  indenting both margins by the list indent — classes.dtx defines both as
-  `\list{}{\rightmargin\leftmargin}`, so the right edge moves in exactly as
-  far as the left. The two environments differ only in
-  `\listparindent` (`quotation` indents each paragraph's first line
-  1.5 em); the engine sets no paragraph indent anywhere yet, so that
-  distinction has nothing to bind to and one node carries both. HTML sets
-  it as `<blockquote>`, markdown as `> ` lines. -/
+  /-- `{quote}`/`{quotation}`: a quotation indented on both margins by the list indent. -/
   | quote (body : Array Block)
-  /-- `{abstract}`: article's unnumbered titled block — `\small`, a centred
-  bold "Abstract" heading, then the body on quotation margins (article.cls
-  §abstract: `\small`, `\begin{center}{\bfseries\abstractname}\end{center}`,
-  `\quotation`). Its own node rather than a `.quote`, because the backends
-  express it differently: HTML sets a `<section class="abstract">` with a
-  heading — exactly the region a reader's tooling looks for — while the PDF
-  keeps the class's quotation shape. -/
+  /-- `{abstract}`: article's unnumbered titled block, `\small` under a
+  centred bold heading, on quotation margins. -/
   | abstract (body : Array Block)
-  /-- beamer's titled block (`{block}`/`{alertblock}`/`{exampleblock}`,
-  user guide §12.3): the `{title}` group on the `\begin` line, block
-  content under it. An empty title is beamer's untitled block — no title
-  bar, the body alone. The title's colours resolve through the kind's
-  role pair (`titledLook`, following beamer's own parent chain:
-  beamercolorthemedefault.sty defines `block title` on structure,
-  `block title alerted` on alerted text, `block title example` on
-  example text, `block body` empty); a declared `<kind>titlebg` turns
-  the title into a colour bar, exactly the frame-title rule. -/
+  /-- beamer's titled block (`{block}`, `{alertblock}`, `{exampleblock}`); an
+  empty title is an untitled block. -/
   | titled (kind : TitledKind) (title : Array Inline) (body : Array Block)
-  /-- A disclosure (markdown's `<details>` and `<summary>`): a summary that
-  stays in view and a body its reader opens and closes. `expanded` is
-  HTML's `open`, the body shown until the reader closes it. The HTML ships
-  the native element, whose collapse is the platform's; paper has no
-  collapse to carry, so the page and the print set the summary as a bold
-  line with the body after it, every word in order, and the markdown twin
-  writes the element its reader reads back. -/
+  /-- A disclosure (markdown's `<details>` and `<summary>`): a summary in view
+  and a body the reader opens and closes; `expanded` is HTML's `open`. -/
   | disclosure (summary : Array Inline) (expanded : Bool) (body : Array Block)
-  /-- A numbered display equation: `{equation}` under amsmath's numbering
-  conventions (amsldoc §3 — `equation` numbers, `equation*` and `\[` do
-  not, `\nonumber`/`\notag` opts a numbered form out). `number` is the
-  rendered tag, parentheses included (`(1)`), assigned per document at
-  elaboration, or an author's `\tag` elaborated as text the way amsmath's
-  `\tagform@` sets it (`\hbox{\normalfont(#1)}`: markup and math inside it
-  are ink, never source); `content` is the formula — or its source-text
-  degradation — preceded by the `\label` anchors the environment carried.
-  The number is structural in both backends: right-aligned beside the
-  centred formula on the page, its own element in HTML, never text glued
-  into the formula. The unnumbered forms keep the plain centred-paragraph
-  shape. -/
+  /-- A numbered display equation; `number` is the rendered tag, `content` the
+  formula after its `\label` anchors. -/
   | equation (number : Array Inline) (content : Array Inline)
-  /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
-  backends set it in the mono face and neither reflows it. `covered` is the
-  dim colour painted by the overlay shade — code pending its step must read
-  as covered like any other text; `none` everywhere else. `spec` is what a
-  listing environment declares beside the content (`ListingSpec`): the
-  numbered caption and the line-number flag. -/
+  /-- `{verbatim}` content, kept literally; `covered` is the overlay shade's
+  dim colour, `spec` what a listing environment declares. -/
   | verbatim (covered : Option Color) (content : String) (spec : ListingSpec)
-  /-- Pseudocode as a value: the lines of an `{algorithm}`/`{algorithmic}`
-  environment, algorithm2e and algorithmicx parsed onto this one node.
-  Lines are rich text with math and generated bold keywords, nested by
-  `depth`; the keywords are the locale table's (`algWords`), generated by
-  `AlgLine.rendered` — the one site both backends read. `numbered` is
-  algorithm2e's `\LinesNumbered` (off by default) or algorithmic's `[1]`;
-  `semis` prints the `;` each `\;` terminates (on by default,
-  `\DontPrintSemicolon` clears it) — both from algorithm2e's own default
-  option set (`\ExecuteOptions{english,plain,resetcount,titlenotnumbered,
-  lined,shortend}`, algorithm2e.sty). The node usually stands inside a
-  `.float` of kind `.algorithm`, which carries the caption and the
-  number; a bare `{algorithmic}` stands alone, uncaptioned. -/
+  /-- Pseudocode: the lines of an `{algorithm}`/`{algorithmic}` environment;
+  `numbered` and `semis` follow algorithm2e's defaults. -/
   | algorithm (numbered : Bool) (semis : Bool) (lines : Array AlgLine)
-  /-- Side-by-side boxes (`{columns}`/`{column}`, and the one-box forms
-  `{minipage}` and `\parbox`): each carries its declared width as a
-  `BoxWidth` — a fraction of the enclosing measure, an absolute length, or
-  `share` for a `{column}` that declares none and takes an equal part of the
-  leftover. Boxes are top-aligned; the alignment options are not modelled
-  (PLAN, M5). -/
+  /-- Side-by-side boxes (`{columns}`/`{column}`, and the one-box `{minipage}`
+  and `\parbox`), each with its declared width. -/
   | columns (cols : Array (BoxWidth × Array Block))
-  /-- Overlay blocks crisp on steps `n` through `last` (`\item<2->`,
-  `\pause`): the block form of `Inline.step`, with the same dim-not-hide
-  semantics. -/
+  /-- Overlay blocks crisp on the selector's steps (`\item<2->`, `\pause`):
+  the block form of `Inline.onSteps`. -/
   | onSteps (spec : OverlaySpec) (body : Array Block)
-  /-- Block-level overlay alternation: the block form of `Inline.alt`, with
-  the same select-one-per-step semantics, the same page-order storage, and
-  the same reasons. -/
+  /-- Block-level overlay alternation: the block form of `Inline.altSteps`. -/
   | altSteps (spec : OverlaySpec) (firstPage : Array Block)
       (otherPage : Array Block)
-  /-- A speaker note (`\note{...}`): a side channel, never slide content.
-  The PDF handout omits it; HTML keeps it as an inert hidden aside for the
-  coming speaker view (PLAN M5). -/
+  /-- A speaker note (`\note{...}`): a side channel, never slide content. -/
   | note (body : Array Block)
-  /-- `{ifbackend}{html,md}`: content addressed to a subset of the backends
-  (`backendNames`). The engine elaborates once and emits several backends
-  from one IR, so the conditional cannot resolve at elaboration: the node
-  carries its target set and each backend keeps or drops it (`keepFor`,
-  applied with the backend's own name at each emitter's entry). Elaboration
-  diagnoses a target set that no backend answers along its nesting path
-  (E0334), and `keepFor_covers` is the conservation theorem that makes the
-  diagnostic sufficient: with every conditional answered, no declared text
-  leaf is dropped by every backend. -/
+  /-- `{ifbackend}{html,md}`: content addressed to a subset of the backends,
+  which each keeps or drops (`keepFor`). -/
   | only (targets : Array String) (body : Array Block)
-  /-- `{nav}`: a navigation landmark — a group of links for page or site
-  navigation, not a widget. HTML emits it as the `<nav>` element (the
-  `navigation` landmark, W3C ARIA Authoring Practices, Landmark Regions);
-  the PDF page and the markdown twin have no landmark to mark, so both keep
-  the body as a transparent group. -/
+  /-- `{nav}`: a navigation landmark, a group of links for page or site navigation. -/
   | nav (spec : NavSpec) (body : Array Block)
-  /-- beamer's `\logo`, met in the body: a stateful declaration — the pages
-  from here on carry this content at their lower-right corner, and an empty
-  content clears it (`\logo{}` after a frame is how a deck scopes a logo to
-  one frame). The preamble form is `Doc.logo`, the initial state. -/
+  /-- beamer's `\logo` in the body: the pages from here on carry this content
+  at their lower-right corner; empty content clears it. -/
   | logo (content : Array Inline)
-  /-- `\pagebreak`/`\newpage`: a declared page boundary. The PDF opens a
-  fresh page (two adjacent boundaries never make a blank one — the builder
-  closes only pages that hold something); HTML and markdown are continuous
-  media with no page to break, so both keep nothing, and the node ships no
-  ink of its own. -/
+  /-- `\pagebreak`/`\newpage`: a declared page boundary. -/
   | pagebreak
-  /-- One slide. First-class and never flattened into article paragraphs:
-  HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
-  An empty title is a bare frame. `standout` is beamer's `[standout]`: the
-  frame inverts (`standoutfg` on `standoutbg`, defaulting to the inverse of
-  the page), centres, and sets Large bold. `valign` is the frame's declared
-  vertical distribution (`[t]`/`[c]`/`[b]`; `center` unless declared).
-  `breakable` is beamer's `[allowframebreaks]`: the author has declared
-  that content taller than one page continues on the next, so a
-  continuation page of this frame is not a loss to report; a frame
-  without it that continues is (`Layout.spill_accounts`). -/
+  /-- One slide; `breakable` (`[allowframebreaks]`) lets it continue on
+  further pages, and a frame without it that continues is a loss
+  (`Layout.spill_accounts`). -/
   | frame (title : Array Inline) (standout : Bool) (valign : VAlign) (breakable : Bool)
       (body : Array Block)
-  /-- `\framefoot{...}` (beamer's `frame footer` template): the footer note
-  the frames from here on carry in the chrome footer's left slot, beside
-  the frame number. Empty content clears it back to the chrome default. -/
+  /-- `\framefoot{...}`: the footer note the frames from here on carry in the
+  chrome footer's left slot; empty content clears it. -/
   | framefoot (content : Array Inline)
-  /-- A palette epoch: a stateful declaration in flow order, carrying the
-  full palette state in force from here on (preamble + theme + every body
-  declaration up to and including this one — elaboration merges, backends
-  only replay). A body `\palette` or `\pagecolor` keeps it past the groups
-  it stands in, as a global assignment does; a group's end that restores a
-  local `\color` places one carrying the state it restores
-  (`Elab.texGroup`). Layout swaps the accumulator's palette (and the
-  default ink derived from it) at the block; HTML opens an epoch container
-  redefining the changed custom properties. The node ships no ink of its
-  own. -/
+  /-- A palette epoch: the full palette state in force from here on, in flow order. -/
   | setPalette (pal : Palette)
-  /-- Body `\tokens` (`\setlength` mid-document): the token state in force
-  from here on, the same stateful door as `.setPalette`. -/
+  /-- Body `\tokens` (`\setlength` mid-document): the token state in force from here on. -/
   | setTokens (tokens : Tokens)
-  /-- A full-measure horizontal rule: the title page's separator. `name` is
-  the palette entry the colour came from, when it had one, as `.colored`;
-  the thickness is symbolic so a token may state it in em, and `Sourced`
-  so the token's name travels with it — the colour's name always did,
-  which is why `separator` was readable from a stylesheet and
-  `separatorheight` was not. -/
+  /-- A full-measure horizontal rule, the title page's separator; `name` is
+  the colour's palette entry, as on `.colored`. -/
   | rule (color : Color) (name : Option ColorRef) (thickness : Sourced SymGlue)
   /-- An elaborated `tikzpicture` subset: concrete shapes in picture
-  coordinates, everything evaluated at elaboration (loops unrolled,
-  expressions reduced, colours resolved, `scale=` applied). Layout places
-  the box and transforms shapes through `Pic.Place`; a construct outside
-  the subset never reaches here — it is diagnosed by name where it stood
-  (W0334/E0333), so nothing a picture declares goes silently missing. -/
+  coordinates, everything evaluated at elaboration. -/
   | picture (pic : Pic.Picture)
-  /-- `{tabular}`: a formal table, booktabs-shaped by construction — three
-  rule weights with their padding, no vertical rules ever ("Never, ever use
-  vertical rules", booktabs.dtx §The layout of formal tables; a `|` in the
-  spec warns and is not drawn). `rows` is rectangular: elaboration pads a
-  short row and widens the grid for a long one, warning either way (W0337),
-  so every walk below may trust `cols.size`. `rules` are drawn before the
-  content row of their index (`rows.size` = after the last); order within
-  one index is document order. `padLeft`/`padRight` are the outer
-  `tabColSep` pads, deleted by `@{}` as in LaTeX. `spans` are the
-  `\multicolumn` cells (`ColSpan`); the cells they cover are empty in `rows`. -/
+  /-- `{tabular}`: a formal table with booktabs' rules and no vertical rules;
+  `rows` is rectangular and `padLeft`/`padRight` are the outer pads `@{}`
+  deletes. -/
   | table (cols : Array ColSpec) (padLeft : Bool) (padRight : Bool)
       (rows : Array (Array (Array Inline))) (rules : Array (Nat × TableRule))
       (spans : Array ColSpan)
-  /-- `{figure}`/`{table}`: a captioned object. A single-pass engine has
-  nowhere for a float to float, so it stands where written, centred, set
-  off from the text by `floatsep` with its caption bound `captionsep` from
-  it (`caption_gaps_rhythm` holds the defaults to the rhythm). `capAbove`
-  is source order: a `\caption` written before the content stands above
-  it, the convention for tables. An empty caption is a bare float. `num`
-  is the float's number among captioned floats of its kind — none until
-  `numberFloats` assigns it, and none forever for a captionless float:
-  LaTeX steps the counter in `\caption` (classes.dtx, `\caption` calls
-  `\refstepcounter`), so a float without one bears no number. A `.sub`
-  float's `num` is its letter index within its parent (subcaption:
-  `\thesubfigure` is `(\alph{subfigure})`). -/
+  /-- `{figure}`/`{table}`: a captioned object standing where written;
+  `capAbove` is source order, `num` its number among captioned floats of its
+  kind. -/
   | float (kind : FloatKind) (num : Option Nat) (capAbove : Bool) (body : Array Block)
       (caption : Array Inline)
-  /-- `\bibliography{src}`: the reference list, standing where the command
-  was written. Elaboration emits the marker with no items — the `.bib`
-  beside the document is the driver's effect (`bibRefs`, the `imageRefs`
-  shape) — and `Bib.apply` fills `items` with the cited entries in the
-  style's order. `style` is the declared `\bibliographystyle`, kept as
-  written so resolution can select the record (W0353 names an unknown one
-  and falls back). An unfilled marker ships nothing: the missing file was
-  already a diagnostic. -/
+  /-- `\bibliography{src}`: the reference list, standing where the command was
+  written; its items fill once the `.bib` is read. -/
   | bibliography (src : String) (style : Option String) (items : Array BibItem)
   deriving Repr, BEq, Inhabited
 
@@ -6603,28 +4406,17 @@ public inductive Block where
     (firstPage otherPage : Array Block) : Block :=
   .altSteps ⟨n, last, []⟩ firstPage otherPage
 
-/-- Block alternatives use the same source-order bridge as inline ones. -/
+/-- An alternation in source order, stored in page order. -/
 public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block) : Block :=
   let (firstPage, otherPage) := spec.pageOrder active otherwise
   .altSteps spec firstPage otherPage
 
-/-- The role a picture standing alone in a display rides in: a commutative
-diagram is display mathematics (`\[\begin{tikzcd}…\end{tikzcd}\]`), set
-with the display's skips, but its ink is a picture, which no formula
-inline carries. A name no document command can spell (it carries a hyphen,
-as `inParagraphRole` does). -/
+/-- The role a picture standing alone in a display rides in. -/
 public def displayPictureRole : String := "display-picture"
 
-/-- Classify a display region without treating source annotations as
-content. `none` means another semantic inline was present; `some seen`
-records whether a formula was found among labels and empty annotations.
-Only diagnostic wrappers and colours are traversed: a colour is ink, not
-shape — a step's cover paints a covered display through one
-(`dimBlocks`), and covering reflows nothing — while a style or link still
-changes the semantic shape, so the general all-descendants fold is not
-this reader. A display picture (`displayPictureRole`) is its display's
-formula. -/
--- conserves: none — a classifier; emits no document text.
+/-- Classify a display region: `none` when another semantic inline is present,
+else whether a formula was found among labels and empty annotations. -/
+-- conserves: none — a classifier.
 public def displayParts : List Inline → Bool → Option Bool
   | [], seen => some seen
   | .formula true _ _ :: rest, _ | .math true _ :: rest, _ => displayParts rest true
@@ -6641,22 +4433,17 @@ decreasing_by
     have hb : sizeOf body = 1 + sizeOf body.toList := rfl
     omega
 
-/-- A source wrapper around an arbitrary region leaves its display reading
-unchanged, including nested annotations, labels and empty bodies. -/
 public theorem displayParts_location_exact (span : Span) (body : Array Inline) (seen : Bool) :
     displayParts [.located span body] seen = displayParts body.toList seen := by
   simp only [displayParts]
   cases displayParts body.toList seen <;> simp [displayParts]
 
-/-- Is this inline a display formula — `\[…\]`, `{equation*}`, an
-alignment — whether modelled or carried as source? -/
+/-- Whether this inline is a display formula, modelled or carried as source. -/
 public def Inline.isDisplayFormula (x : Inline) : Bool :=
   displayParts [x] false == some true
 
-/-- The environments `\@trivlist` spaces with `\partopsep` in vertical
-mode, as this engine sets them: a list, a quote, and the kernel's theorem,
-which is `\trivlist` itself (amsthm's spellings open with `\par`, so their
-mode is always vertical, and their space reads none of it: `thmSkips`). -/
+/-- The environments `\@trivlist` spaces with `\partopsep` in vertical mode: a
+list, a quote, and the kernel's theorem. -/
 public def Block.partopsepEnv : Block → Bool
   | .list .. | .quote _ => true
   | .role n _ => n == thmSpaceRole .kernel
@@ -6664,17 +4451,8 @@ public def Block.partopsepEnv : Block → Bool
 
 mutual
 
-/-- A block whose end leaves TeX's `\@endpe` set (ltlists.dtx `\endtrivlist`,
-`\@doendpe`): a list, a quote, the kernel's theorem and a trivlist, and a
-listing in its environment's frame (`ListingFrame.onPage`); amsthm's
-theorems end `\@endpefalse`. When a display opens a paragraph right after
-one — in vertical mode, possibly across a `\vspace`, but no blank line,
-whose `\par` ends it, and no paragraph of text — the opening `\everypar`
-takes the indent box back, so TeX sets no empty line. One level
-of the in-paragraph wrapper (`inParagraphRole`) is seen through, as that is
-how a list opened mid-paragraph stands in the block stream; so is an
-overlay's carrier or a backend's group, which the page ends where its last
-block ends. -/
+/-- A block whose end leaves TeX's `\@endpe` set: a list, a quote, the
+kernel's theorem, a trivlist, and a framed listing. -/
 public def Block.leavesEndPe : Block → Bool
   | .list .. | .quote _ => true
   | .verbatim _ _ spec => spec.frame == .trivlist || spec.frame == .list
@@ -6695,8 +4473,7 @@ public def leavesEndPeLast : List Block → Bool
 
 end
 
-/-- A list or a quote marked as opened inside a paragraph
-(`inParagraphRole`). Anything else stands as it is. -/
+/-- A list or a quote marked as opened inside a paragraph; anything else as it is. -/
 public def inParagraph (b : Block) : Block :=
   if b.partopsepEnv then .role inParagraphRole #[b] else b
 
@@ -6707,18 +4484,14 @@ public def inParagraph (b : Block) : Block :=
   | _ => false
 
 /-- Mark the block an environment arm pushed past `k` as opened inside a
-paragraph (`inParagraph`) when `inPar` says the paragraph flushed just
-before it had text; the census stands (`markInParagraph_text`). -/
+paragraph when `inPar` says so. -/
 public def markInParagraph (inPar : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
   match inPar && blocks.size == k + 1, blocks.back? with
   | true, some b => blocks.pop.push (inParagraph b)
   | false, _ => blocks
   | true, none => blocks
 
-/-- The last block at index `k` or above that ships content: an epoch
-(`.setPalette`, `.setTokens`) is state, so what stands before a block is
-read through the epochs a group's end or a paragraph's declarations leave
-behind it. -/
+/-- The last block at index `k` or above that ships content, reading through epochs. -/
 public def lastContentFrom? (blocks : Array Block) (k : Nat) : Option Block :=
   go blocks.size
 where
@@ -6730,41 +4503,28 @@ where
       else if blocks[i]?.any (· matches .setPalette _ | .setTokens _) then go i
       else blocks[i]?
 
-/-- The last content block of the whole sequence. -/
 public def lastContent? (blocks : Array Block) : Option Block := lastContentFrom? blocks 0
 
-/-- Did flushing the open paragraph leave one with text — anything but
-label anchors, which ship no ink and keep TeX in vertical mode — as the
-last content past the `k` blocks that stood before? -/
+/-- Whether flushing the open paragraph left one with text, label anchors
+aside, past the first `k` blocks. -/
 public def flushedText (k : Nat) (after : Array Block) : Bool :=
   match lastContentFrom? after k with
   | some (.para content) => !content.all (· matches .label _)
   | _ => false
 
-/-- Does the last content of `blocks` leave TeX in the state a list, quote or
-theorem ends in (`Block.leavesEndPe`)? -/
+/-- Whether the last content of `blocks` leaves `\@endpe` set. -/
 public def lastLeavesEndPe (blocks : Array Block) : Bool :=
   ((lastContent? blocks).map Block.leavesEndPe).getD false
 
-/-- A description item's first paragraph read at its label (`descLabelRole`,
-whose body closes with the `\labelsep` separator): the label and the text
-after it; `none` for any other paragraph. The one reading both backends
-use, so the page's run-in label and HTML's `<dt>` are the same inlines. -/
+/-- A description item's first paragraph split at its label: the label and the
+text after it; `none` for any other paragraph. -/
 public def descLabel? (content : Array Inline) : Option (Array Inline × Array Inline) :=
   match content[0]? with
   | some (Inline.role n label) =>
     if n == descLabelRole then some (label, content.extract 1 content.size) else none
   | _ => none
 
-/-- A centred block's body that is one display formula and nothing else,
-labels aside — the shape `\[…\]` and the unnumbered display environments
-elaborate to (`.center #[.para content]`), and the one reading both
-backends share when they open the display skips around it: `Layout`'s
-display arm pays `displayAbove`/`displayBelow` as its own space, and the
-HTML backend emits the `.display` element the base sheet's display rules
-address. A display formula standing among text (a caption's, an item
-label's) is inline content and opens nothing here — as a numbered
-`.equation` is its own block and opens the same skips at its own arm. -/
+/-- A centred block's body that is one display formula and nothing else, labels aside. -/
 public def displayContent? (body : Array Block) : Option (Array Inline) :=
   match body.toList with
   | [.para content] =>
@@ -6773,9 +4533,6 @@ public def displayContent? (body : Array Block) : Option (Array Inline) :=
     else none
   | _ => none
 
-/-- The display reading is a projection of the body: what it returns is the
-centred paragraph's own content, so the leaves both backends set are the
-leaves `Struct` counts — no content is invented or dropped at the seam. -/
 public theorem displayContent_projects (body : Array Block) (content : Array Inline)
     (h : displayContent? body = some content) : body.toList = [.para content] := by
   unfold displayContent? at h
@@ -6786,13 +4543,8 @@ public theorem displayContent_projects (body : Array Block) (content : Array Inl
     · exact absurd h (by simp)
   · exact absurd h (by simp)
 
-/-- A display a picture stands for: a diagram the engine draws itself,
-alone in `\[…\]` or an unnumbered alignment, is TeX's display of an
-`\hbox`, so it rides as a block in the role its boundary image rides in
-(`displayPictureRole`): the label anchors its display carries, then the
-picture. The one reading both backends open the display skips by (`Layout`'s
-display arm, the HTML `.display` paragraph), as `displayContent?` is the
-formula's. -/
+/-- A display a picture stands for: a diagram the engine draws, alone in
+`\[…\]` or an unnumbered alignment. -/
 public def displayPicture? : Block → Option (Array Inline × Pic.Picture)
   | .role n body =>
     if n != displayPictureRole then none else
@@ -6803,15 +4555,12 @@ public def displayPicture? : Block → Option (Array Inline × Pic.Picture)
     | _ => none
   | _ => none
 
-/-- The block a display picture is (`displayPicture?`): the paragraph of its
-label anchors where it carries any — which ships no ink and opens no gap in
-either backend — then the picture, in the display picture's role. -/
+/-- The block a display picture is: the paragraph of its label anchors, if
+any, then the picture in the display picture's role. -/
 public def displayPictureBlock (keys : Array String) (p : Pic.Picture) : Block :=
   .role displayPictureRole
     ((if keys.isEmpty then #[] else #[.para (keys.map Inline.label)]).push (.picture p))
 
-/-- **A display picture reads back as itself** (`_id`): its labels' anchors
-and its picture, whatever labels the display carried. -/
 public theorem displayPicture?_block_id (keys : Array String) (p : Pic.Picture) :
     displayPicture? (displayPictureBlock keys p) = some (keys.map Inline.label, p) := by
   by_cases h : keys.isEmpty
@@ -6821,22 +4570,19 @@ public theorem displayPicture?_block_id (keys : Array String) (p : Pic.Picture) 
   · have hne : keys ≠ #[] := fun he => h (by simp [he])
     simp [displayPicture?, displayPictureBlock, h, hne]
 
-/-- **Only the display picture's role reads as one** (`_exact`): any other
-role is no display picture, whatever it holds. -/
 public theorem displayPicture?_role_exact (n : String) (body : Array Block)
     (h : n ≠ displayPictureRole) : displayPicture? (.role n body) = none := by
   simp [displayPicture?, h]
 
-/-- A display: the unnumbered shape (`displayContent?`), a picture standing
-for one (`displayPicture?`), or a numbered equation. -/
+/-- A display: the unnumbered shape, a picture standing for one, or a numbered equation. -/
 public def Block.isDisplay : Block → Bool
   | .center body => (displayContent? body).isSome
   | .equation .. => true
   | b@(.role _ _) => (displayPicture? b).isSome
   | _ => false
 
-/-- The context a display block carries (`DisplayCtx.role`) with the display
-itself; an unwrapped display carries the default. -/
+/-- The context a display block carries, with the display itself; an unwrapped
+display carries the default. -/
 public def displayCtxOf (b : Block) : DisplayCtx × Block :=
   match b with
   | .role n body => match DisplayCtx.ofRole? n, body.toList with
@@ -6844,11 +4590,7 @@ public def displayCtxOf (b : Block) : DisplayCtx × Block :=
     | _, _ => ({}, b)
   | _ => ({}, b)
 
-/-- Record where the display an arm pushed past `k` stands in its paragraph
-(`DisplayCtx`): whether the paragraph flushed just before it had text,
-whether a paragraph break follows, and whether it opens right after an
-environment end (`afterEnv`, the `\@endpe` state). A display in the default
-context stays unwrapped; anything else pushed stands as it is. -/
+/-- Record where the display an arm pushed past `k` stands in its paragraph (`DisplayCtx`). -/
 public def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
   match blocks.size == k + 1, blocks.back? with
   | true, some b =>
@@ -6858,13 +4600,13 @@ public def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array 
     blocks.pop.push (if c == {} then d else .role c.role #[d])
   | _, _ => blocks
 
-/-- A display in context `c`, wrapped in the role that names it — unwrapped
-in the default context, as `markDisplay` leaves it. -/
+/-- A display in context `c`, wrapped in the role that names it; unwrapped in
+the default context. -/
 public def withDisplayCtx (c : DisplayCtx) (d : Block) : Block :=
   if c == {} then d else .role c.role #[d]
 
-/-- The opening half of `carrierDisplays`: a first block that is a display
-opening in vertical mode takes the state the carrier opened in. -/
+/-- A first block that is a display opening in vertical mode takes the state
+the carrier opened in. -/
 private def carrierOpenDisplay (inPar endPe : Bool) (blocks : Array Block) : Array Block :=
   match blocks.toList with
   | b :: rest =>
@@ -6874,9 +4616,7 @@ private def carrierOpenDisplay (inPar endPe : Bool) (blocks : Array Block) : Arr
     else blocks
   | [] => blocks
 
-/-- The closing half of `carrierDisplays`: a last block that is a display
-with no break after it inside the carrier takes the break after the
-carrier. -/
+/-- A last block that is a display with no break after it takes the break after the carrier. -/
 private def carrierCloseDisplay (parEnd : Bool) (blocks : Array Block) : Array Block :=
   match blocks.back? with
   | some b =>
@@ -6886,53 +4626,27 @@ private def carrierCloseDisplay (parEnd : Bool) (blocks : Array Block) : Array B
     else blocks
   | none => blocks
 
-/-- **A carrier stands in its paragraph as its blocks would with no carrier
-there**: elaborated alone, an overlay's body sees neither the paragraph it
-opened in nor the break after it, so its first display would open a scope
-and its last end one. The first block, a display opening the carrier in
-vertical mode, takes the state the carrier opened in — inside the
-paragraph the text before it left open (`inPar`), or right after an
-environment end that left `\@endpe` (`endPe`, `Block.leavesEndPe`) — and
-the last, a display closing the carrier with no break inside it, the break
-that does or does not follow the carrier (`parEnd`). lualatex sets a display
-opening or closing a `\pause` or an `\uncover` where it sets it with neither,
-save one departure: where an `\uncover` group closes on a display before a
-paragraph break, beamer's carrier leaves an empty line after the display,
-which the page does not set — an overlay is no line of the page. Every other
-block stands as it is. -/
+/-- A carrier's displays stand in their paragraph as they would with no carrier there. -/
 public def carrierDisplays (inPar endPe parEnd : Bool) (blocks : Array Block) :
     Array Block :=
   carrierCloseDisplay parEnd (carrierOpenDisplay inPar endPe blocks)
 
-/-- The frames the deck numbers: every `.frame` except a golden title page
-and a standout frame. The title is front matter; a standout frame is
-moloch's `standout`, whose key sets `noframenumbering` unless the theme's
-`standout numbering` option asks otherwise (beamerinnerthememoloch.sty:
-462-467): it neither bears a number nor advances the counter, so the frame
-after it, the footline's total and the section pages' progress bar read
-the frames lualatex counts. Footer visibility is selected separately by
-`Chrome.frameFootBand`. The k-th countable frame in document order bears
-number k — the fold below — and a non-countable frame bears none. -/
+/-- The frames the deck numbers: every `.frame` except a golden title page and a standout frame. -/
 public def Block.countable : Block → Bool
   | .frame _ standout valign _ _ => !standout && !(valign matches .golden)
   | _ => false
 
-/-- Count of `true` in a mask: the numbering's denominator. -/
 public def countTrue : List Bool → Nat
   | [] => 0
   | b :: rest => (if b then 1 else 0) + countTrue rest
 
-/-- The numbering fold: masked positions take k+1, k+2, …; the rest take
-none. One definition site for every frame number the engine ever shows —
-both backends read this array, and nothing else counts. -/
+/-- The numbering fold: masked positions take k+1, k+2, …; the rest take none. -/
 public def numbersFrom (k : Nat) : List Bool → List (Option Nat)
   | [] => []
   | b :: rest =>
     if b then some (k + 1) :: numbersFrom (k + 1) rest
     else none :: numbersFrom k rest
 
-/-- The somes of the fold are exactly `1..countTrue`: the numbering is
-monotone and gapless, whatever the mask. -/
 public theorem numbers_gapless (k : Nat) (bs : List Bool) :
     (numbersFrom k bs).filterMap id = List.range' (k + 1) (countTrue bs) := by
   induction bs generalizing k with
@@ -6946,14 +4660,12 @@ public theorem numbers_gapless (k : Nat) (bs : List Bool) :
       rw [h1]
       simp [numbersFrom, ih, List.range'_succ]
 
-/-- Every assigned number is ≤ the total: a progress clamp is dead code. -/
 public theorem numbers_le_total (bs : List Bool) (n : Nat)
     (h : n ∈ (numbersFrom 0 bs).filterMap id) : n ≤ countTrue bs := by
   rw [numbers_gapless] at h
   have := List.mem_range'.mp h
   omega
 
-/-- The last number is the total: the denominator is reached. -/
 public theorem last_number_is_total (bs : List Bool) (h : 0 < countTrue bs) :
     ((numbersFrom 0 bs).filterMap id).getLast? = some (countTrue bs) := by
   obtain ⟨m, hm⟩ : ∃ m, countTrue bs = m + 1 :=
@@ -6961,7 +4673,6 @@ public theorem last_number_is_total (bs : List Bool) (h : 0 < countTrue bs) :
   rw [numbers_gapless, hm, List.range'_concat, List.getLast?_concat]
   exact congrArg some (by omega)
 
-/-- A position is numbered exactly when its mask bit is set. -/
 public theorem numbersFrom_isSome (k : Nat) (bs : List Bool) (i : Nat) :
     ((numbersFrom k bs)[i]?.getD none).isSome = (bs[i]?.getD false) := by
   induction bs generalizing k i with
@@ -6977,28 +4688,18 @@ public theorem numbersFrom_length (k : Nat) (bs : List Bool) :
   | nil => rfl
   | cons b rest ih => cases b <;> simp [numbersFrom, ih]
 
-/-- One footnote mark's number against the counter: an override
-(`\footnote[n]{...}`) is itself and steps nothing — LaTeX's own semantics,
-where the optional argument sets the mark without `\stepcounter` (source2e,
-ltmiscen.dtx `\@xfootnote`) — and an ordinary mark takes the next value.
-The elaborator's per-mark step; `footnoteMarksFrom` is its fold and
-`footnote_numbers_gapless` its contract. -/
+/-- One footnote mark's number against the counter: an override is itself and
+steps nothing, as `\footnote[n]` does. -/
 public def footnoteMark (k : Nat) (override : Option Nat) : Nat × Nat :=
   match override with
   | some n => (n, k)
   | none => (k + 1, k + 1)
 
-/-- The footnote numbering fold: `footnoteMark` over the marks' overrides
-in flow order — what running the elaborator's step over a whole document
-assigns. -/
+/-- The footnote numbering fold: `footnoteMark` over the marks' overrides in flow order. -/
 public def footnoteMarksFrom (k : Nat) : List (Option Nat) → List Nat
   | [] => []
   | o :: rest => (footnoteMark k o).1 :: footnoteMarksFrom (footnoteMark k o).2 rest
 
-/-- Footnote marks in flow order are gapless: over any override pattern,
-the unoverridden marks number `k+1, k+2, …` exactly — `numbers_gapless`
-instantiated at the footnote counter's step. An override never steps, so
-`\footnote{a}\footnote[7]{b}\footnote{c}` numbers 1, 7, 2. -/
 public theorem footnote_numbers_gapless (k : Nat) (os : List (Option Nat)) :
     ((os.zip (footnoteMarksFrom k os)).filterMap fun p =>
         if p.1.isSome then none else some p.2) =
@@ -7013,44 +4714,33 @@ public theorem footnote_numbers_gapless (k : Nat) (os : List (Option Nat)) :
       cases o <;> simp [footnoteMarksFrom, footnoteMark, numbersFrom, ih]
   rw [h, numbers_gapless]
 
-/-- The countable mask of a document body: the fold's instantiation. -/
 private def frameMask (body : Array Block) : List Bool :=
   body.toList.map Block.countable
 
 /-- The frame number each top-level block bears: `some k` for the k-th
-countable frame, `none` for everything else. THE numbering — the chrome
-footer, the progress bar, and the HTML deck all index this array; a new
-count consumer reads it, never counts for itself. -/
+countable frame, `none` for everything else. -/
 public def frameNumbers (body : Array Block) : Array (Option Nat) :=
   (numbersFrom 0 (frameMask body)).toArray
 
-/-- The numbering's denominator: how many countable frames the body has. -/
+/-- The number of countable frames in the body. -/
 public def frameCount (body : Array Block) : Nat :=
   countTrue (frameMask body)
 
-/-- T2, numbered iff countable: position i bears a number exactly when
-block i is a countable frame. -/
 public theorem frameNumbers_numbered_iff_countable (body : Array Block) (i : Nat) :
     ((frameNumbers body)[i]?.getD none).isSome =
       ((body[i]?.map Block.countable).getD false) := by
   have h := numbersFrom_isSome 0 (frameMask body) i
   simpa [frameNumbers, frameMask, List.getElem?_map] using h
 
-/-- T3, monotone and gapless: the numbers assigned, in document order, are
-exactly `1, 2, …, frameCount`. -/
 public theorem frameNumbers_gapless (body : Array Block) :
     (frameNumbers body).toList.filterMap id =
       List.range' 1 (frameCount body) := by
   simpa [frameNumbers, frameCount] using numbers_gapless 0 (frameMask body)
 
-/-- T4a: every number the engine can show is ≤ the denominator — the
-`min`/`max` clamps around a progress fraction cannot fire. -/
 public theorem frameNumbers_le_count (body : Array Block) (n : Nat)
     (h : n ∈ (frameNumbers body).toList.filterMap id) : n ≤ frameCount body := by
   exact numbers_le_total (frameMask body) n (by simpa [frameNumbers] using h)
 
-/-- T4b: the denominator is reached — the last numbered frame bears
-`frameCount` itself, so a full deck ends at n/n, never n−1/n. -/
 public theorem frameNumbers_last_is_count (body : Array Block)
     (h : 0 < frameCount body) :
     ((frameNumbers body).toList.filterMap id).getLast? =
@@ -7062,16 +4752,8 @@ public theorem frameNumbers_size (body : Array Block) :
     (frameNumbers body).size = body.size := by
   simp [frameNumbers, frameMask, numbersFrom_length]
 
--- Float numbering. LaTeX steps a float's counter inside `\caption`
--- (classes.dtx: `\caption` is `\refstepcounter` then `\@makecaption`), so
--- a captionless float bears no number; and this engine's floats never
--- float, so document order IS first-appearance order. `numberFloats` is
--- the one assignment site: elaboration writes `none`, this pass fills the
--- numbers, and both backends only replay what the node carries.
-
-/-- The counters `numberFloats` threads: captioned figures, captioned
-tables, and — reset at every float body, restored after it — captioned
-subfloats, so a letter is an index within its own parent. -/
+/-- The counters `numberFloats` threads: captioned figures, captioned tables,
+and captioned subfloats reset at every float body. -/
 private structure FloatCtr where
   fig : Nat := 0
   tab : Nat := 0
@@ -7094,11 +4776,7 @@ private def FloatCtr.bump : FloatCtr → FloatKind → FloatCtr
 mutual
 
 /-- The numbering walk: every captioned float takes the next number of its
-kind, in document order. A float's body letters its own subfloats from one
-(`sub` resets on entry and is restored after), while the figure and table
-counters thread straight through, so a nested float keeps document order.
-A note is a side channel that never ships a float, so it does not consume
-a number. -/
+kind, in document order. -/
 private def numberFloatList (c : FloatCtr) (out : Array Block) :
     List Block → FloatCtr × Array Block
   | [] => (c, out)
@@ -7108,7 +4786,6 @@ private def numberFloatList (c : FloatCtr) (out : Array Block) :
 
 private def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .para content => (c, .para content)
-  -- an equation holds no float; its number is its own
   | .equation n content => (c, .equation n content)
   | .section l st num title => (c, .section l st num title)
   | .list o items =>
@@ -7170,9 +4847,7 @@ private def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .rule col nm th => (c, .rule col nm th)
   | .picture p => (c, .picture p)
   | .table cols pl pr rows rules spans => (c, .table cols pl pr rows rules spans)
-  -- Lines hold inlines: no float can nest in an algorithm.
   | .algorithm n sm lines => (c, .algorithm n sm lines)
-  -- A reference list is not a float: it consumes no number and holds none.
   | .bibliography src style items => (c, .bibliography src style items)
   | .float kind _ capAbove body caption =>
     let cAfter := if caption.isEmpty then c else c.bump kind
@@ -7196,23 +4871,16 @@ private def numberFloatCols (c : FloatCtr) (out : Array (BoxWidth × Array Block
 
 end
 
-/-- Assign every float its number: the pass elaboration hands the finished
-body to, once, before any backend reads it. -/
 public def numberFloats (xs : Array Block) : Array Block :=
   (numberFloatList {} #[] xs.toList).2
 
-/-- Numbering leaves a lone paragraph and all of its inline content unchanged. -/
 public theorem numberFloats_para_exact (xs : Array Inline) :
     numberFloats #[.para xs] = #[.para xs] := by
   rfl
 
 mutual
 
-/-- The numbers the walk assigned to captioned floats of kind `k`, in
-document order — the collector `numberFloats_exact` judges the walk by.
-For `.sub` it reads a body's own letters: it does not descend into a
-nested float's body, whose letters belong to that float. For `.figure`
-and `.table` it descends everywhere the walk threads its counters. -/
+/-- The numbers the walk assigned to captioned floats of kind `k`, in document order. -/
 public def floatNumsList (k : FloatKind) (out : List Nat) : List Block → List Nat
   | [] => out
   | b :: rest => floatNumsList k (floatNumsOne k out b) rest
@@ -7281,13 +4949,6 @@ private theorem range'_glue (s m n : Nat) :
 
 mutual
 
-/-- The numbering is exact: processing `bs` from counters `c` advances the
-`k` counter by some `n` and assigns exactly the numbers
-`c.get k + 1, …, c.get k + n` to the captioned `k`-floats, in document
-order. Instantiated at the top (`numberFloats_exact`) this is the fact
-`\ref` resolves against: a float's number is the index of its first
-appearance among captioned floats of its kind — floats never float here,
-so document order is appearance order. -/
 private theorem numberFloatList_exact (k : FloatKind) (c : FloatCtr) (acc : Array Block)
     (out : List Nat) (bs : List Block) :
     ∃ n, ((numberFloatList c acc bs).1).get k = c.get k + n ∧
@@ -7405,8 +5066,7 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
   | .float kind _ capAbove body caption =>
     by_cases hcap : caption.isEmpty
-    · -- No caption: no number, no bump; the body still numbers its own
-      -- figures and tables, and its letters are its own affair.
+    ·
       obtain ⟨n, hc, hn⟩ :=
         numberFloatList_exact k { c with sub := 0 } #[] out body.toList
       cases k with
@@ -7431,8 +5091,6 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
             FloatCtr.get] using hn
     · cases k with
       | sub =>
-        -- The collector reads only this float's own letter; the walk
-        -- restores the outer sub counter after the body.
         cases kind with
         | sub =>
           refine ⟨1, ?_, ?_⟩
@@ -7631,10 +5289,6 @@ private theorem numberFloatCols_exact (k : FloatKind) (c : FloatCtr)
 
 end
 
-/-- The numbering fact `\ref` resolves against, over the engine's own
-pass: the numbers `numberFloats` assigns to captioned floats of kind `k`,
-read in document order, are exactly `1, 2, …` up to the walk's own count —
-gapless, starting at one, in first-appearance order. -/
 public theorem numberFloats_exact (k : FloatKind) (xs : Array Block) :
     floatNumsList k [] (numberFloats xs).toList
       = List.range' 1 (floatNumsList k [] (numberFloats xs).toList).length := by
@@ -7644,12 +5298,6 @@ public theorem numberFloats_exact (k : FloatKind) (xs : Array Block) :
     simpa [numberFloats, floatNumsList, h0] using hn
   rw [hnums, List.length_range']
 
-/-- A subfloat's letter is its index within its own parent: every float
-body enters the walk with the sub counter reset to zero (the `.float` arm
-of `numberFloatOne`), so the letters assigned inside it — read shallowly,
-a nested float's letters belonging to that float — are exactly `1, 2, …`
-(subcaption: `\thesubfigure` is `(\alph{subfigure})`, an index within the
-parent figure). -/
 private theorem numberFloats_sub_letters (c : FloatCtr) (body : Array Block) :
     floatNumsList .sub []
         ((numberFloatList { c with sub := 0 } #[] body.toList).2).toList
@@ -7661,21 +5309,11 @@ private theorem numberFloats_sub_letters (c : FloatCtr) (body : Array Block) :
   rw [h0] at hc hn
   simpa [floatNumsList, hc] using hn
 
-/-- A subfloat's letter: `\alph` (1 → a, …, 26 → z). LaTeX's `\alph`
-errors past 26; past it this engine sets the number itself — degraded,
-never silent, and a 27-subfigure float has larger problems. -/
+/-- A subfloat's letter, `\alph` (1 → a, …, 26 → z); past 26 the number itself. -/
 public def subLetter (n : Nat) : String :=
   if 1 ≤ n && n ≤ 26 then String.ofList [Char.ofNat (96 + n)] else s!"{n}"
 
-/-- The caption's number prefix, derived from the node — the one
-definition site both backends read, so the PDF and the HTML spell a
-float's number identically. Sourced: article's `\@makecaption` sets
-`\fnum@figure: text` with `\fnum@figure` = `\figurename~\thefigure`
-(classes.dtx §\@makecaption), and subcaption's `\thesubfigure` is
-`(\alph{subfigure})` followed by a space (subcaption.dtx, the default
-`labelformat=parens`, `labelsep=space`). `\figurename`/`\tablename` are
-locale data (babel's ini captions), so the prefix takes the document's
-locale. A captionless float carries no number and no prefix. -/
+/-- The caption's number prefix, derived from the node, as article's `\@makecaption` sets it. -/
 public def captionPrefix (loc : Locale) (kind : FloatKind) (num : Option Nat) : Option String :=
   num.map fun n =>
     match kind with
@@ -7684,29 +5322,22 @@ public def captionPrefix (loc : Locale) (kind : FloatKind) (num : Option Nat) : 
     | .algorithm => s!"{loc.algorithm} {n}: "
     | .sub => s!"({subLetter n}) "
 
-/-- A caption with its number prefix set in front: what a backend hands
-its text machinery. The prefix is furniture the backend adds, like a list
-marker — the IR's caption stays the declared text, so the census reads
-declarations, not renderings. -/
+/-- A caption with its number prefix set in front. -/
 public def numberedCaption (loc : Locale) (kind : FloatKind) (num : Option Nat)
     (caption : Array Inline) : Array Inline :=
   match captionPrefix loc kind num with
   | some p => (Inline.text p :: caption.toList).toArray
   | none => caption
 
-/-- The float type a caption setting may be scoped to, as the caption
-package names it (`\captionsetup[table]{...}`, caption manual §4): a
-kind's own tokens carry this prefix (`tablecaptionsep`). subcaption's two
-sub types are the engine's one sub kind. -/
+/-- The float type a caption setting may be scoped to, as the caption package
+names it (`\captionsetup[table]{...}`). -/
 public def FloatKind.captionScope : FloatKind → String
   | .figure => "figure"
   | .table => "table"
   | .sub => "sub"
   | .algorithm => "algorithm"
 
-/-- The kind a caption package float type names, if the engine has it:
-subcaption's scope for every sub-caption (`sub`, caption manual, subcaption
-§2) and its two sub types are the engine's one sub kind. -/
+/-- The kind a caption package float type names, if the engine has it. -/
 public def FloatKind.ofCaptionType? : String → Option FloatKind
   | "figure" => some .figure
   | "table" => some .table
@@ -7715,21 +5346,12 @@ public def FloatKind.ofCaptionType? : String → Option FloatKind
   | _ => none
 
 /-- A caption token as one float kind reads it: the kind's own
-(`tablecaptionsep`, what `\captionsetup[table]` or a venue's table-only
-`\abovecaptionskip` declares), else the document's (`captionsep`). The one
-resolving site both backends read, so a setting scoped to tables never
-reaches a figure. -/
+(`tablecaptionsep`), else the document's (`captionsep`). -/
 public def captionTokenOf (tokens : Tokens) (kind : FloatKind) (key : String) : Option SymGlue :=
   tokens.find? (kind.captionScope ++ key) <|> tokens.find? key
 
-/-- Where a document tells the caption package a float type's captions
-stand, so it can place their two skips (caption manual §2.2, `position`;
-caption3.sty `\DeclareCaptionPosition`). `auto` is the package's default
-(caption3.sty `\SetCaptionDefault{position}{auto}`): a caption with nothing
-before it in its float (`\prevdepth` still at the list's start,
-`\caption@autoposition`) is taken for a top one, which is the engine's
-`capAbove`. The kernel's `\@makecaption` (article.cls) places the skips as
-`bottom` does. -/
+/-- Where a document tells the caption package a float type's captions stand
+(`position`); `auto` is the package's default. -/
 public inductive CaptionPos where
   | top
   | bottom
@@ -7744,26 +5366,19 @@ public def CaptionPos.ofKey? : String → Option CaptionPos
   | "auto" | "a" => some .auto
   | _ => none
 
-/-- `\caption@iftop`: is a caption standing on `capAbove`'s side placed as
-a top one? -/
+/-- `\caption@iftop`: whether a caption on `capAbove`'s side is placed as a top one. -/
 public def CaptionPos.placedTop : CaptionPos → Bool → Bool
   | .top, _ => true
   | .bottom, _ => false
   | .auto, capAbove => capAbove
 
 /-- The position a float kind's captions are placed for: the kind's own
-declaration (`\captionsetup[table]{position=…}`, `tableposition=`), else
-the document's (`\captionsetup{position=…}`, keyed `""`), else `auto`. -/
+declaration, else the document's, else `auto`. -/
 public def captionPosOf (decl : Array (String × CaptionPos)) (kind : FloatKind) : CaptionPos :=
   (((decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == ""))).map (·.2)).getD .auto
 
-/-- The position a float kind's captions are placed for in a class's
-lineage, where the document declares none: beamer's own `\caption`
-(`\beamer@makecaption`, beamerbaselocalstructure.sty:589-601) spends
-`\abovecaptionskip` above the caption and `\belowcaptionskip` below it
-whichever side of its object it stands, the kernel's `bottom` order;
-elsewhere the caption package's `auto` (`captionPosOf`). Both backends
-read it. -/
+/-- The position a float kind's captions are placed for in a class's lineage,
+where the document declares none. -/
 public def captionPosFor (l : ListLineage) (decl : Array (String × CaptionPos))
     (kind : FloatKind) : CaptionPos :=
   match (decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == "")), l with
@@ -7771,18 +5386,14 @@ public def captionPosFor (l : ListLineage) (decl : Array (String × CaptionPos))
   | none, .beamer => .bottom
   | none, .sizeFile | none, .web => .auto
 
-/-- LaTeX's two caption skips (article.cls §\@makecaption, which sets
-`\abovecaptionskip` above a caption and `\belowcaptionskip` below it):
-`above` is the engine's `captionsep`, its default the rhythm quantum
-standing in for the class's 10pt (`captionSepDefault`); `below` is the
-`belowcaptionskip` token, its default the class's own 0pt. -/
+/-- LaTeX's two caption skips: `above` is `\abovecaptionskip` (the engine's
+`captionsep`), `below` is `\belowcaptionskip`. -/
 public inductive CaptionSkip where
   | above
   | below
   deriving Repr, BEq, Inhabited
 
-/-- The tokens a skip reads for a float kind, in lookup order: the kind's
-own before the document's, `captionTokenOf`'s order. -/
+/-- The tokens a skip reads for a float kind, the kind's own before the document's. -/
 public def CaptionSkip.keys (s : CaptionSkip) (kind : FloatKind) : List String :=
   let base := match s with
     | .above => "captionsep"
@@ -7800,58 +5411,32 @@ public def CaptionSkip.default (s : CaptionSkip) (size : Sp) : SymGlue :=
   | .below => {}
 
 /-- A skip's value where the document declares none, in a class's lineage:
-beamer sets `\abovecaptionskip` and `\belowcaptionskip` to 7 pt
-(beamerbaselocalstructure.sty:563-568) and spends one above a caption and
-the other below it in every figure and table (`\beamer@makecaption`);
-elsewhere `default`. -/
+beamer sets both to 7 pt. -/
 public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Sp) : SymGlue :=
   match l with
   | .beamer => { width := { sp := Dim.pt 7 } }
   | .sizeFile | .web => s.default size
 
-/-- **A caption's two skips, by the side it stands on and the side it is
-placed for**: the skip between the caption and its object, then the one on
-its text side. caption.sty's `\caption@makecaption` sets `\belowcaptionskip`
-above and `\abovecaptionskip` below a caption placed as a top one, and the
-kernel's order (`\abovecaptionskip` above, `\belowcaptionskip` below) for
-a bottom one; so the object faces `\abovecaptionskip` exactly when the
-caption stands where it is placed for. The one resolving site both
-backends read: `Layout`'s float arm and `HtmlDoc`'s caption rules. -/
+/-- A caption's two skips, by the side it stands on and the side it is placed
+for: the object side's, then the text side's. -/
 public def captionSides (pos : CaptionPos) (capAbove : Bool) : CaptionSkip × CaptionSkip :=
   if pos.placedTop capAbove == capAbove then (.above, .below) else (.below, .above)
 
-/-- Undeclared — the package's `auto`, and the engine's default — a
-caption's object faces `\abovecaptionskip` (`captionsep`) whichever side it
-stands on, and its text side `\belowcaptionskip`: the gap binds a caption
-to what it captions. -/
 public theorem captionSides_auto_exact (capAbove : Bool) :
     captionSides .auto capAbove = (.above, .below) := by
   cases capAbove <;> rfl
 
-/-- A declared position fixes the skips to the caption's own edges, so a
-caption on the other side of its object reads them crosswise: under the
-kernel's order (`bottom`) a caption above a table has `\belowcaptionskip`,
-not `\abovecaptionskip`, between it and the table. -/
 public theorem captionSides_declared_exact (pos : CaptionPos) (h : pos ≠ .auto) :
     captionSides pos true = (captionSides pos false).swap := by
   cases pos <;> first | rfl | exact absurd rfl h
 
-/-- A listing caption with its number prefix set in front: the
-figure-caption shape (`captionPrefix`'s own spelling, classes.dtx
-§\@makecaption) with the locale's listing word — "Listing 1: text" —
-the one site both backends spell a listing's number from, so the PDF and
-the HTML cannot drift. The prefix is furniture the backend adds, exactly
-as `numberedCaption`'s is: the IR keeps the declared text alone. -/
--- conserves: none — the prefix is furniture the backend adds at emission,
--- never a rewrite of the stored document: the IR's caption census stays
--- the declared text alone, exactly as `numberedCaption`'s does.
+/-- A listing caption with its number prefix in front, as "Listing 1: text". -/
+-- conserves: none — the prefix is furniture added at emission.
 public def listingCaption (loc : Locale) (n : Nat) (caption : Array Inline) : Array Inline :=
   (Inline.text s!"{loc.listing} {n}: " :: caption.toList).toArray
 
-/-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
-the blank tail before `\end{verbatim}` delimit — every trailing blank line
-goes, not one — and everything between is content, interior blank lines
-included. -/
+/-- Verbatim content split into lines, without the newline after
+`\begin{verbatim}` and the blank tail before `\end{verbatim}`. -/
 public def verbatimLines (s : String) : Array String := Id.run do
   let s := if s.startsWith "\n" then (s.drop 1).toString
     else if s.startsWith "\r\n" then (s.drop 2).toString else s
@@ -7863,10 +5448,8 @@ public def verbatimLines (s : String) : Array String := Id.run do
     | none => break
   return lines
 
-/-- The one source-preserving reader of listing classification. Metadata may
-come from elaboration or a program constructing IR directly: a stale or
-malformed cache must never delete, insert or reorder code. Such a cache falls
-back to ordinary text. No backend lexes or reconstructs the source. -/
+/-- The listing's classified source lines; a cache that does not match the
+source falls back to plain text. -/
 public def ListingSpec.tokenLines (spec : ListingSpec) (source : String) :
     Array (Array ListingHighlight.Token) :=
   if spec.highlight.map ListingHighlight.lineText = verbatimLines source then
@@ -7874,9 +5457,6 @@ public def ListingSpec.tokenLines (spec : ListingSpec) (source : String) :
   else
     (verbatimLines source).map fun line => #[{ text := line }]
 
-/-- Every listing a backend reads has exactly the normalized source lines,
-regardless of the cached token classes. This IR statement is the common
-text-preservation premise of the PDF and HTML projections. -/
 public theorem listing_source_exact (spec : ListingSpec) (source : String) :
     (spec.tokenLines source).map ListingHighlight.lineText = verbatimLines source := by
   unfold ListingSpec.tokenLines
@@ -7884,11 +5464,8 @@ public theorem listing_source_exact (spec : ListingSpec) (source : String) :
   · assumption
   · simp [Array.map_map, Function.comp_def, ListingHighlight.lineText]
 
-/-- A listing segment's layout spelling and next display column. TAB
-advances to the next stop, including a full stop at an exact boundary.
-The caller resets the column at each source newline and may thread it
-through highlighted segments; neither stored source nor token text changes.
-No-wrap spaces, and the first indentation space, are unbreakable. -/
+/-- A listing segment's layout spelling and next display column, with TABs
+advanced to the next stop. -/
 public def ListingSpec.layoutText (spec : ListingSpec) (column : Nat) (s : String) :
     String × Nat :=
   s.foldl (fun (out, col) c =>
@@ -7899,9 +5476,8 @@ public def ListingSpec.layoutText (spec : ListingSpec) (column : Nat) (s : Strin
       (out ++ String.ofList (List.replicate count space), col + count)
     else (out.push (if c == ' ' then space else c), col + 1)) ("", column)
 
-/-- Verbatim content as inline text: tabs follow the declared stops,
-spaces follow the wrapping policy, source lines join by forced breaks,
-and a blank line keeps one no-break space so it still sets a line. -/
+/-- Verbatim content as inline text: tabs to the declared stops, source lines
+joined by forced breaks, a blank line kept as one no-break space. -/
 public def verbatimInlines (s : String) (spec : ListingSpec := {}) : Array Inline := Id.run do
   let mut out : Array Inline := #[]
   for line in verbatimLines s do
@@ -7911,34 +5487,24 @@ public def verbatimInlines (s : String) (spec : ListingSpec := {}) : Array Inlin
     out := out.push (.text (if kept.isEmpty then "\u00a0" else kept))
   return out
 
-/-- Where a heading rule stands against the heading's baseline. `xHeight`
-is the engine's own placement — raised half the heading face's measured
-x-height at its size, like a dash (Hochuli, Detail in Typography: a rule
-relates to the type it cuts). `baseline` is TeX's `\hrule`: zero depth,
-bottom edge on the baseline — what a `\sectionlinesformat` rule draws. -/
+/-- Where a heading rule stands against the heading's baseline; `xHeight`
+raises it half the heading face's x-height. -/
 public inductive RulePosition where
   | xHeight
   | baseline
   deriving Repr, BEq, Inhabited, DecidableEq
 
-/-- How far above the baseline a heading rule's bottom edge stands, from
-its position and the heading face's x-height at the heading's size. The
-one resolving site: `Layout` reads it into `Seg.rule`'s raise and the
-HTML stylesheet's translate is its other projection. -/
+/-- How far above the baseline a heading rule's bottom edge stands, from its
+position and the heading face's x-height. -/
 public def RulePosition.raise : RulePosition → Sp → Sp
   | .xHeight, xh => xh / 2
   | .baseline, _ => 0
 
-/-- The two positions are exact: a baseline rule is raised by nothing, an
-x-height rule by half the x-height — the statement both backends project. -/
 public theorem heading_rule_position_exact (xh : Int) :
     RulePosition.raise .baseline xh = 0 ∧ RulePosition.raise .xHeight xh = xh / 2 :=
   ⟨rfl, rfl⟩
 
-/-- The declared datum a title-page slot sets: the five parts `\maketitle`
-reads back, which beamer's inserts name (beamerbasetitle.sty:
-`\inserttitle`, `\insertsubtitle`, `\insertauthor`, `\insertinstitute`,
-`\insertdate`). -/
+/-- The declared datum a title-page slot sets: the five parts `\maketitle` reads back. -/
 public inductive TitleDatum where
   | title
   | subtitle
@@ -7954,7 +5520,6 @@ public def TitleDatum.name : TitleDatum → String
   | .institute => "institute"
   | .date => "date"
 
-/-- The literal spelling of each declared title datum. -/
 public theorem TitleDatum.name_exact (datum : TitleDatum) :
     datum.name = (match datum with
       | .title => "title"
@@ -7975,9 +5540,7 @@ public def TitleDatum.ofName? : String → Option TitleDatum
 public theorem TitleDatum.ofName_name (d : TitleDatum) : TitleDatum.ofName? d.name = some d := by
   cases d <;> rfl
 
-/-- A point of a box, by pgf's compass names (TikZ manual §17.5.1, the
-rectangle shape's anchors): the page's own points are the same names on
-the page's box (`current page.south west`, §17.13.2). -/
+/-- A point of a box, by pgf's compass names. -/
 public inductive BoxPoint where
   | center
   | north
@@ -8016,49 +5579,28 @@ public def BoxPoint.name : BoxPoint → String
 public theorem BoxPoint.ofName_name (p : BoxPoint) : BoxPoint.ofName? p.name = some p := by
   cases p <;> rfl
 
-/-- Where the point stands across its box, as a split of the box's width:
-`(left, right)` shares on either side of it — the vocabulary `VAlign.shares`
-distributes leftover space in, read here over an extent instead. -/
+/-- Where the point stands across its box: `(left, right)` shares of its width. -/
 public def BoxPoint.hshares : BoxPoint → Nat × Nat
   | .west | .northWest | .southWest => (0, 1)
   | .center | .north | .south => (1, 1)
   | .east | .northEast | .southEast => (1, 0)
 
-/-- Where the point stands down its box: `(above, below)` shares of its
-height, the same pair a frame's vertical distribution declares — `north` is
-`VAlign.top`'s, `west` `VAlign.center`'s, `south` `VAlign.bottom`'s. -/
+/-- Where the point stands down its box: `(above, below)` shares of its height. -/
 public def BoxPoint.vshares : BoxPoint → Nat × Nat
   | .north | .northWest | .northEast => (0, 1)
   | .center | .west | .east => (1, 1)
   | .south | .southWest | .southEast => (1, 0)
 
-/-- The offset of a point `(a, b)` shares into an extent: `e * a / (a + b)`,
-zero for the empty split. The one arithmetic both backends call: the page
-places a slot by it (`Layout.slotShift`) and the stylesheet writes its
-percentages from it (`HtmlDoc.titleSlotCss`). That the stylesheet puts each
-axis's share on the right property is tested (`titleSlotShipChecks`), not
-proved. -/
 public def shareOf (s : Nat × Nat) (e : Int) : Int :=
   if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
 
-/-- **The stage's percentage is the page's point** (`_agree`), as
-arithmetic: for every compass point, the share taken at the stylesheet's
-hundred-thousandth scale and applied to an extent is the page's share of
-that extent. What it does not say is which property the stylesheet writes
-each share into; `titleSlotShipChecks` tests that, slot by slot, over the
-stylesheet the typed tree ships. -/
 public theorem pagePoint_agree (p : BoxPoint) (e : Int) :
     shareOf p.hshares e = shareOf p.hshares 100000 * e / 100000 ∧
     shareOf p.vshares e = shareOf p.vshares 100000 * e / 100000 := by
   cases p <;> simp [shareOf, BoxPoint.hshares, BoxPoint.vshares] <;> omega
 
-/-- A title slot pinned to its page: which point of its box (`anchor`)
-stands at which point of the page (`pagePoint`), moved by the shifts —
-TikZ's own node placement (`anchor=`, `at (current page.<point>)`,
-`[xshift=…, yshift=…]`; TikZ manual §17.5.1, §13.2). `yshift` keeps TikZ's
-sense, positive up. `innerSep` is the space between the text and the box's
-border, pgf's `inner sep` (§17.2.2); undeclared it is pgf's own
-`0.3333em`, of the body font the node's options are read in. -/
+/-- A title slot pinned to its page: which point of its box stands at which
+point of the page, moved by the shifts. -/
 public structure TitlePlace where
   anchor : BoxPoint
   pagePoint : BoxPoint
@@ -8067,23 +5609,15 @@ public structure TitlePlace where
   innerSep : Option SymGlue := none
   deriving Repr, BEq, Inhabited
 
-/-- pgf's own `inner sep`, `0.3333em` (TikZ manual §17.2.2, the
-`inner sep` key's initial value), at the em it is read in: a template
-node's options are read in the surrounding font, the body's. The same
-value as `Picture.innerSepDefault`, which the picture subset reads. -/
+/-- pgf's own `inner sep`, `0.3333em`, at the em it is read in. -/
 public def pgfInnerSep (em : Sp) : Sp := em * 3333 / 10000
 
-/-- pgf's rectangular-node anchor clearance, the initial `outer sep`:
-half the initial 0.4 pt line width (pgf manual §17.2.3). It expands anchor
-points but is not padding; the text box still carries only `inner sep`. -/
+/-- pgf's initial `outer sep`: half the initial 0.4 pt line width, an anchor
+clearance, not padding. -/
 public def pgfOuterSep : Sp := Dim.pt 1 / 5
 
-/-- One independently styled part of a title slot. `datum` selects document
-metadata; with no datum, `content` is literal slot content. `newLine` starts
-this part below the preceding present part, and `before` is the additional
-vertical gap there. A missing or empty datum omits this part and its gap.
-Font, alignment, absolute size and its baseline skip belong to the part,
-while width and placement belong once to the containing slot. -/
+/-- One independently styled part of a title slot: `datum` selects document
+metadata, else `content` is literal. -/
 public structure TitlePart where
   datum : Option TitleDatum
   content : Array Inline := #[]
@@ -8095,80 +5629,51 @@ public structure TitlePart where
   before : Option SymGlue := none
   deriving Repr, BEq, Inhabited
 
-/-- One box of a declared title page: its ordered, independently styled
-optional parts, its measure, and where the one box stands. A title page
-that declares slots is the slots: a declared datum no part names is not
-set, as a beamer title-page template that never inserts it does not set it. -/
+/-- One box of a declared title page: its ordered, independently styled parts,
+its measure, and where it stands. -/
 public structure TitleSlot where
   parts : Array TitlePart := #[]
   width : Option SymGlue := none
   place : Option TitlePlace := none
   deriving Repr, BEq, Inhabited
 
-/-- Build the one slot owned by a source node. This is the construction
-door the node-to-slot conservation statement ranges over. -/
+/-- The one slot a source node owns. -/
 public def TitleSlot.ofNodeParts (parts : Array TitlePart) (width : Option SymGlue)
     (place : Option TitlePlace) : TitleSlot :=
   { parts := parts, width := width, place := place }
 
-/-- **One node's ordered parts stay in its one slot** (`_exact`): node
-translation changes neither their order nor their identity. -/
 public theorem TitleSlot.ofNodeParts_exact (parts : Array TitlePart) (width : Option SymGlue)
     (place : Option TitlePlace) :
     (TitleSlot.ofNodeParts parts width place).parts = parts := by
   rfl
 
-/-- The box-owned projection both backends consume: width and placement,
-never a part's style. -/
+/-- The box-owned projection both backends consume: width and placement. -/
 public def TitleSlot.box (slot : TitleSlot) : Option SymGlue × Option TitlePlace :=
   (slot.width, slot.place)
 
-/-- **A translated node's box projects unchanged** (`_projects`): the
-layout and HTML backends read this one pair, so part styling cannot split
-or move the node's box. -/
 public theorem TitleSlot.ofNodeParts_projects (parts : Array TitlePart) (width : Option SymGlue)
     (place : Option TitlePlace) :
     (TitleSlot.ofNodeParts parts width place).box = (width, place) := by
   rfl
 
-/-- The role a title slot's block rides in, by the slot's index: the class
-hook both backends already read (`Block.role`), so the one IR value that
-says where slot `i` stands is found from the block that shows it. -/
+/-- The role a title slot's block rides in, by the slot's index. -/
 public def titleSlotRole (i : Nat) : String := s!"titlepage-slot-{i}"
 
-/-- The role one styled part rides inside its slot. The slot role owns the
-box; this nested inline role preserves the part in the typed HTML tree and
-names any absolute size in the layout's existing size ladder. -/
+/-- The role one styled part rides inside its slot. -/
 public def titlePartRole (slot part : Nat) : String := s!"titlepage-slot-{slot}-part-{part}"
 
-/-- The slot a role name shows, among a title page's declared slots: the
-one lookup both backends make from the block to the value that places it. -/
+/-- The slot a role name shows, among a title page's declared slots. -/
 public def titleSlotOf (slots : Array TitleSlot) (n : String) : Option TitleSlot :=
   (slots.zipIdx.find? fun (_, i) => titleSlotRole i == n).map (·.1)
 
-/-- The part an inline role shows. Both backends use this lookup for the
-part's exact size and baseline skip; a role that names no part stays an
-authored, metric-transparent role. -/
+/-- The part an inline role shows; a role that names no part stays an authored role. -/
 public def titlePartOf (slots : Array TitleSlot) (n : String) : Option TitlePart :=
   slots.zipIdx.findSome? fun (slot, i) =>
     slot.parts.zipIdx.findSome? fun (part, k) =>
       if titlePartRole i k == n then some part else none
 
-/-! ### A beamer block template, read
-
-beamer sets a block between two templates, `block begin` before its body and
-`block end` after it (beamerbaselocalstructure.sty: `\par\usebeamertemplate{block
-begin}` … `\par\usebeamertemplate{block end}`), one pair per kind. The default
-inner theme's pair sets two colour boxes (beamerinnerthemedefault.sty); a theme
-that replaces the pair writes its own list in TeX's box-and-rule vocabulary,
-which `BlockTemplate.read` interprets into `BlockShape`: the skips the list
-stands in vertical mode, the box the title stands in, the box holding title and
-body when there is one, and the rules beside those boxes. Both backends read the
-record; a style with no shape is the default inner theme's pair. -/
-
-/-- A skip a block template stands in vertical mode: a skip register, read
-where the block stands (`\vskip\medskipamount`, `\smallskip`: `skipAmount`),
-or a glue the template writes. -/
+/-- A skip a block template stands in vertical mode: a skip register read
+where the block stands, or a written glue. -/
 public inductive BlockSkip where
   | register (name : String)
   | glue (g : SymGlue)
@@ -8183,19 +5688,15 @@ public def BlockSkip.resolve (tokens : Tokens) : BlockSkip → SymGlue
 public def blockSkipSum (tokens : Tokens) (skips : Array BlockSkip) : SymGlue :=
   skips.foldl (fun acc s => acc.add (s.resolve tokens)) {}
 
-/-- The box a template's rule stands beside: the title's own box
-(`\setbox\B\vbox{… \insertblocktitle …}`), or the box holding title and body
-(`\setbox\B\vbox\bgroup` in `block begin`, `\egroup` in `block end`) — for a
-rule reaching by lines (`BlockReach.lines`), the block's lines, title and
-body, which the template measures in that box and sets back unboxed. -/
+/-- The box a template's rule stands beside: the title's own box, or the box
+holding title and body. -/
 public inductive BlockSpan where
   | title
   | whole
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A length a template's rule reads in its title's font, where TeX reads it
-inside the title's box: thousandths of the title's `\baselineskip` (`lead`)
-and of its cap height, `\fontcharht\font`H` (`cap`), and a fixed length. -/
+/-- A length a template's rule reads in its title's font: thousandths of its
+`\baselineskip` and cap height, plus a fixed length. -/
 public structure BlockMetric where
   lead : Int := 0
   cap : Int := 0
@@ -8206,53 +5707,27 @@ public structure BlockMetric where
 public def BlockMetric.resolve (m : BlockMetric) (lead cap : Int) : Int :=
   m.lead * lead / 1000 + m.cap * cap / 1000 + m.sp
 
-/-- The metric negated. -/
 public def BlockMetric.neg (m : BlockMetric) : BlockMetric :=
   { lead := -m.lead, cap := -m.cap, sp := -m.sp }
 
 /-- Half the leading the capitals leave, `(\baselineskip-\fontcharht\font`H)/2`. -/
 public def BlockMetric.halfLeading : BlockMetric := { lead := 500, cap := -500 }
 
-/-- **Half the capitals' leading, as a rule's depth below its lines and its
-height short of them above, spans the leading less the cap height**
-(`_exact`): `halfLeading`'s resolution less its negation's is exactly the
-leading less the cap height, in integer arithmetic, whatever the two are —
-the premise `Layout.edgeLinesSpan_centred_exact` reads to stand such a rule
-centred on its lines' capitals. -/
 public theorem BlockMetric.halfLeading_centred_exact (lead cap : Int) :
     BlockMetric.halfLeading.resolve lead cap - BlockMetric.halfLeading.neg.resolve lead cap =
       lead - cap := by
   simp only [BlockMetric.resolve, BlockMetric.halfLeading, BlockMetric.neg]
   omega
 
-/-- How far a template's rule reaches beside its box. `box`: the box's own
-height and depth (`height \ht\B depth \dp\B`), its top to its bottom.
-`lines`: beside the title's box, read in the title's font
-(`height \dimexpr\ht\B+\dp\B-\parskip+… depth …`): the box's lines — its
-height and depth less the `\parskip` its list opens on, from its first
-line's top to its last line's bottom — and `height` more above the box's
-baseline, its last line's, and `depth` below it, as TeX sets the rule on
-that baseline. Beside the whole block (`BlockSpan.whole`), the rule stands
-its title's part so, and runs on from `depth` below the title's last
-baseline to `depth` below the block's last: the body's part, which the
-template stands on that baseline beside the body it measured. -/
+/-- How far a template's rule reaches beside its box: `box`, the box's own
+height and depth; `lines`, by the title's lines. -/
 public inductive BlockReach where
   | box
   | lines (height depth : BlockMetric)
   deriving Repr, BEq, Inhabited
 
-/-- Where a web page stands a rule reaching by a block title's lines
-(`BlockReach.lines`) beside the header that sets the title: `top` below the
-header's first line box's top and `bottom` above its last line box's bottom;
-`rise` and `riseMany`, how much lower TeX stands a title of one line and one
-of several, its line holding box and rule as tall as the rule wherever the
-rule passes the box's top, which the line's interline glue may absorb;
-`room`, how much further TeX spaces what follows where the rule stands
-deeper than the box; and `depth`, the rule's reach below a baseline, which a
-rule beside the whole block reaches below the block's last
-(`BlockSpan.whole`), and `bodyBelow`, the part of a body paragraph's line box
-below its baseline, from which such a rule stands where the block ends on a
-paragraph. -/
+/-- Where a web page stands a rule reaching by a block title's lines beside
+the header that sets the title. -/
 public structure BlockTitlePlace where
   top : Int
   bottom : Int
@@ -8263,13 +5738,8 @@ public structure BlockTitlePlace where
   bodyBelow : Int
   deriving Repr, BEq, Inhabited
 
-/-- A rule beside one of a block's boxes, as themes spell it
-(`\llap{\vrule width W height \ht\B depth \dp\B \hskip S}\box\B`): `width`
-wide, `sep` from the box's `side`, reaching as `reach` says. A hanging
-rule stands outside the box's line (`\llap`, `\rlap`), so the box keeps the
-measure; a rule inside the line moves the box in by `width + sep` on its side,
-the box set that much narrower. `color` is the colour in force at the rule, and
-`name` the palette entry it reads (`BlockEdge.ink`). -/
+/-- A rule beside one of a block's boxes, as themes spell it: `width` wide,
+`sep` from the box's `side`, reaching as `reach` says. -/
 public structure BlockEdge where
   span : BlockSpan
   side : FlushSide
@@ -8281,50 +5751,33 @@ public structure BlockEdge where
   reach : BlockReach := .box
   deriving Repr, BEq, Inhabited
 
-/-- **The one reading of a template rule's colour**, against the palette in
-force where the block stands: the entry the rule names, else the colour it was
-declared with. The page reads it so, and the stylesheet writes the same lookup
-as `var(--name, colour)`. -/
+/-- A template rule's colour against the palette in force: the entry the rule
+names, else its declared colour. -/
 public def BlockEdge.ink (e : BlockEdge) (pal : Palette) : Color :=
   (e.name.bind pal.lookup).getD e.color
 
-/-- A rule standing beside the title's box: one beside the title, or the
-title's part of one beside the whole block reaching by its lines, whose
-body's part runs on beside the body (`BlockReach.lines`). -/
+/-- Whether the rule stands beside the title's box, alone or as the title's
+part of a rule beside the whole block. -/
 public def BlockEdge.besideTitle (e : BlockEdge) : Bool :=
   e.span == .title || (e.span == .whole && e.reach matches .lines ..)
 
-/-- The title as a block template sets it. `boxed`: in a box of its own,
-`\hsize` wide, which TeX places in its list by the interline rule from the
-box's height (`\setbox\B\vbox{…}` … `\box\B`); otherwise a paragraph of the
-list it stands in. `strut`: `\strut` at both ends of the title, so its first
-line stands at least `.7\baselineskip` tall and its last `.3\baselineskip`
-deep. `parskip`: a node stands before the title's paragraph in its list —
-`\usebeamercolor[fg]` puts a colour change there — so the paragraph spends
-`\parskip` inside its box: TeX adds `\parskip` before a paragraph unless the
-paragraph opens an empty internal list (tex.web §1091). -/
+/-- The title as a block template sets it: `boxed` in a box of its own,
+`\hsize` wide, else a paragraph of the list it stands in. -/
 public structure BlockTitleBox where
   boxed : Bool := false
   strut : Bool := false
   parskip : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- The arm an untitled block takes where its template tests the title
-(beamer's `\ifx\insertblocktitle\@empty`) and sets none: the skips that arm
-stands above the body — `before` in the block's list, before the box holding
-the body when the template sets one, and `between` inside that box, before
-the body. -/
+/-- The arm an untitled block takes where its template tests the title and
+sets none: the skips it stands above the body. -/
 public structure BlockBare where
   before : Array BlockSkip := #[]
   between : Array BlockSkip := #[]
   deriving Repr, BEq, Inhabited
 
-/-- A block template, read (`BlockTemplate.read`). `bare`: how an untitled
-block stands — `none` keeps the title's box, empty, as a template that does
-not test the title does; `some` the arm its title test takes (`BlockBare`).
-`whole`: the box holding title and body, when the template sets one — `some
-true` when the first paragraph of an untitled block's body spends `\parskip`
-inside it, a node standing first. -/
+/-- A block template, read: `bare` is how an untitled block stands, `whole`
+the box holding title and body when the template sets one. -/
 public structure BlockShape where
   before : Array BlockSkip := #[]
   title : BlockTitleBox := {}
@@ -8335,15 +5788,12 @@ public structure BlockShape where
   edges : Array BlockEdge := #[]
   deriving Repr, BEq, Inhabited
 
-/-- Does a block in this template set its title's box: a titled block always,
-an untitled one where the template keeps the box. -/
+/-- Whether a block in this template sets its title's box: a titled block
+always, an untitled one where the template keeps the box. -/
 public def BlockShape.showsTitle (s : BlockShape) (titled : Bool) : Bool :=
   titled || s.bare.isNone
 
-/-- **The skips a block stands above its title, and between title and body,
-in the arm it takes** — the one reading both backends make: a block that
-sets its title's box stands the titled arm's, an untitled one whose
-template leaves the title out its bare arm's. -/
+/-- The skips a block stands above its title, and between title and body, in the arm it takes. -/
 public def BlockShape.skipsAbove (s : BlockShape) (titled : Bool) : Array BlockSkip :=
   match s.bare, titled with
   | some b, false => b.before
@@ -8354,17 +5804,13 @@ public def BlockShape.skipsBetween (s : BlockShape) (titled : Bool) : Array Bloc
   | some b, false => b.between
   | _, _ => s.between
 
-/-- How far a span's box stands in from the measure on one side: the rules
-inside its line there, `width + sep` each. -/
+/-- How far a span's box stands in from the measure on one side: `width + sep`
+of each rule inside its line there. -/
 public def BlockShape.inset (s : BlockShape) (span : BlockSpan) (side : FlushSide) : SymGlue :=
   s.edges.foldl (fun acc e =>
     if e.span == span && e.side == side && !e.hang then (acc.add e.width).add e.sep else acc) {}
 
-/-- How an element kind looks, from `\style{element}{...}`. Every field a
-backend used to hard-code is here instead, so a design lives in the document.
-`font` is a template: the inline wrappers a declaration like
-`{\large\sffamily\bfseries\primary}` elaborates to, with an empty body where
-the element's own content goes. -/
+/-- How an element kind looks, from `\style{element}{...}`. -/
 public structure ElementStyle where
   font : Option (Array Inline) := none
   before : Option SymGlue := none
@@ -8373,122 +5819,72 @@ public structure ElementStyle where
   rule : Option (Color × Option ColorRef) := none
   /-- Where `rule` stands against the baseline; undeclared, `xHeight`. -/
   rulePosition : Option RulePosition := none
-  /-- `rule`'s thickness; undeclared, the engine's em-relative weight
-  (`Layout.headingRuleWeight`) in print and one device pixel on screen. -/
+  /-- `rule`'s thickness; undeclared, the engine's em-relative weight in print
+  and one device pixel on screen. -/
   ruleThickness : Option SymGlue := none
   /-- List marker content, replacing the level's class-default marker. -/
   marker : Option (Array Inline) := none
   indent : Option SymGlue := none
   /-- Space between list items. -/
   gap : Option SymGlue := none
-  /-- Horizontal alignment of the element's lines. The title page reads it
-  (moloch sets its title matter ragged left; undeclared, a title page
-  centres). -/
+  /-- Horizontal alignment of the element's lines; undeclared, a title page centres. -/
   align : Option HAlign := none
-  /-- A full-measure rule after the element's leading part, in this palette
-  colour: the moloch title separator between the title block and the
-  author block. -/
+  /-- A full-measure rule after the element's leading part, in this palette colour. -/
   separator : Option (Color × Option ColorRef) := none
-  /-- A full-measure rule above the element, this thick, in the ink colour:
-  the NeurIPS-lineage top title bar (`\@toptitlebar`, `\hrule height 4\p@`
-  above `\@title`). Read at the title block (`titleBars`); the venue
-  contributes the weight — the four skips below are the document's own
-  declarations, and where none stands the engine's rhythm places the bar
-  (`titleBarGap`/`titleBarSkip`). -/
+  /-- A full-measure rule above the element, this thick, in the ink colour. -/
   ruleAbove : Option SymGlue := none
   /-- Declared space above `ruleAbove`; undeclared, `titleBarSkip`. -/
   ruleAboveSkip : Option SymGlue := none
   /-- Declared space between `ruleAbove` and the element's first line;
   undeclared, `titleBarGap`. -/
   ruleAboveGap : Option SymGlue := none
-  /-- A full-measure rule below the element, this thick: the bottom title
-  bar (`\@bottomtitlebar`, `\hrule height 1\p@`). -/
+  /-- A full-measure rule below the element, this thick. -/
   ruleBelow : Option SymGlue := none
   /-- Declared space between the element's last line and `ruleBelow`;
   undeclared, `titleBarGap`. -/
   ruleBelowGap : Option SymGlue := none
-  /-- Declared space below `ruleBelow`, before what follows (the author
-  block); undeclared, `titleBarSkip`. -/
+  /-- Declared space below `ruleBelow`, before what follows; undeclared, `titleBarSkip`. -/
   ruleBelowSkip : Option SymGlue := none
-  /-- The author line's font template, read at the title block: the
-  NeurIPS-lineage `\bf` inside the author `tabular`, or a document's own
-  `\style{titlepage}{ author-font = ... }`. -/
+  /-- The author line's font template, read at the title block
+  (`\style{titlepage}{ author-font = ... }`). -/
   authorFont : Option (Array Inline) := none
-  /-- The author line's minimum height above its baseline — the lineage's
-  `\rule{\z@}{24\p@}` strut, giving the name room instead of its bare cap
-  height. The engine's value is `titleAuthorStrut`, a rhythm multiple. -/
+  /-- The author line's minimum height above its baseline. -/
   authorStrut : Option SymGlue := none
-  /-- The size step the element's body sets at, read by the abstract only
-  (`abstractBodySize`): article.cls declares `\small` over the whole
-  environment, and a redefinition that declares none leaves its body at
-  the size in force, `\normalsize`. -/
+  /-- The size step the element's body sets at, read by the abstract only. -/
   bodySize : Option String := none
-  /-- Interaction states, read by the HTML backend only — a printed page
-  has no hover or focus, so the PDF path ignores all three keys (said once
-  here, not per consumer). `hover` and `focus` colour the element's links
-  in that state, the same value shape as `rule`; `motion` is the duration,
-  in milliseconds, of the transition between those states, and its CSS
-  always ships inside its own `prefers-reduced-motion` guard
-  (`HtmlDoc.motionCss`, WCAG 2.2 SC 2.3.3). -/
+  /-- Interaction states, read by the HTML backend only: `hover` and `focus`
+  colour the element's links, `motion` is the transition's duration in
+  milliseconds. -/
   hover : Option (Color × Option ColorRef) := none
   focus : Option (Color × Option ColorRef) := none
   motion : Option Nat := none
-  /-- The ink a link kind's text is set in (`link`, `url`, `cite`), where the
-  document declares one: hyperref's `linkcolor`, `urlcolor` and `citecolor`
-  under `colorlinks`. Read at the one site each kind's link is built
-  (`linkInk`); undeclared, a link keeps the running colour. -/
+  /-- The ink a link kind's text is set in (`link`, `url`, `cite`): hyperref's
+  `linkcolor`, `urlcolor` and `citecolor` under `colorlinks`. -/
   color : Option (Color × Option ColorRef) := none
-  /-- The title page's declared slots (`TitleSlot`), read by the title page
-  only: a title page that declares any sets exactly its slots, each where
-  it is pinned. Empty is the built-in title page. -/
+  /-- The title page's declared slots; empty is the built-in title page. -/
   slots : Array TitleSlot := #[]
-  /-- A beamer block kind's template (`BlockShape`), read by the three block
-  elements only; `none` is the default inner theme's colour boxes. -/
+  /-- A beamer block kind's template, read by the three block elements only;
+  `none` is the default inner theme's colour boxes. -/
   shape : Option BlockShape := none
   deriving Repr, BEq, Inhabited
 
-/-- What of the `titlepage` style the title heading itself takes: every key
-but the ones that place a heading's line — a heading rule fills the line a
-heading leaves, and an indent narrows it, and either takes a centred title
-off its centre — and the list keys, which a heading has no items for. The
-title page's own rules are `ruleAbove`, `ruleBelow` and `separator`
-(`Elab.titleBlocks`). Both artifacts read the title through this one
-projection (`Layout.collectTitle`, the HTML `h1`), so neither places the
-title by a key the other ignores: the HTML once drew a heading rule the page
-never drew, and the flex row that drew it set a centred title flush left.
-What no site then reads is `titleUnreadKeys`. -/
+/-- The part of the `titlepage` style the title heading itself takes: every
+key but those that place a heading's line. -/
 public def titleHeadingStyle (st : ElementStyle) : ElementStyle :=
   { st with rule := none, rulePosition := none, ruleThickness := none, indent := none,
             marker := none, gap := none, bodySize := none }
 
-/-- The `\style` keys no engine site reads on the title page, named where
-they are declared (W0104) rather than dropped in silence. -/
+/-- The `\style` keys no engine site reads on the title page. -/
 public def titleUnreadKeys : List String :=
   ["rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "body-size"]
 
 /-- beamer's three blocks, which a `\style` styles by their kind. -/
 public def blockStyleElements : List String := ["block", "alertblock", "exampleblock"]
 
-/-- The `\style` keys a beamer block reads: its title's `font`
-(`blockTitleFont`) and its template (`blockShapeOf`); every other key is
-named where it is declared (W0104) rather than dropped in silence, and kept
-out of the block's style, so nothing reads it. -/
+/-- The `\style` keys a beamer block reads: its title's `font` and its template. -/
 public def blockStyleKeys : List String := ["font", "shape"]
 
-/-- Elements a document may style. Section levels are `section`, `subsection`,
-`subsubsection`; lists are `itemize` and `enumerate` — those two style every
-nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`
-override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
-`frametitle`, `sectionpage`, `standout`, and `titlepage` are the slides
-furniture (their `font` is read; `titlepage` also reads `align` and
-`separator`; the other keys have no meaning there yet); `logo` reads
-`align` only — where the logo stands in the furniture band (`logoAlign`,
-both backends); `block`, `alertblock` and `exampleblock`, beamer's three
-blocks, read `font` (the title's) and `shape` (the kind's template). Beyond
-this list, a
-`\define`d name is styleable too (the elaborator admits it once the
-`\define` stands): the role's rhythm rides `before`/`after` on the page,
-and the whole style addresses the `u-<name>` class hook in HTML. -/
+/-- Elements a document may style; a `\define`d name is styleable too. -/
 public def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "heading1", "heading5", "heading6",
    "abstract", "itemize", "enumerate",
@@ -8503,22 +5899,20 @@ public structure Styles where
 public def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
   (s.entries.find? (·.1 == element)).map (·.2)
 
-/-- The `\style` element a titled block reads: its environment's own name.
-tcolorbox's box reads none of the beamer blocks' styles. -/
+/-- The `\style` element a titled block reads: its environment's own name;
+tcolorbox's box reads none. -/
 public def TitledKind.styleElement : TitledKind → Option String
   | .block => some "block"
   | .alert => some "alertblock"
   | .example => some "exampleblock"
   | .box => none
 
-/-- **The template a titled block stands in**: its kind's declared shape, the
-one lookup both backends make; `none` is the default inner theme's pair. -/
+/-- The template a titled block stands in: its kind's declared shape; `none`
+is the default inner theme's pair. -/
 public def blockShapeOf (styles : Styles) (kind : TitledKind) : Option BlockShape :=
   kind.styleElement.bind fun el => (styles.find? el).bind (·.shape)
 
-/-- The `\topsep` beamer's squeeze leaves in force (`\beamer@cramped`,
-beamerbaseframesize.sty:22): what a trivlist inside a squeezed frame's list
-item spends, rigid. -/
+/-- The `\topsep` beamer's squeeze leaves in force (beamerbaseframesize.sty:22), rigid. -/
 public def squeezedTopsep : SymGlue := { width := { sp := Dim.pt 1 / 2 } }
 
 /-- Where a frame's squeezed list spacing comes from. -/
@@ -8528,31 +5922,26 @@ public inductive FrameSqueeze where
   | fitted
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- Whether a block is one of a frame's marks: an empty engine role the
-overflow ladder or a declared `[squeeze]` opens the frame's body with. -/
+/-- Whether a block is one of a frame's marks: an empty engine role opening the frame's body. -/
 @[expose] public def Block.isFrameMark : Block → Bool
   | .role n inner => inner.isEmpty &&
       (n == squeezeRole || n == squeezeFitRole || fitMarkRole n)
   | _ => false
 
-/-- The marks a frame's body opens with (`Block.isFrameMark`), in order. -/
+/-- The marks a frame's body opens with, in order. -/
 public def frameMarks (body : Array Block) : List String :=
   (body.toList.takeWhile Block.isFrameMark).filterMap fun b => match b with
     | .role n _ => some n
     | _ => none
 
-/-- A frame body's squeeze: the one reading both backends make (`Layout`'s
-frame arm, `HtmlDoc`'s). -/
 public def frameSqueeze (body : Array Block) : FrameSqueeze :=
   if (frameMarks body).contains squeezeRole then .declared
   else if (frameMarks body).contains squeezeFitRole then .fitted
   else .none
 
-/-- Mark a frame with the frame mark `role` (`Block.isFrameMark`) opening its
-body; a frame already marked so keeps its one mark, and any other block is
-left as it is. -/
--- conserves: none — a splice of one empty mark into a frame's body, not a
--- walk of the tree: the output's text is the input's, a mark carrying none.
+/-- Mark a frame with the frame mark `role` opening its body; a frame already
+marked so keeps its one mark. -/
+-- conserves: none — splices one empty mark.
 public def Block.markFrame (role : String) (b : Block) : Block :=
   match b with
   | .frame title standout valign breakable fbody =>
@@ -8565,15 +5954,12 @@ public def Block.markFrame (role : String) (b : Block) : Block :=
   | .nav .. | .logo _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
   | .rule .. | .picture _ | .table .. | .float .. | .bibliography .. => b
 
-/-- Mark the top-level frames at `indices` with the frame mark `role`
-(`Block.markFrame`), the overflow ladder's decision then read off the IR. -/
--- conserves: none — a splice of empty marks into frame bodies, not a walk of
--- the tree: the output's text is the input's, a mark carrying none.
+/-- Mark the top-level frames at `indices` with the frame mark `role`. -/
+-- conserves: none — splices empty marks.
 public def markFrames (body : Array Block) (indices : Array Nat) (role : String) :
     Array Block :=
   body.mapIdx fun i b => if indices.contains i then b.markFrame role else b
 
-/-- Marking no frame changes nothing (`_id`). -/
 public theorem markFrames_id (body : Array Block) (role : String) :
     markFrames body #[] role = body := by
   unfold markFrames
@@ -8582,34 +5968,21 @@ public theorem markFrames_id (body : Array Block) (role : String) :
   · intro i h1 h2
     simp
 
-/-- Mark each top-level frame `i` of `marks` with its role (`markFrames`). -/
+/-- Mark each top-level frame `i` of `marks` with its role. -/
 public def markFramesAt (body : Array Block) (marks : Array (Nat × String)) : Array Block :=
   marks.foldl (fun body (i, role) => markFrames body #[i] role) body
 
-/-- Marking nothing changes nothing (`_id`). -/
 public theorem markFramesAt_id (body : Array Block) : markFramesAt body #[] = body := by
   simp [markFramesAt]
 
-/-- The web deck's squeeze of the frames the page could not set at their glue's
-natural size (`squeezeFitRole`, `Layout.runFitted`), which `HtmlDoc` reads. -/
+/-- The web deck's squeeze of the frames the page could not set at their glue's natural size. -/
 public def squeezeFrames (body : Array Block) (indices : Array Nat) : Array Block :=
   markFrames body indices squeezeFitRole
 
-/-- Squeezing no frame changes nothing (`_id`). -/
 public theorem squeezeFrames_id (body : Array Block) : squeezeFrames body #[] = body :=
   markFrames_id body squeezeFitRole
 
-/-- How a frame not declared breakable stands on its page, the overflow
-ladder at least cost (beamer user guide §8.1: a frame's text that does not
-fit "will be squeezed as much as possible ... and the text just extends
-unpleasantly over the bottom"): `natural` where its content fits its text
-area at its glue's natural size; `shrunk` where it fits once that glue
-shrinks, as TeX's does (and the web deck, which has no glue to shrink,
-squeezes its lists, the floor its list glue shrinks to: `squeezeFitRole`);
-`overfull o` where it still stands `o` past its text area within the gap
-above its footline, and the page sets it there as beamer does; `continued o`
-where it reaches `o` past its text area, past that gap, and continues on the
-next page. -/
+/-- How a frame not declared breakable stands on its page, the overflow ladder at least cost. -/
 public inductive FrameFit where
   | natural
   | shrunk
@@ -8627,30 +6000,20 @@ public inductive FrameFit where
   | .continued _ => true
   | .natural | .shrunk | .overfull _ => false
 
-/-- **The overflow ladder's decision** (`Layout.runFitted` decides every
-overlay step of a frame by it, as beamer sets each step's page): from how
-far the step's content stood past its text area at its glue's natural size
-(`needed`, at most zero where it fit as declared), how far past it reached
-beyond what its glue shrinks (`beyond`), and the gap below its text area its
-ink may take before the footline's (`clearance`, none where footnotes stand
-at the floor). -/
+/-- The overflow ladder's decision for one step, from how far its content
+stood past its text area at its glue's natural size. -/
 public def frameFit (needed beyond clearance : Sp) : FrameFit :=
   if 0 < beyond then
     if beyond ≤ clearance then .overfull beyond else .continued beyond
   else if 0 < needed then .shrunk
   else .natural
 
-/-- A frame that fits is set as it was declared (`_id`): no shrink, no
-overhang, no continuation. -/
 public theorem frameFit_id (needed beyond clearance : Sp) (h : needed ≤ 0)
     (hb : beyond ≤ 0) : frameFit needed beyond clearance = .natural := by
   have h1 : ¬ (0 : Int) < beyond := Int.not_lt.mpr hb
   have h2 : ¬ (0 : Int) < needed := Int.not_lt.mpr h
   simp [frameFit, h1, h2]
 
-/-- An overfull step's overhang is positive and within its clearance
-(`_between`): the ladder stands a frame's step overfull only where its whole
-overrun fits the gap above its footline. -/
 public theorem frameFit_between (needed beyond clearance o : Int)
     (h : frameFit needed beyond clearance = .overfull o) : 0 < o ∧ o ≤ clearance := by
   unfold frameFit at h
@@ -8664,24 +6027,7 @@ public theorem frameFit_between (needed beyond clearance o : Int)
     · simp [h0, h2] at h
     · simp [h0, h2] at h
 
-/-- Where a block's own blocks stand against the vertical list the block
-stands on: the one classification the page's reader, the web deck and the
-fill census read (`Layout`'s and `HtmlDoc`'s block walks, `frameFillsOne`).
-TeX sets a list's items, a trivlist (`center`, the flush environments), an
-overlay's steps and every transparent group on the list they stand on, so a
-`\vfill` among them shares the page's leftover (`onList`). A box sets its
-content at its natural height, where a fill stretches nothing outside it
-(`box`): a beamer block and every `\beamercolorbox` (an `\hbox` around a
-`\vbox`, beamerbasecolor.sty:149-182), a column (`minipage`), and in
-beamer's lineage a quotation and an abstract, whose `quote begin`,
-`quotation begin` and `abstract begin` templates open that colour box
-(beamerinnerthemedefault.sty:324-325, 342-343, 351-352), where article sets
-them as a quotation list on the page's own list. A float is a box in article
-(`\@xfloat`'s `\vbox`, latex.ltx) and beamer's `{figure}`/`{table}` a
-`{center}` on the frame's list (beamerbaselocalstructure.sty:550-560). A
-beamer block standing in its kind's declared template (`blockShapeOf`) sets
-no colour box, so its body stands on the list too. A speaker note is no
-page content (`aside`). -/
+/-- Where a block's own blocks stand against the vertical list the block stands on. -/
 public inductive ListScope where
   | onList
   | box
@@ -8702,9 +6048,7 @@ declared styles. -/
   | .only .. | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _
   | .setTokens _ | .rule .. | .picture _ | .table .. | .bibliography .. => .onList
 
-/-- A list whose every item runs in by its label: a description list, the
-reading both backends set it by (`descLabel?`) — HTML's `<dl>`, whose `<dd>`
-holds the item's text and blocks. -/
+/-- A list whose every item runs in by its label: a description list. -/
 public def listIsDesc (ordered : Bool) (items : Array (Array Block)) : Bool :=
   !ordered && !items.isEmpty && items.all fun it => match it[0]? with
     | some (Block.para c) => (descLabel? c).isSome
@@ -8712,12 +6056,9 @@ public def listIsDesc (ordered : Bool) (items : Array (Array Block)) : Bool :=
 
 mutual
 
-/-- The fills a list item ends on: the run of `\vfill`s after its last other
-block, read through an overlay step or a backend's share the item ends on
-(`\item<2->`, `\pause`), which put nothing on the list of their own. The
-web deck's item grows by these (`HtmlDoc.fillCarrier`), its space falling at
-the item's end, which is where they stand. `n` is the run so far. -/
--- conserves: none — the length of one leaf run at a list's end, not a census of the tree
+/-- The run of `\vfill`s a list item ends on, read through overlay steps and
+backend shares; `n` is the run so far. -/
+-- conserves: none — the length of one leaf run.
 public def trailingFillsOne (n : Nat) : Block → Nat
   | .spaced g body => if g.value.fil && body.isEmpty then n + 1 else 0
   | .onSteps _ body => trailingFillsList 0 body.toList
@@ -8737,14 +6078,8 @@ end
 /-- The fills a list item ends on (`trailingFillsOne`). -/
 public def itemTrailingFills (item : Array Block) : Nat := trailingFillsList 0 item.toList
 
-/-- Which reading of a frame a fill census takes. `page k` is the page the
-frame sets at step `k`, an alternation's group the step shows; `every` is
-every step's at once, both groups of an alternation; `deck` the web deck's
-one stage, which grows a fill where its chain of containers can carry the
-growth: not inside an alternation, whose groups change from step to step
-while the stage's flex column does not, and inside a non-description list
-item only among the fills the item ends on, as an item is no flex column
-(its marker is a list item's). -/
+/-- Which reading of a frame a fill census takes: one step's page, every step
+at once, or the web deck's one stage. -/
 public inductive FillView where
   | page (step : Nat)
   | every
@@ -8753,15 +6088,9 @@ public inductive FillView where
 
 mutual
 
-/-- The `\vfill`s on a frame's own vertical list under one reading
-(`FillView`): every fill block, and the fill a `\block[before = fill]{…}`
-opens its content with, standing among the frame's blocks or inside a block
-whose blocks stand on the same list (`Block.listScope`), and never inside a
-box or an aside. A hand-rolled walk, not a `foldBlocks` leaf, because it
-stops at the boxes. The page reading is the count the page close shares a
-frame's leftover among (`Layout.PageOut.fils`), and the deck reading the
-web stage's (`HtmlDoc.deckSpacerShares`, `HtmlDoc.fillCarrier`). -/
--- conserves: none — a count of one leaf kind on the frame's list, not a census of the tree
+/-- The `\vfill`s on a frame's own vertical list under one reading;
+hand-rolled, not a `foldBlocks` leaf, because it stops at boxes and asides. -/
+-- conserves: none — a count of one leaf kind.
 public def frameFillsOne (l : ListLineage) (styles : Styles) (v : FillView) (acc : Nat) :
     Block → Nat
   | .spaced g inner => frameFillsList l styles v (if g.value.fil then acc + 1 else acc) inner.toList
@@ -8836,9 +6165,7 @@ public inductive FontAxis where
   | family
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The axis a style selects on; `none` for a style that is no one axis's
-selection: `\emph` toggles a shape, `\normalfont` resets every axis, a
-language is no font. -/
+/-- The axis a style selects on; `none` for a style that selects on no one axis. -/
 public def Style.fontAxis : Style → Option FontAxis
   | .size _ | .fontSize _ _ => some .size
   | .italic | .smallcaps | .upright => some .shape
@@ -8846,8 +6173,7 @@ public def Style.fontAxis : Style → Option FontAxis
   | .sans | .roman | .mono | .family _ => some .family
   | .emph | .normal | .lang _ => none
 
-/-- A font template's selection on each axis, as a beamer font element
-carries one per axis (`\setbeamerfont{…}{size=…, series=…}`). -/
+/-- A font template's selection on each axis, as a beamer font element carries one per axis. -/
 public structure FontAxes where
   size : Option Style := none
   shape : Option Style := none
@@ -8861,8 +6187,7 @@ public def FontAxes.get (a : FontAxes) : FontAxis → Option Style
   | .series => a.series
   | .family => a.family
 
-/-- Select `s` on its axis, replacing what the axis held, as a later font
-command replaces an earlier one there. -/
+/-- Select `s` on its axis, replacing what the axis held. -/
 public def FontAxes.select (a : FontAxes) (s : Style) : FontAxes :=
   match s.fontAxis with
   | some .size => { a with size := some s }
@@ -8871,15 +6196,13 @@ public def FontAxes.select (a : FontAxes) (s : Style) : FontAxes :=
   | some .family => { a with family := some s }
   | none => a
 
-/-- `own`'s selection on every axis it makes one, `parent`'s elsewhere: what
-`\beamer@usebeamerfont` leaves selected after running the parent's font and
-then the element's own fields. -/
+/-- `own`'s selection on every axis it makes one, `parent`'s elsewhere. -/
 public def FontAxes.over (own parent : FontAxes) : FontAxes :=
   { size := own.size.or parent.size, shape := own.shape.or parent.shape
     series := own.series.or parent.series, family := own.family.or parent.family }
 
-/-- The selections as a font template, in beamer's selection order: size
-outermost, then shape, series and family around the empty hole. -/
+/-- The selections as a font template, size outermost, then shape, series and
+family around the empty hole. -/
 public def FontAxes.template (a : FontAxes) : Array Inline :=
   let wrap (s : Option Style) (body : Array Inline) : Array Inline :=
     match s with
@@ -8889,12 +6212,12 @@ public def FontAxes.template (a : FontAxes) : Array Inline :=
 
 mutual
 
--- conserves: none — a reading of a font template's wrappers, not a walk over document content.
+-- conserves: none — reads template wrappers.
 private def axesOne (acc : FontAxes) : Inline → Option FontAxes
   | .styled st body => if st.fontAxis.isSome then axesList (acc.select st) body.toList else none
   | _ => none
 
--- conserves: none — the list companion of `axesOne`.
+-- conserves: none — list companion of `axesOne`.
 private def axesList (acc : FontAxes) : List Inline → Option FontAxes
   | [] => some acc
   | [x] => axesOne acc x
@@ -8902,9 +6225,8 @@ private def axesList (acc : FontAxes) : List Inline → Option FontAxes
 
 end
 
-/-- A font template's selections, read: style wrappers on beamer's axes, one
-inside another around the empty hole, an inner wrapper replacing an outer
-one on its axis; `none` for a template holding anything else. -/
+/-- A font template's selections, read; `none` for a template holding anything
+but nested axis wrappers around the empty hole. -/
 public def fontAxesOf (tpl : Array Inline) : Option FontAxes := axesList {} tpl.toList
 
 /-- Every selection stands on its own axis. -/
@@ -8980,14 +6302,10 @@ private theorem axesList_sorted (xs : List Inline) (acc out : FontAxes) (hacc : 
     exact axesOne_sorted x acc out hacc h
   | _ :: _ :: _, h => simp [axesList] at h
 
-/-- A template's reading stands every selection on its own axis. -/
 private theorem fontAxesOf_sorted (tpl : Array Inline) (a : FontAxes) (h : fontAxesOf tpl = some a) :
     a.Sorted :=
   axesList_sorted tpl.toList {} a (fun ax s h => by cases ax <;> simp [FontAxes.get] at h) h
 
-/-- **A font template written from selections reads back as them**
-(`_exact`): the wrappers `FontAxes.template` writes are what `fontAxesOf`
-reads, axis by axis, wherever each selection stands on its own axis. -/
 public theorem FontAxes.template_exact (a : FontAxes) (h : a.Sorted) :
     fontAxesOf a.template = some a := by
   obtain ⟨sz, sh, se, fa⟩ := a
@@ -8998,10 +6316,8 @@ public theorem FontAxes.template_exact (a : FontAxes) (h : a.Sorted) :
   cases sz <;> cases sh <;> cases se <;> cases fa <;>
     simp_all [FontAxes.template, fontAxesOf, axesList, axesOne, FontAxes.select]
 
-/-- **A block title's font template**: the plain block's own; an alerted or
-example title's own selection on each axis it makes one and the plain
-block's on the rest (`blockTitleFont_axes_exact`); `none` is the title's
-built-in bold. -/
+/-- A block title's font template: the plain block's own, or an alerted or
+example title's axes over the plain block's; `none` is bold. -/
 public def blockTitleFont (styles : Styles) (kind : TitledKind) : Option (Array Inline) :=
   kind.styleElement.bind fun el =>
     let own := (styles.find? el).bind (·.font)
@@ -9013,18 +6329,8 @@ public def blockTitleFont (styles : Styles) (kind : TitledKind) : Option (Array 
     | some o, some p =>
       match fontAxesOf o, fontAxesOf p with
       | some oa, some pa => some (oa.over pa).template
-      -- A template beyond the four axes is the kind's whole font.
       | _, _ => some o
 
-/-- **An alerted or example block's title font is the plain block's under its
-own, axis by axis** (`_exact`): where both kinds declare fonts of beamer's
-four axes alone, the font the alerted or example title is set in reads back,
-on each of size, shape, series and family, as the kind's own selection where
-it makes one and the plain block's elsewhere. That is beamer's font parent
-chain: `\beamer@usebeamerfont` (beamerbasefont.sty) runs the parents' fonts,
-then the element's own fields, and beamerfontthemedefault.sty gives `block
-title alerted` and `block title example` the parent `block title`. Both
-backends set the title through `blockTitleFont`. -/
 public theorem blockTitleFont_axes_exact (styles : Styles) (kind : TitledKind) (el : String)
     (hel : kind.styleElement = some el) (hne : el ≠ "block") (o p : Array Inline)
     (oa pa : FontAxes) (ho : (styles.find? el).bind (·.font) = some o)
@@ -9037,29 +6343,18 @@ public theorem blockTitleFont_axes_exact (styles : Styles) (kind : TitledKind) (
   simp only [blockTitleFont, hel, Option.bind_some, ho, hp, hne', hoa, hpa]
   simp [FontAxes.template_exact _ hs, FontAxes.over_get]
 
-/-- A link's body in its kind's declared ink (`ElementStyle.color`: `link`
-for a cross-reference, `url` for a URL, `cite` for a citation mark), what
-hyperref's `colorlinks` sets: `\Hy@colorlink` colours the link's own text,
-never the brackets or words around it. Undeclared, the body as it stands. -/
+/-- A link's body in its kind's declared ink (`ElementStyle.color`), as
+hyperref's `colorlinks` colours a link's text. -/
 public def Styles.linkInk (s : Styles) (kind : String) (body : Array Inline) : Array Inline :=
   match (s.find? kind).bind (·.color) with
   | some (c, n) => #[.colored c n body]
   | none => body
 
-/-- Replace-on-redeclare, one entry per element — the same install mechanism
-as `Palette.declare`/`Tokens.declare`. A `\style` block edits keys of the
-element's existing entry first; what is declared here is the whole record. -/
+/-- Replace-on-redeclare, one entry per element; what is declared here is the whole record. -/
 public def Styles.declare (s : Styles) (element : String) (st : ElementStyle) : Styles :=
   { entries := (s.entries.filter (·.1 != element)).push (element, st) }
 
-/-- The abstract heading's style is the section heading's, centred: a
-reference, not a copy, so a venue or theme that restyles sections carries
-the abstract heading with it — the class's own relation (the NeurIPS
-lineage sets both headings `\large\bf`, differing only in alignment:
-section `\raggedright`, Abstract centred; article.cls sets both in the
-bold face). An explicit `\style{abstract}` key wins per key;
-`abstract_heading_follows_section` is the equation. Undeclared on both
-sides, `font` is `none` and each backend keeps its class-sourced default. -/
+/-- The abstract heading's style: the section heading's, centred. -/
 public def abstractHeadingStyle (styles : Styles) : ElementStyle :=
   let sec := (styles.find? "section").getD {}
   let own := (styles.find? "abstract").getD {}
@@ -9067,10 +6362,6 @@ public def abstractHeadingStyle (styles : Styles) : ElementStyle :=
     font := own.font <|> sec.font
     align := own.align <|> some .center }
 
-/-- With no explicit `\style{abstract}`, the abstract heading's font equals
-the section heading's, and it centres — by construction of the derivation,
-which is what keeps the two headings from drifting when a venue or theme
-restyles sections. -/
 public theorem abstract_heading_follows_section (styles : Styles)
     (h : styles.find? "abstract" = none) :
     (abstractHeadingStyle styles).font =
@@ -9078,22 +6369,16 @@ public theorem abstract_heading_follows_section (styles : Styles)
     (abstractHeadingStyle styles).align = some .center := by
   simp [abstractHeadingStyle, h]
 
-/-- The abstract body's size step: the one resolving site both backends
-read. Undeclared, article.cls §abstract's `\small`, which it declares over
-the whole environment before the heading. -/
+/-- The abstract body's size step; undeclared, article.cls's `\small`. -/
 public def abstractBodySize (styles : Styles) : String :=
   ((styles.find? "abstract").bind (·.bodySize)).getD "small"
 
-/-- What a chrome footer slot shows, resolved per page by the backends: the
-title of the current top-level section, or the index of the page's own frame
-(one number for all pages of a stepped frame). Data, not content: a theme
-names the datum and the engine supplies the value, so a bundle stays a table
-and no backend learns a theme's name. -/
+/-- What a chrome footer slot shows, resolved per page: the current top-level
+section's title, or the page's frame number. -/
 public inductive ChromeSlot where
   | sectionTitle
   | frameNumber
-  /-- The `n / N` form: moloch's `numbering=fraction`, beamer's
-  `[totalframenumber]` template (beamerouterthememoloch.dtx:156-188). -/
+  /-- The `n / N` form, beamer's `[totalframenumber]` template. -/
   | frameFraction
   deriving Repr, BEq, Inhabited
 
@@ -9102,15 +6387,7 @@ public def ChromeSlot.label : ChromeSlot → String
   | .frameNumber => "framenumber"
   | .frameFraction => "framefraction"
 
-/-- The declared priority of a slot datum, the order that decides which slot
-yields when two boxes collide: the frame number is low — it yields to the
-section title, never the reverse (the user's design rule for this engine:
-positions are fixed, and on a collision the number "can be painted over,
-since [the] page number is lower priority"; a printed folio behaves the same
-way — fixed position, yielded by, never yielding to, the text). Distinct
-values by construction (`priority_injective`), so between two declared data
-"which one yields" is a fact of the declaration, never an accident of
-evaluation order. -/
+/-- The declared priority of a slot datum: which slot yields when two boxes collide. -/
 public def ChromeSlot.priority : ChromeSlot → Nat
   | .frameNumber => 0
   | .frameFraction => 1
@@ -9121,12 +6398,10 @@ public theorem ChromeSlot.priority_injective : ∀ a b : ChromeSlot,
   intro a b h
   cases a <;> cases b <;> simp_all [priority]
 
-/-- A `\framefoot` note is the author's own content: it outranks every
-furniture datum. -/
+/-- A `\framefoot` note's priority, above every furniture datum. -/
 public def notePriority : Nat := 3
 
-/-- Which side of a furniture band a slot occupies. The position is the
-declaration; a band holds at most one slot per side. -/
+/-- Which side of a furniture band a slot occupies; a band holds at most one slot per side. -/
 public inductive BandSide where
   | left
   | right
@@ -9136,10 +6411,8 @@ public def BandSide.idx : BandSide → Nat
   | .left => 0
   | .right => 1
 
-/-- One slot of a furniture band, as both backends consume it: the declared
-side, the resolved content, and the declared priority. A band slot always
-ships ink — an empty slot is absent from the band, not a case its
-neighbours see. -/
+/-- One slot of a furniture band: the declared side, the resolved content and
+the declared priority. -/
 public structure BandSlot where
   side : BandSide
   content : Array Inline
@@ -9147,10 +6420,7 @@ public structure BandSlot where
   label : String
   deriving Repr, BEq, Inhabited
 
-/-- The band's paint order: declared priority first, side as the tiebreak.
-Over a band's slots this order is total with no ties — a band holds one
-slot per side (`rank_ne_of_side_ne`) — so the slot painted under, the one
-that yields on a collision, is a fact of the declaration. -/
+/-- The band's paint order: declared priority first, side as the tiebreak. -/
 public def BandSlot.rank (s : BandSlot) : Nat := 2 * s.priority + s.side.idx
 
 public theorem BandSlot.rank_ne_of_side_ne (a b : BandSlot) (h : a.side ≠ b.side) :
@@ -9158,13 +6428,7 @@ public theorem BandSlot.rank_ne_of_side_ne (a b : BandSlot) (h : a.side ≠ b.si
   cases ha : a.side <;> cases hb : b.side <;>
     simp_all [rank, BandSide.idx] <;> omega
 
-/-- The one place a frame number becomes text: both backends resolve a
-footer slot through this function, so the number's format is a datum of the
-IR and neither backend carries a format literal. `n` is the frame's own
-number off `frameNumbers`, `total` the count. `sectionTitle` is content,
-not a number — the caller passes the section in force. The physical
-`\pagenumber`/`\pagecount` are the other, deliberately separate sequence,
-rendered only by `substPage`. -/
+/-- A footer slot as text: the one place a frame number is formatted. -/
 public def ChromeSlot.render (s : ChromeSlot) (sectionTitle : Array Inline)
     (n total : Nat) : Array Inline :=
   match s with
@@ -9172,34 +6436,19 @@ public def ChromeSlot.render (s : ChromeSlot) (sectionTitle : Array Inline)
   | .frameNumber => #[.text (toString n)]
   | .frameFraction => #[.text s!"{n} / {total}"]
 
-/-- Page furniture a theme (or the document, via `\chrome`) declares: the
-slide footer's two slots. A document's own `\runningfoot` overrides the
-whole footer; a slot left undeclared is empty. Redeclaring `\chrome`
-merges per slot, and a theme's chrome installs through the same per-slot
-merge (`Theme.apply`) — a theme fills the slots the document left empty,
-and naming one slot never clears its sibling. -/
+/-- Page furniture a theme or the document (`\chrome`) declares: the slide footer's two slots. -/
 public structure Chrome where
   footerLeft : Option ChromeSlot := none
   footerRight : Option ChromeSlot := none
-  /-- Restore an explicit note on a standout frame. Undeclared
-  keeps the class's plain standout; `some false` explicitly disables it. -/
+  /-- Restore an explicit note on a standout frame; `some false` disables it. -/
   standoutNote : Option Bool := none
   deriving Repr, BEq, Inhabited
 
 public def Chrome.hasFooter (c : Chrome) : Bool :=
   c.footerLeft.isSome || c.footerRight.isSome
 
-/-- The footline's slot layout, resolved once for both backends: the left
-slot — a `\framefoot` note in force, else the declared left datum — and the
-right slot. The layout is moloch's own footline template
-(beamerouterthememoloch.dtx:216-228, `\defbeamertemplate{footline}{plain}`):
-`\usebeamertemplate*{frame footer}` `\hfill` `\usebeamertemplate*{page number
-in head/foot}` — left slot, stretch, right slot, and the `\hfill` stands
-whether or not the left template is empty, so an empty left slot never moves
-the right slot off the right edge. Both backends consume this function and
-neither carries its own slot arithmetic; which side a slot renders on is
-thereby a function of the declaration alone (`footSlots_right_ignores_left`,
-`footSlots_left_ignores_right`). -/
+/-- The footline's slot pair: the left slot a `\framefoot` note in force, else
+the declared left datum, and the right slot. -/
 public def Chrome.footSlots (c : Chrome) (frameFoot : Option (Array Inline))
     (sectionTitle : Array Inline) (n total : Nat) :
     Array Inline × Array Inline :=
@@ -9209,8 +6458,7 @@ public def Chrome.footSlots (c : Chrome) (frameFoot : Option (Array Inline))
     | none => (c.footerLeft.map slot).getD #[]
   (left, (c.footerRight.map slot).getD #[])
 
-/-- One band slot when its content ships ink, none when it is empty: an
-absent slot is how "the empty left slot" stops being a case at all. -/
+/-- One band slot when its content ships ink, none when it is empty. -/
 public def bandSlotIf (side : BandSide) (content : Array Inline)
     (priority : Nat) (label : String) : Array BandSlot :=
   if content.isEmpty then #[] else #[{ side, content, priority, label }]
@@ -9226,12 +6474,8 @@ public theorem mem_bandSlotIf {s : BandSlot} {side : BandSide}
     subst h
     exact ⟨rfl, rfl⟩
 
-/-- The footline as a band of slots, the one object both backends consume:
-each slot carries its declared side, its content resolved by `footSlots`
-(the band never re-resolves), and its declared priority. Positions are the
-layout's, fixed per side (`Layout.bandSlotX`) — never derived from content —
-and on a collision the lower-rank slot yields by paint order, reported by
-name (W0333). -/
+/-- The footline as a band of slots, each with its declared side, its content
+from `footSlots` and its priority. -/
 public def Chrome.footBand (c : Chrome) (frameFoot : Option (Array Inline))
     (sectionTitle : Array Inline) (n total : Nat) : Array BandSlot :=
   let (left, right) := c.footSlots frameFoot sectionTitle n total
@@ -9243,11 +6487,6 @@ public def Chrome.footBand (c : Chrome) (frameFoot : Option (Array Inline))
     bandSlotIf .right right ((c.footerRight.map (·.priority)).getD 0)
       ((c.footerRight.map (·.label)).getD "")
 
-/-- The band is a projection of the one slot pair: a left band slot's
-content is the pair's left component, a right one's the right — so the
-backends can only diverge by rendering the same pair, never by resolving
-different pairs. A deleted one-line renderer once carried this as its own
-equation; the statement below carries it now. -/
 public theorem Chrome.footBand_projects (c : Chrome) (ff : Option (Array Inline))
     (sec : Array Inline) (n total : Nat) {s : BandSlot}
     (h : s ∈ c.footBand ff sec n total) :
@@ -9259,11 +6498,7 @@ public theorem Chrome.footBand_projects (c : Chrome) (ff : Option (Array Inline)
   · exact .inl (mem_bandSlotIf h)
   · exact .inr (mem_bandSlotIf h)
 
-/-- The frame's band, selected once for both backends. Moloch's standout
-option normally clears the footline. Restoring its plain template only
-when `frame footer` is nonempty restores that note, never a section datum
-or a number (beamerinnerthememoloch.sty,
-`KV@beamerframe@standout`; beamerouterthememoloch.sty, `footline/plain`). -/
+/-- The frame's band; a standout frame's carries only a restored explicit note. -/
 public def Chrome.frameFootBand (c : Chrome) (ff : Option (Array Inline))
     (sec : Array Inline) (n : Option Nat) (total : Nat) (standout : Bool) :
     Option (Array BandSlot) :=
@@ -9275,9 +6510,6 @@ public def Chrome.frameFootBand (c : Chrome) (ff : Option (Array Inline))
     n.bind fun k =>
       if c.hasFooter || ff.isSome then some (c.footBand ff sec k total) else none
 
-/-- A standout band contains only a restored explicit note, independently
-of its frame number. Neither chrome datum reaches either backend, and an
-empty or disabled note has no band. -/
 public theorem Chrome.standoutFootBand_exact (c : Chrome) (ff : Option (Array Inline))
     (sec : Array Inline) (n : Option Nat) (total : Nat) :
     c.frameFootBand ff sec n total true =
@@ -9286,39 +6518,25 @@ public theorem Chrome.standoutFootBand_exact (c : Chrome) (ff : Option (Array In
       else none := by
   simp [frameFootBand]
 
-/-- A band's inline content read left to right — the reading order, as
-distinct from the paint order (`BandSlot.rank`). -/
+/-- A band's inline content in reading order, left to right. -/
 public def bandInlines (b : Array BandSlot) : Array Inline :=
   (b.filter (·.side == .left) ++ b.filter (·.side == .right)).flatMap
     (·.content)
 
-/-- The right slot is a function of its own declaration: neither the left
-slot's declaration nor a `\framefoot` note in force can move or change it —
-the empty-left case cannot move the number. -/
 public theorem Chrome.footSlots_right_ignores_left (c c' : Chrome)
     (ff ff' : Option (Array Inline)) (sec : Array Inline) (n total : Nat)
     (h : c.footerRight = c'.footerRight) :
     (c.footSlots ff sec n total).2 = (c'.footSlots ff' sec n total).2 := by
   simp [footSlots, h]
 
-/-- And the left slot of its own: the right slot's declaration never reaches
-it. -/
 public theorem Chrome.footSlots_left_ignores_right (c c' : Chrome)
     (ff : Option (Array Inline)) (sec : Array Inline) (n total : Nat)
     (h : c.footerLeft = c'.footerLeft) :
     (c.footSlots ff sec n total).1 = (c'.footSlots ff sec n total).1 := by
   simp [footSlots, h]
 
-/-- Where moloch's footline template stands on the page, and how much of
-the page it takes from the frame (beamerouterthememoloch.sty:113-125,
-`\defbeamertemplate{footline}{plain}`). beamer sets a footline as wide as
-the paper (beamerbaseframecomponents.sty:128, `\textwidth=\paperwidth`) in
-the `footline` font; the template's colour box insets its slots from the
-paper's side edges and closes with `\vskip4pt`, and the box stands on the
-paper's bottom edge — so the slots' baseline is the band's depth plus
-`raise` above that edge. beamer ends a frame's text area `sep` above the
-band's top (`\footheight` is the band's height and depth plus 4 pt). Both
-backends read `step`; the rest is the paged artifact's geometry. -/
+/-- Where the footline template stands on the page, and how much of the page
+it takes from the frame. -/
 public structure Footline where
   step : String
   left : Sp
@@ -9336,10 +6554,7 @@ public def footline : Footline :=
 
 mutual
 
-/-- The walk of `fillTemplate`. Exhaustive over `Inline` by design: any
-body-carrying wrapper may hold the template's hole, and a leaf carries no
-body to fill. A new constructor must answer here or the build breaks —
-never add a wildcard arm (AGENTS.md § When you add). -/
+/-- The walk of `fillTemplate`: any body-carrying wrapper may hold the template's hole. -/
 private def fillOne (content : Array Inline) : Inline → Inline
   | .styled st body =>
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
@@ -9361,8 +6576,6 @@ private def fillOne (content : Array Inline) : Inline → Inline
       (if otherPage.isEmpty then content else (fillList content otherPage.toList).toArray)
   | .text s => .text s
   | .math d src => .math d src
-  -- a formula's body is math atoms, an image carries no inline body:
-  -- neither can hold the template's hole
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
@@ -9376,9 +6589,7 @@ private def fillOne (content : Array Inline) : Inline → Inline
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
-  -- a citation carries no inline body: it cannot hold the template's hole
   | .cite t ks => .cite t ks
-  -- a footnote's body is the note's own text, never a template hole
   | .footnote n body => .footnote n body
 
 private def fillList (content : Array Inline) : List Inline → List Inline
@@ -9387,28 +6598,20 @@ private def fillList (content : Array Inline) : List Inline → List Inline
 
 end
 
-/-- Fill a font template's hole with content. The hole is the innermost empty
-body; a template with no hole (plain content) is returned unchanged, which
-is what a marker is. -/
--- conserves: none — a splice, not a walk of one tree: the output census is
--- the template's plus the content's, conservation of neither alone; the
--- styled-heading and marker tests pin the behaviour.
+/-- Fill a font template's hole, its innermost empty body, with content; a
+template with no hole is returned unchanged. -/
+-- conserves: none — a splice of two trees.
 public def fillTemplate (template content : Array Inline) : Array Inline :=
   if template.isEmpty then content else (fillList content template.toList).toArray
 
 /-- The size a font template sets its content at: the outermost `.size`
-wrapper's step of the base, else the base itself. Both shipped frametitle
-templates are `{\large\bfseries}` (`Theme.boldFont`), so the frame-title
-bar's strut reads its size from here rather than from a glyph pass. -/
+wrapper's step of the base, else the base. -/
 public def templateSize (base : Sp) (tpl : Array Inline) : Sp :=
   if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline)
   then scaleStep base s else base
 
 /-- The `\baselineskip` each named size sets under a class option, in
-milli-points, as its size file's `\@setfontsize` gives it: size10.clo:48-86
-(`\large` is `\@setfontsize\large\@xiipt{14}`), size11.clo and size12.clo
-the same lines, and extsizes' size8.clo, size9.clo, size14.clo, size17.clo
-and size20.clo:12-47 for beamer's other options (beamer.cls:155-166). -/
+milli-points, from its size file's `\@setfontsize`. -/
 private def sizeFileLeadings : Nat → List (String × Nat)
   | 8 => [("tiny", 6000), ("scriptsize", 6000), ("footnotesize", 7000), ("small", 8000),
       ("normalsize", 9500), ("large", 10950), ("Large", 12000), ("LARGE", 14000),
@@ -9436,11 +6639,8 @@ private def sizeFileLeadings : Nat → List (String × Nat)
       ("huge", 52000), ("Huge", 63000)]
   | _ => []
 
-/-- **The `\baselineskip` a named size sets**, which `\strut` reads (.7 of it
-above the baseline, .3 below) where a template switches to that size: the
-class option's size file's, where the body is that option's point size or the
-`\normalsize` its file sets, stretched by the page's `\linespread` factor;
-elsewhere the engine's own leading of the size (`leadingFor`). -/
+/-- The `\baselineskip` a named size sets: the size file's where the body is
+an option's size, else the engine's leading of the size. -/
 public def sizeFileLeading (body : Sp) (leading : Nat) (name : String) : Sp :=
   match displayOptions.find? fun o => Dim.pt o.1 == body || o.2 == body with
   | some (opt, _) =>
@@ -9449,15 +6649,7 @@ public def sizeFileLeading (body : Sp) (leading : Nat) (name : String) : Sp :=
     | none => leadingFor (scaleStep body name) leading
   | none => leadingFor (scaleStep body name) leading
 
-/-- **A block title's `\baselineskip`**, which its box's lines stand apart by
-and its `\strut` reads (.7 of it above the baseline, .3 below), from the size
-its font template sets outermost: a `\fontsize`'s own leading (`size*` in
-`\setbeamerfont`), stretched by the page's `\linespread` as `\selectfont`
-stretches `\f@baselineskip`; a named size's, the size file's
-(`sizeFileLeading`) or, on a size ladder of the document's own, the engine's
-leading of that size; with no size, the page's. A length, its font-relative
-parts kept, so each backend resolves them in the font it sets: the one value
-the PDF's title box and the stylesheet's empty title box read. -/
+/-- A block title's `\baselineskip`, from the size its font template sets outermost. -/
 public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading : Nat)
     (env : MeasureValues) (font : Option (Array Inline)) : Length :=
   match (font.bind (·[0]?) : Option Inline) with
@@ -9467,21 +6659,12 @@ public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading
   | some (.styled (.fontSize _ lead) _) => (lead.eval env.find).width.scale leading 1000
   | _ => .ofSp (leadingFor body leading)
 
-/-- The token resolves to the strut it is defined as: at the slides
-class's `\large` title step, `frametitlepadding` and `frameTitleStrut`
-agree — the dtx's one value, spelled once as a token and once as the
-kernel's strut. Per-base `decide`, with `titleAuthorStrut`'s caveat:
-em-resolution floors, so the general equality is false off the shipped
-bases. -/
 public theorem frameTitlePadding_exact :
     frameTitlePadding.width.resolve (scaleStep slidesFontSize "large") 0 =
       frameTitleStrut (scaleStep slidesFontSize "large") := by
   decide
 
-/-- The kernel's page models: how content maps onto the surfaces the paged
-backends draw. Three today; `report`'s chapter-opens-a-page is the one
-candidate fourth. HTML is continuous scroll whatever the model —
-scroll-vs-page is per medium, the model per document. -/
+/-- The kernel's page models: how content maps onto the surfaces the paged backends draw. -/
 public inductive PageModel where
   /-- Content flows into a sequence of pages (`article`'s model). -/
   | flow
@@ -9491,146 +6674,80 @@ public inductive PageModel where
   | face
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The page-count bound a class implies, when it implies one: a literal
-(`resume`: fits one page) or the document's own declared faces (`card`). -/
+/-- The page-count bound a class implies: a literal, or the document's own declared faces. -/
 public inductive PagesBound where
   | lit (op : CmpOp) (n : Int)
   | faces
   deriving Repr, BEq
 
-/-- A document class is a record over one of the kernel's page models:
-defaults, furniture flags, implied assertions, build intent — values only,
-no code. A class that needs layout code rather than fields here is asking
-for a new page model and that is a kernel discussion, not a class. -/
+/-- A document class as a record over one of the kernel's page models:
+defaults, furniture flags, implied assertions, build intent. -/
 public structure ClassRecord where
   model : PageModel
-  /-- The class's body-size default, when it declares one (`slides`:
-  beamer's documented 11 pt, user guide §18.2.1). -/
+  /-- The class's body-size default, when it declares one (`slides`: beamer's documented 11 pt). -/
   fontSize : Option Sp := none
-  /-- The class's paragraph-separation default, when it declares one.
-  `resume` declares zero: the LaTeX résumé lineage (moderncv.cls keeps the
-  standard classes' zero `\parskip`) spaces entries by declared rhythm,
-  not by paragraph skips — the same value compat injects when a foreign
-  résumé class is rewritten, so the native spelling and the rewritten one
-  agree. `slides` declares zero too, and for the same reason the source
-  does: beamer sets `\parskip` to `0pt` (beamerbasemisc.sty, with its
-  `plus 1pt` stretch commented out), so a frame spends nothing between
-  paragraphs. A frame is a fixed stage rather than a run of pages, so the
-  quantum an article spends per paragraph accumulates against a height
-  that cannot grow: it is what pushed content that fits beamer's stage
-  past this engine's, and a spilt frame costs a continuation page
-  (W0384). -/
+  /-- The class's paragraph-separation default, when it declares one. -/
   parskip : Option Dim.SymGlue := none
-  /-- Where the class's list spacing comes from (`listSkips`): the size
-  file of the standard classes, or beamer's own list family for a deck
-  and a poster (beamerposter loads beamer). -/
+  /-- Where the class's list spacing comes from (`listSkips`). -/
   lists : ListLineage := .sizeFile
-  /-- The preamble sets text in the sans family: beamer's `\familydefault`
-  is `\sfdefault`, so a package loaded with a deck or a poster measures its
-  lengths in Latin Modern Sans, where the standard classes' and moderncv's
-  preambles set Latin Modern Roman (`PreambleFace`). -/
+  /-- Whether the preamble sets text in the sans family, as beamer's
+  `\familydefault` is `\sfdefault`. -/
   preambleSans : Bool := false
-  /-- Headings number by default; `\section*` opts out either way.
-  `article` numbers (classes.dtx `\@startsection` with counters); a résumé
-  is scanned, not cross-referenced, so `resume` does not (moderncv.cls
-  sets its sections unnumbered), and `webpage` follows the web, whose
-  headings carry no numbering convention. -/
+  /-- Whether headings number by default; `\section*` opts out either way. -/
   numberHeadings : Bool := false
-  /-- The measure is judged against the readable band (W0201): continuous
-  prose classes only — slides are display text, a card one face of it. -/
+  /-- Whether the measure is judged against the readable band. -/
   measureBand : Bool := false
-  /-- Running head, foot and logo are legal furniture (a card carries
-  none: one face of display text, not a page of a run). -/
+  /-- Whether running head, foot and logo are legal furniture. -/
   runningFurniture : Bool := true
-  /-- Pages carry the physical page number, centred in the foot, unless
-  the document declares otherwise: LaTeX's `plain` page style — the
-  kernel's `\ps@plain` sets the foot to `\hfil\thepage\hfil` (ltpage.dtx)
-  and article.cls initialises `\pagestyle{plain}` (classes.dtx §Initial
-  values) — so an article's pages number themselves. `resume` does not:
-  the class already asserts one page, and a number on a known-single page
-  navigates nothing. `webpage` is HTML-primary and its print twin follows
-  the web, which numbers no pages; `slides` numbers frames through the
-  chrome (the deliberately separate sequence); a card is not a run. -/
+  /-- Whether pages carry the physical page number, centred in the foot,
+  unless the document declares otherwise. -/
   pageNumbers : Bool := false
-  /-- The chrome band and the slides furniture styles draw. -/
+  /-- Whether the chrome band and the slides furniture styles draw. -/
   chrome : Bool := false
-  /-- The class draws the `\title` family as a page-top headline band —
-  poster furniture (the gemini lineage's headline template draws the
-  declarations without a `\maketitle`); every other class waits for
-  `\maketitle`. -/
+  /-- Whether the class draws the `\title` family as a page-top headline band,
+  without a `\maketitle`. -/
   headline : Bool := false
   /-- How far the class's tinted grounds stand from its page when a palette is
-  generated from seeds (`SeedPalette.Targets.light`): a document's, or a
-  deck's and a poster's, read across a room. -/
+  generated from seeds. -/
   groundDepth : GroundDepth := .documents
-  /-- What the class asks of the colours nothing declares (`ClassRow`): the
-  standard classes' and the résumé's ink-only secondary text and unpainted
-  verbatim unless the class says otherwise. -/
+  /-- What the class asks of the colours nothing declares. -/
   colorRow : ClassRow := .latex
-  /-- The colour schemes the class's page offers where its document names
-  none (`\output{ schemes = … }`): a document every scheme; a deck, a poster
-  and a card, made to be shown as their author set them, their print, their
-  own screen and that screen's more contrast (`ClassSchemes`). -/
+  /-- The colour schemes the class's page offers where its document names none. -/
   schemes : ClassSchemes := .every
-  /-- Implied contract, checked against the shipped pages exactly as a
-  declared `\assert` is; a document declaring an assertion of the same
-  form is intent and takes control. The help beside each value is the
-  failure guidance E0330 prints. -/
+  /-- An implied page-count contract, checked against the shipped pages as a
+  declared `\assert` is. -/
   pagesBound : Option PagesBound := none
-  /-- Failure guidance for a `.lit` pages bound (`.faces` builds its own:
-  it names the counted faces). -/
+  /-- Failure guidance for a `.lit` pages bound. -/
   pagesHelp : String := ""
   /-- `textInArea` implied, with its failure guidance. -/
   inkInArea : Option String := none
   /-- `minXHeight` implied: the floor and its failure guidance. -/
   xHeightFloor : Option (Sp × String) := none
-  /-- The face's trade trim size (width × height), when the class fixes
-  one: a face is trimmed to a declared physical size, and the default is
-  the trade's, never a guess — the card's ISO/IEC 7810 ID-1, the
-  poster's ISO 216 A0. A declared `\page` geometry overrides. -/
+  /-- The face's trade trim size (width × height), when the class fixes one. -/
   trimDefault : Option (Sp × Sp) := none
-  /-- The face's print safe zone: the default margins, inside which a
-  drifting trim cannot cut. Print-shop guidance asks 3–5 mm on a card
-  (the engine takes the conservative 5); beamerposter sets 1 cm side
-  margins on a poster (`\geometry{hmargin=1cm}`). -/
+  /-- The face's print safe zone: the default margins, inside which a drifting trim cannot cut. -/
   safeMargin : Option Sp := none
   /-- Build intent when the document's `\output` names no formats. -/
   formats : Array String := #[]
-  /-- The markdown twin's default file name, when the class has one
-  (`webpage`: `llms.txt`, the llmstxt.org convention the twin exists
-  for). A document's own `md = "..."` overrides. -/
+  /-- The markdown twin's default file name, when the class has one. -/
   mdName : Option String := none
   deriving Repr, BEq
 
-/-- The document's class, closed: `article`, `slides`, `card`, `resume`,
-`webpage`, or `poster`. A class an `ofString?` does not answer is E0309 at the one
-parse site and never enters the IR, so every class-dependent decision
-downstream is a total decision over this type — a misspelled class in
-engine code is a compile error, and a new class does not build until
-`name`, `ofString?`, `record`, and every exhaustive match over the type
-answer it. -/
+/-- The document's class, closed: a class `ofString?` does not answer never enters the IR. -/
 public inductive DocClass where
   | article
   | slides
   | card
-  /-- Structurally an article — the flow model — with the résumé genre's
-  contract implied: fits one page, ink inside the margins, nothing below
-  the legibility floor. -/
+  /-- An article with the résumé genre's contract implied: one page, ink
+  inside the margins, nothing below the legibility floor. -/
   | resume
-  /-- Structurally an article; HTML-primary, the PDF the print
-  stylesheet's analogue. Declares its own build intent (html + md). -/
+  /-- An article, HTML-primary, declaring its own build intent (html and md). -/
   | webpage
-  /-- One fixed, printed, trimmed surface at a large base — the face
-  model's second class. beamerposter's own mechanics decided the model:
-  the package sets a real paper size and replaces the size ladder with
-  absolute values; nothing frame-model survives (no overlays on a printed
-  sheet, no stage, no per-frame pagination). Column and block vocabulary
-  is content structure, shared with decks, orthogonal to the model. -/
+  /-- One fixed, printed, trimmed surface at a large base: the face model's second class. -/
   | poster
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The class's one spelling — the `\documentclass` argument and the dump
-header alike. -/
+/-- The class's one spelling, the `\documentclass` argument. -/
 public def DocClass.name : DocClass → String
   | .article => "article"
   | .slides => "slides"
@@ -9639,8 +6756,7 @@ public def DocClass.name : DocClass → String
   | .webpage => "webpage"
   | .poster => "poster"
 
-/-- The class a `\documentclass` argument names, if any: the inverse of
-`name`, and the one door a class enters the IR through. -/
+/-- The class a `\documentclass` argument names, if any: the inverse of `name`. -/
 public def DocClass.ofString? : String → Option DocClass
   | "article" => some .article
   | "slides" => some .slides
@@ -9653,16 +6769,8 @@ public def DocClass.ofString? : String → Option DocClass
 public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
   cases c <;> rfl
 
-/-- Each class as its record — one shape for all five, so a new class is
-one constructor and one row here, and anything a row cannot say is a page
-model question. Sources: slides' 11 pt is beamer's (user guide §18.2.1);
-the card's floor is the fluent-reading angular x-height at hand-held
-distance, 1.4 mm at 40 cm (Legge & Bigelow 2011), and `resume` shares it —
-a résumé is read at the same distance; `resume`'s one-page bound is the
-genre's own contract (the reason one asks for a résumé and not a CV);
-`webpage`'s build intent is html plus the markdown twin, the llms.txt
-convention (llmstxt.org), with the print twin opt-in — the class carries
-what to build the way `\documentclass` already carries the page model. -/
+/-- Each class as its record: slides' 11 pt is beamer's, the card's and
+résumé's floor the fluent-reading x-height at hand-held distance. -/
 @[expose] public def DocClass.record : DocClass → ClassRecord
   | .article =>
     { model := .flow
@@ -9728,33 +6836,20 @@ the trim; declare \\assert{ text.in_area } to take control"
 at 1m, the distance where a poster body at beamerposter's own 24.88pt \
 calibration reads fluently; declare \
 \\assert{ text.xheight >= ... } to take control")
-      -- ISO 216 A0, landscape: beamerposter's default board. The measure
-      -- band stays off as an honest gap: its judge reads the page text
-      -- width, and a poster's column is the real measure.
+      -- ISO 216 A0, landscape: beamerposter's default board.
       trimDefault := some (Dim.mm 1189, Dim.mm 841)
       safeMargin := some (Dim.mm 10) }
 
-/-- **A document's class defaults**: its class's colour row and ground depth,
-a markdown note on the web's row whatever its class — a markdown source can
-declare nothing, and what its surface defaults is the web's. -/
+/-- A document's class defaults: its class's colour row and ground depth, the
+web's row for a markdown source. -/
 @[expose] public def DocClass.classColors (c : DocClass) (surface : Surface) : ClassColors :=
   { row := if surface == .markdown then .web else c.record.colorRow
     depth := c.record.groundDepth }
 
-/-- The class fixes the page model: a poster is a face — one fixed,
-printed, trimmed surface — by the record, definitionally. -/
 public theorem poster_model_face : (DocClass.poster).record.model = .face := by rfl
 
-/-- The font a package measures its lengths in as it loads: the preamble's
-current font, which is Latin Modern at the class's `\normalsize`
-(`optionNormalSize`: 10.95 pt under `11pt`) — its sans under beamer
-(`ClassRecord.preambleSans`), its roman under the standard classes and
-moderncv. booktabs assigns its `\dimen`s once, there (`\heavyrulewidth=.08em
-… \belowrulesep=.65ex`, booktabs.dtx), so its em and ex are this face's and
-never a table's own. The x-heights are lualatex's `\fontdimen5` of lmsans10
-(4.44pt at 10pt) and lmroman10 (4.31pt), per mille of the size. A face the
-document declares before booktabs loads would be the preamble's font
-instead; the engine does not measure that one and names the loss (W0398). -/
+/-- The font a package measures its lengths in as it loads: Latin Modern at
+the class's `\normalsize`, its sans under beamer. -/
 public structure PreambleFace where
   size : Sp
   xHeight : Sp
@@ -9770,27 +6865,16 @@ at Latin Modern's x-height there. -/
 public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
   l.resolve face.size face.xHeight
 
-/-- The table lengths a preamble declares (`tableLengths`' names), as LaTeX
-assigns them: `\setlength` evaluates its em and ex where it stands, which in
-the preamble is the preamble's font (`PreambleFace`), so
-`\setlength{\belowrulesep}{1ex}` is 4.31pt in a 10pt article whatever face
-and size its tables set in. Every other token is left as declared, and so
-is a table length a body declares: it resolves where the table reads it. -/
+/-- The table lengths a preamble declares, fixed as `\setlength` evaluates
+them in the preamble's font. -/
 public def PreambleFace.fixTableLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
   { entries := tk.entries.map fun (n, g) =>
       if (tableLengths.lookup n).isSome then
         (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
       else (n, g) }
 
-/-- The poster's headline band: title, authors, institute — the `\title`
-family read as class furniture, the way the gemini lineage's headline
-template reads the declarations without a `\maketitle`
-(beamerthemegemini.sty, the headline template over `\inserttitle`,
-`\insertauthor`, `\insertinstitute`). One value both backends consume:
-the PDF lays it as the face's page-top band in the `frametitle` roles,
-HTML as the page's `<header>`. Assembled once, at `Elab`'s document
-assembly, only for a class whose record declares the band
-(`ClassRecord.headline`). -/
+/-- The poster's headline band: title, authors, institute, the `\title` family
+read as class furniture. -/
 public structure Headline where
   title : Array Inline
   author : Array Inline := #[]
@@ -9798,37 +6882,19 @@ public structure Headline where
   deriving Repr, BEq, Inhabited
 
 /-- One piece of recovered ink: the loss that named it, the command it stood
-for, and the source text the recovery kept. `Salvage` is taken, and means
-something else — where a floor's *characters* come from — so this carries the
-other half of the same vocabulary: which construct the characters came from.
-
-`subject` is the tie to the diagnostic that paid for it. Every refusal that
-recovers goes through `Elab.warnOnce` with the key `"ctrl:<name>"`, which
-lands on `Diag.subject` — the structured dedup key, never the message text
-(`pending_named` is the shape this follows). So an entry is accounted for
-when some diagnostic carries the same subject.
-`Elab.control_completion_contract` proves recovery accounting at the executed
-frontend's final output; `salvageChecks` checks that distinction over the
-corpus and invented probes. -/
+for, and the source text the recovery kept. -/
 public structure Recovered where
   code : DiagCode
   /-- The refused command's name, without its backslash. -/
   command : String
-  /-- The source the groups carried, as the author wrote it: what the census
-  asks about when it wants to know whether a word on the page is salvage. -/
+  /-- The source the groups carried, as the author wrote it. -/
   text : String
   deriving Repr, BEq
 
-/-- The diagnostic subject a recovery is paid for under: `warnOnce`'s own
-key, so the accounting compares structured fields rather than parsing a
-message. -/
+/-- The diagnostic subject a recovery is paid for under: `warnOnce`'s own key. -/
 @[expose] public def Recovered.subject (s : Recovered) : String := "ctrl:" ++ s.command
 
-/-- What a boundary request draws: a `tikzpicture` body, or a whole
-commutative diagram. tikz-cd opens its own picture around its matrix
-(tikzlibrarycd.code.tex: `\tikzcd` is `\tikzpicture` with the diagram's
-keys), so a diagram's source stands outside any `tikzpicture` and the
-standalone opens the diagram's own environment around it. -/
+/-- What a boundary request draws: a `tikzpicture` body, or a whole commutative diagram. -/
 public inductive PicKind where
   | picture
   | cd
@@ -9839,11 +6905,8 @@ public inductive PicKind where
   | .picture => "tikzpicture"
   | .cd => "tikzcd"
 
-/-- The standalone's document opening, through the size switch in force
-where the picture stands (`switch`, spelled by `pictureSwitch`) and the
-kind's environment opening: one literal per kind where no switch stands, so
-a picture's request is spelled as it always was
-(`wrapStandalone_picture_exact`). -/
+/-- The standalone's document opening, through the size switch in force where
+the picture stands, and the kind's environment opening. -/
 @[expose] public def PicKind.docOpen : PicKind → Option String → String
   | .picture, none => "\\begin{document}\n\\begin{tikzpicture}"
   | .cd, none => "\\begin{document}\n\\begin{tikzcd}"
@@ -9854,23 +6917,16 @@ a picture's request is spelled as it always was
   | .picture => "\\end{tikzpicture}\n\\end{document}\n"
   | .cd => "\\end{tikzcd}\n\\end{document}\n"
 
-/-- One boundary request as the document wrote it: its kind and its body —
-everything between the environment's `\begin` and `\end`, the option
-bracket included — and the size switch in force where it stands, by its
-ladder name, when that is not `normalsize`: TeX sets a picture's text at
-the size in force (a `\large` before a display sets the diagram's cells
-large), so the standalone switches to it before the picture. -/
+/-- One boundary request as the document wrote it: its kind, its body, and the
+size switch in force where it stands. -/
 public structure PicSrc where
   kind : PicKind
   body : String
   size : Option String := none
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The source a request's identity is the hash of: a picture's body as
-written, or a diagram's whole environment, after the size switch in force
-— so neither kind can share an identity with the other, one body at two
-sizes is two pictures, and a picture at the body size has the identity it
-always had. -/
+/-- The source a request's identity is the hash of: the body or the whole
+diagram environment, after the size switch in force. -/
 @[expose] public def PicSrc.source (s : PicSrc) : String :=
   let core := match s.kind with
     | .picture => s.body
@@ -9881,158 +6937,87 @@ always had. -/
 
 public structure Doc where
   docClass : DocClass := .article
-  /-- The surface the document was written in (`Surface.ofPath`). -/
   surface : Surface := .tex
   classOptions : String := ""
   page : PageSpec := {}
   fonts : FontSpec := {}
   palette : Palette := {}
   tokens : Tokens := {}
-  /-- The caption positions the document declares (`captionPosOf` reads
-  them): a float type's scope, or `""` for every type, and where its
-  captions are placed for. -/
+  /-- The caption positions the document declares, by float type scope (`""` for every type). -/
   captionPos : Array (String × CaptionPos) := #[]
   /-- `\runninghead` / `\runningfoot`: one line of inline content each, laid
-  out in the margin after the body, when the page count is known. -/
+  out in the margin after the body. -/
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
-  /-- beamer's `\logo`: one piece of inline content — normally an image —
-  placed at the lower-right corner of every page carrying running content,
-  the way the head and foot are placed. -/
+  /-- beamer's `\logo`: inline content placed at the lower-right corner of
+  every page carrying running content. -/
   logo : Option (Array Inline) := none
-  /-- The headline band a headline class draws (`ClassRecord.headline`;
-  the poster today): the `\title` family as furniture. `none` on every
-  other class and when no title is declared. -/
+  /-- The headline band a headline class draws; `none` on every other class
+  and when no title is declared. -/
   headline : Option Headline := none
-  /-- `\logoleft` / `\logoright`: the headline band's two corner slots
-  (the gemini lineage's own commands), each one piece of inline content —
-  normally an image — placed by the furniture pass in the band's corner,
-  the `\logo` machinery's shape. Only a page carrying the band draws
-  them. -/
+  /-- `\logoleft` / `\logoright`: the headline band's two corner slots. -/
   logoLeft : Option (Array Inline) := none
   logoRight : Option (Array Inline) := none
-  /-- First page that carries the running head (`\runninghead[from = 2]`
-  keeps the opening page clean, as a title page is). The gate is the
-  declaration's own: each `\runninghead` sets it — to its `[from]`, or back
-  to 1 when the option is not given — and never its sibling's. -/
+  /-- First page that carries the running head (`\runninghead[from = 2]`). -/
   headFrom : Nat := 1
-  /-- First page that carries the running foot: `\runningfoot`'s own gate,
-  the mirror of `headFrom`. `\thispagestyle{empty}` on the opening page sets
-  both to `2` — fancyhdr's page style genuinely covers both. -/
+  /-- First page that carries the running foot; `\thispagestyle{empty}` on the
+  opening page sets both to `2`. -/
   footFrom : Nat := 1
-  /-- Slide chrome: the themed default footer's slots. `foot` wins over it. -/
+  /-- Slide chrome, the themed default footer's slots, which `foot` wins over. -/
   chrome : Chrome := {}
-  /-- Whether the document itself declared `\chrome` (not a theme installing
-  its default): the author who names the footer's slots has declared what
-  the band holds, so mixing the frame sequence with the physical one there
-  is said, not silent (`footerSequenceDiags`). -/
+  /-- Whether the document itself declared `\chrome`, not a theme installing its default. -/
   chromeDeclared : Bool := false
-  /-- The frame-alignment keys the deck's theme sets (`Theme.frameKeys`):
-  the glue each of `[t]`, `[c]` and `[b]` spends around a frame's body. -/
+  /-- The frame-alignment keys the deck's theme sets (`Theme.frameKeys`). -/
   frameKeys : FrameKeys := .beamer
   styles : Styles := {}
   info : Meta := {}
   output : OutputSpec := {}
   asserts : Array Assertion := #[]
   /-- `\allow{W0307, ...}`: diagnostic codes whose losses this document
-  accepts. The driver downgrades those errors to warnings and always prints
-  the acceptance, so it is declared and visible, never ambient. -/
+  accepts, downgraded to warnings and always printed. -/
   allow : Array String := #[]
-  /-- natbib as the document declared it: `none` when natbib is not loaded —
-  LaTeX's own `\cite` then, numbers in square brackets — and otherwise its
-  punctuation declarations in the order natbib applies them, in its own
-  `\setcitestyle` vocabulary: a load's options expanded in natbib's
-  declaration order, then each preamble `\setcitestyle`. Resolution replays
-  them against the bibliography style (`Bib.CitePunct.ofDoc`), because the
-  style may be declared after every citation. -/
+  /-- natbib as the document declared it: `none` when not loaded, else its
+  punctuation declarations in the order natbib applies them. -/
   natbib : Option (Array String) := none
   /-- The boundary tool in force: the external TeX the driver runs for
-  pictures outside the rendered subset — the document's pin
-  (`\pictures{ tool = lualatex }`, or the `\tikzexternalize` spelling) or
-  the engine default, the boundary being open by default. `none` is the
-  declared refusal (`tool = none`): nothing routes, so no request rides. -/
+  pictures outside the rendered subset. -/
   pictureTool : Option String := some "lualatex"
-  /-- Whether the document lets an external converter draw a figure the
-  engine cannot draw whole — a PDF figure's web face, an SVG figure: open
-  by default; `\figures{ convert = none }` is the declared refusal, under
-  which the engine's own drawing ships with every loss named. -/
+  /-- Whether an external converter may draw a figure the engine cannot draw
+  whole; `\figures{ convert = none }` refuses. -/
   figureConvert : Bool := true
-  /-- The boundary requests this document states: `(id, src)` — the
-  request's identity is the content hash of the author's bytes
-  (`PicSrc.source`), and `src` the picture or diagram as written, with its
-  kind — the `bibRefs` shape. The request the driver fulfils is formed at
-  the request site (`pictureRefs`): the body wrapped with
-  `picturePreamble`, the document's font roles, and exactly the palette
-  roles its body and carried declarations mention, so its colours and faces
-  are the page's (`Design.ofDoc` reads the same palette). The result embeds
-  through the image path as a measured form XObject. The trust label: the
-  engine claims the *box*, never the contents. -/
+  /-- The boundary requests this document states: `(id, src)`, the identity
+  the content hash of the author's bytes. -/
   pictureSrcs : Array (String × PicSrc) := #[]
-  /-- The preamble a boundary standalone needs beyond the document's
-  design: non-native package loads and the tikz-family set lines, as
-  written (`Compat.boundaryDecls`). Set once by the elaborator. -/
+  /-- The preamble a boundary standalone needs beyond the document's design:
+  non-native package loads and tikz set lines, as written. -/
   picturePreamble : String := ""
   /-- The directories graphicx searches for an included file after the
-  document's own (`\graphicspath{{dir/}…}`, grfguide §4.5), in its order:
-  each graphics extension is looked for as written, then under each
-  directory (`Image.searchCandidates`). The last declaration stands, as
-  graphics.sty's `\def\Ginput@path` does. Set once by the elaborator. -/
+  document's own (`\graphicspath{{dir/}…}`), in order. -/
   graphicsPath : Array String := #[]
-  /-- The document's own macro definitions, in document order: the name,
-  and the declaration as the boundary standalone reads it. Captured as the
-  document wrote it rather than spelled back from a native `UserCmd`,
-  because an optional argument's default is the one part the native form
-  drops. The request site carries the subset its body and carried preamble
-  reach (`macroDecls`, `macroDecls_covers`), so a picture that spells a
-  document macro is drawn with it. -/
+  /-- The document's own macro definitions, in document order: the name, and
+  the declaration as the boundary standalone reads it. -/
   pictureMacros : Array (String × String) := #[]
   /-- The ink this document carries that its author did not write: one entry
-  per construct the engine refused and recovered, in flow order.
-
-  The engine's floor for a construct it cannot render is that construct's
-  *content*, never its spelling, and for prose that floor is right — a
-  refused `\emph{text}` still ships "text". For a control-plane command the
-  argument is a keyword, and the same floor puts a stray word on the page:
-  `\setlayout{fullpage}` ships "fullpage" in both backends. Nothing could
-  say so, because recovered ink was byte-identical to authored prose, and two
-  claims failed on that: a statement that a control command's groups
-  contribute no ink could not be made general, and an artifact check that
-  content ink may not spell a preamble argument accused two innocent
-  fixtures.
-
-  A census rather than a mark in the tree, because both claims quantify over
-  the *whole* document's ink — "the keyword is nowhere in it", "this ink is
-  salvage, do not accuse it" — and neither asks where the salvage stands.
-  What this therefore cannot answer is a claim about one region's ink; that
-  wants a wrapper node, which costs an arm in every walk and both backends,
-  and is worth paying when a claim needs it and not before. -/
+  per refused and recovered construct, in flow order. -/
   salvage : Array Recovered := #[]
-  /-- Where the frame numbering starts over: the body index of the first
-  block after `\appendix` in a deck that loads appendixnumberbeamer, whose
-  `\appendix` keeps the main part's last number as its total and sets
-  `framenumber` to 0 (`appendixnumberbeamer.sty`). `none` numbers the body
-  whole. -/
+  /-- Where the frame numbering starts over: the body index of the first block
+  after `\appendix` under appendixnumberbeamer. -/
   frameRestart : Option Nat := none
   /-- Where each `\bibliography` list's footnotes number from, in document
-  order: the footnote counter where its marker stands, and the notes its
-  fields set — numbered from there, in the order the list sets them, as
-  LaTeX's reading of the `.bbl` numbers them (`Bib.apply`). -/
+  order, and how many notes its fields set. -/
   listNotes : Array (Nat × Nat) := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
-/-- The document's one frame numbering: the body numbered whole, or — where
-`frameRestart` splits it — each part numbered from 1 on its own, as
-appendixnumberbeamer leaves beamer's counter. T2–T4 hold over each part. -/
+/-- The document's frame numbering: the body numbered whole, or each part from
+1 where `frameRestart` splits it. -/
 public def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
   match doc.frameRestart with
   | none => Ir.frameNumbers doc.body
   | some p =>
     Ir.frameNumbers (doc.body.extract 0 p) ++ Ir.frameNumbers (doc.body.extract p doc.body.size)
 
-/-- The numbering's denominator at body index `i`: the count of the part `i`
-stands in — appendixnumberbeamer's `\inserttotalframenumber`, the main
-part's count before the restart and the appendix's after it. -/
+/-- The numbering's denominator at body index `i`: the count of the part `i` stands in. -/
 public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
   match doc.frameRestart with
   | none => Ir.frameCount doc.body
@@ -10044,11 +7029,8 @@ public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
 public def Doc.frameCount (doc : Doc) : Nat :=
   doc.frameCountAt 0
 
-/-- The name each frame is known by, at its body index: its number (in an
-appendix, `appendix-n`), an unnumbered standout frame `standout`,
-`standout-2`, …, a title page `titlepage`, `titlepage-2`, …; `none` at every
-other block. The web deck's stage names and a frame diagnostic's subject
-read this one array. -/
+/-- The name each frame is known by at its body index: its number,
+`standout-n` or `titlepage-n`; `none` at every other block. -/
 public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
   let nums := doc.frameNumbers
   let mut standouts := 0
@@ -10073,32 +7055,20 @@ public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
     | _ => out := out.push none
   return out
 
-/-- The document's preamble font: its class's (`PreambleFace.ofClass`) at
-its class size. The one resolving site both backends read a table's
-undeclared lengths from (`Layout.tableLength`, `HtmlDoc.tableLengthFallback`). -/
+/-- The document's preamble font, at its class size. -/
 public def Doc.preambleFace (doc : Doc) : PreambleFace :=
   PreambleFace.ofClass doc.docClass.record doc.page.fontSize
 
 /-- Where a deck's chrome may stand: a class whose record draws it, with no
-`\runningfoot` owning the foot. The one condition both backends read for
-beamer's frame furniture and text area — the PDF's footer and floor
-(`Layout.FrameArea`), the HTML deck's footer and stage. -/
+`\runningfoot` owning the foot. -/
 public def Doc.chromeAllowed (doc : Doc) : Bool :=
   doc.docClass.record.chrome && doc.foot.isNone
 
-/-- Whether a frame stands its body in beamer's text area — the paper's top
-edge (moloch's headline is empty) to `\footheight` above its bottom edge:
-wherever the chrome may stand (`Doc.chromeAllowed`), every frame but the
-title page, whose template places its own furniture. The one decision both
-backends read: the PDF's floor and opening (`Layout.frameAreaFor`), the web
-deck's stage and opening (`HtmlDoc.frameOpensBody`); `frame_area_agree`
-states the agreement. -/
+/-- Whether a frame stands its body in beamer's text area, the paper's top
+edge to `\footheight` above its bottom edge. -/
 public def frameInTextArea (chromeAllowed : Bool) (valign : VAlign) : Bool :=
   chromeAllowed && !(valign matches .golden)
 
-/-- appendixnumberbeamer's numbering, exactly: split at the restart, the
-main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
-(`frameNumbers_gapless`) over each part. -/
 public theorem Doc.frameNumbers_restart_exact (doc : Doc) (p : Nat)
     (h : doc.frameRestart = some p) :
     doc.frameNumbers.toList.filterMap id =
@@ -10107,8 +7077,6 @@ public theorem Doc.frameNumbers_restart_exact (doc : Doc) (p : Nat)
   simp only [Doc.frameNumbers, h, Array.toList_append, List.filterMap_append,
     frameNumbers_gapless]
 
-/-- The numbering indexes the body whole, restart or none: every consumer
-reads position `i` for block `i`. -/
 public theorem Doc.frameNumbers_size (doc : Doc) : doc.frameNumbers.size = doc.body.size := by
   unfold Doc.frameNumbers
   split
@@ -10116,47 +7084,32 @@ public theorem Doc.frameNumbers_size (doc : Doc) : doc.frameNumbers.size = doc.b
   · simp only [Array.size_append, Ir.frameNumbers_size, Array.size_extract]
     omega
 
-/-- Whether the artifacts carry the document's faces — the one resolving
-site the HTML's font shipment and the PDF's embedding read. A declared
-`fonts =` wins; undeclared, the rule is the one the driver always had: a
-document that told no stylesheet story (`css` unset) ships its faces, one
-that did (`css = own`, the site whose stylesheet owns fonts) ships none.
-Declaring `fonts = embedded` beside `css = own` is how such a site opts
-back in. -/
+/-- Whether the artifacts carry the document's faces: a declared `fonts =`
+wins, else the stylesheet rule. -/
 public def Doc.fontPolicy (doc : Doc) : FontPolicy :=
   match doc.output.contract.fonts with
   | some p => p
   | none => if doc.output.css.isNone then .embedded else .none
 
-/-- Undeclared, the policy is exactly the stylesheet rule (`_exact`): the
-refactor that made `shipFonts` a value changed no document's shipment. -/
 public theorem Doc.fontPolicy_exact (doc : Doc) (h : doc.output.contract.fonts = none) :
     doc.fontPolicy = (if doc.output.css.isNone then .embedded else .none) := by
   simp [fontPolicy, h]
 
-/-- Whether this document's pages carry the plain page number: the
-document's own `\page{ numbers = ... }` wins; an undeclared document takes
-its class record's default (`ClassRecord.pageNumbers`). One resolving site,
-read by layout's furniture pass and the driver's glyph precompute alike. -/
+/-- Whether pages carry the plain page number: the document's own
+`\page{ numbers = ... }`, else its class default. -/
 @[expose] public def Doc.pageNumbersOn (doc : Doc) : Bool :=
   doc.page.numbers.getD doc.docClass.record.pageNumbers
 
-/-- Whether counted body lines carry margin line numbers: the document's
-own declaration and nothing else — no class default turns line numbers
-on (the page key is a declared flag, never a default). One resolving
-site, read by layout's furniture pass and the driver's glyph precompute
-alike. -/
+/-- Whether counted body lines carry margin line numbers: the document's own
+declaration and nothing else. -/
 @[expose] public def Doc.lineNumbersOn (doc : Doc) : Bool :=
   doc.page.linenumbers.getD false
 
-/-- The line-number modulus in force: 1 — every counted line — unless
-declared. Floored at 1 so the printing test `count % modulus == 0` is
-meaningful for every declaration that reached the spec. -/
+/-- The line-number modulus in force, at least 1; 1 unless declared. -/
 public def Doc.lineModulo (doc : Doc) : Nat :=
   max 1 (doc.page.lineModulo.getD 1)
 
-/-- Render a symbolic glue the way it was declared, so goldens show intent
-rather than a resolved number. -/
+/-- A symbolic glue as it was declared, for goldens. -/
 public def dumpGlue (g : SymGlue) : String :=
   let part (l : Length) : String :=
     let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
@@ -10168,45 +7121,18 @@ public def dumpGlue (g : SymGlue) : String :=
   let minus := if g.shrink == ({} : Length) then "" else s!" minus {part g.shrink}"
   base ++ plus ++ minus
 
-/-- A sourced glue as the golden shows it: the declared value, and the
-token name it was resolved from when it had one. The name is what the
-HTML defers to, so an elaboration that dropped it is visible here. -/
+/-- A sourced glue as the golden shows it: the declared value and its token name. -/
 private def dumpSourcedGlue (g : Sourced SymGlue) : String :=
   match g.token with
   | some n => s!"{dumpGlue g.value} from {n}"
   | none => dumpGlue g.value
 
-/-- LaTeX's own punctuation: the characters that are markup in a math
-source and never its content. A page that ships one of these is showing a
-reader its source, which is the one recovery no diagnostic may choose — the
-honest floor for a construct the engine cannot model is the formula's text
-content, never its spelling. `&`, `^` and `_` are on the list because this
-is a *math* source: there the tab and the script marks are always markup,
-where in ordinary text an ampersand is content.
-
-A formula the parser *did* model is a different matter: there `\{` is the
-author asking for a brace glyph, and `formulaFloor` ships it, because the
-parse decided it was content. This list governs salvage from a source
-string, where that decision was never reached. -/
+/-- LaTeX's own punctuation: the characters that are markup in a math source
+and never its content. -/
 public def markupChars : List Char := ['\\', '{', '}', '$', '&', '^', '_', '~']
 
-/-- Control words whose leading `{...}` arguments name something rather
-than carrying content, with how many of them do: `\textcolor{indigo}{q}`
-sets `q` in a colour, so one argument is a name and the next is content,
-while `\rule{1pt}{2pt}` is two lengths and no content at all. Without the
-count the second length rode onto the page — markup-free by the character
-test and still nonsense to a reader.
-
-`\text`-like wrappers are deliberately absent: their argument *is* the
-content, and that is what the floor exists to keep.
-
-`\cancelto` earns its row for a sharper reason than the rest: its value
-argument is not merely noise on the page but a *false reading* —
-`\cancelto{0}{x}` shipped `0x`, a product, where the source says `x`
-cancels to `0`. A lossy floor is the contract; a floor that states the
-opposite of the source is not. Native math carries the strike and value;
-this policy still governs recovery when another construct makes the
-whole formula unrenderable, or a use appears outside mathematics. -/
+/-- Control words whose leading `{...}` arguments name something rather than
+carry content, with how many do. -/
 public def floorNamedArgs : List (String × Nat) :=
   [("textcolor", 1), ("colorbox", 1), ("fcolorbox", 2), ("color", 1),
    ("pagecolor", 1), ("label", 1), ("ref", 1), ("eqref", 1), ("tag", 1),
@@ -10215,8 +7141,7 @@ public def floorNamedArgs : List (String × Nat) :=
    ("parbox", 1), ("rule", 2), ("setlength", 2), ("addtolength", 2),
    ("cancelto", 1)]
 
-/-- Past a balanced `{...}` beginning at `i`, or past the end when it never
-closes. An index loop, so the bound is the array and no measure is owed. -/
+/-- Past a balanced `{...}` beginning at `i`, or past the end when it never closes. -/
 private def skipBalanced (cs : Array Char) (i : Nat) : Nat := Id.run do
   let mut j := i
   let mut depth := 0
@@ -10233,10 +7158,7 @@ private def skipBalanced (cs : Array Char) (i : Nat) : Nat := Id.run do
       j := j + 1
   return j
 
-/-- Past a `[...]` option run beginning at `i`, else `i` itself. A naming
-command's option run is markup with its arguments — without this step
-`\textcolor[rgb]{1,0,0}{x}` spent its named argument on the colour triple
-and shipped `rgb` as ink. -/
+/-- Past a `[...]` option run beginning at `i`, else `i` itself. -/
 private def skipOption (cs : Array Char) (i : Nat) : Nat := Id.run do
   if (cs[i]?).getD ' ' != '[' then return i
   let mut j := i + 1
@@ -10256,21 +7178,8 @@ private def skipFloorWs (cs : Array Char) (i : Nat) : Nat := Id.run do
     j := j + 1
   return j
 
-/-- Which characters of a math source are content: one flag per character.
-A control sequence's name is markup, and so are the leading arguments a
-`floorNamedArgs` command names rather than fills. Everything else is
-content — the character test (`markupChars`) then removes LaTeX's
-punctuation, so the two filters are independent and the salvage is
-markup-free whatever this walk decides.
-
-A naming command's arguments are consumed *positionally*, here at the
-command, rather than by a counter the next brace anywhere satisfies: the
-counter form let `\color\textcolor{red}{x}` spend one drop on `{red}` and
-the other on the content `{x}`, deleting the formula's only content with
-nothing said about it.
-
-Index loops throughout, so the bounds are the array and no measure is
-owed. -/
+/-- Which characters of a math source are content, one flag per character:
+control-sequence names and named arguments are markup. -/
 public def floorMask (src : String) : Array Bool := Id.run do
   let cs := src.toList.toArray
   let at? (k : Nat) : Char := (cs[k]?).getD ' '
@@ -10284,13 +7193,10 @@ public def floorMask (src : String) : Array Bool := Id.run do
       keep := keep.setIfInBounds i false
       let mut j := i + 1
       if j < cs.size && !(at? j).isAlpha then
-        -- a control symbol is one character: `\\`, `\,`, `\{`
         let sym := at? j
         keep := keep.setIfInBounds j false
         j := j + 1
-        -- `\\[2ex]` is how an author spaces an array's rows, so the row
-        -- separator's own option run is markup with it. Only this one: after
-        -- `\{` or `\,` a bracket is content.
+        -- Only `\\` takes an option run: after `\{` or `\,` a bracket is content.
         if sym == '\\' then
           let optStart := skipFloorWs cs j
           let stop := skipOption cs optStart
@@ -10306,23 +7212,12 @@ public def floorMask (src : String) : Array Bool := Id.run do
           name := name.push (at? j)
           keep := keep.setIfInBounds j false
           j := j + 1
-        -- a starred command's star is part of its name: without this the
-        -- positional scan below looked for `{` and found `*`, so
-        -- `\hspace*{1pt}` shipped its length.
         let star := skipFloorWs cs j
         if at? star == '*' then
           for m in [j:star + 1] do
             keep := keep.setIfInBounds m false
           j := star + 1
-        -- An option run immediately after the name is this command's, as
-        -- LaTeX reads it, whether or not the engine knows the command:
-        -- `\sqrt[3]{8}` shipped `[3]` and `\zzz[opt]{x}` shipped `[opt]`
-        -- because only a `floorNamedArgs` command ever swept one. The same
-        -- drop is already made in text (inside W0301's own accounting) and
-        -- in a node body, so this
-        -- is one rule at its third site rather than a new judgement. It is
-        -- keyed on the control word and not on the bracket: `[0,1]` standing
-        -- after no command is an interval, and content.
+        -- An option run right after the name is the command's, whether or not the engine knows it.
         let optStart := skipFloorWs cs j
         let optStop := skipOption cs optStart
         if optStop != optStart then
@@ -10332,10 +7227,7 @@ public def floorMask (src : String) : Array Bool := Id.run do
         if let some arity := floorNamedArgs.lookup name then
           for _ in [0:arity] do
             let opened := skipFloorWs cs (skipOption cs (skipFloorWs cs j))
-            -- The run up to the group — the space after the name and any
-            -- option run — is the command's too. Masked before the `{`
-            -- test, not inside it: masking only on the success path left
-            -- `[rgb]` on the page whenever the scan gave up.
+            -- Mask the run up to the group before the `{` test, so a failed scan still drops it.
             for m in [j:opened] do
               keep := keep.setIfInBounds m false
             if at? opened != '{' then
@@ -10345,8 +7237,7 @@ public def floorMask (src : String) : Array Bool := Id.run do
             for m in [opened:stop] do
               keep := keep.setIfInBounds m false
             j := stop
-          -- `\raisebox{lift}[height][depth]{body}`: the options trail the
-          -- named argument, so they are swept after the arity loop.
+          -- `\raisebox{lift}[height][depth]{body}`: options trail the named argument.
           for _ in [0:2] do
             let stop := skipOption cs j
             if stop == j then break
@@ -10354,10 +7245,7 @@ public def floorMask (src : String) : Array Bool := Id.run do
               keep := keep.setIfInBounds m false
             j := stop
       i := j
-  -- A second pass over the same mask squeezes the whitespace a dropped
-  -- command leaves behind: `\overset {x}` writes a space after its name,
-  -- and keeping it would indent the salvage. Dropping a character never
-  -- breaks the membership property `floorInk_mem` reads off the filter.
+  -- A second pass squeezes the whitespace a dropped command leaves behind.
   let survives (k : Nat) : Bool :=
     (keep[k]?.getD false) && !markupChars.contains (at? k)
   let mut lastSpace := true
@@ -10376,54 +7264,27 @@ public def floorMask (src : String) : Array Bool := Id.run do
     last := k
   return keep
 
-/-- What the salvage keeps: the math source's own content characters, with
-LaTeX's punctuation removed. Stated as a filter over the source so every
-character of it is a character of the source by construction — nothing is
-invented, and `floorInk_mem` reads straight off the filter. -/
+/-- What the salvage keeps: the math source's own content characters, LaTeX's
+punctuation removed. -/
 public def floorChars (src : String) : List Char :=
   let mask := floorMask src
   (src.toList.zipIdx.filterMap fun (c, i) =>
     if (mask[i]?.getD true) && !markupChars.contains c then some c else none)
 
-/-- The declared placeholder a formula sets when the salvage comes to
-nothing: `$\overset{\alpha}{\beta}$` is markup and symbol commands end to
-end, so its content characters are none at all, and the alternative to a
-placeholder is a blank where an equation stood. A blank is not an honest
-floor either — it tells a reader nothing was there. Bracketed, so it reads
-as a placeholder rather than as content, and markup-free, so it cannot
-break the property it is inserted under.
-
-It reaches the tagged tree and the alternative text as well as the page, and
-that is deliberate: a screen reader hearing nothing where an equation stood
-learns less than one hearing a placeholder, which is the same argument that
-put it on the page. -/
+/-- The placeholder a formula sets when its salvage comes to nothing. -/
 public def mathFloorPlaceholder : List Char := ['[', '\u2026', ']']
 
-/-- The characters a degraded formula actually inks: its salvage, or the
-declared placeholder when the salvage is empty. `floorInk_accounts` is the
-statement that the second case is never silent. -/
+/-- The characters a degraded formula inks: its salvage, or the placeholder
+when the salvage is empty. -/
 public def floorInk (src : String) : List Char :=
   let cs := floorChars src
   if cs.isEmpty then mathFloorPlaceholder else cs
 
-/-- The honest floor for math the elaborator cannot model: the formula's
-text content, or a visible placeholder when it has none. The alternative —
-setting the source as body text — puts control sequences on the page where
-an equation belongs, which is the worst recovery available: the reader is
-shown markup and cannot tell it from content. Both backends read this one
-function, so the floor is one decision; the construct is still named by its
-diagnostic, so the loss is announced rather than displayed.
-
-The floor drops a symbol command rather than translating it: the symbol
-table sits above the IR (it belongs to the math surface, which no backend
-may reach into), so a translating floor would either duplicate the table or
-invert the layering. A dropped symbol is named by the diagnostic; a shipped
-backslash is not. -/
+/-- The floor for math the elaborator cannot model: the formula's text
+content, or a visible placeholder when it has none. -/
 public def mathFloor (src : String) : String := String.ofList (floorInk src)
 
-/-- Math accents shared by parsing and the textual formula reading. The
-combining marks and stretch flags are unicode-math's accent table;
-`overline` uses U+0305 (TeXbook Appendix G, rule 9). -/
+/-- Math accents with their combining marks and stretch flags, from unicode-math's accent table. -/
 public def mathAccentCommands : List (String × Char × Bool) :=
   [("hat", '\u0302', false), ("widehat", '\u0302', true),
    ("tilde", '\u0303', false), ("widetilde", '\u0303', true),
@@ -10432,9 +7293,7 @@ public def mathAccentCommands : List (String × Char × Bool) :=
 
 namespace FormulaText
 
--- The math AST has its own mutually recursive lists, nuclei and grids.
--- A structural reading needs their boundaries; the glyph-coverage census
--- deliberately omits operators drawn as rules and cannot supply this text.
+-- A structural reading of the math AST: the glyph census omits rule-drawn operators.
 private def grouped (s : String) : String := (String.singleton '(' ++ s).push ')'
 
 private def optionalChar : Option Char → String
@@ -10723,36 +7582,17 @@ end
 
 end FormulaText
 
-/-- The shared plaintext reading of a parsed formula: fallback page text,
-picture labels, alternatives, outlines and tagged structure all read this.
-Grouping, `/`, scripts, roots and matrices follow AsciiMath's linear
-notation (https://asciimath.org/#syntax). Ruleless fractions are named
-`stack(num;den)`; cancellation names the mark and its operands; accents
-use the same names and marks as the parser.
-
-This is a readable structural floor, not a round-trip serialization of
-arbitrary word atoms. Parsed literal characters bypass the source filter:
-a parsed brace is content. Nonprinting spaces, ink switches and absent
-delimiters stay empty. -/
+/-- The shared plaintext reading of a parsed formula, in AsciiMath's linear notation. -/
 public def formulaFloor (body : Math.MList) : String := FormulaText.list "" body
 
-/-- The independent glyph census is a lower bound on the length of the
-structured recovery. In particular, a formula with a nonempty parsed census
-cannot recover to an empty string. This is character accounting, not a
-claim that every source token denotes a glyph. -/
 public theorem formulaFloor_content_covers (body : Math.MList) :
     (Math.MList.scalarsList #[] body).size ≤ (formulaFloor body).length := by
   simpa [formulaFloor] using FormulaText.list_length body #[] ""
 
-/-- Recolouring preserves the complete structural reading, including the
-operators and grouping that the scalar census does not count. -/
 public theorem formulaFloor_ink_id (f : Color → Option ColorRef → Color) (body : Math.MList) :
     formulaFloor (Math.MList.mapInk f body) = formulaFloor body :=
   FormulaText.list_mapInk f body ""
 
-/-- Fraction operands never read as their bare juxtaposition, even when
-one or both operands are empty. Grouping and the division sign belong to
-the shared structural reading, independently of the eventual backend. -/
 public theorem formulaFloor_separates (num den : Math.MList) :
     formulaFloor (.cons (.atom .ord (.frac {} num den) .nil .nil false) .nil) ≠
       formulaFloor num ++ formulaFloor den := by
@@ -10763,17 +7603,6 @@ public theorem formulaFloor_separates (num den : Math.MList) :
     String.length_append] at hlen
   omega
 
-/-- Nothing invented and no markup: every character of a formula's salvage
-is a character of its source, and none of them is LaTeX punctuation. The
-recoveries this replaced shipped the source itself, markup and all.
-
-What this does *not* say, since the distinction matters: it is an upper
-bound. It rules out invention and markup, and it holds for any `floorMask`
-whatever — including one that dropped everything. The lower bound is
-`floorChars_id`, which reads the index loops to establish the converse
-for literal content. The executable half meanwhile is the
-whole-string rows in `recoveryChecks`, which fail under both an
-all-dropping and an all-keeping mask. -/
 public theorem floorChars_mem (src : String) :
     ∀ c ∈ floorChars src, c ∈ src.toList ∧ c ∉ markupChars := by
   intro c hc
@@ -10792,7 +7621,6 @@ public theorem floorChars_mem (src : String) :
     simp only [hk] at hq
     simp at hq
 
-/-- A `filterMap` that keeps every element is the projection it keeps. -/
 private theorem filterMap_eq_map_fst {α β : Type} (l : List (α × β)) (g : α × β → Option α)
     (hg : ∀ p ∈ l, g p = some p.1) : l.filterMap g = l.map Prod.fst := by
   induction l with
@@ -10801,13 +7629,6 @@ private theorem filterMap_eq_map_fst {α β : Type} (l : List (α × β)) (g : �
     rw [List.filterMap_cons, hg p (by simp), List.map_cons,
       ih (fun q hq => hg q (by simp [hq]))]
 
-/-- **The mask of a markup-free source keeps every index.** Each of
-`floorMask`'s three loops preserves "the mask is still all-true": the
-naming-argument scan because no character is a backslash, so the branch
-that drops one is unreachable; the whitespace squeeze and the trailing trim
-because no character is whitespace — and the trim's own `survives` test
-supplies the bound that makes its character readable, so the invariant
-needs nothing about the descending cursor. -/
 public theorem floorMask_id (src : String)
     (h : ∀ c ∈ src.toList, c ≠ '\\' ∧ c ∉ markupChars ∧ c.isWhitespace = false) :
     floorMask src = Array.replicate src.toList.length true := by
@@ -10878,10 +7699,6 @@ public theorem floorMask_id (src : String)
   intro d hd
   exact hd
 
-/-- A math source with no control sequence, no LaTeX punctuation and no
-whitespace salvages to exactly itself: the floor keeps content, it is not
-merely free to drop it. The membership bound alone permits an all-dropping mask;
-this identity rules that out on literal content. -/
 public theorem floorChars_id (src : String)
     (h : ∀ c ∈ src.toList,
       c ≠ '\\' ∧ c ∉ markupChars ∧ c.isWhitespace = false) :
@@ -10896,10 +7713,6 @@ public theorem floorChars_id (src : String)
     simp [Array.getElem?_replicate, (h _ hmem).2.1]
     split <;> simp
 
-
-/-- The same fact over what actually reaches the page: every character a
-degraded formula inks is a character of its source or one of the declared
-placeholder's, and none of them is LaTeX punctuation. -/
 public theorem floorInk_mem (src : String) :
     ∀ c ∈ floorInk src,
       (c ∈ src.toList ∨ c ∈ mathFloorPlaceholder) ∧ c ∉ markupChars := by
@@ -10912,11 +7725,6 @@ public theorem floorInk_mem (src : String) :
   · obtain ⟨hsrc, hmk⟩ := floorChars_mem src c hc
     exact ⟨Or.inl hsrc, hmk⟩
 
-/-- An empty salvage is paid for, never shipped as a blank: a formula whose
-content characters are all markup inks the declared placeholder instead, so
-the page says something stood here. What it does not say is *what* — that is
-the diagnostic's, and `elabMathInline` words the empty case separately so the
-warning and the page agree. -/
 public theorem floorInk_accounts (src : String) : floorInk src ≠ [] := by
   simp only [floorInk]
   split
@@ -10924,65 +7732,20 @@ public theorem floorInk_accounts (src : String) : floorInk src ≠ [] := by
   · rename_i h
     simpa [List.isEmpty_iff] using h
 
-/-- Where a salvage's characters come from, which is what decides how much
-of the floor is checkable. The provenance rule the floor entries argue for,
-as a value the judge reads rather than a distinction three docstrings make
-in prose.
-
-`filtered` is salvage from an unparsed source: no parse decided anything, so
-the result is a subsequence of what the author wrote and LaTeX's punctuation
-is markup by the character test. `floorChars` is the one filtered salvage.
-
-`translated` is what a *parse* decided was content: the characters are the
-parse's own and not the source's. `\{` arrives as `{` because the author
-asked for a brace glyph and `x` arrives as `𝑥` because that is the letter a
-math list sets, so the character test would delete exactly what was meant —
-a reviewer once read both as leaks, which is the warning that this rule is
-easy to misread. `formulaFloor` and a node body's salvage are translated. -/
+/-- Where a salvage's characters come from, which decides how much of the floor is checkable. -/
 public inductive Salvage where
   | filtered
   | translated
   deriving Repr, BEq, DecidableEq
 
-/-- **The recovery floor as one judge, and the only thing every floor
-shares.** `Loss.floor` declares what a construct's place owes a reader; this
-says whether a salvage delivered it. Three clauses, each the generalisation
-of a statement that already stood at one floor and was re-derived at the
-next:
-
-* *shipped only where something is owed* — a `.refuse` or `.inert` floor
-  inks nothing. A run that writes no artifact has no page for a recovery to
-  stand on, and a construct with no content operand has nothing to salvage,
-  so ink in either place is invention rather than recovery. This is the
-  clause that keeps a `config` code from acquiring a placeholder.
-* *paid for* — a floor that owes ink delivers it whenever the construct
-  carried content. `floorInk_accounts` is this clause at the math floor and
-  `Picture.labelFloor_accounts` at a node label's, and the second was
-  written from scratch after the first was on the record.
-* *drawn, and markup-free* — every character shipped is one the construct
-  carried or one of the declared placeholder's, and none of them is LaTeX's
-  punctuation. `floorChars_mem` is this clause, and it binds a `filtered`
-  salvage only: a parse's decision about what is content is not this judge's
-  to overrule.
-
-What the judge deliberately does not express is the corollary the
-`\cancelto` entry adds — that the kept fragments may not compose into a
-*different* well-formed claim. `0x` where `x` cancels to `0` passes all
-three clauses and is still false, because the defect is in the arrangement
-rather than in any character. `floorNamedArgs` is the mechanism for the
-cases where dropping an operand fixes it; where both fragments are content
-the repair is a separator, which is `formulaFloor_separates`. -/
+/-- The recovery floor as one judge: whether a salvage delivered what
+`Loss.floor` declares a construct's place owes. -/
 @[expose] public def FloorHonest (f : Floor) (s : Salvage) (carried ink : List Char) : Prop :=
   (f.ships = false → ink = []) ∧
   (f.inks = true → carried ≠ [] → ink ≠ []) ∧
   (s = .filtered → ∀ c ∈ ink,
     (c ∈ carried ∨ c ∈ mathFloorPlaceholder) ∧ c ∉ markupChars)
 
-/-- Every shipping recovery code pays for a parsed formula's content.
-The reference is the parsed glyph census, independent of the formatter;
-raw source punctuation and length parameters can be intentionally nonprinting
-(`\big.` and an empty ruleless `\genfrac`, for example). This does not assert
-that the parser preserves arbitrary source content. -/
 public theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships) (body : Math.MList) :
     FloorHonest c.floor .translated
       (Math.MList.scalarsList #[] body).toList (formulaFloor body).toList := by
@@ -10995,38 +7758,16 @@ public theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships) (body : Ma
   have bound := formulaFloor_content_covers body
   omega
 
-/-- Did this construct carry content at all? The source's own content
-characters, read through the same mask the floor reads, so "carried content"
-is one question with one answer and not a judgement each raise site makes.
-
-A diagnostic that names a loss where the answer is no is naming a non-loss,
-which dilutes its one meaning and fails a `--werror` run for free — the
-defect W0385's own five neutral names were found to have. A raise site whose
-construct may carry nothing reads this before it warns. -/
+/-- Whether this construct carried content at all: the source's content
+characters, read through the floor's mask. -/
 public def floorCarries (src : String) : Bool := !(floorChars src).isEmpty
 
-/-- **Every registered code's floor is discharged by the salvage, for every
-code.** A diagnostic inherits its recovery from the loss it declares and
-chooses nothing: whatever a code in the registry demands of the construct's
-place, the math floor delivers. This is `floorInk_mem` and
-`floorInk_accounts` as one statement keyed on the loss — the two halves that
-stood in two places and were then derived a third time from scratch at a
-third site.
-
-The hypothesis is the one real constraint, and it is a routing rule rather
-than a formality: `floorInk` inks unconditionally, so a code whose floor
-does not ship may not be routed here. Sending a `config` or `info` code to
-this floor would put the declared placeholder where nothing was lost. -/
 public theorem floorInk_covers (c : DiagCode) (h : c.floor.ships) (src : String) :
     FloorHonest c.floor .filtered src.toList (floorInk src) := by
   refine ⟨fun hn => absurd (h.symm.trans hn) (by decide), fun _ _ => ?_, fun _ => ?_⟩
   · exact floorInk_accounts src
   · exact floorInk_mem src
 
-/-- The same statement at the one loss class that owes ink, spelled out so
-the registry's `degraded` codes have a named fact rather than an instance of
-a quantified one: the math floor is an honest `degraded` recovery for every
-source, including one whose content characters are none. -/
 public theorem floorInk_degraded_covers (src : String) :
     FloorHonest Loss.degraded.floor .filtered src.toList (floorInk src) := by
   exact ⟨fun hn => absurd (Loss.degraded_floor_ships_exact.symm.trans hn) (by decide),
@@ -11034,21 +7775,13 @@ public theorem floorInk_degraded_covers (src : String) :
     fun _ => floorInk_mem src⟩
 
 
-/-- Typographic punctuation, applied to ordinary text. `--` and `---` are the
-dashes an author means when they type them; `...` is an ellipsis. TeX's quote
-ligatures come first (TeXbook ch. 2: ``` `` ``` and `''` are how quotation
-marks are typed; Appendix F's Computer Modern ligature table adds the single
-`` ` `` → ‘ and the Spanish pairs !+backtick → ¡, ?+backtick → ¿); a straight
-double quote or lone apostrophe
-becomes the directional pair, chosen by what precedes it (so an apostrophe in
-"don't" closes). Literal text (mono, verbatim) is exempt — that is where a
-straight quote or backtick is the point. -/
+/-- Typographic punctuation for ordinary text: `--` and `---` as dashes, `...`
+as an ellipsis, and TeX's quote ligatures. -/
 public def smartPunct (s : String) : String :=
   String.ofList (go s.toList [])
 where
-  /-- `prev` is the output so far, reversed: its head is the character just
-  emitted, which is what decides quote direction. Two-character ligatures
-  match before the single-character arms. -/
+  /-- `prev` is the output so far, reversed; two-character ligatures match
+  before single characters. -/
   go : List Char → List Char → List Char
     | [], prev => prev.reverse
     | '-' :: '-' :: '-' :: rest, prev => go rest ('—' :: prev)
@@ -11071,12 +7804,9 @@ where
       go rest ((if opening then '‘' else '’') :: prev)
     | c :: rest, prev => go rest (c :: prev)
 
--- Display-only printers. Structural recursion through `List`, so no `partial`.
-
 mutual
 
-/-- The characters of inline content with every mark stripped: what a URL or
-a palette key built from a parameter is worth as text. -/
+/-- The characters of inline content with every mark stripped. -/
 @[expose] public def plainText (xs : Array Inline) : String :=
   plainTextList xs.toList
 
@@ -11101,15 +7831,11 @@ a palette key built from a parameter is worth as text. -/
     plainTextList firstPage.toList ++ plainTextList otherPage.toList
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount => ""
   | .image _ _ _ => ""
-  -- an icon is worth its text alternative: what the markdown twin renders
   | .icon _ label => label
-  -- an anchor ships no ink; a reference is worth what it resolved to
   | .label _ => ""
   | .ref _ _ text _ => text
-  -- a citation is worth the number it shows (or LaTeX's ? unresolved)
   | .cite _ keys => citeMarks keys
-  -- the note body is document text; its mark digit is generated ink,
-  -- excluded as a citation's mark is
+  -- The note body is document text; its mark digit is generated ink.
   | .footnote _ body => plainTextList body.toList
   | .linebreak _ => " "
 
@@ -11117,16 +7843,9 @@ end
 
 mutual
 
-/-- The text the first page of an overlay sequence shows, onto `acc`:
-`plainText`'s reading, except that an alternation contributes only the group
-stored first — the one step 1 inks (`OverlaySpec.showsFirst_id`). Covered
-content still reads, since it dims on the page and never hides. A name is
-one page's reading: a frame's anchor and its accessible name read this,
-while the census (`plainText`) carries both groups because both ship — read
-as the census, `\textcolor<2>{c}{Word}` named its frame "WordWord".
-Hand-rolled because the generic fold visits both groups. -/
--- conserves: none — one page's reading: an alternation's other group ships
--- on the other pages, and the census (`plainText`) counts it there.
+/-- The text the first page of an overlay sequence shows, onto `acc`;
+hand-rolled because the generic fold visits both alternation groups. -/
+-- conserves: none — one page's reading.
 public def firstPageTextOne (acc : String) (x : Inline) : String :=
   match x with
   | .altSteps _ firstPage _ => firstPageTextList acc firstPage.toList
@@ -11144,33 +7863,24 @@ public def firstPageTextList (acc : String) : List Inline → String
 
 end
 
-/-- The text the first page of an overlay sequence shows
-(`firstPageTextOne`), from nothing. -/
+/-- The text the first page of an overlay sequence shows. -/
 public def firstPageText (xs : Array Inline) : String := firstPageTextList "" xs.toList
 
 /-- The words a picture's labels set, in shape order, joined: what a sighted
-reader reads in the drawing. The one reading a picture's name takes, whoever
-draws it — the SVG's accessible name (`HtmlDoc.pictureName`), and the text
-alternative of the image the boundary returns for it, so a picture routed
-there keeps the name its own labels give it. -/
+reader reads in the drawing. -/
 public def Pic.Picture.said (pic : Pic.Picture) : String :=
   String.intercalate ", " (pic.labelContents.toList.filterMap fun content =>
     let s := plainText content
     if s.toList.any (!·.isWhitespace) then some s.trimAscii.toString else none)
 
-/-- The alternative a reader of either artifact gets for a picture, resolved
-once: what the author declared, else the words its own labels set
-(`said`) — latex-lab-tikz's default for a picture given no key hands a
-reader exactly its text — else nothing said. Both backends read this one
-value (`HtmlDoc.pictureRole`, `Struct`'s picture leaf). -/
+/-- The alternative a reader of either artifact gets for a picture: the
+author's declaration, else its labels' words. -/
 public def Pic.Picture.alternative (pic : Pic.Picture) : Alt :=
   match pic.alt with
   | .undeclared => Alt.declare pic.said
   | .decorative => .decorative
   | .described t => .described t
 
-/-- A declaration outranks the picture's words: the resolution changes only
-what the author left undeclared. -/
 public theorem Pic.Picture.alternative_fixed_point (pic : Pic.Picture) (h : pic.alt ≠ .undeclared) :
     pic.alternative = pic.alt := by
   unfold Pic.Picture.alternative
@@ -11179,17 +7889,13 @@ public theorem Pic.Picture.alternative_fixed_point (pic : Pic.Picture) (h : pic.
   | decorative => rfl
   | described _ => rfl
 
-/-- A role is a name around content, never content: the census reads
-straight through it, so no annotation can add or hide a character. -/
 public theorem role_plaintext (n : String) (body : Array Inline) :
     plainTextOne (.role n body) = plainTextList body.toList := by rfl
 
 mutual
 
-/-- One leaf-parameterised fold hosts every collect walk over the tree:
-`fi` reads each inline node — applied to the node itself, never to
-children, so the recursion below stays explicit and the checker sees it.
-Document order, a node before its content. -/
+/-- One leaf-parameterised fold for every collect walk: `fi` reads each inline
+node in document order, a node before its content. -/
 @[expose] public def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
   match x with
   | .styled _ body => foldInlineList fi (fi acc x) body.toList
@@ -11216,10 +7922,8 @@ end
 @[expose] public def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
   foldInlineList fi acc xs.toList
 
-/-- The first contributing source location, in document order. Enclosing
-declarations precede their content, so a delayed diagnostic retains the
-declaration's origin even when its value was parsed separately. -/
--- conserves: none — reads provenance through the generic inline fold.
+/-- The first contributing source location, in document order. -/
+-- conserves: none — reads provenance.
 public def inlineSource (content : Array Inline) : Option Span :=
   foldInlines (fun source inline => match inline with
     | .located span _ => source.orElse (fun _ => some span)
@@ -11235,9 +7939,7 @@ public def inlineSource (content : Array Inline) : Option Span :=
   | [] => acc
   | cell :: rest => foldTableCells fi (foldInlineList fi acc cell.toList) rest
 
-/-- `foldInline` over algorithm lines: each line's content, then its
-comment, in reading order — one spelling for every collector, so no two
-can disagree on what an algorithm declares. -/
+/-- `foldInline` over algorithm lines: each line's content, then its comment, in reading order. -/
 @[expose] public def foldAlgLines (fi : α → Inline → α) (acc : α) : List AlgLine → α
   | [] => acc
   | l :: rest =>
@@ -11250,27 +7952,18 @@ can disagree on what an algorithm declares. -/
   | [] => acc
   | row :: rest => foldTableRows fi (foldTableCells fi acc row.toList) rest
 
-/-- `foldInline` over a reference list's items: each entry's content, in
-list order. A field is read by the document's own inline elaborator, so an
-entry holds what the body's text holds — an image, a boundary picture, a
-footnote, a reference — and a collector reads it as it reads the body's. -/
+/-- `foldInline` over a reference list's items: each entry's content, in list order. -/
 @[expose] public def foldBibItems (fi : α → Inline → α) (acc : α) : List BibItem → α
   | [] => acc
   | it :: rest => foldBibItems fi (foldInlineList fi acc it.content.toList) rest
 
 mutual
 
-/-- The block face of the fold: `fb` reads each block, `fi` each inline —
-the node first, a frame's title and a float's caption before their bodies,
-as the collectors this fold hosts always read them. A `.bibliography`'s
-items are read after the marker, entry by entry (`foldBibItems`): their
-fields went through the inline elaborator the body's text goes through, so
-an image, a picture or a footnote a field sets is the document's as the
-body's are, and every collector that reads authored content sees it. -/
+/-- The block face of the fold: `fb` reads each block, `fi` each inline, the
+node first, a frame's title and a float's caption before their bodies. -/
 @[expose] public def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) (b : Block) : α :=
   match b with
   | .para content => foldInlineList fi (fb acc b) content.toList
-  -- the formula, then the number beside it: an author's tag is inline content
   | .equation number content =>
     foldInlineList fi (foldInlineList fi (fb acc b) content.toList) number.toList
   | .section _ _ _ title => foldInlineList fi (fb acc b) title.toList
@@ -11322,28 +8015,16 @@ body's are, and every collector that reads authored content sees it. -/
 
 end
 
-/-- `foldBlock` over a block tree: `bibRefs`, `bibStyleName`, and
-`BibStyle.citedKeys` are leaf projections of this one traversal. -/
+/-- `foldBlock` over a block tree. -/
 @[expose] public def foldBlocks (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (xs : Array Block) : α :=
   foldBlockList fb fi acc xs.toList
 
-/-- Whether blocks hold a list anywhere: what beamer's squeeze changes
-(`squeezeRole`), and so whether the overflow ladder squeezes a frame. -/
+/-- Whether blocks hold a list anywhere: what beamer's squeeze changes. -/
 public def holdsList (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .list ..) (fun acc _ => acc) false body
 
-/-- The events a context-threading walk declares. `foldBlock`'s pair of
-leaf functions is the case where no context descends and the way out is
-silent — `foldCtxBlock_covers` is that equality, and it is what makes a
-conversion to this walk a no-op on the artifact. Two things a leaf fold
-cannot express live here: a value bound over a node's *extent*, read from
-`γ` (the float binding a `\label` under a captioned float resolves
-against), and the *end* of a container, which a tree built from the IR
-needs and an accumulator reading a node before its content can never
-find. The context descends and does not escape — siblings are read under
-the context their parent opened them in, and `closeBlock` sees that same
-context, so a node's own binding cannot leak past where it stands. -/
+/-- The events a context-threading walk declares. -/
 public structure CtxFold (γ : Type) (α : Type) where
   /-- Entering a block: the accumulator, and the context its content is
   read under. -/
@@ -11358,10 +8039,8 @@ public structure CtxFold (γ : Type) (α : Type) where
 
 mutual
 
-/-- `foldInline`'s descent with a context and a close event: document
-order, a node before its content, the context `openInline` returns in
-force over that content alone. Structural mutual recursion through `List`,
-the same knot `foldInline` ties — no measure, and total by construction. -/
+/-- `foldInline`'s descent with a context and a close event: the context
+`openInline` returns is in force over that node's content alone. -/
 public def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) : α :=
   match x with
   | .styled _ body =>
@@ -11417,8 +8096,7 @@ public def foldCtxTableRows (w : CtxFold γ α) (ctx : γ) (acc : α) :
   | [] => acc
   | row :: rest => foldCtxTableRows w ctx (foldCtxTableCells w ctx acc row.toList) rest
 
-/-- `foldCtxInline` over algorithm lines: content then comment, the reading
-order `foldAlgLines` declares once for every collector. -/
+/-- `foldCtxInline` over algorithm lines: content then comment. -/
 public def foldCtxAlgLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List AlgLine → α
   | [] => acc
   | l :: rest =>
@@ -11426,18 +8104,15 @@ public def foldCtxAlgLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List AlgL
       | some c => foldCtxInlineList w ctx (foldCtxInlineList w ctx acc l.content.toList) c.toList
       | none => foldCtxInlineList w ctx acc l.content.toList) rest
 
-/-- `foldCtxInline` over a reference list's items, entry by entry: the
-reading order `foldBibItems` declares. -/
+/-- `foldCtxInline` over a reference list's items, entry by entry. -/
 public def foldCtxBibItems (w : CtxFold γ α) (ctx : γ) (acc : α) : List BibItem → α
   | [] => acc
   | it :: rest => foldCtxBibItems w ctx (foldCtxInlineList w ctx acc it.content.toList) rest
 
 mutual
 
-/-- The block face: `foldBlock`'s descent, arm for arm, with the context
-`openBlock` returns in force over the node's content and `closeBlock`
-called once that content is read — a `.bibliography`'s entries among that
-content, as `foldBlock` reads them. -/
+/-- The block face: `foldBlock`'s descent, with the context `openBlock`
+returns in force over the node's content and `closeBlock` called after it. -/
 @[expose] public def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
   match b with
   | .para content =>
@@ -11666,13 +8341,6 @@ public theorem foldCtxAlgLines_covers (fb : α → Block → α) (fi : α → In
 
 mutual
 
-/-- **The context walk covers the leaf fold** (`_covers`): with no context
-descending and a silent way out, `foldCtxBlock` reads exactly the nodes
-`foldBlock` reads, in exactly its order. The descent is declared twice in
-this file, so this is the statement that keeps the two copies one walk —
-the next `Ir` constructor descended in one and not the other fails here,
-and a caller moved from `foldBlocks` to `foldCtxBlocks` is provably a
-no-op. -/
 public theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (b : Block) : foldCtxBlock (CtxFold.ofFold fb fi) () acc b = foldBlock fb fi acc b := by
   match b with
@@ -11820,22 +8488,15 @@ public theorem foldCtxBlockCols_covers (fb : α → Block → α) (fi : α → I
 
 end
 
-/-- The tree face of `foldCtxBlock_covers`: `foldCtxBlocks` with no context
-is `foldBlocks`. -/
 public theorem foldCtxBlocks_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (xs : Array Block) :
     foldCtxBlocks (CtxFold.ofFold fb fi) () acc xs = foldBlocks fb fi acc xs :=
   foldCtxBlockList_covers fb fi acc xs.toList
 
-/-- Does any node of the inline content satisfy `p`? The Bool face of the
-fold — the trigger census the conditional-identity schema
-(`mapInlines_id`) and `hasPhysicalPage` read. -/
 @[expose] public def anyInline (p : Inline → Bool) (xs : Array Inline) : Bool :=
   foldInlines (fun b x => b || p x) false xs
 
-/-- An inline that emits an HTML anchor now or after reference/citation
-resolution. Conservatively counting citations keeps a later rewrite from
-creating an anchor inside an already-built block link. -/
+/-- An inline that emits an HTML anchor now or after reference and citation resolution. -/
 public def Inline.anchorBearing : Inline → Bool
   | .link _ _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => true
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
@@ -11849,12 +8510,7 @@ public def hasBlockAnchor (xs : Array Block) : Bool :=
   foldBlocks (fun found b => found || (b matches .link _ _))
     (fun found x => found || x.anchorBearing) false xs
 
-/-- Whether an inline leaf bears text ink a link affordance should mark. A
-link's underline and ink ride text; an image, an anchor, pure spacing or a
-strut carry none, so they take no affordance — which is what leaves an
-image-only link body with no invisible underline (its reachable, named
-anchor is the affordance instead). The wrapper nodes are descended by the
-afford walk and never classified here. -/
+/-- Whether an inline leaf bears text ink a link affordance should mark. -/
 public def Inline.bearsLinkText : Inline → Bool
   | .text _ | .math _ _ | .formula _ _ _ | .ref _ _ _ _ | .cite _ _
   | .icon _ _ | .pageNumber | .pageCount => true
@@ -11864,12 +8520,7 @@ public def Inline.bearsLinkText : Inline → Bool
   | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => false
 
 /-- One link-body leaf given its kind's affordance: a text-bearing leaf is
-underlined (`Decoration.underline`) and, where the kind declares one, set in
-its ink (`Styles.linkInk`'s colour) — the two affordances an inline link
-already carries (`Layout`'s `.link` arm, WCAG 2.2 SC 1.4.1); a leaf that
-bears no text is left as it stands, so an image-only body carries no
-invisible-only decoration. A leaf rewrite, so the afford walk applies it
-exactly once per leaf. -/
+underlined and set in the kind's declared ink. -/
 public def Styles.linkLeafAfford (s : Styles) (kind : String) (x : Inline) : Inline :=
   if x.bearsLinkText then
     match (s.find? kind).bind (·.color) with
@@ -11877,10 +8528,6 @@ public def Styles.linkLeafAfford (s : Styles) (kind : String) (x : Inline) : Inl
     | none => .decorated .underline #[x]
   else x
 
-/-- A text-bearing link-body leaf takes both affordances: it is underlined,
-and set in the kind's ink where one is declared. The IR half of the inline
-link's own `.link` + `linkInk` behaviour, now readable by both backends from
-one body. -/
 public theorem Styles.linkLeafAfford_afford (s : Styles) (kind : String) (x : Inline)
     (h : x.bearsLinkText = true) :
     s.linkLeafAfford kind x
@@ -11890,16 +8537,10 @@ public theorem Styles.linkLeafAfford_afford (s : Styles) (kind : String) (x : In
   simp only [Styles.linkLeafAfford, h, ite_true]
   rfl
 
-/-- A leaf that bears no text is untouched by the affordance: an image, an
-anchor or pure spacing takes no decoration, so an image-only link body
-carries no invisible-only wrap — its affordance is the named anchor. -/
 public theorem Styles.linkLeafAfford_id (s : Styles) (kind : String) (x : Inline)
     (h : x.bearsLinkText = false) : s.linkLeafAfford kind x = x := by
   simp [Styles.linkLeafAfford, h]
 
-/-- The affordance conserves a leaf's census: underline and ink are both
-body-transparent wraps, so an afforded leaf ships exactly the text it had —
-the per-leaf hypothesis the body walk's `_text` instance reads. -/
 public theorem Styles.linkLeafAfford_text (s : Styles) (kind : String) (x : Inline) :
     plainTextOne (s.linkLeafAfford kind x) = plainTextOne x := by
   rw [Styles.linkLeafAfford]
@@ -11908,9 +8549,7 @@ public theorem Styles.linkLeafAfford_text (s : Styles) (kind : String) (x : Inli
   · rfl
 
 
-/-- The accessible reading of a block link, from the same generic fold that
-censuses the block tree. Wrapper nodes contribute nothing twice; leaf text,
-listing text, reference entries, and non-text alternatives do. -/
+/-- The accessible reading of a block link, from the generic fold that censuses the block tree. -/
 private def blockLinkInlineReading (acc : String) (x : Inline) : String :=
   match x with
   | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
@@ -11928,7 +8567,6 @@ private def blockLinkBlockReading (acc : String) (b : Block) : String :=
       | none => ""
     String.append (String.append acc caption) content
   | .picture pic => String.append acc pic.alternative.text
-  -- a reference list's entries are the fold's own descent, read leaf by leaf
   | .bibliography _ _ _
   | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _ | .spaced _ _
   | .role _ _ | .link _ _ | .quote _ | .abstract _ | .titled _ _ _ | .disclosure _ _ _ | .equation _ _
@@ -11941,25 +8579,16 @@ public def blockLinkReading (body : Array Block) : String :=
   foldBlocks blockLinkBlockReading blockLinkInlineReading "" body
 
 
-/-- Unicode `White_Space` (PropList.txt, maintained under UAX #44): the
-closed set 0009–000D, 0020, 0085, 00A0, 1680, 2000–200A, 2028, 2029, 202F,
-205F, 3000. HTML forbids only ASCII whitespace in an id (§3.2.6), a subset
-of this set; treating every White_Space character as a separator also keeps
-the thin spaces the engine itself emits for `\,`/`\:`/`\;` out of anchors. -/
+/-- Unicode `White_Space` (PropList.txt): 0009–000D, 0020, 0085, 00A0, 1680,
+2000–200A, 2028, 2029, 202F, 205F, 3000. -/
 public def isWhiteSpaceUni (c : Char) : Bool :=
   let n := c.toNat
   (0x09 ≤ n && n ≤ 0x0D) || n == 0x20 || n == 0x85 || n == 0xA0 ||
   n == 0x1680 || (0x2000 ≤ n && n ≤ 0x200A) || n == 0x2028 || n == 0x2029 ||
   n == 0x202F || n == 0x205F || n == 0x3000
 
-/-- One character of an anchor: ASCII letters and digits lowercased, every
-other non-ASCII scalar kept (`none` marks a separator). HTML §3.2.6 places
-no restriction on an id beyond non-emptiness and the absence of ASCII
-whitespace, and the WHATWG URL fragment percent-encode set (§1.3) excludes
-non-ASCII — U+00A0–U+10FFFD are URL code points (§4.3) — so `Café`'s é
-belongs in its anchor rather than degrading to a hyphen. The keep-check
-runs on the already-lowered character, which is what makes
-`slugCharKeep_not_whitespace` a case split over its own guards. -/
+/-- One character of an anchor: ASCII letters and digits lowercased, other
+non-ASCII scalars kept, `none` a separator. -/
 private def slugCharKeep (k : Char) : Option Char :=
   if isWhiteSpaceUni k then none
   else if k.isAlpha || k.isDigit then some k
@@ -11969,8 +8598,7 @@ private def slugCharKeep (k : Char) : Option Char :=
 private def slugChar (c : Char) : Option Char :=
   slugCharKeep (if c.isAlpha || c.isDigit then c.toLower else c)
 
-/-- The slug walk: separators collapse to one hyphen, emitted only between
-kept characters, so no leading or trailing hyphen can exist by construction. -/
+/-- The slug walk: separators collapse to one hyphen, emitted only between kept characters. -/
 private def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
   | [] => acc
   | c :: rest =>
@@ -11980,16 +8608,7 @@ private def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
       else slugGo (acc.push k) false rest
     | none => slugGo acc true rest
 
-/-- An anchor id from a title's own text. Every static site generator derives
-ids this way, so an in-page `\href{#experience}` has a target by construction
-rather than by a label the author must remember to declare. The text is the
-title as its first page shows it (`firstPageText`): an overlay alternation
-names its title once, by the group step 1 inks — the census reading spelled
-both groups into one anchor. Non-emptiness — the other half of HTML §3.2.6's
-requirement — is `sectionize`'s job: an all-separator title takes the id
-`section`. Not done, stated rather than hidden: Unicode normalisation (UAX
-#15 NFC) — a composed and a decomposed `é` make two different anchors; PLAN
-carries the debt. -/
+/-- An anchor id from a title's own text. -/
 public def slug (title : Array Inline) : String :=
   String.ofList (slugGo #[] false (firstPageText title).toList).toList
 
@@ -12028,34 +8647,21 @@ private theorem slugGo_no_whitespace (l : List Char) (acc : Array Char) (sep : B
         · subst hd; exact hkw
     · exact ih acc true hacc
 
-/-- The addressability half of HTML §3.2.6's id contract, proved in the
-stronger Unicode form: no character of a slug is `White_Space`, so in
-particular none is ASCII whitespace ("The value must not contain any ASCII
-whitespace"). Non-emptiness is discharged at the one use site. -/
 public theorem slug_no_whitespace (title : Array Inline) :
     ∀ c ∈ (slug title).toList, isWhiteSpaceUni c = false := by
   intro c hc
   simp only [slug, String.toList_ofList] at hc
   exact slugGo_no_whitespace _ _ _ (by simp) c hc
 
-/-- **An alternating title anchors by the group its first page shows**
-(`_exact`): a title that is one overlay alternation takes the anchor of its
-first-page group alone, never of both groups — read as the census, a
-`\textcolor<2>{c}{Word}` title anchored its frame `wordword`. -/
 public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline) :
     slug #[.altSteps spec firstPage otherPage] = slug firstPage := by
   simp [slug, firstPageText, firstPageTextList, firstPageTextOne]
-
--- Navigation links: what a paged surface renders an unpinned nav as — the
--- document outline. Structural recursion through `List`, as the walks above.
 
 mutual
 
 /-- Every link of a navigation landmark's body, in document order, as
 (text, target). -/
--- conserves: none — a projection of the links alone: a nav is furniture on
--- the paged surface, and only its links are navigation; what its body must
--- NOT ship there is pinned by the webnav census and the nav layout tests.
+-- conserves: none — projects the links alone.
 private def navLinkList (out : Array (String × String)) : List Block → Array (String × String)
   | [] => out
   | b :: rest => navLinkList (navLinkOne out b) rest
@@ -12087,7 +8693,6 @@ private def navLinkOne (out : Array (String × String)) : Block → Array (Strin
   | .onSteps _ body => navLinkList out body.toList
   | .altSteps _ firstPage otherPage =>
     navLinkList (navLinkList out firstPage.toList) otherPage.toList
-  -- a speaker note is a side channel in every backend; never navigation
   | .note _ => out
   | .only _ body => navLinkList out body.toList
   | .nav _ body => navLinkList out body.toList
@@ -12095,7 +8700,6 @@ private def navLinkOne (out : Array (String × String)) : Block → Array (Strin
   | .table _ _ _ rows _ _ => navLinkRows out rows.toList
   | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
   | .algorithm _ _ lines => navLinkAlgLines out lines.toList
-  -- a resolved entry's content carries its URL and anchor links
   | .bibliography _ _ items => navLinkBibItems out items.toList
 
 private def navLinkBibItems (out : Array (String × String)) :
@@ -12137,7 +8741,6 @@ private def navLinkInlineList (out : Array (String × String)) :
   | x :: rest => navLinkInlineList (navLinkInline out x) rest
 
 private def navLinkInline (out : Array (String × String)) : Inline → Array (String × String)
-  -- the link whole: its text is the entry's title (a link cannot nest)
   | .link url body => out.push (plainTextList body.toList, url)
   | .styled _ body => navLinkInlineList out body.toList
   | .colored _ _ body => navLinkInlineList out body.toList
@@ -12149,7 +8752,6 @@ private def navLinkInline (out : Array (String × String)) : Inline → Array (S
     navLinkInlineList (navLinkInlineList out firstPage.toList) otherPage.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  -- a footnote's links are the note's own, never navigation entries
   | .footnote _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
 
@@ -12171,8 +8773,8 @@ private def dumpAltRange (n : Nat) (last : Option Nat) : String :=
   | some u => s!"alt {n}-{u}"
   | none => s!"alt {n}"
 
-/-- Preserve the existing singleton dump; a union retains every declared
-interval rather than printing their enclosing range. -/
+/-- An overlay range for the dump: a single interval as a step's, a union by
+every declared interval. -/
 private def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
   kind ++ " " ++ String.intercalate "," (spec.ranges.map fun (n, last) =>
     match last with
@@ -12181,10 +8783,7 @@ private def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
 
 mutual
 
-/-- One line of a formula's structure, for the IR dump: every atom's class,
-scalar, and scripts, so a golden pins exactly what elaboration decided.
-`ord:𝑥^{ord:2} bin:+ ord:𝑦` reads as it sets. The accumulator threads
-through the walk, as every structural printer here does. -/
+/-- One line of a formula's structure for the IR dump: every atom's class, scalar and scripts. -/
 private def dumpMathItem (acc : String) (x : Math.MItem) : String :=
   match x with
   | .atom cls nuc sup sub lim =>
@@ -12202,8 +8801,6 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .list body => (dumpMathList (acc.push '{') body).push '}'
   | .alpha a _ body => (dumpMathList (acc ++ s!"alpha:{a.name}\{") body).push '}'
   | .frac spec num den =>
-    -- A generalized fraction shows what its spec declares beyond `\frac`'s:
-    -- the delimiters, the rule in sp, and the style's rank (3 display).
     let name (c : Option Char) : String := match c with
       | some c => String.ofList [c]
       | none => "."
@@ -12226,8 +8823,7 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .big d step =>
     acc ++ s!"big{step}:" ++ (match d with | some c => String.ofList [c] | none => ".")
   | .accent mark stretch body =>
-    -- The combining mark by scalar value: pushed bare it would combine
-    -- with the golden's own text.
+    -- The combining mark by scalar value: pushed bare it would combine with the dump's text.
     let tag := if stretch then "acc*" else "acc"
     (dumpMathList (acc ++ s!"{tag}:{mark.toNat}\{") body).push '}'
   | .grid kind rows =>
@@ -12243,8 +8839,6 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
       | .small => "small"
     dumpMathRows (acc ++ tag ++ "[") rows ++ "]"
   | .cancel mark spec value body =>
-    -- The mark, then what the spec declares beyond the defaults, then the
-    -- struck subformula and the value it cancels to.
     let tag := match mark with
       | .up => "cancel"
       | .down => "bcancel"
@@ -12398,11 +8992,8 @@ private def dumpInline (ind : String) (x : Inline) : String :=
 
 end
 
-/-- One column spec, for the dump: the align letter, then the declared
-width. `l:400/1000` is a left `p{.4\linewidth}`; a bare letter is a
-natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
-`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`; `<` a narrowing one
-(`ColSpec.narrows`), a markdown table's `l<`. -/
+/-- One column spec for the dump: the align letter, then the declared width;
+`~` after the letter marks a ragged column. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
@@ -12481,8 +9072,6 @@ private def dumpBlock (ind : String) (b : Block) : String :=
   match b with
   | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
   | .equation number content =>
-    -- A number that is one run of text keeps its one-line spelling; a tag
-    -- carrying markup or math dumps its inlines, as a title does.
     (match number with
       | #[.text s] => s!"{ind}equation {s.quote}\n"
       | _ => s!"{ind}equation\n{ind}  number\n" ++ dumpInlines (ind ++ "    ") number) ++
@@ -12596,9 +9185,6 @@ private def dumpBlock (ind : String) (b : Block) : String :=
       | none => s!" #{Color.hexByte color.r}{Color.hexByte color.g}{Color.hexByte color.b}"
     s!"{ind}rule{nm} {dumpSourcedGlue thickness}\n"
   | .picture pic =>
-    -- Every evaluated shape, so a golden witnesses the whole elaboration:
-    -- unrolled loops, reduced expressions, resolved colours — and the box
-    -- the picture declared, and each node border its natural box counts.
     let boxS := fun (b : Pic.Box) =>
       s!"{b.1.1.toPtString} {b.1.2.toPtString} {b.2.1.toPtString} {b.2.2.toPtString}"
     s!"{ind}picture {pic.shapes.size} shapes{pic.alt.dumpSuffix}\n" ++
@@ -12657,32 +9243,17 @@ private def dumpBlock (ind : String) (b : Block) : String :=
 
 end
 
-/-- The fraction pending overlay content covers to, unless the document
-declares `covered`: 38% of each run's own ink over the surface —
-Material's disabled-state opacity (m2.material.io/design/interaction/
-states.html#disabled: content at 38% opacity), an *opacity*, so it applies
-per colour; compositing over an opaque page is mixing toward it. -/
+/-- The fraction pending overlay content covers to unless the document
+declares `covered`: Material's disabled-state 38% opacity. -/
 public def coveredFractionDefault : Nat := 38
 
 section DesignResolve
-
-/-! ## Resolution
-
-Every role a backend paints resolves here: the palette's own declaration,
-else the role's default in the scheme, read off its row (`Role.row`). A
-default reads only shallower roles (`Role.fallback_depth_monotone`), so the
-recursion is on the role's stratum. -/
 
 /-- The colour the palette declares for a role, if any. -/
 public def Design.declared? (pal : Palette) (r : Role) : Option Color :=
   pal.lookup (.role r)
 
-/-- The palette the class's default seeds generate at a depth in a scheme:
-the seeds as the scheme carries them (`SeedPalette.classSeedsIn`) and what
-they generate there — the generator's answer for each depth and screen
-scheme a class takes, kept in `PaletteData` (held to a fresh derivation by
-its check), and any other generated as asked. Print reads the light
-screen's: a class's printed code ground is the one its screen shows. -/
+/-- The palette the class's default seeds generate at a depth in a scheme. -/
 @[expose] public def Design.classDefaults (d : GroundDepth) (s : Scheme) :
     SeedPalette.Seeds × Option SeedPalette.Colors :=
   let s := if s == .print then .light else s
@@ -12692,11 +9263,8 @@ screen's: a class's printed code ground is the one its screen shows. -/
     let seeds := SeedPalette.classSeedsIn s
     (seeds, ((SeedPalette.generate seeds (seeds.targetsIn d s)).toOption).map (·.colors))
 
-/-- **The colour the palette's seeds generate for a role** in a scheme: the
-document's own seeds where it declares them (`\palette[seeds]`; a palette
-carried to a scheme carries its seeds there), else the class's default seeds
-as the scheme carries them, at the class's depth (`Design.classDefaults`),
-each at the 8-bit colour a TeX build reads from the export. -/
+/-- The colour the palette's seeds generate for a role in a scheme: the
+document's own seeds where declared, else the class's. -/
 @[expose] public def Design.seededColor (pal : Palette) (s : Scheme) (r : Role) : Option Color :=
   let raw := match pal.seeded with
     | some st => SeedPalette.Colors.role st.seeds st.colors r
@@ -12705,12 +9273,8 @@ each at the 8-bit colour a TeX build reads from the export. -/
       (SeedPalette.seedRole cd.1 r).or (cd.2.bind fun c => SeedPalette.Colors.role cd.1 c r)
   raw.map fun c => Color.ofHtml c.r c.g c.b
 
-/-- One default, read through `look` for the roles it names in the scheme
-asked for, and through `printLook` for a role it reads as printed
-(`inPrint`). A bar's ink is the first candidate that meets the role's need
-on the bar (WCAG 2.2's ratio in the scheme, `Contrast.requiredIn`), else
-the first candidate — the choice the engine shipped before it judged. A
-role the palette's seeds generate reads `gen` (`Design.seededColor`). -/
+/-- One default, read through `look` for the roles it names, and through
+`printLook` for a role it reads as printed. -/
 @[expose] public def Design.fallbackWith (s : Scheme) (need : Need)
     (gen look printLook : Role → Option Color) : Fallback → Option Color
   | .first rs => rs.findSome? look
@@ -12727,10 +9291,7 @@ role the palette's seeds generate reads `gen` (`Design.seededColor`). -/
   | .code => none
   | .seeded r => gen r
 
-/-- The resolver at a stratum: a role of depth `d` resolves at `d`, reading
-the roles its default names at `d - 1`, in its own scheme or, for a role
-read as printed, in print. Structural on the stratum, so the kernel can
-evaluate it. -/
+/-- The resolver at a stratum: a role of depth `d` reads the roles its default names at `d - 1`. -/
 @[expose] public def Design.atDepth (pal : Palette) : Nat → Scheme → Role → Option Color
   | 0, s, r => (Design.declared? pal r).or
       (Design.fallbackWith s r.row.need (Design.seededColor pal s) (fun _ => none) (fun _ => none)
@@ -12739,9 +9300,8 @@ evaluate it. -/
       (Design.fallbackWith s r.row.need (Design.seededColor pal s) (Design.atDepth pal n s)
         (Design.atDepth pal n .print) (r.row.fallback pal.classColors.row s))
 
-/-- **The one resolving site.** A role's colour in a scheme: the palette's
-declaration, else its row's default there. `none` is a role nothing paints
-(an undeclared bar, an undeclared content colour). -/
+/-- A role's colour in a scheme: the palette's declaration, else its row's
+default there; `none` for a role nothing paints. -/
 @[expose] public def Design.at (pal : Palette) (s : Scheme) (r : Role) : Option Color :=
   Design.atDepth pal r.depth s r
 
@@ -12843,8 +9403,6 @@ private theorem Design.atDepth_stable (pal : Palette) :
         have := refs r' hr'
         exact ih m (by omega) .print r' (by omega)
 
-/-- **A role is its declaration, else its default over resolved roles**: the
-resolver's equation, the one place a default chain is read. -/
 public theorem Design.resolve_unfold_exact (pal : Palette) (s : Scheme) (r : Role) :
     Design.at pal s r = (Design.declared? pal r).or
       (Design.fallbackWith s r.row.need (Design.seededColor pal s) (Design.at pal s)
@@ -12885,22 +9443,18 @@ public structure ColorPair where
   bg : Color
   deriving Repr, BEq
 
-/-- A region's declared paint. Missing channels inherit independently;
-an absent background never requests a fill. This is shared design data,
-not a backend's choice of fallback colours. -/
+/-- A region's declared paint: missing channels inherit independently, and an
+absent background requests no fill. -/
 public structure SurfaceLook where
   fg : Option Color := none
   bg : Option Color := none
   deriving Repr, BEq
 
-/-- Resolve a region on its enclosing surface, including a nested region
-or a frame with its own ground. The declaration remains available to the
-painter: `look.bg` alone decides whether to paint a new surface. -/
+/-- Resolve a region on its enclosing surface; `look.bg` alone decides whether
+to paint a new surface. -/
 @[expose] public def SurfaceLook.resolve (look : SurfaceLook) (parent : ColorPair) : ColorPair :=
   { fg := look.fg.getD parent.fg, bg := look.bg.getD parent.bg }
 
-/-- Inheritance is per channel and preserves every explicit declaration.
-Both artifacts project this same pair; neither invents a body colour. -/
 public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : ColorPair) :
     (look.resolve parent).fg = look.fg.getD parent.fg ∧
     (look.resolve parent).bg = look.bg.getD parent.bg := by
@@ -12909,11 +9463,7 @@ public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : Color
 public theorem SurfaceLook.undeclared_exact (parent : ColorPair) :
     (SurfaceLook.mk none none).resolve parent = parent := by rfl
 
-/-- beamer's block colour boxes' `colsep*=.75ex` (beamerinnerthemedefault.sty,
-`block begin`), shared by a painted title and body: such a box stands this
-far above and below its lines, and its paint reaches this far beyond the
-text measure on both sides while the text stays on the measure. The PDF
-resolves it against the face's x-height; HTML keeps the `ex`. -/
+/-- beamer's block colour boxes' `colsep*=.75ex`, shared by a painted title and body. -/
 @[expose] public def titledPadding : Length := { ex := 750 }
 
 public theorem titledPadding_contract (fontSize xHeight : Sp) :
@@ -12927,14 +9477,11 @@ public theorem titledPadding_contract (fontSize xHeight : Sp) :
 the body box overlapping the title box by half a point. -/
 public def blockSeam : Sp := Dim.pt 1 / 2
 
-/-- `n` tenths of TeX's millimetre, 7227⁄2540 of the point this engine's
-`pt` is numerically: tcolorbox's lengths (tcolorbox.sty) are TeX's. -/
+/-- `n` tenths of TeX's millimetre, as tcolorbox's lengths are TeX's. -/
 public def texMmTenths (n : Int) : Sp := n * 7227 * Dim.spPerPt / 25400
 
-/-- tcolorbox's box under its reset style, `size=normal` (tcolorbox.sty,
-`size/normal`): the frame's rule (`boxrule=0.5mm`, the title rule the
-same), `boxsep=1mm`, `left=right=4mm`, `top=bottom=2mm`, the title's own
-`toptitle` and `bottomtitle` zero. Both backends read these. -/
+/-- tcolorbox's box under `size=normal` (tcolorbox.sty): `boxrule=0.5mm`,
+`boxsep=1mm`, `left=right=4mm`, `top=bottom=2mm`. -/
 public def tcbRule : Sp := texMmTenths 5
 public def tcbBoxsep : Sp := texMmTenths 10
 public def tcbSide : Sp := texMmTenths 40
@@ -12942,16 +9489,14 @@ public def tcbTop : Sp := texMmTenths 20
 public def tcbBottom : Sp := texMmTenths 20
 
 /-- How far a box's text stands inside its edges, on both sides: the rule,
-`boxsep` and `left` (`right`), 5.5 mm. -/
+`boxsep` and `left` (`right`). -/
 public def tcbInset : Sp := tcbRule + tcbBoxsep + tcbSide
 
-/-- An unpainted body box opens on `\vskip-.25ex\vbox{}`: its first line is
-spaced from a box standing a quarter ex above the body box's own top. -/
+/-- An unpainted body box opens on `\vskip-.25ex\vbox{}`, a quarter ex above its own top. -/
 public def blockBodyRaise : Length := { ex := 250 }
 
-/-- Beamer's three body elements (`beamercolorthemedefault.sty`) start
-empty. Themes such as Moloch declare their fills and inheritance through
-the palette bindings; no title or accent role implies a body fill. -/
+/-- Beamer's three block body colours, which start empty; the palette's
+bindings declare any fill. -/
 @[expose] public def titledBodyLook (pal : Palette) (kind : TitledKind) : SurfaceLook :=
   { fg := Design.declared? pal (Role.bodyInk kind)
     bg := Design.declared? pal (Role.bodyGround kind) }
@@ -12962,35 +9507,20 @@ public theorem titledBodyLook_exact (pal : Palette) (kind : TitledKind) :
   exact ⟨rfl, rfl⟩
 
 /-- A titled block's resolved look: the title's ink, and the bar behind it
-when the palette declares one — no bar key, no bar, exactly the
-frame-title rule. -/
+when the palette declares one. -/
 public structure TitledLook where
   fg : Color
   bar : Option Color
   deriving Repr, BEq
 
-/-- The titled block's title look, per kind, in print: beamer's own parent
-chain (beamercolorthemedefault.sty: `block title` on structure, `block title
-alerted` on `alerted text`, `block title example` on `example text`) as the
-registry's rows say — a bare title takes the kind's content colour, and a
-declared `<kind>titlebg` turns the title into a bar whose ink is the first
-of the page and the ink that is legible on it. -/
+/-- The titled block's title look per kind, in print, along beamer's own parent chain. -/
 @[expose] public def titledLook (pal : Palette) (kind : TitledKind) : TitledLook :=
   { fg := (Design.at pal .print (Role.titleInk kind)).getD Color.black
     bar := Design.at pal .print (Role.titleBar kind) }
 
 
 /-- The document's resolved design: every semantic role the backends read,
-with every default applied here and nowhere else — the type is the totality
-claim, so a consumer can never invent a per-site fallback for a missing
-key. `frametitle` and `progress` are `Option` because their *presence* is
-the design (declaring `frametitlebg` is what turns the frame title into a
-bar; `progressfg` is what themes the section pages) — but each carries a
-total pair, so once a feature is on, no colour in it can be absent.
-`fgDeclared`/`bgDeclared` record what the document said, because the
-backends honour it: the PDF paints no page and HTML emits no body rule for
-an undeclared colour (HTML's own un-themed ink and surface live in the
-stylesheet, dark variant included, and are proved legible in `Contrast`). -/
+with every default applied here. -/
 public structure Design where
   fg : Color
   bg : Color
@@ -12999,70 +9529,45 @@ public structure Design where
   /-- Pending overlay content covers to this fraction (percent) of its
   own ink over the surface, per colour. -/
   coveredFraction : Nat
-  /-- A declared constant cover for runs with no colour of their own
-  (documents in the wild declare `covered = <colour>`); `none` covers
-  them at `coveredFraction` of `fg`. Resolved once, in `Design.cover`. -/
+  /-- A declared constant cover for runs with no colour of their own; `none`
+  covers them at `coveredFraction` of `fg`. -/
   covered : Option Color
-  /-- Quieted secondary furniture — the chrome footer's small text draws in
-  it; the body ink when undeclared. -/
+  /-- Quieted secondary furniture, as the chrome footer's small text; the body
+  ink when undeclared. -/
   muted : Color
   /-- The frame-title bar, when the design has one. -/
   frametitle : Option ColorPair
-  /-- The title's ink when no bar is declared, and the subtitle's ink on
-  the same title surface. Beamer's subtitle inherits its title. -/
+  /-- The title's ink when no bar is declared, and the subtitle's ink on the same title surface. -/
   frameTitleFg : Color
   framesubtitle : Color
   /-- The section divider's heading, on the page's ground. -/
   sectionTitle : Color
   /-- The chrome footline's ink and optional band background. -/
   footline : TitledLook
-  /-- The titled block's title look, one per kind (`titledLook`, the one
-  resolving site). Total: an undeclared palette pairs the kind's content
-  colour with no bar. -/
+  /-- The titled block's title look, one per kind. -/
   blockTitle : TitledLook
   alertTitle : TitledLook
   exampleTitle : TitledLook
-  /-- Each body inherits the enclosing surface unless its own channels
-  are declared. Title and body surfaces are independent. -/
+  /-- Each body inherits the enclosing surface unless its own channels are declared. -/
   blockBody : SurfaceLook
   alertBody : SurfaceLook
   exampleBody : SurfaceLook
   /-- The themed section page and its progress bar, when the design has one. -/
   progress : Option ColorPair
-  /-- The section-page variant inherits the base progress colours but
-  may override either channel without recolouring other progress sites. -/
+  /-- The section page's progress colours: the base ones unless it overrides a channel. -/
   sectionProgress : Option ColorPair
-  /-- A `[standout]` frame's pair — total: without the keys it inverts the
-  page's own colours. -/
+  /-- A `[standout]` frame's pair; without the keys it inverts the page's own colours. -/
   standout : ColorPair
-  /-- The title page's own ground and the ink that stands on it, when the
-  design declares one — a title page whose ground differs from the rest of
-  the document, which is what a theme spells as a full-bleed fill over the
-  page. `none` is the title page that takes the document's own ground, and
-  is the undeclared default: a ground nobody declared is never invented
-  here (`titleGround_exact`). Declared, the ink defaults by inversion, the
-  same rule `standout` follows — a declared ground is usually the page's
-  opposite, and inverting is what makes light matter land on a dark title
-  page without a second declaration. -/
+  /-- The title page's own ground and ink, when the design declares one. -/
   titlepage : Option ColorPair
-  /-- The title-page rule's colour; the ink when undeclared. Declared by
-  both shipped bundles and consumed by no backend yet — the role check in
-  `Tests.lean` names it until the title-page rule lands. -/
+  /-- The title-page rule's colour; the ink when undeclared. -/
   separator : Color
   /-- Thickness of the progress bar, resolved at layout like any token. -/
   progressheight : SymGlue
   styles : Styles
   deriving Repr, BEq
 
-/-- **The design record in one scheme**, every colour field a projection of
-`Design.at`, the one resolving site, so no field restates a default chain.
-The argument is a palette rather than a document because two consumers read
-two palettes: `Design.ofDoc` reads the document's, and the layout reads the
-*epoch* palette in force where a frame stands, so a `\setPalette` mid-deck
-retitles the frames after it (`frametitle_agree`). The two fields a palette
-cannot answer — the progress bar's thickness and the style table — take
-their undeclared values here, and `ofDoc` overlays the document's
-declarations. -/
+/-- The design record in one scheme, every colour field a projection of `Design.at`. -/
 @[expose] public def Design.resolve (pal : Palette) (s : Scheme) : Design :=
   let res := Design.at pal s
   let fg := (res .ink).getD Color.black
@@ -13112,11 +9617,8 @@ rest of the design. -/
 @[expose] public def Design.printPage (pal : Palette) : Color :=
   (Design.at pal .print .page).getD Color.white
 
-/-- **The ground a listing stands on** in a scheme, one value both backends
-and the contrast report read: the ground it declares (minted's `bgcolor`),
-else the verbatim ground the class paints (`Role.codeSurface`: the web's
-documents' surface, in print as on screen), else none — the listing stands
-on what surrounds it. -/
+/-- The ground a listing stands on in a scheme: its declared `bgcolor`, else
+the verbatim ground the class paints. -/
 @[expose] public def ListingSpec.groundIn (spec : ListingSpec) (pal : Palette) (s : Scheme) :
     Option (Color × Option ColorRef) :=
   spec.ground.orElse fun _ => (Design.at pal s .codeSurface).map (·, some (.role .codeSurface))
@@ -13127,10 +9629,6 @@ public theorem Design.ofPalette_fg (pal : Palette) :
 public theorem Design.ofPalette_bg (pal : Palette) :
     (Design.ofPalette pal).bg = Design.printPage pal := rfl
 
-/-- Two palettes whose roles are declared alike, at one covered fraction,
-over one generated palette and one class row, resolve alike in every
-scheme: the resolver reads a palette through its role declarations, its
-generated roles and its class's defaults alone. -/
 private theorem Design.resolve_congr (p q : Palette) (s : Scheme)
     (hd : ∀ r, Design.declared? p r = Design.declared? q r)
     (hc : p.coveredFraction = q.coveredFraction)
@@ -13147,23 +9645,14 @@ private theorem Design.resolve_congr (p q : Palette) (s : Scheme)
     simp only [Design.at, hdepth]
   simp only [Design.resolve, titledBodyLook, hat, hd, hc]
 
-/-- **An author colour never repaints a role.** Declaring a colour under any
-name — `\definecolor{bg}`, the minted manual's own idiom included — leaves
-the resolved design exactly as it was, in every scheme: names are scoped by
-kind (`ColorRef`), and the resolver reads only roles. Before the split the
-same declaration bound the page role and painted the whole page. The one
-role an xcolor definition declares beside its colour is a code role's, by
-that role's key (`Palette.defineXcolor`). -/
 public theorem Palette.defineColor_design_id (pal : Palette) (n : String) (c : Color)
     (d : Bool) (s : Scheme) :
     Design.resolve (pal.declare (.color n) c d) s = Design.resolve pal s :=
   Design.resolve_congr _ _ s
     (fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)) rfl rfl rfl
 
-/-- The names an xcolor definition of `n` declares (`\definecolor`,
-`\colorlet`): the author colour, and the role an xcolor colour of that name
-declares (`Role.ofXcolor?`, a listing's code role). The elaborator writes the
-palette, the flow scope and the global log through this one list. -/
+/-- The names an xcolor definition of `n` declares: the author colour, and the
+code role of that key. -/
 @[expose] public def Palette.xcolorRefs (n : String) : List ColorRef :=
   .color n :: ((Role.ofXcolor? n).map ColorRef.role).toList
 
@@ -13172,8 +9661,6 @@ palette, the flow scope and the global log through this one list. -/
     (d : Bool := false) : Palette :=
   (Palette.xcolorRefs n).foldl (fun p k => p.declare k c d) pal
 
-/-- **An xcolor colour of a code role's key declares the role**, as the
-`\palette` key does: the listing paints that role in it. -/
 public theorem Palette.defineXcolor_role_exact (pal : Palette) (n : String) (c : Color)
     (d : Bool) (r : Role) (h : Role.ofXcolor? n = some r) :
     Design.declared? (pal.defineXcolor n c d) r = some c := by
@@ -13181,10 +9668,6 @@ public theorem Palette.defineXcolor_role_exact (pal : Palette) (n : String) (c :
     List.foldl_cons, List.foldl_nil, Design.declared?]
   exact Palette.declare_find_exact _ _ _ _
 
-/-- **The xcolor spelling of a code role resolves as the `\palette` one**: the
-design an xcolor definition of a code role's key leaves is the design the
-role's own declaration leaves, in every scheme — the author colour it also
-names repaints nothing (`Palette.defineColor_design_id`). -/
 public theorem Palette.defineXcolor_resolve_exact (pal : Palette) (n : String) (c : Color)
     (d : Bool) (s : Scheme) (r : Role) (h : Role.ofXcolor? n = some r) :
     Design.resolve (pal.defineXcolor n c d) s = Design.resolve (pal.declare (.role r) c d) s := by
@@ -13199,9 +9682,6 @@ public theorem Palette.defineXcolor_resolve_exact (pal : Palette) (n : String) (
     rw [Palette.declare_keeps_others _ _ _ _ _ hne, Palette.declare_keeps_others _ _ _ _ _ hne,
       Palette.declare_keeps_others pal (.color n) (.role r') c d (by simp)]
 
-/-- **Any other xcolor colour repaints no role**: an xcolor definition of a
-name no code role is keyed by leaves the resolved design as it was, in every
-scheme (`Palette.defineColor_design_id`). -/
 public theorem Palette.defineXcolor_design_id (pal : Palette) (n : String) (c : Color)
     (d : Bool) (s : Scheme) (h : Role.ofXcolor? n = none) :
     Design.resolve (pal.defineXcolor n c d) s = Design.resolve pal s := by
@@ -13209,32 +9689,23 @@ public theorem Palette.defineXcolor_design_id (pal : Palette) (n : String) (c : 
     List.foldl_cons, List.foldl_nil]
   exact Palette.defineColor_design_id pal n c d s
 
-/-- **A list marks alike on paper and on the light screen**: in every class,
-a list marker's paint is one value in print and light — the marker the
-document declares, else the printed ink (`Row.markerFallback`). -/
 public theorem Design.marker_print_light_exact (pal : Palette) :
     Design.at pal .light .marker = Design.at pal .print .marker := by
   rw [Design.resolve_unfold_exact pal .light, Design.resolve_unfold_exact pal .print]
   cases pal.classColors.row <;>
     simp [Role.row, Row.engine, Row.markerFallback, Design.fallbackWith]
 
-/-- The marker both artifacts paint is the printed ink where the document
-declares no marker: the PDF sets a label in the running ink, and the light
-stylesheet's marker is that ink (`Design.marker_print_light_exact`). -/
 public theorem Design.marker_printInk_exact (pal : Palette) (h : Design.declared? pal .marker = none) :
     Design.at pal .light .marker = Design.at pal .print .ink := by
   rw [Design.resolve_unfold_exact pal .light, h]
   cases pal.classColors.row <;>
     simp [Role.row, Row.engine, Row.markerFallback, Design.fallbackWith]
 
-/-- A declaration is what a role resolves to, in every scheme. -/
 public theorem Design.at_declared (pal : Palette) (s : Scheme) (r : Role) (c : Color)
     (h : Design.declared? pal r = some c) : Design.at pal s r = some c := by
   rw [Design.resolve_unfold_exact, h]
   rfl
 
-/-- The page's text always resolves: its declaration, else the scheme's own
-ink. -/
 public theorem Design.at_ink_isSome (pal : Palette) (s : Scheme) :
     (Design.at pal s .ink).isSome = true := by
   rw [Design.resolve_unfold_exact]
@@ -13248,7 +9719,6 @@ public theorem Design.at_ink_isSome (pal : Palette) (s : Scheme) :
         Design.seededColor]
       cases pal.seeded <;> simp [SeedPalette.Colors.role, SeedPalette.seedRole]
 
-/-- The page always resolves: its declaration, else the scheme's own page. -/
 public theorem Design.at_page_isSome (pal : Palette) (s : Scheme) :
     (Design.at pal s .page).isSome = true := by
   rw [Design.resolve_unfold_exact]
@@ -13262,9 +9732,8 @@ public theorem Design.at_page_isSome (pal : Palette) (s : Scheme) :
         Design.seededColor]
       cases pal.seeded <;> simp [SeedPalette.Colors.role, SeedPalette.seedRole]
 
-/-- One pair a design ships: a role's ink on the ground it stands on — `on`
-is the role that ground is, the role's own where it resolves and the page
-where it does not — and what the ink owes there. -/
+/-- One pair a design ships: a role's ink on the ground it stands on, and what
+the ink owes there. -/
 public structure Site where
   role : Role
   ink : Color
@@ -13274,13 +9743,12 @@ public structure Site where
   scheme : Scheme
   deriving Repr, BEq
 
-/-- A site's pair meets its need in its scheme (WCAG 2.2's ratio,
-`Contrast.requiredIn`). -/
+/-- A site's pair meets its need in its scheme (WCAG 2.2's ratio). -/
 @[expose] public def Site.passes (st : Site) : Bool :=
   decide (Contrast.requiredIn st.scheme st.need ≤ Contrast.contrastMilli st.ink st.ground)
 
-/-- The site one role ships in a scheme, when it ships one: its row pairs it
-with a ground, its presence holds, and its ink resolves. -/
+/-- The site one role ships in a scheme, when its row pairs it with a ground,
+its presence holds and its ink resolves. -/
 @[expose] public def Design.site? (pal : Palette) (s : Scheme) (r : Role) : Option Site :=
   r.row.ground.bind fun g =>
     if r.row.need.paired && r.row.presence.holds (Design.at pal s) then
@@ -13292,16 +9760,10 @@ with a ground, its presence holds, and its ink resolves. -/
             need := r.row.need, scheme := s }
     else none
 
-/-- **Every pair a design ships**, generated from the registry's rows: the
-site of each role present, in registry order. The bundle contracts, the
-document judge and the listing contract read this one list. -/
+/-- Every pair a design ships, generated from the registry's rows in registry order. -/
 @[expose] public def Design.sites (pal : Palette) (s : Scheme) : List Site :=
   Role.all.filterMap (Design.site? pal s)
 
-/-- **The sites cover the registry** (`_covers`): a role whose row pairs it
-with a ground, whose presence holds and whose ink resolves has its site in
-the list, carrying that ink — so no pair a design creates can be missing
-from the contracts that read the list. -/
 public theorem Design.sites_covers (pal : Palette) (s : Scheme) (r g : Role) (c : Color)
     (hg : r.row.ground = some g) (hn : r.row.need.paired = true)
     (hp : r.row.presence.holds (Design.at pal s) = true) (hc : Design.at pal s r = some c) :
@@ -13316,23 +9778,10 @@ public theorem Design.sites_covers (pal : Palette) (s : Scheme) (r g : Role) (c 
              ground := (Design.at pal s .page).getD Color.white, need := r.row.need, scheme := s },
       List.mem_filterMap.mpr ⟨r, hmem, by simp [Design.site?, hg, hn, hp, hc, hgr]⟩, rfl, rfl⟩
 
-/-- The grounds body content flows on in a design — the page, the standout
-inversion, a declared title page, a block body: each region a site stands
-on, once. -/
+/-- The grounds body content flows on in a design, each once: the page, the
+standout inversion, a declared title page, a block body. -/
 @[expose] public def Design.regionGrounds (pal : Palette) (s : Scheme) : List Color :=
   (((Design.sites pal s).filter (·.on.row.region)).map (·.ground)).eraseDups
-
-
-/-! ## The stylesheet's projection
-
-What a role's CSS custom property declares in a scheme: the colour a
-document declared for it, else the role its default resolved through — a
-one-level alias, as the W3C Design Tokens format spells a reference — or a
-scheme's own constant. Chasing the aliases through the table reads back the
-resolver's value for every role (`Design.cssDecl_chase_exact`), so a
-stylesheet that declares this table and reads `var(--ltx-<role>)` paints
-what `Design.at` resolves, and a reader's override of a parent cascades to
-the roles that inherit from it. -/
 
 /-- One role property's declaration: a colour, or the role it aliases. -/
 public inductive CssDecl where
@@ -13345,13 +9794,7 @@ public inductive CssDecl where
   | .value c => some c
   | .alias r => look r
 
-/-- The alias a default resolves through, read through `look` and
-`printLook` as `Design.fallbackWith` reads them: the first role of a
-`first` list that resolves; for a bar's ink the first candidate legible on
-the bar, else the first that resolves, and the `unbarred` list off a bar; a
-role read as printed as its alias where the palette declares it (a
-declaration ships in every scheme), else as its printed value; a scheme
-constant as its value; nothing for an absent or style default. -/
+/-- The alias a default resolves through, read as `Design.fallbackWith` reads its roles. -/
 @[expose] public def Design.fallbackDecl (s : Scheme) (need : Need) (pal : Palette)
     (look printLook : Role → Option Color) : Fallback → Option CssDecl
   | .first rs => (rs.find? fun r => (look r).isSome).map .alias
@@ -13371,18 +9814,16 @@ constant as its value; nothing for an absent or style default. -/
   | .code => none
   | .seeded r => (Design.seededColor pal s r).map .value
 
-/-- **The declaration a role's property carries in a scheme**: its declared
-colour, else its row's default as an alias or a constant; `none` for a role
-nothing paints there. -/
+/-- The declaration a role's property carries in a scheme: its declared
+colour, else its row's default as an alias or a constant. -/
 @[expose] public def Design.cssDecl (pal : Palette) (s : Scheme) (r : Role) : Option CssDecl :=
   match Design.declared? pal r with
   | some c => some (.value c)
   | none => Design.fallbackDecl s r.row.need pal (Design.at pal s) (Design.at pal .print)
       (r.row.fallback pal.classColors.row s)
 
-/-- Chasing a table of declarations at a stratum: a value is itself, an
-alias the chase of its target one stratum down. Structural on the stratum,
-as `Design.atDepth` is. -/
+/-- Chasing a table of declarations at a stratum: a value is itself, an alias
+the chase of its target one stratum down. -/
 @[expose] public def Design.chaseAt (t : Role → Option CssDecl) : Nat → Role → Option Color
   | 0, r => (t r).bind fun
     | .value c => some c
@@ -13527,8 +9968,6 @@ private theorem bind_congr_some {α β : Type} (o : Option α) (f g : α → Opt
   | none => rfl
   | some x => exact h x rfl
 
-/-- An alias in the table names a shallower role: the measure the chase
-recurses on. -/
 public theorem Design.cssDecl_alias_shallower (pal : Palette) (s : Scheme) (r r' : Role)
     (h : Design.cssDecl pal s r = some (.alias r')) : r'.depth < r.depth := by
   unfold Design.cssDecl at h
@@ -13539,7 +9978,6 @@ public theorem Design.cssDecl_alias_shallower (pal : Palette) (s : Scheme) (r r'
     exact Role.refs_shallower r pal.classColors.row s r'
       (Design.fallbackDecl_alias_mem _ _ _ _ _ _ r' h)
 
-/-- One step of the table reads the resolver's value. -/
 public theorem Design.cssDecl_resolve (pal : Palette) (s : Scheme) (r : Role) :
     (Design.cssDecl pal s r).bind (CssDecl.resolve (Design.at pal s)) = Design.at pal s r := by
   rw [Design.resolve_unfold_exact]
@@ -13579,9 +10017,6 @@ private theorem Design.chaseAt_stable (pal : Palette) (s : Scheme) :
       have := Design.cssDecl_alias_shallower pal s r r' hx
       exact ih r' (by omega)
 
-/-- **The stylesheet's table, aliases chased, is the resolver** (`_exact`):
-for every palette, scheme and role, chasing `Design.cssDecl` from the role
-reads exactly `Design.at`. -/
 public theorem Design.cssDecl_chase_exact (pal : Palette) (s : Scheme) (r : Role) :
     Design.chase (Design.cssDecl pal s) r = Design.at pal s r :=
   Design.chaseAt_stable pal s r.depth r (Nat.le_refl _)
@@ -13592,8 +10027,7 @@ public theorem Design.cssDecl_chase_exact (pal : Palette) (s : Scheme) (r : Role
   | some (.alias p) => some p
   | _ => none
 
-/-- The roles a role's aliases reach in some scheme of a list, itself
-included: structural on the stratum, which every alias descends. -/
+/-- The roles a role's aliases reach in some scheme of a list, itself included. -/
 @[expose] public def Design.reachAt (pal : Palette) (schemes : List Scheme) :
     Nat → Role → List Role
   | 0, r => [r]
@@ -13639,9 +10073,6 @@ private theorem Design.reachAt_closed (pal : Palette) (schemes : List Scheme) :
       have hd := Design.aliasOf_shallower pal s' q q' hq'
       exact ih q' r p s (by omega) hs hr' hp
 
-/-- **What a role reaches is closed under its aliases** (`_covers`): an alias
-any reached role declares in a listed scheme names a reached role, so a
-table declaring the reach of its reads leaves no alias dangling. -/
 public theorem Design.reach_covers (pal : Palette) (schemes : List Scheme) (q r p : Role)
     (s : Scheme) (hs : s ∈ schemes) (hr : r ∈ Design.reach pal schemes q)
     (hp : Design.cssDecl pal s r = some (.alias p)) : p ∈ Design.reach pal schemes q :=
@@ -13672,23 +10103,14 @@ private theorem Design.chaseAt_restrict (t : Role → Option CssDecl) (roles : L
     | value c => rfl
     | alias p => exact ih p (hclosed r hr p hx)
 
-/-- **A table restricted to an alias-closed set chases as the whole table**
-on the set: declaring only the roles a stylesheet reads, and what their
-aliases name, loses no value. -/
 public theorem Design.chase_restrict_exact (t : Role → Option CssDecl) (roles : List Role)
     (hclosed : ∀ r ∈ roles, ∀ p, t r = some (.alias p) → p ∈ roles) (r : Role)
     (hr : r ∈ roles) : Design.chase (Design.restrict t roles) r = Design.chase t r :=
   Design.chaseAt_restrict t roles hclosed r.depth r hr
 
-/-- The muted role's one resolving chain (`Design.ofDoc` reads the same
-chain): the palette's `muted`, else its `fg`, else black — quieted
-secondary ink. Spelled once so a walk reading the epoch palette in force
-(algorithm comments, line numbers) resolves exactly as the document
-design does. -/
+/-- The muted role's resolving chain: the palette's `muted`, else its `fg`, else black. -/
 public def mutedOf (pal : Palette) : Color :=
   (Design.at pal .print .muted).getD Color.black
-
-/-! ## A palette generated from seeds -/
 
 /-- One generated declaration installed, at its 8-bit sRGB colour. -/
 @[expose] public def Palette.declareSeeded (p : Palette) (e : Role × Color) : Palette :=
@@ -13699,24 +10121,16 @@ private def Palette.installDerived (keep : Role → Bool) (p : Palette) (e : Rol
     Palette :=
   if keep e.1 then p else p.declareSeeded e
 
-/-- One element role a style binds, at the colour its source role stands at in
-the palette as installed, unless the document declared the element (`keep`). -/
+/-- One element role a style binds, at its source role's installed colour,
+unless the document declared the element (`keep`). -/
 private def Palette.installBound (keep : Role → Bool) (p : Palette) (e : Role × Role) : Palette :=
   if keep e.1 then p else
     match Design.declared? p e.2 with
     | some c => p.declare (.role e.1) c
     | none => p
 
-/-- **A generated palette installed** (`\palette[seeds]`, `Elab.applySeeds`
-calls exactly this): the seeds as the page's ground, text and accent — the
-declarations they are, so the latest wins — then every role generation
-derives, then each element role the block style and the furniture bind, at
-the colour its source role stands at once installed; a derived or bound role
-the document declared (`keep`) keeps the document's colour. Each generated
-colour is an 8-bit sRGB colour, as a TeX build reads it from the export's
-`\definecolor{…}{HTML}{…}`, so both spell it alike in the PDF; the generated
-palette is kept, so a generated role on another ground can re-tone
-(`groundRun`). -/
+/-- A generated palette installed (`\palette[seeds]`): the seeds as the page's
+ground, text and accent, then every role generation derives. -/
 public def Palette.applySeedsUnder (pal : Palette) (st : SeedPalette.SeedState)
     (keep : Role → Bool) : Palette :=
   let seeds : List (Role × Color) :=
@@ -13725,35 +10139,22 @@ public def Palette.applySeedsUnder (pal : Palette) (st : SeedPalette.SeedState)
   let withDerived := (SeedPalette.derivedEntries st).foldl (Palette.installDerived keep) withSeeds
   (SeedPalette.bound st).foldl (Palette.installBound keep) withDerived
 
-/-- A generated palette installed over a palette that declares nothing the
-seeds derive: the export's and a bundle's install. -/
+/-- A generated palette installed over a palette that declares nothing the seeds derive. -/
 public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette :=
   pal.applySeedsUnder st fun _ => false
 
-/-- Whether `el` is an element ink a generated palette chooses for the ground
-`g`: one the block styles and the furniture bind (`SeedPalette.elementRoles`)
-whose row judges it on `g` (`Row.ground`). -/
+/-- Whether `el` is an element ink a generated palette chooses for the ground `g`. -/
 @[expose] public def Role.boundTo (el g : Role) : Bool :=
   SeedPalette.elementRoles.contains el && el.row.ground == some g
 
-/-- The colour a generated palette installs for a role, as the palette holds
-it (8-bit, as a TeX build reads it from the export): a seed, a derived role,
-or an element role at its bound source's colour (`SeedPalette.bound`). -/
+/-- The colour a generated palette installs for a role, as the palette holds it (8-bit). -/
 @[expose] public def Design.installed (st : SeedPalette.SeedState) (r : Role) :
     Option Color :=
   (SeedPalette.Colors.role st.seeds st.colors (((SeedPalette.bound st).lookup r).getD r)).map
     fun c => Color.ofHtml c.r c.g c.b
 
-/-- **An ink generated for a ground follows that ground**: each element ink
-a generated palette bound (`Role.boundTo`) and the document does not declare
-(`keep`) is erased where its ground stands at another colour than the one
-generated for it, so the registry's default for the ground in force reads
-it — the `readable` choice on a bar, solved where it stands — and stands at
-its generated colour again where its ground does. The beamer colour scope's
-resolution runs it after every door that declares a colour
-(`Elab.resolveBeamerColors`), a bundle's install included: a scope that
-restates a bundle's ink cannot bring it back on a ground it was not made
-for, and an epoch that restores the generated ground restores its ink. -/
+/-- Each bound element ink the document does not declare is erased where its
+ground stands at another colour than generated. -/
 public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette :=
   match pal.seeded with
   | none => pal
@@ -13769,21 +10170,12 @@ public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette
         | none => p
       else p) pal
 
-/-- Whether a colour reads more against white text than against black: a
-dark page. -/
+/-- Whether a colour reads more against white text than against black. -/
 private def Color.darkGround (c : Color) : Bool :=
   decide (Contrast.contrastMilli c Color.black < Contrast.contrastMilli c Color.white)
 
-/-- **A bundle's generated palette follows the seeds the document declares**:
-where a palette a bundle generated (`SeedState.bundle`) no longer stands on
-the page, ink and accent it was made from — a declaration after the bundle,
-a body epoch, `\pagecolor` — it is generated again from the seeds as they
-now stand, an ink the document left taking the bundle's paper where the
-page's polarity turned (its ink would vanish on the page it was not made
-for), and every role still at its old generated colour takes its new one; a
-role the document declared (`keep`) keeps its colour. Where the new seeds
-generate nothing, the palette stands as it is: the bundle's own colours
-under the document's. -/
+/-- A bundle's generated palette regenerated from the seeds the document's
+page, ink and accent now declare. -/
 public def Palette.reseed (pal : Palette) (keep : Role → Bool) : Palette :=
   match pal.seeded with
   | none => pal
@@ -13870,10 +10262,6 @@ private theorem Palette.installBound_kept (keep : Role → Bool) (es : List (Rol
         exact hk
       · rfl
 
-/-- **The document's colour outranks the generated one**: a role the document
-declared (`keep`) that is not one of the seeds' own — the page's text,
-ground and accent, which the seeds declare — stands after the install as the
-document declared it, whatever the seeds derive or bind. -/
 public theorem Palette.applySeedsUnder_keep_exact (pal : Palette) (st : SeedPalette.SeedState)
     (keep : Role → Bool) (r : Role) (hk : keep r = true)
     (hs : r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent) :
@@ -13886,11 +10274,6 @@ public theorem Palette.applySeedsUnder_keep_exact (pal : Palette) (st : SeedPale
     Palette.declare_keeps_others _ (.role .page) (.role r) _ _ (by simpa using hs.2.1)]
   rfl
 
-/-- **The seeds ship exactly**, on the install `\palette[seeds]` runs: whatever
-the document declared before, the palette declares the page's text, ground
-and accent as the author's seeds, at the 8-bit colour a TeX build reads from
-the export; nothing the generator derives or a style binds names them
-(`SeedPalette.generate_seeds_exact`). -/
 public theorem Palette.applySeedsUnder_seeds_exact (pal : Palette) (st : SeedPalette.SeedState)
     (keep : Role → Bool) :
     Design.declared? (pal.applySeedsUnder st keep) .ink =
@@ -13919,11 +10302,7 @@ public theorem Palette.applySeedsUnder_seeds_exact (pal : Palette) (st : SeedPal
     unfold Palette.declareSeeded
     rw [Palette.declare_last_wins]
 
-/-- A run coloured by a generated role still holding its generated colour,
-on a ground it does not read on (short of the generated text target): its
-family's tone there (`SeedState.toneOn`), shipped under the inverse role on
-the ink or as a value elsewhere. Any other run stands as it is: a colour the
-document declares ships as declared. -/
+/-- A run coloured by a generated role, on a ground it does not read on: its family's tone there. -/
 public def Palette.groundRun (pal : Palette) (g : Color) (x : Inline) : Inline :=
   match x, pal.seeded with
   | .colored c (some (.role r)) body, some st =>
@@ -13935,7 +10314,6 @@ public def Palette.groundRun (pal : Palette) (g : Color) (x : Inline) : Inline :
     else x
   | _, _ => x
 
-/-- **Grounding a run keeps its text**: only its colour changes. -/
 public theorem Palette.groundRun_text (pal : Palette) (g : Color) (x : Inline) :
     plainTextOne (pal.groundRun g x) = plainTextOne x := by
   unfold Palette.groundRun
@@ -13945,22 +10323,7 @@ public theorem Palette.groundRun_text (pal : Palette) (g : Color) (x : Inline) :
     · rfl
   · rfl
 
-/-! ## A palette in every scheme
-
-A document declares its colours for its page's polarity, and they ship
-exactly in print and on that polarity's plain screen (`SchemeFrame.home`).
-Every other screen scheme carries them (`Palette.view`): to a page of the
-other polarity each declared colour is carried as its distance from the
-document's page (`ContrastSolve.reflect`, `adapt`) — an epoch's own page
-included, so a section set dark on a light page stands light on a dark
-one — and where the reader asks more contrast a colour that falls short of
-the scheme's gate moves as far as it must and no further, at its own hue
-and no more than its chroma. A generated palette is regenerated from its
-seeds as the scheme carries them, and a role nothing declares reads the
-class's seeds in that scheme. -/
-
-/-- Whether a palette's page is dark: its declared page reads more against
-white text than against black. An undeclared page is the class's white. -/
+/-- Whether a palette's page is dark; an undeclared page is the class's white. -/
 @[expose] public def Palette.darkPage (pal : Palette) : Bool :=
   match Design.declared? pal .page with
   | some p => decide (Contrast.contrastMilli p Color.black < Contrast.contrastMilli p Color.white)
@@ -13970,22 +10333,15 @@ white text than against black. An undeclared page is the class's white. -/
 @[expose] public def Palette.homeScreen (pal : Palette) : Scheme :=
   if pal.darkPage then .dark else .light
 
-/-- The palette a generated palette's seeds generate in a scheme: the
-generator's answer `PaletteData` keeps for a shipped bundle's seeds there,
-else generated as asked. -/
+/-- The palette a generated palette's seeds generate in a scheme. -/
 public def Design.generatedIn (seeds : SeedPalette.Seeds) (d : GroundDepth) (s : Scheme) :
     Option SeedPalette.Colors :=
   match PaletteData.bundleGenerated.find? (fun e => e.1 == seeds && e.2.1 == d && e.2.2.1 == s) with
   | some e => some e.2.2.2
   | none => ((SeedPalette.generate seeds (seeds.targetsIn d s)).toOption).map (·.colors)
 
-/-- **A generated palette in a scheme**: its seeds carried to the other
-polarity where the scheme's flips the document's (`flip`,
-`SeedPalette.Seeds.carry`) — a dark section of a light page stands light on
-a dark screen and dark on a light one, however much contrast that asks —
-the ink moved to the gate where the scheme asks more contrast and it falls
-short there, and the palette regenerated at that scheme's targets; `none`
-where the seeds reach no legible tone there or generate nothing. -/
+/-- A generated palette in a scheme: its seeds carried to the other polarity
+where the scheme's flips the document's. -/
 public def Design.carrySeeds (st : SeedPalette.SeedState) (d : GroundDepth)
     (s : Scheme) (flip : Bool) : Option SeedPalette.SeedState := do
   let carried ← st.seeds.carry (st.seeds.dark != flip)
@@ -13996,9 +10352,7 @@ public def Design.carrySeeds (st : SeedPalette.SeedState) (d : GroundDepth)
   pure { st with seeds, targets := seeds.targetsIn d s, colors }
 
 /-- What a document's colours are carried by in one scheme: the scheme,
-whether its polarity is the other one than the document's page's (`flip`),
-the document's page on its own screen and in the scheme, and whether its
-text is judged at a stage's size (`Need.atStage`). -/
+whether its polarity flips, and the document's page there. -/
 public structure SchemeFrame where
   scheme : Scheme
   flip : Bool
@@ -14007,10 +10361,8 @@ public structure SchemeFrame where
   stage : Bool
   deriving Repr, BEq, Inhabited
 
-/-- **A document's frame in a scheme**: its page on its own screen, and in a
-scheme of the other polarity the page its generated palette's seeds carry
-there, else the class's paper for that polarity over the document's own
-page, ink and accent (`SeedPalette.schemePaper`). -/
+/-- A document's frame in a scheme: its page on its own screen, and in the
+other polarity the page its seeds carry there. -/
 public def Palette.frame (doc : Palette) (s : Scheme) (stage : Bool := false) : SchemeFrame :=
   let homeS := doc.homeScreen
   let homePage := (Design.at doc homeS .page).getD Color.white
@@ -14029,43 +10381,30 @@ document's own plain screen. -/
 @[expose] public def SchemeFrame.home (f : SchemeFrame) : Bool :=
   f.scheme == .print || (!f.flip && !f.scheme.more)
 
-/-- **Print ships a document's palettes as declared**, whatever its page. -/
 public theorem Palette.frame_print_home (doc : Palette) (stage : Bool) :
     (doc.frame .print stage).home = true := by
   simp [Palette.frame, SchemeFrame.home]
 
-/-- **A declared ground as a scheme carries it**: itself where the scheme
-keeps the document's polarity, else its distance from the document's page
-carried to the scheme's (`ContrastSolve.reflect`), the document's page
-standing for the scheme's. -/
+/-- A declared ground as a scheme carries it: itself on the document's
+polarity, else its distance from the page carried over. -/
 public def SchemeFrame.ground (f : SchemeFrame) (c : Color) : Color :=
   if !f.flip then c else if c == f.homePage then f.page else ContrastSolve.reflect f.homePage f.page c
 
-/-- A colour a scheme could not carry legibly: the name it is declared
-under, the role it was judged on, and — where one was measured — what the
-nearest carrying read there and what reading there owes. -/
+/-- A colour a scheme could not carry legibly: its name, the role it was
+judged on, and what was measured. -/
 public structure Unrealized where
   name : ColorRef
   on : Role
   measured : Option (Nat × Nat) := none
   deriving Repr, BEq, Inhabited
 
-/-- **One declared ink carried to a scheme**: to a page of the other
-polarity (`flip`), adapted at the gate on its ground (`ContrastSolve.adapt`);
-on the same polarity, where the reader asks more contrast, itself where it
-meets the gate there, else the nearest tone that does
-(`ContrastSolve.realizeNearest`); `none` where no tone of its hue reaches
-the gate. -/
+/-- One declared ink carried to a scheme, adapted at the gate on its ground. -/
 public def Design.carryInk (flip : Bool) (req : Nat) (homePage page ground c : Color) :
     Option Color :=
   if flip then ContrastSolve.adapt req homePage page c ground
   else if req ≤ Contrast.contrastMilli c ground then some c
   else ContrastSolve.realizeNearest req ground c
 
-/-- **A carried ink meets its gate, its hue held, its chroma no more than
-declared** (`_between`): what `carryInk` returns reads at the scheme's gate
-on its ground, and is the declared colour itself or the 8-bit colour of an
-Oklab tone at its own direction with no more than its chroma. -/
 public theorem Design.adapt_between {flip : Bool} {req : Nat} {homePage page ground c c' : Color}
     (h : Design.carryInk flip req homePage page ground c = some c') :
     req ≤ Contrast.contrastMilli c' ground ∧
@@ -14080,12 +10419,8 @@ public theorem Design.adapt_between {flip : Bool} {req : Nat} {homePage page gro
       exact ⟨‹_›, Or.inl rfl⟩
     · exact ⟨ContrastSolve.realizeNearest_meets h, ContrastSolve.realize_hue_between h⟩
 
-/-- **A colour no palette names, as a scheme carries it**: itself where the
-scheme ships palettes as declared (`SchemeFrame.home`); elsewhere carried
-at the scheme's text gate on the scheme's page as a declared ink is
-(`Design.carryInk`), else reflected to it where the polarity flips. Both
-artifacts' one reading of a literal in a scheme: the page states it and the
-scheme judge reads it. -/
+/-- A colour no palette names, as a scheme carries it: itself where palettes
+ship as declared, else carried as a declared ink. -/
 public def Design.literalIn (f : SchemeFrame) (c : Color) : Color :=
   if f.home then c else
   (Design.carryInk f.flip (Contrast.requiredIn f.scheme (Need.text.atStage f.stage)) f.homePage
@@ -14096,12 +10431,7 @@ its ground. -/
 public def Role.grounds : List Role :=
   Role.all.filter fun g => g == .page || Role.all.any (·.row.ground == some g)
 
-/-- **The ground a use stands on, as a scheme ships it**: the palette role it
-is — the one the use census names (`role`), else a ground role of the
-palette in force resolving to it (`Role.grounds`, on the light screen or in
-print) — as the scheme's view of that palette (`view`) resolves it; else
-the colour carried as a declared ground is (`SchemeFrame.ground`), standing
-on the page. -/
+/-- The ground a use stands on, as a scheme ships it. -/
 public def Palette.useGround (pal view : Palette) (f : SchemeFrame) (g : Color)
     (role : Option Role := none) : Color × Role :=
   match role.orElse fun _ => Role.grounds.find? (fun r => Design.at pal .light r == some g ||
@@ -14109,12 +10439,8 @@ public def Palette.useGround (pal view : Palette) (f : SchemeFrame) (g : Color)
   | some r => ((Design.at view f.scheme r).getD (f.ground g), r)
   | none => (f.ground g, .page)
 
-/-- **The grounds an ink must read on in a scheme's view**, each with the
-role it is and what reading on it owes there: its row's ground, the
-palette's own page where its row names none, at the row's need; and each
-ground a use of it stands on (`used`, the use census's surfaces), as the
-view `p` carries it (`Palette.useGround`), as text — large-scale where the
-use stands so. An author colour's row names no ground. -/
+/-- The grounds an ink must read on in a scheme's view, each with its role and
+what reading on it owes. -/
 public def Palette.inkGrounds (pal : Palette) (f : SchemeFrame)
     (used : List (ColorRef × List (Color × Bool × Option Role))) (p : Palette) (k : ColorRef) :
     List (Color × Role × Nat) :=
@@ -14129,12 +10455,8 @@ public def Palette.inkGrounds (pal : Palette) (f : SchemeFrame)
     let (g', on) := pal.useGround p f g role
     (g', on, Contrast.requiredIn s ((if large then Need.largeText else .text).atStage f.stage)))
 
-/-- **One ink carried to a scheme's view on its grounds** (`Palette.inkGrounds`):
-itself where it reads on every one of them without turning the page over,
-else the first carrying to one of them that reads on every one
-(`Design.carryInk`); else the ground the first carrying fails on, with what
-it reads there and what that ground owes. A colour the scheme generated
-(`fresh`) stands in the scheme's polarity already. -/
+/-- One ink carried to a scheme's view on its grounds: itself where it reads
+on every one, else the first carrying that does. -/
 public def Palette.carryOn (pal : Palette) (f : SchemeFrame)
     (used : List (ColorRef × List (Color × Bool × Option Role))) (p : Palette) (k : ColorRef)
     (c : Color) (fresh : Bool := false) : Except (Role × Option (Nat × Nat)) (Option Color) :=
@@ -14152,13 +10474,6 @@ public def Palette.carryOn (pal : Palette) (f : SchemeFrame)
     | some (g, on, req) => .error (on, some (Contrast.contrastMilli best g, req))
     | none => .error (.page, none)
 
-/-- **An ink a scheme's view carries meets that scheme's gate on every ground
-it is judged on, its hue held, its chroma no more than declared**
-(`_between`): what `Palette.carryOn` returns reads at the gate each of the
-ink's grounds owes (`Palette.inkGrounds` — its row's and each its uses stand
-on), and is the declared colour itself or the 8-bit colour of an Oklab tone
-at its own direction with no more than its chroma (`Design.adapt_between`,
-ground by ground). -/
 public theorem Palette.carryOn_between {pal : Palette} {f : SchemeFrame}
     {used : List (ColorRef × List (Color × Bool × Option Role))} {p : Palette} {k : ColorRef}
     {c c' : Color} {fresh : Bool} (h : pal.carryOn f used p k c fresh = .ok (some c')) :
@@ -14185,24 +10500,7 @@ public theorem Palette.carryOn_between {pal : Palette} {f : SchemeFrame}
         · exact (Design.adapt_between hcarry).2
     · split at h <;> cases h
 
-/-- **A palette as a scheme ships it**, with the colours it could not carry.
-A frame that ships palettes as declared (`SchemeFrame.home`) ships it as it
-is. Otherwise a generated role takes its colour in the palette regenerated
-there (`Design.carrySeeds`), or where the seeds generate nothing there is
-carried as a declared colour is; a declared ground or decoration — the
-document's page standing for the scheme's — is reflected to the scheme's
-page where the polarity flips; and a declared ink, a role or an author
-colour, is carried at the scheme's gate on its grounds as the view resolves
-them (`Palette.carryOn`, which meets every one, `Palette.carryOn_between`),
-at the medium's need: its row's ground, the palette's own page where its
-row names none, and every ground a use of it stands on (`used`, the use
-census's surfaces, as `Palette.useGround` carries each) — an author colour,
-whose row names no ground, on its uses' alone, and one no use paints stays
-as declared. Where the reader asks more contrast and
-no tone of an ink's hue reaches the gate on a declared ground, that ground
-moves instead, as far as the gate asks at its own hue
-(`ContrastSolve.realizeNearest`), and every ink is judged there again: a
-bar's pale title on a mid-tone band takes a deeper band. -/
+/-- A palette as a scheme ships it, with the colours it could not carry. -/
 public def Palette.view (pal : Palette) (f : SchemeFrame)
     (used : List (ColorRef × List (Color × Bool × Option Role)) := []) : Palette × Array Unrealized :=
   if f.home then (pal, #[]) else
@@ -14210,17 +10508,11 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
   let uses (k : ColorRef) : List (Color × Bool × Option Role) := (used.lookup k).getD []
   let carried : Option (Option SeedPalette.SeedState) :=
     pal.seeded.map (Design.carrySeeds · pal.classColors.depth s f.flip)
-  -- A role the seeds generated, where they generate again in this scheme;
-  -- where they cannot, it is carried as a declared colour is.
   let generated (r : Role) (c : Color) : Bool := (carried.bind id).isSome &&
     pal.seeded.any fun st => Design.installed st r == some c
-  -- An ink: a role whose need pairs it with a ground, an author colour, and
-  -- any colour a use sets text in.
   let inkLike (k : ColorRef) : Bool := !(uses k).isEmpty || match k with
     | .role r => r.row.need.paired
     | .color _ => true
-  -- Grounds and decorations first, so each ink is judged on its ground as
-  -- the view carries it.
   let grounds : Array (ColorRef × Color) × Array Unrealized :=
     pal.entries.foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized) (k, c) =>
       match k with
@@ -14236,8 +10528,6 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
   let reqOf (k : ColorRef) : Nat := Contrast.requiredIn s ((match k with
     | .role r => r.row.need
     | .color _ => .text).atStage f.stage)
-  -- Each ink on its grounds (`Palette.inkGrounds`), as `Palette.carryOn`
-  -- carries it.
   let groundsOf (p : Palette) (k : ColorRef) : List (Color × Role × Nat) := pal.inkGrounds f used p k
   let carryOn (p : Palette) (k : ColorRef) (c : Color) (fresh : Bool := false) :
       Except (Role × Option (Nat × Nat)) (Option Color) := pal.carryOn f used p k c fresh
@@ -14247,24 +10537,17 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
       let isGenerated := match k with
         | .role r => generated r c
         | .color _ => false
-      -- A generated ink whose own colour already reads at the gate on every
-      -- ground the scheme gives it, and no lower than the tone generated
-      -- there, stays: more contrast never lowers what already meets it.
+      -- A generated ink that already meets the gate stays: more contrast never lowers it.
       let gs := if isGenerated && inkLike k && !f.flip then groundsOf staged k else []
       if !gs.isEmpty && gs.all (fun (g, _, req) =>
           req ≤ Contrast.contrastMilli c g && Contrast.contrastMilli c0 g ≤ Contrast.contrastMilli c g)
       then (acc.1.push (k, c), acc.2) else
       if !inkLike k || (isGenerated && (uses k).isEmpty) then (acc.1.push (k, c0), acc.2) else
-      -- A generated colour another ground's use reads is held there too, from
-      -- the colour the scheme generated.
       match carryOn staged k (if isGenerated then c0 else c) isGenerated with
       | .ok (some c') => (acc.1.push (k, c'), acc.2)
       | .ok none => (acc.1.push (k, c0), acc.2)
       | .error (on, measured) => (acc.1.push (k, c0), acc.2.push { name := k, on, measured }))
       (#[], grounds.2)
-  -- A role the palette leaves undeclared that a use reads on another ground
-  -- than its row's: held there too, from the colour the scheme gives it
-  -- over `base`, and declared in the view where it moves.
   let undeclaredOn (base : Palette) (start : Array (ColorRef × Color) × Array Unrealized) :
       Array (ColorRef × Color) × Array Unrealized :=
     used.foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized) (k, _) =>
@@ -14282,11 +10565,7 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
   let inks := undeclaredOn staged inks
   let out : Palette := { staged with entries := inks.1 }
   if !s.more || inks.2.isEmpty then (out, inks.2) else
-  -- Where the reader asks more contrast and no tone of an ink's hue reaches
-  -- the gate on its declared ground alone, the ground moves instead, as far
-  -- as the gate asks at its own hue; each ink is judged again. An ink each
-  -- of whose grounds one tone serves, but no one tone all of them, moves
-  -- nothing: the scheme cannot carry it.
+  -- Where no tone of an ink's hue reaches the gate, its ground moves instead.
   let moves : Array (Role × Color) := inks.2.foldl (fun acc u =>
     if acc.any (·.1 == u.on) then acc else
     match Design.declared? out u.on, out.lookup u.name with
@@ -14316,29 +10595,18 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
         | .ok none => (acc.1.push (k, c1), acc.2)
         | .error (on, measured) => (acc.1.push (k, c1), acc.2.push { name := k, on, measured }))
         (#[], grounds.2)
-  -- The roles the use pass declares are carried again, from the colours the
-  -- moved grounds and the inks judged again there give them.
   let again := undeclaredOn { moved with entries := rejudged.1 } rejudged
   ({ moved with entries := again.1 }, again.2)
 
-/-- **A frame that ships palettes as declared ships each as it is**: in
-print and on the document's own screen the view is the palette, and nothing
-is left uncarried. -/
 public theorem Palette.view_home (pal : Palette) (f : SchemeFrame) (h : f.home = true) :
     pal.view f = (pal, #[]) := by
   unfold Palette.view
   simp [h]
 
-/-- A role's colour in a scheme as the scheme ships it: the resolver over
-the palette's view in the document's frame there (`Palette.view`). -/
+/-- A role's colour in a scheme as the scheme ships it. -/
 public def Design.inScheme (pal : Palette) (f : SchemeFrame) (r : Role) : Option Color :=
   Design.at (pal.view f).1 f.scheme r
 
-/-- **Declared colours ship exactly in print and on their own screen**: in a
-document whose page is light, every palette it holds — its own and every
-epoch's — resolves each role it declares to that colour in print and in the
-light scheme, as declared: no scheme the colours were written for repaints
-them. -/
 public theorem Design.light_print_exact (doc pal : Palette) (r : Role) (c : Color) (stage : Bool)
     (hd : doc.darkPage = false) (h : Design.declared? pal r = some c) :
     Design.inScheme pal (doc.frame .print stage) r = some c ∧
@@ -14354,10 +10622,8 @@ public theorem Design.light_print_exact (doc pal : Palette) (r : Role) (c : Colo
 
 end DesignResolve
 
-/-- **The colour schemes a document asks its page to offer**: its
-`\output{ schemes = … }`, else its class's (`ClassRecord.schemes`) — every
-scheme, or print, the screen of its page's own polarity and that screen's
-more contrast. -/
+/-- The colour schemes a document asks its page to offer: its
+`\output{ schemes = … }`, else its class's. -/
 public def Doc.requestedSchemes (doc : Doc) : List Scheme :=
   match doc.output.schemes with
   | some l => l.toList
@@ -14377,47 +10643,26 @@ public theorem Design.titledBody_projects (pal : Palette) (kind : TitledKind) :
     (Design.ofPalette pal).titledBody kind = titledBodyLook pal kind := by
   cases kind <;> rfl
 
-/-- A titled body's paint: its declared channels over the enclosing pair,
-the one value both backends' body painters read. -/
+/-- A titled body's paint: its declared channels over the enclosing pair. -/
 @[expose] public def Design.titledBodyPaint (d : Design) (kind : TitledKind)
     (parent : ColorPair) : ColorPair :=
   (d.titledBody kind).resolve parent
 
-/-- The body keeps its own declared ground, else the enclosing one. -/
 public theorem Design.titledBodyPaint_contract (d : Design) (kind : TitledKind)
     (parent : ColorPair) :
     (d.titledBodyPaint kind parent).bg = (d.titledBody kind).bg.getD parent.bg := by
   rfl
 
 /-- The ground a frame's body stands on when the frame declares one of its
-own: a title page's (`titlepagebg`, through `Design.ofPalette`), `none` for
-a frame on the page's own ground. The one reading the page painter
-(`Layout.titleGround`) and the contrast judge make, so a pair judged on the
-title page is the pair painted there. -/
+own: a title page's; `none` on the page's own ground. -/
 @[expose] public def titleGroundOf (pal : Palette) (valign : VAlign) : Option Color :=
   if valign matches .golden then (Design.ofPalette pal).titlepage.map (·.bg) else none
 
-/-- **The one reading of the ground a frame's pages stand on**, off the
-palette in force where the frame stands — the document's, or a body
-`\palette`'s epoch, which is how a deck declares one frame's background
-(reveal.js's per-slide `data-background-color`, here a declaration both
-backends already carry). A `[standout]` frame stands on its inversion
-(`Design.standout`), the title page on its own declared ground when it
-has one (`titleGroundOf`), and every other frame on the palette's
-declared `bg`. `none` is an undeclared ground, which neither backend
-paints: the PDF ships no fill and the HTML stage its stylesheet surface.
-The page painter reads this (`Layout.collectBlock`'s frame arm), and the
-HTML stage resolves the same `--bg` from the epoch's redefinition on its
-node (`HtmlDoc.stageGround`); `artStageGroundChecks` holds the two
-artifacts to it. -/
+/-- The ground a frame's pages stand on, off the palette in force where the frame stands. -/
 public def frameGroundOf (pal : Palette) (standout : Bool) (valign : VAlign) : Option Color :=
   if standout then some (Design.ofPalette pal).standout.bg
   else (titleGroundOf pal valign).orElse fun _ => Design.declared? pal .page
 
-/-- **A plain frame stands on the declared `bg` in force, and on nothing
-else**: a ground nobody declared is never invented, and an epoch's own
-ground is never replaced by the document's — the half of a per-slide
-background the page painter owed before it read the palette in force. -/
 public theorem frameGround_exact (pal : Palette) (valign : VAlign) (h : ¬ valign = .golden) :
     frameGroundOf pal false valign = Design.declared? pal .page := by
   cases valign <;> simp_all [frameGroundOf, titleGroundOf]
@@ -14426,17 +10671,13 @@ public theorem frameGround_exact (pal : Palette) (valign : VAlign) (h : ¬ valig
 two declarations a palette does not carry. -/
 @[expose] public def Design.ofDoc (doc : Doc) : Design :=
   { Design.ofPalette doc.palette with
-    -- The fallback is moloch's own default, `progressbar linewidth=1pt`
-    -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults); the layout
-    -- fallback and the bundles' token entries are the same value.
+    -- Fallback: `progressbar linewidth=1pt`, the outer theme's own default.
     progressheight := (doc.tokens.find? "progressheight").getD
       { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := doc.styles }
 
-/-- A restored standout footer stands on the standout canvas and uses its
-foreground. The deferred `use={standout,background canvas}` colour reads
-these values at the frame, after standout has set the canvas; ordinary
-footers retain their own pair. Both backends project this one value. -/
+/-- The footer look of a frame: a restored standout footer stands on the
+standout canvas in its foreground. -/
 public def Design.frameFootLook (d : Design) (standout : Bool) : TitledLook :=
   if standout then { fg := d.standout.fg, bar := some d.standout.bg } else d.footline
 
@@ -14444,39 +10685,18 @@ public theorem Design.standoutFootLook_projects (d : Design) :
     (d.frameFootLook true).fg = d.standout.fg ∧
     (d.frameFootLook true).bar = some d.standout.bg := ⟨rfl, rfl⟩
 
-/-- **Two projections of one resolved value agree.** The frame-title pair is
-a function of the palette alone: the document-level design's pair is the one
-`ofPalette` resolves from the document's palette, so the value the PDF reads
-at a frame — `(Design.ofPalette epochPalette).frametitle`, the epoch palette
-being the only difference — is the same construction and not a second copy
-of the chain `frametitlefg` → `bg` → white. `ofDoc`'s overlay could have
-touched the pair; this says it does not. -/
 public theorem frametitle_agree (doc : Doc) :
     (Design.ofDoc doc).frametitle = (Design.ofPalette doc.palette).frametitle := by rfl
 
-/-- The added Beamer sites travel the same palette resolution chain in
-the document design and in an epoch's design. -/
 public theorem beamerColors_agree (doc : Doc) :
     ((Design.ofDoc doc).framesubtitle, (Design.ofDoc doc).sectionTitle,
       (Design.ofDoc doc).sectionProgress, (Design.ofDoc doc).footline) =
     ((Design.ofPalette doc.palette).framesubtitle, (Design.ofPalette doc.palette).sectionTitle,
       (Design.ofPalette doc.palette).sectionProgress, (Design.ofPalette doc.palette).footline) := by rfl
 
-/-- The title page's pair travels the same one chain, for the same reason:
-the layout resolves the *epoch* palette in force where the title frame
-stands and `ofDoc` the document's, so the two must be the same
-construction and not two copies of it. -/
 public theorem titlepage_agree (doc : Doc) :
     (Design.ofDoc doc).titlepage = (Design.ofPalette doc.palette).titlepage := by rfl
 
-/-- **A ground nobody declared is never invented.** The title page's ground
-is the declared role and nothing else: `titlepagebg` unset resolves to no
-pair at all, so no page is painted a colour the document did not name, and a
-declared one reaches the artifacts as itself rather than as something the
-engine chose for it. This is what makes the contrast judge's verdict a
-verdict about the author's pair — the defect it forbids is a ground derived
-from `fg` or from the standout keys, which would report a failure the
-document never wrote. -/
 public theorem Design.titleGround_exact (pal : Palette) :
     (Design.ofPalette pal).titlepage.map (·.bg) = Design.declared? pal .titlePageGround := by
   have h : Design.at pal .print .titlePageGround = Design.declared? pal .titlePageGround := by
@@ -14486,38 +10706,27 @@ public theorem Design.titleGround_exact (pal : Palette) :
   simp only [h]
   cases Design.declared? pal .titlePageGround <;> rfl
 
-/-- Per-element style, total: the empty style is the default, applied here
-rather than at each consumer. -/
+/-- Per-element style, total: the empty style is the default. -/
 public def Design.style (d : Design) (element : String) : ElementStyle :=
   (d.styles.find? element).getD {}
 
-/-- The palette keys the registry resolves: every key a document or bundle
-declares is a role some backend reads (`Role.row`), or an author colour. -/
+/-- The palette keys the registry resolves. -/
 public def Design.consumedRoles : List String :=
   Role.all.filterMap (·.row.key)
 
-/-- How covering paints: the colour of a covered run that had none of its
-own, and the per-colour cover of an explicitly coloured one — the same
-ink, quieter, never a repaint to one constant. Built once per document by
-`Design.cover` (the one resolving site); the walks below only apply it. -/
+/-- How covering paints: a covered run with no colour of its own, and the
+per-colour cover of a coloured one. -/
 public structure Cover where
   plain : Color
   of : Color → Color
 
-/-- The one resolving site for covering (the colour-role obligation,
-AGENTS.md § When you add): the per-colour cover at the design's fraction
-toward its surface, and the plain cover for runs with no colour of their
-own — the declared `covered` colour when the document names one, the
-fraction of the body ink otherwise. Everything that covers — the layout dim walks,
-the contrast contract — reads this and nothing else. -/
+/-- Covering: the per-colour cover at the design's fraction toward its
+surface, and the plain cover for runs with no colour. -/
 public def Design.cover (d : Design) : Cover :=
   let of := Oklab.cover d.coveredFraction d.bg
   { plain := d.covered.getD (of d.fg), of := of }
 
--- Overlay walks. Structural recursion through `List`, as the printers above.
-
-/-- One component of a numbered overlay: a number, a closed range, or an
-open range. Mode and incremental specifications are not numbered selectors. -/
+/-- One component of a numbered overlay: a number, a closed range or an open range. -/
 private def overlayInterval (w : String) : Option (Nat × Option Nat) := do
   match w.trimAscii.toString.splitOn "-" with
   | [n] =>
@@ -14531,9 +10740,8 @@ private def overlayInterval (w : String) : Option (Nat × Option Nat) := do
         pure (n, some u)
   | _ => none
 
-/-- The shared reader for every numbered overlay entry, including overprint.
-A comma is union; every component must be numbered. An unsupported component
-refuses the entire selector instead of silently dropping steps. -/
+/-- The reader for every numbered overlay entry: a comma is union, and an
+unsupported component refuses the whole selector. -/
 public def overlayRange (w : String) : Option OverlaySpec := do
   if !(w.startsWith "<" && w.endsWith ">" && w.length ≥ 3) then none else do
     let ranges ← (((w.drop 1).dropEnd 1).toString.splitOn ",").mapM overlayInterval
@@ -14541,13 +10749,10 @@ public def overlayRange (w : String) : Option OverlaySpec := do
     | (n, last) :: more => pure ⟨n, last, more⟩
     | [] => none
 
-/-- The single-interval projection of `OverlaySpec.showsFirst`. Actual
-overlay nodes carry the full selector, including disjoint intervals. -/
+/-- The single-interval projection of `OverlaySpec.showsFirst`. -/
 @[expose] public def altShowsFirst (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
   (OverlaySpec.mk n last []).showsFirst k
 
-/-- Step 1 inks the group stored first: page order, as a fact rather than a
-convention a later reader has to trust. -/
 public theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
     altShowsFirst n last 1 = true :=
   OverlaySpec.showsFirst_id _
@@ -14556,42 +10761,24 @@ public theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
 public def altReachesOther (n : Nat) (last : Option Nat) (steps : Nat) : Bool :=
   (OverlaySpec.mk n last []).reachesOther steps
 
-/-- Is the group stored first the one a *pending* step inks? The side of the
-spec page order put it on, and the only per-node fact an artifact needs
-beyond the range itself: a consumer that can test `stepPending` at a step
-recovers `altShowsFirst` from it (`altShowsFirst_side`). The HTML deck tags
-each group's wrapper with this, because a stylesheet can test the range but
-not read a node's two groups — so both artifacts decide from the one
-arithmetic instead of each re-deriving the selection. -/
+/-- Whether the group stored first is the one a pending step inks. -/
 public def altFirstWhenPending (n : Nat) (last : Option Nat) : Bool :=
   (OverlaySpec.mk n last []).pending 1
 
-/-- The predicate, factored the way a per-step consumer can use it: whether
-step `k` inks the group stored first is whether `k`'s pending state matches
-the side page order gave that group. The equation both artifacts read —
-the PDF page tests `altShowsFirst` directly at layout's arms, the HTML deck
-tests `stepPending` in its own per-snap selectors and compares against the
-tagged side (`HtmlDoc.alt_backend_agree`). -/
 public theorem altShowsFirst_side (n : Nat) (last : Option Nat) (k : Nat) :
     altShowsFirst n last k = (stepPending n last k == altFirstWhenPending n last) := by
   simp [altShowsFirst, altFirstWhenPending, OverlaySpec.showsFirst]
 
 mutual
 
-/-- The last step a frame's body reaches. `frameSteps` also includes its
-title when counting handout pages. A frame nested below another block
-keeps one page. -/
+/-- The last step a frame's body reaches; a frame nested below another block keeps one page. -/
 public def maxStepBlocks (xs : Array Block) : Nat := maxStepBlockList xs.toList
 
 private def maxStepBlockList : List Block → Nat
   | [] => 1
   | b :: rest => max (maxStepBlock b) (maxStepBlockList rest)
 
-/-- Exhaustive by design (never add a wildcard arm). The `1` arms are
-decisions, not gaps: furniture (a section title, a frame footer) and the
-note side channel sit outside the overlay model — the dim walks keep them
-whole, so a step there must not multiply handout pages either — and
-verbatim carries no inline structure. -/
+/-- The `1` arms are furniture and the note side channel, outside the overlay model. -/
 private def maxStepBlock : Block → Nat
   | .para content => maxStepInlines content
   | .equation _ content => maxStepInlines content
@@ -14600,8 +10787,6 @@ private def maxStepBlock : Block → Nat
   | .ragged _ body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
   | .abstract body => maxStepBlockList body.toList
-  -- A titled block's title is furniture and does not multiply pages;
-  -- the body's own steps take theirs.
   | .titled _ _ body => maxStepBlockList body.toList
   | .disclosure _ _ body => maxStepBlockList body.toList
   | .role _ body => maxStepBlockList body.toList
@@ -14612,8 +10797,6 @@ private def maxStepBlock : Block → Nat
   | .altSteps spec firstPage otherPage =>
     max (spec.maxStep)
       (max (maxStepBlockList firstPage.toList) (maxStepBlockList otherPage.toList))
-  -- Conditional content steps like any other content: a backend that keeps
-  -- it must give its overlays their pages. A nav's links may step too.
   | .only _ body => maxStepBlockList body.toList
   | .nav _ body => maxStepBlockList body.toList
   | .section _ _ _ _ => 1
@@ -14627,13 +10810,9 @@ private def maxStepBlock : Block → Nat
   | .pagebreak => 1
   | .logo _ => 1
   | .rule _ _ _ => 1
-  -- A picture is concrete ink with no overlay structure inside it.
   | .picture _ => 1
-  -- A cell's content may step (an overlay reveal per row); the caption is
-  -- furniture and does not multiply pages.
   | .table _ _ _ rows _ _ => maxStepTableRows rows.toList
   | .float _ _ _ body _ => maxStepBlockList body.toList
-  -- A reference list is furniture like a section title: no overlay inside.
   | .bibliography _ _ _ => 1
 
 private def maxStepTableRows : List (Array (Array Inline)) → Nat
@@ -14685,21 +10864,13 @@ private def maxStepInline : Inline → Nat
 
 end
 
-/-- The declared overlay extent of a top-level frame's title and body,
-or zero for any other block. LuaLaTeX gives a frame with only
-`\frametitle{\alt<1,4>{Amber}{Blue}}` four pages; a subtitle is part of
-the same title inlines. Physical pagination can add spill pages beyond
-this overlay extent. `Layout.pages_partition_frames` partitions actual
-shipped pages into unique source/step and flow buckets and accounts for
-all pages, including spills. `frameSteps_covers` holds the title and body
-endpoints to this declared extent. -/
+/-- The declared overlay extent of a top-level frame's title and body, or zero
+for any other block. -/
 public def frameSteps (b : Block) : Nat :=
   if let .frame title _ _ _ body := b then
     max 1 (max (maxStepInlines title) (maxStepBlocks body))
   else 0
 
-/-- Every numbered endpoint in a frame's title or body has a page in its
-shared extent. -/
 public theorem frameSteps_covers (title : Array Inline) (standout : Bool)
     (valign : VAlign) (breakable : Bool) (body : Array Block) :
     maxStepInlines title ≤ frameSteps (.frame title standout valign breakable body) ∧
@@ -14707,7 +10878,6 @@ public theorem frameSteps_covers (title : Array Inline) (standout : Bool)
   simp only [frameSteps]
   constructor <;> omega
 
-/-- A title whose endpoints fit within the body's extent adds no pages. -/
 public theorem frameSteps_body_exact (title : Array Inline) (standout : Bool)
     (valign : VAlign) (breakable : Bool) (body : Array Block)
     (h : maxStepInlines title ≤ maxStepBlocks body) :
@@ -14715,19 +10885,7 @@ public theorem frameSteps_body_exact (title : Array Inline) (standout : Bool)
   simp [frameSteps, Nat.max_eq_right h]
 
 /-- Alternation groups no step of their own frame inks, counted over the
-document's frames — block alternations and inline ones alike. **Zero is the
-contract.** Two consecutive step pages that ship the same ink are either a
-document that meant it or an engine that lost an increment, and the engine
-cannot tell those apart after the fact; an unreachable group, though, is
-decidable *before* the pages are built, from the range and the frame's own
-step window. An overprint whose items were chained head-first produced
-exactly this — `\onslide<1->` then `\onslide<2->` left item 1 winning on
-every step and item 2 reachable from none, two byte-identical pages, no
-diagnostic — so the shape is checked rather than trusted. Only the group
-stored *second* can be unreachable (`altShowsFirst_id` gives step 1 to the
-first), and only a non-empty one is a loss: the empty other group is what a
-chain's last link carries, and it inks nothing whether a step reaches it or
-not. A leaf function over `foldBlocks`, not a new walk. -/
+document's frames; zero is the contract. -/
 public def altUnreachable (doc : Doc) : Nat :=
   doc.body.foldl (init := 0) fun n b =>
     match b with
@@ -14761,22 +10919,9 @@ public def altUnreachable (doc : Doc) : Nat :=
 
 mutual
 
-/-- One overlay walk, two modes, selected by `pending`. Off, it is the dim
-walk: the frame's body as step `k` of its overlay shows it — content
-outside a step's declared range flips the flag and covers, everything else
-stays. On, it is the cover itself: every paragraph below here covered.
-Covered means covered — an explicit colour nested inside (an alert, a
-palette name) is covered too, exactly as beamer's transparent covering
-mutes coloured text — but covered means *the same colour, quieter*: each
-coloured run takes its own cover (`cover.of`), never a repaint to one
-constant that would make a covered alert and a covered example the same
-grey. Runs with no colour of their own take `cover.plain`; a titled
-block's heading has one, the block title's ink, which resolves at layout
-from the palette in force and takes its cover there with the block's
-boxes; verbatim dims through its own `covered` field; section blocks carry
-no colour and stay (recorded in PLAN). Only colours change in either mode,
-so no step can reflow the slide — the cover-not-hide invariant, by
-construction. -/
+/-- One overlay walk in two modes: off, step `k` of the frame's overlay,
+covering what lies outside its range; on, everything covered; only colours
+change. -/
 private def dimBlockList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Block) :
     List Block → Array Block
   | [] => out
@@ -14807,9 +10952,6 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
-  -- The mode flip: a pending step's body covers, and inside a cover a
-  -- nested step stays covered — `\uncover<2>` covers on 1 and again from 3,
-  -- exactly as beamer's transparent covering does.
   | .onSteps spec body =>
     .onSteps spec (dimBlockList cover k (pending || spec.pending k) #[] body.toList)
   | .altSteps spec firstPage otherPage =>
@@ -14822,25 +10964,16 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
     .verbatim (if pending then some cover.plain else c) s
       { spec with caption := spec.caption.map fun (n, cap) =>
           (n, dimInlineList cover k pending #[] cap.toList) }
-  -- Lines cover and dim as paragraphs do, comment included: only colours
-  -- change, so no step can reflow the pseudocode.
   | .algorithm n sm lines => .algorithm n sm (dimAlgLines cover k pending #[] lines.toList)
   | .note body => .note body
   | .frame t st v br body => .frame t st v br body
   | .framefoot content => .framefoot content
-  -- A stateful declaration carries no ink: covering changes only colours
-  -- of content, never the state the declaration installs.
   | .setPalette pal => .setPalette pal
   | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
-  -- A picture has no overlay structure inside it: covered, each shape takes
-  -- its own colour's cover, exactly as a coloured run does.
   | .picture p => .picture (if pending then p.recolor cover.of else p)
-  -- Cells cover as paragraphs do and dim in place: only colours change, so
-  -- no step can reflow the grid. Rules are decorative ink and keep their
-  -- weight; the caption covers and dims with its float.
   | .table cols pl pr rows rules spans =>
     .table cols pl pr (dimTableRows cover k pending #[] rows.toList) rules spans
   | .float fk num ca body caption =>
@@ -14849,8 +10982,6 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
         if caption.isEmpty then caption
         else #[.colored cover.plain none (dimInlineList cover k true #[] caption.toList)]
        else dimInlineList cover k false #[] caption.toList)
-  -- A reference list is furniture, like a section title: the dim walk
-  -- keeps it whole (the `.section` decision, recorded in PLAN).
   | .bibliography src style items => .bibliography src style items
 
 private def dimTableRows (cover : Cover) (k : Nat) (pending : Bool)
@@ -14916,13 +11047,11 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .colored c nm body =>
     if pending then .colored (cover.of c) none (dimInlineList cover k true #[] body.toList)
     else .colored c nm (dimInlineList cover k false #[] body.toList)
-  -- a role is a name, not ink: the cover dims what is inside it
   | .located n body => .located n (dimInlineList cover k pending #[] body.toList)
   | .role n body => .role n (dimInlineList cover k pending #[] body.toList)
   | .link u body => .link u (dimInlineList cover k pending #[] body.toList)
   | .decorated kind body => .decorated kind (dimInlineList cover k pending #[] body.toList)
-  -- The inline flip wraps: a covered paragraph's plain cover comes from its
-  -- block wrapper, but a pending inline step must bring its own.
+  -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
     if !pending && spec.pending k then
       .onSteps spec #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
@@ -14932,8 +11061,7 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
       (dimInlineList cover k pending #[] otherPage.toList)
   | .text s => .text s
   | .math d src => .math d src
-  -- the walk leaves formula and image nodes whole: a pending formula or
-  -- raster dims in the backends' hands, not here
+  -- Formula and image nodes stay whole: the backends dim them.
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
@@ -14947,27 +11075,17 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
-  -- a citation dims with its paragraph's cover, like bare text: no colour
-  -- of its own, so the walk leaves it whole
   | .cite t keys => .cite t keys
-  -- a note's body dims like any content: recoloured inside, never removed
   | .footnote n body => .footnote n (dimInlineList cover k pending #[] body.toList)
 
 end
 
-/-- The frame's body as step `k` of its overlay shows it: the walk's page
-entry, `pending` off. -/
+/-- The frame's body as step `k` of its overlay shows it. -/
 public def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
   dimBlockList cover k false #[] xs.toList
 
-/-- The item flatten itself: a leading `.step` wrapper that opens on a
-paragraph gives the item that paragraph, where the marker attaches, and
-keeps the rest of its body under the wrapper; a wrapper opening on anything
-else stands whole, and an empty one goes. The wrapper must reach what
-follows the paragraph: a block's boxes and heading ink resolve at layout and
-take the step's cover there (`Layout`'s `.onSteps` arm), and flattened they
-shipped at full ink on the steps that do not show their item. Named so its
-text conservation is one lemma, not a case buried inside the walk. -/
+/-- A leading `.step` wrapper opening on a paragraph gives the item that
+paragraph, keeping the rest under the wrapper. -/
 public def flattenLeadStep (item : Array Block) : Array Block :=
   match item[0]? with
   | some (Block.onSteps spec body) =>
@@ -14997,11 +11115,8 @@ public def flattenLeadStep (item : Array Block) : Array Block :=
 
 mutual
 
-/-- Inside a list item, a leading `.step` (an overlay `\item<2->`) is pure
-grouping by the time layout runs — dimming is already painted into colours —
-but it hides the item's first paragraph from the walk that attaches the
-marker. Flatten it, so the marker lands where LaTeX puts the label. Layout's
-own pre-pass; the HTML backend keeps the wrapper for its `data-step`. -/
+/-- Flatten each list item's leading `.step`, so the marker lands on the
+item's first paragraph, as LaTeX puts the label. -/
 public def unwrapItemSteps (xs : Array Block) : Array Block :=
   unwrapItemStepList #[] xs.toList
 
@@ -15042,12 +11157,8 @@ public def unwrapItemStep : Block → Block
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
   | .picture p => .picture p
-  -- A cell holds inlines and a caption is furniture: no item paragraph can
-  -- hide below either, so both nodes pass whole (float body walked: a
-  -- listed figure body may hold a list).
   | .table cols pl pr rows rules spans => .table cols pl pr rows rules spans
   | .float k n ca body caption => .float k n ca (unwrapItemStepList #[] body.toList) caption
-  -- A reference list holds entries, never item paragraphs.
   | .bibliography src style items => .bibliography src style items
 
 private def unwrapItemStepItems (out : Array (Array Block)) :
@@ -15065,66 +11176,44 @@ private def unwrapItemStepCols (out : Array (BoxWidth × Array Block)) :
 
 end
 
-/-- Layout's item pre-pass preserves a paragraph verbatim. The collector reads
-this equation without depending on the pre-pass's private traversal state. -/
 public theorem unwrapItemStep_para_exact (content : Array Inline) :
     unwrapItemStep (.para content) = .para content := by
   rfl
 
-/-- The conservation shape, named once: `f` leaves the census fixed. Every
-public IR-to-IR walk states its conservation as an instance of this — one
-shape, many instances — so an instance is grep-recognisable and the
-pre-commit hook can ask a new walk for one (or for the one-line refusal
-naming why none holds). -/
+/-- The conservation shape: `f` leaves the census fixed. -/
 @[expose] public def Conserves (census : α → β) (f : α → α) : Prop :=
   ∀ x, census (f x) = census x
 
-/-- Body-transparent wraps, once: a constructor whose own census is exactly
-its body's conserves the census when wrapped around any content.
-`langWrap_text`, `footnoteWrap_text`, and `decorated_text` are its
-one-line instances (`rfl` per constructor), and the next wrapper's costs
-the same line. -/
 public theorem wrap_text (w : Array Inline → Inline)
     (hw : ∀ xs, plainTextOne (w xs) = plainText xs) :
     Conserves plainText (fun xs => #[w xs]) := fun xs => by
   simp [plainText, plainTextList, hw]
 
-/-- Diagnostic provenance is transparent to the text census. In particular,
-an empty annotation adds neither content nor a template hole. -/
 public theorem located_text (span : Span) :
     Conserves plainText (fun xs => #[.located span xs]) :=
   wrap_text (.located span) fun _ => rfl
 
-/-- Wrap inline content in a language switch: what `\foreignlanguage`,
-`\selectlanguage`, and `otherlanguage` become. -/
+/-- Wrap inline content in a language switch, as `\foreignlanguage`,
+`\selectlanguage` and `otherlanguage` do. -/
 public def langWrap (tag : String) (xs : Array Inline) : Array Inline :=
   #[.styled (.lang tag) xs]
 
-/-- Language markup has one declared wrapper around its unchanged content. -/
 public theorem langWrap_exact (tag : String) (xs : Array Inline) :
     langWrap tag xs = #[.styled (.lang tag) xs] := by
   rfl
 
-/-- The language attribute is pure markup: tagging content ships exactly
-the text census the content already had — `langWrap_text` below, an
-instance of `wrap_text` because the census ignores style wrappers. -/
 public theorem langWrap_text (tag : String) :
     Conserves plainText (langWrap tag) :=
   wrap_text (.styled (.lang tag)) fun _ => rfl
 
-/-- The style a disclosure's summary sets in: bold, as a titled block's
-title is. The page's summary line reads it (`disclosureSummary`) and the
-web's element through the style's one map to CSS, so the two cannot
-disagree. -/
+/-- The style a disclosure's summary sets in: bold, as a titled block's title is. -/
 public def disclosureSummaryStyle : Style := .bold
 
-/-- A disclosure's summary as paper sets it: the line above its body, in the
-summary's style. An empty summary sets nothing. -/
+/-- A disclosure's summary as paper sets it, the line above its body; an empty
+summary sets nothing. -/
 public def disclosureSummary (summary : Array Inline) : Array Inline :=
   if summary.isEmpty then #[] else #[.styled disclosureSummaryStyle summary]
 
-/-- The summary's style is markup: paper's summary line ships exactly the
-summary's text, and an empty summary, which sets nothing, holds none. -/
 public theorem disclosureSummary_text : Conserves plainText disclosureSummary := fun xs => by
   unfold disclosureSummary
   split
@@ -15136,18 +11225,10 @@ public theorem disclosureSummary_text : Conserves plainText disclosureSummary :=
 public def footnoteWrap (num : Option Nat) (xs : Array Inline) : Array Inline :=
   #[.footnote num xs]
 
-/-- The note body is document text: marking content as a footnote ships
-exactly the text census the content already had. The mark digit is
-generated ink, excluded as `citeMark` is. -/
 public theorem footnoteWrap_text (num : Option Nat) :
     Conserves plainText (footnoteWrap num) :=
   wrap_text (.footnote num) fun _ => rfl
 
-/-- A link's ink (`Styles.linkInk`) is a body-transparent wrap
-(`Inline.colored`, whose census is its body's) where the kind declares a
-colour, and the body unchanged where it does not, so it ships exactly the
-text census the body already had — the `Styles` walk's conservation fact
-(AGENTS.md § When you add). -/
 public theorem Styles_text (s : Styles) (kind : String) :
     Conserves plainText (s.linkInk kind) := by
   intro body
@@ -15156,25 +11237,14 @@ public theorem Styles_text (s : Styles) (kind : String) :
   | none => rfl
   | some (c, n) => exact wrap_text (Inline.colored c n) (fun _ => rfl) body
 
--- Nothing vanishes: dimming recolours, never removes. The text of a frame's
--- body is identical on every handout page, so the union of what the steps
--- show is the whole content — each page already shows all of it, dimmed or
--- not. Stated over the walks above and proved by the same structural
--- recursion; a step function that dropped or reordered content would fail
--- these equalities.
-
-/-- A listing caption's census text: the declared characters, `""` when
-none is declared. The number prefix is backend furniture, excluded as a
-float's `captionPrefix` is. -/
+/-- A listing caption's census text, `""` when none is declared. -/
 @[expose] public def ListingSpec.capText (spec : ListingSpec) : String :=
   match spec.caption with
   | some (_, cap) => plainText cap
   | none => ""
 
 /-- The algorithm lines' census: each line's declared content, then its
-comment — the keywords a kind implies are generated by the backends
-(`AlgLine.rendered`) and never counted, exactly as caption prefixes are
-not (`algorithm_text` is the statement). -/
+comment; generated keywords never count. -/
 @[expose] public def algLineText (acc : String) : List AlgLine → String
   | [] => acc
   | l :: rest =>
@@ -15186,9 +11256,7 @@ not (`algorithm_text` is the statement). -/
 
 mutual
 
-/-- The characters of block content with every mark stripped: the block
-companion of `plainText`, and what the overlay walks must preserve. The
-accumulator threads through, as every walk here does. -/
+/-- The characters of block content with every mark stripped, the block companion of `plainText`. -/
 @[expose] public def blocksText (xs : Array Block) : String := blockTextList "" xs.toList
 
 @[expose] public def blockTextList (acc : String) : List Block → String
@@ -15199,7 +11267,6 @@ accumulator threads through, as every walk here does. -/
   | .para content =>
     let t := plainText content
     acc ++ t
-  -- an equation's number ships beside its formula in every backend
   | .equation number content =>
     let t := plainText content
     let n := plainText number
@@ -15210,11 +11277,8 @@ accumulator threads through, as every walk here does. -/
   | .list _ items => blockTextItems acc items.toList
   | .center body => blockTextList acc body.toList
   | .ragged _ body => blockTextList acc body.toList
-  -- A quotation's text is real census content, exactly as a paragraph's.
   | .quote body => blockTextList acc body.toList
   | .abstract body => blockTextList acc body.toList
-  -- The title counts with its block, before the body, as a frame's does;
-  -- the bar and background are decorative ink and ship no characters.
   | .titled _ title body => blockTextList (acc ++ plainText title) body.toList
   | .disclosure title _ body => blockTextList (acc ++ plainText title) body.toList
   | .role _ body => blockTextList acc body.toList
@@ -15224,34 +11288,22 @@ accumulator threads through, as every walk here does. -/
   | .onSteps _ body => blockTextList acc body.toList
   | .altSteps _ firstPage otherPage =>
     blockTextList (blockTextList acc firstPage.toList) otherPage.toList
-  -- The census reads the DECLARED content: what a conditional addresses to
-  -- one backend is still content the document declares, so it counts here;
-  -- `keepFor` is where a backend's own view drops it.
+  -- A conditional's content counts: the census reads declared content; `keepFor` drops it.
   | .only _ body => blockTextList acc body.toList
   | .nav _ body => blockTextList acc body.toList
   | .note body => blockTextList acc body.toList
   | .verbatim _ s spec => acc ++ spec.capText ++ s
-  -- Content and comment count; generated keywords never do (algorithm_text).
   | .algorithm _ _ lines => algLineText acc lines.toList
   | .logo content => acc ++ plainText content
   | .frame title _ _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
-  -- A stateful declaration ships no text of its own.
   | .setPalette _ => acc
   | .setTokens _ => acc
   | .pagebreak => acc
-  -- A rule is decorative ink; it carries no text.
   | .rule _ _ _ => acc
-  -- A picture's labels are diagram ink, not running text: they reach the
-  -- shipped-page census through the label runs layout sets, and the census
-  -- rows assert them there.
   | .picture _ => acc
-  -- Every cell's text is census content — the conservation the user reads
-  -- as "no cell silently vanished". The caption counts with its float,
-  -- before the body, as a frame's title does.
   | .table _ _ _ rows _ _ => blockTextTableRows acc rows.toList
   | .float _ _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
-  -- Every entry's text is census content, in list order.
   | .bibliography _ _ items => blockTextBibItems acc items.toList
 
 @[expose] public def blockTextBibItems (acc : String) : List BibItem → String
@@ -15282,17 +11334,12 @@ public theorem blockTextList_append (a b : List Block) (acc : String) :
   | nil => simp [blockTextList]
   | cons x xs ih => simp [blockTextList, ih]
 
-/-- Blocks are content-free furniture: a titled block's census is its
-title's text then its body's, onto whatever came before — the bar and the
-background ship no characters. Definitional (`rfl`), the frame arm's own
-shape, so an edit that made the furniture ship text fails this build. -/
 public theorem titled_text (acc : String) (kind : TitledKind) (title : Array Inline)
     (body : Array Block) :
     blockTextOne acc (.titled kind title body)
       = blockTextList (acc ++ plainText title) body.toList := by rfl
 
-/-- A declared vertical skip standing on its own, as `\vskip` does: glue
-the next placed line pays, no content. -/
+/-- A declared vertical skip standing on its own, as `\vskip` does. -/
 private def gapBlock (g : Dim.SymGlue) : Block := .spaced (Sourced.bare g) #[]
 
 /-- A declared bar with the skips beside it; no declared weight, no ink. -/
@@ -15301,12 +11348,7 @@ private def barSide (ink : Color × Option ColorRef)
   | some w => #[gapBlock before, .rule ink.1 ink.2 (Sourced.bare w), gapBlock after]
   | none => #[]
 
-/-- One title bracketed by its declared bars, appended to the walk's
-accumulator: the furniture above, the heading itself — a sibling, never
-wrapped, so the centred walk still meets it — and the furniture below.
-The gaps beside each bar are the engine's rhythm (`titleBarGap` to the
-type, `titleBarSkip` outside) where the document declares none: the
-venue contributes the bars' weights, the engine where they sit. -/
+/-- One title bracketed by its declared bars, appended to the walk's accumulator. -/
 private def titleStep (st : ElementStyle) (ink : Color × Option ColorRef)
     (out : Array Block) (starred : Bool) (num : Option String)
     (title : Array Inline) : Array Block :=
@@ -15316,20 +11358,8 @@ private def titleStep (st : ElementStyle) (ink : Color × Option ColorRef)
     (st.ruleBelowSkip.getD titleBarSkip) st.ruleBelow
   ((out ++ above).push (.section 0 starred num title)) ++ below
 
-/-- Bracket a title block's level-0 heading with its declared bars: a
-full-measure rule above and below at the declared weights, each standing
-its gap from the type — the engine's rhythm (`titleBarGap`,
-`titleBarSkip`) unless the document declares its own — the
-NeurIPS-lineage title bars (`\@toptitlebar`/`\@bottomtitlebar` read for
-the weights they declare, or a document's own
-`\style{titlepage}{ rule-above = ... }`). Top level only,
-deliberately: the title is the block `Elab.titleBlocks` pushes at the top
-of the title block, and descending would let a nested heading take the
-venue's furniture. Bars and skips are siblings of the heading, never
-wrappers, so the centred walk still meets the heading itself; a gap is
-emitted only beside its own bar, and a trailing skip with nothing after it
-is no ink. The bars are decorative ink in the ink colour: `titleBars_text`
-is the census statement that styling changes no content. -/
+/-- Bracket a title block's level-0 heading with its declared bars, each
+standing its gap from the type. -/
 public def titleBarsList (st : ElementStyle) (ink : Color × Option ColorRef)
     (out : Array Block) (done : Bool) : List Block → Array Block
   | [] => out
@@ -15348,15 +11378,11 @@ private theorem blocksText_push (out : Array Block) (b : Block) :
     blocksText (out.push b) = blockTextOne (blocksText out) b := by
   simp [blocksText, Array.toList_push, blockTextList_append, blockTextList]
 
-/-- The in-paragraph role is a name for the page's spacing, never text:
-marking a list or a quote ships exactly the census it had. -/
 public theorem inParagraph_text (acc : String) (b : Block) :
     blockTextOne acc (inParagraph b) = blockTextOne acc b := by
   unfold inParagraph
   cases b.partopsepEnv <;> simp [blockTextOne, blockTextList]
 
-/-- Marking the environment an arm pushed keeps the sequence's census:
-the one rewrite `markInParagraph` makes is `inParagraph_text`'s. -/
 public theorem markInParagraph_text (inPar : Bool) (k : Nat) :
     Conserves blocksText (markInParagraph inPar k) := fun xs => by
   unfold markInParagraph
@@ -15367,23 +11393,17 @@ public theorem markInParagraph_text (inPar : Bool) (k : Nat) :
   · rfl
   · rfl
 
-/-- With no paragraph text flushed before it, the pushed block stands as it
-is. -/
 public theorem markInParagraph_false_id (k : Nat) (blocks : Array Block) :
     markInParagraph false k blocks = blocks := by
   unfold markInParagraph
   split <;> simp_all
 
-/-- Flushing into nothing leaves no paragraph with text. -/
 public theorem flushedText_empty_exact (k : Nat) : flushedText k #[] = false := by
   simp [flushedText, lastContentFrom?, lastContentFrom?.go]
 
-/-- Nothing before leaves no list, quote or theorem behind. -/
 public theorem lastLeavesEndPe_empty_exact : lastLeavesEndPe #[] = false := by
   simp [lastLeavesEndPe, lastContent?, lastContentFrom?, lastContentFrom?.go]
 
-/-- A display's context is a name for its placement, never text: the
-display it wraps ships the census the wrapper does. -/
 private theorem displayCtxOf_text (acc : String) (b : Block) :
     blockTextOne acc (displayCtxOf b).2 = blockTextOne acc b := by
   unfold displayCtxOf
@@ -15393,7 +11413,6 @@ private theorem displayCtxOf_text (acc : String) (b : Block) :
     · rfl
   · rfl
 
-/-- Placing a display in a context moves its placement, never its text. -/
 private theorem withDisplayCtx_text (acc : String) (c : DisplayCtx) (d : Block) :
     blockTextOne acc (withDisplayCtx c d) = blockTextOne acc d := by
   unfold withDisplayCtx
@@ -15427,15 +11446,11 @@ private theorem carrierCloseDisplay_text (parEnd : Bool) :
     · rfl
   · rfl
 
-/-- Standing a carrier's displays in its paragraph moves their placement,
-never their text. -/
 public theorem carrierDisplays_text (inPar endPe parEnd : Bool) :
     Conserves blocksText (carrierDisplays inPar endPe parEnd) := fun xs => by
   unfold carrierDisplays
   rw [carrierCloseDisplay_text, carrierOpenDisplay_text]
 
-/-- Marking a display keeps the sequence's census: whatever context it
-records, the block pushed is the display itself or that display in a role. -/
 public theorem markDisplay_text (inPar parEnd afterEnv : Bool) (k : Nat) :
     Conserves blocksText (markDisplay inPar parEnd afterEnv k) := fun xs => by
   unfold markDisplay
@@ -15474,10 +11489,6 @@ private theorem titleBarsList_text (st : ElementStyle) (ink : Color × Option Co
     simp_all only [blockTextList, blocksText_push, blocksText_titleStep,
       blockTextOne]
 
-/-- Styling never changes content: the bars are decorative ink, so the
-title block's plain-text census under the styled built-in equals the
-unstyled built-in's — the conservation the user reads as "the venue's
-furniture added nothing and lost nothing". -/
 public theorem titleBars_text (st : ElementStyle) (ink : Color × Option ColorRef) :
     Conserves blocksText (titleBars st ink) := by
   intro xs
@@ -15489,11 +11500,7 @@ public theorem titleBars_text (st : ElementStyle) (ink : Color × Option ColorRe
 
 mutual
 
-/-- Every `.section` level in document order: the document's heading
-outline, the fact the outline diagnostics and the markdown preamble read.
-A frame's body is walked (a deck's title heading stands inside the title
-frame); a note is a side channel and never ships a heading. The
-accumulator threads through, as every walk here does. -/
+/-- Every `.section` level in document order: the document's heading outline. -/
 @[expose] public def headingLevels (xs : Array Block) : Array HeadingLevel := headingLevelList #[] xs.toList
 
 @[expose] public def headingLevelList (out : Array HeadingLevel) : List Block → Array HeadingLevel
@@ -15523,7 +11530,6 @@ accumulator threads through, as every walk here does. -/
   | .frame _ _ _ _ body => headingLevelList out body.toList
   | .note _ => out
   | .verbatim _ _ _ => out
-  -- Lines hold inline content; no heading can stand in an algorithm.
   | .algorithm _ _ _ => out
   | .framefoot _ => out
   | .setPalette _ => out
@@ -15532,10 +11538,8 @@ accumulator threads through, as every walk here does. -/
   | .logo _ => out
   | .rule _ _ _ => out
   | .picture _ => out
-  -- Cells and captions hold inline content; no heading can stand in either.
   | .table _ _ _ _ _ _ => out
   | .float _ _ _ body _ => headingLevelList out body.toList
-  -- The References heading is its own .section block; the list holds none.
   | .bibliography _ _ _ => out
 
 @[expose] public def headingLevelItems (out : Array HeadingLevel) : List (Array Block) → Array HeadingLevel
@@ -15548,9 +11552,8 @@ accumulator threads through, as every walk here does. -/
 
 end
 
-/-- Mutually exclusive readings share equal occurrences. Multiset difference
-preserves repeated occurrences within either reading, unlike global deduplication.
-The order is the first reading followed by the other reading's extra occurrences. -/
+/-- The first reading's elements followed by the other reading's extra
+occurrences, as a multiset union. -/
 public def exclusiveOccurrences {α : Type u} [BEq α] (first other : Array α) : Array α :=
   first ++ (first.toList.foldl List.erase other.toList).toArray
 
@@ -15563,8 +11566,6 @@ private theorem eraseOccurrences_exact {α : Type u} [BEq α] [LawfulBEq α]
     rw [List.foldl_cons, ih, List.count_erase, List.count_cons]
     omega
 
-/-- Exclusive readings preserve the larger multiplicity of every element:
-shared occurrences appear once, and authored repeats in either arm survive. -/
 public theorem exclusiveOccurrences_exact {α : Type u} [BEq α] [LawfulBEq α]
     (x : α) (first other : Array α) :
     (exclusiveOccurrences first other).toList.count x =
@@ -15575,13 +11576,9 @@ public theorem exclusiveOccurrences_exact {α : Type u} [BEq α] [LawfulBEq α]
 
 mutual
 
-/-- Every footnote in document order, with its resolved mark number: equal
-occurrences in mutually exclusive alternatives share one endnote. This is the
-one flow the backends' endnote sections read (the HTML `doc-endnotes`
-section, the markdown `[^k]` definitions). The accumulator threads
-through, as every walk here does. -/
--- conserves: none — a projection of the notes alone: nothing is rewritten,
--- and the census the notes owe is `footnoteWrap_text` at the wrap site.
+/-- Every footnote in document order with its resolved mark number; equal
+occurrences in exclusive alternatives share one endnote. -/
+-- conserves: none — projects the notes alone.
 public def footnotesOf (xs : Array Block) : Array (Option Nat × Array Inline) :=
   footnoteBlockList #[] xs.toList
 
@@ -15617,7 +11614,6 @@ private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .nav _ body => footnoteBlockList out body.toList
   | .frame title _ _ _ body =>
     footnoteBlockList (footnoteInlineList out title.toList) body.toList
-  -- a speaker note is a side channel; its text never ships on a page
   | .note _ => out
   | .verbatim _ _ _ => out
   | .framefoot _ => out
@@ -15629,10 +11625,8 @@ private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .picture _ => out
   | .table _ _ _ rows _ _ => footnoteTableRows out rows.toList
   | .algorithm _ _ lines => footnoteAlgLines out lines.toList
-  -- the caption counts with its float, before the body, as its text does
   | .float _ _ _ body caption =>
     footnoteBlockList (footnoteInlineList out caption.toList) body.toList
-  -- a field's note is set where its entry stands, as the body's notes are
   | .bibliography _ _ items => footnoteBibItems out items.toList
 
 private def footnoteBibItems (out : Array (Option Nat × Array Inline)) :
@@ -15676,7 +11670,6 @@ private def footnoteInlineList (out : Array (Option Nat × Array Inline)) :
 private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
     Inline → Array (Option Nat × Array Inline)
   | .footnote num body =>
-    -- flow order: a note nested in another note's body follows its host
     footnoteInlineList (out.push (num, body)) body.toList
   | .styled _ body => footnoteInlineList out body.toList
   | .colored _ _ body => footnoteInlineList out body.toList
@@ -15696,13 +11689,8 @@ end
 
 mutual
 
-/-- A field's notes numbered in reading order from `k + 1`: each
-`.footnote none` — a mark a field's reading left to its list
-(`Elab.Counters.fnDefer`) — takes the next number, a note inside a note's
-body after its host, as `footnotesOf` reads them; a note the author
-numbered keeps its number. Returns the counter past them. -/
--- conserves: none — it sets marks only, digits the census leaves out
--- (`footnoteWrap_text`); every other node is returned as it stands.
+/-- A field's notes numbered in reading order from `k + 1`; returns the counter past them. -/
+-- conserves: none — sets marks only.
 public def numberNotesInline (k : Nat) (x : Inline) : Nat × Inline :=
   match x with
   | .footnote none body =>
@@ -15748,8 +11736,7 @@ public def numberNotesList (k : Nat) (out : Array Inline) : List Inline → Nat 
 
 end
 
-/-- A reference list's notes numbered from `k + 1`, entry by entry, in the
-order the list sets them (`numberNotesInline`), and the counter past them. -/
+/-- A reference list's notes numbered from `k + 1`, entry by entry, and the counter past them. -/
 public def numberNotesItems (k : Nat) (items : Array BibItem) : Nat × Array BibItem :=
   items.foldl (init := (k, #[])) fun (k, out) it =>
     let r := numberNotesList k #[] it.content.toList
@@ -15759,8 +11746,7 @@ public def numberNotesItems (k : Nat) (items : Array BibItem) : Nat × Array Bib
 public def hasListNote (xs : Array Inline) : Bool :=
   anyInline (fun x => x matches .footnote none _) xs
 
-/-- The document with each `\bibliography` list's note count set to `m`:
-the notes its fields set, numbered where it stands (`Bib.apply`). -/
+/-- The document with each `\bibliography` list's note count set to `m`. -/
 @[expose] public def Doc.withListNotes (doc : Doc) (m : Nat) : Doc :=
   { doc with listNotes := doc.listNotes.map fun (k, _) => (k, m) }
 
@@ -15774,8 +11760,7 @@ private def levelName : HeadingLevel → String
   | .h5 => "a rank-five heading"
   | .h6 => "a rank-six heading"
 
-/-- The broken-outline diagnostic W0320 fires: named so the completeness
-theorem below can point at the pushed value's code. -/
+/-- The broken-outline diagnostic, W0320. -/
 private def outlineGapDiag (p l : HeadingLevel) : Diag :=
   Diag.of .W0320
     s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
@@ -15788,12 +11773,8 @@ private def outlineTitleDiag : Diag :=
     (help := some "put \\maketitle before the first \\section, so the \
 outline starts at its top")
 
-/-- The outline walk over the heading levels, `prev` the level just read:
-each element is judged against its lead — the gap first, then the
-misplaced title — with one latch per code, so each fires once per
-document, in encounter order. Recursion over the `List` with a threaded
-accumulator, so `headings_no_skip_judged` can reason by induction where
-the imperative loop this replaces could not. -/
+/-- The outline walk over the heading levels, `prev` the level just read: each
+code fires once per document, in encounter order. -/
 private def outlineWalk (prev : HeadingLevel) (gapNamed titleNamed : Bool)
     (out : Array Diag) : List HeadingLevel → Array Diag
   | [] => out
@@ -15810,40 +11791,24 @@ private def outlineWalk (prev : HeadingLevel) (gapNamed titleNamed : Bool)
       else
         outlineWalk l gapNamed titleNamed out rest
 
-/-- Somewhere after a heading at `prev`, a heading exceeds its lead by
-more than one level: the broken-outline fact `outlineWalk` judges. -/
+/-- Whether, after a heading at `prev`, a heading exceeds its lead by more than one level. -/
 private def outlineSkips (prev : HeadingLevel) : List HeadingLevel → Bool
   | [] => false
   | l :: rest => headingRank l > headingRank prev + 1 || outlineSkips l rest
 
-/-- The document's outline skips a level: the fact W0320 exists to name
-(HTML §4.3.11; WCAG technique G141). -/
+/-- Whether the document's outline skips a level (HTML §4.3.11, WCAG technique G141). -/
 public def outlineHasSkip (doc : Doc) : Bool :=
   match (headingLevels doc.body).toList with
   | [] => false
   | l :: rest => outlineSkips l rest
 
-/-- Outline diagnostics over the document's heading levels — the two
-machine-checkable rules the authorities state, checked on the IR without
-rendering anything.
-
-Levels must not skip as the outline descends: each heading following
-another must have a level "less than, equal to, or 1 greater" than its
-lead (HTML §4.3.11, the conformance rule; WCAG technique G141 spells the
-same proper nesting). The jump is what a screen reader reports as a
-broken outline. And the level-0 title, when the document has one, comes
-first: a title standing mid-outline heads nothing before it (the
-elaborator already keeps it unique; its position is the document's).
-
-Warnings, once each per document, never errors: a document that skips a
-level still means something and still renders — the diagnostic names the
-native spelling that repairs it. -/
+/-- Outline warnings, once each per document: a heading more than one level
+deeper than its lead, and a level-0 title that does not come first. -/
 public def outlineDiags (doc : Doc) : Array Diag :=
   match (headingLevels doc.body).toList with
   | [] => #[]
   | l :: rest => outlineWalk l false false #[] rest
 
-/-- A diagnostic already collected survives the rest of the walk. -/
 private theorem outlineWalk_mem (d : Diag) :
     ∀ (ls : List HeadingLevel) (prev : HeadingLevel) (gN tN : Bool) (out : Array Diag),
       d ∈ out → d ∈ outlineWalk prev gN tN out ls
@@ -15880,13 +11845,6 @@ private theorem outlineWalk_finds :
       · exact outlineWalk_finds rest l true _ hrest
       · exact outlineWalk_finds rest l tN out hrest
 
-/-- The heading-structure judge is complete: a document whose outline
-skips a level (a heading more than one level deeper than its lead —
-`outlineHasSkip`, the fact HTML §4.3.11's conformance rule and WCAG
-technique G141 both state) always ships a W0320 among its outline
-diagnostics. Weak heading structure is then a reported fact, never a
-reader's discovery: the theorem closes the gap between "the judge
-exists" and "no document escapes it". -/
 public theorem headings_no_skip_judged (doc : Doc)
     (h : outlineHasSkip doc = true) :
     ∃ d ∈ outlineDiags doc, d.code = "W0320" := by
@@ -15896,41 +11854,24 @@ public theorem headings_no_skip_judged (doc : Doc)
   · exact absurd h (by simp)
   · exact outlineWalk_finds _ _ false #[] h
 
-/-- Is this node a physical-page placeholder (`\pagenumber` /
-`\pagecount`)? The physical sequence's only spellings — what
-`Layout.substPage` resolves, and what the frame sequence must never be
-mixed with silently (`footerSequenceDiags`). The descent that carries the
-question over content is the fold's, declared once (`hasPhysicalPage`);
-this leaf answers for one node, and any constructor that is not one of
-the two spellings is not a placeholder. -/
+/-- Whether this node is a physical-page placeholder (`\pagenumber` / `\pagecount`). -/
 @[expose] public def isPhysicalPage : Inline → Bool
   | .pageNumber => true
   | .pageCount => true
   | _ => false
 
-/-- Does this inline content carry a physical-page placeholder anywhere?
-`anyInline` over the one leaf predicate. -/
+/-- Whether inline content carries a physical-page placeholder anywhere. -/
 @[expose] public def hasPhysicalPage (xs : Array Inline) : Bool :=
   anyInline isPhysicalPage xs
 
-/-- Is this slot the frame sequence's? The counting model keeps two distinct
-sequences: the frame numbering (`Ir.frameNumbers`, rendered only by
-`ChromeSlot.render`) and the physical pages (`\pagenumber`/`\pagecount`,
-rendered only by `Layout.substPage`) — a stepped frame advances one and not
-the other. -/
+/-- Whether this slot shows the frame sequence rather than the physical pages. -/
 public def ChromeSlot.isFrameSequence : ChromeSlot → Bool
   | .frameNumber => true
   | .frameFraction => true
   | .sectionTitle => false
 
-/-- The footer band must not mix the two sequences silently: a `\framefoot`
-note carrying `\pagenumber`/`\pagecount` beside a frame-sequence chrome slot
-puts the physical count and the frame count in one band with no declared
-relation — on a stepped frame they visibly disagree. Legal, but only
-declared: a document that names its own `\chrome` slots has said what the
-band holds; one that inherited them from a theme has not, and gets a warning
-naming both sequences. Warning, not error (the audit-strict severity
-policy): the content is present, its meaning is what degraded. -/
+/-- A `\framefoot` note carrying `\pagenumber`/`\pagecount` beside a
+frame-sequence slot, named rather than mixed silently. -/
 public def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
   unless doc.docClass.record.chrome && doc.foot.isNone && !doc.chromeDeclared do
     return #[]
@@ -15949,12 +11890,6 @@ a stepped frame advances one and not the other"
 mixing is meant, or drop \\pagenumber from \\framefoot"))
   return out
 
-/-- The two sequences stay distinct, stated where they could fuse: the
-physical pass (`Layout.substPage` rewrites exactly `.pageNumber` and
-`.pageCount`) can never touch a rendered frame slot, because the frame
-sequence's one rendering site emits no physical placeholder. So no future
-change can quietly derive one number from the other's counter without
-breaking this. -/
 public theorem frame_sequence_carries_no_physical (s : ChromeSlot)
     (sec : Array Inline) (n total : Nat) (hs : s.isFrameSequence = true) :
     hasPhysicalPage (s.render sec n total) = false := by
@@ -16066,12 +12001,8 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
     simp [plainTextOne, dimInlineList_text cover k pending firstPage.toList #[],
       dimInlineList_text cover k pending otherPage.toList #[], plainTextList]
   | .image _ _ _ =>
-    -- the walk leaves an image node whole (raster content dims in the
-    -- backends' hands), and its text census is empty either way
     rfl
   | .formula _ _ _ =>
-    -- the walk leaves a formula node whole (a pending formula dims in the
-    -- backends' hands); its census is its source, untouched on both sides
     rfl
   | .text _ | .math _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _
   | .label _ | .ref _ _ _ _
@@ -16080,8 +12011,6 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
 
 end
 
-/-- A covered or dimmed line keeps every character, comment included: the
-cover's wrapper recolours, as a paragraph's does. -/
 private theorem dimAlgLines_text (cover : Cover) (k : Nat) (pending : Bool)
     (ls : List AlgLine) (out : Array AlgLine) (acc : String) :
     algLineText acc (dimAlgLines cover k pending out ls).toList
@@ -16119,8 +12048,6 @@ private theorem dimAlgLines_text (cover : Cover) (k : Nat) (pending : Bool)
           dimInlineList_text cover k false l.content.toList #[],
           dimInlineList_text cover k false c.toList #[]]
 
-/-- A covered or dimmed cell keeps every character: the cover's cell wrapper
-recolours, as a paragraph's does. -/
 private theorem dimTableCells_text (cover : Cover) (k : Nat) (pending : Bool)
     (cells : List (Array Inline))
     (out : Array (Array Inline)) (acc : String) :
@@ -16218,7 +12145,6 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
     rw [dimBlock]
     simp [blockTextOne, dimColumns_text cover k pending cols.toList #[] acc, blockTextColumns]
   | .onSteps spec body =>
-    -- No case split: the mode flip is just the argument the recursion takes.
     rw [dimBlock]
     simp [blockTextOne,
       dimBlockList_text cover k (pending || spec.pending k) body.toList #[] acc,
@@ -16233,13 +12159,7 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
   | .nav spec body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
-  -- A logo declaration is page furniture: the walk never repaints it, so
-  -- its census — the declaration's own inline text — is untouched. The
-  -- verbatim recolour and the picture recolour keep their text census by
-  -- construction: neither constructor's census reads a colour.
   | .logo _ => rfl
-  -- The verbatim body's census reads no colour; the caption dims as a
-  -- float's does, and dimming conserves its text.
   | .verbatim c s spec =>
     rw [dimBlock]
     cases hc : spec.caption with
@@ -16298,27 +12218,14 @@ private theorem dimColumns_text (cover : Cover) (k : Nat) (pending : Bool)
 
 end
 
-/-- Nothing vanishes: page `k` of a stepped frame carries every character
-the frame carries — dimming recolours pending content, it never hides it,
-in either mode of the one walk. The union of what the steps show is
-therefore the whole content. -/
 public theorem dimBlocks_text (cover : Cover) (k : Nat) :
     Conserves blocksText (dimBlocks cover k) := fun xs => by
   simp [blocksText, dimBlocks, dimBlockList_text cover k false xs.toList #[] "",
     blockTextList]
 
-/-- `algorithm_text`: the algorithm block's census is exactly its lines'
-declared content and comments — display flags are settings and the
-keywords a kind implies are generated by the backends (`AlgLine.rendered`),
-so neither is ever counted, exactly as caption prefixes are not. -/
 public theorem algorithm_text (numbered semis : Bool) (lines : Array AlgLine) :
     blocksText #[Block.algorithm numbered semis lines]
       = algLineText "" lines.toList := by rfl
-
--- The item-step flatten: unwrapping loses no text. A leading `\item<2->`
--- wrapper gives its item its paragraph, nothing recoloured, nothing
--- reordered, so the block census is fixed. Same
--- accumulator-lemma-then-mutual-induction shape as the dim walk above.
 
 private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
     blockTextList acc (flattenLeadStep item).toList
@@ -16483,25 +12390,13 @@ private theorem unwrapItemStepCols_text (cols : List (BoxWidth × Array Block))
 
 end
 
-/-- Unwrapping item steps loses no text: the marker pre-pass flattens a
-leading `\item<2->` wrapper, it never drops the item's content
-(arch-faithful I1). -/
 public theorem unwrapItemSteps_text : Conserves blocksText unwrapItemSteps := fun xs => by
   simp [blocksText, unwrapItemSteps, unwrapItemStepList_text xs.toList #[] "",
     blockTextList]
 
-/-- A drawn decoration is never content: the text census
-reads straight through the wrap, so `\underline` and `\sout` can neither add
-nor hide a character — the conservation half of the decoration convention (its
-rules ride a sibling line; `decoration_no_growth` in Layout is the metric
-half). -/
 public theorem decorated_text (kind : Decoration) :
     Conserves plainText (fun xs => #[Inline.decorated kind xs]) :=
   wrap_text (.decorated kind) fun _ => rfl
-
--- Float numbering conserves the census: the pass writes the `num` field
--- and nothing else, so no caption and no body content moves. Same
--- accumulator-lemma-then-mutual-induction shape as the walks above.
 
 mutual
 
@@ -16607,10 +12502,6 @@ private theorem numberFloatCols_text (c : FloatCtr)
 
 end
 
-/-- Numbering assigns numbers and nothing else: the text census is fixed,
-so no caption and no content is touched by the pass — the prefix a backend
-sets in front of a caption (`numberedCaption`) is furniture the backend
-adds, like a list marker, never a rewrite of the document. -/
 public theorem numberFloats_text : Conserves blocksText numberFloats := fun xs => by
   simp [blocksText, numberFloats, numberFloatList_text {} #[] xs.toList "",
     blockTextList]
@@ -16622,16 +12513,10 @@ private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
   | nil => simp [blockTextBibItems]
   | cons item rest ih => simp [blockTextBibItems, ih]
 
--- Backend conditionals: `keepFor` is one backend's view of the document,
--- and `keepFor_covers` is what stops a conditional from becoming a silent
--- delete. Structural recursion through `List`, as the walks above.
-
-/-- The backend names an `{ifbackend}` target may spell: one per emitter,
-exactly the values `\output{ formats = ... }` accepts (`Cli.Args.emitOne`
-mirrors this list, and each backend passes its own entry to `keepFor`). -/
+/-- The backend names an `{ifbackend}` target may spell, one per emitter. -/
 public def backendNames : List String := ["pdf", "html", "md"]
 
-/-- Does backend `t` keep this block? Only a conditional can exclude one. -/
+/-- Whether backend `t` keeps this block; only a conditional can exclude one. -/
 @[expose] public def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
@@ -16648,11 +12533,7 @@ public def backendNames : List String := ["pdf", "html", "md"]
 mutual
 
 /-- The document as backend `t` sees it: an `.only` block whose targets
-exclude `t` is dropped whole, everything else is kept, and the walk carries
-into every body so a nested conditional resolves against its own targets.
-Each backend applies this once at its entry, with its own name — the drop
-decision lives here and nowhere else, so no backend can improvise a
-different reading of the same target set. -/
+exclude `t` is dropped whole, everything else kept. -/
 @[expose] public def keepForOne (t : String) : Block → Block
   | .only targets body => .only targets (keepForList t body.toList).toArray
   | .nav spec body => .nav spec (keepForList t body.toList).toArray
@@ -16684,13 +12565,9 @@ different reading of the same target set. -/
   | .pagebreak => .pagebreak
   | .rule c n th => .rule c n th
   | .picture p => .picture p
-  -- Cells hold inlines: no conditional can nest in a table. A float's
-  -- body is blocks, so the walk carries in, as through a frame.
   | .table c pl pr rows rules spans => .table c pl pr rows rules spans
-  -- Lines hold inlines: no conditional can nest in an algorithm.
   | .algorithm n sm lines => .algorithm n sm lines
   | .float k n ca body caption => .float k n ca (keepForList t body.toList).toArray caption
-  -- Entries hold inlines: no conditional can nest in a reference list.
   | .bibliography src style items => .bibliography src style items
 
 @[expose] public def keepForList (t : String) : List Block → List Block
@@ -16714,9 +12591,7 @@ end
 @[expose] public def keepFor (t : String) (xs : Array Block) : Array Block :=
   (keepForList t xs.toList).toArray
 
-/-- Algorithm text leaves: each line's declared content is one leaf, its
-comment another — a line survives a backend's view whole or not at all,
-as a cell does. -/
+/-- Algorithm text leaves: each line's declared content one leaf, its comment another. -/
 private def algTextLeaves (acc : List String) : List AlgLine → List String
   | [] => acc
   | l :: rest =>
@@ -16726,13 +12601,8 @@ private def algTextLeaves (acc : List String) : List AlgLine → List String
 
 mutual
 
-/-- Every text leaf of the blocks — each paragraph's, title's, and verbatim
-block's plain text as one element (most recent first; the census is read as
-a set). The backend-conditional conservation theorem ranges over leaves
-rather than `blocksText`'s one concatenated string because a leaf survives
-`keepFor` whole or not at all: a character's membership in the
-concatenation could be satisfied by coincidence, a whole surviving leaf
-cannot be. -/
+/-- Every text leaf of the blocks, most recent first: each paragraph's,
+title's and verbatim block's plain text. -/
 private def textLeavesList (acc : List String) : List Block → List String
   | [] => acc
   | b :: rest => textLeavesList (textLeavesOne acc b) rest
@@ -16747,7 +12617,6 @@ private def textLeavesOne (acc : List String) : Block → List String
     | none => s :: acc
   | .logo content => plainText content :: acc
   | .framefoot content => plainText content :: acc
-  -- A stateful declaration carries no text leaf.
   | .setPalette _ => acc
   | .setTokens _ => acc
   | .pagebreak => acc
@@ -16769,19 +12638,11 @@ private def textLeavesOne (acc : List String) : Block → List String
   | .only _ body => textLeavesList acc body.toList
   | .nav _ body => textLeavesList acc body.toList
   | .frame title _ _ _ body => textLeavesList (plainText title :: acc) body.toList
-  -- A rule is decorative ink; it carries no text (as `blockTextOne` reads it).
   | .rule _ _ _ => acc
-  -- A picture's labels reach the census through the shipped runs, as
-  -- `blockTextOne` reads it.
   | .picture _ => acc
-  -- Each cell is one leaf: it survives a backend's view whole or not at
-  -- all, which is what the conservation theorem needs to range over. The
-  -- caption is a leaf beside its float's body, as a frame's title is.
   | .table _ _ _ rows _ _ => textLeavesTableRows acc rows.toList
   | .algorithm _ _ lines => algTextLeaves acc lines.toList
   | .float _ _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
-  -- Each entry is one leaf, as a cell is: it survives a backend's view
-  -- whole or not at all.
   | .bibliography _ _ items => textLeavesBibItems acc items.toList
 
 private def textLeavesBibItems (acc : List String) : List BibItem → List String
@@ -16812,14 +12673,7 @@ public def textLeaves (xs : Array Block) : List String := textLeavesList [] xs.t
 
 mutual
 
-/-- No content is addressed to no backend: along every nesting path, each
-`.only` node's targets keep at least one member of `avail` — the ambient
-set, `backendNames` at the top and the path intersection inside a
-conditional, so an `{ifbackend}{pdf}` inside an `{ifbackend}{html}`
-addresses the empty set whatever each node spells alone. Elaboration
-performs the same intersection as it walks in and fires E0334 exactly where
-this returns false (pinned by test; `Elab` is monadic, so the
-correspondence is not itself a theorem). -/
+/-- Whether along every nesting path each `.only` node's targets keep a member of `avail`. -/
 private def orphanFreeList (avail : List String) : List Block → Bool
   | [] => true
   | b :: rest => orphanFreeOne avail b && orphanFreeList avail rest
@@ -16865,9 +12719,6 @@ end
 
 public def orphanFree (avail : List String) (xs : Array Block) : Bool :=
   orphanFreeList avail xs.toList
-
--- The accumulator lemmas: a leaf census over `acc` is the census over `[]`
--- appended to `acc`, so membership statements can be read off `mem_append`.
 
 private theorem algTextLeaves_acc (acc : List String) (ls : List AlgLine) :
     algTextLeaves acc ls = algTextLeaves [] ls ++ acc := by
@@ -17057,9 +12908,6 @@ private theorem keepForList_dropped (t : String) (b : Block) (rest : List Block)
 
 mutual
 
-/-- The conservation theorem behind `keepFor_covers`, at the list level and
-generalized over the ambient target set, which shrinks by intersection at
-each nested conditional exactly as `orphanFree` and elaboration walk it. -/
 private theorem keepForList_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
     (xs : List Block) (h : orphanFreeList avail xs = true) :
     ∀ s ∈ textLeavesList [] xs, ∃ t ∈ avail, s ∈ textLeavesList [] (keepForList t xs) := by
@@ -17130,15 +12978,12 @@ private theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 �
     intro s hs
     simp [textLeavesOne] at hs
   | .table c pl pr rows rules spans =>
-    -- kept whole by every backend: its own leaves survive untouched
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .algorithm n sm lines =>
-    -- kept whole by every backend, as a table is
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .bibliography src style items =>
-    -- kept whole by every backend, as a table is
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .float k n ca body caption =>
@@ -17363,18 +13208,6 @@ private theorem keepForColumns_covers (avail : List String) (t0 : String) (h0 : 
 
 end
 
-/-- **Nothing is addressable by no backend.** For a document whose backend
-conditionals are all answered — along every nesting path each `.only`
-node's target set keeps at least one available backend (`orphanFree`, the
-condition whose violation elaboration diagnoses as E0334) — every declared
-text leaf survives in at least one backend's kept document: the union over
-the backends of what each `keepFor` keeps is the declared content. This is
-the conservation theorem for the backend conditional, the one that stops
-`{ifbackend}` from becoming a silent delete: dropping is only ever the
-complement of another backend's keeping, or a named diagnostic. Stated over
-the same `plainText` census machinery as the overlay conservation theorems
-(`dimBlocks_text`), lifted to whole leaves because
-`keepFor` drops whole subtrees. -/
 public theorem keepFor_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
     (xs : Array Block) (h : orphanFree avail xs = true) :
     ∀ s ∈ textLeaves xs, ∃ t ∈ avail, s ∈ textLeaves (keepFor t xs) := by
@@ -17382,14 +13215,9 @@ public theorem keepFor_covers (avail : List String) (t0 : String) (h0 : t0 ∈ a
   obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 xs.toList h s hs
   exact ⟨t, ht, by simpa [textLeaves, keepFor] using hmem⟩
 
--- Content is backend-free: `onlyFree` is the premise (no `{ifbackend}`
--- anywhere), `keepFor_id` the statement. Structural recursion through
--- `List`, on `keepForList_covers`' skeleton.
-
 mutual
 
-/-- No backend conditional stands anywhere in the blocks: the premise under
-which every backend's view is the whole document (`keepFor_id`). -/
+/-- Whether no backend conditional stands anywhere in the blocks. -/
 @[expose] public def onlyFreeList : List Block → Bool
   | [] => true
   | b :: rest => onlyFreeOne b && onlyFreeList rest
@@ -17536,88 +13364,56 @@ public theorem keepForColumns_id (t : String) (cols : List (BoxWidth × Array Bl
 
 end
 
-/-- **Content is backend-free.** The elaborated body of a document with no
-`{ifbackend}` is identical whichever backend consumes it: every backend's
-view (`keepFor` under its own name) is the whole document. The modulus is
-exactly `keepFor`, applied once at each backend's entry — `Layout.run`,
-`HtmlDoc.emitTree`, `MarkdownDoc.emit` — and nowhere else, so with no
-conditional declared, "one source, N artifacts" ranges over the identical
-block tree; what a backend then renders of a shared node (a nav as
-outline, a note as nothing) is that medium's declared semantics, never a
-different document. -/
 public theorem keepFor_id (t : String) (xs : Array Block) (h : onlyFree xs = true) :
     keepFor t xs = xs := by
   rw [keepFor, keepForList_id t xs.toList h]
 
 
 /-- The `.bib` files one `\bibliography` marker names: its argument split at
-its commas, each name trimmed — BibTeX's `\bibdata` list, and the resources
-biblatex's `\addbibresource` declarations add up to. -/
+commas, each name trimmed. -/
 public def bibSourceNames (src : String) : Array String :=
   ((src.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)).toArray
 
-/-- The block face of `bibRefs`: the same leaf over a body not yet
-assembled onto a `Doc` — the no-bibliography citation judge (Elab) reads
-it where only the blocks exist. -/
+/-- The block face of `bibRefs`, over a body not yet assembled onto a `Doc`. -/
 public def bibRefsBlocks (blocks : Array Block) : Array String :=
   foldBlocks (fun out b => match b with
     | .bibliography src _ _ => (bibSourceNames src).foldl (init := out) fun out s =>
         if out.contains s then out else out.push s
     | _ => out) (fun out _ => out) #[] blocks
 
-/-- The document's own reference list: the items of every `thebibliography`
-(a `.bibliography` naming no `.bib` source), in document order. Nothing is
-requested for them — their text is the document's. -/
+/-- The items of every `thebibliography` (a `.bibliography` naming no `.bib`
+source), in document order. -/
 public def ownBibItemsBlocks (blocks : Array Block) : Array BibItem :=
   foldBlocks (fun out b => match b with
     | .bibliography "" _ items => items.foldl (·.push ·) out
     | _ => out) (fun out _ => out) #[] blocks
 
 /-- Every `.bib` source the document's `\bibliography` markers name, in
-document order, deduplicated: the request value the CLI driver fulfils by
-reading each file beside the document and handing its text to `Bib.apply`.
-Files are effects, so the core never opens one — `imageRefs`' shape. -/
+document order, deduplicated. -/
 public def bibRefs (doc : Doc) : Array String := bibRefsBlocks doc.body
 
-/-- The document's declared bibliography style: the first
-`\bibliographystyle` in document order, `none` when nothing declared —
-LaTeX keeps one bibliography style per document. -/
+/-- The document's first `\bibliographystyle`, `none` when nothing declared. -/
 public def bibStyleName (doc : Doc) : Option String :=
   (foldBlocks (fun out b => match b with
     | .bibliography _ (some s) _ => out.push s
     | _ => out) (fun out _ => out) #[] doc.body)[0]?
 
--- Image walks: the request an image node states, and the caption an image
--- inherits.
-
-/-- One image-source leaf into the collect: each `.image`'s source,
-deduplicated, in document order. -/
+/-- One image-source leaf into the collect, deduplicated, in document order. -/
 private def imageSrcPush (out : Array String)
     (x : Inline) : Array String :=
   match x with
   | .image src _ _ => if out.contains src then out else out.push src
   | _ => out
 
-/-- Every image source the inlines reference, in document order: a
-`foldInlines` leaf, so the descent — `.role` and `.footnote` bodies
-included — is the fold's, declared once and never re-decided here. An
-image inside a footnote once shipped a silent placeholder because a
-hand-rolled copy of this walk skipped those two arms while layout's
-placement did not. -/
+/-- Every image source the inlines reference, in document order. -/
 public def imageSrcsInlines (out : Array String) (xs : Array Inline) : Array String :=
   foldInlines imageSrcPush out xs
 
-/-- The block face: `foldBlocks` with the same leaf, a reference list's
-entries among what it reads — a field's `\includegraphics` is the body's. -/
+/-- The block face of `imageSrcsInlines`, reference list entries included. -/
 public def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
   foldBlocks (fun out _ => out) imageSrcPush out xs
 
-/-- Every inline region a backend sets beside the body — the running head
-and foot, the logo state, the headline band, the corner logos, and each
-style's templates, author font, marker and title-slot parts — as one list, so a walk
-over "the whole document" is declared once: `foldDoc` reads these,
-`mapDoc` rewrites them, and a resolver and a census cannot disagree on
-what the document is. -/
+/-- Every inline region a backend sets beside the body, as one list. -/
 public def furnitureInlines (doc : Doc) : Array (Array Inline) :=
   optRegion doc.head ++ optRegion doc.foot ++ optRegion doc.logo ++
     (match doc.headline with
@@ -17634,17 +13430,14 @@ where
     | some r => #[r]
     | none => #[]
 
-/-- `foldInlines` over the whole document: the body through `foldBlocks`,
-then every furniture region, in `furnitureInlines`' order. A collector may
-also read block-owned content through `fb`, as it can in `foldBlocks`. -/
+/-- `foldInlines` over the whole document: the body through `foldBlocks`, then
+every furniture region, in `furnitureInlines`' order. -/
 @[expose] public def foldDoc (fi : α → Inline → α) (acc : α) (doc : Doc)
     (fb : α → Block → α := fun acc _ => acc) : α :=
   (furnitureInlines doc).foldl (fun acc r => foldInlines fi acc r)
     (foldBlocks fb fi acc doc.body)
 
-/-- The rewrite face of `foldDoc`: `fb` rewrites the body, `fi` each
-furniture region — the same regions, so a resolver that runs through here
-reaches every node a census through `foldDoc` counts. -/
+/-- The rewrite face of `foldDoc`: `fb` rewrites the body, `fi` each furniture region. -/
 @[expose] public def mapDoc (fi : Array Inline → Array Inline) (fb : Array Block → Array Block)
     (doc : Doc) : Doc :=
   { doc with
@@ -17669,10 +13462,6 @@ private theorem optRegion_map (fi : Array Inline → Array Inline) (o : Option (
     furnitureInlines.optRegion (o.map fi) = (furnitureInlines.optRegion o).map fi := by
   cases o <;> simp [furnitureInlines.optRegion]
 
-/-- `mapDoc` rewrites exactly the regions `foldDoc` reads: the furniture of
-the mapped document is the furniture of the original, each region through
-`fi`. What lets a resolver through `mapDoc` discharge a census through
-`foldDoc` (`Bib.apply_no_cite`). -/
 public theorem furnitureInlines_mapDoc (fi : Array Inline → Array Inline)
     (fb : Array Block → Array Block) (doc : Doc) :
     furnitureInlines (mapDoc fi fb doc) = (furnitureInlines doc).map fi := by
@@ -17682,7 +13471,6 @@ public theorem furnitureInlines_mapDoc (fi : Array Inline → Array Inline)
     simp [optRegion_map, Array.toList_append, Array.toList_map, Array.toList_flatMap,
       List.flatMap_map, List.map_flatMap, List.map_append]
 
-/-- The list fold over an appended list folds the halves in turn. -/
 public theorem foldInlineList_append (fi : α → Inline → α) (acc : α) (l₁ l₂ : List Inline) :
     foldInlineList fi acc (l₁ ++ l₂) = foldInlineList fi (foldInlineList fi acc l₁) l₂ := by
   induction l₁ generalizing acc with
@@ -17712,18 +13500,12 @@ public theorem foldBlockCols_append (fb : α → Block → α) (fi : α → Inli
     obtain ⟨w, body⟩ := b
     rw [List.cons_append, foldBlockCols, foldBlockCols, ih]
 
-/-- `foldBibItems` is the entries' contents folded in turn. -/
 private theorem foldBibItems_foldl (fi : α → Inline → α) (acc : α) (items : List BibItem) :
     foldBibItems fi acc items = items.foldl (fun acc it => foldInlines fi acc it.content) acc := by
   induction items generalizing acc with
   | nil => rfl
   | cons it rest ih => rw [foldBibItems, ih, List.foldl_cons]; rfl
 
-/-- **A reference list's entries are the fold's**: folding a `.bibliography`
-block reads the marker, then each entry's content in list order — the
-equation every collector over `foldBlocks` and `foldDoc` inherits (the
-image and picture requests, the pending census, the alternatives), so a
-field's image, picture or reference is collected as the body's are. -/
 public theorem foldBlock_bibliography_exact (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (src : String) (style : Option String) (items : Array BibItem) :
     foldBlock fb fi acc (.bibliography src style items) =
@@ -17731,22 +13513,18 @@ public theorem foldBlock_bibliography_exact (fb : α → Block → α) (fi : α 
         (fb acc (.bibliography src style items)) := by
   simp only [foldBlock, foldBibItems_foldl, Array.foldl_toList]
 
-/-- Folding a pushed block: the array first, then the block. -/
 public theorem foldBlockList_push (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (out : Array Block) (b : Block) :
     foldBlockList fb fi acc (out.push b).toList = foldBlock fb fi (foldBlockList fb fi acc out.toList) b := by
   rw [Array.toList_push, foldBlockList_append]
   rfl
 
-/-- Every image the document references, deduplicated, in document order:
-the request value the CLI driver fulfils by reading and decoding each file
-into the `Image.Store` layout and the backends consume. Files are effects,
-so the core never opens one — the same shape as fonts. -/
+/-- Every image the document references, deduplicated, in document order: the
+request the CLI driver fulfils. -/
 public def imageRefs (doc : Doc) : Array String := foldDoc imageSrcPush #[] doc
 
-/-- The asset selector belongs to an image's identity: two includes of
-different pages in one PDF must not share a store entry. The generic fold
-visits every document region, including furniture. -/
+/-- An image request keeps its asset selector: two includes of different pages
+in one PDF share no store entry. -/
 private def imageRequestPush (out : Array Image.Request) : Inline → Array Image.Request
   | .image src spec _ =>
     let req := spec.request src
@@ -17760,27 +13538,18 @@ private def imageRequestPush (out : Array Image.Request) : Inline → Array Imag
 public def imageRequests (doc : Doc) : Array Image.Request :=
   foldDoc imageRequestPush #[] doc
 
-/-- The image-source spelling of a boundary picture: an `.image` whose
-source is this prefix plus the request's content hash. The driver fulfils
-it from the boundary cache instead of the filesystem. -/
+/-- The image-source prefix of a boundary picture, followed by the request's content hash. -/
 public def picSrcPrefix : String := "leantex-pic:"
 
-/-- The key a refusal the rendered subset names for a withdrawn picture is
-named under (`Elab.tikzArm` spells it at the call): the picture's id, then
-the refusal's own words, so the driver reads which picture a refusal
-belongs to off the structured subject (`Cli.Boundary.fragmentOf`), never
-off its message. -/
+/-- The key a refusal for a withdrawn picture is named under: the picture's
+id, then the refusal's own words. -/
 public def picFragmentKey (id msg : String) : String := "picture:" ++ id ++ ":" ++ msg
 
-/-- The key a picture in a line of text is named under where it is not
-drawn (`Elab.inlinePicture` spells it at the call): the rendered subset
-sets a picture only as a block. -/
+/-- The key a picture in a line of text is named under where it is not drawn. -/
 public def picInlineKey (id : String) : String := "picture:inline:" ++ id
 
-/-- FNV-1a, two seeds, 32 hex digits. Over a picture body it is the
-picture's identity (`pictureSrcs`, the image source); over the wrapped
-request it is the boundary cache key — a content hash, so an unchanged
-request never re-runs the tool and a changed one always does. -/
+/-- FNV-1a with two seeds, 32 hex digits: a content hash over a picture body
+or a wrapped request. -/
 public def picHash (s : String) : String := Id.run do
   let hex (x : UInt64) : String := Id.run do
     let digits := "0123456789abcdef".toList
@@ -17797,11 +13566,8 @@ public def picHash (s : String) : String := Id.run do
     return h
   return hex (fnv 14695981039346656037) ++ hex (fnv 1099511628211)
 
-/-- xcolor's name grammar: a colour name is a maximal run of ASCII letters
-and digits. Every such run of a picture body, deduplicated in first-seen
-order. The over-approximation — a prose word spelled like a palette role
-— costs one harmless `\definecolor`, and is what keeps this a total
-tokenizer rather than a TikZ option parser. -/
+/-- xcolor's name grammar: every maximal run of ASCII letters and digits in a
+picture body, deduplicated in first-seen order. -/
 private def colorNamesFlush (cur : String) (acc : Array String) : Array String :=
   if cur.isEmpty || acc.contains cur then acc else acc.push cur
 
@@ -17813,15 +13579,11 @@ private def colorNamesGo : List Char → String → Array String → Array Strin
 
 public def colorNames (body : String) : Array String := colorNamesGo body.toList "" #[]
 
-/-- The palette roles a picture body mentions, each with the palette's
-value: exactly the names the body spells that the palette resolves
-(`paletteDecls_covers`, `_mem`), read from the same palette both backends
-read through `Design.ofDoc` (`paletteDecls_agree`). -/
+/-- The palette roles a picture body mentions, each with the palette's value. -/
 public def paletteDecls (pal : Palette) (body : String) : Array (String × Color) :=
   (colorNames body).filterMap fun n => (pal.find? n).map (n, ·)
 
-/-- A CMYK component in thousandths as xcolor's `0`–`1` real, shortest
-spelling (`0`, `0.83`, `1`). -/
+/-- A CMYK component in thousandths as xcolor's `0`–`1` real, in its shortest spelling. -/
 public def cmykPart (v : Nat) : String :=
   if v = 0 then "0"
   else if v ≥ 1000 then "1"
@@ -17830,9 +13592,8 @@ public def cmykPart (v : Nat) : String :=
     let padded := "".pushn '0' (3 - s.length) ++ s
     "0." ++ String.ofList (padded.toList.reverse.dropWhile (· == '0')).reverse
 
-/-- One palette role as the `\definecolor` the boundary tool reads. An
-explicit source model keeps its exact validated components; computed/native
-colours fall back to the model carried by the IR. -/
+/-- One palette role as the `\definecolor` the boundary tool reads, in its
+exact source model where declared. -/
 public def colorDeclLine : String × Color → String
   | (n, c) => match c.pdfModel with
     | some (.rgb r g b) => s!"\\definecolor\{{n}}\{rgb}\{{r},{g},{b}}\n"
@@ -17843,14 +13604,8 @@ public def colorDeclLine : String × Color → String
         s!"\\definecolor\{{n}}\{cmyk}\{{cmykPart cy},{cmykPart m},{cmykPart y},{cmykPart k}}\n"
       | none => s!"\\definecolor\{{n}}\{RGB}\{{c.r},{c.g},{c.b}}\n"
 
-/-- The document's declared font roles, projected into the standalone's
-preamble: fontspec's `\setmainfont`/`\setsansfont`/`\setmonofont` for the
-body, sans and mono families, and `unicode-math`'s `\setmathfont` for the
-math face — so a picture's text and formulas set in the page's own faces
-(`pictureRefs_design_projects`). A family declared as a file name resolves
-against the document's font dir, which the boundary tool cannot see from
-its build directory; only a named family travels. A family declared beside
-the three slots travels as fontspec's `\newfontfamily` of its command. -/
+/-- The document's declared font roles as the standalone's fontspec and
+`unicode-math` preamble lines. -/
 public def fontLines (fonts : FontSpec) : String :=
   let named (f : Option String) : Option String := f.filter fun fam =>
     !(fam.endsWith ".ttf" || fam.endsWith ".otf" || fam.endsWith ".ttc")
@@ -17870,12 +13625,8 @@ public def fontLines (fonts : FontSpec) : String :=
     | none => ""
   if faces.isEmpty && math.isEmpty then "" else "\\usepackage{fontspec}\n" ++ faces ++ math
 
-/-- TeX's control-word grammar (TeXbook ch. 7): a backslash and the
-maximal run of letters after it. Every such name a stretch of source
-spells, deduplicated in first-seen order. The over-approximation — a name
-inside a comment or a verbatim run — costs one harmless definition, and is
-what keeps this a total tokenizer rather than a TeX mouth, the same trade
-`colorNames` makes for xcolor's name grammar. -/
+/-- TeX's control-word grammar: every backslash-led run of letters a source
+spells, deduplicated in first-seen order. -/
 private def ctrlNamesFlush (cur : Option String) (acc : Array String) : Array String :=
   match cur with
   | none => acc
@@ -17891,10 +13642,7 @@ private def ctrlNamesGo : List Char → Option String → Array String → Array
 
 public def ctrlNames (src : String) : Array String := ctrlNamesGo src.toList none #[]
 
-/-- Consume each reachable declaration once, adding the names its body
-spells. Removing the declaration supplies the termination measure, including
-cycles and repeated names; no round budget stands in for closure.
-`macroReachNames_contract` states both root retention and closure. -/
+/-- Consume each reachable declaration once, adding the names its body spells. -/
 public def macroReachNames (pending : List (String × String)) (ns : Array String) : Array String :=
   match _h : pending.find? (fun p => ns.contains p.1) with
   | none => ns
@@ -17906,13 +13654,7 @@ decreasing_by
   have hn := List.length_pos_of_mem hp
   omega
 
-/-- The document's own macro definitions a picture body reaches: every
-definition whose name the body spells, and transitively every definition
-those bodies spell, in document order. The reachable set rather than all of
-them, for the reason the palette arm filters too (`paletteDecls_mem`): a
-document's definition of a name TeX or TikZ already owns is the picture's
-to see only where the picture asks for it, and the cache key then moves
-only when a definition the picture reads moves. -/
+/-- The document's own macro definitions a picture body reaches, transitively, in document order. -/
 public def macroDecls (macros : Array (String × String)) (body : String) : Array (String × String) :=
   let ns := macroReachNames macros.toList (ctrlNames body)
   macros.filter fun p => ns.contains p.1
@@ -17922,17 +13664,8 @@ per line. -/
 public def macroDeclLines (macros : Array (String × String)) : String :=
   macros.foldl (fun s p => s ++ p.2 ++ "\n") ""
 
-/-- Wrap one picture body for the boundary: `\documentclass{standalone}`,
-the preamble declarations a standalone needs (package loads and set lines,
-collected from the document), the document's font roles (`fontLines`), the
-palette roles the request mentions (`paletteDecls`, as `colorDeclLine`s),
-the document's own macro definitions the body reaches (`macroDecls`), and
-the picture as written. The macros come last in the preamble: a document
-that defined a name defined it for its own pictures too, whatever the
-packages above spell. The request is a pure function of the document: two
-runs over one document state byte-identical requests, so the cache key
-means something. Determinism here is definitional — no theorem states a
-pure function's purity, and `boundaryChecks` checks the bytes agree. -/
+/-- Wrap one picture body for the boundary as a `standalone` document carrying
+the preamble, font roles, palette roles and macros it needs. -/
 public def wrapStandalone (head preamble fonts : String) (colors : Array (String × Color))
     (shims : String) (macros : Array (String × String)) (switch : Option String)
     (src : PicSrc) : String :=
@@ -17940,21 +13673,15 @@ public def wrapStandalone (head preamble fonts : String) (colors : Array (String
     colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ shims ++ macroDeclLines macros ++
     src.kind.docOpen switch ++ src.body ++ src.kind.docClose
 
-/-- The class line and the TikZ load a standalone opens with: the class takes
-the document's body size where it has an option for it (`size11.clo`,
-`size12.clo`), so a picture's text — and every size switch inside it — sets
-on the document's own ladder. Any other body size is the switch's to set
-(`pictureSwitch`). -/
+/-- The class line and the TikZ load a standalone opens with, at the
+document's body size where the class has an option for it. -/
 @[expose] public def standaloneHead (body : Sp) : String :=
   if body == Dim.pt 11 then "\\documentclass[11pt]{standalone}\n\\usepackage{tikz}\n"
   else if body == Dim.pt 12 then "\\documentclass[12pt]{standalone}\n\\usepackage{tikz}\n"
   else "\\documentclass{standalone}\n\\usepackage{tikz}\n"
 
-/-- The size switch a request's standalone sets before its picture: the
-size in force by its ladder name, on a body size the class's own ladder
-holds (`standaloneHead`); on any other body size, the size the engine's
-ladder gives it, spelled as `\fontsize` at the engine's leading, the body
-size included — the class's ten-point ladder would set it wrong. -/
+/-- The size switch a request's standalone sets before its picture: the size
+in force, by its ladder name. -/
 public def pictureSwitch (page : PageSpec) (size : Option String) : Option String :=
   if page.fontSize == Dim.pt 10 || page.fontSize == Dim.pt 11 || page.fontSize == Dim.pt 12 then
     size.map ("\\" ++ ·)
@@ -17962,9 +13689,6 @@ public def pictureSwitch (page : PageSpec) (size : Option String) : Option Strin
     let sz := scaleStepIn page.scale page.fontSize (size.getD "normalsize")
     some s!"\\fontsize\{{sz.toPtString}pt}\{{(leadingFor sz).toPtString}pt}\\selectfont"
 
-/-- A picture's request at the body size is the standalone it always was:
-its kind opens the environment the wrapper wrote before diagrams had a kind
-of their own, so no such picture's request — and so no cache key — moved. -/
 public theorem wrapStandalone_picture_exact (preamble fonts : String)
     (colors : Array (String × Color)) (macros : Array (String × String)) (body : String) :
     wrapStandalone "\\documentclass{standalone}\n\\usepackage{tikz}\n" preamble fonts colors ""
@@ -17975,19 +13699,11 @@ public theorem wrapStandalone_picture_exact (preamble fonts : String)
         "\\end{tikzpicture}\n\\end{document}\n" := by
   simp only [wrapStandalone, PicKind.docOpen, PicKind.docClose]
 
-/-- Beamer's `\alert` as a picture body spells it: a command name, read here
-as one, never as the palette key of the role the command sets. -/
+/-- Beamer's `\alert` as a picture body spells it, read as a command name. -/
 private def alertCtrl : String := "alert"
 
-/-- What beamer defines that a beamer document's standalone — a deck's, or
-a beamerposter sheet's (`DocClass.poster`) — which is no beamer, does not:
-`\alert`, where the picture spells it, set as the engine
-sets an alert (`Compat.alertStyled`) — the alert role's colour where the
-palette declares one, bold outside mathematics, an overlay specification read
-and spent, a picture being one step — and beamer's own colour names `fg`
-and `bg` (the normal text's), where the picture spells one the palette does
-not hold, at the value the page resolves (`Design.ofPalette`); a name the
-palette holds travels as its role (`paletteDecls`). -/
+/-- What beamer defines that a beamer document's standalone does not:
+`\alert`, where the picture spells it. -/
 public def slideShims (doc : Doc) (roots : String) : String :=
   if doc.docClass != .slides && doc.docClass != .poster then "" else
   let alert :=
@@ -18003,11 +13719,7 @@ public def slideShims (doc : Doc) (roots : String) : String :=
   alert ++ ([("fg", d.fg), ("bg", d.bg)].filter fun (n, _) =>
     named.contains n && (doc.palette.find? n).isNone).foldl (fun s c => s ++ colorDeclLine c) ""
 
-/-- The request one picture body states, formed from the finished
-document, so the picture's `alert` is the page's `alert`. The carried preamble and the body are both
-dependency roots: a TikZ style can name a macro or colour that the body
-never spells. The colour scan also reads every reachable macro definition,
-so the same closure that makes a macro travel makes its colours travel. -/
+/-- The request one picture body states, formed from the finished document. -/
 public def pictureRequest (doc : Doc) (src : PicSrc) (faces : FontSpec := doc.fonts) : String :=
   let roots := doc.picturePreamble ++ src.body
   let macros := macroDecls doc.pictureMacros roots
@@ -18015,21 +13727,13 @@ public def pictureRequest (doc : Doc) (src : PicSrc) (faces : FontSpec := doc.fo
     (paletteDecls doc.palette (macroDeclLines macros ++ roots)) (slideShims doc roots) macros
     (pictureSwitch doc.page src.size) src
 
-/-- The document with boundary pictures `more` added to its request, each id
-once, its own first: what a reference list's fields set (`Bib.apply`), as
-the body's are recorded where they stand. -/
+/-- The document with boundary pictures `more` added to its request, each id once, its own first. -/
 @[expose] public def Doc.addPictures (doc : Doc) (more : Array (String × PicSrc)) : Doc :=
   { doc with pictureSrcs := more.foldl (init := doc.pictureSrcs) fun acc (h, b) =>
       if acc.any (·.1 == h) then acc else acc.push (h, b) }
 
-/-- The boundary requests the shipped tree actually states: `pictureSrcs`
-filtered to the ids an `.image` node still references — a picture pruned
-with its frame asks for nothing, exactly as a pruned `\bibliography` does
-— each wrapped at this site (`pictureRequest`), so the request reads the
-document's design as both backends do. The font roles are the document's
-unless the driver hands the ones the engine resolved (`faces`,
-`Cli.FontAssembly.boundaryFonts`): the request is then set in the faces the
-page sets in. -/
+/-- The boundary requests the shipped tree states: `pictureSrcs` filtered to
+the ids an `.image` node still references, each wrapped. -/
 public def pictureRefs (doc : Doc) (faces : FontSpec := doc.fonts) : Array (String × String) :=
   let srcs := imageRefs doc
   (doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)).map
@@ -18067,15 +13771,8 @@ private def includedFileL (cs : List Char) : Option String :=
   | '{' :: rest => (groupTextL 0 [] rest).map (·.trimAscii.toString)
   | _ => none
 
-/-- **The files a boundary request reads**: the operand of every
-`\includegraphics` the standalone spells, deduplicated in first-seen order —
-a diagram's cell may hold a thumbnail, and the tool runs where the
-document's directory is not. The driver stages each beside the standalone
-and keys the request on its bytes, so a changed figure re-renders and a
-missing one fails in the tool's own words. A control word whose name only
-begins with `includegraphics` names nothing; an operand still holding a
-macro is the tool's to expand and stays out. A total scan of the request's
-characters. -/
+/-- The files a boundary request reads: every `\includegraphics` operand the
+standalone spells, deduplicated in first-seen order. -/
 public def pictureInputs (request : String) : Array String := Id.run do
   let pieces := request.splitOn "\\includegraphics"
   let mut out : Array String := #[]
@@ -18089,8 +13786,6 @@ public def pictureInputs (request : String) : Array String := Id.run do
     | none => pure ()
   return out
 
-/-- **Referenced roles are covered.** A name the body spells that the
-palette resolves is declared in the request, with the palette's value. -/
 public theorem paletteDecls_covers (pal : Palette) (body n : String) (c : Color)
     (hn : n ∈ colorNames body) (hc : pal.find? n = some c) :
     (n, c) ∈ paletteDecls pal body := by
@@ -18098,9 +13793,6 @@ public theorem paletteDecls_covers (pal : Palette) (body n : String) (c : Color)
   rw [Array.mem_filterMap]
   exact ⟨n, hn, by simp [hc]⟩
 
-/-- **The picture's colour is the page's.** Every value the standalone
-defines for a name is the value `Palette.find?` answers — the one read
-`Design.ofDoc` makes for both backends. -/
 public theorem paletteDecls_agree (pal : Palette) (body n : String) (c : Color)
     (h : (n, c) ∈ paletteDecls pal body) : pal.find? n = some c := by
   unfold paletteDecls at h
@@ -18113,9 +13805,6 @@ public theorem paletteDecls_agree (pal : Palette) (body n : String) (c : Color)
     obtain ⟨rfl, rfl⟩ := hm
     exact hf
 
-/-- **Exactly the mentioned names.** No role rides that the body does not
-spell — the locality of the cache key (`paletteDecls_local_exact`) rests
-on it. -/
 public theorem paletteDecls_mem (pal : Palette) (body n : String) (c : Color)
     (h : (n, c) ∈ paletteDecls pal body) : n ∈ colorNames body := by
   unfold paletteDecls at h
@@ -18136,10 +13825,6 @@ private theorem filterMap_congr_mem {α β : Type} (f g : α → Option β) : �
     rw [h a (List.mem_cons_self ..),
       filterMap_congr_mem f g l fun x hx => h x (List.mem_cons.mpr (Or.inr hx))]
 
-/-- **An unrelated palette edit leaves the request untouched.** Two
-palettes agreeing on every name the body spells produce one declaration
-list — so the request, hence the boundary cache key, moves only when a
-role the picture mentions moves. -/
 public theorem paletteDecls_local_exact (pal pal' : Palette) (body : String)
     (h : ∀ n ∈ colorNames body, pal.find? n = pal'.find? n) :
     paletteDecls pal body = paletteDecls pal' body := by
@@ -18150,9 +13835,6 @@ public theorem paletteDecls_local_exact (pal pal' : Palette) (body : String)
   intro n hn
   rw [h n (Array.mem_def.mpr hn)]
 
-/-- Every root remains, and every reached declaration's dependencies remain.
-The step consumes one declaration; it covers that declaration from the new
-roots and every other declaration from the remaining worklist. -/
 public theorem macroReachNames_contract (pending : List (String × String)) (ns : Array String) :
     (∀ n ∈ ns, n ∈ macroReachNames pending ns) ∧
     (∀ p ∈ pending, p.1 ∈ macroReachNames pending ns →
@@ -18172,13 +13854,6 @@ public theorem macroReachNames_contract (pending : List (String × String)) (ns 
       exact ih.1 n (Array.mem_append_right _ hdep)
     · exact ih.2 q ((List.mem_erase_of_ne he).mpr hq) hn n hdep
 
-/-- **A definition the picture spells is carried.** A control sequence the
-body spells that the document itself defined is declared in the request the
-wrapper produces — the closure property the preamble's closed list could
-not have: a list closed over the commands the engine knows cannot hold a
-name the document invented, so the boundary tool met an undefined control
-sequence and drew nothing. `macroDecls_fixed_point` supplies the transitive
-half for definitions reached only through another carried definition. -/
 public theorem macroDecls_covers (macros : Array (String × String)) (body n d : String)
     (hn : n ∈ ctrlNames body) (hm : (n, d) ∈ macros) :
     (n, d) ∈ macroDecls macros body := by
@@ -18187,9 +13862,6 @@ public theorem macroDecls_covers (macros : Array (String × String)) (body n d :
   exact Array.contains_iff_mem.mpr
     ((macroReachNames_contract macros.toList (ctrlNames body)).1 n hn)
 
-/-- The carried definitions are closed under reference: a definition whose
-name another carried definition spells is carried too. This holds for every
-declaration array, including cycles and repeated names. -/
 public theorem macroDecls_fixed_point (macros : Array (String × String)) (body n d : String)
     (hm : (n, d) ∈ macros)
     (hr : ∃ p ∈ macroDecls macros body, n ∈ ctrlNames p.2) :
@@ -18201,25 +13873,10 @@ public theorem macroDecls_fixed_point (macros : Array (String × String)) (body 
   exact (macroReachNames_contract macros.toList (ctrlNames body)).2 p
     (Array.mem_def.mp hm') (Array.contains_iff_mem.mp hp) n hn
 
-/-- **Only the document's own definitions ride.** Nothing reaches the
-boundary that the document did not declare: the request's macro block is
-drawn from `pictureMacros`, so the standalone can shadow a package's
-command only where the document shadowed it first. -/
 public theorem macroDecls_mem (macros : Array (String × String)) (body : String)
     (p : String × String) (h : p ∈ macroDecls macros body) : p ∈ macros :=
   (Array.mem_filter.mp h).1
 
-/-- **The boundary request projects the document's design.** Every
-request `pictureRefs` states is one picture body of `pictureSrcs`
-wrapped with the document's preamble, the font roles it is set in
-(`fontLines faces`: the document's declared roles, or the faces the engine
-resolved for them, which the driver hands — `Cli.FontAssembly.boundaryFonts`),
-the palette roles the request mentions (`paletteDecls doc.palette`) and the
-macro definitions its preamble and body reach (`macroDecls
-doc.pictureMacros`) — the same `palette` both backends read through
-`Design.ofDoc`, and the faces the page sets in. No backend theorem stands
-behind this one: the PDF embeds the tool's drawing and the HTML embeds a
-rasterization of the same drawing — one fulfilment, two projections. -/
 public theorem pictureRefs_design_projects (doc : Doc) (faces : FontSpec)
     (id w : String)
     (h : (id, w) ∈ pictureRefs doc faces) :
@@ -18239,44 +13896,15 @@ public theorem pictureRefs_design_projects (doc : Doc) (faces : FontSpec)
   obtain ⟨rfl, rfl⟩ := heq
   exact ⟨src, (Array.mem_filter.mp hmem).1, rfl⟩
 
-/-- **The boundary request is environment-free.** What a document requests
-at the boundary (`pictureRefs`) is a function of the document alone — the
-picture bodies, the shipped tree, and the document's own design (its
-preamble lines, font roles and palette, all declaration values) — never
-of the fulfilment side: repinning the tool field leaves every request
-untouched. The other half of the statement is structural, not provable
-here: the request is formed in the pure core (`Elab`'s picture arm routes
-on the door's presence — a declaration value — and
-`wrapStandalone`/`picHash` take no tool), which cannot read PATH, so
-whether a tool exists on the machine decides *fulfilment* only — run,
-serve from the warm cache, or W0379 (`Main.resolvePictures`) — and, for a
-picture the rendered subset draws in part, withdrawal: a request no tool
-drew is withdrawn and a second elaboration draws that picture natively
-(`Cli.Boundary.withdraw`). Every request is still stated by the first
-elaboration, from the document alone. The
-executable half — pinning the default tool elaborates to the identical
-`Doc` — runs in `boundaryChecks`. -/
 public theorem boundary_request_env_free (doc : Doc) (t : Option String) :
     pictureRefs { doc with pictureTool := t } = pictureRefs doc := by rfl
 
--- The logo: one resolving site for its state sequence and its alignment,
--- read by both backends.
-
-/-- The logo in force at position `k` of a keyed declaration sequence: the
-last span whose key is at or before `k`, else the initial state `init` (the
-preamble `\logo`) — beamer's stateful declaration, where an empty body
-clears (`\logo{}` after a frame is how a deck scopes a logo to one frame).
-The one resolving site: the PDF's furniture pass keys the spans by page
-index and reads each page's logo here, and the HTML deck walk keys them by
-body position and reads each frame's logo here — never a second
-interpretation of the sequence (`logo_frames_agree`). -/
+/-- The logo in force at position `k`: the last span whose key is at or before
+`k`, else the preamble's `init`. -/
 public def logoInForce (init : Option (Array Inline))
     (spans : Array (Nat × Array Inline)) (k : Nat) : Option (Array Inline) :=
   spans.foldl (fun acc s => if s.1 ≤ k then some s.2 else acc) init
 
-/-- The list spine of `logo_frames_agree`: the fold reads a key only
-through its comparison against the read point, so any rekeying that
-preserves those comparisons preserves the fold. -/
 private theorem logoInForceList_rekey (f : Nat → Nat) (k : Nat) :
     ∀ (l : List (Nat × Array Inline)),
       (∀ s ∈ l, (f s.1 ≤ f k) ↔ (s.1 ≤ k)) →
@@ -18294,16 +13922,6 @@ private theorem logoInForceList_rekey (f : Nat → Nat) (k : Nat) :
     simp only [hs]
     exact ih hrest _
 
-/-- The cross-backend agreement, stated over the shared resolving function:
-`logoInForce` is invariant under any rekeying that preserves each
-declaration's position relative to the read point. The PDF keys the spans
-by page index and reads at a page; the HTML deck keys the same declarations
-by body position and reads at a frame — the map from body position to page
-index preserves order against every declaration (a `\logo` before a frame
-is placed before the frame's page opens, a clear after it only after the
-page closed), so the two projections resolve the same state, frame for
-page. The artifact-level census over a deck (Tests, `deckLogoChecks`)
-holds the rendered halves to this. -/
 public theorem logo_frames_agree (init : Option (Array Inline))
     (spans : Array (Nat × Array Inline)) (f : Nat → Nat) (k : Nat)
     (h : ∀ s ∈ spans, (f s.1 ≤ f k) ↔ (s.1 ≤ k)) :
@@ -18315,23 +13933,13 @@ public theorem logo_frames_agree (init : Option (Array Inline))
   exact logoInForceList_rekey f k spans.toList
     (fun s hs => h s (by simpa using hs)) init
 
-/-- The logo's declared alignment in the furniture band — the one resolving
-site both backends read: the document's `\style{logo}{ align = ... }`,
-else `right`, the beamer default placement the engine keeps (beamer's
-default outer theme hangs `\insertlogo` at the lower-right corner:
-beamerouterthemedefault.sty, the `sidebar right` template's
-`\llap{\insertlogo\hskip0.1cm}` at the sidebar's bottom). Vertical
-placement is not a knob: the logo rides the furniture band at the page
-bottom, as the foot does. -/
+/-- The logo's declared alignment in the furniture band:
+`\style{logo}{ align = ... }`, else `right`. -/
 public def logoAlign (styles : Styles) : HAlign :=
   ((styles.find? "logo").bind (·.align)).getD .right
 
-/-- Every image source the logo state ships — the preamble `\logo` and each
-body declaration's content. A logo is decorative furniture by role
-(WCAG 2.2 SC 1.1.1: content that is pure decoration needs no text
-alternative and is implemented so assistive technology can ignore it — the
-HTML backend ships `alt=""` on these), so the no-alternative census counts
-these sources as decorative, never as missing. -/
+/-- Every image source the logo state ships: the preamble `\logo` and each
+body declaration's content. -/
 public def logoImageSrcs (doc : Doc) : Array String :=
   let out := foldBlocks (fun out b => match b with
     | .logo c => imageSrcsInlines out c
@@ -18344,12 +13952,8 @@ private structure SansAltCensus where
   missing : Array String := #[]
   pictures : Nat := 0
 
-/-- One image node's contribution to the no-alternative census: an
-`.image` whose `alt` is `.undeclared`, its `src` collected once — a
-`.decorative` image is the conforming state (WCAG 2.2 SC 1.1.1: pure
-decoration, implemented so assistive technology can ignore it). A leaf
-projection of the shared fold — the fold recurses, so this leaf reads
-only the node itself; `imageSrcPush`'s shape. -/
+/-- One image node's contribution to the no-alternative census: an `.image`
+whose `alt` is `.undeclared`, its `src` once. -/
 private def sansAltStep (out : SansAltCensus) (x : Inline) : SansAltCensus :=
   match x with
   | .image src _ alt =>
@@ -18358,14 +13962,11 @@ private def sansAltStep (out : SansAltCensus) (x : Inline) : SansAltCensus :=
     else out
   | _ => out
 
-/-- The census key of a native picture: `picture#k`, where `k` is its
-index among all native pictures in document order. Counting every native
-picture keeps the key stable when a later caption fills its alternative. -/
+/-- The census key prefix of a native picture: `picture#k`, its index among
+native pictures in document order. -/
 public def picKeyPrefix : String := "picture#"
 
-/-- One native picture's contribution to the no-alternative census. The
-artifact-facing `alternative` is judged, so label words and a caption both
-satisfy the same value the HTML and PDF project. -/
+/-- One native picture's contribution to the no-alternative census, judged on its `alternative`. -/
 private def sansAltPicStep (out : SansAltCensus) (b : Block) : SansAltCensus :=
   match b with
   | .picture pic =>
@@ -18374,28 +13975,14 @@ private def sansAltPicStep (out : SansAltCensus) (b : Block) : SansAltCensus :=
       pictures := out.pictures + 1 }
   | _ => out
 
-/-- Every non-text object the artifacts ship with no text alternative,
-deduplicated by source for images and keyed by native-picture position, in
-document order. The backends read the body and the running head and foot,
-so the census reads the same regions (`imageRefs`' scope for shipped ink).
-A figure's caption has already become its object's `alt` by elaboration
-(`setAltBlocks`), so a captioned figure is not counted — and a logo's
-images are not counted either: a logo is decorative furniture by role
-(`logoImageSrcs`), so its missing alternative is the conforming state,
-never a defect. A native picture (`picKeyPrefix`) is judged with file
-images (`altDiags`). A boundary picture (`picSrcPrefix`) is counted too —
-the route changes who drew the box, not what an accessibility reader gets —
-but judged after fulfilment by `picAltDiags`. The two faces partition this
-census (`alt_judged_complete`); N0023 names trust, not loss. -/
+/-- Every non-text object the artifacts ship with no text alternative, in document order. -/
 public def imagesSansAlt (doc : Doc) : Array String :=
   let out := foldBlocks sansAltPicStep sansAltStep {} doc.body
   let out := match doc.head with | some h => foldInlines sansAltStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
   out.missing.filter (fun src => !(logoImageSrcs doc).contains src)
 
-/-- The picture faces' one message and help, native and boundary alike.
-The key is an internal census identity, so the message stays in the
-author's words and names every available declaration. -/
+/-- The picture faces' one message and help, native and boundary alike. -/
 public def pictureSansAltMessage : String :=
   "this picture ships no text alternative; assistive technology " ++
     "reads nothing in its place (WCAG 2.2 SC 1.1.1)"
@@ -18405,12 +13992,8 @@ public def pictureSansAltHelp : String :=
     "decorative with [artifact], or caption a figure around it; an empty " ++
     "alt= says nothing"
 
-/-- The text-alternative judge's file-image and native-picture face (WCAG
-2.2 SC 1.1.1, Non-text Content). One diagnostic per distinct object; a
-file source or native-picture key provides the structured subject and its
-recorded span. The caller attributes the written trigger from source
-evidence; the IR judge invents no surface spelling. Boundary pictures are
-judged by `picAltDiags` after the driver has fulfilled them. -/
+/-- The text-alternative judge for file images and native pictures (WCAG 2.2
+SC 1.1.1): one diagnostic per distinct object. -/
 public def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
     Array Diag :=
   ((imagesSansAlt doc).filter fun src => !src.startsWith picSrcPrefix).map fun src =>
@@ -18428,10 +14011,8 @@ public def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => non
           "caption becomes the alternative"))
         (subject := some src)
 
-/-- The judge's boundary-picture face, read by the driver after fulfilment:
-`shipped` says whether the picture's drawn box embeds — a picture the tool
-failed on ships a placeholder box, not an image, and W0382 has named that
-loss, so naming it here too would name one loss twice. -/
+/-- The text-alternative judge for boundary pictures, read after fulfilment;
+`shipped` says whether the drawn box embeds. -/
 public def picAltDiags (doc : Doc) (spanOf : String → Option Span)
     (shipped : String → Bool) : Array Diag :=
   ((imagesSansAlt doc).filter fun src =>
@@ -18455,11 +14036,6 @@ private theorem size_filter_partition (p : α → Bool) (as : Array α) :
   simp only [Array.length_toList] at h1 h2 h3
   omega
 
-/-- The two faces judge exactly the census, together: every shipped image
-with no text alternative is named by the file-image face or the picture
-face (with every picture shipped), and by only one. An image cannot
-escape without escaping the fold whose arms are all explicit — weak
-accessibility of images is a reported fact, never a discovery. -/
 public theorem alt_judged_complete (doc : Doc) (spanOf : String → Option Span) :
     (altDiags doc spanOf).size + (picAltDiags doc spanOf (fun _ => true)).size =
       (imagesSansAlt doc).size := by
@@ -18468,21 +14044,15 @@ public theorem alt_judged_complete (doc : Doc) (spanOf : String → Option Span)
   exact size_filter_partition (fun src => src.startsWith picSrcPrefix)
     (imagesSansAlt doc)
 
-/-- The text a link's body offers the accessibility tree: its plain text
-(icon labels and reference texts included, as `plainTextOne` reads them)
-together with each contained image's declared alternative — WCAG 2.2
-SC 2.4.4 takes a link's purpose from its link text, and technique H30
-names the `alt` of an image inside the link as that text. -/
+/-- The text a link's body offers the accessibility tree: its plain text and
+each contained image's declared alternative. -/
 public def linkReading (body : Array Inline) : String :=
   foldInlines
     (fun s x => match x with | .image _ _ alt => s ++ alt.text | _ => s)
     (plainText body) body
 
-/-- One link node's contribution to the no-text census: a `.link` whose
-body reads as nothing (`linkReading`), its target collected once. A leaf
-projection of the shared fold, `sansAltStep`'s shape — the fold visits
-the `.link` node itself before its body, so no link escapes the census
-without escaping the fold, whose arms are all explicit. -/
+/-- One link node's contribution to the no-text census: a `.link` whose body
+reads as nothing, its target once. -/
 private def sansTextLinkStep (out : Array String)
     (x : Inline) : Array String :=
   match x with
@@ -18503,21 +14073,14 @@ private def sansTextBlockLinkStep (out : Array String)
   | .setTokens _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
   | .bibliography _ _ _ => out
 
-/-- Every link the artifacts ship with no reading — no text, no icon
-label, no image alternative — deduplicated by target, in document order:
-the backends read the body, the running head and foot, and the logo, so
-the census reads the same regions (`imageRefs`' scope for shipped ink). -/
+/-- Every link the artifacts ship with no reading, deduplicated by target, in document order. -/
 public def linksSansText (doc : Doc) : Array String :=
   let out := foldBlocks sansTextBlockLinkStep sansTextLinkStep #[] doc.body
   let out := match doc.head with | some h => foldInlines sansTextLinkStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansTextLinkStep out f | none => out
   match doc.logo with | some l => foldInlines sansTextLinkStep out l | none => out
 
-/-- The link-purpose judge (WCAG 2.2 SC 2.4.4, Link Purpose (In Context):
-the purpose of each link can be determined from the link text; sufficient
-technique H30). One diagnostic per distinct target: a link a reader can
-follow and an assistive reader cannot name is a per-link fact, and the
-target names which. -/
+/-- The link-purpose judge (WCAG 2.2 SC 2.4.4): one diagnostic per distinct target. -/
 public def linkDiags (doc : Doc) : Array Diag :=
   (linksSansText doc).map fun url =>
     Diag.of .W0377
@@ -18526,10 +14089,6 @@ public def linkDiags (doc : Doc) : Array Diag :=
       (help := some ("give the link visible text — \\href{...}{words} — " ++
         "or an image with alt inside it"))
 
-/-- The judge is silent exactly when no shipped link lacks a reading:
-`linkDiags` is a per-offender map over the census (`linksSansText`, a
-leaf projection of the shared fold), so an unnameable link is a reported
-fact, never a discovery — `alt_judged_complete`'s shape. -/
 public theorem links_judged_complete (doc : Doc) :
     linkDiags doc = #[] ↔ linksSansText doc = #[] := by
   rw [← Array.size_eq_zero_iff, ← Array.size_eq_zero_iff, linkDiags,
@@ -18537,11 +14096,8 @@ public theorem links_judged_complete (doc : Doc) :
 
 mutual
 
-/-- One leaf-parameterised map hosts every leaf rewrite over the tree.
-`f` rewrites childless nodes. `finish` combines a completed sibling array,
-after its children have been mapped, so a transparent wrapper can be
-spliced out without a second structural walk. The default keeps every
-wrapper and sibling unchanged. -/
+/-- One leaf-parameterised map for every leaf rewrite: `f` rewrites childless
+nodes, `finish` combines each completed sibling array. -/
 @[expose] public def mapInlines (f : Inline → Inline) (xs : Array Inline)
     (finish : Array Inline → Array Inline := id) : Array Inline :=
   mapInlineList f #[] xs.toList finish
@@ -18622,19 +14178,14 @@ end
 mutual
 
 /-- The block face of the generic map: `gp` rewrites native pictures, `f`
-childless inlines, `finish` completed inline regions, and `listing` the
-listing specification after its caption is mapped. Every block wrapper
-keeps its shape and ordering. Existing leaf-only callers use the identity
-defaults; annotation erasure uses the same descent. -/
+childless inlines, `finish` completed regions, `listing` listing
+specifications. -/
 @[expose] public def mapBlocksPic (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (xs : Array Block) (finish : Array Inline → Array Inline := id)
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
   mapBlockList gp f #[] xs.toList finish listing
 
-/-- The generic map with every picture passed through untouched: a label's
-inlines are not this map's leaves. A rewrite that must reach the text a
-label paints — alphabet resolution, location erasure — maps labels through
-`mapBlocksPic`; each caller of this one says why its rewrite need not. -/
+/-- The generic map with every picture passed through untouched. -/
 @[expose] public def mapBlocks (f : Inline → Inline) (xs : Array Block)
     (finish : Array Inline → Array Inline := id)
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
@@ -18719,9 +14270,7 @@ public def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inlin
 
 end
 
-/-- Resolve one formula leaf; every wrapper is owned by `mapInlines`, so the
-leaf function cannot skip a title, caption, table cell, note, or furniture
-region. -/
+/-- Resolve one formula leaf. -/
 @[expose] public def resolveMathAlphaInline (coverage : Math.MathAlphabetCoverage) : Inline → Inline
   | .formula display src body =>
     .formula display src (Math.resolveMathAlphas coverage body)
@@ -18750,31 +14299,24 @@ region. -/
   | .pageCount => .pageCount
   | .linebreak extra => .linebreak extra
 
-/-- A formula leaf is already resolved after one pass. -/
 public theorem resolveMathAlphaInline_fixed_point (coverage : Math.MathAlphabetCoverage)
     (x : Inline) :
     resolveMathAlphaInline coverage (resolveMathAlphaInline coverage x) =
       resolveMathAlphaInline coverage x := by
   cases x <;> simp only [resolveMathAlphaInline, Math.resolveMathAlphas_fixed_point]
 
-/-- The picture face of alphabet resolution. A label paints its formulas in
-both backends — the face census asks glyphs for them — so they resolve as a
-caption's do; skipping them shipped an unresolved alphabet node, which MathML
-frames as an error and the page sets in the source glyphs. -/
+/-- The picture face of alphabet resolution: a label's formulas resolve as a caption's do. -/
 @[expose] public def resolveMathAlphaPicture (coverage : Math.MathAlphabetCoverage)
     (pic : Pic.Picture) : Pic.Picture :=
   pic.mapLabels (mapInlines (resolveMathAlphaInline coverage))
 
-/-- A formula and the authored location enclosing it. The canonical formula
-text is not source evidence: the lexical trigger lives on the stored span. -/
+/-- A formula and the authored location enclosing it. -/
 public structure MathRequest where
   body : Math.MList
   source : Option Span
 
-/-- The two existing consumers read different regions: alphabet resolution
-rewrites notes and style templates, whereas face loading follows the painted
-scalar census, which excludes them. Both read picture labels, whose formulas
-both backends paint (`mathRequests_resolve_covers`). -/
+/-- The regions a formula census reads: alphabet resolution's, which include
+notes and style templates, or the painted scalar census's. -/
 public inductive MathRequestScope where
   | alphabets
   | face
@@ -18794,10 +14336,8 @@ private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathReques
     | .pageNumber | .pageCount | .linebreak _ => (out, ctx)
   closeInline := fun _ out _ => out
 
-/-- Entering a block for the request census: a note closes the face scope
-over its content, and the block-owned regions `foldCtxBlock` does not descend
-into — a listing caption, picture labels — are read here, under the block's
-context. A reference list's entries are the fold's own descent. -/
+/-- Entering a block for the request census: a note closes the face scope, and
+block-owned regions are read here. -/
 private def mathRequestOpen (scope : MathRequestScope) (ctx : Option Span × Bool)
     (out : Array MathRequest) (b : Block) : Array MathRequest × (Option Span × Bool) :=
   let read := foldCtxInlines mathRequestInlines ctx
@@ -18820,18 +14360,8 @@ private def mathRequestFold (scope : MathRequestScope) :
     CtxFold (Option Span × Bool) (Array MathRequest) :=
   { mathRequestInlines with openBlock := mathRequestOpen scope }
 
-/-- Formula requests in the shared context fold's document order.
-A location binds only its own descendants; siblings cannot
-borrow it. Outermost locations retain a macro's authored call site.
-
-The face scope reads the regions of `Layout.docMathScalars` — a corpus check
-holds the two to one scalar set (`mathCensusRegionChecks`); the alphabet
-scope is the regions `resolveMathAlphas` rewrites — body, furniture, notes,
-style templates, listing captions, formatted references and picture labels
-— and `missingMathAlphas` is defined over it. Holding the scope to the
-rewrite is `mathRequests_resolve_covers` in one direction only: a region
-the rewrite reaches and this fold misses resolves without a note. Neither
-scope changes which formulas are resolved or request a face. -/
+/-- Formula requests in the shared context fold's document order; a location
+binds only its own descendants. -/
 public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathRequest :=
   let body := foldCtxBlocks (mathRequestFold scope) (none, true) #[] doc.body
   let furniture := match scope with
@@ -18858,21 +14388,15 @@ public def missingAlphasOf (coverage : Math.MathAlphabetCoverage)
   requests.foldl (noteRequestAlphas coverage) #[]
 
 /-- Every alphabet whose used range the selected symbol face lacks,
-deduplicated in first-use order over the alphabet census's requests — the
-body and furniture, notes, style templates, listing captions, formatted
-references and picture labels: the requests each note takes its source
-from, so which alphabets are named and where cannot read two region lists. -/
+deduplicated in first-use order over the alphabet census. -/
 public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
     (doc : Doc) : Array Math.MathAlphabet :=
   missingAlphasOf coverage (mathRequests .alphabets doc)
 
-/-- The first actual formula needing glyphs, before a face is selected.
-An unsourced request stays unsourced rather than borrowing a later site. -/
+/-- The first formula needing glyphs, before a face is selected. -/
 public def mathFaceRequest (doc : Doc) : Option MathRequest :=
   (mathRequests .face doc).find? fun r => !(Math.MList.scalarsList #[] r.body).isEmpty
 
-/-- A selected face request belongs to the painted census and really asks
-for at least one scalar; an empty formula cannot own the automatic-face note. -/
 public theorem mathFaceRequest_covers (doc : Doc) (request : MathRequest)
     (h : mathFaceRequest doc = some request) :
     request ∈ mathRequests .face doc ∧
@@ -18880,10 +14404,8 @@ public theorem mathFaceRequest_covers (doc : Doc) (request : MathRequest)
   refine ⟨Array.mem_of_find?_eq_some h, ?_⟩
   simpa using Array.find?_some h
 
-/-- Resolve typed math-alphabet scopes in the shared IR before the scalar
-fallback census and both backends. The returned diagnostics are one per
-alphabet, never one per glyph; isolated holes in a supported range remain
-mapped and therefore keep the ordinary per-character fallback path. -/
+/-- Resolve typed math-alphabet scopes in the shared IR, with one diagnostic
+per missing alphabet. -/
 @[expose] public def resolveMathAlphas (coverage : Math.MathAlphabetCoverage) (family : String)
     (doc : Doc) : Doc × Array Diag :=
   let leaf := resolveMathAlphaInline coverage
@@ -18901,9 +14423,6 @@ mapped and therefore keep the ordinary per-character fallback path. -/
       (trigger := source.bind (·.pos.command))
   (resolved, diags)
 
-/-- Every located alphabet note is witnessed by a formula in the sourced
-census that actually lacks the named alphabet. An earlier supported formula
-or a different alphabet's loss cannot supply its origin. -/
 public theorem resolveMathAlphas_origin_covers (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) (d : Diag) (span : Span)
     (hd : d ∈ (resolveMathAlphas coverage family doc).2) (hs : d.span = some span) :
@@ -18921,13 +14440,6 @@ public theorem resolveMathAlphas_origin_covers (coverage : Math.MathAlphabetCove
       Array.find?_some (p := fun r : MathRequest =>
         (Math.missingMathAlphas coverage r.body).contains a) hr⟩
 
-/-- The N0018 census is `_named`: `resolveMathAlphas` emits exactly one
-diagnostic per missing alphabet, each carrying that alphabet's key as its
-subject (`math-alpha:<name>`). Since `missingMathAlphas` is derived from the
-same `remaps` the resolver keeps scalars by (`Math.missingCharAlpha_kept`),
-the census cannot drift from what rendered: the IR owner is the single
-subject-bearing owner of the whole-alphabet loss, and the per-character
-Layout path (W0016) sees only remapped scalars this census never names. -/
 public theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :
     (resolveMathAlphas coverage family doc).2.map (·.subject) =
@@ -18935,7 +14447,6 @@ public theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
         (fun a => some ("math-alpha:" ++ a.name)) := by
   simp [resolveMathAlphas, missingMathAlphas, Diag.of_subject, Array.map_map, Function.comp]
 
-/-- Expose the completed-region combiner without changing the generic map's walk. -/
 public theorem mapInlineList_finish_exact (f : Inline → Inline) (out : Array Inline)
     (xs : List Inline) (finish : Array Inline → Array Inline) :
     mapInlineList f out xs finish =
@@ -18988,7 +14499,6 @@ private theorem mapMathInlineElems_fixed_point (coverage : Math.MathAlphabetCove
 
 end
 
-/-- Resolving an inline region twice resolves it once. -/
 public theorem mapMathInlines_fixed_point (coverage : Math.MathAlphabetCoverage)
     (xs : Array Inline) :
     mapInlines (resolveMathAlphaInline coverage)
@@ -19245,7 +14755,6 @@ private theorem mapMathBlocks_fixed_point (coverage : Math.MathAlphabetCoverage)
   simp only [mapBlocksPic, mapBlockList_toList, List.nil_append]
   exact mapMathBlockElems_fixed_point coverage xs.toList
 
-/-- Document mapping composes region by region, including style templates. -/
 private theorem mapDoc_comp (fi fi' : Array Inline → Array Inline)
     (fb fb' : Array Block → Array Block) (doc : Doc) :
     mapDoc fi fb (mapDoc fi' fb' doc) = mapDoc (fi ∘ fi') (fb ∘ fb') doc := by
@@ -19267,8 +14776,6 @@ private theorem mapMathDoc_fixed_point (coverage : Math.MathAlphabetCoverage) (d
       = mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) := funext (mapMathBlocks_fixed_point coverage)
   rw [mapDoc_comp, hfi, hfb]
 
-/-- The shared IR is unchanged by a second alphabet resolution, including
-body, captions and running furniture. Backend entry corollaries project it. -/
 public theorem resolveMathAlphas_fixed_point (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :
     (resolveMathAlphas coverage family (resolveMathAlphas coverage family doc).1).1
@@ -19297,8 +14804,6 @@ private theorem mathRequestFold_closeBlock (scope : MathRequestScope)
 
 mutual
 
-/-- A walk with the request census's inline events, over a resolved inline,
-pushes only resolved formulas — whatever context it is read under. -/
 private theorem requestsInline_resolve_covers (coverage : Math.MathAlphabetCoverage)
     (w : CtxFold (Option Span × Bool) (Array MathRequest))
     (ho : ∀ ctx out x, w.openInline ctx out x = mathRequestInlines.openInline ctx out x)
@@ -19343,7 +14848,6 @@ private theorem requestsInlineList_resolve_covers (coverage : Math.MathAlphabetC
 
 end
 
-/-- The block census's own inline events are the request fold's. -/
 private theorem requestsFoldInlines_resolve_covers (scope : MathRequestScope)
     (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
     (out : Array MathRequest) (xs : Array Inline) (h : RequestsFree out) :
@@ -19353,7 +14857,6 @@ private theorem requestsFoldInlines_resolve_covers (scope : MathRequestScope)
   exact requestsInlineList_resolve_covers coverage (mathRequestFold scope) (fun _ _ _ => rfl)
     (fun _ _ _ => rfl) ctx out xs.toList h
 
-/-- A run of resolved inline regions, each read by the request fold. -/
 private theorem requestsRegions_resolve_covers (coverage : Math.MathAlphabetCoverage)
     (ctx : Option Span × Bool) :
     ∀ (regions : List (Array Inline)) (out : Array MathRequest), RequestsFree out →
@@ -19422,10 +14925,6 @@ private theorem requestsBibItems_resolve_covers (scope : MathRequestScope)
 
 mutual
 
-/-- The request census over a resolved block reads only resolved formulas:
-its descent through every region `foldCtxBlock` walks — a reference list's
-entries among them — and the block-owned regions `mathRequestOpen` reads —
-captions and picture labels. -/
 private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
     (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
     (out : Array MathRequest) (b : Block) (h : RequestsFree out) :
@@ -19538,16 +15037,6 @@ private theorem requestsCols_resolve_covers (scope : MathRequestScope)
 
 end
 
-/-- **Alphabet resolution reaches every formula either census reads**
-(`_covers`): after `resolveMathAlphas`, every request of the painted census —
-the regions the face is loaded for and both backends set, picture labels
-included — and of the alphabet census asks for an alphabet-free formula, for
-every document, coverage and family. The painted census reads
-`Layout.docMathScalars`' regions (a corpus check, not a theorem, holds the
-two to one scalar set), so a region a backend paints and the resolver skips
-breaks this statement: picture labels once shipped their
-alphabets unresolved, which MathML framed as an error and the page set in the
-source glyphs. -/
 public theorem mathRequests_resolve_covers (scope : MathRequestScope)
     (coverage : Math.MathAlphabetCoverage) (family : String) (doc : Doc) :
     ∀ r ∈ mathRequests scope (resolveMathAlphas coverage family doc).1,
@@ -19587,9 +15076,6 @@ public theorem mathRequests_resolve_covers (scope : MathRequestScope)
       simp only [RequestsFree] at this
       simpa [mapDoc, hh, optRegion_map, Array.map_append] using this
 
-/-- Resolution empties the alphabet census for every document and coverage:
-the census reads the alphabet requests, and every one of them is
-alphabet-free after resolution (`mathRequests_resolve_covers`). -/
 public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :
     missingMathAlphas coverage (resolveMathAlphas coverage family doc).1 = #[] := by
@@ -19606,15 +15092,13 @@ public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCove
   exact spent _ fun r hr =>
     mathRequests_resolve_covers .alphabets coverage family doc r (by simpa using hr)
 
-/-- Entry normalization can repeat without repeating N0018 diagnostics. -/
 public theorem resolveMathAlphas_diags_exact (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :
     (resolveMathAlphas coverage family (resolveMathAlphas coverage family doc).1).2 = #[] := by
   change (missingMathAlphas coverage (resolveMathAlphas coverage family doc).1).map _ = #[]
   rw [missingMathAlphas_resolve_exact, Array.map_empty]
 
-/-- The List companion of `linkBlocks`: one block link owns the whole body,
-so an authored wrapper cannot multiply with its inline leaves. -/
+/-- The List companion of `linkBlocks`: one block link owns the whole body. -/
 private def linkBlockList (url : String) (body : List Block) : List Block :=
   [Block.link url body.toArray]
 
@@ -19622,28 +15106,14 @@ private def linkBlockList (url : String) (body : List Block) : List Block :=
 public def linkBlocks (url : String) (xs : Array Block) : Array Block :=
   (linkBlockList url xs.toList).toArray
 
-/-- A block link's nested body given its kind's affordance: every
-text-bearing run — through styling, colour and role wrappers alike — set in
-the kind's link ink and underlined, exactly as an inline link's body is,
-applied once per leaf. Built only where the body bears no anchor
-(`hasBlockAnchor` refuses the nested case first), so no span inside an inner
-inline link is reached, and none is afforded twice. An image-only body — no
-text-bearing leaf — is returned carrying no decoration (`linkLeafAfford_id`).
-Both backends read this one afforded body: `Layout`'s `.decorated`/`.colored`
-arms lower it to a PDF underline fill and coloured glyphs, HtmlDoc's to a
-`<u>` and an ink span. -/
+/-- A block link's nested body given its kind's affordance: every text-bearing
+run set in the kind's link ink and underlined. -/
 public def Styles.linkBodyAfford (s : Styles) (kind : String) (xs : Array Block) : Array Block :=
-  -- A picture's labels are the diagram's text, not the link's: they keep
-  -- their own ink and are never underlined.
+  -- A picture's labels are the diagram's text: they keep their ink and are never underlined.
   mapBlocks (s.linkLeafAfford kind) xs
 
 mutual
 
-/-- The census face of the map, per node: a leaf function that conserves
-each node's own census conserves every node's. `mapInlines_text` and
-`mapBlocks_text` are the walk-level schema; a leaf-rewrite states its
-census fact as their one-line instance instead of one hand induction per
-walk. -/
 public theorem mapInlineFinish_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
     (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (x : Inline) :
@@ -19706,9 +15176,6 @@ public theorem mapInlineListFinish_text (f : Inline → Inline)
 
 end
 
-/-- The `Conserves` schema over the generic map, inline face: whatever the
-leaf function, if it conserves each node's census the walk conserves the
-content's. -/
 public theorem mapInlinesFinish_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
     (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) :
@@ -19717,7 +15184,6 @@ public theorem mapInlinesFinish_text (f : Inline → Inline)
   rw [mapInlineListFinish_text f hf finish hfinish xs.toList #[]]
   simp [plainTextList, plainText]
 
-/-- The default map preserves text when its leaf function does. -/
 public theorem mapInline_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (x : Inline) :
     plainTextOne (mapInline f x) = plainTextOne x :=
@@ -19752,8 +15218,6 @@ private theorem mapAlgLines_text (f : Inline → Inline)
 
 mutual
 
-/-- The Bool fold un-threads: the accumulator rides outside as one `||`,
-which is what lets `anyInline p = false` decompose per node below. -/
 public theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
     foldInline (fun a y => a || p y) b x
       = (b || foldInline (fun a y => a || p y) false x) := by
@@ -19808,9 +15272,6 @@ end
 
 mutual
 
-/-- Conditional identity, per node: where the trigger census `p` reads
-false everywhere and the leaf function fixes every `p`-false node, the map
-leaves the node exactly as it stood. -/
 public theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
     (hf : ∀ x, p x = false → f x = x) (x : Inline)
     (h : foldInline (fun a y => a || p y) false x = false) :
@@ -19883,10 +15344,6 @@ public theorem mapInlineList_id (f : Inline → Inline) (p : Inline → Bool)
 
 end
 
-/-- The conditional-identity schema over the generic map (`_id`): content
-carrying no `p`-node survives the pass whole, whenever the leaf function
-fixes every `p`-false node. `Layout.substPage_id` is its instance, with
-`hasPhysicalPage` (= `anyInline isPhysicalPage`) as the trigger census. -/
 public theorem mapInlines_id (f : Inline → Inline) (p : Inline → Bool)
     (hf : ∀ x, p x = false → f x = x) (xs : Array Inline)
     (h : anyInline p xs = false) : mapInlines f xs = xs := by
@@ -20101,9 +15558,6 @@ public theorem mapBlockColsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inl
 
 end
 
-/-- The `Conserves` schema over the picture- and inline-parameterised map.
-A picture rewrite cannot change text, so only the inline leaf hypothesis is
-needed. -/
 public theorem mapBlocksPicWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
     (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
@@ -20122,8 +15576,6 @@ public theorem mapBlocksWith_text (f : Inline → Inline)
     Conserves blocksText (mapBlocks (finish := finish) (listing := listing) f) :=
   mapBlocksPicWith_text id f hf finish hfinish listing hlisting
 
-/-- The default block map is the text-preserving instance of the
-region-combining map. Pictures have no entry in `blocksText`. -/
 public theorem mapBlock_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (acc : String) (b : Block) :
     blockTextOne acc (mapBlock gp f b) = blockTextOne acc b :=
@@ -20161,9 +15613,8 @@ public theorem mapBlocks_text (f : Inline → Inline)
     Conserves blocksText (mapBlocks f) :=
   mapBlocksPic_text id f hf
 
-/- Source erasure uses the map's completed-region combiner. The reverse
-list accumulator joins only neighbouring text leaves; it never crosses a
-style, link, overlay, footnote, or other semantic boundary. -/
+/- Joins neighbouring text leaves only, never across a style, link, overlay,
+footnote or other semantic boundary. -/
 private def pushLocationText (out : List Inline) (x : Inline) : List Inline :=
   match x with
   | .text s =>
@@ -20231,9 +15682,7 @@ private theorem finishLocations_text : Conserves plainText finishLocations := by
   intro xs
   simp [finishLocations, plainText, spliceLocations_reading, plainTextList]
 
-/-- Erase diagnostic wrappers and join adjacent text throughout an inline
-region. The generic map owns recursion; its combiner sees already-mapped
-children, so splicing an annotation cannot leave a nested one behind. -/
+/-- Erase diagnostic wrappers and join adjacent text throughout an inline region. -/
 public def eraseLocationInlines (xs : Array Inline) : Array Inline :=
   mapInlines id xs finishLocations
 
@@ -20291,8 +15740,6 @@ private theorem spliceLocations_append (out xs ys : List Inline) :
   | nil => rfl
   | cons x xs ih => simp only [List.cons_append, spliceLocations, ih]
 
-/-- A diagnostic wrapper anywhere in a region leaves its erased value
-unchanged, for arbitrary nested content and sibling regions. -/
 public theorem eraseLocationInlines_located_exact (span : Span)
     (before body after : Array Inline) :
     eraseLocationInlines (before ++ #[.located span body] ++ after) =
@@ -20309,17 +15756,12 @@ private def eraseLocationPicture (pic : Pic.Picture) : Pic.Picture :=
 private def eraseListingSource (spec : ListingSpec) : ListingSpec :=
   { spec with source := none }
 
-/-- The source-free view of a compiled document. Erase only diagnostic
-provenance, including listing starts, in every body and furniture region.
-Adjacent text rejoins after annotations disappear, recursively; semantic
-wrappers, block ordering, design, and picture geometry remain intact. -/
+/-- The source-free view of a compiled document: diagnostic provenance erased
+in every body and furniture region, adjacent text rejoined. -/
 public def eraseLocations (doc : Doc) : Doc :=
   mapDoc eraseLocationInlines
     (mapBlocksPic eraseLocationPicture id · finishLocations eraseListingSource) doc
 
-/-- Source erasure conserves the body's text census and every furniture
-region's text, including style templates and markers. This is the actual
-erasure pass, with text coalescing, instantiated through the generic maps. -/
 public theorem eraseLocations_text :
     Conserves (fun doc : Doc =>
       (blocksText doc.body, (furnitureInlines doc).map plainText)) eraseLocations := by
@@ -20332,33 +15774,25 @@ public theorem eraseLocations_text :
     funext xs
     exact eraseLocationInlines_text xs
 
-/-- The List wrapper changes navigation, never content. -/
 private theorem linkBlockList_text (url : String) (xs : List Block) (acc : String) :
     blockTextList acc (linkBlockList url xs) = blockTextList acc xs := by
   simp [linkBlockList, blockTextList, blockTextOne]
 
-/-- Linking a block-shaped wrapper preserves its complete text census. -/
 public theorem linkBlocks_text (url : String) : Conserves blocksText (linkBlocks url) := by
   intro xs
   simp [linkBlocks, blocksText, linkBlockList_text]
 
-/-- A block link's affordance conserves the body's census: it is the generic
-map under a leaf rewrite that conserves each leaf (`linkLeafAfford_text`), so
-neither underline nor ink adds or hides a character — the one census both
-backends read from the afforded body. -/
 public theorem Styles.linkBodyAfford_text (s : Styles) (kind : String) :
     Conserves blocksText (s.linkBodyAfford kind) := by
   unfold Styles.linkBodyAfford
   exact mapBlocks_text (s.linkLeafAfford kind) (s.linkLeafAfford_text kind)
 
-/-- A caption fills only what was left undeclared: a described image keeps
-its own words, and `artifact` inside a captioned figure stays decoration. -/
+/-- A caption fills only an undeclared alternative. -/
 private def setAltFill (alt : String) : Alt → Alt
   | .undeclared => Alt.declare alt
   | .decorative => .decorative
   | .described t => .described t
 
-/-- A declared alternative survives any enclosing caption. -/
 private theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .undeclared) :
     setAltFill alt a = a := by
   cases a with
@@ -20366,12 +15800,8 @@ private theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .unde
   | decorative => rfl
   | described _ => rfl
 
-/-- Give every non-text object that has no alternative yet this text:
-how a `figure` caption becomes the accessible name of the object it
-captions. `mapBlocksPic` is the shared exhaustive leaf rewrite, so the
-caption reaches nested images and native pictures without a parallel walk.
-An inner caption still wins because `setAltFill` changes only undeclared
-values. -/
+/-- Give every non-text object with no alternative yet this text, as a
+`figure` caption names what it captions. -/
 private def setAltLeaf (alt : String) (x : Inline) : Inline :=
   match x with
   | .image src size old => .image src size (setAltFill alt old)
@@ -20383,47 +15813,30 @@ private def setAltPic (alt : String) (pic : Pic.Picture) : Pic.Picture :=
 public def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
   mapBlocksPic (setAltPic alt) (setAltLeaf alt) xs
 
-/-- Caption-to-alt is markup, never content: the census does not read a
-non-text object's alternative, so the shared rewrite ships exactly the
-text census the body had. -/
 public theorem setAltBlocks_text (alt : String) :
     Conserves blocksText (setAltBlocks alt) :=
   mapBlocksPic_text _ _ (fun x => by cases x <;> rfl)
 
-/-- A caption as the alternative of what it captions (`setAltBlocks`): the
-words its first page shows (`firstPageText`), the reading a frame's name
-takes — an overlay alternation in the caption names the object once, never
-by both of its groups as the census would. -/
+/-- A caption's first-page words as the alternative of what it captions. -/
 public def captionAltBlocks (caption : Array Inline) (xs : Array Block) : Array Block :=
   setAltBlocks (firstPageText caption) xs
 
-/-- Naming an object by its caption ships the census the body had. -/
 public theorem captionAltBlocks_text (caption : Array Inline) :
     Conserves blocksText (captionAltBlocks caption) :=
   setAltBlocks_text _
 
-/-- A declaration met between blocks: `\footnotesize`, `\bfseries`, or a
-bare palette name standing where a block could, with no argument. It
-scopes every block after it in its group — the rest-of-group reading
-`\centering` already has (ltmiscen.dtx: every declaration form scopes to
-the group) — and the elaborator carries the open declarations, outermost
-first, to every inline region it builds in that scope (a paragraph, a
-table cell), where `wrapDecls` puts them around the region. So a table or
-list standing next receives the declaration, no empty styled paragraph is
-set in its place, and a later `\normalsize` inside resets because it
-stands innermost and sizes are absolute (`Layout.applyStyle`). -/
+/-- A declaration met between blocks (`\footnotesize`, `\bfseries`, a bare
+palette name), scoping every following block of its group. -/
 public inductive Decl where
   | style (s : Style)
   | color (c : Color) (name : Option ColorRef)
   deriving Repr, BEq
 
-/-- One declaration around a region: exactly the node its grouped
-spelling elaborates to (`{\footnotesize B}` is `.styled (size) B`). -/
+/-- One declaration around a region: the node its grouped spelling elaborates to. -/
 public def Decl.wrap : Decl → Array Inline → Array Inline
   | .style s, xs => #[.styled s xs]
   | .color c n, xs => #[.colored c n xs]
 
-/-- The constructor selected by each declaration around a content region. -/
 public theorem Decl.wrap_exact (d : Decl) (xs : Array Inline) :
     d.wrap xs = (match d with
       | .style s => #[.styled s xs]
@@ -20436,7 +15849,6 @@ public def wrapDecls (ds : List Decl) (xs : Array Inline) : Array Inline :=
   | [] => xs
   | d :: rest => d.wrap (wrapDecls rest xs)
 
-/-- The declaration list is applied from its innermost wrapper outwards. -/
 public theorem wrapDecls_exact (ds : List Decl) (xs : Array Inline) :
     wrapDecls ds xs = (match ds with
       | [] => xs
@@ -20447,8 +15859,6 @@ public theorem Decl.wrap_text (d : Decl) (xs : Array Inline) :
     plainText (d.wrap xs) = plainText xs := by
   cases d <;> simp [Decl.wrap, plainText, plainTextList, plainTextOne]
 
-/-- A declaration is markup, never content: the region ships exactly the
-census it had. -/
 public theorem wrapDecls_text (ds : List Decl) : Conserves plainText (wrapDecls ds) := fun xs => by
   induction ds with
   | nil => rfl
@@ -20457,20 +15867,15 @@ public theorem wrapDecls_text (ds : List Decl) : Conserves plainText (wrapDecls 
 mutual
 
 /-- The named size a paragraph is set in, read down the chain of single
-wrappers around its whole content (`.styled`, `.colored`, `.located`): the
-outermost size scope wins, the one a paragraph built by `paraAt` stands
-under where it ends; an explicit `\fontsize` or `\normalfont` ends the
-reading, the run's own leading or the body's then governing. A hand-rolled
-walk, not `foldInlines`: it descends only the chain of single wrappers and
-stops at the first size scope. -/
--- conserves: none — a classifier over the wrapper chain; emits no document text.
+wrappers around its whole content; the outermost size scope wins. -/
+-- conserves: none — a classifier.
 public def paraStepIn (xs : List Inline) : Option String :=
   match xs with
   | [x] => paraStepOne x
   | [] => none
   | _ :: _ :: _ => none
 
--- conserves: none — the one-node face of paraStepIn's classifier.
+-- conserves: none — the one-node classifier.
 public def paraStepOne (x : Inline) : Option String :=
   match x with
   | .styled (.size n) _ => some n
@@ -20489,36 +15894,18 @@ public def paraStepOne (x : Inline) : Option String :=
 
 end
 
-/-- **The size step a paragraph is set at**: the named size of the outermost
-scope wrapping its whole content — for a paragraph `paraAt` built, the size
-declaration in force where it ends (`paraStep_paraAt_exact`): `{\small …\par}`
-or a `\small` declaration standing over it sets the step, while
-`{\small …}\par`, whose group closed before the paragraph ended, stands under
-the body's own `\normalsize`, as LaTeX reads `\baselineskip` at `\par`.
-`none` when some content stands outside every size scope (a body paragraph
-with a small run inside it) or no size scope wraps it. The one resolving
-site: the page sets the paragraph's strut at this step, the HTML gives the
-paragraph element the step's class (`liftParaStep`). -/
+/-- The size step a paragraph is set at: the named size of the outermost scope
+wrapping its whole content. -/
 public def paraStep? (xs : Array Inline) : Option String := paraStepIn xs.toList
 
-/-- **The size step text a template inserts leads at**: the template sets
-the text in a group, so a size command inside it ends before the
-template's `\par` and the lines keep the template's own `\baselineskip` —
-lualatex leads a `\small` or a `\tiny` frame title at the frame title's
-skip (beamer's `\insertframetitle`). A step at or above the body's own, on
-the ladder `scale`, still leads its lines (`paraStep?`): TeX stands lines of
-type taller than the template's skip clear of each other by `\lineskip`,
-and the step's leading stands them clear too. -/
+/-- The size step text a template inserts leads at: the template's own, since
+a size command inside it ends before its `\par`. -/
 public def insertedStep? (scale : List (String × Nat)) (xs : Array Inline) : Option String :=
   (paraStep? xs).filter fun n => 1000 ≤ ((scale.find? (·.1 == n)).map (·.2)).getD 1000
 
 mutual
 
-/-- The wrapper chain with the size scope `paraStepIn` reads removed — the
-step stands on the paragraph element itself, so the scope left inside would
-scale the type twice — and every other wrapper, an inner size scope among
-them, kept. A hand-rolled walk, not `mapInlines`: it rewrites only the
-chain of single wrappers down to that scope. -/
+/-- The wrapper chain with the size scope `paraStepIn` reads removed, every other wrapper kept. -/
 public def liftParaStepIn (xs : List Inline) : Array Inline :=
   match xs with
   | [x] => liftParaStepOne x
@@ -20570,8 +15957,7 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
 
 end
 
-/-- A paragraph's content with its step lifted (`paraStep?`) to the element
-that carries it. -/
+/-- A paragraph's content with its step lifted to the element that carries it. -/
 public def liftParaStep (xs : Array Inline) : Array Inline := liftParaStepIn xs.toList
 
 mutual
@@ -20609,33 +15995,28 @@ private theorem liftParaStepOne_text (x : Inline) :
 
 end
 
-/-- Lifting the step moves markup, never content: the paragraph ships the
-census it had. -/
 public theorem liftParaStep_text : Conserves plainText liftParaStep := fun xs => by
   show plainText (liftParaStepIn xs.toList) = plainText xs
   rw [liftParaStepIn_text]
   rfl
 
 /-- Whether a declaration sets the size its runs take: a named step, an
-explicit `\fontsize`, or `\normalfont`, which resets the whole style here
-(`Layout`'s `applyStyle`). -/
+explicit `\fontsize`, or `\normalfont`. -/
 public def Decl.setsSize : Decl → Bool
   | .style (.size _) | .style (.fontSize _ _) | .style .normal => true
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
   | .style (.lang _) | .style (.family _) | .color _ _ => false
 
-/-- Whether a font-size length reads the size in force (`em`, `ex`): a
-`\fontsize` spelled so scales the size declared before it. -/
+/-- Whether a font-size length reads the size in force (`em`, `ex`). -/
 public def affineFontRelative {α : Type} : Dim.Affine α → Bool
   | .lit g => g.width.em != 0 || g.width.ex != 0
   | .ref _ => false
   | .scale _ _ e => affineFontRelative e
   | .add a b | .sub a b => affineFontRelative a || affineFontRelative b
 
-/-- Whether a declaration sets its runs' size whatever size stood before it:
-a named step and `\normalfont`, which are absolute here, and a `\fontsize`
-in absolute lengths. An `em` or `ex` `\fontsize` scales the size before it. -/
+/-- Whether a declaration sets its runs' size whatever stood before it: a
+named step, `\normalfont`, or an absolute `\fontsize`. -/
 public def Decl.shadowsSize : Decl → Bool
   | .style (.size _) | .style .normal => true
   | .style (.fontSize s l) => !affineFontRelative s && !affineFontRelative l
@@ -20643,8 +16024,7 @@ public def Decl.shadowsSize : Decl → Bool
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
   | .style (.lang _) | .style (.family _) | .color _ _ => false
 
-/-- Whether a declaration does nothing but set the size: a named step or a
-`\fontsize` — what a later absolute size leaves without effect. -/
+/-- Whether a declaration does nothing but set the size: a named step or a `\fontsize`. -/
 public def Decl.onlySize : Decl → Bool
   | .style (.size _) | .style (.fontSize _ _) => true
   | .style .normal | .style .bold | .style .italic | .style .mono | .style .smallcaps
@@ -20652,8 +16032,7 @@ public def Decl.onlySize : Decl → Bool
   | .style .upright | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- The step a size declaration leaves in force: its named size, or `none`
-under an explicit `\fontsize` or a `\normalfont`, where the run's own
-leading or the body's governs. Off a size declaration, nothing. -/
+under `\fontsize` or `\normalfont`; off a size declaration, nothing. -/
 public def Decl.sizeStep? : Decl → Option (Option String)
   | .style (.size n) => some (some n)
   | .style (.fontSize _ _) | .style .normal => some none
@@ -20661,30 +16040,21 @@ public def Decl.sizeStep? : Decl → Option (Option String)
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
   | .style (.lang _) | .style (.family _) | .color _ _ => none
 
-/-- The named step a list of declarations gives the paragraph they stand
-over: the first size declaration's (`Decl.sizeStep?`), `none` under none. -/
+/-- The named step a list of declarations gives the paragraph they stand over:
+the first size declaration's. -/
 public def declStep (ds : List Decl) : Option String :=
   (ds.filterMap Decl.sizeStep?).head?.join
 
-/-- The declarations in force where a paragraph ends, every size declaration
-a later absolute one leaves without effect dropped (`Decl.shadowsSize`):
-only the last absolute size sets the paragraph's type and leading, and a
-scope kept for a shadowed one would nest an em-relative size on the screen.
-An `em` `\fontsize` keeps the size it scales. -/
+/-- The declarations in force where a paragraph ends, each size declaration a
+later absolute one shadows dropped. -/
 public def dropShadowedSizes : List Decl → List Decl
   | [] => []
   | d :: rest =>
     if d.onlySize && rest.any Decl.shadowsSize then dropShadowedSizes rest
     else d :: dropShadowedSizes rest
 
-/-- **A paragraph as it ends**: its content wrapped in the declarations in
-force where it ends (`wrapDecls`), each shadowed size dropped
-(`dropShadowedSizes`), and — where no size declaration stands in force there
-but the content opens on a size scope that closed before the paragraph did
-(`{\small A}\par`) — the body's own `\normalsize` around it. LaTeX reads a
-paragraph's `\baselineskip` at its `\par`, so the step its lines lead at
-(`paraStep?`) is the declarations' (`paraStep_paraAt_exact`), never a size
-group's that closed inside it; the inner group still sets its runs' type. -/
+/-- A paragraph as it ends: its content wrapped in the declarations in force
+there, shadowed sizes dropped. -/
 @[expose] public def paraAt (ds : List Decl) (xs : Array Inline) : Array Inline :=
   let ds := dropShadowedSizes ds
   let inner := wrapDecls ds xs
@@ -20692,7 +16062,6 @@ group's that closed inside it; the inner group still sets its runs' type. -/
     #[.styled (.size "normalsize") inner]
   else inner
 
-/-- Building a paragraph as it ends moves markup, never content. -/
 public theorem paraAt_text (ds : List Decl) : Conserves plainText (paraAt ds) := fun xs => by
   unfold paraAt
   dsimp only
@@ -20765,15 +16134,6 @@ private theorem paraStep_wrapDecls (ds : List Decl) (xs : Array Inline) :
       rw [paraStep_wrap_free d hs, ih]
       simp [hs, declStep, hz]
 
-/-- **A paragraph leads at the step its declarations give it** (`_exact`):
-the size step a paragraph built by `paraAt` sets its lines at (`paraStep?`)
-is the one the declarations standing over its end give it (`declStep` of
-the kept ones), whatever size scopes inside it closed before — the body's
-own when none stands there. `{\small A\par}` leads at `\small`'s skip;
-`{\small A}\par` at the body's, as LaTeX's `\par` reads `\baselineskip`.
-The kept declarations hold one size save behind an `em` `\fontsize` and
-after a `\normalfont`, where the first, the one this reads, is the size the
-later one scales or follows. -/
 public theorem paraStep_paraAt_exact (ds : List Decl) (xs : Array Inline) :
     (paraStep? (paraAt ds xs)).filter (· != "normalsize") =
       (declStep (dropShadowedSizes ds)).filter (· != "normalsize") := by
@@ -20812,13 +16172,8 @@ public theorem paraStep_paraAt_exact (ds : List Decl) (xs : Array Inline) :
 
 mutual
 
--- conserves: none — a census, not a rewrite: it reads the tree and returns
--- the text standing under a style the predicate accepts.
-/-- The text of inline content that stands under some `.styled st` with
-`p st`: what a size or weight declaration is worth on the page. Under an
-accepted style everything counts; elsewhere the walk reads through the
-wrappers to the styled runs below. The list face threads its
-accumulator. -/
+-- conserves: none — a census, not a rewrite.
+/-- The text of inline content that stands under some `.styled st` with `p st`. -/
 public def textUnder (p : Style → Bool) (x : Inline) : String :=
   match x with
   | .styled st body =>
@@ -20849,13 +16204,6 @@ public def Decl.anyStyle (p : Style → Bool) : List Decl → Bool
   | .style s :: rest => p s || Decl.anyStyle p rest
   | .color _ _ :: rest => Decl.anyStyle p rest
 
-/-- A declaration standing between blocks scopes every following block of
-its group: once a style the predicate accepts is among the open
-declarations, the text standing under it in any region built in that
-scope is the region's whole census — no character of the scope escapes
-the declaration, and none is added. This is how the `\footnotesize`
-before a tabular reaches the cells, where the inline reading left an
-empty styled paragraph beside a body-size table. Shape `_covers`. -/
 public theorem decl_between_blocks_covers (p : Style → Bool) (ds : List Decl)
     (hd : Decl.anyStyle p ds = true) (xs : Array Inline) :
     textUnderList p "" (wrapDecls ds xs).toList = plainText xs := by
@@ -20880,36 +16228,23 @@ public theorem decl_between_blocks_covers (p : Style → Bool) (ds : List Decl)
       show textUnderList p ("" ++ textUnder p (.colored c n _)) [] = _
       simp [textUnderList, textUnder, ih hd]
 
-/-- The two spellings agree: the declaration read between blocks wraps a
-region in exactly the node the grouped spelling `{\footnotesize B}`
-elaborates to. Shape `_agree`. -/
 public theorem decl_spellings_agree (s : Style) (xs : Array Inline) :
     wrapDecls [.style s] xs = #[.styled s xs] := by rfl
 
 /-- One character of a label's anchor: Unicode characters, ASCII word
-characters and the punctuation label keys conventionally carry (`fig:flow`,
-`eq.1`, `a-b`, `x_y`) survive verbatim. HTML ids permit non-ASCII characters;
-folding them would collapse distinct authored targets. Other ASCII
-characters — whitespace included — fold to a hyphen. -/
+characters and the conventional label punctuation survive. -/
 private def labelAnchorChar (c : Char) : Char :=
   if c.toNat ≥ 0x80 || c.isAlpha || c.isDigit || c == ':' || c == '.' ||
       c == '-' || c == '_' then c
   else '-'
 
 /-- The id a `\label` key takes in the HTML page and a resolved reference
-targets: the key sanitised character-wise — one resolving site for both
-ends, so a link and its anchor cannot disagree. An empty key still yields
-an id, HTML §3.2.6's non-emptiness. Two distinct keys can fold to one
-anchor only when they differ in folded characters, which the key
-conventions above never use. -/
+targets: the key sanitised character-wise. -/
 public def labelAnchor (key : String) : String :=
   match key.toList.map labelAnchorChar with
   | [] => "label"
   | l => String.ofList l
 
-/-- Every nonempty key in the supported alphabet keeps its exact spelling
-at the one resolving site both an anchor and its link read. In particular,
-distinct Unicode keys remain distinct, without relaxing ASCII safety. -/
 public theorem labelAnchor_fixed_point (key : String) (hne : key ≠ "")
     (hkeep : ∀ c ∈ key.toList,
       (c.toNat ≥ 0x80 || c.isAlpha || c.isDigit || c == ':' || c == '.' ||
@@ -20926,9 +16261,6 @@ public theorem labelAnchor_fixed_point (key : String) (hne : key ≠ "")
     exact False.elim (hne (String.toList_eq_nil_iff.mp he))
   · exact String.ofList_toList
 
-/-- The sanitiser never lets a character through that the kept set refuses:
-whatever the key spelled, the anchor's characters are non-ASCII, word
-characters, the kept punctuation, or the fold hyphen — never `bad`. -/
 private theorem labelAnchorChar_not (c bad : Char)
     (hbad : (bad.toNat ≥ 0x80 || bad.isAlpha || bad.isDigit || bad == ':' ||
       bad == '.' || bad == '-' || bad == '_') = false) :
@@ -20936,12 +16268,6 @@ private theorem labelAnchorChar_not (c bad : Char)
   unfold labelAnchorChar
   split <;> rintro rfl <;> simp_all
 
-/-- The label key is author text entering an `id` attribute and an `href`,
-so it owes the same statement `roleClass_single_token` makes for authored
-class names: no character of an anchor is ASCII whitespace (HTML §3.2.6's
-id contract) or a quote (the attribute-breakout characters `escapeAttr`
-kills). Here the statement needs no alphabet hypothesis — the sanitiser is
-total over whatever the document spelled. -/
 public theorem labelAnchor_single_token (key : String) :
     ((labelAnchor key).toList.all fun c =>
       !(c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
@@ -20959,38 +16285,18 @@ public theorem labelAnchor_single_token (key : String) :
     have h6 := labelAnchorChar_not a '\'' (by decide)
     simp [h1, h2, h3, h4, h5, h6]
 
-/-- What a label names: the kind of the numbered thing it bound to, read
-by cleveref's name prefixes (`crefNameOf`). The engine's numbered things
-are its headings, its display equations, and its captioned floats — a
-label under a subfloat takes the parent float's kind, as cleveref's
-subfigure names are the figure's. -/
+/-- What a label names: the kind of the numbered thing it bound to, read by
+cleveref's name prefixes. -/
 public inductive RefKind where
   | heading | equation | figure | table | algorithm
   deriving Repr, BEq
 
-/-- One label's binding: the number it bound to, with the kind of the
-numbered thing when elaboration made one. A binding the engine numbers
-without a node of any kind — a bare `\refstepcounter` — carries `none`:
-what such a label names has no kind, so a `\cref` to it sets the plain
-number, named (W0380). -/
+/-- One label's binding: the number it bound to, with the kind of the numbered
+thing when elaboration made one. -/
 public structure RefBinding where
   kind : Option RefKind
   num : String
   deriving Repr, BEq
-
-/-! ## The keyed index
-
-Every keyed store in this engine is an association array read by
-`find? (·.1 == k)`: it holds declaration order, which several stores make
-observable (a palette's CSS variables, a style's cascade, a token defined
-in terms of an earlier one). Order is therefore not negotiable, so the
-fast lookup is an *index beside* the array, never a replacement for it —
-`keyIndex_find?` is the one equation that makes the two answers the same,
-so a pass may read the index while every theorem keeps stating `find?`.
-
-First-wins insertion is what makes the equation hold: `Array.find?`
-answers with the earliest match, so a key already indexed is never
-overwritten by a later duplicate. -/
 
 private def indexStep {α : Type} (m : Std.HashMap String (String × α))
     (e : String × α) : Std.HashMap String (String × α) :=
@@ -21042,12 +16348,6 @@ private theorem indexList {α : Type} :
         simp [hk, hEq]
       | false => simp [indexStep, hc, hEq, Std.HashMap.getElem?_insert]
 
-/-- **The index answers exactly what the scan answers.** Every keyed store
-this engine reads is an `Array (String × α)` scanned by `find?`; the index
-is the same question asked in constant time, on the same array, with the
-same first-wins tie-break. So a pass may read the index and keep every
-`find?`-stated theorem it already had, unweakened: rewriting with this
-equation turns the one into the other. -/
 public theorem keyIndex_find? {α : Type} (xs : Array (String × α)) (k : String) :
     (keyIndex xs)[k]? = xs.find? (·.1 == k) := by
   unfold keyIndex
@@ -21055,18 +16355,11 @@ public theorem keyIndex_find? {α : Type} (xs : Array (String × α)) (k : Strin
     ← Array.find?_toList]
   rfl
 
-/-- The label table resolution spends: each key with the binding its
-`\label` took in flow order (`none`: the label stood where nothing
-numbers). Elaboration builds it — the first declaration of a key wins,
-W0350 names the rest — and `resolveRefs` is the single pass over the IR
-that resolves every reference against it, so no backend re-scans for
-labels. -/
+/-- Each label key with the binding its `\label` took in flow order; `none`
+where nothing numbers. -/
 public abbrev RefTable := Array (String × Option RefBinding)
 
-/-- cleveref's name for a kind: the one resolving site both `refText`
-readers use, so `\cref` and `\namecref` cannot disagree on a kind's name.
-Every heading level takes the section name, as cleveref's subsection
-names are the section's own (its english block). -/
+/-- cleveref's name for a kind; every heading level takes the section name. -/
 public def crefNameOf (loc : Locale) : RefKind → CrefName
   | .heading => loc.crefSection
   | .equation => loc.crefEquation
@@ -21074,20 +16367,13 @@ public def crefNameOf (loc : Locale) : RefKind → CrefName
   | .table => loc.crefTable
   | .algorithm => loc.crefAlgorithm
 
-/-- Every kind, for the coverage contract: an added constructor fails
-`all_complete` until it is listed, and listed is covered
-(`crefNameOf_covers`) — the DiagCode registry's shape. -/
+/-- Every kind, for the coverage contract. -/
 public def RefKind.all : List RefKind :=
   [.heading, .equation, .figure, .table, .algorithm]
 
 public theorem RefKind.all_complete (k : RefKind) : RefKind.all.contains k := by
   cases k <;> rfl
 
-/-- Every label kind the engine assigns has its cleveref names, all four
-forms, in every shipped locale — with the range conjunction beside them.
-Quantified over `Locale.builtin` (adding a locale is entering the
-contract) and `RefKind.all` (complete by `RefKind.all_complete`): the
-statement behind `\cref` never printing an empty name. -/
 public theorem crefNameOf_covers :
     (Locale.builtin.all fun l =>
       (RefKind.all.all fun k =>
@@ -21096,17 +16382,12 @@ public theorem crefNameOf_covers :
       && !l.crefRangeTo.isEmpty) = true := by decide +kernel
 
 /-- A cref-form number: equation numbers keep their parentheses in every
-cleveref form (cleveref.sty `\creflabelformat{equation}{...\textup{(#1)}}`);
-every other kind shows the bare number. -/
+cleveref form; every other kind shows the bare number. -/
 public def crefNum (b : RefBinding) : String :=
   if b.kind == some .equation then "(" ++ b.num ++ ")" else b.num
 
-/-- The text one resolved reference shows, the one rendering site
-(`resolveOneRef` and its theorems read it): `\ref`'s bare number,
-`\eqref`'s parentheses, and cleveref's forms over the binding's kind —
-name and number joined by the package's own no-break space. A kindless
-binding (a bare `\refstepcounter`) sets the plain number under every
-cleveref form, and W0349's judge names it (W0380). -/
+/-- The text one resolved reference shows: `\ref`'s bare number, `\eqref`'s
+parentheses, and cleveref's forms over the binding's kind. -/
 public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
   let numText := crefNum b
   match form with
@@ -21131,10 +16412,7 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | some k => if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one
     | none => b.num
 
-/-- One reference against a lookup. The table is reached through a function
-rather than scanned in place, so the same match serves the scan and the
-index beside it — `resolveOneRef` is this at the scan, `resolveRefs` this at
-the index, and the two differ by a function equality, never by a case. -/
+/-- One reference against a lookup. -/
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)
     (form : RefForm) : Inline :=
@@ -21143,17 +16421,12 @@ public def resolveOneRefWith (loc : Locale)
     .ref key form (refText loc form b) (some (labelAnchor key))
   | _ => .ref key form "??" none
 
-/-- One reference against the table. A key bound to a number takes exactly
-its form's text over the binding (`refText`) and the label's anchor; a key
-the table cannot number keeps LaTeX's own `??` and no target (the
-elaborator has already named it, W0349). -/
+/-- One reference against the table: a numbered key takes its form's text and
+the label's anchor; any other keeps `??` and no target. -/
 public def resolveOneRef (loc : Locale) (table : RefTable) (key : String)
     (form : RefForm) : Inline :=
   resolveOneRefWith loc (fun k => table.find? (·.1 == k)) key form
 
-/-- Resolution at the scan, written out: the equation every `resolveOneRef`
-theorem is proved through, so factoring the lookup out as a parameter cost
-the statements nothing. -/
 public theorem resolveOneRef_scan (loc : Locale) (table : RefTable) (key : String)
     (form : RefForm) :
     resolveOneRef loc table key form =
@@ -21162,9 +16435,8 @@ public theorem resolveOneRef_scan (loc : Locale) (table : RefTable) (key : Strin
         .ref key form (refText loc form b) (some (labelAnchor key))
       | _ => .ref key form "??" none := by rfl
 
-/-- Resolution's one rewrite: every `.ref` is rewritten from the lookup
-(`resolveOneRef_exact` is its statement), everything else keeps its shape
-and is walked by the generic map. -/
+/-- Resolution's one rewrite: every `.ref` rewritten from the lookup,
+everything else walked by the generic map. -/
 private def resolveRefLeaf (loc : Locale)
     (look : String → Option (String × Option RefBinding))
     (x : Inline) : Inline :=
@@ -21172,31 +16444,21 @@ private def resolveRefLeaf (loc : Locale)
   | .ref key form _ _ => resolveOneRefWith loc look key form
   | _ => x
 
-/-- The table read as a lookup: resolution's scan face, the one every
-theorem states. -/
+/-- The table read as a lookup. -/
 public def refScan (table : RefTable) : String → Option (String × Option RefBinding) :=
   fun k => table.find? (·.1 == k)
 
-/-- **The index answers the scan's question.** The lookup a resolution pass
-reads is the index beside the table, and this is the one step that makes
-that the same lookup the theorems state: the two functions are equal, so
-every `resolveOneRef` statement is a statement about the indexed pass too.
-Resolution's cost changed; its meaning did not. -/
 public theorem refLook_agree (table : RefTable) :
     (fun k => (keyIndex table)[k]?) = refScan table := by
   funext k
   exact keyIndex_find? table k
 
-/-- The pass over an index already built. The index is a *parameter*, not a
-`let` inside the leaf: Lean is strict, so an argument is evaluated once
-before the call, while a binding used once inside a lambda can be inlined
-back into it — which rebuilt the index per reference and cost 12× the scan
-it replaced. -/
+/-- The pass over an index already built, taken as a parameter so it is
+evaluated once rather than per leaf. -/
 private def resolveRefsIdx (loc : Locale)
     (idx : Std.HashMap String (String × Option RefBinding))
     (xs : Array Block) : Array Block :=
-  -- No label holds a reference: the label reader refuses `\ref` and drops
-  -- its key (`Picture.salCtrl`).
+  -- No picture label holds a reference: the label reader refuses `\ref`.
   mapBlocks (resolveRefLeaf loc (fun k => idx[k]?)) xs
 
 private def resolveRefInlinesIdx (loc : Locale)
@@ -21204,19 +16466,14 @@ private def resolveRefInlinesIdx (loc : Locale)
     (xs : Array Inline) : Array Inline :=
   mapInlines (resolveRefLeaf loc (fun k => idx[k]?)) xs
 
--- conserves: none — resolution rewrites a ref's placeholder text to its
--- number, which is the pass's whole point; `resolveOneRef_exact` is its
--- statement.
+-- conserves: none — rewrites a ref's placeholder to its number.
 public def resolveRefInline (loc : Locale) (table : RefTable) (x : Inline) : Inline :=
   mapInline (resolveRefLeaf loc (refScan table)) x
 
--- conserves: none — the block face of resolveRefInline, same reason.
+-- conserves: none — the block face of `resolveRefInline`.
 public def resolveRefs (loc : Locale) (table : RefTable) (xs : Array Block) : Array Block :=
   resolveRefsIdx loc (keyIndex table) xs
 
-/-- The indexed block pass applies exactly the table's reference rewrite
-through the generic map. Its public equation names `resolveOneRef`; the
-lookup adapter and index traversal remain implementation details. -/
 public theorem resolveRefs_agree (loc : Locale) (table : RefTable) (xs : Array Block) :
     resolveRefs loc table xs = mapBlocks (fun x => match x with
       | .ref key form _ _ => resolveOneRef loc table key form
@@ -21225,12 +16482,6 @@ public theorem resolveRefs_agree (loc : Locale) (table : RefTable) (xs : Array B
   rw [refLook_agree]
   congr 1
 
-/-- References resolve to what they name: when the table binds `key` to
-binding `b` — elaboration binds a key declared exactly once to the numbered
-node in force where its `\label` stood — the resolved reference shows
-exactly its form's text over `b` (`refText`) and targets exactly that
-label's anchor. The `\ref` and the `\label` cannot disagree, because both
-read this one entry. -/
 public theorem resolveOneRef_exact (loc : Locale) (table : RefTable) (key : String)
     (form : RefForm)
     (b : RefBinding) (h : ∃ e ∈ table, e.1 = key ∧ e.2 = some b)
@@ -21256,9 +16507,6 @@ public theorem resolveOneRef_exact (loc : Locale) (table : RefTable) (key : Stri
   subst hfval
   rw [hf]
 
-/-- An unreferencable key resolves to LaTeX's own `??`, never silently to
-a number: the reader sees that something stands unresolved, and W0349 has
-already named the key. -/
 public theorem resolveOneRef_missing (loc : Locale) (table : RefTable) (key : String)
     (form : RefForm) (h : ∀ e ∈ table, e.1 ≠ key) :
     resolveOneRef loc table key form = .ref key form "??" none := by
@@ -21269,35 +16517,18 @@ public theorem resolveOneRef_missing (loc : Locale) (table : RefTable) (key : St
     simp [h e hmem]
   rw [hfind]
 
-/-- The inline face of `resolveRefs`, for the furniture regions `mapDoc`
-hands it: the same leaf, so a `\ref` in a running head resolves as one in
-the body does. -/
--- conserves: none — the inline-region face of resolveRefs, same reason.
+/-- The inline face of `resolveRefs`, for the furniture regions `mapDoc` hands it. -/
+-- conserves: none — the inline face of `resolveRefs`.
 public def resolveRefInlines (loc : Locale) (table : RefTable) (xs : Array Inline) :
     Array Inline :=
   resolveRefInlinesIdx loc (keyIndex table) xs
 
-/-- The inline-region pass reads the index and means the scan, the twin of
-`resolveRefs_agree`: a `\ref` in a running head resolves as one in the body
-does, off the same index. -/
 private theorem resolveRefInlines_agree (loc : Locale) (table : RefTable) (xs : Array Inline) :
     resolveRefInlines loc table xs = mapInlines (resolveRefLeaf loc (refScan table)) xs := by
   unfold resolveRefInlines resolveRefInlinesIdx
   rw [refLook_agree]
 
-/-! ## The pending census
-
-What the engine could not resolve and a backend would otherwise ship
-unnamed: a `\ref` no label numbers, a `\cite` no bibliography answered, an
-image no file or tool produced. Each resolver names what it leaves — W0349,
-W0351, W0601/W0602/W0382/W0379 — and `pending_named` (Pending.lean) holds
-the census to those diagnostics, so "a warning per misunderstood thing" is
-a theorem over the pipeline's pure tail, not a convention each resolver
-keeps by hand. The silent `\cite` with no bibliography was that convention
-failing. -/
-
-/-- One unresolved node the IR itself carries, by the key a diagnostic can
-be matched to. -/
+/-- One unresolved node the IR carries, by the key a diagnostic can be matched to. -/
 public inductive Unresolved where
   | ref (key : String)
   | cite (key : String)
@@ -21308,7 +16539,7 @@ public inductive Unresolved where
   | .ref _ => false
 
 /-- One pending thing a backend would ship unnamed: a node of the IR, or an
-image source the store holds no payload for. -/
+image source with no payload in the store. -/
 public inductive Pending where
   | node (u : Unresolved)
   | image (src : String)
@@ -21319,16 +16550,12 @@ public def Pending.key : Pending → String
   | .node (.cite k) => k
   | .image s => s
 
-/-- A diagnostic names a pending node when its structured subject is the
-node's key: a lookup, never a search of the message text. -/
+/-- Whether a diagnostic names a pending node: its structured subject is the node's key. -/
 public def _root_.LeanTex.Core.Diag.mentions (d : Diag) (p : Pending) : Bool :=
   d.subject == some p.key
 
-/-- One node's contribution: a `.ref` still carrying no target is
-unresolved (`resolveOneRef` sets a target for every key it numbers); a
-`.cite` is unresolved by existence — `Bib.apply` replaces every one. Nodes
-are listed, not deduplicated: the census counts occurrences, the judges
-name keys. -/
+/-- One node's contribution: a `.ref` with no target, or any `.cite`, which
+`Bib.apply` replaces when it answers. -/
 @[expose] public def pendingLeaf : Inline → Array Unresolved
   | .ref key _ _ none => #[.ref key]
   | .cite _ keys => keys.map .cite
@@ -21339,47 +16566,37 @@ name keys. -/
   let leaf := pendingLeaf x
   acc ++ leaf
 
-/-- Every unresolved reference and citation the document's regions carry,
-in document order — a `foldDoc` leaf, so the descent is the fold's. -/
+/-- Every unresolved reference and citation the document's regions carry, in document order. -/
 @[expose] public def pendingNodes (doc : Doc) : Array Unresolved :=
   foldDoc pendingStep #[] doc
 
-/-- The lists' note counts change no census the regions carry. -/
 public theorem pendingNodes_withListNotes (doc : Doc) (m : Nat) :
     pendingNodes (doc.withListNotes m) = pendingNodes doc := by
   simp only [pendingNodes, foldDoc, furnitureInlines, Doc.withListNotes]
 
-/-- A picture request added changes no census the regions carry. -/
 public theorem pendingNodes_addPictures (doc : Doc) (more : Array (String × PicSrc)) :
     pendingNodes (doc.addPictures more) = pendingNodes doc := by
   simp only [pendingNodes, foldDoc, furnitureInlines, Doc.addPictures]
 
-/-- Every image source the document names that the store holds no payload
-for — the placeholder boxes every consumer places. -/
+/-- Every image source the document names that the store holds no payload for. -/
 public def pendingImages (doc : Doc) (store : Image.Store) : Array Pending :=
   ((imageRequests doc).filter fun req => (store.infoRequest? req).isNone).map
     (fun req => .image req.src)
 
-/-- The census: everything a backend would ship as `??`, `?`, or a
-placeholder box, over the document and the store the backends read. -/
+/-- Everything a backend would ship as `??`, `?`, or a placeholder box. -/
 public def pending (doc : Doc) (store : Image.Store) : Array Pending :=
   let images := pendingImages doc store
   (pendingNodes doc).map .node ++ images
 
-/-- The distinct keys of the unresolved references, first occurrence
-first: what W0349 names, once per key. -/
+/-- The distinct keys of the unresolved references, first occurrence first. -/
 public def pendingRefKeys (doc : Doc) : Array String :=
   (pendingNodes doc).foldl (init := #[]) fun out p =>
     match p with
     | .ref k => if out.contains k then out else out.push k
     | .cite _ => out
 
-/-- W0349's judge, read off the resolved IR: every distinct key a `\ref`
-still shows `??` for, named at its first site (`spanOf`) with the cause
-the table knows — a `\label` that stood where nothing numbers, or no
-`\label` at all. It reads the census the gate quantifies over, so a
-reference cannot escape it without escaping the fold whose arms are all
-explicit (`refDiags_named`). -/
+/-- W0349's judge: every distinct key a `\ref` still shows `??` for, named at
+its first site with the cause the table knows. -/
 private def refDiagLeaf (look : String → Option (String × Option RefBinding))
     (spanOf : String → Option Span) (key : String) : Diag :=
   match look key with
@@ -21401,15 +16618,12 @@ public def refDiags (table : RefTable) (spanOf : String → Option Span) (doc : 
     Array Diag :=
   refDiagsIdx (keyIndex table) spanOf (pendingRefKeys doc)
 
-/-- The judge reads the index and means the scan: `refLook_agree` under the
-leaf, so W0349's census is the one the table states. -/
 private theorem refDiags_agree (table : RefTable) (spanOf : String → Option Span) (doc : Doc) :
     refDiags table spanOf doc
       = (pendingRefKeys doc).map (refDiagLeaf (refScan table) spanOf) := by
   unfold refDiags refDiagsIdx
   rw [refLook_agree]
 
-/-- The key fold only grows its accumulator. -/
 private theorem pendingRefKeys_grow (l : List Unresolved) :
     ∀ (out : Array String) (k : String), k ∈ out →
       k ∈ l.foldl (init := out) fun out p => match p with
@@ -21446,8 +16660,6 @@ private theorem pendingRefKeys_mem (doc : Doc) (key : String)
       · simp
     · exact ih hrest _
 
-/-- **Every unresolved reference is named**: a `.ref` the census lists has
-a W0349 in the judge's output whose subject is its key. -/
 public theorem refDiags_named (table : RefTable) (spanOf : String → Option Span) (doc : Doc)
     (key : String) (h : Unresolved.ref key ∈ pendingNodes doc) :
     ∃ d ∈ refDiags table spanOf doc, d.mentions (.node (.ref key)) = true := by
@@ -21461,51 +16673,24 @@ public theorem refDiags_named (table : RefTable) (spanOf : String → Option Spa
     obtain ⟨_, b⟩ := e
     cases b <;> simp [Diag.mentions, Diag.of_subject, Pending.key]
 
--- Float label rows. Elaboration cannot know a float's number — `numberFloats`
--- assigns it once the whole body exists — so the table's float rows are read
--- off the numbered IR by this collect, and no second numbering exists to
--- disagree with (`refs_agree_with_numbering` is the statement a predictor
--- could only hope for).
-
 /-- One label leaf into the rows, bound to the float binding in force. -/
 private def floatLabelPush (float : Option RefBinding)
     (out : Array (String × Option RefBinding)) : Inline → Array (String × Option RefBinding)
   | .label k => out.push (k, float)
   | _ => out
 
-/-- The float binding in force at every `.label` of the numbered IR, in
-document order. `float` is the enclosing captioned float's rendering —
-`none` outside every captioned float — and every label is reported, bound
-or not, so a key's first row is its first declaration and a later
-duplicate inside a float can never override it (`withFloatRows` reads only
-the first). A captioned float binds its number over its own extent, the
-caption included; a captionless one leaves the enclosing binding in
-force; a captioned subfloat binds its parent's number plus its letter
-(subcaption manual §"Referencing subfigures": `\ref` shows `1a`, the
-figure number then `\alph`); an equation's content and a section's title
-bind to numbers elaboration already recorded, so their labels report
-unbound here. The IR keeps a float body's labels but not their side of
-the caption, so a label anywhere under a captioned float binds to it —
-LaTeX documents `\label` before `\caption` as a user error (clsguide §"The
-label commands"); here it resolves to the number the author captioned.
-
-The binding is the walk's context, so this is the open event and nothing
-else: `foldCtxBlock` owns the descent, and the arms below say only what
-each block does to the binding its content is read under. The explicit
-arms are an Ir constructor's obligation (AGENTS.md § When you add), kept here
-because a new constructor must declare which binding it passes down. -/
+/-- The float binding in force at every `.label` of the numbered IR; `float`
+is the enclosing captioned float's, `none` outside. -/
 public def floatLabelEnter (float : Option RefBinding) (out : Array (String × Option RefBinding))
     (b : Block) : Array (String × Option RefBinding) × Option RefBinding :=
   match b with
-  -- an equation's content and a section's title number at elaboration
   | .equation _ _ | .section _ _ _ _ => (out, none)
   | .float kind num _ _ _ =>
     (out, match num with
       | none => float
       | some m =>
         match kind with
-        -- A subfloat letters under its parent: the binding keeps the
-        -- parent's kind, as cleveref's subfigure names are the figure's.
+        -- A subfloat keeps its parent's kind, as cleveref's subfigure names are the figure's.
         | .sub => some { kind := float.bind (·.kind)
                          num := ((float.map (·.num)).getD "") ++ subLetter m }
         | .figure => some { kind := some .figure, num := toString m }
@@ -21518,35 +16703,28 @@ public def floatLabelEnter (float : Option RefBinding) (out : Array (String × O
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => (out, float)
 
-/-- The label walk: `floatLabelEnter` binds, `floatLabelPush` collects, the
-shared context fold descends. -/
+/-- The label walk over the shared context fold: `floatLabelEnter` binds,
+`floatLabelPush` collects. -/
 public def floatLabelWalk : CtxFold (Option RefBinding) (Array (String × Option RefBinding)) where
   openBlock := floatLabelEnter
   closeBlock := fun _ out _ => out
   openInline := fun float out x => (floatLabelPush float out x, float)
   closeInline := fun _ out _ => out
 
-/-- The float rows of the numbered body: every label with the float binding
-in force where it stands, the table's float half. -/
+/-- The float rows of the numbered body: every label with the float binding in
+force where it stands. -/
 public def floatLabelRows (xs : Array Block) : RefTable :=
   foldCtxBlocks floatLabelWalk none #[] xs
 
-/-- The label table with its float rows filled from the numbered IR: an
-entry whose key's first `.label` stands under a captioned float takes that
-float's number; every other entry keeps elaboration's binding (headings
-and equations number at elaboration; a key bound nowhere keeps `none` and
-W0349 names it). `rows` is `floatLabelRows` over the numbered body. -/
+/-- A label table entry whose key's first `.label` stands under a captioned
+float takes that float's number. -/
 private def floatRowLeaf (look : String → Option (String × Option RefBinding))
     (e : String × Option RefBinding) : String × Option RefBinding :=
   match look e.1 with
   | some (_, some n) => (e.1, some n)
   | _ => e
 
-/-- The merge over an index already built. The index is a *parameter*, not
-a `let` inside the mapped function: Lean is strict, so an argument is
-evaluated once before the call, while a binding used once inside a lambda
-can be inlined back into it — which rebuilt the whole index per label and
-cost 32× the scan it replaced. -/
+/-- The merge over an index already built, taken as a parameter so it is evaluated once. -/
 private def withFloatRowsIdx (labels : RefTable)
     (idx : Std.HashMap String (String × Option RefBinding)) : RefTable :=
   labels.map (floatRowLeaf (fun k => idx[k]?))
@@ -21554,17 +16732,12 @@ private def withFloatRowsIdx (labels : RefTable)
 public def withFloatRows (labels rows : RefTable) : RefTable :=
   withFloatRowsIdx labels (keyIndex rows)
 
-/-- The merge reads the index and means the scan: `refLook_agree` under the
-leaf, the equation `withFloatRows_finds` is proved through. -/
 private theorem withFloatRows_agree (labels rows : RefTable) :
     withFloatRows labels rows
       = labels.map (floatRowLeaf (refScan rows)) := by
   unfold withFloatRows withFloatRowsIdx
   rw [refLook_agree]
 
-/-- The merge keeps keys and takes exactly the collect's binding: when the
-collect's first row for `key` carries a number and elaboration recorded
-the key at all, the merged table's answer for `key` is that number. -/
 public theorem withFloatRows_finds (labels rows : RefTable) (key : String) (b : RefBinding)
     (hrow : rows.find? (·.1 == key) = some (key, some b))
     (hkey : (labels.find? (·.1 == key)).isSome) :
@@ -21588,15 +16761,6 @@ public theorem withFloatRows_finds (labels rows : RefTable) (key : String) (b : 
   rw [hekey]
   simp [hrow]
 
-/-- Floats are numbered once, from the proved walk. `numberFloats` assigns
-every captioned float's number (`numberFloats_exact`: gapless, 1-based,
-document order), `floatLabelRows` reads those numbers off the numbered
-nodes where each `\label` stands, `withFloatRows` carries them into the
-table, and resolution shows precisely that entry: a resolved reference to
-a float shows exactly the number the float node carries, and targets the
-label's anchor. Before this pipeline, elaboration *predicted* the number
-and nothing related predictor to assigner; now there is no predictor, and
-the agreement is this theorem, stated over the engine's own functions. -/
 public theorem refs_agree_with_numbering (loc : Locale) (labels : RefTable) (xs : Array Block)
     (key : String) (b : RefBinding) (form : RefForm) (t : String) (a : Option String)
     (hrow : (floatLabelRows (numberFloats xs)).find? (·.1 == key)
@@ -21671,7 +16835,6 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     fontLine "mono" doc.fonts.mono ++
     String.join (doc.fonts.families.toList.map fun (name, f) => fontLine s!"family.{name}" (some f)) ++
     String.join (doc.fonts.faces.toList.map fun ((slot, weight, italic), f) =>
-      -- A declared family's slot dumps under the key that declares it.
       let slotName := match slot with
         | 0 => "body" | 1 => "sans" | 2 => "mono"
         | s => match doc.fonts.families[s - familySlotBase]? with
