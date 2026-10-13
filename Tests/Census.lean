@@ -1560,7 +1560,9 @@ authority for what exists, and whether a file is a fixture is a decision, so
 the decision is written where it applies (`corpusExcludeMarker`) and both
 directions are loud. A declared exclusion may not rot either: a `.tex` that
 excuses itself must still refuse to elaborate, or the sketch's commands have
-landed and it belongs in the golden set. -/
+landed and it belongs in the golden set. A golden fixture's census row is
+held here; a new backend emission owes the census assertion that it
+appeared too, which review holds. -/
 def corpusCoverageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dir : System.FilePath := "testdata/corpus"
   for entry in ← corpusDocs do

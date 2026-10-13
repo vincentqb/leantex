@@ -1444,7 +1444,11 @@ that runs git in repositories it makes owes this guard before every
 command, and two more conditions beside it: the run refuses to start when
 any repository encloses its root (`rootFault`), and every child runs under
 `GIT_ALLOW_PROTOCOL=file` (land's `harnessEnv`). Scrubbing inherited
-variables is one layer, never the guard. -/
+variables is one layer, never the guard. Not yet under it, a port owed:
+the scoreboard's `--check --base` cases (`runCliCase` in
+scripts/scoreboard.lean), which run git in a fresh temporary directory
+behind a scrubbed environment alone, with no root check and no protocol
+limit. -/
 theorem hcall_writes_owned (g : HGuard) (c : HCall) (h : c.allowed g = true) :
     ∀ w ∈ c.writes, w.owned g = true := by
   intro w hw

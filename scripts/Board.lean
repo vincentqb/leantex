@@ -32,9 +32,9 @@ An item may hold spaces: a row is split on its tab, and no consumer splits
 an item on whitespace.
 
 Any record format a producer writes and reads back — a tier's sidecar, a
-cache envelope, a ledger row — owes the round trip of its empty value,
-every field empty: that is the arm a real fixture eventually takes and the
-one a hand-written example never does. The parity sidecar's is held in
+cache envelope — owes the round trip of its empty value, every field
+empty: that is the arm a real fixture eventually takes and the one a
+hand-written example never does. The parity sidecar's is held in
 scripts/parity-regen.lean, the rhythm record's in scripts/rhythm.lean; the
 conversion cache's envelope round trip is owed (U68).
 

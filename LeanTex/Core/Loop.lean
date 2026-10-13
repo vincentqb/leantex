@@ -37,8 +37,9 @@ to be read by it.
 
 The discipline this supports is recorded in AGENTS.md § Lean rules:
 a loop owes the invariant its statement will be read through, written in
-the loop's own module, where its private state is nameable, and exported as
-the corollary the statement reads — never the loop restated as a fold.
+the loop's own module, where its private state is nameable, or in a proof
+module importing it all, and exported as the corollary the statement reads.
+The loop itself is never restated as a fold to reach it.
 What the pair does *not* reach, so it is not mistaken for more than it
 is: a pure invariant cannot see how much of the input the loop has
 consumed, so a claim about the loop's *value* (a census, a round trip)

@@ -427,7 +427,9 @@ lakefile for its name was a substring test a valid lakefile defeated.
 `warning:` is unsound, because a warm cache replays a module's logged warning
 without recompiling it and a scan of a quiet build proves nothing about the
 module that did not rebuild. Every maintained target shares
-that flag and the lakefile's proof-error setting. The first build requests
+that flag and the lakefile's proof-error setting, and the commit hook builds
+the same way (`checkCompiledTree` in scripts/precommit.lean); a plain
+`lake build` does not fail on a warning. The first build requests
 all gate executables together; `lake test` and `lake lint` then run their
 drivers in order. Lint owns the source, compiled-proof and citation audits,
 including their selftests. -/

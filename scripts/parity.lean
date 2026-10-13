@@ -41,7 +41,11 @@ with nothing written:
               first: that is the engine's to fix before the line is.
 
 The oracle is never "must match". Every fixture's number is what the engine
-reaches today; the ladder's whole claim is that it does not go down.
+reaches today; the ladder's whole claim is that it does not go down. So it
+is also the one bound on how far a departure the principles allow moves a
+page from lualatex's, and only on the fixtures it reads: a departure that
+costs an item a fall needs a human's lowering line, never a regeneration
+alone.
 
 Each comparison level owes the pair it is blind to, equal under it and
 unequal under the level above, and its ordering premise as a check, never a

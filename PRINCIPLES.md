@@ -13,12 +13,12 @@ writer; the exit status is a separate policy (--werror, CI), never whether the a
 ## The standard is the specification
 
 Warts are not: meaning comes from the documented standards (LaTeX's manuals and sources, e-TeX,
-CommonMark and GFM, OpenType MATH, MathML Core, HTML, CSS, PDF 2.0, WCAG 2.2), never from parameter
-resets and discards, recovery quirks, once-only package loads or single-pass limits. A visible
-departure is measurably better on a named axis (legibility, accessibility, rhythm, alignment,
-content fidelity) and names the check holding it, as code coloured by its token's role, not
-lualatex's type, does (`codeRoleChecks`); lualatex parity and rhythm are tiers, not ceilings
-(`compatIndexChecks`, `testdata/scoreboard/parity.tsv`, `testdata/scoreboard/rhythm.tsv`).
+CommonMark and GFM, OpenType MATH, MathML Core, HTML, CSS, PDF 2.0, WCAG 2.2; `compatIndexChecks`),
+never from parameter resets and discards, recovery quirks, once-only package loads or single-pass
+limits. A visible departure is measurably better on a named axis (legibility, accessibility, rhythm,
+alignment, content fidelity) and names the check holding it, as code coloured by its token's role,
+not lualatex's type, does (`codeRoleChecks`); lualatex parity and rhythm are tiers, not ceilings
+(`testdata/scoreboard/parity.tsv`, `testdata/scoreboard/rhythm.tsv`).
 
 ## Evident intent wins
 
@@ -54,11 +54,11 @@ projection corollary, never re-derived or left to a platform (`footBand_projects
 
 ## Typed boundaries
 
-Values cross module boundaries as typed data with spans. Nothing crosses as source text the receiver
-re-lexes, a control-word name it decodes or a string it sniffs; a closed vocabulary is an inductive,
-and strings are only for names the author chose (`Md.altSource`, `Md.desugar_vocabulary_mem`,
-`escapeText_no_lt`; owed (U51): `toName_unforgeable`). A record format a producer writes and reads
-back round-trips its all-empty value (`scripts/Board.lean`).
+Values cross module boundaries as typed data with spans. Nothing crosses as text the receiver
+re-lexes unless checked to read back exactly (`Md.altSource`), a control-word name it decodes or a
+string it sniffs; a closed vocabulary is an inductive, and strings are only for names the author
+chose (`Md.desugar_vocabulary_mem`, `escapeText_no_lt`; owed (U51): `toName_unforgeable`). A record
+format a producer writes and reads back round-trips its all-empty value (`scripts/Board.lean`).
 
 ## One mechanism per concept
 

@@ -2,13 +2,14 @@
 
 Lean checks the surface readers' source spans, the census of the IR walks that state one, line-break
 validity, the PDF writer's structure, compression and cross-reference widths, HTML escaping and
-script policy, the picture both backends paint and the PDF figures they import, the colour roles and
-their contrast, the host interpreter's replay and the landing tool. The tables are an index: each named declaration states its exact hypotheses. A
-proof marked by unfolding holds by unfolding the definition it names, with no lemma about another
-definition and no induction: it fails when that definition loses the property, so it is a check, but
-its strength is that one definition's. A name written owed (Uxx) is a guarantee that unit delivers;
-`scripts/cites.lean` holds every name here to one declaration of the compiled tree that is not a
-type, and an owed name fails once it lands until this file promotes it.
+script policy, the picture both backends paint and the PDF figures they import, the colour roles,
+their schemes and their contrast, the host interpreter's replay and the landing tool. The tables are
+an index: each named declaration states its exact hypotheses. A proof marked by unfolding holds by
+unfolding the definition it names, with no lemma about another definition and no induction: it fails
+when that definition loses the property, so it is a check, but its strength is that one
+definition's. A name written owed (Uxx) is a guarantee that unit delivers; `scripts/cites.lean`
+holds every name here to one declaration of the compiled tree that is not a type, and an owed name
+fails once it lands until this file promotes it.
 
 ## Surfaces
 
@@ -79,18 +80,19 @@ type, and an owed name fails once it lands until this file promotes it.
 | Area | Guarantee | Proofs |
 |---|---|---|
 | Registry | Every default reads only shallower roles, so resolution terminates, and a role is its declaration, else its default over resolved roles; a key names one role, and no role, author colour or token name collides with another or with a layout property; the stylesheet's table, aliases chased, is the resolver, and a page's roles are closed under their aliases. | `Role.fallback_depth_monotone`, `Design.resolve_unfold_exact`, `Role.key_inj`, `CssName.ident_inj`, `CssName.ident_internal`, `role_css_projects`, `Design.cssDecl_chase_exact`, `cssRoles_closed` |
-| Judging | The sites cover the registry, and the judged pairs cover its sites where they ship; a passing site leaves the report as it was; the registry's defaults meet their needs in every scheme, and every shipped bundle's in print and on screen. | `Design.sites_covers`, `judged_covers`, `judgeSite_id`, `default_sites_contract`, `builtin_palettes_contract`, `builtin_palettes_light_contract`, `builtin_palette_contract_engine` |
-| Declared colours | An author colour never repaints a role, and an xcolor colour declares one only by a code role's key; the document's colour outranks a generated one, and the seeds ship exactly, no binding rewriting one. | `Palette.defineColor_design_id`, `Palette.defineXcolor_design_id`, `Palette.defineXcolor_role_exact`, `Palette.applySeedsUnder_keep_exact`, `generate_seeds_exact`, `bindings_seeds_exact` |
+| Judging | The sites cover the registry, and the judged pairs cover its sites where they ship; a passing site leaves the report as it was; the registry's defaults meet their needs in every scheme; every site a shipped bundle paints reads, in print and on the light screen, but the roles its lineage reports, and every shipped muted ink reads with a margin. | `Design.sites_covers`, `judged_covers`, `judgeSite_id`, `default_sites_contract`, `builtin_palettes_contract`, `builtin_palette_contract_engine`, `Theme.builtin_sites_contract`, `builtin_muted_contract` |
+| Declared colours | An author colour never repaints a role, and an xcolor colour declares one only by a code role's key; declared colours ship exactly in print and on their own screen, and a bundle's lineage colours as its source sets them; the document's colour outranks a generated one, and the seeds ship exactly, no binding rewriting one. | `Palette.defineColor_design_id`, `Palette.defineXcolor_design_id`, `Palette.defineXcolor_role_exact`, `Design.light_print_exact`, `moloch_lineage_exact`, `Palette.applySeedsUnder_keep_exact`, `generate_seeds_exact`, `bindings_seeds_exact` |
 | Code colours | A colour shipped as declared is one the palette declares, under the key it ships under, and every other ships under the role's own key; the style decides a role only where the rule leaves it open, and a role no style reads resolves alike under every style; two types of one role paint alike; a tone clears what it was asked to on every ground it was asked for. | `resolve_declared_mem`, `resolve_derived_exact`, `derive_none_opens`, `resolve_style_exact`, `paint_role_exact`, `toneOn_contract` |
 | Generated colours | Every site a generated palette creates meets its target, each ground in its band and a block's title band apart from its body; gamut mapping holds lightness and hue, never adds chroma, and leaves an in-gamut colour as it was. | `generated_sites_contract`, `tint_between`, `blockPair_between`, `Okl.gamutMap_between`, `Okl.gamutMap_id`, `Okl.toGamut_between` |
-| Roles and schemes | Owed: every role-coloured run is judged; each scheme meets its contract. | owed (U61): `DesignRole.judged_complete`; owed (U80): `Contrast.scheme_contract` |
+| Schemes | An ink a scheme's view carries meets that scheme's gate on every ground it is judged on, its hue held and its chroma no more than declared; a more-contrast scheme never owes less; a dropped scheme is paid for, each colour it could not carry named on its subject. Owed: every role-coloured run is judged. | `Palette.carryOn_between`, `requiredIn_monotone`, `scheme_drop_accounts`, `sites_named`; owed (U61): `DesignRole.judged_complete` |
 
 ## HTML
 
 | Area | Guarantee | Proofs |
 |---|---|---|
 | Escaping | Text and JSON hold no '<', attributes no quote, raw payloads no terminator. | `escapeText_no_lt`, `escapeAttr_no_quote`, `escapeJson_no_lt`; by unfolding: `rawPayload_no_terminator`; owed (U62): `cssString_no_lt`, `cssString_no_quote` |
-| Script policy | With scripting off the deck is the pure-CSS pager: no floor rule dims a step unless the script's marker gates it, and the floor hides no content. | `floor_covered_script_gated`, `floor_hides_nothing` |
+| Script policy | With scripting off the deck is the pure-CSS pager: no floor rule dims a step unless the script's marker gates it, and the floor hides no content; the math renderer ships only where the run declares one, and with scripting off the page is the page without it. | `floor_covered_script_gated`, `floor_hides_nothing`, `math_boundary_contract`, `math_boundary_floor_exact` |
+| Print agreement | The printed web page paints each role as the PDF does, and its list marker is the PDF's. | `html_print_agree`, `marker_css_agree` |
 | Picture SVG | Element ids are injective and read back; the spelled tree wraps a picture's labels in plain SVG and nests no second math root; every shipped label baseline projects the IR's measured band. | `ids_inj`, `parseId_svgId_exact`, `spell_plain_contract`, `pictureKids_unnested_contract`, `pictureLabelBaseline_projects` |
 | Layout contracts | One gap owner per boundary, kept when the rules read through overlay carriers; print lifts cover stage bounds; the deck CSS partitions by feature. | `blockGap_owner_contract`, `blockGapThrough_owner_contract`, `print_lifts_stage_bounds_covers`, `deck_css_partition` |
 
@@ -115,7 +117,7 @@ type, and an owed name fails once it lands until this file promotes it.
 | Flags and plans | The backend plan reads the output name and --math-boundary alone, the one remainder a named hypothesis; that no backend takes the configuration is by type, and the driver's reads are held to a list by a line scan, not a proof. A batch never holds two requests with one key. | `plan_keys_nodup`; by unfolding: `artifact_flag_free` |
 | Host | A program asks the host only questions, and its result through the shipped interpreter is the replay of the trace that run recorded; two interpreters that agree on every question a program can ask run it alike, and the tool lookup asks only lookup questions, which the host answers with no process; the overwrite preflight only looks. | `Host.record_replay_exact`, `Host.recordIO_fst_exact`, `Prog.runM_only_exact`, `ToolPath.located_only`, `Host.answer_runless_exact`, `overwrite_only` |
 | Figure routes | An exact import never reaches the converter, a lossless one never asks it, a refused converter is never run, and a drawn figure is never a placeholder; the cache answers what the import answers, and every loss an import names reaches the page's diagnostics. | `Boundary.route_exact`, `asksTool_lossless_exact`, `asksTool_declared_exact`, `route_lossy_exact`, `nativeOf_exact`, `import_named` |
-| Caches | The record decision production calls keeps a refusal and drops an unfinished attempt or an empty drawing, by case lemmas; a warm slot answers with the fresh attempt's outcome and answer, and a decoded envelope replays as itself; a tool version is reused only under the witness it was recorded with, a tool that did not exit cleanly names no version, and a tool's words never reach a recorded answer. Owed: the policy characterized over the record decision composed with an attempt's classification, and the envelope round trip; the PicCache step and remembers lemmas hold of a model no production path calls. | `ConvCache.replay_record_exact`, `ConvCache.replay_decode_exact`, `PicCache.versionStep_remembered_exact`, `probed_present_exact`, `probed_absent_exact`, `annotate_record_exact`; by unfolding: `ConvCache.inconclusive_retried_exact`, `ConvCache.empty_retried_exact`, `ConvCache.refusal_replays_exact`; owed (U68): `record?_some_exact`, `decode_encode_record_id` |
+| Caches | The record decision production calls keeps a refusal and drops an unfinished attempt or an empty drawing, by case lemmas; a warm slot answers with the fresh attempt's outcome and answer, and a decoded envelope replays as itself; a tool version is reused only under the witness it was recorded with, a tool that did not exit cleanly names no version, and the words an unfinished attempt's tool printed never reach a record. Owed: the policy characterized over the record decision composed with an attempt's classification, and the envelope round trip; the PicCache step and remembers lemmas hold of a model no production path calls. | `ConvCache.replay_record_exact`, `ConvCache.replay_decode_exact`, `PicCache.versionStep_remembered_exact`, `probed_present_exact`, `probed_absent_exact`, `annotate_record_exact`; by unfolding: `ConvCache.inconclusive_retried_exact`, `ConvCache.empty_retried_exact`, `ConvCache.refusal_replays_exact`; owed (U68): `record?_some_exact`, `decode_encode_record_id` |
 | Landing | Main moves only to the gated tip; every write is owned; the pin invariant holds on every trace; a git call the harness's guard allows writes only what its run made. | `step_mutates_gated`, `step_writes_owned`, `trace_writes_owned`, `step_pinned`, `trace_pinned`, `step_unheld_exact`, `step_barred_exact`; by unfolding: `init_pinned`, `hcall_writes_owned` |
 
 ## Scope
@@ -173,6 +175,7 @@ it is a new shape. The first three are what the conservation gate reads (`conser
 
 - `lake build` checks every proof under -E hasSorry; `lake lint` audits the compiled axiom
   closure (`scripts/ProofAudit.lean`), holds every name in this file to one declaration and
-  resolves every name a docstring cites (`scripts/cites.lean`).
+  resolves every theorem-shaped name a docstring cites, one with an interior underscore,
+  qualified or not (`scripts/cites.lean`); a name without one is prose no gate reads.
 - Owed: a pin resolves only when the named theorem's statement mentions what it pins, and a
   per-module census maps where theorems exist (owed (U71)).

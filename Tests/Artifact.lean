@@ -2053,7 +2053,10 @@ paint it.** Over the judge's own mutants, the slides fixtures of the corpus,
 and the epoch deck: every plain stage resolves the role to the declared
 value of the palette in force at its frame, through a rule that paints the
 stage from it and inks the stage from `--fg`; and every PDF page of that
-frame ships the same colour as its ground. -/
+frame ships the same colour as its ground. A page-opening path declares its
+ground, read at `Ir.frameGroundOf`, which this holds, and its vertical
+distribution in `Layout.VDist`'s vocabulary, never a default, which review
+holds. -/
 def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref

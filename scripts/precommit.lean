@@ -299,7 +299,10 @@ def grepRecords (out : String) : Array (String × Nat × String) := Id.run do
     | _ => pure ()
   return recs
 
-/-- Every home-directory path among the given lines, located. -/
+/-- Every home-directory path among the given lines, located: the privacy
+rule's mechanical half for paths. Names, initials, a private document's
+text, topics, palettes, fonts and spacing constants are the denylist's
+(`privacyTree`) where a term names them, and review's otherwise. -/
 def homePathHits (lines : Array (String × Nat × String)) : Array (String × Nat × String) :=
   lines.foldl (init := #[]) fun acc (f, n, l) =>
     (homePaths l).foldl (init := acc) fun acc h => acc.push (f, n, h)
@@ -3477,7 +3480,8 @@ the privacy check is skipped."
   -- commits around it, so this reads the index alone.
   if src == .index && staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
     say "pre-commit: lean-toolchain changed together with other files.
-  Toolchain bumps are deliberate and go in their own commit (AGENTS.md § Build and verify).
+  The toolchain tracks Lean's stable release, and a bump is deliberate and goes
+  in its own commit (AGENTS.md § Build and verify).
   Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
 
   if staged.any (·.startsWith "testdata/golden/") then

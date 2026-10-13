@@ -32,8 +32,9 @@ public def Result.record? (r : Result) : Option (Except String ByteArray) :=
 public theorem inconclusive_retried_exact (why : String) (bytes : ByteArray) :
     Result.record? ⟨.inconclusive why, bytes⟩ = none := by rfl
 
-/-- **A tool's words never reach a recorded answer.** Only an inconclusive
-attempt gains them (`PicCache.annotate`), and none is recorded
+/-- **An unfinished attempt's words never reach a recorded answer.** The
+words a tool printed are annotated onto an inconclusive attempt alone
+(`PicCache.annotate`; a refusal keeps its own reason), and none is recorded
 (`inconclusive_retried_exact`). -/
 public theorem annotate_record_exact (o : PicCache.Outcome) (log : PicCache.Log) (said : String)
     (bytes : ByteArray) :

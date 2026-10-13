@@ -630,10 +630,12 @@ one (a JSON-LD data block is data, not script). No backend emits script to
 compensate for a platform: a page says what it means declaratively, and
 where a declarative feature is unevenly supported it ships the degraded
 state — a control always visible, never one permanently hidden. The math
-boundary runs script a document asks for by name; any other path owes the
-pager's three properties — a constant (`deck_script_constant`), gated on its
-class (`deck_script_gated`), degrading to the pure-CSS pager with scripting
-off (`floor_covered_script_gated`) — or a design discussion. -/
+boundary runs the renderer the run names (`--math-boundary`), shipped only
+where the run declares one, the page with scripting off the page without it
+(`math_boundary_contract`, `math_boundary_floor_exact`); any other path owes
+the pager's three properties — a constant (`deck_script_constant`), gated on
+its class (`deck_script_gated`), degrading to the pure-CSS pager with
+scripting off (`floor_covered_script_gated`) — or a design discussion. -/
 def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut decks := 0
   for name in goldenNames do
