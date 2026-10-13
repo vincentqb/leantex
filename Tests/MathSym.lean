@@ -123,8 +123,11 @@ no symbol row is a name the parser reads structurally, where the row would
 be dead or would change what a script argument means; and a refused name is
 unknown to the parser, which is what makes its W0012 the refusal it
 declares. The face side: every atom the table sets has a glyph in the
-shipped math face or is one of `firaGaps`, and a gap reaches the page as a
-named loss, never as silence. -/
+shipped math face or is one of `firaGaps`, and every gap listed is a name
+the table sets and the face lacks, so the list holds both ways; a gap
+reaches the page as a named loss, never as silence. A symbol's scalar is
+held to lualatex's by its line in the parity fixtures `amssymb` and
+`mathsym` (the parity tier). -/
 def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (pkg, documented) in [("amsfonts", MathSymData.amsfonts), ("amssymb", MathSymData.amssymb)] do

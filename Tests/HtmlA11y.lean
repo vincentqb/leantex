@@ -140,7 +140,15 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
   return undecodableSeen
 
 /-- The HTML accessibility contract over the shipped corpus and the probes
-that break each half once. -/
+that break each half once. An emission assistive technology must name or
+reach, or is told to skip — an `<svg>`, an `<img>`, a disclosure's
+`<summary>`, a box a stylesheet rule scrolls, a box under `aria-hidden` —
+has its fact in the judge, `HtmlDoc.a11yFacts`: a scroll rule enters
+`declaresScroll` too, or the judge cannot see the box. Held at zero on every
+shipped page: an unnamed svg, an unreachable scroll container, a tab stop
+under `aria-hidden` (counted though the subtree is hidden, or hiding a link
+would score as a fix), and an unnamed summary. The `htmla11y` tier ratchets
+the rest, and axe over the rendered corpus is its report, never the gate. -/
 def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- W4: every inline <svg> on every shipped page carries an accessible

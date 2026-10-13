@@ -133,7 +133,7 @@ type, and an owed name fails once it lands until this file promotes it.
   (`DocBench.growthWithin_doubled_covers`, `DocBench.growthWithin_quadratic_exact`); the size
   class it holds is monotone (`DocBench.heldClass_monotone`). The fuzzers and differentials
   (`scripts/kp-fuzz.lean`, `scripts/hyphen-diff.lean`, `scripts/compose-fuzz.lean`) are
-  evidence, not theorems.
+  evidence, not theorems: a claim is open until machine-checked, and says which it has.
 - Change detectors state a definition's own body or value, so every edit fails the build, an
   improvement included, until the pin is restated: `document_declares_lang`,
   `deck_script_constant`, `deck_script_gated`. They state no property and are listed so none
@@ -144,8 +144,8 @@ type, and an owed name fails once it lands until this file promotes it.
 A theorem's suffix names its shape; a new property instantiates one, or its review says why
 it is a new shape. The first three are what the conservation gate reads (`conservesSuffixes`).
 
-- `_text` (census equality, stated as a Conserves instance), `_covers` (leaf coverage),
-  `_id` (conditional identity).
+- `_text` (census equality, stated as a Conserves instance), `_covers` (every member of a set
+  is reached: a walk's leaves, a table's entries, a box's marks), `_id` (conditional identity).
 - `_inj`, `_rectangular`, `_monotone`, `_fixed_point`, `_contract`, `_set_eq`, `_between` (a
   value inside two named bounds), `_mem` (the result is drawn from the input set).
 - `_exact`: an equation or iff that determines the value completely.

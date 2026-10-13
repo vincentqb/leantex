@@ -15,10 +15,10 @@ writer; the exit status is a separate policy (--werror, CI), never whether the a
 Warts are not: meaning comes from the documented standards (LaTeX's manuals and sources, e-TeX,
 CommonMark and GFM, OpenType MATH, MathML Core, HTML, CSS, PDF 2.0, WCAG 2.2), never from parameter
 resets and discards, recovery quirks, once-only package loads or single-pass limits. A visible
-departure names the axis it improves (legibility, accessibility, content fidelity) and the check
-holding it, as code coloured by its token's role, never lualatex's per-type colours, does
-(`codeRoleChecks`); lualatex parity and rhythm are tiers, not ceilings (`compatIndexChecks`,
-`testdata/scoreboard/parity.tsv`, `testdata/scoreboard/rhythm.tsv`).
+departure is measurably better on a named axis (legibility, accessibility, rhythm, alignment,
+content fidelity) and names the check holding it, as code coloured by its token's role, not
+lualatex's type, does (`codeRoleChecks`); lualatex parity and rhythm are tiers, not ceilings
+(`compatIndexChecks`, `testdata/scoreboard/parity.tsv`, `testdata/scoreboard/rhythm.tsv`).
 
 ## Evident intent wins
 
@@ -54,10 +54,11 @@ projection corollary, never re-derived or left to a platform (`footBand_projects
 
 ## Typed boundaries
 
-Values cross module boundaries as typed data with spans. Nothing crosses as source text the
-receiver re-lexes, a control-word name it decodes or a string it sniffs; a closed vocabulary is
-an inductive, and strings are only for names the author chose (`Md.altSource`,
-`Md.desugar_vocabulary_mem`, `escapeText_no_lt`; owed (U51): `toName_unforgeable`).
+Values cross module boundaries as typed data with spans. Nothing crosses as source text the receiver
+re-lexes, a control-word name it decodes or a string it sniffs; a closed vocabulary is an inductive,
+and strings are only for names the author chose (`Md.altSource`, `Md.desugar_vocabulary_mem`,
+`escapeText_no_lt`; owed (U51): `toName_unforgeable`). A record format a producer writes and reads
+back round-trips its all-empty value (`scripts/Board.lean`).
 
 ## One mechanism per concept
 
@@ -81,7 +82,7 @@ A diagnostic reports a loss in an artifact that ships, each wording once with it
 source excerpt and help spelled in the document's own surface; a site's particulars are its detail,
 never its words, and its header names a construct the author wrote or nothing (`repeatFoldChecks`,
 `dvLint`, `DiagCode.namesPlace`). Severity follows what the reader loses, never the roadmap or the
-emitter; standard behaviour is never a warning; a run ends with a total line
+emitter (`demotedAssign`); standard behaviour is never a warning; a run ends with a total line
 (`Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact`, `foldChecks`, `diagVoiceChecks`; owed
 (U33): `view_carriers_card`). A diagnostic stays typed until Ui.diag renders it
 (`diagnosticOutputBypasses`); a report reads porcelain JSON, never the human header (review).
@@ -89,9 +90,9 @@ emitter; standard behaviour is never a warning; a run ends with a total line
 ## Theorems state guarantees
 
 A theorem earns its place by stating an invariant an algorithm could break, over the
-implementation's own constants, indexed in `THEOREMS.md` by its guarantee; restatements, single
-samples and vacuous totality do not count. Proofs live in proof modules off the binary's
-critical path (`scripts/cites.lean`, `buildGraphChecks`; owed (U71); owed (U28)).
+implementation's own constants, indexed in `THEOREMS.md` by its guarantee and named by its registry;
+restatements, single samples and vacuous totality do not count. Proofs live in proof modules off the
+binary's critical path (`scripts/cites.lean`, `buildGraphChecks`; owed (U71); owed (U28)).
 
 ## Linear by construction
 
@@ -120,7 +121,6 @@ lives in git and in the docstrings of the checks it motivated, never a dated rul
 ## Decisions owed
 
 The user owns these; until answered, the unit named builds the default given (review).
-
 - Discarded list parameters are honoured with a note (U55); an unknown class takes the article
   model with a warning (U37); an undated build is a named loss (U76) (review).
 - Faces: Latin Modern for LaTeX classes and Libertinus for markdown (U35); native article takes

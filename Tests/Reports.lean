@@ -143,7 +143,8 @@ check can see — a private document's own build, a port that invokes the
 binary — is an acceptance run, named in abstract words.
 
 A report is closed only as `guarded`, naming the tree its guards failed on
-and whose record says so. What is not closed stays visible: `unwitnessed`
+— the broken commit, or the fix reverted — and whose record says so, before
+the fix lands. What is not closed stays visible: `unwitnessed`
 (guards, but no failing run on record) and `owed` (no guard yet, the owner
 and the guard's name once it lands) are counts the suite holds in both
 directions, and an owed guard that lands fails the suite until its row is

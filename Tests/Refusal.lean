@@ -30,7 +30,12 @@ and the page is the page of the document that never wrote the definition.
 The defect: the parse judged the definition's two bodies as document text,
 so the idiom failed the build (E0201, E0205, E0202) beside the W0303 that
 ignored it. Quantified over `Elab.builtinEnvNames` and `splitShapes`, so a
-built-in the engine gains is a row. -/
+built-in the engine gains is a row. Any refusal by name — a definition, a
+redefinition, a use — is held so, two builds apart, since a refusal that
+adds ink or fails the build is the loss it claims to avoid; a refused use
+ships its braced spelling's page (`delimitedUseChecks`). What a refused
+construct's parts owe is judged by its definer, never by the parse that read
+them (`Elab.settleSplits`). -/
 def refusedEnvChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let body := "Body words stand here."

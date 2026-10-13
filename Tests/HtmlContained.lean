@@ -626,7 +626,14 @@ def bulmaSheetChecks (ref : IO.Ref (List String)) : IO Unit := do
 This is a syntax coverage guard; missing captures still owe publication checks.
 It is also the census of script: no corpus page, in any stylesheet mode,
 runs script but the slides class's constant pager, and every deck runs that
-one (a JSON-LD data block is data, not script). -/
+one (a JSON-LD data block is data, not script). No backend emits script to
+compensate for a platform: a page says what it means declaratively, and
+where a declarative feature is unevenly supported it ships the degraded
+state — a control always visible, never one permanently hidden. The math
+boundary runs script a document asks for by name; any other path owes the
+pager's three properties — a constant (`deck_script_constant`), gated on its
+class (`deck_script_gated`), degrading to the pure-CSS pager with scripting
+off (`floor_covered_script_gated`) — or a design discussion. -/
 def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut decks := 0
   for name in goldenNames do

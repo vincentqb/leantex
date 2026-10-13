@@ -1439,7 +1439,12 @@ def rootFault (root enclosing : String) : Option String :=
 /-- **The harness writes only what its run created.** Every write a command
 the guard lets run may make lies inside the run's scratch root, and a push —
 or a run of the tool under test, which may push to any remote its repository
-names — reaches only a bare repository the run itself made there. -/
+names — reaches only a bare repository the run itself made there. A script
+that runs git in repositories it makes owes this guard before every
+command, and two more conditions beside it: the run refuses to start when
+any repository encloses its root (`rootFault`), and every child runs under
+`GIT_ALLOW_PROTOCOL=file` (land's `harnessEnv`). Scrubbing inherited
+variables is one layer, never the guard. -/
 theorem hcall_writes_owned (g : HGuard) (c : HCall) (h : c.allowed g = true) :
     ∀ w ∈ c.writes, w.owned g = true := by
   intro w hw

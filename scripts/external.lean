@@ -36,6 +36,16 @@ denominator.
 checkout — every worktree and every clone — so builds, rasters and tables
 never land in a tree, whatever list was read. Per-document build directories
 are numbered, never named after the document.
+
+*What a vendored corpus owes*, this one and the next: its licence verbatim
+beside it; a `PROVENANCE.txt` naming the upstream commit, what was taken,
+what was left and why — a user's own document is left, since fixtures here
+are invented; a `SHA256SUMS` over the upstream bytes that `sha256sum -c`
+checks from that directory; only documents the reference builds under
+`-halt-on-error`, so every one is in the denominator; and the reading that
+needs neither fonts nor TeX as a tier, its premise checked by the report
+wherever both readings exist. testdata/commonmark vendors its spec the same
+way.
 -/
 import LeanTex
 import scripts.Board

@@ -36,13 +36,15 @@ to be read by it.
   successful exit, including `break`, preserves the invariant.
 
 The discipline this supports is recorded in AGENTS.md § Lean rules:
-a loop owes the invariant its statement will be read through, named beside
-it. What the pair does *not* reach, so it is not mistaken for more than it
+a loop owes the invariant its statement will be read through, written in
+the loop's own module, where its private state is nameable, and exported as
+the corollary the statement reads — never the loop restated as a fold.
+What the pair does *not* reach, so it is not mistaken for more than it
 is: a pure invariant cannot see how much of the input the loop has
 consumed, so a claim about the loop's *value* (a census, a round trip)
 needs either the break-free `foldl` bridge above or its own
-progress-indexed argument. `_covers`-shaped safety claims are what this
-layer is for.
+progress-indexed argument, and its review says which of the two it is.
+`_covers`-shaped safety claims are what this layer is for.
 -/
 
 namespace LeanTex.Core.Loop

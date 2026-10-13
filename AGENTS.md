@@ -40,14 +40,14 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   - Elab's preamble apply sites: `scripts/compose-fuzz.lean`; Oklab: `scripts/oklab-roundtrip.lean`
   - image decoding: `scripts/img-fuzz.lean`; font scan and cache: `scripts/fontcache-check.lean`
   - cancellation: `scripts/cancel-diff.lean`; TeX font trees: `scripts/texfonts-report.lean`
-  - breaking, pagination, protrusion, fallback: `scripts/typeset.lean` --report or --lines
+  - breaking, pagination, protrusion, fallback: `scripts/typeset.lean` --report; its tier gates
   - lexers or their data, reading ahead only through a Table: `scripts/highlight-diff.lean`
   - a deck stage's type, leading, gaps, tables: `scripts/html-oracle.lean`, stage-fit
   - the picture reader or vector emission: `scripts/tikz-diff.lean`
 - Performance claims come only from `scripts/bench.lean`, run on touching a whole-document pass: a
-  report no landing gates on (`defaultGates`), its --doc-cost history taking only commits main holds
-  (`onMain`); document cost gates only as the hermetic doccost tier (`scripts/doccost.lean`), build
-  cost owed (U30): `scripts/buildcost.lean`.
+  report, never a gate (`defaultGates`), recording --doc-cost history only from main (`onMain`);
+  document cost gates only as the hermetic doccost tier (`scripts/doccost.lean`), build cost owed
+  (U30): `scripts/buildcost.lean`.
 
 ## Layout and design
 
@@ -67,9 +67,9 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   (`undeclaredConfigRead`), but for --math-boundary, a hypothesis of `artifact_flag_free`; removing
   a CLI surface is a migration: run every out-of-repo build invoking the binary (review).
 - The kernel owns the page models (flow, frame, face): a class is a record over one
-  (`elabDocChecks`); one needing layout code is a new page model; a theme is only visual (review).
-- A claim about what a page shows comes from a rendered page or the shipped census, never an IR dump
-  or a golden (`irDumpUnmarked`, `censusChecks`).
+  (`DocClass.record`), one needing layout code a kernel question; a theme is only visual (review).
+- A claim about what a page shows comes only from a rendered page or the shipped census, never an IR
+  dump or a golden (`irDumpUnmarked`, `censusChecks`).
 - A run leads at its paragraph's leading scaled to its size, never a leading of its own, and a size
   span states no line height (`runLead_between`, `inlineRunChecks`).
 
@@ -90,21 +90,21 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   owing the merge (`siteAccountingChecks`); a censused code: a subject at every emission and door,
   or a subjectDebt row only falling (`subjectCensusChecks`, `subjectDoorChecks`).
 - A gate naming, silencing or demoting a loss: the check falsifying its premise, beside it
-  (`premisePin`), and two builds differing by its condition (`pictureKeyGateChecks`).
+  (`premiseSite`), and two builds differing by its condition (`pictureKeyGateChecks`).
 - A path where a machine fact (a tool absent, killed or unable to start, a check unfinished) stops a
   conversion, a face or a check: a degraded artifact, never a refused one, its loss named once,
   nothing cached, though a tool's refusal is cached and replayed as the same loss
   (`machineLossChecks`, `boundaryUnfinishedChecks`, `inconclusive_retried_exact`).
 - A design constant: a token, or its source where it stands (`dimLiteral`); a token: one resolving
   site, held over every bundle (`builtin_palettes_contract`); a colour role: a `Role.row` arm read
-  only through `Design.at` (`default_sites_contract`), the stylesheet its projection
+  only through its resolver (`roleReads`, `roleRowWildcards`), the stylesheet its projection
   (`role_css_projects`, `htmlRoleClosureChecks`); a code role through `CodeColor.resolve`.
-- A page-opening path: a declared vertical distribution and ground (`artStageGroundChecks`); a
-  furniture element: a declared alignment, never a hard-coded centre (review).
+- A page-opening path: a declared vertical distribution and ground (`artStageGroundChecks`), never a
+  default; a furniture element: a declared alignment, never a hard-coded centre (review).
 - A PageOut field shipping ink: its place in `PageOut.blank`, every emptiness test's one reading,
   and in finishPage's distribution gates if it moves with content (review; `gfxContentPageChecks`).
-- A document class: a record row with sourced defaults and implied assertions (`elabDocChecks`); an
-  assertion kind: its judge in Check.one, no wildcard, a test breaking it (review).
+- A document class: a record row with sourced defaults and implied assertions (`DocClass.record`);
+  an assertion kind: its judge in Check.one, no wildcard, a test breaking it (review).
 - A native package: a compat-index file of its documented commands, probed (`compatIndexChecks`).
 - A length LaTeX fixes as a class or package loads: that dimen, in the preamble font at the class
   size (`tableLengthChecks`); a fix to one term of a printed distance is judged by the whole against
@@ -116,7 +116,7 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 - Each comparison level with a blind spot: the pair it cannot see, equal at it and unequal a level
   up, and its ordering premise checked (`scripts/parity.lean`, `scripts/mdtwin.lean`).
 - A measurement a goal is judged by: a tier, whose contract `scripts/Board.lean` states.
-- An HTML emission assistive technology must name, reach or skip: its fact in the judge
+- An HTML emission assistive technology must name, reach or skip: its fact in `a11yFacts`
   (`htmlA11yChecks`); a box a stylesheet scrolls: its rule in `declaresScroll`, or the judge cannot
   see it, and a print lift (`print_lifts_stage_bounds_covers`, `printLiftChecks`).
 - An HTML rule that only spaces or styles: a class on its element (`trivlistChecks`); a block margin
@@ -127,8 +127,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 - An HTML spelling markdown reads: lowered onto an existing md node, never a passthrough
   (`htmlInlineAt_covers`), each attribute carried, honoured, routed or refused; it ships what its
   markdown spelling ships (`htmlTwinChecks`) or means (`cellBreakChecks`, `disclosurePrintChecks`,
-  `pdfDestinationChecks`); text spelling it is escaped in the twin (`mdTwinBreakChecks`); a loss is
-  named once per artifact suffering it (`mdHtmlAccountsChecks`, `refusedDisclosureChecks`).
+  `pdfDestinationChecks`); text spelling it is escaped in the twin (`mdTwinBreakChecks`); one
+  accounting names each artifact it costs (`mdHtmlAccountsChecks`, `refusedDisclosureChecks`).
 - A markdown-twin emission: a reader arm reading it back or a named loss, and its tier item
   (`scripts/mdtwin.lean`); a spelling no reader here reads owes that reader's grammar as a model and
   a theorem against it (`rowLine_cells_exact`).
@@ -142,13 +142,13 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 
 ## Lean rules
 
-- Every theorem has a complete proof and no project axiom; nothing is unsafe, fuelled or declared
-  partial (`bannedWord`, `scripts/ProofAudit.lean`), though repeat loops compile to partial (owed
-  (U72)): the language is designed terminating. A guarantee in prose names its theorem; an unproved
-  claim is pending work, never an unfinished declaration (`scripts/cites.lean`).
+- Every theorem has a complete proof and no project axiom; nothing is unsafe or declared partial
+  (`bannedWord`, `scripts/ProofAudit.lean`), though repeat loops compile to partial (owed (U72)):
+  the language is designed terminating. A guarantee in prose names its theorem; an unproved claim is
+  pending work, never an unfinished declaration (`scripts/cites.lean`).
 - A resisting proof, a declaration near its budget or a kernel check of seconds is a factorization
-  finding, never a raise, fuel or a sampled decide; a literal bound under the default holds its cost
-  (`heartbeatRaise`); a long list literal stands in parts (`censusPartRows`).
+  finding, never a raise, fuel or a sampled decide (review); a literal bound under the default holds
+  its cost (`heartbeatRaise`); a long list literal stands in parts (`censusPartRows`).
 - A walk threads an Array accumulator, never prepending to a recursive call's result
   (`quadraticPrepend`); hot paths use Array and ByteArray, bit work UInt64, never Nat (review).
 - An index is proved or defaulted, never a new `]!` (`bangBaseline`); constructor fields carry no

@@ -1040,7 +1040,13 @@ by glyph — each with the size its run is set at — against `artLaidGlyphs`,
 beyond what the file can state: half a thousandth of that size (a `TJ`
 number's resolution, `Pdf.place_between`'s bound) plus the precision a
 coordinate is spelled at (`artSpellSlack`). A count that differs is an
-offence of its own. -/
+offence of its own. The pen is the viewer's: it advances by what the file
+states — every `TJ` element, `Tm`, `Tz` and `/W` width read in the file's own
+spellings (`Dim.Sp.toPtMilli`, `PdfContent.pdfWidthμ`) — never by the
+writer's belief of where its pen stands. A writer that believed its pen
+stood at the layout's x after each run, while the viewer advanced by
+nominal widths, shipped no kern and overlapped the word before a font
+change. -/
 def artGlyphPlacementOffences (laid : Array Dim.Sp) (painted : Array (Dim.Sp × Dim.Sp)) :
     Array String := Id.run do
   if laid.size != painted.size then

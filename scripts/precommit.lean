@@ -487,7 +487,15 @@ self-append (`s := s ++ one x`), and an RHS ending in a projection
 (`out.extract i out.size` splices, it does not walk a tail). Line-local: an
 application split across lines is not seen. The shape turned a 4 ms pass
 into 1157 ms three times in one day, and a 4 ms pass into 600 ms on a
-30-page document. -/
+30-page document. Appending to a `mut` string or array in a loop is fine:
+unique ownership appends in place. An array stays unique only while nothing
+else still reads it, and a record update builds its fields in structure
+order, so `{ acc with notes := … acc.items.size …, items := acc.items.push x }`
+pushes while the size is still to be read and copies the array at every
+push: bind what the update reads first, and carry a read that must see the
+array before a call grows it as a field the call writes (`ItemsAcc.before`),
+since the compiler may sink a pure `let` past the call. No scan sees this
+shape; the bench's growth rows do. -/
 def quadraticPrepend (l : String) : Bool :=
   match (l.splitOn patAppend).reverse with
   | rhs :: lhs :: _ =>
@@ -848,7 +856,12 @@ def defaultHeartbeats : Nat := 200000
 a literal bound under the default. A larger value, zero (no limit at all), a
 value not spelled as a literal, and every other heartbeat option are raises:
 `synthInstance`'s budget defaults to 20000, so a value under the bare
-option's default can still raise it fivefold. -/
+option's default can still raise it fivefold. A proof that needs a raise is
+a factorization finding: case analysis the statement never mentions, a
+private state it cannot name, a heartbeat wall. It is written as the
+refactor it needs — a field the statement can read, a state split, an
+equation pack — and completed against the resulting interface; an
+unresolved claim is recorded as pending work, never as a proved theorem. -/
 def heartbeatRaise (l : String) : Bool :=
   match (stripLineComment (stripStrings l)).splitOn kwMaxHeartbeats with
   | [_] => false
@@ -1547,6 +1560,10 @@ def gates : List Gate := [
     help := s!"  No declaration in the tree is marked '{kwPartial}': every recursion the
   source spells terminates by a proved measure, though do-notation repeat
   loops still compile to a {kwPartial} combinator (AGENTS.md § Lean rules).
+  A map or flatMap over children hides the call behind a lambda the checker
+  cannot see, and a list matched against a literal pattern with a catch-all
+  variable loses its tail; an index loop bounded by [0:xs.size + 1] is total.
+  A construct that cannot terminate is a design question, never fuel.
   Fix: make the recursion structural, through a List companion or an index
   measure whose facts stand beside each call." },
   { applies := fun _ => true

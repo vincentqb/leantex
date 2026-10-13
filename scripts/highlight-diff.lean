@@ -36,6 +36,14 @@ Three comparison levels, each failing on its first difference:
   `style_for_token`, blind to two types one style paints alike.
 `--selftest` shows each level's blind spot equal under it and unequal under
 the level above, and every level unequal on a changed type.
+
+What a token stream cannot show is cost. A mirror answers what Pygments'
+backtracking answers without backtracking: a rule reads past the scalars it
+writes only through a `Table`, a scan answered at every position in one
+pass (LeanTex/Core/Highlight/Scan.lean states the argument), because each
+lookahead read directly once made a lexer quadratic or worse in lines or a
+line's length; `scripts/bench.lean --listings-only` holds every lexer linear
+over invented adversarial listings, and is run with this one.
 -/
 import LeanTex
 import LeanTex.Core.Highlight

@@ -296,10 +296,13 @@ row is spellings the vocabulary reads and the one they all lower to; in
 every context the row names, a spelling and its twin give byte-identical
 HTML, the same shipped lines (position, size and text) and the same
 diagnostics. Never the IR: a row holds the artifacts, where a reader meets
-the page. Every attribute a spelling may carry is decided here, carried,
-honoured, routed or refused: `<details open>` was once refused while the
-closed spelling, which ships the same expanded page, was read, because no
-row had decided the attribute's fate. -/
+the page. Every attribute a spelling may carry is decided here, carried by
+an existing field, honoured exactly by what ships (a premise pin), routed
+by an existing route, or the element refused — never dropped: `<details
+open>` was once refused while the closed spelling, which ships the same
+expanded page, was read, because no row had decided the attribute's fate.
+One accounting per construct names each artifact that suffers its loss,
+the markdown twin included, and none that does not. -/
 def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet

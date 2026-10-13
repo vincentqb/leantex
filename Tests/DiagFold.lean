@@ -57,6 +57,17 @@ def porcelainRows (log code : String) : List (Nat × String) :=
 
 def span (line : Nat) : Option Span := some ⟨"deck.tex", { line, col := 1 }⟩
 
+/-- **How a phase's log counts what it folds**, read off the driver's own
+sink. Warnings in the same words print one line, at the first site,
+carrying their count, whatever census key tells the sites apart; `-v`
+prints every site, and porcelain keeps every record, the first carrying the
+count. Under `--werror` a folded line is one warning, its later sites notes,
+as a census repeat is; an error prints and counts at every site, named or
+not. Acceptance accepts every site of a loss it names and counts each loss
+once — one census key, or a subjectless repeat in the same words
+(`Diag.acceptedLosses`) — leaving no site an unread note. A loss of the
+PDF's page names that output, so a build that ships no PDF prints none
+(`reflowAccountChecks`). -/
 def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let plain : Config := { cmd := .build "deck.tex", color := .never }
@@ -243,10 +254,12 @@ the measure, which cannot re-flow. Every line the page shows past its
 margin is accounted once: a W0005 at its site, or an overrun its
 paragraph's record holds (`ReflowedLine.over`). Accepting the re-flow
 accepts the overrun it carries; an acceptance of W0005 is never stale for a
-carried overrun; the default log names every overrun. The overlay steps
-that set one paragraph again are one W0386, however the steps set it: at
-the first line any step re-flowed, carrying an overrun any step runs, by
-the most any runs it. Every word here is invented. -/
+carried overrun; the default log names every overrun. Both are losses of
+the PDF's page and name that output, so a build that writes no PDF prints
+neither. The overlay steps that set one paragraph again are one W0386,
+however the steps set it: at the first line any step re-flowed, carrying an
+overrun any step runs, by the most any runs it. Every word here is
+invented. -/
 def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
