@@ -31,10 +31,8 @@ private def placement (out : Layout.Out) :=
       | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
         | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => none)
 
-/-- Exercise the production boundary, starting from a real producer result.
-The two integrity guards are tested by deleting that result's line or
-shrinking its reservation. No witness constructs a diagnostic. The
-unresolved-outline case changes only the external font answer. -/
+/-- The production boundary from a real producer result, its integrity guards tested by deleting
+that result's line or shrinking its reservation. -/
 def boundaryWitness (fs : Font.FontSet) (code : DiagCode) : Array Diag :=
   let geom : Layout.Geom := {}
   let source : Span := {
@@ -58,8 +56,7 @@ def boundaryWitness (fs : Font.FontSet) (code : DiagCode) : Array Diag :=
   | .W0396 => (finish result ((0, 0), (0, 0))).diags
   | _ => #[]
 
-/-- Checks over actual shipped pages. Font arguments come from the committed
-fixture corpus; changing only outline answers models that external boundary. -/
+/-- Checks over shipped pages, with fonts from the committed fixture corpus. -/
 def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font.Font) : IO Unit := do
   let fs : Font.FontSet := { fonts := #[serif, sans], index := #[((1, 400, false), 1)] }
   let geom : Layout.Geom := {}
@@ -271,8 +268,7 @@ def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font.Fo
       pageRequests.all fun r => pageObservations.any fun o =>
         decide (Layout.LabelAudit.Matches r o) && !o.known)
 
-/-- Load the committed fonts and run the shipped-page and guard checks from
-the diagnostic suite, whose witness registry consumes the same decisions. -/
+/-- Load the committed fonts and run the shipped-page and guard checks. -/
 def fixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let load (name : String) : IO Font.Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with

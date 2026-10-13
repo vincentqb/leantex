@@ -16,10 +16,8 @@ private def exactSites (actual expected : Array (Nat × Span)) : Bool :=
   actual.size == expected.size &&
     (actual.zip expected).all fun ((i, a), (j, b)) => i == j && exactSpan a b
 
-/-- The metadata belongs to the block that actually survives elaboration.
-Equal or empty frames cannot be identified by their content; splicing,
-macro ownership, and title-frame flattening must follow the emitted shape.
-These are elaboration tests, not claims about rendered page contents. -/
+/-- Frame metadata belongs to the block that survives elaboration, through splicing, macro ownership
+and title-frame flattening. -/
 def elabFrameSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let first : Pos := { line := 7, col := 3, command := some "\\begin" }

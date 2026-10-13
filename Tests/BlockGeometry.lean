@@ -8,26 +8,8 @@ open LeanTex.Core
 
 namespace Tests.BlockGeometry
 
-/-!
-# A beamer block is the default inner theme's two colour boxes
-
-beamerinnerthemedefault.sty sets every block as `\par\vskip\medskipamount`,
-a title `beamercolorbox` and a body `beamercolorbox`, both `colsep*=.75ex`,
-then `\vskip\smallskipamount`. A painted box stands `.75ex` above and below
-its lines and its paint reaches `.75ex` beyond the text measure on both
-sides, the text itself on the measure; a painted title meets a painted body
-through `\nointerlineskip\vskip-0.5pt`; the body opens on a `\vbox{}`, so
-its first baseline is one `\baselineskip` below the body box's top; the
-boxes reset `\parskip` (`\@arrayparboxrestore`); an untitled block keeps
-its empty title box; and TeX's interline glue spaces each box from the
-band above (`\lineskip` where the boxes would collide).
-
-Every distance below was measured under lualatex on this very source
-(moloch, OpenSans Regular as the only face, 10pt): the table is the PDF's
-own coordinates in big points converted to TeX points, the unit this
-engine's `pt` stands for numerically. The checks read the shipped pages
-(`Layout.Out`) and the typed HTML tree, never the IR.
--/
+/-! A beamer block is the default inner theme's two colour boxes, held to lualatex's distances on
+the invented probe over the shipped pages and the typed HTML tree. -/
 
 /-- Word spaces ship as gaps, not glyphs: a line is found by its letters. -/
 private def letters (text : String) : String := text.replace " " ""
@@ -35,8 +17,8 @@ private def letters (text : String) : String := text.replace " " ""
 private def titleColor : Ir.Color := { r := 0xC9, g := 0xD6, b := 0xE8 }
 private def bodyColor : Ir.Color := { r := 0xE8, g := 0xEE, b := 0xF6 }
 
-/-- The invented probe: one frame per paint combination, `[t]` with room
-to spare so every glue keeps its natural size. -/
+/-- The invented probe: one frame per paint combination, `[t]` with room to spare so every glue
+keeps its natural size. -/
 def source : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
   "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeTitle}{HTML}{C9D6E8}\n" ++
@@ -67,19 +49,15 @@ def source : String :=
   "wraps onto a second line of text because it keeps going and going}\nBody words here.\n" ++
   "\\end{block}\n\\end{frame}\n\\end{document}\n"
 
-/-- lualatex's distances on `source`, in thousandths of a TeX point (the
-PDF's big points times 72.27/72): what the shipped page must reproduce.
-Each row names two marks on one page; a mark is a line's baseline, or a
-fill's top or bottom edge. -/
+/-- lualatex's distances on `source`, in thousandths of a TeX point; each row names two marks on one
+page, a baseline or a fill's edge. -/
 private inductive Mark where
   | base (text : String)
   | top (color : Ir.Color) (n : Nat)
   | bottom (color : Ir.Color) (n : Nat)
 
 private def measured : Array (Nat × Mark × Mark × Int) := #[
-  -- Painted title and body: medskip and `\lineskip` above the title box,
-  -- `.75ex` inside it, the body overlapping it by half a point and opening
-  -- one `\baselineskip` below its top, no `\parskip` between its paragraphs.
+  -- Painted title and body: medskip and `\lineskip` above, `.75ex` inside, a half-point overlap.
   (0, .base "Lead paragraph above.", .top titleColor 0, 9402),
   (0, .top titleColor 0, .base "Alpha title words", 11611),
   (0, .base "Alpha title words", .bottom titleColor 0, 6416),
@@ -93,14 +71,12 @@ private def measured : Array (Nat × Mark × Mark × Int) := #[
   (0, .base "Beta title words", .bottom titleColor 1, 4111),
   (0, .top bodyColor 1, .base "Third body words.", 12000),
   (0, .base "Third body words.", .bottom bodyColor 1, 6416),
-  -- The untitled block keeps its empty title box, `1.5ex` tall, spaced
-  -- by `\baselineskip` because it is shorter than one.
+  -- The untitled block keeps its empty `1.5ex` title box, spaced by `\baselineskip`.
   (0, .bottom bodyColor 1, .top titleColor 2, 12974),
   (0, .top titleColor 2, .bottom titleColor 2, 8027),
   (0, .top bodyColor 2, .base "Untitled body words.", 12000),
   (0, .bottom bodyColor 2, .base "Trailing paragraph below.", 20000),
-  -- Transparent boxes: the title spaced as text, the body box opening
-  -- `.25ex` above its own top edge, an untitled block's empty title line.
+  -- Transparent boxes: the title spaced as text, the body box opening `.25ex` above its top edge.
   (1, .base "Lead paragraph above.", .base "Alpha title words", 18000),
   (1, .base "Alpha title words", .base "Body words here.", 14065),
   (1, .base "Body words here.", .base "Beta title words", 21000),
@@ -132,18 +108,16 @@ private def markY (page : Layout.PageOut) : Mark → Option Dim.Sp
   | .top c n => (boxOf page c n).map (·.y)
   | .bottom c n => (boxOf page c n).map fun f => f.y + f.h
 
-/-- 0.02 pt: the reference's three-decimal big points, the TeX/big-point
-conversion and TeX's sp rounding together stay under 0.005 pt; the rest is
-margin for the font program's glyph bounds read by two decoders. -/
+/-- 0.02 pt: the reference's three-decimal big points and the conversions stay under 0.005 pt; the
+rest is margin for glyph bounds. -/
 private def tolerance : Int := 20
 
 private def layout (fonts : Font.FontSet) (src : String) : Layout.Out × Array Diag :=
   let (doc, diags) := Elab.run "block-geometry.tex" src
   (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc, diags)
 
-/-- Geometry the reference table cannot spell as a distance: the paint's
-reach beyond the measure, the wrapped title's full cover, and the frame
-opening a block spends. -/
+/-- Geometry the reference table cannot spell as a distance: the paint's reach beyond the measure,
+the wrapped title's cover, and the frame opening a block spends. -/
 private def shapeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (out : Layout.Out) : IO Unit := do
   let (doc, _) := Elab.run "block-geometry.tex" source
@@ -159,10 +133,7 @@ private def shapeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   check ref "block geometry: block text stands on the measure"
     (out.pages.all fun page => page.lines.all fun l =>
       l.furniture || lineText l false != letters "Body words here." || l.x == geom.hmargin)
-  -- TeX ships the body box after the title box it overlaps by half a
-  -- point (`\nointerlineskip\vskip-0.5pt`), so the body paints over the
-  -- title's last half point: in paint order every body follows the title
-  -- it meets.
+  -- The body box paints over the title box's last half point (`\nointerlineskip\vskip-0.5pt`).
   let seams := out.pages.flatMap fun page =>
     page.fills.zipIdx.flatMap fun (bar, i) =>
       if bar.color != titleColor then #[] else
@@ -170,8 +141,6 @@ private def shapeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
           body.color == bodyColor && body.y == bar.y + bar.h - Ir.blockSeam).map fun (_, j) => (i, j)
   check ref "block geometry: a body box paints over the title box it overlaps"
     (!seams.isEmpty && seams.all fun (i, j) => i < j)
-  -- The wrapped title: one box covers both lines, `.75ex` beyond their
-  -- TeX boxes, the lines one `\baselineskip` apart.
   match out.pages[4]? with
   | some page =>
     let titles := page.lines.filter fun l =>
@@ -190,8 +159,7 @@ private def shapeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         (bar.y + bar.h == last.y + d2 + colsep)
       check ref "block geometry: wrapped title lines stand one baselineskip apart"
         (last.y - first.y == Dim.pt 12)
-      -- The frame opens `\vskip-\parskip\vbox{}`; the block's medskip and
-      -- `\lineskip` follow it (lualatex: 2 pt below the opening skip).
+      -- The frame opens on `\vskip-\parskip\vbox{}`, then the block's medskip and `\lineskip`.
       let header := (page.fills.filter (·.color == { r := 0x23, g := 0x37, b := 0x3B : Ir.Color })).foldl
         (fun e f => max e (f.y + f.h)) 0
       check ref "block geometry: a frame's first block spends medskip less parskip"
@@ -213,8 +181,7 @@ mutual
     | node :: rest => listStyles (nodeStyles acc node) rest
 end
 
-/-- The `margin-top` of the gap sheet's first rule whose selector holds
-every fragment. -/
+/-- The `margin-top` of the gap sheet's first rule whose selector holds every fragment. -/
 private def ruleValue (sheet : String) (frags : List String) : Option String :=
   (sheet.splitOn "\n").findSome? fun l =>
     if l.startsWith ":where(" && frags.all (hasStr l ·) then
@@ -228,8 +195,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-geometry.tex" source
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let (inline, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
-  -- A block's paint reads its role: each style as the light screen reads it,
-  -- the roles' properties in scope (`lightStyle`).
+  -- A block's paint reads its role, each style as the light screen reads it.
   let painted := (elemStylesListIn (screenRootVars sheet) #[] body.toList).map (·.2)
   let box := lightStyle [] HtmlDoc.titledBoxPaint
   check ref "block geometry HTML: the boxes' insets are .75ex, reaching beyond the measure"
@@ -249,8 +215,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block geometry HTML: a block's paragraphs spend no parskip"
     (hasStr sheet ":where(section.block > *) { --parskip: 0rem; }")
 
-/-- The shipped block paint and title ink of a three-kind frame, in page
-order: what the colour checks compare between spellings. -/
+/-- The shipped block paint and title ink of a three-kind frame, in page order. -/
 private def blockPaint (fonts : Font.FontSet) (src : String) :
     Array Ir.Color × Array (Option Ir.Color) × Array Diag :=
   let (out, diags) := layout fonts src
@@ -262,12 +227,7 @@ private def blockPaint (fonts : Font.FontSet) (src : String) :
       | _ => none
   (paint, ink, diags ++ out.diags)
 
-/-- Block colours resolve as beamer resolves them: moloch's `block=fill`
-option, in either spelling, is moloch's own declarations; an empty value
-clears a channel; the alerted and example bodies inherit the block body
-(moloch) and the titles inherit `structure` and the text roles (beamer's
-default colour theme). Read on the shipped page, against lualatex's fills
-on the same frame: a title bar of `#CFD3D4`, bodies of `#E4E6E7`. -/
+/-- Block colours resolve as beamer resolves them, on the shipped page against lualatex's fills. -/
 private def colorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let pre := "\\documentclass{beamer}\n"
   let frame := "\\begin{document}\\begin{frame}[t]{F}\\begin{block}{Plain}P\\end{block}" ++
@@ -312,12 +272,8 @@ private def colorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   check ref "block colours: the alerted and example bodies inherit the block body"
     (inherited.size == 3 && inherited.all (· == inherited[0]!))
 
-/-- minted's lines under `breaklines` each carry a `\strut` (fvextra's
-`\FV@ListProcessLine@Break`: `\parbox[t]{…}{\noindent\strut … \strut}`), so
-a colour box around the code ends the strut's depth below the last
-baseline, whatever that line's glyphs; unbroken lines are bare `\hbox`es,
-their glyphs' boxes. lualatex paints two such bodies, one ending on
-descenders, 36.3 bp each under `breaklines` and 32.8 and 35.0 bp without. -/
+/-- minted's lines under `breaklines` each carry a `\strut`, so a colour box around the code ends
+the strut's depth below the last baseline. -/
 private def strutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let src (opts : String) :=
     "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
@@ -340,16 +296,8 @@ private def strutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       | some a, some b => a < b
       | _, _ => false))
 
-/-- A tcolorbox is tcolorbox's box (tcolorbox.sty, `size=normal` under the
-reset style's `beforeafter skip balanced=0.5\baselineskip plus 2pt`), not
-beamer's: lualatex's baselines on this article (OpenSans, 10 pt), in
-thousandths of a TeX point. The title segment stands the frame's rule and
-`boxsep` inside the box's top, which stands `.3\baselineskip` and the
-balanced skip below the line above; `boxsep`, the title rule, `boxsep` and
-`top` separate the title from the body; `bottom`, `boxsep` and the rule
-close it, and the next line stands the balanced skip and `.7\baselineskip`
-below; consecutive boxes stand the skip apart; an untitled box has no title
-segment at all; text stands 5.5 mm inside the box. -/
+/-- A tcolorbox is tcolorbox's box (`size=normal`, balanced skips), not beamer's: lualatex's
+baselines on this article, in thousandths of a TeX point. -/
 private def tcolorboxSource : String :=
   "\\documentclass[10pt]{article}\n\\usepackage{tcolorbox}\n\\begin{document}\n" ++
   "Lead paragraph above the boxes.\n\n" ++
@@ -398,14 +346,8 @@ private def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
       hasStr sheet "section.tcolorbox > .tcolorbox-body { padding: " &&
       hasStr sheet ":where(* + section.tcolorbox) { margin-top: ")
 
-/-- moloch 2.1.0 loads with no `block` option: its alerted and example
-titles only `use` the block title and their text role
-(`\moloch@setup@block@colors`), keeping the default theme's `parent=alerted
-text` and `parent=example text`, so a fill declared on the text role paints
-their bars there as under the default theme; the `transparent` option
-clears them and `fill` repaints them the block title's. lualatex on this
-frame, all four ways: the two text roles' fills under moloch and the
-default theme, no bar under `transparent`, six grey boxes under `fill`. -/
+/-- moloch 2.1.0 loads with no `block` option, so a fill declared on a text role paints the alerted
+and example bars; `transparent` clears them and `fill` repaints them. -/
 private def textGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let decl := "\\definecolor{probeAlert}{HTML}{E4C76B}\n\\definecolor{probeExample}{HTML}{8FD3C1}\n" ++
     "\\setbeamercolor{alerted text}{bg=probeAlert}\n\\setbeamercolor{example text}{bg=probeExample}\n"
@@ -427,16 +369,8 @@ private def textGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (filled.size == 6 && filled[0]? == filled[2]? && filled[2]? == filled[4]? &&
       !filled.contains alertInk && !filled.contains exampleInk)
 
-/-- Each colour theme's own relationships, and only its own. beamer's
-default colour theme (beamercolorthemedefault.sty) leaves the alerted and
-example bodies empty and hangs the block title on `structure`, the frame
-title on `titlelike` and `titlelike` on `structure`; moloch's
-(beamercolorthememoloch.sty, `\moloch@setup@block@colors`) gives the block
-title normal text's ink and no fill whatever `structure` holds, and the
-alerted and example bodies the block body's colours. lualatex on these
-frames: one body fill under the default theme and three under moloch; the
-plain title and the frame title in `structure`'s colour under the default
-theme, the plain title in normal text's under moloch. -/
+/-- Each colour theme's own relationships, and only its own: the default theme's `structure` chain
+and moloch's block colours. -/
 private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let frame := "\\begin{document}\\begin{frame}[t]{Kinds}\\begin{block}{Plain}P\\end{block}" ++
     "\\begin{alertblock}{Loud}A\\end{alertblock}" ++
@@ -455,9 +389,7 @@ private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   let (molochBodies, _, _) := blockPaint fonts (moloch ++ body ++ frame)
   check ref "block parents: under moloch the alerted and example bodies inherit the block body"
     (molochBodies == #[surface, surface, surface])
-  -- Under the deck's default bundle a declared `structure` still reaches
-  -- the plain title, as beamer's default colour theme hangs it there; the
-  -- alerted and example titles stand in the bundle's own band inks.
+  -- Under the default bundle a declared `structure` still reaches the plain title.
   let deck := "\\documentclass{beamer}\n"
   let (deckDoc, _) := Elab.run "block-parents.tex" (deck ++ accentDecl ++ frame)
   let (_, plainInk, _) := blockPaint fonts (deck ++ accentDecl ++ frame)
@@ -478,12 +410,8 @@ private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     (molochInk == #[bundle.bind (·.find? "fg"), bundle.bind (·.find? "alert"),
       bundle.bind (·.find? "example")])
 
-/-- A block an overlay item holds is covered with its item, whether it
-opens the item or follows the item's paragraph: on the steps before the
-item's, its boxes and heading ink ship at their cover, on the item's step
-and after at their own colours, and no step moves a box (cover, not hide).
-lualatex on this frame covers both blocks' bars and bodies on every step
-that does not show their item. -/
+/-- A block an overlay item holds is covered with its item, whether it opens the item or follows its
+paragraph, and no step moves a box. -/
 private def coveredItemChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let src := "\\documentclass{beamer}\n\\usetheme{moloch}\n\\setbeamercovered{transparent}\n" ++
     "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
@@ -523,17 +451,8 @@ private def coveredItemChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
   check ref "block covered items: no step moves a box"
     ((boxes 0).size == 4 && place 0 == place 1 && place 1 == place 2)
 
-/-- A block in a list or a quotation. TeX sets beamer's colour box
-`\textwidth` wide in vertical mode at the box's left edge
-(beamerbasecolor.sty), and `\@arrayparboxrestore` zeroes
-`\@totalleftmargin`, so neither an item's indent nor a quotation's margins
-reach it: lualatex on this frame (16:9, 10 pt) spans every bar across the
-text block and `.75ex` beyond it, and starts every block line on the text
-block's edge, the item and quoted text keeping their indents. Owed, both
-ways. The kinds are told apart now — tcolorbox's box (`Ir.TitledKind.box`)
-is `\linewidth` wide inside the indent, as LaTeX sets it — but a beamer
-block still stands on its list's indent in both artifacts, and the HTML has
-no length for an enclosing list's total indent to stand outside. -/
+/-- A block in a list or a quotation, owed both ways: beamer spans it across the text block, while
+both artifacts stand it on its list's indent. -/
 private def listedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let src := "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
     "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
@@ -559,11 +478,8 @@ private def listedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
     (["Outer listed", "Outer block words.", "Inner listed", "Inner block words.", "Quoted",
       "Quoted block words."].all fun t => (lineX t).any (geom.hmargin < ·))
 
-/-- The block template spends the registers in force, never their kernel
-values: `\vskip\medskipamount` above the title box and `\vskip
-\smallskipamount` below the body box (beamerinnerthemedefault.sty) take the
-document's 20 pt and 15 pt as `\medskip` does. lualatex's distances on this
-source, in thousandths of a TeX point. -/
+/-- The block template spends the registers in force: the document's 20 pt `\medskipamount` and 15
+pt `\smallskipamount`. -/
 private def skipSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
   "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeTitle}{HTML}{C9D6E8}\n" ++
@@ -608,10 +524,7 @@ private def skipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   check ref s!"block skips HTML: a block's space below is the document's small skip ({below})"
     (((ruleValue sheet ["section.block", " + *)"]).map (·.startsWith s!"calc({below} + ")) ==
       some true)
-  -- The kernel's registers are written once: the compatibility layer's
-  -- spellings parse to the values both backends read, `\smallskip` and its
-  -- kin spend them, and a register the document sets reaches the rewrite
-  -- and the block alike.
+  -- The compatibility layer's register spellings parse to the values both backends read.
   for (cmd, reg) in #[("smallskip", "smallskipamount"), ("medskip", "medskipamount"),
       ("bigskip", "bigskipamount")] do
     check ref s!"kernel skips: {reg}'s compatibility spelling is its kernel value"
@@ -631,10 +544,8 @@ private def skipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (spent (src set) == some { width := .ofSp (Dim.pt 7) } &&
         Ir.skipAmount setDoc.tokens reg == { width := .ofSp (Dim.pt 7) })
 
-/-- A block an overlay step wraps (`HtmlDoc.overlayNode`) owns its
-boundaries through the wrapper: the step's carrier takes the block's space
-above where the block opens it and passes the space below on where the block
-closes it, so a block after `\pause` stands the space an unwrapped one does. -/
+/-- A block an overlay step wraps owns its boundaries through the wrapper, so a block after `\pause`
+stands the space an unwrapped one does. -/
 private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let src := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}[t]{Steps}\n" ++
     "\\begin{block}{Plain}Early words.\\end{block}\n\\pause\n" ++
@@ -655,9 +566,7 @@ private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, closingSheet) := listStyles (#[], "") (closingHead.toList ++ closingBody.toList)
   check ref "block step wrappers HTML: a wrapper a block closes passes its space below on"
     (hasStr closingSheet ":has(> section.block:last-child) + *:not(")
-  -- A frame opening on a stepped block: the opening rule reads the block's
-  -- space above (`--frame-body-before`) on the frame's first body element,
-  -- here the step's carrier, which therefore declares it.
+  -- The opening rule reads the block's space above on the frame's first body element.
   let opening := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Steps}\n" ++
     "\\begin{block}<2->{Later}Late words.\\end{block}\n\\end{frame}\n\\end{document}\n"
   let (doc, _) := Elab.run "block-step-opening.tex" opening
@@ -673,25 +582,17 @@ private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr l ":is(.step, .step-set):has(> section.block:first-child)" &&
         hasStr l "--frame-body-before:" && !hasStr l "margin-top")
 
-/-- ΔEOK², squared so a bound compares with no root: the Euclidean distance
-between two colours' `Oklab.labOf` coordinates, at its 10¹⁸ scale. -/
+/-- ΔEOK², squared so a bound compares with no root, at `Oklab.labOf`'s 10¹⁸ scale. -/
 private def deltaEOkSq (c c' : Ir.Color) : Nat :=
   let p := Oklab.labOf c
   let q := Oklab.labOf c'
   ((p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)).toNat
 
-/-- Four just-noticeable differences, ΔEOK 0.08 (one JND is 0.02, CSS Color 4
-§14.2.1), on `deltaEOkSq`'s scale: how far the engine's cover, a mix in
-Oklab, may stand from xcolor's mix in sRGB. -/
+/-- Four just-noticeable differences, ΔEOK 0.08 (CSS Color 4 §14.2.1), on `deltaEOkSq`'s scale. -/
 private def coverBoundSq : Nat := (8 * 10 ^ 16) * (8 * 10 ^ 16)
 
-/-- beamer's transparent covering mixes every colour a covered step uses
-with the page (`\opaqueness`, beamerbaseoverlay.sty), a block's colour
-boxes and heading ink included: on the step that does not show it, a block
-after `\pause` ships its bars and heading at their cover, the cover the
-engine gives every covered colour (`Ir.Design.cover`), within four
-just-noticeable differences of xcolor's mix; on the step that shows it, its
-own colours. -/
+/-- A covered block's bars and heading ship at the engine's cover, within four just-noticeable
+differences of xcolor's mix, and at their own colours on the step that shows them. -/
 private def coveredChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let src := "\\documentclass{beamer}\n\\setbeamercovered{transparent}\n" ++
     "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++

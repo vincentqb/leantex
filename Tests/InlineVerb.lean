@@ -6,11 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- `\verb`: the text between two copies of its delimiter, on one line, is
-code read raw — a control word inside it is text, never run — set in the
-mono face within its paragraph, its spaces held (`\verb*` shows them as
-U+2423); a delimiter with no second copy on its line is E0102, as LaTeX's
-"\verb ended by end of line". -/
+/-- `\verb` sets the raw text between two copies of its delimiter on one line in the mono face,
+spaces held (`\verb*` shows U+2423), and an unclosed delimiter is E0102. -/
 def inlineVerbChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let body (s : String) := s!"\\documentclass\{article}\n\\begin\{document}\n{s}\n\\end\{document}"

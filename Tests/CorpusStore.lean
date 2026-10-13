@@ -12,9 +12,8 @@ judge what the corpus ships: the census, the artifact tier, the backends. -/
 
 open LeanTex.Core LeanTex.Cli
 
-/-- The corpus fixture's images, read from `testdata/corpus/` the way the
-driver reads them beside the document (boundary pictures stay unfulfilled:
-their placeholder boxes are what an unconverted build ships). -/
+/-- The corpus fixture's images, read from `testdata/corpus/` as the driver reads them; boundary
+pictures stay unfulfilled. -/
 def corpusStore (doc : Ir.Doc) (fs : Option Font.FontSet := none) : IO Image.Store := do
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
   let mut svgs : Array (Option Driver.SvgFetch) := #[]
@@ -27,8 +26,7 @@ def corpusStore (doc : Ir.Doc) (fs : Option Font.FontSet := none) : IO Image.Sto
       if ← p.pathExists then
         let bytes ← IO.FS.readBinFile p
         let href := if cand == src then "" else cand
-        -- An SVG takes the driver's native route, with no converter: the
-        -- corpus is held to what a host with no tool ships.
+        -- An SVG takes the native route with no converter, as a host with no tool ships it.
         if Image.isSvg cand then
           let r ← Driver.svgFetch src bytes req.page doc.info.locale.tag none
           f := .decoded href r.res (some bytes) none (some bytes) none
@@ -41,14 +39,12 @@ def corpusStore (doc : Ir.Doc) (fs : Option Font.FontSet := none) : IO Image.Sto
     svgs := svgs.push svg
   let store := FigureStore.attach (Image.fulfilRequests fetched).1
     (svgs.map (·.map Driver.SvgFetch.drawn))
-  -- A drawn figure's text sets in the faces the pages set in, and one that
-  -- moves gets its still face, as the driver gives them.
+  -- A drawn figure's text sets in the page's faces, and a moving one gets its still face.
   match fs with
   | none => return store
   | some fs => return (FigureStore.settle fs store).1
 
-/-- The document with each drawn figure's own `<title>` as the alternative
-it leaves undeclared, as the driver hands them to `FigureAlt.titled`: the
-page the build ships, not the one before the titles. -/
+/-- The document with each drawn figure's own `<title>` as the alternative it leaves undeclared, as
+the driver gives it. -/
 def corpusTitled (doc : Ir.Doc) (store : Image.Store) : Ir.Doc :=
   FigureAlt.titled (store.entries.filterMap fun en => (en.vector.bind (·.title)).map (en.src, ·)) doc

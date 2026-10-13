@@ -8,43 +8,8 @@ open LeanTex.Core
 
 namespace Tests.BlockSkips
 
-/-!
-# An explicit vertical skip adds to the boundary it stands at
-
-TeX puts `\smallskip`, `\medskip`, `\bigskip` and `\vspace` on the vertical
-list where they stand (latex.ltx `\@vspace`: `\vskip #1\vskip\z@skip`), so
-the glue adds to the space the element above leaves below it and to the space
-the element below spends above it, and an `\addvspace` after it adds rather
-than taking the larger. Nothing absorbs it: not a beamer block's own
-`\medskipamount` above its title box and `\smallskipamount` below its body
-box (beamerinnerthemedefault.sty), not a list's `\topsep`, not a display's
-skips, not a listing's. At a frame's top the skip stands between beamer's
-`\vskip-\parskip\vbox{}` (beamerbaseframe.sty) and the first element, whose
-own `\parskip` still cancels the frame's.
-
-lualatex (TeX Live 2026) on the invented probes below — beamer with moloch at
-10 pt, every frame `[t]` with room to spare so each glue keeps its natural
-width — moves the element below a skip by these distances, in thousandths of
-a TeX point, against the same frame without the skip, at `\parskip` 0 and
-4 pt alike. The engine owes them exactly: a skip at its natural width, plus
-whatever smaller own space of a neighbour the skip keeps from being merged
-(two trivlist-like spaces meeting take the larger, as `\addvspace` does,
-until a skip stands between them).
-
-Not owed here, and measured on the same probes: a beamer list, centred block,
-display or listing meeting another element without a skip spaces itself
-differently from TeX in places (beamer's list colour stands between a block
-and its list, so TeX adds the list's `\topsep` where the engine takes the
-larger; a verbatim block is no trivlist here), so pairs whose skip-free
-boundary already differs are left out of the table.
-
-The HTML twin: a document skip is a box of its own, as tall as the skip's
-natural width in the gap sheet's screen unit (`HtmlDoc.screenMilli`), with
-no margin of its own and a block formatting context, so no margin collapses
-through it; the element above owns its own space below before it (a rule
-for every element that owns a boundary below), the element below its own
-space above. The boundary is the three addends the page sums.
--/
+/-! An explicit vertical skip adds to the boundary it stands at, as TeX's `\@vspace` sets it, held
+to lualatex's moves on invented probes and to the HTML twin's skip box. -/
 
 private def preamble (pre : String) : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
@@ -84,10 +49,8 @@ private def below : String → String
   | "verbatim" => "\\begin{verbatim}\nomega code\n\\end{verbatim}"
   | _ => "\\begin{lstlisting}\nomega code\n\\end{lstlisting}"
 
-/-- `\bigskip` between two elements: lualatex's move of the lower one. Every
-pair whose skip-free boundary the engine sets as TeX does; the 15 and 18 pt
-rows are the unmerged neighbour spaces (a block's `\smallskipamount`, a
-display's skip below, against a centred block's `\topsep`). -/
+/-- `\bigskip` between two elements: lualatex's move of the lower one, per pair whose skip-free
+boundary the engine sets as TeX does. -/
 private def bigskipMoves : List (String × String × Int) :=
   (["paragraph", "block", "list", "centred", "display", "verbatim", "listing"].map
     fun y => ("paragraph", y, 12000)) ++
@@ -104,27 +67,24 @@ private def bigskipMoves : List (String × String × Int) :=
   (["paragraph", "block", "list", "centred", "display", "verbatim", "listing"].map
     fun y => ("listing", y, 12000))
 
-/-- Each skip spelling between blocks and paragraphs: lualatex's move in
-TeX points. A length in points is the engine's point numerically; the
-centimetre (28.453 TeX points) is compared as a length. -/
+/-- Each skip spelling between blocks and paragraphs: lualatex's move in TeX points; a centimetre
+(28.453 TeX points) is compared as a length. -/
 private def skipMoves : List (String × String × Int × Bool) :=
   [("\\smallskip", "small", 3000, false), ("\\medskip", "medium", 6000, false),
    ("\\bigskip", "big", 12000, false), ("\\vspace{1cm}", "centimetre", 28453, true),
    ("\\vspace{-4pt}", "negative", -4000, false), ("\\bigskip\n\\medskip", "two", 18000, false)]
 
-/-- lualatex's distance from a painted block's body box to the next block's
-title box, the skip between them: medskip, smallskip and `\lineskip` with
-nothing between, then each skip on top. -/
+/-- lualatex's distance from a painted block's body box to the next block's title box, with each
+skip between them. -/
 private def blockGaps : List (String × Int) :=
   [("", 10000), ("\\smallskip", 13001), ("\\medskip", 16001), ("\\bigskip", 22000),
    ("\\vspace{1cm}", 38454)]
 
-/-- 2 thousandths of a point: lualatex's three-decimal big points and their
-conversion to TeX points. -/
+/-- 2 thousandths of a point: lualatex's three-decimal big points and their conversion to TeX
+points. -/
 private def tolerance : Int := 2
 
-/-- TeX points in thousandths, in the engine's point (PostScript's): a
-centimetre is 28.453 TeX points and 28.346 of the engine's. -/
+/-- TeX points in thousandths, in the engine's point (PostScript's). -/
 private def bpMilli (texMilli : Int) : Int := (texMilli * 7200 + 3613) / 7227
 
 private def pagesOf (fonts : Font.FontSet) (src : String) : Array Layout.PageOut × Ir.Doc :=
@@ -151,7 +111,6 @@ private def skipsOf (doc : Ir.Doc) : Array (Ir.Sourced Dim.SymGlue) :=
 
 private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (pre, label) in [("", "parskip 0"), ("\\setlength{\\parskip}{4pt}\n", "parskip 4pt")] do
-    -- `\bigskip` between every pair TeX sets additively.
     let frames := bigskipMoves.flatMap fun (x, y, _) =>
       [frame (above x ++ "\n\n" ++ below y), frame (above x ++ "\n\n\\bigskip\n\n" ++ below y)]
     let (pages, _) := pagesOf fonts (document pre frames)
@@ -164,7 +123,6 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         check ref s!"block skips ({label}): \\bigskip between {x} and {y} moves it {lua} (lualatex), got {spMilli (d1 - d0)}"
           (d1 - d0 == Dim.pt want && (lua - 1000 * want).natAbs ≤ tolerance.toNat)
       | _, _ => check ref s!"block skips ({label}): the {x}/{y} probe's marks ship" false
-    -- Every skip spelling, between blocks and paragraphs.
     let pairs := [("block", "block"), ("paragraph", "paragraph"), ("block", "paragraph"),
       ("paragraph", "block")]
     for (skip, name, lua, physical) in skipMoves do
@@ -172,8 +130,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         [frame (above x ++ "\n\n" ++ below y), frame (above x ++ "\n\n" ++ skip ++ "\n\n" ++ below y)]
       let (pages, doc) := pagesOf fonts (document pre frames)
       let size := doc.page.fontSize
-      -- The engine pays the IR's value whole: the glue the skip elaborated to,
-      -- at its natural width, which is TeX's within the measurement.
+      -- The engine pays the skip's elaborated glue whole, at its natural width.
       let width := (skipsOf doc).foldl (fun s g => s + (g.value.resolve size (size / 2)).width) (0 : Dim.Sp)
       let width := width / pairs.length
       check ref s!"block skips ({label}): {name} resolves to lualatex's {lua} TeX points"
@@ -184,8 +141,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
           check ref s!"block skips ({label}): {name} between {x} and {y} moves it by its width, got {spMilli (d1 - d0)}"
             (d1 - d0 == width)
         | _, _ => check ref s!"block skips ({label}): the {name} {x}/{y} probe's marks ship" false
-    -- At a frame's top the skip stands under the opening; the first
-    -- paragraph's or list's `\parskip` still cancels the frame's.
+    -- At a frame's top the first paragraph's or list's `\parskip` still cancels the frame's.
     let tops := ["paragraph", "block", "list"]
     let frames := tops.flatMap fun y => [frame (below y), frame ("\\bigskip\n\n" ++ below y)]
     let (pages, _) := pagesOf fonts (document pre frames)
@@ -195,7 +151,6 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         check ref s!"block skips ({label}): \\bigskip at a frame's top moves its first {y} 12000 (lualatex), got {spMilli (y1 - y0)}"
           (y1 - y0 == Dim.pt 12)
       | _, _ => check ref s!"block skips ({label}): the frame-top {y} probe's marks ship" false
-    -- Inside a block's body, before its end, and before `\pause`.
     let inner := [
       ("at a block body's top", "\\begin{block}{Alpha title}\n", "Omega body words.\\end{block}", false),
       ("before a block's end", "\\begin{block}{Alpha title}Alpha body words.\n", "\\end{block}\n" ++ below "block", false),
@@ -209,7 +164,6 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         check ref s!"block skips ({label}): \\bigskip {name} moves what follows 12000 (lualatex), got {spMilli (d1 - d0)}"
           (d1 - d0 == Dim.pt 12)
       | _, _ => check ref s!"block skips ({label}): the probe {name} ships its marks" false
-  -- The distance between two painted blocks, body box to title box.
   let frames := blockGaps.map fun (skip, _) =>
     frame (above "block" ++ "\n" ++ skip ++ "\n" ++ below "block")
   let (pages, _) := pagesOf fonts (document "" frames)
@@ -224,16 +178,8 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         ((spMilli (t - b) - want).natAbs ≤ tolerance.toNat)
     | _, _ => check ref s!"block skips: the '{skip}' blocks ship their boxes" false
 
-/-- TeX's primitive `\vskip` reads its glue unbraced, its keywords run into
-their dimensions or not (`plus2pt`). lualatex moves what follows it by its
-glue — 7 pt between paragraphs, and mid-paragraph too, where the vertical
-command ends the paragraph (a `\vspace` there is a `\vadjust` and keeps it),
--3 pt for a negative skip, and `3pt plus2pt` or `3pt minus1pt` by 3 pt — and
-`\vskip 0pt plus 1fill` is `\vfill`, spelled `\vskip0pt plus1fill` too. One
-difference: an element's `\addvspace` after `\vskip` takes the larger, where
-after `\vspace`, which closes on `\vskip\z@skip`, it adds — lualatex moves a
-centred block after `\vskip 12pt` by 4 pt, the skip less the block's own
-8 pt `\topsep`, and after `\vspace{12pt}` by 12. -/
+/-- TeX's primitive `\vskip` reads its glue unbraced and moves what follows by it, and an element's
+`\addvspace` after it takes the larger where after `\vspace` it adds. -/
 private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let para := above "paragraph"
   let cases := [("between paragraphs", "\n\n\\vskip 7pt\n\n", 7),
@@ -283,11 +229,8 @@ private def styleDecl (style name : String) : Option String :=
     let [n, value] := decl.splitOn ":" | none
     if n.trimAscii.toString == name then some value.trimAscii.toString else none
 
-/-- A skip spelled through a register LaTeX keeps: `\baselineskip`, the
-`\parskip` in force, a multiple or a negative of either. lualatex moves what
-follows by these thousandths of a TeX point on the probes below (beamer,
-moloch, 10 pt, `\parskip` 0 and 4 pt declared in the preamble), against the
-same frame without the skip. -/
+/-- A skip spelled through a register LaTeX keeps, with lualatex's moves in thousandths of a TeX
+point at `\parskip` 0 and 4 pt. -/
 private def registerMoves : List (String × Int × Int) :=
   [("\\vspace{\\baselineskip}", 12000, 12000), ("\\vspace{2\\baselineskip}", 24000, 24001),
    ("\\vspace{-\\baselineskip}", -12000, -12000), ("\\vspace{0.5\\baselineskip}", 6001, 6000),
@@ -295,10 +238,8 @@ private def registerMoves : List (String × Int × Int) :=
    ("\\vspace{\\smallskipamount}", 3000, 3000), ("\\vspace{\\medskipamount}", 6000, 6000),
    ("\\vspace{\\bigskipamount}", 12000, 12000)]
 
-/-- The registers a document's skip reads elaborate to their values, with
-no diagnostic, and move what follows as lualatex moves it; TeX's own
-spelling of an infinite stretch, `\vspace{0pt plus 1fill}`, stands where
-`\vfill` stands. -/
+/-- The registers a document's skip reads elaborate to their values with no diagnostic and move what
+follows as lualatex does. -/
 private def registerChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let para := above "paragraph"
   for (pre, label, col) in [("", "parskip 0", 0), ("\\setlength{\\parskip}{4pt}\n", "parskip 4pt", 1)] do
@@ -325,17 +266,15 @@ private def registerChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     ((fillOf "\\vspace{0pt plus 1fill}").isSome &&
       fillOf "\\vspace{0pt plus 1fill}" == fillOf "\\vfill")
 
-/-- A skip box's natural width in milli-rem, read off its style: the
-`--skip` the sheet turns into its height or, negative, its bottom margin;
-nothing declared is zero. -/
+/-- A skip box's natural width in milli-rem, read off its style's `--skip`; nothing declared is
+zero. -/
 private def boxMilli (style : String) : Option Int :=
   match styleDecl style "--skip" with
   | some value => remMilliOf value
   | none => if style.trimAscii.isEmpty then some 0 else none
 
-/-- The box's extent where no sheet reaches it: a positive skip's height, a
-negative one's bottom margin, the same length as its `--skip`, and no other
-margin. -/
+/-- The box's extent where no sheet reaches it: a positive skip's height or a negative one's bottom
+margin, as its `--skip`, and no other margin. -/
 private def boxExtentInline (style : String) : Bool :=
   match styleDecl style "--skip" with
   | none => style.trimAscii.isEmpty
@@ -368,8 +307,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       else (HtmlDoc.screenMilli size v : Int)
     check ref s!"block skips HTML: a {spMilli v} thousandths skip is a box of {want} milli-rem, its extent on the box ('{style}')"
       (boxMilli style == some want && boxExtentInline style && !hasStr style "margin-top")
-  -- A page that ships none of the engine's sheet still moves the follower
-  -- by the skip: the box carries its extent itself, as it does with the sheet.
+  -- With none of the engine's sheet, the box carries its extent itself.
   for (cfg, mode) in [(({ css := .none } : HtmlDoc.Config), "css = none"), ({ css := .bulma }, "bulma")] do
     let (_, bare, _) := HtmlDoc.emitTree cfg doc
     let styles := (elemNodesList (· == "div") #[] bare.toList).filterMap fun
@@ -380,8 +318,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       (styles == boxes.map (fun attrs => (HtmlDoc.attrOf? attrs "style").getD "") &&
         styles.all boxExtentInline && styles.any (hasStr · "height: ") &&
         styles.any (hasStr · "margin-bottom: -"))
-  -- The frame-top box takes the frame's opening and pays beamer's
-  -- `\vskip-\parskip`, which the paragraph after it cancels by its own.
+  -- The frame-top box pays beamer's `\vskip-\parskip`, which the paragraph after it cancels.
   check ref "block skips HTML: a skip opening a frame owns its opening"
     ((boxes.back?.map (hasClassTok · "frame-body-start")).getD false)
   let (head, _, _) := HtmlDoc.emitTree {} doc
@@ -393,11 +330,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block skips HTML: a negative skip is the box's bottom margin, its only own margin"
     (HtmlDoc.blockGapRules doc.docClass.record.lists size doc.tokens |>.contains
       (.reset ".vskip" "0 0 min(0rem, var(--skip, 0rem))"))
-  -- Every element that owns a space below it in the sheet owns it before a
-  -- skip too, without the peer gap of the paragraph the generic boundary
-  -- assumes after it: the follower past the skip pays its own. A boundary
-  -- that sets its follower flush (a heading's, a caption's) sets a skip
-  -- flush through the same rule.
+  -- An element owning its space below owns it before a skip too; the follower pays its own.
   for (lineage, lname) in [(Ir.ListLineage.sizeFile, "size file"), (.beamer, "beamer"), (.web, "web")] do
     for sz in [Dim.pt 10, Dim.pt 12] do
       let rules := HtmlDoc.blockGapRules lineage sz {}
@@ -413,10 +346,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
           check ref s!"block skips HTML ({lname}, {spMilli sz}): '{sel}' owns its space before a skip, without the follower's gap"
             ((companion.map fun (_, own) =>
               !hasStr own "+ var(--parskip" && (own == v || hasStr v own || hasStr own v)).getD false)
-  -- The boundary the three addends make, block to block across
-  -- `\bigskip`, in screen milli-rem: the block's `\smallskipamount`, the
-  -- skip, the next block's `\medskipamount` and `\lineskip` — the page's
-  -- 22 pt, each addend converted once.
+  -- Across `\bigskip`: `\smallskipamount`, the skip, `\medskipamount` and `\lineskip`, 22 pt.
   let rules := HtmlDoc.blockGapRules doc.docClass.record.lists size doc.tokens
   let valueOf (p : String → Bool) : Option Int := rules.findSome? fun
     | .boundary sel v => if p sel then remMilliOf v else none
@@ -432,10 +362,8 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((b + s + a - want).natAbs ≤ 3)
   | _, _, _ => check ref "block skips HTML: the block boundary's three addends are in the sheet" false
 
-/-- A skip met inside inline content — a table cell, a bold run, a
-footnote, a frame or block title — has no vertical glue to stand in: it is
-skipped with one W0329, the document builds, and none of its native
-spelling reaches the page as text. lualatex accepts every one. -/
+/-- A skip inside inline content has no vertical glue to stand in: it is skipped with one W0329 and
+the document builds. -/
 private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let sites := [("a table cell", "\\begin{tabular}{p{3cm}}cell words \\vskip 3pt more\\end{tabular}"),
     ("a bold run", "\\textbf{bold \\vskip 3pt words}"),
@@ -451,8 +379,7 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       ((diags.filter (·.code == "W0329")).size == 1 && diags.all (·.code != "W0301"))
     check ref s!"block skips: a skip inside {name} sets none of its spelling as text"
       (pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "before")
-  -- An infinite skip met there is the same one skipped site: no stretch loss
-  -- of its own beside it, and a width with `\fill` on top one skip.
+  -- An infinite skip there is the same one skipped site, with no stretch loss of its own.
   for (name, body) in [("an unranked stretch", "\\textbf{bold \\vspace{0pt plus 1fil} words}"),
       ("a width and a fill", "\\textbf{bold \\vspace{1em plus 1fill} words}"),
       ("an emphasis", "\\emph{some \\vspace{1em plus 1fill} words}"),
@@ -466,11 +393,8 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   let (_, diags) := Elab.run "block-skips-inline-title.tex" titled
   check ref "block skips: a skip inside a frame title builds" (diags.all (·.severity != .error))
 
-/-- An infinite stretch other than `\\vfill`'s ranks against the page's other
-infinite glues, which the engine does not tell apart: lualatex leaves what
-follows `\\vskip 0pt plus 1fil` in place on a `[t]` frame, whose own bottom
-glue outranks it. The engine sets the skip at its natural width and names
-it once (W0104); `\\vskip 0pt plus 1fill` stays `\\vfill`. -/
+/-- An infinite stretch other than `\vfill`'s is set at its natural width and named once (W0104);
+`\vskip 0pt plus 1fill` stays `\vfill`. -/
 private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let para := above "paragraph"
   let pageOf (skip : String) : Option Dim.Sp × Array Diag :=
@@ -486,20 +410,16 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let (fill, diags) := pageOf "\\vskip 0pt plus 1fill"
   check ref "block skips: \\vskip 0pt plus 1fill is \\vfill, unnamed"
     (fill.isSome && fill != natural && diags.all (·.code != "W0104"))
-  -- The skip door reads `\\vspace`'s argument the same way.
   let (vnatural, _) := pageOf "\\vspace{0pt}"
   let (vfil, vdiags) := pageOf "\\vspace{0pt plus 1fil}"
   check ref "block skips: \\vspace{0pt plus 1fil} sets at its natural width, named once"
     (vfil.isSome && vfil == vnatural && (vdiags.filter (·.code == "W0104")).size == 1)
-  -- TeX's `\fill` over a natural width is one glue that stretches: its width,
-  -- and a fill after it.
+  -- TeX's `\fill` over a natural width is one glue that stretches.
   let (wfill, wdiags) := pageOf "\\vspace{1em plus 1fill}"
   let (wsplit, _) := pageOf "\\vspace{1em}\\vfill"
   check ref "block skips: \\vspace{1em plus 1fill} is its width and a fill, unnamed"
     (wfill.isSome && wfill == wsplit && wdiags.all (·.code != "W0104"))
-  -- Every spelling TeX reads as that glue: LaTeX's `\stretch`, the fill unit a
-  -- space past its factor, the keywords in capitals, a shrink after the
-  -- stretch, a register for the width; lualatex sets each.
+  -- Every spelling TeX reads as that glue, each set by lualatex.
   for (skip, same) in [("\\vspace{\\stretch{1}}", "\\vfill"), ("\\vspace{0pt plus 1 fill}", "\\vfill"),
       ("\\vspace{0pt PLUS 1FILL}", "\\vfill"),
       ("\\vspace{12pt plus 1fill minus 3pt}", "\\vspace{12pt}\\vfill"),
@@ -510,9 +430,7 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     check ref s!"block skips: '{skip}' stands where '{same}' stands, unnamed, got {ds.map (·.code)}"
       (y.isSome && y == want && ds.all fun d => d.code != "W0104" && d.code != "W0301" &&
         d.severity != .error)
-  -- The block reader's own key: `stretch = fill` (or `fil`, the native
-  -- reader's one infinite unit) is the fill; any other value is the key's
-  -- wrong type, never an unknown key.
+  -- `stretch = fill` (or `fil`) is the fill; any other value is the key's wrong type.
   let (nfill, nds) := pageOf "\\block[stretch = fil]{}"
   let (vfill, _) := pageOf "\\vfill"
   check ref "block skips: \\block[stretch = fil]{} stands where \\vfill stands"
@@ -521,12 +439,8 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   check ref "block skips: a stretch the block reader does not take names its values"
     (bad.any fun d => hasStr d.message "fill or unranked" && !hasStr d.message "has no key")
 
-/-- The sheet's rules for a skip box where its follower's term is not the
-one the generic boundary assumes: a skip opening an untitled frame pays the
-frame's `\\vskip-\\parskip`, a step carrier opening on a skip box owns the
-box's boundaries and opening, the paragraph past a box after a list pays
-TeX's `\\parskip` (the list's own term) rather than the sheet's peer gap, and
-a rule's `<hr>` carries no margin of its own, as TeX's `\\hrule` has none. -/
+/-- The sheet's rules for a skip box whose follower's term differs from the generic boundary's: a
+frame opening, a step carrier, a paragraph after a list, and a rule's `<hr>`. -/
 private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (lineage, lname) in [(Ir.ListLineage.sizeFile, "size file"), (.beamer, "beamer")] do
     let rules := HtmlDoc.blockGapRules lineage (Dim.pt 10) {}
@@ -541,11 +455,7 @@ private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
         !hasStr v "var(--parskip")
     check ref s!"block skips HTML ({lname}): the paragraph past a skip after a list pays TeX's \\parskip"
       (has fun sel v => hasStr sel "ul:not(.bibliography) + .vskip + p" && v == "var(--parskip, 0rem)")
-    -- The follower past a skip box after a heading, or opening a container
-    -- other than a frame or a step carrier, pays what its place pays
-    -- without the box — nothing — in the second-last rule, after every rule
-    -- a follower takes its gap from: the rules stand at zero specificity,
-    -- so the later one wins.
+    -- The rules stand at zero specificity, so the follower's later rule wins.
     let follower := (rules.reverse[1]?).bind fun
       | .boundary sel v => if v == "0" then some (cssSelParts sel) else none
       | _ => none

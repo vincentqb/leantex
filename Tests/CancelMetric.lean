@@ -8,15 +8,14 @@ open LeanTex.Core
 
 namespace CancelMetric
 
-/-- Independent source snippets share the driver's alphabet resolution;
-no round trip through dumped IR supplies the expected artifact. -/
+/-- A source snippet's math list through the driver's alphabet resolution, never a round trip
+through dumped IR. -/
 def formula (fonts : Font.FontSet) (source : String) : Option Math.MList :=
   let doc := (elabStr (dvDoc "\\usepackage{cancel}" ("$" ++ source ++ "$"))).1
   firstFormula (Ir.resolveMathAlphas fonts.mathAlphabets "math face" doc).1
 
-/-- Compare the measured mark and target with the shipped page, modulo
-only the common translation that page placement and reserved room add.
-The target hull is decoded independently from the emitted glyphs. -/
+/-- The measured mark and target against the shipped page, modulo the common translation placement
+and room add, the target hull decoded from the emitted glyphs. -/
 def agrees (fonts : Font.FontSet) (out : Layout.Out) (em : Int)
     (input : Math.CancelIn) (spec : Math.CancelSpec) (target : String) : Bool :=
   (do
@@ -40,9 +39,8 @@ def agrees (fonts : Font.FontSet) (out : Layout.Out) (em : Int)
       ink.bottom == dy + geom.valueY + input.vbot &&
       ink.top == dy + geom.valueY + input.vtop : Except String Bool).toOption.getD false
 
-/-- Source neighbours witness the reserved interval. Operand ink is read
-from the shipped outlines independently; signed spacing must not make it
-disappear from the measured envelope or cross the following source glyph. -/
+/-- Source neighbours witness the reserved interval: operand ink stays in the measured envelope and
+clear of the following source glyph. -/
 def bodyRoomAgrees (fonts : Font.FontSet) (out : Layout.Out)
     (metric : Math.CancelMetric) (spec : Math.CancelSpec) : Bool :=
   (do
@@ -59,9 +57,8 @@ def bodyRoomAgrees (fonts : Font.FontSet) (out : Layout.Out)
       body.right == dx + geom.shift + metric.bodyRight &&
       (!spec.room || body.inRoom left right) : Except String Bool).toOption.getD false
 
-/-- Ambient declarations reach the existing native resolver. The stale
-callback with an empty style history is a negative control: it must be
-rejected on the same shipped page when the active size changes. -/
+/-- Ambient declarations reach the native resolver, and a stale callback is rejected when the active
+size changes. -/
 def contextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let fixed (n : Int) : Dim.Affine Dim.Measure :=
     .lit { width := .ofSp (Dim.pt n) }
@@ -98,8 +95,8 @@ def contextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
           check ref s!"cancel metric context: {name}/{operand} rejects a stale default size"
             (!(stale.any fun m => agrees fonts out m.em m.input spec "0𝑔"))
 
-/-- Negative spacing separates an operand's logical advance from its ink.
-The callback exposes both, and native reservation contains that ink. -/
+/-- Negative spacing separates an operand's logical advance from its ink, and native reservation
+contains that ink. -/
 def signedRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for operand in ["\\!x", "x\\!\\!\\!\\!", "\\!\\!x\\!\\!\\!\\!"] do
     for room in [false, true] do
@@ -121,9 +118,8 @@ def signedRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
 end CancelMetric
 
 open CancelMetric in
-/-- A backend callback must measure the same operand, target, style and
-font as the native assembly. Shipped polygons, glyph ink and the current
-math em witness that agreement across aspect ratios and package options. -/
+/-- A backend callback measures the same operand, target, style and font as the native assembly,
+across aspect ratios and package options. -/
 def CancelMetric.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   check ref "cancel metric refuses an absent math face"

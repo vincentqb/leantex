@@ -24,17 +24,8 @@ private def runInks (out : Layout.Out) (text : String) : Array Ir.Color :=
       | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
       | _ => none
 
-/-- **An author colour binds no role but a code role's.** `\definecolor` and
-`\colorlet` name xcolor colours, a namespace apart from the roles `\palette`
-keys declare (`Palette.defineXcolor_design_id`; a code role's key declares
-that role too, `xcolorCodeRoleChecks`): the minted manual's own
-`\definecolor{bg}` paints no page, a colour named `fg` sets no text, a
-`\colorlet{alert}` leaves the alert role as declared and `\alert` reads that
-role (beamer's `alerted text`), while an expression (`\textcolor{bg}`,
-`\textcolor{alert}`) still reads the author's colour first, as xcolor does.
-minted's own
-`bgcolor=bg` sets the listing — and only the listing — on that colour. Read
-off the shipped pages and the emitted stylesheet. -/
+/-- An author colour binds no role but a code role's: `\definecolor` and `\colorlet` name xcolor
+colours apart from palette roles, while a colour expression reads the author's colour first. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr (article "\\definecolor{bg}{rgb}{.9,.9,.9}\n" "Probe text.")
@@ -96,8 +87,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (baseline "Before.").all (· < f.y) && (baseline "After.").all (· > f.y + f.h) &&
       (baseline "def f(x):").all fun y => f.y < y && y < f.y + f.h)
   let mCss := (HtmlDoc.emit {} mDoc).1
-  -- In print, as on the light screen, the panel paints the declared colour;
-  -- every other scheme carries it as a ground (`HtmlDoc.Config.listingStyle`).
+  -- Print and the light screen paint the declared colour; other schemes carry it as a ground.
   let (mHead, mBody, _) := emitIn {} mDoc .print
   let panels := (elemNodesList (· == "pre") #[] mBody.toList).filterMap fun n => match n with
     | .elem _ attrs _ => (attrs.find? (·.1 == "style")).map (·.2)
@@ -110,11 +100,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     "Probe page.")
   t "author colours: \\pagecolor names the page role explicitly"
     (pageFills pageDoc (layoutOf fonts pageDoc) == #[{ r := 0xF4, g := 0xF0, b := 0xE6 }])
-  -- The stylesheet's rules once read the page as `--surface`, the text as
-  -- `--ink`, the code ground as `--tint` and the focus ring as `--accent`,
-  -- the names an author colour was declared under too: a colour so named
-  -- repainted them in the HTML alone. Each rule's value, chased through the
-  -- page's own table, is the registry's colour.
+  -- Each rule's value, chased through the page's own table, is the registry's colour.
   let (hjDoc, _) := elabStr (article ("\\definecolor{surface}{HTML}{112233}" ++
     "\\definecolor{tint}{HTML}{445566}\\definecolor{accent}{HTML}{778899}" ++
     "\\definecolor{ink}{HTML}{AA0000}\n") "Probe words.")
@@ -126,8 +112,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   for (sel, prop, role, what) in [("body", "background", Ir.Role.page, "page"),
       ("body", "color", .ink, "text"), ("pre", "background", .codeSurface, "code ground"),
       ("a:focus-visible", "outline", .focus, "focus ring")] do
-    -- A role the class leaves unpainted (an article's code ground) is no
-    -- colour at all: the rule paints nothing there.
+    -- A role the class leaves unpainted is no colour at all: the rule paints nothing there.
     let registry := match Ir.Design.at hjDoc.palette .light role with
       | some c => HtmlDoc.cssColor c
       | none => "none"
@@ -142,13 +127,8 @@ private def runTexts (out : Layout.Out) (word : String) : Array (String × Ir.Co
         if glyphs.isEmpty then none else some (String.ofList (glyphs.map (·.2.1)).toList, ink)
       | _ => none
 
-/-- **An xcolor colour of a code role's key declares the role** (R149), the
-one spelling both engines compile: a listing under
-`\definecolor{codekeyword}` and `\colorlet{codeliteral}{blue}` sets its
-keywords and literals in them, on the page and in the HTML alike, as the
-`\palette` spelling of the two roles does, says nothing, and keeps both names
-readable as colours; without them the same tokens take what the palette
-derives. Read off `Layout.Out`, the typed HTML body and the stylesheet. -/
+/-- An xcolor colour of a code role's key declares the role, on the page and in the HTML, as the
+`\palette` spelling does, and stays readable as a colour. -/
 public def xcolorCodeRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre : String) := elabStr (article ("\\usepackage{minted}\n" ++ pre)
@@ -187,9 +167,7 @@ public def xcolorCodeRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   t "xcolor code roles: the stylesheet's two roles are the declared colours"
     (chaseCssValue vars (HtmlDoc.roleRef .codeKeyword) == some (HtmlDoc.cssColor red) &&
       chaseCssValue vars (HtmlDoc.roleRef .codeLiteral) == some (HtmlDoc.cssColor blue))
-  -- Declared in the body, inside a group: the role reaches a listing after
-  -- the group ends, as the colour of that name does and as the role's
-  -- `\palette` spelling does — a frame's end and an environment's alike.
+  -- Declared inside a group in the body, the role reaches a listing after the group ends.
   let listing := "\\begin{minted}{lean4}\ntheorem probe : 1 + 1 = 2 := by\n  sorry\n\\end{minted}"
   let groups : List (String × (String → String)) := [
     ("a frame", fun decl => dvDeck "\\usepackage{minted}\n"
@@ -202,23 +180,15 @@ public def xcolorCodeRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     let (gp, _) := elabStr (src "\\palette{ codekeyword = #A63D24 }")
     t s!"xcolor code roles: declared inside {what}, the keyword after it ships the declared colour"
       (!(inksOf gx keyword).isEmpty && (inksOf gx keyword).all (· == red))
-    -- The page and the listing's HTML are the role's `\palette` spelling's;
-    -- the colour of that name is declared beside the role, the one place the
-    -- two spellings' HTML differs.
+    -- That name's colour is declared beside the role: the one HTML difference between spellings.
     let code (d : Ir.Doc) := ((body d).splitOn "<code").getD 1 "" |>.splitOn "</code>" |>.headD ""
     t s!"xcolor code roles: declared inside {what}, the page and the listing are the palette spelling's"
       (runs gx == runs gp && !(code gx).isEmpty && code gx == code gp)
     t s!"xcolor code roles: declared inside {what}, the HTML declares the colour beside the role"
       (hasStr (body gx) "--ltx-c-codekeyword: " && !hasStr (body gp) "--ltx-c-codekeyword: ")
 
-/-- **An HTML colour's PDF decimals are lualatex's**: for every byte, the
-DeviceRGB decimal the engine writes is the one lualatex's xcolor writes
-(`testdata/oracles/xcolor-html-decimals.tsv`, from
-`scripts/gen-xcolor-decimals.lean`), a whole one without its `.0`, for an
-HTML colour and for an RGB colour a `\definecolor` stores, which xcolor
-converts alike, and such a stored RGB colour shows the HTML byte xcolor
-converts its stored decimals to; and a document's `\definecolor` of an HTML
-colour ships that operator. -/
+/-- An HTML colour's PDF decimals are lualatex's for every byte
+(`testdata/oracles/xcolor-html-decimals.tsv`), for HTML and stored RGB colours alike. -/
 public def htmlDecimalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let rows := (← IO.FS.readFile "testdata/oracles/xcolor-html-decimals.tsv").splitOn "\n" |>.filter
@@ -239,9 +209,7 @@ public def htmlDecimalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         wrong := wrong.push s!"{byte}: {html} {defined}"
     | _ => wrong := wrong.push row
   t s!"xcolor decimals: every byte writes lualatex's decimal ({wrong.toList.take 4})" wrong.isEmpty
-  -- An RGB colour a definition stores shows xcolor's own HTML conversion of
-  -- the decimals it stores, as lualatex's `\\convertcolorspec{named}{x}{HTML}`
-  -- reports them (measured: 133.5 stores 0.52353 and reports 85).
+  -- xcolor's HTML conversion of the stored decimals: 133.5 stores 0.52353 and reports 85.
   for (v, byte) in [("0.5", 0x00), ("127.5", 0x80), ("133.5", 0x85), ("136.5", 0x88),
       ("139.5", 0x8B), ("146.5", 0x92), ("152.5", 0x98), ("178.5", 0xB2), ("229.5", 0xE5),
       ("254.5", 0xFF)] do
@@ -256,12 +224,8 @@ public def htmlDecimalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   t "xcolor decimals: a defined HTML colour ships lualatex's operator"
     (bytesContain pdf "0.92157 0.50587 0.10588 rg")
 
-/-- **A `\palette` name nothing reads is named where it stands**: `ink` and
-`surface` declare author colours, never the page's text and ground, so one
-the document names nowhere else is one W0387 at its declaration naming the
-key that sets what the document likely meant (`fg`, `bg`); named where it is
-used, or declared by `\definecolor`, it is an author colour like any other
-and says nothing. -/
+/-- A `\palette` name nothing reads (`ink`, `surface`) is one W0387 at its declaration, pointing at
+the key likely meant. -/
 public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let named (ds : Array Diag) (key : String) : Array Diag :=
@@ -280,9 +244,7 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, roles) := elabStr (article "\\palette{ fg = #333333, bg = #FFFFFF }\n" "Probe.")
   t "palette keys: the role keys say nothing"
     (roles.all fun d => d.code != "W0387")
-  -- A read is the engine's: a colour expression, a palette value, a command
-  -- named for the colour, a beamer declaration, a picture's colour. The
-  -- word in prose or a comment reads nothing.
+  -- Only the engine's reads count; the word in prose or a comment reads nothing.
   let declared := "\\palette{ ink = #333333, surface = #F4F4F4 }\n"
   let (_, prose) := elabStr (article declared
     "Water beads on the surface of the leaf, dark as ink.")
@@ -309,10 +271,8 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "palette keys: a beamer colour declaration reads both keys"
     ((named beamer "ink").isEmpty && (named beamer "surface").isEmpty)
 
-/-- The artifact two builds are compared by: the PDF's bytes, and the HTML
-body with the stylesheet's rules — every author colour the page declares for
-a host to read left out, since a host's override is not the document's
-read. -/
+/-- The artifact two builds are compared by: the PDF's bytes and the HTML body and stylesheet rules,
+less the author colours declared for a host. -/
 private def flipArtifact (fonts : Font.FontSet) (doc : Ir.Doc) : ByteArray × String × String :=
   let geom := Layout.Geom.ofPage doc.page
   let pdf := driverPdf fonts geom doc (layoutOf fonts doc)
@@ -322,14 +282,8 @@ private def flipArtifact (fonts : Font.FontSet) (doc : Ir.Doc) : ByteArray × St
     !(d.startsWith "--ltx-c-" || d.startsWith "--ink:" || d.startsWith "--surface:")
   (pdf, Html.render (Html.elem "body" body) 0, "\n".intercalate rules)
 
-/-- **W0387 is the two-build oracle** (`unreadPaletteKeys`' premise): a
-document declaring `ink` and `surface` is built again with one key's value
-changed, and the shipped artifact is unchanged exactly when that key draws
-W0387. Each probe states which way it goes: a colour expression, a mix, a
-command named for the colour as an argument or as a declaration, a cancel
-mark, a rule the page draws, a picture's paint, a beamer element and a
-listing ground read the key; prose, a comment, and a colour construct the
-engine paints nothing for do not. -/
+/-- W0387 is the two-build oracle: changing one key's value leaves the artifact unchanged exactly
+when that key draws W0387. -/
 public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let probes : List (String × String × String × String × Bool) := [
@@ -361,7 +315,6 @@ public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       (changed == read)
     t s!"palette keys, two builds: {what}: W0387 exactly when the artifact ignores '{key}'"
       (warned == !changed)
-  -- A beamer element's declaration reads the key where the element paints.
   let deck (v : String) := Id.run do
     let (doc, ds) := elabStr ("\\documentclass{beamer}\n\\palette{ ink = " ++ v ++ " }\n" ++
       "\\setbeamercolor{frametitle}{fg=ink, bg=white}\n\\begin{document}\n" ++

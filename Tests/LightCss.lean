@@ -2,13 +2,8 @@ module
 
 public import LeanTex.Core.DesignRole
 
-/-!
-The light screen's static reading of the CSS a page states its colours in:
-each `var()` chased through the custom properties in scope and each
-`light-dark()` pair read on its light side — what a walk over the typed tree
-compares against the printed page, now that an element's paint reads its
-roles.
--/
+/-! The light screen's static reading of a page's colour CSS: `var()` chased through the custom
+properties in scope and `light-dark()` read on its light side. -/
 
 public section
 
@@ -35,11 +30,8 @@ def lightSide (v : String) : String :=
     (splitTopComma ((v.drop 11).dropEnd 1).toString).1.trimAscii.toString
   else v
 
-/-- **The light screen's reading of a CSS value** against the custom
-properties in force (`vars`, nearest declaration first): each `var()` chased,
-its fallback read where nothing declares it, and each `light-dark()` pair
-read on its light side, eight steps deep — what a static reading of the
-cascade gives a property the page states through its colour roles. -/
+/-- The light screen's reading of a CSS value against the custom properties in force, nearest first,
+eight steps deep. -/
 def lightValue (vars : List (String × String)) (v : String) : String :=
   (List.range 8).foldl (fun v _ =>
     let v := lightSide v
@@ -60,9 +52,8 @@ where
     | k :: rest@(_ :: _) => some (k.trimAscii.toString, (":".intercalate rest).trimAscii.toString)
     | _ => none
 
-/-- A style attribute with each ordinary declaration's value read as the
-light screen reads it against `vars` (`lightValue`): what a static walk over
-the typed tree compares, the custom properties themselves kept as written. -/
+/-- A style attribute with each ordinary declaration's value read by `lightValue`, custom properties
+kept as written. -/
 def lightStyle (vars : List (String × String)) (style : String) : String :=
   "; ".intercalate ((style.splitOn ";").filterMap fun decl =>
     match decl.splitOn ":" with
@@ -72,12 +63,8 @@ def lightStyle (vars : List (String × String)) (style : String) : String :=
       some s!"{key}: {if key.startsWith "--" then v else lightValue vars v}"
     | _ => if decl.trimAscii.isEmpty then none else some decl.trimAscii.toString)
 
-
-
-/-- A style attribute with every declaration's value — a custom property's
-too — read as the light screen reads it against `vars` and the style's own
-custom properties (`lightValue`): the concrete colours a check that compares
-custom properties reads. -/
+/-- A style attribute with every declaration's value, custom properties too, read by `lightValue`
+against `vars` and its own properties. -/
 def lightStyleAll (vars : List (String × String)) (style : String) : String :=
   let vars := styleVars style ++ vars
   "; ".intercalate ((style.splitOn ";").filterMap fun decl =>
@@ -86,20 +73,8 @@ def lightStyleAll (vars : List (String × String)) (style : String) : String :=
       some s!"{k.trimAscii.toString}: {lightValue vars (":".intercalate rest).trimAscii.toString}"
     | _ => if decl.trimAscii.isEmpty then none else some decl.trimAscii.toString)
 
-/-! ### Every scheme's reading
-
-The cascade a page's stylesheet gives its `:root` properties in one colour
-scheme: the top-level `:root` rules, then each `@supports` and `@media`
-block whose condition holds there — `light-dark()` support everywhere,
-`prefers-contrast: more` in the two more-contrast schemes, `print` in print —
-and each `light-dark()` pair read on the side the `color-scheme` in force
-there takes: dark where it names dark and the scheme is a dark one, or names
-dark alone. -/
-
-/-- A stylesheet's rules in order, each with the preludes of the blocks it
-stands in, outermost first: `@media`, `@supports` and every other at-rule
-but `@font-face` and `@page` hold rules; anything else holds declarations.
-Comments are dropped. -/
+/-- A stylesheet's rules in order, each with its enclosing at-rule preludes, outermost first;
+comments dropped. -/
 def sheetRules (css : String) : Array (List String × String × String) := Id.run do
   let mut stack : List String := []
   let mut out : Array (List String × String × String) := #[]
@@ -141,9 +116,7 @@ def sheetRules (css : String) : Array (List String × String × String) := Id.ru
       else cur := cur.push c
   return out
 
-/-- Whether a block's condition holds in a scheme, the reader asking more
-contrast where `more` says (in print too: a reader who asks it prints with
-it). -/
+/-- Whether a block's condition holds in a scheme, `more` asking more contrast (in print too). -/
 def holdsIn (s : Ir.Scheme) (prelude : String) (more : Bool := s.more) : Bool :=
   if prelude.startsWith "@supports" then prelude.contains "light-dark"
   else if prelude == "@media (prefers-contrast: more)" then more
@@ -169,8 +142,8 @@ def rootDeclsIn (s : Ir.Scheme) (rules : Array (List String × String × String)
   (rules.toList.filter fun (conds, sel, _) =>
     sel == ":root" && conds.all (holdsIn s · more)).flatMap fun (_, _, decls) => cssDecls decls
 
-/-- **The `:root` table a scheme's cascade gives**, newest first, and whether
-its `light-dark()` pairs read their dark side there. -/
+/-- The `:root` table a scheme's cascade gives, newest first, and whether its `light-dark()` pairs
+read dark there. -/
 def schemeRoot (css : String) (s : Ir.Scheme) (more : Bool := s.more) :
     List (String × String) × Bool :=
   let decls := rootDeclsIn s (sheetRules css) more
@@ -188,10 +161,8 @@ def sideOf (dark : Bool) (v : String) : String :=
     (if dark then d else l).trimAscii.toString
   else v
 
-/-- **A CSS value as a scheme reads it** against the custom properties in
-force (`vars`, nearest first): each `var()` chased, its fallback read where
-nothing declares it, each `light-dark()` pair read on the scheme's side,
-eight steps deep. -/
+/-- A CSS value as a scheme reads it against the custom properties in force, nearest first, eight
+steps deep. -/
 def schemeRead (dark : Bool) (vars : List (String × String)) (v : String) : String :=
   (List.range 8).foldl (fun v _ =>
     let v := sideOf dark v

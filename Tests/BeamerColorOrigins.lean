@@ -8,12 +8,7 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- A delayed frame-title contrast report names the channel that supplied
-the winning Beamer alias. The synthetic included source runs through
-preparation, body elaboration, the contrast report, trigger attribution,
-and site accounting. The pre-judge palette checks distinguish source
-ownership from paint order. The soft ink fails even the large-scale ratio a
-deck's stage-size title asks, so the bar's pair is reported. -/
+/-- A delayed frame-title contrast report names the channel that supplied the winning Beamer alias. -/
 def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let root := "beamer-origins.tex"
@@ -104,8 +99,6 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("\\setbeamercolor{probe source}{fg=SoftInk,bg=white}\n" ++
       "\\setbeamercolor*{headline}{use=probe source,fg=probe source.fg,bg=probe source.bg}")
     soft (some (2, "\\setbeamercolor"))
-  -- An overwritten source must disappear even when the winning channel has
-  -- no Beamer declaration site. These checks inspect the resolver's output.
   let site (line : Nat) : Span := ⟨child, { line := line, col := 1 }⟩
   let declared := (({} : BeamerColor.State).declare
     "frametitle" false "fg=red,bg=white" (site 1)).1

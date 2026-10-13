@@ -22,11 +22,8 @@ def synthFace (family : String) (path : String := "") : FontDb.Face :=
     fixedPitch := false
     weight := 400 }
 
-/-- The weight axis's string half, executable because String does not
-kernel-reduce (`Weight.ofCss_css_id` in Ir.lean carries the numeric half
-as a theorem): parsing inverts printing over every series, the NFSS
-combination rules hold, and a face's OS/2 500 reads as the `m` series —
-a Medium face serving as a document's regular. -/
+/-- The weight axis's string half: parsing inverts printing over every series, the NFSS combination
+rules hold, and OS/2 500 reads as the `m` series. -/
 def weightAxisChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "every series round-trips through its NFSS spelling"
@@ -53,23 +50,14 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "nearest of nothing alike is empty" ((FontDb.nearest fams "Zapfino").isEmpty)
   t "nearest caps at eight"
     ((FontDb.nearest ((List.range 20).map fun i => s!"Test Face {i}").toArray "Test").size ≤ 8)
-  -- families must be linear in the face count. The shape that made the
-  -- quadratic version cost two seconds was a TeX Live tree: ~3000 faces in
-  -- ~1000 families, so `seen` grew to a thousand names re-normalised for
-  -- every face. Synthesised here in that shape — the suite reads no host
-  -- fonts — with distinct families, so dedupe is checked exactly too.
+  -- A TeX Live shape: ~3000 faces in ~1000 families, distinct so dedupe is checked exactly.
   let many := ((List.range 3000).map fun i => synthFace s!"Family {i / 3}" s!"/x/{i}.otf").toArray
   let t0 ← IO.monoMsNow
   let fams' := FontDb.families many
-  -- Consumed before the clock is read again: a pure `let` floats to its
-  -- first use, so a timing with nothing between the two reads measures
-  -- nothing (the quadratic version "took 0 ms" that way; forced, 21 s).
+  -- Consumed before the clock is read again: a pure `let` floats to its first use.
   t "families dedupes" (fams'.size == 1000)
   let ms := (← IO.monoMsNow) - t0
   t s!"families is linear ({ms} ms for {many.size} faces)" (ms < 200)
-  -- A fontspec name like "Alpha Sans Light" is no family, but it names a
-  -- face: family plus subfamily matches it, its italic sibling comes along,
-  -- and its true bold is honestly unsatisfied rather than silently heavier.
   let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
     subfamily := "Light", weight := 300 }
   let lightIt : FontDb.Face := { light with
@@ -86,11 +74,9 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a real family name still resolves its regular"
     ((FontDb.resolve faces "Alpha Sans" {}).map (·.1.subfamily) == some "Regular")
 
-/-- The weight axis below the driver: series spellings in `\fonts`, exact
-resolution for an installed weight, the nearest-with-W0366 substitution
-for a missing one, categorical italic, and the declared-face override —
-plus `docWeightKeys`, the precompute contract that tells the driver which
-off-corner keys a document's styles can ask for. -/
+/-- The weight axis below the driver: `\fonts` series spellings, exact resolution for an installed
+weight, the nearest with W0366 for a missing one, categorical italic, the declared-face override,
+and `docWeightKeys`. -/
 def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pre := "\\documentclass{article}"
@@ -102,7 +88,6 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
     (d.faceFor 0 600 true == some "X SemiBold Italic")
   t "a width half stays an unknown key"
     (errCodes (pre ++ "\\fonts{ body.bx = \"Y\" }" ++ post) == ["E0322"])
-  -- Resolution on the axis, over synthetic faces.
   -- A substitution's words, then its site's particulars (the weights).
   let subMsg : Option FontDb.Substituted → Option String
     | some s => some ((DriverDiag.substituted s).message ++
@@ -136,16 +121,12 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
         (fun r => (r.1.subfamily, subMsg r.2)) ==
       (FontDb.resolveVariant faces "Alpha Sans" none { bold := true }).map
         (fun r => (r.1.subfamily, subMsg r.2)))
-  -- The key census: exactly the off-corner keys the styled ancestry
-  -- reaches, with slot and italic applied as layout will apply them.
   let doc : Ir.Doc := { body := #[.para #[.styled (.series .l)
     #[.text "x", .styled .italic #[.text "y"]]]] }
   t "docWeightKeys folds the styled ancestry"
     (Layout.docWeightKeys doc == #[(0, 300, false), (0, 300, true)])
   let corner : Ir.Doc := { body := #[.para #[.styled .bold #[.text "x"]]] }
   t "corner weights collect no extra keys" ((Layout.docWeightKeys corner).isEmpty)
-  -- The surface, end to end: \fontseries rides Compat's @series marker
-  -- through declStyleOf into a .series style the collector then sees.
   let (fsDoc, fsDs) := elabStr (pre ++ "\\begin{document}{\\fontseries{l}\\selectfont x}\\end{document}")
   t "fontseries elaborates clean" (fsDs.filter (·.severity == .error) |>.isEmpty)
   t "fontseries reaches the key census"
@@ -156,7 +137,6 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unknown series warns and stands down"
     ((elabStr (pre ++ "\\begin{document}{\\fontseries{zz}\\selectfont x}\\end{document}")).2.map
       (·.code) |>.contains "W0104")
-  -- FontFace lands as the native declaration, * expanding to the family.
   let ff := (elabStr (pre ++ "\\setmainfont{Alpha Sans}[UprightFont=*-Medium, " ++
     "FontFace={l}{n}{*-Light}]" ++ post)).1.fonts
   t "FontFace declares the series face" (ff.faceFor 0 300 false == some "Alpha Sans-Light")
@@ -164,12 +144,6 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a FontFace shape off the model is named"
     ((elabStr (pre ++ "\\setmainfont{Alpha Sans}[FontFace={l}{sc}{*-Light}]" ++ post)).2.map
       (·.code) |>.contains "W0104")
-  -- A 0-ary definition ending in a declaration styles the rest of the
-  -- enclosing group — expansion is token replacement, so the declaration
-  -- must take the same scope written directly. The invariant whose absence
-  -- was the defect: the body elaborated in isolation left the style
-  -- wrapping the empty rest of the body, and every {\featherweight …} run
-  -- rendered upright beside an empty styled node.
   let seriesText (doc : Ir.Doc) : List String :=
     doc.body.toList.flatMap fun b => match b with
       | .para content =>
@@ -184,15 +158,12 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a spelling's trailing declaration styles the rest of its group"
     (seriesText spellDoc == ["x"])
 
-/-- fontspec's per-variant face options (`BoldFont=` and siblings) reach the
-font spec and win over the family's own variant; a declared face the host
-lacks degrades with a message that says the declaration could not be met and
-names the face actually used. -/
+/-- fontspec's per-variant face options reach the font spec and win over the family's own variant,
+and a declared face the host lacks degrades with a message naming the face used. -/
 def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pre := "\\documentclass{article}"
   let post := "\\begin{document}x\\end{document}"
-  -- The compat layer carries the four face options into the spec.
   let d := (elabStr (pre ++ "\\setsansfont[ItalicFont={Alpha Sans Light Italic}, " ++
     "BoldFont={Alpha Sans}, BoldItalicFont={Alpha Sans Italic}]{Alpha Sans Light}" ++
     post)).1.fonts
@@ -201,11 +172,9 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat ItalicFont" (d.faceFor 1 400 true == some "Alpha Sans Light Italic")
   t "compat BoldItalicFont" (d.faceFor 1 700 true == some "Alpha Sans Italic")
   t "compat no UprightFont declared" (d.faceFor 1 400 false == none)
-  -- ...from either side of the name, a file name included.
   let d2 := (elabStr (pre ++
     "\\setsansfont{Open Sans}[Path = fonts/, BoldFont = OpenSans-Bold.ttf]" ++ post)).1.fonts
   t "compat BoldFont after the name" (d2.faceFor 1 700 false == some "OpenSans-Bold.ttf")
-  -- The native spelling.
   let d3 := (elabStr (pre ++ "\\fonts{ body = \"X\", body.bold = \"Y\", " ++
     "mono.upright = \"Z\" }" ++ post)).1.fonts
   t "fonts body.bold" (d3.faceFor 0 700 false == some "Y")
@@ -214,10 +183,8 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     == ["E0322"])
   t "fonts variant wrong type" (errCodes (pre ++ "\\fonts{ body.bold = 12 }" ++ post)
     == ["E0323"])
-  -- fontspec's `*` in a per-variant name stands for the family name.
   let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Semibold]{Ordwick}" ++ post)).1.fonts
   t "fontspec * expands to the family name" (d4.faceFor 1 400 false == some "Ordwick-Semibold")
-  -- Resolution: the declared face wins over the family's own variant.
   -- A substitution's words, then its site's particulars (the weights).
   let subMsg : Option FontDb.Substituted → Option String
     | some s => some ((DriverDiag.substituted s).message ++
@@ -235,13 +202,11 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((FontDb.resolveVariant faces "Alpha Sans" (some "Alpha Sans Light Italic")
       { italic := true }).map (fun r => (r.1.subfamily, subMsg r.2)) ==
         some ("Light Italic", none))
-  -- A declared face the host lacks: family fallback, message says so.
   t "declared face the host lacks degrades and says so"
     ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Nope Sans") { bold := true }).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", some
         ("'Alpha Sans Light' declares 'Nope Sans' as its bold face, " ++
          "which is not installed; 'Alpha Sans Light' substitutes")))
-  -- No declaration: the substitution message names the face actually used.
   t "substitution names the face actually used"
     ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map
       (subMsg ·.2) ==
@@ -250,8 +215,6 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (subMsg ·.2) == some none)
   t "a missing family is still the caller's E0403"
     ((FontDb.resolveVariant faces "Nope Sans" (some "Also Nope") { bold := true }).isNone)
-  -- A weighted name with no such weight installed: the nearest installed
-  -- weight substitutes and the message names both weights (W0366).
   let beta700 : FontDb.Face := { synthFace "Beta Sans" "/x/bs-b.otf" with
     subfamily := "Bold", bold := true, weight := 700 }
   let betas := #[synthFace "Beta Sans" "/x/bs-r.otf", beta700]
@@ -270,20 +233,15 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an installed weight is served exactly and stays silent"
     ((FontDb.resolveVariant (betas.push betaLight) "Beta Sans Light" none {}).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", none))
-  -- A declared file name denotes that exact scanned face.
   let shipped ← FontDiscovery.scanRoots [testFonts]
   t "a declared file name denotes that exact face"
     ((FontDb.resolveVariant shipped "Open Sans" (some "SourceSerifPro-Bold.otf")
       { bold := true }).map (fun r => (r.1.path, subMsg r.2)) ==
       some (testFonts ++ "/SourceSerifPro-Bold.otf", none))
 
-/-- Icons: the fontawesome5 spellings elaborate to `Inline.icon` — the
-package's own name-to-scalar table, a required text alternative — layout
-sets the glyph from whichever face the per-scalar chain covers it with,
-deliberately and without the W0009 substitution warning, and an icon no
-face covers is the ordinary coverage loss (E0405). HTML hides the glyph
-from assistive technology and names the icon on its wrapper (WCAG 2.2
-SC 1.1.1); the markdown twin renders the text alternative itself. -/
+/-- fontawesome5 spellings elaborate to `Inline.icon`, set from the face covering their scalar
+without W0009, hidden from assistive technology behind a named wrapper in HTML, and read as their
+text in the markdown twin. -/
 def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let wrap (body : String) : String := dvDoc "" body
@@ -305,7 +263,6 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes (wrap "\\faIcon{no-such-icon} x") == ["E0340"])
   t "an unmodelled \\faIcon option is named W0110"
     (warnCodes (wrap "\\faIcon[regular]{envelope} x") == ["W0110"])
-  -- HTML: the glyph is aria-hidden, the accessible name rides the wrapper.
   let page := (HtmlDoc.emit {} doc).1
   let has := hasStr page
   t "html hides the glyph and names the icon"
@@ -313,33 +270,22 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
       "<span aria-hidden=\"true\">\uF09B</span></span>"))
   t "html carries the overridden name"
     (has "aria-label=\"Return to top\"")
-  -- Every icon has an accessible name: an empty aria-label is
-  -- unrepresentable upstream (the constructor requires a label), and the
-  -- rendered page witnesses it.
   t "no icon renders with an empty accessible name" (!has "aria-label=\"\"")
-  -- The markdown twin renders the text alternative.
   let md := (MarkdownDoc.emit doc)
   t "markdown renders the text alternative, never the raw scalar"
     ((md.splitOn "GitHub").length ≥ 2 && (md.splitOn "\uF09B").length == 1)
-  -- Layout: the icon sets from the covering face without a substitution
-  -- warning; no coverage is the ordinary E0405.
   let load (name : String) : IO Font.Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"icons: {name} unparsable: {e}")
   let sans ← load "OpenSans-Regular.ttf"
   let iconsFace ← load "ExampleIcons-Regular.ttf"
-  -- post.italicAngle is the PDF descriptor's derivation: the parser reads
-  -- the face's own declared slant, zero when it declares none.
   let italicFace ← load "OpenSans-Italic.ttf"
   t "the parser reads the declared slant from post"
     (italicFace.italicAngle == -12 && sans.italicAngle == 0)
   t "coverage premise: only the invented icon face has U+F09B"
     ((sans.gid '\uF09B').isNone && (iconsFace.gid '\uF09B').isSome)
-  -- The interword space from the face, never zero: the fontloader's own
-  -- chain (space glyph; else half the em dash; else half the em). Every
-  -- fixture face carries a space glyph, so the fallback arms are
-  -- exercised on copies with the covering cmap ranges filtered out.
+  -- Every fixture face has a space glyph, so the fallback arms run on cmap-filtered copies.
   t "spaceAdvance is the space glyph's advance where one exists"
     (sans.spaceAdvance == sans.advance ' ' && sans.advance ' ' > 0)
   let noSpace : Font.Font :=
@@ -373,15 +319,10 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an uncovered icon is the ordinary coverage loss, naming the scalar"
     ((dropOut.diags.filter (·.code == "E0405")).any
       fun d => (d.message.splitOn "U+F09B").length ≥ 2)
-  -- The icon scalar enters the same fallback precompute text does.
   t "docScalars carries the icon scalar" ((Layout.docScalars glyphDoc).contains '\uF09B')
 
-/-- The GSUB small-caps parse, measured over every shipped corpus face: which
-carry `smcp` and `c2sc`, and that the composed map is uniform — a capital and
-its lowercase land on the same small-cap glyph, which is what lets mixed-case
-source render at one height. The presence facts double as the coverage
-premises for the layout checks: real substitution is exercised on a face that
-has the features, synthesis on one that does not. -/
+/-- The GSUB small-caps parse over every shipped face: which carry `smcp` and `c2sc`, and that the
+composed map is uniform. -/
 def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -391,9 +332,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let features (name : String) : IO (Bool × Bool × Bool) := do
     let f ← load name
     pure (f.hasSmcp, f.hasC2sc, !f.smallCaps.isEmpty)
-  -- Measured presence, per shipped face. The italic Source Serif faces ship
-  -- without small caps; that is the font's own choice, recorded here so a
-  -- change of shipped fixture is a visible test change.
+  -- The italic Source Serif faces ship without small caps: the font's own choice.
   t "source serif regular carries smcp+c2sc"
     ((← features "SourceSerifPro-Regular.otf") == (true, true, true))
   t "source serif bold carries smcp+c2sc"
@@ -412,8 +351,6 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((← features "FiraMath-Regular.otf") == (false, false, false))
   t "the icon face carries neither feature"
     ((← features "ExampleIcons-Regular.ttf") == (false, false, false))
-  -- Uniformity of the composed map: for every letter, A and a substitute to
-  -- the same small-cap glyph, distinct from the full capital.
   let serif ← load "SourceSerifPro-Regular.otf"
   let fira ← load "FiraSans-Regular.otf"
   let uniform (f : Font.Font) : Bool := Id.run do
@@ -428,16 +365,9 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     (uniform serif)
   t "fira sans maps both cases of every letter to one small-cap glyph"
     (uniform fira)
-  -- A face without the features substitutes nothing: identity, so synthesis
-  -- is the layout's decision, never a half-applied map.
   let sans ← load "OpenSans-Regular.ttf"
   t "a face without the features maps every gid to itself"
     ((sans.gid 'a').all fun g => sans.smallCapGid g == g)
-  -- The rendered claim, over Layout.Out (never an IR dump): what the page
-  -- draws for a small-caps run is the same glyphs at the same sizes
-  -- whatever the casing of the source — that is what "uniform" means — and
-  -- differs from the plain rendering. Both mechanisms are held to it: real
-  -- substitution on the serif face, synthesis on the sans face.
   let geom : Layout.Geom := {}
   let allVariants (slot idx : Nat) : List ((Nat × Nat × Bool) × Nat) :=
     [((slot, 400, false), idx), ((slot, 700, false), idx),
@@ -471,10 +401,6 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "synthesised small caps set every letter at one reduced size"
     (!scSans.isEmpty &&
      scSans.all (·.2 == geom.fontSize * Layout.smallCapScaleFor sans / 1000))
-  -- The HTML side, judged on the typed tree and the stylesheet: the run
-  -- keeps the authored casing as text under the `sc` class, and the class
-  -- asks for uniform small caps (CSS Fonts 4: `all-small-caps` is c2sc +
-  -- smcp, the same pair the PDF path reads).
   let (scDoc, scDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "{\\scshape NaCl}\\end{document}")
   t "small caps html source clean" scDs.isEmpty
@@ -497,12 +423,9 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((HtmlDoc.emit {} scDoc).1.splitOn
       ".sc { font-variant-caps: all-small-caps; }").length == 2)
 
-/-- Per-glyph fallback: a scalar the styled face lacks is set from the face
-the driver's map names, at the same size; the diagnostic is one line per
-family+glyph, naming both families; a scalar no face covers is still an
-honest E0405 naming the family; and a document whose faces cover their text
-is untouched by the map — byte-identical output. The pick order over scanned
-faces is the documented one, not scan order. -/
+/-- Per-glyph fallback: a scalar the styled face lacks is set from the mapped face at the same size
+and named once per family and glyph, an uncovered one is E0405, and a covered document is
+byte-identical. -/
 def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -524,7 +447,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 1).toArray
   }
   let mapped : Font.FontSet := { bare with fallback := #[('∀', 1)] }
-  -- The mapped face sets the glyph, at the styled size, in its own run.
   let (faDoc, faDs) := Elab.run "t" "for all is ∀ set\n\nagain ∀ here"
   t "fallback source clean" faDs.isEmpty
   let out := layoutOf mapped faDoc geom
@@ -539,14 +461,12 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       #[("'Open Sans' has no glyph for U+2200", none,
         some (.replacedBy "a glyph from 'Source Code Pro'"))])
   t "a covered scalar raises no E0405" (!out.diags.any (·.code == "E0405"))
-  -- No face covers it: dropped once per family+glyph, family named.
   let (dropDoc, _) := Elab.run "t" "lost ⟨ here\n\nand ⟨ there"
   let dropOut := layoutOf mapped dropDoc geom
   t "an uncovered scalar drops once, naming the family"
     ((dropOut.diags.filter (·.code == "E0405")).map
       (fun d => (d.message, d.triggerText, d.recovery)) ==
       #[("'Open Sans' has no glyph for U+27E8", none, some .skipped)])
-  -- A document whose faces cover their text is untouched by the map.
   let (plainDoc, _) := Elab.run "t" "plain words only"
   let noMap := Pdf.write geom bare (layoutOf bare plainDoc geom).pages
   let withMap := Pdf.write geom
@@ -554,8 +474,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (layoutOf { bare with fallback := #[('p', 1), ('a', 1), ('o', 1)] }
       plainDoc geom).pages
   t "a covered document is byte-identical under any map" (noMap == withMap)
-  -- The document's scalars: text and titles, uppercase for small caps,
-  -- verbatim content, no whitespace and no fixed-space kerns.
   let (scDoc, _) := Elab.run "t"
     "\\section{Tz}\n\n{\\scshape hi}\\,x\n\n\\begin{verbatim}q r\\end{verbatim}"
   let scalars := Layout.docScalars scDoc
@@ -564,13 +482,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       scalars.contains 'q' && scalars.contains 'r')
   t "docScalars carries the uppercase small caps set"
     (scalars.contains 'H' && scalars.contains 'I')
-  -- The reported accent class: a combining sequence (e + U+0301) in
-  -- regular and bold. NFC at input (UAX #15, Nfc.lean) composes it before
-  -- any face is consulted, so the accent is a plain cmap hit — é ships as
-  -- one glyph from every corpus face, no mark anchoring needed. What
-  -- remains of the old loss class: a face that lacks the *composed* form
-  -- falls back (W0009) or drops loudly naming the scalar (E0405) — never
-  -- silently.
+  -- NFC at input composes e + U+0301 before any face is consulted, so é is a plain cmap hit.
   let (accDoc, accDs) := Elab.run "t" "Cafe\u0301 and \\textbf{Cafe\u0301}"
   t "combining source clean" accDs.isEmpty
   let accOut := layoutOf mapped accDoc geom
@@ -594,8 +506,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "docScalars excludes whitespace and kerns"
     (!scalars.contains ' ' && !scalars.contains '\u2009' && !scalars.contains '\u00a0')
   t "docScalars is sorted" (scalars == scalars.qsort (· < ·))
-  -- The scanned-face pick order is documented: families in normalised order,
-  -- upright regular first — never scan luck.
   let shipped ← FontDiscovery.scanRoots [testFonts]
   let picks ← FontDiscovery.fallbackPicks shipped #['∀', '₿', '𓀀']
   t "picks the first covering family in sorted order"
@@ -604,11 +514,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (picks.contains ('₿', testFonts ++ "/SourceSerifPro-Regular.otf"))
   t "a scalar no face covers is absent from the picks"
     (!picks.any (·.1 == '𓀀'))
-  -- The undeclared-math resolution over the shipped faces, branch by
-  -- branch: a body with a sourced pairing row and its companion installed
-  -- gets the companion; one with no row gets the first MATH-table face
-  -- under the documented order; a scan with no MATH face at all gets none
-  -- (and layout degrades with W0003, pinned in mathChecks).
   t "companion branch: Fira Sans finds Fira Math with its sourced row"
     ((← FontDiscovery.pickMathFace shipped "Fira Sans").map
         (fun (f, r) => (f.family, (r.map (·.license)).getD "")) ==
@@ -616,10 +521,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no-companion branch: the first MATH-table face serves, rowless"
     ((← FontDiscovery.pickMathFace shipped "Source Serif Pro").map
         (fun (f, r) => (f.family, r.isNone)) == some ("Fira Math", true))
-  -- GPOS pair kerning (PairPos formats 1+2 + ClassDef; legacy kern
-  -- table as HarfBuzz's fallback rule). The −41 is hb-shape's own
-  -- number for Source Serif Pro "Ta" at upem 1000; Open Sans ships no
-  -- pairs and must read as zero everywhere, costing nothing.
+  -- −41 is hb-shape's value for Source Serif Pro "Ta" at upem 1000; Open Sans ships no pairs.
   let ssp ← load "SourceSerifPro-Regular.otf"
   let sspT := (ssp.gid 'T').getD 0
   let sspA := (ssp.gid 'a').getD 0
@@ -630,9 +532,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "kern: a face with no pairs answers 0 for every pair"
     ((osans.kernData.get).1.isEmpty && (osans.kernData.get).2.isEmpty &&
       osans.kernAdv ((osans.gid 'T').getD 0) ((osans.gid 'a').getD 0) == 0)
-  -- A subset (FontSubset.program) keeps a composite's components: Open
-  -- Sans draws 'é' from 'e' and an accent, and the subset holding 'é'
-  -- alone draws it exactly as the face does, while an unused 'x' is empty.
   let osE := (osans.gid 'é').getD 0
   let (osProg, osSub) := FontSubset.program osans #[osE]
   let osSrc := Ink.Src.make osans.data false osans.numGlyphs
@@ -641,9 +540,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (osSub && ((osEmb.cmdsAt osE).map (·.size != 0)) == some true &&
       osEmb.cmdsAt osE == osSrc.cmdsAt osE &&
       osEmb.cmdsAt ((osans.gid 'x').getD 0) == some #[] && osProg.size < osans.data.size)
-  -- A CFF subset reads the face's own prepared source and memoized decode
-  -- answers (`Font.inkSrc`, `Font.yExtent`): its table is the one a fresh
-  -- decode of the same bytes builds.
   let sspKeep := "Typesetting".toList.foldl (fun k c =>
     match ssp.gid c with | some g => k.set! g true | none => k)
     ((Array.replicate ssp.numGlyphs false).set! 0 true)
@@ -656,21 +552,13 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
        viaFace.isSome && viaFace.map (·.data) ==
          (FontSubset.cffDrop ssp.data ct sspKeep fresh (fresh.yExtentAt · |>.isSome)).map (·.data)
      | none => false)
-  -- Fira Sans keeps every kern lookup behind an extension (GPOS type 9):
-  -- read through the hop, its pairs answer hb-shape's own numbers (Te −55,
-  -- AV −14, LT −83, aa −5 at upem 1000, HH none); without it the face read
-  -- as unkerned.
+  -- Fira Sans keeps its kern lookups behind a GPOS extension; values are hb-shape's, upem 1000.
   let firaSans ← load "FiraSans-Regular.otf"
   let fk (a b : Char) : Int :=
     firaSans.kernAdv ((firaSans.gid a).getD 0) ((firaSans.gid b).getD 0)
   t "kern: pairs behind an extension lookup answer hb-shape's values"
     (fk 'T' 'e' == -55 && fk 'A' 'V' == -14 && fk 'L' 'T' == -83 && fk 'a' 'a' == -5 &&
       fk 'H' 'H' == 0)
-  -- The space pairs a parsed face memoizes per glyph (`Font.spaceKernAdv`,
-  -- what a space beside a word reads) are `kernAdv`'s own answers against
-  -- the face's space glyph, on both sides, for every glyph and two gids
-  -- past the last: Source Serif Pro kerns with its space, Fira Sans keeps
-  -- its pairs behind an extension, Open Sans has none.
   let spaceMemoExact (f : Font.Font) : Bool :=
     match f.gid ' ' with
     | some sp => (List.range (f.numGlyphs + 2)).all fun g =>
@@ -696,9 +584,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (boundedSpaceLookup ssp && boundedSpaceLookup firaSans)
   t "kern: a pairless face short-circuits its space cache"
     osans.spaceKerns.get.isNone
-  -- The applied value reaches the box: a "Ta" word's width is the two
-  -- advances plus the (negative) kern, exactly
-  -- (kern_measure_exact holds the general fact).
   let sspSet := oneFaceOf ssp
   let (taDoc, _) := Elab.run "t" "Ta"
   let taOut := layoutOf sspSet taDoc ({} : Layout.Geom)
@@ -717,9 +602,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
            + (ssp.widths[sspA]! : Int) * geom.fontSize / 1000
        glyphs.size == 2 && w == want
      | none => false)
-  -- The run carries each glyph's laid advance, the pair value in the
-  -- first: where the second glyph starts is the ink's to honour, not only
-  -- the measure's (`Seg.run`; the PDF writer places by it).
   t "kern: the run carries T's advance with the pair value, a's without"
     (match taRun with
      | some (_, glyphs) =>
@@ -728,11 +610,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
          #[(ssp.widths[sspT]! : Int) * geom.fontSize / 1000 + (-41 : Int) * geom.fontSize / 1000,
            (ssp.widths[sspA]! : Int) * geom.fontSize / 1000]
      | none => false)
-  -- Space kerning, as luaotfload applies it: the face's pairs with its
-  -- space glyph move the interword glue beside a glyph — (T, space) −19,
-  -- (V, space) −39 and (space, V) −30 in Source Serif Pro, the pairs
-  -- lualatex applied at 10 pt (T a 2.14, a V 2.03, V a 1.94 against a
-  -- 2.33 pt space) — and a pairless neighbour leaves the space alone.
+  -- Source Serif Pro's space pairs as lualatex applies them: (T, sp) −19, (V, sp) −39, (sp, V) −30.
   let (skDoc, _) := Elab.run "t" "T a V V x y"
   let skOut := layoutOf sspSet skDoc ({} : Layout.Geom)
   let skGaps := ((skOut.pages.flatMap (·.lines)).flatMap (·.segs)).filterMap
@@ -744,16 +622,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
      let u (n : Int) : Dim.Sp := n * fsz / 1000
      let sp := u ssp.spaceAdvance
      skGaps == #[sp + u (-19), sp + u (-30), sp + u (-39) + u (-30), sp + u (-39), sp])
-  -- A text-font command's edge stops a space kern; its declaration does
-  -- not. `\DeclareTextFontCommand` sets TeX's `\/` at each edge where the
-  -- font in force is upright (ltfntcmd's `\check@icl` inside, before the
-  -- argument, lifting the space before it; `\check@icr` after the group),
-  -- and luaotfload kerns a glue only against a glyph beside it — lualatex's
-  -- own lists, `\showbox`: `T a` is T, glue 2.14; `\textrm{T} a` is T,
-  -- kern 0.0 (italic), glue 2.33; `T \textrm{a}` T, kern, glue 2.33. Inside
-  -- a slanted face there is no check (`V \emph{V}` keeps (V, space)), and
-  -- the kern stands on one side of the glue only (`\emph{a} V` keeps
-  -- (space, V)). Source Serif Pro bold kerns (T, space) −6.
+  -- A text-font command's edges stop a space kern, as ltfntcmd's `\/` does; a declaration does not.
   let some sfs ← serifFacesSet | t "font edge: the serif faces load" false
   let edgeRun (src : String) : Array Dim.Sp × Array Diag :=
     let (d, ds) := Elab.run "t" src
@@ -765,11 +634,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let edgeGap (src : String) : Array Dim.Sp := (edgeRun src).1
   let edgeU (n : Int) : Dim.Sp := n * ({} : Layout.Geom).fontSize / 1000
   let edgeSp := edgeU ssp.spaceAdvance
-  -- Two edges at one space give its pair back once: after the first
-  -- correction the glyph no longer ends the list, and TeX's `\/` before a
-  -- kern adds nothing (lualatex: `\textbf{T }a`, `\textbf{T }\textrm{a}`,
-  -- `\textrm{\textbf{T }}a` and `\textbf{T }\textbf{a}` all start their
-  -- second word 8.44 bp in, the bold space bare).
+  -- Two edges at one space give its pair back once (lualatex: 8.44 bp in each spelling).
   let boldSp := edgeU (sfs.get (sfs.lookup 0 700 false)).spaceAdvance
   for (src, want) in [("T a", edgeSp + edgeU (-19)), ("{\\rmfamily T} a", edgeSp + edgeU (-19)),
       ("\\textrm{T} a", edgeSp), ("T \\textrm{a}", edgeSp), ("\\textup{V} a", edgeSp),
@@ -793,9 +658,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "every pairing row names a face, a source, and a licence"
     (FontDb.mathCompanions.all fun p =>
       !p.body.isEmpty && !p.companion.isEmpty && !p.source.isEmpty && !p.license.isEmpty)
-  -- The order axioms pickCompanion_set_eq assumes — faceLt transitive,
-  -- asymmetric, total — hold over the shipped faces, and the pick really is
-  -- scan-order independent there: the theorem's hypotheses, witnessed.
   t "faceLt is asymmetric over the shipped faces"
     (shipped.all fun f => shipped.all fun g =>
       !(FontDb.faceLt f g && FontDb.faceLt g f))
@@ -808,7 +670,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pickCompanion answers the same for the reversed scan"
     ((FontDb.pickCompanion shipped.reverse "Fira Sans").map (·.2.path) ==
       (FontDb.pickCompanion shipped "Fira Sans").map (·.2.path))
-  -- Malformed and missing candidates stay total: no answer, never an abort.
   t "tableImage of a missing file is none"
     ((← FontDiscovery.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
   let corrupt := System.FilePath.mk "/tmp" / "leantex-test-corrupt-fallback.otf"
@@ -817,9 +678,6 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((← FontDiscovery.tableImage corrupt.toString (· == "cmap")).isNone)
   IO.FS.removeFile corrupt
 
-  -- The document's own faces outrank the host's: the documented order
-  -- picks Fira Math for '∀' (asserted above), but a preference on the
-  -- Source Code Pro path — a document that ships that face — wins.
   let prefPicks ← FontDiscovery.fallbackPicksPreferring
     (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['∀']
   t "a preferred (document-shipped) face answers first for what it covers"
@@ -831,22 +689,14 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   Tests.NfcBoundary.tableChecks t
 
-  -- A new language touches four hand-maintained sites (gen-hyphen row,
-  -- gen-locale list, the Hyphen thunk, the forTag arm) — the Diag-registry
-  -- lesson: a miscount must be a test failure, not a silent gap. Every
-  -- shipped locale is served by Hyphen.forTag or stands on the named
-  -- unhyphenated list beside this check; a tag on neither is a locale
-  -- whose text silently stopped hyphenating.
+  -- Every shipped locale is served by `Hyphen.forTag` or stands on the unhyphenated list.
   let unhyphenated : List String := []
   t "every builtin locale hyphenates or is declared unhyphenated"
     (Locale.builtin.all fun l =>
       (Hyphen.forTag l.tag).isSome || unhyphenated.contains l.tag)
 
-/-- The default-family choice and the search roots are what make a fresh
-machine work with no configuration, so they are pinned here on synthetic
-faces: preference order beats scan order among preferred names; then the
-first family calling itself sans; then any face; none only when nothing is
-installed. Ties between duplicate installs go to scan order. -/
+/-- The default family over synthetic faces: preferred names in preference order, then the first
+family calling itself sans, then any face, none only when nothing is installed. -/
 def defaultFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "default prefers listed names over scan order"
@@ -870,20 +720,14 @@ def defaultFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   if let some home ← IO.getEnv "HOME" then
     t "extraDirs covers ~/Library/Fonts"
       ((← FontDiscovery.extraDirs).contains (home ++ "/Library/Fonts"))
-  -- A .ttc never reaches probe via the scan (isFontFile skips it), but probe
-  -- fed one directly must classify it as unusable, never abort: its reads
-  -- are bounded checks, not trusted offsets.
+  -- A .ttc fed to `probe` directly classifies as unusable, never aborts.
   let ttc := System.FilePath.mk "/tmp" / "leantex-test-synthetic.ttc"
   IO.FS.writeBinFile ttc ("ttcf".toUTF8 ++ ByteArray.mk (Array.replicate 64 0x7f))
   t "probe rejects a ttc without aborting" ((← FontDiscovery.probe ttc.toString).isNone)
   IO.FS.removeFile ttc
 
-/-- The shipped fonts make the suite hermetic: what `lake test` sees is a
-function of the checkout, not of the host. Pinned here: scan order is sorted
-path order (so ties resolve the same everywhere), a font file name denotes
-its face's family (fontspec's `Path=` idiom), the compat layer carries
-`Path=` into `dir` from either side of the name, the default family over the
-shipped faces is the sans, and a plain face beats a condensed sibling. -/
+/-- The shipped fonts make the suite hermetic: sorted scan order, a file name denoting its face's
+family, `Path=` carried into `dir`, and the sans as the default family. -/
 def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) : IO Unit := do
   let t := check ref
   let paths := faces.map (·.path)
@@ -923,17 +767,7 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   let condensed : FontDb.Face := { plain with path := "/x/b.otf", subfamily := "Condensed Bold" }
   t "plain face beats a condensed sibling"
     ((FontDb.resolve #[condensed, plain] "X" { bold := true }).map (·.1.path) == some "/x/a.otf")
-  -- **A face's pitch is the face's own `post.isFixedPitch`.** The field is
-  -- at offset 12 of `post`; offset 16 is minMemType42, a memory hint most
-  -- faces leave at 0 and some do not, so a reader four bytes late answers
-  -- "proportional" for every monospace design and "fixed-pitch" for a
-  -- proportional face whose hint is set. Two faces whose declared answers
-  -- differ pin it: the shipped monospace says yes, the shipped serif no.
-  -- The PDF descriptor's FixedPitch flag and every slot stack's generic
-  -- both read this, as does the slot report's face test. Read through
-  -- `classify` rather than a scan: the scan answers from a disk cache, and
-  -- this is a claim about the parser (the artifact tier reads the two
-  -- fields it reaches, `artifactPitchChecks`).
+  -- `post.isFixedPitch` is at offset 12; offset 16 is minMemType42, a memory hint.
   let pitchOf (name : String) : IO (Option Bool) := do
     match Font.classify (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok c => pure (some c.isFixedPitch)
@@ -943,9 +777,7 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   t "face pitch: a proportional design does not"
     ((← pitchOf "SourceSerifPro-Regular.otf") == some false)
 
-/-- The shipped faces as `classify` answers them, pinned to the classifier
-version that answers so: file, family, subfamily, bold, italic, fixed pitch,
-weight — every field the probe cache stores. -/
+/-- The classifier version the shipped faces' pinned classifications answer to. -/
 def classifierPinsVersion : Nat := 2
 
 def classifierPins : List (String × String × String × Bool × Bool × Bool × Nat) := [
@@ -962,18 +794,8 @@ def classifierPins : List (String × String × String × Bool × Bool × Bool ×
   ("SourceSerifPro-Regular.otf", "Source Serif Pro", "Regular", false, false, false, 400),
   ("SourceSerifPro-RegularIt.otf", "Source Serif Pro", "Italic", false, true, false, 400)]
 
-/-- **A stored classification is read only by the classifier that wrote
-it.** Two halves. The probe cache's file name carries
-`Font.classifierVersion`, checked by two scans of the shipped directory
-through a private cache that differ only in which file holds one stale
-row — the answer an offset-16 classifier left for Source Code Pro,
-proportional and under a family no scan answers: under the unversioned
-name every earlier binary wrote, the scan answers from the face; under
-this version's own name the same row is served, so the cache is live and
-only the name stands between the scan and the stale answer. And the
-version moves with the answer: the shipped faces' classifications are
-pinned to the version, so changing what `classify` says about any of them
-without moving the version fails here. -/
+/-- A stored classification is read only by the classifier that wrote it: the probe cache's file
+name carries `Font.classifierVersion`, which moves with the answers. -/
 def probeCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let path := testFonts ++ "/SourceCodePro-Regular.otf"
@@ -1008,15 +830,8 @@ Font.classifierVersion, so no stored answer of the old one is read"
   t "classifier pins: every shipped face is pinned"
     (shipped.qsort (· < ·) == (classifierPins.map (·.1)).toArray.qsort (· < ·))
 
-/-- **A stored listing is read only by a walk with the same filter.** The
-listing cache's file name carries the extensions the walk keeps
-(`FontDb.fontExtensions`), checked by two scans of the shipped directory
-through a private cache that differ only in which file holds one listing
-claiming the directory, at its current time, holds no font: under the
-unnamed file every earlier walk wrote, the scan finds the shipped faces;
-under this filter's own name the listing is served and the scan finds
-none, so the cache is live and only the name stands between the scan and
-another filter's answer. -/
+/-- A stored listing is read only by a walk with the same filter: the listing cache's file name
+carries the extensions the walk keeps. -/
 def listingCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let md ← (System.FilePath.mk testFonts).metadata
@@ -1037,7 +852,6 @@ refuses it ({live} faces)" (live == 0)
 
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- \fonts declarations and family resolution
   let fontsSrc := "\\documentclass{article}\n" ++
     "\\fonts{ body = \"DejaVu Serif\", sf = \"DejaVu Sans\" }\n" ++
     "\\begin{document}x\\end{document}"
@@ -1051,7 +865,6 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fonts unknown key" (errCodes ("\\documentclass{article}\\fonts{ script = \"X\" }" ++
     "\\begin{document}x\\end{document}") == ["E0322"])
 
-  -- Resolution runs on the shipped faces, never the host's.
   let faces ← FontDiscovery.scanRoots [testFonts]
   t "fontdb finds the twelve shipped faces" (faces.size == 12)
   t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
@@ -1072,7 +885,6 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.english.get
-  -- font parsing on the system font
   match ← findFont with
   | none =>
     failures ref s!"font: {testFonts}/OpenSans-Regular.ttf missing from the checkout"
@@ -1090,33 +902,21 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "font cap height from OS/2" (font.capHeight == 1462)
       t "font not bold" (!font.isBold && !font.isItalic)
 
-      -- A parser is fed arbitrary files, so it has to be total over them. Every
-      -- byte read used to go through `b[i]!`, which aborts the process: one
-      -- font in a TeX Live tree took the whole run down with it.
       t "font parse rejects garbage"
         ((Font.parse (ByteArray.mk #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])).isOk == false)
       t "font parse rejects an empty file" ((Font.parse (ByteArray.mk #[])).isOk == false)
-      -- Truncation at every length must return a verdict rather than abort.
-      -- Reaching the assertion at all is the property: a panic would take the
-      -- whole run down. Some truncations parse legitimately -- the metrics
-      -- tables can all survive when only glyph data is lost.
+      -- Reaching the assertion is the property: a panic would take the run down.
       let verdicts := (List.range 64).map fun k =>
         (Font.parse (fontData.extract 0 (fontData.size * k / 64))).isOk
       t "font parse is total over truncations" (verdicts.length == 64)
       t "font parse rejects short truncations" (verdicts.take 8 |>.all (· == false))
-      -- A valid font with a table header claiming more than the file holds.
       let lying := Id.run do
         let mut b := fontData.extract 0 (min fontData.size 4096)
-        -- the first table entry's length field, made absurd
         for i in [0:4] do
           b := b.set! (12 + 12 + i) 0x7f
         return b
       t "font parse rejects a table that overruns the file"
         ((Font.parse lying).isOk == false)
-      -- `classify` is what a family scan uses, and it must agree with `parse`
-      -- about what a face is called. It used to be `parse` fed a sparse image
-      -- with the metric tables missing, which is how the scan read out of
-      -- bounds in the first place.
       match Font.classify fontData with
       | .error e => failures ref s!"font classify: {e}"
       | .ok c =>
@@ -1128,13 +928,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "classify is total over truncations"
         (((List.range 64).map fun k =>
           (Font.classify (fontData.extract 0 (fontData.size * k / 64))).isOk).length == 64)
-      -- Parse totality alone leaves the lazy readers unfuzzed. On the
-      -- feature-rich faces (Source Serif: GPOS kern, GSUB, format-12 cmap;
-      -- Fira Math: MATH), every truncation whose parse succeeds also forces
-      -- the deferred readers -- kern pairs, underline ink, ink extents, the
-      -- x ink top, the MATH variant and accent reads -- so a short table
-      -- obstructs there too, never aborts. Reaching the assertion is the
-      -- property; acc only forces the reads, its value is face data.
+      -- Forces the lazy readers on each parsable truncation; reaching the assertion is the test.
       for name in ["SourceSerifPro-Regular.otf", "FiraMath-Regular.otf"] do
         let rich ← IO.FS.readBinFile (testFonts ++ "/" ++ name)
         let mut forced := 0
@@ -1153,11 +947,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
             acc := acc + (f.xInkTop.get.getD 0)
         t s!"truncated lazy readers are total ({name})"
           (forced ≥ 1 && acc - acc == 0)
-      -- A format-12 cmap whose group count claims ~2M groups: the count is
-      -- the one file-derived loop bound with no structural limit, and it
-      -- must be clamped by the bytes actually present, never trusted -- a
-      -- malformed installed face otherwise demands gigabytes of pushes at
-      -- every resolve.
+      -- The group count is the one file-derived loop bound, so the bytes present clamp it.
       let ssp ← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")
       let cmap12Off : Option Nat := Id.run do
         let some ct := Ink.findTable ssp "cmap" | return none
@@ -1183,8 +973,6 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let oneFace := oneFaceOf font
       t "fontset lookup body" (oneFace.lookup 0 400 false == 0)
       t "fontset lookup falls back" (oneFace.lookup 2 700 true == 0)
-      -- Two faces on one slot's weight axis: the declared weight answers,
-      -- an unindexed weight falls to the slot's regular.
       let twoWeights : Font.FontSet := {
         fonts := #[font, font]
         index := #[((0, 400, false), 0), ((0, 300, false), 1)] }
@@ -1192,8 +980,6 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "an unindexed weight falls to the slot regular"
         (twoWeights.lookup 0 600 false == 0)
 
-      -- layout: hyphenation is materialized only at a chosen break; headings
-      -- and list markers carry visual structure into the positioned page.
       let (hyDoc, hyDs) := Elab.run "t" "incomprehensibility"
       t "layout hyphen source clean" hyDs.isEmpty
       let narrow : Layout.Geom := {
@@ -1209,9 +995,6 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
           | .gap _ _ | .decoratedGap _ _ _ | .rule .. | .decoration .. | .image .. | .poly .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
-      -- Display type never hyphenates (Butterick, "Hyphenation"): the same
-      -- word that hyphenates as body text must set unbroken as a heading,
-      -- a frame title, and the document title, patterns loaded or not.
       let hyphens (doc : Ir.Doc) : Bool :=
         (layoutOf oneFace doc narrow (some pats)).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
@@ -1225,9 +1008,6 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "the title page never hyphenates"
         (!hyphens (Elab.run "t" ("\\documentclass{slides}\\begin{document}" ++
           "\\title{incomprehensibility}\\maketitle\\end{document}")).1)
-      -- Display type sets ragged: justification without hyphenation would
-      -- stretch a short display line across the whole measure (Butterick,
-      -- "Justified text"; moloch's title templates are \raggedright).
       let (jhDoc, _) := Elab.run "t"
         "\\section{one two six ten oak elm fir ash}\n\nbody text"
       let headLines := (layoutOf oneFace jhDoc narrow (some pats)).pages.flatMap
@@ -1235,8 +1015,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "a wrapped heading is ragged, not justified"
         (headLines.size ≥ 2 && headLines.all (·.setWidth < narrow.textWidth))
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
-      -- Scale must survive the dedup: W0005 is spanless, so the count is
-      -- the only signal of how much of the document overflowed.
+      -- W0005 is spanless, so after the dedup the count is the only signal of scale.
       let (ofDoc, _) := Elab.run "t"
         "aaaaaaaaaaaaaaaaaaaaaaaaaa\n\nbbbbbbbbbbbbbbbbbbbbbbbbbb"
       let ofOut := layoutOf oneFace ofDoc narrow
@@ -1258,7 +1037,6 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
 
-      -- pdf: build a tiny document and re-verify the xref stream offsets
       let (doc, eds) := Elab.run "t" "hello world, a small pdf self check"
       t "pdf source clean" eds.isEmpty
       let geom : Layout.Geom := {}
@@ -1270,8 +1048,6 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       match checkXref pdf with
       | .ok n => t s!"pdf xref valid" (n > 0)
       | .error e => failures ref s!"pdf xref: {e}"
-
-
 
 /-- Distinct real text slots and body variants, so a face-selection check
 cannot pass by aliasing every request to one font. -/
@@ -1293,9 +1069,7 @@ def mathTextFaces : IO Font.FontSet := do
 
 mutual
 
-/-- Read emitted MathML text leaves and their declared text-face styles.
-This checks the typed artifact; computed browser styles are a separate
-rendered probe. -/
+/-- The emitted MathML text leaves with their declared text-face styles. -/
 def mathTextLeaves (acc : Array (String × String)) : Html.Node →
     Array (String × String)
   | .elem tag attrs kids =>
@@ -1312,11 +1086,8 @@ def mathTextLeavesList (acc : Array (String × String)) :
 
 end
 
-/-- LuaLaTeX with fontspec/unicode-math selects regular, bold, italic,
-sans regular and mono regular respectively for these commands, on letters
-AND digits and even inside bold/italic prose. The italic digit is a text
-face choice despite Unicode having no mathematical italic digit range.
-Independent expectations judge shipped glyph faces and MathML leaves. -/
+/-- The math text commands select lualatex's faces (regular, bold, italic, sans, mono) on letters
+and digits, even inside bold or italic prose. -/
 def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathTextFaces
   let rows : Array (String × Nat × String) := #[
@@ -1345,7 +1116,6 @@ def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
         check ref (label ++ " selects its real HTML text face")
           (mathTextLeavesList #[] body.toList == #[(String.singleton c, css)])
 
-
   for (source, expectedFace, expectedCss) in [
       ("$\\symit{5}$", 6, ""),
       ("$\\mathbf{\\mathit{5}}$", 2,
@@ -1361,15 +1131,8 @@ def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
       (glyphs == #[(expectedFace, '5')] &&
         mathTextLeavesList #[] body.toList == #[("5", expectedCss)] && ads.isEmpty)
 
-
-
-/-- A symbol alphabet resets an enclosing text family even when the math
-face has no range to install. unicode-math-luatex.sty's
-`\__um_prepare_mathstyle:n` sets `\fam=-1` after switching mathcodes;
-`\use@mathgroup` has already made an outer text command's Latin literal.
-LuaLaTeX therefore ships upright A in Fira Math for the inner calligraphic
-scope, with Open Sans Bold restored on either side. Judge the shipped
-glyph faces and typed MathML, not an elaboration dump. -/
+/-- A symbol alphabet resets an enclosing text family even where the math face installs no range, as
+unicode-math's `\fam=-1` does. -/
 def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathTextFaces
   let bold := "font-family: var(--font-body); font-weight: 700"
@@ -1383,8 +1146,7 @@ def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("\\mathit{\\mathcal{5}}", #[(6, '5')], #[("5", "")]),
     ("\\mathbf{\\mathfrak{Z}}", #[(6, 'Z')], #[("Z", "")]),
     ("\\mathit{\\symsf{A}}", #[(6, 'A')], #[("A", "")]),
-    -- bm.sty's wrapper does not reset the family of a digit; it is not a
-    -- unicode-math symbol alphabet. LuaLaTeX keeps this Open Sans Italic.
+    -- bm.sty's wrapper keeps a digit's family: lualatex sets it in Open Sans Italic.
     ("\\mathit{\\bm{5}}", #[(2, '5')],
       #[("5", "font-family: var(--font-body); font-style: italic")]),
     ("\\mathit{\\mathcal{\\Gamma}}", #[(6, '𝛤')], #[("𝛤", "")])]
@@ -1404,7 +1166,6 @@ def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (glyphs == expectedGlyphs)
     check ref (source ++ " resets only the inner HTML text family")
       (mathTextLeavesList #[] body.toList == expectedLeaves)
-
 
 /-- A discarded enclosing text family cannot suppress the unavailable
 symbol alphabet's note. Compare the shipped glyph and typed MathML pair,
@@ -1443,17 +1204,9 @@ def mathSymbolResetAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "symbol reset accounting: retained style carries no missing alphabet note"
     (notes styled.2.2 == #[])
 
-
-/-- M6's first slice, pinned end to end: the MATH constants read from the
-shipped face, the box-is-box widths in sp (a math box's advance is the sum
-of its atoms plus the spacing the table gives — recomputed here from the
-font's own advances, sharing nothing with the layout walk), script sizes
-and shifts from the constants, Bin degradation, script-style spacing
-suppression, the italic/upright convention, and that nothing is silently
-dropped: a glyph the math face lacks earns E0405 naming it, a document with
-no math face earns one W0003 and its formulas retain a structural plaintext
-reading, and every out-of-scope construct earns a code naming it while its
-text content survives — never its markup (`Ir.floorInk_mem`). -/
+/-- Math end to end: MATH constants from the shipped face, box widths recomputed from the font's own
+advances, script sizes and shifts, and every glyph or construct the engine cannot set named while
+its text survives. -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathTextAmbientChecks ref
   mathSymbolResetChecks ref
@@ -1465,8 +1218,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error e => throw (IO.userError s!"math: {name} unparsable: {e}")
   let serif ← load "SourceSerifPro-Regular.otf"
   let fira ← load "FiraMath-Regular.otf"
-  -- The MATH table parses to the face's own constants (read independently
-  -- with a struct-unpacking script against the OpenType spec offsets).
+  -- Expected constants come from an independent struct-unpacking of the face.
   t "text faces carry no MATH table" serif.math.isNone
   t "fira math constants" (fira.math == some {
     scales := { script := 72, scriptscript := 58 }
@@ -1508,8 +1260,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     radicalKernBeforeDegree := 276
     radicalKernAfterDegree := -400
     radicalDegreeBottomRaisePercent := 64 })
-  -- MathVariants: the vertical size variants a delimiter grows through,
-  -- checked against an independent struct-unpacking of the same face.
+  -- Checked against an independent struct-unpacking of the same face.
   t "fira grows ( through sixteen sizes"
     (((fira.gid '(').map fun g => fira.vertVariants g) ==
       some #[(9, 991), (1637, 1320), (1638, 1648), (1639, 1976), (1640, 2304),
@@ -1520,8 +1271,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((fira.gid '\u2211').map fun g => fira.vertVariants g) ==
       some #[(753, 863), (1584, 1528)])
   t "a text face grows nothing" (serif.mathVariants.isEmpty)
-  -- Glyph vertical ink extents from the outline: the sum sign reaches well
-  -- below the baseline and above the x-height; a period hugs the baseline.
   t "sum sign ink extent brackets the axis"
     (match (fira.gid '\u2211').bind fira.yExtent with
       | some (lo, hi) => lo < -100 && hi > 600
@@ -1543,15 +1292,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     mathAlphabets := alphaCoverage }
   let geom : Layout.Geom := {}
   let base := geom.fontSize
-  -- The engine sets the math face at the size that matches its x-height to
-  -- the surrounding face's (`Math.mathSize`); every width below recomputes
-  -- at that size from the font's own tables.
   let mbase : Dim.Sp := (Math.mathSize base.toNat serif.xHeightOptical
     serif.unitsPerEm fira.xHeightOptical fira.unitsPerEm : Nat)
-  -- Optical agreement over the shipped pair, in sp: unscaled the two
-  -- x-heights disagree (the mismatch the scaling exists to remove); at
-  -- `mathSize` they agree to the division quantum — `mathSize_matches` and
-  -- `body_xheight_le_mathSize_next`, witnessed on real faces.
   let bodyXh := (serif.xHeightOptical : Int) * base / serif.unitsPerEm
   let mathXhAt (sz : Dim.Sp) := (fira.xHeightOptical : Int) * sz / fira.unitsPerEm
   t "x-heights disagree before scaling" (mathXhAt base != bodyXh)
@@ -1565,9 +1307,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mu (size : Dim.Sp) (n : Int) : Dim.Sp := size * n / 18
   let konst (size : Dim.Sp) (v : Int) : Dim.Sp := v * size / upem
 
-  -- The math-face/alphabet boundary, asserted on artifacts rather than an
-  -- IR dump. Fira has no script range, while this synthetic host face does;
-  -- resolving first must keep the host face out of both backend inputs.
+  -- Fira has no script range and the synthetic host does, so resolution must keep the host out.
   let scriptO := UInt32.ofNat '𝒪'.toNat
   let fakeGid := UInt32.ofNat ((serif.gid 'O').getD 0)
   let fakeHost : Font.Font := { serif with
@@ -1610,8 +1350,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((twiceDiags.filter (·.code == "N0018")).map (·.subject) ==
       #[some "math-alpha:cal", some "math-alpha:frak"])
 
-  -- A covered range with one missing scalar is different: the range stays
-  -- mapped, so the existing per-character fallback remains the mechanism.
   let holeCoverage : Math.MathAlphabetCoverage := { alphaCoverage with
     covered := alphaCoverage.covered.push (.cal, .latinUpper) }
   let (holeDoc, holeDiags) := Ir.resolveMathAlphas holeCoverage fira.family alphaRaw
@@ -1624,9 +1362,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .run 2 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '𝒪')
         | _ => false)
 
-  -- unicode-math's package option is carried as typed configuration. Its
-  -- five defaults are text-sourced; this document explicitly puts roman on
-  -- the symbol face, while the other four retain their existing semantics.
   let (umDoc, umDiags) := Elab.run "synthetic.tex"
     "\\documentclass{article}\\usepackage[mathrm=sym]{unicode-math}\\begin{document}$\\mathrm{R}$\\end{document}"
   t "unicode-math source options elaborate without a configuration loss"
@@ -1639,16 +1374,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!alphaCoverage.faceCovers .cal .latinUpper &&
       !alphaCoverage.faceCovers .cal .latinLower &&
       alphaCoverage.faceCovers .bb .latinUpper)
-  -- Phase 2: a text-sourced alphabet the selected face does not cover keeps
-  -- its source scalar in that face rather than remapping to a Unicode math
-  -- scalar an unrelated host face would then satisfy per-character. Fira has
-  -- no sans-serif range; `\mathsf{R}` must stay 'R' in the Fira face, never a
-  -- host face carrying the sans-serif R. A synthetic host that does carry it
-  -- would take the glyph under the old text-source remap.
-  -- The scalar `\mathsf{R}` keeps when sans-serif is unavailable is the
-  -- default math-italic R (as `\mathcal{O}` keeps math-italic O above), which
-  -- Fira's italic range covers. The synthetic host carries the sans-serif R
-  -- the old text-source remap would have selected per-character.
+  -- The synthetic host carries a sans-serif R, which a per-character remap would select.
   let sfKept : Char := 'R'
   let sansScalar : Char := Char.ofNat 0x1D5B1
   let sansR : UInt32 := UInt32.ofNat 0x1D5B1
@@ -1657,10 +1383,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     family := "Synthetic Host Sans"
     psName := "SyntheticHostSans"
     cmap := (serif.cmap.push (sansR, sansR, sansGid)).qsort (fun a b => a.1 < b.1) }
-  -- The sans slot gets its own face (font 2); every other (slot,weight,italic)
-  -- still maps to font 0 through `allSlots`, so a run at font 2 witnesses the
-  -- `.styled` path (sans text family), not the math face. `lookup` takes the
-  -- first matching index entry, so the sans key is rewritten in place.
+  -- `lookup` takes the first matching index entry, so the sans key is rewritten in place.
   let sfFs : Font.FontSet := { mfs with
     fonts := #[serif, fira, sansHost]
     index := mfs.index.map fun e => if e.1 == (1, 400, false) then (e.1, 2) else e }
@@ -1689,10 +1412,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       styleOne sfTree == some "font-family: var(--font-sans)")
   t "the unavailable sans-serif alphabet is named once by the IR owner"
     ((sfDiags.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:sf")).isEmpty)
-  -- Phase 2 contract: `remaps = faceCovers`, so a text-sourced alphabet the
-  -- face lacks no longer remaps, while the covered text-sourced alphabets
-  -- (bf/it/tt) still remap in the selected face — no regression.
-  t "text source no longer forces a remap the face cannot cover"
+  t "a text source forces no remap the face cannot cover"
     (alphaCoverage.remaps .sf .latinUpper == alphaCoverage.faceCovers .sf .latinUpper &&
       !alphaCoverage.remaps .sf .latinUpper)
   t "covered text-sourced alphabets still remap in the selected face"
@@ -1700,11 +1420,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       alphaCoverage.faceCovers .it .latinUpper && alphaCoverage.remaps .it .latinUpper &&
       alphaCoverage.faceCovers .tt .latinUpper && alphaCoverage.remaps .tt .latinUpper)
 
-  -- Item 6: a text-projected `.styled` scalar is judged against its own text
-  -- face, never the math face. Here the math face is missing the base letter
-  -- 'R' and a fallback face carries it; the sans slot sets the scalar
-  -- cleanly, so the math-face substitution scan must not raise W0009 for a
-  -- glyph that was never asked of the math face.
   let rc : UInt32 := (Char.toNat 'R').toUInt32
   let noR : Font.Font := { fira with
     cmap := fira.cmap.filter (fun r => !(r.1 ≤ rc && rc ≤ r.2.1)) }
@@ -1722,21 +1437,12 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!styledOut.diags.any (·.code == "W0009"))
   t "the styled scalar still reaches the page (set in its text face)"
     ((Layout.docScalars styledDoc).contains 'R')
-  -- The invariant behind the fix, pinned directly: the math-face scalar
-  -- collector drops a `.styled` nucleus that `scalars` keeps.
   let oneStyled : Math.MList :=
     .cons (.atom .ord (.styled { slot := .sans } 'R') .nil .nil false) .nil
   t "mathScalars excludes a styled nucleus that scalarsList keeps"
     (Math.MList.mathScalarsList #[] oneStyled == #[] &&
       Math.MList.scalarsList #[] oneStyled == #['R'])
 
-  -- Phase 3 projection contract (Item 3): one IR `MathTextStyle` fact, its
-  -- PDF face-selection projection, its MathML `mathvariant` projection, and
-  -- the agreement that both backends read the SAME typed style. Plus the
-  -- Item 2 public-entry door: a body with an `.alpha` node resolves to an
-  -- alpha-free list, the guarantee `resolveMathAlphas_covers` proves for all.
-  -- (a) The IR fact: each text-sourced alphabet's typed style; the shape
-  -- alphabets carry none (they are sym-sourced).
   t "IR: text-sourced alphabets carry their typed MathTextStyle"
     (Math.MathAlphabet.textStyle? .rm == some { slot := .body, bold := false, italic := false } &&
       Math.MathAlphabet.textStyle? .it == some { slot := .body, bold := false, italic := true } &&
@@ -1747,21 +1453,12 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       Math.MathAlphabet.textStyle? .cal == none &&
       Math.MathAlphabet.textStyle? .frak == none &&
       Math.MathAlphabet.textStyle? .bfit == none)
-  -- (c) The MathML projection: the semantic mathvariant each typed style
-  -- declares — now the IR-dump label (`Ir.dump` writes `styled:{variant}`)
-  -- and the semantic meaning, since the MathML leaf no longer emits it
-  -- (Chromium ignores every non-`normal` variant); the browser-honoured
-  -- projection is `.css`, checked next.
   t "MathML: the mathvariant projection of each typed style"
     ((({ slot := .body, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "normal") &&
       (({ slot := .body, bold := true, italic := false } : Math.MathTextStyle).mathvariant == "bold") &&
       (({ slot := .body, bold := false, italic := true } : Math.MathTextStyle).mathvariant == "italic") &&
       (({ slot := .sans, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "sans-serif") &&
       (({ slot := .mono, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "monospace"))
-  -- (c') The CSS projection: the declarations each typed style projects, the
-  -- `style` attribute the `.styled` MathML leaf actually emits. Family from
-  -- the slot's `--font-*` variable, weight 700 only when bold, italic only
-  -- when italic — the axes `Layout` reads from the same style.
   t "MathML: the CSS projection of each typed style"
     ((({ slot := .body, bold := false, italic := false } : Math.MathTextStyle).css
         == "font-family: var(--font-body)") &&
@@ -1775,13 +1472,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         == "font-family: var(--font-mono)") &&
       (({ slot := .sans, bold := true, italic := true } : Math.MathTextStyle).css
         == "font-family: var(--font-sans); font-weight: 700; font-style: italic"))
-  -- (b)+(d) The agreement: for `\mathbf`, the PDF face selection
-  -- (`FontSet.lookup slot.toNat weight italic`) and the MathML CSS both flow
-  -- from the ONE style `textStyle? .bf`, through the ONE `weight` owner and
-  -- the ONE slot→family partition (`fontVar_toNat_agree`). The run-face
-  -- witness is above ("mathbf's letters go through the styled bold body
-  -- slot"), the MathML witness in the CSS projection check; here both are
-  -- tied to the IR fact, and the slot's two encodings agree.
   let bfStyle := (Math.MathAlphabet.textStyle? .bf).getD default
   t "PDF and MathML projections agree on the one typed style for mathbf"
     (bfStyle == { slot := .body, bold := true, italic := false } &&
@@ -1789,36 +1479,21 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         == mfs.lookup 0 700 false &&
       bfStyle.weight == 700 &&
       bfStyle.css == "font-family: var(--font-body); font-weight: 700" &&
-      -- the CSS family partition and the FontSet slot partition agree
       (Math.MathTextSlot.sans.fontVar == Math.MathTextSlot.sans.fontVar) &&
       (decide (Math.MathTextSlot.body.fontVar ≠ Math.MathTextSlot.sans.fontVar)
         == decide (Math.MathTextSlot.body.toNat ≠ Math.MathTextSlot.sans.toNat)))
-  -- (Item 2 door) A body carrying an `.alpha` node — what a backend must
-  -- never see — resolves to an alpha-free list; the general fact is the
-  -- theorem `Math.resolveMathAlphas_covers`.
   t "public-entry resolution eliminates every alphabet boundary"
     ((Math.resolveMathAlphas alphaCoverage
         (.cons (.atom .ord
           (.alpha .bf .doc (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil))
           .nil .nil false) .nil)).alphaFree)
-  -- (Item 2, defensive) The `.alpha` node is unreachable in the MathML
-  -- backend on every public path (the door above resolves it away). A
-  -- bypass call that hands `nucNode` an unresolved `.alpha` is LOUD — a
-  -- MathML `merror` naming its content — never a silent `mrow` that reads
-  -- as ordinary math; the content still renders inside.
   t "an unresolved alphabet reaching MathML is a loud merror, never a silent mrow"
     (match MathMl.nucNode {} false .ord
         (Math.MNucleus.alpha .bf .doc (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil)) with
       | .elem tag _ kids => tag == "merror" && !kids.isEmpty
       | _ => false)
 
-  -- Blocker 2 (typed tree): the `.styled` MathML leaf projects the family /
-  -- weight / shape onto a real `style` attribute (Chromium honours no
-  -- non-`normal` mathvariant), carries `mathvariant="normal"` on a letter
-  -- `mi` to cancel `math-auto`, and keeps the literal base scalar as its
-  -- text. A digit `mn` needs no cancel; a nested styled scalar reaches the
-  -- same leaf. Each row is the raw nucleus through `MathMl.nucNode`, read by
-  -- its tag, `style`, `mathvariant` and shown text.
+  -- Chromium honours no non-`normal` mathvariant, so the style rides a `style` attribute.
   let styledLeaf (sl : Math.MathTextSlot) (b i : Bool) (c : Char) : Html.Node :=
     MathMl.nucNode {} false .ord (.styled { slot := sl, bold := b, italic := i } c)
   let leafFacts (n : Html.Node) : Option (String × Option String × Option String × String) :=
@@ -1845,8 +1520,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "styled bold digit: mn carries weight 700 with NO mathvariant cancel, digit kept"
     (leafFacts (styledLeaf .body true false '7')
       == some ("mn", some "font-family: var(--font-body); font-weight: 700", none, "7"))
-  -- Nested: a styled scalar inside a subscript still reaches the one leaf,
-  -- styled and scalar-faithful.
   let nestedStyled : Math.MList :=
     .cons (.atom .ord (.sym 'a')
       (.cons (.atom .ord (.styled { slot := .sans } 'k') .nil .nil false) .nil) .nil false) .nil
@@ -1855,10 +1528,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elemNodesList (· == "mi") #[] nestedTree.toList).any fun n =>
       leafFacts n == some ("mi", some "font-family: var(--font-sans)", some "normal", "k"))
 
-  -- Blocker 1, Part A: source provenance decides the source, not just the
-  -- alphabet. On a face that carries the math sans range, `\symsf` (forced
-  -- sym) remaps into that range, while `\mathsf` (document-sourced, default
-  -- text) projects to the sans text slot — the same alphabet, two sources.
+  -- `\symsf` remaps into the face's sans range; `\mathsf` projects to the sans text slot.
   let sfCov : Math.MathAlphabetCoverage := { covered := #[(.sf, .latinUpper)] }
   let itR : Char := Char.ofNat 0x1D445   -- the parser's italic R
   let sansR' : Char := Char.ofNat 0x1D5B1 -- MATHEMATICAL SANS-SERIF CAPITAL R
@@ -1870,15 +1540,11 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "mathsf under the default policy projects to the sans text slot"
     (Math.resolveCharStack sfCov [(.sf, sfCov.effectiveSource .doc .sf)] itR
       == (.styled { slot := .sans } 'R' : Math.Resolved))
-  -- `\mathsf` under `\unimathsetup{mathsf=sym}` is byte-for-byte `\symsf`.
   let sfSymCov : Math.MathAlphabetCoverage := { sfCov with sources := sfCov.sources.set .sf .sym }
   t "mathsf under mathsf=sym behaves exactly like symsf"
     (sfSymCov.effectiveSource .doc .sf == .sym &&
       Math.resolveCharStack sfSymCov [(.sf, sfSymCov.effectiveSource .doc .sf)] itR
         == .sym sansR')
-  -- End-to-end (Layout.Out + typed HTML, never Ir.dump): on the Fira face
-  -- (no sans range) `\mathsf{R}` still projects to the sans text slot with
-  -- no loss, while `\symsf{R}` keeps its source scalar and is named once.
   let e2eMathsf := (Ir.resolveMathAlphas alphaCoverage fira.family
     (Elab.run "synthetic.tex" "$\\mathsf{R}$").1)
   let e2eMathsfTree := HtmlDoc.blockNode { fonts := some alphaFs } e2eMathsf.1.body[0]!
@@ -1893,11 +1559,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       !(Layout.docScalars e2eSymsf.1).contains sansR' &&
       (e2eSymsf.2.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:sf")).size == 1)
 
-  -- Blocker 1, Part B: `.bfit` is now the genuine bold-italic alphabet
-  -- (`\symbfit`), `.bm` (`\bm`/`\boldsymbol`) the near-identity. Scalars
-  -- anchored to the Mathematical Alphanumeric block (unicode-math): bold
-  -- italic Latin U+1D468/U+1D482, bold italic Greek U+1D71C upper /
-  -- U+1D736 lower / U+1D735 nabla.
+  -- Bold italic anchors: Latin U+1D468/U+1D482, Greek U+1D71C/U+1D736, nabla U+1D735.
   let bfitCov : Math.MathAlphabetCoverage := { covered :=
     #[(.bfit, .latinUpper), (.bfit, .latinLower), (.bfit, .greekUpper),
       (.bfit, .greekLower), (.bfit, .misc)] }
@@ -1912,9 +1574,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       == .sym (Char.ofNat 0x1D735))
   t "bfit's ranges are the four bold-italic ranges (no digits)"
     (Math.MathAlphabet.ranges .bfit == [.latinUpper, .latinLower, .greekUpper, .greekLower, .misc])
-  -- `.bm` is near-identity: rangeOf is always none, so every scalar falls
-  -- through to its source — italic 𝐴, plain 5, italic 𝛼 — with no over-bold
-  -- and no spurious N0018, and `.bm` is not one of the census alphabets.
   let bmSrc := bfitCov.effectiveSource .doc .bm
   t "bm leaves Latin, digit, and Greek variables at their source scalars"
     (Math.resolveCharStack bfitCov [(.bm, bmSrc)] (Char.ofNat 0x1D434) == .sym (Char.ofNat 0x1D434) &&
@@ -1930,8 +1589,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (d, _) := Elab.run "t" src
     (((layoutOf mfs d geom).pages.flatMap (·.lines))[0]?).getD default
   let widthOf (src : String) : Dim.Sp := (lineOf src).setWidth
-  -- A box is a box: the advance equals the sum of what it contains plus
-  -- the spacing the table gives, in sp, recomputed from the font alone.
   t "box is a box: a+b is two medium spaces"
     (widthOf "$a+b$" ==
       adv mbase '𝑎' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝑏')
@@ -1952,24 +1609,17 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (supRuns "$x^2$" == #[(scriptSize, konst mbase 400)])
   t "subscript drop is subscriptShiftDown"
     (supRuns "$x_i$" == #[(scriptSize, -konst mbase 350)])
-  -- Nested scripts: scriptscript size, shifts accumulating, the inner one
-  -- scaled at its own base (the script size), cramped nowhere here.
   t "nested superscript reaches scriptscript and stacks its shifts"
     (supRuns "$x^{y^z}$" ==
       #[(scriptSize, konst mbase 400),
         (ssSize, konst mbase 400 + konst scriptSize 400)])
-  -- Script styles suppress the conditional spacing: the + inside the
-  -- superscript gets no medium space.
   t "no medium space inside a script"
     (widthOf "$x^{a+b}$" ==
       adv mbase '𝑥' + adv scriptSize '𝑎' + adv scriptSize '+' +
         adv scriptSize '𝑏' + konst mbase 41)
-  -- Both scripts stack at one position: the atom advances by the wider.
   t "sup and sub stack, advancing by the wider"
     (widthOf "$x^a_b$" ==
       adv mbase '𝑥' + max (adv scriptSize '𝑎') (adv scriptSize '𝑏') + konst mbase 41)
-  -- Variables italic, digits and function names upright (ISO 80000-2 §7,
-  -- TeXbook ch. 18): x maps to U+1D465, sin and 2 stay ASCII.
   let glyphChars (src : String) : Array Char :=
     (lineOf src).segs.flatMap fun s => match s with
       | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.map (·.2.1)
@@ -1979,18 +1629,12 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "sin binds with a thin space"
     (widthOf "$\\sin x$" ==
       adv mbase 's' + adv mbase 'i' + adv mbase 'n' + mu mbase 3 + adv mbase '𝑥')
-  -- Nothing is silently dropped: a scalar the math face lacks warns,
-  -- naming the face.
   let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
     (.cons (.atom .ord (.sym '₿') .nil .nil false) .nil)]] }
   t "a glyph the math face lacks warns E0405 naming it"
     (((layoutOf mfs bDoc geom).diags.filter (·.code == "E0405")).map
       (fun d => (d.message, d.triggerText, d.recovery)) ==
       #[("'Fira Math' has no glyph for U+20BF", none, some .skipped)])
-  -- The chain, extended to math scalars: the census walk carries a
-  -- formula's scalars to the driver's precompute, and a scalar the math
-  -- face lacks that the precomputed chain covers sets from that face,
-  -- named W0009 — never dropped.
   t "docScalars carries a formula's math scalars"
     ((Layout.docScalars (Elab.run "t" "$x$").1).contains '𝑥')
   let cfs : Font.FontSet := { mfs with fallback := #[('₿', 0)] }
@@ -2004,10 +1648,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '₿')
         | _ => false))
-  -- No math face: one W0003 for the document. The plaintext reading keeps
-  -- parsed glyphs and script boundaries; an exponent must not collapse
-  -- into a digit adjacent to its base. The fallback chain covers the
-  -- italic variables without assigning a math face.
   let bare : Font.FontSet := {
     fonts := #[serif, fira], index := allSlots
     fallback := #[('𝑥', 1), ('𝑦', 1)] }
@@ -2016,8 +1656,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no math face warns W0003 once" ((nOut.diags.filter (·.code == "W0003")).size == 1)
   t "no math face preserves script boundaries in the shipped plaintext"
     (String.ofList ((bodyGlyphs nOut).toList.map (·.2)) == "(𝑥)^(2)and𝑦")
-  -- Elaboration shapes: display math is its own centred block; \(..\) is
-  -- inline; equation* renders; align and \frac stay warned source.
   let (dd, dds) := Elab.run "t" "a \\[x\\] b"
   t "display math splits its paragraph into a centred block"
     (dds.isEmpty && dd.body ==
@@ -2030,25 +1668,17 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "equation* is display math"
     ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body.map unwrapDisplay ==
       #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]]])
-  -- A parsed formula's scalars are content by the parser's own decision, so
-  -- `\backslash` and `\{` ship their glyphs: that is the author asking for
-  -- the character, not markup leaking. The distinction is provenance, not
-  -- the character — which is why `markupChars` governs salvage from a
-  -- source string and `formulaFloor` runs no filter, and why the corpus ink
-  -- watch is per character (`inkMarkupExempt`) rather than per fixture.
+  -- A parsed formula's scalars are content, so `\backslash` and `\{` ship their glyphs.
   t "a formula asking for a backslash or a brace ships the glyph"
     (warnCodes "$\\backslash + \\{x\\}$" == [] &&
       (glyphChars "$\\backslash$").contains '\\' &&
       (glyphChars "$\\{x\\}$").contains '{')
-  -- The style-neutral wrappers lose nothing inside \text, so they say
-  -- nothing: a degraded code firing over a no-op would fail --werror for
-  -- free and dilute the one meaning W0385 carries.
+  -- A degraded code over a no-op would fail --werror for nothing.
   t "an upright wrapper inside \\text names no loss"
     (warnCodes "$\\text{\\textrm{plain} word}$" == [] &&
       warnCodes "$\\text{\\mbox{boxed} word}$" == [] &&
       glyphChars "$\\text{\\textrm{plain} word}$" ==
         glyphChars "$\\text{plain word}$")
-  -- What still is not modelled keeps its text content and its name.
   t "an out-of-scope construct degrades to its content and warns by name"
     (warnCodes "$\\overset{?}{=}$" == ["W0012"] &&
       ((Elab.run "t" "$\\overset{?}{=}$").1.body.any fun b => match b with
@@ -2056,11 +1686,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .math false _ => true
           | _ => false
         | _ => false))
-  -- LaTeX's text-style commands inside math resolve to the math alphabets
-  -- they mean, so a formula wrapped in one renders instead of degrading:
-  -- `\textbf{x}` is `\mathbf{x}`, which under the default text source is the
-  -- plain base letter set in a text family (not a Bold Alphanumeric scalar),
-  -- carrying the semantic `mathvariant` a MathML consumer reads.
   let bfvRaw := (Elab.run "synthetic.tex" "$\\textbf{v}$").1
   let (bfvDoc, _) := Ir.resolveMathAlphas alphaCoverage fira.family bfvRaw
   let bfvTree := HtmlDoc.blockNode { fonts := some mfs } bfvDoc.body[0]!
@@ -2070,17 +1695,12 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$" &&
       mathvariantOne bfvTree == some "normal" &&
       styleOne bfvTree == some "font-family: var(--font-body); font-weight: 700")
-  -- Colour declarations now travel in the math list; the shipped colour
-  -- and its scope are held by cancelReportChecks.
   t "a colour inside math keeps its content without a presentation loss"
     (warnCodes "$\\textcolor{blue}{x}$" == [] &&
       glyphChars "$\\textcolor{blue}{x}$" == glyphChars "$x$")
   t "a colour wrapping a styled operator renders both"
     (warnCodes "$\\textcolor{blue}{\\textbf{\\sum_z}}$" == [] &&
       (glyphChars "$\\textcolor{blue}{\\textbf{\\sum_z}}$").contains '∑')
-  -- A group inside \text is grouping, a known symbol contributes its
-  -- scalar, and a style command contributes its letters with the styling
-  -- named as lost — none of the three degrades the formula any more.
   t "a group inside \\text is grouping, not a construct"
     (warnCodes "$\\text{a{b}c}$" == [] &&
       glyphChars "$\\text{a{b}c}$" == glyphChars "$\\text{abc}$")
@@ -2094,8 +1714,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "$\\text{\\textcolor{indigo}{red} ink}$" == ["W0385"] &&
       glyphChars "$\\text{\\textcolor{indigo}{red} ink}$" ==
         glyphChars "$\\text{red ink}$")
-  -- An alignment body carries the same coverage: this is the shape a talk's
-  -- coloured, styled align rows take, and it used to degrade whole.
   t "a coloured styled alignment renders as a grid, never as source"
     (let src := "\\begin{align*} &P(A) \\\\ &= \
 \\textcolor{blue}{\\textbf{\\sum_z}} P(B) \\end{align*}"
@@ -2107,11 +1725,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
              | _ => false
            | _ => false
          | _ => false))
-  -- Literal Greek in math is unicode-math's second spelling of the control
-  -- word (math-style=TeX): the two spellings elaborate to one atom list
-  -- (the formula's source field alone differs), and the shipped glyph is
-  -- the Mathematical Italic scalar from the math face, never the body-face
-  -- U+03xx letter (`greek_literal_agree`).
   let atomsOf (src : String) : Option Math.MList :=
     (Elab.run "t" src).1.body.findSome? fun b => match b with
       | .para xs => xs.findSome? fun x => match x with
@@ -2131,8 +1744,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (sameFormula "$Ω$" "$\\Omega$" && glyphChars "$Ω$" == #['Ω'])
   t "literal Greek never ships as body-face source text"
     (glyphChars "$λ θ φ$" == #['𝜆', '𝜃', '𝜑'])
-  -- Accents: TeXbook Appendix G rule 12 over MathTopAccentAttachment,
-  -- pinned in sp over Layout's own output.
+  -- Accents: TeXbook Appendix G rule 12 over MathTopAccentAttachment, in sp.
   let runXOf (src : String) (pick : Array (Nat × Char × Dim.Sp) → Bool) : Option Dim.Sp := Id.run do
     let l := lineOf src
     let mut x : Dim.Sp := 0
@@ -2166,20 +1778,10 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false).size == 1)
   t "an accented atom still takes its script"
     (warnCodes "$\\hat{x}^2$" == [] && warnCodes "$e^{\\hat{H}}$" == [])
-  -- Math alphabets: one remap per letter (Math.MathAlphabet.apply), the
-  -- Letterlike holes individually — \mathbb{R} is ℝ, never tofu at
-  -- U+1D549 — and the classes projection untouched
-  -- (remapList_classes_id), so spacing survives the remap.
   t "mathbb takes the Letterlike hole: R is ℝ"
     (glyphChars "$\\mathbb{R}$" == #['ℝ'] && warnCodes "$\\mathbb{R}$" == [])
   t "mathrm recovers the upright letters"
     (glyphChars "$\\mathrm{Err}$" == #['E', 'r', 'r'])
-  -- Phase 3: `\mathbf{x+y}` sets its letters through the text-styled bold
-  -- body slot — plain 'x'/'y' boxed in the body text family (serif here),
-  -- not Bold Alphanumeric scalars in the math face — while '+' stays a math
-  -- symbol in the math face. The two medium spaces (the Ord-Bin-Ord classes)
-  -- must survive the styled letters: text advances use the ambient size,
-  -- while the operator and medium spaces use the matched math size.
   t "mathbf keeps the spacing classes: x+y bolds with its medium spaces"
     (widthOf "$\\mathbf{x+y}$" ==
       serifAdv base 'x' + mu mbase 4 + adv mbase '+' + mu mbase 4 + serifAdv base 'y')
@@ -2188,20 +1790,10 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .run f _ _ _ glyphs _ _ _ _ _ _ =>
         f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == 'x')
       | _ => false)
-  -- \boldsymbol/\bm is near-identity here: with no bold math version
-  -- declared, LuaLaTeX leaves \boldsymbol{\beta} the italic β (measured
-  -- against four math faces in scripts/math-alphabet-diff.lean, `bsym`
-  -- rows). bfit installs no range, so the stack falls it through to the
-  -- source scalar rather than over-bolding.
+  -- With no bold math version lualatex keeps `\boldsymbol{\beta}` italic (math-alphabet-diff).
   t "boldsymbol leaves a Greek variable at its source italic"
     (glyphChars "$\\boldsymbol{\\beta}$" == #['𝛽'])
-  -- \boldsymbol/\bm carry no digits: with no bold math version, LuaLaTeX
-  -- leaves \boldsymbol{5} a plain 5 (measured against four math faces in
-  -- scripts/math-alphabet-diff.lean), and under the default text source
-  -- \mathbf{5} is ALSO a plain 5 — but set through the text-styled bold
-  -- body slot, not the math face. So the two do not differ by codepoint;
-  -- they differ by face: mathbf's 5 boxes at the bold body slot (font 0),
-  -- boldsymbol's stays a math symbol in the math face (font 1).
+  -- `\mathbf{5}` and `\boldsymbol{5}` share a codepoint and differ by face.
   let mbFive := (lineOf "$\\mathbf{5}$").segs.findSome? fun s => match s with
     | .run f _ _ _ glyphs _ _ _ _ _ _ => if glyphs.any (·.2.1 == '5') then some f else none
     | _ => none
@@ -2210,10 +1802,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => none
   t "boldsymbol leaves a digit plain; mathbf keeps the bold digit"
     (mbFive == some (mfs.lookup 0 700 false) && bsFive == some 1 && mbFive != bsFive)
-  -- A symbol scope keeps the enclosing mathcode mapping but resets its
-  -- text family (unicode-math's \__um_prepare_mathstyle:n). LuaLaTeX ships
-  -- plain 5 and Z in the math face even where the inner alphabet has no
-  -- digit range or the face has no fraktur coverage.
   t "nested alphabets: calligraphic resets the text family for a digit"
     (glyphChars "$\\mathbf{\\mathcal{5}}$" == #['5'] &&
       (lineOf "$\\mathbf{\\mathcal{5}}$").segs.any fun s => match s with
@@ -2226,28 +1814,19 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .run f _ _ _ glyphs _ _ _ _ _ _ =>
           f == 1 && glyphs.any (·.2.1 == 'Z')
         | _ => false)
-  -- Range completeness confirmed against the oracle: \mathit sets the
-  -- italic uppercase Greek block (U+1D6E2), \boldsymbol is near-identity
-  -- (bfit installs no range with no bold math version).
   t "mathit sets the italic uppercase Greek block"
     (glyphChars "$\\mathit{\\Gamma}$" == #['𝛤'])
   t "boldsymbol leaves a Latin variable at its source italic"
     (glyphChars "$\\boldsymbol{O}$" == #['𝑂'])
-  -- The unicode-math \sym… family maps onto the typed alphabets: \symbb
-  -- takes its Letterlike hole, \symbfup emboldens lowercase Greek upright,
-  -- \symup leaves the upright capital, and none of them warns any more.
   t "symbb takes its Letterlike double-struck scalar"
     (glyphChars "$\\symbb{R}$" == #['ℝ'])
   t "symbfup emboldens lowercase Greek upright"
     (glyphChars "$\\symbfup{\\gamma}$" == #['𝛄'])
   t "symup leaves the upright Greek capital"
     (glyphChars "$\\symup{\\Gamma}$" == #['Γ'])
-  t "the sym family no longer raises an unknown-command warning"
+  t "the sym family raises no unknown-command warning"
     (warnCodes "$\\symbb{R}$" == [] && warnCodes "$\\symup{\\Gamma}$" == [] &&
       warnCodes "$\\symbfup{\\gamma}$" == [])
-  -- The corpus math face's cmap, per mapped scalar: the alphabets it
-  -- covers render from it; the ones it lacks take the diagnosed fallback
-  -- path (per-scalar chain, N0018 synthesis where the chain is empty).
   t "fira math covers the bb, bf, bfit, tt, it, and rm letter alphabets"
     ([Math.MathAlphabet.bb, .bf, .bfit, .tt, .it, .rm].all fun a =>
       Math.latinLetters.all fun c => (fira.gid (a.apply c)).isSome)
@@ -2255,7 +1834,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (([Math.MathAlphabet.cal, .frak, .sf].all fun a =>
       Math.latinLetters.all fun c =>
         (fira.gid (a.apply c)).isNone || a.apply c == '\u210A'))
-  -- A construction stands as a script's argument: the pending chain.
   t "a word is a script's argument"
     (warnCodes "$V^\\text{null}$" == [] &&
       glyphChars "$V^\\text{null}$" == #['𝑉', 'n', 'u', 'l', 'l'])
@@ -2265,12 +1843,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (glyphChars "$x^\\mathbb{R}$" == #['𝑥', 'ℝ'])
   t "ensuremath is transparent in math"
     (glyphChars "$\\ensuremath{x}$" == #['𝑥'])
-  -- \define expansion inside math: the hook where MathParse meets the
-  -- elaborator's macro table. Arguments bind already expanded (the walk
-  -- runs right to left), matching takeArgs' text-mode order; a definition
-  -- sees only definitions before it, so a self-reference stays unexpanded
-  -- and the formula degrades with its name — the same rule that bounds
-  -- the expansion (expandMathList's measure).
+  -- A definition sees only those before it, so a self-reference stays unexpanded.
   let wrapDoc (pre body : String) : String :=
     "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\n" ++ body ++
       "\n\\end{document}"
@@ -2298,10 +1871,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         + adv mbase 'r' + mu mbase 3 + adv mbase '𝑦')
   t "ensuremath in text enters math"
     (glyphsOf "" "\\ensuremath{x^2}" == #['𝑥', '2'])
-  -- An alphabet range the selected math face does not carry keeps the
-  -- source's ordinary math scalar. The face-level resolver has already
-  -- named the alphabet once, so layout neither consults host fallback nor
-  -- repeats a per-glyph note.
   let calOut := layoutOf mfs (Elab.run "t" "$\\mathcal{L}$").1 geom
   t "an unsupported calligraphic range keeps ordinary italic, named once"
     ((calOut.diags.filter (·.code == "E0405")).isEmpty &&
@@ -2325,9 +1894,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((bbOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
         | _ => false))
-  -- The alignment family renders as grids now; the numbered forms warn
-  -- W0014 (numbers are owed, the mathematics is not), a ragged row is
-  -- W0013 and still renders padded.
   t "align renders as a grid; its numbers warn W0015"
     (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0015"] &&
       ((Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body.any fun b => match unwrapDisplay b with
@@ -2339,8 +1905,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false))
   t "a ragged align row is W0014 and still renders"
     (warnCodes "\\begin{align*}a &= b \\\\ z\\end{align*}" == ["W0014"])
-  -- Ragged rows of two environments are two losses, each warned in its own
-  -- words: the once-key names the environment.
   t "ragged rows of two environments each warn in their own words"
     (warnCodes ("\\begin{align*}a &= b \\\\ z\\end{align*}\n\n" ++
       "$\\begin{pmatrix}a & b \\\\ c\\end{pmatrix}$") == ["W0014", "W0014"])
@@ -2374,9 +1938,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           if let .rule w thickness raise _ := s then
             out := out.push (w, thickness, raise)
     return out
-  -- Fractions: parts at their styles' sizes, numerator raised and
-  -- denominator dropped, the bar fractionRuleThickness thick, and the
-  -- advance the wider part plus \nulldelimiterspace each side.
   t "frac advance is the wider part plus null delimiters"
     (widthOf "$\\frac12$" ==
       2 * (mbase * 12 / 100) + max (adv scriptSize '1') (adv scriptSize '2'))
@@ -2388,23 +1949,19 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (rules "$\\frac12$" ==
       #[(max (adv scriptSize '1') (adv scriptSize '2'), konst mbase 76,
          konst mbase 280 - konst mbase 76 / 2)])
-  -- The radical: the surd's ink top meets the overbar, radicand under it.
   t "sqrt draws surd and overbar over the radicand"
     ((glyphInfo "$\\sqrt{x}$").any (fun g => g.1 == '\u221A') &&
       (rules "$\\sqrt{x}$").size == 1 &&
       (glyphInfo "$\\sqrt{x}$").any (fun g => g.1 == '𝑥'))
   t "a root index sets small before the surd"
     ((glyphInfo "$\\sqrt[3]{x}$").any (fun g => g.1 == '3' && g.2.2.2.1 > 0))
-  -- \left...\right grows through the variant ladder: around a tall display
-  -- fraction the paren is no longer the base glyph (gid 9 in Fira Math).
+  -- The paren's base glyph is gid 9 in Fira Math.
   t "left paren grows over a display fraction"
     ((glyphInfo "\\[\\left(\\frac{a}{b}\\right)\\]").any fun g =>
       g.1 == '(' && g.2.1 != 9)
   t "an inline paren around a scalar stays the base glyph"
     ((glyphInfo "$\\left(a\\right)$").any fun g => g.1 == '(' && g.2.1 == 9)
-  -- Big operators: display style takes the face's display-size variant
-  -- (gid 1584) with limits above and below, centred; text style keeps the
-  -- base glyph (753) and its scripts beside.
+  -- Fira Math's display-size sum is gid 1584, its base glyph 753.
   t "display sum takes the display variant"
     ((glyphInfo "\\[\\sum_{i=1}^{n} i\\]").any fun g => g.1 == '\u2211' && g.2.1 == 1584)
   t "inline sum keeps the text-size glyph and scripts beside"
@@ -2417,9 +1974,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       return mraise > 0 && ((2 * mx + ma) - (2 * sx + sa)).natAbs ≤ 2)
   t "the lower limit sits below the operator"
     ((glyphInfo "\\[\\sum_{j=2}^{m} j\\]").any fun g => g.1 == '2' && g.2.2.2.1 < 0)
-  -- Alignment points align: the relation opening every even align cell
-  -- sits at one x for every row, and the right-aligned column pushes a
-  -- short cell right by exactly the width difference.
   t "align columns share their alignment point"
     (Id.run do
       let gs := glyphInfo "\\begin{align*}ab &= c \\\\ x &= yz\\end{align*}"
@@ -2440,7 +1994,6 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       let some (_, _, bx, _, ba) := gs.find? (fun g => g.1 == '𝑏') | return false
       let w1 := 4 * adv mbase '𝑎'
       return ((2 * bx + ba) - (2 * ax + w1)).natAbs ≤ 2)
-  -- Primes and \text.
   t "a prime is a raised superscript prime"
     ((glyphInfo "$x'$").any fun g => g.1 == '\u2032' && g.2.2.2.1 == konst mbase 400)
   t "text inside math keeps its letters and spaces upright"
@@ -2456,17 +2009,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.run "t" ("\\documentclass{article}\\fonts{ math = \"Fira Math\" }" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
 
-
-/-- The isolated-glyph-hole owner (W0016), partitioned from the
-whole-alphabet owner (N0018) by the `remaps` bit. Two builds differing only
-in coverage-versus-glyph: when the selected face does not carry a range's
-anchor the resolver keeps the source scalar and the IR names the whole
-alphabet (N0018, `math-alpha:<name>`) with no W0016; when the face declares
-the range covered yet the specific glyph is filtered out, the resolver
-applies the alphabet, layout meets the hole, and the base letter stands in
-under W0016 (`math-alpha:<name>`) with no N0018. Disjoint by construction —
-`Math.missingCharAlpha_kept` proves the N0018 census names only kept source
-scalars, which the covered-hole path never leaves standing. -/
+/-- The isolated-glyph-hole owner (W0016) and the whole-alphabet owner (N0018) partition by the
+`remaps` bit, two builds apart. -/
 def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -2485,17 +2029,11 @@ def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     math := some 1
     mathAlphabets := fira.mathAlphabetCoverage {} }
   let geom : Layout.Geom := {}
-  -- Coverage OMITS the calligraphic range: the resolver keeps the source
-  -- scalar and the IR names the whole alphabet once, no per-glyph W0016.
   let calOut := layoutOf mfs (Elab.run "t" "$\\mathcal{L}$").1 geom
   t "partition: an uncovered range keeps its source scalar, named N0018 alone"
     ((calOut.diags.filter (·.code == "N0018")).map (·.subject) ==
         #[some "math-alpha:cal"] &&
       !calOut.diags.any (·.code == "W0016"))
-  -- Coverage COVERS the double-struck range (its anchor stands) but the
-  -- specific glyph is filtered: the resolver applies the alphabet, layout
-  -- meets the isolated hole, the base letter stands in under W0016, no
-  -- N0018. bb is sym-sourced, so this is the loss `\mathbf` no longer is.
   let noBBFira2 : Font.Font := { fira with
     cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D538 && 0x1D538 ≤ r.2.1.toNat) }
   let noBBSet2 : Font.FontSet := { mfs with fonts := #[serif, noBBFira2] }
@@ -2507,19 +2045,6 @@ def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((bbOut2.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
         | _ => false))
-
-
-
-/-! ## The slot matrix: the driver end to end, judged on its artifacts
-
-`slotLossChecks` pins the decision's conditions over sets built by hand.
-This block runs the path that ships — the `leantex` binary — over
-documents that differ only in the dimension a row names, and judges each
-report against what the artifact itself says about the face a run is set
-in: the PDF's content stream and descriptor, or the page's slot stack and
-the file its `@font-face` names. The expected answer is never the
-engine's rule restated: it is the artifact's face, and whether the
-document declared the slot. -/
 
 /-- Which artifacts one row builds, as its document declares them. -/
 inductive SlotArt where
@@ -2541,10 +2066,8 @@ def SlotArt.name : SlotArt → String
   | .htmlOwn => "html/css=own"
   | .pdfHtmlOwn => "pdf+html/css=own"
 
-/-- One row: a class, the `\fonts` keys it declares (none: the
-`LEANTEX_FONT` override instead of a declaration), the pitch of every
-family it names, the artifacts it builds, and the one slot its one
-construct sets. -/
+/-- One row: a class, its declared `\fonts` keys (none: the `LEANTEX_FONT` override), the pitch of
+every family it names, its artifacts, and the slot its construct sets. -/
 structure SlotRow where
   cls : String
   decl : List String
@@ -2553,10 +2076,8 @@ structure SlotRow where
   slot : String
   deriving Repr, Inhabited
 
-/-- The family a row names for a key: the monospace face for every key of
-a fixed-pitch row, else a proportional design per key — Fira Sans for
-mono, a proportional family a document may declare for its typewriter
-slot, and has then chosen. -/
+/-- The family a row names for a key: the monospace face in a fixed-pitch row, else a proportional
+design per key. -/
 def SlotRow.family (r : SlotRow) (key : String) : String :=
   if r.fixed then "Source Code Pro"
   else if key == "body" then "Source Serif Pro"
@@ -2571,9 +2092,8 @@ def SlotRow.label (r : SlotRow) : String :=
   let d := if r.decl.isEmpty then "LEANTEX_FONT" else ",".intercalate r.decl
   s!"{r.cls} [{d}] {if r.fixed then "fixed" else "proportional"} {r.art.name} {r.slot}"
 
-/-- A row's document: one paragraph of plain words carrying the row's one
-construct, a `\texttt` or a `\textsf` run spelling `zqx` — a word nothing
-else on the page spells, so the face that sets it can be read back. -/
+/-- A row's document: one paragraph whose `\texttt` or `\textsf` run spells `zqx`, a word nothing
+else on the page spells. -/
 def SlotRow.src (r : SlotRow) : String :=
   let fonts := if r.decl.isEmpty then "" else
     "\\fonts{ dir = \"fonts\", " ++
@@ -2598,11 +2118,8 @@ def slotRows : Array SlotRow := Id.run do
             out := out.push { cls, decl := d, fixed, art, slot }
   return out
 
-/-- A font file's own `post.isFixedPitch`, read through the OpenType table
-directory — the uint32 at offset 12 of `post` (OpenType spec, the `post`
-table header) — with no engine code between the bytes and the answer, so
-the matrix's pitch oracle does not share the reader it judges. `none`: no
-readable `post` table. -/
+/-- A font file's own `post.isFixedPitch`, read from the table directory with no engine code between
+the bytes and the answer. -/
 def postIsFixedPitch (data : ByteArray) : Option Bool := Id.run do
   let byte (i : Nat) : Nat := (data[i]?.map (·.toNat)).getD 0
   let u16 (i : Nat) : Nat := byte i * 256 + byte (i + 1)
@@ -2616,12 +2133,8 @@ def postIsFixedPitch (data : ByteArray) : Option Bool := Id.run do
       return if off + 16 ≤ data.size then some (u32 (off + 12) != 0) else none
   return none
 
-/-- What a written PDF sets in each face resource: the resource's name,
-the text its runs spell through that face's own `/ToUnicode`, the `/Flags`
-its descriptor declares, and the pitch the embedded program's own `post`
-table declares (`postIsFixedPitch`). The artifact tier's tokenizer and CMap
-reading, plus the one fact that tier does not keep: which face a run is
-set in. -/
+/-- What a written PDF sets in each face resource: its name, the text its runs spell through its
+`/ToUnicode`, its descriptor's `/Flags`, and its embedded program's `post` pitch. -/
 def pdfFaceRuns (pdf : ByteArray) :
     Except String (Array (String × String × Int × Option Bool)) := do
   let es := (← PdfRead.objects pdf).val
@@ -2690,13 +2203,8 @@ def faceSetting (runs : Array (String × String × Int × Option Bool)) (needle 
     Option (String × Int × Option Bool) :=
   (runs.find? fun (_, s, _, _) => hasStr s needle).map fun (nm, _, fl, p) => (nm, fl, p)
 
-/-- The resource a page sets a slot in: walk the slot's `--font-<slot>` stack
-— the last declaration, which is the one the cascade keeps — to the first
-family that has an `@font-face` rule at the regular weight and upright
-style, as the browser's per-family walk does (CSS Fonts 4 §5.2: a
-synthetic family with no rule names no face, and the walk moves on), and
-return that rule's `src`. `none`: no family of the stack has a rule,
-so the page ships no face for the slot. -/
+/-- The `src` of the `@font-face` rule a page sets a slot in: the first family of the slot's last
+`--font-<slot>` stack with a regular upright rule, as the browser walks it. -/
 def htmlSlotSource (html slot : String) : Option String := do
   let parts := html.splitOn ("--font-" ++ slot ++ ": ")
   if parts.length < 2 then none
@@ -2713,11 +2221,8 @@ def htmlSlotSource (html slot : String) : Option String := do
       "\"; font-weight: 400; font-style: normal; src: url(\""
     ((html.splitOn rule)[1]?).bind fun rest => (rest.splitOn "\"").head?
 
-/-- One row's outcome: the driver's exit code and log, the W0390 lines it
-printed, and what the artifact says — whether any artifact carrying a
-face sets the slot's run in a face that is not of the slot's kind, whether
-that face is the running text's own, and whether the PDF's descriptor
-declares the pitch its embedded program does. -/
+/-- One row's outcome: the driver's exit code and log, its W0390 lines, and what the artifacts say
+about the slot's face. -/
 structure SlotOutcome where
   exit : UInt32
   log : String
@@ -2727,11 +2232,8 @@ structure SlotOutcome where
   flagsAgree : Bool
   oracle : String
 
-/-- Build one row with the driver and read its artifacts back. The driver
-runs in an environment of its own: a private cache, an empty home, and a
-`PATH` holding nothing, so no TeX tree, user font directory or tool on
-this host reaches the scan — every family a row names is in the copied
-corpus directory beside the document. -/
+/-- Build one row with the driver in a private environment (cache, empty home, empty `PATH`) and
+read its artifacts back. -/
 def slotRunRow (bin : String) (dir : System.FilePath) (cache : String) (i : Nat)
     (r : SlotRow) : IO SlotOutcome := do
   let tex := dir / s!"row{i}.tex"
@@ -2782,17 +2284,8 @@ same as running text {same}"
   return { exit := p.exitCode, log := p.stdout ++ p.stderr, reports, lost, textFace,
            flagsAgree, oracle }
 
-/-- **W0390 fires exactly when an artifact sets a slot's runs in a face
-not of the slot's kind, and the document declared no family for the
-slot.** For mono the kind is fixed pitch, read from the face program the
-artifact carries — the PDF's or HTML's embedded program —
-through its `post` table directly (`postIsFixedPitch`), never through the
-engine's classifier, which is what the report rests on; and every PDF's
-descriptor must declare the pitch its own program does. For sans the kind
-is contrast with the running text — no face field says "is a sans design"
-— so the loss is the run set in the text's own face. An artifact carrying
-no face (a page under a declared `css =`) sets no run in a resolved face
-and loses nothing. -/
+/-- W0390 fires exactly when an artifact sets a slot's runs in a face not of the slot's kind and the
+document declared no family for the slot. -/
 def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let before := (← ref.get).length
   let t := check ref
@@ -2807,18 +2300,14 @@ def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
     if e.fileName.endsWith ".otf" || e.fileName.endsWith ".ttf" then
       IO.FS.writeBinFile (dir / "fonts" / e.fileName) (← IO.FS.readBinFile e.path)
   let cache := (dir / "cache").toString
-  -- One run first, so every parallel run after it reads a warm probe cache
-  -- instead of each probing the host's font tree for itself.
+  -- One run first, so every parallel run after it reads a warm probe cache.
   let rows := slotRows
   let warm ← slotRunRow bin dir cache rows.size (rows[0]?.getD default)
   t s!"slot matrix: the warm-up run builds: {warm.log}" (warm.exit == 0)
   let mut outcomes : Array (Option (Except IO.Error SlotOutcome)) := Array.replicate rows.size none
-  -- Sixteen workers: measured on a 192-core host, the matrix took 3.4 s at
-  -- 16, 4.2 s at 32, 5.7 s at 64 and 5.0 s at 4.
+  -- Sixteen workers measured fastest (3.4 s, against 4.2 s at 32 and 5.0 s at 4).
   let width := 16
-  -- Workers over a static partition — worker `j` builds rows `j`,
-  -- `j + width`, … — so no state is shared and a slow row delays only its
-  -- own worker, not a whole batch.
+  -- Workers over a static partition share no state, so a slow row delays only its own worker.
   let mut tasks := #[]
   for j in [0:width] do
     tasks := tasks.push (← IO.asTask (prio := .dedicated) do
@@ -2848,8 +2337,6 @@ def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
       else expectedSilent := expectedSilent + 1
       t s!"slot matrix {r.label}: {if want then "reported" else "silent"} ({o.oracle}); \
 got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
-      -- What the report says is the artifact's answer too: which face served
-      -- the run, and, where the page beside the PDF carries none, the PDF.
       if want then
         let word := if r.slot == "mono" then SlotLoss.monoWord else SlotLoss.sansWord
         let served := if o.textFace then SlotLoss.Served.bodyFace else .bodyFamily
@@ -2862,8 +2349,7 @@ got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
 {o.reports}" (o.reports.map (·.trimAscii.toString) == #[expect])
     | some (.error e) => t s!"slot matrix {r.label}: the row runs: {e}" false
     | none => t s!"slot matrix {r.label}: the row ran" false
-  -- Non-vacuity: the matrix reaches both answers, and the deck setup the
-  -- defect was found in is one of the rows whose artifact says "lost".
+  -- Non-vacuity: the matrix reaches both answers.
   t s!"slot matrix: some rows are losses ({expectedReports})" (0 < expectedReports)
   t s!"slot matrix: some rows are not ({expectedSilent})" (0 < expectedSilent)
   t s!"slot matrix: every PDF declares the run face's pitch its embedded program does: \
@@ -2873,35 +2359,12 @@ got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
   else
     IO.eprintln s!"slot matrix: retained artifacts in {dir}"
 
-/-- **A family slot set in a face not of its kind, and the report that
-names it.** The mono-slot defect: a `\texttt`, `\url` or verbatim run in a
-document with no `\fonts{ mono = ... }` sets in body prose, and said
-nothing. Measured from the bytes on a synthetic document carrying all three
-constructs against the shipped corpus fonts — with `mono` declared the PDF
-embeds two faces, without it one — and both builds were silent.
-
-Three groups, each falsifying one thing this could get wrong. The census:
-a document that never asks for the slot is never told about it, and the
-descent is the fold's, so a `\texttt` inside a footnote or a running head
-counts. The decision, over sets built here: its four conditions (a face
-carried, the slot used, no family declared, the face not of the slot's
-kind) are each load-bearing, the face answers where the index says the
-opposite in both directions — a fixed-pitch body the index calls
-collapsed, and a deck's serif body family the index calls the slot's own —
-the body slot is the reference rather than a subject, and the message says
-what served the slot and, in a build where only the PDF carries the face,
-that the PDF lost. The matrix (`slotMatrixChecks`): the same invariant
-through the driver binary, judged on each artifact's own face.
-
-Hermetic and synthetic throughout: the faces are ones the corpus ships,
-every index here is built here, and the driver runs read the shipped faces
-from a copy of the corpus directory under a private cache. Invented
-content, `example.org` links. -/
+/-- A family slot set in a face not of its kind is reported: the census, the decision's four
+conditions, and the message. -/
 def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let doc (body : String) : Ir.Doc := (elabStr ("\\documentclass{article}\n" ++
     "\\begin{document}\n" ++ body ++ "\n\\end{document}")).1
-  -- The census: which slots a document's own content asks for.
   t "slot census: a plain paragraph asks for no family slot past the body"
     ((SlotLoss.slotsUsed (doc "Plain body prose here.")).isEmpty)
   t "slot census: '\\texttt' asks for the mono slot"
@@ -2914,23 +2377,9 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((SlotLoss.slotsUsed (doc "A \\textsf{sans} run.")).contains 1)
   t "slot census: '\\texttt' asks for no sans slot"
     (!(SlotLoss.slotsUsed (doc "A \\texttt{fixed pitch} run.")).contains 1)
-  -- A link whose text carries no typewriter style asks for no mono slot: the
-  -- census reads the style the IR carries, never the construct that made it.
-  -- That is why honouring `\urlstyle{same}` where `\url` elaborates — no
-  -- family style for `same` — is all it takes for a URL in the running face
-  -- to stop counting as a lost mono run, with no change here.
   t "slot census: a link with no typewriter style asks for no mono slot"
     (!(SlotLoss.slotsUsed (doc "A link \\href{https://example.org/a}{here}.")).contains 2)
-  -- **Registered debt: the census counts declarations, not shipped runs.**
-  -- A style-s font template is a furniture region, so a `\style` naming
-  -- `\ttfamily` counts as a mono use even in a document with no element of
-  -- that kind, and the report names a loss no page shows (measured: one
-  -- W0390 on such a document). The answer belongs to the layout, which
-  -- resolves each run-s slot as it sets it (`Layout.Out`), and this census
-  -- cannot see provenance: `Ir.furnitureInlines` hands over runs, not the
-  -- elements they came from. The row fails in both directions — when the
-  -- over-count grows past what is registered, and when the fix lands and
-  -- the registered answer stops holding, which is the signal to delete it.
+  -- Registered debt: a `\style` font template counts as a mono use with no such element.
   let debtDoc := (elabStr ("\\documentclass{article}\n\\style{section}{ font = {\\ttfamily} }\n" ++
     "\\begin{document}\nPlain body prose here, and no section at all.\n\\end{document}")).1
   let debtSlots := SlotLoss.slotsUsed debtDoc
@@ -2941,16 +2390,12 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     failures ref ("slot census debt: the registered answer no longer holds — a furniture " ++
       s!"template now yields {debtSlots.toList}; if the layout-s per-run slot landed, " ++
       "delete this row and the PLAN registration")
-  -- The descent is the fold's: a construct nested where a hand-rolled walk
-  -- would have stopped still counts. An image inside a footnote once
-  -- shipped a silent placeholder for exactly this reason.
   t "slot census: the fold reaches a footnote body"
     ((SlotLoss.slotsUsed (doc "Text\\footnote{A \\texttt{note} run.}")).contains 2)
   t "slot census: the fold reaches a running head"
     ((SlotLoss.slotsUsed ((elabStr ("\\documentclass{article}\n" ++
       "\\runninghead{A \\texttt{head} run}\n\\begin{document}\nx\n\\end{document}")).1)).contains 2)
-  -- The resolved sets. `collapsed` is the no-declaration default: one face
-  -- serves every slot. `declared` is a distinct mono in slot 2.
+  -- `collapsed`: one face in every slot; `declared`: a distinct mono in slot 2.
   let load (name : String) : IO (Option Font.Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure (some f)
@@ -2966,11 +2411,9 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let monoSpec : Ir.FontSpec := { mono := some "Source Code Pro" }
   let usesMono := doc "A \\texttt{fixed pitch} run."
   let usesNeither := doc "Plain body prose here."
-  -- What the build carries: a PDF always carries its faces; an HTML-only
-  -- page under a declared stylesheet carries none.
+  -- A PDF always carries its faces; an HTML-only page under a declared stylesheet carries none.
   let pdf := SlotLoss.carries #[.pdf] .embedded
   let bare := SlotLoss.carries #[.html, .md] .none
-  -- The report, and each of its conditions.
   t "slot loss: an undeclared mono slot on the body face is reported"
     ((SlotLoss.diags {} collapsed usesMono pdf).size == 1)
   t "slot loss: the report is the mono slot"
@@ -2983,12 +2426,6 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((SlotLoss.diags {} collapsed usesNeither pdf).isEmpty)
   t "slot loss: a slot on its own fixed-pitch face is not reported"
     ((SlotLoss.losses {} declared #[2] pdf).isEmpty)
-  -- **The face, not the index — in both directions.** A monospace body
-  -- sets typewriter runs in fixed pitch whichever slot they came through,
-  -- so the index's "collapsed" is no loss. And a deck sets its text in the
-  -- sans family while an undeclared mono slot falls to the body family —
-  -- a face of its own, by the index, and a proportional serif all the
-  -- same: that deck was silent, and the index was why.
   let monoBody : Font.FontSet := { fonts := #[code], index := slots 0 0 0 }
   t "slot loss: a fixed-pitch body face loses no mono, though the index collapsed"
     ((SlotLoss.diags {} monoBody usesMono pdf).isEmpty)
@@ -3003,13 +2440,9 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!deck.slotCollapsed 2 && (SlotLoss.losses deckSpec deck #[2] pdf).map (·.key) == #["mono"])
   t "slot loss: a deck's mono slot on a fixed-pitch body family is not"
     ((SlotLoss.losses deckSpec deckOnCode #[2] pdf).isEmpty)
-  -- The sans slot claims no pitch: no flag in a face records "is a sans
-  -- design", so the loss reported is the missing contrast, and a
-  -- fixed-pitch body does not exempt it.
+  -- The sans slot claims no pitch: no face flag records a sans design.
   t "slot loss: the sans slot is reported on a fixed-pitch body too"
     ((SlotLoss.losses {} monoBody #[1] pdf).map (·.key) == #["sans"])
-  -- **What served the slot, said so.** The body face where the slot sits on
-  -- the text's own face; the body family where the text is set in another.
   t "slot loss: a slot on the text's own face was served by the body face"
     (SlotLoss.served collapsed 2 == .bodyFace)
   t "slot loss: a deck's mono slot was served by the body family"
@@ -3018,11 +2451,6 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((SlotLoss.diags deckSpec deck usesMono pdf).map (·.message)) ==
       #["nothing declares a 'mono' family; typewriter runs set in the body family, \
 which is not fixed-pitch"])
-  -- **The carrying gate is load-bearing.** One document, one index, two
-  -- values of the gate's own condition: an artifact carrying a face
-  -- reports the lost slot, one carrying none reports nothing. An HTML-only
-  -- page under a declared `css =` is the second, and it is what the site
-  -- port builds.
   t "slot loss: an artifact carrying no face reports nothing"
     ((SlotLoss.diags {} collapsed usesMono bare).isEmpty)
   t "slot loss: a PDF carries a face whatever the font policy"
@@ -3033,11 +2461,6 @@ which is not fixed-pitch"])
       (SlotLoss.carries #[.html] .none).faced.isEmpty)
   t "slot loss: a markdown twin carries no face and sets no run in one"
     (SlotLoss.carries #[.md] .embedded == { faced := #[], unfaced := #[] })
-  -- **A mixed build names the artifact that lost.** A PDF beside a page
-  -- under its own stylesheet: the page sets code from its own monospace
-  -- stack, so the loss is the PDF's alone and the report says so; where
-  -- every emitted artifact carries the face, the report holds of the build
-  -- and names none.
   let mixed := SlotLoss.carries #[.pdf, .html] .none
   t "slot loss: a PDF beside an unfaced page is the one artifact named"
     (Tests.SlotLossWording.carryOnly mixed == some "the PDF")
@@ -3048,18 +2471,13 @@ which is not fixed-pitch"])
     (((SlotLoss.diags {} collapsed usesMono mixed).map (·.message)) ==
       #["nothing declares a 'mono' family; in the PDF, typewriter runs set in the body face, \
 which is not fixed-pitch"])
-  -- The body slot is the reference, never a subject: no report names it,
-  -- whatever is asked of it.
   t "slot loss: the body slot is never reported"
     ((SlotLoss.losses {} collapsed #[0, 1, 2] pdf).all (·.slot != 0))
-  -- One loss per slot, not one per run: five mono sites and one sans site
-  -- are two diagnostics.
   let manyRuns := doc ("A \\texttt{one} run, a \\texttt{two} run, a \\texttt{three} run, " ++
     "\\url{https://example.org/a}, and \\textsf{sans}.\n" ++
     "\\begin{verbatim}\nliteral\n\\end{verbatim}")
   t "slot loss: one report per lost slot, not one per run"
     ((SlotLoss.diags {} collapsed manyRuns pdf).size == 2)
-  -- The diagnostic itself: the code, and the subject the census counts on.
   let monoDiag := (SlotLoss.diags {} collapsed usesMono pdf)[0]?
   t "slot loss: the report is its own code, not the variant axis (W0390)"
     ((monoDiag.map (·.code)) == some "W0390")
@@ -3072,13 +2490,7 @@ which is not fixed-pitch"])
   t "slot loss: the report names the slot's runs, not constructs the document may not have written"
     ((monoDiag.map fun d => !hasStr d.message "\\url").getD false)
 
-  -- **A provisional index is not a document's loss.** A provisional
-  -- assembly resolves slot 0 and skips the others, so its index has no
-  -- entry past the body and every slot reads as collapsed. The report is
-  -- reached only from `build`, which holds the settled set; this row keeps
-  -- the difference visible, so a caller handing the provisional shape in
-  -- would be handing in an index that answers about the driver's shortcut
-  -- rather than about the document.
+  -- A provisional assembly's index has no entry past the body; the report reads the settled set.
   let provisional : Font.FontSet := { fonts := #[body], index := #[((0, 400, false), 0)] }
   t "slot loss: a slot-0-only index would report every other slot, which only the settled set avoids"
     ((SlotLoss.losses {} provisional #[1, 2] pdf).size == 2)

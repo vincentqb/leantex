@@ -13,8 +13,7 @@ private def titleColor : Ir.Color := { r := 35, g := 57, b := 91 }
 private def innerColor : Ir.Color := { r := 199, g := 218, b := 242 }
 private def headerColor : Ir.Color := { r := 67, g := 85, b := 104 }
 
-/-- Invented frame boundary probes. Ordinary fit, spill, and empty paint
-are separate witnesses; the ordinary matrix does not claim zero flex. -/
+/-- Invented frame boundary probes: ordinary fit, spill and empty paint as separate witnesses. -/
 private def source (alignment body : String) (size : Nat := 12) (height : Nat := 240) : String :=
   "\\documentclass{beamer}\n" ++
   s!"\\page\{width=320pt,height={height}pt,hmargin=16pt,vmargin=14pt,fontsize={size}pt}\n" ++
@@ -40,9 +39,8 @@ private def hasClass (node : Html.Node) (name : String) : Bool :=
     ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains name
   | .text _ | .style _ | .script .. => false
 
-/-- The minimum painted body coordinate of the shipped page. Header ink
-is identified by its fixture text; header lines are not `furniture`.
-Filled surfaces count even when their first glyph stands lower. -/
+/-- The topmost painted body coordinate of a shipped page, filled surfaces included; header ink is
+told by its fixture text. -/
 private def paintedTop (fonts : Font.FontSet) (page : Layout.PageOut) : Option Dim.Sp :=
   let ys := (page.fills.filter isSurface).map (·.y) ++
     (page.lines.filter fun line =>
@@ -50,8 +48,7 @@ private def paintedTop (fonts : Font.FontSet) (page : Layout.PageOut) : Option D
       (fun line => line.y - (Layout.segsInk fonts line.segs).1)
   ys.foldl (fun acc y => some (acc.map (min y) |>.getD y)) none
 
-/-- Read the actual repeated header paint independently of its census
-metadata: a missing `PageOut.band` must not hide a continuation page. -/
+/-- The repeated header paint's bottom, read independently of its census metadata. -/
 private def headerBottom (page : Layout.PageOut) : Option Dim.Sp :=
   (page.fills.filter (·.color == headerColor)).foldl
     (fun edge fill => some (edge.map (max (fill.y + fill.h)) |>.getD (fill.y + fill.h))) none
@@ -94,10 +91,8 @@ private def compoundMatches (selector : String) (node : Html.Node) : Bool :=
       classes.all (hasClass node)
   | _, _ => false
 
-/-- A bounded cascade reader for these direct stage children: type/class
-compounds, direct-child and adjacent-sibling selectors, and `:where()`.
-The emitted rules are read in order; inline declarations win. This is not
-a general CSS engine or a rendered-browser distance measurement. -/
+/-- A bounded cascade reader for direct stage children: type and class compounds, child and
+adjacent-sibling selectors, and `:where()`. -/
 private def selectorMatches (selector : String) (stage node : Html.Node)
     (previous : Option Html.Node) : Bool :=
   let selector := selector.trimAscii.toString
@@ -148,10 +143,8 @@ private def openingMargin :=
   "calc(var(--frame-body-skip) + var(--frame-title-below, 0pt) + " ++
     "var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))"
 
-/-- Read the first participating box and its winning margin, including
-resets, class specificity and inline precedence. Authored leading space
-must remain a separate addend. The stage conversion permits only its one
-printed milli-percent of coordinate rounding. -/
+/-- The first participating box and its winning margin, resets, specificity and inline precedence
+included, the authored leading space a separate addend. -/
 private def htmlOpeningClearance (css : String) (stage : Html.Node)
     (skip height : Dim.Sp) (before : String := "0pt") : Bool :=
   match stage with
@@ -173,8 +166,8 @@ private def htmlOpeningClearance (css : String) (stage : Html.Node)
         "--frame-body-skip" skip height
   | .elem _ _ _ | .text _ | .style _ | .script .. => false
 
-/-- Mutations of the read-side judge: the right class and property must
-not hide a stronger class, inline margin, later reset, or hidden owner. -/
+/-- Mutations of the read-side judge: a stronger class, an inline margin, a later reset or a hidden
+owner is seen. -/
 private def cascadeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let header := Html.elem "header" #[]
   let node := Html.elem "div" #[] #[("class", "spaced frame-body-start")]
@@ -197,11 +190,8 @@ private def cascadeChecks (ref : IO.Ref (List String)) : IO Unit := do
       (Html.elem "section" #[header, hidden, Html.elem "div" #[]]
         #[("class", "slide"), ("style", "--frame-body-skip: 1vh")]) 1 100)
 
-/-- Exercise the sourced-glue boundary directly: a theme may supply a
-resolved fallback without declaring its token in the document. Root and
-epoch declarations, and that fallback, must all remain CSS lengths when
-the opening rule adds them. The positive cases preserve token references;
-the zero cases catch unitless numbers inside the emitted `calc`. -/
+/-- Root and epoch token declarations, and a theme's resolved fallback, stay CSS lengths in the
+opening rule. -/
 private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let (base, ds) := Elab.run "frame-clearance.tex"
@@ -253,9 +243,8 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
           (out.pages.flatMap (·.lines)).any (fun line => lineText line == "BODY") &&
           (nodeTextList "" nodes.toList).contains "BODY")
 
-/-- Artifact guard for the opening boundary, independently specified from
-beamer's quarter-em title skip and 2 mm top-alignment skip. The PDF guard
-reads final paint; HTML reads the first emitted body element and CSS. -/
+/-- The opening boundary held independently of beamer's quarter-em title skip and 2 mm top skip:
+final paint in the PDF, the first body element and CSS in HTML. -/
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   cascadeChecks ref
   tokenClearanceChecks ref fonts
@@ -291,8 +280,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       check ref (name ++ ": body survives in both artifacts")
         ((out.pages.flatMap (·.lines)).any (fun line => lineText line == "BODY") &&
           (nodeTextList "" nodes.toList).contains "BODY")
-      -- A document skip opening the frame is a box of its own: it takes the
-      -- opening, and the authored space is its height, a separate addend.
+      -- A document skip opening the frame is its own box; its height is a separate addend.
       if kind == "leading-vspace" then
         check ref (name ++ ": a leading skip takes the opening as a box as tall as the skip")
           (!stages.isEmpty && stages.all fun stage => match stage with

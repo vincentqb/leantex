@@ -40,12 +40,8 @@ private def imageLoaderOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     (unreadable.size == 1 && unreadable.all fun d =>
       d.kind == .W0601 && d.span == some request && d.subject == some "missing.png")
 
-/-- The built driver reports image losses at the first executed request,
-including an included file. Dormant definitions and skipped branches are
-not source sites, and a later repeated request does not replace the first.
-Synthetic boundary tools make the W0378 path independent of installed TeX
-or converters. Missing assets refuse self-contained HTML publication only
-after these driver diagnostics have been emitted. -/
+/-- The built driver reports image losses at the first executed request, included files among them,
+never at dormant definitions or skipped branches. -/
 def imageOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
   imageLoaderOriginChecks ref
   let t := check ref
@@ -69,8 +65,7 @@ exit 19\n"
     let mode ← IO.Process.output { cmd := "chmod", args := #["+x",
       (tools / "lualatex").toString, (tools / "pdftocairo").toString] }
     unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the image origins tools"
-    -- An encrypted boundary result: the PDF embeds it, the figure importer
-    -- refuses it, and the failing converter leaves its web face to W0378.
+    -- An encrypted result the PDF embeds and the importer refuses, so its web face falls to W0378.
     IO.FS.writeBinFile (dir / "boundary.pdf") encryptedCanvasPdf
     IO.FS.writeFile (dir / "invalid.png") "not an image"
     IO.FS.writeBinFile (dir / "metadata.jpg")

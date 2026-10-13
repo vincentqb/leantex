@@ -21,9 +21,7 @@ private def hookHtml (doc : Ir.Doc) : Array Html.Node :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   body
 
-/-- Tags and attributes of the typed tree, in order, together with its text.
-In particular an empty spacing block must have the native block's own
-spacing attributes; merely retaining the title and body text is not enough. -/
+/-- Tags, attributes and text of the typed tree, in order. -/
 private def hookHtmlFacts (doc : Ir.Doc) :
     Array (String × Array (String × String)) × String :=
   let tree := hookHtml doc
@@ -42,11 +40,8 @@ private def standoutFooterHook (body : String := standoutFooterBody)
   "\\makeatletter\\apptocmd{\\KV@beamerframe@standout}{" ++ body ++ "}{" ++
     success ++ "}{" ++ failure ++ "}\\makeatother"
 
-/-- A preamble block-begin hook appends its supported skips immediately
-after each ordinary block title, exactly as an explicit skip at that point
-does. Unsupported bodies are consumed whole and named, never recovered as
-page content. The footer and error-control cases hold already-working
-compatibility alongside the live spacing regression. -/
+/-- A preamble block-begin hook appends its supported skips after each ordinary block title, and an
+unsupported body is consumed whole and named. -/
 def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   Tests.StandoutPalette.standoutPaletteChecks ref fonts
   let t := check ref
@@ -74,8 +69,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let firstY (doc : Ir.Doc) (text : String) :=
     (bodyLines (layoutOf fonts doc)).findSome? fun line =>
       if lineText line == text then some line.y else none
-  -- latex.ltx: \smallskipamount = 3pt plus 1pt minus 1pt. A top-aligned
-  -- frame has no vertical justification, so the added natural gap is 3pt.
+  -- `\smallskipamount` is 3pt plus 1pt minus 1pt; a top-aligned frame adds its natural 3pt.
   t "beamer hook: first body baseline moves by the natural smallskip"
     (match firstY actual "FirstBody", firstY plain "FirstBody" with
      | some a, some b => a - b == 3 * 65536
@@ -88,8 +82,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "beamer hook: successive additions compose in both artifacts"
     (reprStr (layoutOf fonts twice).pages == reprStr (layoutOf fonts twiceNative).pages &&
       hookHtmlFacts twice == hookHtmlFacts twiceNative)
-  -- A preamble macro can be defined before the hook is declared. The
-  -- template is read when the block is used, after the preamble finishes.
+  -- The template is read when the block is used, after the preamble.
   let macroSource := "\\newcommand{\\panel}{\\begin{block}{Macro title}MacroBody\\end{block}}\n"
   let macroNative := "\\newcommand{\\panel}{\\begin{block}{Macro title}\\smallskip MacroBody\\end{block}}\n"
   let macroFrame := "\\begin{frame}[t]{Macro}\\panel\\end{frame}"
@@ -127,8 +120,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     t s!"beamer hook unsupported site {source}: configuration refusal without changing the page"
       (ds.any (·.code == "W0104") && !ds.any (·.severity == .error) &&
         reprStr (layoutOf fonts refused).pages == plainPages && hookHtmlFacts refused == plainHtml)
-  -- A bare preamble group already has E0313, independently of its hook.
-  -- Refusing a scoped hook must not change that baseline or set a global gap.
+  -- A bare preamble group already has E0313; refusing a scoped hook keeps it and sets no gap.
   let (groupPlain, groupPlainDs) := elabStr (hookDeck "{}" (hookBlocks))
   let (groupHook, groupDs) := elabStr (hookDeck ("{" ++ hook "\\smallskip" ++ "}") (hookBlocks))
   t "beamer hook: a grouped preamble addition changes neither artifact nor existing errors"
@@ -218,8 +210,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       !dormantDs.any (fun d => d.severity == .error || d.code == "W0387" ||
         d.code == "W0105" || hasStr d.message "overprint" ||
         hasStr d.message "IfPackageLoadedTF" || hasStr d.message "AtBeginDocument"))
-  -- A dormant delimited definition must not change a live macro's call
-  -- syntax: the semicolon following its braced argument remains page text.
+  -- A dormant delimited definition does not change a live macro's call syntax.
   let probePre := "\\newcommand{\\probe}[1]{#1}"
   let probeFrame := "\\begin{frame}{Delimiter}\\probe{A};\\end{frame}"
   let probePlain := (elabStr (hookDeck (probePre ++ standoutFooterHook) probeFrame)).1
@@ -232,8 +223,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "standout footer hook: dormant delimiter syntax cannot consume HTML punctuation"
     (hasStr (hookHtmlFacts probePlain).2 "A;" &&
       hookHtmlFacts probeDormant == hookHtmlFacts probePlain)
-  -- TeX takes one character for an unbraced argument, even when the lexer
-  -- coalesces several into a word. Every prepass must own the same four.
+  -- TeX takes one character for an unbraced argument, even where the lexer coalesces a word.
   let tokenHook := "\\makeatletter\\apptocmd{\\KV@beamerframe@standout}{" ++
     standoutFooterBody ++ "}"
   for tail in ["X{\\AtBeginDocument{Leaked}}", "&{\\AtBeginDocument{Leaked}}",

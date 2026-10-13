@@ -13,9 +13,8 @@ private def sameOpening (actual : Option Span) (expected : Span) : Bool :=
     a == expected && a.pos.origins == expected.pos.origins &&
       a.pos.command == expected.pos.command
 
-/-- Source sites follow the actual document through citation removal and
-backend filtering. Two identical frames expose using an ordinal or a stale
-block index instead of the opening that produced the overflowing page. -/
+/-- Source sites follow the document through citation removal and backend filtering, two identical
+frames naming their own openings. -/
 def layoutSourceChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   for (name, ok) in LeanTex.Tests.LayoutProvenance.frameSourceChecks fs do

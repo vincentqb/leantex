@@ -2,9 +2,8 @@ module
 
 import LeanTex.Core.Layout.GlyphBounds
 
-/-! The producer's paired measurement and its contracts are available from
-an ordinary import. The glyph equation remains usable by layout's
-agreement proof; its fold-induction machinery is private. -/
+/-! The producer's paired measurement and its contracts reach an ordinary import; the fold-induction
+machinery stays private. -/
 
 open LeanTex.Core
 open LeanTex.Core.Layout.GlyphBounds
@@ -30,8 +29,7 @@ example (font : Font.Font) (size raise : Sp) (gid : Nat) :
     (glyph font size raise gid).unresolved = true ↔ font.yExtent gid = none :=
   glyph_unresolved_exact font size raise gid
 
--- The real agreement proof unfolds both branches, including the nominal
--- fallback, whose local scaler needs no exported helper.
+-- Layout's agreement proof unfolds both branches, the nominal fallback included.
 example (font : Font.Font) (size raise : Sp) (gid : Nat) :
     (glyph font size raise gid).extent =
       match font.yExtent gid with

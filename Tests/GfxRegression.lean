@@ -40,19 +40,9 @@ def subseq : List String → List String → Bool
 end Tests.GfxRegression
 
 open Tests.GfxRegression in
-/-- **A placed picture's ink is its page's content.** A page holding nothing
-but a picture made of fills, or of strokes, ships alone at a page break, at a
-frame boundary and as the document's last page, and a float that does not fit
-after it opens a page of its own; what follows the picture on its page — a
-paragraph, a second picture — stands below it, or on the next page when it
-leaves no room; and the page's vertical distribution moves it as it
-moves a rule of its size: a `[c]` frame's centring, fil glue and a flush
-bottom. Each held over `Layout.Out`,
-each failing while page shipment and placement read only a page's lines and
-fills. Picture fills once moved from a page's fills into its placed inks while
-those tests still read lines and fills: a page holding only a picture was
-dropped, merged into the next frame, set over and left undistributed.
-Invented pictures. -/
+/-- A placed picture's ink is its page's content: a page holding only a picture ships, what follows
+stands below or on the next page, and the page's vertical distribution moves it as a rule of its
+size. -/
 def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let draws (out : Layout.Out) (i : Nat) : Nat := ((out.pages[i]?.map pageDraws).map (·.size)).getD 0
@@ -101,8 +91,7 @@ def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let ruleTops (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
     ((out.pages[page]?.map fun p => p.lines.filter (!·.furniture)).getD #[]).map fun l =>
       l.y - (Layout.segsInk oneFace l.segs).1
-  -- pgf's centimetre (28.45274pt) and TeX's (7227/254pt) differ by 0.56
-  -- ppm, about 30sp across a page.
+  -- pgf's cm (28.45274pt) and TeX's (7227/254pt) differ by 0.56 ppm, about 30sp across a page.
   let near (a b : Array Dim.Sp) : Bool :=
     a.size == b.size && (a.zip b).all fun (x, y) => (x - y).natAbs ≤ 64
   let rule := "\\noindent\\rule{3cm}{2cm}"
@@ -137,25 +126,12 @@ def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       !tall.diags.any (·.code == "W0358"))
 
 open Tests.GfxRegression in
-/-- **The four cross-backend picture defects the vector model closed**,
-each asserted over the artifact a reader meets — the page's typed stream
-and `Layout.Out`, the typed HTML tree — and each failing before the model
-landed. A rectangle fill painted in the page's leading fill block, before
-every picture path (F1); an edge's continuing segments each opened with
-its own `M` in the SVG, so interior vertices drew caps where the PDF drew
-joins (F2); a zero line width painted nothing in the SVG where PDF and pgf
-draw the thinnest visible line (F3); SVG strokes left at SVG's miter limit
-of 4 where PDF and pgf mitre to 10 (F4). And three the readers' agreement
-was blind to while the SVG reader did not read SVG's own rules: a stroked
-rectangle of zero size spelled a `rect` SVG draws nothing for, a dashed
-rectangle or circle an element whose dashes start elsewhere and run the
-other way, and a square-capped dot a square the PDF does not paint.
-Invented pictures. -/
+/-- The cross-backend picture defects the vector model closed, held over the page's typed stream,
+`Layout.Out` and the typed HTML tree: fill order, subpaths, zero widths, miter limits, zero-size and
+dashed shapes, and square-capped dots. -/
 def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let red : Ir.Color := { r := 255, g := 0, b := 0 }
-  -- F1: the fill paints after the edge the source draws first, inside the
-  -- picture's own Figure sequence, and is no page fill.
   let (doc1, ds1) := elabStr (picDoc "" ""
     "\\draw (-1,-1) -- (1,1);\n\\fill[red] (-0.5,-0.5) rectangle (0.5,0.5);")
   let out1 := layoutOf oneFace doc1
@@ -171,13 +147,7 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | some f, some c, some r =>
        f < c && c < r && ((ls.extract (f + 1) r).all fun l => l != "EMC")
      | _, _, _ => false)
-  -- F1 and the furniture: a footer band never splits a picture — its fill
-  -- and its stroke stand on one side of the band, inside one Figure
-  -- sequence. While picture fills were page fills, the band painted after
-  -- the fill and before the stroke, so a picture overflowing into the band
-  -- lost its fills under it and kept its strokes over it. Which side the
-  -- band paints on is the furniture's own decision: today it paints with
-  -- the page's other fills, before the body's ink and text.
+  -- A footer band never splits a picture: fill and stroke stand on one side, in one sequence.
   let ground : Ir.Color := { r := 0xE8, g := 0xED, b := 0xF3 }
   let (docF, _) := elabStr ("\\documentclass{beamer}\\usetheme{moloch}\\pictures{ tool = none }" ++
     "\\definecolor{FootGround}{HTML}{E8EDF3}\\setbeamercolor{footline}{bg=FootGround}" ++
@@ -186,9 +156,7 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     "\\end{tikzpicture}\n\\end{frame}\\end{document}")
   let outF := layoutOf oneFace docF
   let lsF := streamLines oneFace docF outF
-  -- The band's colour carries the exact rider `\definecolor` declared, so
-  -- its spelling is read off the shipped fill, not rebuilt from the screen
-  -- value.
+  -- The band keeps the exact rider `\definecolor` declared, read off the shipped fill.
   let band := (outF.pages[0]?.bind fun p => p.fills.find? (·.color == ground)).map (·.color.pdfFill)
   let bandAt := band.bind fun b => lsF.findIdx? fun l => hasStr l (b ++ " ") && l.endsWith " re f Q"
   let figAt := lsF.findIdx? fun l => l.startsWith "/Figure << /MCID"
@@ -200,7 +168,6 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        f < r && r < k && ((lsF.extract (f + 1) k).all fun l => l != "EMC") &&
          ((b < r && b < k) || (r < b && k < b))
      | _, _, _, _ => false)
-  -- F2: a chain of continuing segments is one subpath in both artifacts.
   let (doc2, _) := elabStr (picDoc "" "" "\\draw (0,0) -- (1,0) -- (1,1);")
   t "F2: a continuing segment chain is one SVG subpath"
     (match (strokedPaths doc2).toList with
@@ -209,7 +176,6 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let ls2 := streamLines oneFace doc2 (layoutOf oneFace doc2)
   t "F2: and one PDF subpath"
     ((ls2.filter fun l => l.endsWith " S Q").all fun l => (l.splitOn " m ").length == 2)
-  -- F3: a zero line width is the thinnest visible line in both.
   let (doc3, _) := elabStr (picDoc "" "" "\\draw[line width=0pt] (0,0) -- (1,0);")
   t "F3: a 0pt line width draws the SVG hairline"
     (match (strokedPaths doc3).toList with
@@ -218,7 +184,6 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | _ => false)
   t "F3: and the PDF's thinnest line"
     ((streamLines oneFace doc3 (layoutOf oneFace doc3)).any (hasStr · " 0 w "))
-  -- F4: every TikZ stroke states pgf's miter limit to the SVG.
   let (doc4, _) := elabStr (picDoc "" ""
     "\\draw (0,0) -- (1,0) -- (1,1);\n\\node[draw] at (3,0) {Box};\n\\node[draw,circle] at (5,0) {O};")
   let stroked := elemAttrsList (fun tag => tag == "path" || tag == "rect" || tag == "circle") #[]
@@ -226,9 +191,7 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let strokes := stroked.filter fun (_, attrs) => attrs.any fun (k, v) => k == "stroke" && v != "none"
   t "F4: HTML TikZ strokes carry stroke-miterlimit 10"
     (strokes.size == 3 && strokes.all fun (_, attrs) => attr? attrs "stroke-miterlimit" == some "10")
-  -- A rectangle or circle that encloses no area, or that a dashed stroke
-  -- runs along, spells as the path the PDF strokes: SVG draws no `rect` or
-  -- `circle` of zero size, and starts and runs a dashed one its own way.
+  -- Zero-size and dashed rectangles and circles spell as the path the PDF strokes.
   let shapes (doc : Ir.Doc) : Array (String × Array (String × String)) :=
     (elemAttrsList (fun tag => tag == "path" || tag == "rect" || tag == "circle" || tag == "ellipse") #[]
       (doc.body.toList.map (HtmlDoc.blockNode {}))).filter fun (_, attrs) =>
@@ -249,8 +212,7 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | [("path", attrs)] =>
        match (attr? attrs "d").map numbers with
        | some ns =>
-         -- M x0 y0 L x1 y0: the bottom edge first (SVG's y grows down, so
-         -- the min corner's y is the largest of the four).
+         -- The bottom edge first: SVG's y grows down, so the min corner's y is the largest.
          ns.size ≥ 8 && ns[1]? == ns[3]? && (ns[0]?.getD 0) < (ns[2]?.getD 0) &&
            (ns[5]?.getD 0) < (ns[1]?.getD 0)
        | none => false
@@ -263,8 +225,7 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        | some ns => ns.size ≥ 8 && (ns[7]?.getD 0) < (ns[1]?.getD 0)
        | none => false
      | _ => false)
-  -- A square-capped dot: PDF paints nothing (ISO 32000-2 §8.5.3.2), SVG a
-  -- square, so the spelling leaves the dot out of its path.
+  -- A square-capped dot: PDF paints nothing (ISO 32000-2 §8.5.3.2), SVG a square.
   let dotted : Gfx.Figure Empty :=
     { box := ((0, 0), (Dim.pt 10, Dim.pt 10)), clipToBox := false, outlines := #[], symbols := #[]
       rasters := #[], title := none, losses := #[]
@@ -287,11 +248,8 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   | _ => t "a picture ships as a standalone SVG file with its inline box" false
 
 open Tests.GfxRegression in
-/-- **The HTML face of the `diagram-strokes` census row**: the strokes the
-vector model made reachable in the SVG ship on the fixture's emitted page,
-read over the typed HTML tree — the chain and the dashed chain each one
-subpath of two segments, the zero line width the hairline (one CSS pixel
-that no transform scales), every stroke at pgf's miter limit. -/
+/-- The HTML face of the `diagram-strokes` census row: the vector model's strokes on the fixture's
+emitted page, read over the typed HTML tree. -/
 def gfxStrokeCensusChecks (ref : IO.Ref (List String)) (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
   match arts.find? (·.name == "diagram-strokes") with
@@ -311,15 +269,8 @@ def gfxStrokeCensusChecks (ref : IO.Ref (List String)) (arts : Array GoldenArt) 
     t "gfx stroke census: every stroke states pgf's miter limit"
       (paths.all fun a => attr? a "stroke-miterlimit" == some "10")
 
-/-- **Both artifacts read one picture's marks, over the whole corpus**: the
-marks read back from every ink the layout placed (`Pdf.inkPaint`, the
-operators `contentOps` writes under the picture's Figure sequence, read with
-PDF's meaning) are the marks read back from the typed SVG tree the HTML
-backend emits for one of the document's pictures (`HtmlDoc.pictureTree`,
-read with SVG's meaning), and every picture with ink is placed; and every
-stroke a shipped picture's SVG paints states pgf's miter limit, the census
-of that emission. The executable face of `Gfx.picture_marks_agree` on the
-shipped pipeline. -/
+/-- Both artifacts read one picture's marks over the whole corpus, every picture with ink is placed,
+and every shipped SVG stroke states pgf's miter limit. -/
 def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (arts : Array GoldenArt) : IO Unit := do
   let mut placed := 0
@@ -337,25 +288,20 @@ def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       GfxPdf.readMarks ((Pdf.pageIso art.geom).compose k.place)
         (Pdf.inkPaint art.geom Pdf.figureNames (fun _ => none) k)
     placed := placed + pdf.size
-    -- The order the labels paint in among the ink, read off the pages'
-    -- own streams: every picture sequence the PDF paints interleaves its
-    -- labels with its ink as one of the document's pictures' SVG does.
+    -- Every PDF picture sequence interleaves its labels with its ink as the SVG does.
     let svgSteps := pics.map fun pic =>
       let box := pic.box metric
       (GfxSvg.readSteps (HtmlDoc.pictureIso box) (HtmlDoc.pictureTree pic box metric {})).map
         Tests.GfxRegression.stepKind
     let tree := Struct.ofDoc (Layout.pdfView art.doc)
-    -- A picture's sequence stands before the page's text object, an image's
-    -- — a raster, or a drawn figure's form — after it.
+    -- A picture's sequence stands before the page's text object, an image's after it.
     let pdfSteps := ((Pdf.pageOps art.geom oneFace art.out.pages art.store tree).flatMap fun ops =>
       (ops.toList.takeWhile fun o => !(o matches .text _)).toArray.filterMap fun o => match o with
         | .marked (.content "Figure" _ _) body =>
           some ((GfxPdf.readSteps { flipY := true, dx := 0, dy := 0 } body).map
             Tests.GfxRegression.stepKind)
         | _ => none).filter (!·.isEmpty)
-    -- A label the page set no line for (math with no math face in the
-    -- suite's one face) paints nothing in the PDF: the sequence is the
-    -- SVG's with such labels left out, never reordered.
+    -- A label the page set no line for paints nothing in the PDF, and nothing is reordered.
     check ref s!"gfx agreement {art.name}: every picture sequence sets its labels among its ink as its SVG does"
       (pdfSteps.all fun s => svgSteps.any fun v =>
         Tests.GfxRegression.subseq s.toList v.toList &&
@@ -376,15 +322,7 @@ def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (labelled > 0)
 
 open Tests.GfxRegression in
-/-- **A picture's labels paint in the order its statements wrote them, in
-the PDF as in the HTML.** The invariant whose absence painted every picture
-label after all of its picture's ink in the PDF — the page's one text object
-followed the pictures — while the HTML painted them in source order: a fill
-written after a node covered its label in the SVG and in pgf's own drawing,
-and not in the PDF. Asserted over the artifacts a reader meets: the page's
-typed stream read back operator by operator (`GfxPdf.readSteps`) and as the
-spelled lines, and the typed SVG tree (`GfxSvg.readSteps`). Invented
-picture. -/
+/-- A picture's labels paint in the order its statements wrote them, in the PDF as in the HTML. -/
 def gfxLabelOrderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let red : Ir.Color := { r := 255, g := 0, b := 0 }
@@ -402,9 +340,7 @@ def gfxLabelOrderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
      | [body] => (GfxPdf.readSteps { flipY := true, dx := 0, dy := 0 } body).map stepKind ==
          #["label", "ink", "label"]
      | _ => false)
-  -- The page's stream as spelled: inside the one Figure sequence, a saved
-  -- state around a text object, the red fill, another; the page's own text
-  -- object holds neither label.
+  -- Inside the one Figure sequence: a saved state around a text object, the red fill, another.
   let ls := streamLines oneFace doc out
   let fig := ls.findIdx? (fun l => l.startsWith "/Figure << /MCID")
   let fillAt := ls.findIdx? (fun l => hasStr l (red.pdfFill ++ " ") && l.endsWith " re f Q")
@@ -421,7 +357,6 @@ def gfxLabelOrderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
          (Pdf.paintRuns p).length == (Pdf.pageRuns p).length &&
          ((Pdf.paintLines p).filterMap (·.pictureLabel.map (·.key))).take 2 == ["Under", "Over"]
      | none => false)
-  -- The HTML: the picture's typed SVG tree, read back element by element.
   match doc.body.toList.filterMap (fun b => match b with | .picture p => some p | _ => none) with
   | [pic] =>
     let box := HtmlDoc.pictureBoxOf {} pic

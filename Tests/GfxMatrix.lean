@@ -43,9 +43,8 @@ def figure (nodes : Array (Gfx.Node Empty)) (symbols : Array (Array (Gfx.Node Em
     rasters := #[{ bytes := ByteArray.empty, jpeg := false, pxW := 1, pxH := 1, smooth := false }]
     title := none, losses := #[] }
 
-/-- The synthetic matrix: every node arm, solid and gradient paints on fill
-and stroke, a clip of each rule, an alpha group, a symbol use, an outline
-stamp, a raster, ink-free words. -/
+/-- The synthetic matrix: every node arm, solid and gradient paints, each clip rule, an alpha group,
+a symbol, an outline stamp, a raster, ink-free words. -/
 def cases : Array (String × Gfx.Figure Empty) := #[
   ("solid fill and a stroke stating every field",
     figure #[.draw square (some (fillOf red)) (some fancyStroke)]),
@@ -92,13 +91,8 @@ def has (a : Array (String × String)) (k v : String) : Bool := a.any (· == (k,
 end Tests.GfxMatrix
 
 open Tests.GfxMatrix in
-/-- **The vector model's two emitters over a synthetic matrix**, asserted
-over the typed PDF operators and the typed and spelled SVG trees: each case
-reads back to the figure's marks in both formats (`GfxPdf.marks_projects`,
-`GfxSvg.marks_projects`, executed), and each spells what its format needs —
-the state PDF does not start in, the attributes SVG does not start with,
-the resources and definitions a gradient, clip, alpha group, symbol, stamp
-and raster name. Invented geometry. -/
+/-- The vector model's two emitters over the synthetic matrix: each case reads back to its marks in
+both formats and spells the state, attributes and resources its format needs. -/
 def gfxMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, fig) in cases do
@@ -110,8 +104,7 @@ def gfxMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pdf0 := Pdf.render (pdfOps f0)
   t "gfx matrix: PDF states a stroke's cap, join, miter limit, dash and alphas"
     (["1 J ", "2 j ", "4 M ", "[2 1] 1 d ", "/GS1 gs "].all (hasStr pdf0 ·))
-  -- A dashed rectangle spells as the path its dashes run along, as PDF's
-  -- `re` traces it: an SVG `rect` starts and runs its dashes its own way.
+  -- A dashed rectangle spells as the path its dashes run along, as PDF's `re` traces it.
   t "gfx matrix: SVG states what differs from its initial values, and not the miter limit 4"
     ((attrs f0 "path").any fun a => has a "stroke-linecap" "round" && has a "stroke-linejoin" "bevel" &&
       has a "stroke-dasharray" "2 1" && has a "stroke-dashoffset" "1" &&

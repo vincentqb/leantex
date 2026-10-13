@@ -23,26 +23,8 @@ import Tests.SvgRoute
 import scripts.Rung
 import Tests.MonoDefault
 
-/-!
-# The diagnostics audit: every code's decided direction, and what holds it
-
-An audit of a document's warnings decides, per code, where it goes next —
-implement the construct, keep the code, fold it into another's accounting —
-and the decision is worth something only while a checker holds it. A row
-here is that decision as a value: the code, the verdict, the construct rung
-the verdict aims at (the vocabulary `coverage` ranks constructs in), and the
-pin that fails when the decision regresses.
-
-A row has no free-text field. The pin is written as a reference that
-resolves or does not compile (`thm%`, `check%`), or as a scoreboard item
-that must exist in a committed baseline, so a row can only point at what is
-already in the tree — an audit of a private document cannot leave its words
-here. The reasons live beside the rows, as comments, where a reviewer reads
-them.
-
-`scripts/diagaudit.lean` ratchets the rows as the `diagaudit` tier: the codes
-no row binds, charged in its provenance to the modules that apply them.
--/
+/-! The diagnostics audit: each code's decided verdict, the construct rung it aims at, and the pin
+that fails when the decision regresses; `scripts/diagaudit.lean` ratchets the codes no row binds. -/
 
 open LeanTex.Core
 open Tests (listingProviderChecks listingStyleTableChecks htmlContainedCliChecks
@@ -81,13 +63,8 @@ def Ruling.word : Ruling → String
 def Ruling.all : List Ruling :=
   [.native, .divergence, .refusal, .keep, .merge, .resite, .message]
 
-/-- What holds a verdict. A theorem pin carries the proof itself, so it is a
-theorem or it does not compile; a check pin elaborates the block it names,
-so it exists or it does not compile, and it binds only while the suite runs
-it; a tier pin binds while the committed baseline holds the item. Whether a
-pin is *about* its code is decided where the pinned declarations are
-readable, by the tier (`scripts/diagaudit.lean`): the suite's binary cannot
-read a declaration's statement or body. -/
+/-- What holds a verdict: a theorem pin carries its proof, a check pin elaborates the block it names
+and binds while the suite runs it, a tier pin binds while the baseline holds its item. -/
 inductive Pin where
   | thm (name : Lean.Name) (stmt : Prop) (proof : stmt)
   | check (name : Lean.Name) (seen : Unit)
@@ -115,156 +92,63 @@ structure AuditRow where
   target : Rung
   pin : Pin
 
-/-- The decided codes. A code with no row is owed a verdict; the tier counts
-the debt, and a new code adds to it. -/
+/-- The decided codes; a code with no row is owed a verdict, which the tier counts. -/
 def registry : List AuditRow :=
-  -- The four standard codes: the page is the declaration, and the judge
-  -- that fires on it is the gate.
   [⟨.W0201, .keep, .native, check% measureChecks⟩,
    ⟨.W0202, .keep, .native, check% rhythmChecks⟩,
    ⟨.N0376, .keep, .native, check% a11yChecks⟩,
-   -- The covered arm warns about the engine's own default cover: derive
-   -- the cover per role at its one resolving site instead.
    ⟨.W0345, .native, .native, check% contrastChecks⟩,
-   -- A fallback face substitutes where lualatex substitutes silently.
    ⟨.W0009, .keep, .degraded, check% fallbackChecks⟩,
-   -- unicode-math leaves a missing symbol alphabet on its ordinary source;
-   -- the one face-level resolution note names that visible difference.
    ⟨.N0018, .keep, .rewritten, check% mathChecks⟩,
-   -- A styled scalar in a covered range whose glyph is an isolated face
-   -- hole: the base letter stands in, the loss named once per alphabet.
    ⟨.W0016, .keep, .degraded, check% isolatedHoleChecks⟩,
-   -- The witness that the gap theorems' side condition was taken.
    ⟨.N0200, .keep, .rewritten, check% spacingChecks⟩,
-   -- One element-style field closes it.
    ⟨.W0110, .native, .native, check% themeTitleShipChecks⟩,
-   -- A contained wrapper still owes its positioning; cancellation is native.
    ⟨.W0389, .native, .native, check% mathContainChecks⟩,
-   -- A rewrite's note beside the refusal of what it produced, and a
-   -- picture's constructs beside its placeholder: the siteAccounting rows.
    ⟨.N0100, .merge, .rewritten, check% siteAccountingChecks⟩,
    ⟨.W0362, .merge, .native, check% siteAccountingChecks⟩,
-   -- A boundary refusal the rendered subset stands in for: one line names
-   -- the picture, every construct the subset leaves out a clause of it.
    ⟨.W0419, .keep, .degraded, check% pictureRouteChecks⟩,
-   -- A boundary picture no tool drew and the subset draws nothing of: the
-   -- placeholder ships and the line names it, in the tool's words.
    ⟨.W0382, .keep, .degraded, check% pictureDefnReachChecks⟩,
-   -- A line the author ended that the measure split; the paragraph's own
-   -- last line is prose and sets as many lines as it needs, unnamed.
    ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩,
-   -- A `\qedhere` on an alignment's row or under a number: set the row's
-   -- tag natively (amsthm's `\tag*{\qedsymbol}`) and the code leaves.
    ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩,
-   -- A refused external classification keeps the source and names its loss.
    ⟨.W0393, .keep, .degraded, check% listingProviderChecks⟩,
-   -- A listing LaTeX cannot set where it is written, set by its evident
-   -- intent: the remedy is the author's, the inline command the help names.
    ⟨.W0411, .keep, .native, check% Tests.inlineCodeChecks⟩,
-   -- A language no lexer reads: the code ships plain and the nearest known
-   -- name is the help; the document's to correct, never the boundary's.
    ⟨.W0412, .keep, .degraded, check% Tests.inlineCodeChecks⟩,
-   -- `\mint` within a line of text: LaTeX breaks the paragraph for its
-   -- display, or fails in a box; a decided divergence, set as inline code.
    ⟨.W0413, .divergence, .degraded, check% Tests.inlineCodeChecks⟩,
-   -- A face declared before booktabs loads: measuring that face's ex at
-   -- the class size (the driver holds the font environment) retires it.
    ⟨.W0398, .native, .native, check% Tests.tableFaceOrderChecks⟩,
-   -- A fill the web slide cannot grow where it stands: a slide that grows a
-   -- fill before more of its item, and one in an alternation's shown side,
-   -- retires the code.
    ⟨.W0399, .native, .native, check% Tests.FrameGeometry.fillCarrierChecks⟩,
-   -- A frame a point or two past its text area stands overfull in the gap
-   -- below it, as beamer's one page sets it: the right loss as it stands.
-   -- Its text area matching beamer's narrows which frames reach the gap, and
-   -- the code stays.
    ⟨.W0400, .keep, .degraded, check% Tests.FrameFit.overhangChecks⟩,
-   -- A frame step past that gap continues on the next page where beamer
-   -- sets it overfull on its one page, over its footline and off the paper:
-   -- a decided divergence, named with the whole overrun.
    ⟨.W0384, .divergence, .degraded, check% Tests.FrameFit.overhangChecks⟩,
-   -- Seeds no palette can be generated from: the role that fails is named,
-   -- and the seeds themselves stand as the page's colours.
    ⟨.W0306, .keep, .degraded, check% Tests.SeedPalette.failureChecks⟩,
-   -- A scheme the page offers that cannot carry a colour legibly is dropped
-   -- for that page alone, the colour named once: the right loss as it stands.
    ⟨.W0308, .keep, .degraded, check% Tests.Schemes.dropChecks⟩,
-   -- Unknown outline data, an absent result and a reservation mismatch
-   -- are separate losses. The check mutates each guard's own input and
-   -- holds the actual emitted diagnostics to the label and full source.
    ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,
-   -- Refused by design: E0390 drops exactly the raw HTML, the indented
-   -- line or the lazy line the reader consumed, and its check holds all
-   -- three strict classes and their fix-its.
    ⟨.E0390, .refusal, .fails, check% mdSurfaceChecks⟩,
-   -- A figure's feature the engine does not draw, PDF or SVG: drawing it
-   -- natively retires both the degraded drawing's code and the converter's
-   -- note, and the route that names it is the boundary's one decision.
    ⟨.W0609, .native, .native, check% figureRouteChecks⟩,
    ⟨.N0024, .native, .native, check% Tests.svgRouteChecks⟩,
-   -- An SVG names a family the document does not declare: the text sets in
-   -- the document's own face, as LaTeX's svg package sets it, and says so.
    ⟨.N0026, .keep, .rewritten, check% Tests.svgFontMatchChecks⟩,
-   -- A link inside a figure: the drawing carries none yet, and the note
-   -- leaves once links are carried as the page's own.
    ⟨.N0027, .native, .native, check% Tests.svgLinkNoteChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,
-   -- A destination that cannot be written: the artifact is not there, and
-   -- the system's words say why; the other artifacts are written.
    ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩,
-   -- A destination that is a file the build reads: refused before any write,
-   -- every input keeping its bytes; the run is the user's to point elsewhere.
    ⟨.E0005, .refusal, .fails, check% Tests.publicationInputChecks⟩,
-   -- An output name no format reads: refused before the build, as a typed
-   -- record, its help the extensions a run can take.
    ⟨.E0006, .refusal, .fails, check% Tests.outputNameChecks⟩,
-   -- Bytes that are not text ship as U+FFFD, listed once per file. A file
-   -- under an inputenc encoding the engine carries a table for reads in it
-   -- byte by byte, as pdfLaTeX reads it, unless its bytes say UTF-8: a
-   -- valid UTF-8 file, or one whose well-formed sequences outnumber its
-   -- stray bytes, where pdfLaTeX garbles every accent and the strays are a
-   -- guess (W0004). latin1's 0x80-0x9F read as Windows-1252, where
-   -- pdfLaTeX refuses them; lualatex reads no declaration at all. The
-   -- declaration's one note says how each file read.
    ⟨.W0002, .keep, .degraded, check% inputDecodingChecks⟩,
    ⟨.W0004, .keep, .degraded, check% inputDecodingChecks⟩,
    ⟨.N0025, .divergence, .native, check% inputDecodingChecks⟩,
-   -- A field the style itself prints nowhere: the list is the style's own,
-   -- and the note names what the .bib keeps that the page does not.
    ⟨.N0029, .keep, .rewritten, check% bibNamedChecks⟩,
-   -- A date outside biblatex's grammar prints as written, named.
    ⟨.W0420, .keep, .degraded, check% bibNamedChecks⟩,
-   -- A list biblatex words in another language is set in English, named.
    ⟨.W0421, .keep, .degraded, check% bibLanguageChecks⟩,
-   -- A cited @set's members are listed each as an entry, named.
    ⟨.W0422, .keep, .degraded, check% bibSetChecks⟩,
-   -- An entry's related entries are not set after it, named.
    ⟨.W0423, .keep, .degraded, check% bibRelatedChecks⟩,
-   -- A missing .bib among several: the list holds the others' entries.
    ⟨.W0424, .keep, .degraded, check% bibSourcesChecks⟩,
-   -- A crossref or xdata reference biber does not resolve: the entry is set
-   -- without what it would inherit, named.
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,
-   -- A macro no @string defines before its use: its name prints, named.
    ⟨.W0426, .keep, .degraded, check% bibStringStoreChecks⟩,
-   -- A sort locale whose tailoring is of another script: the default
-   -- collation sorts the list, named.
    ⟨.W0427, .keep, .degraded, check% biblatexLocaleSortChecks⟩,
-   -- A character TeX reserves in a .bib field, set as the character where
-   -- LaTeX stops at it: a decided divergence, named.
    ⟨.N0030, .divergence, .rewritten, check% bibReservedChecks⟩,
-   -- The typewriter default a scan serves upright only: its italics set
-   -- upright, the one note naming it; lualatex substitutes and warns.
    ⟨.N0031, .divergence, .rewritten, check% Tests.MonoDefault.monoDefaultChecks⟩,
-   -- A numeric style's superscript citation: set as \cite, its keys listed
-   -- and numbered, the superscript named.
    ⟨.W0428, .keep, .degraded, check% biblatexSuperciteChecks⟩,
-   -- A field the inline reading refuses where LaTeX sets it: set as its
-   -- text, run into the entry, the build shipping, named.
    ⟨.W0429, .keep, .degraded, check% bibFieldBackstopChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
@@ -278,9 +162,8 @@ def moduleItem (path : String) : String :=
 mention there is never the suite running one. -/
 def registryFiles : List String := ["Tests/DiagAudit.lean", "Tests/Reports.lean", "Tests/Premises.lean"]
 
-/-- The suite's own code, which a check pin must be run from: the driver and
-every suite module but the registries, which name each pinned block once by
-writing it. -/
+/-- The suite's own code, which a check pin must be run from: the driver and every suite module but
+the registries. -/
 def suiteText : IO String := do
   let mut text := stripNonCode (← IO.FS.readFile "Tests.lean")
   for f in ← System.FilePath.walkDir "Tests" do
@@ -288,12 +171,8 @@ def suiteText : IO String := do
       text := text ++ stripNonCode (← IO.FS.readFile f)
   return text
 
-/-- Does the pin hold anything? A theorem pin carries its proof. A check pin
-elaborates its declaration and needs a reference outside the registries:
-declaring, importing or opening a name alone cannot hold it. The declaration
-may use an enclosing namespace while the call spells the qualified name.
-This is a source-reference check, not a proof of runtime reachability.
-A tier pin binds while the committed baseline has a row for its item. -/
+/-- Whether the pin holds anything: a theorem pin always, a check pin while code outside the
+registries references its declaration, a tier pin while the baseline has its item. -/
 def Pin.resolves (suite : String) : Pin → IO Bool
   | .thm .. => pure true
   | .check n _ => pure (wordCountWhere suite n.toString (fun before =>
@@ -306,9 +185,8 @@ def Pin.resolves (suite : String) : Pin → IO Bool
     if !(← path.pathExists) then return false
     return ((← IO.FS.readFile path).splitOn "\n").any (·.startsWith (item ++ "\t"))
 
-/-- The codes a registry binds, or what makes it malformed: a code with two
-rows, or a pin that holds nothing. A pin that stops resolving is a fault
-rather than a quiet unbinding, so a row can never outlive its gate. -/
+/-- The codes a registry binds, or what makes it malformed: a code with two rows, or a pin that
+holds nothing. -/
 def auditBound (suite : String) (rows : List AuditRow) : IO (Except String (List DiagCode)) := do
   let mut bound : List DiagCode := []
   for r in rows do
@@ -329,10 +207,7 @@ def unboundByModule (sources : Array (String × List String)) (bound : List Diag
 end DiagAudit
 
 open DiagAudit in
-/-- **Every audit row is held by a checker, and every code can be charged.**
-The registry read in both directions: a row whose pin resolves to nothing
-fails here, not only in the tier, and a code no engine module applies has no
-module to owe its verdict. -/
+/-- Every audit row is held by a checker, and every code can be charged to a module. -/
 def diagAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let suite ← suiteText
@@ -343,14 +218,11 @@ def diagAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
   let charged := DiagCode.all.filter fun c => !sources.any (·.2.contains c.code)
   t s!"diag audit: every code is applied by some engine module ({charged.map (·.code)})"
     charged.isEmpty
-  -- The resolver itself, once each way: a block the suite runs, a block it
-  -- never names, an item a baseline holds, an item none holds.
   t "diag audit: a check the suite runs resolves"
     (← (check% a11yChecks).resolves suite)
   t "diag audit: a check nothing runs does not"
     !(← (Pin.check `zzNoSuchChecks ()).resolves suite)
-  -- A name standing only inside a longer one holds nothing: the suite
-  -- spells `StreamChecks` solely as the tail of the block it calls.
+  -- The suite spells `StreamChecks` only as the tail of a longer name, so it holds nothing.
   t "diag audit: a name inside a longer name does not resolve"
     (hasStr suite "StreamChecks" && wordCount suite "pdfStreamChecks" ≥ 2 &&
       !(← (Pin.check `StreamChecks ()).resolves suite))

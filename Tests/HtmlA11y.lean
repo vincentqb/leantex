@@ -6,58 +6,39 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! What assistive technology is handed, asserted over the pages the corpus
-ships: the typed tree `HtmlDoc.emitTree` produces for every golden fixture,
-judged by `HtmlDoc.a11yFacts` — the same judge the `htmla11y` scoreboard
-tier reads, so the suite and the tier cannot disagree about what counts. -/
+/-! What assistive technology is handed, over every golden fixture's typed tree, judged by
+`HtmlDoc.a11yFacts`, the judge the `htmla11y` tier reads. -/
 
-/-- The stylesheet mode a document's page is emitted under: its own
-`\output{ css = … }` declaration, read as the driver reads it. -/
+/-- The stylesheet mode a document's page is emitted under: its own `\output{ css = … }`, read as
+the driver reads it. -/
 def a11yCssOf (doc : Ir.Doc) : HtmlDoc.CssMode :=
   match cssFor doc.output.css with
   | .own => .own
   | .bulma => .bulma
   | .none => .none
 
-/-- One corpus fixture's page as its typed tree, built in-process the way
-the driver builds it: the document's own stylesheet mode, its images from
-`testdata/corpus` (`corpusStore`) and its drawn figures' titles as their
-alternatives (`corpusTitled`). No boundary tool runs here, so a boundary
-picture is its placeholder — what a host with no tool ships. -/
+/-- One corpus fixture's page as its typed tree, built in-process as the driver builds it; a
+boundary picture is its placeholder. -/
 def a11yCorpusPage (n : String) :
     IO (Ir.Doc × Image.Store × Array Html.Node × Array Html.Node × Array Diag) := do
   let (doc, _) ← goldenDoc n
-  -- A drawn figure's text shapes against the shipped face, as the driver
-  -- shapes it against the document's: the page's tree then carries the
-  -- figure the page ships.
+  -- A drawn figure's text shapes against the shipped face, as the driver shapes it.
   let fs ← match ← findFont with
     | some data => pure ((Font.parse data).toOption.map oneFaceOf)
     | none => pure none
   let store ← corpusStore doc fs
-  -- A drawn figure's own title answers the alternative the document leaves
-  -- undeclared, as the driver's build gives it.
+  -- A drawn figure's own title answers the alternative the document leaves undeclared.
   let doc := corpusTitled doc store
   let (head, body, diags) := HtmlDoc.emitTree { css := a11yCssOf doc, imgs := store } doc
   return (doc, store, head, body, diags)
 
-/-- The judge's reading of one page: the stylesheet mode and the page model
-decide which elements are scroll containers. -/
+/-- The judge's reading of one page: the stylesheet mode and the page model decide the scroll
+containers. -/
 def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
   HtmlDoc.a11yFacts (a11yCssOf doc == .own) (doc.docClass.record.model == .frame) body
 
-/-- A page's accessibility deficits, one count per check — what the
-`htmla11y` scoreboard tier ratchets, per fixture, as headroom:
-
-* `contrast` — the stylesheet's pairings the page fails, over every colour
-  scheme it ships (`HtmlDoc.schemeFailures`);
-* `h1` — 1 unless the page carries exactly one `<h1>`;
-* `hidden-focus` — tab stops under `aria-hidden`, a keyboard stop assistive
-  technology cannot see;
-* `img` — `<img>` with no text alternative and no declared decorative role;
-* `scroll` — declared scroll containers a keyboard cannot reach;
-* `svg` — `<svg>` with no accessible name.
-
-Sorted by check name, so a tier's rows come out in the order it writes them. -/
+/-- A page's accessibility deficits, one count per check (`contrast`, `h1`, `hidden-focus`, `img`,
+`scroll`, `svg`), sorted by check name. -/
 def a11yDeficits (doc : Ir.Doc) (body : Array Html.Node) :
     List (String × Nat) :=
   let f := a11yFactsOf doc body
@@ -85,13 +66,8 @@ def svgLabels (body : Array Html.Node) : Array (Option String) :=
 def imgAlts (body : Array Html.Node) : Array (Option String) :=
   (elemAttrsList (· == "img") #[] body.toList).map (HtmlDoc.attrOf? ·.2 "alt")
 
-/-- The format a file's first bytes declare, for the image formats a browser
-decodes in an `<img>` (WHATWG MIME Sniffing §6.1, the image signatures):
-PNG, JPEG, GIF, WebP — and SVG, an XML document a browser draws, read by
-the native judge. `none` for anything else — a PDF page included. Read off
-the bytes, never the backend's classification of a source (its extension,
-its route): an SVG is one the resource boundary admits, the boundary
-publication attests every embedded SVG through. -/
+/-- The format a file's first bytes declare among those a browser decodes in an `<img>` (PNG, JPEG,
+GIF, WebP, and an SVG the resource boundary admits); `none` otherwise. -/
 def sniffBrowserImage (b : ByteArray) : Option String :=
   let at' (i : Nat) (xs : List UInt8) : Bool :=
     xs.length + i ≤ b.size && (List.range xs.length).all fun k => b[i + k]! == xs[k]!
@@ -103,8 +79,8 @@ def sniffBrowserImage (b : ByteArray) : Option String :=
   else if (Svg.judge b).toBool then some "svg"
   else none
 
-/-- Every `<img src>` a body emits, hidden or not: a browser fetches and
-decodes an image under `aria-hidden` all the same. -/
+/-- Every `<img src>` a body emits, hidden or not, since a browser decodes an image under
+`aria-hidden` too. -/
 def a11yImgSrcs (body : Array Html.Node) : Array String :=
   (elemAttrsList (· == "img") #[] body.toList).filterMap (HtmlDoc.attrOf? ·.2 "src")
 
@@ -153,22 +129,11 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
         t s!"html a11y {name}: '{href}' is named undecodable only when it is" (!decodes)
   return undecodableSeen
 
-/-- The HTML accessibility contract over the shipped corpus and the probes
-that break each half once. An emission assistive technology must name or
-reach, or is told to skip — an `<svg>`, an `<img>`, a disclosure's
-`<summary>`, a box a stylesheet rule scrolls, a box under `aria-hidden` —
-has its fact in the judge, `HtmlDoc.a11yFacts`: a scroll rule enters
-`declaresScroll` too, or the judge cannot see the box. Held at zero on every
-shipped page: an unnamed svg, an unreachable scroll container, a tab stop
-under `aria-hidden` (counted though the subtree is hidden, or hiding a link
-would score as a fix), and an unnamed summary. The `htmla11y` tier ratchets
-the rest, and axe over the rendered corpus is its report, never the gate. -/
+/-- The HTML accessibility contract over the shipped corpus, with probes breaking each half once: no
+unnamed svg, unreachable scroll container, tab stop under `aria-hidden`, or unnamed summary. -/
 def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- W4: every inline <svg> on every shipped page carries an accessible
-  -- name. S1: every scroll container the page's own stylesheet declares —
-  -- a deck stage, a code block — is reachable from the keyboard.
-  -- Non-vacuous only if the corpus ships pictures and scrollers at all.
+  -- Every inline `<svg>` is named and every declared scroll container reachable.
   let mut svgsSeen := 0
   let mut scrollsSeen := 0
   let mut summariesSeen := 0
@@ -182,9 +147,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (f.svgsUnnamed == 0)
     t s!"html a11y {n}: every scroll container is reachable \
 ({f.scrollsUnreachable} of {f.scrolls} not)" (f.scrollsUnreachable == 0)
-    -- No tab stop stands under `aria-hidden`: a regression floor over the
-    -- shipped pages — the corpus holds no linked logo, so the probes below
-    -- are what fire it.
+    -- The corpus holds no linked logo, so the probes below are what fire this.
     t s!"html a11y {n}: no tab stop is hidden from assistive technology \
 ({f.hiddenTabStops})" (f.hiddenTabStops == 0)
     summariesSeen := summariesSeen + f.summaries
@@ -194,26 +157,18 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     let names := (stageMarks body).filterMap (·.2)
     t s!"html a11y {n}: no two stages share a name"
       (names.all fun nm => (names.filter (· == nm)).size == 1)
-    -- W3: every <img src> the page emits is a format a browser decodes, or
-    -- a diagnostic names the request (subject `img:<index>:<src>`). The format is read
-    -- off the file's own bytes, never off the backend's classification;
-    -- an image that did not load, or a boundary picture, was named where it
-    -- failed, by the fulfilment's own subject-keyed diagnostic.
+    -- Every `<img src>` is a format a browser decodes, by its bytes, or a diagnostic names it.
     undecodableSeen := undecodableSeen + (← browserImageChecks ref n store body diags)
   t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
   t s!"html a11y: the corpus ships disclosures ({summariesSeen})" (0 < summariesSeen)
-  -- The judge breaks once: a summary holding no text, or only text the page
-  -- hides, names nothing; text, or a name of its own, names it.
+  -- A summary holding no text, or only hidden text, names nothing.
   let judged (kids : Array Html.Node) (attrs : Array (String × String)) : Nat :=
     (HtmlDoc.a11yFacts true false #[Html.elem "details" #[Html.elem "summary" kids attrs]]).summariesUnnamed
   t "html a11y: a summary with no text is unnamed"
     (judged #[] #[] == 1 && judged #[Html.text "  "] #[] == 1
       && judged #[Html.elem "span" #[Html.text "Amber"] #[("hidden", "")]] #[] == 1)
-  -- Characters a renderer draws as nothing name nothing either: the no-break
-  -- and ideographic spaces, the zero-width space and joiners, the line
-  -- separator, the byte order mark, the soft hyphen, a direction mark and a
-  -- control.
+  -- Characters a renderer draws as nothing name nothing either.
   let invisible := [" ", "　", "​", "‍", " ", "﻿", "­",
     "‎", ""]
   t "html a11y: a summary of characters drawn as nothing is unnamed"
@@ -253,10 +208,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
         selected #[Html.elem tag #[] attrs] #[]
       t s!"html a11y: the judge rejects {tag} with request index {repr index}"
         (!(← broken.get).isEmpty)
-  -- W3's size half: `width`/`height` are CSS px, so a vector page's box is
-  -- declared on the CSS ruler (1pt = 4/3 px), not as its point count. The
-  -- boundary picture's SVG face (pdftocairo, `width="56.693pt"`) is what a
-  -- browser draws 76 × 38; the page used to declare 56 × 28.
+  -- `width` and `height` are CSS px, so a vector box is declared at 1pt = 4/3 px.
   t "html a11y: 56.693pt × 28.346pt reads 76 × 38 CSS px"
     (HtmlDoc.cssPxOfSp 3715432 == 76 && HtmlDoc.cssPxOfSp 1857684 == 38)
   match Image.decode (← IO.FS.readBinFile "testdata/corpus/figures/box.pdf") with
@@ -271,9 +223,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (dims == #[(some "340", some "204")])
     t "html a11y: a PDF page's <img> is named undecodable"
       (pdiags.any fun d => d.subject == some "img:0:box.pdf")
-    -- W0605's remedy, followed, clears it: the web page's include gated to
-    -- HTML and the PDF include to PDF. Keeping the PDF include for both
-    -- backends, as a reader of "keep the PDF for print" might, does not.
+    -- W0605's remedy clears it: the web include gated to HTML and the PDF include to PDF.
     let webOnly := "\\begin{ifbackend}{html}\n\\includegraphics[alt={A card}]{rects.png}\n\
 \\end{ifbackend}\n"
     let pdfInclude := "\\includegraphics[alt={A card}]{box.pdf}"
@@ -298,8 +248,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
         (qdims == #[(some "assets/pic.svg", some "340", some "204")])
       t "html a11y: a boundary picture's SVG face is not named undecodable"
         (!qdiags.any fun d => (d.subject.getD "").startsWith "img:")
-  -- A refused picture's placeholder is never decorative: its name is the
-  -- code that names the loss, the text the box itself shows.
+  -- A refused picture's placeholder is never decorative: the code naming the loss is its name.
   let refused := dvDoc "\\pictures{ tool = none }\n"
     "\\begin{tikzpicture}\n\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   let (rdoc, rds) := elabStr refused
@@ -307,10 +256,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a11y: the refused picture fires W0362" (rds.any (·.code == "W0362"))
   t s!"html a11y: the refused placeholder is named by its loss: {svgLabels rbody}"
     (svgLabels rbody == #[some "W0362"])
-  -- A boundary picture with no face in the store — a host with no tool, or
-  -- a tool that refused — ships its request key as the `src`, which draws
-  -- nothing: never decorative, so it is named by what it is, in the page's
-  -- language, and a caption the author wrote still wins.
+  -- A boundary picture with no face is named by what it is; an authored caption wins.
   let shaded := "\\begin{tikzpicture}\n\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   let (tdoc, _) := elabStr (dvDoc "" shaded)
   let (_, tbody, _) := HtmlDoc.emitTree {} tdoc
@@ -323,9 +269,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("\\begin{figure}\n" ++ shaded ++ "\n\\caption{A shaded card}\n\\end{figure}"))).1
   t s!"html a11y: …and its caption names it where it has one: {imgAlts tcbody}"
     (imgAlts tcbody == #[some "A shaded card"])
-  -- A picture's labels are its name: role="img" makes an SVG's children
-  -- presentational (WAI-ARIA 1.2 §5.3), so the words a sighted reader sees
-  -- reach assistive technology only through the name.
+  -- role="img" makes an SVG's children presentational, so its labels reach the name only.
   let labelled := dvDoc "" ("\\begin{tikzpicture}\n\\node at (0,0) {left};\n" ++
     "\\node at (2,0) {right};\n\\end{tikzpicture}")
   let (_, lbody, _) := HtmlDoc.emitTree {} (elabStr labelled).1
@@ -340,11 +284,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabStr (dvDoc "\\usepackage[ngerman]{babel}\n" bare)).1
   t s!"html a11y: …in German too: {svgLabels gbody}"
     (svgLabels gbody == #[some "Abbildung"])
-  -- S1: a deck stage is a named, focusable region — named by its title,
-  -- or by its own words when it has none — and a stepped frame's stage
-  -- keeps both inside its track. The keys the constant script binds are
-  -- untouched: the script is still the pinned literal, and it is the one
-  -- script node the page carries.
+  -- A deck stage is a named, focusable region; the pinned script is the one script node.
   let deckSrc := dvDeck "" ("\\begin{frame}{A Titled Stage}\nBody.\n\\end{frame}\n" ++
     "\\begin{frame}\nOnly words here.\n\\end{frame}\n" ++
     "\\begin{frame}{Stepped}\n\\begin{itemize}\n\\item one\n\\pause\n\\item two\n" ++
@@ -358,8 +298,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => none
   t "html a11y: the deck's one script is still the pinned constant"
     (scripts == #[HtmlDoc.deckScript])
-  -- An untitled stage is named by the words it shows, never by what it
-  -- hides: a speaker note is a hidden aside, not part of the slide.
+  -- An untitled stage is named by the words it shows, never by a hidden speaker note.
   let (_, nbody, _) := HtmlDoc.emitTree {}
     (elabStr (deck169Frame "Visible words.\n\\note{Hidden speaker words.}")).1
   t s!"html a11y: a speaker note stays out of the stage's name: {stageMarks nbody}"
@@ -369,10 +308,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\section{An Invented Part}\n\\begin{frame}{F}\nx\n\\end{frame}")).1
   t s!"html a11y: a section page is a focusable, named stage: {stageMarks sbody}"
     (stageMarks sbody == #[(some "0", some "An Invented Part"), (some "0", some "F")])
-  -- Two stages named alike are one landmark to a reader moving by landmark
-  -- (axe `landmark-unique`): a repeated name takes its occurrence number,
-  -- as the repeated title's anchor does. One construct per probe: two
-  -- frames of one title, then a section page and a frame of one title.
+  -- Two stages named alike are one landmark, so a repeated name takes its occurrence number.
   let (_, twbody, _) := HtmlDoc.emitTree {} (elabStr (dvDeck ""
     ("\\begin{frame}{Results}\nfirst\n\\end{frame}\n" ++
      "\\begin{frame}{Results}\nsecond\n\\end{frame}"))).1
@@ -392,10 +328,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{verbatim}\ncode\n\\end{verbatim}")).1
   let pres := (elemAttrsList (· == "pre") #[] cbody.toList).map (HtmlDoc.attrOf? ·.2 "tabindex")
   t s!"html a11y: a code block is focusable: {pres}" (pres == #[some "0"])
-  -- A poster's corner logo is decorative furniture by role
-  -- (`Ir.logoImageSrcs`), declared so on the page as the deck's logo strip
-  -- is: assistive technology skips the slot, so its empty alt is not a
-  -- missing alternative.
+  -- A poster's corner logo is decorative by role, so its empty alt is no missing alternative.
   let (pdoc2, _) := elabStr ("\\documentclass{poster}\n\\title{T}\n" ++
     "\\logoright{\\includegraphics{rects.png}}\n\\begin{document}\n" ++
     "\\begin{frame}\nx\n\\end{frame}\n\\end{document}")
@@ -407,10 +340,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (slots == #[(some "presentation", some "true")])
   t "html a11y: …so the judge counts no unnamed image on it"
     ((a11yFactsOf pdoc2 lgbody).imgsUnnamed == 0)
-  -- A logo that is a link is no decoration: the keyboard lands on the link,
-  -- so its box never leaves the accessibility tree over it, and the image's
-  -- own alternative names the link. One construct per probe: the poster's
-  -- corner slot, then the deck's logo strip.
+  -- A linked logo is no decoration: the image's alternative names the link.
   let linkedLogo := "\\href{https://example.org}{\\includegraphics[alt={Example Org}]{rects.png}}"
   let (lpdoc, _) := elabStr ("\\documentclass{poster}\n\\title{T}\n\\logoright{" ++ linkedLogo ++
     "}\n\\begin{document}\n\\begin{frame}\nx\n\\end{frame}\n\\end{document}")
@@ -438,15 +368,8 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"html a11y: an unlinked deck logo strip is declared decorative: {strips} {imgAlts udbody}"
     (strips == #[(some "presentation", some "true")] && imgAlts udbody == #[some ""])
 
-/-- **The painted request census reads the scalar census's regions**, over
-one corpus document: the formulas the math face is requested for
-(`Ir.mathRequests .face`) ask exactly the scalars `Layout.docMathScalars`
-holds — the census the driver loads the math face and the per-glyph
-fallback by — so a region one census reads and the other skips fails here,
-and `Ir.mathRequests_resolve_covers` speaks of the regions both backends
-paint. `htmlMathChecks` runs it over every golden fixture on the documents
-it reads once; the answer is whether this document's picture labels ask
-for scalars, which keeps that corpus run non-vacuous. -/
+/-- The painted request census reads the scalar census's regions: the formulas the math face is
+requested for ask exactly the scalars `Layout.docMathScalars` holds. -/
 def mathCensusRegionChecks (ref : IO.Ref (List String)) (n : String) (doc : Ir.Doc) :
     IO Bool := do
   let requested := (Ir.mathRequests .face doc).foldl
@@ -460,20 +383,8 @@ def mathCensusRegionChecks (ref : IO.Ref (List String)) (n : String) (doc : Ir.D
       | _ => acc) acc xs
   return !((docPictures doc).foldl (fun acc p => p.labelContents.foldl scalars acc) #[]).isEmpty
 
-/-- **No shipped page nests a MathML root or ships an error element.** Over
-every golden fixture's typed tree — the pages the corpus ships — no `math`
-element stands inside another and no `merror` appears, judged by the
-predicates the theorems state (`MathMl.unnested`, `MathMl.tagFree`): the
-driver resolves every formula a page paints, picture labels included, and a
-label's carrier is its formulas' one root. No path ships an `merror` a
-diagnostic names — an alphabet the face lacks is named (N0018) and resolves
-to its source glyphs — so the count owed is zero, not a count of named ones.
-The pages are emitted with no face, so with an empty alphabet coverage;
-resolution is alphabet-free under every coverage, which the IR theorem
-quantifies (`Ir.mathRequests_resolve_covers`). Non-vacuous only while the
-corpus ships MathML, MathML inside a picture, and an alphabet there. The
-same pass holds each document's painted request census to its scalar census
-(`mathCensusRegionChecks`). -/
+/-- No shipped page nests a MathML root or ships an error element, over every golden fixture's typed
+tree. -/
 def htmlMathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut roots := 0

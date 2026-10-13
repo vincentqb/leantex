@@ -13,8 +13,8 @@ namespace ListingHighlight
 
 open LeanTex.Core.ListingHighlight (Language Kind Token tokenize lineText)
 
-/-- Invented probes: keywords, literals and comments must ship distinct ink,
-while indentation, empty lines and HTML metacharacters stay literal. -/
+/-- Invented probes: keywords, literals and comments ship distinct ink, while indentation, empty
+lines and HTML metacharacters stay literal. -/
 def pythonSource : String :=
   "def greet(value):\n    # Keep <tags> & quotes literal\n    return \"hello\" + str(42)\n\nprint(greet(7))"
 
@@ -25,7 +25,7 @@ def sourceDoc (language source : String) : Ir.Doc :=
   (elabStr (dvDoc "" ("\\begin{minted}{" ++ language ++ "}\n" ++ source ++
     "\n\\end{minted}"))).1
 
-/-- Only listing leaves; the generic IR fold owns all container traversal. -/
+/-- Every listing leaf of a document, through the generic IR fold. -/
 def listings (doc : Ir.Doc) : Array (Option Ir.Color × String × Ir.ListingSpec) :=
   Ir.foldBlocks (fun acc b => match b with
       | .verbatim covered source spec => acc.push (covered, source, spec)
@@ -53,8 +53,7 @@ end
 
 mutual
 
-/-- Only spans with explicit token paint count; a language class alone did
-not colour the old artifact. -/
+/-- The spans with explicit token paint; a language class alone paints nothing. -/
 def coloredSpansOne (acc : Array (String × String)) : Html.Node →
     Array (String × String)
   | .text _ | .style _ | .script _ _ => acc
@@ -82,8 +81,8 @@ def glyphColors (out : Layout.Out) : Array (Char × Ir.Color) := Id.run do
               ink := ink.push (c, color)
   return ink
 
-/-- Invented palette-epoch fixture, independent of option parsing. A frame's
-entry pair applies until a body declaration replaces the default ink/ground. -/
+/-- An invented palette-epoch fixture: a frame's entry pair applies until a body declaration
+replaces it. -/
 def epochDoc (pal : Ir.Palette) (epoch : Option Ir.Palette)
     (standout : Bool) (valign : Ir.VAlign) : Ir.Doc :=
   let source := "return value"
@@ -93,9 +92,8 @@ def epochDoc (pal : Ir.Palette) (epoch : Option Ir.Palette)
   { (elabStr (dvDeck "" "")).1 with
     palette := pal, body := #[.frame #[] standout valign false body] }
 
-/-- A paint-level artifact probe: select the typed listing style and pass its
-shared inlines through the real PDF/HTML emitters. Listing option parsing and
-backend parameter threading are separate integration responsibilities. -/
+/-- A paint-level probe: the typed listing style's shared inlines through the real PDF and HTML
+emitters. -/
 def styleSource : String := "def demo(): return \"sample\" + str(42) # comment"
 
 def styleDoc (style : Ir.ListingStyle) : Ir.Doc :=
@@ -129,8 +127,7 @@ def hexIn (css : String) : Option String :=
   | some tail => if (css.splitOn "#").length > 1 then some (String.ofList (tail.toList.take 6)) else none
   | none => none
 
-/-- Each scalar of a code element with the colour, weight and slant it
-ships in: the innermost declared colour, and whether a `strong` or `em`
+/-- Each scalar of a code element with its innermost declared colour and whether `strong` or `em`
 encloses it. -/
 abbrev ScalarPaint := Char × Option String × Bool × Bool
 
@@ -165,11 +162,8 @@ where
 
 end ListingHighlight
 
-/-- Listing lines ship as runs of tokens that look alike. Each scalar must
-still show its own token's weights, and wherever it lays down ink its own
-token's ink, in the typed HTML and in the PDF's glyphs; white space may
-take a neighbour's ink, which it does not show. And the runs must cost the
-typed tree fewer text nodes than painting token by token would. -/
+/-- Listing lines ship as runs of alike tokens, each scalar still showing its token's weights and
+ink in both artifacts, at fewer text nodes than token by token. -/
 def listingRunChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let source := "theorem garden (n : Nat) : n + 0 = n := by\n  simp only [Nat.add_zero] -- rows\n" ++
@@ -212,10 +206,8 @@ def listingRunChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       (glyphs.size == wanted.size && (glyphs.zip wanted).all fun ((c, ink), (c', want)) =>
         c == c' && want.all (· == ink))
 
-/-- Selecting Friendly must change actual ink while conserving the code.
-The colour pins are Pygments' `styles/friendly.py` (the whole table is held
-to Pygments by `listingStyleTableChecks`); keywords stay bold and comments
-italic in both styles. -/
+/-- Selecting Friendly changes the ink while conserving the code, keywords bold and comments italic
+in both styles. -/
 def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "listing style: bounded typed names leave unsupported styles unresolved"
@@ -275,8 +267,7 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{minted}[style=unknown-style]{python}\nprint(1)\n\\end{minted}")
   t "listing style: unsupported style still has its option warning"
     (diagnostics.any (·.code == "W0110"))
-  -- The command path must select those inks too: a style in a spec built
-  -- by the test alone cannot witness minted's source declaration.
+  -- Through the command path: a spec built by the test alone cannot witness minted's declaration.
   let code (opts : String := "") :=
     "\\begin{minted}" ++ (if opts.isEmpty then "" else "[" ++ opts ++ "]") ++
       "{python}\ndef f(): return 7\n\\end{minted}\n"
@@ -308,10 +299,8 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes (dvDoc "" "\\begin{lstlisting}[style=friendly]\nx\n\\end{lstlisting}")).contains
       "W0110")
 
-/-- The native lexers are Pygments' own (`pygmentsLexerChecks` holds every
-recorded stream token for token); these pins name what a reader sees: a
-proof hole, a declaration, a decorator, an interpolation, a prompt. The IR's
-reader stays honest on what no lexer vouches for: stale classification. -/
+/-- The native lexers name what a reader sees: a proof hole, a declaration, a decorator, an
+interpolation, a prompt. -/
 def listingLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let lean := ListingHighlight.classified .lean4
@@ -346,9 +335,8 @@ def listingLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((stale.tokenLines source).map LeanTex.Core.ListingHighlight.lineText ==
       Ir.verbatimLines source)
 
-/-- Body epochs must paint the same listing ink and ground in both artifacts.
-The unchanged entry is the control; a repeated declaration still resets a
-title/standout pair, and a removed ground must not retain that entry's colour. -/
+/-- Body epochs paint the same listing ink and ground in both artifacts, a repeated declaration
+resetting a title or standout pair. -/
 def listingPaletteEpochChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -393,9 +381,7 @@ def listingPaletteEpochChecks (ref : IO.Ref (List String))
       let pdf := pdfText (Pdf.write geom fonts out.pages doc.info)
       t s!"listing epoch {frame}/{name}: emitted PDF paints the classified ink"
         (bytesContain pdf fg.pdfFill && bytesContain pdf keyword.pdfFill)
-      -- The PDF is the printed page: the typed tree as print reads it. A
-      -- deck whose page is dark ships its dark screen, whose own class
-      -- defaults stand where an epoch removes its colours.
+      -- The PDF is the printed page, so the typed tree is read as print reads it.
       let (_, html, _) := emitIn {} doc .print
       let pre := elemAttrsList (· == "pre") #[] html.toList
       let code := ListingHighlight.codeNodesList #[] html.toList
@@ -409,8 +395,8 @@ def listingPaletteEpochChecks (ref : IO.Ref (List String))
       t s!"listing epoch {frame}/{name}: typed HTML keeps the literal code"
         (code.size == 1 && nodeTextOne "" code[0]! == "return value")
 
-/-- The last epoch is the persistent ground, even after a styled frame closes
-or spills. Removing `bg` ships no fill; declaring it again resumes painting. -/
+/-- The last epoch is the persistent ground after a styled frame closes or spills; removing `bg`
+ships no fill. -/
 def listingPaletteContinuationChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -490,10 +476,8 @@ def listingPaletteContinuationChecks (ref : IO.Ref (List String))
       t s!"listing epoch {name}/{epochName}: the fill theorem requires a declared epoch"
         (Layout.pageGroundsDeclared geom fonts none spill == ground.isSome)
 
-/-- The contrast judge must leave a styled frame's entry ground at a body
-palette declaration, even an identical one, and report the authored role's
-pairing on the new ground. The grey fails even the large-scale ratio a
-deck's stage-size text asks, so the pairing is reported. -/
+/-- The contrast judge leaves a styled frame's entry ground at any body palette declaration and
+reports the authored role's pairing on the new ground. -/
 def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let gray : Ir.Color := { r := 0xAA, g := 0xAA, b := 0xAA }
@@ -557,11 +541,8 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
      (ListingHighlight.coloredSpansList #[] codes.toList).any fun (text, style) =>
        text == "return" && hasStr style (HtmlDoc.cssColor gray))
 
-/-- The pair the audit reports is the pair the run ships: the declared ink, on
-the ground the audit judged. Every declaration ends the frame-entry ground,
-even an identical or nested one; notes do not. The witnesses read shipped
-glyphs, PDF paint and the typed HTML spans. The grey fails even the
-large-scale ratio a deck's stage-size text asks. -/
+/-- The pair the audit reports is the pair the run ships: the declared ink on the judged ground,
+every declaration ending the frame-entry ground. -/
 def listingRoleEpochChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -641,8 +622,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
       (ds.any fun d => d.code == "W0315" && hasStr d.message "'accent'")
     shipped s!"{frameName}/exit" doc #[gray, gray] #[Ir.Color.black, Ir.Color.white]
 
-/-- Artifact regression: the old pipeline preserves code but ships no syntax
-colour in either artifact. These checks must fail on that implementation. -/
+/-- Listings ship syntax colour in both artifacts while conserving their code. -/
 def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   listingLexerChecks ref

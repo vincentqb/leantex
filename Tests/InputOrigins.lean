@@ -8,11 +8,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- A file effect has the origin of the declaration that requested it:
-filename, line, column and macro ancestry travel together. Input wrappers
-switch only the filename of their contents and restore the caller for the
-following siblings. An unreadable top-level file has no declaration site;
-malformed included bytes have their own measured site instead. -/
+/-- A file effect has the origin of the declaration that requested it, an input wrapper switching
+only the filename of its contents and restoring the caller after. -/
 def inputOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let parse (file text : String) := (Parse.parse file (Lex.lex file text).1).1
@@ -55,8 +52,7 @@ def inputOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
             else ⟨if nested then caller else file, { line := 4, col := 5 }⟩
           t s!"input origins: {command}/{nested}/{name} names the measured source site"
             (oneAt ds kind expected)
-      -- Eight successful reads reach the ninth request, whose source is
-      -- the last included file, not the root or the requested destination.
+      -- The ninth request's source is the last included file, not the root or the destination.
       for n in [0:8] do
         let next := if n == 7 then "\\" ++ command ++ "{absent.tex}"
           else s!"\\input\{level{n + 1}.tex}"

@@ -43,8 +43,7 @@ private def margins (em : Int) (node : Html.Node) : Option (Int × Int) := do
 private def near (em a b : Int) : Bool :=
   (a - b).natAbs ≤ ((em + 1999999) / 2000000 + 2).toNat
 
-/-- MathML width cannot carry a negative advance. Read the declared CSS
-margins too; a negative attribute alone does not move the following atom. -/
+/-- The advance a node gives the following atom: its width clamped at zero plus its CSS margins. -/
 private def advance (em : Int) (node : Html.Node) : Option Int := do
   let w ← readEm em (rootAttribute "width" node)
   let (left, right) ← margins em node
@@ -56,9 +55,8 @@ private structure Offset where
   y : Int
   advance : Int
 
-/-- Chromium clamps negative mpadded lspace, while Firefox accepts it.
-The two readings must agree with the native pen. Balanced CSS margins
-are read from the actual placement element, outside its child's size step. -/
+/-- A node's placement as Chromium reads it (negative lspace clamped) and as Firefox does, none
+under CSS positioning. -/
 private def offset (em : Int) (node : Html.Node) : Option Offset := do
   if ["position", "left", "top", "transform"].any (fun key => !(css key node).isEmpty) then
     none
@@ -144,10 +142,7 @@ private def targetAgrees (w : Witness) : Bool := (do
     near w.em placement.y (w.baseline - first.y) &&
     near w.em placement.advance 0).getD false
 
-/-- Read the explicit bounds on the native zero-width construction actually
-shipped. These cases have a plain x body, so the only construction carrier
-is cancellation's own reservation; neither geometry constructors nor
-target ink predict it. -/
+/-- The top and bottom of the shipped line's one zero-width math strut, cancellation's reservation. -/
 private def reservation (w : Witness) : Option (Int × Int) := do
   let struts := w.line.segs.filterMap fun seg => match seg with
     | .run _ _ _ width glyphs size metrics _ raise _ _ =>
@@ -170,8 +165,8 @@ private def reachAgrees (w : Witness) : Bool := (do
   let (h, bot') ← htmlReservation w
   return near w.em h top && near w.em bot' bot).getD false
 
-/-- A plain script witnesses target spacing without cancellation geometry
-or either metric callback supplying the expected pen displacement. -/
+/-- The script size and the width `source` occupies between two superscript letters, laid out
+without cancellation. -/
 private def targetSpacePen (fonts : Font.FontSet) (source : String) :
     Except String (Int × Int) := do
   let (doc, ds) := elabStr (dvDoc "" ("$z^{u" ++ source ++ "v}$"))
@@ -201,110 +196,107 @@ private def readerChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("lspace", lspace), ("voffset", "1em"), ("style", style)] #[]
   let correct := offset 1000000 (placed "0"
     "margin-left: -2em; margin-right: 2em")
-  check ref "cancel review reader: balanced signed margins preserve zero advance"
+  check ref "cancel reader: balanced signed margins preserve zero advance"
     (correct.any fun r => r.chromiumX == -2000000 && r.firefoxX == -2000000 &&
       r.y == 1000000 && r.advance == 0)
   let clamped := offset 1000000 (placed "-2em" "")
-  check ref "cancel review reader: negative lspace exposes browser disagreement"
+  check ref "cancel reader: negative lspace exposes browser disagreement"
     (clamped.any fun r => r.chromiumX == 0 && r.firefoxX == -2000000)
   let unbalanced := offset 1000000 (placed "0" "margin-left: -2em")
-  check ref "cancel review reader: missing balancing margin leaks advance"
+  check ref "cancel reader: missing balancing margin leaks advance"
     (unbalanced.any fun r => r.advance == -2000000)
   let signed := Html.Node.elem "mpadded"
     #[("width", "0"), ("style", "margin-inline-end: -0.5em")] #[]
   let clampedWidth := Html.Node.elem "mpadded" #[("width", "-0.5em")] #[]
-  check ref "cancel review reader: signed CSS advance survives nonnegative width"
+  check ref "cancel reader: signed CSS advance survives nonnegative width"
     (advance 1000000 signed == some (-500000))
-  check ref "cancel review reader: negative width alone loses signed advance"
+  check ref "cancel reader: negative width alone loses signed advance"
     (advance 1000000 clampedWidth == some 0)
 
 end CancelReview
 
 open CancelReview in
-/- check: CancelReview.checks -/
-/-- Guard the native-to-HTML cancellation boundary with actual shipped
-neighbour pens, target baselines, reservation struts and line spacing.
-The signed-offset reader models the independently observed browser
-disagreement explicitly. -/
+/-- Cancellation's MathML agrees with the native layout: neighbour pens, target baselines,
+reservation struts and line spacing. -/
 def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   readerChecks ref
   for options in ["overlap", "makeroom"] do
     let empty := (witness fonts options "$" "x" "" "$").toOption
-    check ref s!"cancel review spacing {options}: empty reservation control" empty.isSome
+    check ref s!"cancel spacing {options}: empty reservation control" empty.isSome
     for (style, before, after) in [
         ("text", "$", "$"), ("script", "$z^{", "}$")] do
       for body in ["x", "x\\!\\!\\!\\!\\!\\!", "\\!\\!x\\!\\!\\!\\!"] do
         let name := s!"{options}/{style}/{body}"
         match witness fonts options before body "0" after with
-        | .error err => check ref s!"cancel review signed {name}: {err}" false
+        | .error err => check ref s!"cancel signed {name}: {err}" false
         | .ok w =>
-          check ref s!"cancel review signed {name}: native neighbour advance" (advanceAgrees w)
-          check ref s!"cancel review signed {name}: portable target placement" (targetAgrees w)
+          check ref s!"cancel signed {name}: native neighbour advance" (advanceAgrees w)
+          check ref s!"cancel signed {name}: portable target placement" (targetAgrees w)
           if options == "overlap" && body != "x" then
-            check ref s!"cancel review signed {name}: witness is negative" (w.nativeAdvance < 0)
+            check ref s!"cancel signed {name}: witness is negative" (w.nativeAdvance < 0)
       let body := "\\frac{x}{\\frac{x}{x}}"
       match witness fonts options before body "000000000000g" after with
-      | .error err => check ref s!"cancel review wide {options}/{style}: {err}" false
+      | .error err => check ref s!"cancel wide {options}/{style}: {err}" false
       | .ok w =>
-        check ref s!"cancel review wide {options}/{style}: portable target placement"
+        check ref s!"cancel wide {options}/{style}: portable target placement"
           (targetAgrees w)
-        check ref s!"cancel review wide {options}/{style}: native neighbour advance"
+        check ref s!"cancel wide {options}/{style}: native neighbour advance"
           (advanceAgrees w)
         if options == "overlap" then
-          check ref s!"cancel review wide {options}/{style}: target starts left of origin"
+          check ref s!"cancel wide {options}/{style}: target starts left of origin"
             ((w.glyphs.find? (·.scalar == '0')).any (·.x < w.origin))
     for target in ["", "\\color{red}", "{}", "\\,", "\\!", "\\color{red}\\,"] do
       match witness fonts options "$" "x" target "$" with
-      | .error err => check ref s!"cancel review empty {options}/{target}: {err}" false
+      | .error err => check ref s!"cancel empty {options}/{target}: {err}" false
       | .ok w =>
-        check ref s!"cancel review empty {options}/{target}: native reservation struts"
+        check ref s!"cancel empty {options}/{target}: native reservation struts"
           (reachAgrees w)
-        check ref s!"cancel review empty {options}/{target}: native advance retained"
+        check ref s!"cancel empty {options}/{target}: native advance retained"
           (advanceAgrees w)
-        check ref s!"cancel review empty {options}/{target}: empty to-value node retained"
+        check ref s!"cancel empty {options}/{target}: empty to-value node retained"
           ((children w.node).size == 3 &&
             (MathMl.nodeChars #[] ((children w.node)[1]!)).isEmpty)
         if ["\\,", "\\!", "\\color{red}\\,"].contains target then
-          check ref s!"cancel review spacing {options}/{target}: native height ignores spacing"
+          check ref s!"cancel spacing {options}/{target}: native height ignores spacing"
             (empty.any fun e => (reservation e).any fun expected =>
               reservation w == some expected)
-          check ref s!"cancel review spacing {options}/{target}: native line extent ignores spacing"
+          check ref s!"cancel spacing {options}/{target}: native line extent ignores spacing"
             (empty.any fun e => w.lineExtents == e.lineExtents)
-          check ref s!"cancel review spacing {options}/{target}: native line baselines ignore spacing"
+          check ref s!"cancel spacing {options}/{target}: native line baselines ignore spacing"
             (empty.any fun e => w.flowBaselines == e.flowBaselines)
-          check ref s!"cancel review spacing {options}/{target}: HTML height ignores spacing"
+          check ref s!"cancel spacing {options}/{target}: HTML height ignores spacing"
             (empty.any fun e => (htmlReservation e).any fun expected =>
               (htmlReservation w).any fun actual =>
                 near w.em actual.1 expected.1 && near w.em actual.2 expected.2)
           match targetSpacePen fonts target with
-          | .error err => check ref s!"cancel review spacing {options}/{target}: {err}" false
+          | .error err => check ref s!"cancel spacing {options}/{target}: {err}" false
           | .ok (em, expected) =>
-            check ref s!"cancel review spacing {options}/{target}: signed target advance retained"
+            check ref s!"cancel spacing {options}/{target}: signed target advance retained"
               ((targetSpaceAdvance w).any fun (actualEm, actual) =>
                 near w.em actualEm em && near em actual expected)
-            check ref s!"cancel review spacing {options}/{target}: signed control is nonzero"
+            check ref s!"cancel spacing {options}/{target}: signed control is nonzero"
               (if target == "\\!" then expected < 0 else expected > 0)
     for (name, value) in [
         ("zero-mu", Math.MList.cons (.space 0) .nil),
         ("balanced-mu", .cons (.space 18) (.cons (.space (-18)) .nil))] do
       match zeroExtentWitness fonts (options == "makeroom") value with
-      | .error err => check ref s!"cancel review zero extent {options}/{name}: {err}" false
+      | .error err => check ref s!"cancel zero extent {options}/{name}: {err}" false
       | .ok w =>
-        check ref s!"cancel review zero extent {options}/{name}: native reservation struts"
+        check ref s!"cancel zero extent {options}/{name}: native reservation struts"
           (reachAgrees w)
-        check ref s!"cancel review zero extent {options}/{name}: native advance retained"
+        check ref s!"cancel zero extent {options}/{name}: native advance retained"
           (advanceAgrees w)
-        check ref s!"cancel review zero extent {options}/{name}: native height ignores spacing"
+        check ref s!"cancel zero extent {options}/{name}: native height ignores spacing"
           (empty.any fun e => (reservation e).any fun expected =>
             reservation w == some expected)
-        check ref s!"cancel review zero extent {options}/{name}: native line extent ignores spacing"
+        check ref s!"cancel zero extent {options}/{name}: native line extent ignores spacing"
           (empty.any fun e => w.lineExtents == e.lineExtents)
-        check ref s!"cancel review zero extent {options}/{name}: native line baselines ignore spacing"
+        check ref s!"cancel zero extent {options}/{name}: native line baselines ignore spacing"
           (empty.any fun e => w.flowBaselines == e.flowBaselines)
-        check ref s!"cancel review zero extent {options}/{name}: HTML height ignores spacing"
+        check ref s!"cancel zero extent {options}/{name}: HTML height ignores spacing"
           (empty.any fun e => (htmlReservation e).any fun expected =>
             (htmlReservation w).any fun actual =>
               near w.em actual.1 expected.1 && near w.em actual.2 expected.2)
-        check ref s!"cancel review zero extent {options}/{name}: zero net target advance retained"
+        check ref s!"cancel zero extent {options}/{name}: zero net target advance retained"
           ((targetSpaceAdvance w).any (·.2 == 0))

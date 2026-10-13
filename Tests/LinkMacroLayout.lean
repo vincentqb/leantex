@@ -19,9 +19,8 @@ private def linkRow (name left right : String) : String :=
 private def linkBox (text : String) : String :=
   "\\begin{minipage}{.3\\textwidth}" ++ text ++ "\\end{minipage}"
 
-/-- The active meaning owns argument consumption. Changing only an argument
-that meaning discards cannot alter the shipped glyphs or the emitted HTML
-structure. Keeping the definition in the control also checks its semantic role. -/
+/-- The active meaning owns argument consumption: changing only an argument it discards alters
+neither the glyphs nor the HTML structure. -/
 def linkMacroLayoutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let agree (label source control : String) : IO Unit := do
@@ -58,8 +57,7 @@ def linkMacroLayoutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
           (dvDoc pre ("Before " ++ linkRow name (linkBox "Discarded A.")
             (linkBox "Discarded B.") ++ " after."))
           (dvDoc pre ("Before " ++ linkRow name "Discarded A." "Discarded B." ++ " after."))
-  -- Native rows on both sides of a local override witness source order and
-  -- restoration. Only the overridden calls change their discarded arguments.
+  -- Native rows on both sides of a local override witness source order and restoration.
   for name in #["href", "hyperlink"] do
     let native := linkRow name (linkBox "Left.") (linkBox "Right.")
     let definition := "\\renewcommand{\\" ++ name ++ "}[2]{TOKEN}"
@@ -75,8 +73,7 @@ def linkMacroLayoutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     t s!"link meaning {name}: native rows remain before and after the override"
       ((classes.filter (fun cls => (cls.splitOn " ").contains "columns")).size == 2 &&
         hrefs.size == 4)
-  -- A linked block body starts a fresh accumulator while retaining its
-  -- macro owner. Earlier paragraphs must not become offsets in that body.
+  -- A linked block body starts a fresh accumulator while keeping its macro owner.
   for name in #["href", "link", "hyperlink", "hypertarget"] do
     let source := dvDoc
       ("\\usepackage{hyperref}\n\\newcommand\\scopeprobe[1]{" ++

@@ -22,8 +22,7 @@ private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO 
 private def lineText (line : Layout.LineOut) : String :=
   String.ofList (line.segs.toList.flatMap Layout.Seg.glyphChars)
 
-/-- Keep each element's declarations separate: backgrounds do not inherit,
-and two declarations on one box do not witness two nested surfaces. -/
+/-- An element's declarations kept separate: backgrounds do not inherit. -/
 private structure HtmlElement where
   tag : String
   styles : String
@@ -50,8 +49,7 @@ mutual
     | .text text => out.push { text, ancestors }
     | .elem tag attrs kids =>
       let raw := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
-      -- Values a style states through its roles read as the light screen
-      -- reads them, against the custom properties in scope.
+      -- Values a style states through its roles read as the light screen reads them.
       let vars := styleVars raw ++ ancestors.flatMap (styleVars ·.styles)
       let own := lightStyle vars raw
       let bodyBox := attrs.contains ("class", "block-body")
@@ -63,18 +61,15 @@ mutual
     | .style _ | .script .. => out
 end
 
-/-- Nearest explicit inline colour, in the emitted declaration format.
-This reads inline ownership, not the browser's full stylesheet cascade. -/
+/-- The nearest explicit inline colour, in the emitted declaration format. -/
 private def HtmlInk.inlineColor (leaf : HtmlInk) : Option String :=
   leaf.ancestors.findSome? (fun elem => cssProperty elem.styles "color")
 
 private def HtmlInk.bodyProperty (leaf : HtmlInk) (name : String) : Option String :=
   (leaf.ancestors.find? (·.bodyBox)).bind (fun elem => cssProperty elem.styles name)
 
-/-- Epoch paint belongs on the paragraph/pre containing the text. Ancestor
-ink alone cannot stand in for it: a normal stylesheet rule on the child
-outranks inherited ink. Descendant inline ink must agree too. This contract
-does not compute arbitrary selectors or stylesheet `!important` overrides. -/
+/-- Epoch paint belongs on the paragraph or `pre` holding the text, and descendant inline ink
+agrees. -/
 private def HtmlInk.epochPaint (leaf : HtmlInk) (tag color : String) : Bool :=
   match leaf.ancestors.find? (fun elem => elem.tag == "p" || elem.tag == "pre") with
   | some owner => owner.tag == tag && cssProperty owner.styles "color" == some color &&
@@ -93,8 +88,8 @@ private def HtmlInk.paddedBand (leaf : HtmlInk) (background padding : String) : 
   leaf.bodyBox && leaf.bodyProperty "background" == some background &&
     leaf.bodyProperty "padding" == some padding
 
-/-- Break the witnesses themselves: declaration presence cannot substitute
-for the owning element or the actual ancestor relationship. -/
+/-- The witnesses broken: declaration presence cannot stand in for the owning element or the
+ancestor relationship. -/
 private def htmlWitnessChecks (ref : IO.Ref (List String)) : IO Unit := do
   let body (styles : String) (kids : Array Html.Node) : Html.Node :=
     .elem "div" #[("class", "block-body"), ("style", styles)] kids
@@ -143,16 +138,12 @@ private def probe (kind : Ir.TitledKind) (title : Array Ir.Inline) : Ir.Doc :=
 private def layout (fonts : Font.FontSet) (doc : Ir.Doc) : Layout.Out :=
   Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
 
-/-- The page's leaves as print paints them, the scheme the PDF is
-(`emitIn`). -/
+/-- The page's leaves as print paints them. -/
 private def html (doc : Ir.Doc) : Array HtmlInk :=
   let (_, nodes, _) := emitIn {} doc .print
   htmlInks [] #[] nodes.toList
 
-/-- Exercise the exported source through the real front end and both
-artifacts. A correct palette or an isolated IR renderer cannot stand in
-for the bindings between them. Footer ink is declared too: changing the
-page polarity must not inherit the opening theme's small-text colour. -/
+/-- The exported source through the real front end and both artifacts, footer ink declared too. -/
 private def generatedSourceChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let dark : Ir.Color := { r := 25, g := 42, b := 61 }
@@ -196,9 +187,8 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
             leaf.inlineColor == some seeds.ink.css &&
             leaf.bodyProperty "background" == ground.map (·.css))
 
-/-- These four small documents hold the reviewed artifact counterexamples:
-epochs must replace inherited concrete ink, nesting owes every inset, empty
-paint has area, and padding participates in fitting on every spill page. -/
+/-- Epochs replace inherited ink, nesting owes every inset, empty paint has area, and padding takes
+part in fitting on every spill page. -/
 private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let blue : Ir.Color := { r := 0, g := 64, b := 128 }
   let brown : Ir.Color := { r := 128, g := 64, b := 0 }
@@ -226,9 +216,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       (.role .blockBodyGround, pale), (.role .exampleBodyGround, dark),
       (.role .exampleBodyInk, Ir.Color.white)] }
     body := #[.titled .block #[] #[.titled .example #[] #[.para #[.text "NESTED"]]]] }
-  -- beamer's colour boxes are `\textwidth` wide at every depth, so a nested
-  -- box shares its parent's reach; the parent keeps the child's space above
-  -- it and its own inset, after the child's `\smallskipamount`, below.
+  -- beamer's colour boxes are `\textwidth` wide at every depth: a nested box shares the reach.
   let pad := Layout.titledPaddingOf fonts (Layout.Geom.ofPage nested.page)
   check ref "block body nested: PDF outer encloses the inner box and its skips"
     (0 < pad && (layout fonts nested).pages.any fun page => page.fills.any fun outer =>
@@ -270,9 +258,8 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     ((List.range 24).all fun i =>
       (out.pages.flatMap (·.lines) |>.filter (lineText · == s!"LINE{i}")).size == 1)
 
-/-- Filled titled bodies ship their declared ink and an enclosing surface
-on both artifacts, for every kind and with or without a title. These are
-artifact assertions; resolving a role in the IR alone cannot pass them. -/
+/-- Filled titled bodies ship their declared ink and an enclosing surface in both artifacts, for
+every kind, titled or not. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   htmlWitnessChecks ref
   for kind in #[Ir.TitledKind.block, .alert, .example] do

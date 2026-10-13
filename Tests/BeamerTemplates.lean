@@ -18,9 +18,8 @@ private def templateHtmlFacts (doc : Ir.Doc) :=
   let tree := (templateHtml doc).toList
   (elemAttrsList (fun _ => true) #[] tree, nodeTextList "" tree)
 
-/-- Beamer's marker templates and numbered footer carry content. Their
-native translations must preserve that content in both shipped outputs,
-including the distinction between an overlay and a numbered frame. -/
+/-- Beamer's marker templates and numbered footer keep their content in both outputs, an overlay
+distinct from a numbered frame. -/
 def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for datum in ["title", "subtitle", "author", "institute", "date"] do
@@ -63,7 +62,7 @@ def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       let hookNative := (elabStr (templateDeck
         s!"\\style\{{native}}\{marker=\{{marker}}}"
         ("\\framefoot{Hook note}" ++ items))).1
-      t s!"marker hook {element}: both style arguments stay together; the following note stays in the body"
+      t s!"marker hook {element}: both style arguments stay together and the note stays in the body"
         (!hookDs.any (fun d => d.severity == .error || d.code == "W0301") &&
           reprStr (layoutOf fonts hooked).pages == reprStr (layoutOf fonts hookNative).pages &&
           templateHtmlFacts hooked == templateHtmlFacts hookNative)
@@ -137,9 +136,7 @@ def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   t "numbered template: honoured font changes both artifacts"
     (reprStr (layoutOf fonts nativeFont).pages != reprStr (layoutOf fonts defaultFont).pages &&
       templateHtmlFacts nativeFont != templateHtmlFacts defaultFont)
-  -- beamerbasefont.sty stores one local definition per font axis.
-  -- Nonstarred calls replace supplied axes only; starred calls clear all.
-  -- The reference probe reads \f@size/\f@shape/\f@series after selection.
+  -- Unstarred beamer font calls replace only the axes given; starred calls clear all.
   let sized := "\\fontsize{8pt}{9.5pt}\\selectfont"
   for (label, changes, fontCommands) in
       [("merge axes", "\\setbeamerfont{footline}{shape=\\itshape}",

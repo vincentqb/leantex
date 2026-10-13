@@ -7,14 +7,10 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! The bibliography's one entry model, held to the programs it stands in
-for: names split as bibtex.web splits them, the two views, both
-inheritances, and the reference lists of six BibTeX styles and biblatex's
-two standard families against lualatex with bibtex and biber, over the
-invented probes in `testdata/probes/u102` (each reference file names the
-tool versions it was measured with). -/
+/-! The bibliography's one entry model, held against bibtex and biber: name splitting, the two
+views, both inheritances, and the reference lists of the BibTeX styles and biblatex's standard
+families over the probes in `testdata/probes/u102`. -/
 
-/-- The probe directory. -/
 def bibProbeDir : String := "testdata/probes/u102"
 
 /-- A reference file's lines: its `#` provenance and `pdftotext`'s page
@@ -23,9 +19,8 @@ def refLines (text : String) : Array String :=
   ((text.splitOn "\n").map (·.replace "\x0c" "")).filter (fun l =>
     !l.trimAscii.toString.isEmpty && !l.startsWith "#") |>.toArray
 
-/-- Text with the mathematical italic letters a formula sets read as the
-letters they style, and white space runs one space: what `pdftotext` reads
-of lualatex's math, which names its glyphs by their base scalars. -/
+/-- Text with math italic letters read as their base letters and white space runs as one space, as
+`pdftotext` reads lualatex's math. -/
 def bibPlain (s : String) : String := Id.run do
   let mut out := ""
   let mut space := false
@@ -44,10 +39,8 @@ def bibPlain (s : String) : String := Id.run do
       space := false
   return out.trimAscii.toString
 
-/-- The acronyms biblatex sets in small capitals (`\mkbibacro`), as the
-page's glyphs spell them where the face has no small capitals — capitals
-at a smaller size — read back as the lowercase letters `pdftotext` reads of
-lualatex's small capitals. -/
+/-- biblatex's small-capital acronyms as the page spells them without a small-caps face, read back
+as the lowercase `pdftotext` reads. -/
 def bibAcros (s : String) : String :=
   ["DOI:", "URL:", "ISBN:", "ISSN:", "ISRN:"].foldl (fun s a => s.replace a a.toLower) s
 
@@ -66,8 +59,8 @@ def bibProbeDoc (pre list keys : String) (width : String := "60cm") : String :=
     ",paperheight=80cm,margin=1cm]{geometry}\n" ++
     pre ++ "\n\\begin{document}\n\\nocite{" ++ keys ++ "}\n" ++ list ++ "\n\\end{document}\n"
 
-/-- bibtex 0.99e's own splits of nineteen names (`{ff}`, `{vv}`, `{ll}`,
-`{jj}`, `{f.}` through a probe `.bst`), a tie read as the space it is. -/
+/-- bibtex 0.99e's own splits of nineteen names (`{ff}`, `{vv}`, `{ll}`, `{jj}`, `{f.}`), a tie read
+as a space. -/
 def bibtexNameSplits : List (String × String × String × String × String × String) :=
   [("Jean de La Fontaine", "Jean", "de", "La Fontaine", "", "J."),
    ("Charles Louis Xavier Joseph de la Vallee Poussin", "Charles Louis Xavier Joseph", "de la",
@@ -92,9 +85,7 @@ def bibtexNameSplits : List (String × String × String × String × String × S
    ("{\\OE}rsted, Hans", "Hans", "", "{\\OE}rsted", "", "H."),
    ("{Ann Marie} Zed", "{Ann Marie}", "", "Zed", "", "A.")]
 
-/-- **Names split as bibtex.web splits them**: the von part from the first
-to the last lowercase token, a special character read by its control word,
-a hyphen joining a last name and kept in initials, a brace group whole. -/
+/-- Names split as bibtex.web splits them. -/
 def bibNameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tie (s : String) : String := s.replace "~" " "
@@ -105,11 +96,7 @@ def bibNameChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"names: '{s}' abbreviates to '{inits}' ('{Bib.initials n.first}')"
       (tie (Bib.initials n.first) == inits)
 
-/-- **biber's date grammar**: a date, a month, a year, a range closed or
-open at either end, a mark of approximation, a year division, unspecified
-digits read as the range they span, a time with its seconds; anything else
-— a season in words, a month or a day the calendar lacks, a year not of four
-digits, a time without its seconds — is no date. -/
+/-- biber's date grammar: what it reads as a date and what it does not. -/
 def bibDateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let d (y : Int) (m d' : Option Nat := none) : Bib.Date := { year := y, month := m, day := d' }
@@ -145,10 +132,7 @@ def bibDateChecks (ref : IO.Ref (List String)) : IO Unit := do
       (Bib.DateValue.parse "98").isNone && (Bib.DateValue.parse "2020-02-29T10:00").isNone &&
       (Bib.DateValue.parse "").isNone && (Bib.DateValue.parse "2019/2020/2021").isNone)
 
-/-- **Letters past `z`**: the entries sharing a label take `a` … `z`, then
-`aa`, `ab` … — biblatex's `\mknumalph` — where bibtex's `int.to.chr$` ran
-on into braces and control characters. Twenty-eight entries by one author
-in one year, under biblatex's authoryear and under plainnat. -/
+/-- Entries sharing a label take `a` … `z`, then `aa`, `ab` …, as biblatex's `\mknumalph` does. -/
 def bibLetterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bib := String.join ((List.range 28).map fun i =>
@@ -173,9 +157,8 @@ def bibLetterChecks (ref : IO.Ref (List String)) : IO Unit := do
 def bibEntry (kind key : String) (fields : List (String × String)) : Bib.Entry :=
   { kind, key, fields := fields.toArray, pos := {} }
 
-/-- **The two views of one entry**: biber reads BibTeX's spellings under
-biblatex's names, a BibTeX style reads biblatex's under its own, and a view's
-own spelling always wins. -/
+/-- The two views of one entry: biber reads BibTeX's spellings under biblatex's names, a BibTeX
+style the reverse, and a view's own spelling wins. -/
 def bibViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let months := Locale.en.months
@@ -215,13 +198,7 @@ def bibViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((bibEntry "misc" "k" [("date", "Spring 2020")]).bibtexView months).field? "year" ==
       some "Spring 2020")
 
-/-- **Both inheritances, and who enters the list**: BibTeX copies every
-missing field under its own name, biber maps a book's title to its
-chapter's booktitle and withholds what biblatex withholds, `xdata` lends to
-both and is never listed, a chain reaches a grandparent, a cycle ends, and a
-parent two cited entries cross-reference enters the list — a parent with
-fewer leaves it, and under BibTeX its child loses the `crossref` that would
-send a reader to it. -/
+/-- Both inheritances, and which entries enter the list. -/
 def bibInheritChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let months := Locale.en.months
@@ -265,10 +242,7 @@ def bibInheritChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "inherit: one child leaves it out, and under BibTeX loses its crossref"
     (one.list == #["k1"] && ((one.entries.get? "k1").bind (·.field? "crossref")).isNone &&
       ((one.entries.get? "k1").bind (·.field? "year")) == some "2018")
-  -- bibtex 0.99e reads the file once, in order: a parent written before
-  -- every child naming it, and cited by no one, is passed before anything
-  -- asks for it ("A bad cross reference"); cited, or after a cited child,
-  -- it is read. biber resolves it wherever it stands.
+  -- bibtex reads the file once, in order: an uncited parent before every child is passed.
   let first := #[bibEntry "proceedings" "pr" [("title", "Proc"), ("year", "2018")],
     bibEntry "inproceedings" "k1" [("crossref", "pr"), ("title", "One")],
     bibEntry "inproceedings" "k2" [("crossref", "pr"), ("title", "Two")]]
@@ -291,12 +265,8 @@ def bibInheritChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "inherit: biber resolves a parent written first"
     (((biber.entries.get? "k1").bind (·.field? "year")) == some "2018")
 
-/-- **Seven BibTeX styles set bibtex's lists**: `bibtex.bib`'s entries under
-plain, unsrt, abbrv, alpha, plainnat, unsrtnat and abbrvnat, line for line
-against lualatex with bibtex — alpha's labels and their order, the
-crossref'd proceedings listed and its talks pointing at it, the
-once-referenced book inherited whole — on the shipped page and in the
-HTML. -/
+/-- Seven BibTeX styles set bibtex's lists, line for line against lualatex with bibtex, on the page
+and in the HTML. -/
 def bibtexOracleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -313,29 +283,19 @@ def bibtexOracleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     t s!"bibtex {style}: the list holds bibtex's {want.size} entries ({entries.size})"
       (entries.size == want.size)
     for (w, k) in want.zipIdx do
-      -- alpha's raised `+` reads back from lualatex's page as `+ `; the
-      -- engine's mark sets it on the baseline
+      -- alpha's raised `+` reads back from lualatex's page as `+ `; the engine sets it inline.
       let w := bibPlain (w.replace "+ " "+")
       let got := (entries[k]?).getD ""
       t s!"bibtex {style}: entry {k + 1} is '{w}' ('{got}')" (got == w)
       t s!"bibtex {style}: the html reads entry {k + 1}" (hasStr html w)
 
-/-- **biblatex's two standard families set biber's lists**: `biblatex.bib`'s
-37 entries — every standard entry type, dates and ranges, journal series and
-issues, subtitles, eprints, DOIs and visited URLs, a crossref'd proceedings
-listed by `mincrossrefs`, `xdata`, editors and translators, `et al.` and
-authoryear's dash and letters — under `style=numeric`, `style=authoryear`
-and four option sets (`giveninits`, `maxbibnames`, `dashed`, `sorting=none`,
-`isbn`/`url`/`doi`/`eprint`, `useprefix`), line for line against lualatex
-with biber, on the shipped page and in the HTML; and the citations of
-prefixed, lettered, title-headed and editor-headed entries. -/
+/-- biblatex's two standard families set biber's lists under several option sets, line for line
+against lualatex with biber, on the page and in the HTML. -/
 def biblatexOracleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
   let bib ← IO.FS.readFile s!"{bibProbeDir}/biblatex.bib"
   let keys := (← IO.FS.readFile s!"{bibProbeDir}/biblatex.keys").trimAscii.toString
-  -- The two families at biblatex's defaults, then four option sets, each
-  -- named on its reference's first line.
   let runs : List (String × String) :=
     [("style=numeric", "biblatex-numeric"), ("style=authoryear", "biblatex-authoryear")] ++
     (← ["biblatex-opt1", "biblatex-opt2", "biblatex-opt3", "biblatex-opt4"].mapM fun f => do
@@ -354,8 +314,6 @@ def biblatexOracleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       let got := (entries[k]?).getD ""
       t s!"biblatex {opts}: entry {k + 1} is '{w}' ('{got}')" (got == bibPlain w)
       t s!"biblatex {opts}: the html reads entry {k + 1}" (hasStr html (bibPlain w))
-  -- Every shape of a date range, open, closed, sharing a year or a month,
-  -- with authoryear's letters over the year a range names.
   let dates ← IO.FS.readFile s!"{bibProbeDir}/dates.bib"
   for family in ["numeric", "authoryear"] do
     let want := refLines (← IO.FS.readFile s!"{bibProbeDir}/dates-{family}.ref.txt")
@@ -368,8 +326,6 @@ def biblatexOracleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       let got := (entries[k]?).getD ""
       t s!"biblatex dates {family}: entry {k + 1} is '{w}' ('{got}')" (got == bibPlain w)
       t s!"biblatex dates {family}: the html reads entry {k + 1}" (hasStr html (bibPlain w))
-  -- Citations of a prefixed name, two letters, a title head and an editor
-  -- head, with and without `useprefix` (lualatex and biber, as above).
   let calls := ["\\textcite{n1}", "\\parencite{n1}", "\\textcite{n2,n3}", "\\parencite{o1}",
     "\\textcite{p1}"]
   let cites : List (String × List String) :=
@@ -394,9 +350,8 @@ def biblatexOracleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       t s!"biblatex {opts}: the page sets '{line}'" (page.contains line)
       t s!"biblatex {opts}: the html reads '{line}'" (hasStr html line)
 
-/-- A citation probe against biber: `{probe}.bib` cited by `{probe}.body.tex`
-under each named reference's options (its first line), every citation line on
-the page and in the HTML, and the list entry for entry. -/
+/-- A citation probe against biber: `{probe}.bib` cited by `{probe}.body.tex` under each reference's
+options, every citation line and the list compared. -/
 def biblatexCiteProbe (ref : IO.Ref (List String)) (fonts : Font.FontSet) (probe : String)
     (names : List String) (width : String := "60cm") : IO Unit := do
   let t := check ref
@@ -426,85 +381,42 @@ def biblatexCiteProbe (ref : IO.Ref (List String)) (fonts : Font.FontSet) (probe
       let got := (entries[k]?).getD ""
       t s!"biblatex {probe} {opts}: entry {k + 1} is '{w}' ('{got}')" (got == w)
 
-/-- **biber's uniqueness, in the citations and the list**: `uniq.bib`'s
-names — one family under several given names, a list whose opening others
-share, `and others`, a prefix, a suffix, hyphenated given names, a name with
-no given name, an editor heading a collection — and its `shortauthor`,
-`shorteditor` and `shorthand`, cited by `uniq.body.tex` under authoryear's
-defaults, five option sets and numeric, against lualatex with biber: every
-citation line on the page and in the HTML, and the list entry for entry. -/
+/-- biber's uniqueness in the citations and the list, against lualatex with biber. -/
 def biblatexUniqueChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "uniq" ["authoryear", "authoryear-init",
     "authoryear-off", "authoryear-max2", "authoryear-allfull", "authoryear-prefix", "numeric"]
-  -- `giveninits` (or its alias) turns `uniquename=full` into `init` and
-  -- `allfull` into `allinit`, as biblatex.sty does at the preamble's end:
-  -- names sharing an initial are no longer told apart.
+  -- `giveninits` turns `uniquename=full` into `init` and `allfull` into `allinit`.
   biblatexCiteProbe ref (← mathSetOf oneFace) "ginit" ["inits", "allfull"]
 
-/-- **biber's extended name format**: `xname.bib`'s names written as
-`family=`, `given=`, `prefix=` and `suffix=` items — a per-name
-`useprefix`, a braced family and a braced given name, a list mixing the
-two formats — under numeric, authoryear and `giveninits`, against lualatex
-with biber, as `biblatexUniqueChecks` holds `uniq.bib`. -/
+/-- biber's extended name format (`family=`, `given=`, `prefix=`, `suffix=`) against lualatex with
+biber. -/
 def biblatexXnameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "xname" ["numeric", "authoryear", "authoryear-inits"]
 
-/-- **Every field standard.bbx's drivers print is printed**: `fields.bib`
-holds every entry type biblatex's standard styles set — `@patent`,
-`@periodical`, `@dataset` and `@software` among them — each with every field
-its driver prints: the role names (`editora` and its type, the commentator,
-annotator, introduction, foreword and afterword, a translator from an
-original language, an editor who translates), versions, issue titles,
-events, page totals, every eprint type biblatex links, pages that are no
-numerals, a legacy month; under numeric and authoryear, against lualatex
-with biber, line for line on the page and in the HTML. What N0029 calls a
-style's own omission rests on this: a field this probe's drivers left out
-would leave its line short of biber's. -/
+/-- Every field standard.bbx's drivers print is printed, line for line against lualatex with biber. -/
 def biblatexFieldCoverageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "fields" ["numeric", "authoryear"] "120cm"
 
-/-- **biber's order**: `sort.bib` under numeric (`nty`) and authoryear
-(`nyt`) — `presort`, `sortkey` and BibTeX's `key` standing in for every
-later sortset, `sortname`, `sorttitle`, `sortyear`, volumes compared as
-numbers (a roman numeral, in either case, as its value), an entry's `options = {useprefix=true}`, `skipbib` cited and
-numbered but never listed, `dataonly` cited with no number, names padded
-part by part, accented letters with their base letters and an uppercase
-family before its lowercase — every citation's number or year and the list,
+/-- biber's order under numeric and authoryear, every citation's number or year and the list,
 against lualatex with biber. -/
 def biblatexSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "sort" ["numeric", "authoryear"] "120cm"
 
-/-- **One label date, everywhere it prints**: `ydate.bib`'s legacy years
-that are no number (`forthcoming`, `in press`, `c. 1850`, `2020a`), a date
-from the visit, the event or the original alone, seasons and quarters,
-unspecified digits, open starts and ends, a year before the common era, a
-year of five digits, a time, a legacy month and two undated entries by one
-author — each citation's label year and letter, and the list's dates and
-heads, against lualatex with biber. -/
+/-- One label date everywhere it prints, against lualatex with biber. -/
 def biblatexLabelDateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "ydate" ["numeric", "authoryear"] "120cm"
 
-/-- **A post-note's page prefix**: `cite.bib` cited with post-notes — a
-page, a range in either hyphen, a list, a roman numeral, words, a page that
-is no numeral, a pre-note beside it, a textual citation's, and an entry's
-`pagination` (columns, sections, none) — under numeric and authoryear,
-against lualatex with biber. -/
+/-- A post-note's page prefix under numeric and authoryear, against lualatex with biber. -/
 def biblatexPostnoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "cite" ["numeric", "authoryear"] "120cm"
 
-/-- **A name's letters are any script's**: `uname.bib`'s accented given
-names in both orders, an accented capital before a particle, accented
-family names among plain ones, a braced accent and a lowercase accented
-particle — the citations, the order and the initials `giveninits` sets,
-against lualatex with biber. -/
+/-- A name's letters may be any script's: citations, order and `giveninits` initials, against
+lualatex with biber. -/
 def biblatexUnicodeNameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   biblatexCiteProbe ref (← mathSetOf oneFace) "uname" ["numeric", "authoryear-inits"] "120cm"
 
-/-- **A BibTeX style reads a name's letters by their case too**: bibtex
-0.99 reads UTF-8 as bytes — it abbreviated `Émile` to half a character and
-took `Élise` for a particle by its second letter — where the engine reads
-each letter's case and abbreviates to the whole letter, as biber does: the
-splits, the initials, alpha's labels and plain's order over `uname.bib`. -/
+/-- A BibTeX style reads a name's letters by their case, as biber does: the splits, initials,
+alpha's labels and plain's order. -/
 def bibUnicodeNameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let n := Bib.parseName "Élise Varden"
@@ -537,11 +449,7 @@ def bibUnicodeNameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (pos "Ana Ångvik" < pos "Öra Ärnhelm" && pos "Öra Ärnhelm" < pos "Ola ébauche Ervin" &&
       pos "Émil Ostrow" < pos "Élan Quill" && pos "Élan Quill" < pos "Ana Zorvik")
 
-/-- **What biber cannot read is printed as written, and named**: a day
-the calendar lacks, a two-digit year and a season in words, under
-authoryear — each named once (W0420), the citation and the list reading
-the value as written, the list's date and the citation's year one reading.
-A legacy month that names no month is named the same way. -/
+/-- A date biber cannot read prints as written and is named once (W0420). -/
 def bibUnreadDateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let bib := "@article{u1, author = {Ann Alpha}, title = {No Such Day}, journaltitle = {J},\n\
@@ -579,9 +487,8 @@ def bibReadingBib : String :=
   @book{foreign, author = {Cy Gamma}, title = {Ein erfundenes Buch}, publisher = {Example Press},\n\
     date = {2016}, langid = {ngerman}}\n"
 
-/-- **A field means what it means in the body**: a `\url` inside a field is
-a link to its address, `\emph` emphasis, `$…$` a formula and `{\"U}` the
-letter Ü — through the document's own elaborator, in both artifacts. -/
+/-- A field means what it means in the body: `\url`, `\emph`, `$…$` and accents through the
+document's own elaborator, in both artifacts. -/
 def bibFieldReadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := bibBuild (bibProbeDoc "\\usepackage{natbib}"
@@ -607,12 +514,7 @@ def bibFieldReadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     | _ => acc) false content && !ds.any (·.code == "W0012"))
   t "field reading: an accent composes" (entries.any (hasStr · "See the Über page"))
 
-/-- **What a style drops is named, once; what reaches the page is correct**:
-plain prints no URL and says so once for every entry that keeps one, where
-plainnat prints it and says nothing; a date biblatex cannot read prints as
-written and is named; `(n.d.)` appears only for an entry with no date, and a
-BibTeX style reads a biblatex date as its year; a declared language tags its
-entry; an article with a volume and no date prints no empty parentheses. -/
+/-- What a style drops is named once, and what reaches the page is correct. -/
 def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let build (pre list keys : String) := bibBuild (bibProbeDoc pre list keys) #[("refs", bibReadingBib)]
@@ -623,8 +525,7 @@ def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let (_, natDs) := build "\\usepackage{natbib}" "\\bibliographystyle{plainnat}\\bibliography{refs}" "web"
   t "named: plainnat prints the url and names nothing about it"
     (!natDs.any fun d => d.code == "N0029" && d.subject == some "bibfield:url")
-  -- plainnat prints a @misc's howpublished and not a @manual's: the note
-  -- names the type it drops it for, never the field as one it prints nowhere
+  -- plainnat prints a @misc's howpublished and not a @manual's, so the note names the type.
   let hbib := "@misc{hm, author = {Ann Alpha}, title = {Notes}, howpublished = {Handed out}, \
     year = 2001}\n@manual{hn, author = {Bo Beta}, title = {Guide}, howpublished = {Posted}, \
     year = 2002}\n"
@@ -697,13 +598,7 @@ def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       !dropped.any (·.subject == some "bibfield:institution") &&
       dropped.all (hasStr ·.message "biblatex's authoryear style prints no"))
 
-/-- **A list biblatex words in another language is named, once**: under
-babel's `ngerman`, loaded before biblatex or after it, the list's strings
-are named and the page sets the English ones; babel's `american` is
-biblatex's American strings, named too; an English document, or a load
-with `language=english`, names nothing; and under `autolang=other` an
-entry whose `langid` is French is named, one whose `langid` is English
-not. -/
+/-- A list biblatex words in another language is named once. -/
 def bibLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bib := "@article{en1, author = {Ann Alpha}, title = {One}, journaltitle = {J}, \
@@ -741,10 +636,7 @@ def bibLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[("refs", bib)]
   t s!"language: a document that prints no list names nothing ({named nds})" (named nds).isEmpty
 
-/-- **An `@set` entry is named, and its members are listed**: biblatex sets
-a cited set as one entry of its members; the engine lists each member as
-an entry of its own, cites the set as its first member, and names the set
-once — and a member cited alone is listed alone, as biber lists it. -/
+/-- A cited `@set` is named once and its members are listed each as an entry. -/
 def bibSetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bib := "@set{st1, entryset = {m1,m2}}\n\
@@ -767,10 +659,7 @@ def bibSetChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"set: a member cited alone is listed alone, unnamed ({keys mdoc})"
     (keys mdoc == #["m1"] && !mds.any (·.code == "W0422"))
 
-/-- **Related entries are named, not set**: biblatex's styles set the
-entries an entry's `related` field names after it (standard.bbx's
-`related` macro); the engine lists the entry and names what it leaves out,
-once (W0423). -/
+/-- An entry's related entries are named (W0423), not set. -/
 def bibRelatedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bib := "@book{k, author = {Ann Alpha}, title = {A Reprint}, date = {2020}, related = {r},\n\
@@ -784,13 +673,7 @@ def bibRelatedChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"related: what it names is named once ({(ds.filter (·.code == "W0423")).map (·.subject)})"
     ((ds.filter (·.code == "W0423")).map (·.subject) == #[some "bibrelated:k"])
 
-/-- **A `.bib`'s `@preamble` is in force where its list is typeset, and
-nowhere in what sorts it**: a `\noopsort` it defines prints nothing — no
-unknown command is named — and its argument still sorts, so the entry of
-2001 written `{\noopsort{1999}}2001` comes before the one of 2000, as
-bibtex sorts the `.bbl` LaTeX typesets; a command defined over an earlier
-one, a `\def` with a parameter and a `\providecommand` of a name already
-defined each read as LaTeX reads them. -/
+/-- A `.bib`'s `@preamble` is in force where its list is typeset and nowhere in what sorts it. -/
 def bibPreambleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let bib := "@preamble{ \"\\newcommand{\\noopsort}[1]{}\" # \"\\def\\twice#1{#1#1}\" }\n\
@@ -809,9 +692,7 @@ def bibPreambleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (Bib.expandMacros (Bib.preambleMacros #["\\newcommand{\\pair}[2]{(#1,#2)}"])
       "a \\pair{x}{\\pair{y}{z}} b" == "a (x,(y,z)) b")
 
-/-- **Every named `.bib` is read**: `\bibliography{a, b}` reads both files,
-as BibTeX's list of files does, and so does a second `\addbibresource`; a
-key two files hold is the first file's, as BibTeX and biber keep it. -/
+/-- Every named `.bib` is read, and a key two files hold is the first file's. -/
 def bibSourcesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let a := "@article{a1, author = {Ann Alpha}, title = {One}, journal = {J}, year = 2001}\n\
@@ -829,8 +710,6 @@ def bibSourcesChecks (ref : IO.Ref (List String)) : IO Unit := do
       (bad nds).isEmpty)
   t "sources: a key two files hold is the first file's"
     ((items ndoc).any fun it => it.key == "dup" && hasStr (Ir.plainText it.content) "First")
-  -- One file of several not there, on the driver's own path: the list holds
-  -- the other file's entries and the missing one is named (W0424).
   let (missingDs, kept) ← IO.FS.withTempDir fun dir => do
     IO.FS.writeFile (dir / "kept.bib") "@misc{k, author = {Ann Alpha}, title = {Kept}, year = 2024}\n"
     let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\nA claim\\cite{k}.\n\
@@ -859,9 +738,7 @@ def bibSourcesChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"sources: a loss the fields raise counts with the body's ({counted.map (·.sites)})"
     (counted.size == 3 && (counted.map (·.sites)).foldl (· + ·) 0 == 3 &&
       (counted.map (·.sites)).toList.count 0 == 2)
-  -- The run's own accounting (the driver's `Bib.demoteRepeated` before the
-  -- tally): the body's site is the warning and carries every site's count;
-  -- the fields' sites ride beside it as notes with no help of their own.
+  -- `Bib.demoteRepeated` before the tally: the body's site warns, the fields' are notes.
   let file := "t.tex"
   let (toks, ld) := Lex.lex file (bibProbeDoc "\\usepackage{natbib}"
     "Body \\zzbib{} text.\n\\bibliographystyle{plainnat}\\bibliography{u}" "u1,u2")
@@ -880,10 +757,8 @@ def bibSourcesChecks (ref : IO.Ref (List String)) : IO Unit := do
     (fieldsOnly.size == 2 && (fieldsOnly[0]?.any (!·.demoted)) &&
       (fieldsOnly[1]?.any (·.demoted)))
 
-/-- **Plain field text needs no elaborator**: every text `asWritten?`
-accepts — invented spellings and 400 strings drawn from its alphabet — sets
-under the document's elaborator exactly as the fast path sets it, and a
-text with anything TeX reads otherwise goes to the elaborator. -/
+/-- Plain field text needs no elaborator: every text `asWritten?` accepts sets as the elaborator
+sets it. -/
 def bibAsWrittenChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n"
@@ -938,13 +813,8 @@ def bibtexPage (body list : String) (pre : String := "") : String :=
   "\\documentclass{article}\n\\usepackage[paperwidth=60cm,paperheight=80cm,margin=1cm]{geometry}\n" ++
     pre ++ "\n\\begin{document}\n" ++ body ++ list ++ "\n\\end{document}\n"
 
-/-- **A field's citation completes the list**: `fcite.bib`'s notes cite
-entries the body does not — one through another — and the list holds each
-of them, after the body's citations where the order is citation order, each
-note's citation resolved and its sentence closed by its period, under plain
-and unsrt against bibtex and under authoryear and numeric `sorting=none`
-against biber, LaTeX rerun until the `.bbl` held; a field's citation of a
-key no entry answers is W0351, at the entry whose field cites it. -/
+/-- A field's citation completes the list, and a field's citation of no entry is W0351 at the citing
+entry. -/
 def bibFieldCiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -975,11 +845,8 @@ def bibFieldCiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (w.size == 1 && w.all (fun d => (d.span.map (·.file)) == some "m.bib") &&
       entries == #["[1] Ann Alpha. First, 2020. Reprinted as [?]."])
 
-/-- **One `@string` store for a list's files**: `strings-a.bib` defines a
-macro `strings-b.bib` uses and `strings-c.bib` holds a parent `strings-b.bib`'s
-entry cross-references, read in turn as bibtex reads `\bibliography{a,b,c}`
-and biber three `\addbibresource`s, line for line; a macro no `@string`
-defines before its use prints its name, named once by W0426. -/
+/-- One `@string` store across a list's files, and a macro no `@string` defines prints its name,
+named once (W0426). -/
 def bibStringStoreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1007,12 +874,8 @@ def bibStringStoreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (w.all (·.subject == some "bibstring:nojt") && (w.filter (!·.demoted)).size == 1 &&
       (w.map (·.sites)).foldl (· + ·) 0 == 2 && entries.all (hasStr · "nojt"))
 
-/-- **The label column holds the widest label**: an alpha list's labels of
-three widths, on the article page and on a page with 1 cm margins — every
-label starts at or right of the text block's left edge, the widest exactly
-there, and every entry's text starts at one place, the widest label and
-`\labelsep` in, as LaTeX's `\settowidth\labelwidth` over the widest label
-places it (asserted over the shipped page, `Layout.Out`). -/
+/-- The label column holds the widest label: every entry's text starts the widest label and
+`\labelsep` in. -/
 def bibLabelColumnChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let bib := "@article{w1, author = {Ann Alpha and Bo Beta}, title = {Short Label}, journal = {J}, year = 2021}\n\
@@ -1037,15 +900,7 @@ def bibLabelColumnChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     t s!"label column ({tag}): every entry's text starts at one place ({textXs})"
       (textXs.size == 3 && textXs.all (· == textXs[0]!))
 
-/-- **biber's sort locales**: `loc.bib`'s invented names — the letters and
-runs each tailoring weighs otherwise — sorted under sixteen locales, from
-the default table to Swedish's letters after `z`, Danish's `aa`, Spanish's
-traditional `ch` and `ll`, Hungarian's, Czech's, Turkish's and Welsh's
-runs, German phonebook's `ä` as `ae` and French Canadian's backwards
-accents, each list line for line against biber; babel's main language is
-the locale `sortlocale=auto` sorts by; a locale whose tailoring is of another
-script is named (W0427); and `clearlang=false` prints a `language` the
-document's own. -/
+/-- biber's sort locales, line for line against biber, and a locale of another script named (W0427). -/
 def biblatexLocaleSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1065,13 +920,7 @@ def biblatexLocaleSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
     ((ds.filter (·.code == "W0427")).map (·.subject) == #[some "bibsort:ja"])
   biblatexCiteProbe ref fonts "lang" ["clearlang", "numeric"]
 
-/-- **A reference that names no entry is named, and costs nothing else**:
-an `xdata` list naming three keys no entry holds before the one it does
-still lends that one's fields, as biber does, and names the three (W0425);
-a `crossref` naming no entry is W0425; BibTeX finds a parent whatever the
-case of its key, as bibtex does, where biber matches keys exactly and the
-help names the entry that differs only in case; and the walk ends however
-many missing keys stand before a real one. -/
+/-- A reference naming no entry is named (W0425) and costs nothing else. -/
 def bibRefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1110,11 +959,8 @@ def bibRefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "refs: forty missing keys before the data entry end no walk early"
     (((db.entries.get? "u").bind (·.field? "publisher")) == some "Pub" && db.broken.size == 40)
 
-/-- **A field's text reads as the body's**: each command the body's text
-translates — `\relax`, `\mbox`, `\makebox`, `\raisebox`, `\foreignlanguage`,
-`\enquote`, `\space`, and BibTeX's own `{\relax Ch}ristopher` idiom —
-sets in a `.bib` field exactly as in the body, through the compatibility
-pass the body's text goes through, and raises no unknown command there. -/
+/-- A field's text reads as the body's: each command the body translates sets the same in a `.bib`
+field. -/
 def bibFieldCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let snippets := ["R \\relax{}x", "M \\mbox{m b}", "K \\makebox{mk}", "B \\raisebox{1pt}{rb}",
@@ -1132,12 +978,8 @@ def bibFieldCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"field compat: '{s}' raises no unknown command in the field"
       (!ds.any fun d => d.code == "W0301" && (d.span.map (·.file)) == some "f.bib")
 
-/-- **biblatex's citation commands**: the capitalized forms, `\parencite*`'s
-year, the multicite commands with and without their own notes, the field
-citations — `\citetitle` (a short title, the full one starred, each in its
-type's title format), `\citeurl`, `\citedate` and `\fullcite` — the
-starred textual and year forms, and the footnote citations — on the page
-and in the HTML, against biber under authoryear and numeric. -/
+/-- biblatex's citation commands, on the page and in the HTML, against biber under authoryear and
+numeric. -/
 def biblatexCiteCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1163,10 +1005,8 @@ def biblatexCiteCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontS
     for n in notes do
       t s!"footnote citations {style}: a note reads '{n}'" (page.any (·.endsWith n) && hasStr html n)
 
-/-- **What a list's entry names elsewhere resolves**: biblatex's `ids`
-alias cites its entry; a `\ref` in a field sets the number the body's
-`\ref` sets, resolved against the document's labels; biblatex's legacy
-`\bibliography{refs}` in the preamble adds `refs.bib`. -/
+/-- What a list's entry names elsewhere resolves: `ids` aliases, a field's `\ref`, and a preamble
+`\bibliography{refs}`. -/
 def bibElsewhereChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1195,11 +1035,8 @@ def bibElsewhereChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t s!"elsewhere: biblatex's preamble \\bibliography adds its file ({(ds.filter fun d => !d.code.startsWith "N").map (·.code)})"
     (page.contains "L1 [1] end." && !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
 
-/-- **biblatex's delimiters, redefined**: under author-year citations a
-`\nameyeardelim`, `\multicitedelim` and `\postnotedelim` of punctuation and
-a space set the citations biber sets with them, line for line; a
-redefinition of another of biblatex's macros (`\bibfont`, a delimiter of
-another shape) is named (W0104), keyed by the macro. -/
+/-- biblatex's delimiters redefined set biber's citations, and another macro's redefinition is named
+(W0104). -/
 def biblatexPunctChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1232,14 +1069,8 @@ def biblatexPunctChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
 def urlTargets (field : String) : List String :=
   ((field.splitOn "{http").drop 1).map fun rest => "http" ++ ((rest.splitOn "}").headD "")
 
-/-- **A character TeX reserves sets as itself in a field, and the build
-ships**: under BibTeX's plain and biblatex's numeric, each of `&`, `_`, `#`,
-`^`, an unmatched `$` and `%` in a `note` sets as the character it is, on the
-page and in the HTML, where LaTeX stops at it or drops the rest of the line;
-the build raises no error, and one note names the character (N0030). A
-formula's `^` and `_` stay the formula's, and a URL's `_`, `%` and `$` are
-the URL's, named by nothing and linked as written — a URL's `$` never pairs
-with a formula's across it, which failed the build where LaTeX's did not. -/
+/-- A character TeX reserves sets as itself in a field and the build ships, one note naming it
+(N0030). -/
 def bibReservedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1283,33 +1114,12 @@ def bibReservedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
           (notes.size == 1 && notes.all (·.subject == some s!"bibfield:reserved:{c}"))
       | none => t s!"{what}: nothing is named ({notes.map (·.subject)})" notes.isEmpty
 
-/-- **xdata as biber resolves it**: `xdata.bib` under biblatex's numeric —
-a data entry's fields set over the entry's own, a later data entry's over
-an earlier's, a data entry's own `xdata` read first, granular references
-lending a field, one name and every name — line for line against lualatex
-with biber; where biber leaves an unresolved granular reference's own
-spelling in the field, which prints it (or an empty name), the engine sets
-the entry without it; and each reference biber does not resolve is named
-(W0425) under its key: an entry no `.bib` holds, an entry that is no
-`@xdata` (the entry itself among them), a field, an item or a kind the data
-entry lacks. A value spelling the marker with white space in it is no
-reference, and prints as the text it is, as biber reads it. A cycle
-(`xcycle.bib`) sets as biber sets it when told not to stop at its error,
-named once. `xdata2.bib`: a data entry's `crossref` is lent, and the entry
-inherits through it, as biber's; two references in one list each lend
-where they are written, where biber resolves the later at a position the
-first moved (the declared departure); a date holds no reference, as biber
-reads it, and where biber drops such a date (`Invalid format`) the engine
-prints it as written, named as every date biber cannot read is (W0420) —
-the second declared departure.
-A granular reference closing a cycle is named once, as the field it lends,
-and its spelling never reaches the page. -/
+/-- xdata as biber resolves it, line for line against lualatex with biber, each unresolved reference
+named (W0425), with the declared departures. -/
 def biblatexXdataChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
-  -- The engine's departures from biber's page: the lines where biber prints
-  -- an unresolved granular reference's spelling, or the empty name it read
-  -- one as.
+  -- Lines where biber prints an unresolved granular reference's spelling and the engine departs.
   let xdataDepart : List (Nat × String) :=
     [(8, "[9] Ivy Iota. Granular Missing Field. Own Press, 2019."),
      (9, "[10] Jo Kappa. Granular Missing Entry. Own Press, 2020."),
@@ -1375,7 +1185,6 @@ def biblatexXdataChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     ({ds.map (·.subject)})"
     ((ds.filter (·.code == "W0420")).map (·.subject) == #[some "bibdate:y4:date"] &&
       !ds.any (·.code == "W0425") && !ds.any (·.severity == .error))
-  -- a granular cycle: named once, as the field it lends, never on the page
   let loop := "@xdata{yl1, note = {xdata=yl2-note}}\n@xdata{yl2, note = {xdata=yl1-note}}\n\
     @book{y5, title = {Granular Loop}, author = {Jo Kappa}, note = {xdata=yl1-note}, date = {2007}}\n"
   let (ldoc, lds) := bibBuild (bibProbeDoc "\\usepackage[style=numeric]{biblatex}\n\\addbibresource{loop.bib}"
@@ -1388,14 +1197,7 @@ def biblatexXdataChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t s!"xdata: a granular cycle's spelling never reaches the page ({lentries})"
     (lentries == #["[1] Jo Kappa. Granular Loop. 2007."])
 
-/-- **The fields the compatibility pass leaves as they stand skip it, and
-read the same**: for each name of `Bib.compatInert`, a field using it bare,
-with one group, with two, with an optional argument and inside a group, and
-for each formula symbol of `Bib.compatInertMath`, a formula holding it bare,
-between letters, scripted, before a group and inside a group, in a document
-defining nothing and in one whose preamble redefines it, reads exactly as
-the reading that runs the pass over every field with a control word
-(`Bib.FieldDoor.readWith`). -/
+/-- The fields the compatibility pass leaves as they stand skip it and read the same. -/
 def bibFieldDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let doorOf (pre : String) : Bib.FieldDoor :=
@@ -1431,13 +1233,8 @@ def bibFieldDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
         let fast := door.readWith false ⟨"refs.bib", {}⟩ shape
         t s!"door {label}: {repr shape} reads as the full reading reads it" (full == fast)
 
-/-- **A label the style writes sets flush left; a number right-aligned**:
-under BibTeX's `alpha` (`\bibitem[label]`, latex.ltx's `\@lbibitem` and its
-`\hfill`) the labels of three widths start at one x and their entries' text
-at another, on the page, and the HTML marks the labels flush — and so do a
-`thebibliography`'s labels written by hand; under `plain`
-the numbers end at one x, unmarked, and so do biblatex's numeric labels, a
-shorthand among them (`\makelabel` is `\hss#1` there). -/
+/-- A label the style writes sets flush left and a number right-aligned, on the page and in the
+HTML. -/
 def bibLabelAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1475,8 +1272,6 @@ def bibLabelAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       t s!"labels {style}: every number ends at one x ({es.map (·.2.1)})" (same (·.2.1))
       t s!"labels {style}: the html sets them right-aligned"
         (!hasStr html "bib-marker flush" && !hasStr html ".bib-marker.flush")
-  -- `thebibliography` written by hand: a `\bibitem[label]` flush left, as
-  -- latex.ltx's `\@lbibitem` sets it
   let own := "\\documentclass{article}\n\\begin{document}\nSee \\cite{a,b,c}.\n\
     \\begin{thebibliography}{Longest}\n\\bibitem[A]{a} First.\n\\bibitem[Bb]{b} Second.\n\
     \\bibitem[Longest]{c} Third.\n\\end{thebibliography}\n\\end{document}\n"
@@ -1490,12 +1285,8 @@ def bibLabelAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t s!"labels own: the labels are of more than one width" (!same (·.2.1))
   t s!"labels own: the html sets them flush" (hasStr html "bib-marker flush")
 
-/-- **`\supercite` under a numeric style sets as `\cite`**: its keys are
-cited, listed and numbered — the citation after it keeps its number — its
-notes go, as numeric.cbx ignores them, and the superscript it loses is named
-once (W0428). Under an author-year style, which defines no `\supercite`, it
-is `\cite` with its notes, as biblatex.sty falls back to it, and nothing is
-named. -/
+/-- `\supercite` under a numeric style sets as `\cite`, its lost superscript named once (W0428);
+under author-year it is `\cite` with its notes. -/
 def biblatexSuperciteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1521,17 +1312,12 @@ def biblatexSuperciteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     t s!"supercite {opts}: {if named then "one note names the superscript" else "nothing is named"} \
       ({w.map (·.subject)})"
       (if named then w.size == 1 && w.all (·.subject == some "citecmd:supercite") else w.isEmpty)
-  -- Without biblatex it is no command the document loads: the unknown-command
-  -- path names it, and the superscript's note does not stand in for that.
   let (_, nds) := bibBuild "\\documentclass{article}\n\\begin{document}\nOne\\supercite{a} end.\n\\end{document}\n" #[]
   t s!"supercite: without biblatex it is an unknown command, named ({nds.map (·.code)})"
     (nds.any (·.code == "W0301") && !nds.any (·.code == "W0428"))
 
-/-- **A list's `\ref` is judged as the body's**: a `.bib` field's
-`\ref{key}` resolves against the document's labels where the list stands,
-and one no `\label` numbers sets `??` in the entry, named by W0349 under
-its key as the body's own unresolved `\ref` is — under BibTeX's plain and
-biblatex's numeric. -/
+/-- A list's `\ref` is judged as the body's: resolved against the document's labels, or `??` named
+by W0349. -/
 def bibFieldRefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1556,9 +1342,7 @@ def bibFieldRefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       (named.contains (some "nosuch") && named.contains (some "alsonosuch") &&
         !named.contains (some "sec:a"))
 
-/-- **`@comment` under biber is a comment**: biber's reader takes an
-`@comment{…}` block whole, so an entry written inside one is no entry of a
-biblatex list; BibTeX reads on after the word, and lists it. -/
+/-- `@comment` is a comment under biber, while BibTeX reads on after the word. -/
 def bibCommentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1578,18 +1362,11 @@ def bibCommentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       ((entries.any (hasStr · "Cy Gamma")) == (want != 1))
     t s!"comment {name}: the build ships with no error" (!ds.any (·.severity == .error))
 
-/-- The corpus's own PNG, which the field-content checks include as
-`img.png`, and the drawing a synthetic boundary renderer returns for a
-picture (`fakeRenderer`). -/
+/-- The corpus's own PNG and the drawing a synthetic boundary renderer returns. -/
 def bibFieldPng : String := "testdata/corpus/rects.png"
 def bibFieldBox : String := "testdata/corpus/figures/box.pdf"
 
-/-- The store a build fulfils for a document's image requests, through the
-driver's own decision (`Image.fulfilRequests`): `img.png` read as `png`, a
-boundary picture drawn as `box` with `face` its browser face — only where
-the document's request carries the picture's body (`Ir.pictureRefs`), as
-the driver asks the boundary only for those — and anything else a missing
-file. -/
+/-- The store a build fulfils for a document's image requests through `Image.fulfilRequests`. -/
 def bibFieldStore (doc : Ir.Doc) (png box face : ByteArray) : Image.Store × Array Diag :=
   let refs := Ir.pictureRefs doc
   Image.fulfilRequests ((Ir.imageRequests doc).map fun req =>
@@ -1600,9 +1377,8 @@ def bibFieldStore (doc : Ir.Doc) (png box face : ByteArray) : Image.Store × Arr
         none)
     else (req, .missing req.src))
 
-/-- The shipped images of the reference list's entries: each image box an
-entry's lines set, by the source of the store entry it draws, and whether
-that entry loaded. -/
+/-- The reference list's shipped images: each image box an entry's lines set, by source, with
+whether it loaded. -/
 def bibEntryImages (store : Image.Store) (out : Layout.Out) : Array (String × Bool) :=
   (bibEntryLines (bodyLines out)).flatMap fun e => e.flatMap fun l => l.segs.filterMap fun s =>
     match s with
@@ -1616,8 +1392,7 @@ def bibHtmlList (body : Array Html.Node) : Array Html.Node :=
     | .elem _ attrs _ => ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains "bibliography"
     | _ => false
 
-/-- The images the page's reference list shows: each `img` under it, its
-embedded resource decoded (`htmlDataDecode`) — or, where it embeds none, its
+/-- The images the page's reference list shows, each `img`'s embedded resource decoded, or its
 source and no bytes. -/
 def bibListImages (body : Array Html.Node) : IO (Array (String × ByteArray)) :=
   (elemAttrsList (· == "img") #[] (bibHtmlList body).toList).mapM fun (_, a) => do
@@ -1643,20 +1418,8 @@ def bibEndnotes (body : Array Html.Node) : Array (String × String) :=
         else none
     | _ => none
 
-/-- **A field's image, picture and footnote are the body's**: under BibTeX's
-plain and biblatex's numeric, a field's `\includegraphics` is an image
-request the build fulfils, set in its entry's line on the page and in the
-page's list, and the page publishes; a field's `\tikz` is a boundary request
-whose body the document's request carries, drawn in its entry; and a
-field's `\footnote` numbers where the list stands — after the body's note
-before the list and before the one after it, as LaTeX numbers a `.bbl`'s
-notes — at the page's foot and among the page's endnotes. The image and the
-picture once shipped an empty box and refused the page (E0606), and the
-note shipped the body's first note's number and no endnote: the walks that
-collect a document's requests and notes did not read a list's entries,
-skipped as formatted renderings. Content the engine builds from authored
-text is authored: a list's fields go through the inline elaborator, so the
-fold reads its entries (`Ir.foldBlock_bibliography_exact`). -/
+/-- A field's image, picture and footnote are the body's: fulfilled, drawn and numbered where the
+list stands, on the page and among its endnotes. -/
 def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1672,7 +1435,6 @@ def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     #[("r", bib), ("r.bib", bib)]
   let pre := "\\usepackage{graphicx}\n\\usepackage{tikz}\n"
   for (name, load, list) in lists do
-    -- an image
     let (doc, ds) := bibBuild (bibProbeDoc (pre ++ load) list "k")
       (bibOf "\\includegraphics[width=1cm]{img.png}")
     let what := s!"field content {name}: an image"
@@ -1689,7 +1451,6 @@ def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     let shown ← bibListImages body
     t s!"{what}: the page's entry holds the image's bytes ({shown.map (·.1)})"
       (shown.size == 1 && shown.all (· == ("image/png", png)))
-    -- a picture
     let (doc, ds) := bibBuild (bibProbeDoc (pre ++ load) list "k")
       (bibOf "\\tikz \\draw (0,0) circle (2pt);")
     let what := s!"field content {name}: a picture"
@@ -1709,7 +1470,6 @@ def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     let shown ← bibListImages body
     t s!"{what}: the page's entry holds the drawing's face ({shown.map (·.1)})"
       (shown.size == 1 && shown.all (· == ("image/svg+xml", face)))
-    -- a footnote, between two of the body's
     let src := "\\documentclass{article}\n\\usepackage[paperwidth=60cm,paperheight=80cm,margin=1cm]{geometry}\n" ++
       load ++ "\n\\begin{document}\nOne\\footnote{body before}.\\nocite{k}\n" ++ list ++
       "\nTwo\\footnote{body after}.\n\\end{document}\n"
@@ -1730,9 +1490,8 @@ def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     t s!"{what}: the page's entry marks it, linked to its endnote"
       (marks.any fun (_, a) => HtmlDoc.attrOf? a "href" == some "#fn2")
 
-/-- One run of the built binary over `doc` in `dir`, writing `out`: its exit
-code, whether the artifact was written, and its diagnostics' codes and
-severities. The machine holds only `dir/bin` on its PATH. -/
+/-- One run of the built binary over `doc` in `dir`: its exit code, whether the artifact was
+written, and its diagnostics' codes and severities. -/
 def bibShipRun (binary font dir : System.FilePath) (doc out : String) :
     IO (UInt32 × Bool × Array (String × String)) := do
   let path := dir / out
@@ -1743,18 +1502,8 @@ def bibShipRun (binary font dir : System.FilePath) (doc out : String) :
       ("LEANTEX_FONT", some font.toString)] }
   return (r.exitCode, ← path.pathExists, porcelainCodes r.stdout)
 
-/-- **A field's image, picture and footnote ship as the body's do**, through
-the driver's whole publication path: the built binary, on a machine whose
-boundary renderer draws a committed PDF (`fakeRenderer`) and which holds no
-other tool, writes the PDF and the page of a document that sets each in a
-`.bib` field, under BibTeX's plain and biblatex's numeric, as it writes them
-for the same document setting it in a line of the body that stays one, as an
-entry's text does (`\\mbox`): every run exits 0, the field's
-reports the warnings the body's reports — W0378 for a picture's unchecked
-browser face on such a machine, nothing for the image or the note — and no
-run refuses the page (E0606). The field's image and picture once refused the
-page, and the picture's box shipped empty in the PDF. The caller supplies an
-already-built binary. -/
+/-- A field's image, picture and footnote ship through the driver's publication path as the body's
+do. -/
 def bibFieldShipChecks (ref : IO.Ref (List String))
     (binary : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref
@@ -1787,8 +1536,7 @@ def bibFieldShipChecks (ref : IO.Ref (List String))
             (if load.isEmpty then "" else s!"\\addbibresource\{{r}.bib}\n") ++
             "\\begin{document}\nText" ++ body ++ " \\cite{k}.\n" ++ list r ++ "\n\\end{document}\n"
         IO.FS.writeFile (dir / "field.tex") (docOf "rf" "")
-        -- the body's spelling in a line that stays one, as an entry's does: a
-        -- font command's argument, where an `\mbox`'s picture is a block
+        -- The body's spelling inside a font command's argument, a line that stays one.
         IO.FS.writeFile (dir / "body.tex") (docOf "rb" (" \\textnormal{" ++ construct ++ "}"))
         for ext in ["pdf", "html"] do
           let (fe, fw, fc) ← bibShipRun binary font dir "field.tex" s!"field.{ext}"
@@ -1801,12 +1549,8 @@ def bibFieldShipChecks (ref : IO.Ref (List String))
           t s!"{art}: no run refuses the page"
             (!(fc ++ bc).any (·.1 == "E0606"))
 
-/-- Invented field texts for the reading's fuzz: pieces drawn by a fixed
-linear congruential sequence — words, characters TeX reserves, accents,
-formulas, URLs, block-level commands and environments, definitions,
-citations and references, an image, a picture and a note, an unmatched
-closer — every group and environment a piece opens closed again, so each
-`.bib` value is balanced and reaches the field's reading. -/
+/-- Invented, balanced field texts for the reading's fuzz, drawn by a fixed linear congruential
+sequence. -/
 def bibFuzzFields (n : Nat) : Array String := Id.run do
   let pieces : Array String := #["word", " ", "Two words", "&", "#", "^", "_", "$", "%", "~",
     "--", "``q''", "$x^2$", "$\\alpha$", "\\'e", "\\\"o", "\\ss{}", "\\\\", "\\par ", "\\item ",
@@ -1847,17 +1591,8 @@ def bibFuzzFields (n : Nat) : Array String := Id.run do
     out := out.push text
   return out
 
-/-- **A field LaTeX sets always ships**: a list, a table, a definition by
-`\def` or `\newcommand` and a heading in a `note` — what LaTeX sets in a
-bibliography entry, and the document's inline elaborator refuses — set as
-their text, run into the entry, under BibTeX's plain and biblatex's
-numeric, on the page and in the HTML; the build raises no error, and one
-warning names the field and its entry (W0429), where the field's refusal
-once failed the whole build. Vertical space the inline elaborator reads
-itself, a skip inside a paragraph set aside as the body's is (W0329), so
-the field ships with no backstop. Three hundred invented field texts
-(`bibFuzzFields`) ship under both, each with its entry on the page and
-each such warning keyed to the field. -/
+/-- A field LaTeX sets always ships: what the inline elaborator refuses sets as its text, run into
+the entry, named once (W0429). -/
 def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1908,13 +1643,8 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       let (doc, ds) := bibBuild (bibProbeDoc ("\\usepackage{graphicx}\n\\usepackage{tikz}\n" ++ pre)
         list "k") #[("r", bibOf field), ("r.bib", bibOf field)]
       let (entries, _) := bibShipped fonts doc
-      -- what the driver's publication path reads: every request fulfilled,
-      -- the page closing over its resources (E0606 otherwise), every note
-      -- numbered and each number once
       let (store, fulfilled) := bibFieldStore doc png box face
       let marks := (Ir.footnotesOf doc.body).map (·.1)
-      -- the entry is the one line group holding its author: a footnote the
-      -- field sets is a group of its own at the foot of the page
       unless !ds.any (·.severity == .error) && (entries.filter (hasStr · "Ann Alpha")).size == 1 &&
           (ds.filter (·.code == "W0429")).all (·.subject == some "bibfield:unread:k:note") &&
           fulfilled.isEmpty && (HtmlDoc.emitClosed { imgs := store } doc #[face]).1.isOk &&
@@ -1923,14 +1653,7 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"backstop fuzz {name}: every one of {fields.size} builds ships its entry \
       ({failed.size} did not: {failed.toList.take 3})" failed.isEmpty
 
-/-- **The fuzz's fields ship through the driver**: the three hundred invented
-field texts (`bibFuzzFields`) as the notes of one list's three hundred
-entries, under BibTeX's plain and biblatex's numeric, built by the binary
-on a machine whose boundary renderer draws a committed PDF and which holds
-no other tool: the PDF and the page are written, the run exits 0, nothing
-is an error and no resource refuses the page (E0606) — the driver's
-publication check, which the in-process fuzz reads only as its pure close.
-The caller supplies an already-built binary. -/
+/-- The fuzz's field texts ship through the driver: PDF and page written, exit 0, no error. -/
 def bibFuzzShipChecks (ref : IO.Ref (List String))
     (binary : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref
@@ -1964,13 +1687,7 @@ def bibFuzzShipChecks (ref : IO.Ref (List String))
           ({exit}, {errors.toList.eraseDups})"
           (exit == 0 && written && errors.isEmpty && !codes.any (·.1 == "E0606"))
 
-/-- **alpha's label reads the key before the organization**: `alphakey.bib`'s
-proceedings volumes and manuals — a key beside an organization, an
-organization alone, an editor or an author beside both — a book with a key
-and no name, a note with a key and one with neither, under `alpha`, line for
-line against lualatex with bibtex, on the page and in the HTML: alpha.bst's
-`editor.key.organization.label` and `author.key.organization.label` read
-the `key` first, where its sort reads the organization first. -/
+/-- alpha's label reads the key before the organization, line for line against lualatex with bibtex. -/
 def bibAlphaKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -1990,15 +1707,7 @@ def bibAlphaKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"alpha keys: entry {k + 1} is '{w}' ('{got}')" (got == w)
     t s!"alpha keys: the html reads entry {k + 1}" (hasStr html w)
 
-/-- **An entry no name list labels is cited by its label title**:
-`ltitle.bib`'s anonymous manual, notes, article, web page, book, thesis, a
-`label`ed note and a volume with only a `maintitle`, cited by
-`ltitle.body.tex` under authoryear and numeric, against lualatex with
-biber, every citation line on the page and in the HTML: authoryear.cbx's
-`cite:label` prints the `label`, else the label title — the
-`shorttitle`, the `title`, the `maintitle` — and numeric.cbx's `textcite`
-the label title, under the `citetitle` format, the field's TeX set as the
-body sets it: emphasized, an article's and a thesis's quoted. -/
+/-- An entry no name list labels is cited by its label title, against lualatex with biber. -/
 def biblatexLabelTitleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -2014,21 +1723,12 @@ def biblatexLabelTitleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
   t "label title: the citation's \\emph and formula inside the title, as the body sets them"
     (hasStr html "<em>Über <em>Alles</em> and <math")
 
-/-- **A label and a citation's names set as their TeX sets**:
-`labeltex.bib`'s names, key and shorthand spelt with control words — a
-digraph `{\relax Ch}` and `{\relax Th}`, a bold family name, a key through
-a `@preamble` definition, a bold shorthand — under alpha (alpha.bst's
-`text.length$` and `text.prefix$`, a special character one letter) and
-plainnat against bibtex, and under biblatex's authoryear and numeric
-against biber, citation lines and entries, on the page and in the HTML: the
-TeX is read as the entry's fields are, never flattened to a command's
-name, and the bold stays bold in the citation's link. -/
+/-- A label and a citation's names set as their TeX sets, never flattened to a command's name. -/
 def bibLabelTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
   let bib ← IO.FS.readFile s!"{bibProbeDir}/labeltex.bib"
   let quiet (ds : Array Diag) : Bool := !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E"
-  -- alpha: the list's labels
   let want := refLines (← IO.FS.readFile s!"{bibProbeDir}/labeltex-alpha.ref.txt")
   let (doc, ds) := bibBuild (bibProbeDoc "" "\\bibliographystyle{alpha}\\bibliography{labeltex}"
     "lt1,lt3,lt4") #[("labeltex", bib)]
@@ -2038,7 +1738,6 @@ def bibLabelTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (entries == want.map bibPlain)
   for w in want do
     t s!"label tex alpha: the html reads '{w}'" (hasStr html (bibPlain w))
-  -- plainnat: the citations' names
   let body ← IO.FS.readFile s!"{bibProbeDir}/labeltex-nat.body.tex"
   let (cites, want) := refParts (← IO.FS.readFile s!"{bibProbeDir}/labeltex-plainnat.ref.txt")
   let (doc, ds) := bibBuild (bibtexPage body "\\bibliographystyle{plainnat}\\bibliography{labeltex}"
@@ -2052,7 +1751,6 @@ def bibLabelTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t s!"label tex plainnat: the list holds bibtex's entries ({entries})" (entries == want)
   t "label tex plainnat: the citation sets the name's \\textbf as the body sets it"
     (hasStr (HtmlDoc.emit {} doc).1 "<strong>Brandt</strong>")
-  -- biblatex: the citations' names and shorthand, and numeric's label
   biblatexCiteProbe ref fonts "labeltex" ["authoryear", "numeric"]
   let body ← IO.FS.readFile s!"{bibProbeDir}/labeltex.body.tex"
   let (doc, _) := bibBuild ("\\documentclass{article}\n" ++
@@ -2062,7 +1760,6 @@ def bibLabelTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "label tex authoryear: the citation sets the name's and the shorthand's \\textbf"
     (hasStr raw "<strong>Brandt</strong>" && hasStr raw "<strong>AbC</strong>")
 
-/-- The bibliography model's checks, in one dispatch. -/
 def bibModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   bibAsWrittenChecks ref
   bibNameChecks ref

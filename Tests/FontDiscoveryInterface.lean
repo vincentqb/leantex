@@ -2,10 +2,8 @@ module
 
 import LeanTex.Cli.FontDiscovery
 
-/-! Font discovery publishes metadata and filesystem entry points, with
-their external assumptions documented at the boundary. An ordinary client
-does not inherit the font parser or cache-row implementation. These checks
-type-check the IO API without scanning the host's fonts. -/
+/-! Font discovery's metadata and filesystem entry points reach an ordinary import without the font
+parser or cache rows; nothing here scans the host's fonts. -/
 
 open LeanTex.Core.FontDb
 open LeanTex.Cli.FontDiscovery

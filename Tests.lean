@@ -293,9 +293,7 @@ open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChec
 open Tests (fontDefaultsChecks fontDefaultsOverrideChecks weightSubstitutionRecordChecks
   blockBarChecks batchChecks)
 
-/-- The backend blocks, dispatched together so each stays a leaf the
-module split can place; main runs this right after compatChecks, which
-used to carry these calls as its tail. -/
+/-- The backend check blocks, dispatched together after `compatChecks`. -/
 def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   footnoteBackendChecks ref
   styleChecks ref
@@ -414,11 +412,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlA11yChecks ref
   htmlMathChecks ref
 
-/-- The layout, census, theme, and chrome blocks all read the same shipped
-face; dispatched together so each stays a leaf the module split can place.
-fontSuiteChecks used to carry these calls in its parse-success arm — it
-still owns reporting a missing or unparsable font, so failure here only
-skips. -/
+/-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font
+only skips them, `fontSuiteChecks` reporting it. -/
 def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pats := Hyphen.english.get
   let some fontData ← findFont | return ()
@@ -870,18 +865,15 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontSizeAffineChecks ref oneFace
   linkColorChecks ref oneFace
 
-/-- The world premises' blocks, dispatched together so `main`'s spent
-elaboration budget stays flat: the runtime's process boundary, the
-toolchain's spawners, and the registry held to the source. -/
+/-- The world premises' blocks: the runtime's process boundary, the toolchain's spawners, and the
+registry held to the source. -/
 def worldPremiseChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.processRuntimeChecks ref
   toolchainSpawnChecks ref
   premiseChecks ref
 
-/-- The surface-and-math suite: the dispatcher for the compat, class,
-bibliography, and math elaboration blocks, so an added block lands here and
-`main`'s spent elaboration budget stays flat — the regrowth the two suite
-dispatchers above exist to prevent. -/
+/-- The compat, class, bibliography and math elaboration blocks, dispatched together so `main` stays
+within its elaboration budget. -/
 def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   terminationChecks ref
   hookChecks ref
@@ -940,9 +932,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   privacyMatcherChecks ref
   privacyGateChecks ref
 
-/-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
-together so each stays a leaf and `main`'s spent elaboration budget stays
-flat. -/
+/-- The theme, palette and role blocks. -/
 def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   paletteChecks ref
   Tests.ThemePalette.checks ref
@@ -960,9 +950,7 @@ def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   roleShadowChecks ref
   geminiChecks ref
 
-/-- The font-face blocks (Tests/FontMath.lean), run unconditionally:
-fontSuiteChecks owns reporting a missing or unparsable font, so none of
-these may hide behind the layout suite's font gate. -/
+/-- The font-face blocks, run unconditionally: none may hide behind the layout suite's font gate. -/
 def fontFaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontDiagChecks ref
   weightAxisChecks ref
@@ -1014,16 +1002,13 @@ def main (args : List String) : IO UInt32 := do
   parseChecks ref
   elabDocChecks ref
 
-  -- goldens
   corpusCoverageChecks ref
   runGoldens update (failures ref)
   Tests.regressionDocumentChecks ref
   floatRefAgreementChecks ref
 
   dimChecks ref
-  -- The integral toPtString case and mm/inch agreement are compile-time
-  -- examples beside Dim; this fractional case is not decide-able (its
-  -- String.Slice ops get stuck for decide and the kernel alike).
+  -- A fractional case: its String.Slice ops get stuck for decide, so it runs here.
   check ref "sp pt string fractional" ((Dim.pt 3 / 2).toPtString == "1.5")
   kpChecks ref
   hyphenChecks ref

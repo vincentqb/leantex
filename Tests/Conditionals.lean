@@ -6,18 +6,14 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- The heads the accounting row ranges over: every `\if…` primitive of
-TeX82's table (`Compat.texPrimitives`) and e-TeX's three. Spelled from the
-table rather than listed, so a head the table gains is a probe this block
-owes. -/
+/-- The heads the accounting row ranges over: every `\if…` primitive of TeX82's table
+(`Compat.texPrimitives`) and e-TeX's three. -/
 def condProbeHeads : List String :=
   (Compat.texPrimitives.toList.filter (·.startsWith "if")) ++
     ["ifdefined", "ifcsname", "iffontchar"]
 
-/-- One probe per head: what follows the head so TeX reads a complete test,
-and which branch TeX takes (`none` where the answer is TeX's run-time state,
-a mode or a register this engine does not keep). The `\ifcase` row's case 0
-is its own text, so the probe's first case is not the one taken. -/
+/-- One probe per head: what completes TeX's test, and which branch TeX takes (`none` where the
+answer is run-time state this engine does not keep). -/
 def condProbeArgs : List (String × String × Option Bool) :=
   [("if", "aa ", none), ("ifcase", "1 Zero\\or ", some true), ("ifcat", "aa ", none),
    ("ifdim", "1pt<2pt ", none), ("ifeof", "1 ", none), ("iffalse", " ", some false),
@@ -28,25 +24,13 @@ def condProbeArgs : List (String × String × Option Bool) :=
    ("ifdefined", "\\probeundefined ", some false), ("ifcsname", "relax\\endcsname ", none),
    ("iffontchar", "\\font`a ", none)]
 
-/-- Where a picture's statements answer differently from running text: the
-four mode tests read a mode that is fixed there, since pgf sets a picture
-in a horizontal box (lualatex draws exactly these branches). -/
+/-- Where a picture's statements answer differently from running text: the four mode tests, since
+pgf sets a picture in a horizontal box. -/
 def condPicTaken : List (String × Bool) :=
   [("ifhmode", true), ("ifinner", true), ("ifmmode", false), ("ifvmode", false)]
 
-/-- **Every conditional is accounted for.** A TeX conditional the engine
-meets is either decided — its branch named, the other branch gone — or
-refused by name; it is never resolved in silence. The defect this pins:
-inside a picture, `\ifnum` over a document macro was computed from the last
-definition the whole document made, with no diagnostic at all, so three
-renderings of one picture under three macro states drew the same branch.
-
-Asserted structurally, two builds apart: wrapping content in a conditional
-adds at least one diagnostic that carries a subject (the census key a
-reader and a tally can look up) to what the unwrapped content emits, in
-running text and in a picture alike, and a decided head ships exactly the
-branch TeX takes. Exhaustive over the heads TeX defines: a head with no
-probe row fails here. Invented content throughout. -/
+/-- Every conditional is accounted for, decided with its branch named or refused by name: wrapping
+content in one adds a subjected diagnostic, and a decided head ships TeX's branch. -/
 def condAccountingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -84,15 +68,7 @@ def condAccountingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (decide (keyed (elabStr flagSrc).2 >
       keyed (elabStr (dvDoc "\\newif\\ifprobe\n" "Other")).2))
 
-/-- **A picture honours the macro state at its own site.** Two renderings of
-one picture source under different definitions draw what those definitions
-decide: TeX reads a macro where it is expanded, and `\def` inside an
-environment ends with it. The deck-shaped probe: three sibling environments
-each define the state a picture's `\ifnum` and `\ifdefined` read, and the
-last one leaves the stage different — the defect drew the last stage's
-branch in all three, because the picture's macro table was the whole
-document's, last definition winning. Read off the shipped page census:
-which branch ran is visible only as ink. Invented content throughout. -/
+/-- A picture honours the macro state at its own site, read off the shipped page census. -/
 def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -114,7 +90,6 @@ def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "every decision the pictures' state made is a keyed note"
     ((ds.filter fun d => d.code == "N0114" && d.subject.isNone).isEmpty &&
       (ds.filter (·.code == "N0114")).size ≥ 5)
-  -- Running text reads the same scoped state.
   let scopeTxt := censusText (shipped (dvDoc ""
     "\\begin{center}\\def\\flag{}Inner\\end{center}\n\n\\ifdefined\\flag Leaked\\else Scoped\\fi"))
   t "a definition inside an environment is not visible after it"
@@ -124,9 +99,7 @@ def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\begin{center}\\gdef\\flag{}Inner\\end{center}\n\n\\ifdefined\\flag Kept\\else Lost\\fi"))
   t "a global definition outlives its environment"
     (hasStr globalTxt "Kept" && !hasStr globalTxt "Lost")
-  -- The boundary's identity is the picture's bytes, so a branch the state
-  -- decides must be decided before the bytes are taken: two sites of one
-  -- source under two states are two requests, never one cached answer.
+  -- A branch is decided before the boundary's bytes are taken, so two states are two requests.
   let bpic :=
     "\\begin{tikzpicture}\\ifnum\\mode=1 \\draw (0,0) parabola (1,1);\\else " ++
     "\\draw (0,0) parabola (2,2);\\fi\\end{tikzpicture}"
@@ -134,18 +107,8 @@ def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "two states of one boundary picture are two requests"
     (bdoc.pictureSrcs.size == 2)
 
-
-/-- **`\ifx` compares the meaning TeX compares.** Two macros are `\ifx`-equal
-when their replacement texts and their prefixes agree (TeXbook chapter 20),
-and LaTeX's `\newcommand` is `\long` only when it takes arguments and is not
-starred: `\meaning` reads `macro:->x` for a parameterless `\newcommand` and a
-`\def` alike (measured against LaTeX2e 2025-11-01). The defect read every
-unstarred `\newcommand` as `\long`, so the common string switch — a
-`\newcommand` holding a word compared against a `\def` of the same word —
-shipped the wrong branch with a note. A robust command's meaning names the
-command itself, so two of them with one body are different meanings: the
-engine cannot say so from the text and refuses the test by name. Read off
-the shipped census. Invented content throughout. -/
+/-- `\ifx` compares the meaning TeX compares: replacement texts and prefixes, a parameterless
+`\newcommand` not `\long`, and two robust commands refused by name. -/
 def ifxMeaningChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -170,17 +133,8 @@ def ifxMeaningChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "two robust commands of one text are not read as equal, and the test is refused by name"
     (!hasStr (text robust) "Same" && (elabStr (dvDoc "" robust)).2.any (·.code == "W0104"))
 
-
-/-- **A conditional in a macro's text is decided where the macro is used.**
-TeX expands a macro where it is used, so a conditional in its text reads the
-state in force at the use, and a macro used under two states takes two
-branches. The defect decided the conditional where the macro was defined:
-`\def\n{1}\def\show{\ifnum\n=1 One\else Two\fi}\def\n{2}\show` shipped "One"
-(TeX: "Two") with a note, where the base had named the loss. A use the engine
-cannot decide is refused by name, never decided at the definition. Required
-arguments are bound before the pass decides the replacement text.
-Read off the shipped census and the structured diagnostics. Invented
-content throughout. -/
+/-- A conditional in a macro's text is decided where the macro is used, after its required arguments
+are bound, or refused by name. -/
 def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -218,21 +172,17 @@ def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (_, useDs) := elabStr (dvDoc "" (showDef ++ "\\def\\probeN{2}\\probeShow"))
   t "the decision at the use is a keyed note"
     (useDs.any fun d => d.code == "N0114" && d.subject.isSome)
-  -- Bind arguments before deciding the replacement text, against the state
-  -- at the call rather than the state where the definition was stored.
   let argSrc := dvDoc "" ("\\def\\probeN{2}\\newcommand\\probeShow[1]{\\ifnum\\probeN=1 #1\\fi}" ++
     "\\def\\probeN{1}\\probeShow{Arg}")
   let (_, argDs) := elabStr argSrc
   t "a conditional in a macro with parameters is decided after binding at the use"
     (argDs.all (·.code != "W0104") && argDs.any (·.code == "N0114") &&
       hasStr (censusText (censusOfSrc oneFace argSrc)) "Arg")
-  -- A picture written as a macro draws the state at each use.
   let fig := "\\newcommand{\\probeFig}{\\begin{tikzpicture}\\ifnum\\probeStage=1 " ++
     "\\node at (0,0) {Small};\\else \\node at (0,0) {Large};\\fi\\end{tikzpicture}}\n"
   let figs := text fig "\\def\\probeStage{1}\\probeFig\n\n\\def\\probeStage{2}\\probeFig"
   t "a picture written as a macro draws the state in force at each use"
     (occurs figs "Small" == 1 && occurs figs "Large" == 1)
-
 
 private def macroLengthOps : List String :=
   ["newlength", "setlength", "addtolength", "advance", "multiply", "divide"]
@@ -242,8 +192,7 @@ private def macroLengthExecuted (source : String) : Compat.Executed :=
   Elab.executeInputs (m := Id) (fun _ context => pure (none, context))
     "length-live.tex" raws
 
--- Only executed top-level controls count: a definition's stored operands
--- remain groups, so merely finding an assignment inside its text cannot pass.
+-- Only executed top-level controls count: a definition's stored operands remain groups.
 private def topMacroLengthOps (raws : Array Parse.Raw) : Array String :=
   raws.filterMap fun r => match r with
     | .ctrl name _ => if macroLengthOps.contains name then some name else none
@@ -255,9 +204,8 @@ private def topMacroLengthUses (raws : Array Parse.Raw) : Array String :=
         then some name else none
     | _ => none
 
-/-- A macro's length mutations must reach the scoped rewrite once per
-executed use, in source order, with their operands still readable there.
-Dormant definitions and skipped branches must contribute no mutation. -/
+/-- A macro's length mutations reach the scoped rewrite once per executed use, in source order,
+operands readable; dormant definitions and skipped branches contribute none. -/
 def macroLengthExecutionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -319,8 +267,7 @@ def macroLengthExecutionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   let direct := macroLengthExecuted (dvDoc declaration "Visibleword.")
   t "newlength: declaration reaches the rewrite at its macro use"
     (topMacroLengthOps actual.raws == topMacroLengthOps direct.raws)
-  -- Column geometry reads the assignments later, so expansion must preserve
-  -- both use-time operands independently of the column lowering.
+  -- Column geometry reads the assignments later, so expansion must keep both use-time operands.
   let gap := "\\setlength{\\columnsep}{2\\columnsep}"
   let actual := macroLengthExecuted (dvDoc
     ("\\newcommand{\\doublegap}{" ++ gap ++ "}\\doublegap\\doublegap") "Visibleword.")
@@ -328,19 +275,8 @@ def macroLengthExecutionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     (topMacroLengthOps actual.raws == #["setlength", "setlength"] &&
       (topMacroLengthUses actual.raws).isEmpty)
 
-
-/-- **A picture's macro-dependent values are the ones in force at its own
-site.** TeX expands a macro in a picture where the picture stands; the
-defect read every document macro in a picture from one table for the whole
-document, the last definition winning — a label redefined between two
-pictures drew its last text in both, and a test over a macro defined only
-after the picture was computed from that later definition and named as the
-picture's own values. The conditional pass now puts the value in force at
-the site into the picture, for the walk and the boundary alike; the walk
-expands nothing into a test; and a name the whole-document table cannot
-answer for every site — defined with different texts — is not expanded but
-named. Read off the shipped census, the boundary requests and the
-structured diagnostics. Invented content throughout. -/
+/-- A picture's macro-dependent values are the ones in force at its own site, for the walk and the
+boundary alike, and a name with different texts at different sites is named. -/
 def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -375,17 +311,8 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       bdoc.pictureSrcs.any (fun p => hasStr p.2.body "Early") &&
       bdoc.pictureSrcs.any (fun p => hasStr p.2.body "Late"))
 
-
-/-- **A definition no use the pass sees reaches is decided where the engine
-reads it.** The elaborator reads a built-in's refused redefinition — and the
-macros it reaches — at the preamble's end, for the appearance it declares;
-no use in the document stands there for the conditional pass to expand. A
-conditional in such a text is therefore decided against the state at the
-preamble's end, named as the definition's, never taken out silently (the
-shape that lost a venue's author styling) and never read from the state
-the definition was made in. The venue shape, synthetic: the author block
-sits in a flag's branch. Read off the title block the built-in ships.
-Invented content throughout. -/
+/-- A definition no use reaches is decided against the state at the preamble's end and named as the
+definition's. -/
 def settleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let venue (after : String) : String :=
@@ -409,8 +336,7 @@ def settleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (lateDoc, _) := elabStr (venue "\\probeanontrue")
   t "it reads the state at the preamble's end, not where the definition was made"
     (!styled lateDoc)
-  -- Settling reads a text and does not run it: a flag it declares or sets
-  -- is not declared or set by the reading, and no note says it is.
+  -- Settling reads a text without running it: its flags stay undeclared and unset.
   let (_, declDs) := elabStr ("\\documentclass{article}" ++
     "\\newcommand\\probeDecl{\\newif\\ifprobelate}\\newif\\ifprobeon" ++
     "\\newcommand\\probeSet{\\probeontrue}" ++

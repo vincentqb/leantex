@@ -14,19 +14,13 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- **A changed engine misses the answers an earlier engine stored**, in each
-cache of the engine's own answers: a flate stream, an image plan and a
-converter's face answer the engine that wrote them, a slot another engine
-wrote is computed afresh and replaced, and the earlier engine then misses
-the later one's. The defect keyed all three by the release version, which
-every build of a release shares, so a changed compressor or planner was
-served an older one's answer. -/
+/-- A changed engine misses the answers an earlier engine stored, in each cache of the engine's own
+answers: a flate stream, an image plan and a converter's face. -/
 def engineCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   IO.FS.withTempDir fun dir => do
     let a : Engine.Cache := { dir, engine := "invented engine a" }
     let b : Engine.Cache := { dir, engine := "invented engine b" }
-    -- A flate stream.
     let input := "an invented page stream".toUTF8
     let calls ← IO.mkRef (0 : Nat)
     let compute := fun bytes => do
@@ -45,7 +39,7 @@ def engineCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
         SlotRecord.lookup (Compression.slotKey a.engine input) stored == none)
     discard <| Compression.deflateCachedAt (some a) input compute
     t "engine caches: the earlier engine misses the later one's flate slot" ((← calls.get) == 3)
-    -- An image plan: an alpha PNG, whose plan recodes, so it is cached.
+    -- An alpha PNG's plan recodes, so it is cached.
     let png ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
     let params := Image.PlanParams.default
     let encoded (r : Except String Image.Plan) : Option ByteArray := r.toOption.map Image.encodeBin
@@ -74,23 +68,15 @@ def engineCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     let c4 ← convert a.engine
     t "engine caches: a conversion answers the engine that recorded it, and no other"
       ([c1, c2, c3, c4].all (·.answer == .ok face) && (← produced.get) == 3)
-  -- An identity reads each of its parts: a binary rebuilt to another size at
-  -- the same time is another engine, as one rebuilt at another time is.
+  -- An identity reads each of its parts: size, time and path.
   let st : World.Stat :=
     { kind := .file, size := 1000, mtimeSec := 1700000000, mtimeNsec := 5, real := "/opt/a/leantex" }
   t "engine caches: an identity moves with the binary's size alone, its time alone and its path alone"
     ([{ st with size := 1001 }, { st with mtimeSec := 1700000001 }, { st with mtimeNsec := 6 },
       { st with real := "/opt/b/leantex" }].all (Engine.identity · != Engine.identity st))
 
-/-- **A rebuilt engine reads none of an earlier engine's answers**: two
-copies of the engine binary, two identities as a rebuild or a replacement
-leaves (`Engine.engineId`), build one document over one cache. With every
-flate slot the first wrote holding another slot's stream under its own key,
-and the image slot another image's plan, the first serves the planted
-answers and ships another PDF, while the second ships byte for byte the PDF
-a cold build ships. The defect keyed these slots by the release version,
-which every build of a release shares, so a planted answer changed another
-binary's PDF. -/
+/-- A rebuilt engine reads none of an earlier engine's answers: over planted slots the first engine
+ships another PDF while the second ships a cold build's bytes. -/
 def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
@@ -128,8 +114,7 @@ def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"engine identity: the cold and the filling builds publish ({cold.exitCode}, {filled.exitCode}): {cold.stderr}{filled.stderr}"
       (cold.exitCode == 0 && filled.exitCode == 0 &&
         (← IO.FS.readBinFile (root / "filled.pdf")) == coldPdf)
-    -- Over the first engine's cache, the second plans its image afresh: its
-    -- images phase reports no cached plan, where the first's warm build does.
+    -- Over the first engine's cache the second plans its image afresh.
     let imagesPhase (run : IO.Process.Output) : List String :=
       (run.stdout.splitOn "\n").filter fun line =>
         hasStr line "\"event\":\"phase\"" && hasStr line "\"name\":\"images\""
@@ -142,14 +127,10 @@ def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
       (probeB.exitCode == 0 && (imagesPhase probeB).length == 1 &&
         (imagesPhase probeB).all (!hasStr · "cached") &&
         (← IO.FS.readBinFile (root / "probe.pdf")) == coldPdf)
-    -- The first engine's slots again, for the plant.
     let refilled ← build "a" "cache" "refilled.pdf"
     t s!"engine identity: the first engine fills the cache again ({refilled.exitCode})"
       (refilled.exitCode == 0)
-    -- Plant: each flate slot holds, under the key it holds now, the stream
-    -- the next slot held when the first engine filled the cache, and the
-    -- image slot another image's plan under its own key — the same wrong
-    -- answers however often it runs.
+    -- Each flate slot holds the next slot's earlier stream, the image slot another image's plan.
     let flate := root / "cache" / "leantex" / "flate"
     let imgs := root / "cache" / "leantex" / "imgs"
     let planted := match Image.probe flat >>= Image.plan Image.PlanParams.default with
@@ -184,10 +165,7 @@ def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
     let fresh ← build "b" "cache" "fresh.pdf"
     t s!"engine identity: another engine misses every planted slot and ships the cold PDF ({fresh.exitCode}): {fresh.stderr}"
       (fresh.exitCode == 0 && (← IO.FS.readBinFile (root / "fresh.pdf")) == coldPdf)
-    -- A rebuild keeps the path: the binary written again in place moves its
-    -- modification time, and a longer one its size too. Over slots its
-    -- former self wrote and the plant holds, each reads them as another
-    -- engine's and ships the cold PDF.
+    -- A rebuild in place moves the binary's modification time, and a longer one its size too.
     let engineA := root / "a" / ".lake/build/bin/leantex"
     for (change, bytes) in [("written again", program), ("grown", program.push 0)] do
       discard <| build "a" "cache" "refilled.pdf"
@@ -201,15 +179,8 @@ def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
         (before != after && rebuilt.exitCode == 0 &&
           (← IO.FS.readBinFile (root / "rebuilt.pdf")) == coldPdf)
 
-/-- **A watcher keeps the identity it started as.** A watcher whose first
-build reads no cache — it has no document yet — and whose binary is then
-replaced at its path, a longer file renamed over it as a relink leaves it,
-writes every slot of the rebuild that answers the document under the
-identity its binary had when the process started, and none under the
-replacement's. The defect: with an identity read per build, or first read
-by a build, the watcher read the image it runs as the system names it once
-replaced, or the replacement, and either wrote no slot or claimed a binary
-that never ran. -/
+/-- A watcher keeps the identity it started as: after its binary is replaced, it writes every slot
+under its starting identity. -/
 def engineWatchChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref

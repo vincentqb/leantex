@@ -12,9 +12,8 @@ open Core Core.Dim Core.Font Core.Ir Core.Layout
 private def glyphsAccounted (out : Out) : Bool :=
   !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
 
-/-- These checks read the final shipped pages. They exercise source ownership
-across inline and paragraph boundaries, physical spills, running furniture,
-and spacing characters that advance the pen without painting a glyph. -/
+/-- Shipped pages conserve source text across inline and paragraph boundaries, physical spills,
+running furniture and non-painting spacing characters. -/
 def textConservationChecks (fs : FontSet) : Array (String × Bool) :=
   let geom : Geom := {
     pageW := pt 130, pageH := pt 72

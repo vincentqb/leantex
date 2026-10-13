@@ -19,9 +19,8 @@ def gridProbeCall (env : String) (kind : Math.GridKind) : String :=
   if env == "substack" then s!"$\\substack\{{gridProbeBody kind}}$"
   else s!"$\\begin\{{env}}{gridProbeBody kind}\\end\{{env}}$"
 
-/-- The formula with its delimited grid's `\arraystretch` set to `s`: how a
-reference spelled with `array`, whose surface reads no stretch, states a
-definition that declares one (`cases`). -/
+/-- The formula with its delimited grid's `\arraystretch` set to `s`, as an `array` reference states
+`cases`' stretch. -/
 def restretch (s : Nat) : Math.MList → Math.MList
   | .cons (.atom c (.delim l r (.cons (.atom c' (.grid (.array cols _) rows)
       sup sub lim) .nil)) sup' sub' lim') .nil =>
@@ -29,34 +28,21 @@ def restretch (s : Nat) : Math.MList → Math.MList
       sup sub lim) .nil)) sup' sub' lim') .nil
   | l => l
 
-/-- The formula with its undelimited grid set as `smallmatrix`'s: how a
-reference spelled with `matrix`'s `array` states the cells `smallmatrix`
-sets in its own grid. -/
+/-- The formula with its undelimited grid set as `smallmatrix`'s. -/
 def resmall : Math.MList → Math.MList
   | .cons (.atom c (.grid (.array _ _) rows) sup sub lim) .nil =>
     .cons (.atom c (.grid .small rows) sup sub lim) .nil
   | l => l
 
-/-- The formula with its alignment set as `aligned`'s: the display
-alignment's column model, its pairs `\minalignsep` apart, the probe's last
-pair not trailing it (`MathParse.gridEnvs`). -/
+/-- The formula with its alignment set as `aligned`'s: the display alignment's column model, pairs
+`\minalignsep` apart. -/
 def realigned : Math.MList → Math.MList
   | .cons (.atom c (.grid .align rows) sup sub lim) .nil =>
     .cons (.atom c (.grid (.aligned false) rows) sup sub lim) .nil
   | l => l
 
-/-- amsmath's grid environments are the grids their definitions build
-(`MathParse.gridEnvs`, one row per environment, sourced to amsmath.sty).
-
-* **Each row is its definition.** The formula equals the one amsmath.sty's
-  own expansion spells with the engine's `array` and `\left…\right`, or,
-  for an alignment, the display alignment of the same column model. The
-  expansions are the reference, written from amsmath.sty rather than from
-  the table, so a row whose data drifts fails here.
-* **Each row ships its cells and delimiters, and nothing of its source**:
-  the glyphs the PDF's page carries and the HTML's text content are the
-  cells in reading order between the row's delimiters, with no diagnostic —
-  on the base engine the source text shipped instead, under W0012. -/
+/-- amsmath's grid environments are the grids their definitions build: each row equals its
+amsmath.sty expansion and ships its cells and delimiters, not its source. -/
 def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let cells := "a & b \\\\ c & d"
@@ -100,12 +86,7 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       (!·.isWhitespace))
     t s!"amsmath grid {env}: the HTML carries its cells between its delimiters \
 (got '{text}')" (text == expected)
-  -- `aligned` stands its column pairs `\minalignsep` apart (amsmath.sty
-  -- `\start@aligned`: `\alignsep@\minalignsep`, 10 pt), lualatex 9.96 bp
-  -- between the first pair's end and the second's start: on the page, the
-  -- second pair's cell opens 10 pt past the first pair's last glyph; in the
-  -- browser the pair boundary's two cells carry half of it each, as the page
-  -- states a print length.
+  -- `aligned` stands its pairs `\minalignsep` (10 pt) apart; boundary cells take half each.
   let pairDoc := dvDoc "" "\\[ \\begin{aligned} a &= b & c &= d \\end{aligned} \\]"
   let runsOf (src : String) : Array (String × Dim.Sp × Dim.Sp) :=
     (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l =>
@@ -122,12 +103,7 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
 as a print length ({sep})"
     (hasStr pairHtml s!"padding-left: 0; padding-right: calc({sep} / 2)" &&
       hasStr pairHtml s!"padding-right: 0; padding-left: calc({sep} / 2)")
-  -- The `\tabskip` after `aligned`'s last pair stands too, unless a row end
-  -- cancels it: `\math@cr@@@aligned` adds a column of `\kern-\alignsep@`
-  -- where the columns opened so far, counted across rows, are even, so a
-  -- widest row that takes it closes on its last pair. lualatex, the gap from
-  -- an inline `aligned`'s last glyph to the next word beyond a two-row one's:
-  -- 9.96 bp for the trailing shapes, under 0.01 bp for the others.
+  -- The `\tabskip` after `aligned`'s last pair stands unless a row end cancels it.
   let trailing : List (String × Bool) :=
     [("a &= b", true), ("a &= b \\\\", false),
      ("c &= b \\\\ c &= d & e &= b", true), ("a &= d & e &= b \\\\ c &= b", false),
@@ -155,9 +131,7 @@ after its last pair, got {spMilli (g - base)}"
       (hasStr (trailHtml "a &= b") s!"padding-left: 0; padding-right: {sep}\"" &&
         !hasStr (trailHtml "a &= b \\\\ c &= b") s!"padding-right: {sep}\"")
   | none => t "amsmath aligned: the two-row probe ships its marks" false
-  -- A redefined `\minalignsep` is a setting no engine site reads: named once
-  -- where it stands (W0104), however it is spelled, and the page is the
-  -- page without it.
+  -- A redefined `\minalignsep` is named once (W0104), and the page is the page without it.
   let pairs := "$\\begin{aligned} a &= b & c &= d \\end{aligned}$ Zeta"
   for redef in ["\\renewcommand{\\minalignsep}{0pt}\n", "\\def\\minalignsep{20pt}\n"] do
     let (_, ds) := elabStr (dvDoc redef pairs)
@@ -166,10 +140,7 @@ after its last pair, got {spMilli (g - base)}"
         ds.all (·.code != "N0100"))
     t s!"amsmath aligned: '{redef.trimAscii}' ships the page without it"
       (runsOf (dvDoc redef pairs) == runsOf (dvDoc "" pairs))
-  -- An alignment sets its cells in display style wherever it stands
-  -- (amsmath.sty, `\start@aligned` and `gathered`: `$\m@th\displaystyle{##}$`),
-  -- so a fraction in an inline `aligned` sets its numerator at the formula's
-  -- own size, where an inline fraction's is a script size.
+  -- An alignment sets its cells in display style wherever it stands.
   let glyphSizes (src : String) : Array Dim.Sp :=
     let (d, _) := elabStr src
     (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap fun s =>
@@ -188,17 +159,13 @@ after its last pair, got {spMilli (g - base)}"
     (let (_, html, _) := HtmlDoc.emitTree {} (elabStr alignedFrac).1
      (elemAttrsList (· == "mtable") #[] html.toList).any fun (_, attrs) =>
        attrs.contains ("displaystyle", "true"))
-  -- A lone fence never grows: TeX stretches a delimiter only under
-  -- `\left`/`\right`, while MathML Core's operator dictionary makes every
-  -- fence stretchy, so beside a grown brace `f(x)`'s parentheses ballooned.
+  -- A lone fence never grows: TeX stretches a delimiter only under `\left`/`\right`.
   let fx := (HtmlDoc.emit {} (elabStr (dvDoc ""
     "\\[ f(x) = \\begin{cases} 1 & a \\\\ 0 & b \\end{cases} \\]")).1).1
   t "amsmath grids: a lone fence keeps its size beside a grown one in HTML"
     (hasStr fx "<mo stretchy=\"false\">(</mo>" &&
       hasStr fx "<mo stretchy=\"true\" symmetric=\"true\">{</mo>")
-  -- `cases` sets `\arraystretch` 1.2 (`\env@cases`), so its rows stand 1.2
-  -- times an array's pitch apart on the page: the raise of the first row's
-  -- cell over the second's, read off the shipped runs.
+  -- `cases` sets `\arraystretch` 1.2, so its rows stand 1.2 times an array's pitch apart.
   let pitchOf (src : String) : Option Dim.Sp := do
     let (d, _) := elabStr src
     let raises := (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap
@@ -223,14 +190,7 @@ after its last pair, got {spMilli (g - base)}"
     (hasStr (HtmlDoc.emit {} (elabStr (dvDoc ""
       "$\\begin{cases} a & b \\\\ c & d \\end{cases}$")).1).1
       "padding-top: calc(0.5ex + 0.120em)")
-  -- `smallmatrix` against lualatex's \showbox of the same formulas under the
-  -- test face (FiraMath, unicode-math, 10pt; 2026-09-28), in thousandths of
-  -- the formula's size: cells at the face's script size (7.2 of 10), a thin
-  -- space each side and a thick one between columns (`a\\c` is 7.43 wide,
-  -- `a&b\\a&b` 14.38), rows `6\ex@` apart (`a\\c`) unless their boxes would
-  -- come within `1.5\ex@` (`a&b\\c&d`: 0.09 + 1.5 + 5.39). ±1 is \showbox's
-  -- rounding. Every row failed before smallmatrix was its own grid, where the
-  -- environment was the parser's decline (W0012).
+  -- `smallmatrix` against lualatex's `\showbox` (FiraMath, 10pt), in thousandths; ±1 is rounding.
   let small (cells : String) : String :=
     dvDoc "" s!"$\\begin\{smallmatrix}{cells}\\end\{smallmatrix}$"
   let near (a b : Int) : Bool := (a - b).natAbs ≤ 1
@@ -258,10 +218,8 @@ after its last pair, got {spMilli (g - base)}"
        attrs.contains ("scriptlevel", "+0") && attrs.contains ("displaystyle", "false") &&
        attrs.contains ("style", "font-size: 0.700000em; padding-inline: 0.238em"))
 
-/-- `\tag{t}` stands in the number's place — `(t)`, or `t` under `\tag*` —
-and steps no counter; a label binds to the tag, so `\eqref` reads it
-(amsldoc §3.4). Where no number is rendered yet (an alignment's rows) the
-tag is named, never set inside the formula. -/
+/-- `\tag{t}` stands in the number's place and steps no counter, a label binds to it, and where no
+number is rendered the tag is named. -/
 def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let squash (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
@@ -284,10 +242,7 @@ def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
   let aligned := dvDoc "" "\\begin{align*}x &= y\\tag{3}\\end{align*}"
   t "amsmath tag: an alignment's tag is named, never set inside the formula"
     ((warnCodes aligned).contains "W0015" && !(pageTextOf fs aligned).contains '3')
-  -- amsmath's `\[` is `equation*` (amsmath.sty:
-  -- `\DeclareRobustCommand{\[}{\begin{equation*}}`): one construct under two
-  -- spellings, so every body elaborates to one document and one accounting
-  -- under both. `\[`'s own arm once dropped a tag, silently.
+  -- amsmath's `\[` is `equation*`: both spellings elaborate to one document and one accounting.
   for body in ["a = b", "a = b \\label{k}", "a = b \\tag{A}", "a = b \\tag*{B}",
       "\\label{k} a = b \\tag{A}", "a = b \\nonumber"] do
     let (bd, bds) := elabStr (dvDoc "" s!"Text.\n\\[ {body} \\]\nMore \\ref\{k}.")
@@ -306,8 +261,7 @@ def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
 
 mutual
 
-/-- Every `span.eqnum` of an emitted tree, in document order: the number
-beside each numbered display, as the HTML ships it. -/
+/-- Every `span.eqnum` of an emitted tree, in document order. -/
 def eqnumSpansOne (acc : Array Html.Node) : Html.Node → Array Html.Node
   | .text _ => acc
   | .style _ => acc
@@ -335,12 +289,8 @@ def hasElemList (tag : String) : List Html.Node → Bool
 
 end
 
-/-- A tag's argument is text set in an `\hbox` (amsmath's `\tagform@` and
-`\maketag@@@`): markup and math in it are ink, never source. One argument
-per kind — math, a command, text with a script, a reference with a prime —
-each read off the laid page as face and scalar per glyph, and off the HTML
-number span's tree; a label on a tag binds the tag's text, not its source.
-On the base engine each shipped its argument's source as text, silently. -/
+/-- A tag's argument is text set in an `\hbox`: its markup and math are ink, never source, on the
+page and in the HTML. -/
 def amsTagTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fs ← serifFacesSet
@@ -370,16 +320,14 @@ def amsTagTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "amsmath tag text: a tag's script is a script"
     ((glyphs (dvDoc "" "\\begin{equation} a = b \\tag{C$_1$} \\end{equation}")).any
       fun (i, c, r) => i == math && c == '1' && r < 0)
-  -- A reference inside a tag resolves where the number stands, as amsmath's
-  -- `\@currentlabel` is the tag's own text: `(1′)`, the prime a script.
+  -- A reference inside a tag resolves where the number stands, the tag's own text.
   let primed := dvDoc "" ("\\begin{equation} x \\label{p} \\end{equation}\n" ++
     "\\begin{equation} y \\tag{\\ref{p}$'$} \\end{equation}")
   let pg := (glyphs primed).toList.map fun (i, c, _) => (i, c)
   t s!"amsmath tag text: a reference in a tag resolves beside its prime (got {pg})"
     ((dvE primed).isEmpty && pg == [(math, v 'x'), (roman, '('), (roman, '1'), (roman, ')'),
       (math, v 'y'), (roman, '('), (roman, '1'), (math, '\u2032'), (roman, ')')])
-  -- A label on a tag binds the tag's text: `\eqref` reads the ink, not the
-  -- argument's spelling.
+  -- A label on a tag binds the tag's text, not the argument's spelling.
   let labelled := dvDoc "" ("\\begin{equation} a = b \\label{d} \\tag{$\\ast$} \\end{equation}\n\n" ++
     "See \\eqref{d}.")
   let text := nodeTextList "" (HtmlDoc.emitTree {} (elabStr labelled).1).2.1.toList
@@ -400,11 +348,8 @@ def callCtrlWords (call : String) : List String := Id.run do
     else i := i + 1
   return out
 
-/-- An implemented amsmath row ships no source: no control word its call
-spells reaches the laid page or the HTML text. The class the tag's
-argument belonged to, where recognising the command changed the document
-(so `compatRowEffect` held) and the change was its own spelling set as
-text. -/
+/-- An implemented amsmath row ships no source: no control word its call spells reaches the page or
+the HTML text. -/
 def amsIndexInkChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let content ← IO.FS.readFile "testdata/compat-index/amsmath.txt"
   for line in content.splitOn "\n" do
@@ -420,24 +365,8 @@ def amsIndexInkChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
       check ref s!"amsmath index: '{call}' ships its own source {leaked}" leaked.isEmpty
     | _ => pure ()
 
-/-- amsmath's fractions are rows of one generalized fraction
-(`MathParse.fracCmds`, from amsmath.sty's own `\genfrac` definitions).
-
-* **Each row is its definition**: the formula equals `\genfrac` spelled
-  with the row's arguments, written here from amsmath.sty; a row added
-  without its reference fails.
-* **A fraction spaces as the Ord its braces make**: `$x\cmd{a}{b}y$` sets
-  exactly as wide as `$x{\cmd{a}{b}}y$`, since latex.ltx and amsmath.sty
-  brace every fraction; the engine once set an Inner's thin space each side.
-* **The style is the declared one**: an inline `\dfrac`'s parts set at the
-  formula's own size, a displayed `\tfrac`'s at an inline fraction's.
-* **A stack has no rule and grows its delimiters**: `\binom` ships its
-  parentheses around stacked parts with no bar, each at least amsmath's
-  fraction delimiter size (2.40 em displayed, 1.01 em otherwise); a
-  declared thickness is the bar's; the MathML declares the same.
-
-On the base engine `\dfrac` and `\tfrac` set as `\frac` in the current
-style, silently, and `\binom` and `\genfrac` set their source as text. -/
+/-- amsmath's fractions are rows of one generalized fraction: each row is its `\genfrac` definition,
+spaces as an Ord, sets its declared style, and a stack has no rule. -/
 def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let expansions : List (String × String) := [
@@ -512,13 +441,8 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
          attrs.contains ("scriptlevel", "+0") && attrs.contains ("style", "font-size: 1.000000em")
        | _ => false)
 
-/-- amsmath's modulo commands are their definitions (amsmath.sty), measured
-on the laid line: each formula is as wide as the definition spelled with
-the engine's own kerns (`\;` 5 mu, `\:` 4, `\,` 3, `\quad` 18) and an
-upright `\text{mod}` — `\bmod` 5 mu a side; `\mod` 12 mu inline, then
-`\,\,`; `\pod` 8 mu inline and 18 in a display, then its parenthesised
-argument; `\pmod` a `\pod` of "mod" 6 mu before the argument. The semantic
-dots set the glyphs amsmath `\let`s them to. -/
+/-- amsmath's modulo commands are their definitions, measured on the laid line against the engine's
+own kerns. -/
 def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let widthOf (body : String) : Dim.Sp :=
@@ -532,8 +456,7 @@ def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
     ("$a \\dotsi b$", "$a \\!\\cdots b$")]
   for (cmd, defn) in pairs do
     t s!"amsmath mod: {cmd} sets no diagnostic" (dvE (dvDoc "" cmd)).isEmpty
-    -- One kern spelled as several rounds once per kern: 12 mu as `\:\:\:`
-    -- may differ from one 12 mu kern by the 2 sp its two extra roundings owe.
+    -- 12 mu as `\:\:\:` may differ from one 12 mu kern by its extra roundings' 2 sp.
     let (w, d) := (widthOf cmd, widthOf defn)
     t s!"amsmath mod: {cmd} is as wide as its definition ({w} vs {d})"
       (w > 0 && w - d ≤ 2 && d - w ≤ 2)
@@ -548,15 +471,8 @@ def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
       ((dvE src).isEmpty && squash (pageTextOf fs src) ==
         String.ofList [MathParse.italicVar 'a', glyph, MathParse.italicVar 'b'])
 
-/-- amsmath's `\numberwithin{counter}{within}` (amsmath.sty:
-`\@addtoreset{counter}{within}` with `\the<counter>` redefined as
-`\the<within>.\arabic{counter}`): the counter restarts whenever the heading
-counter moves and renders after it — the equation counter and a theorem
-counter alike — and a counter numbered per document runs on across
-`\appendix`, which resets only the heading counters (article.cls). The page
-and the references read exactly as lualatex sets the same document. Before
-this feature `\numberwithin` was unknown (W0301) and a per-document theorem
-counter restarted at `\appendix`: every row failed. -/
+/-- `\numberwithin` restarts a counter with its heading counter and renders after it, and a
+per-document counter runs on across `\appendix`, as lualatex sets it. -/
 def amsNumberWithinChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let squash (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))

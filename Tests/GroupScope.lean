@@ -12,8 +12,7 @@ open LeanTex.Core
 
 namespace Tests.GroupScope
 
-/-- The fill colour of every body glyph run carrying `marker`, when they
-all agree: what the page shows the word in. -/
+/-- The fill colour of every body glyph run carrying `marker`, when they all agree. -/
 private def pdfInk (out : Layout.Out) (marker : String) : Option Ir.Color :=
   let colors := out.pages.flatMap (·.lines) |>.filter (! ·.furniture) |>.flatMap fun line =>
     line.segs.filterMap fun seg => match seg with
@@ -24,8 +23,7 @@ private def pdfInk (out : Layout.Out) (marker : String) : Option Ir.Color :=
   | some c => if colors.all (· == c) then some c else none
   | none => none
 
-/-- The ground the layout painted on page `i`: its first fill, when that
-fill covers the medium (`Layout.Geom.ground`). -/
+/-- The ground the layout painted on page `i`: its first fill, when that covers the medium. -/
 private def pdfGround (doc : Ir.Doc) (out : Layout.Out) (i : Nat) : Option Ir.Color :=
   let geom := Layout.Geom.ofPage doc.page
   out.pages[i]?.bind fun page => page.fills[0]?.bind fun fill =>
@@ -33,8 +31,7 @@ private def pdfGround (doc : Ir.Doc) (out : Layout.Out) (i : Nat) : Option Ir.Co
         fill.w == geom.pageW + 2 * geom.bleed &&
         fill.h == geom.pageH + 2 * geom.bleed then some fill.color else none
 
-/-- Every body line's text and position: what a colour-only edit must leave
-alone. -/
+/-- Every body line's text and position, which a colour-only edit must leave alone. -/
 private def linePlaces (out : Layout.Out) : Array (String × Dim.Sp × Dim.Sp) :=
   out.pages.flatMap (·.lines) |>.filter (! ·.furniture) |>.map fun l => (lineText l, l.x, l.y)
 
@@ -45,8 +42,8 @@ private def declarations (style : String) : List (String × String) :=
       some (key.trimAscii.toString, (String.intercalate ":" (value :: more)).trimAscii.toString)
     | _ => none
 
-/-- The shipped stylesheet's top-level rules, selector and declarations, in
-order: a rule inside an at-rule (the dark scheme, print) is not one. -/
+/-- The shipped stylesheet's top-level rules, selector and declarations, in order, at-rules
+excluded. -/
 private def topRules (head : Array Html.Node) : List (String × List (String × String)) :=
   head.toList.flatMap fun node => match node with
     | .style css => (css.splitOn "}").filterMap fun chunk =>
@@ -61,8 +58,7 @@ private def rootVariables (head : Array Html.Node) : List (String × String) :=
       if k.startsWith "--" then (k, v) :: vars else vars) vars
     else vars) []
 
-/-- The colour the shipped stylesheet gives `<body>`: the last top-level
-`body` rule's that declares one. -/
+/-- The colour the last top-level `body` rule declaring one gives `<body>`. -/
 private def bodyColor (head : Array Html.Node) : String :=
   (topRules head).foldl (fun acc (sel, decls) =>
     if sel != "body" then acc
@@ -80,8 +76,8 @@ private def varStep (vars : List (String × String)) (value : String) : String :
     | [] => value
   else value
 
-/-- The light screen's paint of a value: its `var()` chain and any
-`light-dark()` pair read as the light screen reads them (`lightValue`). -/
+/-- The light screen's paint of a value: its `var()` chain and any `light-dark()` pair resolved as
+the light screen reads them. -/
 private def resolveVar (vars : List (String × String)) (value : String) : String :=
   lightValue vars (varStep vars value)
 
@@ -92,9 +88,7 @@ private structure Leaf where
   classes : String
   tags : String
 
-/-- The stylesheet's colour rule for an element under `<body>`: a deck's
-stage reads `stageInk`; an inline `color` wins where an element declares
-one. -/
+/-- The stylesheet's colour rule for an element under `<body>`; an inline `color` wins. -/
 private def ruleColor (tag : String) (classes : String) : Option String :=
   if tag == "section" && ((classes.splitOn " ").any fun c =>
       c == "slide" || c == "section-page") then some HtmlDoc.stageInk
@@ -127,17 +121,16 @@ mutual
     | .style _ | .script .. => out
 end
 
-/-- Every text leaf of the typed tree with the paint the shipped stylesheet
-gives it, the walk starting from `<body>`'s own colour — and that colour,
-what a word with no colour of its own reads in. -/
+/-- Every text leaf of the typed tree with the paint the shipped stylesheet gives it, and `<body>`'s
+own colour. -/
 private def leavesOf (doc : Ir.Doc) (fonts : Font.FontSet) : Array Leaf × String :=
   let (head, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
   let vars := rootVariables head
   let body := resolveVar vars (bodyColor head)
   (leavesList vars body none "" "" #[] nodes.toList, body)
 
-/-- The paint the typed HTML tree gives the text leaf carrying `marker`;
-`none` when the leaf is absent or repeated. -/
+/-- The paint the typed HTML tree gives the text leaf carrying `marker`; `none` when absent or
+repeated. -/
 private def htmlInk (leaves : Array Leaf) (marker : String) : Option String :=
   match leaves.filter (hasStr ·.text marker) with
   | #[leaf] => some leaf.color
@@ -149,8 +142,7 @@ private def htmlLeaf (leaves : Array Leaf) (marker : String) : Option Leaf :=
   | _ => none
 
 mutual
-  /-- Every element but an inline span, with its class, in document order:
-  the block structure and roles a colour declaration must leave alone. -/
+  /-- Every element but an inline span, with its class, in document order. -/
   private def blockShape (out : Array (String × String)) : Html.Node → Array (String × String)
     | .elem tag attrs kids =>
       let out := if tag == "span" then out
@@ -168,8 +160,7 @@ private def shapeOf (doc : Ir.Doc) (fonts : Font.FontSet) : Array (String × Str
   blockShapeList #[] nodes.toList
 
 mutual
-  /-- The longest `style` attribute and the deepest element nesting in a
-  typed tree: what an epoch-heavy flow must keep bounded. -/
+  /-- The longest `style` attribute and the deepest element nesting in a typed tree. -/
   private def treeMeasure (depth : Nat) (acc : Nat × Nat) : Html.Node → Nat × Nat
     | .elem _ attrs kids =>
       let style := ((attrs.find? (·.1 == "style")).map (·.2)).getD ""
@@ -180,12 +171,8 @@ mutual
     | n :: rest => treeMeasureList depth (treeMeasure depth acc n) rest
 end
 
-/-- One probe: an invented document, and the ink each marker word ships in.
-`none` asks for the document's own ink — what the same word reads in with
-no colour declared at all. `htmlOwed` names the markers whose HTML paint is
-pending, each with the colour its group set, which it must have left: an
-inline `\normalcolor` ships the IR's concrete normal ink, where the page's
-own text reads the stylesheet's. -/
+/-- One probe: an invented document and the ink each marker word ships in (`none`: the document's
+own ink), with `htmlOwed` naming markers whose HTML paint is pending. -/
 private structure Probe where
   name : String
   source : String
@@ -208,15 +195,8 @@ private def titleSource : String :=
       "\\end{titlepage}\n\\nopagecolor\n\\clearpage\nBody words after.\n\n" ++
       "\\begin{itemize}\\item Listed item\\end{itemize}")
 
-/-- The probes, each measured under lualatex: `\current@color` logged at
-every marker, and the fill colour at every text operator of the uncompressed
-PDF, read the colour the group's start held after `\end{...}`, `}`,
-`\endgroup`, `\egroup` and a column's end — a `\color` reaches the end of
-its group and no further, through paragraph ends and list items alike
-(neither a `\par` nor an `\item` closes a group) — and `\normalcolor` reads
-the colour in force at `\begin{document}`, a preamble `\color` included.
-Beamer paints `normal text` where `\usebeamercolor` uses it, so its probe
-says so. -/
+/-- The probes, each measured under lualatex: a `\color` reaches the end of its group and no
+further, and `\normalcolor` reads the colour in force at `\begin{document}`. -/
 private def probes : List Probe := [
   { name := "title page"
     source := titleSource
@@ -300,8 +280,7 @@ private def probes : List Probe := [
     inks := [("Three", some blue), ("Four", none)] }
 ]
 
-/-- Pairs of invented documents differing by colour declarations alone: the
-lualatex pages place every line alike, so both artifacts must too. -/
+/-- Pairs of documents differing by colour declarations alone, whose lines lualatex places alike. -/
 private def colourOnly : List (String × String × String) :=
   let pre := "\\usepackage{xcolor}\n\\usepackage{amsthm}\n"
   [("a display after a paragraph's colour",
@@ -320,23 +299,8 @@ private def colourOnly : List (String × String × String) :=
      dvDoc pre "\\begin{proof} Alpha \\color[HTML]{800000} Beta\\end{proof}\nGamma",
      dvDoc pre "\\begin{proof} Alpha Beta\\end{proof}\nGamma")]
 
-/-- **A colour declared inside a group does not reach text after it**, in
-either artifact: every marker's glyph runs in `Layout.Out` and its leaf in
-the typed HTML tree carry the colour the lualatex measurement names, and a
-colour declaration moves no line. A declaration a document can make inside a
-group (a colour, a font, a language, a URL face, a Beamer colour) keeps its
-state in the scope record, in the global log where TeX makes the assignment
-global (`\pagecolor`), or in the flow scope its native door documents
-(`\palette`). A paragraph end closes no group, so what a
-paragraph's text declares is carried past it (`carryDecls`), and a group
-split at a paragraph end re-applies its declarations to each part. A colour
-once rode the flow palette, a global door: a title page's `\color` reached
-every page after it and the body shipped in the page's own colour. Still
-outside the scope record: lengths (Compat's per-key restore,
-`closeLengthScope`), a body `\definecolor` (the native palette door, so
-global, where xcolor's is local), a URL face chosen inside a command's own
-argument, and an inline `\normalcolor`'s HTML paint (the IR's concrete normal
-ink, not the stylesheet's). -/
+/-- A colour declared inside a group does not reach text after it, in either artifact, and a colour
+declaration moves no line. -/
 def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for p in probes do
@@ -363,9 +327,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
         linePlaces (Layout.run (Layout.Geom.ofPage pdoc.page) fonts none pdoc))
     t s!"group scope/{name}: every HTML block keeps its tag and classes"
       (shapeOf cdoc fonts == shapeOf pdoc fonts)
-  -- `\pagecolor` is global (xcolor manual §2.6.4): the title page's ground
-  -- reaches its page and `\nopagecolor` takes it back; a ground set inside
-  -- an environment outlives the environment, as it does under lualatex.
+  -- `\pagecolor` is global (xcolor manual §2.6.4), outliving its group and environment.
   let (tdoc, _) := Elab.run "group-scope.tex" titleSource
   let tout := Layout.run (Layout.Geom.ofPage tdoc.page) fonts none tdoc
   let black : Ir.Color := { r := 0, g := 0, b := 0 }
@@ -378,10 +340,6 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "group scope/a page ground set inside an environment outlives it"
     (gout.pages.size == 2 && pdfGround gdoc gout 0 == some yellow &&
       pdfGround gdoc gout 1 == some yellow)
-  -- The page ground is global wherever its declaration stands, a brace
-  -- group or `\begingroup` included (lualatex: the braced title's page is
-  -- black and the next white; `\begingroup\pagecolor{yellow}\endgroup`
-  -- grounds both pages; a braced `\nopagecolor` clears the next page's).
   let grounds (src : String) : Array (Option Ir.Color) × Bool :=
     let (doc, ds) := Elab.run "group-scope.tex" src
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
@@ -397,9 +355,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     (grounds (dvDoc "\\usepackage{xcolor}\n"
       "\\pagecolor{yellow}\nAaa\n\\clearpage\n{\\nopagecolor}\nBbb") ==
       (#[some yellow, none], true))
-  -- Small caps is its own axis since LaTeX 2020: `\scshape` after
-  -- `\itshape` keeps the slant (lualatex: `scsl`, LMRomanCaps10-Oblique),
-  -- through the paragraph end and not past the minipage.
+  -- Small caps is its own axis since LaTeX 2020: `\scshape` after `\itshape` keeps the slant.
   let (shdoc, _) := Elab.run "group-scope.tex"
     (dvDoc "" "\\begin{minipage}{5cm} Aaa \\itshape Bbb \\scshape Ccc\\par Ddd\\end{minipage}\n\nEee")
   let shleaves := (leavesOf shdoc fonts).1
@@ -407,8 +363,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ((l.tags.splitOn " ").contains "em", (l.classes.splitOn " ").contains "sc")
   t "group scope/small caps keeps the italic before it, to its group's end"
     (shape "Ddd" == some (true, true) && shape "Eee" == some (false, false))
-  -- A `\selectlanguage` between blocks is local to its group too (babel:
-  -- `\languagename` reads the outer language after `\end{center}`).
+  -- A `\selectlanguage` between blocks is local to its group.
   let (ldoc, _) := Elab.run "group-scope.tex"
     (dvDoc "\\usepackage[french,english]{babel}\n"
       "\\begin{center}\\selectlanguage{french} Cyrene.\\end{center}\n\nDelphi")
@@ -416,10 +371,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "group scope/a language switch inside an environment stays there"
     ((htmlLeaf lleaves "Cyrene").any (·.lang == some "fr") &&
       (htmlLeaf lleaves "Delphi").any (·.lang != some "fr"))
-  -- url.sty's `\urlstyle` is a local face selector (lualatex sets a in
-  -- roman, b mono, c and g sans, d mono, e roman, f mono: `\UrlFont` reads
-  -- `\ttfamily` again after the group, and a paragraph end inside the group
-  -- keeps the face).
+  -- url.sty's `\urlstyle` is a local face selector.
   let (udoc, _) := Elab.run "group-scope.tex"
     (dvDoc "\\usepackage{url}\n"
       ("Lyre {\\urlstyle{rm}\\url{http://example.org/a}} and \\url{http://example.org/b}\n\n" ++
@@ -435,9 +387,6 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       !mono "example.org/a" && mono "example.org/b" && !mono "example.org/c" &&
       !mono "example.org/g" && mono "example.org/d" && !mono "example.org/e" &&
       mono "example.org/f")
-  -- A size declared in a paragraph's own text holds to the end of its group
-  -- (lualatex: `\f@size` is 14.4 after the paragraph end, 10 after the
-  -- minipage).
   let (sdoc, _) := Elab.run "group-scope.tex"
     (dvDoc "" "\\begin{minipage}{5cm} Delos \\Large Ephyra\\par Gortyn\\end{minipage}\n\nHalos")
   let sc := censusOf (coveredColorsOf sdoc) (layoutOf fonts sdoc)
@@ -445,8 +394,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     (match lineSizeOf sc 0 "Ephyra", lineSizeOf sc 0 "Gortyn", lineSizeOf sc 0 "Halos" with
      | some big, some next, some after => next == big && after < big
      | _, _, _ => false)
-  -- A palette name read with its argument colours the argument alone, so a
-  -- paragraph end inside its group carries no declaration past it.
+  -- A palette name read with its argument colours the argument alone.
   let (adoc, _) := Elab.run "group-scope.tex"
     (dvDoc "\\palette{probeink=#7A1F1F}\n" "{\\probeink{Elis} Fano\\par Gela} Hydra")
   let aout := Layout.run (Layout.Geom.ofPage adoc.page) fonts none adoc
@@ -454,8 +402,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "group scope/a palette name with its argument colours the argument alone"
     (pdfInk aout "Elis" == some probeInk &&
       pdfInk aout "Gela" == some anormal && pdfInk aout "Hydra" == some anormal)
-  -- A body `\palette` is global, so a frame's end replays it, and the named
-  -- Beamer colour derived from its entry resolves again over the replay.
+  -- A body `\palette` is global, so a frame's end replays it.
   let (bdoc, _) := Elab.run "group-scope.tex"
     ("\\documentclass{beamer}\n\\palette{ProbeMuted=#596674}\n" ++
       "\\setbeamercolor{alerted text}{fg=ProbeMuted}\n\\begin{document}\n" ++
@@ -466,19 +413,14 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "group scope/a replayed palette entry resolves its Beamer colours again"
     (pdfInk bout "Knossos" == some replayed &&
       htmlInk (leavesOf bdoc fonts).1 "Knossos" == some replayed.css)
-  -- An epoch-heavy flow keeps its typed tree bounded: an epoch restates what
-  -- it changes, and a scope holds one declaration per axis, however many
-  -- groups closed or paragraphs declared before.
+  -- An epoch restates what it changes, one declaration per axis, so the tree stays bounded.
   let many := String.join ((List.range 40).map fun i =>
     s!"\\begin\{center}\\color\{blue} Ring{i}\\end\{center}\nPara{i} \\small small\\normalsize " ++
       s!"\\fontsize\{11}\{13}\\selectfont sized \\em turned \\itshape slanted \\em back\n\n")
   let (mdoc, _) := Elab.run "group-scope.tex" (dvDoc "\\usepackage{xcolor}\n" many)
   let (_, mnodes, _) := HtmlDoc.emitTree { fonts := some fonts } mdoc
   let (longest, deepest) := treeMeasureList 0 (0, 0) mnodes.toList
-  -- A colour epoch restates the ink and every role that follows it (the
-  -- muted step, the list marker, the printed ink, the standout ground): a
-  -- custom property resolves where it is declared, so a dependent declared
-  -- at the root would keep the root's ink.
+  -- A custom property resolves where it is declared, so an epoch restates every dependent role.
   t s!"group scope/forty closed groups keep every style short ({longest} characters)"
     (longest ≤ 200)
   t s!"group scope/forty carried sizes keep the tree shallow ({deepest} levels)"

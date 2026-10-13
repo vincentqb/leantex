@@ -52,8 +52,7 @@ private def linePaint (line : Layout.LineOut) : Bool :=
     | _ => none
   !runs.isEmpty && runs.all (fun (c, ground) => c == ink && ground == some paper)
 
-/-- Read inline declarations and ancestry from the typed artifact. This is
-an artifact witness, not another palette resolver or a browser CSS cascade. -/
+/-- Inline declarations and ancestry read from the typed artifact. -/
 private structure HtmlInk where
   text : String := ""
   styles : String
@@ -91,9 +90,8 @@ private def bodyPaint (leaf : HtmlInk) : Bool :=
   leaf.inBody && property leaf.styles "color" == some ink.css &&
     property leaf.styles "background" == some paper.css
 
-/-- Two distinct paragraphs must lie inside the same positive-area body
-surface, with their measured ink bounds and authored foreground. The title
-and following paragraph stay outside that surface in both artifacts. -/
+/-- Two paragraphs lie inside one positive-area body surface with their ink and foreground, the
+title and the following paragraph outside it, in both artifacts. -/
 private def filledChecks (ref : IO.Ref (List String)) (label : String)
     (actual : Artifacts) : IO Unit := do
   let lines := actual.out.pages.flatMap (·.lines)
@@ -132,19 +130,8 @@ private def compareChecks (ref : IO.Ref (List String)) (label : String)
   check ref (label ++ ": identical serialized typed HTML")
     (actual.serialized == control.serialized)
 
-/-- Source conditionals must retain the selected body declaration through
-Compat, Elab and both artifact paths. moloch defines `\molochset`
-(beamerthememoloch.sty), so under it the guard holds and runs the theme's
-setter, as the unguarded setter does; a document redefining the setter
-(`\renewcommand`, since moloch defined it) runs its own definition, whose
-literal `block=fill` branch uses the supported `setbeamercolor` surface.
-Source overrides use that same surface; the false `directlua` guard is
-followed by an unconditional native palette declaration.
-
-These are finite source/artifact checks for normal, alert and example
-blocks, with two body paragraphs. They assert Layout.Out geometry and the
-typed HTML tree, not serialized PDF paint, browser rendering or a universal
-conditional-execution theorem. -/
+/-- Source conditionals keep the selected body declaration through Compat, Elab and both artifacts,
+for normal, alert and example blocks. -/
 public def blockFillConditionalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (env, element, role) in #[
       ("block", "block body", "block"),
@@ -167,9 +154,7 @@ public def blockFillConditionalChecks (ref : IO.Ref (List String)) (fonts : Font
       let label := "block fill conditional " ++ env ++ "/" ++ name
       let actual := artifacts fonts (source env pre)
       let control := artifacts fonts (source env controlPre)
-      -- moloch's own fill sets the example title's teal on its grey bar,
-      -- which the contrast contract names (3.16:1) wherever the setter
-      -- runs, guarded or not: the guard adds nothing the setter does not.
+      -- The contrast contract names moloch's teal-on-grey title wherever the setter runs.
       let named (a : Artifacts) := (a.diags.filter (·.severity != .note)).map (·.code)
       let contrast (a : Artifacts) := named a |>.filter fun c => c != "W0315" && c != "W0345"
       check ref (label ++ ": source has no loss") (contrast actual).isEmpty
@@ -178,8 +163,7 @@ public def blockFillConditionalChecks (ref : IO.Ref (List String)) (fonts : Font
       compareChecks ref label actual control
       filledChecks ref label actual
 
-  -- Unsupported configuration remains an honest no-effect. Keeping the
-  -- whole key list out of the artifact is part of the refusal contract.
+  -- Unsupported configuration is an honest no-effect, its whole key list kept out of the artifact.
   let actual := artifacts fonts (source "block" "\\metroset{block=fill}")
   let control := artifacts fonts (source "block" "")
   check ref "block fill conditional metroset: one named loss"

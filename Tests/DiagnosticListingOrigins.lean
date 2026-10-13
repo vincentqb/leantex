@@ -9,19 +9,15 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- The diagnostic stands where `text` is written in the source, and names no
-construct: code is no markup, so its header quotes none of it. -/
+/-- The diagnostic stands where `text` is written in `source` and names no construct. -/
 private def listingSourceExact (file source text : String) (d : Diag) : Bool := Id.run do
   let some span := d.span | return false
   let some line := (source.splitOn "\n")[span.pos.line - 1]? | return false
   return span.file == file && span.pos.line > 0 && span.pos.col > 0 && d.trigger.isNone &&
     (String.ofList (line.toList.drop (span.pos.col - 1))).startsWith text
 
-/-- Listing diagnostics carry source coordinates, independently of tab
-expansion, generated line numbers, line endings and lexical paint, and their
-headers quote none of the code: the location points at the text, so a header
-that quoted a fragment of a code line read differently at every site. Adding
-that evidence leaves shipped layout and PDF/HTML bytes unchanged. -/
+/-- Listing diagnostics carry source coordinates whatever the tab expansion, line numbering, line
+endings and paint, quote no code, and leave layout and bytes unchanged. -/
 def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -55,8 +51,7 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       let losses := (out.diags.filter (·.kind == .W0009)).map
         prepared.sourceTriggers.attribute
       let label := name ++ (if newline == "\n" then "/LF" else "/CRLF")
-      -- A plain line is one token, standing where the line does; a
-      -- highlighted one stands at the token that holds the scalar.
+      -- A plain line is one token; a highlighted line stands at the token holding the scalar.
       t s!"listing origins {label}: fallback stands at its source text"
         (ds.all (·.severity != .error) && losses.size == 1 &&
           losses.all (listingSourceExact file source (if highlighted then "∀" else "prefix")))
@@ -93,8 +88,7 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"listing origins {env}: overflow stands at its line and names no opener"
       (losses.size == 1 && losses.all fun d =>
         listingSourceExact file source "  build" d && d.span.any fun span => span.pos.line == 4)
-  -- A highlighted line's indentation is its own token: the overflow stands
-  -- at the first token that lays down ink, never at the blanks.
+  -- A highlighted line's indentation is its own token, which lays down no ink.
   for (lang, indent) in [("python", "    "), ("lean4", "  "), ("bash", "\t ")] do
     let line := indent ++ "build_all(" ++ "".pushn 'W' 96 ++ ")"
     let source := String.intercalate "\n" [

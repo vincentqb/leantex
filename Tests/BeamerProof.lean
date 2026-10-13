@@ -8,14 +8,9 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Beamer's implicit AMS packages and its opt-out must use the ordinary
-package loader. Recognition, headings, and QED marks are checked on shipped
-PDF lines and the typed HTML tree, including named and nested proofs.
-
-Beamer's `noamsthm` option disables both AMS packages; `notheorems` only
-disables its automatic theorem declarations. The option is a key, even
-when its unused value says `false` (beamerbasetheorems.sty and
-beamer.cls, Beamer 3.77). Explicit package loads remain independent. -/
+/-- Beamer's implicit AMS packages and their opt-outs go through the ordinary package loader:
+`noamsthm` disables both packages, `notheorems` only the automatic theorem declarations, on the
+PDF's lines and the typed HTML. -/
 def beamerProofChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | t "beamer proof: fixture fonts load" false

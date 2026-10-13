@@ -38,12 +38,8 @@ private def producerRun (file text : String) : IO (Ir.Doc × Array Diag) := do
     (lexDs ++ parseDs ++ inputDs)
   return (doc, ds)
 
-/-- Late compatibility diagnostics obey the same input-file stack as the
-rewrite that precedes them. Coordinates, source spelling and ancestry remain
-attached to the row; returning from an include restores the surrounding file.
-The oracle reads each complete record and the emitted HTML tree, not an IR dump.
-The root deliberately has an unrelated input command at the child's coordinates:
-attributing a wrong filename must not pass just because a trigger is nonempty. -/
+/-- Late compatibility diagnostics keep the input file, position, spelling and ancestry of the
+rewrite before them, and an include's return restores the surrounding file. -/
 def diagnosticProducerOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   IO.FS.withTempDir fun dir => do
@@ -110,10 +106,8 @@ def diagnosticProducerOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         (markedRows.size == 1 && markedRows.all (producerAt ·
           ⟨child, { line := 2, col := 3, origins := [origin], command := some trigger }⟩ trigger))
 
-/-- Every aggregation input uses lexical attribution once it becomes a final
-diagnostic. A record without source evidence remains unlocated. Apart from the
-trigger, the record (including ancestry and command, which Pos.BEq ignores)
-must survive unchanged. These guards exercise completePrepared via runPrepared. -/
+/-- Each aggregation input reaches its final diagnostic with lexical attribution, unlocated without
+source evidence, and otherwise unchanged. -/
 def diagnosticAggregationOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let file := "synthetic-aggregation.tex"
@@ -144,11 +138,8 @@ private def producerJsonAt (j : Lean.Json) (file : String) (line col : Nat)
     j.getObjValAs? Nat "line" == .ok line && j.getObjValAs? Nat "col" == .ok col &&
     j.getObjValAs? String "trigger" == .ok trigger
 
-/-- Full Driver pipeline guards. The caller supplies an already-built binary;
-this check never starts a build. A private synthetic renderer reports its
-version, then refuses with a log, so W0419 is a real withdrawal line without
-depending on TeX, a browser or global caches. Local theme notes are produced
-after elaboration. Direct and included inputs must emit the same HTML bytes. -/
+/-- Through a built driver binary, each diagnostic keeps its real source, and direct and included
+inputs emit the same HTML bytes. -/
 def diagnosticPipelineOriginChecks (ref : IO.Ref (List String))
     (binary : System.FilePath := ".lake/build/bin/leantex")
     (font : System.FilePath := "testdata/corpus/fonts/OpenSans-Regular.ttf") : IO Unit := do

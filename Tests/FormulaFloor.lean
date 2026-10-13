@@ -8,10 +8,7 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Every formula an emitted tree carries — the elements holding their
-source in `data-tex` — as its tag and the rendering of its content: a
-paragraph's formula is a `math` root, a label's a row inside its carrier,
-which is already the label's root. -/
+/-- Every formula an emitted tree carries, as its tag and its content's rendering. -/
 private def formulaTrees (doc : Ir.Doc) : Array (String × String) :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   (formulaElems body).filterMap fun node =>
@@ -19,11 +16,8 @@ private def formulaTrees (doc : Ir.Doc) : Array (String × String) :=
     | .elem tag _ kids => some (tag, String.join (kids.toList.map (Html.render · 0)))
     | _ => none
 
-/-- A formula's plaintext reading must retain operation and operand
-boundaries. These invented expressions previously collapsed into strings
-of digits on PDF pages without a math font. Accessible structure keeps that
-reading too. HTML diagram labels retain the complete mathematical tree used
-in prose instead of painting the fallback notation. -/
+/-- A formula's plaintext reading keeps operation and operand boundaries, its accessible structure
+too, and an HTML diagram label keeps the full mathematical tree. -/
 def formulaFloorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let fonts := { fonts with math := none }
   let cases : List (String × String) :=
@@ -53,8 +47,7 @@ def formulaFloorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     check ref s!"formula diagram HTML retains the complete prose math tree: {source}"
       (proseMath.size == 1 && labelMath.map (·.2) == proseMath.map (·.2) &&
         proseMath.map (·.1) == #["math"] && labelMath.map (·.1) == #["mrow"])
-  -- Invisible delimiters and layout parameters are valid nonprinting
-  -- syntax. Raw-source punctuation is not a sound content premise.
+  -- Invisible delimiters and layout parameters are valid nonprinting syntax.
   for source in ["\\big.", "\\left.\\right.", "\\quad", "{}",
       "\\genfrac{}{}{0pt}{}{}{}"] do
     let raws := (Parse.parse "formula.tex" (Lex.lex "formula.tex" source).1).1

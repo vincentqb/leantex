@@ -7,9 +7,8 @@ public section
 
 open LeanTex.Core
 
-/-- Configuration provenance crosses the production frontend, including
-boundary withdrawal, source erasure, diagnostic attribution and tallying.
-Artifact equality for the tool gate is checked by `pictureKeyGateChecks`. -/
+/-- Configuration provenance crosses the production frontend: boundary withdrawal, source erasure,
+diagnostic attribution and tallying. -/
 def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let settings :=
@@ -41,8 +40,7 @@ def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := d
   t "prepared and finalized frontends retain the same named keys"
     ((full.2.1.filterMap fun d =>
       if d.kind == .W0334 then d.subject else none) == named)
-  -- The former claim quantified over every raw tree. Settling a closing
-  -- half discards its payload before configuration is collected.
+  -- Settling a closing half discards its payload before configuration is collected.
   let pos : Pos := {}
   let keys : Array Parse.Raw := #[.word "overlay" pos]
   let discarded : Parse.Raw := .env (Parse.splitClose "invented")
@@ -60,9 +58,7 @@ def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := d
     (Elab.enginePictures result.1.body > 0 &&
       !(Picture.unreadKeys [] (Picture.ofRaws keys)).isEmpty &&
       !(result.2.any (·.kind == .W0334)))
-  -- A setting line is named in the file that wrote it, at its own token:
-  -- never at the root's line of the same number, whose token there the
-  -- note would otherwise take as its trigger.
+  -- A setting line is named in the file that wrote it, at its own token.
   let keyFile := "synthetic/picture-keys.tex"
   let keyRoot := (Parse.parse "picture-contract.tex" (Lex.lex "picture-contract.tex"
     ("\\pictures{tool=none}\n\\begin{document}\n" ++

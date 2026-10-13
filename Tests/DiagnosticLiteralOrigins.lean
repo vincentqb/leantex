@@ -15,12 +15,8 @@ private def literalRaws (file source : String) : Array Parse.Raw :=
 private def literalSources (file source : String) : Compat.SourceTriggers :=
   (Compat.execute file (literalRaws file source)).sourceTriggers
 
-/-- Delayed diagnostics can originate at plain text or a special character.
-Their source is the original coordinates, including when normalization
-changes the rendered word; their header names a construct the author wrote
-there — a special character TeX gives a role — and never a word of text or a
-bracket, which the location already points at. Synthetic surface values do
-not supply evidence merely by resembling authored text. -/
+/-- Delayed diagnostics at plain text or a special character stand at the original coordinates and
+quote only a construct written there, never text or a bracket. -/
 def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
     (fs : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -64,8 +60,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
     t "literal origins: existing producer evidence survives a synthetic surface"
       (sources.attribute explicit == explicit)
 
-  -- U+0344 expands to two combining scalars under NFC. A control consumes the
-  -- first; the remaining fragment has no original boundary of its own.
+  -- U+0344 is two scalars under NFC: a control takes the first, leaving no boundary of its own.
   for source in ["\\\u0344_", "\\\u0344$x$"] do
     let tokens := (Lex.lex file source).1
     let sources := literalSources file source

@@ -18,10 +18,8 @@ private def inputObservations (source : String) : Array InputObservation :=
       return (none, context)
   (Elab.executeInputs reader file raws).run #[] |>.2
 
-/-- Inspect the production evaluator's actual callback arguments. Dormant
-definitions and skipped branches cannot pay for an executed loading call;
-native options and native themes remain counterexamples to inferring a
-file request from a refusal code. -/
+/-- The production evaluator's callback arguments: dormant definitions and skipped branches pay for
+no executed load, and a refusal code infers no file request. -/
 def frontendInputRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let calls ← pure (inputObservations

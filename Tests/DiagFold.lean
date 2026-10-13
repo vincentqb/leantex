@@ -8,19 +8,12 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-/-! **One loss, one line, on the log a run prints.** A warning repeated at
-many sites printed once per site when its emitter named no subject: the
-census groups by subject, and the sink printed every record that was not a
-note. A listing option the engine does not honour was such a loss, one line
-per listing. The invariant is over what the driver's own sink writes: a
-phase's repeats of one loss in the same words print one line carrying their
-count, `-v` prints every site, porcelain keeps every site, and the counts add
-up to the records, a loss's to its own. Every word here is invented. -/
+/-! One loss, one line, on the log a run prints: a phase's repeats of one loss in the same words
+print one line with their count, `-v` and porcelain keep every site, and the counts add up. -/
 
 namespace Tests.DiagFold
 
-/-- What the driver's sink writes for one phase: stderr, stdout and the
-phase's accounting. -/
+/-- What the driver's sink writes for one phase: stderr, stdout and the phase's accounting. -/
 def sink (cfg : Config) (allowed : Array String) (ds : Array Diag)
     (outputs : Array Diag.Output := #[.pdf, .html]) :
     IO (String × String × Resolution) := do
@@ -33,8 +26,8 @@ def sink (cfg : Config) (allowed : Array String) (ds : Array Diag)
   let text (b : IO.FS.Stream.Buffer) := String.fromUTF8? b.data |>.getD ""
   return (text (← err.get), text (← out.get), r)
 
-/-- The record lines a human log holds for a code: each starts with the
-severity icon and the bracketed code. -/
+/-- The record lines a human log holds for a code, each opening with the severity icon and the
+bracketed code. -/
 def headLines (log code : String) : List String :=
   (log.splitOn "\n").filter fun l =>
     (l.startsWith "⚠ " || l.startsWith "✖ " || l.startsWith "ℹ ") && hasStr l s!"[{code}]"
@@ -42,8 +35,7 @@ def headLines (log code : String) : List String :=
 def warningLines (log code : String) : List String :=
   (headLines log code).filter (·.startsWith "⚠ ")
 
-/-- The porcelain records for a code, each line's `sites` (absent is 1) and
-severity. -/
+/-- The porcelain records for a code: each line's `sites` (absent is 1) and severity. -/
 def porcelainRows (log code : String) : List (Nat × String) :=
   (log.splitOn "\n").filterMap fun l =>
     if !hasStr l s!"\"code\":\"{code}\"" then none else
@@ -57,21 +49,11 @@ def porcelainRows (log code : String) : List (Nat × String) :=
 
 def span (line : Nat) : Option Span := some ⟨"deck.tex", { line, col := 1 }⟩
 
-/-- **How a phase's log counts what it folds**, read off the driver's own
-sink. Warnings in the same words print one line, at the first site,
-carrying their count, whatever census key tells the sites apart; `-v`
-prints every site, and porcelain keeps every record, the first carrying the
-count. Under `--werror` a folded line is one warning, its later sites notes,
-as a census repeat is; an error prints and counts at every site, named or
-not. Acceptance accepts every site of a loss it names and counts each loss
-once — one census key, or a subjectless repeat in the same words
-(`Diag.acceptedLosses`) — leaving no site an unread note. A loss of the
-PDF's page names that output, so a build that ships no PDF prints none
-(`reflowAccountChecks`). -/
+/-- How a phase's log counts what it folds, read off the driver's own sink: in the same words, under
+`--werror`, `-v`, porcelain and acceptance. -/
 def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let plain : Config := { cmd := .build "deck.tex", color := .never }
-  -- A listing option the engine does not honour, at five listings.
   let listing := "\\begin{lstlisting}[zzfoldkey=on]\nalpha\n\\end{lstlisting}\n\n"
   let (_, ds) := elabStr (dvDoc "\\usepackage{listings}"
     (String.join (List.replicate 5 listing)))
@@ -92,8 +74,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] ds
   t "porcelain keeps every site, the first carrying the count"
     ((porcelainRows porcelain "W0110").map (·.1) == [5, 0, 0, 0, 0])
-  -- Each listing arm keys its loss by its words: two sites share a subject
-  -- exactly when they print the same.
+  -- A listing arm keys its loss by its words: sites share a subject exactly when they print alike.
   let arms := ["zzfoldkey=on", "zzfoldkey", "numbers=zzbad", "fontsize=", "fontsize={}",
     "tabsize=0", "tabsize=zz", "breaklines=zz", "basicstyle", "basicstyle=\\bfseries",
     "language={zz zz}", "style=zzstyle"]
@@ -105,13 +86,11 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a listing arm's subject and its words determine each other"
     (armDs.all fun a => armDs.all fun b => (a.subject == b.subject) == (a.message == b.message))
   let (err, _, _) ← sink plain #[] (elabStr (dvDoc "\\usepackage{listings}" armDoc)).2
-  -- `zzfoldkey=on` and a bare `zzfoldkey` print the same words.
   t s!"each listing arm's words print once ({(warningLines err "W0110").length} lines)"
     ((warningLines err "W0110").length == arms.length - 1 &&
       (armDs.map (·.message)).toList.eraseDups.length == arms.length - 1 &&
       ((warningLines err "W0110").filter (hasStr · "(4 sites)")).length == 1 &&
       ((warningLines err "W0110").filter (hasStr · "(2 sites)")).length == arms.length - 2)
-  -- A siunitx command's option, at three sites.
   let (_, siDs) := elabStr (dvDoc "\\usepackage{siunitx}"
     "One \\num[zzopt=1]{1}, two \\num[zzopt=2]{2}, three \\num[zzopt=3]{3}.")
   let siW := siDs.filter (·.kind == .W0110)
@@ -120,8 +99,6 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (err, _, _) ← sink plain #[] siDs
   t "a siunitx command's options print once, with their sites"
     ((warningLines err "W0110").length == 1 && (warningLines err "W0110").all (hasStr · "(3 sites)"))
-  -- The class, whatever the emitter: a warning repeated in the same words
-  -- with no subject is one loss.
   let same := (List.range 4).toArray.map fun k =>
     Diag.of .W0110 "the zzsink option is not honoured; ignored" (span (k + 3))
   let other := Diag.of .W0110 "the zzother option is not honoured; ignored" (span 9)
@@ -139,13 +116,11 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "porcelain: the later sites read note, the first warning"
     ((porcelainRows porcelain "W0110").map (·.2) ==
       ["warning", "note", "note", "note", "warning"])
-  -- What a record says beyond its message is its words too.
   let advised := #[Diag.of .W0110 "zzsame words" (span 1) (help := some "zzone"),
     Diag.of .W0110 "zzsame words" (span 2) (help := some "zztwo")]
   let (err, _, _) ← sink plain #[] advised
   t "the same message with different advice keeps both lines"
     ((warningLines err "W0110").length == 2)
-  -- One loss in different words keeps each wording, each with its own count.
   let boxes := #[Diag.of .W0110 "box keys zzalpha are not applied" (span 1) (subject := some "zzbox"),
     Diag.of .W0110 "box keys zzbeta are not applied" (span 2) (subject := some "zzbox"),
     Diag.of .W0110 "box keys zzbeta are not applied" (span 3) (subject := some "zzbox")]
@@ -156,28 +131,23 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
       (warningLines err "W0110").any (fun l => hasStr l "deck.tex:1:1" && !hasStr l "sites)") &&
       (warningLines err "W0110").any (fun l => hasStr l "deck.tex:2:1" && hasStr l "(2 sites)") &&
       (porcelainRows porcelain "W0110").map (·.1) == [1, 2, 0])
-  -- A repeat at another output scope is another loss.
   let scopes := (same.map fun d => { d with output := some .pdf }).push
     (Diag.of .W0110 "the zzsink option is not honoured; ignored" (span 3) (output := some .html))
   let (err, _, _) ← sink plain #[] scopes
   t "a repeat at another output scope keeps its own line"
     ((warningLines err "W0110").length == 2)
-  -- An error is never folded: each site fails the build and prints.
   let errs := (List.range 3).toArray.map fun k => Diag.of .E0304 "a zzmissing argument" (span k)
   let named := (List.range 3).toArray.map fun k =>
     Diag.of .E0304 "a zzmissing argument" (span k) (subject := some "zzarg")
   let (err, _, r) ← sink plain #[] (errs ++ named)
   t "a repeated error prints at every site and counts every site, named or not"
     ((headLines err "E0304").length == 6 && r.errors == 6)
-  -- Acceptance accepts every site of the losses it names, and counts each
-  -- loss once: a subjectless repeat in the same words is one loss, as its
-  -- one line is, and none of its sites is left an unread note.
+  -- Acceptance counts each loss once: a subjectless repeat in the same words is one loss.
   let (err, _, r) ← sink plain #["W0110"] (same.push other)
   t "an accepted repeat prints nothing and is accepted once per loss"
     ((headLines err "W0110").isEmpty && Diag.acceptedLosses r.accepted == #["W0110", "W0110"] &&
       r.accepted.size == 5 && r.warnings == 0 && r.notes == 0)
 
-  -- The law the theorems state, read off the folded records.
   let log := same.push other ++ errs ++ named ++ boxes ++ advised ++ ds
   let folded := Diag.foldRepeats log
   t "folding keeps every record, in order, rewriting only counts and demotion"
@@ -192,8 +162,6 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
         !f.severity.isWarning ||
           f.sites == (log.filter (Diag.countsOn log.toList d)).size
       | _, _ => false)
-  -- A loss that opens on a note keeps that record's count there, and its
-  -- warning shows with its own.
   let quiet := #[(Diag.of .W0110 "the zzquiet option is not honoured; ignored" (span 1)
       (subject := some "zzquiet")).demote,
     Diag.of .W0110 "the zzquiet option is not honoured; ignored" (span 2)
@@ -203,9 +171,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a loss that opens on a note still shows its warning, the loss's sites all counted"
     ((warningLines err "W0110").length == 1 && (warningLines err "W0110").all (hasStr · "deck.tex:2:1") &&
       (porcelainRows porcelain "W0110") == [(1, "note"), (1, "warning")])
-  -- The line is the wording, never the census key: an overfull line keyed by
-  -- its own position, a paragraph by its index, a label by its text are
-  -- sites of one wording, and a wording prints once.
+  -- The line is the wording, never the census key, and a wording prints once.
   let keyed := (List.range 5).toArray.map fun k =>
     Diag.of .W0005 "overfull line; no feasible break" (span (k + 2))
       (subject := some s!"overfull:deck.tex:{k + 2}:1")
@@ -217,14 +183,10 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] keyed
   t "porcelain keeps every keyed site, the first carrying the count"
     ((porcelainRows porcelain "W0005").map (·.1) == [5, 0, 0, 0, 0])
-  -- Losses the census keys apart stay apart however their words fold: the
-  -- five overfull lines accepted are five losses, and no site an unread note.
   let (err, _, r) ← sink plain #["W0005"] keyed
   t s!"accepted keyed sites are each a loss accepted ({Diag.acceptedLosses r.accepted})"
     ((headLines err "W0005").isEmpty && Diag.acceptedLosses r.accepted == #["W0005", "W0005",
       "W0005", "W0005", "W0005"] && r.notes == 0 && r.warnings == 0)
-  -- A once-per-construct loss beside another construct in the same words:
-  -- one line, the two constructs' sites on it, the notes of each counted.
   let once (key : String) (k : Nat) (first : Bool) : Diag :=
     let d := Diag.of .W0110 "the zzkeyed option is not honoured; ignored" (span k)
       (subject := some key)
@@ -235,31 +197,14 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "two constructs in one wording print one line carrying both constructs' sites"
     ((warningLines err "W0110").length == 1 &&
       (warningLines err "W0110").all (hasStr · "(5 sites)"))
-  -- Errors still print at every site, whatever their keys.
   let errKeyed := (List.range 3).toArray.map fun k =>
     Diag.of .E0304 "a zzmissing argument" (span k) (subject := some s!"zzarg:{k}")
   let (err, _, r) ← sink plain #[] errKeyed
   t "an error keyed per site still prints at every site"
     ((headLines err "E0304").length == 3 && r.errors == 3)
 
-/-- **A re-flowed declared line is one diagnostic, wherever its lines run.**
-W0386 says a paragraph's declared lines did not hold — one record per
-paragraph, at its first declared line that re-flowed, in its census key —
-and where a line one of them re-flowed onto still runs past the measure,
-that overrun is the declared line's too: the record says so in its words,
-carries W0005's loss (`Diag.carries`), and its detail gives the measure and
-where each such line opens, and no W0005 names the line again. W0005 names
-an overrun no re-flow accounts for: a declared line of one word wider than
-the measure, which cannot re-flow. Every line the page shows past its
-margin is accounted once: a W0005 at its site, or an overrun its
-paragraph's record holds (`ReflowedLine.over`). Accepting the re-flow
-accepts the overrun it carries; an acceptance of W0005 is never stale for a
-carried overrun; the default log names every overrun. Both are losses of
-the PDF's page and name that output, so a build that writes no PDF prints
-neither. The overlay steps that set one paragraph again are one W0386,
-however the steps set it: at the first line any step re-flowed, carrying an
-overrun any step runs, by the most any runs it. Every word here is
-invented. -/
+/-- A re-flowed declared line is one W0386 per paragraph, carrying any overrun of its lines (W0005's
+loss), so every line past its margin is accounted once, in the PDF's output only. -/
 def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -271,8 +216,7 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let prose (n : Nat) := String.intercalate " " (List.replicate n "alpha beta gamma delta")
   let located (src : String) : Ir.Doc := (elabLocated file src).1
   let siteOf (d : Diag) := d.span.map fun s => (s.pos.line, s.pos.col)
-  -- The overruns the paragraphs' re-flowed lines hold, off the record, and
-  -- how far each runs past.
+  -- The overruns the paragraphs' re-flowed lines hold, and how far each runs past.
   let carriedOf (o : Layout.Out) : Nat :=
     o.paragraphBreaks.foldl (fun n p => p.lines.foldl (fun m l => m + l.over.size) n) 0
   let excesses (o : Layout.Out) : Array Dim.Sp :=
@@ -303,7 +247,6 @@ where it opens ({reflows.map (·.detail)})"
       hasStr (Render.porcelainDiag d) "\"carries\":[\"W0005\"]" == runsPast d)
   t s!"reflow account: W0005 names only the overrun no re-flow accounts for ({overfull.map siteOf})"
     (overfull.map siteOf == #[some (12, 1)] && overfull.all (·.trigger.isNone))
-  -- The page: every line past its margin is accounted once.
   let right := doc.page.width - doc.page.hmargin
   let past := (bodyLines out).filter fun l => l.x + l.setWidth > right + Dim.pt 3
   t s!"reflow account: the page's overruns are W0005's and the re-flows' counts ({past.size})"
@@ -317,8 +260,6 @@ where it opens ({reflows.map (·.detail)})"
       (warningLines err "W0386").any (fun l => hasStr l s!"{file}:9:1") &&
       hasStr err "still runs past the measure" &&
       (headLines err "W0005").all (fun l => hasStr l s!"{file}:12:1"))
-  -- Both are losses of the PDF's page: a build that writes no PDF prints
-  -- neither, and one that writes it prints both.
   let (htmlErr, _, _) ← sink plain #[] out.diags #[.html]
   let (pdfErr, _, _) ← sink plain #[] out.diags #[.pdf]
   t "reflow account: an HTML build prints neither page loss, a PDF build both"
@@ -331,16 +272,10 @@ where it opens ({reflows.map (·.detail)})"
     ((headLines err "W0386").isEmpty && (warningLines err "W0005").length == 1 &&
       (warningLines err "W0005").all (hasStr · s!"{file}:12:1") &&
       Diag.acceptedLosses r.accepted == #["W0386", "W0386"])
-  -- A document that accepted W0005 for an overrun a re-flow now carries
-  -- keeps no stale acceptance: the carried loss fires W0005 with it.
   let carriedOnly := out.diags.filter fun d => d.kind != .W0005
   let (_, _, rc) ← sink plain #["W0005"] carriedOnly
   t "reflow account: an overrun a re-flow carries fires W0005, so its acceptance is not stale"
     (Diag.unfired #["W0005"] rc.fired == #[])
-  -- Paragraphs whose re-flowed lines open on a word wider than the
-  -- measure, hold two such words, or re-flow twice with the second alone
-  -- running past: one W0386 each, at its first re-flowed line, carrying
-  -- every overrun of its lines, and no W0005 names them.
   let collide := String.intercalate "\n" [
     "\\documentclass{article}", "\\page{ width = 220pt, margin = 20pt }",
     "\\begin{document}",
@@ -363,8 +298,6 @@ which names where each overrun opens ({cReflows.map siteOf}, {cReflows.map (·.d
   let cPast := (bodyLines cOut).filter fun l => l.x + l.setWidth > cRight + Dim.pt 3
   t s!"reflow account: the re-flows carry every overrun the page shows ({cPast.size})"
     (cPast.size == carriedOf cOut && carriedOf cOut == 4)
-  -- The overlay steps that set one paragraph again: one loss, one record,
-  -- whatever each step sets.
   let deckOf (body : List String) : Layout.Out :=
     layoutOf fs (located (String.intercalate "\n"
       (["\\documentclass{slides}", "\\begin{document}", "\\begin{frame}"] ++ body ++
@@ -375,8 +308,6 @@ which names where each overrun opens ({cReflows.map siteOf}, {cReflows.map (·.d
   t s!"reflow account: a paragraph three steps set is one W0386 ({deckOut.pages.size} pages, \
 {deckReflows.map siteOf})"
     (deckOut.pages.size == 3 && deckReflows.size == 1 && deckReflows.all (siteOf · == some (5, 1)))
-  -- Steps that run one declared line past the measure by different widths:
-  -- one record, at the most either runs, where that step's line opens.
   let measured := deckOf ["Opening.\\\\",
     prose 2 ++ " \\alt<2>{" ++ wider ++ "}{" ++ wide ++ "} " ++ prose 1 ++ ".\\\\",
     "Closing.", "\\pause", "", "One."]
@@ -388,8 +319,6 @@ the most ({mSteps.map (·.toPtString)}, {mReflows.map (·.detail)})"
     (mSteps.size == 2 && mSteps[0]? != mSteps[1]? && mReflows.size == 1 &&
       mReflows.all fun d => runsPast d &&
         d.detail.any (hasStr · s!"by up to {mMost.toPtString}pt, at 5:55"))
-  -- Steps that differ in whether the declared line runs past at all: the
-  -- one record carries the overrun, whichever step ran it, in its words.
   let onlyOne := deckOf ["Opening.\\\\",
     prose 6 ++ " \\alt<2>{" ++ wide ++ "}{short} end.\\\\", "Closing.", "\\pause", "", "One."]
   let oReflows := onlyOne.diags.filter (·.kind == .W0386)
@@ -397,8 +326,6 @@ the most ({mSteps.map (·.toPtString)}, {mReflows.map (·.detail)})"
 carry it ({oReflows.map (·.message)})"
     ((excesses onlyOne).size == 1 && oReflows.size == 1 &&
       oReflows.all (fun d => runsPast d && hasStr d.message "still runs past the measure"))
-  -- Steps that differ in which declared line re-flows: the one record, at
-  -- the first line either step re-flowed, names both.
   let shifting := deckOf ["Opening.\\\\", "\\alt<2>{Short.}{" ++ prose 6 ++ ".}\\\\",
     prose 6 ++ ".\\\\", "Closing.", "\\pause", "", "One."]
   let sReflows := shifting.diags.filter (·.kind == .W0386)
@@ -409,11 +336,7 @@ carry it ({oReflows.map (·.message)})"
       sReflows.all (fun d => d.detail.any (hasStr · "2 declared lines ship as")) &&
       (headLines sErr "W0386").length == 1 && !hasStr sErr "sites)")
 
-/-- The doors a diagnostic is made through, by their call heads, and whether
-each takes a subject: a door named before its receiver (`diag ctx .`,
-`diagOf s.ctx .`, `warn st .`), one applied to its code directly (`say .`,
-`Diag.of .`), and a record literal (`kind := .`). Elab's `diag` and Layout's
-`warn` take no subject. -/
+/-- The doors a diagnostic is made through, by their call heads, with whether each takes a subject. -/
 def receiverDoors : List (String × Bool) := [("diag", false), ("diagOf", true), ("warn", false)]
 
 def directDoors : List (String × Bool) := [("say", true), ("Diag.of", true)]
@@ -432,20 +355,12 @@ def codeOfTok (t : String) : Option String :=
     if isDiagCode tok then some tok else none
   else none
 
-/-- Does a call's text name a subject: by keyword with a value, or by position? -/
+/-- Whether a call's text names a subject, by keyword with a value or by position. -/
 def namesSubject (call : String) : Bool :=
   (hasStr call "subject :=" && !hasStr call "subject := none") || hasStr call "(some subject)"
 
-/-- **Every direct emission of a counted loss names it.** A degraded or
-pending code is counted by its subject, at every emission or as a debt row;
-the census gate reads one witness per code, and a listing option shipped as
-a second door for a code whose witness was subjected, so its sites printed
-one line each. Read off a stripped source: a counted code applied at a door
-must name a subject within the call, by keyword or by position, or be in
-`subjectDebt`; a door that takes no subject carries no counted code outside
-the debt. The reading is syntactic: a call's extent is its own line and the
-deeper-indented lines under it, a record literal's its fields to the closing
-brace, and a subject is named when the call writes one other than `none`. -/
+/-- Every direct emission of a counted loss names its subject within the call, or its code is in
+`subjectDebt`, read off a stripped source. -/
 def doorOffences (src : String) : Array String := Id.run do
   let lines := ((stripNonCode src).splitOn "\n").toArray
   let mut out : Array String := #[]
@@ -487,7 +402,6 @@ def subjectDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
       offences := offences.push s!"{file} {tok}"
   check ref s!"every direct emission of a counted loss names its subject ({offences})"
     offences.isEmpty
-  -- The scan reads what it claims to, at each door it names.
   let hit (src : String) : Bool := !(doorOffences src).isEmpty
   let t := check ref
   t "door scan: the subjectless door, under each receiver it is called with"

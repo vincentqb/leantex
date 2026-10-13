@@ -17,28 +17,19 @@ private def inksOn (out : Layout.Out) (text : String) : Array Ir.Color :=
       | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
       | _ => none
 
-/-- The styles of the HTML elements whose text holds `text`, as the printed
-page reads them (`schemeTree`). -/
+/-- The styles of the HTML elements whose text holds `text`, as the printed page reads them. -/
 private def htmlStyles (doc : Ir.Doc) (text : String) : Array String :=
   let (_, body, _) := emitIn {} doc .print
   (elemStylesList #[] body.toList).filterMap fun (t, st) =>
     if hasStr t text && !st.isEmpty then some st else none
 
-/-- The contrast reports a run shows: the warnings, never the notes that
-carry a pairing's later runs. -/
+/-- The contrast reports a run shows: the warnings, never the notes carrying a pairing's later runs. -/
 private def reports (ds : Array Diag) : Array Diag :=
   ds.filter fun d => (d.code == "W0315" || d.code == "W0345" || d.code == "W0330") &&
     d.severity == .warning
 
-/-- **A declared colour ships as declared, in both artifacts, and its
-contrast is reported once.** A colour a document states — a role, an author
-colour, a mix of two named colours, a highlighting style's token colour —
-is the colour the PDF's glyph runs and the HTML's spans carry, on the page
-and on every local ground; a pairing that falls short of what its medium
-asks is one warning, on one line, with no repair named. A deck's stage
-shows its text at the size of the screen, so it asks large-scale text's
-3:1 where a document's page asks 4.5:1. Read off `Layout.Out` and the typed
-HTML tree. -/
+/-- A declared colour ships as declared in both artifacts, on the page and every local ground, and a
+pairing short of its medium's ratio is one warning; a deck's stage asks 3:1, a page 4.5:1. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   -- A role on the page: an orange that fails a document's 4.5:1.
@@ -73,7 +64,6 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     (let rs := reports deckDs
      rs.size == 1 && rs.all fun d =>
        d.code == "W0315" && hasStr d.message "the frame-title bar" && d.help.isNone)
-  -- A mix of two named colours ships xcolor's value.
   let fg := hex 0x23 0x37 0x3B
   let page := hex 0xFA 0xFA 0xFA
   let mixed := fg.mix 60 page
@@ -88,7 +78,6 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "declared colours: the mix is reported under the expression the author wrote"
     (let rs := reports mixDs
      rs.size == 1 && rs.all fun d => d.subject.any (·.startsWith "fg!60!bg:"))
-  -- A highlighting style's token colours ship as the style states them.
   let red := hex 0xFF 0x00 0x00
   let comment := hex 0x60 0xA0 0xB0
   let source := "sorry -- note"
@@ -115,8 +104,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "declared colours: each failing token colour is reported once"
     (let rs := reports (Contrast.docDiags listing)
      rs.size == 2 && rs.all (·.code == "W0315"))
-  -- The document wrote no key for a style's colour: the report names the
-  -- style, and a code role the palette declares is named by its key.
+  -- A style's colour with no key is reported by the style; a palette code role by its key.
   t "declared colours: a style's token colour is reported under the style"
     (let rs := reports (Contrast.docDiags listing)
      rs.all fun d => hasStr d.message "'friendly' highlighting style" &&
@@ -136,9 +124,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       "\\begin{frame}\\textcolor{quiet}{Grey words.}\\end{frame}")).2).isEmpty)
   t "declared colours: a document's page text asks 4.5:1"
     ((reports (elabStr (greySrc "article" "\\textcolor{quiet}{Grey words.}")).2).size == 1)
-  -- A highlighting style the document never declared is the engine's own
-  -- choice of colours: fitted to the ground the listing stands on, in both
-  -- artifacts, with nothing to report. A declared style ships as it states.
+  -- An undeclared highlighting style is fitted to the listing's ground with nothing to report.
   let darkPage := hex 0x11 0x11 0x11
   let darkListing (env opts : String) : Ir.Doc × Array Diag :=
     elabStr ("\\documentclass{article}\\usepackage{minted}\\usepackage{listings}" ++
@@ -158,8 +144,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     ((ListingHighlight.glyphColors (layoutOf fonts declDoc)).any (·.2 == friendlyString))
   t "declared colours: a declared style's colours short of the dark page are reported"
     ((reports declDs).any fun d => hasStr d.message "'friendly' highlighting style")
-  -- The focus ring a link draws on the HTML page: a declared accent short of
-  -- non-text's 3:1 is reported once, where a link ships.
+  -- A declared accent short of non-text's 3:1 is reported once, where a link ships its focus ring.
   let focusSrc (body : String) : String :=
     "\\documentclass{article}\\palette{ accent = #FFE000 }\\begin{document}" ++ body ++
       "\\end{document}"
@@ -177,16 +162,11 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     ((reports (elabStr ("\\documentclass{article}\\output{ css = none }" ++
       "\\palette{ accent = #FFE000 }\\begin{document}See " ++
       "\\href{https://example.org}{the probe}.\\end{document}")).2).isEmpty)
-  -- A legible document says nothing.
   t "declared colours: a legible document draws no contrast report"
     ((reports (elabStr ("\\documentclass{article}\\palette{ fg = #111111, bg = #FFFFFF, " ++
       "quiet = #444444 }\\begin{document}\\textcolor{quiet}{Dark words.}\\end{document}")).2).isEmpty)
 
-/-- **The focus ring is judged where a page draws it** (the gate in
-`Contrast.docWalk`): two builds apart by the gate's own condition. The page
-the engine styles holds the ring's rule and its declared accent is reported;
-the page that ships no stylesheet of the engine's holds no ring rule, and a
-document declaring only PDF builds no page at all, so neither is reported. -/
+/-- The focus ring is judged where a page draws it, two builds apart by the gate's own condition. -/
 public def focusGateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src (output : String) : String :=
@@ -218,14 +198,8 @@ public def focusGateChecks (ref : IO.Ref (List String)) : IO Unit := do
 private def charInks (out : Layout.Out) (c : Char) : Array Ir.Color :=
   (ListingHighlight.glyphColors out).filterMap fun (g, ink) => if g == c then some ink else none
 
-/-- **A listing's plain text reads on the ground the listing declares**
-(minted's `bgcolor`): the punctuation and operators no code role colours set
-in the text colour around the listing fitted to that ground, one colour in
-both artifacts, with nothing to report — a pairing the document never stated.
-A code ink the document declares ships as declared there and is reported
-once. The ground once took the code roles' colours fitted to it while the
-plain text kept the page's ink, black on black among them, unreported. Read
-off `Layout.Out` and the typed HTML tree. -/
+/-- A listing's plain text reads on the ground the listing declares, in one colour in both
+artifacts, while a declared code ink ships as declared and is reported once. -/
 public def listingGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let listing (cls pre opts : String) : String :=

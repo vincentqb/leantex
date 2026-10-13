@@ -21,10 +21,8 @@ private def superscriptTextList (want : String) : List Html.Node → Bool
 
 end
 
-/-- A cancellation target reaches both shipped surfaces as a script, even
-inside a colour declaration expanded from a macro in an alignment. The
-operand and the neighbouring mathematics keep their glyphs and scripts:
-neither the annotation nor its surrounding declaration can flatten a row. -/
+/-- A cancellation target reaches both artifacts as a script, even inside a macro-expanded colour
+declaration in an alignment, and no annotation flattens a row. -/
 def cancelReportChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -44,22 +42,22 @@ def cancelReportChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       | .run _ _ _ _ glyphs _ _ _ raise _ _ =>
         some (String.ofList (glyphs.toList.map (·.2.1)), raise)
       | _ => none
-    t s!"cancel report: {label} keeps the target above the operand"
+    t s!"cancel script: {label} keeps the target above the operand"
       (runs.any fun (text, raise) => text == "7" && raise > 0)
     let text := String.join (runs.toList.map (·.1))
-    t s!"cancel report: {label} preserves the operand and neighbouring script"
+    t s!"cancel script: {label} preserves the operand and neighbouring script"
       (hasStr text "𝑥" && hasStr text "𝑦" &&
         runs.any fun (text, raise) => text == "2" && raise > 0)
-    t s!"cancel report: {label} needs no math recovery"
+    t s!"cancel script: {label} needs no math recovery"
       (!(ds.any fun d => d.code == "W0389" || d.code == "W0012"))
     let (_, tree, _) := HtmlDoc.emitTree { fonts := some fonts } doc
-    t s!"cancel report: {label} gives HTML the target as a superscript"
+    t s!"cancel script: {label} gives HTML the target as a superscript"
       (superscriptTextList "7" tree.toList)
-    t s!"cancel report: {label} gives HTML the neighbouring script"
+    t s!"cancel script: {label} gives HTML the neighbouring script"
       (superscriptTextList "2" tree.toList)
     let fg := (Ir.Design.ofDoc doc).fg
     let ink := (colour.bind doc.palette.resolve).getD fg
-    t s!"cancel report: {label} colours the annotation and keeps the outer scope"
+    t s!"cancel script: {label} colours the annotation and keeps the outer scope"
       (segs.all fun s => match s with
         | .run _ c _ _ glyphs _ _ _ _ _ _ =>
           glyphs.all fun (_, scalar, _) =>
@@ -68,8 +66,7 @@ def cancelReportChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
         | .poly _ c => c == ink
         | _ => true)
 
-  -- A colour switch is not ink. Judge the colours the shipped glyphs,
-  -- marks and rules use, including restored scopes and CancelColor's value.
+  -- A colour switch is not ink: the shipped glyphs', marks' and rules' colours are judged.
   let colourCases : List (String × String × String × Bool × Bool) := [
     ("shadowed math colour", "", "${\\color{red}\\textcolor{blue}{\\cancelto{7}{x}}}$", false, false),
     ("shadowed formula colour", "", "{\\color{red}$\\textcolor{blue}{\\cancelto{7}{x}}$}", false, false),
@@ -114,9 +111,8 @@ def cancelReportChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       ((ds.any (·.code == "W0315")) == redInk &&
         !(ds.any fun d => d.code == "W0012" || d.code == "W0389"))
 
-/-- The marks themselves reach the page as ink, reserve horizontal room,
-and contribute their vertical bounds. Package options affect those
-shipped marks and their value, without changing the operand's colour. -/
+/-- The marks reach the page as ink, reserve horizontal room and contribute their vertical bounds;
+package options change the marks, not the operand's colour. -/
 def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -139,7 +135,7 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     let (_, out, _) := build opts "" s!"$\\{cmd}\{x}y$"
     ((bodyLines out).flatMap metricRunsAt).findSome? fun (s, x) =>
       if s == "𝑦" then some x else none
-  -- cancel.sty defaults to \hidewidth; only makeroom selects \hfil.
+  -- cancel.sty defaults to `\hidewidth`; only makeroom selects `\hfil`.
   for cmd in ["cancel", "bcancel", "xcancel", "cancelto{7}"] do
     t s!"cancel geometry: {cmd} defaults to overlap"
       (match nextX "" cmd, nextX "overlap" cmd with
@@ -167,16 +163,9 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "cancel geometry: polygon bounds enter the shipped line's vertical extent"
     (box.above == 900 && box.below == 300 && box.inkAbove == 900 && box.inkBelow == 300)
 
-/-- Ordinary strikes stay inside the control band's corner-to-corner box;
-arrows stay inside the full `Math.cancelEnvelope`, including perpendicular
-wings beyond that box. The control is a shipped `Layout.Out` band, and the
-following glyph supplies the actual style's font rule. Zero-area operands,
-all four math sizes, both room modes and both rule weights share the same
-judge, which rejects a vertex escaping any one edge or a missing mark.
-`Math.cancelGeom_envelope_between` supplies the universal reservation bound.
-Clearance compares absolute positions after accumulating segment advances;
-`CancelAlignment.checks` independently holds the target to its forward ray
-and resolved font gap. -/
+/-- Strikes stay inside the control band's corner-to-corner box and arrows inside
+`Math.cancelEnvelope`, over zero-area operands, all four math sizes, both room modes and both rule
+weights. -/
 def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -193,8 +182,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       (ShippedInk.polygonHull pts).any fun mark =>
         bounds.left ≤ mark.left && mark.right ≤ bounds.right &&
           bounds.bottom ≤ mark.bottom && mark.top ≤ bounds.top
-  -- Outline hulls conservatively enclose ink. Require a positive gap on
-  -- either axis against every mark; touching hulls do not count as clear.
+  -- Outline hulls enclose ink conservatively, so clearance needs a positive gap.
   let clearsInk (ink : ShippedInk.InkBounds)
       (placed : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
     !placed.isEmpty && placed.all fun pts =>
@@ -207,7 +195,6 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       | .ok ink => clearsInk ink (ShippedInk.polygonsAt l)
       | .error _ => false
   -- Compensated kerns preserve every other pen and the logical advance.
-  -- Increasing the run's raise moves its ink upward in the hull coordinates.
   let moveTarget (l : Layout.LineOut) (dx dy : Dim.Sp) : Layout.LineOut :=
     { l with segs := l.segs.flatMap fun seg => match seg with
       | .run face color link w glyphs size leading underline raise ground attr =>
@@ -269,7 +256,6 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           let bounds : ShippedInk.InkBounds := { left, bottom, right, top }
           t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
             (inside bounds polys)
-          -- Mutate actual emitted polygons against the fixed expected box.
           -- One sp is the coordinate grid, not a perceptual tolerance.
           for (edge, escaped) in [("left", (left - 1, bottom)),
               ("right", (right + 1, bottom)), ("bottom", (left, bottom - 1)),
@@ -300,7 +286,6 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
                     pts.all fun (x, _) => line.x ≤ pen + x && pen + x ≤ yx
                 | none => false)
 
-  -- The operand still inks x after negative kerns make its advance negative.
   -- Nonempty vertices alone do not witness the filled arrowhead's ink.
   let area2 (pts : Array (Dim.Sp × Dim.Sp)) : Int :=
     pts.zipIdx.foldl (fun acc (p, n) =>
@@ -320,12 +305,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"cancel box: {label} ships a nonzero filled arrowhead"
         ((polygons line).back?.any fun pts => area2 pts != 0)
 
-  -- Move a decoded contour vertex strictly inside the actual arrowhead.
-  -- A single nonzero polygon outlines this fixture's 7: an interior head
-  -- neighbourhood around its contour vertex contains painted glyph ink,
-  -- unlike a hull-centre overlap which could sit in a glyph's empty region.
-  -- Two carrier glyphs expose a forgotten polygon pen even for a broad,
-  -- thick arrowhead; their actual advances determine the displacement.
+  -- A head neighbourhood around a contour vertex holds glyph ink, unlike a hull-centre overlap.
   for (shape, struck) in [("square", "x"), ("wide", "abcdefabcdef"),
       ("steep", "\\frac{x}{\\frac{z}{w}}")] do
     for opts in ["makeroom", "makeroom,thicklines", "overlap", "overlap,thicklines"] do
@@ -384,8 +364,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"cancel box: {label} accepts clear ink and rejects painted overlap"
         (arrowClearsTarget line && !arrowClearsTarget moved)
 
-      -- A vertically clear target need not clear the arrow horizontally.
-      -- The gap comes from the actual target face; zero gap must fail.
+      -- A vertically clear target need not clear the arrow horizontally; zero gap fails.
       let gap := font.math.map (fun m =>
         m.overbarVerticalGap * g.size / (font.unitsPerEm : Int)) |>.getD 0
       let centredX := (headInk.left + headInk.right - ink.left - ink.right) / 2

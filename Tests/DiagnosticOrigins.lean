@@ -8,9 +8,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- Delayed glyph diagnostics name the actual failing source occurrence. A
-covered occurrence of the same scalar is not evidence for the later loss.
-The glyph census also checks that locating a fallback never changes its ink. -/
+/-- Delayed glyph diagnostics name the failing occurrence, not an earlier covered one of the same
+scalar, and locating a fallback never changes its ink. -/
 def diagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do

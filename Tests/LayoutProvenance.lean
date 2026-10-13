@@ -13,8 +13,7 @@ private def provenanceSpan (line id : Nat) : Span :=
     pos := { line, col := 3, origins := [{ id, name := "framefixture" }],
              command := some "\\begin{frame}" } }
 
-/-- Span equality intentionally ignores expansion metadata, so the regression
-checks those fields separately as well as the physical source coordinates. -/
+/-- Span equality ignores expansion metadata, so those fields are checked separately. -/
 private def sameSource (actual : Option Span) (expected : Span) : Bool :=
   match actual with
   | none => false
@@ -22,8 +21,8 @@ private def sameSource (actual : Option Span) (expected : Span) : Bool :=
     actual == expected && actual.pos.origins == expected.pos.origins &&
       actual.pos.command == expected.pos.command
 
-/-- Identical frames restart numbering, expand overlays, and spill naturally.
-Their diagnostics must still name two distinct opening declarations. -/
+/-- Identical frames that restart numbering, expand overlays and spill still name two distinct
+opening declarations. -/
 def frameSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let geom : Geom := {
     pageW := pt 220, pageH := pt 120
@@ -58,8 +57,7 @@ def frameSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
         filteredSpills.any (fun d => sameSource d.span first) &&
         filteredSpills.any (fun d => sameSource d.span second))]
 
-/-- Each overflowing line names its own source, including a note whose
-generated mark shifts the item indices and expansions at shared coordinates. -/
+/-- Each overflowing line names its own source, a note's generated mark included. -/
 def overfullSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let geom : Geom := {
     pageW := pt 160, pageH := pt 400

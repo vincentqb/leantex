@@ -10,8 +10,8 @@ open LeanTex.Cli
 
 namespace Tests
 
-/-- The child removes only its fresh, empty working directory. The suite's
-cwd and environment remain unchanged while other IO checks run. -/
+/-- The child removes only its fresh, empty working directory, leaving the suite's cwd and
+environment unchanged. -/
 def runCacheCwdChild (args : List String) : IO UInt32 := do
   let [owned, stage] := args |
     throw <| IO.userError "expected the owned working directory and removal stage"
@@ -53,8 +53,8 @@ def runCacheCwdChild (args : List String) : IO UInt32 := do
   IO.println s!"cache identity/{stage}: {failed.length} failures"
   return if failed.isEmpty then 0 else 1
 
-/-- Optional identity IO may prevent caching, but must neither bypass the
-producer nor turn its answer into an IO exception. -/
+/-- Optional identity IO may prevent caching but neither bypasses the producer nor turns its answer
+into an exception. -/
 def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (lean, leanPath) ← leanChild "cache identity checks"
   for stage in #["before", "after"] do

@@ -138,7 +138,6 @@ private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     let key := Compression.slotKey engine.engine input
     let path := Compression.cachePath dir input
     IO.FS.createDirAll (path.parent.getD dir)
-    -- This is all the old header-only reader needed to embed a partial file.
     IO.FS.writeBinFile path (bytes [0x78, 0x9C])
     let calls ← IO.mkRef (0 : Nat)
     let compute := fun b => do
@@ -205,7 +204,6 @@ private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "compression cache: failed rename falls back and cleans staging"
       (unpublished == expected && entries.all fun entry => !entry.fileName.endsWith ".part")
 
-/-- Guards for the actual compression dispatch and cache boundary. -/
 def compressionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let a := bytes [0, 255, 7, 0, 10]
   let b := "synthetic second font program".toUTF8

@@ -8,9 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- The image boxes a reader receives, including the store entry whose
-pixels or PDF form the writer embeds. A placeholder cannot pass this
-check as a successfully lowered animation. -/
+/-- The image boxes a reader receives, with the store entry the writer embeds, so a placeholder
+cannot pass as a lowered animation. -/
 private def animatedImageSegs (out : Layout.Out) :
     Array (Option Nat × Dim.Sp × Dim.Sp) :=
   (allLines out).foldl (fun acc line =>
@@ -27,9 +26,8 @@ private structure GraphicsPage where
   tree : Array Html.Node
   diags : Array Diag
 
-/-- Read the two artifacts after elaboration. Synthetic store entries
-have distinct request identities and captured browser bytes, so a source-only
-lookup cannot accidentally satisfy a page-selection check. -/
+/-- Both artifacts after elaboration; store entries with distinct identities keep a source-only
+lookup from satisfying a page check. -/
 private def graphicsPage (fonts : Font.FontSet) (imgs : Image.Store)
     (pre body : String) : GraphicsPage :=
   let (doc, diags) := elabStr (dvDoc pre body)
@@ -49,19 +47,13 @@ private def graphicsSizingAttrs (p : GraphicsPage) : Array (Array (String × Str
   (elemAttrsList (· == "img") #[] p.tree.toList).map fun (_, attrs) =>
     attrs.filter fun a => a.1 != "src" && a.1 != "class"
 
-/-- An animation command owns four mandatory groups. Its frame rate,
-source and range must never become paragraph ink; the tail must survive.
-The witnesses are shipped layout and typed HTML, with an ordinary image
-as the text/size control. The initial five artifact assertions failed on
-a9116a2 before lowering existed. The PNG plans here isolate request
-dispatch and sizing; multipage decoding and SVG fulfilment have their own
-guards. Animation frames share dimensions, as the animate manual §6.1
-sizes the widget from the first frame even when another poster is chosen. -/
+/-- An animation command owns four mandatory groups: its rate, source and range never become ink and
+the tail survives, in both artifacts. -/
 def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let info := graphicsPng 64 40
-  t "animation regression has a decoded image" info.isSome
+  t "animation probe has a decoded image" info.isSome
   let svg (label : String) := svgDocument s!"<rect id=\"{label}\" width=\"32\" height=\"20\"/>" 64 40
   let imgs : Image.Store := { entries := #[
     { src := "animation-probe", animated := true, href := "animation-probe.svg",
@@ -147,15 +139,12 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     p.images == #[(some idx, w, h)] &&
       imageSrcs p == #[hrefs[idx]!]
 
-  -- animate manual §§5–6.1: first is the default; numbers count frames
-  -- from zero. The exact identities also distinguish numeric zero from
-  -- graphicx's numeric page one while both address the first PDF page.
+  -- animate manual §§5–6.1: first is the default; numbers count frames from zero.
   let posters : Array (String × Nat) := #[
     ("", 0), ("poster", 0), ("poster=first", 0), ("poster=0", 2),
     ("poster=1", 3), ("poster={1}", 3), ("poster=last", 4),
     ("poster=last,poster", 0), ("poster=none,poster=last", 4),
-    -- A repeated key keeps its last value in both directions: an earlier
-    -- invalid value must not poison a later valid one (last-wins parsing).
+    -- A repeated key keeps its last value: an earlier invalid one cannot poison a later valid one.
     ("poster=bad,poster=last", 4), ("poster=1,poster=last", 4),
     ("every=1,type=pdf", 0), ("every=2,every=1,type=png,type=pdf", 0)]
   for (keys, idx) in posters do
@@ -167,15 +156,11 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       (p.diags.all fun d => d.severity == .note ||
         (d.code == "W0110" && d.subject == some "animategraphics:playback"))
 
-  -- graphicx.sty Gin/page and a synthetic three-page LuaLaTeX probe:
-  -- default = first, numeric pages start at one, and page=0 / page=last
-  -- are errors. Distinct dimensions witness that infoRequest? is used as
-  -- well as findRequest? and the HTML source lookup.
+  -- graphicx's `page`: default first, numeric pages from one, `page=0` and `page=last` errors.
   let pages : Array (String × Nat × Int × Int) := #[
     ("", 1, 64, 40), ("page=1", 5, 64, 40),
     ("page=2", 6, 48, 96), ("page={2}", 6, 48, 96),
     ("page=3", 7, 80, 20), ("page=3,page=2", 6, 48, 96),
-    -- Last-wins: an earlier invalid page must not poison a later valid one.
     ("page=bad,page=2", 6, 48, 96), ("page=0,page=2", 6, 48, 96)]
   for (keys, idx, w, h) in pages do
     let p := page "" ("Lead" ++ graphic keys ++ "Tail")
@@ -243,8 +228,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (unknown.diags.any (·.code == "W0301") && hasStr unknown.ink "Kept" &&
       treeShownOccurs unknown.tree "Kept" == 1)
 
-  -- Every refused source still owns all four groups. Nothing at that
-  -- site becomes ink, and the following text is the unchanged control.
+  -- Every refused source still owns all four groups; nothing at that site becomes ink.
   let absent := page "" "LeadTail"
   let refusals : Array (String × String) := #[
     (animate "" "0" "2", "nonempty first/last"),

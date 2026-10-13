@@ -8,42 +8,9 @@ open LeanTex.Core
 
 namespace Tests.ElementBoundaries
 
-/-!
-# The space between two elements is the space TeX sets there
-
-lualatex (TeX Live 2026) on the invented probes below — beamer with moloch,
-and the article class, both at 10 pt, OpenSans the only text face (sans and
-mono), FiraMath for math — sets each probe's lower element, a blank line
-between the two, a measured distance below the upper one's first line. Each
-row holds the engine's page (`Layout.Out`) to one difference of two such
-distances, so that what neither boundary decides cancels: an *opening* row
-is the lower element's distance less a paragraph's in its place, under the
-same upper element; a *closing* row is a paragraph's distance under the
-upper element less its distance under a paragraph. The engine sets the
-article's paragraphs its own peer gap apart, not TeX's `\parskip` — the
-class's design — so the article's rows with a paragraph on the boundary
-hold the distance itself.
-
-* beamer's lists stand their `\topsep` (3 pt) further than a paragraph
-  after anything: beamer sets the list's body colour before `\list` opens,
-  so the colour stack's push is last on the vertical list and `\addvspace`
-  finds no skip to take the larger of;
-* a `center` is a trivlist whose `\topsep` is the size file's, 8 pt at
-  10 pt, under beamer too (its own `\@listi` reaches lists, not the
-  outermost trivlist); `\addvspace` takes the larger of it and the space the
-  upper element leaves (a block's `\smallskipamount`, a list's `\topsep`, a
-  display's skip below), and the article adds its 2 pt `\partopsep` where
-  the trivlist opens in vertical mode;
-* a display that opens a paragraph after an environment and a blank line
-  stands on the empty line TeX sets first, one baseline skip, as after a
-  paragraph — the blank line's `\par` ends the environment's `\@endpe`;
-* a `verbatim` is a trivlist (latex.ltx `\@verbatim`), its `\topsep` the
-  trivlist's at its depth; a `minted` is fancyvrb's `\list` one level down,
-  its `\topsep` taking the larger of the space above — 8 and 3 pt from a
-  paragraph in the frame and inside a block's body alike, and 3 and 2 below
-  an item's first paragraph, where the item's level sets both. lualatex
-  closes a `minted` 0.25 pt short of its `\topsep`, which no row holds.
--/
+/-! The space between two elements is the space TeX sets there: each row holds the page to one
+difference of two lualatex-measured distances on invented beamer and article probes, so what neither
+boundary decides cancels. -/
 
 private def preamble (cls : String) : String :=
   (if cls == "article" then "\\documentclass[10pt]{article}\n\\usepackage{amsmath}\n"
@@ -71,9 +38,8 @@ private def lower : String → String
   | "minted" => "\\begin{minted}{text}\nomega code\n\\end{minted}"
   | _ => "\\begin{verbatim}\nomega code\n\\end{verbatim}"
 
-/-- A probe's body: the upper element, a blank line, the lower — or the
-lower opening a block's body under its title (`bodytop`), or an item's
-second paragraph (`item`). -/
+/-- A probe's body: the upper element, a blank line, the lower, or the lower opening a block's body
+(`bodytop`) or an item's second paragraph (`item`). -/
 private def pairBody (x y : String) : String :=
   match x with
   | "bodytop" => "\\begin{block}{Alpha title}\n" ++ lower y ++ "\n\\end{block}"
@@ -95,13 +61,12 @@ private def lineY (page : Layout.PageOut) (word : String) : Option Dim.Sp :=
 private def span (page : Layout.PageOut) : Option Dim.Sp := do
   pure ((← lineY page "omega") - (← lineY page "alpha"))
 
-/-- 2 thousandths of a point: lualatex's three-decimal big points and their
-conversion to TeX points. -/
+/-- 2 thousandths of a point: lualatex's three-decimal big points and their conversion to TeX
+points. -/
 private def tolerance : Int := 2
 
-/-- One measured difference: the probe pair whose distance is measured, the
-pair it is measured against (none: the distance itself), and lualatex's
-difference in thousandths of a TeX point. -/
+/-- One measured difference: the probe pair, the pair it is measured against (none: the distance
+itself), and lualatex's difference in thousandths of a TeX point. -/
 private structure Row where
   cls : String
   pair : String × String
@@ -122,16 +87,14 @@ private def measured : List Row :=
   -- beamer's lists: their `\topsep`, 3 pt, on top of whatever stands above.
   (["para", "block", "list", "enum", "centre", "display", "verbatim"].flatMap fun x =>
     [opening "beamer" x "list" 3000, opening "beamer" x "enum" 3000]) ++
-  -- a centre: the size file's 8 pt `\topsep`, the larger of it and the space
-  -- above.
+  -- A centre: the size file's 8 pt `\topsep`, the larger of it and the space above.
   [opening "beamer" "para" "centre" 8000, opening "beamer" "block" "centre" 5001,
    opening "beamer" "list" "centre" 4999, opening "beamer" "enum" "centre" 4999,
    opening "beamer" "centre" "centre" 0, opening "beamer" "display" "centre" 2000,
    closing "beamer" "centre" 8000,
    opening "article" "list" "centre" 0, opening "article" "enum" "centre" 0,
    distance "article" "para" "list" 22001] ++
-  -- a display after an environment and a blank line: the empty line first,
-  -- one baseline skip beyond a paragraph there, as after a paragraph.
+  -- A display after an environment and a blank line: the empty line first, as after a paragraph.
   [opening "beamer" "para" "display" 12000, opening "beamer" "list" "display" 11999,
    opening "beamer" "enum" "display" 11999, opening "beamer" "centre" "display" 12001,
    distance "article" "para" "display" 24000, opening "article" "list" "display" 11999,
@@ -162,14 +125,8 @@ private def rem (m : Nat) : String :=
   let r := toString (m % 1000)
   s!"{m / 1000}.{"".pushn '0' (3 - min 3 r.length) ++ r}rem"
 
-/-- The browser's half (`HtmlDoc.blockGapRules`, beamer's lineage at 10 pt):
-at the top list level the last rule a pair of elements meets — every rule
-stands at zero specificity, so the later one wins — composes the upper
-element's own space below with the lower one's opening as the page does: a
-beamer list adds its `\topsep` and a block its `\medskipamount` to a
-block's `\smallskipamount`, a list's `\topsep`, a centred block's or a
-display's space below, and a centred block takes the larger. The article's
-sheet owes none of them. -/
+/-- The browser's half: at the top list level, the last rule a pair of elements meets composes the
+upper's space below with the lower's opening as the page does. -/
 private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
   let size := Dim.pt 10
   let rules := HtmlDoc.blockGapRules .beamer size {}
@@ -177,8 +134,7 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .boundary sel v => some (cssSelParts sel, v)
     | _ => none).toArray
   let top := ":not(li, dd, blockquote) > "
-  -- the last rule holding a top-level part that names the upper element
-  -- and, after its sibling combinator, the lower one
+  -- The last rule with a top-level part naming the upper element and, after it, the lower.
   let lastFor (upper lower : String) : Option (Nat × String) :=
     (bounds.zipIdx.toList.filter fun ((parts, _), _) => parts.any fun p =>
       p.startsWith top && match (p.drop top.length).toString.splitOn " + " with
@@ -224,26 +180,21 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"element boundaries (beamer, browser): {name} composes both spaces, got {v}"
         (ok v && generic.all (· < i))
     | none => check ref s!"element boundaries (beamer, browser): {name} has its pair rule" false
-  -- A slide's spacer after its body (`.fill`, the frame's `\vfill`) meets
-  -- an element's own space below it: no paragraph follows to spend its
-  -- `\parskip`, so a `[c]` frame centres the element as TeX's does.
+  -- A slide's spacer after its body meets an element's own space below: no paragraph follows.
   for (name, sel) in [("a list", listL), ("a minted", ".verbatim-list"), ("a centred block", triv),
       ("a block", blockU), ("a display", ".display")] do
     let own := bounds.toList.filter fun (parts, _) => parts.any fun p =>
       p.startsWith (sel ++ " + :is(") && p.endsWith ", .fill, section.block-shaped)"
     check ref s!"element boundaries (beamer, browser): the slide's spacer after {name} meets its own space alone"
       (!own.isEmpty && own.all fun (_, v) => !hasStr v "parskip")
-  -- A block set in its kind's template stands its template's skips as its
-  -- padding and spends the paragraph's `\parskip` inside it: the element
-  -- above meets it on its own space alone, and no adding pair reads it.
+  -- A templated block's skips are its padding: the element above meets it on its own space.
   let shapedBounds := (HtmlDoc.blockGapRules .beamer size {} (shaped := true)).filterMap fun
     | .boundary sel v => some (cssSelParts sel, v)
     | _ => none
   check ref "element boundaries (beamer, browser): a templated block meets the list above it on the list's own space"
     (shapedBounds.any fun (parts, v) => parts.any (fun p =>
       p.startsWith (listL ++ " + :is(") && p.endsWith "section.block-shaped)") && !hasStr v "parskip")
-  -- the centred block's own rules stand before the block's, so its pair is
-  -- the last rule it and a templated block meet
+  -- The centred block's rules stand before the block's, so its pair is the last rule both meet.
   let lastShaped := (shapedBounds.filter fun (parts, _) =>
     parts.any (· == s!"{triv} + section.block-shaped")).getLast?
   check ref "element boundaries (beamer, browser): a templated block meets the centred block above it on its own space"
@@ -259,14 +210,8 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .boundary sel _ => !hasStr sel top
       | _ => true)
 
-/-- A listing whose class does not space its environment's frame as TeX does
-stands as a paragraph there (`Ir.ListingFrame.onPage`), and a paragraph
-leaves no `\@endpe`, so the display after it opens on its empty line whether
-or not a blank line stands between: a verbatim in the article, whose
-paragraphs stand the engine's peer gap apart, the résumé, whose trivlists
-keep the size file's quantized `\topsep`, the web page and the poster, and a
-minted on the web page, which has no list levels. lualatex sets the
-article's 22 and 34 pt, the engine 24 for both. -/
+/-- A listing whose class does not space its environment's frame as TeX does stands as a paragraph
+there, so the display after it opens on its empty line with or without a blank line. -/
 private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let verbatim := "\\begin{verbatim}\nalpha code\n\\end{verbatim}"
   let minted := "\\begin{minted}{text}\nalpha code\n\\end{minted}"

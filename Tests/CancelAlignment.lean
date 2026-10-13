@@ -10,10 +10,7 @@ namespace CancelAlignment
 
 open ShippedInk
 
-/-- These probes contain one northeast cancellation arrow. The head's
-first vertex is its emitted tip; perpendicular wings may exceed either
-coordinate of that tip. Area and ray-shape judges below reject malformed
-heads instead of imposing an operand-box constraint on the triangle. -/
+/-- The emitted tip of a probe's one northeast cancellation arrow: its head's first vertex. -/
 def arrowTip (polys : Array (Array (Dim.Sp × Dim.Sp))) :
     Except String (Dim.Sp × Dim.Sp) := do
   let heads := polys.filter (·.size == 3)
@@ -25,8 +22,7 @@ def arrowTip (polys : Array (Array (Dim.Sp × Dim.Sp))) :
   if area == 0 then throw "arrowhead has no painted area"
   return tip
 
-/-- The lower-left endpoint actually present in the shipped shaft.
-Head-only arrows have no shaft direction to report. -/
+/-- The lower-left endpoint present in the shipped shaft; a head-only arrow reports none. -/
 def shaftTail (polys : Array (Array (Dim.Sp × Dim.Sp))) :
     Option (Dim.Sp × Dim.Sp) := do
   let #[shaft] := polys.filter (·.size > 3) | none
@@ -34,12 +30,8 @@ def shaftTail (polys : Array (Array (Dim.Sp × Dim.Sp))) :
   let tail := shaft.foldl (fun (x, y) q => (min x q.1, min y q.2)) p
   if shaft.contains tail then some tail else none
 
-/-- A triangular head retains both wings about the shipped shaft's ray.
-The full transverse width is three font rule thicknesses. Symmetry is
-judged across and along the ray: cross-products alone cannot detect a
-wing sliding along the shaft. Each coordinate's division error is below
-one sp, so a wing-to-wing projection errs by at most twice the sum of
-the direction coordinates. A merely nonzero triangle is not enough. -/
+/-- A triangular head keeps both wings about the shipped shaft's ray, three font rules wide,
+symmetric across and along the ray within the division error. -/
 def headHasWings (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool :=
   match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
   | .ok tip, some tail, some head =>
@@ -55,12 +47,8 @@ def headHasWings (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool 
       a - b + rounding ≥ 3 * rule * length
   | _, _, _ => false
 
-/-- Fixed head aspect measured from the shipped shaft and triangle, not
-from a geometry constructor. Axial depth is four font rules and transverse
-width three. Multiplying projections by the integral diagonal length
-avoids another division: each coordinate was rounded below one sp, so the
-error is bounded by twice that length times the sum of the ray coordinates.
-The assertion requires a positive rule and a nonzero northeast ray. -/
+/-- The head's aspect measured from the shipped shaft and triangle: four font rules deep and three
+wide, within the rounding bound. -/
 def headHasShape (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool :=
   match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
   | .ok tip, some tail, some head =>
@@ -87,13 +75,12 @@ structure Witness where
   glyphs : Array ShippedGlyph
   deriving Repr
 
-/-- Twice the signed distance from the target's vertical ink centre to
-the arrow tip. Positive means the target is too high on the page. -/
+/-- Twice the signed distance from the target's vertical ink centre to the arrow tip, positive when
+the target is too high. -/
 def Witness.centreError2 (w : Witness) : Dim.Sp :=
   w.ink.top + w.ink.bottom - 2 * w.tip.2
 
-/-- A diagnostic only: the first source glyph may follow a glyphless
-prefix, and the attachment may move the whole logical origin left. -/
+/-- A diagnostic only, since the first source glyph may follow a glyphless prefix. -/
 def Witness.originGap (w : Witness) : Dim.Sp := w.originX - w.tip.1
 
 def Witness.direction (w : Witness) : Option (Dim.Sp × Dim.Sp) := do
@@ -111,9 +98,8 @@ def Witness.rayError2 (w : Witness) : Option Int := do
   let (cx, cy) := w.centreFromTip2
   return dx * cy - dy * cx
 
-/-- Judge the forward ray of the shipped shaft. In doubled centre
-coordinates, rounding one free coordinate by at most half an sp gives
-the tight cross-product bound `max dx dy`. No placement routine is read. -/
+/-- Whether the target lies on the forward ray of the shipped shaft, within the doubled-coordinate
+rounding bound `max dx dy`. -/
 def Witness.alongRay (w : Witness) : Bool :=
   match w.direction with
   | none => false
@@ -122,30 +108,24 @@ def Witness.alongRay (w : Witness) : Bool :=
     dx * cx + dy * cy > 0 &&
       (dx * cy - dy * cx).natAbs ≤ (max dx dy).natAbs
 
-/-- One near ink edge meets the positive font gap exactly; the other is
-no farther than that gap, and its far edge reaches the tip's coordinate.
-This admits either attachment axis without reproducing axis selection. -/
+/-- One near ink edge meets the positive font gap exactly, the other is no farther, and its far edge
+reaches the tip, on either attachment axis. -/
 def Witness.clearsTip (w : Witness) : Bool :=
   let x := w.ink.left - w.tip.1
   let y := w.ink.bottom - w.tip.2
   w.fontGap > 0 && ((x == w.fontGap && y ≤ w.fontGap && w.tip.2 ≤ w.ink.top) ||
     (y == w.fontGap && x ≤ w.fontGap && w.tip.1 ≤ w.ink.right))
 
-/-- Positive separation between target outline ink and every shipped mark
-hull, including full head wings outside the operand rectangle. A tip gap
-alone cannot certify this: the target must also clear the actual marks. -/
+/-- Positive separation between the target's outline ink and every shipped mark hull, head wings
+included. -/
 def Witness.clearsMarks (w : Witness) (polys : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
   !polys.isEmpty && polys.all fun pts =>
     (polygonHull pts).any fun mark =>
       mark.right < w.ink.left || w.ink.right < mark.left ||
         mark.top < w.ink.bottom || w.ink.top < mark.bottom
 
-/-- Read a one-line synthetic page. The `u` immediately before the
-construct witnesses its actual style size and math face, so the expected
-gap is scaled from that font's MATH table rather than guessed from text
-size or copied from cancellation geometry. Target scalars are disjoint
-from every operand and carrier in `probes`. `originX` records the first
-source glyph, including an empty-outline space, for diagnostics only. -/
+/-- Read a one-line synthetic page: the `u` before the construct witnesses its style size and math
+face, from whose MATH table the expected gap is scaled. -/
 def measure (fonts : Font.FontSet) (out : Layout.Out) (target : String) :
     Except String Witness := do
   let #[line] := bodyLines out | throw "expected one body line"
@@ -172,11 +152,8 @@ structure Probe where
   ordinary : String
   deriving Repr
 
-/-- Invented operands span narrow, shallow, steep and degenerate arrows.
-The fourth target contains only a superscript on an empty base: all its ink
-is away from its local baseline, exposing a bounds helper that includes zero.
-Narrow and tall operands also carry a wide label, so a steep attachment
-must accommodate ink extending left of the tip as well as a logical end. -/
+/-- Invented operands spanning narrow, shallow, steep and degenerate arrows, with wide labels and a
+superscript on an empty base. -/
 def probes : Array Probe := Id.run do
   let shapes := [("narrow", "i"), ("wide", "x+x+x+x+x+x"),
     ("tall", "\\frac{x}{\\frac{x}{x}}"), ("empty", ""),
@@ -224,10 +201,8 @@ structure NonpaintingProbe where
   reference : Probe
   deriving Repr
 
-/-- Each altered target has exactly the raised zero of its reference.
-The added space has source and advance but no outline; the empty fraction
-has logical width but its zero-width bar never reaches the shipped page.
-Wide and tall operands exercise shallow and steep arrows in every style. -/
+/-- Targets each altered by a nonpainting part (an outline-less space, an empty fraction) beside
+their reference. -/
 def nonpaintingProbes : Array NonpaintingProbe := Id.run do
   let shapes := [("wide", "x+x+x+x+x+x"), ("tall", "\\frac{x}{\\frac{x}{x}}")]
   let styles := [("text", "$", "$", "$z^{", "}$"),
@@ -257,8 +232,7 @@ def nonpaintingProbes : Array NonpaintingProbe := Id.run do
                        body := body value, ordinary := ordinary value, target, options } }
   return result
 
-/-- Distance between the two source neighbours. Relative positions remove
-display centring and page placement from the construct's advance check. -/
+/-- The distance between the two source neighbours, free of display centring and page placement. -/
 def neighbourSpan (out : Layout.Out) : Except String Dim.Sp := do
   let all := shippedBodyGlyphs out
   let #[before] := all.filter (·.scalar == '𝑢') | throw "left neighbour is missing"
@@ -267,8 +241,7 @@ def neighbourSpan (out : Layout.Out) : Except String Dim.Sp := do
     throw "neighbours are on different lines"
   return after.x - before.x
 
-/-- Actual horizontal construct endpoints come from the adjacent ordinary
-source glyphs, never the target's first visible glyph or a polygon's pen. -/
+/-- The construct's horizontal endpoints, from the adjacent ordinary source glyphs. -/
 def constructEndpoints (out : Layout.Out) : Except String (Dim.Sp × Dim.Sp) := do
   let all := shippedBodyGlyphs out
   let #[before] := all.filter (·.scalar == '𝑢') | throw "left neighbour is missing"
@@ -277,8 +250,7 @@ def constructEndpoints (out : Layout.Out) : Except String (Dim.Sp × Dim.Sp) := 
     throw "neighbours are on different lines"
   return (before.x + before.advance, after.x)
 
-/-- Read painted rules at their shipped pens, independently of item bounds.
-The tall neighbours' fraction bars matter as well as their glyph outlines. -/
+/-- The painted rules of a line at their shipped pens, the tall neighbours' fraction bars included. -/
 def rulesAt (line : Layout.LineOut) : Array InkBounds := Id.run do
   let mut pen := line.x
   let mut result := #[]
@@ -312,10 +284,7 @@ def RoomWitness.clearsBefore (r : RoomWitness) : Bool :=
 def RoomWitness.clearsAfter (r : RoomWitness) : Bool :=
   !r.after.isEmpty && r.assembly.all fun a => r.after.all a.disjoint
 
-/-- Decode the target, marks and neighbouring ink directly from the page.
-Neighbour letters are disjoint from the operand and target census. The
-fraction bars wholly outside the construct belong to the tall neighbours.
-Room is checked on both sides even when only the right neighbour moved. -/
+/-- The target, marks and neighbouring ink decoded from the page, room checked on both sides. -/
 def roomWitness (fonts : Font.FontSet) (out : Layout.Out) (w : Witness) :
     Except String RoomWitness := do
   let #[line] := bodyLines out | throw "expected one body line"
@@ -334,10 +303,8 @@ def roomWitness (fonts : Font.FontSet) (out : Layout.Out) (w : Witness) :
     if right ≤ b.left then after := after.push b
   return { left, right, assembly := #[w.ink] ++ marks, before, after }
 
-/-- Read the head and thickness from actual shipped pages over shallow,
-steep and ordinary operands, all four math styles and both room policies.
-Nonzero rays and positive font rules permit a visible bounded-aspect head;
-its perpendicular wings need not fit inside the operand rectangle. -/
+/-- Over shallow, steep and ordinary operands, all four math styles and both room policies, the
+shipped head has its bounded aspect and both wings. -/
 def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   for (shape, operand) in [("ordinary", "x"), ("wide", "x+x+x+x+x+x"),
@@ -375,18 +342,15 @@ def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
               check ref s!"cancel head aspect: {shape}/{style}/{options} reserves full wings and target"
                 (r.containsInk && r.clearsBefore && r.clearsAfter)
 
-/-- Source geometry up to translation, including nonpainting glyphs and
-the actual advances used by the shipped pen. -/
+/-- Source geometry up to translation, nonpainting glyphs and shipped advances included. -/
 def relativeSource (glyphs : Array ShippedGlyph) :
     Array (Nat × Nat × Char × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
   let x := (glyphs[0]?).map (·.x) |>.getD 0
   let y := (glyphs[0]?).map (·.y) |>.getD 0
   glyphs.map fun g => (g.face, g.glyph, g.scalar, g.size, g.advance, g.x - x, g.y - y)
 
-/-- An ordinary rendering at the target's style independently witnesses
-its internal source advances. Its following `v` also witnesses the logical
-run end, including trailing script space. Translating from a source glyph
-does not identify that glyph with the target's logical origin. -/
+/-- An ordinary rendering at the target's style witnesses its source advances and logical run end,
+and the cancellation reserves its room. -/
 def sourceAndRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (p : Probe) (out : Layout.Out) (w : Witness) : IO Unit := do
   let (ordinary, ds) := layProbe fonts { p with body := p.ordinary }
@@ -424,9 +388,7 @@ def sourceAndRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         check ref s!"{name} separates target and marks from following ink hulls"
           r.clearsAfter
 
-/-- Empty outlines and zero-width rules change source spacing, not the
-painted hull's attachment. An empty space before the empty fraction makes
-that fraction's internal advance observable after the whole target moves. -/
+/-- Empty outlines and zero-width rules change source spacing, never the painted hull's attachment. -/
 def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   for p in nonpaintingProbes do
@@ -482,15 +444,13 @@ def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         | _ => check ref s!"{name} retains exactly one source space" false
       | .emptyRule => pure ()
 
-/-- Every triangle from these vertices has zero area. Unlike a signed
-polygon-area sum this cannot hide cancellation between opposite windings,
-and duplicate initial vertices do not conceal a later noncollinear one. -/
+/-- Whether every triangle from these vertices has zero area, which no opposite windings can hide. -/
 def collinear (points : Array (Dim.Sp × Dim.Sp)) : Bool :=
   points.all fun a => points.all fun b => points.all fun c =>
     (b.1 - a.1) * (c.2 - a.2) == (b.2 - a.2) * (c.1 - a.1)
 
-/-- Mutate only the fixture's MATH rule constant. A zero-thickness
-cancellation still ships its polygon vertices but fills no area. -/
+/-- The fixture with only its MATH rule constant zeroed, so a cancellation ships its polygon but
+fills no area. -/
 def zeroRuleFonts (fonts : Font.FontSet) : Font.FontSet :=
   { fonts with fonts := fonts.fonts.map fun f =>
       { f with math := f.math.map fun m => { m with overbarRuleThickness := 0 } } }
@@ -500,9 +460,7 @@ structure NestedMarkProbe where
   reference : Probe
   deriving Repr
 
-/-- The added nested mark is collinear, including when its diagonal hull
-has positive width and height. Raised and descender targets keep actual
-paint away from the invisible mark's corners. -/
+/-- Targets with an added nested mark that is collinear, its hull of positive width and height. -/
 def nestedMarkProbes : Array NestedMarkProbe := Id.run do
   let shapes := [("narrow", "i"), ("wide", "x+x+x+x+x+x"),
     ("tall", "\\frac{x}{\\frac{x}{x}}")]
@@ -524,10 +482,8 @@ def nestedMarkProbes : Array NestedMarkProbe := Id.run do
             probe := { reference with body := body ("\\cancel{" ++ value ++ "}") } }
   return result
 
-/-- The painted target's placement relative to an actual operand glyph.
-Using the operand removes page centring and common room padding. With the
-zero-rule fixture the outer arrow also has no fill: this paired witness
-tests whether invisible marks move ink, not whether that arrow paints. -/
+/-- The painted target's placement relative to an operand glyph, free of page centring and room
+padding. -/
 def operandRelativeInk (fonts : Font.FontSet) (out : Layout.Out) (target : String) :
     Except String (InkBounds × Array ShippedGlyph) := do
   let #[line] := bodyLines out | throw "expected one body line"
@@ -541,9 +497,7 @@ def operandRelativeInk (fonts : Font.FontSet) (out : Layout.Out) (target : Strin
     | throw "operand anchor is missing"
   return (ink.shift (-origin.x) origin.y, glyphs)
 
-/-- Adding a known nonpainting polygon must not move the same painted
-target. Source advances remain a separate assertion; no expected placement
-comes from a bounds or attachment helper in production. -/
+/-- Adding a known nonpainting polygon does not move the painted target. -/
 def nestedMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts := zeroRuleFonts (← mathSetOf oneFace)
   for p in nestedMarkProbes do
@@ -579,9 +533,7 @@ def nestedMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         check ref s!"{name} preserves overlapping neighbour advance" (span == other)
       | .error e, _ | _, .error e => check ref s!"{name}: {e}" false
 
-/-- Deliberately translate only target runs on a shipped page. Balanced
-gaps leave every other segment's pen position unchanged. Used solely to
-test the measurement, never to repair a page before a regression check. -/
+/-- Translate only the target's runs on a shipped page, to test the measurement. -/
 private def shiftTarget (out : Layout.Out) (target : String) (dx dy : Dim.Sp) : Layout.Out :=
   { out with pages := out.pages.map fun page =>
       { page with lines := page.lines.map fun line =>
@@ -597,9 +549,8 @@ private def shiftTarget (out : Layout.Out) (target : String) (dx dy : Dim.Sp) : 
               | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _
                 | .decoration _ _ _ _ _ | .image _ _ _ | .poly _ _ => #[seg] } } }
 
-/-- Real outline translations test all four bounds and the shipped pen
-measurement. Small integral witnesses then exercise the exact rounding
-boundary, forward direction and clearance independently of placement. -/
+/-- Outline translations and small integral witnesses test the judges' bounds, rounding, direction
+and clearance. -/
 def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   for p in probes.filter (fun p => p.label.startsWith "narrow/text/") do
@@ -703,18 +654,8 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
 end CancelAlignment
 
 open CancelAlignment in
-/-- Public suite entry point. Judged entirely on the shipped page and
-font outlines; no expected offset comes from `Math.cancelGeom`.
-
-The rule it holds for every typographic attachment: name the anchors, the
-direction and the bounds read (measured ink, advance, or the
-baseline-inclusive line box), derive the displacement from them and the
-resolved font, and reserve the reach; nonpainting spacing contributes
-advance, never attachment ink. Geometry tolerances come from the coordinate
-arithmetic, perceptual ones from rendered evidence at a stated size.
-Matching the tip's height alone never guaranteed alignment with the arrow's
-direction, which is why these checks judge along the ray
-(`Math.inkRayOrigin_between`). -/
+/-- Cancellation alignment judged on the shipped page and font outlines alone, along the arrow's
+ray. -/
 def CancelAlignment.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   judgeChecks ref oneFace
   headWingChecks ref oneFace

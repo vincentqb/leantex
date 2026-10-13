@@ -25,12 +25,8 @@ private def fontDefaultSource (slides : Bool) (spec : Ir.FontSpec) : String :=
      "\\textbf{\\textit{Both}}\\par", "\\texttt{Code}\\par", "$x$",
      if slides then "\\end{frame}" else "", "\\end{document}"])
 
-/-- A mono or math declaration cannot choose the text family. Exercise the
-actual driver assembly with a controlled scan, including its provisional
-picture environment. Layout glyphs and the typed HTML head must consume the
-resolved text face; a green family lookup alone cannot establish that.
-Every matrix document declares a family, so a caller's LEANTEX_FONT cannot
-influence this matrix. The separate process checks cover that override. -/
+/-- A mono or math declaration cannot choose the text family: through the driver's assembly, the
+layout's glyphs and the HTML head consume the resolved text face. -/
 def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let scanned ← FontDiscovery.scanRootsIn none [testFonts]
   -- Fix the default candidate order without depending on host fonts.
@@ -137,10 +133,8 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
        | .error d => d.kind == .E0403 && hasStr d.message missing
        | .ok _ => false)
 
-/-- Two weights the family lacks, served by one nearest face, are two losses
-in one wording: the assembly keeps a record for each — the weights in their
-particulars — and the log folds them to one line counting both. The same
-substitution met again from a second slot is one record. -/
+/-- Two weights a family lacks, served by one nearest face, are two records in one wording that the
+log folds to one line counting both. -/
 def weightSubstitutionRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
   let faces ← FontDiscovery.scanRootsIn none [testFonts]
   let scan : FaceScan := { faces, docDirs := [], dirs := #[], diags := #[] }
@@ -161,10 +155,8 @@ def weightSubstitutionRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((folded.filter (·.severity.isWarning)).map (·.sites) == #[2] &&
      (folded.filter (·.demoted)).size == 1)
 
-/-- End-to-end guard for the environment boundary: the single-face override
-applies only with no declared family. With mono or math alone, even an invalid
-override must be ignored and the PDF/HTML text must keep the ordinary default.
-The PDF oracle reads the embedded program's pitch, not the driver's index. -/
+/-- The single-face override applies only with no declared family; with mono or math alone even an
+invalid override is ignored, the pitch read from the embedded program. -/
 def fontDefaultsOverrideChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let binary ← IO.FS.realPath executable

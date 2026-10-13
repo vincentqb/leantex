@@ -6,11 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! # Images
-
-The image blocks, one file per the by-phase split: the probe and the
-planner, the alpha split, colour-key transparency, and the plan's own
-contract (`planChecks`). -/
+/-! Image checks: the probe and the planner, the alpha split, colour-key transparency, and the
+plan's own contract. -/
 
 /-- The colour-key ranges a plan carries, empty when none. -/
 def planKey (pl : Image.Plan) : Array Nat :=
@@ -34,12 +31,8 @@ def planPalette (pl : Image.Plan) : ByteArray :=
   | .rgb => ByteArray.empty
   | .iccBased _ _ => ByteArray.empty
 
-/-- `splitPredictedAlpha_exact`, executed: over seeded random pixels with a
-random filter type per row, for grey+alpha and RGBA at several geometries
-(one-pixel rows, one-row images, wide rows), unfiltering the two residual
-planes equals projecting the unfiltered pixels, and the split keeps every
-row's filter byte. Alongside, the unfilter inverts the forward filter of
-every type. -/
+/-- Over seeded random pixels and filter types, unfiltering the alpha split's two residual planes
+equals projecting the unfiltered pixels, and the unfilter inverts every forward filter. -/
 def alphaSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut s : UInt64 := 0x2545F4914F6CDD1D
@@ -79,14 +72,10 @@ def alphaSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pngUnfilter inverts the forward filter of every type" allInvert
   t "the random rows exercised all five filter types" (sawFilter.all id)
 
-/-- Images: the decoders' verdicts over synthetic bytes and the shipped
-fixtures, the sizing contract on placed pages, the placeholder path, the PDF
-embedding, and the HTML emit. Decoder totality over truncations and random
-bytes is fuzzed deeper in `scripts/img-fuzz.lean` (an oracle, not a
-theorem). -/
+/-- The image decoders over synthetic bytes and the shipped fixtures, the sizing contract on placed
+pages, the placeholder, the PDF embedding and the HTML emit. -/
 def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- Synthetic PNGs through the shared synthesizer (Tests/Support).
   let chunk := pngChunk
   let ihdr := pngIhdr
   let plain := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++ chunk "IDAT" [1, 2, 3] ++
@@ -106,9 +95,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match Image.decode physed with
      | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
      | .error _ => false)
-  -- Refusals and the decode path, each with its reason: 16-bit alpha and
-  -- interlace refuse; 8-bit alpha inflates and splits its filtered rows —
-  -- never its pixels — and the alpha plane comes back as an SMask.
   t "png 16-bit alpha refused"
     (match Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
@@ -129,23 +115,15 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        ((Flate.inflate (planSoft inf) 6).bind fun rows =>
          Flate.pngUnfilter rows 2 2 1) == .ok (bytes [255, 128, 7, 16])
      | .error _ => false)
-  -- The planes are the source's residuals under the source's own filters
-  -- (None, then Sub), not a re-filtering: the split never saw a pixel.
   t "png alpha planes keep the source rows' filter bytes"
     (match Image.decode rgbaPng with
      | .ok inf =>
        Flate.inflate inf.data 14 == .ok (bytes [0, 10, 20, 30, 40, 50, 60, 1, 5, 5, 5, 1, 2, 3]) &&
        Flate.inflate (planSoft inf) 6 == .ok (bytes [0, 255, 128, 1, 7, 9])
      | .error _ => false)
-  -- The inflate under it round-trips its own stored encoder, and reads a
-  -- real compressor's stream: rects.png's IDAT is zlib at level 9, and its
-  -- unfiltered scanlines are 40 rows of 1+192 bytes.
+  -- rects.png's IDAT is zlib level 9; its unfiltered scanlines are 40 rows of 1+192 bytes.
   t "flate roundtrip on stored blocks"
     (Flate.inflate (Flate.deflateStored rgbaRaw) rgbaRaw.size == .ok rgbaRaw)
-  -- The real compressor: `inflate_deflate_id`'s statement, witnessed on
-  -- the shapes a block must survive — empty, tiny, a run, a period-3
-  -- repetition, text, and the raw plane above (`scripts/flate-fuzz.lean`
-  -- is the deep oracle, with a foreign inflater as second judge).
   let rt (b : ByteArray) : Bool := Flate.inflate (Flate.deflate b) b.size == .ok b
   t "deflate roundtrip: empty" (rt ByteArray.empty)
   t "deflate roundtrip: one byte" (rt (bytes [42]))
@@ -157,15 +135,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "deflate roundtrip: the raw plane" (rt rgbaRaw)
   t "deflate really compresses a run"
     ((Flate.deflate (ByteArray.mk (Array.replicate 70000 7))).size < 1000)
-  -- A deflate-compressed IDAT decodes through the dynamic-Huffman path:
-  -- the engine reads its own compressor's output inside a PNG too.
   t "png alpha decodes from a deflate-compressed IDAT"
     (match Image.decode (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
       chunk "IDAT" (Flate.deflate rgbaRaw).toList ++ chunk "IEND" [])) with
      | .ok inf => inf.color == .rgb && !(planSoft inf).isEmpty
      | .error _ => false)
-  -- The driver's image-cache serialization inverts exactly
-  -- (`decodeBin_encodeBin_id`'s statement, witnessed on a real decode).
   t "image cache serialization round-trips a decoded alpha png"
     (match Image.decode rgbaPng with
      | .ok inf =>
@@ -208,8 +182,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     ((Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 8 2 0) ++
       be32 99999 ++ ("IDAT".toList.map fun c => UInt8.ofNat c.toNat) ++ [0]))).isOk
       == false)
-  -- A synthetic JPEG: SOI, JFIF APP0 declaring 144 dpi, SOF0 10×20 in three
-  -- components, SOS. The scan data never has to exist for the header walk.
+  -- A synthetic JPEG: SOI, JFIF APP0 declaring 144 dpi, SOF0 10×20 in three components, SOS.
   let jfif (unit dx dy : Nat) : List UInt8 :=
     [0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, UInt8.ofNat unit,
      UInt8.ofNat (dx / 256), UInt8.ofNat (dx % 256),
@@ -238,7 +211,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "decode rejects foreign bytes" ((Image.decode (bytes [0, 1, 2, 3])).isOk == false)
   t "decode rejects empty" ((Image.decode (bytes [])).isOk == false)
 
-  -- The shipped fixtures: what `lake test` sees on every host.
   let pngData ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let jpgData ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
   let alphaData ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
@@ -255,9 +227,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | .ok inf => inf.filter == .dct && inf.pxW == 64 && inf.pxH == 40 &&
         inf.width == Dim.pt 64
      | .error _ => false)
-  -- The RGBA fixture went through a real compressor (zlib level 9), so
-  -- decoding it exercises the Huffman paths of the inflater; its alpha
-  -- fades 255 down to 15 across the rectangle and vanishes outside it.
+  -- The RGBA fixture is zlib level 9; its alpha fades 255 to 15 across the rectangle.
   t "shipped alpha png decodes with its mask"
     (match alphaInfo with
      | .ok inf =>
@@ -268,8 +238,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
             (mask[4 * 48 + 4]?.getD 0) == 255 && (mask[4 * 48 + 43]?.getD 0) == 21
         | .error _ => false)
      | .error _ => false)
-  -- Totality over truncations of both, as for fonts: reaching the count is
-  -- the property — a panic would take the run down.
+  -- Reaching the count is the property: a panic would take the run down.
   t "png decode total over truncations"
     (((List.range 64).map fun k =>
       (Image.decode (pngData.extract 0 (pngData.size * k / 64))).isOk).length == 64)
@@ -293,11 +262,9 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     let (doc, _) := Elab.run "t" src
     layoutOf oneFace doc geom none store
 
-  -- Intrinsic: no keys, the box is the file's physical size.
   let outIntrinsic := layoutSrc "\\includegraphics{rects.png}"
   t "layout intrinsic size"
     (imageSegs outIntrinsic == #[(some 0, Dim.pt 64, Dim.pt 40)])
-  -- `width = 0.8\textwidth`: the spelling every deck sizes a figure with.
   let outTw := layoutSrc "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let expectW := geom.textWidth * 800 / 1000
   t "layout width fraction of the measure"
@@ -316,28 +283,18 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "linewidth resolves inside its minipage rather than against the page"
     (imageSegs (layoutSrc localSrc) ==
       #[(some 0, localW, localW * Dim.pt 40 / Dim.pt 64)])
-  -- Both dimensions declared win exactly.
   let outBoth := layoutSrc "\\includegraphics[width=32pt, height=40pt]{rects.png}"
   t "layout declared size wins"
     (imageSegs outBoth == #[(some 0, Dim.pt 32, Dim.pt 40)])
-  -- keepaspectratio fits inside the declared box: width binds (the image is
-  -- wider than tall), the height follows the intrinsic ratio.
   let outKeep :=
     layoutSrc "\\includegraphics[width=32pt, height=32pt, keepaspectratio]{rects.jpg}"
   t "layout keepaspect fits the box"
     (imageSegs outKeep == #[(some 1, Dim.pt 32, Dim.pt 32 * 40 / 64)])
-  -- The mirror bound, in the poster's own spelling: with `width` and
-  -- `totalheight` both given, `keepaspectratio` takes the smaller of the
-  -- two scales so neither bound is exceeded (graphicx.sty, the `Gin@iso`
-  -- branch of `\Gin@req@sizes`; `resolveSize_keepAspect_fits` is the
-  -- engine's statement). Here the height is the binding bound: the width
-  -- follows the intrinsic ratio, never the declared 60pt.
+  -- Here the height binds: the width follows the intrinsic ratio, never the declared 60pt.
   let outKeepH :=
     layoutSrc "\\includegraphics[width=60pt, totalheight=20pt, keepaspectratio]{rects.jpg}"
   t "layout keepaspect picks the binding bound"
     (imageSegs outKeepH == #[(some 1, Dim.pt 20 * 64 / 40, Dim.pt 20)])
-  -- A source the store has no entry for is a placeholder box: the document
-  -- still compiles, at the requested size.
   let outMissing := layoutSrc "\\includegraphics[width=50pt]{missing.png}"
   t "layout missing image keeps requested width"
     (imageSegs outMissing == #[(none, Dim.pt 50, Dim.pt 50)] &&
@@ -346,8 +303,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (imageSegs (layoutSrc "\\includegraphics{missing.png}") ==
       #[(none, Dim.inch 1, Dim.inch 1)])
 
-  -- The figure environment: a float standing where written, the caption on
-  -- its source side (below here) and the alt of the image it captions.
   let (figDoc, figDiags) := Elab.run "t"
     "\\begin{figure}[t]\\centering\\includegraphics{rects.png}\\caption{A mark}\\end{figure}"
   t "figure elaborates with its placement registered as a note"
@@ -365,14 +320,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | _ => false)
   t "figure image reaches the page"
     ((imageSegs (layoutOf oneFace figDoc geom none store)).size == 1)
-  -- An image in a slide: the frame's page carries it.
   let (slideDoc, _) := Elab.run "t"
     "\\documentclass{slides}\\begin{document}\\begin{frame}{T}\\includegraphics{rects.png}\\end{frame}\\end{document}"
   let slideGeom := Layout.Geom.ofPage slideDoc.page
   t "slide image reaches the frame page"
     ((imageSegs (layoutOf oneFace slideDoc slideGeom none store)).size == 1)
-  -- The deck logo: same image node, placed at the lower-right corner of
-  -- every page, its right edge on the margin.
   let (logoDoc, logoDiags) := Elab.run "t"
     "\\documentclass{slides}\\logo{\\includegraphics[height=8pt, alt={A synthetic mark}]{rects.png}}\
 \\begin{document}\\begin{frame}{A}x\\end{frame}\\begin{frame}{B}y\\end{frame}\\end{document}"
@@ -388,8 +340,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
           | .image _ w h => w == logoW && h == Dim.pt 8
           | _ => false)
 
-  -- The PDF: an XObject per used image, painted by a cm+Do pair; the xref
-  -- theorem-test still holds with the new objects in the file.
   let (pdfDoc, _) := Elab.run "t"
     "\\includegraphics{rects.png} and \\includegraphics{rects.jpg} and \
 \\includegraphics{rects-alpha.png}"
@@ -403,21 +353,17 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "pdf gives the alpha image a soft mask" (bytesContain pdf "/SMask")
   t "pdf paints all three images" (bytesContain pdf "/Im1 Do" &&
     bytesContain pdf "/Im2 Do" && bytesContain pdf "/Im3 Do")
-  -- The cm matrix must carry the placed size: a Do behind a degenerate
-  -- matrix is a blank box that every structural check would miss.
+  -- A `Do` behind a degenerate matrix is a blank box every structural check would miss.
   t "pdf image matrix carries the placed size"
     (bytesContain pdf "q 64 0 0 40 ")
   t "pdf page resources name the xobjects" (bytesContain pdf "/XObject <<")
   match checkXref pdfRaw with
   | .ok n => t "pdf xref valid with images" (n > 0)
   | .error e => failures ref s!"pdf xref with images: {e}"
-  -- The raw IDAT bytes must reach the file unchanged: the stream is the
-  -- pass-through, not a re-encoding.
   t "pdf carries the png stream verbatim"
     (match pngInfo with
      | .ok inf => containsBytes pdf inf.data
      | .error _ => false)
-  -- The placeholder: an outlined box, no image object, a valid file.
   let missOut := layoutOf oneFace
     ((Elab.run "t" "\\includegraphics[width=50pt]{missing.png}").1) geom none store
   let missRaw := Pdf.write geom oneFace missOut.pages {} store
@@ -428,9 +374,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   | .ok _ => pure ()
   | .error e => failures ref s!"pdf xref with placeholder: {e}"
 
-  -- The HTML: an <img> through the typed tree, intrinsic pixel size as
-  -- attributes so the page never reflows, the caption as alt, the requested
-  -- fraction as a percentage.
   let hcfg : HtmlDoc.Config := { imgs := store }
   let (_, figTree, _) := HtmlDoc.emitTree hcfg figDoc
   let pngHref ← htmlDataOracle "image/png" pngData
@@ -450,8 +393,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "html missing image still emits the img with alt"
     ((missHtml.splitOn "<img src=\"missing.png\"").length == 2)
 
-  -- The surface diagnostics: a length that does not parse, an option the
-  -- engine does not model.
   t "includegraphics bad length is E0331"
     (errCodes "\\includegraphics[width=banana]{x.png}" == ["E0331"])
   t "includegraphics em length is E0331"
@@ -467,9 +408,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
         | .image _ spec _ => spec.height == some (Image.Len.abs (Dim.pt 8))
         | _ => false
      | _ => false)
-  -- \logo is a declaration in the body too, and it is stateful there, as
-  -- in beamer: a deck scopes a logo to one frame with `\logo{...}` before
-  -- it and `\logo{}` after.
   let (bodyLogoDoc, bodyLogoDiags) := Elab.run "t"
     "\\documentclass{slides}\\begin{document}\\logo{\\includegraphics[height=8pt, alt={A synthetic mark}]{rects.png}}\
 \\begin{frame}{A}x\\end{frame}\\logo{}\\begin{frame}{B}y\\end{frame}\\end{document}"
@@ -482,9 +420,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "body logo scopes to its frame's page"
     (blOut.pages.size == 2 && pageHasImage blOut.pages[0]! &&
      !pageHasImage blOut.pages[1]!)
-  -- A bare graphicx name gains the extension the file on disk has; the
-  -- candidate order tries the name as written first, then `.pdf` —
-  -- graphicx's own order under pdfTeX.
+  -- graphicx tries the name as written first, then `.pdf`, its order under pdfTeX.
   t "source candidates try the written name first"
     ((Image.sourceCandidates "figures/plot").take 3 ==
       ["figures/plot", "figures/plot.pdf", "figures/plot.png"])
@@ -496,18 +432,13 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
      HtmlDoc.imgSrcsList #[] tree.toList == #[pngHref])
 
-/-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour
-types (greyscale, truecolour, indexed) is either exactly the PDF `/Mask`
-ranges in sample units or a refusal the driver names — never an opaque
-embed. Every bit depth, the indexed edge cases (interval, prefix, all
-opaque, fractional, scattered, over-long), chunk order and duplicates, the
-image dictionary, and the cache codec's new field. -/
+/-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour types is exactly the PDF
+`/Mask` ranges in sample units, or a refusal the driver names. -/
 def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let chunk := pngChunk
   let ihdr := pngIhdr
-  -- A PNG of colour type `ct` at bit depth `bd`, its PLTE and tRNS as given
-  -- (an empty list omits the chunk), IDAT arbitrary.
+  -- A PNG of colour type `ct` at bit depth `bd`, PLTE and tRNS as given (empty omits the chunk).
   let png (bd ct : Nat) (plte trns : List UInt8) (idat : List UInt8 := [0]) : ByteArray :=
     mkPng (chunk "IHDR" (ihdr 4 4 bd ct 0) ++
       (if plte.isEmpty then [] else chunk "PLTE" plte) ++
@@ -521,10 +452,8 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     match Image.decode b with
     | .error e => (e.splitOn word).length == 2
     | .ok _ => false
-  -- Greyscale: one two-byte sample, in range for the bit depth.
   t "grey 8-bit key is the sample twice" (keyOf (png 8 0 [] [0, 7]) == some #[7, 7])
-  -- 16-bit keys: exact in the pure mapping, refused by the decoder — two of
-  -- the four target readers (Poppler, PDFium) paint the keyed pixels.
+  -- 16-bit keys are refused: Poppler and PDFium paint the keyed pixels.
   t "grey 16-bit key is exact in the mapping"
     (Image.colorKeyRanges .gray 16 (bytes [1, 2]) ByteArray.empty == .ok #[258, 258])
   t "grey 16-bit key refused by the decoder, naming the readers"
@@ -536,7 +465,6 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "grey 8-bit key out of range refused" (refusedNaming (png 8 0 [] [1, 0]) "tRNS")
   t "grey key of the wrong length refused"
     (refusedNaming (png 8 0 [] [7]) "tRNS" && refusedNaming (png 8 0 [] [0, 7, 0]) "tRNS")
-  -- Truecolour: three two-byte samples.
   t "rgb 8-bit key is each sample twice"
     (keyOf (png 8 2 [] [0, 10, 0, 20, 0, 30]) == some #[10, 10, 20, 20, 30, 30])
   t "rgb 16-bit key is exact in the mapping"
@@ -547,7 +475,6 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (keyOf (png 16 2 [] []) == some #[])
   t "rgb 8-bit key out of range refused" (refusedNaming (png 8 2 [] [1, 0, 0, 0, 0, 0]) "tRNS")
   t "rgb key of the wrong length refused" (refusedNaming (png 8 2 [] [0, 10]) "tRNS")
-  -- Indexed: the transparent entries one interval, the rest opaque.
   let pal2 : List UInt8 := [0, 0, 0, 255, 255, 255]
   let pal4 : List UInt8 := pal2 ++ [255, 0, 0, 0, 255, 0]
   t "indexed key on entry 0" (keyOf (png 8 3 pal2 [0, 255]) == some #[0, 0])
@@ -565,7 +492,6 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (refusedNaming (png 8 3 pal2 [255, 255, 0]) "tRNS")
   t "indexed tRNS beyond the bit depth refused"
     (refusedNaming (png 1 3 pal4 [255, 255, 0]) "tRNS")
-  -- Order and multiplicity: one tRNS, after PLTE, before IDAT.
   t "tRNS on an alpha type refused"
     (refusedNaming (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++ chunk "tRNS" [0, 0, 0, 0, 0, 0] ++
       chunk "IDAT" (Flate.deflateStored (bytes (List.replicate 18 0))).toList ++
@@ -580,14 +506,10 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 3 0) ++ chunk "tRNS" [0] ++
       chunk "PLTE" pal2 ++ chunk "IDAT" [0] ++ chunk "IEND" [])) "tRNS")
   t "no tRNS is no key" (keyOf (png 8 2 [] []) == some #[])
-  -- The pure ranges, exercised beside their theorems on shapes the
-  -- decoder cannot reach (a tRNS array with no palette behind it).
   t "colorKeyRanges: empty indexed tRNS is no mask"
     (Image.colorKeyRanges .indexed 8 ByteArray.empty (bytes pal4) == .ok #[])
   t "colorKeyRanges: grey ignores the palette"
     (Image.colorKeyRanges .gray 8 (bytes [0, 9]) (bytes pal4) == .ok #[9, 9])
-  -- The PDF: the raster dictionary carries `/Mask` in sample units, the
-  -- IDAT still passes through verbatim, and an unkeyed image has no mask.
   let idxPng := png 8 3 pal2 [0, 255] (idat := (Flate.deflateStored (bytes
     (List.replicate 4 [0, 0, 1, 1, 0]).flatten)).toList)
   let rgbPng := png 8 2 [] [0, 10, 0, 20, 0, 30]
@@ -617,8 +539,6 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   match checkXref pdfRaw with
   | .ok n => t "pdf xref valid with keyed images" (n > 0)
   | .error e => failures ref s!"pdf xref with keyed images: {e}"
-  -- The cache codec: the key rides, the format version moved, and the
-  -- old magic is a miss.
   match idxInfo with
   | .error e => failures ref s!"keyed png decode: {e}"
   | .ok inf =>
@@ -635,17 +555,14 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     t "image cache rejects a stale LTIMG2 entry" ((Image.decodeBin (blob.set! 5 50)).isNone)
     t "image cache rejects a lying key count"
       ((Image.decodeBin (blob.set! 49 (blob[49]! + 1))).isNone)
-  -- A wide key (the truecolour ranges) round-trips too.
   t "image cache round-trips a six-range key"
     (match Image.decode rgbPng with
      | .ok inf => (Image.decodeBin (Image.encodeBin inf)).map planKey ==
          some #[10, 10, 20, 20, 30, 30]
      | .error _ => false)
 
-
-/-- A JPEG header from segments: SOI, the given APP segments, a baseline
-SOF0 of the given geometry, and SOS — the scan never has to exist for the
-probe. -/
+/-- A JPEG header from segments: SOI, the APP segments, a baseline SOF0 of the given geometry, and
+SOS. -/
 def jpegOf (apps : List UInt8) (w h ncomp : Nat) : ByteArray :=
   let sof0 : List UInt8 :=
     [0xFF, 0xC0, 0, UInt8.ofNat (8 + 3 * ncomp), 8,
@@ -677,12 +594,8 @@ def iccApp2 (seq count : Nat) (data : List UInt8) : List UInt8 :=
   jpegSeg 0xE2 ([0x49, 0x43, 0x43, 0x5F, 0x50, 0x52, 0x4F, 0x46, 0x49, 0x4C, 0x45, 0] ++
     [UInt8.ofNat seq, UInt8.ofNat count] ++ data)
 
-/-- The probe and the planner: every `Source` fact the plan does not carry
-is a ledger entry (`plan_losses_accounts`), the refusals name their
-format (`plan_refuses_named`), the cache gate is the planner's
-(`recodes_iff`), the parameters key the cache
-(`planParams_serialize_inj`), the codec inverts on every constructor, and
-the driver turns the ledger into one diagnostic per entry. -/
+/-- The probe and the planner: every source fact the plan does not carry is a ledger entry, refusals
+name their format, the cache gate and keys are the planner's, and the codec inverts. -/
 def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let chunk := pngChunk
@@ -699,8 +612,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   let default := Image.PlanParams.default
   let planOf (b : ByteArray) (p : Image.PlanParams := default) : Except String Image.Plan :=
     Image.probe b >>= Image.plan p
-  -- Red 1: the profile is read, dropped under the default policy, and the
-  -- drop is in the ledger; the IDAT still passes through.
   t "probe reads an iCCP profile as zlib bytes"
     (match Image.probe pngIccp with
      | .ok s => s.iccIsZlib && s.icc == Flate.deflateStored (bytes profile) && s.format == .png
@@ -738,7 +649,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
         chunk "IDAT" idat2 ++ chunk "IEND" [])) with
      | .error e => hasStr e "iCCP"
      | .ok _ => false)
-  -- Red 2: orientation, both byte orders, in the ledger and one W0604.
   let jpgExif6 := jpegOf (exifApp1 6 true) 2 1 3
   let jpgExif8le := jpegOf (exifApp1 8 false) 2 1 3
   t "probe reads Exif orientation 6 (big-endian TIFF)"
@@ -762,8 +672,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
      (planOf (jpegOf [] 2 1 3)).toOption.map (·.losses) == some #[])
   t "an orientation outside 1–8 is the default"
     ((Image.probe (jpegOf (exifApp1 9 true) 2 1 3)).toOption.map (·.orientation) == some 1)
-  -- A JPEG profile in two APP2 pieces, out of file order, concatenates in
-  -- sequence order; a profiled JPEG with orientation carries two losses.
   let jpgIcc := jpegOf (iccApp2 2 2 [4, 5, 6] ++ iccApp2 1 2 [1, 2, 3] ++ exifApp1 3 true) 2 1 3
   t "probe concatenates APP2 profile pieces in sequence order, raw"
     (match Image.probe jpgIcc with
@@ -782,7 +690,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "probe reads the APP14 Adobe transform"
     ((Image.probe (jpegOf (jpegSeg 0xEE [0x41, 0x64, 0x6F, 0x62, 0x65, 0, 100, 0, 0, 0, 0, 1])
         2 1 3)).toOption.bind (·.adobeTransform) == some 1)
-  -- Red 3: the unembeddable formats are recognised, sized, and refused by name.
   let le24 (n : Nat) : List UInt8 :=
     [UInt8.ofNat (n % 256), UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n / 65536 % 256)]
   let webpX := bytes ([0x52, 0x49, 0x46, 0x46] ++ (be32 30).reverse ++ [0x57, 0x45, 0x42, 0x50] ++
@@ -811,13 +718,11 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "probe sizes an AVIF from ispe"
     ((Image.probe avif).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.avif, 640, 480))
   t "plan refuses AVIF by name" (refusedNaming avif "AVIF")
-  -- JPEG XL: small size header, 8×8 at ratio 1:1 (bits LSB-first: small=1,
-  -- ysize_div8_minus_1=0, ratio=1), and a non-small 300×200 header.
+  -- JPEG XL small header: 8×8, ratio 1:1 (LSB-first: small=1, ysize_div8_minus_1=0, ratio=1).
   let jxlSmall := bytes [0xFF, 0x0A, 0x41, 0]
   t "probe sizes a small JPEG XL header"
     ((Image.probe jxlSmall).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.jxl, 8, 8))
-  -- non-small: bit0 small=0; U32 selector 0 (2 bits) then 9 bits = 199 (h=200);
-  -- ratio 0 (3 bits); U32 selector 0 then 9 bits = 299 (w=300).
+  -- Non-small: small=0, selector 0, 199 (h=200), ratio 0, selector 0, 299 (w=300).
   let bitsToBytes (bs : List Nat) : List UInt8 := Id.run do
     let mut out : Array UInt8 := #[]
     let mut cur := 0
@@ -857,8 +762,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match Image.probe (bytes [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) with
      | .error e => hasStr e "unrecognised signature"
      | .ok _ => false)
-  -- Red 4: the gate agrees with the planner on the shipped fixtures and a
-  -- synthetic colour type 6; the recoded flag is exactly the alpha arm's.
   let pngData ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let jpgData ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
   let alphaData ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
@@ -881,7 +784,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an interlaced alpha PNG is refused, so the gate's answer never reaches a cache"
     ((planOf (mkPng (chunk "IHDR" (ihdr 2 2 8 6 1) ++
       chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" []))).isOk == false)
-  -- The parameters the alpha arm honours.
   t "a forbidden soft mask refuses the alpha PNG by name"
     (match planOf rgbaPng { default with softMaskPermitted := false } with
      | .error e => hasStr e "soft mask"
@@ -893,8 +795,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
      | .ok _ => false)
   t "the default limit passes 16-bit samples through"
     ((planOf (mkPng (chunk "IHDR" (ihdr 2 2 16 0 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" []))).isOk)
-  -- Red 5: the serialization is injective over the parameter product, and
-  -- two records differing only in the policy key two cache paths.
   let params : List Image.PlanParams := Id.run do
     let mut out : List Image.PlanParams := []
     for j in [false, true] do
@@ -910,8 +810,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "two policies key two cache paths"
     (default.key != ({ default with iccPolicy := .carry } : Image.PlanParams).key &&
      default.key.length == 14)
-  -- Red 6: the codec inverts on a plan per alpha and colour constructor;
-  -- the older magics are misses.
   let rt (pl : Image.Plan) : Bool :=
     match Image.decodeBin (Image.encodeBin pl) with
     | some back => back.pxW == pl.pxW && back.pxH == pl.pxH && back.dpiX == pl.dpiX &&
@@ -940,8 +838,6 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a foreign colour tag is a miss" ((Image.decodeBin (blob.set! 6 9)).isNone)
   t "a foreign loss tag is a miss"
     ((Image.decodeBin (blob.set! 66 7)).isNone)
-  -- The driver, end to end: one W0603 and one W0604 per source, the PDF still
-  -- built, and the two images embedded pass-through.
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the plan checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
@@ -973,12 +869,7 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
       (containsBytes text (bytes idat2) && containsBytes text jpgExif6 &&
        bytesContain text "/DeviceRGB")
 
-
-/-- Images set in a row, spaced as TeX sets them: a user's frame of two
-centred rows, each two images parted by `\hfill`, shipped its images
-clumped at the middle of the measure. Over `Layout.Out`, on an invented
-frame of the same shape: every image box with its left edge (the line's
-origin plus what the line set before it). -/
+/-- Images set in a row are spaced as TeX sets them, over `Layout.Out`. -/
 def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pngInfo := Image.decode (← IO.FS.readBinFile "testdata/corpus/rects.png")
@@ -1009,10 +900,7 @@ width=.4\\textwidth]{rects.png}%\n"
   let bs := boxes out
   let left := geom.hmargin
   let right := geom.pageW - geom.hmargin
-  -- `\centering` puts 0pt plus 1fil in `\leftskip` and `\rightskip`
-  -- (`\@flushglue`, latex.ltx) and `\hfill` is 0pt plus 1fill, an order
-  -- above them, so the fill takes all of the row's slack: the first image
-  -- stands at the measure's left edge, the second ends at its right edge.
+  -- `\hfill` is an order above `\centering`'s fil glue, so it takes all of the row's slack.
   t s!"image rows: one page, four images: {bs.size} on {out.pages.size}"
     (out.pages.size == 1 && bs.size == 4)
   t s!"image rows: each row spans the measure, the fill taking the slack: {bs}"
@@ -1021,12 +909,7 @@ width=.4\\textwidth]{rects.png}%\n"
       | some (_, x0, y0, _, _), some (_, x1, y1, w1, _) =>
         x0 == left && x1 + w1 == right && y0 == y1
       | _, _ => false)
-  -- beamer's `\textheight` is the paper less `\footheight` and
-  -- `\headheight` (beamerbaseframecomponents.sty:178-180): on a frame
-  -- page carrying the footline, the text area the page builder already
-  -- stands the body in (`Layout.footFloor`, moloch's headline empty). The
-  -- invented image is taller than the deck's, so the height binds the
-  -- keepaspectratio fit: its box is .28 of that height.
+  -- beamer's `\textheight` is the paper less `\footheight` and `\headheight`; height binds.
   match out.pages[0]? with
   | some p =>
     match p.footBox with
@@ -1036,7 +919,6 @@ width=.4\\textwidth]{rects.png}%\n"
         (bs.size == 4 && bs.all fun (_, _, _, _, hh) => hh == 280 * th / 1000)
     | none => t "image rows: the frame page carries the footline" false
   | none => t "image rows: the frame lays out" false
-  -- A logo is furniture of the page, sized by the same `\textheight`.
   let (logoDoc, _) := Elab.run "t" "\\documentclass[10pt,aspectratio=169]{beamer}\n\
 \\logo{\\includegraphics[totalheight=.2\\textheight, alt={An invented mark}]{rects.png}}\n\
 \\begin{document}\n\\begin{frame}{An invented frame}\nA line of invented text.\n\
@@ -1053,11 +935,6 @@ width=.4\\textwidth]{rects.png}%\n"
         ((boxes logoOut).map (·.2.2.2.2) == #[200 * th / 1000])
     | none => t "image rows: the logo's page carries the footline" false
   | none => t "image rows: the logo's frame lays out" false
-  -- The HTML: the row is the container its fractions are stated against,
-  -- each image's box is graphicx's fit under the height, never a letterbox,
-  -- and a fill row's first group starts at the left as the fill spans the
-  -- line. Chromium measured the deck's frame this way (the report's
-  -- evidence); the typed tree carries what it read.
   let (html, _) := HtmlDoc.emit { imgs := store } doc
   let rowOpen := "<p class=\"entry entry-pair\" style=\"container-type: inline-size\">"
   t "image rows html: each row declares the container its fractions read"

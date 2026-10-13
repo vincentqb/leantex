@@ -17,10 +17,8 @@ private def bidiControls : List Nat :=
 
 private def bidi (c : Char) : Bool := bidiControls.contains c.toNat
 
-/-- A diagnostic's first line carries its effective severity,
-stable code and optional source position. Continuations belong to that one
-record, even when a tool or filename supplies terminal control characters.
-These are output assertions, independent of the diagnostics golden. -/
+/-- A diagnostic's first line carries its effective severity, stable code and optional position, its
+continuations one record whatever control characters they carry. -/
 def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let span : Span := ⟨"chapters/example file.tex", { line := 4, col := 7 }⟩
@@ -44,8 +42,7 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
       (.N0100, "ℹ [N0100]")] do
     t s!"diagnostic format: {kind.code} displays severity without an internal category"
       (Render.human false (Diag.of kind "detail") == head ++ "\n  detail")
-  -- Future registry entries must take the same projection, including an
-  -- accepted error whose effective severity is a note but code stays E….
+  -- Every registry entry takes the same projection, an accepted error's code staying E….
   for kind in DiagCode.all do
     let raw := Diag.of kind "detail"
     for resolved in [raw, (Diag.accept #[raw.code] false raw).1] do
@@ -104,8 +101,7 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"diagnostic format: {name} is one safe physical line, color={color}"
         (!(unstyle (render statusControls)).toList.any fun c => c.toNat < 0x20 ||
           (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029' || bidi c)
-  -- Strip only the SGR sequences the renderer emits, not arbitrary escapes
-  -- in a diagnostic. The latter must have been spelled out as data.
+  -- Only the SGR sequences the renderer emits are stripped; other escapes are spelled out as data.
   for sample in [d, multi, { d with sites := 3 }, accepted] do
     let colored := Render.human true sample
     let stripped := ["\x1b[1;31m", "\x1b[1;33m", "\x1b[1;36m", "\x1b[1;34m",
@@ -127,9 +123,8 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Render.porcelainDiag (Diag.accept #[machine.code] false machine).1 ==
       json.replace "\"severity\":\"warning\"" "\"severity\":\"note\"")
 
-/-- The record carries source spelling, actual recovery and suggested action
-independently. Scope is identity: one artifact's notices cannot count or
-accept losses in another. Empty and hostile payloads are ordinary data. -/
+/-- The record carries source spelling, recovery and suggested action independently; scope is
+identity, and empty or hostile payloads are ordinary data. -/
 def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let d := Diag.of .W0301 "command is unknown"
@@ -173,8 +168,7 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
         ["⚠ [W0301] - example.tex:4:7",
           "  command is unknown", "  replaced by: \\oddity",
           "    Error - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"])
-  -- A control symbol is one construct token whatever character follows its
-  -- backslash, so the filter keeps it: the header escapes it instead.
+  -- A control symbol is one token whatever follows its backslash, so the header escapes it.
   for (c, shown) in [('\x1b', "\\x1b"), ('\r', "\\r"), ('\n', "\\n"),
       ('\x9b', "\\x9b"), ('\u2028', "\\u2028"), ('\u2029', "\\u2029")] do
     let symbol := "\\".push c
@@ -200,8 +194,7 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
     let actual := parsed.bind fun j => (j.getObjVal? "recovery").bind fun r =>
       (r.getObjVal? "kind").bind Lean.Json.getStr?
     t "diagnostic record: each recovery has its own JSON kind" (actual.toOption == some kind)
-  -- Round-trip every serialized text field empty, then with all terminal
-  -- control bytes and both Unicode line separators, through a real JSON reader.
+  -- Every text field round-trips empty and with all terminal controls through a real JSON reader.
   let controls := String.ofList ((List.range 32 ++ (List.range 33).map (· + 127) ++
     [0x2028, 0x2029] ++ bidiControls).map Char.ofNat)
   for text in ["", "\"\\" ++ controls] do
@@ -277,10 +270,8 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
         some .html &&
       (DriverDiag.htmlResourceUnavailable "missing resource").output == some .html)
 
-/-- Exercise the emitted stderr, stream routing and exits of the built CLI.
-The malformed synthetic inputs stop before fonts or external tools are
-needed. In particular the warning must still fire beside a fatal error,
-and accepting it changes visibility only under the existing verbosity rule. -/
+/-- The built CLI's stderr, stream routing and exits on malformed synthetic inputs; a warning fires
+beside a fatal error. -/
 def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
@@ -291,8 +282,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let file := (dir / "invalid.tex").toString
     IO.FS.writeBinFile file ⟨#[0xFF]⟩
-    -- The one input that stops the run before anything is written is one
-    -- that cannot be read: bytes never do.
+    -- Only an unreadable input stops the run before anything is written: bytes never do.
     let unreadable := (dir / "folder.tex").toString
     IO.FS.createDir unreadable
     let bad ← run #["dump", unreadable, "--color=never"]
@@ -307,9 +297,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         records.all fun line => (Lean.Json.parse line).toOption.any fun j =>
           j.getObjValAs? String "code" == .ok "E0001" &&
           j.getObjValAs? String "severity" == .ok "error")
-    -- A loss with a location, a recovery and a suggestion, end to end: one
-    -- bad byte ships a page and names itself. Its header quotes no text: a
-    -- replaced byte is no construct.
+    -- A replaced byte is no construct, so the header quotes no text.
     let face ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
     let runFace (args : Array String) := IO.Process.output {
       cmd := ".lake/build/bin/leantex", args := args
@@ -336,8 +324,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic format: argument errors preserve porcelain-mode stderr"
       (machineUsage.exitCode == 3 && machineUsage.stdout.isEmpty && machineUsage.stderr ==
         "leantex: unknown flag '--not-a-flag'\ntry 'leantex --help'\n")
-    -- An output name no format reads is a document run's refusal, not an
-    -- argument error: a typed diagnostic, rendered or a record.
+    -- An output name no format reads is a typed refusal, not an argument error.
     let output := (dir / "output.bad").toString
     let dest ← run #[file, "-o", output, "--color=never"]
     t "diagnostic format: an output name no format reads renders as E0006 and keeps usage exit"
@@ -406,9 +393,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"diagnostic format: fatal error is never suppressed {allow}/{verbose}"
           (lines.any (·.startsWith s!"✖ [E0202] - {source}:5:1"))
 
-/-- Output scope is resolved by the real output plan before warning counts,
-acceptance and printing. A static raster makes these driver probes independent
-of installed SVG converters or a TeX engine. -/
+/-- Output scope is resolved by the real output plan before warning counts, acceptance and printing. -/
 def diagnosticOutputCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let font ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
@@ -461,8 +446,7 @@ def diagnosticOutputCliChecks (ref : IO.Ref (List String)) : IO Unit := do
           t s!"diagnostic output: warning count includes only selected scopes {name}"
             (verdicts.length == 1 && verdicts.all fun record =>
               record.getObjValAs? Nat "warnings" == .ok scopes.length)
-      -- Repeated notices become notes in elaboration. The human footer and
-      -- porcelain projection must count the same requested-output records.
+      -- The human footer and the porcelain projection count the same requested-output records.
       let source ← IO.FS.readFile file
       let animation := "\\animategraphics[width=32pt,alt={Moving square},autoplay,loop,controls]" ++
         "{17}{animation-probe}{}{}\n"

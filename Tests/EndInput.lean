@@ -6,12 +6,7 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! # A file is read up to its live `\endinput`
-
-TeX reads the rest of the terminator's line and no more of the file, so
-what a style file parks after it — alternate definitions, settings the
-author switched off — never takes. Fixtures in testdata/corpus/sty-parity,
-synthetic and invented; lualatex ships exactly the pages asserted here. -/
+/-! A file is read up to its live `\endinput`, whose own line TeX still reads to its end. -/
 
 /-- The body text a `sty-parity` fixture ships, read off the laid-out
 pages, with its diagnostics. -/

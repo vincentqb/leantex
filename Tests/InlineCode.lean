@@ -10,10 +10,8 @@ open LeanTex.Core
 
 namespace Tests.InlineCode
 
-/-- A face set whose run faces tell slot, weight and slant apart: the shipped
-serif's four faces for the text slots (0 regular, 1 bold, 2 italic, 3 both),
-and the shipped mono under four more indices for the typewriter slot (4 to 7
-in the same order), so the face a run sets in says how it was asked for. -/
+/-- A face set whose run faces tell slot, weight and slant apart: serif indices 0–3 and mono 4–7,
+each regular, bold, italic and both. -/
 def facesSet : IO (Option Font.FontSet) := do
   let mut loaded : Array Font.Font := #[]
   for n in #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
@@ -102,8 +100,7 @@ def attr? (n : Html.Node) (key : String) : Option String :=
   | .elem _ attrs _ => HtmlDoc.attrOf? attrs key
   | _ => none
 
-/-- The text an element's own text children hold: what it shows in the ink
-and weight around it, no span of its own painting it. -/
+/-- The text an element's own text children hold. -/
 def ownText (n : Html.Node) : String :=
   match n with
   | .elem _ _ kids => kids.foldl (fun s k => match k with
@@ -162,18 +159,8 @@ end InlineCode
 
 open InlineCode
 
-/-- **Inline code is text** (`\mintinline` in both of minted's spellings,
-and a listing written within a line of text or an argument): it takes the
-size, weight, slant and colour of where it stands, and only its family
-becomes mono; its highlighted tokens take their code roles' colours, and a
-keyword's bold adds to the weight around it — as lualatex sets minted's
-inline code, measured on a synthetic probe (minted 3.7, Pygments 2.21) with
-`fontsize=\relax` for inline. Asserted over `Layout.Out` and the typed HTML
-tree, in a paragraph, under `\textbf`, `\textit`, a colour and a size, in a
-frame's footer, a frame's title and a block's title; with `\setminted` and
-`\setmintedinline` layered as minted layers them; and around the display
-listings, the one-line `\mint` and the listing written where LaTeX cannot
-set it, named once. -/
+/-- Inline code is text: it takes the size, weight, slant and colour where it stands and only its
+family becomes mono, its tokens in their roles' colours, in both artifacts and every context. -/
 def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← facesSet | failures ref "inline code: the shipped faces did not load"
@@ -183,7 +170,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (body, treeCssList "" head.toList)
   let quiet (src : String) := (elabStr src).2.all fun d =>
     d.severity != .warning && d.severity != .error
-  -- In a paragraph, beside the display listing of the same code.
   let para := mintedDoc ""
     ("Alpha \\mintinline{python}{def probe(arg): return arg} omega.\n\n" ++
      "\\begin{minted}{python}\ndef probe(arg): return arg\n\\end{minted}")
@@ -212,7 +198,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "inline code html: no stylesheet rule sizes code"
     ((cssRulesOf css "code, pre").all (!hasStr · "font-size") && !hasStr css "0.925em" &&
       (cssRulesOf css "pre > code").isEmpty)
-  -- The style around it stands.
   for (label, src, outer, want) in [
       ("bold", "\\textbf{Bold \\mintinline{python}{def probe(arg)}}", "Bold",
         fun (g : Glyph) => mono g && bold g && !italic g),
@@ -244,7 +229,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"inline code {label} html: the code sets no style of its own and its ink token none"
       (codes.size == 1 && codes.all fun c =>
         (attr? c "style").isNone && hasStr (spaced (ownText c)) "probe(arg)")
-  -- Contexts: a frame's footer, its title and a block's title.
   let deck := deckSrc
     ("\\newenvironment{codefoot}[1]{\\setbeamertemplate{frame footer}{{\\scriptsize #1}}}" ++
       "{\\setbeamertemplate{frame footer}{}}\n")
@@ -281,8 +265,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "inline code block title html: the block's header holds the code"
     ((codesUnder body fun n => tagIs n "header" && !hasStr (nodeTextOne "" n) "Heading").any
       fun c => nodeTextOne "" c == "show_all")
-  -- minted's layers: `\setminted` reaches inline code, `\setmintedinline`
-  -- after it, the command's own last; `\relax` keeps the size around it.
+  -- minted's layers: `\setminted`, then `\setmintedinline`, then the command's own options.
   let sizes := "{\\footnotesize Foot} {\\large Large} {\\tiny Tiny} {\\Huge Huge} "
   let sizeOf (gs : Array Glyph) (w : String) : Option Dim.Sp :=
     (word? gs w).bind fun r => (look r).map (·.2.1)
@@ -305,8 +288,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let gs := shipped src
     t s!"inline code layers: {label}"
       (quiet src && (sizeOf gs want).isSome && probeSize gs == sizeOf gs want)
-    -- The typed tree states the step the code sets in: a declared step's
-    -- class on a span holding the code, none where the size around it stands.
     let step := match want with
       | "Foot" => "footnotesize"
       | "Small" => "scriptsize"
@@ -315,8 +296,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => want
     t s!"inline code layers html: {label}"
       (sizesAround (html src).1 == #["size-" ++ step])
-  -- A definition's parameters reach the code, the language and the
-  -- options its minted command writes, bound before minted reads them.
   let wrapped := mintedDoc ("\\newcommand{\\py}[1]{\\mintinline{python}{#1}}\n" ++
       "\\newcommand{\\code}[2]{\\mintinline{#1}{#2}}\n")
     "Alpha \\py{def probe(arg)} beta \\code{python}{return arg} omega."
@@ -324,8 +303,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "Alpha \\mintinline{python}{def probe(arg)} beta \\mintinline{python}{return arg} omega."
   t "inline code: a definition's parameter is its argument's code, as LaTeX binds it"
     (quiet wrapped && shipped wrapped == shipped direct)
-  -- The elaborator binds a parameter for xparse's definers and an
-  -- environment's: the argument's source, never its elaboration.
+  -- A parameter binds the argument's source, never its elaboration.
   let tricky := "d = {\"k\": 'v'} -- x~y"
   for (label, pre, call) in [
       ("xparse's definer", "\\NewDocumentCommand{\\pya}{m}{\\mintinline{python}{#1}}\n",
@@ -339,23 +317,17 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let inked := (shipped src).filter fun g => mono g && !g.c.isWhitespace && g.c != '\u00a0'
     t s!"inline code: {label} binds its argument's source as the code"
       (quiet src && String.ofList (inked.toList.map (·.c)) == "d={\"k\":'v'}--x~y")
-  -- A definition that stops at the language is a shortcut: its use, and the
-  -- code after it, is the call (`\newcommand{\py}{\mintinline{python}}`).
   let shortcut := mintedDoc "\\newcommand{\\py}{\\mintinline{python}}\n"
     "Alpha \\py{def probe(arg)} beta \\py|return arg| omega."
   t "inline code: a shortcut to minted's command and the code after its use are the call"
     (quiet shortcut && shipped shortcut == shipped direct)
   t "inline code: a parameter outside any definition is the code it spells"
     ((word? (shipped (mintedDoc "" "Alpha \\mintinline{python}{#1} omega.")) "#1" mono).isSome)
-  -- A document's own definition of minted's command is the command its
-  -- calls run, whatever the definer's spelling.
   for definer in ["\\renewcommand{\\mintinline}[2]{\\textbf{#2}}",
       "\\renewcommand\\mintinline[2]{\\textbf{#2}}"] do
     let mine := mintedDoc (definer ++ "\n") "Alpha \\mintinline{python}{probe} omega."
     t "inline code: a document's own \\mintinline is the command its calls run"
       ((word? (shipped mine) "probe" fun g => !mono g && bold g).isSome)
-  -- On a frame painting its own ground, inline code's derived colours fit
-  -- that ground, as the listing's beside it do.
   let standout := deckSrc "\\usetheme{metropolis}\n"
     ("\\begin{frame}[fragile,standout]\nWord \\mintinline{python}{probe = 42} here.\n" ++
      "\\begin{minted}{python}\nprobe = 42\n\\end{minted}\n\\end{frame}")
@@ -364,7 +336,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   | some (some (_, _, inl)), some (some (_, _, disp)) =>
     t "inline code standout: its literal ships the listing's ink on the frame's ground" (inl == disp)
   | _, _ => failures ref "inline code standout: the frame's words did not ship"
-  -- Read as print paints the page (`emitIn`), a token's class colour its own.
+  -- Read as print paints the page, a token's class colour its own.
   let (_, sbody, _) := emitIn {} (elabStr standout).1 .print
   let spanColors (n : Html.Node) := (elemNodesList (· == "span") #[] [n]).filterMap fun sp =>
     if nodeTextOne "" sp == "42" then attr? sp "style" else none
@@ -387,8 +359,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "\\mint: the page and the HTML of the one-line environment"
     (quiet mintPage && shipped mintPage == shipped envPage &&
       ((html mintPage).1.map (Html.render · 0)) == ((html envPage).1.map (Html.render · 0)))
-  -- A display listing where inline content stands is named once and set as
-  -- inline code.
   let named (src : String) := (elabStr src).2.filter (·.code == "W0411")
   for (label, code, src) in [
       ("\\mint in an argument", "W0413", "\\textbf{Alpha \\mint{python}{def probe(arg)} omega}"),
@@ -423,7 +393,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"a one-line listing alone {label} is named and set as a display"
       ((named alone).size == 1 && (named alone).all (fun d => d.help.any (hasStr · "lines of its own")) &&
         !(elemNodesList (· == "pre") #[] (html alone).1.toList).isEmpty)
-  -- A lexer name no lexer reads is named with the nearest known one.
   let unknown (src : String) := (elabStr src).2.filter (·.code == "W0412")
   let typo := mintedDoc "" "Alpha \\mintinline{pyhton}{def probe} omega."
   t "inline code: a misspelt lexer is named with the nearest lexer as its help"
@@ -451,7 +420,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let commented := mintedDoc "" "Alpha \\mintinline%\n{python}{def probe(arg)} omega."
   t "inline code: a comment between the command and its language is skipped"
     (quiet commented && (word? (shipped commented) "probe" mono).isSome)
-  -- minted's command stands under a document's provision of it.
   let provided := mintedDoc "\\providecommand{\\mintinline}[2]{\\textbf{#2}}\n"
     "Alpha \\mintinline{python}{def probe(arg)} omega."
   t "inline code: a provision of minted's command keeps minted's"
@@ -461,8 +429,6 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "{\\footnotesize Foot}\n\n\\mint{python}|probe = 1|"
   t "\\mint takes \\setminted's layers and none of \\setmintedinline's"
     ((sizeOf (shipped block) "Foot").isSome && probeSize (shipped block) == sizeOf (shipped block) "Foot")
-  -- Display listings keep their declared size, relative to the body, and
-  -- `\relax` asks for the size around them as `auto` does.
   for (label, pre, opts) in [("\\relax", "", "[fontsize=\\relax]"),
       ("a \\setminted \\relax", "\\setminted{fontsize=\\relax}\n", "")] do
     let src := mintedDoc pre
@@ -515,9 +481,6 @@ def inlineCodeRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "inline code request: the answer paints the code; none leaves it plain"
     ((inlineCodesList #[] false coldBody.toList).all (paintedTexts · |>.isEmpty) &&
       (!builtin || painted.any (hasStr · "echo")))
-  -- A language outside the registry is still asked of the installed
-  -- highlighter: an answer paints the code and names nothing; a refusal
-  -- leaves the elaborator's one line and no placeholder behind.
   let src := mintedDoc "" "Alpha \\mintinline{pyhton}{def probe} omega."
   let (toks, ld) := Lex.lex "inline.tex" src
   let (raws, pd) := Parse.parse "inline.tex" toks
@@ -547,7 +510,6 @@ def inlineCodeRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
       (left.isEmpty && refusalDs.isEmpty && (refusedDs.filter (·.code == "W0412")).size == 1 &&
         !refusedDs.any (·.code == "W0393"))
   | _, _ => failures ref "inline code request: the synthetic batches were rejected"
-  -- A refusal of a registry language keeps the driver's line and placeholder.
   let ruby := ListingReply.Request.ofSource "ruby" "puts 1"
   match ListingReply.decode #[ruby]
       (ShellHighlight.shellBatchJson #[ShellHighlight.shellFailureJson ruby "unsupported"])

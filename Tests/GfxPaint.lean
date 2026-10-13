@@ -13,8 +13,8 @@ open Tests.GfxMatrix
 
 def opaqueFill (p : Gfx.Paint) : Gfx.Fill := { paint := p, rule := .nonzero, alpha := Gfx.Alpha.opaque }
 
-/-- A gradient that runs up the page from the figure's origin, and one off
-its box's centre: both read differently in a frame the placement flips. -/
+/-- A gradient running up the page from the figure's origin, and one off its box's centre: both read
+differently in a frame the placement flips. -/
 def vertical : Gfx.Gradient := .linear (0, 0) (0, Dim.pt 10) stops Gfx.Affine.unit
 
 def offCentre : Gfx.Gradient :=
@@ -27,8 +27,7 @@ def inGroup (g : Gfx.Gradient) : Gfx.Figure Empty :=
   figure #[.group (Gfx.Affine.translate (Dim.pt 20) (Dim.pt 30)) #[] Gfx.Alpha.opaque
     #[.draw square (some (opaqueFill (.gradient g))) none]]
 
-/-- The SVG an emitter that left a gradient in its own frame wrote: every
-`url` paint's frame map back to the gradient's own. -/
+/-- The SVG an emitter that left a gradient in its own frame would write. -/
 def unplacedSvg : GfxSvg.El → GfxSvg.El
   | .shape g a =>
     let back (p : GfxSvg.SPaint) : GfxSvg.SPaint := match p with
@@ -38,8 +37,7 @@ def unplacedSvg : GfxSvg.El → GfxSvg.El
     .shape g { a with fill := a.fill.map back, stroke := a.stroke.map back }
   | e => e
 
-/-- The PDF an emitter that left a pattern's matrix out of the placement
-wrote. -/
+/-- The PDF an emitter that left a pattern's matrix out of the placement would write. -/
 def unplacedPdf : Pdf.ContentOp → Pdf.ContentOp
   | .paint fl st gs segs =>
     let back (p : Pdf.PdfPaint) : Pdf.PdfPaint := match p with
@@ -70,8 +68,7 @@ end
 
 def attrValues (key : String) (n : Html.Node) : Array String := attrValuesOne key #[] n
 
-/-- The definitions an `svg` subtree references: `url(#…)` paints and clips,
-`#…` hrefs. -/
+/-- The definitions an `svg` subtree references: `url(#…)` paints and clips, `#…` hrefs. -/
 def refsOf (n : Html.Node) : Array String :=
   let urls := (#["fill", "stroke", "clip-path"].flatMap fun k => attrValues k n).filterMap fun v =>
     if v.startsWith "url(#" then some ((v.drop 5).dropEnd 1).toString else none
@@ -94,17 +91,8 @@ def forms (fig : Gfx.Figure Empty) : Array Pdf.FigRes :=
 end Tests.GfxPaint
 
 open Tests.GfxPaint Tests.GfxMatrix in
-/-- **A gradient lands in the frame the figure placed it in**, in both
-artifacts, and the readers see where it lands. The SVG once spelled a
-root-level gradient's points and transform in the figure's y-up frame while
-its shape's coordinates were placed into the SVG's y-down one, so a
-vertical gradient painted upside down; and both readers copied the typed
-gradient back without reading its frame, so `backend_marks_agree` held of
-the misplaced SVG. The emitters compose the placement into a gradient's
-frame map (`GfxSvg.sPaint`, `GfxPdf.pdfPaint`), and the readers place it
-back in the figure frame from what the artifact states — so the same
-artifact with the placement left out of the gradient reads as different
-marks. Invented geometry. -/
+/-- A gradient lands in the frame the figure placed it in, in both artifacts, and the readers place
+it back from what the artifact states. -/
 def gfxGradientFrameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "gradient frame: a root gradient's SVG transform carries the placement"
@@ -134,13 +122,8 @@ def gfxGradientFrameChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
 
 open Tests.GfxPaint Tests.GfxMatrix in
-/-- **Figures on one page never share an id**: every figure spells its
-definitions under ordinal 0, and the page numbers each rendered figure that
-defines anything apart, in document order (`HtmlDoc.numberFigures`) — so a
-second figure's `url(#…)` resolves to its own definition, not the first's.
-The ids hold a separator no anchor the document names can (`GfxSvg.idSep`),
-and the anchors two overlay alternatives share are never a figure's own.
-Invented geometry. -/
+/-- Figures on one page never share an id: each defining figure is numbered apart in document order,
+and overlay alternatives' shared anchors are never a figure's own. -/
 def gfxIdChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some (_, grads) := cases[1]? | t "figure ids: cases" false
@@ -181,13 +164,8 @@ def gfxIdChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((HtmlDoc.numberFigures alts).flatMap (attrValues "id")).size == 2 * (ids #[svgOf grads]).size)
 
 open Tests.GfxPaint Tests.GfxMatrix in
-/-- **A stamp's form is its outline and operator, never its colour**: an
-outline painted red and blue under two matrices is one form, its body a
-path and a painting operator with no colour of its own, each instance
-setting its colour before the `Do`; a stroked stamp's form is keyed by the
-reach its strokes need, which its box clips to; a gradient stamp paints
-inline, since a pattern never crosses a form boundary. Each reads back as
-its marks. Invented geometry. -/
+/-- A stamp's form is its outline and operator, never its colour: each instance sets its colour
+before the `Do`, a stroked stamp keyed by its stroke reach, a gradient stamp painted inline. -/
 def gfxStampChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let twoColours := stampFig #[(some (fillOf red), none), (some (fillOf blue), none)]
@@ -223,13 +201,7 @@ def gfxStampChecks (ref : IO.Ref (List String)) : IO Unit := do
       (GfxSvg.readMarks svgPlace (svgTree fig) == fig.marks)
 
 open Tests.GfxMatrix in
-/-- **The shared geometry kit**, each piece at the values its definition
-names: the four axis directions exact; an endpoint arc's centre on its
-chord's midpoint and its pieces' joins on the circle, including when its
-radii are scaled up to reach; a rounded rectangle's radii clamped to half
-its extents; the quadratic-to-cubic elevation two thirds of the way; a dash
-array as both formats read it; a regular polygon's vertices on its circle.
-Invented values. -/
+/-- The shared geometry kit, each piece at the values its definition names. -/
 def gfxKitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let u := Gfx.Trig.unit
@@ -273,11 +245,7 @@ def gfxKitChecks (ref : IO.Ref (List String)) : IO Unit := do
       sq.segs.map Gfx.Seg.endPt == #[(0, 10 * p), (-(10 * p), 0), (0, -(10 * p))])
 
 open Tests.GfxMatrix in
-/-- **A page's ink paints no raster, and the writer refuses one that
-would**: the lowering puts no image node in a picture's ink
-(`Gfx.ofPictureIn_imageFree_exact`), and the checked writer refuses a page whose
-ink carries one rather than writing a name no resource answers. Invented
-geometry. -/
+/-- A page's ink paints no raster, and the writer refuses a page whose ink would. -/
 def gfxInkRasterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let some (_, raster) := cases[7]? | t "ink rasters: cases" false
@@ -293,11 +261,8 @@ def gfxInkRasterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
      | .ok _ => true
      | .error _ => false)
 
-/-- **A copied page's content survives the writer's compression, on every
-corpus figure**: each copied form the corpus ships declares `/FlateDecode`
-exactly when its stored stream is smaller than the page's content, and its
-stream decodes to that content — the shipped half of
-`Pdf.copiedForm_inflate_id`. -/
+/-- A copied page's content survives the writer's compression on every corpus figure: `/FlateDecode`
+exactly when smaller, decoding to that content. -/
 def copiedFormChecks (ref : IO.Ref (List String)) (arts : Array GoldenArt) : IO Unit := do
   let mut seen := 0
   for art in arts do

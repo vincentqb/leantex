@@ -16,10 +16,8 @@ private def blockSource (cls env role titleSize bodySize : String) : String :=
     (if cls == "beamer" then "\\begin{frame}[t]{}" ++ body ++ "\\end{frame}" else body) ++
     "\n\\end{document}"
 
-/-- A title background's painted bottom must clear the first body's
-decoded glyph hull. Cross title/body sizes and all titled-block kinds in
-both page models: a missing fill, missing body, or a spill cannot pass as
-separation. The hull is read independently from the shipped face outlines. -/
+/-- A title background's painted bottom clears the first body line's glyph hull, across sizes, block
+kinds and both page models. -/
 def blockBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let sizes := #["tiny", "scriptsize", "footnotesize", "small", "normalsize", "Large"]
   for cls in #["article", "beamer"] do
@@ -32,8 +30,7 @@ def blockBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
           let out := layoutOf fonts doc
           check ref (label ++ ": source elaborates without errors")
             (!(ds ++ out.diags).any (·.severity == .error))
-          -- A painted body opens on a line that sets nothing (its ground's
-          -- top): the text lines are the title's and the body's.
+          -- A painted body opens on an empty line at its ground's top.
           check ref (label ++ ": title and body share one page")
             (out.pages.size == 1 &&
               ((bodyLines out).filter (!·.segs.isEmpty)).map lineText == #["Hg", "BODY"])

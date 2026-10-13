@@ -8,11 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- One titled deck stage of an emitted tree: the anchor its frame carries
-(the stage's own `id`, or its track's for a stepped frame), its accessible
-name, the words its title element shows a reader with no snap state — step
-1, every `hidden` alternative left out (`shownTextList`) — and the snap
-anchors its track carries. -/
+/-- One titled deck stage of an emitted tree: its frame's anchor, its accessible name, the words its
+title shows at step 1, and its track's snap anchors. -/
 private structure Stage where
   anchor : Option String
   name : Option String
@@ -34,9 +31,8 @@ private def stageOf (anchor : Option String) (attrs : Array (String × String))
 
 mutual
 
-/-- Every titled stage of a tree, in document order. A hand-rolled walk
-because a stage's anchor rides its track: the record needs the track's
-attributes and its snap spacers beside the stage it holds. -/
+/-- Every titled stage of a tree in document order; hand-rolled because a stage's anchor rides its
+track. -/
 private def stagesOne (acc : Array Stage) : Html.Node → Array Stage
   | .elem tag attrs kids =>
     let cls := classesOf attrs
@@ -65,11 +61,8 @@ private def stagesList (acc : Array Stage) : List Html.Node → Array Stage
 
 end
 
-/-- A frame's anchor and name read what its title shows: the anchor is the
-slug of the shown words, or that slug numbered (`base-2`, `base-3`, … —
-`claimId`'s ladder), the name the shown words themselves, or numbered as
-`claimName` numbers a repeat; a stepped frame's snaps are its anchor and the
-step, in order. -/
+/-- Whether a frame's anchor and name read what its title shows: the shown words' slug (numbered as
+`claimId` ladders it), and a stepped frame's snaps its anchor and step. -/
 private def stageFaithful (s : Stage) : Bool :=
   let words := HtmlDoc.squashSpace s.shown
   let base := Ir.slug #[.text s.shown]
@@ -93,20 +86,8 @@ private def imageAlts (doc : Ir.Doc) : Array Ir.Alt :=
     | .image _ _ alt => acc.push alt
     | _ => acc) #[] doc.body
 
-/-- **A frame's anchor and accessible name are what its title shows**, and
-every anchor the deck assigns is one id: the slug of the title's step-1
-words (`Ir.firstPageText`, the reading `Ir.slug` takes), never of both
-groups of an overlay alternation, numbered only where an earlier frame
-holds it; the name the same words; the snaps the anchor and their step.
-Over an invented deck whose titles alternate, colour, alert and cover by
-step, with exact anchors, and over every deck of the corpus. A title an
-`\only` steps is held to its shown words alone (`stageFaithful`), since
-what its first page shows is the overlay walk's to decide. The other names
-read off a title or a caption read the same page: an image's alternative
-from its caption, and the document title's metadata. The defect it names:
-`\textcolor<2>{c}{Word}` in a title named its frame "WordWord" — anchor
-`wordword` — because the anchor read the census, which carries both
-groups. -/
+/-- A frame's anchor and accessible name are what its title shows at step 1, every assigned anchor
+one id, over an invented deck and every corpus deck; captions and title metadata read the same page. -/
 def frameAnchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let deck := deck169 "\\title{\\textcolor<2>{red}{Invented} Deck}"

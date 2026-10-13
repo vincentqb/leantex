@@ -6,10 +6,8 @@ public section
 
 open LeanTex.Core
 
-/-- Consuming registry rows are checked at the actual compatibility
-checkpoint and at the source frontend. The source-level counterexample
-keeps execution outside the declarative erasure contract: definitions in
-consumed groups can already have changed later text. -/
+/-- Consuming registry rows hold at the compatibility checkpoint and the source frontend, where
+execution stays outside the declarative erasure contract. -/
 def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let file := "controls.tex"

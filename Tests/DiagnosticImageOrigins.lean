@@ -19,9 +19,8 @@ private def imageOriginParse (file text : String) : Array Parse.Raw :=
 private def imageOriginTex (file text : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
   Elab.runRawsSpanned file (imageOriginParse file text)
 
-/-- N0376 quotes the exact authored command at its recorded site, including a
-macro invocation before expansion. Source spans alone justify no trigger in raw
-IR. Attribution preserves the census, source span, acceptance and output scope. -/
+/-- N0376 quotes the exact authored command at its site, before any macro expansion, and attribution
+keeps its census, span, acceptance and output scope. -/
 def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit :=
     unless ok do ref.modify (name :: ·)
@@ -68,8 +67,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         match tok.tok with
         | .ctrl _ | .verb _ _ => some (tok.pos.line, tok.pos.col)
         | _ => none) == #[(2, 1), (3, 1), (3, 3), (3, 8)])
-  -- Several authored spellings share a normalized control token. Evidence
-  -- keeps the full source slice; following words carry their own evidence.
+  -- Several authored spellings share one normalized control token.
   for (label, written, name) in [
       ("control-space", "\\ ", " "),
       ("control-LF", "\\\n", " "),
@@ -93,8 +91,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         let expected := match tok.tok with
           | .word s => some s
           | _ => none
-        -- The lexer keeps a word's evidence; a word names no construct, so the
-        -- index a header reads holds none.
+        -- A word keeps its own evidence but names no construct, so the source index holds none.
         tok.pos.command == expected &&
           prepared.sourceTriggers[(file, tok.pos.line, tok.pos.col)]?.isNone)
   let (animated, animatedDs, spans) := imageOriginTex "animation.tex"
@@ -233,7 +230,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     spacedNativeWarnings ++ shipped ++ attributed
   for d in warnings do
     let (accepted, didAccept) := d.accept #["N0376"] false
-    t "image origin: informational attribution needs no acceptance and retains common output scope"
+    t "image origin: an attributed note needs no acceptance and keeps common output scope"
       (!didAccept && accepted.severity == .note &&
         accepted == d &&
         Diag.forOutputs #[.pdf] #[d] == #[d] &&

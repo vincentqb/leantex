@@ -9,9 +9,8 @@ import LeanTex.Cli.FontEnv
 public import LeanTex.Cli.Args
 import all LeanTex.Cli.Driver
 
-/-! Test access to the driver's captured-image preparation and its settle
-decision. Legacy runtime tests use these wrappers without exporting the
-driver's orchestration state. -/
+/-! Test access to the driver's captured-image preparation and settle decision, without exporting
+its orchestration state. -/
 
 namespace Tests.DriverAssets
 
@@ -30,9 +29,8 @@ public def picsToSvg (pics : Array (String × ByteArray)) (imgs : Image.Store)
   LeanTex.Cli.Driver.picsToSvg
     (pics.map fun (src, bytes) => { src, bytes }) imgs imageSpans
 
-/-- The driver's settle decision (`Driver.settlement`) for a document
-elaborated against `provisional`, over the font set and the document font
-assembly returned: whether that elaboration stands. -/
+/-- Whether a document elaborated against `provisional` stands under the driver's settle decision
+(`Driver.settlement`). -/
 public def settles (elaborated : Ir.Doc) (provisional : Option Ir.Pic.LabelMetric)
     (fs : Font.FontSet) (resolved : Ir.Doc) : IO Bool := do
   let front : LeanTex.Cli.Driver.Front := {

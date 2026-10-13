@@ -6,14 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- hyperref's `colorlinks` (hyperref.sty: `\Hy@colorlink` paints a link's
-own text in `linkcolor` for a cross-reference, `urlcolor` for a URL and
-`citecolor` for a citation's mark, red, magenta and green unless declared;
-without `colorlinks`, or under `hidelinks`, it paints nothing). lualatex sets
-exactly those on a probe of the same shape: the `\ref`'s number red, the
-`\url` magenta, the `\cite`'s number green with its brackets black. The four
-rows that read the running ink are the controls for the five that read a
-declared colour. -/
+/-- hyperref's `colorlinks` paints a cross-reference in `linkcolor`, a URL in `urlcolor` and a
+citation's mark in `citecolor`, as lualatex does, and nothing without it. -/
 def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let doc (pre : String) : String :=
@@ -38,16 +32,12 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
   let blue : Ir.Color := { r := 0, g := 0, b := 255 }
   let magenta : Ir.Color := { r := 255, g := 0, b := 255 }
   let black := Ir.Color.black
-  -- The line reads "See 1, https://example.org, Zephyr and [1]." — the
-  -- reference's number and the citation's mark are both '1'; the URL owns
-  -- every 'x'; the internal `\hyperlink`'s text owns 'Z'.
+  -- '1' is the reference and the citation mark, 'x' the URL's, 'Z' the `\hyperlink`'s.
   let dflt := inks "\\usepackage[colorlinks]{hyperref}"
   t "colorlinks: the reference, then the citation, in red and green"
     (inkOf dflt '1' == [red, green])
   t "colorlinks: the URL in magenta" (!(inkOf dflt 'x').isEmpty && (inkOf dflt 'x').all (· == magenta))
-  -- An internal `\hyperlink` is a cross-reference, so colorlinks paints its
-  -- text in `linkcolor` (red by default), exactly as `\ref` — the same
-  -- `linkInk "link"` door, not a bare untinted body.
+  -- An internal `\hyperlink` is a cross-reference, painted in `linkcolor`.
   t "colorlinks: the internal \\hyperlink text in link ink (red)"
     (!(inkOf dflt 'Z').isEmpty && (inkOf dflt 'Z').all (· == red))
   t "colorlinks: the citation's brackets and the words keep the running ink"
@@ -68,7 +58,6 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
   t "colorlinks: the HTML links carry their kinds' ink"
     (hasStr html (HtmlDoc.cssColor red) && hasStr html (HtmlDoc.cssColor magenta) &&
       hasStr html (HtmlDoc.cssColor green))
-  -- Accessibility: a coloured link is still a link — its name (the text) and
-  -- role (the href anchor) survive the colour wrap.
+  -- A coloured link keeps its name and role.
   t "colorlinks: the HTML link keeps its href and visible text"
     (hasStr html "href=\"https://example.org\"" && hasStr html "https://example.org")

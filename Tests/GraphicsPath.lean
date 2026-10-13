@@ -8,10 +8,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- A boundary renderer that draws only where the file its request includes
-stands where the request's `\graphicspath` finds it — `figs/dot.png` beside
-the standalone — and refuses with LaTeX's own words otherwise. Shell
-builtins and `/bin/cp` alone. -/
+/-- A boundary renderer that draws only where `figs/dot.png` stands beside the standalone as
+`\graphicspath` finds it, and refuses with LaTeX's words otherwise. -/
 def stagedRenderer (pdf : System.FilePath) : String :=
   "#!/bin/sh\n" ++
   "if [ \"$1\" = --version ]; then\n" ++
@@ -25,20 +23,8 @@ def stagedRenderer (pdf : System.FilePath) : String :=
   "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
   "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
 
-/-- **An image a `\graphicspath` directory holds is the document's image.**
-The invariant whose absence lost a poster's body figures to placeholders
-(W0601) and its diagrams' figures at the boundary, where the standalone ran
-with none of the files its `\includegraphics` named: graphicx searches each
-extension as written and then under every directory the last
-`\graphicspath` names (`Image.searchCandidates`), and so does the engine,
-for its own images and for the files a boundary request reads, which ride
-staged where the path found them, the `\graphicspath` line beside them. The
-pure half: the scan reads the last declaration's directories wherever it
-stands, and the candidates keep graphicx's order. The driver half, on the
-built binary: the PDF of a document whose figure stands in such a directory
-ships it with no W0601 and no unknown command, and a boundary picture
-including it is drawn by a renderer that finds it beside its standalone.
-The caller supplies an already-built binary. -/
+/-- An image a `\graphicspath` directory holds is the document's image, for the engine and for a
+boundary request's staged files, in graphicx's candidate order. -/
 def graphicsPathChecks (ref : IO.Ref (List String))
     (binary : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref

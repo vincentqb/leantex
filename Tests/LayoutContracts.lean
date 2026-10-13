@@ -9,9 +9,8 @@ namespace LeanTex.Tests.LayoutContracts
 
 open Core Core.Dim Core.Ir Core.Layout Core.Font
 
-/-- The coverage judge reads shipped body glyphs and the input document's
-structure. Empty paragraphs and glyphless spacing owe no source claim;
-running furniture remains outside the body's source census. -/
+/-- The coverage judge over shipped body glyphs and the input's structure; empty paragraphs,
+glyphless spacing and furniture owe no claim. -/
 def attributionChecks (fs : FontSet) : Array (String × Bool) :=
   let geom : Geom := {
     pageW := pt 150, pageH := pt 80
@@ -38,8 +37,7 @@ def attributionChecks (fs : FontSet) : Array (String × Bool) :=
     ("empty and spacing-only paragraphs add no unattributed body glyphs",
       noDroppedGlyph blank && (bodyLines blank).all (·.glyphChars.isEmpty))]
 
-/-- Frame ownership survives an authored running footer: suppressing the
-chrome band changes furniture, not which frame produced a physical page. -/
+/-- Frame ownership survives an authored running footer. -/
 def ownershipChecks (fs : FontSet) : Array (String × Bool) :=
   let geom : Geom := {
     pageW := pt 220, pageH := pt 120
@@ -90,12 +88,8 @@ def ownershipChecks (fs : FontSet) : Array (String × Bool) :=
       stepped.pages.map (·.frameOrigin) == #[some ⟨0, 1⟩, some ⟨0, 2⟩] &&
       stepped.pages.all (·.frame == some 1))]
 
-/-- Executable counterexamples to the old universal Layout contracts.
-These exercise legitimate pagination and furniture decisions, not a font
-failure or a desired geometry fix encoded as expected broken behaviour.
-They pin why the replacement statements need body ink, physical-page
-coordinates, actual spill counts, the shared standout footer decision,
-and the distinction between an authored line end and a paragraph end. -/
+/-- Counterexamples showing why the layout contracts read body ink, physical-page coordinates,
+actual spill counts, the standout footer decision and authored line ends. -/
 def counterexamples (fs : FontSet) : Array (String × Bool) := Id.run do
   let geom : Geom := {
     pageW := pt 220, pageH := pt 80
@@ -173,9 +167,8 @@ private def keyedReflows (out : Out) : Bool :=
 private def sequentialParagraphs (out : Out) : Bool :=
   out.paragraphBreaks.zipIdx.all fun (p, i) => p.site == i
 
-/-- Read actual breaker choices from shipment, including float retries and
-column joins. A replay must neither duplicate its abandoned trial nor
-reuse a key; deduplication must retain separate paragraphs' warnings. -/
+/-- Breaker choices read from shipment, float retries and column joins included: a replay duplicates
+no abandoned trial and reuses no key. -/
 def reflowChecks (fs : FontSet) : Array (String × Bool) :=
   let geom : Geom := {
     pageW := pt 100, pageH := pt 250
@@ -245,11 +238,8 @@ private def furnitureHas (p : PageOut) (text : String) : Bool :=
 private def htmlFooters (doc : Doc) : Array (String × String) :=
   slideFootsList #[] (HtmlDoc.emitTree {} doc).2.1.toList
 
-/-- Footer decisions are read at the actual source opening and survive
-physical placement. These checks also inspect shipped furniture ink and
-the typed HTML footer, including the intentional absence on a standout.
-The older counterexample above remains a guard against restoring the
-false requirement that every numbered frame have a footer. -/
+/-- Footer decisions read at the source opening survive physical placement, in the shipped furniture
+and the typed HTML footer. -/
 def footerChecks (fs : FontSet) : Array (String × Bool) :=
   let geom : Geom := {
     pageW := pt 220, pageH := pt 120
@@ -347,10 +337,8 @@ def footerChecks (fs : FontSet) : Array (String × Bool) :=
       (pdfFoots floated).size == floated.pages.size &&
       floated.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1"))]
 
-/-- The partition is over physical output. Two overlays with an authored
-page break contribute four pages per source, even when the next source
-restarts the displayed counter. Natural overflow, flow pages, column
-merges and float replay exercise the same accounting boundary. -/
+/-- The page partition is over physical output: overlays, authored breaks, overflow, column merges
+and float replay. -/
 def partitionChecks (fs : FontSet) : Array (String × Bool) :=
   let geom : Geom := {
     pageW := pt 220, pageH := pt 160

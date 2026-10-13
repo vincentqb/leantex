@@ -4,9 +4,8 @@ import LeanTex.Core.FontDb
 -- The executable guards need the same public interface at compile time.
 meta import LeanTex.Core.FontDb
 
-/-! An ordinary consumer of the pure selection interface. Importing it must
-not expose the old filesystem entry points, implementation helpers or
-implementation imports. Public contracts must work without `import all`. -/
+/-! A consumer of the pure selection interface: importing it exposes no filesystem entry point,
+helper or implementation import, and public contracts work without `import all`. -/
 
 open LeanTex.Core
 

@@ -6,16 +6,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- **Boxes with fill between them share a row.** Two `{minipage}`s with an
-`\hfill` between and no paragraph break are LaTeX's side-by-side panels:
-the fill takes the measure the boxes leave, so the first box stands at the
-margin and the second ends at the measure's right edge, both on one line.
-The defect stacked them, each its declared width with the rest of its line
-empty, and a frame of two titled panels ran onto a second page. Read off
-`Layout.Out` — where the boxes' lines land — and the typed HTML tree, the
-other artifact of the same IR value. A paragraph break between the boxes
-ends the line, so there they stack, as LaTeX's do. Invented content
-throughout. -/
+/-- Boxes with fill between them share a row: two `{minipage}`s parted by `\hfill` stand on one
+line, the first at the margin and the second at the measure's right edge, in both artifacts. -/
 def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
@@ -40,14 +32,12 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       (decide (l.setWidth ≤ geom.textWidth * 45 / 100) &&
         decide (r.setWidth ≤ geom.textWidth * 45 / 100))
   | _, _ => t "the row probe ships both boxes' text" false
-  -- A paragraph break between the boxes ends the line: they stack.
   let stacked := linesOf (doc "\n\n\\hfill\n\n")
   t "a paragraph break between two boxes stacks them"
     (match lineWith stacked "Left", lineWith stacked "Right" with
      | some l, some r => decide (l.y < r.y)
      | _, _ => false)
-  -- The HTML projection of the same row: one grid of two tracks, each the
-  -- declared fraction, the leftover between them.
+  -- The HTML row: one grid of two tracks, each the declared fraction, the leftover between them.
   let (rowDoc, _) := elabStr (doc "\\hfill\n")
   let isRow : Html.Node → Bool
     | .elem "div" attrs kids =>
@@ -55,10 +45,7 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     | _ => false
   t "the HTML row is one grid holding both boxes"
     (rowDoc.body.any fun b => isRow (HtmlDoc.blockNode {} b))
-  -- The frame shape: two titled panels whose widths a document command
-  -- spells, side by side under `\centering`. Stacked they are taller than
-  -- the frame; side by side they fit it, so the frame is one page and says
-  -- nothing about spilling.
+  -- Two titled panels fit the frame side by side and not stacked, so the frame is one page.
   let tall := "One\\\\Two\\\\Three\\\\Four\\\\Five\\\\Six\\\\Seven\\\\Eight\\\\Nine\\\\Ten\\\\Eleven"
   let frameSrc := dvDeck "\\newcommand{\\panelw}{.45\\textwidth}\n"
     ("\\begin{frame}{Panels}\n\\centering\n" ++
@@ -69,9 +56,7 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let (fdoc, fds) := elabStr frameSrc
   let fout := layoutOf oneFace fdoc
   let fls := (allLines fout).filter fun l => !l.furniture && !l.segs.isEmpty
-  -- Side by side, not stacked: the second title starts on the first's row,
-  -- right of it. A painted block's box is as tall as its title's glyphs, so
-  -- two titles of different letters stand a fraction of a point apart.
+  -- A painted block is as tall as its title's glyphs, so titles differ by a fraction of a point.
   t "two titled panels in a frame stand side by side"
     (match lineWith fls "First", lineWith fls "Second" with
      | some a, some b => decide ((a.y - b.y).natAbs < (Dim.pt 1).natAbs) && decide (a.x < b.x)
@@ -79,16 +64,8 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "the frame of two side-by-side panels is one page, with no spill named"
     (fout.pages.size == 1 && (fds ++ fout.diags).all (·.code != "W0384"))
 
-
-/-- **A row stands its boxes on one baseline** (TeXbook ch. 12; latex.ltx
-`\@iiiparbox`: `[t]` puts a box's first baseline on the line, `[b]` its
-last, `[c]` its middle; `Ir.BoxPos`, `Layout.B.alignRow`). The defect set
-every row top-aligned and noted the option as machinery nothing modelled
-(N0102), so a `[b]` pair stood a full line away from where LaTeX puts it. A
-picture's `baseline` is the height it stands on the line by
-(`Ir.Pic.Picture.rise`): a paragraph of a positioned box and a picture is
-one line, the label beside the graph. Read off `Layout.Out` and the typed
-HTML tree. Invented content. -/
+/-- A row stands its boxes on one baseline by `[t]`, `[b]` and `[c]`, and a picture's `baseline` is
+the height it stands on the line by, in both artifacts. -/
 def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
@@ -103,20 +80,17 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((linesOf src).filter fun l => hasStr (lineText l) needle).toList.map (·.y)
   let tallYs (src : String) : List Dim.Sp :=
     ((linesOf src).filter fun l => !hasStr (lineText l) "Short").toList.map (·.y)
-  -- `[b]`: the one-line box stands on the tall box's last line.
   let bRow := two "[b]" "Short." tall
   t "a [b] row stands each box on its last baseline"
     (match ys bRow "Short", (tallYs bRow).reverse with
      | [s], last :: _ :: _ => s == last
      | _, _ => false)
-  -- `[t]` against a first line set larger: top edges would differ from
-  -- first baselines, so this is the case the top-aligned row got wrong.
+  -- Top edges differ from first baselines here, which a top-aligned row gets wrong.
   let tRow := two "[t]" "Short." ("{\\Large Big} " ++ tall)
   t "a [t] row stands each box on its first baseline"
     (match ys tRow "Short", ys tRow "Big" with
      | [s], [b] => s == b
      | _, _ => false)
-  -- `[c]`: a one-line box stands halfway down the tall one.
   let cRow := two "[c]" "Short." tall
   t "a [c] row stands each box on its middle"
     (match ys cRow "Short", tallYs cRow with
@@ -134,9 +108,7 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (match ys cols "Short", (tallYs cols).reverse with
      | [s], last :: _ :: _ => s == last
      | _, _ => false)
-  -- A positioned box, then a picture, one paragraph: one line. Elaborated
-  -- as the driver elaborates, with the measurement layout sets labels by,
-  -- so the node's `base` is where its label's baseline ships.
+  -- Elaborated as the driver does, so the node's `base` is where its label's baseline ships.
   let picLine := dvDoc "" ("\\raggedright\n\n\\parbox[t]{.2\\textwidth}{\\emph{Lab}}\n" ++
     "\\begin{tikzpicture}[baseline={(c.base)}]\n\\node (x) {Nodea};\n" ++
     "\\node (c) [right =of x] {Nodeb};\n\\path (c) edge (x);\n\\end{tikzpicture}\n")
@@ -147,8 +119,6 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (match pls.find? (fun l => hasStr (lineText l) "Lab"), pls.find? (fun l => hasStr (lineText l) "Nodeb") with
      | some lab, some node => lab.y == node.y && decide (lab.x < node.x)
      | _, _ => false)
-  -- The HTML projections: the grid's own baseline alignment, and the
-  -- declared baseline as the SVG's lift off the line.
   let (bDoc, _) := elabStr bRow
   let bStyles := bDoc.body.foldl (fun acc b => acc ++ attrValuesOf (· == "div") "style" (HtmlDoc.blockNode {} b)) #[]
   t "the HTML row stands [b] boxes on their last baselines"
@@ -158,15 +128,7 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the HTML picture stands on its declared baseline, beside its box"
     (svgStyles.any (hasStr · "vertical-align: -") &&
       (pStyles.filter (hasStr · "align-self: baseline")).size == 2)
-  -- A baseline coordinate's y is read as a path reads a coordinate's
-  -- component (TikZ manual §13.2.1): a length where it declares units, a
-  -- number of the y vector otherwise, and with no transformation of the
-  -- picture's, which pgf reads the coordinate after closing. So `(0,5pt)`
-  -- stands the picture on its line as `baseline=5pt` does and `(0,0.2)` as
-  -- `baseline=0.2cm`, at `scale=2` too, as lualatex sets them; the defect
-  -- read every y as a number of the vector, scaled, and `(0,5pt)` as five of
-  -- them. Every height here lies inside the picture's box, which bounds the
-  -- rise (`Ir.Pic.Picture.rise`).
+  -- A baseline y is a length with units or a number of the y vector, unscaled (TikZ §13.2.1).
   let based (opts : String) : Ir.Doc :=
     (elabM (dvDoc "" ("\\raggedright\n\n\\parbox[t]{.2\\textwidth}{\\emph{Lab}}\n" ++
       "\\begin{tikzpicture}[" ++ opts ++ "]\n\\node (x) {Nodea};\n\\end{tikzpicture}\n"))).1

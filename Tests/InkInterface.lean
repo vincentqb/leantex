@@ -2,9 +2,8 @@ module
 
 import LeanTex.Core.Ink
 
-/-! Ordinary outline consumers can read font tables, measure glyphs and
-inspect the prepared source kind. Transform state and CFF parser state
-remain internal. -/
+/-! Ordinary outline consumers can read font tables, measure glyphs and inspect the prepared source
+kind; transform and CFF parser state stay internal. -/
 
 open LeanTex.Core.Ink
 

@@ -10,71 +10,11 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests.BlockTemplate
 
-/-!
-# A block template's rule stands beside its box
+/-! A block template's rule stands beside its box: beamer's `block begin` and `block end` pair is
+read into `Ir.BlockShape` and held to lualatex's distances on invented probes. -/
 
-beamer sets a block between two templates, `block begin` and `block end`
-(beamerbaselocalstructure.sty), and a theme that replaces the pair writes its
-look in TeX's box-and-rule vocabulary: the title boxed with `\setbox`, a
-`\vrule` reading the box's `\ht` and `\dp` in an `\llap` beside it, the box
-placed with `\box`. The engine reads the pair (`BlockTemplate.read`) into the
-record both artifacts set a block by (`Ir.BlockShape`), so the rule a
-template draws is drawn, where TeX draws it.
-
-lualatex (TeX Live 2026, beamer with moloch at 10 pt, OpenSans Regular as the
-only face, every frame `[t]` with room to spare so each glue keeps its natural
-size) ships these invented probes with the distances below, read by a node
-walker over the page lists in four-decimal TeX points: three templates of one
-shape — a rule beside the title's box, hanging in the margin in `em`s of the
-body font; a rule beside the box holding title and body (its `\vbox\bgroup`
-opened in `block begin`, closed in `block end`); a rule inside the line at
-the text edge, the title's box narrowed to make room — titled, untitled and
-wrapped, plain, alerted (a right-hand rule, the box placed with `\copy`) and
-example blocks. TeX's semantics the distances show: a `\usebeamercolor[fg]`
-before the title in its box puts a colour change on the box's list, so the
-title's paragraph spends `\parskip` inside the box as well as before the line
-holding it; the box joins its list by the interline rule from its height, so
-a two-line title box takes `\lineskip` where a one-line one takes the
-baseline skip; and an `\addtobeamertemplate` before the template's install is
-dropped with the template it modified.
-
-Four more probes hold what a review of the reading found, the same way: each
-arm of the title test stands its own skips, inside the box holding title and
-body where it stands them there (`armed`); a template that keeps an empty
-title box sets the box, a line of its struts or of nothing, and every rule
-beside it once (`boxed`); a title's `\strut` and its lines read its own
-font's `\baselineskip` (`sized`); and beamer's default blocks place a sized
-title by the page's interline rule (`plainsized`).
-
-A second review's probes hold the rest: an empty title box under a declared
-size, strutted and not, in both artifacts (`emptybox`); a title with no box of
-its own, a paragraph of the block's list, empty the struts' line or no line at
-all (`plainempty`); a title font declared
-with `size*` standing its own `\baselineskip`, templated and in the default
-blocks (`starsized`, `plainstar`); `\usebeamercolor` binding only the channels
-its element sets (`chain`); a title font declared before the theme, and one
-declared with the star (`parentChecks`); and a block's unread style keys kept
-out of both artifacts, each the one refusal at its site.
-
-A rule reaching by its title's lines, read in the title's font, is held the
-same way (`capitals`): a `\dimexpr` over the title box's height and depth
-less the `\parskip` its list opens on, `\baselineskip` and
-`\fontcharht\font`H`, and length registers assigned with `\global` inside
-the box; lualatex centres such a rule on the capitals, grows a line whose
-rule reaches past its box, and spaces what follows from a rule deeper than
-the box, and both artifacts do (`capitalChecks`, `capitalHtmlChecks`).
-
-A rule beside the whole block is held so too (`wholebar`): a template that
-sets the body in a box to measure its lines, puts them back where they stood
-and stands the body's part of the rule on the last baseline is read as one
-rule from the title's capitals to its depth below that baseline
-(`wholeBarChecks`, `wholeBarHtmlChecks`), and one that would move a line or
-the rule is named (`wholeBarReadingChecks`).
--/
-
-/-- A rule beside the title's box, hanging `.6em` into the margin, `.3em`
-wide; the alerted kind's rule on the right, `4pt` out, `3pt` wide, placed
-after `\copy`; and an `\addtobeamertemplate` small skip after the install. -/
+/-- A rule beside the title's box, `.6em` into the margin and `.3em` wide; the alerted kind's on the
+right, `4pt` out and `3pt` wide, after `\copy`. -/
 def hanging : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -245,10 +185,8 @@ def inside : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- A template whose title test stands skips of its own in each arm: `5pt` where
-the title is empty, `4pt` after the title's box; and the alerted kind's box
-holding title and body, `3pt` inside it where the title is empty, `2pt` after
-the title, its rule on the right after `\copy`, at `\parskip` 3pt. -/
+/-- A template whose title test stands its own skips in each arm: `5pt` where the title is empty,
+`4pt` after its box; the alerted kind's box holding title and body, `3pt` and `2pt`. -/
 def armedSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -317,9 +255,8 @@ def armedSource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- A template with no title test, so an untitled block keeps the title's box,
-empty: rules inside the line on both sides of the box at `\parskip` 2pt;
-the alerted kind unstrutted, so its empty box holds no paragraph. -/
+/-- A template with no title test, so an untitled block keeps the title's empty box: rules on both
+sides at `\parskip` 2pt, the alerted kind unstrutted. -/
 def boxedSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -376,9 +313,8 @@ def boxedSource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- The title's box in a declared title size: `\large` for the plain block —
-moloch's own alerted title font keeps the alerted one's — and `\small` for
-the example; one-line and two-line titles. -/
+/-- The title's box in a declared title size: `\large` for the plain block and `\small` for the
+example, one-line and two-line titles. -/
 def sizedSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -596,10 +532,8 @@ def emptyBoxSource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- Rules painted through two `\usebeamercolor`s, the later element setting
-only the other channel: `\color{bg}` after a foreground-only element,
-`\color{fg}` after a background-only one, and `\usebeamercolor[bg]` of the
-foreground-only one; then a frame that gives it a background. -/
+/-- Rules painted through two `\usebeamercolor`s, the later element setting only the other channel,
+then a frame that gives it a background. -/
 def chainSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -676,9 +610,8 @@ def chainSource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- Title fonts declared with `size*`, each its own `\baselineskip`: the
-alerted title 13 pt on 17, the example 9 pt on 15; one-line and two-line
-titles. -/
+/-- Title fonts declared with `size*`, each its own `\baselineskip`: the alerted 13 pt on 17, the
+example 9 pt on 15. -/
 def starSizedSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -809,19 +742,8 @@ def plainEmptySource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- Rules reaching by their titles' lines, read in the title's font from the
-title's box: the plain kind's its box's height and depth less the
-`\parskip` its list opens on, less half the leading the capitals leave
-(`\baselineskip` less `\fontcharht\font`H`), standing that far below the
-last baseline; the example kind's the same at `\large`, its box opening on
-its strut, so its rule reaches past the box's top; the alerted kind's on the
-right, half a leading deep and a point over the lines above, deeper than the
-box. The two-line titles break with `\\`, which beamer sets as a paragraph
-per line. The fourth frame's titles stand their lines apart from their
-struts: an accented capital's ink above the strut, at the body's size and at
-`\large`, and two lines a `\\[3pt]` further apart; the fifth's last lines
-stand deeper than their struts, which the rule's reach past the box's top
-reads. -/
+/-- Rules reaching by their titles' lines, read in the title's font from the title's box, over
+one-line, two-line and accented titles. -/
 def capitalsSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -964,8 +886,7 @@ private inductive Mark where
 /-- lualatex's distances from the first mark to the second, in thousandths
 of a TeX point, per probe and page. -/
 private def measured : Array (String × Nat × Mark × Mark × Int) := #[
-  -- The title's box: medskip, the line's `\parskip`, `\lineskip`, then the
-  -- box's own `\parskip` and the strut above the baseline.
+  -- The title's box: medskip, the line's `\parskip`, `\lineskip`, the box's `\parskip` and strut.
   ("hanging", 0, .base "Lead paragraph above.", .base "Alpha title words", 25802),
   ("hanging", 0, .top edgeColor 0, .base "Alpha title words", 12400),
   ("hanging", 0, .top edgeColor 0, .bottom edgeColor 0, 16000),
@@ -987,8 +908,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
     .base "A very long block title that certainly wraps onto a second line", 12400),
   ("hanging", 2, .top edgeColor 1, .bottom edgeColor 1, 28000),
   ("hanging", 2, .base "of text because it keeps going and going", .base "Fifth body words.", 19000),
-  -- The box holding title and body: its top the title's, its bottom the
-  -- body's last line's depth; untitled, the body's colour change stands first.
+  -- The box holding title and body: its top the title's, its bottom the body's last depth.
   ("whole", 0, .base "Lead paragraph above.", .base "Alpha title words", 25802),
   ("whole", 0, .top edgeColor 0, .base "Alpha title words", 12400),
   ("whole", 0, .top edgeColor 0, .bottom edgeColor 0, 46802),
@@ -1001,8 +921,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("whole", 1, .top edgeColor 1, .bottom edgeColor 1, 30000),
   ("whole", 1, .base "One untitled line.", .base "And another paragraph.", 16000),
   ("whole", 1, .base "And another paragraph.", .base "Trailing paragraph below.", 19000),
-  -- Inside the line, no `\parskip`: a one-line title box takes the baseline
-  -- skip, a two-line one `\lineskip`; the earlier addition is gone.
+  -- No `\parskip`: a one-line title box takes the baseline skip, a two-line one `\lineskip`.
   ("inside", 0, .base "Lead paragraph above.", .base "Alpha title words", 18000),
   ("inside", 0, .top edgeColor 0, .base "Alpha title words", 8400),
   ("inside", 0, .top edgeColor 0, .bottom edgeColor 0, 12000),
@@ -1014,10 +933,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
     .base "A very long block title that certainly wraps onto a second line", 8400),
   ("inside", 1, .top edgeColor 0, .bottom edgeColor 0, 24000),
   ("inside", 1, .base "of text because it keeps going and going", .base "Fourth body words.", 12000),
-  -- Each arm's own skips: the title's `4pt` only after the title's box, the
-  -- untitled arm's `5pt` only where the title is empty; inside the box
-  -- holding title and body, the untitled arm's `3pt` stands in the box,
-  -- whose height the interline rule reads.
+  -- Each arm's own skips; inside the box holding title and body, the untitled arm's `3pt`.
   ("armed", 0, .base "Lead paragraph above.", .base "Alpha title words", 23802),
   ("armed", 0, .top edgeColor 0, .base "Alpha title words", 11400),
   ("armed", 0, .top edgeColor 0, .bottom edgeColor 0, 15000),
@@ -1035,9 +951,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("armed", 1, .top edgeColor 1, .base "Untitled whole words.", 13598),
   ("armed", 1, .top edgeColor 1, .bottom edgeColor 1, 13739),
   ("armed", 1, .base "Untitled whole words.", .base "Trailing paragraph below.", 18000),
-  -- The title's box kept empty: the struts' line, and both rules beside it
-  -- as tall as the box; unstrutted, the empty box is a line of no height
-  -- that draws no rule.
+  -- The empty title box: the struts' line and both rules; unstrutted, no height and no rule.
   ("boxed", 0, .base "Lead paragraph above.", .base "Gamma title words", 19802),
   ("boxed", 0, .top edgeTwoColor 0, .base "Gamma title words", 10400),
   ("boxed", 0, .top edgeTwoColor 0, .bottom edgeTwoColor 0, 14000),
@@ -1054,8 +968,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("boxed", 1, .base "Delta title words", .base "Third body words.", 17000),
   ("boxed", 1, .base "Third body words.", .base "Untitled bare words.", 40000),
   ("boxed", 1, .base "Untitled bare words.", .base "Trailing paragraph below.", 19000),
-  -- The title's `\strut` reads its own font's `\baselineskip` (14, 10 and
-  -- 11 pt), and its lines stand that far apart.
+  -- The title's `\strut` reads its own font's `\baselineskip` (14, 10 and 11 pt).
   ("sized", 0, .base "Lead paragraph above.", .base "Alpha title words", 19202),
   ("sized", 0, .top edgeColor 0, .base "Alpha title words", 9800),
   ("sized", 0, .top edgeColor 0, .bottom edgeColor 0, 14000),
@@ -1080,9 +993,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("sized", 1, .base "Third title line", .base "Fourth title line", 11000),
   ("sized", 1, .base "Fourth title line", .base "Sixth body words.", 12000),
   ("sized", 1, .base "Sixth body words.", .base "Trailing paragraph below.", 15000),
-  -- beamer's default title box under a declared size: placed by the page's
-  -- interline rule from its height, its lines its font's `\baselineskip`
-  -- apart; the alerted title keeps moloch's own size.
+  -- beamer's default title box under a declared size, by the page's interline rule.
   ("plainsized", 0, .base "Lead paragraph above.", .base "Alpha heading words", 18000),
   ("plainsized", 0, .base "Alpha heading words", .base "Body words here.", 14545),
   ("plainsized", 0, .base "Body words here.", .base "Beta heading words", 21000),
@@ -1094,9 +1005,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("plainsized", 1, .base "First heading line", .base "Second heading line", 14000),
   ("plainsized", 1, .base "Second heading line", .base "Fifth body words.", 14545),
   ("plainsized", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000),
-  -- An empty title box under a declared size: the struts' line at its own
-  -- font's `\baselineskip` and the box's `\parskip`, the rules as tall; an
-  -- unstrutted box holds no paragraph and draws no rule.
+  -- An empty title box under a declared size, strutted and unstrutted.
   ("emptybox", 0, .base "Lead paragraph above.", .base "Gamma title words", 21202),
   ("emptybox", 0, .top edgeTwoColor 0, .base "Gamma title words", 11800),
   ("emptybox", 0, .top edgeTwoColor 0, .bottom edgeTwoColor 0, 16000),
@@ -1121,8 +1030,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("emptybox", 2, .top edgeColor 1, .base "Untitled small words.", 26700),
   ("emptybox", 2, .top edgeColor 1, .bottom edgeColor 1, 13000),
   ("emptybox", 2, .base "Untitled small words.", .base "Trailing paragraph below.", 19000),
-  -- `size*` titles stand their declared `\baselineskip`: the strut, the
-  -- lines of a two-line title, and the depth what follows is spaced from.
+  -- `size*` titles stand their declared `\baselineskip`.
   ("starsized", 0, .base "Lead paragraph above.", .base "Alpha title words", 18000),
   ("starsized", 0, .top edgeColor 0, .base "Alpha title words", 8400),
   ("starsized", 0, .top edgeColor 0, .bottom edgeColor 0, 12000),
@@ -1147,9 +1055,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("starsized", 1, .base "Third title line", .base "Fourth title line", 15000),
   ("starsized", 1, .base "Fourth title line", .base "Sixth body words.", 13098),
   ("starsized", 1, .base "Sixth body words.", .base "Trailing paragraph below.", 15000),
-  -- A title with no box is a paragraph of the block's list, placed by the
-  -- interline rule under its font's `\baselineskip`; empty and unstrutted
-  -- it is no paragraph at all.
+  -- A title with no box is a paragraph of the block's list; empty and unstrutted, none.
   ("plainempty", 0, .base "Lead paragraph above.", .base "Gamma title words", 18000),
   ("plainempty", 0, .base "Gamma title words", .base "Body words here.", 17000),
   ("plainempty", 0, .base "Body words here.", .base "Untitled plain words.", 26000),
@@ -1167,10 +1073,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("plainstar", 1, .base "First heading line", .base "Second heading line", 17000),
   ("plainstar", 1, .base "Second heading line", .base "Fifth body words.", 14785),
   ("plainstar", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000),
-  -- A rule reaching by the title's lines: half a leading and half a cap
-  -- height past the capitals' span, one leading per line; the large title's
-  -- rule reaches past its box, which its line then stands below; the
-  -- alerted rule half a leading deep, which the body is then spaced from.
+  -- A rule reaching by the title's lines: half a leading and half a cap height past the capitals.
   ("capitals", 0, .base "Lead paragraph above.", .base "Alpha title words", 25802),
   ("capitals", 0, .top edgeColor 0, .base "Alpha title words", 9569),
   ("capitals", 0, .top edgeColor 0, .bottom edgeColor 0, 12000),
@@ -1203,10 +1106,7 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("capitals", 2, .base "Beta title words", .base "Fifth body words.", 18651),
   ("capitals", 2, .base "Fifth body words.", .base "Untitled body words.", 25000),
   ("capitals", 2, .base "Untitled body words.", .base "Trailing paragraph below.", 19000),
-  -- Lines standing apart from their struts: an accent's ink above the strut
-  -- makes the box and its rule that much taller above, the large title's
-  -- box so much taller that its line stands lower again; a skip between two
-  -- lines lengthens the rule by itself.
+  -- Lines standing apart from their struts: an accent's ink, a `\\[3pt]` skip.
   ("capitals", 3, .base "Lead paragraph above.", .base "Élan Über words", 26714),
   ("capitals", 3, .top edgeColor 0, .base "Élan Über words", 10481),
   ("capitals", 3, .top edgeColor 0, .bottom edgeColor 0, 12912),
@@ -1282,8 +1182,7 @@ private def markAt (geom : Layout.Geom) (page : Layout.PageOut) : Mark → Optio
 
 private def milliOf (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
 
-/-- 2 thousandths of a point: the walk's four-decimal TeX points, rounded
-here to thousandths. -/
+/-- 2 thousandths of a point: the walk's four-decimal TeX points, rounded. -/
 private def tolerance : Int := 2
 
 private def sources : List (String × String) :=
@@ -1312,8 +1211,7 @@ private def pageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
         check ref s!"block template {name} page {page}: {want} (lualatex) got {milliOf d}"
           ((milliOf d - want).natAbs ≤ tolerance.toNat)
       | none => check ref s!"block template {name} page {page}: the marks for {want} ship" false
-    -- Paint is the rules alone: a page's ground, the frame title's bar,
-    -- and one fill per rule beside a box.
+    -- Paint is the rules alone: a page's ground, the frame title's bar, and one fill per rule.
     let edge (f : Layout.Fill) : Bool :=
       f.color == edgeColor || f.color == alertColor || f.color == edgeTwoColor
     let rules := out.pages.map fun p => (p.fills.filter edge).size
@@ -1350,11 +1248,8 @@ private def shapedSections (body : Array Html.Node) : Array (Array Html.Node) :=
       if attrs.any (fun (k, v) => k == "class" && hasStr v "block-shaped") then some kids else none
     | .text _ | .style _ | .script .. => none
 
-/-- The typed HTML tree sets each templated block as its section with no
-colour box, an untitled block whose template tests the title with no
-header, and the stylesheet draws each rule beside its box from the declared
-values: the hanging title rule `.3em` wide and `.6em` out, in the palette
-entry the template's colour element paints. -/
+/-- The typed HTML tree sets each templated block as its section with no colour box, and the
+stylesheet draws each rule beside its box from the declared values. -/
 private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-template-hanging.tex" hanging
   let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -1381,9 +1276,8 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block template HTML: a shaped block's body keeps the page's paragraph skip"
     (hasStr sheet ":where(section.block-shaped > *) { --parskip: inherit; }")
 
-/-- **The stylesheet projects the record the page reads**: every rule of every
-shaped kind is its box's pseudo-element declaring the rule's own width and
-the lookup of its palette entry, `Ir.BlockEdge.ink`'s spelling. -/
+/-- Every rule of every shaped kind is its box's pseudo-element declaring the rule's width and
+palette lookup. -/
 private def projectionChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, src) in sources do
     let (doc, _) := Elab.run s!"block-template-{name}.tex" src
@@ -1404,10 +1298,8 @@ private def projectionChecks (ref : IO.Ref (List String)) : IO Unit := do
         check ref s!"block template {name} {kind.name}: the page reads the rule's palette entry"
           (e.ink doc.palette == e.color)
 
-/-- The reading names what it does not read: a template outside the
-vocabulary is not applied, beamer's default pair stands, and the loss is
-one warning; the native spelling the reading lands as reads back as the
-record, its emptiest form included. -/
+/-- A template outside the vocabulary is not applied and named once, and the native spelling reads
+back as the record. -/
 private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (name, src) in sources do
     let (_, diags) := Elab.run s!"block-template-{name}.tex" src
@@ -1468,15 +1360,8 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     check ref s!"block template: the native shape {src} reads back"
       (((doc.styles.find? "block").bind (·.shape)) == some want)
 
-/-- The reading names a rule it does not hold beside the title's lines: one
-reading its box's height alone, one taking off a paragraph skip its box's
-list does not open on, one reading the height of a character other than
-`H`, one beside a title box no strut bounds, whose lines stand as tall and
-as deep as their ink, and one beside a box whose first strut is set before
-the title's font. Each pair is named once, for its reading, and its blocks
-keep beamer's default pair; the native spelling refuses a rule reaching by
-lines beside a title box without struts the same way. The plain kind reads
-half the capitals' leading past its lines. -/
+/-- Rules the reading does not hold beside the title's lines are named once, their blocks keeping
+beamer's default pair. -/
 private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let height := capitalsSource.replace
     "height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax"
@@ -1507,8 +1392,6 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (named.size == 1 && named.all (hasStr ·.message why))
     check ref s!"capitals {name}: its blocks keep the default pair"
       (((doc.styles.find? style).bind (·.shape)).isNone)
-  -- The plain kind reads half the capitals' leading past its lines, the
-  -- pair `Ir.BlockMetric.halfLeading_centred_exact` speaks of.
   let (doc, _) := Elab.run "block-template-capitals.tex" capitalsSource
   let reaches := ((Ir.blockShapeOf doc.styles .block).map (·.edges.map (·.reach))).getD #[]
   check ref "capitals: the plain kind's rule reads half the capitals' leading past its lines"
@@ -1521,12 +1404,8 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref s!"capitals: the native spelling refuses lines beside a title no strut bounds ({nd.map (·.message)})"
     (nd.any fun d => d.code == "E0323" && hasStr d.message "a title that is not a box its struts bound")
 
-/-- **A register a template assigns is no length of the document's**
-(the premise beside `Compat.flushBeamerBlocks`' register gate): the probe's
-`\probe@down`, which the templates assign and read as TeX runs them, read by
-the document's own text — a gap in a paragraph — is refused by name, where
-TeX would set the value its last run left there and a length token would
-set none; set with `\setlength` first, it is refused the same way. -/
+/-- A register a template assigns is no length of the document's: a document's read of it is refused
+by name. -/
 private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let used := capitalsSource
     |>.replace "\\makeatother\n" "\\newcommand{\\probegap}{\\hspace*{\\probe@down}}\n\\makeatother\n"
@@ -1535,7 +1414,6 @@ private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, diags) := Elab.run "block-template-capitals-register.tex" used
   check ref s!"capitals register: the document's read of the template's register is refused by name ({diags.filter (·.severity == .error) |>.map (·.message)})"
     (diags.any fun d => d.severity == .error && hasStr d.message "probe@down")
-  -- Set as a length first, it still holds no value the document reads.
   let set := used.replace "\\makeatother\n" "\\setlength{\\probe@down}{3pt}\n\\makeatother\n"
   check ref "capitals register: the probe setting its register differs from the probe" (set != used)
   let (_, sd) := Elab.run "block-template-capitals-register-set.tex" set
@@ -1545,16 +1423,8 @@ private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "capitals register: the probe alone raises nothing"
     (clean.all fun d => d.severity == .note || reportedContrast d)
 
-/-- fontspec's `\newfontfamily\cmd{Family}` declares a family beside the
-three slots and the command that selects it, and beamer's
-`\setbeamerfont{block title}{series=\mdseries,family=\cmd}` sets the block
-title in it, through the title's font site (`\style{block}{ font = … }`),
-which the alerted title inherits by beamer's parent chain. A family named
-by one face — "Source Serif Pro Bold", which fontspec finds as that face —
-sets the title in that face at the medium series, where the title's own
-default is the sans bold, in both artifacts: the PDF's title runs in that
-face, the HTML's title span in the family's own stack, whose faces are that
-face's. The command switches the family in text too. -/
+/-- A `\newfontfamily` family set as the block title's family through beamer's font chain, in both
+artifacts. -/
 private def familySource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
   "\\usepackage{fontspec}\n\\setsansfont{Open Sans}\n" ++
@@ -1606,11 +1476,8 @@ private def familyChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((HtmlDoc.shipFaces fs).any fun ff => ff.family == s!"ltx-{slot}" &&
       (fs.get ff.index).psName == titleFace)
 
-
-/-- A rule painted by `\usebeamercolor{element}\color{bg}` is the element's
-background, which `\usebeamercolor` binds to `bg` (beamerbasecolor.sty), in
-the epoch each frame stands in — lualatex paints the three frames' rules
-green, red and blue. -/
+/-- A rule painted by `\usebeamercolor{element}\color{bg}` is the element's background, in each
+frame's epoch. -/
 private def channelChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (_, out, diags) := layout fonts "channels" channelsSource
   check ref "block template channels: the probe reads without loss"
@@ -1622,16 +1489,7 @@ private def channelChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     check ref s!"block template channels page {page}: the rule paints the element's background"
       (rules.size == 1 && rules.all (·.color == c))
 
-/-- **`\usebeamercolor` binds a channel only where its element sets one**
-(beamerbasecolor.sty: `fg` and `bg` become the element's where it has them
-and keep the colour in force otherwise): `\color{bg}` after an element with
-no background paints the earlier element's background, `\color{fg}` after
-one with no foreground the earlier one's foreground, and
-`\usebeamercolor[bg]` of an element with no background keeps the earlier
-one's — lualatex paints the three rules green, rose and green — in each
-frame's epoch, so a frame that gives the foreground-only element a
-background paints its rules blue. The earlier element is read, so nothing
-calls its colours unused. -/
+/-- `\usebeamercolor` binds a channel only where its element sets one, in each frame's epoch. -/
 private def chainChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (_, out, diags) := layout fonts "chain" chainSource
   check ref "block template chain: the probe reads without loss"
@@ -1666,18 +1524,7 @@ private def inkTop (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Sp :=
 private def linesBeside (p : Layout.PageOut) (bar : Layout.Fill) : Array Layout.LineOut :=
   (p.lines.filter fun l => !l.furniture && bar.y ≤ l.y && l.y ≤ bar.y + bar.h).qsort (·.y < ·.y)
 
-/-- **A rule reaching by its title's lines stands centred on the capitals**
-over the shipped pages, as `Layout.edgeLinesSpan_centred_exact` states it of
-the fill beside lines struts bound, given the half-leading pair the template
-reads (`Ir.BlockMetric.halfLeading_centred_exact`): every
-rule beside the probe's plain and example titles — one line and two, at the
-body's size and at `\large`, two lines a skip further apart — has its
-midpoint at the midpoint of the span from its title's first line's cap
-height, the height of `H` in the face and at the size the line's first run
-sets in, to its last line's baseline, and reaches its lines' span and one
-`\baselineskip` more, to two scaled points. Where the first line's ink
-stands above its strut — an accented capital — TeX's box of that line is as
-much taller, and so is the rule above it. -/
+/-- A rule reaching by its title's lines stands centred on the capitals over the shipped pages. -/
 private def capitalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (_, out, _) := layout fonts "capitals" capitalsSource
   for (page, leads) in [(0, [12, 12]), (1, [14, 14]), (3, [12, 12, 14])] do
@@ -1730,10 +1577,8 @@ private def boxedRules (src : String) : String :=
     |>.replace ("height \\dimexpr\\dp\\probe@box+\\ht\\probe@box-\\parskip-\\probe@down+1pt\\relax\n" ++
         "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
 
-/-- One build's HTML against its PDF, kind by kind: each rule's place about
-its title's baselines, and the rise and room the header keeps against the
-same template with every rule reaching by its box alone, for a title of one
-line and one broken by `\\`. -/
+/-- One build's HTML against its PDF, kind by kind: each rule about its title's baselines, and the
+header's rise and room. -/
 private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (name src : String) (kinds : List (Ir.TitledKind × String × Nat × Ir.Color × String × String × String))
     (broken : List (Ir.TitledKind × Nat × String × String)) : IO Unit := do
@@ -1782,7 +1627,6 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
       check ref s!"{name} HTML {kind.name}: the header keeps the page's room below ({room} against {d - d'})"
         ((room - (d - d')).natAbs ≤ tol)
     | _, _, _, _ => check ref s!"{name} HTML {kind.name}: the boxed probe's lines ship" false
-  -- A title the author breaks stands as low as the page's broken title.
   for (kind, page, prev, title) in broken do
     let sel := s!"section.block-shaped.block-{kind.name} > header"
     let pad := ((cssRulesOf sheet s!"{sel}:has(br)").find? (hasStr · "padding-top")).getD
@@ -1793,26 +1637,7 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
         ((riseOf pad - (a - a')).natAbs ≤ tol)
     | _, _ => check ref s!"{name} HTML {kind.name}: the broken titles ship" false
 
-/-- **The web page stands each rule reaching by its title's lines where the
-page stands it** (`HtmlDoc.blockShapeCss`, `Layout.blockTitleRule`): each
-kind's rule is its header's pseudo-element, its top the header's first line
-box's top and its bottom its last line box's bottom, each moved by the offset
-the driver measures over the page's faces. Under CSS 2.1 §10.8.1's model of
-the header's lines — the header's strut, its bold body face at the body's
-size, and the title's run in its face at its size, each leaded at its size's
-share of the page's leading over its ascent and descent, the line box their
-union — every rule stands as far above its title's first baseline and below
-its last as the PDF's rule beside the same title, for one line and two, to
-the stylesheet's precision: the plain and `\large` rules centred on their
-capitals, and the alerted rule on the right a point above its centre. The
-header keeps what TeX's line holding box and rule adds beside the lines: the
-room below the alerted rule, deeper than its box, and the rise past the box's
-top — all of it for a title the author breaks, and for one line what the
-interline rule leaves of it, nothing where the `\baselineskip` absorbs it —
-each the distance the PDF's title and body move against the same template
-with every rule reaching by its box alone; at the body's size, with no
-`\parskip`, and at `\large`. A rule reaching by its box beside one that
-rises stands from the box's top, the rise above it. -/
+/-- The web page stands each rule reaching by its title's lines where the page stands it. -/
 private def capitalHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let kinds : List (Ir.TitledKind × String × Nat × Ir.Color × String × String × String) :=
     [(.block, "before", 0, edgeColor, "Lead paragraph above.", "Alpha title words", "Body words here."),
@@ -1870,14 +1695,8 @@ private def blockUnreadEntries : List (String × String) :=
 private def paletteFree : String :=
   "\\documentclass{article}\n\\begin{document}\nPlain words here.\n\\end{document}\n"
 
-/-- The style keys a beamer block reads are its title's `font` and its
-template's `shape`. Every other key `\style` knows is named once (W0104)
-where it is declared and kept out of the document's styles, so both
-artifacts ship exactly what they ship without it: on the three kinds,
-templated or in beamer's default blocks, and on a page with no palette,
-whose stylesheet keeps the dark scheme a stored colour once took away. A
-key `\style` does not know, or one another element owns, is its own one
-refusal and nothing more. -/
+/-- A beamer block reads only its title's `font` and its template's `shape`; every other `\style`
+key is named once (W0104) and kept out of both artifacts. -/
 private def blockStyleKeyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let spec := String.intercalate ", " (blockUnreadEntries.map fun (k, v) => s!"{k} = {v}")
   for (probe, src) in [("hanging", hanging), ("plainsized", plainSizedSource),
@@ -1909,12 +1728,8 @@ private def blockStyleKeyChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     check ref s!"block style {el}: '{entry}' is its one refusal, {code} ({raised.map (·.code)})"
       (raised.size == 1 && raised.all (·.code == code))
 
-/-- The HTML stands a template's skips where the page does (`blockShapeCss`,
-`blockRules`): the section's padding above the title in the arm the block
-takes and below the body, the header's below the title — each the declared
-skip's own length on the deck's stage — and no block margin of the default
-pair's around it. A template that differs only in the skip above the title
-differs in exactly that padding. -/
+/-- The HTML stands a template's skips where the page does, as the section's and the header's
+padding. -/
 private def htmlSkipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-template-armed.tex" armedSource
   let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -1944,15 +1759,8 @@ private def htmlSkipChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((cssRuleOf sheet2 "section.block-shaped.block-block").any fun r =>
       hasStr r s!"padding-top: {len 12};")
 
-/-- **The HTML sets an empty title box as TeX does** (`blockShapeCss`): the
-box a template keeps for an untitled block stands its title font's strut
-tall where the template struts it — lualatex's two empty boxes are the 2pt
-`\parskip` inside them on a `\large` and a `\small` strut, 14 and 11 pt, on
-the deck's stage — beside its rules; where it does not, the box holds no
-paragraph, so it has no height and no rule beside it, and its line is one
-line of the page. The empty header carries none of it inline: the stylesheet
-owns each kind's box. A title with no box of its own spends its line's
-`\parskip` once, and empty is its struts' line or no line at all. -/
+/-- The HTML sets an empty title box as TeX does: strut-tall beside its rules where strutted,
+otherwise no height and no rule. -/
 private def emptyBoxHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-template-emptybox.tex" emptyBoxSource
   let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -1973,8 +1781,6 @@ private def emptyBoxHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => none
   check ref s!"empty title box HTML: every kind's empty box is the stylesheet's ({empties.size})"
     (empties.size == 3 && empties.all fun attrs => !attrs.any (·.1 == "style"))
-  -- A title with no box of its own spends its line's `\parskip` alone; empty,
-  -- it is the struts' line, or no line at all.
   let (plain, _) := Elab.run "block-template-plainempty.tex" plainEmptySource
   let (phead, pbody, _) := HtmlDoc.emitTree {} plain
   let psheet := treeCssList "" (phead.toList ++ pbody.toList)
@@ -2004,13 +1810,8 @@ private def assemble (doc : Ir.Doc) : IO (Option (Font.FontSet × Ir.Doc)) := do
   | .ok (fs, doc, _, _) => return some (fs, doc)
   | .error _ => return none
 
-/-- beamer's font parent chain, axis by axis (`Ir.blockTitleFont_axes_exact`):
-the alerted and example titles keep the plain title's family where they
-declare none and their own size where they declare one, and moloch's own
-alerted title font keeps its size under a declared plain title size —
-lualatex sets the plain, alerted and example titles in Source Serif Pro Bold
-at 10, 9 and 10 pt in the first probe, and Open Sans Bold at 12, 10 and 12 pt
-in the second. -/
+/-- beamer's font parent chain, axis by axis: the alerted and example titles keep the plain title's
+family unless declared and their own size where declared. -/
 private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let head := "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
     "\\usepackage{fontspec}\n\\setsansfont{Open Sans}\n"
@@ -2030,10 +1831,7 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
       [("Alpha title words", "OpenSans-Bold", Dim.pt 12),
        ("Beta title words", "OpenSans-Bold", Dim.pt 10),
        ("Gamma title words", "OpenSans-Bold", Dim.pt 12)]),
-     -- Declared before the theme: loading moloch's font theme merges its own
-     -- size and series over the plain and alerted titles' fields, keeping
-     -- the declared family; the example title, which moloch leaves alone,
-     -- keeps its declared size.
+     -- Declared before the theme: moloch's font theme merges its size and series over the titles.
      ("pretheme", "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usepackage{fontspec}\n" ++
         "\\setsansfont{Open Sans}\n\\newfontfamily\\probeserif{Source Serif Pro}\n" ++
         "\\setbeamerfont{block title}{size=\\large,family=\\probeserif}\n" ++
@@ -2042,9 +1840,7 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
       [("Alpha title words", "SourceSerifPro-Bold", Dim.pt 10),
        ("Beta title words", "SourceSerifPro-Bold", Dim.pt 10),
        ("Gamma title words", "SourceSerifPro-Bold", Dim.pt 144 / 10)]),
-     -- The starred form clears the plain title's fields, moloch's series
-     -- with them: the plain title and the example under it set in the
-     -- regular weight, the alerted one in its own bold.
+     -- The starred form clears the plain title's fields, moloch's series with them.
      ("starred", head ++ "\\setbeamerfont*{block title}{size=\\small}\n" ++ blocks,
       [("Alpha title words", "OpenSans-Regular", Dim.pt 9),
        ("Beta title words", "OpenSans-Bold", Dim.pt 10),
@@ -2099,7 +1895,7 @@ private def dumpChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\newfontface\\probeB{FiraSans-Regular.otf}\n" ++
     "\\begin{document}\nWords.\n\\end{document}\n"
   let (doc, diags) := Elab.run "block-title-dump.tex" src
-  let dump := Ir.dump doc diags -- ir tier: the claim is the dump's own, the golden witness's record of the fonts
+  let dump := Ir.dump doc diags -- ir tier: the dump's own record of the fonts
   for line in ["font family.probeA \"Source Serif Pro\"", "font family.probeB \"FiraSans-Regular.otf\"",
       "font family.probeA.bold \"Source Serif Pro Bold\"",
       "font family.probeB.bold \"FiraSans-Regular.otf\"",
@@ -2122,10 +1918,8 @@ private def defaultOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   check ref "block template: a default reinstall drops the addition made before it"
     (pageInk outA == pageInk outP)
 
-/-- A family declared in the body is skipped as the declaration it is, named
-by the command the author wrote, and its command selects no family in
-either artifact: the IR declares none, the HTML selects none, and the PDF
-sets the words in the page's own face. -/
+/-- A family declared in the body is skipped and named, and its command selects no family in either
+artifact. -/
 private def bodyFamilyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let src := "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usepackage{fontspec}\n" ++
     "\\begin{document}\n\\begin{frame}[t]{Body}\n\\newfontfamily\\probeA{Source Serif Pro}\n" ++
@@ -2146,24 +1940,6 @@ private def bodyFamilyChecks (ref : IO.Ref (List String)) : IO Unit := do
     | none => #[]
   check ref s!"body family: the PDF sets the words in the page's own face ({faces})"
     (!faces.isEmpty && faces.all fun (face, _) => !face.startsWith "SourceSerifPro")
-
-/-! ### A rule beside the whole block
-
-lualatex, as above, ships `wholebar`: the capitals probe's rule beside the
-title, from a template whose `block begin` also opens a box the body is set
-in (`\setbox\B\vbox\bgroup`, on the depth of the line above,
-`\prevdepth`, after a penalty), and whose `block end` closes the box, takes
-the glue, kerns and penalties after its last line into a box of their own
-(a macro calling itself, `\lastnodetype`, `\unskip`), sets the body back
-unboxed, then a box of no size holding the body's part of the rule
-(`\nointerlineskip`, `\moveleft`, `\vbox to\z@`, `\raisebox`) — a title's
-rule's depth below the last baseline, as tall as the title's line's depth
-and the box's height — and sets back the items and the last line's depth.
-Over paragraphs, a list, a display alignment, a large title, a picture, an
-untitled block, a title alone and a listing, every line stands where the
-title's rule alone leaves it, and the rule runs from the title's capitals to
-its depth below the block's last baseline (`Layout.edgeLinesFrom_abuts_exact`).
--/
 
 def wholeBarSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
@@ -2298,10 +2074,7 @@ def wholeBarSource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- lualatex's distances on the whole-bar probe, in thousandths of a point,
-per page: the rule beside each block from its title's first baseline and to
-the block's last — one rule, where TeX's two parts meet — and the lines
-around it. -/
+/-- lualatex's distances on the whole-bar probe, in thousandths of a point, per page. -/
 private def measuredWhole : Array (Nat × Mark × Mark × Int) := #[
   (0, .base "Lead paragraph above.", .base "Alpha title words", 25802),
   (0, .top edgeColor 0, .base "Alpha title words", 9569),
@@ -2366,13 +2139,8 @@ private def runBase (p : Layout.PageOut) (text : String) : Option Dim.Sp :=
       if String.ofList (glyphs.toList.map (·.2.1)) == text then some (l.y - raise) else none
     | _ => none
 
-/-- **A rule beside the whole block stands where lualatex stands it**: read
-off the whole-bar probe as one rule beside each titled block
-(`Ir.BlockSpan.whole`), from its title's capitals — the title's rule's place
-— to its depth below the block's last baseline: a paragraph's, a list
-item's, a display alignment's last row's, a picture's, a listing's last
-line's, the title's own where the body is empty; none beside the untitled
-block; and every line where the title's rule alone leaves it. -/
+/-- A rule beside the whole block stands where lualatex stands it, from its title's capitals to its
+depth below the block's last baseline. -/
 private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let fs ← mathSetOf fonts
   let (geom, out, diags) := layout fs "wholebar" wholeBarSource
@@ -2392,8 +2160,7 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let rules := out.pages.map fun p => (p.fills.filter (·.color == edgeColor)).size
   check ref s!"whole bar: one rule per titled block, none beside the untitled one ({rules})"
     (rules == #[2, 2, 3, 1])
-  -- The display alignment's rule ends its depth below the last row, which
-  -- TeX sets as a line of its own: here a row of the display's one line.
+  -- The display alignment's rule ends its depth below the last row, a line of its own.
   let half : Dim.Sp := 2431
   match out.pages[1]?, out.pages[1]?.bind fun p => runBase p "𝑑" with
   | some p, some row =>
@@ -2404,8 +2171,6 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         ((d - half).natAbs ≤ tolerance.toNat)
     | none => check ref "whole bar: the display's rule ships" false
   | _, _ => check ref "whole bar: the display's last row ships" false
-  -- A grid inside the last row's cell is a box of that row's: the rule
-  -- still ends below the row.
   let nested := wholeBarSource.replace "  d &= e\n" "  d &= \\begin{gathered} x \\\\ y \\end{gathered}\n"
   check ref "whole bar: the nested-grid probe differs from the probe" (nested != wholeBarSource)
   let (_, nout, _) := layout fs "wholebar-nested" nested
@@ -2418,7 +2183,6 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         ((d - half).natAbs ≤ tolerance.toNat)
     | none => check ref "whole bar: the nested-grid display's rule ships" false
   | _, _ => check ref "whole bar: the nested-grid display's last row ships" false
-  -- The picture stands on the baseline, its lower edge there.
   match out.pages[2]? with
   | some p =>
     match ruleOf p edgeColor 1, p.inks[0]? with
@@ -2429,7 +2193,6 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         ((d - half).natAbs ≤ 250)
     | _, _ => check ref "whole bar: the picture and its rule ship" false
   | none => check ref "whole bar: the picture's page ships" false
-  -- Every line stands where the title's rule alone leaves it.
   let titled := titleBarOf wholeBarSource
   check ref "whole bar: the title-only probe differs from the probe" (titled != wholeBarSource)
   let (_, alone, _) := layout fs "wholebar-title" titled
@@ -2438,13 +2201,8 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   check ref "whole bar: the title-only probe draws the title's rule alone"
     ((alone.pages.map fun p => (p.fills.filter (·.color == edgeColor)).size) == #[2, 2, 3, 1])
 
-/-- **The web page draws the rule beside the whole block on the block's
-section** (`HtmlDoc.blockShapeCss`): from its title's part's top, where the
-title's rule stands below the header's first line box, to its depth below
-the body's last line box's baseline — a body paragraph's unless the section
-says how far its last line box reaches (a listing's, its mono face at its
-size leaded at its line height); none for an untitled block. The depth is
-the page's: the PDF's rule ends that far below the block's last baseline. -/
+/-- The web page draws the rule beside the whole block on the block's section, ending the page's
+depth below its last line box. -/
 private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let fs ← mathSetOf fonts
   let (doc, _) := Elab.run "block-template-wholebar.tex" wholeBarSource
@@ -2477,7 +2235,6 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
         (hasStr rule s!"var(--block-last-below, {stage p.bodyBelow}) - {stage p.depth})")
     | _, _ => check ref "whole bar HTML: the page's rule and its last line ship" false
   | _, _ => check ref "whole bar HTML: the driver places the rule" false
-  -- The listing's section says how far its last line box reaches.
   let below := Layout.blockLastBelow geom fs
   let listings := Ir.foldBlocks (fun acc b => match b with
     | .titled _ _ kb => match kb.back? with
@@ -2488,7 +2245,6 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   match listings[0]?.bind below with
   | some v =>
     let said := s!"--block-last-below: {HtmlDoc.blockShapeLength doc { width := .ofSp v }};"
-    -- The section holding the listing.
     let holding := (elemNodesList (· == "section") #[] body.toList).filterMap fun n => match n with
       | .elem _ attrs kids =>
         if kids.any (fun k => k matches .elem "pre" _ _) then (attrs.find? (·.1 == "style")).map (·.2)
@@ -2497,9 +2253,6 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     check ref s!"whole bar HTML: the listing's section says how far its last line box reaches ({said}, {holding})"
       (holding.size == 1 && holding.all (hasStr · said))
   | none => check ref "whole bar HTML: the driver measures the listing's last line" false
-  -- Every such section says its own end, so a block inside another reads
-  -- none of the enclosing one's; a body ending in a block ends past that
-  -- block's skip below.
   let inner := wholeBarSource.replace "Body words here.\n"
     "Body words here.\n\\begin{block}{Inner title words}\nInner body words.\n\\end{block}\n"
   check ref "whole bar HTML: the nested-block probe differs from the probe" (inner != wholeBarSource)
@@ -2512,7 +2265,6 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     (styles.size ≥ 2 && styles.all (hasStr · "--block-last-below: "))
   check ref s!"whole bar HTML: a block ending in a block ends past that block's skip below ({styles})"
     (styles.any (hasStr · "--block-last-below: calc("))
-  -- That skip as the section pads it, its font's part and all.
   let emInner := inner.replace "  \\vskip\\smallskipamount}\n" "  \\vskip 1em}\n"
   let (edoc, _) := Elab.run "block-template-wholebar-inner-em.tex" emInner
   let (_, ebody, _) := HtmlDoc.emitTree cfg edoc
@@ -2522,16 +2274,8 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   check ref s!"whole bar HTML: a skip below in ems ends the enclosing block's rule an em past the inner block ({estyles})"
     (emInner != inner && estyles.any (hasStr · "--block-last-below: calc(1em + "))
 
-/-- **The reading holds a template that sets the body back to what TeX sets**:
-each probe below breaks one of the template's settings — the items the body
-ends on left in its box, below the rule (no peel); the depth below its last
-line not set back; the box opened on a fresh box's depth rather than the
-line above's; its list opened on no penalty, so its first paragraph spends
-no `\parskip`; the rule beside the body moved off the title's rule, or
-reaching less than to it — and is named once, for its reading, its blocks
-keeping beamer's default pair. The native spelling refuses a rule beside the
-whole block by its lines beside a box holding title and body, or inside the
-line. -/
+/-- A template that sets the body back other than TeX does is named once, and its blocks keep
+beamer's default pair. -/
 private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let src := wholeBarSource
   let cases : List (String × String × String) :=
@@ -2547,36 +2291,26 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
        "a rule beside the body at another place, width or paint than its title's"),
      ("short", src.replace "    \\advance\\probe@above\\ht\\probe@body\n" "",
        "a rule beside the body reaching elsewhere than the title's rule"),
-     -- Two rounds of one peel take two items off, not every one.
      ("unrolled", src.replace "\\probe@peel\n  \\else\\ifnum" "\n  \\else\\ifnum"
          |>.replace "\\probe@trail}\\probe@peel\n" "\\probe@trail}\n"
          |>.replace "  \\probe@peel\n  \\egroup\n" "  \\probe@peel\\probe@peel\n  \\egroup\n",
        "a rule beside the body standing below the items the body ends on"),
-     -- A trail set in the body's group is lost where the group ends.
      ("local", src.replace "\\global\\setbox\\probe@trail\\vbox{" "\\setbox\\probe@trail\\vbox{",
        "the items the body ends on set back otherwise than in their order, every one"),
-     -- A space before the rule moves it off the title's.
      ("spaced", src.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{ {",
        "a box beside the body other than a rule standing on its last line"),
-     -- A close that takes the body's last item off moves what follows.
      ("unskipped", (titleBarOf src).replace "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}"
          "\\newcommand{\\probe@close}{\\par\\unskip\\vskip\\smallskipamount}",
        "the items the body ends on set back otherwise than in their order, every one"),
-     -- A line end after a brace is TeX's space, before the rule.
      ("line end", src.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{\n{",
        "a box beside the body other than a rule standing on its last line"),
-     -- So is a macro's text that is one.
      ("macro line end", src.replace "\\makeatother\n\\begin{document}"
          "\\newcommand{\\probe@lead}{\n}\n\\makeatother\n\\begin{document}"
          |>.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{\\probe@lead{",
        "a box beside the body other than a rule standing on its last line"),
-     -- The starred colour use without a channel sets no colour last, and
-     -- keeps the space after it.
      ("starred", src.replace "{\\usebeamercolor[bg]{probe edge}%\n      \\raisebox"
          "{\\usebeamercolor*{probe edge} \\usebeamercolor[bg]{probe edge}%\n      \\raisebox",
        "a box beside the body other than a rule standing on its last line"),
-     -- A peel run twice through a macro the expansion leaves for the run
-     -- takes two items off, not every one.
      ("forward", src.replace "\\newcommand{\\probe@peel}{%\n"
          "\\newcommand{\\probe@peel}{\\probe@peelone\\probe@peelone}\n\\newcommand{\\probe@peelone}{%\n"
          |>.replace "\\probe@trail}\\probe@peel\n" "\\probe@trail}\n",
@@ -2589,10 +2323,6 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (named.size == 1 && named.all (hasStr ·.message why))
     check ref s!"whole bar {name}: its blocks keep the default pair"
       (((doc.styles.find? "block").bind (·.shape)).isNone)
-  -- A template runs as TeX runs it at each block, against the macros and
-  -- flags in force where the body begins: a flag the preamble sets after
-  -- the templates, a macro's optional argument's default, a comment's line
-  -- end, glue after the rule.
   let (plain, _) := Elab.run "block-template-wholebar.tex" src
   let shape := (plain.styles.find? "block").bind (·.shape)
   let shapeOf (name variant : String) := ((Elab.run s!"block-template-wholebar-{name}.tex" variant).1.styles.find?
@@ -2617,11 +2347,8 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
     check ref s!"whole bar {name}: the template reads as the probe's ({diags.filter (·.code == "W0110") |>.map (·.message)})"
       (shape.isSome && (doc.styles.find? "block").bind (·.shape) == shape)
-  -- The flag decides: set where the body begins, its arm is taken.
   check ref "whole bar: a flag set where the body begins takes its arm"
     (shape.isSome && (shapeOf "gapped" gapped).isSome && shapeOf "gapped" gapped != shape)
-  -- A template macro the preamble redefines after the templates runs as
-  -- redefined, as TeX runs it at each block.
   let closeHead := "\\newcommand{\\probe@close}{%\n"
   let closeFoot := "  \\vskip\\smallskipamount}\n"
   let closeBody := (((src.splitOn closeHead)[1]?.getD "").splitOn closeFoot)[0]?.getD ""
@@ -2634,8 +2361,6 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "whole bar: a template macro redefined after the templates runs as redefined"
     ((shapeOf "renewed" renewed).isSome && shapeOf "renewed" renewed == shapeOf "written" written &&
       shapeOf "written" written != shape)
-  -- A flag the body changes before a block runs the templates otherwise
-  -- there than where the body began: named, the default pair standing.
   let drifted := gapped.replace "Lead paragraph above.\n" "\\probe@gapfalse\nLead paragraph above.\n"
   let (ddoc, dd) := Elab.run "block-template-wholebar-drift.tex" drifted
   let named := dd.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:block begin"
@@ -2655,11 +2380,7 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"whole bar: the native spelling refuses lines beside the whole block {name} ({nd.map (·.message)})"
       (nd.any fun d => d.code == "E0323" && hasStr d.message why)
 
-/-- **A block template's own macro names no loss of its own**
-(`Compat.templateReach`, the premise beside the settled and translated
-definitions): the whole-bar probe's macros, which only its templates call,
-raise nothing; the probe whose text also uses one of them, where the
-conditional pass expands the use, names its loss at that use. -/
+/-- A block template's own macro names no loss of its own unless the document's text also uses it. -/
 private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, clean) := Elab.run "block-template-wholebar.tex" wholeBarSource
   check ref s!"template code: the probe's own macros raise nothing ({clean.filter (·.severity != .note) |>.map (·.message)})"
@@ -2669,15 +2390,11 @@ private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, ud) := Elab.run "block-template-wholebar-used.tex" used
   check ref s!"template code: a template macro the text uses names its loss there ({ud.filter (·.severity != .note) |>.map (·.message)})"
     (ud.any fun d => d.code == "W0104" && hasStr d.message "probe@peel")
-  -- Named elsewhere in the preamble, outside the templates and its own
-  -- definition, it is no template's alone: its definition names its loss.
   let elsewhere := wholeBarSource.replace "\\makeatother\n"
     "\\newcommand{\\probe@other}{\\probe@peel}\n\\makeatother\n"
   check ref "template code: the probe naming a template macro elsewhere differs from the probe"
     (elsewhere != wholeBarSource)
   let (_, ed) := Elab.run "block-template-wholebar-elsewhere.tex" elsewhere
-  -- The loss named at the macro's own definition, where its settled text
-  -- reads its call of itself.
   let lines := (elsewhere.splitOn "\n").zipIdx
   let first := ((lines.find? fun (l, _) => l.startsWith "\\newcommand{\\probe@peel}").map (·.2 + 1)).getD 0
   let past := ((lines.find? fun (l, i) => i + 1 > first && l.startsWith "\\newcommand{\\probe@close}").map
@@ -2685,7 +2402,6 @@ private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let atDefinition (d : Diag) : Bool := d.span.any fun sp => first ≤ sp.pos.line && sp.pos.line < past
   check ref s!"template code: a template macro the preamble names elsewhere names its definition's loss ({ed.filter (·.severity != .note) |>.map fun d => (d.message, d.span.map (·.pos.line))})"
     (ed.any fun d => d.code == "W0104" && hasStr d.message "probe@peel" && atDefinition d)
-  -- And the probe's own definitions, every one of them, name nothing.
   let srcLines := (wholeBarSource.splitOn "\n").zipIdx
   let opens := ((srcLines.find? fun (l, _) => l.startsWith "\\newcommand{\\probe@open}").map (·.2 + 1)).getD 0
   let ends := ((srcLines.find? fun (l, _) => l.startsWith "\\defbeamertemplate").map (·.2 + 1)).getD 0
@@ -2693,11 +2409,8 @@ private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (opens > 0 && ends > opens && clean.all fun d => d.severity == .note ||
       !(d.span.any fun sp => opens ≤ sp.pos.line && sp.pos.line < ends))
 
-/-- **A line end the lexer leaves out beside a brace stays on the brace**
-(`Pos.openEol`, `Pos.closeEol`), and the template reader sets back the
-space TeX reads there (`BlockTemplate.flatten`): after an opening brace,
-and before a closing one past anything but a control word; a comment's
-line end is none, and the document's own raws keep none. -/
+/-- A line end the lexer leaves out beside a brace stays on the brace, and the template reader sets
+back the space TeX reads there. -/
 private def braceEolChecks (ref : IO.Ref (List String)) : IO Unit := do
   let raws (src : String) : Array Parse.Raw := (Parse.parse "eol.tex" (Lex.lex "eol.tex" src).1).1
   let flat (src : String) : Array LeanTex.Core.BlockTemplate.Tok :=

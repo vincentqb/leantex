@@ -5,15 +5,8 @@ import Lean.Elab.ParseImportsFast
 
 public section
 
-/-! The build graph as Lake reads it. A module's private part — its
-private declarations, unexposed bodies, proofs and comments — reaches a
-dependent's build only through `import all`, or through a file outside the
-module system, which reads every transitive import whole (Lake's
-`ModuleImportInfo.addImport`). So a private edit to a module rebuilds
-exactly the files that read its private part. A large module on that list
-re-elaborates for nothing: an appended comment line once cost six and a
-half minutes of `lake build leantex Tests`, Layout and HtmlDoc each
-reading all of Ir and 172 test files reading everything. -/
+/-! The build graph as Lake reads it: a module's private part reaches a dependent's build only
+through `import all` or a file outside the module system. -/
 
 namespace Tests.BuildGraph
 
@@ -32,10 +25,8 @@ structure Header where
   imports : Array Import
   deriving Repr
 
-/-- A source file's header as Lake reads it — `Lean.parseImports'`, the
-reader Lake builds its import graph from, so a comment or a modifier
-anywhere in a header is read as the build reads it — or the error Lake
-raises on a header it refuses. -/
+/-- A source file's header as Lake reads it, by `Lean.parseImports'`, or the error Lake raises on a
+header it refuses. -/
 def parseHeader (name text : String) : IO (Except String Header) := do
   try
     let h ← Lean.parseImports' text name
@@ -45,10 +36,8 @@ def parseHeader (name text : String) : IO (Except String Header) := do
         { mod := i.module.toString (escape := false), all := i.importAll } }
   catch e => return .error e.toString
 
-/-- The modules whose private part `h`'s build reads, among those in
-`graph`. A file outside the module system reads every transitive import
-whole; a module reads each module it imports `all`, and whatever that one
-imports `all` in turn. The closure takes at most one round per module. -/
+/-- The modules whose private part `h`'s build reads among `graph`: everything for a file outside
+the module system, else the transitive `import all` closure. -/
 def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String := Id.run do
   let follow (i : Import) : Bool := !h.isModule || i.all
   let mut seen : Array String :=
@@ -63,26 +52,16 @@ def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String
     seen := next
   return seen.qsort (· < ·)
 
-/-- The files outside the module system, each small and imported by no
-module: the suite's root, which gathers every check; `Tests.DiagAudit`,
-which defines the `thm%`/`check%` pin syntax, and `Tests.Reports` and
-`Tests.Premises`, which use it; `Tests.PdfReadRepresentability`, whose
-proofs decide over the UTF-8 bytes of string literals, a body core does not
-expose to modules; and `Tests.SvgBrowser`, outside the suite, which reads
-the scoreboard library. -/
+/-- The files outside the module system, each small and imported by no module. -/
 def legacyFiles : List String :=
   ["Tests", "Tests.DiagAudit", "Tests.PdfReadRepresentability", "Tests.Premises",
    "Tests.Reports", "Tests.SvgBrowser"]
 
-/-- A file at least this long takes tens of seconds to elaborate (Layout,
-about 21,000 lines: 130 s; Picture, about 6,000: 27 s), so what its build
-reads is declared below. -/
+/-- A file at least this long takes tens of seconds to elaborate, so what its build reads is
+declared below. -/
 def largeLines : Nat := 5000
 
-/-- What each large file's build reads of other modules' private parts —
-every large file has a row, and the row is exactly what its imports read.
-Layout's diagnostic proofs compare code spellings, which the registry
-(`DiagCode.spec`) keeps private. -/
+/-- What each large file's build reads of other modules' private parts: exactly its imports' reads. -/
 def largeReads : List (String × List String) :=
   [("LeanTex.Core.Compat", []),
    ("LeanTex.Core.Elab", []),
@@ -93,13 +72,8 @@ def largeReads : List (String × List String) :=
    ("Tests.Layout", []),
    ("Tests.Surface", [])]
 
-/-- Whose builds read each large file's private part: a private edit to the
-file — a comment, a proof — rebuilds exactly these and the shims. Every
-large file has a row, and the row is exactly its readers, so a new reader
-is a decision written here. Reads chain through `import all`: the contracts
-that read Theme whole read Ir whole through it, and their kernel `decide`s
-evaluate Ir's private bodies, so ContrastContract's 28 seconds follow every
-comment in Ir. -/
+/-- Whose builds read each large file's private part: exactly its readers, so a new reader is a
+decision written here. -/
 def largeReaders : List (String × List String) :=
   [("LeanTex.Core.Compat", ["LeanTex.Core.ControlContract", "LeanTex.Core.InputContract"]),
    ("LeanTex.Core.Elab", ["LeanTex.Core.ControlContract", "LeanTex.Core.ElabRegistryContract",
@@ -117,8 +91,7 @@ def largeReaders : List (String × List String) :=
    ("Tests.Layout", []),
    ("Tests.Surface", [])]
 
-/-- The maintained Lean sources: the library, the suite and the two roots
-beside them. Tools under `scripts/` build on their own. -/
+/-- The maintained Lean sources: the library, the suite and the two roots beside them. -/
 def sources : IO (Array (String × String)) := do
   let mut out := #[]
   for dir in ["LeanTex", "Tests"] do
@@ -168,14 +141,7 @@ def judge (files : Array (String × String)) : IO (List (String × Bool)) := do
           | none => (s!"{name} ({size} lines) declares {what} in {table} (found {found})", false)]
   return facts
 
-/-- The model on an invented graph, both ways: a legacy file reads its whole
-closure, a module reads only through `import all`, and `import all` is
-transitive only through further `import all`; the header as Lake reads it —
-a comment anywhere in it, a nested one, one ending an import line, one
-before `module` — and a header Lake refuses is a failing fact, never a
-skipped file; and the tables both ways: a large file needs a row, a row
-needs a large file, and a reader through a chain of `import all` is a
-reader. -/
+/-- The model on an invented graph, both ways: closures, headers as Lake reads them, and the tables. -/
 def selfTest : IO (List (String × Bool)) := do
   let g : List (String × String) :=
     [("A", "module\n\nimport all B\nimport C\n\nnamespace A\n\nimport all G"),
@@ -220,24 +186,8 @@ def selfTest : IO (List (String × Bool)) := do
 
 end Tests.BuildGraph
 
-/-- The build graph's private reads over the maintained tree. A consumer
-reads public interfaces: a proof that must unfold a body reads an
-`@[expose]`d definition or a public lemma beside it, and `import all` is for
-small readers whose rebuild costs seconds, such as a proof or contract
-companion beside what it reads. Private reads chain: ContrastContract and
-ElabRegistryContract read Theme whole and, through Theme's `import all Ir`,
-Ir's private part, which their kernel `decide`s evaluate, so a 28-second
-contract rebuilds on every Ir edit, the standing exception. Every library and
-test file is a `module` but the declared shims; each header is read with
-Lake's own reader, and the shims, each large file's private reads and each
-large file's private readers are held to declared lists. One comment line
-appended to Ir once rebuilt 184 modules in six and a half minutes, through
-Layout's and HtmlDoc's `import all` and 172 test files outside the module
-system. Order inside a large module costs as much, and this check does not
-read it: a structure, an inductive or a mutual block is added
-synchronously, after the elaboration and kernel check of every theorem above
-it, so its types stand before its theorems; Layout once lost about 100 of
-its 136 seconds that way. -/
+/-- Every library and test file is a `module` but the declared shims, and the shims, each large
+file's private reads and its private readers match the declared lists. -/
 def buildGraphChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, ok) in ← Tests.BuildGraph.selfTest do
     check ref s!"build graph model: {name}" ok

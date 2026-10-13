@@ -6,9 +6,8 @@ public section
 
 open LeanTex.Core
 
-/-! The LTIMG3 byte contract, captured before the reader/writer factorization.
-These fixtures pin the persisted representation independently of round-trip
-agreement between an encoder and decoder changed together. -/
+/-! The LTIMG3 byte contract: fixtures pin the persisted bytes independently of encoder and decoder
+round-trip agreement. -/
 
 private def profiledPlan : Image.Plan :=
   { pxW := 258, pxH := 772, dpiX := 150, dpiY := 96, bitDepth := 4
@@ -42,9 +41,8 @@ private def sameRaster (a b : Image.Plan) : Bool :=
     a.filter == b.filter && a.alpha == b.alpha && a.recoded == b.recoded &&
     a.losses == b.losses && a.data == b.data && a.form.isNone && b.form.isNone
 
-/-- Persisted bytes retain their meaning; malformed tags, counts, truncations
-and trailing bytes are cache misses. The universal identity is proved in Image;
-these checks additionally exercise the executable byte primitives. -/
+/-- Persisted bytes keep their meaning, and malformed tags, counts, truncations and trailing bytes
+are cache misses. -/
 def imageCodecChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, plan, encoded) in
@@ -60,15 +58,13 @@ def imageCodecChecks (ref : IO.Ref (List String)) : IO Unit := do
   for pos in [0, 5, 6, 7, 8, 66] do
     t s!"image codec: invalid magic or tag refuses at {pos}"
       ((Image.decodeBin (profiledBytes.set! pos 255)).isNone)
-  -- LTIMG3's palette/profile/key/plane/data/loss lengths are u32s at these
-  -- offsets. An oversized count must refuse before allocation or traversal.
+  -- Offsets of LTIMG3's u32 palette, profile, key, plane, data and loss lengths.
   for pos in [38, 42, 46, 54, 58, 62] do
     let oversized := (List.range 4).foldl
       (fun b k => b.set! (pos + k) 255) profiledBytes
     t s!"image codec: truncated declared extent refuses at {pos}"
       ((Image.decodeBin oversized).isNone)
-  -- Empty variants and the largest representable integers need no giant
-  -- allocation: payload lengths are separate from the scalar fields.
+  -- Payload lengths are separate from the scalar fields, so u32 maxima allocate nothing large.
   let empty : Image.Plan :=
     { pxW := 0, pxH := 0, dpiX := 0, dpiY := 0, bitDepth := 0, orientation := 0
       data := .empty }
@@ -84,8 +80,7 @@ def imageCodecChecks (ref : IO.Ref (List String)) : IO Unit := do
         let p := { seed with color, alpha }
         t "image codec: empty fields and u32 boundary retain every field"
           ((Image.decodeBin (Image.encodeBin p)).any (sameRaster p))
-  -- A value outside the theorem's domain truncates as the existing format
-  -- always has; no runtime certification is added to the encoder.
+  -- A width outside the round-trip theorem's domain truncates; the encoder adds no runtime check.
   let tooWide := { empty with pxW := 4294967296 }
   t "image codec: u32 representability bound is necessary"
     ((Image.decodeBin (Image.encodeBin tooWide)).any fun p =>

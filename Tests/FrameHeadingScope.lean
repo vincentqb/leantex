@@ -6,22 +6,13 @@ public section
 
 open LeanTex.Core
 
-/-! Frame heading invariant: an explicit IR heading inside a frame belongs
-to that frame's body. For a short body, its preceding text, heading and
-following text ship together, under the frame's ground, vertical
-distribution and footer. Only headings outside frames open slide dividers.
-
-This is the contract of `Ir.Block.section`, including headings supplied by
-a second surface reader. It is not a claim that Beamer's metadata-only
-`\section`, `\subsection` or `\subsubsection` commands paint headings:
-a synthetic default-Beamer LuaLaTeX probe, without section hooks, leaves
-the same one-page raster when those declarations are inserted in a frame. -/
+/-! An explicit IR heading inside a frame belongs to that frame's body, under its ground,
+distribution and footer; only headings outside frames open slide dividers. -/
 
 namespace FrameHeadingScope
 
-/-- Synthetic IR, shared with the rendered-PDF acceptance probe. Both the
-progress-divider path and its fallback see the same three local headings;
-the empty chrome variant also exercises the frame reader without a band. -/
+/-- Synthetic IR, shared with the rendered-PDF acceptance probe: three local headings under both the
+progress-divider path and its fallback. -/
 def doc (progress footer : Bool) (valign : Ir.VAlign)
     (levels : Array Ir.HeadingLevel := #[1, 2, 3]) : Ir.Doc :=
   let base := (elabStr (deck169 "\\theme{moloch}" "")).1
@@ -57,9 +48,7 @@ private def frameNodesList (acc : Array Html.Node) : List Html.Node → Array Ht
 
 end
 
-/-- Direct frame children, including the declared distribution spacers.
-The header and footer have their own assertions; local headings must
-remain children of the same stage as the surrounding paragraphs. -/
+/-- Direct frame children, the declared distribution spacers included. -/
 private def bodyShape : Html.Node → Array (String × String)
   | .elem _ _ kids => kids.filterMap fun node => match node with
     | .elem tag attrs _ =>
@@ -95,10 +84,8 @@ private def groundOn (geom : Layout.Geom) (color : Ir.Color) (page : Layout.Page
 
 end FrameHeadingScope
 
-/-- Artifact guard for local levels 1–3, separately and together: frame
-membership, paint order, ground, footer ink and body distribution in
-`Layout.Out`, and heading rank, containment and spacer shares in the
-typed HTML tree. Top-level divider behavior remains independently pinned. -/
+/-- Local levels 1–3, separately and together: frame membership, paint order, ground, footer ink and
+distribution in `Layout.Out`, and rank, containment and spacer shares in the typed HTML. -/
 def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for progress in [false, true] do
@@ -139,8 +126,7 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
              positions[1]![i]! - positions[0]![i]! == positions[1]![0]! - positions[0]![0]! &&
              positions[2]![i]! - positions[1]![i]! == positions[2]![0]! - positions[1]![0]!) &&
            titleYs[0]!.isSome && titleYs[0]! == titleYs[1]! && titleYs[1]! == titleYs[2]!)
-    -- A title frame's ground differs from the deck's: opening a divider
-    -- here would visibly replace it even if its text happened to fit.
+    -- A title frame's ground differs from the deck's, so a divider here would visibly replace it.
     let base := FrameHeadingScope.doc progress false .golden #[1]
     let ground : Ir.Color := { r := 231, g := 242, b := 222 }
     let doc := { base with palette := base.palette.declare (.role .titlePageGround) ground }
@@ -170,8 +156,7 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
          out.pages[2]!.frame == some 2 &&
          (out.pages[1]!.lines.map fun line => (lineText line).trimAscii.toString) == #["Divider"] &&
          pdfFoots out == #[("Frame footer", "1"), ("Frame footer", "2")])
-  -- `ChromeSlot.sectionTitle` names the enclosing top-level section.
-  -- A local heading must not leak that state into the following frame.
+  -- A local heading must not leak `ChromeSlot.sectionTitle` state into the following frame.
   let base := FrameHeadingScope.doc true true .center
   let doc := { base with
     chrome := { footerLeft := some .sectionTitle }

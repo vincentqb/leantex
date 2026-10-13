@@ -13,17 +13,8 @@ private def stagesOf (doc : Ir.Doc) : Array Html.Node :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   slideStages body
 
-/-- **A moloch frame title starts the bar's inset from the paper's edge**
-(`Ir.frameTitleInset`): moloch's bar is a colour box as wide as the paper
-whose title is inset 0.85 of the title's strut from either edge
-(beamerouterthememoloch.sty:134-135), never at the text margin. Against
-lualatex on the moloch spelling (10 pt, 4:3, the shipped Fira Sans for
-every face): the title's first glyph at 8.30 bp under moloch's `\large`
-title and at 10.67 bp under a theme's `\Large`, held to half a point — what
-remains is the strut's leading, the rhythm's 1.2 against size10.clo's 14 pt
-and 18 pt. The web deck pads its bar by the same inset, in em of the title.
-At `f319b96c` both titles stood at the text margin, 28.35 bp, and the bar
-padded by the stage's safe area. Invented words. -/
+/-- A moloch frame title starts the bar's inset, 0.85 of the title's strut, from the paper's edge,
+on both artifacts. -/
 def titleInsetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "title inset: the shipped Fira Sans parses" false
@@ -49,17 +40,8 @@ def titleInsetChecks (ref : IO.Ref (List String)) : IO Unit := do
           | _ => false
         | none => false)
 
-/-- **A standout frame bears no number and advances no count**
-(`Ir.Block.countable`): moloch's `standout` key sets `noframenumbering`
-unless `standoutnumbering` asks otherwise (beamerinnerthememoloch.sty:
-462-467), so the frames after it, the footline's numbers and the section
-page's progress bar read the frames lualatex counts. Over `Layout.Out` and
-the typed HTML tree: frames numbered 1, 2, 3 around an unnumbered standout,
-and a section page after the first frame filling a third of its bar, the
-PDF's measure (`Ir.sectionPageMeasure`). lualatex on the same spelling
-fills 2 of 7 of a bar on a deck whose standout stands second, where the
-engine filled 3 of 8. At `f319b96c` the standout bore 2 and the bar filled
-half. Invented words. -/
+/-- A standout frame bears no number and advances no count, so the footline's numbers and the
+section page's bar read the frames lualatex counts. -/
 def standoutNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "standout numbering: the shipped Fira Sans parses" false
@@ -87,15 +69,8 @@ def standoutNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elemAttrsList (fun _ => true) #[] body.toList).any fun (_, attrs) =>
       (HtmlDoc.attrOf? attrs "style") == some "width: 33%")
 
-/-- **A moloch section page sets its title and bar in moloch's measure on
-both artifacts** (`Ir.sectionPageMeasure`): the `progressbar` section
-page's `0.7875\linewidth` minipage (beamerinnerthememoloch.sty:345),
-centred. Over `Layout.Out`, the bar's track is the measure wide and starts
-half the rest of the line in from the text margin; over the stylesheet, the
-web section page's title and bar are the same share of the stage, to its
-one printed milli-percent. At `f319b96c` the web deck set both in 60% of
-the stage's width, its title 20 bp right of the page's on a 16:9 deck.
-Invented words. -/
+/-- A moloch section page sets its title and bar in moloch's `0.7875\linewidth` measure, centred, on
+both artifacts. -/
 def sectionMeasureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "section measure: the shipped Fira Sans parses" false
@@ -124,17 +99,8 @@ def sectionMeasureChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "section measure: the web section page's title and bar take the same share of the stage"
     (shares "section.section-page h2" && shares ".progress")
 
-/-- **A bar-less frame title stands in beamer's default title box**
-(`Ir.defaultFrameTitleBelow`): beamer's default `frametitle` template closes
-its box `1ex` above the title strut's depth (beamerouterthemedefault.sty:
-169-180), and the body opens below that box, its `\vskip0.25em`, a `[t]`
-frame's `.2cm` and one `\baselineskip`. Against lualatex on the unthemed
-spelling (10 pt, the shipped Fira Sans for every face): the first body
-line 17.93 bp below the title's baseline, held to half a point — the
-title's leading remains, the rhythm's 17.28 pt against size10.clo's 18 pt.
-The web deck trims the title to its baseline and adds the same box to the
-body's opening. At `f319b96c` the line stood 24.39 bp below, and the web
-deck held no such box. Invented words. -/
+/-- A bar-less frame title stands in beamer's default title box, the body opening below it, on both
+artifacts. -/
 def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "title opening: the shipped Fira Sans parses" false
@@ -150,8 +116,7 @@ def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _, _ => false)
   let (head, _, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
-  -- The box below the title's baseline, in the title's em and ex at its step:
-  -- `calc(<step> * (<below>em - 1ex))`, each number the IR's own.
+  -- The box below the title's baseline in the title's em and ex at its step, each number the IR's.
   let below := Ir.defaultFrameTitleBelow 1000 doc.page.leading 0
   let step := Ir.scaleStep 1000 Ir.plainFrameTitleStep
   let boxDecl := (cssBlocksFor css "section.slide:not(.title-page):not(.titlebar):has(> header)").findSome?
@@ -170,15 +135,7 @@ def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
       (artCssBlocks css).any fun (sel, decls) =>
         hasStr sel "section.slide > .frame-body-start" && hasStr decls "var(--frame-title-below")
 
-/-- **A centred frame splits its leftover as its theme's `[c]` key does**
-(`Ir.VAlign.glue`): beamer's own a fill above against a fill and a half
-below (beamerbaseframe.sty:257-258), moloch's one fil on either side
-(beamerinnerthememoloch.sty:455-456). Against lualatex on `deck` (10 pt,
-the shipped Fira Sans for every face), two and four lines centred: under
-beamer's keys at 109.60 and 100.04 bp, under moloch's at 130.32 and
-118.37, held to a fifth of a point. The web deck's spacers grow by the same
-shares. At `f319b96c` beamer's keys centred evenly, the two lines at
-134.00 bp. Invented words. -/
+/-- A centred frame splits its leftover as its theme's `[c]` key does, on both artifacts. -/
 def centreSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "centre split: the shipped Fira Sans parses" false
@@ -195,9 +152,7 @@ def centreSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
         (bodyLineY out 1 "Kilo").any (withinSp (ptMilli 200) · (ptMilli luaFour)))
     t s!"centre split {name}: the web stage's spacers grow by the key's shares"
       ((stagesOf doc).all (stageGrows · == grows) && (stagesOf doc).size == 2)
-  -- A standout frame is moloch's key, which sets moloch's own `[c]` under
-  -- any deck's keys (`Ir.frameKeysOf`): the block's top rises by half of
-  -- its growth, the rate that cancels the lines' own boxes.
+  -- A standout frame is moloch's key, which sets moloch's own `[c]` under any deck's keys.
   let (sdoc, sds) := elabStr (beamerDeck "" [("standout", two), ("standout", four)])
   t "centre split: the standout deck elaborates clean" (sds.all (·.severity != .error))
   let sout := layoutOf fira sdoc (Layout.Geom.ofPage sdoc.page)
@@ -210,20 +165,8 @@ def centreSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "centre split: a standout frame centres evenly under beamer's keys, in the web deck"
     ((stagesOf sdoc).size == 2 && (stagesOf sdoc).all (stageGrows · == #["1000", "1000"]))
 
-/-- **A body's `\vfill` shares a frame's leftover with the frame's own glue
-of its order** (`Layout.VDist.filAbove`, `HtmlDoc.deckSpacerShares`): TeX
-stretches only the highest order of infinity present, in proportion to the
-stretch each glue states (TeXbook ch. 12) — beamer's keys are of
-`\vfill`'s order, so a `\vfill` takes its share beside them, and moloch's
-`[c]` is an order below, so a `\vfill` takes it all. Against lualatex on the
-spelling (10 pt, the shipped Fira Sans for every face), the line after a
-`\vfill` under `[t]`, `[c]` and `[b]`: beamer's keys at 148.80, 163.40 and
-268.02 bp (the line before at 17.62, 81.70 and 134.01), moloch's at 145.14,
-260.65 and 260.59 (before: 17.62, 11.96, 130.30), held to a fifth of a
-point. The web deck stands a spacer of one fill for the `\vfill` beside the
-frame's, which a moloch `[c]` frame holding one drops. At `f319b96c` the
-`\vfill` took the whole leftover on the page and the web deck rendered
-nothing for it. Invented words. -/
+/-- A body's `\vfill` shares a frame's leftover with the frame's own glue of its order, as TeX
+stretches only the highest order present. -/
 def vfillChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "vfill: the shipped Fira Sans parses" false
@@ -247,12 +190,8 @@ def vfillChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"vfill {name}: the web stage grows a fill's spacer beside the frame's"
       ((stagesOf doc).size == 3 && ((stagesOf doc).zip grows).all fun (s, g) => stageGrows s == g)
 
-/-- The fill cases, in invented words: a name, the theme, the frame's
-options, its body, the page held, where lualatex sets Kilo and Lima on it
-(10 pt, the shipped Fira Sans for every face; `none` where only their
-distance is held — the lines a box's fill leaves one baseline apart, a
-list's own place aside — or where nothing is), and the grows of the web
-stage's direct children. -/
+/-- The fill cases: a name, the theme, the frame's options, its body, the page held, lualatex's Kilo
+and Lima baselines (`none` where only their distance is held), and the web stage's grows. -/
 private def fillCases : List (String × String × String × String × Nat × Option (Int × Int) × Int ×
     Array String) :=
   let beamer := "\\usetheme{default}\n"
@@ -317,35 +256,8 @@ private def fillCases : List (String × String × String × String × Nat × Opt
    ("alternation moloch, step 2", moloch, "c", alt, 1, some (11955, 260654), 248699,
      #["1000", "1000"])]
 
-/-- **A fill shares the leftover wherever it stands on the frame's own list,
-and stretches nothing inside a box** (`Ir.Block.listScope`, the one
-classification the page's reader, the web deck and the fill census read):
-TeX sets a fill an overlay step, a list item, a group, a description or one
-side of an alternation holds on the frame's vertical list, and beamer's
-`{figure}` and `{table}` are a `{center}` there (beamerbaselocalstructure.sty:
-550-560); a fill in a beamer block or a column sets in a box at its natural
-height, and a breakable centred frame's own glue is finite
-(`Ir.autobreakCentre`), so a fill takes all of its leftover and without one
-it splits two to three. Against lualatex on the spelling (10 pt, the shipped
-Fira Sans for every face), held to a fifth of a point: after `\pause`
-(beamer's keys 81.70 and 163.40 bp, moloch's 11.96 and 260.70), between two
-items (moloch's 14.94 and 257.67; beamer's 82.13 apart), in a group a macro
-opens (81.70 and 163.40; 11.96 and 260.70), between two descriptions (82.13
-and 164.26; 14.94 and 257.67), in a figure (85.12 and 162.26; 19.93 and
-252.67) and a table (19.93 and 252.62 under moloch), a fill in a block or a
-column leaving its lines one baseline apart, a breakable frame's lines
-around its fill (beamer's 11.96 and 268.02, moloch's 11.96 and 260.64) and
-without one (beamer's 109.60, moloch's 106.63), an alternation's two steps
-(beamer's 109.60 and 121.56, then 81.70 and 163.40; moloch's 130.33 and
-142.28, then 11.96 and 260.65), under moloch a fill an item's step ends on
-(14.94 and 257.71) and one in a block standing in its kind's declared
-template, which sets no box (29.89 and 257.72), and under moloch a fill before more of its item (14.94
-and 257.67) or between nested items (Oscar 242.66, Lima 257.61). The web stage's direct children grow by the frame's spacers
-and by the fills the deck reads (`Ir.FillView.deck`). At `f319b96c` a
-block's and a column's fill took the leftover on the page, a breakable frame
-centred evenly or shared its leftover with a fill, and the web deck grew none
-of them; on the branch's first reviewed tree a figure's and a table's fill
-stretched nothing. Invented words. -/
+/-- A fill shares the leftover wherever it stands on the frame's own list and stretches nothing
+inside a box, on both artifacts. -/
 def nestedFillChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "nested fill: the shipped Fira Sans parses" false
@@ -382,10 +294,8 @@ private def classesOf (attrs : Array (String × String)) : List String :=
 
 mutual
 
-/-- The fills a list item ends on, as its last children: document skips with
-no extent of their own, read through an overlay step or a backend's share
-the item ends on, as the census reads them (`Ir.trailingFillsOne`). `n` is
-the run so far. -/
+/-- The fills a list item ends on, read through an overlay step or a backend's share as the census
+reads them; `n` is the run so far. -/
 private def tailSkipsOne (n : Nat) : Html.Node → Nat
   | .elem "div" attrs kids =>
     if (classesOf attrs).contains HtmlDoc.skipClass && styleLast attrs "--skip" == none then n + 1
@@ -405,11 +315,8 @@ private def trailingSkips (kids : Array Html.Node) : Nat := tailSkipsList 0 kids
 
 mutual
 
-/-- The faults of a stage's fill growth at `n`, whose ancestors up to the
-stage are all growing flex columns where `carried` holds: an element that
-grows where an ancestor does not grows nothing, a growing flex column grows by
-exactly its children's grows (a `fill-before` box its own fill's too), and a
-growing list item, which is no flex column, by the fills it ends on. -/
+/-- The faults of a stage's fill growth: a grow under a non-growing ancestor, a flex column not
+growing by its children's grows, a list item not growing by the fills it ends on. -/
 private def growFaultsOne (carried : Bool) (acc : Array String) : Html.Node → Array String
   | .elem tag attrs kids =>
     let g := growOf (.elem tag attrs kids)
@@ -436,18 +343,8 @@ private def growFaultsList (carried : Bool) (acc : Array String) : List Html.Nod
 
 end
 
-/-- **Every fill the web stage grows grows something, and the stage grows by
-the fills the deck reads** (`HtmlDoc.fillCarrier`, `Ir.FillView.deck`):
-over the typed tree of every fill case's stage, an element with a grow
-stands in an unbroken chain of growing flex columns up to the stage, a
-carrier grows by exactly what it holds, a list item by the fills it ends on,
-and the stage's children other than its spacers by the deck's census of the
-frame's fills. A frame whose census on the page exceeds the deck's — a fill
-before more of its item, a fill in an alternation — and only such a frame
-is named once in the web build (W0399). On the branch's first reviewed tree a
-fill in a group, a link, a description, a backend's share or a nested item
-grew inside a box that did not, so it moved nothing, and nothing named
-it. Invented words. -/
+/-- Every fill the web stage grows grows something, and the stage grows by the fills the deck reads;
+a frame whose page census exceeds the deck's is named once (W0399). -/
 def fillCarrierChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let engineOnly : List (String × String × String) :=
@@ -484,10 +381,7 @@ def fillCarrierChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"fill carrier {name}: a named fill's frame is the subject"
       (hds.all fun d => d.code != "W0399" || d.subject == some "1")
 
-/-- **The page shares its leftover among the fills the census counts on it**
-(`Ir.FillView.page`, `Layout.PageOut.fils`): over every fill case, each page
-of the frame closes on exactly the fill units the census reads on the frame
-at the page's step — an alternation's shown side, a box's fills none. -/
+/-- The page shares its leftover among the fills the census counts on it. -/
 def fillCensusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "fill census: the shipped Fira Sans parses" false
@@ -501,15 +395,8 @@ def fillCensusChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((out.pages[page]?.map (·.fils)) ==
         some (Ir.frameFills doc.docClass.record.lists doc.styles (.page (page + 1)) fbody))
 
-/-- **Outside a deck a quotation and an abstract stand on the page's own
-list** (`Ir.Block.listScope`): article sets both as a quotation list, so a
-fill inside either takes the page's leftover, where beamer's colour box sets
-it at its natural height. Over `Layout.Out` on an article (the shipped Fira
-Sans for every face): the line after the fill stands one paragraph above the
-line after the environment, the page's last, as lualatex's 17.93 bp (the
-abstract) and 21.92 bp (the quotation), held to half a point. On the
-branch's first reviewed tree the abstract's fill stretched nothing.
-Invented words. -/
+/-- Outside a deck a quotation and an abstract stand on the page's own list, so a fill inside either
+takes the page's leftover. -/
 def articleFillChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "article fill: the shipped Fira Sans parses" false
@@ -528,20 +415,7 @@ def articleFillChecks (ref : IO.Ref (List String)) : IO Unit := do
        | some l, some m => withinSp (ptMilli 500) (m - l) (ptMilli lua)
        | _, _ => false)
 
-/-- **An alerted word takes its theme's alert colour and the body's face**
-(`Compat.alertStyled`): beamer's `\alert` selects the `alerted text` colour
-and font, and beamer's default font theme leaves that font empty
-(beamerfontthemedefault.sty:15), as moloch does. Over `Layout.Out`, with the
-regular and the bold weight set apart: under moloch and in a deck naming no
-theme — its class's default bundle — the word sets in the regular face in
-the bundle's alert colour, and the typed HTML tree carries that colour and no
-strong emphasis. A deck that names bareness has no alert colour to read,
-and only that its word still stands apart from its neighbours is held here:
-beamer's default colour theme sets it red in the regular face, which the bare
-deck does not install (`Compat.alertStyled`), and the bold standing in is a
-departure this check leaves open rather than asserts. lualatex sets the
-moloch word in the regular face. At `f319b96c` the themed word was bold, and
-a deck naming no theme set it bold in its ink. Invented words. -/
+/-- An alerted word takes its theme's alert colour and the body's face. -/
 def alertChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← shippedFiraFont | t "alert: the shipped Fira Sans parses" false

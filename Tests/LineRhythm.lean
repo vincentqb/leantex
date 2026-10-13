@@ -16,20 +16,13 @@ private def pitchesOf (fs : Font.FontSet) (src : String) : Array Sp :=
 private def baselines (fs : Font.FontSet) (src : String) : Array Sp :=
   (bodyLines (layoutOf fs (elabStr src).1)).map (·.y)
 
-/-- Two lines forced apart inside one paragraph, the paragraph set wholly
-in `step`: the line pitch is the step's own. Invented words only. -/
+/-- Two lines forced apart inside one paragraph set wholly in `step`, so the line pitch is the
+step's own. -/
 private def stepPara (step : String) : String :=
   s!"\{\\{step} Alpha one\\\\Bravo two\\par}"
 
-/-- **A paragraph set in a named size stands its lines at that size's
-`\baselineskip`** (size10.clo's `\@setfontsize` rows, measured under
-lualatex by the rhythm tier's `article-steps` and `slides-steps`
-fixtures), asserted on the shipped page. Before the step carried its own
-leading every line stood on the body's strut: a `\footnotesize`
-paragraph's lines 12 pt apart where LaTeX sets 9.5, and a `\LARGE` one's
-at 6⁄5 of its size, 1.3 pt tight. A body paragraph keeps the body's pitch
-around a small run, a footnote stands at `\footnotesize`'s, and the page's
-`\linespread` scales a step's leading as `\selectfont` scales any. -/
+/-- A paragraph set in a named size stands its lines at that size's `\baselineskip`, on the shipped
+page. -/
 def stepLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   -- size10.clo's `\baselineskip` per step, hundredths of a point.
@@ -66,14 +59,8 @@ private def withClassIn (nodes : Array Html.Node) (c : String) : Array Html.Node
     | .elem _ attrs _ => attrs.any fun (k, v) => k == "class" && (v.splitOn " ").contains c
     | _ => false
 
-/-- **The HTML sets a paragraph's named size where the page does**: the
-step's class on the paragraph element itself, so the element's own line
-box is the step's, and on a deck the step's leading as that element's line
-height — the page's projection, where a reading page keeps the screen's one
-line height. A span inside the element left the body's strut under every
-line. A size span states no line height of its own: it inherits its
-block's, as the page leads a run in its paragraph's proportion
-(`Ir.runLead`), so a smaller span never moves its line. -/
+/-- The HTML sets a paragraph's named size where the page does: the step's class on the paragraph
+element, and a size span inherits its block's line height. -/
 def htmlStepChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (_, body, _) := HtmlDoc.emitTree {} (elabStr (metricDoc (stepPara "small"))).1
@@ -110,20 +97,14 @@ def htmlStepChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((withClassIn deckMixed "size-small").size == 1 &&
       (withClassIn deckMixed "size-small").all (· matches .elem "span" _ _) &&
       (withClassIn deckMixed "lead-small").isEmpty)
-  -- The 4:3 stage is 96 mm (272.126 pt) high: the 10 pt body is 3.674% of
-  -- it, and the root — the body at 12/14.5 — 3.041%, so the sheet's
-  -- quantum `0.725rem` is the page's 6 pt on the stage.
+  -- The 4:3 stage is 96 mm (272.126 pt) high, so the sheet's quantum `0.725rem` is the page's 6 pt.
   t "a deck's body sets the page's leading, not the screen's"
     (hasStr deck "font-size: 3.674vh; line-height: 1.200;")
   t "a deck's root size is the stage's rhythm unit"
     (hasStr deck "html { font-size: 3.041vh; }")
 
-/-- **A declared paragraph gap reaches the screen at its length**: `\parskip`
-in `em` is evaluated once at the body, as TeX evaluates `\setlength`, and
-lands as its multiple of the screen's quantum; reading only the length's
-point part dropped every font-relative declaration — `\setlength{\parskip}
-{0.5em}`, the parskip package's `0.6em` — to zero. A deck's `\bigskip`
-stands its share of the stage, never a fixed CSS length. -/
+/-- A declared paragraph gap reaches the screen at its length: an `em` `\parskip` is evaluated once
+at the body, and a deck's `\bigskip` stands its share of the stage. -/
 def htmlGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let page (pre : String) := (HtmlDoc.emit {} (elabStr (dvDoc pre "Alpha.\n\nBravo.")).1).1
@@ -145,8 +126,8 @@ private def longPara : String :=
   String.intercalate " " (List.replicate 6
     "Alder birch cedar dogwood elm fir hazel juniper larch maple oak pine rowan spruce")
 
-/-- Whether a ragged line holds every word that fits: the next line's first
-word, one space after this line's end, would stand past the measure. -/
+/-- Whether a ragged line holds every word that fits: the next line's first word, one space after
+this line's end, would stand past the measure. -/
 private def lineFillsTo (l : Layout.LineOut) (space : Sp) (next : Layout.LineOut)
     (measure : Sp) : Bool :=
   let first := (next.segs.toList.takeWhile fun sg => match sg with
@@ -156,13 +137,8 @@ private def lineFillsTo (l : Layout.LineOut) (space : Sp) (next : Layout.LineOut
       | _ => w) 0
   measure < l.setWidth + space + first
 
-/-- **A beamer frame sets its text ragged right**, as beamer.cls's own
-`\raggedright` does for every frame (measured under lualatex: the lines
-of a frame paragraph end where their words end, none hyphenated), while an
-article's lines stand justified to the measure; the HTML hyphenates only
-where the page would, so a deck's paragraphs break at spaces. Before, a
-frame's lines were stretched to the measure and hyphenated, in both
-artifacts. -/
+/-- A beamer frame sets its text ragged right, unhyphenated, while an article's lines stand
+justified, in both artifacts. -/
 def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let deckSrc := "\\documentclass[10pt]{beamer}\n\\begin{document}\n\\begin{frame}[t]\n" ++
@@ -176,9 +152,7 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a frame's lines end ragged, where their words end"
     (inner.any fun l => l.setWidth < measure - pt 2)
   t "a frame's lines end on whole words" (lines.all fun l => !(lineText l).endsWith "-")
-  -- LaTeX's `\raggedright` leaves no line loose (`\rightskip 0pt plus 1fil`),
-  -- and TeX keeps the latest of equal demerits: each line takes every word
-  -- that fits, so the next line's first word, after one space, would not.
+  -- `\raggedright` leaves no line loose and TeX keeps the latest of equal demerits.
   t "a frame's lines take every word that fits, as LaTeX's raggedright sets them"
     (lines.size ≥ 3 && (List.range (lines.size - 1)).all fun i =>
       let l := lines[i]!
@@ -196,8 +170,7 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (hasStr (HtmlDoc.emit {} deck).1 "p { hyphens: manual; }")
   t "an article's paragraphs keep the browser's hyphenation"
     (hasStr (HtmlDoc.emit {} art).1 "p { hyphens: auto; }")
-  -- ragged2e is not read: its declarations name the page key that sets a
-  -- deck's frames justified, and that key does.
+  -- ragged2e is not read: its declarations name the page key that sets a deck's frames justified.
   let deck (pre : String) := "\\documentclass[10pt]{beamer}\n" ++ pre ++
     "\\begin{document}\n\\begin{frame}[t]\n\\justifying\n" ++ longPara ++
     "\n\\end{frame}\n\\end{document}"
@@ -210,12 +183,8 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (onLines.size ≥ 3 && (onLines.extract 0 (onLines.size - 1)).all fun l =>
       measure - pt 1 ≤ l.setWidth)
 
-/-- **A listing's lines stand at its size's leading, less what its package
-takes off each line**: a bare `verbatim` under `\\footnotesize` at the
-step's 9.5 pt, as lualatex sets it (9.464 bp), and a minted listing 0.25 pt
-tighter, fvextra's overlap after every line (lualatex: 9.215 bp), twice
-after its first (8.966 bp); the HTML `pre` states the later pitch over its
-font size. Before, both stood at 6⁄5 of 8 pt, 9.6 pt, on both artifacts. -/
+/-- A listing's lines stand at its size's leading, less what its package takes off each line, in
+both artifacts. -/
 def listingPitchChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let code := "alpha = 1\nbravo = 2\ncharlie = 3\n"
@@ -248,23 +217,15 @@ title across lines. -/
 private def longTitle : String :=
   "Alder birch cedar dogwood elm fir hazel juniper larch maple oak pine rowan spruce yew"
 
-/-- **A size command inside a display sets its lines in the size file's
-proportion to their type**: a heading's, a title's or a frame title's
-content set in a named step stands on that step's leading of the display
-size the step scales (`Ir.stepLead`), so its wrapped lines clear their
-type within the size file's band, 8⁄7 to 9⁄7 (`Ir.stepLead_between`),
-asserted on the shipped page. Read off the body's column instead, a
-`\LARGE` section title's lines set solid and a `\small` frame title's
-lines overlapped; a display under no size command keeps the 6⁄5 rule of
-its own size, inside the same band. -/
+/-- A size command inside a display sets its lines in the size file's proportion to their type,
+between 8⁄7 and 9⁄7. -/
 def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- 8⁄7 ≤ pitch ⁄ size: a line never stands closer than the size file's
-  -- tightest proportion to its type, a sp of rounding per line
+  -- 8⁄7 ≤ pitch ⁄ size, a sp of rounding per line.
   let clears (out : Layout.Out) : Bool :=
     let ps := sizedPitches out
     !ps.isEmpty && ps.all fun (sz, p) => 8 * sz ≤ 7 * p + 8
-  -- and, a display wholly in one step, no looser than its loosest, 9⁄7
+  -- A display wholly in one step is no looser than 9⁄7.
   let banded (out : Layout.Out) : Bool :=
     clears out && (sizedPitches out).all fun (sz, p) => 7 * p ≤ 9 * sz + 9
   let art (pre body : String) : Layout.Out :=
@@ -284,8 +245,7 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a Huge document title's lines stand in the step's proportion"
     (banded (art ("\\title{\\Huge " ++ longTitle ++ "}\n\\author{Kilo Lima}\n\\date{}\n")
       "\\maketitle"))
-  -- beamer inserts a frame's title in a group: a smaller size inside it
-  -- ends before the template's `\par`, whose skip leads the lines
+  -- beamer sets a frame's title in a group, so a smaller size ends before the template's `\par`.
   let titlePitches (pre : String) : Array Sp :=
     (sizedPitches (deck "" ("\\begin{frame}{" ++ pre ++ longTitle ++ " " ++ longTitle ++ "}\n" ++
       "Body words.\n\\end{frame}"))).map (·.2)
@@ -300,9 +260,7 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (banded (deck ("\\title{{\\LARGE " ++ longTitle ++ "}}\n\\author{Kilo Lima}\n")
       "\\begin{frame}\n\\titlepage\n\\end{frame}"))
 
-/-- The value the last `sel` rule of a stylesheet's text declares for
-`prop`, scanning in source order: what the cascade leaves where the rules
-share one specificity and every one of them applies. -/
+/-- The value the last `sel` rule of a stylesheet declares for `prop`, in source order. -/
 private def lastDeclared (css sel prop : String) : Option String :=
   ((css.splitOn ("\n" ++ sel ++ " {")).drop 1).foldl (fun acc chunk =>
     let body := (chunk.splitOn "}").head!
@@ -312,12 +270,7 @@ private def lastDeclared (css sel prop : String) : Option String :=
       | _ => none
     found.orElse fun _ => acc) none
 
-/-- **A deck's listing is the page's**: on the stage a `pre` carries none of
-the reading page's code box — no padding, no ground — as the page pads no
-listing and paints none under one, and neither does an article's, where a
-reading page of the web's classes keeps its box. The
-stage's root is its rhythm unit, so the box's rem padding grew with it and
-pushed a slide that fits its page past its stage. -/
+/-- A deck's listing is the page's: on the stage a `pre` carries no padding and no ground. -/
 def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let code := "alpha = 1\nbravo = 2\n"
@@ -331,9 +284,7 @@ def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "the stage pads no listing" (lastDeclared deck "pre" "padding" == some "0")
   t "the stage paints no ground under a listing"
     (lastDeclared deck "pre" "background" == some "none")
-  -- An article paints no code ground on its page either, so its listing
-  -- is the page's too; the web's classes paint one, in both artifacts, and
-  -- keep the code box on it.
+  -- An article paints no code ground either; the web's classes paint one and keep the code box.
   let art := (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
   t "an article's listing is the page's"
     (lastDeclared art "pre" "padding" == some "0" &&
@@ -343,23 +294,14 @@ def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ((lastDeclared web "pre" "padding").any (· != "0") &&
       lastDeclared web "pre" "background" == some (HtmlDoc.roleRef .codeSurface))
 
-/-- The distinct baselines a source's body lines stand on, in page order, and
-the distances between them: a table's row pitch, one per row, whatever the
-number of cells a row sets. -/
+/-- The distances between the distinct baselines a source's body lines stand on: a table's row
+pitch, one per row. -/
 private def rowPitches (fs : Font.FontSet) (src : String) : Array Sp :=
   let ys := (bodyLines (layoutOf fs (elabStr src).1)).foldl (fun (acc : Array Sp) l =>
     if acc.back? == some l.y then acc else acc.push l.y) #[]
   (ys.zip (ys.extract 1 ys.size)).map fun (a, b) => b - a
 
-/-- **A table's rows stand on the strut of the size the table began under**,
-in both artifacts: LaTeX's `\@arstrut` is the strut in force where the
-`tabular` opened, so a cell that sets its own size changes its type, never
-its row — lualatex keeps three `\small` cells' rows 11.955 bp apart, the
-body's 12 pt, and a table opened under `\small` sets its rows at the step's
-11 pt (10.955 bp) and its `p`-column paragraphs' wrapped lines at the step's
-leading. Before, a cell set wholly in one size took the step's strut, and
-its row stood 11 pt below the last. The HTML cell carries the size the row
-stands under (`Ir.paraStep?`); a cell's own size stays a span. -/
+/-- A table's rows stand on the strut of the size the table began under, in both artifacts. -/
 def cellStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let perCell := dvDoc "" ("\\begin{tabular}{ll}\n\\small Alpha & \\small one\\\\\n" ++
@@ -384,16 +326,7 @@ def cellStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     ((withClassIn nodes "size-small").size == 6 &&
       (withClassIn nodes "size-small").all (· matches .elem "td" _ _))
 
-/-- **A paragraph leads at the size in force where it ends**, on the shipped
-page: LaTeX reads `\baselineskip` at `\par`, so a size group closed before
-its paragraph ends leaves the body's leading under the paragraph's lines
-(lualatex: `{\small A\\B}\par` stands its lines 11.955 bp apart, the body's
-12 pt), while `{\small A\\B\par}`, a `\small` declaration over the
-paragraph, and a nested size group ending the paragraph inside it lead at
-their step (`Ir.paraAt`, `Ir.paraStep_paraAt_exact`). The HTML gives the step
-to the paragraph element only where it is in force at the end. Before, the
-closed group led at the step, a point tight, and a `\Huge` group at a page's
-top stood its line 11.6 bp low. -/
+/-- A paragraph leads at the size in force where it ends, on the shipped page and in the HTML. -/
 def paraEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   t "a size group closed before the paragraph ends leaves the body's leading"
@@ -419,9 +352,8 @@ def paraEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       (withClassIn nested "size-footnotesize").size == 1 &&
       (withClassIn nested "size-small").isEmpty)
 
-/-- A venue's size ladder as a style it ships declares one: `\@setfontsize`
-rows for the body and some of its steps (invented values, in a venue's shape:
-a 10/10.95 body, steps that declare their own skips). -/
+/-- A venue's size ladder as a style it ships declares one: invented `\@setfontsize` rows in a
+venue's shape. -/
 private def venuePre : String :=
   "\\makeatletter\n" ++
   "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}\n" ++
@@ -431,16 +363,8 @@ private def venuePre : String :=
   "\\renewcommand{\\large}{\\@setfontsize\\large{14}{15}}\n" ++
   "\\makeatother\n"
 
-/-- **Under a size ladder a document declares, each step leads at the skip it
-declares** (fntguide's `\@setfontsize`, its third argument), measured under
-lualatex on the venue probe: `\footnotesize` 9/10 at 9.96 bp, `\scriptsize`
-7/8 at 7.97, `\tiny` 6/7 at 6.97, a `\large` declared 14/15 at 15, and a
-step the venue leaves alone at size10.clo's own skip (`\small` 11 pt). The
-column holds the declared skips (`Ir.setSkip`, `Ir.skipRowOf_between`) and
-every step leads in its proportion to the body's (`Ir.stepLead_ratio_between`),
-to the page factor's milli rounding. Before, every step read size10.clo's
-column under the venue's tighter body factor: `\footnotesize` set 8.68 bp
-lines on 9 pt type, `\large` solid. -/
+/-- Under a size ladder a document declares, each step leads at the skip it declares, in its
+proportion to the body's. -/
 def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let near (a b : Sp) : Bool := (a - b).natAbs ≤ (pt 1 / 100).natAbs
@@ -453,8 +377,7 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a listing in a declared step leads at the declared skip"
     (let ps := pitchesOf oneFace (dvDoc venuePre code)
      ps.size == 1 && near ps[0]! (pt 10))
-  -- The body's skip declared natively, the spelling a class's `\normalsize`
-  -- reads as: the body's lines at it, a step it leaves alone at size10.clo's.
+  -- The body's skip declared natively, as a class's `\normalsize` reads it.
   let native (body : String) := dvDoc "\\page{ fontsize = 10pt, baselineskip = 11pt }\n" body
   t "a declared body skip sets the body's lines at it"
     (let ps := pitchesOf oneFace (native (stepPara "normalsize"))
@@ -467,10 +390,7 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (doc.page.skipScale.lookup "footnotesize" == some 1000 &&
       doc.page.skipScale.lookup "normalsize" == some 1095 &&
       doc.page.skipScale.lookup "small" == some 1100)
-  -- A footnote sets in the document's own `\footnotesize`, its size and its
-  -- skip from the one ladder and column: lualatex sets the venue's notes at
-  -- 8.97 bp type on a 9.96 bp pitch. Before, the note took the engine's 8 pt
-  -- type on the venue's 10 pt skip.
+  -- A footnote sets in the document's own `\footnotesize`, its size and skip from the one ladder.
   let notes := (layoutOf oneFace (elabStr (dvDoc venuePre
       "Alpha words.\\footnote{Bravo note\\\\Charlie note}")).1).pages.flatMap
         (·.lines.filter fun l => l.note && !(lineText l).isEmpty)
@@ -480,10 +400,7 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a footnote under a declared ladder sets at its declared footnotesize and skip"
     (notes.size == 2 && near (notes[1]!.y - notes[0]!.y) (pt 10) &&
       noteSizes.contains (pt 9) && !noteSizes.contains (pt 8))
-  -- The body's skip and `\linespread` compose, as `\selectfont` stretches the
-  -- skip a size command sets, whatever order a block or two blocks state
-  -- them in: 11 pt stretched 1.5 is 16.5. Before, the skip was read at the
-  -- size in force where its key stood, and each overwrote the other.
+  -- The body's skip and `\linespread` compose in either order: 11 pt stretched 1.5 is 16.5.
   let skipped (pre : String) : Array Sp := pitchesOf oneFace (dvDoc pre (stepPara "normalsize"))
   for (name, pre, want) in [
       ("before the size", "\\page{ baselineskip = 14pt, fontsize = 12pt }\n", pt 14),
@@ -495,23 +412,12 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"a declared body skip {name} sets the body's lines at its stretched length"
       (ps.size == 1 && near ps[0]! want)
 
-/-- A paragraph holding smaller inline runs on every line — a small, a
-footnotesize and a scriptsize word, a formula — between forced breaks:
-invented words only. -/
+/-- A paragraph holding smaller inline runs on every line between forced breaks. -/
 private def mixedRuns : String :=
   "Alpha one {\\small Charlie} one\\\\Bravo {\\footnotesize two} words\\\\" ++
     "Delta {\\scriptsize three} $x$ four\\\\Echo five\\par"
 
-/-- **A smaller inline run never moves its line** (`Ir.runLead`), under every
-skip column the page reads: size10.clo's, a body skip the document declares
-tighter than its 6⁄5 (`\page{ baselineskip = 11pt }`), and a venue's
-`\normalsize` of 10/10.95 that leaves `\small` undeclared. LaTeX reads one
-`\baselineskip` at a paragraph's `\par`, and a run adds only its ink:
-lualatex stands every line of such a paragraph at the body's skip, the closed
-`{\small A\\B}\par` group's included (10.91 bp under the venue's 10.95 pt).
-Before, each run carried its own step's leading into its line box: under the
-tighter columns every line holding a small run stood about 0.35 pt low, and
-the closed group led at the step's skip. -/
+/-- A smaller inline run never moves its line, under every skip column the page reads. -/
 def inlineRunChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let near (a b : Sp) : Bool := (a - b).natAbs ≤ (pt 1 / 100).natAbs
@@ -527,16 +433,8 @@ def inlineRunChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     t s!"under {name} a closed small group leads at the body's leading"
       (closed.size == 1 && closed.all (near · lead))
 
-/-! ### The gap sheet's cascade on the typed tree
-
-What a browser's cascade gives an element's `margin-top`, read off the
-emitted tree and its sheet with no browser: compounds of type, class and
-attribute selectors (presence, `=`, `~=`), `:first-child`, `:last-child`,
-`:not()`, `:is()`, `:where()` and `:has()` with relative selectors, the four
-combinators, specificity, source order, and the element's own `style`. A rule
-inside an `@media` block or an `@supports not` block is not the screen's
-default and is skipped. The subset the engine's sheets are written in, read
-as a browser reads it — never the generator's own patterns. -/
+/-! The gap sheet's cascade on the typed tree: the `margin-top` a browser gives an element, read
+with no browser over the selector subset the engine's sheets use. -/
 
 /-- One element of a flattened tree. -/
 private structure CEl where
@@ -795,8 +693,8 @@ private def cssPartsSpec (fuel : Nat) (ps : List CPart) : Nat × Nat × Nat :=
 
 end
 
-/-- A sheet's rules in source order with the at-rules around each: the
-screen's default reads a rule inside no `@media` and no `@supports not`. -/
+/-- A sheet's rules in source order with the at-rules around each; the screen's default reads a rule
+inside no `@media` and no `@supports not`. -/
 private def cssRules (css : String) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   let mut heads : Array String := #[]
@@ -894,18 +792,8 @@ private def milliOf (v : String) : Option Int :=
     | _, _ => none
   | _ => none
 
-/-- **A deck's heading set in a named size leads at the page's leading**, as
-the page leads a display's lines at the step's `\baselineskip` on the base
-the step scales: the title's element carries `lead-<step>` and stands no
-line of its own, and the step's span inside it, at the step's size, takes
-the leading over that size — the page's own pitch over its own type, to the
-milli. Before, the element took the leading over its own size and the span
-inherited that factor, so a step above the title's size stood every line
-that step's factor too loose: 37.3 bp per line for a `\Large` frame title
-the page sets at 25.9. A step below the body's own ends inside the group
-beamer inserts a frame's title in, and the title keeps its own leading in
-both artifacts (`Ir.insertedStep?`): a `\tiny` title led at 8.64 bp where
-lualatex leads it at the title's 17.94. -/
+/-- A deck's heading set in a named size leads at the page's leading, and a step below the body's
+keeps the title's own leading. -/
 def headingLeadChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for step in ["Large", "LARGE"] do
@@ -937,9 +825,7 @@ def headingLeadChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         match (cascadeInherited tree rules "line-height" i).bind milliOf with
         | some v => page.all fun q => (v - q).natAbs ≤ 1
         | none => false)
-  -- a smaller step inside a frame's title ends before the template's
-  -- `\par`, so the title keeps the heading's own line height, as the page
-  -- keeps the title's skip (`displayStepChecks`)
+  -- A smaller step inside a frame's title ends before the template's `\par`.
   let titleDoc (pre : String) : Ir.Doc :=
     (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
       "\\begin{frame}{" ++ pre ++ longTitle ++ "}\nBody words.\n\\end{frame}\n" ++
@@ -958,9 +844,8 @@ keeps the heading's own leading"
         Ir.sizeScale.all (fun (n, _) => (withClassIn nodes ("lead-" ++ n)).isEmpty) &&
         (titleLead pre).isSome && titleLead pre == titleLead "")
 
-/-- The flow blocks of each frame a deck's tree ships, seeing through overlay
-carriers and skipping the frame's furniture, each block's tag, its text and
-the `margin-top` the cascade gives it. -/
+/-- The flow blocks of each frame a deck's tree ships, through overlay carriers and past the frame's
+furniture: tag, text and cascaded `margin-top`. -/
 private def frameFlow (nodes : Array Html.Node) (css : String) :
     Array (String × String × Option String) := Id.run do
   let t := CTree.of nodes
@@ -990,8 +875,7 @@ private def frameFlow (nodes : Array Html.Node) (css : String) :
             stack := rest
   return out
 
-/-- Overlay content as the page shows it at its last step, paragraph by
-paragraph: invented words in paragraphs, two beamer blocks, a list, a
+/-- Overlay content as the page shows it at its last step: paragraphs, two beamer blocks, a list, a
 quotation and a display. -/
 private def gapBlocks : List String :=
   ["Alder words open the frame.", "Birch words follow it.",
@@ -1002,12 +886,8 @@ private def gapBlocks : List String :=
    "\\[ x + y = z \\]", "Juniper words follow the display.",
    "\\begin{block}{Lima}Lima words close a step.\\end{block}", "Larch words end the frame."]
 
-/-- The same blocks with overlays between them: `\pause` twice, the second
-opening on a block, an open `\uncover` holding a paragraph and the quotation
-it closes on, and a closed range's `\uncover<2-3>` (its declared end a second
-carrier) opening on the display right after that quotation and closing on a
-block. lualatex stands every line of its last step where the flat frame
-stands it. -/
+/-- The same blocks with `\pause`, open `\uncover` and closed-range carriers between them; lualatex
+stands every line of the last step where the flat frame does. -/
 private def gapOverlaid : String :=
   match gapBlocks with
   | [a, b, c, k, l, f, q, d, j, m, e] =>
@@ -1040,15 +920,8 @@ private def marginTopOfText (nodes : Array Html.Node) (css : String) (text : Str
     if (t.el i).text.trimAscii.toString == text then return cascadeMarginTop t rules i
   return none
 
-/-- **A disclosure is read through at its foot where its body shows.** On
-paper a disclosure sets flat, so the block after it stands where it would
-after its body's last block: a list, a quotation or a paragraph ending the
-body gives the next block the space it gives outside a disclosure, open or
-closed, and nested. On screen an open one does the same, and a closed one,
-which shows its summary alone, gives the next block the space a paragraph
-gives: its hidden body moves nothing. The judge is the sheet's own cascade
-over the emitted tree, its print rules read after the screen's for paper.
-Invented words throughout. -/
+/-- A disclosure is read through at its foot where its body shows: on paper and open on screen the
+next block gets its body's space, closed it gets a paragraph's. -/
 def disclosureGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let gapAfter (print : Bool) (src : String) : Option String :=
@@ -1073,8 +946,6 @@ shown end gives ({gapAfter false one}, {gapAfter false nested} beside {screenWan
       t s!"paper: a disclosure, {how}, ending on {label}, gives the next block its body's space \
 ({gapAfter true one}, {gapAfter true nested} beside {paperWant})"
         (paperWant.isSome && gapAfter true one == paperWant && gapAfter true nested == paperWant)
-  -- An item whose disclosure ends on a nested list gives the next item the
-  -- space a nested list ending the item gives, on paper and open on screen.
   let flatItem := "- **Elm**\n\n  Alder\n\n  - Birch\n  - Cedar\n- After.\n"
   for (opener, print) in [("<details open>", false), ("<details open>", true), ("<details>", true)] do
     let item := s!"- {opener}\n  <summary>Elm</summary>\n\n  Alder\n\n  - Birch\n  - Cedar\n" ++
@@ -1083,20 +954,8 @@ shown end gives ({gapAfter false one}, {gapAfter false nested} beside {screenWan
 next item its space ({gapAfter print item} beside {gapAfter print flatItem})"
       ((gapAfter print flatItem).isSome && gapAfter print item == gapAfter print flatItem)
 
-/-- **An overlay changes no gap between the blocks it carries**: built with
-and without its `\pause`, `\uncover` and closed-range carriers, every flow
-block of the frame takes the same `margin-top` in the cascade — the
-declared `\parskip` between paragraphs, a list's and a quotation's space,
-the display's skip — and every step of the page stands every line where the
-flat frame does: a display opening a carrier keeps the `\@endpe` the
-quotation before it left (`Ir.carrierDisplays`), and a covered display stays
-a display (`Ir.displayParts` reads through the cover's colour). A carrier is an element of its own (one element animates
-one opacity), so the sheet's sibling boundaries read through it
-(`HtmlDoc.GapRule.throughCarriers`, `HtmlDoc.blockGapThrough_owner_contract`);
-before, the first block in each carrier took no margin and the declared gap
-vanished at every step (measured in Chromium: 14.1 px gaps with holes of 0).
-The judge itself is checked to see the hole: the same tree under the sheet
-read through no carriers differs. -/
+/-- An overlay changes no gap between the blocks it carries, and every step of the page stands every
+line where the flat frame does. -/
 def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (flatDoc, _) := elabStr (gapDeck ("\n\n".intercalate gapBlocks))
@@ -1114,8 +973,7 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "every block keeps its gap through the overlay carriers" (agree flat ov)
   t "the paragraphs after a step take the declared parskip"
     ((ov.filter fun (tag, _, _) => tag == "p").all fun (_, _, m) => m.isSome)
-  -- the judge sees the hole the carriers left: the same tree under the
-  -- sheet read through no carriers
+  -- The judge sees the hole: the same tree under the sheet read through no carriers.
   let d := HtmlDoc.carrierPairs on
   let lists := ovDoc.docClass.record.lists
   let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens d
@@ -1124,8 +982,6 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (!d.isEmpty && hasStr ovCss through && through != plain)
   t "without reading through carriers the judge finds the gaps that vanish"
     (!agree flat (frameFlow on (ovCss.replace through plain)))
-  -- the page: every step of the overlaid frame is the flat frame, covered
-  -- or shown
   let pages (doc : Ir.Doc) : Array (Array (String × Sp)) :=
     (layoutOf oneFace doc).pages.map fun p =>
       (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
@@ -1134,10 +990,6 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "every step of the page stands every line where the flat frame does"
     (!flatPages.isEmpty && ovPages.size == 3 * flatPages.size &&
       (List.range ovPages.size).all fun i => ovPages[i]? == flatPages[i % flatPages.size]?)
-  -- an alternation: the page at each step is the flat frame of the group
-  -- it shows, and the screen with no snap shows the first, whichever kind
-  -- of block each group ends on; the block after a pair ending apart reads
-  -- the group shown there, never the hidden one
   for (groups, alike, label) in [
       (("Kilo words in a paragraph.", gapList "Lima"), false, "a paragraph shown first and a list"),
       ((gapList "Kilo", "Lima words in a paragraph."), false, "a list shown first and a paragraph"),
@@ -1156,9 +1008,7 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       (agree3 (frameFlow fn1 (treeCssList "" fh1.toList)) (frameFlow an (treeCssList "" ah.toList)))
     t s!"each step of an alternation of {label} is the flat frame of the group it shows"
       (pages altDoc == (pages firstDoc ++ pages otherDoc) && (pages altDoc).size == 2)
-  -- the sheet reads the boundary shapes the tree has, not every depth its
-  -- carriers nest to: forty pauses read through the one link a single
-  -- pause does
+  -- The sheet reads the tree's boundary shapes, not its carriers' depth: forty pauses read as one.
   let pausesDoc (n : Nat) : Ir.Doc :=
     (elabStr (gapDeck ("\n\\pause\n".intercalate
       ((List.range (n + 1)).map fun i => s!"Words of paragraph {i}.\n")))).1
@@ -1173,11 +1023,7 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "a frame of forty pauses ships the gap sheet of one"
     (sheetOf 40 == sheetOf 1)
 
-/-- Displays meeting an overlay carrier, each with its flat reading: a
-display opening a `\pause` or an `\uncover` after a list, opening a
-`\pause` inside a running paragraph or after a quotation, a `\pause` after
-a display inside a paragraph, and an `\uncover` holding a display in
-mid-paragraph. Invented words only. -/
+/-- Displays meeting an overlay carrier, each with its flat reading. -/
 private def carrierDisplayCases : List (String × String × String) :=
   [("a display opening a pause after a list",
      gapList "Elm" ++ "\n\\pause\n\\[ a = b \\]\n\nAlder words stand here.",
@@ -1199,19 +1045,8 @@ private def carrierDisplayCases : List (String × String × String) :=
      "Alder words stand here.\n\\uncover<2->{\\[ a = b \\]}\nBirch words stand here.",
      "Alder words stand here.\n\\[ a = b \\]\nBirch words stand here.")]
 
-/-- **A carrier stands its displays in their paragraph**
-(`Ir.carrierDisplays`): a display opening or closing a `\pause` or an
-`\uncover` stands, at every step of the page and on the screen, where it
-stands with no overlay there — inside the paragraph its text runs on in,
-right after the environment end that left `\@endpe`, before the break that
-does or does not follow — as lualatex stands it, save one departure: where
-an `\uncover` group closes on a display before a paragraph break, beamer's
-carrier leaves an empty line after the display (about 13.5 bp), which the
-page does not set, as an overlay is no line of the page. Elaborated alone,
-the carrier's body saw neither side: a display after a list opened a new
-paragraph about 13 pt lower, one in a running paragraph about 8 pt, and
-every covered step set the display as a centred paragraph, the cover's
-colour hiding its shape (`Ir.displayParts`). -/
+/-- A carrier stands its displays in their paragraph, at every step and on the screen, as lualatex
+does, save the empty line beamer's closing `\uncover` leaves. -/
 def carrierDisplayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pages (doc : Ir.Doc) : Array (Array (String × Sp)) :=
@@ -1236,13 +1071,7 @@ private def runtPara : String :=
   "Fern yew spruce elm beech hazel juniper cedar fir oak beech cedar oak juniper " ++
     "pine larch moss holly hazel alder clover spruce rowan spruce."
 
-/-- **A centred block never leaves its last word alone where TeX's line count
-allows otherwise** (`Layout.runtDemerits`): LaTeX's `\centering` fills each
-line first and can end a block on one word, centred under the rest; the page
-keeps TeX's line count — the same paragraph set flush left, which TeX breaks
-exactly as it breaks it centred, stands the same number of lines — and gives
-the last line a second word. Before, the centred block ended on its last
-word alone. -/
+/-- A centred block never leaves its last word alone where TeX's line count allows otherwise. -/
 def centredRuntChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let lines (env : String) : Array Layout.LineOut :=

@@ -6,8 +6,7 @@ public section
 
 open LeanTex.Core
 
-/-- Site accounting follows reporting calls, not repetitions of source text.
-The preamble counterexample rules out the stronger, false duplication claim. -/
+/-- Site accounting follows reporting calls, not repetitions of source text. -/
 def elabWarningContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let ctx : Elab.Ctx := { file := "probe.tex" }
@@ -37,9 +36,8 @@ def elabWarningContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "warning contract: duplicating a body does not duplicate preamble diagnostics"
     ((keyed one).size == 1 && (keyed two).size == 1)
 
-/-- Alias equivalence belongs to the refused title body's declarative
-read-out. A conditional operand still names the command the source wrote:
-normalizing it globally would change which declarations execute. -/
+/-- Alias equivalence belongs to the refused title body's read-out; a conditional operand still
+names the command the source wrote. -/
 def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let style (out : Ir.Doc × Array Diag) : Option Ir.ElementStyle :=
@@ -70,9 +68,8 @@ def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"title alias boundary: {b} keeps the refusal site and provenance"
       (!(refusalSites left).isEmpty && refusalSites left == refusalSites right)
 
-/-- Unknown-option erasure belongs to the actual recovery arm. Bindings,
-definitions and palette roles are counterexamples to erasure for every
-context; package internals are a different, code-consuming refusal. -/
+/-- Unknown-option erasure belongs to the recovery arm, never to bindings, definitions or palette
+roles. -/
 def elabUnknownDispatchChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let ctx : Elab.Ctx := { file := "probe.tex" }

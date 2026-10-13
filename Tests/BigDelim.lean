@@ -13,9 +13,8 @@ def mathAtoms : Math.MList → List (Math.MathClass × Math.MNucleus)
   | .cons (.space _) rest => mathAtoms rest
   | .cons (.ink _ _) rest => mathAtoms rest
 
-/-- The shipped glyphs set in `face`: each glyph's id, its run's size, and
-its ink top and bottom about the line's baseline, from the face's outline
-bounds at the run's size. -/
+/-- The shipped glyphs set in `face`: each glyph's id, its run's size, and its ink top and bottom
+from the outline bounds. -/
 def faceGlyphInk (fs : Font.FontSet) (face : Nat) (out : Layout.Out) :
     Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
   let mut acc := #[]
@@ -33,8 +32,8 @@ def faceGlyphInk (fs : Font.FontSet) (face : Nat) (out : Layout.Out) :
       | .rule _ _ _ _ | .image _ _ _ | .poly _ _ => pure ()
   return acc
 
-/-- A shipped line's reach above and below its baseline: every run's ink,
-and each glyph-free construction's explicit bounds at its raise. -/
+/-- A shipped line's reach above and below its baseline: every run's ink and each glyph-free
+construction's bounds. -/
 def lineReach (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Sp × Dim.Sp :=
   l.segs.foldl (init := (0, 0)) fun (top, bot) s =>
     match s with
@@ -54,11 +53,8 @@ def lineReach (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Sp × Dim.Sp :=
     | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _
     | .rule _ _ _ _ | .image _ _ _ | .poly _ _ => (top, bot)
 
-/-- amsmath's sized delimiters, `\big` through `\Bigg` in their four classes
-(amsmath.sty `\bBigg@`: `\left` grown around a `\vcenter` of 1, 1.5, 2 and
-2.5 times `\big@size`, which is 1.2 times the height and depth of the text
-font's `(`). Each was the math parser's decline (W0012), which set the whole
-formula as its source text; every row here failed there. -/
+/-- amsmath's sized delimiters, `\big` through `\Bigg` in their four classes, as `\bBigg@` grows
+them around a `\vcenter`. -/
 def bigDelimChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let doc (body : String) : String :=
@@ -68,7 +64,7 @@ def bigDelimChecks (ref : IO.Ref (List String)) : IO Unit := do
     (firstFormula (elabStr (doc body)).1).map mathAtoms
   let declines (body : String) : Bool :=
     (elabStr (doc body)).2.any (·.code == "W0012")
-  -- ir tier: the class each spelling sets, and the size step it carries
+  -- ir tier: each spelling's class and size step
   t "\\bigl and \\bigr open and close at the \\big step"
     ((atoms "$\\bigl(x\\bigr)$").map (·.map (·.1)) ==
       some [.opening, .ord, .closing] &&
@@ -86,11 +82,7 @@ def bigDelimChecks (ref : IO.Ref (List String)) : IO Unit := do
       some (.big (some '\u27E8') 3) &&
      ((atoms "$\\bigl.x\\bigr|$").bind (·.head?)).map (·.2) == some (.big none 2) &&
      !declines "$\\bigl.x\\bigr|_{0}$")
-  -- The page, against lualatex's \showbox of the same formulas under the
-  -- test face (FiraMath, unicode-math, 10pt): in thousandths of the math
-  -- size, the glyph each step selects (its ink, the variant) and the box's
-  -- reach, which is its `\vcenter` wherever that stands past the glyph. ±1
-  -- is \showbox's rounding.
+  -- Against lualatex's `\showbox` (FiraMath, 10pt), in thousandths of the math size, ±1.
   match ← serifFacesSet with
   | none => failures ref "big delimiters: the shipped serif faces did not load"
   | some fs =>
@@ -121,10 +113,7 @@ def bigDelimChecks (ref : IO.Ref (List String)) : IO Unit := do
        | some (_, g, s, t1, b1), some (_, g', s', t2, b2) =>
          g == g' && s == s' && t1 - b1 == t2 - b2
        | _, _ => false)
-  -- HTML: MathML's stretch clamp at the PDF's own target (`Math.bigTarget`
-  -- in em), which Chromium resolves to TeX's variant at every step in Latin
-  -- Modern Math; the `\vcenter` itself (1.2 em at `\big`) set one variant
-  -- too tall there.
+  -- HTML: MathML's stretch clamp at the PDF's own target (`Math.bigTarget`, in em).
   let html (body : String) : String := (HtmlDoc.emit {} (elabStr (doc body)).1).1
   t "the MathML stretches each to the PDF's target"
     (hasStr (html "$\\bigl(x$") "minsize=\"1.081em\" maxsize=\"1.081em\"" &&

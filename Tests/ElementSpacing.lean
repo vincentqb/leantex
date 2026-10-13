@@ -17,8 +17,7 @@ private def geometry : Geom := {
 
 private def gap (n : Int) : SymGlue := { width := Length.ofSp (pt n) }
 
-/-- Ordinary role spacing reaches `Acc.addvspace`; a nonempty `.spaced`
-block instead uses the distinct explicit-skip path. -/
+/-- Two role paragraphs whose declared gaps reach `Acc.addvspace`, with `between` set between them. -/
 private def spacingPage (fs : FontSet) (before after : Option SymGlue)
     (between : Array Block := #[]) (geom : Geom := geometry)
     (content : Array Inline := #[.text "Second"]) : Out :=
@@ -54,26 +53,22 @@ private def paragraphDisplacement (before after : Out) (delta : Sp) : Bool :=
   (Spacing.inkBaselines after).getLast?.getD 0 -
     (Spacing.inkBaselines before).getLast?.getD 0 == delta
 
-/-- A defined block role follows the ordinary source-to-element-spacing
-path. Keeping the declaration on its own line preserves body provenance
-when only the declared gap changes. The text arguments are unrestricted. -/
+/-- A document whose defined block role declares `space` before it, the declaration on its own line
+so body provenance stays fixed as the gap changes. -/
 private def spacingSource (space first last : String) : String :=
   dvDoc ("\\define \\entryprobe(a: content){\\a\\par}\n" ++
     "\\style{entryprobe}{before = " ++ space ++ "}\n")
     (first ++ "\n\n\\entryprobe{" ++ last ++ "}")
 
-/-- The return value is a proof-bearing certificate over the two elaborated
-documents, not a test of their final baseline ordering. -/
+/-- Whether both documents elaborate cleanly into the proof-bearing two-paragraph certificate. -/
 private def certifies (fs : FontSet) (geom : Geom) (before after : String) : Bool :=
   let a := elabStr before
   let b := elabStr after
   a.2.all (·.severity == .note) && b.2.all (·.severity == .note) &&
     (Spacing.twoParagraphPair? geom fs a.1 b.1).isSome
 
-/-- Synthetic shipped-page witnesses for the corrected spacing contract.
-Natural fixed glue leaves page-close redistribution out of these checks.
-The two false-premise probes distinguish default replacement and pagination
-from a missing glyph or a changed line break. -/
+/-- Declared element gaps hold on shipped pages, in fixed glue so no page-close redistribution
+intervenes. -/
 def elementSpacingChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let ordinary := spacingPage fs none none
   let mut out := #[

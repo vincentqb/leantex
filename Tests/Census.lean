@@ -8,17 +8,15 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- The margin number column of a page census: furniture lines standing
-left of the measure. The plain foot's page number is furniture too, but
-it centres inside the measure, so the x test tells them apart. -/
+/-- The margin number column of a page census: furniture lines standing left of the measure, where
+the centred page number never stands. -/
 def marginNumbers (geom : Layout.Geom) (c : Array CensusPage) :
     Array (Array CensusLine) :=
   c.map fun p => p.lines.filter fun l =>
     l.furniture && l.x + l.width ≤ geom.hmargin
 
-/-- The shipped-page rule for `\page{ linenumbers = on }`: on a numbered
-page every counted body line carries exactly one margin number at its own
-baseline, and the numbers run consecutively across pages from 1. -/
+/-- The shipped-page rule for `\page{ linenumbers = on }`: every counted body line carries one
+margin number at its baseline, numbered consecutively from 1. -/
 def linenoCensus (geom : Layout.Geom) (c : Array CensusPage) :
     List (String × Bool) :=
   let margin := marginNumbers geom c
@@ -57,9 +55,8 @@ undeclared column hanging from half the margin",
        m.x + m.width == geom.hmargin / 2) &&
      margin.toList.any (!·.isEmpty))]
 
-/-- The modulo half of the rule: the count advances on every counted
-line, and the modulus filters what prints — multiples only, in order,
-each at a counted line's own baseline. -/
+/-- The modulo half: the count advances on every counted line and only its multiples print, each at
+its line's baseline. -/
 def linenoModuloCensus (geom : Layout.Geom) (c : Array CensusPage) :
     List (String × Bool) :=
   let margin := (marginNumbers geom c).foldl (· ++ ·) #[]
@@ -73,9 +70,7 @@ on every counted line",
    ("each printed number stands at a counted line's own baseline",
      margin.all fun m => countedLines.any fun l => l.y == m.y)]
 
-/-- A conditional fixture's census: one page, every kept branch ships and
-no hidden branch does. The branch TeX takes is the claim, read off the page
-(lualatex ships exactly the kept branches of each). -/
+/-- A conditional fixture's census: one page, every kept branch ships and no hidden branch does. -/
 def condBranchRow (kept hidden : List String) :
     Layout.Geom → Array CensusPage → List (String × Bool) := fun _ c =>
   [("one page", c.size == 1)] ++
@@ -86,19 +81,16 @@ def condBranchRow (kept hidden : List String) :
 def mdSizeOf (c : Array CensusPage) (needle : String) : Dim.Sp :=
   (lineSizeOf c 0 needle).getD 0
 
-/-- The pages' text read as prose, every run of spaces one space: a claim
-about a phrase then holds wherever the measure breaks its lines. -/
+/-- The pages' text as prose, every run of spaces one space. -/
 def censusProse (c : Array CensusPage) : String :=
   " ".intercalate (((censusText c).splitOn " ").filter (!·.isEmpty))
 
-/-- The pages' ink with every space dropped: a listing's line reads whole
-however it wraps. -/
+/-- The pages' ink with every space dropped. -/
 def censusInk (c : Array CensusPage) : String :=
   String.ofList ((censusText c).toList.filter (· != ' '))
 
-/-- Three rules in line order bracket a table as booktabs sets one: a heavy
-rule above the header, a lighter one between it and the first row, and a
-rule as heavy as the first under the last row. -/
+/-- Three rules in line order bracket a table as booktabs does: a heavy rule above the header, a
+lighter one below it, and one as heavy as the first under the last row. -/
 def booktabsBrackets (c : Array CensusPage) (rules : List (Dim.Sp × Dim.Sp))
     (header firstRow lastRow : String) : Bool :=
   match rules, lineYOf c 0 header, lineYOf c 0 firstRow, lineYOf c 0 lastRow with
@@ -107,11 +99,7 @@ def booktabsBrackets (c : Array CensusPage) (rules : List (Dim.Sp × Dim.Sp))
       decide (mid < f) && decide (l < bottom)
   | _, _, _, _ => false
 
-/-- The markdown fixtures' census rows: what the markdown reader's pages
-show, read off `Layout.Out` like every other row. Facts a later reader
-change keeps (the text of a pipe table's cells ships whether the table is
-read as a table or as text) stand here; a loss the build names stays out of
-them, the golden and the diagnostic witnessing it instead. -/
+/-- The markdown fixtures' census rows, read off `Layout.Out`. -/
 def censusMdRows :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("md-code", fun geom c => [
@@ -242,15 +230,8 @@ the centred one centres on it, the left one starts with it",
         | some a, some b, some d, some e => a + b == d + e
         | _, _, _, _ => false))])]
 
-/-- A loss a markdown golden ships with no diagnostic naming it: a construct
-markdown writes that the page sets as its own source text, or sets without
-part of its meaning. `shows` reads one golden's document, pages, census and
-diagnostics, and holds while the loss ships. Every row's judge runs over
-every markdown golden in both directions: a golden it fires on must be
-listed (the loss is recorded wherever it shows), and a listed golden it no
-longer fires on fails until the row goes, so the change that reads the
-construct takes the row out and leaves its own guard in its place. `owner`
-says what that change is. -/
+/-- A loss a markdown golden ships with no diagnostic naming it, judged over every markdown golden
+both ways; `owner` names the change that reads the construct. -/
 structure SilentLoss where
   what : String
   owner : String
@@ -263,15 +244,14 @@ def imageLinkTargets (doc : Ir.Doc) : Array String :=
     | .link url body => if body.any (fun b => b matches .image ..) then acc.push url else acc
     | _ => acc) #[] doc
 
-/-- Every link target the pages carry: a linked run's, or a link
-rectangle's. -/
+/-- Every link target the pages carry: a linked run's or a link rectangle's. -/
 def pageLinkTargets (out : Layout.Out) : Array String :=
   out.pages.foldl (fun acc p =>
     p.lines.foldl (fun acc l => l.segs.foldl (fun acc s => match s with
       | .run _ _ (some url) .. => acc.push url
       | _ => acc) acc) (acc ++ p.links.map (·.target))) #[]
 
-/-- The silent losses the markdown goldens ship today. -/
+/-- The silent losses the markdown goldens ship. -/
 def silentLosses : List SilentLoss := [
   { what := "a task list item ships its checkbox as bracket text"
     owner := "list items that carry a task state, set as a box in both artifacts"
@@ -297,18 +277,12 @@ def silentLossChecks (ref : IO.Ref (List String))
     for (n, doc, out, c, ds) in seen do
       let fires := row.shows doc out c ds
       if row.fixtures.contains n then
-        check ref s!"silent loss '{row.what}': {n} still ships it — if it no longer does, \
-take {n} out of the row, or the row out, and leave the guard that keeps it read" fires
+        check ref s!"silent loss '{row.what}': {n} still ships it (else take {n}, or the row, out)" fires
       else
         check ref s!"silent loss '{row.what}': {n} ships it unrecorded — list {n} under the row" (!fires)
 
-/-- Census assertions, one row per golden fixture: what each fixture's
-shipped pages must show, judged from `Layout.Out` — never from the IR dump,
-which witnesses elaboration only. `censusChecks` fails when a fixture in
-`goldenNames` has no row here, so a fixture cannot enter the suite
-witnessed by its golden alone. Facts are observable page claims: text
-shipped (or deliberately not, for a note), covered-coloured runs on step
-pages, rules and fills drawn, line positions for centring and columns. -/
+/-- Census assertions, one row per golden fixture: what each fixture's shipped pages show, judged
+from `Layout.Out`. -/
 def censusRows0 :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("affine-lengths", fun _ c => [
@@ -336,8 +310,7 @@ def censusRows0 :
         (lineYOf c 1 "First slide point").map fun i => decide (t < i)).getD false)]),
   ("listings", fun geom c => [
     ("one page", c.size == 1),
-    -- a no-break space ships as a glyphless box, so the census text of a
-    -- code line reads glued ("1defprobe(n):"), exactly as "Equation(1)"
+    -- A no-break space ships as a glyphless box, so a code line's census text reads glued.
     ("the caption ships numbered with the locale's listing word, above the code",
       hasStr (censusText c) "Listing 1: An invented probe." &&
       ((lineYOf c 0 "An invented probe").bind fun cy =>
@@ -416,10 +389,6 @@ def censusRows0 :
       (lineXOf c 0 "Entirely synthetic findings").any fun x => decide (x > geom.hmargin)),
     ("the following body returns to the margin",
       lineXOf c 0 "Body text follows the abstract" == some geom.hmargin),
-    -- The abstract heading follows the styled section heading
-    -- (`Ir.abstract_heading_follows_section`): same font on the shipped
-    -- page — \large is 1.2x, no engine default (the small-bold abstract
-    -- line, the body size) reaches it.
     ("the abstract heading ships in the styled section's font",
       lineSizeOf c 0 "Abstract" == some (geom.fontSize * 1200 / 1000) &&
       lineSizeOf c 0 "Abstract" == lineSizeOf c 0 "Introduction"),
@@ -502,10 +471,7 @@ def censusRows1 :
       hasStr (censusText c) "The example body stands under its own title."),
     ("the untitled block ships its body under its empty title band",
       hasStr (censusText c) "An untitled block keeps its body under an empty title band."),
-    -- Only `blocktitlebg` is declared, so exactly the plain kind draws a
-    -- bar: alert and example take their content colours barless. beamer
-    -- keeps an untitled block's empty title box, so the untitled plain
-    -- block paints its 1.5ex band too, and the bare theme adds no fill.
+    -- Only `blocktitlebg` is declared, so only plain blocks draw a bar, the untitled one included.
     ("the declared title bar ships on both plain blocks",
       (c[0]?.map (·.fills)).getD 0 == 2),
     ("a filled title stands on the measure, its paint reaching beyond it",
@@ -514,8 +480,6 @@ def censusRows1 :
       lineXOf c 0 "A Loud Statement" == some geom.hmargin &&
       lineXOf c 0 "A Worked Instance" == some geom.hmargin)]),
   ("poster", fun geom c => [
-    -- The class's implied faces bound: the one declared frame is one
-    -- face, and every glyph ships on it.
     ("one face ships as one page", c.size == 1),
     ("the board is the record's A0 landscape trim",
       geom.pageW == Dim.mm 1189 && geom.pageH == Dim.mm 841),
@@ -537,10 +501,6 @@ def censusRows1 :
       ((c[0]?.bind fun p => p.lines.back?).map
         (·.text.trimAscii.toString != "1")).getD false)]),
   ("poster-headline", fun geom c => [
-    -- The band: the title family ships as page-top furniture, its bar
-    -- painted from the page top at full width (distinct from the page
-    -- ground, which spans the whole face), the title matter centred (the
-    -- gemini bundle's declared titlepage alignment), the body below it.
     ("one face ships as one page", c.size == 1),
     ("the band ships the title family",
       hasStr (censusText c) "An Invented Band Title" &&
@@ -575,24 +535,13 @@ def censusRows1 :
     ("the title page ships its matter",
       pageHas c 0 "A Placeholder Deck" && pageHas c 0 "P. Placeholder" &&
         pageHas c 0 "example.org"),
-    -- The declared ground is a fill the width and height of the page, and
-    -- it is the first thing painted: `finishPage` prepends it, so nothing
-    -- placed on the page can end up under it.
     ("the title page's ground covers the page and is painted first",
       (c[0]?.bind fun p => p.fillRects[0]?).map
         (fun r => decide (r.1 == (0 : Dim.Sp) ∧ r.2.1 == (0 : Dim.Sp) ∧
           r.2.2.1 == geom.pageW ∧ r.2.2.2 == geom.pageH)) == some true),
-    -- Whether that ground is the page's own or the document's is a claim
-    -- about its colour, which no census carries: `artGroundParityChecks`
-    -- reads the fill's colour off `Layout.Out` and holds the two artifacts
-    -- to it. Here: the page after it is a page like any other.
     ("the frame after it ships its own page",
       pageHas c 1 "On the document" &&
         pageHas c 1 "on the ground every other page carries"),
-    -- Each datum stands where its slot pins it: the title's anchor 1.6cm
-    -- in, its text one inner sep plus pgf's outer anchor clearance inside,
-    -- at the slot's own size; the author above the page foot, the
-    -- institute set flush right at the foot's other corner.
     ("the title starts inside its pinned node separations",
       lineXOf c 0 "A Placeholder Deck" ==
         some (Dim.mm 16 + Ir.pgfInnerSep geom.fontSize + Ir.pgfOuterSep)),
@@ -615,19 +564,12 @@ def censusRows1 :
      ("the author ships under it", hasStr (censusText c) "An Invented Author"),
      ("the body text ships after the title block",
        hasStr (censusText c) "Body text follows the styled built-in title."),
-     -- 3 pt and 2 pt are the fixture's own numbers: no engine default —
-     -- TeX's 0.4 pt \hrule, the 0.5 pt separator, the 0.06 em heading
-     -- rule, the booktabs weights — can produce them, so these bars come
-     -- from the refused body or the fact fails.
+     -- 3 pt and 2 pt match no engine default, so these bars can only come from the fixture.
      ("two bars ship at the body's declared weights",
        bars.map (·.2) == #[Dim.pt 3, Dim.pt 2]),
      ("the top bar stands above the title line, the bottom below",
        (bars.map fun s => decide (s.1 < titleY)) == #[true, false]),
-     -- The gaps beside the bars are the engine's rhythm, not the venue's
-     -- \vskips (the fixture's 0.5in/0.75in are deliberately unread): three
-     -- quanta from the bar to the type's body — the cap line above the
-     -- title, so the band over the exact gap is under one \Large cap —
-     -- and the baseline below it, where the bottom bar lands exactly.
+     -- The gaps are the engine's rhythm; the fixture's own `\vskip`s are deliberately unread.
      ("the top bar stands three quanta above the title's cap line",
        (bars[0]?.map fun s => decide (3 * Ir.rhythmQuantum geom.fontSize ≤ titleY - s.1 ∧
          titleY - s.1 ≤ 3 * Ir.rhythmQuantum geom.fontSize + geom.fontSize * 1440 / 1000)).getD false),
@@ -637,25 +579,17 @@ def censusRows1 :
      ("the title is centred in the measure",
        ((lineXOf c 0 "Bars Probe Title").map fun x =>
          decide (x > geom.hmargin)).getD false),
-     -- \Large is the body's declaration; the engine's own default is the
-     -- scale's LARGE step, so a default-styled title fails this fact.
+     -- `\Large` is the body's; the engine's default is LARGE, so a default-styled title fails.
      ("the title sets at the body's declared \\Large, not the LARGE default",
        lineSizeOf c 0 "Bars Probe Title" ==
          some (geom.fontSize * 1440 / 1000)),
-     -- The author line's 2u strut (`Ir.titleAuthorStrut`): its baseline
-     -- stands the strut's 24pt plus the engine's one-quantum bar skip
-     -- under the bottom bar (the venue's 0.1in is unread); unstrutted,
-     -- the skip plus a bare cap height (under 14pt) never reaches the
-     -- floor.
+     -- The author line's 2u strut: 24pt plus one quantum under the bottom bar.
      ("the author line carries its 2u strut under the bottom bar",
        ((pageRuleSegs c 0)[1]?.map fun s =>
          let d := (lineYOf c 0 "An Invented Author").getD 0 - s.1
          decide (Dim.pt 24 + Ir.rhythmQuantum geom.fontSize ≤ d ∧
            d ≤ Dim.pt 24 + Ir.rhythmQuantum geom.fontSize + 2 * geom.fontSize)).getD false),
-     -- The rhythm gap after the block (`Ir.titleBlockAfter`, 2u at the
-     -- body size): the body text stands the gap plus its interline under
-     -- the author line; without the gap the default (parskip + leading,
-     -- under 20pt) never reaches the floor.
+     -- The rhythm gap after the block, 2u at the body size, plus the interline.
      ("the 2u gap after the title block stands before the body text",
        let d := (lineYOf c 0 "Body text follows").getD 0 -
          (lineYOf c 0 "An Invented Author").getD 0
@@ -727,9 +661,7 @@ def censusRows2 :
       pageCovered c 1 "15.97" && pageHas c 2 "15.97" && pageAllRevealed c 2)]),
   ("deck1610", fun geom c => [
     ("one page, the frame", c.size == 1),
-    -- The stage a class option declares is the stage the pages ship on:
-    -- aspectratio=1610 is beamer's 160×100 mm row (user guide §8.1),
-    -- selected through Ir.slidesStages, never a string match.
+    -- aspectratio=1610 is beamer's 160×100 mm row (user guide §8.1).
     ("the pages ship on the declared 16:10 stage",
       geom.pageW == Dim.mm 160 && geom.pageH == Dim.mm 100),
     ("the frame title ships", pageHas c 0 "One declared key"),
@@ -738,12 +670,7 @@ def censusRows2 :
     ("pages", c.size == 8),
     ("the section page carries its progress-bar fills", (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
     ("the frame-title bar fills", (c[2]?.map fun p => decide (p.fills ≥ 1)).getD false),
-    -- moloch's frametitle box, on the page: the bar is a full-width fill
-    -- from the page top, exactly `2·pad + strut` tall at the bundle's
-    -- `\large` title step (`Layout.frameBar_exact`; the pad is the
-    -- lineage's `frametitlepadding` token resolved at the title size,
-    -- `Ir.frameTitlePadding_exact`) — never the body's vmargin plus a
-    -- half-body pad, which was 1.5× the reference.
+    -- moloch's frametitle bar: a full-width fill, `2·pad + strut` tall at `\large`.
     ("the frame-title bar is moloch's box: 2·pad + strut at the title step",
       let titleSize := Ir.scaleStep geom.fontSize "large"
       let pad := Ir.frameTitlePadding.width.resolve titleSize 0
@@ -759,10 +686,7 @@ def censusRows2 :
       pageCovered c 3 "alert beat" && pageCovered c 3 "teal example beat"),
     ("the covered beats still ship", pageHas c 3 "alert beat"),
     ("the second step reveals them", pageAllRevealed c 4),
-    -- The census form of "every frame page carries its title bar unless
-    -- plain/standout": the tall frame spills, and its continuation page
-    -- repeats the title line and the bar fill (page bg + bar ≥ 2 fills),
-    -- exactly as beamer keeps the frametitle on every page of a frame.
+    -- The continuation page repeats the title line and the bar fill (page ground + bar ≥ 2 fills).
     ("the tall frame spills onto a continuation page",
       pageHas c 5 "Overflow beat one" && pageHas c 6 "eighteen"),
     ("every page of the frame carries its title",
@@ -775,15 +699,11 @@ def censusRows2 :
     ("the standout frame fills its background", (c[7]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
   ("daylight", fun _ c => [
     ("pages", c.size == 5),
-    -- The default bundle declares a page colour: every page paints.
     ("every page paints the warm paper", c.all fun p => decide (p.fills ≥ 1)),
-    -- Variant A: no frame-title bar — the frame page carries the page
-    -- fill and nothing else behind its title.
     ("the frame page carries no title bar", (c[2]?.map (·.fills == 1)).getD false),
     ("the frame title ships as a plain heading", pageHas c 2 "A default bundle"),
     ("the section page draws its progress track",
       (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
-    -- Every block a tinted card: the page, then each block's band and body.
     ("each block paints its title band and its body",
       (c[3]?.map fun p => decide (p.fills ≥ 7)).getD false && pageHas c 3 "An alerted card"),
     ("the standout page fills its azure room", (c[4]?.map fun p => decide (p.fills ≥ 1)).getD false),
@@ -795,10 +715,6 @@ def censusRows2 :
     ("thispagestyle empty keeps the opening page bare of the running head and its number",
       (c[0]?.map fun p => p.lines.all fun l =>
         l.text.trimAscii.toString != "1" && !hasStr l.text "Harbour Rowing Club").getD false),
-    -- The hand-aligned pair, through the whole driver: a phantom props a
-    -- descender-less word's depth so it shares its neighbour's baseline. The
-    -- argument is sizing, never ink — this fixture is the corpus's witness
-    -- that no page ships it.
     ("the hand-aligned pair ships both its words",
       hasStr (censusText c) "Novice" && hasStr (censusText c) "Trophy"),
     ("and the phantom's argument reaches no page",
@@ -831,8 +747,6 @@ def censusRows3 :
     ("the narrow column sets right of the wide one",
       (lineXOf c 0 "A narrow aside.").any fun x => decide (x > geom.hmargin)),
     ("both equal shares ship", pageHas c 1 "left half" && pageHas c 1 "right half"),
-    -- The command form: three `\column`s in one body ship as three
-    -- side-by-side columns, level at the top (`[T]`), never stacked.
     ("the three command-form columns stand side by side",
       ((lineXOf c 2 "First third").bind fun x1 =>
         (lineXOf c 2 "Second third").bind fun x2 =>
@@ -857,9 +771,7 @@ def censusRows3 :
     ("a pause inside a column dims below it", pageCovered c 7 "Below the pause.")]),
   ("chrome", fun geom c => [
     ("pages", c.size == 5),
-    -- The title page is `\frame[plain,noframenumbering]` (moloch): no chrome,
-    -- and it does not advance the count — so the first content frame is 1, not
-    -- 2, and nothing on page 1 carries the section title or a number.
+    -- The title page is `[plain,noframenumbering]`, so the first content frame is 1.
     ("the title page carries no footer",
       !pageHas c 0 "Footers" &&
         ((c[0]?.map fun p => p.lines.all (·.text != "1")).getD false)),
@@ -868,11 +780,6 @@ def censusRows3 :
     ("a framefoot note takes the left slot", pageHas c 3 "source: example.org/data"),
     ("the default footer returns when the wrapper ends",
       pageHas c 4 "Footers" && lineRightOf c 4 "3" == some (geom.pageW - Ir.footline.right))]),
-  -- The footline's slots have fixed positions (FINDINGS F5 correction): a
-  -- slot's box is a function of the declared layout and the paper's edge
-  -- alone (`Layout.bandSlotX`, moloch's insets), so the number holds the
-  -- right edge whatever the left slot holds — an empty left slot is not a
-  -- case.
   ("footer-left", fun geom c => [
     ("pages", c.size == 4),
     ("the sectionless frame still numbers at the right edge",
@@ -884,10 +791,6 @@ def censusRows3 :
       lineXOf c 3 "Placement" == some Ir.footline.left),
     ("the sectioned frame numbers at the same right edge",
       lineRightOf c 3 "2" == some (geom.pageW - Ir.footline.right))]),
-  -- FINDINGS F4: the two sequences share a band only by declaration. The
-  -- stepped frame is where they visibly disagree: its pages advance the
-  -- physical number and hold the frame number — one counter could never
-  -- ship these pages.
   ("footer-mixed", fun _ c => [
     ("pages", c.size == 5),
     ("the step pages advance the physical number",
@@ -896,11 +799,6 @@ def censusRows3 :
       (lineRightOf c 2 "p. 3").isSome && pageHas c 2 "1" && pageHas c 3 "1"),
     ("the plain frame carries the next of both",
       pageHas c 4 "p. 5" && pageHas c 4 "2")]),
-  -- The F5 correction's collision half: the boxes overlap and the number —
-  -- lower priority — yields IN PLACE: still at its right inset, painted
-  -- first so the note paints over it. The yield's diagnostic (W0333) and
-  -- the paint order are asserted in bandChecks; the census states the
-  -- boxes.
   ("footer-collide", fun geom c => [
     ("pages", c.size == 2),
     ("the number still ends at its right inset",
@@ -919,10 +817,6 @@ def censusRows3 :
     ("one page", c.size == 1),
     ("the base override ships", hasStr (censusText c) "– The base override"),
     ("the level override ships", hasStr (censusText c) "• The level override")]),
-  -- The two marker fixtures carry FINDINGS F1: a declared marker either
-  -- reaches a backend as declared or the substitution has a name (W0331).
-  -- The PDF side is judged here; the HTML side and the agreement between
-  -- them are judged in agreeChecks.
   ("marker-styled", fun _ c => [
     ("one page", c.size == 1),
     ("the declared en-dash marker ships beside each item",
@@ -939,8 +833,6 @@ def censusRows3 :
 
 def censusRows4 :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
-  -- the census carries x and text, not y; the [t]/[c]/[b] geometry itself
-  -- is pinned by vdistChecks over Layout.LineOut
   ("valign", fun _ c => [
     ("five frames, the overflow spilling once", c.size == 6),
     ("each declared frame ships its body",
@@ -1041,8 +933,6 @@ def censusRows4 :
       (c[0]?.map (·.paths == 8)).getD false),
     ("the text node body ships", hasStr (censusText c) "tile"),
     ("the curve's mid-path label ships", hasStr (censusText c) "bend"),
-    -- A label's alphabet resolves as a paragraph's: upright letters, never
-    -- the source italic an unresolved alphabet node set (𝑟𝑑).
     ("the alphabet edge label ships upright",
       hasStr (censusText c) "rd" && !hasStr (censusText c) "𝑟𝑑"),
     ("every node ships a glyph line",
@@ -1050,32 +940,13 @@ def censusRows4 :
 
 def censusRows5 :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
-  -- **A style reaches its picture wherever it was declared.** `ball` comes
-  -- from the preamble, `slab` from a `\tikzset` beside the picture inside
-  -- the document body; both are applied by name, and their keys are what
-  -- draws the outlines this row counts. Before the native reading, the
-  -- style names were keys outside the subset (W0334) and the nodes shipped
-  -- bare labels: three fewer paths on the page, and the fixture's own
-  -- declaration silently doing nothing. `images == 0` is the other half of
-  -- the claim — the ink is the engine's own, with no tool asked to draw.
-  -- The second picture carries `wire` on its own bracket, which is the
-  -- inheritance half: see the stroke rows below.
   ("diagram-tikzset", fun _ c => [
     ("one page", c.size == 1),
-    -- two circle outlines + one rectangle outline + one edge, then the
-    -- second picture's two inheriting edges
+    -- Two circles, one rectangle and one edge, then the second picture's two inheriting edges.
     ("the styled node outlines and the edges ship as page paths",
       (c[0]?.map (·.paths == 6)).getD false),
     ("no boundary box stands where the picture is",
       (c[0]?.map (·.images == 0)).getD false),
-    -- **A style applied to the picture reaches the picture's contents, and
-    -- the inner setting wins.** `wire` sets a stroke colour and `thick` on
-    -- the second picture; its first edge declares nothing of its own and
-    -- must ship both, its second re-declares the colour and must ship its
-    -- own there and the picture's width still. Before picture-level keys,
-    -- `wire` was a key outside the subset and both edges shipped thin and
-    -- black. Read off the shipped strokes, because only the page can say
-    -- which value survived.
     ("the edge that declared nothing inherits the picture's colour and width",
       ((c[0]?.bind (·.pathStrokes[4]?)).map fun (col, w) =>
         col == { r := 0, g := 0, b := 255 } && w == Ir.Pic.thickWidth).getD false),
@@ -1088,16 +959,7 @@ def censusRows5 :
     ("the prose around the diagram ships",
       hasStr (censusText c) "Before the diagram" &&
         hasStr (censusText c) "After the diagram")]),
-  -- **A picture's strokes ship as the vector model states them, in both
-  -- artifacts.** The chain's continuing segments are one path, so its
-  -- corner joins; the zero line width is the hairline, never no line; the
-  -- dashed chain is one dashed path around its corner. The HTML face of the
-  -- same row is `gfxStrokeCensusChecks`, over the typed SVG tree.
-  -- A tree grown upward and a sketch of dots: every construct the subset
-  -- once routed, drawn natively. Tree edges with their parent-end tips
-  -- (four, so eight marks — the edge with draw=none ships none), the
-  -- default-named edge and its tip, the coloured dot; then the line, two
-  -- dots, the ellipse and the two-ended arrow's line and tips.
+  -- Four tree edges with their tips make eight marks; the draw=none edge ships none.
   ("diagram-tree", fun _ c => [
     ("one page", c.size == 1),
     ("no boundary box stands where the pictures are",
@@ -1118,8 +980,7 @@ def censusRows5 :
     ("the picture's font= sets its tree's labels below the body size",
       (((lineSizeOf c 0 "sum").bind fun a => (lineSizeOf c 0 "mid").map fun b =>
         decide (a < b)).getD false))]),
-  -- Path keys and scopes: the rounded box, the turned polyline, the arc
-  -- continued by its line, the stopped arrow and its tip, the faded fill.
+  -- The rounded box, turned polyline, continued arc, stopped arrow and tip, and faded fill.
   ("diagram-scope", fun _ c => [
     ("one page", c.size == 1),
     ("no boundary box stands where the picture is",
@@ -1131,12 +992,7 @@ def censusRows5 :
         p.pathStrokes.any (·.2 == Ir.Pic.thinWidth)).getD false),
     ("the labels ship, the turned one beside its path",
       hasStr (censusText c) "box" && hasStr (censusText c) "turned")]),
-  -- A commutative square and triangle drawn by the engine: seven arrows,
-  -- each a shaft and a tip, and the description label's ground behind it;
-  -- cells and labels as mathematics, the labels a script size below the
-  -- cells, the coloured diagonal in its colour. Placement against the
-  -- cells' measured letters is `tikzcdNativeChecks`', which elaborates as
-  -- the driver does.
+  -- Seven arrows, each a shaft and a tip, and the description label's ground.
   ("diagram-cd", fun _ c => [
     ("one page", c.size == 1),
     ("no boundary box stands where the diagrams are",
@@ -1156,12 +1012,7 @@ def censusRows5 :
       (c[0]?.map fun p => (p.pathStrokes.filter (·.1 == { r := 255, g := 0, b := 0 })).size == 2).getD false),
     ("the prose around the square ships",
       hasStr (censusText c) "Before the square" && hasStr (censusText c) "After the square")]),
-  -- The long tail drawn by the engine: an axial and a ball shading and a
-  -- clipped disc; an ellipse and a diamond joined by a Stealth arrow, a node
-  -- with a label and a pin, a dashed frame fitted round two nodes, a brace.
-  -- Each mark one page path; the pin's edge in help lines; the fitted frame
-  -- dashed. The shadings' stops and the clip's group are
-  -- `tikzShapeChecks`', over the shipped figures.
+  -- Each mark is one page path; the pin's edge is in help lines and the fitted frame dashed.
   ("diagram-longtail", fun _ c => [
     ("one page", c.size == 1),
     ("no boundary box stands where the pictures are",
@@ -1205,8 +1056,6 @@ def censusRows5 :
         (lineXOf c 0 "Meaning").map fun b => decide (a < b)).getD false),
     ("the floated table centres: its first cell sits past the margin",
       (lineXOf c 0 "invented row").any fun x => decide (x > geom.hmargin)),
-    -- a `\multicolumn` head: one line, standing over the columns it covers,
-    -- right of the first column's cell
     ("the spanned head ships once, right of the first column",
       pageOccurs c 0 "a spanned head" == 1 &&
       ((lineXOf c 0 "a spanned head").bind fun h =>
@@ -1284,8 +1133,6 @@ def censusRows5 :
     ("a document macro's expansion ships",
       hasStr (censusText c) "w" && !hasStr (censusText c) "𝐰"),
     ("a word stands as a script's argument", hasStr (censusText c) "null")]),
-  -- Colour and text in math; a font change inside one word still names
-  -- its loss. cancelReportChecks holds the shipped colours and scope.
   ("math-text", fun _ c => [
     ("one page", c.size == 1),
     ("\\textbf and \\textit ship the alphabets \\mathbf and \\mathit mean",
@@ -1304,10 +1151,6 @@ def censusRows5 :
     ("no page of this fixture ships a control sequence",
       !hasStr (censusText c) "overset" && !hasStr (censusText c) "textcolor"
         && !hasStr (censusText c) "textbf")]),
-  -- The text-sourced alphabets whose MathML projection rides on real CSS:
-  -- the PDF ships the plain base letter set in a text family, never a
-  -- Mathematical Alphanumeric scalar (which is the loss this projection
-  -- avoids). The unstyled variables stay italic Alphanumeric, as always.
   ("math-alpha", fun _ c =>
     let has (n : Nat) := hasStr (censusText c) (String.ofList [Char.ofNat n])
     [
@@ -1397,11 +1240,6 @@ def censusRows6 :
     ("the dimmed beats still ship", pageHas c 0 "Second beat."),
     ("the last step reveals everything", pageAllRevealed c 2),
     ("pause dims what follows it", pageCovered c 3 "After the pause.")]),
-  -- `{overprint}` is alternation, and alternation is replacement: the row
-  -- that names the defect is the ABSENCE of the other readings on a step
-  -- page, since keeping the body stacked all of them on every page and no
-  -- page claim could tell. Covering is the other mechanism and stays out
-  -- of it — nothing here is ever dimmed.
   ("overprint", fun _ c => [
     ("a page per step across the three frames: three, two, one", c.size == 6),
     ("the opening step inks its one reading and neither of the others",
@@ -1467,9 +1305,6 @@ def censusRows7 :
     ("two faces, two pages", c.size == 2),
     ("the front ships the name", pageHas c 0 "Pat Placeholder"),
     ("the back ships the contact", pageHas c 1 "press@example.org"),
-    -- The declared cut marks, judged from the shipped fills: those eight
-    -- are a face's only ink, each outside the trim and inside the medium,
-    -- and none reaches within the declared gap of a trim corner.
     ("each face ships exactly the eight cut marks and no other fill",
       c.all fun p => p.fills == 8),
     ("every mark stands in the bleed strip: outside the trim, inside the medium",
@@ -1500,10 +1335,8 @@ def censusRows7 :
   ("cond-loaded", condBranchRow ["Loaded branch ships.", "Unloaded branch ships."]
     ["Loaded branch hidden.", "Unloaded branch hidden."])]
 
-/-- The census rows, in parts of at most `censusPartRows`: one list
-literal's elaboration grows faster than its rows (all 86 as one literal
-took 23 s, the eight parts together under 5 s), and the suite's build
-waits on this module. A new row joins a part with room, or starts one. -/
+/-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
+faster than its rows. -/
 def censusParts :
     List (List (String × (Layout.Geom → Array CensusPage → List (String × Bool)))) :=
   [censusRows0, censusRows1, censusRows2, censusRows3, censusRows4, censusRows5,
@@ -1515,11 +1348,8 @@ def censusTable :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) :=
   censusParts.flatten
 
-/-- The outline tier of the census: the PDF document outline is backend
-emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a
-fixture whose layout carries one owes the assertion that it appeared —
-the same obligation every emission carries. `censusChecks` holds every
-fixture with a non-empty outline to a row here. -/
+/-- The outline tier of the census: a fixture whose layout ships a PDF outline owes a row asserting
+it. -/
 def censusOutlineTable :
     List (String × (Array Layout.OutlineEntry → List (String × Bool))) := [
   ("webnav", fun o => [
@@ -1537,29 +1367,19 @@ def censusOutlineTable :
       o.zipIdx.all fun (e, i) =>
         e.page.isNone && e.url == some s!"https://example.org/entries/{i + 1}")])]
 
-/-- The phrase a corpus file writes in its own header to declare itself out
-of the golden set: the convention PLAN records for a design sketch whose
-commands do not exist yet. The declaration lives in the file it applies to,
-not in a second list beside `goldenNames` — a list of exclusions here would
-drift from the directory exactly the way `goldenNames` itself did. -/
+/-- The phrase a corpus file writes in its own header to declare itself out of the golden set. -/
 def corpusExcludeMarker : String := "excluded from the golden set"
 
-/-- Does this corpus file's header declare it out of the golden set? Only the
-opening lines count, so a fixture whose body discusses the golden set does
-not thereby excuse itself. The header is read as one run of prose — comment
-markers dropped, lines joined — so the declaration may wrap the way a
-sentence does. -/
+/-- Whether a corpus file's opening lines, read as one run of prose, declare it out of the golden
+set. -/
 def declaresExcluded (text : String) : Bool :=
   let header := ((text.splitOn "\n").take 16).map fun line =>
     let l := line.trimAscii.toString
     if l.startsWith "%" then (l.drop 1).toString.trimAscii.toString else l
   hasStr (" ".intercalate header) corpusExcludeMarker
 
-/-- The corpus entries a golden run could draw from: the top-level `.tex` and
-`.md` files under `testdata/corpus`. The subdirectories hold `\input` targets,
-`.sty` files and the shipped fonts — never fixtures — so the scan does not
-descend. `.md` is in scope because markdown is a shipped surface: a markdown
-fixture dropped here must face the same question a `.tex` one does. -/
+/-- The top-level `.tex` and `.md` files under `testdata/corpus`: the entries a golden run could
+draw from. -/
 def corpusDocs : IO (Array String) := do
   let dir : System.FilePath := "testdata/corpus"
   let mut out := #[]
@@ -1569,18 +1389,8 @@ def corpusDocs : IO (Array String) := do
       out := out.push entry
   return out
 
-/-- The coverage loop's missing half: `goldenNames` against the corpus
-directory. `censusChecks` holds the golden set and `censusTable` to each
-other, which says nothing about what is on disk — so a fixture added to
-`testdata/corpus` and forgotten from the list owed no golden and no census row,
-and nothing noticed; two files sat in that state. The directory is the
-authority for what exists, and whether a file is a fixture is a decision, so
-the decision is written where it applies (`corpusExcludeMarker`) and both
-directions are loud. A declared exclusion may not rot either: a `.tex` that
-excuses itself must still refuse to elaborate, or the sketch's commands have
-landed and it belongs in the golden set. A golden fixture's census row is
-held here; a new backend emission owes the census assertion that it
-appeared too, which review holds. -/
+/-- `goldenNames` against the corpus directory, both ways: every fixture is golden or declares its
+exclusion, and an excluded `.tex` still refuses to elaborate. -/
 def corpusCoverageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dir : System.FilePath := "testdata/corpus"
   for entry in ← corpusDocs do
@@ -1606,34 +1416,14 @@ elaborates without complaint — promote it"
     check ref s!"golden {n}: both {n}.md and {n}.tex exist, and the golden set reads only the .md"
       (!(← (dir / s!"{n}.tex").pathExists))
 
-/-- The characters the ink watch bans, narrower than `Ir.markupChars` on
-purpose. The floor filters `$`, `&`, `^`, `_` and `~` too, because in a
-*math* source those are always markup; in ordinary prose they are content —
-a price, an ampersand in a name — and the corpus ships one. A backslash or
-a brace is the unambiguous signature of a page showing its source, and no
-fixture ships one as content. -/
+/-- Markup characters no page may ship as ink: in prose `$`, `&`, `^`, `_` and `~` are content, a
+backslash or a brace never. -/
 def inkMarkupWatch : List Char := ['\\', '{', '}']
 
-/-- Fixtures allowed to ship a named markup character as ink, per
-character, each with the reason it is content there. Per character and not
-per fixture: `\{` is the author asking for a brace glyph and a formula that
-uses it ships one legitimately, but that says nothing about a backslash on
-the same page, and a whole-fixture exemption would have excused both.
-
-Empty: nothing in the corpus renders one today. Adding a row is a
-deliberate decision, visible in review; a recovery path that starts leaking
-markup cannot quietly join it. -/
+/-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
 def inkMarkupExempt : List (String × List Char) := []
 
-/-- The channel that watches the recovery floor on the artifact: no page of
-any golden fixture ships a LaTeX markup character as ink. This is the
-page-facing half of `Ir.floorInk_mem` — the IR states that a degraded
-formula's ink is markup-free and drawn from its source or the declared
-placeholder, and this reads the shipped glyph runs of every fixture to say
-the page honours it. It is deliberately wider than math: any future
-diagnostic whose recovery sets its own source as body text fails here, not
-only where it was introduced. The corpus had exactly one offender when this
-went in, the W0012 math recovery. -/
+/-- No page of any golden fixture ships a LaTeX markup character as ink. -/
 def inkMarkupChecks (ref : IO.Ref (List String)) (n : String)
     (c : Array CensusPage) : IO Unit := do
   let allowed := ((inkMarkupExempt.find? (·.1 == n)).map (·.2)).getD []
@@ -1643,11 +1433,7 @@ def inkMarkupChecks (ref : IO.Ref (List String)) (n : String)
       check ref s!"census {n}: ships the markup character '{ch}' as ink"
         (!text.any (· == ch))
 
-/-- The census tier: every golden fixture also appears in `censusTable`,
-and each row's facts hold on the pages the engine actually ships. A
-fixture that declares a math face renders its census with the shipped
-Fira Math in the math slot — the assertions over fraction bars and grown
-glyphs are exactly what `oneFace` alone could never witness. -/
+/-- Every golden fixture has a `censusTable` row whose facts hold on the pages the engine ships. -/
 def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let mathSet ← mathSetOf oneFace
@@ -1658,17 +1444,14 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     check ref s!"census covers {n}" (censusTable.any (·.1 == n))
   for (n, _) in censusTable do
     check ref s!"census row {n} names a golden fixture" (goldenNames.contains n)
-  -- A fixture that reaches math without declaring a face resolves it the
-  -- way the driver does (FontDiscovery.pickMathFace over the shipped faces), so
-  -- the census exercises the same decision a build runs.
+  -- A fixture reaching math without a declared face resolves it as the driver does.
   let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut seen := #[]
   for (n, facts) in censusTable do
     let (doc, diags) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    -- The census reads the pages the driver ships: images fetched beside
-    -- the fixture, drawn figures shaped in its faces.
+    -- The census reads what the driver ships: images beside the fixture, figures in its faces.
     let store ← corpusStore doc (some fs)
     let out := (fittedOf fs doc geom (some pats) store).out
     let c := censusOf (coveredColorsOf doc) out store
@@ -1676,8 +1459,6 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     inkMarkupChecks ref n c
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
-    -- The outline tier: emission owes its appearance, so a fixture whose
-    -- layout ships an outline must assert it, and the asserted facts hold.
     if !out.outline.isEmpty then
       check ref s!"census {n}: a shipped outline has its outline row"
         ((censusOutlineTable.lookup n).isSome)
@@ -1685,17 +1466,8 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       check ref s!"census {n} outline: {label}" ok
   silentLossChecks ref seen
 
-
-/-- The rendered half of `Ir.refs_agree_with_numbering`: the table's float
-rows are read off the numbered IR (`Ir.floatLabelRows` — one numbering,
-no predictor), and this check witnesses the wiring over every golden
-fixture: a resolved reference to a key standing inside a captioned figure
-or table shows exactly the number the numbered node carries. Keys inside
-a nested subfloat are the nested float's own — their shipped form is the
-subfigures census row — so `.sub` stays outside this watch. This is
-IR-level agreement between resolution and the numbered nodes, not a page
-claim; the page-facing halves live in censusTable's crossref and
-subfigures rows. -/
+/-- A resolved reference to a key inside a captioned float shows the number the numbered node
+carries, over every golden fixture. -/
 def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let labelsIn (body : Array Ir.Block) (caption : Array Ir.Inline) : Array String :=
     let fi := fun (out : Array String) (x : Ir.Inline) => match x with

@@ -8,10 +8,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- File reads belong to a macro's use, under that use's argument bindings.
-An unused definition must not read, a filename argument selects only its
-own answer, and an inline answer must not inherit another answer's block
-shape. Both surfaces ship their content through the existing elaborator. -/
+/-- File reads belong to a macro's use under its bindings: an unused definition reads nothing, each
+filename selects its own answer, and an inline answer stays inline. -/
 def inputUseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some bytes ← findFont | failures ref "input use: missing fixture font"
@@ -62,9 +60,7 @@ def inputUseChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (direct, directDs) ← elabInputSrc file
         (dvDoc wrapper ("Leadword \\" ++ command ++ "{" ++ path ++ "} Tailword\n\n\\" ++
           command ++ "{block." ++ ext ++ "}"))
-      -- Markdown's native paragraph carries an explicit paragraph end.
-      -- A macro must preserve that boundary, just as a TeX fragment with
-      -- no paragraph end must remain inline.
+      -- A Markdown answer ends a paragraph, a TeX fragment stays inline, under a macro too.
       t s!"{command}: each answer keeps the paragraph shape of its direct use"
         ((bodyLines out).map lineText ==
            (bodyLines (layoutOf fonts direct)).map lineText &&

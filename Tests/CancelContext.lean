@@ -8,8 +8,7 @@ open LeanTex.Core
 
 namespace CancelContext
 
-/-- The driver supplies one font environment to both backends. These
-fixtures compare typed artifact attributes, never an elaboration dump. -/
+/-- The typed tree under the one font environment both backends receive. -/
 private def contextTree (fonts : Font.FontSet) (doc : Ir.Doc) : Array Html.Node :=
   let geom := Layout.Geom.ofPage doc.page
   let cfg : HtmlDoc.Config := {
@@ -21,16 +20,13 @@ private def contextTree (fonts : Font.FontSet) (doc : Ir.Doc) : Array Html.Node 
   let doc := (Ir.resolveMathAlphas fonts.mathAlphabets "math face" doc).1
   (HtmlDoc.emitTree cfg doc).2.1
 
-/-- Attachment coordinates and physical fraction-rule widths read from
-actual HTML elements. Outside font declarations may differ while these
-rendered lengths must agree. -/
+/-- Attachment coordinates and physical fraction-rule widths read from the HTML elements. -/
 private def contextGeometry (nodes : Array Html.Node) :=
   elemAttrsList (fun tag => ["svg", "polygon", "mpadded", "mfrac"].contains tag)
     #[] nodes.toList
 
-/-- A local affine size and its evaluated point size ship identical native
-ink and identical MathML geometry. The fixed 8pt fraction rule prevents a
-wrong em from cancelling out as an otherwise uniform rescaling. -/
+/-- A local affine size and its evaluated point size ship identical ink and identical MathML
+geometry. -/
 private def localContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let wrappers : Array (String × (String → String)) := #[
     ("minipage", fun s => "\\begin{minipage}{100pt}" ++ s ++ "\\end{minipage}"),
@@ -59,9 +55,8 @@ private def localContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       check ref s!"cancel local context {name}/{measure}: HTML geometry matches native 12pt"
         (!actual.isEmpty && actual == wanted)
 
-/-- Widthless columns divide the remaining measure, and neither a column
-nor its siblings change the following paragraph's context. Compare the
-shipped ink and typed attachment tree with explicitly evaluated sizes. -/
+/-- Widthless columns divide the remaining measure, and no column changes the following paragraph's
+context. -/
 private def columnContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let template (size : String) := (elabStr (dvDoc "\\usepackage[makeroom]{cancel}"
     ("{\\fontsize{" ++ size ++ "}{48pt}\\selectfont " ++
@@ -86,11 +81,8 @@ private def columnContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   check ref "cancel local context columns: HTML shared widths and scope restoration"
     (!actual.isEmpty && actual == wanted)
 
-/-- A text-sourced math leaf uses the text em; its neighbouring math glyph
-uses the x-height-matched math em. The leaf's emitted font-size must state
-that ratio even inside either script style. Firefox drops a plain relative
-font size on a token that also changes family; `calc` preserves that same
-ratio without adding a MathML container (the rendered text-target probe). -/
+/-- A text-sourced math leaf uses the text em beside the math em, its `calc` font-size stating the
+ratio in either script style. -/
 private def mixedContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (name, before, after) in [("text", "$", "$"),
       ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")] do

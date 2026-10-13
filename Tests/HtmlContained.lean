@@ -10,10 +10,8 @@ open LeanTex.Core LeanTex.Cli.Publication
 
 namespace Tests
 
-/-- Raw style/script payloads owe an HTML raw-text parsing context. Foreign
-content and title RCDATA can reinterpret the payload as markup; a void
-element discards its children. Refuse those placements rather than certify
-the dependency reading of bytes the browser does not read as CSS or script. -/
+/-- Raw style and script payloads ship only in an HTML raw-text context: foreign content, title
+RCDATA and void elements are refused. -/
 def htmlContainedRawContextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let close (head body : Array Html.Node) :=
@@ -63,9 +61,8 @@ def htmlContainedRawContextChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((close #[] quoted).isOk &&
       hasStr (Html.document "en" #[] quoted) "&lt;/svg&gt;&lt;img")
 
-/-- A CSS at-keyword starts at `@`, even beside another token. In particular,
-HTML's legacy CSS comment opener must not hide an import from the dependency
-policy: the browser ignores the opener and still fetches the stylesheet. -/
+/-- A CSS at-keyword starts at `@` even beside another token, so HTML's legacy comment opener hides
+no import. -/
 def htmlContainedCssAtRuleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let close (head body : Array Html.Node) :=
@@ -89,9 +86,8 @@ def htmlContainedCssAtRuleChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "contained CSS at-keyword: supported rules and inert mentions remain accepted"
       ((close #[.style css] #[]).isOk)
 
-/-- Active attribution requests are not rendering resources, and script escape
-states can consume following HTML even for JSON or an approved constant.
-Admission owes both boundaries independently of the current emitter. -/
+/-- Admission refuses active attribution requests and script escape states, independently of the
+current emitter. -/
 def htmlContainedAdmissionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bytes := svgDocument "<rect width=\"1\" height=\"1\"/>"
@@ -203,9 +199,7 @@ def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "contained index: an empty tree needs no resource evidence"
     ((close invalid #[] #[] #[]).isOk)
 
-/-- A single HTML file carries the exact captured rendering bytes in its
-actual typed carriers. These assertions fail on the sibling-file emitter;
-closure of nested SVG/CSS references is a separate, stricter obligation. -/
+/-- A single HTML file carries the exact captured rendering bytes in its typed carriers. -/
 def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   htmlContainedRawContextChecks ref
   htmlContainedCssAtRuleChecks ref
@@ -346,8 +340,8 @@ def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     (!(HtmlResource.close #[collection] #[] #[HtmlDoc.deckScript] "en"
       #[.style ("@font-face { font-family: Probe; src: url(\"" ++ collection.uri ++ "\"); }")] #[]).isOk)
 
-/-- Capture and publication are separated by deliberate source mutations.
-SVG dependency mutations cross the actual CLI validator before the gate. -/
+/-- Capture and publication separated by deliberate source mutations, SVG dependency mutations
+crossing the CLI validator. -/
 def htmlContainedPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   IO.FS.withTempDir fun dir => do
@@ -416,10 +410,8 @@ def htmlContainedPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (rejected, _) ← prepareHtml (dir / "source.tex").toString mutated doc
       t ("contained publication: exact SVG validation refuses " ++ name) (!rejected.isOk)
 
-/-- Numeric color presentation attributes, including converter output, must
-cross the same exact-byte closure gate as authored SVG. The raster oracle
-reads the published carrier and compares it with separately authored colors;
-it never treats successful conversion as resource-closure evidence. -/
+/-- Numeric colour presentation attributes cross the same exact-byte closure gate as authored SVG,
+judged on the published carrier's raster. -/
 def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let red := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
@@ -488,8 +480,7 @@ def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (closed, _) ← prepareHtml (dir / "source.tex").toString cfg doc
       t ("contained SVG color: refuses " ++ name) (svgBoundaryError closed)
 
-/-- Refusal precedes the CLI's output writes, including best-effort mode.
-These cases wrote unresolved pages before checked publication was installed. -/
+/-- Refusal precedes the CLI's output writes, best-effort mode included. -/
 def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
@@ -517,8 +508,6 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
       IO.FS.writeFile (input / "open.js") "const invented = '<!--';\n"
       IO.FS.writeFile (input / "shout.js") "const invented = 1; </SCRIPT> const more = 2;\n"
       IO.FS.writeFile (input / "nul.js") "const invented = \"\u0000\";\n"
-      -- A framework sheet in a published build's shape, outside the page's CSS
-      -- vocabulary from its first line.
       IO.FS.writeFile (input / "framework.css") "@charset \"utf-8\";\n.content { margin: 0 }\n"
       IO.FS.writeFile (input / "source.tex")
         ("\\documentclass{article}\n" ++ preamble ++
@@ -548,15 +537,9 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
           (← IO.FS.readFile (output / "source.html")) == "existing artifact" &&
           (← output.readDir).map (·.fileName) == #["source.html"])
 
-/-- **The declared math renderer passes the closure gate it was declared
-for.** `--math-boundary <file>` names a local script, and the page carries
-its text inline as the body's last node (`HtmlDoc.mathBoundaryNodes`); the
-gate admits exactly that text (`HtmlDoc.admittedScripts`), the page is
-otherwise the page without it (`HtmlDoc.math_boundary_floor_exact`), its
-formula native MathML, and the build publishes. A script the run did not
-declare, and a renderer text that would end its script early, are refused.
-The defect emitted `<script src>` for the flag's value, a source the gate
-refuses, so no HTML build with the flag could publish. -/
+/-- The declared math renderer passes the closure gate: its text ships inline as the body's last
+node, the page otherwise unchanged, and an undeclared script or a text ending its script early is
+refused. -/
 def mathBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let renderer := "document.documentElement.dataset.mathRenderer = \"invented\";\n"
@@ -600,12 +583,8 @@ def mathBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
         element.trimAscii == renderer.trimAscii && (html.splitOn renderer).length == 2 &&
         hasStr html "<math" && !hasStr html "renderer.js")
 
-/-- **Bulma's classes over the declared sheet.** `css = bulma` names the
-framework's class vocabulary, and its sheet is the document's declared
-stylesheet: captured and inlined after the engine's token binding, so a
-sheet that declares the same properties sets them, and the page publishes
-with it. A sheet outside the page's CSS vocabulary is refused, as
-`htmlContainedCliChecks` holds for a published build's shape. -/
+/-- `css = bulma`'s declared sheet is captured and inlined after the engine's token binding, and a
+sheet outside the page's CSS vocabulary is refused. -/
 def bulmaSheetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := elabStr (dvDoc "\\output{ css = bulma, stylesheet = \"framework.css\" }\n"
     "An invented paragraph.")
@@ -622,20 +601,8 @@ def bulmaSheetChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "bulma: a page naming the classes publishes with its declared sheet"
     (HtmlDoc.emitClosed cfg doc #[]).1.isOk
 
-/-- The shipped generated syntax must remain in the checked vocabulary.
-This is a syntax coverage guard; missing captures still owe publication checks.
-It is also the census of script: no corpus page, in any stylesheet mode,
-runs script but the slides class's constant pager, and every deck runs that
-one (a JSON-LD data block is data, not script). No backend emits script to
-compensate for a platform: a page says what it means declaratively, and
-where a declarative feature is unevenly supported it ships the degraded
-state — a control always visible, never one permanently hidden. The math
-boundary runs the renderer the run names (`--math-boundary`), shipped only
-where the run declares one, the page with scripting off the page without it
-(`math_boundary_contract`, `math_boundary_floor_exact`); any other path owes
-the pager's three properties — a constant (`deck_script_constant`), gated on
-its class (`deck_script_gated`), degrading to the pure-CSS pager with
-scripting off (`floor_covered_script_gated`) — or a design discussion. -/
+/-- The shipped generated syntax stays in the checked vocabulary, and no corpus page runs script but
+the slides class's constant pager, which every deck runs. -/
 def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut decks := 0
   for name in goldenNames do

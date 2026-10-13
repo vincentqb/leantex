@@ -6,9 +6,8 @@ public section
 
 open LeanTex.Core
 
-/-- The title reader's boundary is a refused body. These contexts exercise
-its nested declarative syntax and its lookahead operands; the conditional
-counterexample remains in `elabTitleBoundaryChecks`. -/
+/-- The title reader's boundary is a refused body, across nested declarative syntax and lookahead
+operands. -/
 def frontendTitleContextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let contexts : Array (String × String) :=
@@ -30,9 +29,7 @@ def frontendTitleContextChecks (ref : IO.Ref (List String)) : IO Unit := do
         (left.1.styles.find? "titlepage" == right.1.styles.find? "titlepage")
       t s!"title context: {aliasName} preserves explicit document precedence"
         (((left.1.styles.find? "titlepage").bind (·.align)) == some .right)
-  -- Reading a refused body is a once-only preamble operation, including a
-  -- body that declares no supported styling. Keeping that payload in the
-  -- body interpreter would leave its spelling observable after its reader.
+  -- A refused body is read once, in the preamble, even one declaring no supported style.
   let st : Elab.ESt :=
     { refusedTitleBody := some #[.word "no-declarative-title-style" {}] }
   t "title completion retires a body with no supported style"

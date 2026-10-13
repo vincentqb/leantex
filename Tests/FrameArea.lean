@@ -8,13 +8,8 @@ open LeanTex.Core
 
 namespace Tests.FrameArea
 
-/-- The invented moloch deck the checks lay out, the one source each value
-below was first measured on under lualatex (beamer 10 pt, 4:3, the shipped
-Fira Sans for every face): a standout frame, a standout frame whose note the
-deck's footline hook restores, a titled control, a standout frame that also
-names `b`, a section page, and a bottom-aligned frame. The footline hook is
-the one a moloch deck spells to restore an explicit note on a standout
-frame. -/
+/-- The invented moloch deck the checks lay out: standout frames (one whose note the footline hook
+restores, one naming `b`), a titled control, a section page and a bottom-aligned frame. -/
 private def deck : String :=
   "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n" ++
   "\\newenvironment{framefooter}[1]{%\n" ++
@@ -44,9 +39,8 @@ private def deck : String :=
   "\\begin{frame}[b]\nKilo words.\n\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- A templated title page — its title and author set as nodes, which the
-engine places as title slots — with a section page on its heels, a frame,
-and a second section page of the same title: invented words. -/
+/-- A templated title page with a section page on its heels, a frame, and a second section page of
+the same title. -/
 private def slottedDeck : String :=
   "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n" ++
   "\\setbeamertemplate{title page}{%\n" ++
@@ -68,31 +62,8 @@ private def slottedDeck : String :=
   "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- **Every frame stands its content box in beamer's text area**
-(`Layout.FrameArea`, `Layout.frameFloor_exact`). beamer's `\textheight` is
-the paper less `\footheight` — the footline's box plus 4 pt, the 4 pt alone
-where the footline is empty — and a frame's content opens at its top on
-`\vskip-\parskip\vbox{}`; a plain frame, as moloch's section page is,
-centres on the whole paper with its first box flush on that `\vbox{}`.
-Asserted over `Layout.Out` against lualatex's measurements of `deck` (TeX
-Live 2026; bp from the page top to the baseline): a standout frame's line
-at 142.951 — whatever alignment its options name besides, as moloch's key
-centres it — the same frame with its note restored at 138.197 (the note's
-own baseline at 268.057), the section page's title at 127.894, on a
-templated title page's heels (`slottedDeck`) as after a frame, and a
-bottom-aligned frame's line at 260.59, its content ending exactly on the
-text area's floor, the footline's box and 4 pt above the paper's edge. The
-lines are held to
-0.5 bp: what remains is the standout size's leading, 17.28 pt on the
-engine's ladder against size10.clo's 18 pt, half of it after centring
-(0.36 bp). At `fa516a82` the standout frame stood 2.06 bp high, the
-restored note sent its line 9.12 bp low — the page took the note's band off
-a floor still at the slides margin, the paper's top still 26.4 bp above its
-content — and the section page stood 9.99 bp low; with the area alone, the
-section page after the title page stood 14.3 bp low, the title page's slots
-leaving the page fresh for the next page's opening. At `5e6eedf5` a standout
-frame naming `b` stood on the floor, 125 bp below where lualatex centres it.
-Invented words. -/
+/-- Every frame stands its content box in beamer's text area, held to lualatex's baselines on `deck`
+within 0.5 bp. -/
 def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "frame area: the shipped Fira Sans parses" false
@@ -115,9 +86,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (at? 4 "Hotel" 127894)
   t "frame area: a bottom-aligned frame stands its last line on its text area's floor, as lualatex does"
     (at? 6 "Kilo" 260590)
-  -- A title page's slots each set as from its page's top; the next page,
-  -- a section page here, still opens as every section page does (lualatex
-  -- sets both of `slottedDeck`'s at 127.894).
+  -- A title page's slots each set from its page's top; lualatex sets both section pages at 127.894.
   let (sdoc, _) := elabStr slottedDeck
   let sout := layoutOf fira sdoc (Layout.Geom.ofPage sdoc.page)
   let sectionY (page : Nat) : Option Dim.Sp :=
@@ -127,9 +96,6 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (match sectionY 1, sectionY 3 with
      | some a, some b => a == b && near a (ptMilli 127894)
      | _, _ => false)
-  -- The floor itself, exactly: a bottom-aligned frame's content ends on
-  -- it, the glyphs' depth below its last baseline (`B.contentEnd`), the
-  -- footline's box and 4 pt above the paper's edge (`Layout.frameFloor`).
   let geom := Layout.Geom.ofPage doc.page
   let band := ((out.pages[6]?.map (·.lines)).getD #[]).filter (·.furniture)
   let box := band.foldl (fun (acc : Dim.Sp × Dim.Sp) l =>
@@ -140,9 +106,8 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       l.y + (Layout.segsInk fira l.segs).2 ==
         Layout.frameFloor geom.pageH Ir.footline.sep (some box)).getD false)
 
-/-- The deck the class option `t` declares — `opt` the class options'
-tail, `frame` every unaligned frame's option list — with a frame that names
-`c` and a standout frame. Invented words. -/
+/-- The deck the class option `t` declares, with a frame naming `c` and a standout frame; `opt` is
+the class options' tail, `frame` every unaligned frame's options. -/
 private def classDeck (opt frame : String) : String :=
   s!"\\documentclass[10pt{opt}]\{beamer}\n\\usetheme\{moloch}\n\\begin\{document}\n" ++
   s!"\\begin\{frame}{frame}\{Foxtrot}\nAlpha words.\n\\end\{frame}\n" ++
@@ -150,16 +115,8 @@ private def classDeck (opt frame : String) : String :=
   "\\begin{frame}[c]{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
   "\\begin{frame}[standout]\nKilo words.\n\\end{frame}\n\\end{document}\n"
 
-/-- **The class options' `t` aligns every frame that names no alignment as
-`[t]` does** (`Elab.Ctx.frameAlign`; beamer.cls's `\ExecuteOptionsBeamer{c}`,
-then the document's options, the last winning): two builds apart — the
-deck under `t` with bare frames, and the deck with no class option whose
-frames each name `[t]` — the page and the web page are the same, a frame
-naming `c` still centres and a standout frame still centres. Against
-lualatex on the `t` deck (4:3, the shipped Fira Sans for every face): the
-untitled frame's line at 17.62 bp, the standout's at 142.95. At
-`5e6eedf5` the option was dropped unnamed and every bare frame centred, the
-untitled one's line 118.7 bp low. Invented words. -/
+/-- The class option `t` aligns every frame naming no alignment as `[t]` does, two builds apart,
+while a frame naming `c` and a standout still centre. -/
 def classAlignChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "class t: the shipped Fira Sans parses" false
@@ -175,7 +132,7 @@ def classAlignChecks (ref : IO.Ref (List String)) : IO Unit := do
   let at? (page : Nat) (word : String) (milli : Int) : Bool :=
     ((out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) word).map fun l => near l.y (ptMilli milli)).getD false
-  t "class t: an untitled frame opens at the text area's top and a standout frame centres, as lualatex does"
+  t "class t: an untitled frame opens at the text area's top, a standout frame centres"
     (at? 1 "Kilo" 17620 && at? 3 "Kilo" 142950)
   let centred (doc : Ir.Doc) : Option Ir.VAlign := doc.body.findSome? fun b => match b with
     | .frame _ false v _ _ => if v matches .center then some v else none
@@ -197,25 +154,7 @@ private def openDeck : String :=
   "\\begin{frame}[t]\n\\includegraphics[width=20pt,height=8pt]{tall.png}\n\\end{frame}\n" ++
   "\\end{document}\n"
 
-/-- **A frame's content opens as TeX opens it below its `\vbox{}`, on both
-artifacts** (`HtmlDoc.frameOpeningCss`): the first line's baseline one
-`\baselineskip` of its paragraph below the opening — `Ir.leadingFor`, which
-the page's opening rule spends and the web's first-line strut is, at an em
-of the line — and a list opening the content first its `\@topsepadd`
-lower, the length the web's list rides on the opening (`--frame-body-open`,
-the stage's share). Asserted over `Layout.Out` against lualatex on
-`openDeck` (4:3, the shipped Fira Sans for every face): the paragraph's
-line at 17.62 bp, the itemize's and the enumerate's first items at 20.61,
-the tall image's bottom at 46.52 and the short one's at 17.62;
-and over the stylesheet the deck ships, each web length the PDF's own. At
-`5e6eedf5` the web set a frame's first line on its screen line box, the
-half-leading and the face's ascent below the opening (1.37 bp above
-lualatex's), and dropped an opening list's `\topsep`: an opening list's
-first item stood 4.36 bp above lualatex's; and the page stood an opening image flush on the opening, a
-short one 4 pt above lualatex's, a tall one the 1 pt of `\lineskip`. The
-trim reaches a paragraph's, a list's and an alignment scope's last line,
-never a box that paints or scrolls: a trimmed listing hid the last of its
-lines (the browser oracle's `code-height`). Invented words. -/
+/-- A frame's content opens as TeX opens it below its `\vbox{}`, on both artifacts. -/
 def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "frame opening: the shipped Fira Sans parses" false
@@ -228,7 +167,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let size := doc.page.fontSize
   let lead := Ir.leadingFor size doc.page.leading
   let skip := (Ir.frameBodySkip false .top).resolve size 0
-  t "frame opening: a paragraph's first baseline stands one baselineskip below the opening, as lualatex's"
+  t "frame opening: a paragraph's first baseline stands one baselineskip below the opening"
     ((first 0).any fun y => y == skip + lead && near y (ptMilli 17620))
   let listOpen : Option Dim.Sp := (Ir.listSkips doc.docClass.record.lists size 1).map fun sk =>
     sk.topsep.width.sp + (Ir.partopsepFor doc.docClass.record.lists size 1 doc.tokens).width.sp
@@ -236,9 +175,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match first 1, first 2, listOpen with
      | some a, some b, some o => a == skip + o + lead && b == a && near a (ptMilli 20610)
      | _, _, _ => false)
-  -- An image's box takes TeX's interline glue at its paragraph's
-  -- `\baselineskip`: a short one stands its bottom one skip below the
-  -- opening, a tall one `\lineskip` below its own height.
+  -- An image's box takes TeX's interline glue at its paragraph's `\baselineskip`.
   let imageY (page : Nat) : Option Dim.Sp :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
@@ -253,8 +190,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (strut.size == 1 && strut.all fun (sel, d) =>
       hasStr sel "li:first-child" &&
       ((cssDeclOf d "height").bind cssEmMilli).any (· * size / 1000 == lead))
-  -- The content ends where its last line's glyphs end: every frame's last
-  -- element is marked, and its last line trims to its baseline.
+  -- Every frame's last element is marked, and its last line trims to its baseline.
   let (_, body, _) := HtmlDoc.emitTree {} doc
   let classes := attrValuesOf (fun _ => true) "class" (Html.elem "body" body #[])
   let trims := blocks.filter fun (sel, d) =>
@@ -271,12 +207,8 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
      (cssBlocksFor css ":where(section.slide > .frame-body-start)").any
       (hasStr · "var(--frame-body-open, 0pt)"))
 
-/-- An invented deck whose frames open on beamer's trivlists: `[t]`
-untitled, a `{center}`, a `{flushleft}` and a `{flushright}` on a line, a
-`{figure}` and a `{center}` on an image taller than the body's
-`\baselineskip`, a `{description}`, a `{center}` between two paragraphs,
-a `{center}` inside a list item, a captioned `{figure}`, and a `{figure}`
-inside a list item. -/
+/-- An invented deck whose frames open on beamer's trivlists, figures, a description, and trivlists
+inside list items. -/
 private def trivDeck : String :=
   "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
   "\\begin{frame}[t]\n\\begin{center}\nKilo words.\n\\end{center}\n\\end{frame}\n" ++
@@ -298,34 +230,8 @@ private def trivDeck : String :=
   "\\includegraphics[width=60pt,height=40pt]{tall.png}\n\\end{figure}\nMike words.\n" ++
   "\\end{itemize}\n\\end{frame}\n\\end{document}\n"
 
-/-- **A frame's trivlists open and stand apart as TeX sets them, on both
-artifacts**: a `{center}`, `{flushleft}` or `{flushright}` — and beamer's
-`{figure}`, which is a `{center}` (beamerbaselocalstructure.sty:550-553) —
-spends the `\topsep` in force where it stands (`Ir.trivlistSkipFor`):
-outside a list the class option's size file's (size10.clo's `8pt plus 2pt
-minus 4pt`, which beamer leaves in force there; extsizes' 6 pt under `9pt`;
-beamer's own 11pt's 9 pt under a poster's scaled body), inside one the
-`\topsep` beamer's `\@listi` sets again (3 pt, then 2 pt), which a preamble
-declaration does not survive; its first line stands one `\baselineskip`
-below the opening, an image `\lineskip` below its own height; a caption
-spends beamer's 7 pt `\abovecaptionskip` and `\belowcaptionskip`. Over
-`Layout.Out` against lualatex on `trivDeck` (4:3, the shipped Fira Sans for
-every face): the three lines at 25.59 bp, both images' tops at 14.64, the
-description's item at 20.61, the paragraphs around the `{center}` at 17.62,
-37.55 and 57.48, the `{center}` in an item at 35.56 with its item's next
-line at 50.50 and the next item at 65.45, and the captioned figure's next
-line 26.90 below its caption; over the stylesheet the deck ships, the
-opening space of a trivlist and of a figure, the root's and each list
-level's `--topsep` and the caption skips are the stage's shares of the
-page's, and their first lines and a description's label take the
-first-line strut. Before the first fix the page spent the rhythm's 6 pt
-quantum for the `\topsep` and a float's text gap for a figure — the lines
-1.93 bp high and the figure's image 4.03 bp low — and the web deck dropped
-the trivlist's opening space and its strut: the lines 9.35 bp high, both
-images 8.97. Before the second, a `{center}` in an item spent the top
-level's 8 pt (its line 5.11 bp low, its item's next line 10.17), and the
-captioned figure's next line stood 6.90 bp short of its caption. Invented
-words. -/
+/-- A frame's trivlists open and stand apart as TeX sets them, on both artifacts, at the `\topsep`
+in force where they stand. -/
 def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "trivlist opening: the shipped Fira Sans parses" false
@@ -345,10 +251,10 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
       l.segs.any (· matches .image ..)).map (·.y)
   t "trivlist opening: a frame's trivlist spends LaTeX's top-level topsep, size10's 8pt"
     (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size 0).1.width.sp == topsep)
-  t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip below the opening, as lualatex's"
+  t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip down"
     ([0, 1, 2].all fun pg => (lineY pg "Kilo").any fun y =>
       y == skip + topsep + lead && near y (ptMilli 25594))
-  t "trivlist opening: a figure's and a center's image stand their topsep and lineskip below the opening, as lualatex's"
+  t "trivlist opening: a figure's and a center's image stand topsep and lineskip below the opening"
     ([3, 4].all fun pg => (imageY pg).any fun y =>
       y == skip + topsep + Layout.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (ptMilli 14635))
   t "trivlist opening: a description's item stands its topsep below the opening, as lualatex's"
@@ -361,15 +267,13 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Ir.trivlistSkipFor lists doc.tokens size 1).width.sp == Dim.pt 3 &&
      (lineY 7 "Lima").any (near · (ptMilli 35557)) && (lineY 7 "Mike").any (near · (ptMilli 50501)) &&
      (lineY 7 "November").any (near · (ptMilli 65445)))
-  -- A caption sets 7 pt below its own line (`\belowcaptionskip`), the
-  -- figure's topsep after that, as beamer's caption does.
+  -- A caption sets 7 pt below its line (`\belowcaptionskip`), then the figure's topsep.
   t "trivlist opening: a captioned figure spends beamer's caption skips, as lualatex's"
     ((imageY 8).any (fun y => near (y - Dim.pt 40) (ptMilli 14635)) &&
      (match lineY 8 "Figure", lineY 8 "Mike" with
       | some c, some m => near (m - c) (ptMilli 26899)
       | _, _ => false))
-  -- The top-level topsep is the class option's size file's: extsizes'
-  -- 6 pt under `9pt`, and beamer's own 11pt's 9 pt under a poster's body.
+  -- The top-level topsep is the size file's: extsizes' 6 pt under `9pt`, beamer's 11pt's 9 pt.
   t "trivlist opening: the top-level topsep is the class option's size file's"
     ((Ir.trivlistSkipFor lists {} (Dim.pt 9) 0).width.sp == Dim.pt 6 &&
      (Ir.trivlistSkipFor lists {} Ir.posterFontSize 0).width.sp == Dim.pt 9 &&
@@ -418,12 +322,8 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((c.splitOn " ").contains (HtmlDoc.roleClass Ir.trivlistRole) ||
        (c.splitOn " ").contains "float")).size == 6)
 
-/-- **An alignment a standout frame discards is named** (`Elab.frameOpts`):
-moloch's `standout` key opens with `\setkeys{beamerframe}{c}`, so `b` before
-it is overridden and `t` after it is an undefined key lualatex steps over;
-either way the frame centres, and here one note names the alignment it
-lost. `[standout]` and `[c,standout]`, which lose nothing, raise none. At
-`7600baa5` the alignment was dropped unnamed. Invented words. -/
+/-- An alignment a standout frame discards is named once; `[standout]` and `[c,standout]` raise
+none. -/
 def standoutAlignNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let deckOf (opts : String) : String :=
@@ -443,29 +343,8 @@ def standoutAlignNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "standout alignment: every standout frame centres"
     (["b,standout", "standout,t", "standout", "c,standout"].all centred)
 
-/-- **The deck stands every frame in beamer's text area too**, the PDF's
-(`checks`): the stage opens at its top edge and its text area ends
-`\footheight` above its bottom edge — the 4 pt gap the frame's end spacer,
-the grow-only spacer a printed frame ends on (`HtmlDoc.printEndGrow`), and
-the footline after it, on the stage's bottom edge, reaching into no padding
-(`HtmlDoc.footlineCss`), and on paper kept with the frame's last content;
-its slots' baseline its closing skip above that
-edge, inset as moloch insets them, its box as tall as its tallest slot's cap
-height; the frame-title bar is moloch's strut box, and with no bar the title
-opens at the slides' top margin, where the PDF sets it; an untitled or
-standout frame opens its body as the PDF does; a section page closes on its
-subsection strut; and a standout frame's type is the whole frame's while its
-footline keeps its own step. Asserted over the typed tree and the
-stylesheet it ships, on `deck` and `barlessDeck`: lengths are the stage's
-shares of the PDF's own (`cssStageLength`, one printed milli-percent). At
-`fa516a82` the stage kept the 6vmin safe area above and below every frame,
-the footline stood that safe area and a 1.45 rem margin up with its slots at
-the safe area's edge, the bar was padded below its line box, untitled and
-standout frames paid a paragraph gap at their top, and a standout note set
-at 1.44 times its size in bold. At `0232749b` the footline reached the edge
-by a negative margin through the stage's padding, which sent it to a sheet
-of its own on paper, a bar-less title stood on the stage's top edge, and a
-standout frame's lists set at the body's size. Invented words. -/
+/-- The deck stands every frame in beamer's text area too: its text area, footline, title bar and
+openings are the PDF's lengths as stage shares. -/
 def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, _) := elabStr deck
@@ -505,8 +384,7 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame area html: the frame-title bar is moloch's strut box"
     ((cssBlocksFor css "section.slide > header h2::before").any (hasStr · "height: calc(var(--frametitlepadding") &&
      (cssBlocksFor css "section.slide > header h2::after").any (hasStr · "vertical-align: calc(-1 * var(--frametitlepadding"))
-  -- The standout type is the frame's, moloch's `\usebeamerfont{standout}`;
-  -- the footline undoes that step for its own (its weight: `footWeightChecks`).
+  -- The standout type is the frame's (`\usebeamerfont{standout}`); the footline undoes that step.
   let standoutSize := (cssBlocksFor css "section.slide.standout").findSome? (cssDeclOf · "font-size")
   let footStep := (cssBlocksFor css s!".size-{Ir.footline.step}").findSome? (cssDeclOf · "font-size")
   t "frame area html: a standout frame's type is the whole frame's, its footline keeping its own"
@@ -517,16 +395,13 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
        (cssBlocksFor css "section.slide.standout > footer.slide-foot").any
          (cssDeclOf · "font-size" == some s!"calc({f} / {s.dropEnd 2})")
      | _, _ => false)
-  -- The frames' own attributes: every frame of the deck opens its body
-  -- (`frame-body-start`), the untitled ones with no fixed skip of their own.
   let sections := elemAttrsList (· == "section") #[] body.toList
   let slides := sections.filter fun (_, attrs) =>
     ((attrs.find? (·.1 == "class")).map (·.2.splitOn " " |>.contains "slide")).getD false
   t "frame area html: every frame opens its body as beamer's content box"
     (slides.size == 6 && slides.all fun (_, attrs) =>
       ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--frame-body-skip")).getD false)
-  -- The strut's em is the page's own strut at the section page's body
-  -- (`Ir.sectionPageStrut_between`), less the bar it stands under.
+  -- The strut's em is the page's own at the section page's body, less the bar above it.
   let size := doc.page.fontSize
   let pdfStrut := Ir.sectionPageStrut size doc.page.leading
   t "frame area html: a section page closes on its subsection strut below its bar"
@@ -539,8 +414,6 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame area html: a restored scriptsize note sizes its footline's box"
     (feet.any fun (_, attrs) =>
       ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--foot-cap: 1.400;")).getD false)
-  -- With no bar the title is the page's first line at the slides' top
-  -- margin (`Layout.collectFrameTitle`), the stage's top edge its area's.
   let (bdoc, _) := elabStr barlessDeck
   let (bhead, _, _) := HtmlDoc.emitTree {} bdoc
   let bcss := treeCssList "" bhead.toList
@@ -548,8 +421,7 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((cssBlocksFor bcss "section.slide:not(.title-page) > header").any fun d =>
       cssStageLength d "padding-top" bdoc.page.vmargin bdoc.page.height)
 where
-  /-- A deck with no title bar (the bundle a deck without `\usetheme` gets):
-  one titled frame. Invented words. -/
+  /-- A deck with no title bar: one titled frame. -/
   barlessDeck : String :=
     "\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
     "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n\\end{document}\n"
@@ -611,16 +483,8 @@ private def computedOn (css key : String) (path : Array ArtElem) : Option String
       | [] => v
     else v
 
-/-- **A figure inside a list item reads its own level's float space in the
-web deck** (`HtmlDoc.lineageLevelRules`): `--floatsep`'s `var(--topsep)`
-resolves where the property is declared, so each list level declares it
-beside its own `--topsep` — the nearest ancestor of a figure in an item that
-declares the one is the item, and declares the other at the level's 3 pt,
-the stage's share, the space the page spends there (`Ir.floatSpaceFor` at
-depth one). Declared on the root alone, a figure in an item spent the top
-level's 8 pt in the web deck, 5 bp low above and below at 10 pt. Read by a
-cascade over the shipped stylesheet and the typed tree's paths
-(`declaredOn`). Invented words. -/
+/-- A figure inside a list item reads its own level's float space in the web deck, as each level
+declares `--floatsep` beside its `--topsep`. -/
 def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, _) := elabStr trivDeck
@@ -639,8 +503,6 @@ def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
         (declaredOn css "--topsep" o).any fun v =>
           cssStageLength ("--c: " ++ v) "--c" level doc.page.height
       | none => false)
-  -- A preamble `\topsep` is the top level's alone: the deck states it as
-  -- the stage's share, and a note says the lists set their own.
   let (ddoc, dds) := elabStr ("\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n" ++
     "\\setlength{\\topsep}{20pt}\n\\begin{document}\n\\begin{frame}[t]\n" ++
     "\\begin{center}\nKilo words.\n\\end{center}\n\\end{frame}\n\\end{document}\n")
@@ -660,14 +522,7 @@ private def lightSet (f : Font.Font) : Font.FontSet :=
       [((slot, 400, false), 0), ((slot, 700, false), 1),
        ((slot, 400, true), 0), ((slot, 700, true), 1)]).toArray }
 
-/-- **Every footline sets at the body's weight, standout frames included**
-(`HtmlDoc.footlineCss`, `fontCss`'s `--ltx-body-weight`): on `deck` with a
-Light family whose regular face is a 300, every footer element computes to
-the 300 the body resolves, while a standout frame's own type stays at its
-600. Read by a cascade over the shipped stylesheet and the typed tree's
-paths (`computedOn`), which a footer rule naming `normal` again breaks. At
-`5e6eedf5` every footer computed to `normal`, a 400: the family's Regular,
-the deck's bold, where the PDF and lualatex set the Light. Invented words. -/
+/-- Every footline sets at the body's weight, standout frames included. -/
 def footWeightChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some f ← shippedFiraFont | t "footline weight: the shipped Fira Sans parses" false
@@ -699,16 +554,8 @@ private def noteDeck : String :=
   "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
   "\\end{framefooter}\n\\end{document}\n"
 
-/-- **The web footline is the page's band box** (`Layout.footBandBox`,
-`HtmlDoc.Config.footBox`): where the driver measures it, a frame's footer
-declares its band's glyph height and depth as the stage's shares of the box
-the shipped page's footline lines carry, so its slots' baseline stands their
-depth above the closing skip, as TeX's box of the line puts it. Asserted
-over `Layout.Out` and the typed tree on `noteDeck`, whose note descends. At
-`913469fb` the footer declared no box: the slots stood their baseline the
-closing skip above the stage's edge whatever they held, and a note that
-descends stood its depth (1.42 bp at seven points) below the page's.
-Invented words. -/
+/-- The web footline is the page's band box: a frame's footer declares its band's glyph height and
+depth as stage shares. -/
 def footBoxChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "footline box: the shipped Fira Sans parses" false
@@ -742,19 +589,7 @@ private def noteFrames : String :=
   "\\footnote{Whiskey yankee.} november.\n\\end{frame}\n" ++
   "\\begin{frame}{Charlie words}\nKilo lima mike november.\n\\end{frame}\n\\end{document}\n"
 
-/-- **A frame's footnotes stand in its text area as beamer sets them**
-(`Spacing.Page.noteGap`, `Spacing.Page.noteHang`): one box directly under the
-frame's content, no `\skip\footins` above it, its last baseline on the text
-area's floor and its depth below, the content centred in what the box
-leaves. Asserted over `Layout.Out` against lualatex's measurements of
-`noteFrames` (TeX Live 2026, beamer 10 pt, 4:3, the shipped Fira Sans for
-every face; bp from the page top to the baseline): the notes at 260.82,
-260.77, and 251.00 and 260.71; the untitled frame's body at 132.87; and the
-titled frame's body 3.39 bp above the same frame's with no note — the note's
-own lift, apart from the titled frames' size-ladder residual. Held to 0.5
-bp, as `checks` holds its lines. At `fac230ee` the notes stood a
-`\skip\footins` and their ink above the floor: about 2 bp high, and the
-body above them about 8 bp high. Invented words. -/
+/-- A frame's footnotes stand in its text area as beamer sets them, held to lualatex within 0.5 bp. -/
 def frameNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "frame notes: the shipped Fira Sans parses" false

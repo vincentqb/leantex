@@ -10,9 +10,7 @@ namespace Tests.BrowserFaceBatch
 
 open LeanTex.Core LeanTex.Cli
 
--- The batch exercises the converter: its pages are ones the figure
--- importer refuses (an encrypted file), so every face is the converter's,
--- as before faces were drawn natively.
+-- Encrypted pages the figure importer refuses, so every face is the converter's.
 private def capturedPdf (tag : String) : ByteArray :=
   encryptedCanvasPdf ++ ("\n% batch-id:" ++ tag ++ "\n").toUTF8
 
@@ -91,15 +89,8 @@ private def deniedExit : UInt32 := 2
 past the probe's budget. -/
 private def slowProbeLimit : Nat := 4
 
-/-- Called in a child with its own PATH and cache, so the suite never mutates
-process-global environment while other IO tests may be running.
-
-Tool identity rests on spawns held to wall-clock budgets (the PATH lookup,
-the version probe); one answered past its budget identifies no tool, so that
-conversion runs uncached by design and the census would count the host's
-speed as a sharing failure. The census is judged only when every cold call
-recorded its answer and no warm pass converted without adding a slot: every
-other contract is judged on every run. -/
+/-- Called in a child with its own PATH and cache; the census is judged only when every cold call
+recorded its answer, since a probe past its budget identifies no tool. -/
 def runChild (args : List String) : IO UInt32 := do
   let limit := (args.headD "4").toNat?.getD 4
   let some root ← IO.getEnv "LEANTEX_FACE_BATCH_ROOT" |
@@ -187,8 +178,7 @@ census not judged"
   IO.println s!"browser batch limit={limit}: {failed.length} failures"
   return if !failed.isEmpty then 1 else if judged then 0 else deniedExit
 
--- A slow stub sleeps through its first version answer; a probe that kills
--- it at its budget leaves no answered marker.
+-- A slow stub sleeps through its first version answer, so a budgeted probe leaves no marker.
 private def versionStub (slow : Bool := false) : String :=
   "#!/bin/sh\n\
 case \"$1\" in -v|--version)\n" ++
@@ -198,8 +188,7 @@ case \"$1\" in -v|--version)\n" ++
   fi\n" else "") ++
   "  printf '%s\\n' 'browser-face test 1'; exit 0;; esac\n"
 
--- The converter witnesses real overlap via a handshake, not an elapsed-time
--- assertion. Its source lock and event log cover the actual process boundary.
+-- The converter witnesses real overlap by a handshake, not an elapsed-time assertion.
 private def converterStub (pdf : Bool) (slow : Bool := false) : String :=
   versionStub slow ++
   (if pdf then
@@ -245,10 +234,8 @@ namespace Tests
 
 open LeanTex.Cli
 
-/-- Real preparation, cache reads/writes and child processes under isolated
-synthetic tools. No installed vector converter or shared user cache is used.
-A run the host denied a tool identity runs again, three runs per limit at
-most; the first run at `slowProbeLimit` is denied on purpose. -/
+/-- Real preparation, cache reads and writes and child processes under isolated synthetic tools; a
+denied run is repeated, three runs per limit at most. -/
 def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (lean, leanPath) ← leanChild "browser batch checks"
   let cwd ← IO.currentDir

@@ -12,8 +12,7 @@ private structure ColumnGeomInk where
   y : Sp
   width : Sp
 
--- A full-line rule exposes the column's assigned measure without depending
--- on word widths, justification, or an IR claim about what reached the page.
+-- A full-line rule exposes the column's assigned measure, whatever the words and justification.
 private def columnGeomInk (out : Layout.Out) : Array ColumnGeomInk :=
   out.pages.zipIdx.flatMap fun (page, i) => page.lines.filterMap fun line =>
     if line.furniture then none else
@@ -36,8 +35,7 @@ private def columnGeomAtom (s : String) (measure : Sp) : Option Sp := do
   if d == 0 then none else
     some (n * unit / ((d : Int) * if s.endsWith "%" then 100 else 1))
 
--- Read the emitted additive affine CSS, independently of Ir.Track's writer.
--- Unknown units or expressions fail closed rather than being guessed.
+-- The emitted affine CSS, read independently of `Ir.Track`'s writer; unknown units fail closed.
 private def columnGeomLength (s : String) (measure : Sp) : Option Sp := do
   if !(s.startsWith "calc(" && s.endsWith ")") then
     return ← columnGeomAtom s measure
@@ -93,9 +91,7 @@ private structure ColumnGeomRow where
   right : Sp
   deriving BEq, Repr
 
--- The browser's track arithmetic at the PDF's declared measure. Fixed
--- tracks leave their remainder to space-between; fr tracks consume only
--- what remains after the explicit gap and fixed tracks.
+-- The browser's track arithmetic at the PDF's declared measure.
 private def columnGeomHtml (style : String) (measure : Sp) : Option ColumnGeomRow := do
   if columnGeomProp style "display" != some "grid" then return ← none
   let gap ← columnGeomLength ((columnGeomProp style "column-gap").getD "0pt") measure
@@ -219,13 +215,8 @@ private def columnGeomScopeContinuation (ref : IO.Ref (List String))
   check ref s!"{name}: opening scope text continues the typed HTML paragraph"
     (paras.count "AlphaBeta" == 1 && paras.count "Gamma" == 1)
 
-/-- The article class sets `\columnsep` to 10pt (article.cls).
-Paracol's `\pcol@setcolwidth@r` first subtracts that gap from `\textwidth`,
-then applies ratios and gives the last column the remainder. An invented
-LuaLaTeX probe at a 200pt measure gives 47.5/142.5pt for ratio .25,
-45.5/136.5pt under a locally scoped 18pt gap, and 47.5/142.5pt afterward.
-These exact quarters need no rounding tolerance. The guards read shipped
-rules and text in Layout.Out, and declarations in HtmlDoc.emitTree. -/
+/-- paracol's column widths under article's 10pt `\columnsep`, a locally scoped gap and its
+restoration, against an invented lualatex probe, in `Layout.Out` and the typed HTML. -/
 def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let css := "display: grid; column-gap: 10pt; grid-template-columns: "
@@ -253,12 +244,10 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     columnGeomCase ref oneFace s!"paracol scoped {gap}pt"
       (columnGeomSource 200 body "\\columnratio{.25}\n") (pt 200)
       #[want, columnGeomExpected (pt 200) (pt gap) 1, want]
-  -- Scope exit restores the values held at entry, regardless of their
-  -- declaration source or the order in which local assignments changed them.
+  -- Scope exit restores the values held at entry, whatever their source or assignment order.
   let openGap := columnGeomExpected (pt 200) (pt 18) 1
   let closedGap := columnGeomExpected (pt 200) 0 1
-  -- A closing snapshot must not turn the scope's opening text into a new
-  -- paragraph. Its saved value also predates every part split by \par.
+  -- A closing snapshot does not turn the scope's opening text into a new paragraph.
   for (source, pre) in #[
       ("native", "\\tokens{columnsep=18pt}\n"),
       ("copied", "\\newlength{\\savedgap}\\setlength{\\savedgap}{18pt}\n" ++
@@ -292,8 +281,7 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         ("\\columnratio{.25}\n\\newlength{\\savedgap}\\setlength{\\savedgap}{18pt}\n" ++
           "\\setlength{\\columnsep}{\\savedgap}\n"))
       (pt 200) #[openGap, closedGap, openGap, openGap]
-  -- TeX copies a register's value at each executed assignment, including
-  -- the class default and reads inside a command definition.
+  -- TeX copies a register's value at each executed assignment, the class default included.
   columnGeomCase ref oneFace "paracol copied class gap"
     (columnGeomSource 200 columnGeomPair
       ("\\columnratio{.25}\n\\setlength{\\columnsep}{2\\columnsep}\n"))
@@ -308,8 +296,7 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       ("\\columnratio{.25}\n\\newlength{\\savedgap}\\setlength{\\savedgap}{\\columnsep}\n" ++
         "\\setlength{\\columnsep}{18pt}\\setlength{\\columnsep}{\\savedgap}\n"))
     (pt 200) #[want]
-  -- Unequal flows still revisit their common opening page and join after
-  -- the longer flow. Rules on every paragraph witness continuation widths.
+  -- Unequal flows revisit their common opening page and join after the longer flow.
   for (leftCount, rightCount) in #[(24, 1), (1, 24), (24, 17), (17, 24)] do
     let body := "\\begin{paracol}{2}\n" ++ columnGeomParagraphs "CL" leftCount ++
       "\\switchcolumn\n" ++ columnGeomParagraphs "CR" rightCount ++

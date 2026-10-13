@@ -17,9 +17,8 @@ private def bodyTree (doc : Ir.Doc) : String :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   Html.document "en" #[] body
 
-/-- Formatting before the first item scopes all items but no following
-text. Compare the actual page and typed HTML tree with the same declaration
-at the start of each item; a declaration is never itself list content. -/
+/-- Formatting before the first item scopes every item and no following text, ships as the same
+declaration at each item's start would, and is never list content itself. -/
 def listDeclarationChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref

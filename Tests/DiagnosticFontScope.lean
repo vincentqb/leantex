@@ -14,16 +14,8 @@ private def fontScopeString (j : Lean.Json) (key : String) : String :=
 private def fontScopeCount (j : Lean.Json) (key : String) : Nat :=
   (j.getObjValAs? Nat key).toOption.getD 0
 
-/-- Native glyph decisions describe the PDF alone. The CLI must filter them
-before refusal, acceptance and `--werror` counts; HTML and Markdown retain
-Unicode even when a native face cannot paint it. Read the emitted paragraph
-and the PDF's painted text, not IR or diagnostic silence alone.
-
-E0405 uses the single vendored `LEANTEX_FONT` override. W0009 needs two faces
-(the override deliberately has no fallback): every slot variant is explicitly
-bound to one of two vendored faces, and every input scalar is covered there.
-No Main import: registration may use the default binary; fail-first runs can
-pass a saved integration executable. -/
+/-- Native glyph decisions describe the PDF alone, so the CLI filters them before refusal,
+acceptance and `--werror` counts, and HTML and Markdown keep the text. -/
 def diagnosticFontScopeChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let binary ← IO.FS.realPath executable
@@ -83,8 +75,7 @@ def diagnosticFontScopeChecks (ref : IO.Ref (List String))
             (reports.length == (if native then 1 else 0) &&
              diags.length == (if native || stale then 1 else 0) &&
              (!stale || diags.all (fontScopeString · "code" == "W0013")))
-          -- The glyph is document text, which its location points at and its
-          -- message names: the record quotes no construct.
+          -- The glyph is document text, so the record quotes no construct.
           t "native records have PDF scope and the real source, and name no construct"
             (reports.all fun d => fontScopeString d "output" == "pdf" &&
               fontScopeString d "file" == source.toString && fontScopeCount d "line" == 6 &&

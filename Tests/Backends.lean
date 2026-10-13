@@ -12,18 +12,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- Math in HTML is MathML Core from the parsed atoms — one row per
-construct, judged on the emitted page. The shapes cite MathML Core (W3C CR
-2025-06-24): scripts (§3.4.1 child order base, sub, sup), limits in
-display (§3.4.2), fractions and radicals (§3.3.2–3.3.3), stretchy
-delimiters (§3.2.4.2), accents (§3.4.2.4) with the U+0305 overline as the
-dictionary's stretchy U+203E, alignments as `mtable` with CSS cell
-alignment (§3.5.3) and restored `displaystyle` (§2.1.6), spaces as
-`mspace` (§3.2.5). The census half: per formula, every scalar the PDF's
-coverage census asks (`Math.MList.scalarsList`) appears in the MathML leaf
-text and everything in the leaf text is a census scalar or the overline
-operator — the executable relation `mathml_glyphs_agree`'s docstring
-promises, the U+0305 rule-drawn accent being the one stated exception. -/
+/-- Math in HTML is MathML Core built from the parsed atoms, one shape per construct, and its leaf
+text matches the PDF's coverage census. -/
 def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let page (body : String) : String :=
@@ -46,7 +36,6 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elements body tag).any fun n => match n with
     | .elem _ attrs _ => wanted.all attrs.contains
     | _ => false
-  -- One row per construct: the MathML shape on the page.
   t "inline math is an inline math element"
     (has "$x$" "<math class=\"math\" data-tex=\"x\"><mi mathvariant=\"normal\">𝑥</mi></math>")
   t "display math is a block math element with the display class"
@@ -116,18 +105,12 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unparsed construct stays source text with its data-tex hook"
     (let p := page "$\\overset{?}{=}$"
      ((p.splitOn "<span class=\"math\" data-tex=").length ≥ 2))
-  -- The HTML half of the recovery floor: the element's visible text is the
-  -- floor (`Ir.floorInk_mem`), the source rides only in data-tex where the
-  -- opt-in client renderer finds it. The two backends read the one IR
-  -- function, so a reader of either artifact is shown content, not markup.
   t "an unparsed construct's element text is its floor, not its source"
     (let p := page "$\\overset{\\textcolor{indigo}{q}}{=}$"
      let inSpan := (((p.splitOn "<span class=\"math\" data-tex=").getD 1 "").splitOn
        "</span>").headD ""
      let shown := ((inSpan.splitOn ">").getD 1 "")
      shown == "q=" && ((inSpan.splitOn "indigo").length ≥ 2))
-  -- The census half, over the same construct list plus the alphabets:
-  -- MathML leaf text against the PDF's coverage census, per formula.
   let census := ["$x^2$", "$a_i^2$", "$\\frac{1}{2}$", "$\\sqrt[3]{x}$",
     "$\\left( x \\right)$", "$\\sum_{i=1}^{n} i$", "$\\hat{x}$",
     "$\\overline{x+y}$", "$a \\quad b$", "$\\mathbb{R}^d + \\mathcal{L}$",
@@ -143,10 +126,7 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"every MathML leaf scalar is a census scalar or the overline: {src}"
         (leaf.all fun c => pdf.contains c || c == MathMl.overlineChar)
 
-/-- The class hook: a semantic distinction the author declares as a named
-wrapper survives into the artifact as an addressable annotation. Its absence
-was the audited defect — `HtmlDoc.emit ∘ elab` of `\muted{x}` and of `x`
-were byte-identical, so no stylesheet could address the author's own role. -/
+/-- A named wrapper the author declares survives into the artifact as an addressable annotation. -/
 def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (mutedDoc, mutedDs) :=
@@ -158,20 +138,12 @@ def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
     (mutedPage != (HtmlDoc.emit {} bareDoc).1)
   t "an authored role's class reaches the page"
     ((mutedPage.splitOn "class=\"u-muted\"").length == 2)
-  -- Arity reads the definition: a 0-ary command is a spelling, not a role,
-  -- and splices transparently.
   let (abbrevDoc, _) :=
     elabStr (dvDoc "\\define \\brand {Example Corp}\n" "\\brand{} words")
   t "a zero-ary command is a spelling, not a role"
     (((HtmlDoc.emit {} abbrevDoc).1.splitOn "u-brand").length == 1)
-  -- The census reads through the annotation (role_plaintext): the markdown
-  -- twin renders the words, never the wrapper.
   t "the markdown twin reads through a role"
     ((((MarkdownDoc.emit mutedDoc).splitOn "quiet words").length) == 2)
-  -- Both halves on one page, judged on the typed tree: a palette role
-  -- resolves to its var reference, an authored role to its class — a name
-  -- the palette knows adapts, a name it does not becomes addressable, and
-  -- neither is silently lost.
   let (bothDoc, bothDs) := elabStr (dvDoc
     ("\\palette{ accent = #205E3B }\n\\define \\entry(word: content) {\\word}\n")
     "\\accent{coloured} and \\entry{classed}")
@@ -189,30 +161,20 @@ def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a palette role and an authored role share a page, each addressable"
     (hasSpan ("style", "color: var(--ltx-accent, #205e3b)") bothTree &&
      hasSpan ("class", "u-entry") bothTree)
-  -- The block half: a command whose expansion is block content keeps its
-  -- name on a flow container.
   let (blockRoleDoc, _) := elabStr
     (dvDoc "\\define \\entry(a: content) {\\a\\par}\n" "\\entry{First}\n\\entry{Second}")
   t "a block-level role is an addressable div"
     (((HtmlDoc.emit {} blockRoleDoc).1.splitOn "<div class=\"u-entry\">").length == 3)
 
-/-- `\\style` and its two backends. Its own function: `main` is a single `do`
-block and Lean's elaboration budget for one block is spent. -/
+/-- `\style` and its two backends. -/
 def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- The font-axis table (fntguide §2.2) generates both spellings: for every
-  -- axis value the one-argument command and the declaration elaborate to
-  -- the same styled inline, the command's with ltfntcmd's italic
-  -- corrections at its edges. The two lists once disagreed as hand lists —
-  -- \scshape was in, \textsc unknown (W0301).
   for (decl, arg, st) in Elab.fontAxes do
     t s!"font axis \\{arg} and \\{decl} agree"
       ((elabStr s!"\\{arg}\{x}").1.body ==
           #[.para #[.styled st #[.italicCorr true, .text "x"], .italicCorr true]] &&
        (elabStr s!"\{\\{decl} x}").1.body == #[.para #[.styled st #[.text "x"]]] &&
        (elabStr s!"\\{arg}\{x}").2.all (·.severity != .warning))
-  -- \style: every visual constant a backend applies to an element is a token
-  -- the document can name. The font value is a template with a hole.
   let styled := elabStr ("\\documentclass{article}\\palette{ink = #112233}" ++
     "\\tokens{ sep = 3pt }" ++
     "\\style{section}{ font = {\\large\\sffamily\\ink}, before = 2 * sep, after = sep, rule = ink }" ++
@@ -231,11 +193,6 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let listStyle := styled.1.styles.find? "itemize"
   t "style itemize marker is content"
     ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some (.color "ink")) #[.text "•"]])
-  -- A declared marker either reaches HTML as declared or the substitution
-  -- is named (W0331): a glyph in a colour and a size is expressible in
-  -- a ::marker rule (CSS Pseudo-Elements 4 §4.1), arbitrary inline content
-  -- is not. `markerCss?_text` is the theorem that the expressed content is
-  -- exactly the declared characters.
   let markInk : Ir.Color := { r := 0x20, g := 0x5E, b := 0x3B }
   t "markerCss? expresses colour and size around text"
     (HtmlDoc.markerCss? #[.colored markInk (some (.color "markerink"))
@@ -275,15 +232,10 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
       (d.message.splitOn "itemize").length > 1)
   t "html inexpressible marker emits no ::marker override"
     ((contentMarkerPage.splitOn "rects.png").length == 1)
-  -- The content string is escaped: marker text cannot end its own CSS
-  -- string (CSS Syntax 3 §4.3.7).
   t "css marker string escapes its delimiters"
     (HtmlDoc.cssString "a\"b\\c" == "a\\\"b\\\\c")
   t "style unknown element" (errCodes ("\\documentclass{article}\\style{footer}{ before = 1pt }" ++
     "\\begin{document}x\\end{document}") == ["E0328"])
-  -- A defined role is styleable: its rhythm and format are declared once,
-  -- upstream, and the style addresses the class hook the role already
-  -- ships (`u-<name>`) — the door a framework-shaped stylesheet uses too.
   let roleStyled := elabStr ("\\documentclass{article}" ++
     "\\define \\entry(a: content) {\\a\\par}" ++
     "\\style{entry}{ before = 2em }" ++
@@ -305,8 +257,6 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
       #[.styled .bold #[.styled .sans #[.text "x"]]])
   t "fillTemplate leaves plain content alone"
     (Ir.fillTemplate #[.text "–"] #[.text "x"] == #[.text "–"])
-  -- The styles reach HTML as CSS on the element, with the template wrapping
-  -- the heading and the rule as a class the stylesheet draws.
   let (stylePage, _) := HtmlDoc.emit {} styled.1
   t "html styled heading wraps in the template"
     ((stylePage.splitOn "</span>\u2003<span class=\"size-large\"><span class=\"sans\">").length == 2 &&
@@ -315,36 +265,23 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html styled list indent and gap"
     ((stylePage.splitOn "ul { padding-left: 1.5em; }").length == 2 &&
      (stylePage.splitOn "ul > li { margin-top: 3pt; }").length == 2)
-  -- Font-relative lengths keep their unit. An em length once became a
-  -- percentage, which for padding is a fraction of the container: every
-  -- styled list left the page.
   t "css em keeps its unit" (HtmlDoc.cssLength { em := 1500 } == "1.5em")
   t "css ex keeps its unit" (HtmlDoc.cssLength { ex := 1500 } == "1.5ex")
   t "css whole em has no fraction" (HtmlDoc.cssLength { em := 2000 } == "2em")
   t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.pt 3, em := 500 } == "calc(3pt + 0.5em)")
-  -- \runninghead[from = 2]: the opening page carries no furniture, and the
-  -- gate is the head's own — the undeclared foot keeps its default.
   let (fromDoc, fromDs) := elabStr ("\\documentclass{article}\\runninghead[from = 2]{x}" ++
     "\\begin{document}y\\end{document}")
   t "running from clean" (fromDs.isEmpty && fromDoc.headFrom == 2 && fromDoc.footFrom == 1)
 
-/-- The HTML article layout is a faithful degradation of the PDF page: the
-measure, fill rows, link colour, and heading rules all follow the IR. Its own
-function, same elaboration-budget reason. -/
+/-- The HTML article layout follows the IR: the measure, fill rows, link colour and heading rules. -/
 def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- The measure is the page's text width over the base font size, in em so
-  -- it scales with the browser font. It used to be a fixed 68ch, an
-  -- unrelated design the PDF page never asked for.
   t "html measure derives from the default page"
     (HtmlDoc.measureEm {} == "46.8em")
   let (narrowDoc, narrowDs) := elabStr ("\\documentclass{article}" ++
     "\\page{ hmargin = 0.75in }\\begin{document}x\\end{document}")
   t "html measure follows a declared page" (narrowDs.isEmpty &&
     ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.4em;").length == 2)
-  -- Exactly two fill groups reserve the right group's max-content width,
-  -- then let the left group wrap in what remains. More groups retain the
-  -- general flex semantics instead of pretending to be a two-column row.
   let hasClass (name : String) (attrs : Array (String × String)) : Bool :=
     attrs.any fun (key, value) =>
       key == "class" && (value.splitOn " ").contains name
@@ -380,8 +317,6 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html broken two-group rows select the pair contract"
     (((HtmlDoc.emit {} rowsDoc).1.splitOn
       "<span class=\"entry-row entry-pair\"><span class=\"group\">").length == 3)
-  -- The anchor itself carries inheritance, so a host framework cannot remap
-  -- links away from the document or enclosing IR colour.
   let (linkDoc, linkDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\href{https://example.org}{invented link}\\end{document}")
   let inheritedLink :=
@@ -395,9 +330,6 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((bulmaPage.splitOn "--bulma-link:").length == 1)
   t "html link keeps a visible focus"
     ((entryPage.splitOn "a:focus-visible { outline:").length == 2)
-  -- A heading rule sits at half the heading's own x-height, as the PDF
-  -- draws it (Layout.paraLineGeom): the flex items align by baseline and
-  -- the rule element lifts half its own inherited ex.
   let (ruledDoc, _) := elabStr ("\\documentclass{article}\\palette{ ink = #112233 }" ++
     "\\style{section}{ rule = ink }\\begin{document}\\section{H}\\end{document}")
   t "html heading rule declares the flex baseline anchor"
@@ -406,10 +338,6 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html heading rule lifts half the heading's own ex"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "transform: translateY(-0.5ex)").length == 2)
-  -- A baseline rule is the flex baseline itself: the empty `::after` box's
-  -- synthesised baseline is its bottom border edge (CSS Flexbox §8.5), so
-  -- no translate, and its border weight is the declared thickness — the
-  -- HTML projection of the one IR fact the PDF raise projects.
   let (baselineDoc, _) := elabStr ("\\documentclass{article}\\palette{ ink = #112233 }" ++
     "\\style{section}{ rule = ink, rule-position = baseline, rule-thickness = 2pt }" ++
     "\\begin{document}\\section{H}\\end{document}")
@@ -418,10 +346,6 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
       "h2.ruled::after { transform: none; border-top-width: 2pt; }").length == 2)
   t "html x-height heading rule emits no per-element override"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn "h2.ruled::after").length == 1)
-  -- Both backends declare the same underline band source — the font's own
-  -- post metrics: CSS Text Decoration 4 §2.4.1 and §2.8.2 bind `from-font`
-  -- to the face's declared thickness and position, which are what
-  -- `Font.band` reads for the PDF. No unsourced offset survives.
   let fromFontPage := (HtmlDoc.emit {} ruledDoc).1
   t "html u and a underline from the font's own band"
     ((fromFontPage.splitOn "text-decoration-thickness: from-font").length == 3 &&
@@ -430,10 +354,8 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 mutual
 
-/-- The flow's shape as `tag.class` tokens, in document order: every `<p>`
-and every element carrying the `display` class, with `>math` when a
-`<math>` child stands directly inside — the typed-tree fact a display
-formula's block placement is judged on, never the serialized page. -/
+/-- The flow's shape as `tag.class` tokens, in document order: every `<p>` and every
+`display`-classed element, with `>math` for a direct `<math>` child. -/
 def flowShapeOne (acc : Array String) : Html.Node → Array String
   | .text _ => acc
   | .style _ => acc
@@ -451,12 +373,8 @@ def flowShapeList (acc : Array String) : List Html.Node → Array String
 
 end
 
-
-/-- The subject of one selector part: its rightmost compound, after the last
-top-level combinator, cut at its first pseudo-class, attribute or id —
-`figure.float > figcaption:first-child + *` is `*`, `li:not(.algorithm *)`
-is `li` — or `::` for a pseudo-element's compound, which spaces generated
-content, never the element. -/
+/-- The subject of one selector part: its rightmost compound, cut at its first pseudo-class,
+attribute or id, or `::` for a pseudo-element's compound. -/
 private def selSubject (part : String) : String := Id.run do
   let mut cur := ""
   let mut depth := 0
@@ -468,19 +386,13 @@ private def selSubject (part : String) : String := Id.run do
   if (cur.splitOn "::").length > 1 then return "::"
   return (cur.takeWhile fun c => c != ':' && c != '[' && c != '#').toString
 
-/-- A compound's element and classes: `table.booktabs` is `table` and
-`[booktabs]`, `.display` no element and `[display]`. -/
+/-- A compound's element and classes: `table.booktabs` is `table` and `[booktabs]`. -/
 private def compoundParts (s : String) : String × List String :=
   match s.splitOn "." with
   | e :: cls => (e, cls.filter (!·.isEmpty))
   | [] => ("", [])
 
-/-- Can a rule whose subject is compound `c` match an element whose subject
-is compound `e`? A universal compound matches everything; an element name
-every compound of that element, unless both name classes and share none
-(the sheet's classes name kinds of element: `figure.listing` is never a
-`figure.float`); a class alone every compound carrying it; a
-pseudo-element's compound none. -/
+/-- Whether a rule whose subject is compound `c` can match an element whose subject is compound `e`. -/
 private def compoundOverlaps (c e : String) : Bool :=
   let (ce, cc) := compoundParts c
   let (ee, ec) := compoundParts e
@@ -488,17 +400,8 @@ private def compoundOverlaps (c e : String) : Bool :=
     (!ce.isEmpty && ce == ee && (cc.isEmpty || ec.isEmpty || cc.any ec.contains)) ||
     (ce.isEmpty && cc.any ec.contains))
 
-/-- The HTML rhythm realization, censused over emitted sheets: every default
-vertical gap is one emission — the below element's `margin-top`, computed
-from the declared table (`Ir.rhythmGapQuanta`) in the screen context's
-quanta — and the one `margin-bottom` in a whole emitted page is the
-caption-above float's internal seam, whose neighbour declares no top
-margin, so single ownership holds there too. A second margin-bottom would
-be a boundary with two emitters: the box-model defect
-`HtmlDoc.single_owner_gap_exact` exists to exclude (block flow collapses
-the pair, a flex column sums it — the site port shipped 52 px for a
-declared 32 px exactly that way). Its own function: `main`'s elaboration
-budget is spent. -/
+/-- Every default vertical gap in the emitted sheets has one emitter, the lower element's
+`margin-top`, except the caption-above float's internal seam. -/
 def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (plainDoc, plainDs) := elabStr
@@ -507,14 +410,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html rhythm fixture elaborates clean" plainDs.isEmpty
   t "html base sheet has one gap owner per boundary"
     ((plainPage.splitOn "margin-bottom").length == 2)
-  -- The one longhand margin-bottom is the caption-above float's seam; the
-  -- other deliberately bottom-owned boundary is the heading's band below
-  -- (PDF semantics; its follower's default top margin is suppressed),
-  -- spelled as shorthand and pinned below. The longhand census cannot see
-  -- a shorthand (`margin: 0 0 1rem` spells no "margin-bottom"), so the
-  -- ownership of each block element is pinned by its whole rule.
-  -- Verified load-bearing: putting a bottom margin back on blockquote
-  -- fails here.
+  -- A longhand census cannot see a shorthand margin, so each block element's whole rule is pinned.
   t "html heading owns its band below, followers suppressed"
     ((plainPage.splitOn ":where(h1, h2, h3, h4, h5, h6) { margin: 0 0 0.725rem; }").length == 2 &&
      (plainPage.splitOn ":where(:is(h1, h2, h3, h4, h5, h6) + *) { margin-top: 0; }").length == 2)
@@ -525,18 +421,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html peer gap is the page's parskip over one screen quantum, top-owned"
     ((plainPage.splitOn ":where(* + p) { margin-top: var(--parskip, 0.725rem); }").length == 2 &&
      !hasStr plainPage "    --parskip:")
-  -- The owner contract's text half (`HtmlDoc.blockGap_owner_contract` holds
-  -- the emitter's order): on no golden page does a base-sheet rule outside
-  -- the zero-specificity emitter declare a vertical margin on an element
-  -- the emitter spaces. Such a rule outranks every boundary rule on it:
-  -- `p { margin: 0 }` at (0,0,1) once kept every peer gap from rendering
-  -- while the sheet declared them. A selector reaches the elements its
-  -- rightmost compound matches, so both sides are read there
-  -- (`selSubject`): the emitter's subjects are its boundary rules', never a
-  -- hand list, and a base-sheet rule shadows a subject its compound can
-  -- match — a universal compound every one (`… + *`, review LP-5), a bare
-  -- element the classed subjects of that element, a class the subjects
-  -- carrying it.
+  -- A selector reaches what its rightmost compound matches, so both sides are read there.
   let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
     (HtmlDoc.blockGapRules l Ir.baseFontSize {}).flatMap fun r => match r with
     | .boundary sel _ => (cssSelParts sel).filterMap fun part =>
@@ -567,17 +452,6 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html float owns the boundary below it"
     ((plainPage.splitOn
       ":where(figure.float + *) { margin-top: var(--floatsep, 1.450rem); }").length == 2)
-  -- The display formula's block owns both its boundaries through the two
-  -- display tokens the PDF walk reads, over TeX's long skip as the screen's
-  -- multiple of its quantum (10 pt over 6 pt quanta); the formula element
-  -- itself carries no margin, so the boundary has one emitter. HTML uses the
-  -- long skip on both sides as a fixed CSS margin and nothing else: a
-  -- continuous medium has no `\predisplaysize`, so the PDF's short-skip
-  -- choice, the vertical-mode empty line, and the `\@endpe`/`\@afterheading`
-  -- state (`Ir.DisplayCtx.afterEnv`) are placement facts of the page alone —
-  -- the display context role is unwrapped here (`HtmlDoc`'s role arm). Typed-
-  -- tree half: paragraph, display, paragraph emits the `.display` element
-  -- between two `<p>`s, and the numbered equation joins the same class.
   t "html display skips are the two tokens over TeX's long skip"
     ((plainPage.splitOn
       ":where(* + .display) { margin-top: var(--abovedisplayskip, 1.208rem); }").length == 2 &&
@@ -605,18 +479,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html themed sheet has one gap owner per boundary"
     ((themedPage.splitOn "margin-bottom").length == 2)
 
-/-- **A list's spaces are the class's `\@list⟨n⟩` in HTML too** (review
-RF-5): the sheet realizes each level's `\topsep`, `\itemsep` and `\parsep`
-in the screen's quanta — the values the size files and beamer source,
-hand-converted here (size10.clo and size12.clo:216-233,
-beamerbaselocalstructure.sty:152-163; one quantum is 6, 7.2 and 6.6 pt of
-print and 0.725 rem of screen), never read back from the emitter — the
-web's lineage keeps its lists a peer gap apart and its items a leading,
-and a reference list's entries stand a peer gap apart, as the PDF walk
-sets them. It fails on the sheet that set every item at zero
-(`8d3df368`), and its `\partopsep` rows on the sheet that spent `\topsep`
-alone at every list (`f66f9381`, review-e HR-1). The rendered half is the
-rhythm tier's browser report (`scripts/rhythm.lean --html`). -/
+/-- A list's spaces are the class's `\@list⟨n⟩` in HTML too, at each level, in the screen's quanta. -/
 def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let page (cls : String) : String := (HtmlDoc.emit {} (elabStr (s!"\\documentclass{cls}" ++
@@ -624,10 +487,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
   let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
   let art := page "{article}"
-  -- The emitter's selector lists, spelled here once: a list level's
-  -- elements — fancyvrb's listing among them, a `\list` with no items —
-  -- each level reached through an item ancestor per enclosing list (`<li>`
-  -- or a description's `<dd>`).
+  -- A list level's elements, each reached through one `<li>` or `<dd>` per enclosing list.
   let elems := ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl",
     ".verbatim-list"]
   let lv (n : Nat) : String := String.join (List.replicate n ":is(li, dd, blockquote) ")
@@ -642,10 +502,8 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a 10pt list's items stand itemsep over the item's parsep apart"
     (hasStr art s!":where({items 0}) \{ margin-top: {space "0.483"}; }" &&
      hasStr art s!":where({parsep 0}) \{ --parskip: 0.483rem; }")
-  -- `\@trivlist`'s `\@topsepadd` (latex.ltx:15871-15878): `\topsep`, with
-  -- `\partopsep` on top in vertical mode — size10.clo:215's 2pt, one
-  -- conversion of the summed length — the same above and below.
-  t "html a 10pt list and quote that open a paragraph stand topsep and partopsep from their neighbours"
+  -- `\@topsepadd`: `\topsep` plus size10.clo's 2pt `\partopsep` in vertical mode, above and below.
+  t "html a 10pt list and quote opening a paragraph stand topsep and partopsep from neighbours"
     (hasStr art s!":where({above 0}) \{ margin-top: {space "1.208"}; }" &&
      hasStr art s!":where({below 0}) \{ margin-top: {space "1.208"}; }")
   t "html a 10pt list and quote inside an open paragraph stand topsep alone"
@@ -656,7 +514,6 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
      hasStr art s!":where({items 1}) \{ margin-top: {space "0.241"}; }" &&
      hasStr art s!":where({above 1}) \{ margin-top: {space "0.725"}; }" &&
      hasStr art s!":where({lv 1}* + .u-in-paragraph) \{ margin-top: {space "0.483"}; }")
-  -- The nested list's `\@topsepadd` meets the next item's `\itemsep`, and
   -- `\addvspace` keeps the larger: level two's 4pt + 2pt over level one's 4pt.
   t "html an item after a nested list that opened a paragraph stands the larger space"
     (hasStr art s!":where({lastList 0 ":not(.u-in-paragraph)"}) \{ margin-top: {space "0.725"}; }")
@@ -676,8 +533,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
      hasStr deck s!":where({items 0}) \{ margin-top: {space "0.329"}; }" &&
      hasStr deck s!":where({above 0}) \{ margin-top: {space "0.329"}; }" &&
      !hasStr deck ".u-in-paragraph")
-  -- beamerbaselocalstructure.sty:156-163: level two's `\itemsep` is zero and
-  -- level three's `\topsep` 2pt, so the nested list's end is the larger.
+  -- beamerbaselocalstructure.sty: level two's `\itemsep` is zero and level three's `\topsep` 2pt.
   t "html a deck's level-two item after a nested list stands level three's topsep"
     (hasStr deck s!":where({lastList 1 ""}) \{ margin-top: {space "0.219"}; }")
   let web := page "{webpage}"
@@ -685,18 +541,9 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!hasStr web "li + li:" && !hasStr web "dl > *) { --parskip:" &&
      hasStr web ":where(* + ul) { margin-top: var(--parskip, 0.725rem); }" &&
      hasStr web ":where(* + .u-trivlist-env, * + blockquote) { margin-top: ")
-  -- The reference list's entries are the paragraphs the PDF walk sets a
-  -- peer gap apart (`Layout.collectBibliography`), outside every list
-  -- level's item scope.
   t "html a reference list's entries stand the page's peer gap apart"
     (hasStr art ":where(.bibliography > li + li) { margin-top: var(--parskip, 0.725rem); }")
-  -- A description is a `\list` (latex.ltx `description`), so each of its
-  -- boundaries resolves where the same boundary of an itemize resolves —
-  -- the last rule naming it wins, every rule standing at zero specificity
-  -- — at every level, and a list inside its item reads the next level
-  -- (review-e KE-5: the sheet at 2f81a8e1 spaced `dl` as a peer).
-  -- A selector list's members: its commas outside parentheses, since a
-  -- level's prefix (`:is(li, dd)`) holds one.
+  -- A selector list's members: its commas outside parentheses (`:is(li, dd)` holds one).
   let topParts (sel : String) : List String :=
     let (ps, cur, _) := sel.toList.foldl (fun (acc : List String × String × Nat) c =>
       let (ps, cur, d) := acc
@@ -722,9 +569,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 mutual
 
-/-- The first element child's tag of every `<section id>` a tree carries:
-the article's heading-opened containers (`HtmlDoc.sectionize`), and the
-premise of the rule that spaces them — its heading is its first child. -/
+/-- The first element child's tag of every `<section id>` a tree carries. -/
 def sectionHeadsOne (acc : Array String) : Html.Node → Array String
   | .elem tag attrs kids =>
     let acc := if tag == "section" && attrs.any (·.1 == "id") then
@@ -741,13 +586,7 @@ def sectionHeadsList (acc : Array String) : List Html.Node → Array String
 
 end
 
-/-- **A section's heading opens its space above, in HTML too** (the gap
-site-fix routed: 2.34 against the PDF's 4.72 quanta in the rhythm tier's
-browser report). A level-1 heading is its `<section>`'s first child, so
-`* + h2` never met it and nothing stood above the section; the heading now
-owns that boundary at the heading row's two quanta, as the PDF walk's
-heading `before` spends. Fails on the sheet at `8d3df368`, which carries
-no such rule; the tree half holds the rule's premise. -/
+/-- A section's heading opens its space above in HTML too, as the first child of its `<section>`. -/
 def htmlSectionGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}Alpha.\n\n" ++
@@ -760,9 +599,8 @@ def htmlSectionGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a section's heading owns the heading gap above its section"
     (hasStr page ":where(* + section[id] > h2:first-child) { margin-top: 1.450rem; }")
 
-/-- Every innermost declaration block of a stylesheet with the at-rule
-preludes enclosing it, outermost first: `artCssBlocks`' scan, keeping what
-it drops — whether a rule holds on paper. -/
+/-- Every innermost declaration block of a stylesheet with its enclosing at-rule preludes, outermost
+first. -/
 def cssBlocksIn (css : String) : Array (List String × String × String) := Id.run do
   let mut out : Array (List String × String × String) := #[]
   let mut sels : Array String := #[]
@@ -782,17 +620,8 @@ def cssBlocksIn (css : String) : Array (List String × String × String) := Id.r
       cur := cur.push c
   return out
 
-/-- **A box the sheet scrolls on screen has its lift on paper**
-(AGENTS.md § When you add: a scroll box owes its print lift; deck-print
-routed the code block's): on every golden page's own sheet, each rule that
-holds on paper and declares an overflow `auto` or `scroll` has a rule at its
-selector inside `@media print` that sets that overflow `visible` — the
-deck's stage grows
-(`HtmlDoc.print_lifts_stage_bounds_covers`), and a code block wraps its
-long line inside the box, since paper has no scroll and a scroll box clips
-there. It fails on `8d3df368`, whose print block left every `pre` at
-`overflow-x: auto`. The rendered half is a Chromium print of a long code
-line, censused against the page (evidence only). -/
+/-- Every rule that scrolls a box on screen has a print rule at its selector setting that overflow
+`visible`. -/
 def printLiftChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let sets (decls prop : String) (vals : List String) : Bool :=
@@ -820,9 +649,8 @@ def printLiftChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "print lift: every box a sheet scrolls on screen grows or wraps on paper" missing.isEmpty
   t "print lift: a code block wraps a long line on paper" wraps
 
-/-- Article sections become anchored containers: `<section id="slug">` wraps
-the heading and its content, ids stay unique under repeated titles, and an
-in-page `\href{#...}` has a real target. Invented titles throughout. -/
+/-- Article sections become anchored containers: `<section id>` wraps each heading and its content,
+ids stay unique, and an in-page `\href{#...}` has a target. -/
 def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
@@ -840,10 +668,6 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some before => (before.splitOn "<section").length == 1
      | none => false)
   t "html every container closes" ((page.splitOn "</section>").length == 4)
-  -- Identifier fidelity: HTML §3.2.6 forbids only ASCII whitespace in an id
-  -- and the WHATWG URL fragment percent-encode set excludes non-ASCII, so a
-  -- title's own letters — accented or CJK — survive into its anchor instead
-  -- of degrading to hyphens. Invented titles.
   let (intlDoc, intlDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\section*{Café Notes}First.\\section*{概要}Second." ++
     "\\section*{Caf Notes}Third.\\end{document}")
@@ -855,9 +679,6 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html titles that folded together under the ascii rule stay distinct"
     ((intlPage.splitOn "<section id=\"caf-notes\">").length == 2 &&
      intlDiags.isEmpty)
-  -- Two distinct titles that still fold to the same slug: the ids stay
-  -- unique and W0320 names the collision, because a link written from the
-  -- second title's text would silently reach the first section.
   let (clashDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\section*{Signal Path}One.\\section*{Signal, Path}Two.\\end{document}")
   let (clashPage, clashDiags) := HtmlDoc.emit {} clashDoc
@@ -869,9 +690,6 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a repeated identical title numbers quietly"
     (!ds.any (·.code == "W0327") &&
      !(HtmlDoc.emit {} doc).2.any (·.code == "W0327"))
-  -- The numbered fallback is itself an id: a title whose own slug is
-  -- `noise-2` must not collide with the number handed to a repeated
-  -- `Noise`. Uniqueness is per assigned id, not per base.
   let (numDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\section*{Noise}A.\\section*{Noise}B.\\section*{Noise 2}C.\\end{document}")
   let numPage := (HtmlDoc.emit {} numDoc).1
@@ -884,13 +702,10 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html an in-page link reaches its section anchor" (navDs.isEmpty &&
     (navPage.splitOn "<a href=\"#trailhead\"").length == 2 &&
     (navPage.splitOn "<section id=\"trailhead\">").length == 2)
-  -- Slides keep their own sectioning: one <section> per frame, none per title.
   let (deck, _) := elabStr ("\\documentclass{slides}\\begin{document}" ++
     "\\begin{frame}{One}a\\end{frame}\\end{document}")
   t "html slides sectioning is untouched"
     (((HtmlDoc.emit {} deck).1.splitOn "<section id=").length == 1)
-  -- The declared stylesheet: named by the document, linked after the inline
-  -- styles in every css mode, and quoted or bare spellings agree.
   let sheetSrc (v : String) := "\\documentclass{article}" ++
     s!"\\output\{ stylesheet = {v} }\\begin\{document}x\\end\{document}"
   let (sheetDoc, sheetDs) := elabStr (sheetSrc "\"site.css\"")
@@ -909,9 +724,8 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html no stylesheet, no link"
     (((HtmlDoc.emit {} doc).1.splitOn "<link rel=\"stylesheet\"").length == 1)
 
-/-- The markdown backend: the llms.txt twin comes from the same IR as the
-page. Metadata is the preamble, structure maps, decoration degrades to its
-text, and a speaker note stays a side channel. Invented content. -/
+/-- The markdown twin comes from the same IR as the page: metadata from the preamble, structure
+mapped, decoration degraded to its text, a speaker note kept aside. -/
 def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}" ++
@@ -950,8 +764,6 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
     "under\\_score and 2*3\\end{document}")
   t "markdown escapes what would read as markup"
     (((MarkdownDoc.emit esc).splitOn "under\\_score and 2\\*3").length == 2)
-  -- The declared text alternative (graphicx's alt key, LaTeX News 37)
-  -- reaches both backends, and a caption does not overwrite it.
   let (img, imgDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\includegraphics[width=32pt, alt={An invented portrait}]{face.png}" ++
     "\\end{document}")
@@ -964,30 +776,22 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "figure caption fills only an undeclared alt"
     (((HtmlDoc.emit {} figImg).1.splitOn "alt=\"Declared wins\"").length == 2)
 
-/-- The llms.txt preamble's placement invariant, over all four title
-sources: the summary stands immediately after the title line, wherever the
-title comes from — the metadata `#` line or the body's own level-0 heading
-(`\maketitle`) — and above the body only when nothing carries a title. The
-theorems in MarkdownDoc pin the two titled shapes; these pin all four
-end-to-end, plus the mid-document remainder ("never precedes"). Own
-function: `main`'s elaboration budget. -/
+/-- In the llms.txt preamble the summary stands right after the title line, whichever of the four
+title sources carries it. -/
 def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- 1: metadata title only — the preamble carries both lines, in order.
   let (metaOnly, ds1) := elabStr ("\\documentclass{article}" ++
     "\\pdfmeta{ title = \"Meta Title\", subject = \"A meta summary.\" }" ++
     "\\begin{document}Body text.\\end{document}")
   t "metadata-only source is clean" ds1.isEmpty
   t "metadata title: summary follows the title line"
     ((MarkdownDoc.emit metaOnly) == "# Meta Title\n\n> A meta summary.\n\nBody text.\n")
-  -- 2: body heading only — the summary follows the body's own title line.
   let bodyOnly : Ir.Doc := {
     info := { subject := some "A body-titled summary." }
     body := #[.section 0 false none #[.text "Body Title"], .para #[.text "After."]] }
   t "body title: summary follows the body's title line"
     ((MarkdownDoc.emit bodyOnly) ==
       "# Body Title\n\n> A body-titled summary.\n\nAfter.\n")
-  -- 3: both — the body's heading wins; one `#` line, one title, summary after it.
   let (both, ds3) := elabStr ("\\documentclass{article}" ++
     "\\pdfmeta{ subject = \"A shared summary.\" }\\title{Both Sources}" ++
     "\\begin{document}\\maketitle Body text.\\end{document}")
@@ -997,41 +801,26 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bothMd.startsWith "# Both Sources\n\n> A shared summary.\n\n")
   t "both sources: exactly one # line, the title stated once"
     ((bothMd.splitOn "\n# ").length == 1 && (bothMd.splitOn "# Both Sources").length == 2)
-  -- 4: neither — nothing carries a title, so the summary opens the twin.
   let neither : Ir.Doc := {
     info := { subject := some "Only a summary." }
     body := #[.para #[.text "x"]] }
   t "no title anywhere: the summary opens the twin"
     ((MarkdownDoc.emit neither) == "> Only a summary.\n\nx\n")
-  -- The remainder: a mid-document title (W0321 warns) still pulls the
-  -- summary to its own line — after the title, never above the body.
   let mid : Ir.Doc := {
     info := { subject := some "A late summary." }
     body := #[.para #[.text "Lead."], .section 0 false none #[.text "Late Title"]] }
   t "a mid-document title carries the summary with it"
     ((MarkdownDoc.emit mid) == "Lead.\n\n# Late Title\n\n> A late summary.\n")
-  -- The twin of a small-caps run is its text with the authored casing:
-  -- `\scshape` renders uniform small capitals, so the source carries the
-  -- reading form and plain text is correct as typed. (W0344 named the loss
-  -- back when uniform small caps required writing the casing wrong; it
-  -- retired with the workaround.)
   let (sc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "{\\scshape NaCl}\\end{document}")
   t "the twin of a mixed-case small-caps run carries the authored casing"
     ((MarkdownDoc.emit sc) == "NaCl\n")
-  -- A `|` in prose is `\|` in the twin — CommonMark §2.4 escapes any ASCII
-  -- punctuation — so a table cell containing one keeps its row instead of
-  -- splitting it at the pipe.
   let pipe : Ir.Doc := {
     body := #[.table #[default, default] false false
       #[#[#[.text "a|b"], #[.text "c"]]] #[] #[]] }
   t "a cell containing a pipe keeps its row"
     (((MarkdownDoc.emit pipe).splitOn "| a\\|b | c |").length == 2)
 
-/-- A heading's Markdown marker length and HTML tag both project the
-shared IR rank, quantified over every typed heading level. Tagged PDF's
-projection is `Pdf.heading_type_projects`; its written roles are checked
-by `markdownHeadingChecks`. -/
 theorem heading_renderings_agree (level : Ir.HeadingLevel) :
     HtmlDoc.headingTag level = "h" ++ toString (Ir.headingRank level) ∧
     (MarkdownDoc.headingMarker level).toList =
@@ -1039,22 +828,12 @@ theorem heading_renderings_agree (level : Ir.HeadingLevel) :
   refine ⟨rfl, ?_⟩
   simp [MarkdownDoc.headingMarker]
 
-/-- The two backends declare one vertical-distribution table: each is a
-projection of `Ir.frameGlue`, so the agreement is `rfl` at every
-alignment under either keys, breakable or not — the previous form was a runtime pin over the
-four constants in `deckStructureChecks`, a decide-over-constants wearing a
-test. -/
 theorem vdist_shares_agree (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool) :
     HtmlDoc.vdistShares keys v breakable =
       ((Layout.VDist.of keys v breakable).above, (Layout.VDist.of keys v breakable).below) := rfl
 
-/-- The two backends share a frame's leftover with its fills by one rule: a
-line with `k` of the frame's `n` fills above it stands the same fraction of
-the leftover down on the page (`Layout.VDist.filAbove` of `filTotal`) and on
-the web stage, whose spacers (`HtmlDoc.deckSpacerShares`) stand beside fills
-growing by `Ir.fillUnit` each. Cross-multiplied, because the page counts a
-fill as one unit where the frame's glue yields to it and the stage in
-thousandths. -/
+/-- A line below `k` of a frame's `n` fills stands the same fraction of the leftover on the page and
+on the web stage. -/
 theorem fill_shares_agree (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool)
     (n k : Nat) (hn : 0 < n) :
     (Layout.VDist.of keys v breakable).filAbove k *
@@ -1069,20 +848,12 @@ theorem fill_shares_agree (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Boo
   · simp [hj]
   · simp [hj, Nat.mul_comm, Nat.mul_left_comm]
 
-/-- The two backends read one frame-area decision: the web deck opens an
-untitled or standout frame's body at the stage's top exactly where the PDF
-stands that frame in beamer's text area — both projections of
-`Ir.frameInTextArea`, at every alignment and either chrome. -/
 theorem frame_area_agree (chrome : Bool) (v : Ir.VAlign) :
     HtmlDoc.frameOpensBody chrome false v = (Layout.frameAreaFor chrome v == .text) := by
   rw [HtmlDoc.frameOpensBody_projects, Layout.frameAreaFor_projects]
 
-/-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
-elaborated once; each backend keeps or drops through `Ir.keepFor` at its own
-entry. The diagnostics, the `orphanFree` correspondence (the hypothesis of
-`Ir.keepFor_covers`, checked here on a real elaboration), and each backend's
-kept view are pinned. Invented content. Its own function: `main` is one `do`
-block and its elaboration budget is spent. -/
+/-- `{ifbackend}` content: one IR elaborated once, each backend keeping or dropping through
+`Ir.keepFor`. -/
 def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let has := hasStr
@@ -1104,8 +875,6 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
      !has (Ir.blocksText htmlBody) "Print and twin" &&
      has (Ir.blocksText mdBody) "Print and twin carry this." &&
      !has (Ir.blocksText mdBody) "Only the page")
-  -- The theorem's hypothesis holds on the elaborated document, and its
-  -- conclusion is observable: every declared leaf survives in some backend.
   t "declared content is orphan-free and every leaf survives somewhere"
     (Ir.orphanFree Ir.backendNames doc.body &&
      (Ir.textLeaves doc.body).all fun leaf =>
@@ -1119,8 +888,6 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
   let md := (MarkdownDoc.emit doc)
   t "markdown emits only its own conditional content"
     (has md "Print and twin carry this." && !has md "Only the page")
-  -- Diagnostics: an unknown backend name (W0323), and content no backend
-  -- answers (E0334) — flat by typo, or nested by empty intersection.
   t "unknown backend name warns, and an emptied set errors with it"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{ifbackend}{web}x\\end{ifbackend}\\end{document}")
@@ -1139,15 +906,8 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{ifbackend}text\\end{ifbackend}\\end{document}") == ["E0304"])
 
-/-- The navigation landmark and its two artifact-judged contracts: at most
-one unlabeled `<nav>` per page (W0325 — ARIA Authoring Practices, Landmark
-Regions: a repeated landmark role needs unique labels, and the engine has
-no label mechanism yet) and every in-page link resolving to an anchor the
-page emits (W0326 — with '#' and any-ASCII-case '#top' exempt, which the
-HTML spec's fragment navigation scrolls to the top of the document). Both
-judged over the emitted tree, never the IR: a backend conditional may keep
-a nav on one surface only, and only the tree knows what this page carries.
-Invented content. -/
+/-- At most one unlabeled `<nav>` per page (W0325), and every in-page link resolves to an anchor the
+page emits (W0326). -/
 def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let has := hasStr
@@ -1185,9 +945,8 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!ddiags.any fun d =>
       (d.message.splitOn "#TOP").length > 1 || (d.message.splitOn "'#'").length > 1)
 
-/-- The markdown twin's declared name: `\output{ md = "llms.txt" }` rides
-the one OutputSpec, so the driver writes the twin as served and the head's
-alternate link cannot drift from the file. -/
+/-- The markdown twin's declared name rides the one OutputSpec, so the twin and the head's alternate
+link agree. -/
 def mdNameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}" ++
@@ -1202,13 +961,8 @@ def mdNameChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes ("\\documentclass{article}\\output{ pdfx = yes }" ++
       "\\begin{document}x\\end{document}") == ["E0322"])
 
-/-- The pinned placement and the declared reveal: a labeled nav names its
-landmark instance (so it never counts toward W0325), a pin becomes
-`position: fixed` at the declared corner and offset — read by the HTML
-backend alone, the PDF has no viewport — and a declared reveal ships the
-scroll-driven CSS (`@supports`, declarative where the platform has it) and
-the constant script fallback, judged over the emitted tree. Invented
-content. -/
+/-- A labeled nav names its landmark, a pin becomes `position: fixed` at its declared corner in HTML
+alone, and a declared reveal ships its scroll-driven CSS and constant script. -/
 def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let has := hasStr
@@ -1233,19 +987,14 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the reveal ships with its reduced-motion guard"
     (has page ("@media (prefers-reduced-motion: reduce) " ++
       "{ .reveal-scroll { animation: none; } }"))
-  -- Compatibility is the framework's job, not the engine's: where the
-  -- platform lacks scroll-driven animations the control is simply visible,
-  -- and no backend emits script to hide that.
   t "no backend emits script for the reveal"
     (!has page "CSS.supports" && !has page "js-reveal" &&
       !has page "addEventListener")
-  -- No reveal declared: none of the machinery ships.
   let (plain, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{nav}\\href{#one-head}{One}\\end{nav}\\section*{One Head}x\\end{document}")
   let (plainPage, _) := HtmlDoc.emit {} plain
   t "no declared reveal, no reveal css"
     (!has plainPage "ltx-reveal" && !has plainPage "CSS.supports")
-  -- A reveal another backend owns ships nothing here: judged over the tree.
   let (kept, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{ifbackend}{pdf}\\begin{nav}[label = Up, pin = bottom right, " ++
     "reveal = scroll]\\href{#one-head}{Up}\\end{nav}\\end{ifbackend}" ++
@@ -1253,9 +1002,7 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (keptPage, _) := HtmlDoc.emit {} kept
   t "a reveal another backend owns ships nothing on this page"
     (!has keptPage "ltx-reveal" && !has keptPage "CSS.supports")
-  -- The markdown twin drops a pinned nav whole, as any nav: furniture.
   t "markdown drops a pinned nav" (!has (MarkdownDoc.emit doc) "[Up](#top)")
-  -- Declaration mistakes are named, never silent.
   t "offset or reveal without a pin is named as ignored"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{nav}[reveal = scroll]\\href{#a-head}{A}\\end{nav}" ++
@@ -1269,12 +1016,8 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{nav}[sticky = yes]\\href{#a-head}{A}\\end{nav}" ++
       "\\section*{A Head}x\\end{document}") == ["E0322"])
 
-/-- Interaction states are style keys, not a subsystem: `hover`/`focus`
-colour an element's links in that state, `motion` is the transition between
-them, and a declared motion cannot ship unguarded (`HtmlDoc.motionCss`;
-WCAG 2.2 SC 2.3.3 with sufficient technique C39, the
-`prefers-reduced-motion` query of CSS Media Queries 5 §12.1). The PDF path
-reads none of the three keys. Invented content. -/
+/-- Interaction states are style keys: `hover` and `focus` colour links, `motion` is the transition
+between them, and a declared motion never ships unguarded. -/
 def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let has := hasStr
@@ -1286,8 +1029,7 @@ def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "interaction keys parse" (ds.isEmpty &&
     ((doc.styles.find? "nav").bind (·.hover)).map (·.2) == some (some (.color "ink")) &&
     ((doc.styles.find? "nav").bind (·.motion)) == some 150)
-  -- css = none ships only the declared rules, so the guard must ride with
-  -- the declaration: both halves are checked on the emitted page.
+  -- `css = none` ships only the declared rules, so the guard must ride with the declaration.
   let (page, pds) := HtmlDoc.emit { css := .none } doc
   t "declared hover and focus land on the nav's links" (pds.isEmpty &&
     has page "nav a:hover { color: var(--ltx-c-ink, #1d4ed8); }" &&
@@ -1300,22 +1042,8 @@ def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes ("\\documentclass{article}\\style{nav}{ motion = fast }" ++
       "\\begin{document}x\\end{document}") == ["E0323"])
 
-/-- The single-emission-site check for `transition:`: nothing but
-`HtmlDoc.motionCss` and the base stylesheet's global reduce guard — both in
-HtmlDoc.lean — may spell a transition into emitted styles. This is the
-architectural half of the by-construction claim `motionCss_guarded`
-states; the scan is the same shape as `diagChecks`'.
-
-The `animation:` half of the same convention: only HtmlDoc.lean may spell
-an animation into emitted styles, and every definition there that does
-ends in its own reduced-motion guard (the guard travels with the
-declaration — `revealCss`; the deck's typed rules carry theirs by
-`guards_by_construction` and spell no `animation:` in source), spells the
-guard query itself (the base stylesheet's global block and the guards),
-or is named on the allowlist with its reason (`themeCss`'s deck progress
-bar ships only under the theme's own stylesheet, whose global reduce
-block covers it). Doc comments are stripped first so prose spelling
-"animation:" cannot satisfy or trip the census. -/
+/-- The definitions of a source, docstrings stripped, that spell `animation:` without a
+reduced-motion guard, a `…Guard` ending, or an allowlisted own gate. -/
 private def unguardedAnimations (src : String) : Array String := Id.run do
   let ownGated := ["themeCss"]
   let stripped := match src.splitOn "/--" with
@@ -1373,11 +1101,8 @@ def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   for n in unguardedAnimations (← IO.FS.readFile "LeanTex/Core/HtmlDoc.lean") do
     check ref s!"animation-emitting def carries its guard ({n})" false
 
-/-- The paged deck's stylesheet is the slides class's own: snap paging on
-screen, the handout card in print, and no other class ships a deck rule —
-which is what keeps the site port's webpage output unchanged. Every motion
-rule carries its reduced-motion counterpart by theorem
-(`HtmlDoc.guards_by_construction`); this pins the emitted page. -/
+/-- The paged deck's stylesheet is the slides class's own: snap paging on screen, the handout in
+print, and no other class ships a deck rule. -/
 def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (deckDoc, deckDs) := elabStr (deck169 "" "\\begin{frame}{T}\nx\n\\end{frame}")
@@ -1416,15 +1141,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the deck slide fills the viewport as an opaque column on the declared ground"
     (has deckPage ("background: var(--ltx-bg); color: var(--ltx-fg); " ++
       "display: flex; flex-direction: column;"))
-  -- Print pages the stages: the stage, its type and its furniture hold on
-  -- both media (the `@media screen, print` block), the sheet is the PDF's
-  -- page (160 × 90 mm, the MediaBox's own points), every stage opens and
-  -- ends its sheet and grows onto the next rather than clip what runs
-  -- long, a frame's bottom safe area is room its content may take before
-  -- it continues, the sheet a continuation leaves unfilled keeps the
-  -- stage's ground, and the card the handout drew is gone.
-  -- Every print block the page carries: the stage's, and the colour
-  -- schemes' print values.
+  -- Every print block the page carries: the stage's and the colour schemes'.
   let printOf (page : String) : String :=
     String.join (((page.splitOn "@media print {").drop 1).map fun b => (b.splitOn "\n}\n").headD "")
   let stageOf (page : String) : String :=
@@ -1444,10 +1161,6 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has (stageOf deckPage) "main { max-width: none; margin: 0; font-size: " &&
      !has (stageOf deckPage) "scroll-snap" &&
      !has (printOf deckPage) "border:" && !has deckPage "section.slide { break-after: page; }")
-  -- No push, no sticky stage, no view-timeline gate in a stepless deck:
-  -- the scroll itself is the motion, and the frame sections are the snap
-  -- pages on every path (the progress hairline's own scroll() gate is
-  -- the theme's, judged in deckProgressChecks).
   t "a stepless deck ships no feature gate: the scroll is the motion"
     (!has deckPage "@supports (animation-timeline: view())" &&
      !has deckPage "@supports not" &&
@@ -1456,26 +1169,16 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"" &&
      (elemAttrsList (· == "section") #[] deckBody.toList).any fun (_, attrs) =>
        attrs.contains ("data-snap", ""))
-  -- The constant keyboard script (`HtmlDoc.deckScript`), the slides
-  -- class's own: it queries the same `[data-snap]` selector the door
-  -- rule styles, marks `<html data-deck-script>`, and survives the
-  -- raw-payload guard verbatim (no `</script` in the constant).
   t "the deck ships the constant keyboard script through the snap door"
     ((deckPage.splitOn "<script").length == 2 &&
      has deckPage "document.documentElement.dataset.deckScript" &&
      has deckPage "document.querySelectorAll(\"[data-snap]\")" &&
      has deckPage "scrollIntoView" && !has deckPage "/* removed */")
-  -- A key the page's own controls take is theirs: a focused field or
-  -- button, and the Space and Enter a focused summary toggles its
-  -- disclosure with; every other key still pages the deck.
   t "the deck's keys leave a focused summary to toggle its disclosure"
     ((HtmlDoc.deckScript.splitOn
       "(t.tagName === \"SUMMARY\" && (e.key === \" \" || e.key === \"Enter\"))").length == 2)
   t "the deck keeps the safe area"
     (has deckPage "padding: var(--safearea, 6vmin); position: relative; }")
-  -- A title's background must contain all of its lines. An arbitrary
-  -- height cap or flex compression lets wrapped ink leave that ground;
-  -- the header owns its content height, on screen and in print.
   for theme in "" :: Theme.builtin.map (·.name) do
     let pre := if theme.isEmpty then "" else s!"\\theme\{{theme}}"
     let (doc, _) := elabStr (deck169 pre
@@ -1491,9 +1194,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
        declarations.all fun d =>
          !["height", "max-height", "block-size", "max-block-size", "flex-basis"].contains
            ((d.splitOn ":").headD "").trimAscii.toString)
-  -- 11pt over the 90mm stage (Ir.slidesFontSize / Ir.slidesStage169.2),
-  -- truncated to the printed milli: deck_type_is_stage_ratio's bounds;
-  -- its lines at the page's leading (`Ir.stepSkip`), not the screen's.
+  -- 11pt over the 90mm stage, truncated to the printed milli.
   t "deck type is the PDF's stage ratio, in vh"
     (has deckPage "font-size: 4.311vh; line-height: 1.200; }" &&
      has deckPage "h1 { font-size: 1.728em; }" &&
@@ -1502,18 +1203,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}{T}\nx\n\\end{frame}")
   t "a declared safearea token overrides the engine default"
     (has (HtmlDoc.emit {} tokDoc).1 "--safearea: 20pt;")
-  -- The deck is stage-free by construction: the emitted page carries no
-  -- stage millimetre — type rides the stage-height ratio in vh (above)
-  -- and the slide fills the viewport (100dvh; a block section fills the
-  -- width) — so on a viewport of another ratio the frame reflows rather
-  -- than letterboxing. The sharp half: two stages of equal height and
-  -- different width (16:9 is 160×90 mm, 14:9 is 140×90) emit identical
-  -- screen decks, so the screen rendering never reads the stage width;
-  -- the third stage differing keeps the comparison honest (16:10's
-  -- 100 mm height moves the vh). Print is a paged medium with a stage —
-  -- its sheet is the PDF's page (`deckPageRule`, in points) — so its
-  -- measure legitimately reads the page and stays outside this property:
-  -- the screen deck is the stage block and the screen block, up to print.
+  -- Two stages of equal height and different width emit identical screen decks; 16:10 differs.
   t "the deck page carries no stage millimetre" (!has deckPage "mm")
   let deckAt (ratio : String) : String :=
     (HtmlDoc.emit {} (elabStr
@@ -1525,12 +1215,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (screenOf (deckAt "169") != "" &&
      screenOf (deckAt "169") == screenOf (deckAt "149") &&
      screenOf (deckAt "169") != screenOf (deckAt "1610"))
-  -- The other half of the uncover census: a stepless deck has nothing to
-  -- reveal and ships no timeline, uncover rule, track, or spacer — its
-  -- frames are their own snap pages.
   t "a stepless deck ships no uncover rule and no track"
-    -- (`--frame x`/`animation-timeline: --frame` are the timeline's own
-    -- spellings; a `--frametitle…` token var is not a timeline.)
+    -- `--frame x` is the timeline's spelling; a `--frametitle…` token var is not a timeline.
     (!has deckPage "ltx-uncover" && !has deckPage "--frame x" &&
      !has deckPage "animation-timeline: --frame" &&
      !has deckPage "scroll-state" &&
@@ -1539,8 +1225,6 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elemAttrsList (· == "section") #[] deckBody.toList).filterMap (fun (_, attrs) =>
       if attrs.contains ("data-snap", "") then
         attrs.find? (·.1 == "data-snapped") else none) == #[("data-snapped", "1")])
-  -- The gate, both directions: no deck rule and no script outside the
-  -- slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
       ("webpage", "\\documentclass{webpage}\\begin{document}x\\end{document}")] do
@@ -1553,11 +1237,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
        !has page "<script" &&
        has page "section.slide { border:")
 
-  -- Every typed rule survives emission: the declaration multiset of the
-  -- emitted stylesheet equals the typed set's — `emitDeckRules` drops and
-  -- duplicates nothing on its way through the gate grouping. Each rule
-  -- renders on one line, so the parse is line-local: the body between a
-  -- line's last `{` and first `}`.
+  -- Each rule renders on one line, so the parse is line-local.
   let rules := HtmlDoc.deckRules { body := "4.311vh", root := "3.568vh", leading := "1.200" }
     "453.543pt 255.118pt" 38 3
   let typed := rules.flatMap fun r => r.decls.map fun d => d.1 ++ ": " ++ d.2
@@ -1572,14 +1252,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (typed.length == emitted.length &&
      typed.all fun d => typed.count d == emitted.count d)
 
-/-- Rubber image sizes in the deck: the stage is the viewport, so every
-stage-resolved image dimension ships as its share of the stage
-(`HtmlDoc.image_share_agrees`) — `vw`/`dvh` for absolute lengths,
-`\textheight` fractions and bare scales; `%` for the `\textwidth`
-fraction both backends resolve against the local measure — and the
-deck's HTML carries no `pt` image dimension (the "very small image"
-defect: a print length on a stage that is the viewport). Flow classes
-keep the print reading untouched: paper is paper. -/
+/-- In the deck every stage-resolved image dimension ships as its share of the stage, and flow
+classes keep the print reading. -/
 def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let imgs := "\\includegraphics[width=0.5\\textwidth, alt={A synthetic box}]{a.png}\n\n" ++
@@ -1611,12 +1285,7 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((((html.splitOn "<svg").drop 1).all fun s =>
         (((s.splitOn ">").headD "").splitOn "pt").length == 1) &&
      has "vw; height:" && has "dvh\"")
-  -- An SVG picture label carries inline content, and math it cannot model
-  -- reaches the same floor the prose path does: the label's <tspan> shows
-  -- content, never a control sequence (`Ir.floorInk_mem`). This is the
-  -- assertion the backend emission owes — the shipped-page census reads
-  -- `Layout.Out`, so the SVG label is outside it and would otherwise be
-  -- watched by nothing.
+  -- The shipped-page census reads `Layout.Out`, so the SVG label's floor is watched here.
   let labelDeck := dvDeck "" ("\\begin{frame}{Labelled}\n" ++
     "\\begin{tikzpicture}\n" ++
     "\\node at (0,0) {$\\overset{\\textcolor{indigo}{q}}{=}$};\n" ++
@@ -1629,13 +1298,9 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
        (inner.splitOn "<").headD ""
      !spans.isEmpty &&
        spans.all (fun s => !((shownOf s).any (fun c => Ir.markupChars.contains c))) &&
-       -- positive too: the label's own content is there, so an empty tspan
-       -- or the placeholder cannot pass this
+       -- Positive too, so an empty tspan or the placeholder cannot pass.
        spans.any (fun s => shownOf s == "q=") &&
        ((labelHtml.splitOn "indigo").length == 1))
-  -- The flow reading, untouched: pt for the absolute length and the
-  -- scale, % for the fraction, the intrinsic size for the textheight
-  -- fraction (no CSS analog on paper).
   let (art, artDs) := elabStr (dvDoc "" imgs)
   t "flow image fixture elaborates clean" artDs.isEmpty
   let artHtml := (HtmlDoc.emit { imgs := store } art).1
@@ -1648,11 +1313,8 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a flow picture keeps its pt box"
     (hasA "pt\" height=\"" || hasA "pt\" role=\"img\"")
 
-/-- The paged deck's structure: a frame's declared vertical distribution
-reaches the artifact as flex spacers carrying the PDF's own ratios (both
-project `Ir.VAlign.shares`; `vdist_shares_agree` states it) and every
-slide is fragment-addressable through an id unique by the shared claim
-walk. -/
+/-- A frame's declared vertical distribution reaches the deck as flex spacers carrying the PDF's
+ratios, and every slide has a unique fragment id. -/
 def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr (deck169 "\\title{T}\\author{A}"
@@ -1664,11 +1326,6 @@ def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (html, eds) := HtmlDoc.emit {} doc
   let count (s : String) : Nat := (html.splitOn s).length - 1
   t "declared distributions land as their ratios"
-    -- golden above the title matter, its below share beneath; [t] one
-    -- spacer below, [b] one above, beamer's own centring a fill above
-    -- against a fill and a half below (`Ir.VAlign.glue`).
-    -- The golden pair is the composed share (`Ir.golden_composes_center`):
-    -- the frame's own centring unit on each side plus the template's glue.
     (count "flex-grow: 3618" == 1 && count "flex-grow: 2000" == 1 &&
      count "flex-grow: 1000\"" == 3 && count "flex-grow: 1500\"" == 1)
   t "frame ids are unique, a repeated identical title numbers quietly"
@@ -1685,11 +1342,8 @@ def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
      (linkHtml.splitOn "id=\"a-b\"").length == 2 &&
      (linkHtml.splitOn "id=\"a-b-2\"").length == 2)
 
-/-- The deck's progress hairline: emitted exactly when the deck draws
-progress at all, scaled by the root scroll under `@supports` (Scroll-driven
-Animations 1), reading the same two tokens the PDF's section-page bar
-reads. The emission census a backend emission owes — asserted on the
-emitted page, the HTML face of the `censusTable` obligation. -/
+/-- The deck's progress hairline ships exactly when the deck draws progress, scaled by the root
+scroll and reading the PDF bar's two tokens. -/
 def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr (deck169 "\\theme{moloch}"
@@ -1715,12 +1369,8 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no other class ships the hairline"
     (!has (HtmlDoc.emit {} artDoc).1 "deck-progress")
 
-/-- The read size ladder reaches both artifacts: the PDF sets a named size
-run at the venue's step — judged on the shipped lines' own segments, never
-an IR dump — and the HTML stylesheet's `.size-` rules carry the same
-ladder, so the two backends cannot disagree on what a venue's `\tiny`
-means (`sizeRules`' docstring promise). An undeclared document keeps the
-engine's scale in both. -/
+/-- A venue's size ladder reaches both artifacts: the PDF's named size runs and the HTML's `.size-`
+rules. -/
 def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -1752,11 +1402,8 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "an undeclared document keeps the engine ladder on the page"
     (psizes.contains (plain.page.fontSize * 500 / 1000))
 
-/-- Declared once, derived everywhere: every metadata fact lives in the one
-`Ir.Meta` record and each surface derives its own rendering of it — the HTML
-head, the llms.txt preamble, and the PDF's Info dictionary and XMP read the
-same field, so no surface can drift from another (the report's principle 3).
-Invented facts, example.org throughout. -/
+/-- Every metadata fact lives in one `Ir.Meta` record, from which the HTML head, the llms.txt
+preamble and the PDF's Info and XMP each derive. -/
 def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -1783,9 +1430,6 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      has "<meta property=\"og:type\" content=\"website\">")
   t "html twitter derives only its card kind; the facts fall back to og"
     (has "<meta name=\"twitter:card\" content=\"summary\">" && !has "twitter:title")
-  -- The llms.txt twin is discoverable from the page: when the driver
-  -- writes one beside the html, the head links it (rel=alternate,
-  -- HTML §4.6.6.1; text/markdown, RFC 7763).
   let mdPage := (HtmlDoc.emit { mdHref := some "profile.md" } doc).1
   t "html links its markdown twin as the alternate representation"
     ((mdPage.splitOn ("<link rel=\"alternate\" type=\"text/markdown\" " ++
@@ -1799,9 +1443,6 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      bytesContain pdf "/Title (Alex Doe, Cartographer)")
   t "the one declared url reaches the pdf as XMP dc:identifier"
     (bytesContain pdf "<dc:identifier>https://example.org/alex</dc:identifier>")
-  -- A text string past ASCII is UTF-16BE with the byte-order mark
-  -- (ISO 32000-2 §7.9.2.2): raw UTF-8 in an Info string is read as
-  -- PDFDocEncoding, and an 'é' displayed as 'Ã©' in the document panel.
   let accDoc := { doc with info := { doc.info with title := some "Café Crème" } }
   let accPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace accDoc geom).pages accDoc.info)
   t "an accented Info title is a UTF-16BE hex string with the BOM"
@@ -1809,11 +1450,6 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       "/Title <FEFF00430061006600E900200043007200E8006D0065>")
   t "the ascii entries beside it keep the literal spelling"
     (bytesContain accPdf "/Author (Alex Doe)")
-  -- Both artifacts declare the document's language everywhere text
-  -- appears: <html lang> (WCAG 2.2 SC 3.1.1) and the catalog /Lang
-  -- (ISO 32000-2 §14.9.2.2) carry the SAME declared tag, a switched run
-  -- is a span with its own lang (SC 3.1.2), and the window titles from
-  -- the metadata (/DisplayDocTitle, §12.2).
   let (frDoc, _) := elabStr ("\\documentclass{article}\n" ++
     "\\usepackage[french]{babel}\n\\begin{document}\n" ++
     "texte \\foreignlanguage{english}{words}\n\\end{document}")
@@ -1831,9 +1467,6 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (bytesContain pdf "/ViewerPreferences << /DisplayDocTitle true >>")
   t "the stylesheet asks the browser to hyphenate by that declaration"
     ((frPage.splitOn "hyphens: auto").length == 2)
-  -- JSON-LD is the same record again, as a data block. Values pass the
-  -- certified JSON escaper, so a hostile title can neither end its own
-  -- string nor close the script element.
   let (bare, _) := elabStr ("\\documentclass{article}" ++
     "\\pdfmeta{ title = \"Quiet Page\" }\\begin{document}x\\end{document}")
   t "html json-ld derives from the one record"
@@ -1857,14 +1490,10 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      (barePage.splitOn "twitter:").length == 1 &&
      (barePage.splitOn "ld+json").length == 1)
 
-/-- The content stream a strict viewer accepts. Own function, same
-elaboration-budget reason as the others. -/
+/-- The content stream a strict viewer accepts. -/
 def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- The pen is moved by `Tm` when a gap is wide; a `TJ` adjustment is
-  -- thousandths of the font size and macOS Preview drops an array holding
-  -- one past ±32767 — which is how two headings vanished from a resume.
-  -- And an array with no glyphs (a rule-only line) is never written.
+  -- Preview drops a `TJ` array holding an adjustment past ±32767, so a wide gap moves by `Tm`.
   let asciiText (pdf : ByteArray) : String :=
     String.fromUTF8! ⟨pdf.data.map fun b => if b < 128 then b else 46⟩
   let tjNumbers (text : String) : List Int × Nat := Id.run do
@@ -1887,8 +1516,7 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
               cur := ""
     return (nums, emptyArrays)
   let wide : Layout.Geom := { pageW := Dim.pt 1200, hmargin := Dim.pt 20 }
-  -- numbers off: the claim is about the body's pen movement, and the plain
-  -- page number would add its own Tm.
+  -- Numbers off: the plain page number would add its own `Tm`.
   let (gapDoc0, _) := Elab.run "t" "a\\hfill b\n\n\\underline{x}"
   let gapDoc := { gapDoc0 with page := { gapDoc0.page with numbers := some false } }
   let gapText := asciiText (pdfText (Pdf.write wide oneFace (layoutOf oneFace gapDoc wide).pages))
@@ -1896,14 +1524,9 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "pdf never writes a TJ adjustment past sixteen bits"
     (adjs.all fun n => n.natAbs ≤ 32767)
   t "pdf writes no glyphless TJ array" (empties == 0)
-  -- Three pen placements: the first line, `b` across the fill, the second
-  -- line; the underline's rule-only sibling line places nothing.
   t "pdf moves the pen across a wide gap with Tm" ((gapText.splitOn " Tm\n").length == 4)
 
-/-- Faces and sizes have to survive into the content stream, and only the
-bytes can say so: a regression once embedded one face where six belonged
-while every other test still passed. Its own function: `main`'s do block
-has no elaboration budget left. -/
+/-- Every face and size survives into the content stream. -/
 def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
   let t := check ref
@@ -1922,13 +1545,8 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
   t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
   t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
-  -- One face only: nothing unused is embedded, so no /F2 exists.
   let plainPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages)
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
-  -- The driver's cached spellings are transparent: pre-deflated content
-  -- streams and face files (the cache's shape), built from the glyph census
-  -- it takes once, write the file the writer builds for itself, byte for
-  -- byte, and the census keeps the faces the writer keeps.
   let bigPages := (layoutOf twoFace bigDoc geom).pages
   let cached := (Pdf.pageStreams geom twoFace bigPages).map fun d => (d, some (Flate.deflate d))
   let usedBig := Pdf.usedAll twoFace bigPages
@@ -1941,10 +1559,7 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       Pdf.write geom { twoFace with zdata := zFaces } bigPages (streams := cached)
         (programs := progs) ==
       Pdf.write geom twoFace bigPages)
-  -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
-  -- CapHeight is the cap height), never a stand-in: the fixture face
-  -- declares a cap height under its ascent, so the old CapHeight := ascent
-  -- is distinguishable and must stay dead.
+  -- The fixture face's cap height is under its ascent, so CapHeight cannot pass as the ascent.
   let cap1000 := font.capHeight * 1000 / (font.unitsPerEm : Int)
   let asc1000 := font.ascent * 1000 / (font.unitsPerEm : Int)
   t "pdf descriptor CapHeight is the face's own, not the ascent"
@@ -1954,9 +1569,7 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
 
 def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- Browsers match end tags ASCII-case-insensitively, so the terminator guard
-  -- must too; the lowercase spelling is pinned beside the printers' tests,
-  -- these pin the case variants in both printers.
+  -- Browsers match end tags ASCII-case-insensitively, so the terminator guard must too.
   t "html style payload cannot close its own tag in upper case"
     (((Html.render (Html.Node.style "x</STYLE>bad") 0).splitOn "</STYLE").length == 1)
   t "html style payload cannot close its own tag in mixed case inline"
@@ -1965,15 +1578,12 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html script payload cannot close its own tag in upper case inline"
     (((Html.render (Html.elem "p" #[Html.Node.script #[] "x</SCRIPT>bad"]) 0).splitOn
       "</SCRIPT").length == 1)
-  -- The terminator literal omits the closing `>`, which is what catches a
-  -- spaced or self-closed end tag; pinned so the case fix cannot regress it.
+  -- The terminator literal omits the closing `>`, which catches a spaced or self-closed end tag.
   t "html script payload with a spaced terminator is removed"
     (((Html.render (Html.elem "p" #[Html.Node.script #[] "x</script >bad"]) 0).splitOn
       "/* removed */").length == 2)
 
-/-- The pre-commit gate's own predicates, exercised through the script's
-`--selftest` mode: a gate that does not catch the shape it commemorates
-grants false confidence. -/
+/-- The pre-commit gate's own predicates, through the script's `--selftest` mode. -/
 def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let build ← IO.Process.output
     { cmd := "lake", args := #["build", "precommit", "-q"] }
@@ -1983,13 +1593,8 @@ def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do
       { cmd := ".lake/build/bin/precommit", args := #["--selftest"] }
     check ref s!"precommit selftest:\n{out.stderr}" (out.exitCode == 0)
 
-/-- The cross-backend agreement tier, over every golden fixture: a declared
-fact both backends render — a footer's slot contents and their sides, a
-list item's marker — renders the same from `Layout.Out` and from the typed
-HTML tree, or a diagnostic names the divergence (W0007 physical furniture
-omitted, W0331 marker substituted, W0332 sequences mixed). This is the
-general form of FINDINGS F1 and F5: the next divergence in any fixture
-fails here without anyone looking at a page. -/
+/-- A fact both backends render from every golden fixture renders the same from `Layout.Out` and the
+typed HTML tree, or a diagnostic names the divergence. -/
 def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let namingCodes := ["W0007", "W0331", "W0332"]
@@ -2000,8 +1605,7 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (_, body, htmlDs) := HtmlDoc.emitTree {} doc
     let naming := (docDs ++ out.diags ++ htmlDs).any (namingCodes.contains ·.code)
     let pdf := dedupConsecutive (pdfFoots out)
-    -- Both sides collapse a stepped frame's repeated footer: the deck
-    -- emits one section per overlay step, as the PDF ships pages.
+    -- Both sides collapse a stepped frame's repeated footer, one section or page per step.
     let html := dedupConsecutive (slideFootsList #[] body.toList)
     check ref s!"agree {n}: footer slots match across backends, or are named"
       (pdf == html || naming)
@@ -2009,29 +1613,17 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       if let some m := st.marker then
         match HtmlDoc.markerCss? m with
         | some r =>
-          -- The expressible marker shows the declared characters — the
-          -- executable face of `markerCss?_text`, judged per fixture.
           check ref s!"agree {n}: the '{element}' marker's HTML text is the declared text"
             (r.text == Ir.plainText m)
         | none =>
           check ref s!"agree {n}: the '{element}' marker's substitution is named"
             (htmlDs.any (·.code == "W0331"))
 
-
-/- One diagnostic code, one meaning: `DiagCode` in Diag.lean is the single
-place a code lives — an unregistered code is unrepresentable, because every
-emission site passes a constructor, and a new code is forced through the
-`DiagCode.spec` match, where a collision with an existing number is visible
-before it ships. The defect class is real twice over: the card slice nearly
-renumbered W0315 over the contrast pairing (PLAN 2026-09-17), and the old
-string registry's first run found W0314 meaning both a column width and an
-unknown theme. What is left to check at runtime: the spec's code strings are
-unique (a constructor cannot claim another's number), each carries a
-meaning, and no constructor outlives its last emission site. -/
+/- One code, one meaning: the spec's code strings are unique, each carries a meaning, and no
+constructor outlives its last emission site. -/
 
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- render: porcelain is stable, escaped JSONL
   let d : Diag := Diag.of .E0001 "bad \"quote\"\nline"
     (some ⟨"a.tex", { line := 3, col := 7 }⟩)
     (help := "fix it")
@@ -2051,13 +1643,11 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "human phase line spells out a tool's control characters"
     (Render.humanPhase "boundary" "x\u001b]0;t\u0007y" 3 == "boundary: x\\x1b]0;t\\x07y (3 ms)")
 
-  -- render: human, no color
   t "human diag plain" (Render.human false d ==
     "✖ [E0001] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
 
 def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- links, running content, and block-producing user commands
   let (linkDoc, linkDs) := elabStr "\\href{https://example.org}{text}"
   t "href source clean" linkDs.isEmpty
   t "href wraps body" (linkDoc.body ==
@@ -2085,14 +1675,12 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .spaced _ _ => true
         | _ => false
       | _ => false)
-  -- An inline-only macro must stay inline, or it would split the paragraph.
   let inlineMacro := "\\documentclass{article}\n" ++
     "\\define \\who(a: text) {\\textbf{\\a}}\n" ++
     "\\begin{document}\\who{Ada} wrote it\\end{document}"
   let (imDoc, _) := elabStr inlineMacro
   t "inline macro does not split the paragraph" (imDoc.body.size == 1)
 
-  -- HTML backend
   let escaped := Html.escapeText "a <script> & \"x\""
   t "html escapes text" (escaped == "a &lt;script&gt; &amp; \"x\"")
   t "html escapes attributes" (Html.escapeAttr "a\"b<c" == "a&quot;b&lt;c")
@@ -2103,8 +1691,6 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       Html.text ", c"]) 0 == "<p>a <em>b</em>, c</p>\n")
   t "html style payload cannot close its own tag"
     (((Html.render (Html.Node.style "x</style>bad") 0).splitOn "</style>").length == 2)
-  -- The same contract inside a phrasing parent, where rendering goes through
-  -- the inline printer instead.
   t "html style payload cannot close its own tag inline"
     (((Html.render (Html.elem "p" #[Html.Node.style "x</style>bad"]) 0).splitOn
       "</style>").length == 2)
@@ -2140,35 +1726,27 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html inlines the stylesheet" ((page.splitOn "<style>").length == 2)
   t "html declares the generator" ((page.splitOn "content=\"leantex\"").length == 2)
 
-  -- Running content is paged furniture: HTML says so rather than dropping it.
   let (_, runHtmlDiags) := HtmlDoc.emit {} runDoc
   t "html warns about running content" (runHtmlDiags.any (·.code == "W0007"))
 
-  -- Bulma interop binds our tokens to the framework's own properties.
   let (bulmaPage, _) := HtmlDoc.emit { css := .bulma } htmlDoc
   t "bulma mode binds primary" ((bulmaPage.splitOn "--bulma-primary").length == 2)
   t "bulma mode ships no base sheet" ((bulmaPage.splitOn "--measure").length == 1)
   let (barePage, _) := HtmlDoc.emit { css := .none } htmlDoc
   t "css none emits no style element" ((barePage.splitOn "<style>").length == 1)
 
-  -- A stretched row broken by `\\` becomes a column of rows. A <br> cannot end
-  -- a layout row, so the break has to be structural or the second line lands
-  -- beside the first -- where the PDF puts it below.
+  -- A `<br>` cannot end a layout row, so the break is structural.
   let (rowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "left \\hfill right\\\\second\\end{document}")
   let (rowPage, _) := HtmlDoc.emit {} rowDoc
   t "broken stretched row becomes rows"
     ((rowPage.splitOn "<span class=\"entry-row").length == 3)
   t "broken stretched row keeps no br" ((rowPage.splitOn "<br>").length == 1)
-  -- An unbroken one stays a single row.
   let (oneRowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "left \\hfill right\\end{document}")
   t "unbroken stretched row stays one row"
     (((HtmlDoc.emit {} oneRowDoc).1.splitOn "class=\"entry entry-pair\"").length == 2)
 
-  -- \hfill and control-symbol spaces
-  -- \hfill takes no argument but still swallows the following space: a space
-  -- after the stretch would be visible at the far margin.
   let (fillDoc, fillDs) := elabStr "a \\hfill b"
   t "hfill source clean" fillDs.isEmpty
   t "hfill becomes an inline fill" (fillDoc.body ==
@@ -2176,14 +1754,8 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "thin space escape" ((elabStr "a\\,b").1.body ==
     #[.para #[.text "a b"]])
 
-/-- The page ships the faces it names — the census of the `@font-face`
-emission (the same obligation every backend emission carries): one rule per
-face of the resolved set, slot variables naming only the synthetic families,
-every referenced file among the write requests, and the generic keyword read
-from the face's own OS/2 class, never from its name. The set is built from
-the shipped corpus faces, so the checks also pin the OS/2 read on real
-tables (Open Sans declares class 8; Source Code Pro declares nothing and
-takes the slot's kind). -/
+/-- The page ships the faces it names: one `@font-face` rule per face of the resolved set, every
+referenced file written, the generic keyword read from the face's OS/2 class. -/
 def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO (Option Font.Font) := do
@@ -2198,13 +1770,10 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     | t "font ship: SourceCodePro-Regular loads" false
   let some icons ← load "ExampleIcons-Regular.ttf"
     | t "font ship: ExampleIcons-Regular loads" false
-  -- The OS/2 fields, pinned on the real tables the fixtures ship.
   t "font ship: Open Sans declares OS/2 class 8, Source Code Pro none"
     (sans.familyClass == 8 && code.familyClass == 0)
   t "font ship: fsType embedding bits are recorded as declared"
     (sans.fsType == 0 && icons.fsType == 4)
-  -- The deck's shape: body and sans from one face, mono its own — the
-  -- driver's index for a document that declared body and mono families.
   let fs : Font.FontSet := {
     fonts := #[sans, code]
     index := ((List.range 2).flatMap fun slot =>
@@ -2234,26 +1803,20 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((html.splitOn "--font-mono: \"ltx-mono\", \"ltx-body\", \"ltx-sans\", monospace;").length == 2)
   t "font ship: the body weight is the resolved face's, and nothing is faked"
     ((html.splitOn "body { font-weight: 400; --ltx-body-weight: 400; font-synthesis: small-caps; }").length == 2)
-  -- A face only per-glyph fallback reaches ships under its own family and
-  -- every slot stack appends it, so the browser's per-character walk can
-  -- reach it — the CSS spelling of `FontSet.fallback`.
   let fsFb : Font.FontSet := { fs with fonts := fs.fonts.push icons }
   let (htmlFb, _) := HtmlDoc.emit { cfg with fonts := some fsFb } doc
   t "font ship: a slotless face ships under its fallback family"
     (((htmlFb.splitOn "font-family: \"ltx-fb2\"").length == 2) &&
      ((htmlFb.splitOn
         "--font-body: \"ltx-body\", \"ltx-sans\", \"ltx-mono\", \"ltx-fb2\", sans-serif;").length == 2))
-  -- The math face rides through its token; the `.math` rule reads it.
   let fsMath : Font.FontSet := { fs with math := some 1 }
   let (htmlMath, _) := HtmlDoc.emit { cfg with fonts := some fsMath } doc
   t "font ship: the resolved math face lands in --font-math"
     ((htmlMath.splitOn "--font-math: \"ltx-math\", \"ltx-body\", \"ltx-sans\", \"ltx-mono\", math;").length == 2)
   t "font ship: .math reads the document's math face through its token"
     ((htmlMath.splitOn ".math { font-family: var(--font-math,").length == 2)
-  -- Without a set nothing ships: the name-only stacks stay, unchanged.
   t "font ship: a config with no set ships no rules"
     (((HtmlDoc.emit {} doc).1.splitOn "@font-face").length == 1)
-  -- The generic keyword rules, on faces that declare each field.
   let mkF (cls : Nat) (fixed : Bool) : Font.Font :=
     { (default : Font.Font) with familyClass := cls, isFixedPitch := fixed }
   t "generic keyword: class 8 is sans-serif"
@@ -2265,10 +1828,8 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "generic keyword: an undeclared class takes the slot's declared kind"
     (HtmlDoc.genericFor (oneFaceOf (mkF 0 false)) 0 "serif" == "serif")
 
-/-- The backends' note apparatus: the HTML mark is a `doc-noteref` sup
-link, the one `doc-endnotes` section carries each body once with its
-`doc-backlink` (W3C DPUB-ARIA 1.1), no script and no broken anchor; the
-markdown twin sets `[^k]` marks with their definitions after the body. -/
+/-- Footnotes: the HTML mark is a `doc-noteref` link, one `doc-endnotes` section holds each body
+once with its backlink, and the markdown twin sets `[^k]` marks with definitions after the body. -/
 def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := dvDoc "" ("A claim\\footnote{the note text} continues.\n\n" ++
@@ -2303,12 +1864,8 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let md0 := MarkdownDoc.emit (elabStr (dvDoc "" "plain words")).1
      md0.endsWith "\n" && !(md0.endsWith "\n\n") && !((md0.splitOn "[^").length ≥ 2))
 
-/-- The PDF-figure path (PLAN's asset half of the graphics boundary):
-`\includegraphics{x.pdf}` embeds page 1 as a form XObject. The fixture is
-the engine's own output (`testdata/corpus/figures/box.tex` is its committed
-generator), so the reader is exercised against the writer — xref stream,
-object stream, embedded font program and all — and the roundtrip below
-reads back the file this test writes. -/
+/-- `\includegraphics{x.pdf}` embeds page 1 as a form XObject, read from a fixture the engine itself
+wrote. -/
 def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pdfData ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"
@@ -2317,35 +1874,24 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (match inf? with
      | .ok inf => inf.form.isSome && inf.data.isEmpty
      | .error _ => false)
-  -- The intrinsic size is the page box (`form_bbox_exact`'s other half):
-  -- the card declared 90 × 54 mm, and the writer's `Sp.toPtString`
-  -- rounded each edge once at the thousandth of a point — so the read
-  -- box stands within one thousandth-pt unit of the declared size.
+  -- The writer rounds each edge once at a thousandth of a point, hence the tolerance.
   t "pdf intrinsic size is the page box"
     (match inf? with
      | .ok inf =>
        (Dim.mm 90 - inf.width).natAbs ≤ 66 &&
        (Dim.mm 54 - inf.height).natAbs ≤ 66
      | .error _ => false)
-  -- The copied graph: the fixture embeds a font, so its resource closure
-  -- is non-trivial; `resources_closed` rides in the subtype the decoder
-  -- stored, so a dangling hole is unrepresentable here.
   t "pdf resources graph copied with the page"
     (match inf? with
      | .ok inf =>
        (inf.form.map fun f =>
          f.val.objects.size > 0 && !f.val.content.isEmpty).getD false
      | .error _ => false)
-  -- Totality over truncations, as fonts: a verdict for every prefix, the
-  -- full sweep living in scripts/img-fuzz.lean.
   t "pdf decode total over truncations"
     (((List.range 64).map fun k =>
       (Image.decode (pdfData.extract 0 (pdfData.size * k / 64))).isOk).length == 64)
   t "pdf decode rejects a headerless tail"
     ((Image.decode (pdfData.extract 4 pdfData.size)).isOk == false)
-  -- Write → read: place the fixture at a declared size, write the PDF,
-  -- and the file carries the form XObject, its xref verifies, and this
-  -- engine's own reader follows the produced file back to a form.
   let store : Image.Store := { entries := #[
     { src := "box.pdf", info := inf?.toOption }] }
   let (doc, _) := Elab.run "t"
@@ -2359,8 +1905,6 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (match PdfRead.readForm pdf with
      | .ok f => !f.val.content.isEmpty
      | .error _ => false)
-  -- The placed segment takes the declared width, and the height follows
-  -- the box's own ratio, as every image does (`resolveSize`).
   let segs := Id.run do
     let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
     for p in out.pages do
@@ -2374,29 +1918,18 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
        w == Dim.pt 100 && h == Dim.pt 100 * inf.height / inf.width
      | _, _ => false)
 
-/-- `algorithm_lines_agree`'s executable side. The theorem holds the line
-census — that `algNest`'s forest reads back as the declared array, so no
-line reaches one artifact and misses the other — and what remains for an
-oracle is the *rendering* of that forest, which no theorem states: one
-`<li>` per node, one nested `<ol>` per level, and the emission order the
-census fixes. Checked over the shapes that exercise it: the `\eIf` else
-standing at its if's own level (the double-nesting defect this pins), a
-plain loop, and — built on the IR, since no surface spelling produces
-it — a depth that skips a level, where the forest stands a group in for
-the level nothing declared. -/
+/-- `algNest`'s forest renders as one `<li>` per node and one nested `<ol>` per level, in census
+order, an else at its if's level. -/
 def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let emitOf (body : String) : String :=
     (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
   let html := emitOf ("\\begin{algorithm}\n\\caption{An invented check.}\n" ++
     "\\eIf{$a > 0$}{one\\;}{two\\;}\n\\Return{$r$}\\;\n\\end{algorithm}")
-  -- one <li> per line: if, one, else, two, end, return
   t "algorithm html: one list item per line"
     (((html.splitOn "<li>").length - 1) == 6)
-  -- the outer list plus one nested list per branch body
   t "algorithm html: eIf nests each branch once"
     (((html.splitOn "<ol").length - 1) == 3)
-  -- the census in emission order — no line lost, none reordered
   let inOrder (hay : String) (needles : List String) : Bool := Id.run do
     let mut rest := hay
     for n in needles do
@@ -2408,7 +1941,6 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (inOrder html ["<strong>if</strong>", "<strong>then</strong>", "one;",
       "<strong>else</strong>", "two;", "<strong>end</strong>",
       "<strong>return</strong>"])
-  -- the else stands at its if's level: the nested <ol> before it closed
   t "algorithm html: the else closes its then-branch first"
     (inOrder html ["one;", "</ol>", "<strong>else</strong>"])
   let deep := emitOf ("\\begin{algorithm}\n" ++
@@ -2417,8 +1949,6 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((deep.splitOn "<ol").length - 1) == 3 &&
       inOrder deep ["<strong>for</strong>", "<strong>while</strong>",
         "step;", "<strong>end</strong>", "<strong>end</strong>"])
-  -- a skipped level, straight on the IR: the forest carries every line and
-  -- opens a list for the level no line declared
   let stmt (d : Nat) (txt : String) : Ir.AlgLine :=
     { depth := d, kind := .statement, content := #[.text txt], comment := none }
   let jumpDoc : Ir.Doc :=
@@ -2428,9 +1958,6 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((jump.splitOn "<li>").length - 1) == 3 && inOrder jump ["top;", "deep;"])
   t "algorithm html: a skipped level opens a list per level"
     (((jump.splitOn "<ol").length - 1) == 3)
-  -- The comment's optional star is a word token at the TeX surface. Every
-  -- documented inline placement option still owes the comment's ink in
-  -- both artifacts; accepting only a symbol token used to lose the group.
   let some bytes ← findFont | failures ref "algorithm comments: missing fixture font"
   let .ok font := Font.parse bytes |
     failures ref "algorithm comments: invalid fixture font"
@@ -2454,9 +1981,8 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 mutual
 
-/-- Every `code` element's `class` attribute in the typed tree, in document
-order — `none` for a `code` that carries no class. The listing-language
-oracle reads the attribute the tree carries, never the printed string. -/
+/-- Every `code` element's `class` attribute in the typed tree, in document order, `none` where it
+carries none. -/
 def codeClassesOne (acc : Array (Option String)) : Html.Node → Array (Option String)
   | .text _ => acc
   | .style _ => acc
@@ -2471,11 +1997,8 @@ def codeClassesList (acc : Array (Option String)) : List Html.Node → Array (Op
 
 end
 
-/-- `listing_language_agree`'s executable oracle over the two text artifacts:
-one declared language reaches the HTML `code` element's `language-…` class
-and the markdown fence's info string; a listing without one reaches neither;
-a spelling outside the token grammar is named W0110 and reaches neither. The
-typed tree is read for the class, the emitted twin for the fence. -/
+/-- One declared language reaches the HTML `code` element's `language-…` class and the markdown
+fence's info string; none, or a malformed one (W0110), reaches neither. -/
 def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let docOf (body : String) : Ir.Doc × Array Diag := elabStr (dvDoc "" body)
@@ -2484,8 +2007,7 @@ def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
     codeClassesList (codeClassesList #[] head.toList) body.toList
   let fencesOf (doc : Ir.Doc) : List String :=
     ((MarkdownDoc.emit doc).splitOn "```").zipIdx.filterMap fun (seg, i) =>
-      -- opening fences stand at odd positions between the delimiters; the
-      -- info string is the opener's first line
+      -- Opening fences stand at odd positions between the delimiters.
       if i % 2 == 1 then some ((seg.splitOn "\n").headD "") else none
   let (lst, _) := docOf "\\begin{lstlisting}[language=Python]\nx = 1\n\\end{lstlisting}"
   t "html: a listings language reaches the code element's class"
@@ -2507,8 +2029,6 @@ def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
     (classesOf verb == #[none])
   t "markdown: verbatim opens a bare fence"
     (fencesOf verb == [""])
-  -- listings' dialect spelling is outside the token grammar: named, and the
-  -- raw text reaches neither artifact
   let (dialect, ds) := docOf "\\begin{lstlisting}[language={[LaTeX]TeX}]\nx\n\\end{lstlisting}"
   t "an invalid language spelling is named W0110"
     (ds.any (·.code == "W0110"))
@@ -2516,7 +2036,6 @@ def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
     (classesOf dialect == #[none])
   t "markdown: an invalid language spelling reaches no fence info"
     (fencesOf dialect == [""])
-  -- the class survives the caption and line-number apparatus around it
   let (full, _) := docOf ("\\begin{lstlisting}[language=C++, caption={An invented probe}, " ++
     "numbers=left]\nint x;\n\\end{lstlisting}")
   let fullHtml := (HtmlDoc.emit {} full).1
@@ -2527,14 +2046,11 @@ def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "markdown: a captioned listing's fence carries the info string after the caption"
     (fencesOf full == ["c++"] &&
       ((MarkdownDoc.emit full).splitOn "Listing 1: An invented probe\n\n```c++\n").length == 2)
-  -- the attribute goes through the escaper as every attribute does: a
-  -- token cannot carry a quote, and the printed class is exactly the token
   t "html: the printed class is the token, escaped by construction"
     ((fullHtml.splitOn "<code class=\"language-c++\">").length == 2)
 
-/-- One cell of an emitted table, as the facts the header contract judges:
-the row group it sits in (`thead`/`tbody`, or `""` when the table has
-none), its tag, its `scope`, its `class`, and its text. -/
+/-- One cell of an emitted table: its row group (`thead`, `tbody` or `""`), tag, `scope`, `class`
+and text. -/
 structure CellFact where
   group : String
   tag : String
@@ -2546,8 +2062,7 @@ structure CellFact where
 
 mutual
 
-/-- Every `th`/`td` of a typed tree in document order, each with the row
-group above it — the HTML side of `Ir.tableHeaderRows`. -/
+/-- Every `th`/`td` of a typed tree in document order, each with the row group above it. -/
 def cellFactsOne (group : String) (acc : Array CellFact) : Html.Node → Array CellFact
   | .text _ => acc
   | .style _ => acc
@@ -2574,8 +2089,7 @@ end
 
 mutual
 
-/-- Every `tr`'s `class` value in document order (`""` when unclassed): the
-rule classes the stylesheet draws, which the header regrouping may not move. -/
+/-- Every `tr`'s `class` value in document order (`""` when unclassed). -/
 def rowClassesOne (acc : Array String) : Html.Node → Array String
   | .text _ => acc
   | .style _ => acc
@@ -2593,8 +2107,7 @@ end
 
 mutual
 
-/-- The tags of a table's direct children — `colgroup`, `thead`, `tbody`
-— so a test can state which row groups a table ships. -/
+/-- The tags of each table's direct children (`colgroup`, `thead`, `tbody`). -/
 def tableGroupsOne (acc : Array (Array String)) : Html.Node → Array (Array String)
   | .text _ => acc
   | .style _ => acc
@@ -2612,13 +2125,8 @@ def tableGroupsList (acc : Array (Array String)) : List Html.Node → Array (Arr
 
 end
 
-/-- One header fact for both artifacts: `Ir.tableHeaderRows` names
-booktabs' head — the rows before the first `\midrule` — and the HTML arm
-ships exactly those rows as `<thead>`/`<th scope=col>`, the rest as
-`<tbody>`/`<td>`. Cell text and order, the rule classes on each row, and
-the `bt-cmid` cell class are unchanged by the regrouping: the header is a
-semantic fact, not a visual one (the stylesheet neutralises `th`'s UA bold
-and centring so the raster cannot move). Invented content. -/
+/-- booktabs' head rows ship as `<thead>`/`<th scope=col>` and the rest as `<tbody>`/`<td>`, with
+cell text, order and rule classes unchanged. -/
 def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let rows3 : Array (Array (Array Ir.Inline)) :=
@@ -2641,7 +2149,6 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hdr #[(7, .mid)] == 3)
   t "an empty table has zero header rows whatever its rules"
     (Ir.tableHeaderRows #[] #[(0, .mid), (1, .mid)] == 0)
-  -- The typed tree: one header row.
   let tree (src : String) : Html.Node :=
     HtmlDoc.blockNode {} (elabStr (dvDoc "" src)).1.body[0]!
   let one := tree ("\\begin{tabular}{lcr}\\toprule Left & Centre & Right \\\\ " ++
@@ -2657,11 +2164,10 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       (c.tag == "td") == (c.scope == ""))
   t "cell text and order survive the regrouping"
     (oneCells.map (·.text) == #["Left", "Centre", "Right", "a", "b", "c", "d", "e", "f"])
-  t "the rule classes stand on the same rows as before"
+  t "the rule classes stand on the same rows after regrouping"
     (rowClassesOne #[] one == #["bt-heavy-above bt-pre", "bt-light-above", "bt-heavy-below"])
   t "the table ships colgroup, thead, tbody in that order"
     (tableGroupsOne #[] one == #[#["colgroup", "thead", "tbody"]])
-  -- Two header rows.
   let two := tree ("\\begin{tabular}{ll}\\toprule A & B \\\\ C & D \\\\ " ++
     "\\midrule e & f \\\\ \\bottomrule\\end{tabular}")
   let twoCells := cellFactsOne "" #[] two
@@ -2669,7 +2175,6 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((twoCells.filter (·.tag == "th")).size == 4 &&
       (twoCells.filter (·.tag == "td")).size == 2 &&
       (twoCells.filter (·.group == "thead")).size == 4)
-  -- No midrule: a cmidrule and a gap must not be mistaken for one.
   let cmid := tree ("\\begin{tabular}{lcr}\\toprule left & centre & right \\\\ " ++
     "\\cmidrule(lr){1-2} a & b & c \\\\ \\addlinespace d & e & f \\\\ " ++
     "\\bottomrule\\end{tabular}")
@@ -2683,25 +2188,21 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         "bt-right bt-nowrap", "bt-left bt-nowrap", "bt-center bt-nowrap", "bt-right bt-nowrap"])
   t "no header: colgroup and tbody only"
     (tableGroupsOne #[] cmid == #[#["colgroup", "tbody"]])
-  -- Bare tabular, no rules at all.
   let bare := tree "\\begin{tabular}{ll}a & b \\\\ c & d\\end{tabular}"
   t "a rule-less table has no th"
     ((cellFactsOne "" #[] bare).all fun c => c.tag == "td" && c.group == "tbody")
-  -- Every row a header row: the midrule stands after the last row.
   let allHead := tree "\\begin{tabular}{ll}\\toprule a & b \\\\ \\midrule\\end{tabular}"
   t "a midrule after the last row heads every row: thead and no tbody"
     (tableGroupsOne #[] allHead == #[#["colgroup", "thead"]] &&
       (cellFactsOne "" #[] allHead).all (·.tag == "th"))
-  -- A `\multicolumn` head ships once, with `colspan`, its own alignment,
-  -- and no element for the cell it covers; the body rows are untouched.
   let spanned := tree ("\\begin{tabular}{lrr}\\toprule & \\multicolumn{2}{c}{Head} \\\\ " ++
     "\\midrule a & 1 & 2 \\\\ \\bottomrule\\end{tabular}")
   let spannedCells := cellFactsOne "" #[] spanned
-  t "a spanning head is one th with colspan, its covered cell ships no element (fails on base)"
+  t "a spanning head is one th with colspan, its covered cell ships no element"
     (spannedCells.map (fun c => (c.group, c.tag, c.text, c.colspan)) ==
       #[("thead", "th", "", ""), ("thead", "th", "Head", "2"),
         ("tbody", "td", "a", ""), ("tbody", "td", "1", ""), ("tbody", "td", "2", "")])
-  t "a spanning head takes its own alignment, not its column's (fails on base)"
+  t "a spanning head takes its own alignment, not its column's"
     (match spanned with
      | .elem _ _ kids => (kids.toList.findSome? fun k => match k with
          | .elem "thead" _ rs => rs.toList.findSome? fun r => match r with
@@ -2711,17 +2212,14 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
              | _ => none
          | _ => none) == some ("class", "bt-center bt-nowrap")
      | _ => false)
-  -- The empty table: nothing to group.
   let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])
   t "an empty table ships its colgroup and no row group"
     (tableGroupsOne #[] empty == #[#["colgroup"]])
-  -- The fixture's census: the first table heads one row of three, the
-  -- second (cmidrule) none; every declared cell ships once.
   let src ← IO.FS.readFile "testdata/corpus/tables.tex"
   let (fixture, _) ← elabFixture "tables" src
   let (_, body, _) := HtmlDoc.emitTree {} fixture
   let cells := cellFactsList "" #[] body.toList
-  -- a span-covered cell has no element of its own: the head's colspan is it
+  -- A span-covered cell has no element of its own.
   let declared := Ir.foldBlocks (fun n b => match b with
     | .table _ _ _ rows _ spans => n + rows.foldl (fun m r => m + r.size) 0
         - spans.foldl (fun m s => m + (s.n - 1)) 0
@@ -2732,19 +2230,13 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((cells.filter (·.tag == "th")).size == 3 &&
       (cells.filter (·.tag == "th")).all (fun c => c.group == "thead" && c.scope == "col") &&
       (cells.filter (·.tag == "td")).all (·.group == "tbody"))
-  -- The stylesheet's half of "no movement": each cell rule the header
-  -- cells left as `td` addresses `th` too, and the UA's bold/centred
-  -- `th` defaults are neutralised.
   let css := HtmlDoc.baseCss {} fixture
   t "the table stylesheet addresses th beside td"
     (hasStr css "table.booktabs th" && hasStr css "tr.bt-heavy-above > th" &&
       hasStr css "tr.bt-light-above > th" && hasStr css "th.bt-cmid" &&
       hasStr css "font-weight: inherit")
 
-/-- A five-object PDF whose one font is the standard `Helvetica`, no
-program embedded: the file `pdffonts` reports `emb no` for. Built here, in
-Lean, so no binary fixture is checked in — and so the census has a file
-the writer never produced to judge. -/
+/-- A five-object PDF whose one font is the standard `Helvetica`, no program embedded. -/
 def unembeddedProbePdf : ByteArray := Id.run do
   let content := "BT /F1 12 Tf 10 20 Td (Probe) Tj ET"
   let objs : Array String := #[
@@ -2769,11 +2261,8 @@ def unembeddedProbePdf : ByteArray := Id.run do
   out := out ++ s!"trailer\n<< /Size {objs.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
   return out.toUTF8
 
-/-- A hand-built cross-reference-stream PDF whose catalog, pages and page
-ride in one *uncompressed* object stream: the smallest file on which an
-object stream's header can be permuted in place (`swap`), with every
-offset unchanged — the mutant that distinguishes a reader that checks the
-header's numbers from one that trusts the cross-reference. -/
+/-- A cross-reference-stream PDF whose catalog, pages and page ride in one uncompressed object
+stream, its header permuted in place under `swap`. -/
 def objStmPdf (swap : Bool) : ByteArray := Id.run do
   let o1 := "<< /Type /Catalog /Pages 2 0 R >>"
   let o2 := "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
@@ -2805,7 +2294,6 @@ def objStmPdf (swap : Bool) : ByteArray := Id.run do
   bytes := bytes ++ s!"\nendstream\nendobj\nstartxref\n{off6}\n%%EOF\n".toUTF8
   return bytes
 
-/-- The first occurrence of `needle` in `hay`. -/
 def findBytes (hay : ByteArray) (needle : String) (from_ : Nat := 0) : Option Nat := Id.run do
   let p := needle.toUTF8
   if hay.size < p.size then return none
@@ -2823,25 +2311,13 @@ def findBytes (hay : ByteArray) (needle : String) (from_ : Nat := 0) : Option Na
 def spliceBytes (hay : ByteArray) (i : Nat) (old new : String) : ByteArray :=
   hay.extract 0 i ++ new.toUTF8 ++ hay.extract (i + old.utf8ByteSize) hay.size
 
-/-- One byte of `hay` inverted. -/
 def flipByte (hay : ByteArray) (i : Nat) : ByteArray :=
   match hay[i]? with
   | some v => hay.set! i (v ^^^ 0xFF)
   | none => hay
 
-
-/-- One golden fixture, elaborated, laid out, written and read back once.
-Three judges over the corpus — the contract slice, the conformance walk and
-the structure tree — used to run this pipeline each for itself, so every
-fixture was elaborated and laid out three times, written twice with
-identical arguments, and parsed four. The bytes are the same bytes in every
-case (`Pdf.write` is a function of what is here), so sharing them weakens
-nothing: each assertion still reads a real written file.
-
-`pdf` carries no structure tree, which is what the contract and conformance
-judges write; the structure judge writes its own from `out` and `store`,
-because its file differs by the tree and a shared one would not be the file
-it judges. -/
+/-- One golden fixture elaborated, laid out, written and read back once for the corpus judges; `pdf`
+carries no structure tree. -/
 structure GoldenArt where
   name : String
   doc : Ir.Doc
@@ -2867,13 +2343,8 @@ def goldenArts (oneFace : Font.FontSet) : IO (Array GoldenArt) := do
         text := pdfText pdf, objs := (PdfRead.objects pdf).map (·.val) }
   return arts
 
-/-- What each golden fixture's PDF carries, read back from its bytes by the
-census: `(pages, type0Fonts, images, forms, smasks, linkAnnots,
-outlineItems, lang, filters)`. A fixture without a row fails the coverage
-check, so a new fixture states what its file carries before it enters —
-and a writer change that moves a count is visible here, per fixture. The
-PDF is built with the suite's one face and the fixture's own images; a
-boundary picture is a placeholder box (no converter runs in the suite). -/
+/-- What each golden fixture's PDF carries, read back by the census: `(pages, type0Fonts, images,
+forms, smasks, linkAnnots, outlineItems, lang, filters)`. -/
 def pdfCensusTable :
     List (String × (Nat × Nat × Nat × Nat × Nat × Nat × Nat × Option String × List String)) := [
   ("affine-lengths", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
@@ -2974,8 +2445,7 @@ def pdfCensusTable :
   ("md-code", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-emphasis", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-headings", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  -- no link annotation: the image a link wraps ships without its link, the
-  -- loss `silentLosses` records; this row follows the fix that closes it
+  -- No link annotation: the image a link wraps ships without its link (`silentLosses`).
   ("md-images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
   -- the included markdown's link is the page's one annotation
   ("md-include", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
@@ -2987,24 +2457,16 @@ def pdfCensusTable :
   ("md-rules", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-table", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"]))]
 
-/-- The read-side census (`PdfCensus`) and the checked reader beneath it
-(`PdfRead.objects`): the probe the writer never made judges as
-`pdffonts` does; a copied page carrying an unembedded face makes the
-written file's census say so (the fact `Check.Shipped.fontsEmbedded` now
-reads); six mutants each refuse by a distinct message; every golden
-fixture's PDF reads back with every object under its spelled number and a
-census row that matches. -/
+/-- The read-side census and its checked reader: a probe the writer never made, a copied unembedded
+face, six mutants refused by distinct messages, and every golden fixture read back. -/
 def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- The probe: one font, no program.
   let probe := unembeddedProbePdf
   t "probe pdf reads as a form" (PdfRead.readForm probe).isOk
   t "probe census: one unembedded font"
     (match pdfCensusOf probe with
      | .ok c => c.fonts == 1 && c.type0Fonts == 0 && !c.fontsEmbedded && c.pages == 1
      | .error _ => false)
-  -- The written file: the suite's face embeds; a copied page's face is
-  -- judged from the bytes, where the writer's intent would have said yes.
   let (doc, _) := Elab.run "t" "A line of text."
   let out := layoutOf oneFace doc
   let pdf := Pdf.write {} oneFace out.pages
@@ -3020,7 +2482,6 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "copied unembedded page: the census says not embedded"
     ((pdfCensusOf ppdf).map (fun c => (c.fontsEmbedded, c.forms, c.fonts)) == .ok (false, 1, 3))
   t "copied unembedded page: the xref still verifies" (checkXref ppdf).isOk
-  -- Mutants: each refuses, each by its own message — the judge breaks once.
   let mutants : IO (Array (String × ByteArray)) := do
     let some sx := findBytes pdf "startxref\n" | return #[]
     let x ← match PdfRead.readXref pdf with
@@ -3031,15 +2492,13 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     let es ← match PdfRead.objects pdf with
       | .ok es => pure es.val
       | .error _ => return #[]
-    -- A stream whose length keeps its digit count one shorter, so every
-    -- offset after it stands.
+    -- The length keeps its digit count, so every offset after it stands.
     let some lenE := es.find? fun e =>
         e.stream.isSome && (match e.val.get? "Length" with
           | some (.int n) => n ≥ 11 && n % 10 != 0
           | _ => false) | return #[]
     let some (.int len) := lenE.val.get? "Length" | return #[]
     let some lenAt := findBytes pdf s!"/Length {len} >>" | return #[]
-    -- A page's content stream: a bare deflated dictionary.
     let some cE := es.reverse.find? fun e =>
         e.stream.isSome && (e.val.get? "Type").isNone && (e.val.get? "Subtype").isNone &&
           (e.val.get? "Length1").isNone &&
@@ -3075,7 +2534,6 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | some sx, .ok x =>
        !(checkXref (spliceBytes pdf (sx + 10) (toString x.start) (toString (x.start - 1)))).isOk
      | _, _ => false)
-  -- Every golden fixture's PDF, read back through the checked reader.
   for n in goldenNames do
     t s!"pdf census covers {n}" (pdfCensusTable.any (·.1 == n))
   for (n, _) in pdfCensusTable do
@@ -3097,10 +2555,7 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       | some (_, want) =>
         t s!"pdf census row {n}: {repr row}" (row == want)
       | none => pure ()
-  -- The driver, end to end: the gate reads the census of the bytes it is
-  -- about to write, and a failing document writes nothing — not the page,
-  -- not the `-o` directory. The binary is this tree's own build; the
-  -- fixture ships its face from the corpus, so no host font enters.
+  -- The tree's own binary, with the fixture's face from the corpus, so no host font enters.
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
@@ -3134,12 +2589,6 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     t "driver: pdf+html with a failing assertion writes nothing" (code != 0 && !dirExists)
     IO.FS.removeDirAll dir
 
-/-- Synthetic pages exercising every content-stream operator the writer
-emits: glyph runs that join one `TJ` array, a gap as an adjustment, a face
-and colour change, a raised run, a CMYK colour, expansion (`Tz`) turned on
-and back off, a kern, a move too large for an adjustment, a rule and
-images (loaded, failed, and unnamed), page fills, and every picture path
-shape with every paint combination. -/
 def contentOpsRed : Ir.Color := { r := 200, g := 30, b := 30 }
 def contentOpsGrey : Ir.Color := { r := 240, g := 240, b := 240 }
 def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
@@ -3149,10 +2598,8 @@ def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Na
   .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size {} {}
     raise none (.leaf 0)
 
-/-- The widths the synthetic pages' faces declare, in millionths of the
-em: each glyph's laid advance at its run's size, so the writer places
-every glyph where its run already put it and the only numbers in the
-stream are the gaps'. -/
+/-- The widths the synthetic pages' faces declare, in millionths of the em: each glyph's laid
+advance at its run's size. -/
 def contentOpsWidths (_ : Unit) : Array (Array Int) :=
   let face := (Array.range 70001).map fun g => match g with
     | 36 | 37 | 70000 | 4096 => 1250000
@@ -3205,11 +2652,7 @@ def contentOpsFigure {L : Type} (nodes : Array (Gfx.Node L)) : Gfx.Figure L :=
 from the 100pt page's bottom, so picture and PDF coordinates coincide. -/
 def contentOpsPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.pt 100 }
 
-/-- Two pictures' ink: the first's three marks stamped with leaf 0, the
-second's two with leaf 1 (`contentOpsTags` gives both a holder), so the
-writer groups them as two figures: a dashed circle, a dotted filled frame,
-an edge whose four segments make two subpaths, a filled tip, a bare
-rectangle. -/
+/-- Two pictures' ink under leaf 0 and leaf 1, which the writer groups as two figures. -/
 def contentOpsPathPage : Layout.PageOut := {
   inks := #[
     { fig := contentOpsFigure #[
@@ -3235,15 +2678,8 @@ def contentOpsPathPage : Layout.PageOut := {
         .draw (.rect (Dim.pt 1) (Dim.pt 97) (Dim.pt 2) (Dim.pt 2)) none none]
       place := contentOpsPlace, leaf := some 1 } ] }
 
-/-- The streams the writer produced for these pages before the typed
-layer existed — captured from `Pdf.pageStreams`, and the spelling the
-typed operators must reproduce byte for byte — with two numbers since
-placed by the viewer's arithmetic (`place_between`): a gap rounds to the
-nearest thousandth (5 pt at 12 pt is 416.7, so 417 where truncation said
-416), and is measured from where the file's own pen stands. The expanded
-line's `xy` declares 30 pt of unexpanded advances, which paint 30.6 pt
-under `Tz`; the old writer measured the gap from 30 pt and set `z` 0.58 pt
-past its layout x (−407), the number now brings it back (−359). -/
+/-- The recorded streams of the synthetic text pages, which the typed operators reproduce byte for
+byte, gaps placed by the viewer's arithmetic. -/
 def contentOpsTextExpected : String :=
   "q 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\n" ++
@@ -3283,19 +2719,13 @@ def contentOpsBleedExpected : String :=
   "q 0.784 0.118 0.118 rg 13 25 40 1 re f Q\n" ++
   "q 0 0 0 rg 113 23 10 2 re f Q"
 
-/-- The stream with its marked-content lines removed: what the artifact
-acceptance strips from the file, spelled on the string. `Pdf.stripMarks`
-is the same operation on the typed line list; the per-page row "stripping
-the marked-content lines of the file is stripping the typed lines" in
-`artifactMarkChecks` is the bridge between them. -/
+/-- The stream with its marked-content lines removed, as the artifact acceptance strips the file. -/
 def stripMarkLines (s : String) : String :=
   "\n".intercalate ((s.splitOn "\n").filter fun l =>
     !(l == "EMC" || l.endsWith " BDC" || l.endsWith " BMC"))
 
-/-- The typed content operators render, with their marked-content lines
-removed, byte for byte to the stream the writer wrote before they existed
-(`contentOps_text` holds the glyph census, `mark_ink_exact` the ink; this
-block holds the spelling). -/
+/-- The typed content operators render, marked-content lines removed, byte for byte to the recorded
+streams. -/
 def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
@@ -3325,19 +2755,15 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ink geom contentOpsTextPage == contentOpsTextExpected
       && ink geom contentOpsPathPage == contentOpsPathExpected
       && ink bleed contentOpsTextPage == contentOpsBleedExpected)
-  -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
     (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[]
         contentOpsTextPage)
       == Pdf.paintRuns contentOpsTextPage &&
       Pdf.paintRuns contentOpsTextPage == Pdf.pageRuns contentOpsTextPage)
-  -- Two spellings that coincide: the honest bound on injectivity.
   t "content ops: a fill and a fill-only rectangle path spell the same"
     (Pdf.render #[.fill contentOpsRed 1 2 3 4]
       == Pdf.render #[.paint (some { paint := .solid contentOpsRed, evenOdd := false }) none none
         #[.rect 1 2 3 4]])
-  -- `write` and `pageStreams` read the typed layer: the public entry
-  -- yields the same bytes for the same pages.
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let twoFace : Font.FontSet := { fonts := #[font, font] }
@@ -3352,16 +2778,13 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (streams.map (stripMarkLines <| String.fromUTF8! ·)
       == #[typed contentOpsTextPage, typed contentOpsPathPage])
 
-/-- The output contract: declared facts held against each artifact's
-realization record (one W0701 per unmet fact per artifact), the font
-policy's one resolving site, and the byte-reading assertion judged on the
-bytes the run emits — failing loud when it emits none of them. -/
+/-- Declared output facts are held against each artifact's realization record, one W0701 per unmet
+fact per artifact, and a byte-reading assertion with no bytes fails loud. -/
 def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let out (decl : String) : Ir.Doc × Array Diag := elabStr (dvDoc s!"\\output\{ {decl} }\n" "x")
   let w0701 (c : Ir.OutputContract) (r : Ir.Realization) : Array Diag :=
     Ir.contractDiags (c.unmet r)
-  -- Red 1: the alternatives fact, declared and held against each record.
   let (d1, ds1) := out "formats = pdf, alternatives = required"
   t "contract: 'alternatives = required' is a known key"
     (!ds1.any fun d => d.code == "E0322" || d.code == "E0321")
@@ -3373,7 +2796,6 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   t "contract: the HTML carries alt → no W0701"
     ((w0701 d1.output.contract HtmlDoc.profile).isEmpty)
-  -- Red 2: the colour fact.
   let (d2, ds2) := out "formats = pdf, color = srgb"
   t "contract: 'color = srgb' is a known key" (!ds2.any (·.code == "E0322"))
   t "contract: device colour in the PDF → one W0701 naming color"
@@ -3382,11 +2804,9 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   t "contract: CSS colour is sRGB by definition → no W0701"
     ((w0701 d2.output.contract HtmlDoc.profile).isEmpty)
-  -- Two unmet facts are two warnings, never one.
   let (d12, _) := out "formats = pdf, alternatives = required, color = srgb"
   t "contract: two unmet facts are two W0701s"
     ((w0701 d12.output.contract Pdf.profile).size == 2)
-  -- A bad value is E0321 in the existing style; the key is still known.
   t "contract: an unknown alternatives value is E0321"
     ((out "alternatives = maybe").2.any fun d =>
       d.code == "E0321" && hasStr d.message "maybe")
@@ -3394,13 +2814,10 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((out "color = cmyk").2.any (·.code == "E0321"))
   t "contract: an unknown font policy is E0321"
     ((out "fonts = subset").2.any (·.code == "E0321"))
-  -- The defaults meet every artifact (the theorems say so; this is the
-  -- executable face of the same fact over the elaborated default).
   let (d0, _) := out "formats = pdf, html"
   t "contract: an undeclared contract is met by both records"
     ((d0.output.contract.unmet Pdf.profile).isEmpty &&
      (d0.output.contract.unmet HtmlDoc.profile).isEmpty)
-  -- The font policy's one resolving site: declared wins, else the css rule.
   t "font policy: undeclared with no css story ships faces"
     (d0.fontPolicy == .embedded)
   t "font policy: undeclared with css = own ships none"
@@ -3411,13 +2828,11 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((out "formats = html, fonts = none").1.fontPolicy == .none)
   let (dLast, _) := elabStr (dvDoc "\\output{ fonts = none }\n\\output{ fonts = embedded }\n" "x")
   t "font policy: the later declaration wins" (dLast.fontPolicy == .embedded)
-  -- `reads`: the closed table, executable.
   t "reads: layout assertions read no artifact"
     ((Ir.AssertKind.pages .eq 1).reads.isEmpty && Ir.AssertKind.textInArea.reads.isEmpty &&
      (Ir.AssertKind.minXHeight 0).reads.isEmpty && Ir.AssertKind.accessibilityAA.reads.isEmpty)
   t "reads: fonts.all_embedded reads the two artifacts that carry faces"
     (Ir.AssertKind.fontsAllEmbedded.reads == #["pdf", "html"])
-  -- The driver, end to end, on this tree's own binary and the corpus face.
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the contract checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
@@ -3437,7 +2852,6 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
         args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
       return (r.exitCode, r.stdout ++ r.stderr, outDir)
     let count (log needle : String) : Nat := (log.splitOn needle).length - 1
-    -- Red 1 and 2 through the driver: one W0701 per artifact that lacks the fact.
     let (code, log, _) ← run "alt-pdf" "article"
       "\\output{ formats = pdf, alternatives = required }\n" one
     t s!"driver: pdf + alternatives = required builds with one W0701: {log}"
@@ -3455,8 +2869,6 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       (code == 0 && count log "[W0701]" == 1 && hasStr log "color = srgb")
     let (code, log, _) ← run "srgb-html" "article" "\\output{ formats = html, color = srgb }\n" one
     t "driver: html + color = srgb builds with no W0701" (code == 0 && count log "W0701" == 0)
-    -- Red 3: css = own ships no face, so the assertion fails; `fonts =
-    -- embedded` is the opt-in that embeds the font bytes and passes it.
     let (code, log, outDir) ← run "own" "article"
       "\\output{ formats = html, css = own }\n\\assert{ fonts.all_embedded }\n" one
     t s!"driver: css = own + fonts.all_embedded is E0330: {log}"
@@ -3471,7 +2883,6 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (code, _, outDir) ← run "optout" "article" "\\output{ formats = html, fonts = none }\n" one
     t "driver: fonts = none with no css story ships no faces"
       (code == 0 && !(← (outDir / "optout.fonts").pathExists))
-    -- Red 4: layout assertions judge the layout whatever is emitted.
     let (code, log, _) ← run "three" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" three
     t s!"driver: html-only pages == 3 holds on a three-page layout: {log}" (code == 0)
     let (code, log, _) ← run "one" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" one
@@ -3479,17 +2890,12 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       (code != 0 && hasStr log "E0330" && hasStr log "(actual: 1)")
     let (code, log, _) ← run "resume" "resume" "\\output{ formats = html }\n" one
     t s!"driver: an html-only résumé builds clean under its implied assertions: {log}" (code == 0)
-    -- Red 5: the one fail-loud case — a byte-reading assertion with no
-    -- artifact to read.
     let (code, log, outDir) ← run "md" "article" "\\output{ formats = md }\n\\assert{ fonts.all_embedded }\n" one
     t s!"driver: md-only fonts.all_embedded fails loud (E0330): {log}"
       (code != 0 && hasStr log "E0330" && hasStr log "no emitted artifact carries this measurement" &&
        !(← outDir.pathExists))
     IO.FS.removeDirAll dir
 
-/-- The allocation contract as one statement, from the two theorems the
-object table exists for: the ids are pairwise distinct (`objTable_inj`)
-and are exactly `[1, size)` (`objTable_covers` with `objTable_between`). -/
 theorem objTable_ids_set_eq (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) :
     (Pdf.objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids.toList.Nodup ∧
@@ -3499,17 +2905,10 @@ theorem objTable_ids_set_eq (keep : Array Nat) (imgs : Image.Store) (usedImgs : 
     ⟨Pdf.objTable_between keep imgs usedImgs np nOut nElems nFigDict nFigForm id,
      fun h => Pdf.objTable_covers keep imgs usedImgs np nOut nElems nFigDict nFigForm id h.1 h.2⟩⟩
 
-/-- Every object id the writer's cross-reference lists is allocated by one
-table (`Pdf.objTable`), read back through the engine's own reader: the
-table's ids are exactly the objects the file carries, per corpus fixture,
-and the row kind of an id is `kindOf`'s answer, never a default. -/
+/-- Every object id the writer's cross-reference lists is allocated by one table, read back through
+the engine's own reader, per corpus fixture. -/
 def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- One face, one page, nothing else: 1 catalog, 2 pages, four font ids,
-  -- the file, the page pair, then Info, the resources dictionary, XMP, the
-  -- object stream, the xref. The structure block sits between the outline
-  -- and the resources: root, parent tree, namespace, then one id per
-  -- element (here the `Document` alone).
   let t0 := Pdf.objTable #[0] {} #[] 1 0 1 0 0
   t "table: the font block is four ids then the file"
     (Pdf.ObjTable.type0Id 0 == 3 && Pdf.ObjTable.cidId 0 == 4 && Pdf.ObjTable.fdId 0 == 5 &&
@@ -3521,21 +2920,15 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      t0.nf == 1 && t0.np == 1)
   t "table: the conditional families allocate nothing yet"
     (t0.outputIntent.isNone && t0.icc.isNone)
-  -- Two faces, three pages, a two-item outline: the root then its items
-  -- sit between Info and the structure block.
   let t1 := Pdf.objTable #[0, 2] {} #[] 3 2 0 0 0
   t "table: two faces, three pages, an outline"
     (t1.fileId 1 == 12 && t1.pageId 2 == 17 && t1.contentId 2 == 18 && t1.infoId == 19 &&
      t1.outlineRootId == 20 && t1.outlineItemId 1 == 22 && t1.structTreeRoot == 23 &&
      t1.structBase == 26 && t1.resId == 26 && t1.xmpId == 27 && t1.xrefId == 29 && t1.size == 30)
-  -- The figure table's dictionaries, then its forms, after the resources.
   let t2 := Pdf.objTable #[0] {} #[] 1 0 1 2 3
   t "table: two figure dictionaries then three figure forms"
     (t2.resId == 15 && t2.figDictId 0 == 16 && t2.figDictId 1 == 17 && t2.figFormId 0 == 18 &&
      t2.figFormId 2 == 20 && t2.xmpId == 21 && t2.size == 24)
-  -- Images: a plain raster is one id; an alpha raster brings its SMask; a
-  -- copied page brings its resource graph, one id per object; a placeholder
-  -- (no info) brings nothing beyond its own slot.
   let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
   let rgbaPng := mkPng (pngChunk "IHDR" (pngIhdr 2 2 8 6 0) ++
@@ -3559,26 +2952,21 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "table: the pages follow the last image block"
     (ti.pageId 0 == 13 + formN && ti.contentId 1 == 16 + formN && ti.infoId == 17 + formN &&
      ti.size == 25 + formN)
-  -- 600 outline items make 613 compressed objects: three object streams,
-  -- their ids after XMP and before the xref.
+  -- 600 outline items make 613 compressed objects: three object streams.
   let tl := Pdf.objTable #[0] {} #[] 1 600 1 0 0
   t "table: one object stream per capacity of compressed objects"
     (Pdf.compressedCount tl.nf tl.np tl.nOut tl.nElems tl.nFigDict == 613 && tl.nStm == 3 &&
      tl.objStmId 0 == tl.xmpId + 1 && tl.objStmId 2 == tl.xmpId + 3 &&
      tl.xrefId == tl.xmpId + 4 && tl.size == tl.xmpId + 5)
-  -- The executable twin of `objTable_ids_set_eq`, on the shapes above.
   for (name, tb) in [("plain", t0), ("outline", t1), ("figures", t2), ("images", ti),
       ("streams", tl)] do
     t s!"table {name}: the ids are exactly [1, size)"
       (tb.ids.toList == List.range' 1 (tb.size - 1))
-  -- The row kind is a function of the table and the object stream's index.
   let cidx : Nat → Option Nat := fun id => if id == 1 then some 0 else if id == 2 then some 1 else none
   t "kindOf: xref, in-stream, direct — and none outside the table"
     (ti.kindOf cidx ti.xrefId == some .xref && ti.kindOf cidx 1 == some (.inStream 0) &&
      ti.kindOf cidx 2 == some (.inStream 1) && ti.kindOf cidx 8 == some .direct &&
      ti.kindOf cidx 0 == none && ti.kindOf cidx ti.size == none)
-  -- Every corpus PDF, read back: the objects the file carries are the
-  -- table's ids, in order, and the trailer's /Size is the table's.
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
@@ -3597,21 +2985,15 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         ((((PdfRead.trailer pdf).toOption.bind (·.get? "Size")).bind PdfRead.Obj.int?)
           == some (tb.size : Int))
 
-/-- One page placing the store's first image: the shape whose store
-decides the census's image rows. -/
+/-- One page placing the store's first image. -/
 def featurePlacingPages : Array Layout.PageOut :=
   #[{ lines := #[
     { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 10, setWidth := Dim.pt 100,
       segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15)] }] }]
 
-/-- The typed feature census: the registry (`Feature.all` derived and
-closed, names one-to-one with rows), `features` on the shapes that decide
-each row — a soft-mask image says `smask`, a plain one does not, a copied
-page says `formXObject` and `copiedGraph`, a JPEG says `dct` — and, over
-every corpus fixture, the four features no fixture emits stay unreached while
-the bookkeeping five — the structure tree among them — are always
-reached; and `objStmMulti` turns on with the second object stream, at the
-boundary exactly. -/
+/-- The typed feature census: the registry is closed and one-to-one, each row is decided by its
+shape, and over the corpus the unemitted features stay unreached and the bookkeeping ones are always
+reached. -/
 def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   t "features: the registry counts its constructors"
@@ -3629,7 +3011,6 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "features: crossing either projection falsifies the agreement check"
     ((!(HtmlDoc.kernCssFor kernOn).isEmpty) != Layout.kernEnabled kernOff &&
       (!(HtmlDoc.kernCssFor kernOff).isEmpty) != Layout.kernEnabled kernOn)
-  -- One page placing one image; the store decides the row.
   let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let jpg ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
   let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
@@ -3657,8 +3038,6 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t s!"features: a placeholder reaches no image feature: {repr missing}"
     (!missing.contains .smask && !missing.contains .formXObject && !missing.contains .dct &&
      !missing.contains .flatePredictor15)
-  -- Every placing is under a wrapper (pdf-tag-skeleton): the placeholder's
-  -- box a layout artifact, the loaded image of a leafless line a bare one.
   t "features: a placed image reaches marked content, loaded or not"
     (missing.contains .markedContent && plain.contains .markedContent)
   let bare := Pdf.features geom oneFace #[]
@@ -3671,9 +3050,6 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (let o := Pdf.features geom oneFace #[] {} #[{ title := "a", page := some 0 }]
      let u := Pdf.features geom oneFace #[] {} #[{ title := "a", url := some "https://example.org" }]
      o.contains .outlines && !o.contains .linkURI && u.contains .outlines && u.contains .linkURI)
-  -- Several object streams, at the boundary: each outline entry is one
-  -- more compressed object, so the entry that takes the count past the
-  -- capacity opens a second stream, and the census says so then, not before.
   let outlineOf (n : Nat) : Array Layout.OutlineEntry := Array.replicate n { title := "a" }
   let planAt (n : Nat) := Pdf.prepare geom oneFace #[] {} {} (outlineOf n)
   let multiAt (n : Nat) : Bool :=
@@ -3684,9 +3060,6 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (planAt (full + 1)).chunks.length == 2)
   t "features: objstm-multi exactly when a second object stream opens"
     (!bare.contains .objStmMulti && !multiAt full && multiAt (full + 1))
-  -- The census over the corpus: the three features no fixture emits never, a
-  -- transparency group exactly where a figure paints through a translucent
-  -- group, the bookkeeping five always, and the census is in registry order.
   let translucent : List String := ["svg-figures"]
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
@@ -3704,12 +3077,7 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     t s!"features {n}: in registry order, once each"
       (fs.toList == Pdf.Feature.all.filter fs.contains)
 
-/-- The recorded text page under the marking layer: the fills as one bare
-`/Artifact` block, the paragraph and heading lines as `/P` and `/H2`
-sequences numbered 0 and 1, the line whose leaf no element holds and the
-leafless line as bare artifacts, the loaded image of the leafless line a
-bare artifact, each placeholder under `/Layout`, the rules as one
-`/Layout` block. -/
+/-- The recorded text page under the marking layer. -/
 def artifactTextExpected : String :=
   "/Artifact BMC\nq 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\nEMC\n" ++
@@ -3726,9 +3094,7 @@ def artifactTextExpected : String :=
   "/Artifact << /Type /Layout >> BDC\nq 0.784 0.118 0.118 rg 10 22 40 1 re f Q\n" ++
   "q 0 0 0 rg 110 20 10 2 re f Q\nEMC"
 
-/-- The path page: two pictures, each its paths under one `/P` sequence
-(the tag is whatever type holds the leaf — here the synthetic tags'), the
-text object empty. -/
+/-- The path page: two pictures, each its paths under one `/P` sequence, the text object empty. -/
 def artifactPathExpected : String :=
   "/P << /MCID 0 >> BDC\n" ++
   "q 0.784 0.118 0.118 RG 0.4 w [3 3] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
@@ -3740,10 +3106,7 @@ def artifactPathExpected : String :=
   "q 1 97 2 2 re n Q\nEMC\n" ++
   "BT\nET"
 
-/-- Two furniture lines around a flow line, the second furniture line
-carrying a rule: the furniture groups are pagination artifacts inside the
-text object, the flow line — no leaf — a bare artifact, the rule a layout
-artifact after `ET`. -/
+/-- Two furniture lines around a flow line, the second carrying a rule. -/
 def artifactFurniturePage : Layout.PageOut := {
   lines := #[
     { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, furniture := true,
@@ -3760,24 +3123,15 @@ def artifactFurnitureExpected : String :=
   "/Artifact << /Type /Pagination >> BDC\n1 0 0 1 10 40 Tm\n[<0026>] TJ\nEMC\nET\n" ++
   "/Artifact << /Type /Layout >> BDC\nq 0 0 0 rg 40 40 10 1 re f Q\nEMC"
 
-/-- A line whose operators paint: a run with glyphs. Rules and images
-gather for painting after `ET`, a kern only moves, so a line of those
-alone puts nothing in the text object — unless it resets the expansion
-the line before it set (`lineSt`'s `Tz`), which `expectedArtifacts`
-tracks. -/
+/-- A line whose operators paint: one holding a run with glyphs. -/
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
     | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .gap _ _ | .decoratedGap _ _ _ | .poly _ _ => false
 
-/-- The artifact count a page owes, read from `Layout.PageOut` and the leaf
-tags, not from the stream: one block for its fills when it has any, one
-for its rules when it has any, one per image segment (the corpus is laid
-out here with no store, so every image is a placeholder), one per
-furniture line, one per line no element holds whose operators are not
-empty — a glyph run, or the expansion reset a rules-only line inherits
-from the expanded line before it. -/
+/-- The artifact count a page owes, read from `Layout.PageOut` and the leaf tags rather than the
+stream. -/
 def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : Nat :=
   let rules := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
@@ -3797,9 +3151,7 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
   (if page.fills.isEmpty then 0 else 1) + (if rules == 0 then 0 else 1) + images
     + (page.lines.filter (·.furniture)).size + unattributed
 
-/-- The runs under the pagination wrappers of a text object: what the
-furniture artifacts hide from a reader of real content — exactly the
-furniture lines' runs, no others. -/
+/-- The runs under a text object's pagination wrappers. -/
 def paginationRuns (ops : Array Pdf.TextOp) : List (Array Nat) :=
   ops.toList.flatMap fun o =>
     match o with
@@ -3812,21 +3164,14 @@ def furnitureRuns (page : Layout.PageOut) : List (Array Nat) :=
   page.lines.toList.flatMap fun l =>
     if l.furniture then l.segs.toList.flatMap Pdf.segRuns else []
 
-/-- The lines of a stream that open an artifact sequence. -/
 def isArtifactOpen (l : Pdf.Line) : Bool :=
   match l with
   | .open (.artifact _) => true
   | .open (.content _ _ _) => false
   | .op _ | .emc => false
 
-/-- Every painting operator sits inside a wrapper, and the ink is provably
-unmoved: the theorems (`mark_ink_exact`, `wrapped_covers`,
-`furniture_covers`, `numberMarks_mcids_exact`, `lines_marked_balanced`,
-`render_lines_exact`) judged executably on synthetic pages and on every
-corpus fixture — the spelling of the wrappers, the string-level strip
-equal to the typed strip, the artifact count against the page, the
-identifiers `0 … n−1` in stream order, balance, and no flow run under a
-pagination wrapper. -/
+/-- Every painting operator sits inside a wrapper with its ink unmoved, on synthetic pages and every
+corpus fixture. -/
 def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
@@ -3849,8 +3194,6 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "artifacts: the marks of the text page are its two leaves, numbered in stream order"
     (Pdf.pageMarks (ops contentOpsTextPage) == #[(0, 0), (1, 1)]
       && Pdf.pageMarks (ops contentOpsPathPage) == #[(0, 0), (1, 1)])
-  -- Well-nesting is a type: a hand-built nest renders balanced, and strips
-  -- to its innermost body.
   let nest : Array Pdf.ContentOp :=
     #[.marked (.artifact none) #[.marked (.artifact (some .page)) #[.fill contentOpsRed 1 2 3 4],
         .imageMissing 5 6 7 8], .fill contentOpsRed 9 9 9 9]
@@ -3863,8 +3206,6 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       && Pdf.render (Pdf.inkOps nest) == stripMarkLines (Pdf.render nest))
   t "artifacts: an empty wrapper is one opening line and one EMC line"
     (Pdf.render #[.marked (.artifact none) #[]] == "/Artifact BMC\nEMC")
-  -- Numbering descends every body and hands out `0 … n−1` in stream order,
-  -- however the construction nested.
   let nested : Array Pdf.ContentOp :=
     #[.marked (.content "P" 9 0) #[.fill contentOpsRed 1 2 3 4,
         .marked (.content "Span" 9 1) #[.fill contentOpsRed 5 6 7 8]],
@@ -3873,17 +3214,13 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "artifacts: numbering hands out 0 … n−1 in stream order through every body, leaves kept"
     (Pdf.pageMarks (Pdf.numberMarks nested) == #[(0, 0), (1, 1), (2, 2), (3, 3)]
       && Pdf.inkOps (Pdf.numberMarks nested) == Pdf.inkOps nested)
-  -- `BDC` takes two operands, `BMC` one: a bare tag before `BDC` is a
-  -- syntax error on which poppler drops the rest of the page (found by
-  -- `pdftotext`, not by any spelling test — the reason this row exists).
+  -- A bare tag before `BDC` is a syntax error on which poppler drops the rest of the page.
   t "artifacts: every opener is a legal operator — BMC alone, BDC with its dictionary"
     (Pdf.MarkTag.opener (.artifact none) == "/Artifact BMC"
       && [Pdf.ArtifactKind.pagination, .layout, .page].all (fun k =>
         let o := Pdf.MarkTag.opener (.artifact (some k))
         o.startsWith "/Artifact << /Type /" && o.endsWith " >> BDC")
       && Pdf.MarkTag.opener (.content "P" 7 3) == "/P << /MCID 7 >> BDC")
-  -- The corpus: every fixture's every page, under the fixture's own
-  -- structure tree.
   let mut pages := 0
   let mut wrappers := 0
   let mut marks := 0
@@ -3905,9 +3242,6 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       wrappers := wrappers + ls.countP Pdf.Line.isOpen
       marks := marks + pm.size
       furniture := furniture + (page.lines.filter (·.furniture)).size
-      -- The string-level strip is the typed strip (`render_inkOps_exact`
-      -- reaches `joinLines (stripMarks (lines ops))`; this closes the gap
-      -- between a line of the file and a `Line`).
       t s!"artifacts {n} p{i}: stripping the marked-content lines of the file is stripping the typed lines"
         (stripMarkLines s == Pdf.render (Pdf.inkOps ops)
           && stripMarkLines s == Pdf.joinLines (Pdf.stripMarks ls))
@@ -3932,18 +3266,14 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
             | .fill _ _ _ _ _ | .paint _ _ _ _ | .group _ _ _ _ | .shade _ _ | .outline _ _ _
             | .xobject _ _ _ _ | .image _ _ _ _ _ | .imageMissing _ _ _ _ | .marked _ _ => [])
               == furnitureRuns page)
-      t s!"artifacts {n} p{i}: every operation at the top of the stream is wrapped, or the text object with every operator wrapped"
+      t s!"artifacts {n} p{i}: every top-level operation is wrapped, or is the text object with every operator wrapped"
         (ops.all Pdf.ContentOp.wrapped)
   t s!"artifacts: the corpus exercised the layer ({pages} pages, {wrappers} wrappers, \
 {marks} marks, {furniture} furniture lines)"
     (pages > 0 && wrappers > 0 && marks > 0 && furniture > 0)
 
-/-- The profile grammar and the contract algebra: a declared conformance
-name is a set element implying exactly one assertion, judged on the census
-of the built bytes; the meet of two contracts fails no file the two would
-each pass; and no claim is written — every corpus PDF is byte-identical
-to the writer's output before the grammar existed (the writer takes no
-contract; asserted here by the absence of any identification). -/
+/-- A declared conformance name implies exactly one assertion judged on the built bytes' census, the
+meet of two contracts fails no file both pass, and no claim is written. -/
 def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
@@ -3952,8 +3282,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     match a.kind with
     | .pdfProfile n => some n
     | .pages _ _ | .fontsAllEmbedded | .textInArea | .minXHeight _ | .accessibilityAA => none
-  -- Red 1: the key is known, the name lands in the set, one assertion is
-  -- implied, and A-4's colour demand folds into the contract.
   let (d1, ds1) := out "formats = pdf, profiles = pdf/a-4"
   t "profiles: 'profiles = pdf/a-4' is a known key" (!ds1.any fun d => d.code == "E0322" || d.code == "E0321")
   t "profiles: the name lands in the set" (d1.output.profiles == #["pdf/a-4"])
@@ -3963,7 +3291,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((Ir.AssertKind.pdfProfile "pdf/a-4").reads == #["pdf"] &&
      (Ir.AssertKind.pdfProfile "pdf/a-4").source == "pdf.profile = pdf/a-4")
   t "profiles: pdf/a-4 implies color = srgb" (d1.output.contract.color == .srgb)
-  -- Red 2: a set, and a refused name naming the registered ones.
   let (d2, _) := out "formats = pdf, profiles = pdf/a-4, pdf/a-4"
   t "profiles: a repeated name is one entry and one assertion"
     (d2.output.profiles == #["pdf/a-4"] && profileAsserts d2 == #["pdf/a-4"])
@@ -3978,8 +3305,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "profiles: an unknown name never enters the set" (dz.output.profiles.isEmpty && (profileAsserts dz).isEmpty)
   t "profiles: a bare entry after another key is still refused"
     ((out "css = own, pdf/a-4").2.any (·.code == "E0320"))
-  -- Red 3: UA-2 folds alternatives = required; declared keys win, in
-  -- either order.
   let (d3, _) := out "formats = pdf, profiles = pdf/ua-2"
   t "profiles: pdf/ua-2 implies alternatives = required" (d3.output.contract.alternatives == .required)
   t "profiles: a declared 'color = device' wins over pdf/a-4's srgb"
@@ -3991,7 +3316,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((out "formats = pdf, profiles = pdf/ua-2, alternatives = judged").1.output.contract.alternatives == .judged)
   t "profiles: pdf/x-6 folds no backend-neutral demand"
     ((out "formats = pdf, profiles = pdf/x-6").1.output.contract == {})
-  -- The algebra, executable: the table, the meet, the order.
   t "contract: the registered names are exactly the table's"
     (PdfContract.Profile.names.all fun n => (PdfContract.Profile.contract? n).isSome)
   t "contract: brotli is not a registered name" ((PdfContract.Profile.contract? "brotli").isNone &&
@@ -4035,8 +3359,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         PdfContract.brotli.filters.contains f && PdfContract.archive.filters.contains f) &&
      PdfContract.brotli.filters.all fun f => !PdfContract.archive.filters.contains f ||
         (PdfContract.brotli.meet PdfContract.archive).filters.contains f)
-  -- Judged on a written file's census: plain passes, the others fail by
-  -- name, and each named fact turns the rule off.
   let (doc, _) := Elab.run "t" "A line of text."
   let lo := layoutOf oneFace doc
   let pdf := Pdf.write {} oneFace lo.pages
@@ -4048,8 +3370,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t "violations: today's file satisfies plain" ((rules PdfContract.plain).isEmpty)
     t "violations: archive fails on Info and the missing intent, nothing else"
       (rules PdfContract.archive == #["6.1.3-4", "6.2.4.3"])
-    -- Every PDF is tagged (pdf-tag-skeleton): the structure and mark rules
-    -- hold of the written file; what accessible still lacks is declared.
     t "violations: accessible fails on language and title, the tree and the mark being present"
       (rules PdfContract.accessible == #["8.4.4-1", "8.11.1-1"])
     t "violations: a title turns the title rule off (needsTitle_accounts, executable)"
@@ -4072,9 +3392,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   | .ok c =>
     t "violations: a declared language turns the /Lang rule off"
       ((PdfContract.violations PdfContract.accessible c none).map (·.rule) == #["8.11.1-1"])
-  -- The corpus: every fixture satisfies plain, every monotone instance
-  -- holds, and no file carries an identification — the writer is
-  -- untouched by this slice.
   let mut n := 0
   for a in arts do
     let name := a.name
@@ -4094,9 +3411,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
          ((v PdfContract.archive).isEmpty → (v PdfContract.plain).isEmpty))
       t s!"contract {name}: archive fails today on Info" ((v PdfContract.archive).any (·.rule == "6.1.3-4"))
   t s!"contract: the corpus was censused ({n} files)" (n > 0)
-  -- The driver, end to end: honest failure with the census facts as
-  -- actual, nothing written, exit 2; an unknown name refused; a set with
-  -- no PDF to judge fails loud.
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the profile checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
@@ -4140,12 +3454,8 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (code == 0 && (← (outDir / "none.pdf").pathExists))
     IO.FS.removeDirAll dir
 
-/-! ## The structure tree, read back -/
-
-/-- One structure element as the reader sees it: its object number, type,
-parent reference, child element numbers in `/K` order, the
-`(page object, mcid)` pairs of its marked-content references, and its
-`/Alt` as the file spells it, delimiters included. -/
+/-- One structure element as the reader sees it: object number, type, parent reference, child
+element numbers in `/K` order, `(page object, mcid)` references, and its `/Alt` as spelled. -/
 structure ReadElem where
   num : Nat
   s : String
@@ -4156,9 +3466,7 @@ structure ReadElem where
   alt : Option String
   deriving Repr, Inhabited
 
-/-- The reader's view of a file's structure tree: the root's `/K` chain,
-walked in preorder. `pageOf` maps a page object number to its index in
-the page tree. -/
+/-- The reader's view of a file's structure tree: the root's `/K` chain in preorder. -/
 def readStructTree (es : Array PdfRead.Entry) (root : PdfRead.Obj) : Array ReadElem := Id.run do
   let byNum (n : Nat) : Option PdfRead.Obj := (es.find? (·.num == n)).map (·.val)
   let mut out : Array ReadElem := #[]
@@ -4211,17 +3519,12 @@ def streamMcids (data : ByteArray) : List Nat :=
       | [] => none
     else none
 
-/-- **Every PDF is tagged.** The catalog carries `/MarkInfo << /Marked true >>`
-and a `/StructTreeRoot`; the tree read back through the engine's reader lists
-every marked-content identifier the page streams open, once, with the parent
-tree mapping each back to its element; the heading elements are exactly
-`Ir.headingLevels`; the typed model agrees with itself (tags, parent tree,
-leaf placeholders each held once). Every corpus fixture. -/
+/-- Every PDF is tagged: `/MarkInfo` and a `/StructTreeRoot`, a tree listing each marked-content
+identifier once with a parent tree mapping it back, and heading elements equal to
+`Ir.headingLevels`. -/
 def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
-  -- The typed model on a synthetic tree: kinds to types, holders, inline
-  -- elements empty, an image its own Figure with /Alt, headings the census.
   let tree : Struct.Tree := { children := #[
     .node (.heading 0) #[.leaf 0 (.text "Title")],
     .node .paragraph #[.leaf 1 (.text "Read "), .node (.link "https://example.org") #[.leaf 2 (.text "this")],
@@ -4252,8 +3555,6 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (tags == #[some "H1", some "P", some "P", some "Figure", some "P", some "P", none,
       some "LBody", some "LBody", some "Caption", some "Figure", some "Code"])
   t "struct: the heading census is the tree's" (Pdf.headingsOf sk == [0] && tree.headings == #[0])
-  -- fill and the parent tree on two synthetic pages: leaf 1 on page 0 as
-  -- mcid 0 and 1, leaf 5 on page 1 as mcid 0.
   let marks : Array (Array (Nat × Nat)) := #[#[(0, 1), (1, 1)], #[(0, 5)]]
   let filled := Pdf.fill sk (Pdf.leafPagesOf 12 marks)
   t "struct: fill puts each mark in the element holding its leaf, in page order"
@@ -4261,14 +3562,10 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      filled[9]!.kids == #[.mcid 1 0])
   t "struct: the parent tree maps every mark back to the element that lists it"
     (Pdf.parentTreeOf marks (Pdf.leafOwners sk 12) == #[#[some 2, some 2], #[some 9]])
-  -- The Struct projection of an elaborated document is a Document over Sect/H/P.
   let (doc, _) := elabStr (dvDoc "" "\\section{Head}\n\nText\\footnote{note body} more.\n\n\\begin{itemize}\\item one\\end{itemize}")
   let esk := Pdf.skeleton (Struct.ofDoc (Layout.pdfView doc))
   t "struct: an elaborated section, footnote and list project to H2, P with FENote, L/LI/LBody/P"
     (esk.map (·.s) == #["Document", "H2", "P", "FENote", "L", "LI", "LBody", "P"])
-  -- A picture's and an image's alternative, written and read back: each
-  -- Figure carries the /Alt the IR resolves, and a decorative object is no
-  -- element at all.
   let (altDoc, _) := elabStr (dvDoc "\\pictures{ tool = none }\n" (
     "\\begin{tikzpicture}[alt={Two squares joined by a bar}]" ++
       "\\fill (0,0) rectangle (1,1);\\end{tikzpicture}\n\n" ++
@@ -4290,7 +3587,6 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t "struct alt: the written Figures carry the /Alt the IR resolves; decoration is no element"
       (((readStructTree es root).filter (·.s == "Figure")).map (·.alt) ==
         #[some "(Two squares joined by a bar)", some "(North, South)", none])
-  -- Every corpus fixture, written and read back.
   let mut elems := 0
   let mut mcids := 0
   for a in arts do
@@ -4305,10 +3601,7 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"struct {n}: the catalog declares marked content and a structure tree root"
       (bytesContain text "/MarkInfo << /Marked true >>" && bytesContain text "/StructTreeRoot"
         && bytesContain text "/S /Document")
-    -- The typed model: placeholders held once, tags from the holders.
     let sk := Pdf.skeleton tree
-    -- The per-fixture floor beside the proved `skeleton_leafKids_nodup`, and of
-    -- `parentTree_covers`'s hypothesis.
     t s!"struct {n}: every leaf placeholder is held by exactly one element" (Pdf.leafKids sk).Nodup
     match PdfRead.objects pdf with
     | .error e => t s!"struct {n}: objects: {e}" false
@@ -4343,7 +3636,6 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
           | some p => (p == rootNum && e.num == tree[0]!.num)
             || tree.any fun q => q.num == p && q.kids.contains e.num
           | none => false)
-      -- The streams' identifiers against the tree's, as multisets.
       let mut streamPairs : Array (Nat × Nat) := #[]
       let mut perPageOk := true
       for (pg, i) in pageNums.zipIdx do
@@ -4365,7 +3657,6 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         perPageOk
       t s!"struct {n}: the tree lists every identifier the streams open, once, and no other"
         (sortPairs treePairs == sortPairs streamPairs)
-      -- The parent tree: entry [page][mcid] is the element listing it.
       let ptObj := PdfCensus.deref es ((root.get? "ParentTree").getD .null)
       let nums : Array PdfRead.Obj := match ptObj.get? "Nums" with
         | some (.arr xs) => xs
@@ -4379,7 +3670,6 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         | _ => false
       t s!"struct {n}: the parent tree maps every identifier back to the element listing it"
         (ptOk && (root.get? "ParentTreeNextKey").bind PdfRead.Obj.int? == some (pageNums.size : Int))
-      -- The heading census: H<n> elements project the shared IR rank.
       let hs := tree.filterMap fun e =>
         if e.s.startsWith "H" && e.s.length > 1 then (e.s.drop 1).toString.toNat? else none
       t s!"struct {n}: the heading elements project Ir.headingLevels exactly"
@@ -4391,9 +3681,7 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
 
 mutual
 
-/-- Every `img` element's `src` attribute in the typed tree, in document
-order. The self-contained-page oracle reads the attribute the tree
-carries, never the printed string. -/
+/-- Every `img` element's `src` attribute in the typed tree, in document order. -/
 -- conserves: none — a src census, not text
 def imgSrcs (acc : Array String) : Html.Node → Array String
   | .text _ => acc
@@ -4413,9 +3701,8 @@ def imgSrcsList (acc : Array String) : List Html.Node → Array String
 
 end
 
-/-- Captured raster bytes live in the typed image carrier and the one file
-the CLI publishes. Replacing a raster at the same source path changes its
-embedded URL; unchanged bytes preserve the page and URL. -/
+/-- Captured raster bytes live in the typed image carrier and the one file the CLI publishes, and
+replacing a raster changes its embedded URL. -/
 def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let png : Image.Plan := { pxW := 64, pxH := 40 }
@@ -4430,14 +3717,12 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   let rectsUri ← htmlDataOracle "image/png" rects
   let alphaUri ← htmlDataOracle "image/png" alpha
-  -- A loaded raster embeds its captured bytes, independent of source naming.
   let doc ← docOf "\\includegraphics[alt={A box}]{rects.png}"
   let one : Image.Store := { entries := #[{ src := "rects.png", info := some png, source := some rects }] }
   t "html assets: a loaded raster's src embeds its exact capture"
     (srcsOf one doc == #[rectsUri])
   t "html assets: the capture list carries the source bytes"
     ((HtmlDoc.imageResources one).map (·.bytes) == #[rects])
-  -- Two sources sharing a basename retain their distinct captured content.
   let doc2 ← docOf "\\includegraphics[alt={A}]{a/plot.png} and \\includegraphics[alt={B}]{b/plot.png}"
   let two : Image.Store := { entries := #[
     { src := "a/plot.png", info := some png, source := some rects },
@@ -4446,27 +3731,20 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     (srcsOf two doc2 == #[rectsUri, alphaUri] && rectsUri != alphaUri)
   t "html assets: captured resources cover both in store order"
     ((HtmlDoc.imageResources two).map (·.bytes) == #[rects, alpha])
-  -- Red 3: an entry that did not load keeps the source spelling (the
-  -- placeholder, already diagnosed) and has no asset row.
   let unloaded : Image.Store := { entries := #[{ src := "rects.png" }] }
   t "html assets: an unloaded entry keeps its source spelling and ships no copy"
     (srcsOf unloaded doc == #["rects.png"] && (HtmlDoc.imageAssets unloaded).isEmpty)
-  -- graphicx's extension resolution: the entry's href names the file on
-  -- disk, and the copy takes that name, not the bare spelling.
   let bare ← docOf "\\includegraphics[alt={A box}]{rects}"
   let resolved : Image.Store :=
     { entries := #[{ src := "rects", href := "rects.png", info := some png, source := some rects }] }
   t "html assets: a bare graphicx name embeds the resolved file's bytes"
     (srcsOf resolved bare == #[rectsUri])
-  -- A PDF source is a form XObject in the PDF and no browser image either
-  -- way: it keeps today's src and ships no copy (named-next for html-oracle).
   let pdfDoc ← docOf "\\includegraphics[alt={A page}]{box.pdf}"
   let pdfPlan := (Image.decode (← IO.FS.readBinFile "testdata/corpus/figures/box.pdf")).toOption
   let pdfStore : Image.Store :=
     { entries := #[{ src := "box.pdf", info := pdfPlan }] }
   t "html assets: a PDF source keeps its spelling and ships no copy"
     (srcsOf pdfStore pdfDoc == #["box.pdf"] && (HtmlDoc.imageAssets pdfStore).isEmpty)
-  -- A boundary picture carries the SVG bytes captured by conversion.
   let picSrc := Ir.picSrcPrefix ++ "abc"
   let picStore : Image.Store :=
     { entries := #[{ src := picSrc, webSvg := some "<svg/>".toUTF8
@@ -4474,14 +3752,10 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html assets: a boundary picture embeds its SVG bytes"
     (HtmlDoc.imageHref picStore picSrc == "data:image/svg+xml;base64,PHN2Zy8+" &&
      (HtmlDoc.imageResources picStore).map (·.bytes) == #["<svg/>".toUTF8])
-  -- The name's index is recoverable whatever the basename (the executable
-  -- twin of `imageAssetName_inj`).
   t "html assets: equal names mean equal indices"
     (HtmlDoc.imageAssetName 3 "a/x.png" == "i3-x.png" &&
      HtmlDoc.imageAssetName 3 "a/x.png" != HtmlDoc.imageAssetName 13 "x.png" &&
      HtmlDoc.imageAssetName 12 "x.png" != HtmlDoc.imageAssetName 1 "2-x.png")
-  -- The CLI embeds the source bytes in the file named by `-o`; a failing
-  -- assertion still leaves no output directory or artifact.
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the asset checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
@@ -4540,26 +3814,14 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
        assetDirs.isEmpty)
     IO.FS.removeDirAll dir
 
-
-
-
-/-- Anchor claiming: the ids this backend assigns are unique, numbered in
-the documented order, and cost their count rather than its cube.
-
-`claimId` probed a growing association array for every candidate id, so
-`k` sections sharing one slug scanned `k` entries `k` times. Compiled, 1,800
-same-titled sections cost 5.4 s that way and 234 ms keyed. The numbering is
-pinned beside the timing because the cheap way to make the probe fast would
-be a per-base counter, which assigns different ids the moment another
-title's slug has already taken `base-2` — so the ladder is the contract,
-not an implementation detail. -/
+/-- Assigned anchor ids are unique, numbered by the documented ladder, and cost their count rather
+than its cube. -/
 def anchorCostChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pageOf (body : String) : String × Array Diag :=
     HtmlDoc.emit {} (elabStr ("\\documentclass{article}\\begin{document}" ++
       body ++ "\\end{document}")).1
   let page (body : String) : String := (pageOf body).1
-  -- Identical titles take the documented base, base-2, base-3 ladder.
   let shared := page (String.join ((List.range 3).map fun _ => "\\section{Topic}"))
   t "the first of three identical titles claims the bare slug"
     (hasStr shared "id=\"topic\"")
@@ -4568,27 +3830,18 @@ def anchorCostChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "and no fourth id is invented" (!hasStr shared "id=\"topic-4\"")
   t "a repeated identical title takes its number without a warning"
     (((pageOf "\\section{Topic}\\section{Topic}").2.filter (·.code == "W0327")).isEmpty)
-  -- A *different* title folding to the same slug is named, not resolved in
-  -- silence: an in-page link written from the second title would otherwise
-  -- reach the first section with no error anywhere.
   let clash := pageOf "\\section{Data set}\\section{Data-set}"
   t "two different titles sharing a slug both ship an anchor"
     (hasStr clash.1 "id=\"data-set\"" && hasStr clash.1 "id=\"data-set-2\"")
   t "and the collision is named W0327"
     ((clash.2.filter (·.code == "W0327")).size == 1)
-  -- Distinct slugs stay distinct at scale, and the ladder is not entered.
   let wide := page (String.join ((List.range 4000).map fun i => s!"\\section\{Topic {i}}"))
   t "the four-thousandth distinct section ships its own anchor, unnumbered"
     (hasStr wide "id=\"topic-3999\"" && !hasStr wide "id=\"topic-3999-2\"")
-  -- The cost witness, in the shape that was cubic: every section shares one
-  -- slug, so every claim walks the whole ladder and the claim is the
-  -- measurement.
   let n := 1800
   let t0 ← IO.monoMsNow
   let big := page (String.join ((List.range n).map fun _ => "\\section{Topic}"))
-  -- Consumed before the clock is read again: a pure `let` floats to its
-  -- first use, so a timing with nothing between the two reads measures
-  -- nothing (the FontDb.families precedent).
+  -- Consumed before the clock is read again: a pure `let` floats to its first use.
   t s!"all {n} same-titled sections ship an anchor"
     (hasStr big s!"id=\"topic-{n}\"" && hasStr big "id=\"topic\"")
   let sharedMs := (← IO.monoMsNow) - t0

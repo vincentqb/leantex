@@ -21,10 +21,8 @@ private def triggerAt (ds : Array Diag) (kind : DiagCode) (file : String)
       s.pos.line == line && s.pos.col == col
   found.size == 1 && found.all (·.triggerText == some trigger)
 
-/-- Replacement text crossing from execution into compatibility rewriting
-names its actual macro use, even when definition coordinates collide with
-an unrelated command in the caller. Written arguments and newly read files
-keep their own sites; a selected default belongs to the macro use. -/
+/-- Replacement text crossing into compatibility rewriting names its macro use, while written
+arguments and newly read files keep their own sites. -/
 def diagnosticTriggerExpansionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let child := "child.tex"
@@ -94,9 +92,8 @@ def diagnosticTriggerExpansionChecks (ref : IO.Ref (List String)) : IO Unit := d
     t "diagnostic trigger expansion: an included deferred body keeps its site"
       (triggerAt ds .W0104 deep 5 18 "\\directlua")
 
-/-- Ordinary command expansion and compatibility execution share source
-ownership: replacement code belongs to the outer written call, while a
-written argument retains its own site and command. -/
+/-- Command expansion and compatibility execution share source ownership: replacement code belongs
+to the outer call, a written argument to its own site. -/
 def diagnosticElabMacroChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let animation := "\\animategraphics{12}{poster.pdf}{}{}"
@@ -137,10 +134,8 @@ def diagnosticElabMacroChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic macro origin: fulfilled inputs retain the written macro trigger"
       (readDs.isEmpty && owns ds root 3 1 "\\movie")
 
-/-- Compatibility diagnostics name the construct at their source site.
-The spelling is independent of the message, subject and refused name; file
-scope, nested commands and deferred replay must retain that ownership.
-Adding it changes no other diagnostic field or compatibility behaviour. -/
+/-- Compatibility diagnostics name the construct at their source site, independently of message,
+subject and refused name, through file scope, nesting and deferred replay. -/
 def diagnosticTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
   diagnosticTriggerExpansionChecks ref
   diagnosticElabMacroChecks ref

@@ -9,15 +9,11 @@ open LeanTex.Core
 
 namespace Tests.ColourSolve
 
-
-/-- Gamut mapping holds a colour's lightness and hue and loses only chroma;
-the solver that derives a legible tone holds the hue it was given. Before,
-a per-channel clip of an out-of-gamut candidate turned an orange about 15°
-toward red. -/
+/-- Gamut mapping keeps a colour's lightness and hue and loses only chroma, and the legible-tone
+solver keeps the hue it was given. -/
 def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- An oklch(0.70 0.30 150°) green is outside sRGB: it maps to a fitting
-  -- value at its own lightness and direction, with less chroma.
+  -- An oklch(0.70 0.30 150°) green is outside sRGB: it maps at its own lightness and direction.
   let green := Oklab.ofLch (7 * 10 ^ 17) (3 * 10 ^ 17) 150000
   let o : Oklab.Okl := { L := green.L, a := green.a, b := green.b, f := Oklab.fracOne }
   t "gamut map: the green is outside sRGB" (!o.inGamut)

@@ -6,11 +6,9 @@ public section
 
 open LeanTex.Core
 
-/-! Listing token paint against Pygments' own answers. The oracle
-(`testdata/oracles/pygments-styles.tsv`, regenerated with
-`scripts/gen-pygments-style-data.lean`) holds, for every standard token type
-of every shipped style, `style_for_token` and what the LaTeX formatter minted
-runs ships; the artifacts are then held to the engine's reading of it. -/
+/-! Listing token paint against Pygments' own answers: the oracle
+`testdata/oracles/pygments-styles.tsv` holds `style_for_token` and minted's composition for every
+standard token type of every shipped style. -/
 
 namespace Tests.ListingStyleTable
 
@@ -26,8 +24,8 @@ def oracleRows : IO (Array (Array String)) := do
     !l.isEmpty && !l.startsWith "#" && !l.startsWith "style\t").toArray.map
       fun l => (l.splitOn "\t").toArray
 
-/-- A channel as the LaTeX formatter writes it, `'%.2f' % (v / 255)`: no
-8-bit channel lies on a tie, so rounding to nearest is the whole rule. -/
+/-- A channel as the LaTeX formatter writes it, `'%.2f' % (v / 255)`; no 8-bit channel lies on a
+tie. -/
 def twoDp (v : UInt8) : String :=
   let n := (200 * v.toNat + 255) / 510
   s!"{n / 100}.{if n % 100 < 10 then "0" else ""}{n % 100}"
@@ -46,9 +44,8 @@ def boxCell : Option Box → String
     s!"frame:{texRgb border}/{if fill == Ir.Color.white then "1,1,1" else texRgb fill}"
   | some (.fill fill) => s!"fill:{texRgb fill}"
 
-/-- The engine's two readings of one type, in the oracle's spelling: Pygments'
-inheritance, then the LaTeX formatter's composition. The chain cell is
-Pygments' own spelling, passed through. -/
+/-- The engine's two readings of one type in the oracle's spelling: Pygments' inheritance, then the
+LaTeX formatter's composition. -/
 def cellsOf (style : Ir.ListingStyle) (type chain : String) : Array String :=
   let table := CodeColor.table style
   let k := Kind.ofPygments type
@@ -129,8 +126,8 @@ def holeDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
   elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
     ("\\begin{minted}{lean4}\n" ++ holeSource ++ "\n\\end{minted}"))
 
-/-- Invented listings that define a function and a class and use them, one
-per language, beside a builtin and a parameter. -/
+/-- Invented listings that define a function and a class and use them, one per language, beside a
+builtin and a parameter. -/
 def defsPython : String :=
   "class Basket:\n    pass\n\ndef tally(items):\n    return len(items)\n\nprint(tally(Basket()))"
 def defsLean : String := "def tally (n : Nat) : Nat := n + 1\n#eval tally 2"
@@ -147,15 +144,8 @@ namespace Tests
 open Tests.ListingStyleTable
 open LeanTex.Core.ListingHighlight (Kind)
 
-/-- **Every token type of every shipped style is painted as Pygments and
-minted paint it, in both artifacts.** The engine's resolution of the
-generated declarations equals `style_for_token`, and its composition equals
-what minted's `\PYG` chain ships (a `nobold` under a bold type stays bold, as
-a lualatex build shows); a style colour ships unchanged where legible and
-otherwise as the least legible mix; PDF glyphs and typed HTML carry each
-type's ink and weights. On the base tree the painter knew seven classes:
-`Generic.Error` and the other types fell to plain, and a proof hole shipped
-in bold keyword green. -/
+/-- Every token type of every shipped style is painted as Pygments and minted paint it, in both
+artifacts, a style colour shipping unchanged where legible. -/
 def listingStyleTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let rows ← oracleRows
@@ -206,7 +196,6 @@ def listingStyleTableChecks (ref : IO.Ref (List String)) : IO Unit := do
       let inks := (kinds.filter (·.role == r)).map fun k => Listing.ink doc.palette none k (style := style)
       t s!"code roles: {style.name} every type of the {repr r} role ships one ink"
         (inks.all (· == inks[0]?.getD none))
-  -- The report: a Lean proof hole under minted's styles.
   let friendlyRed := Listing.ink {} none .genericError (style := some .friendly)
   t "pygments styles: friendly's Generic.Error ships its own #FF0000"
     (friendlyRed == some (Ir.Color.ofHtml 255 0 0))
@@ -238,8 +227,8 @@ def listingStyleTableChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((ShellHighlight.witnessPaint? holeSource "theorem" laid).any fun paint =>
         !paint.isEmpty && paint.all (· == (1, green)))
 
-/-- Two languages' must-not-ship markers: a Lean proof hole and a raised
-not-implemented error, one minted listing each, under an invented palette. -/
+/-- Two languages' must-not-ship markers, a Lean proof hole and a raised not-implemented error,
+under an invented palette. -/
 def markerLean : String := "theorem t : True := by\n  sorry"
 def markerPython : String := "def f():\n    raise NotImplementedError"
 
@@ -248,9 +237,8 @@ def markerDoc (preamble : String) : Ir.Doc × Array Diag :=
     ("\\begin{minted}{lean4}\n" ++ markerLean ++ "\n\\end{minted}\n" ++
      "\\begin{minted}{python}\n" ++ markerPython ++ "\n\\end{minted}"))
 
-/-- Oklab hue geometry over shipped colours, for the derivation checks: the
-cosine of the hue angle between two colours, in thousandths, and a colour's
-chroma at `Oklab.labOf`'s scale. -/
+/-- Oklab hue geometry over shipped colours: the cosine of the hue angle between two colours in
+thousandths, and a colour's chroma. -/
 def hueCosMilli (c c' : Ir.Color) : Int :=
   let p := Oklab.labOf c
   let q := Oklab.labOf c'
@@ -259,17 +247,15 @@ def hueCosMilli (c c' : Ir.Color) : Int :=
 
 def chromaOf (c : Ir.Color) : Nat := Nat.sqrt (Oklab.chromaSq (Oklab.labOf c)).toNat
 
-/-- A listing document's visible code as each artifact paints it: the laid
-glyphs' face index and colour, and the typed HTML's paint. -/
+/-- A listing document's visible code as each artifact paints it. -/
 def codePaints (fonts : Font.FontSet) (doc : Ir.Doc) :
     Array (Char × Nat × Ir.Color) × Array (Char × HtmlPaint) :=
   (((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
       ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color)),
     (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c)
 
-/-- The code roles: every token type's role by its parent chain, each role's
-colour from the document's palette by the stated rule or the style, and one
-colour and weight for every type of one role, in both artifacts. -/
+/-- The code roles: every token type's role by its parent chain, each role's colour from the palette
+by the stated rule or the style, one colour and weight per role, in both artifacts. -/
 def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let role (path : String) := Kind.role ⟨path⟩
@@ -331,8 +317,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code roles: a literal hue within 60° of the ink's leaves keywords in the ink"
     (let r := roles (invented.declare (.role .example) teal |>.declare (.role .ink) (Ir.Color.ofHtml 0x1C 0x3A 0x4A))
      hueCosMilli teal (Ir.Color.ofHtml 0x1C 0x3A 0x4A) ≥ 500 && r.get .keyword == none)
-  -- A muted step derived by a rule, never a fixed mix: the quietest tone
-  -- of the ink's own hue that reads as text, 0.10 above WCAG's 4.5:1.
+  -- A muted step is derived, never a fixed mix: the ink hue's quietest tone at 0.10 above 4.5:1.
   let quietTone (p : Option CodeColor.Paint) : Bool :=
     match p with
     | some q => !q.declared && q.role == some .codeComment && hueCosMilli q.color ink ≥ 990 &&
@@ -408,9 +393,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{lstlisting}[formatcom=\\itshape]\nx\n\\end{lstlisting}")
   t "code roles: formatcom is minted's: a listings key of that name stays unknown"
     (lstDs.any (·.code == "W0110") && lstDs.all (·.code != "N0102"))
-  -- The style is read only for a role the palette leaves open: two builds
-  -- differing only by the declared style ship one page exactly when the
-  -- palette answers every role, and the style is then named as inert.
+  -- The style is read only for a role the palette leaves open, and is otherwise named as inert.
   let shipped (doc : Ir.Doc) := (glyphPaint (layoutOf fonts doc), htmlLines doc)
   let open_ := "\\palette{fg=#202440,bg=#FFFFFF,muted=#5A6068,example=#1A6A3A}"
   for (label, decl, answered) in [("an invented palette", palette, true),
@@ -437,10 +420,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
         { color := c, role := some .codeError, declared := false, styled := true })
   t "code roles: a muted step that is the alert quiets comments to the quietest tone of the ink's hue"
     (quietTone ((roles (invented.declare (.role .muted) alert)).get .comment))
-  -- A key that once coloured one token type colours no listing now: named
-  -- once where the palette declares it, its name still a colour, and a
-  -- listing holding a token of each key's type ships as the document
-  -- without the key ships it, where each role's own key repaints it.
+  -- A retired per-type key is named once and leaves its listing as the document without the key.
   let typed (preamble : String) : Ir.Doc :=
     (elabStr (dvDoc ("\\usepackage{minted}" ++ palette ++ preamble)
       "\\begin{minted}{python}\nprint(\"s\", 1 + len(x))\n\\end{minted}")).1
@@ -465,17 +445,8 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Theme.builtin.all fun th => (deckBundle th).entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
-/-- A generated palette's code is complete: under `\palette[seeds]`, a
-listing's keywords, names and literals each set in a colour of their own,
-showing a hue 60° or more from the others', the error's and a hued listing
-ink's on these invented seeds, each derived one reading at the code tone on
-the page; comments set in the generated muted step and errors in the alert;
-a role its own key declares ships as declared and the others are planned
-around it; and the web page sets every role in the PDF's colour. An ink
-whose hue stands clear of the alert's keeps its keywords in it, and two inks
-a channel step apart, whose arcs tie exactly, set their code in the same
-hues. Held over the shipped page and the typed HTML, and over the export a
-TeX build reads, from the palette the script builds. -/
+/-- A generated palette's code is complete: keywords, names and literals in hues 60° or more apart,
+comments in the muted step and errors in the alert, alike in both artifacts and the TeX export. -/
 def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "seeded code: the serif faces load"
@@ -558,8 +529,7 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       let native := CodeExport.pageBrushes doc.palette .default
       t s!"seeded code, {label}: the script's palette paints the native page's code"
         (ListingHighlight.Role.all.all fun r => (script.get r).ink == (native.get r).ink)
-  -- Two inks a channel step apart plan their code alike where their arcs tie
-  -- exactly: the tie rule settles it, never rounding.
+  -- Two inks a channel step apart plan their code alike where their arcs tie exactly.
   let (near, _) := build "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A" ""
   let (next, _) := build "ink = #2C2440, paper = #FFFFFF, accent = #E85D2A" ""
   match paints near, paints next with
@@ -568,10 +538,8 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hueCosMilli kw kw' ≥ 990 && hueCosMilli nm nm' ≥ 990 && hueCosMilli lit lit' ≥ 990)
   | _, _ => t "seeded code: two inks a step apart ship every role in one colour" false
 
-/-- A name reads alike where its listing defines it and where it uses it,
-and from one language to the next: a definition's name sets in the ink, as
-the identifiers that use it do, while a builtin keeps the name role. Held
-over the shipped page and the typed HTML, under a style and a palette. -/
+/-- A name reads alike where its listing defines it and where it uses it, and across languages,
+while a builtin keeps the name role. -/
 def definitionNameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "definition names: the serif faces load"
@@ -612,11 +580,8 @@ def definitionNameChecks (ref : IO.Ref (List String)) : IO Unit := do
       (typedBuiltin.isSome && typedBuiltin != firstHtml &&
         typedBuiltin.any fun p => p.color.any (hasStr · (HtmlDoc.cssColor builtinInk)))
 
-/-- The TeX export of a palette's code colours: one redefinition per standard
-token type, every setting stated, each role's colour the one the engine
-paints on the page (`CodeExport.pageBrushes`), the alert the palette's own,
-each coloured type `\let` to its role's colour command, and a document that
-reads the export, as one both engines build does, built without a warning. -/
+/-- The TeX export of a palette's code colours: one redefinition per standard token type, each
+role's colour the one the page paints, and a document reading it builds without a warning. -/
 def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ink := Ir.Color.ofHtml 0x20 0x24 0x40

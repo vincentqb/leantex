@@ -12,9 +12,7 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests.ListingProvider
 
--- Synthetic classification data, independent of an installed lexer, for a
--- language no native lexer reads. The provider's language accuracy is a
--- separate rendered acceptance report.
+-- Synthetic classification data for a language no native lexer reads.
 def providerSource : String := "echo\t\"ready\"\n\n$HOME  # terminal\t  "
 
 def reply (request : ListingReply.Request) : String :=
@@ -73,10 +71,8 @@ end Tests.ListingProvider
 
 namespace Tests
 
-/-- Invocation spelling selects the provider environment even when several
-paths resolve to one executable, and a python3 the OS refuses to execute is
-passed over as execvp passes it. Fresh fulfilments must observe environment
-and interpreter changes, including recovery after an unavailable provider. -/
+/-- Invocation spelling selects the provider's environment, an unexecutable python3 is skipped as
+execvp skips it, and each fulfilment rereads the environment. -/
 def listingProviderInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some lean ← ToolProbe.onPath "lean" |
     throw <| IO.userError "listing invocation checks require the Lean interpreter"
@@ -111,9 +107,8 @@ def main (args : List String) : IO UInt32 := do\n\
       check ref s!"listing provider/{mode}: {result.stdout}{result.stderr}"
         (result.exitCode == 0)
 
-/-- Checked replies must reach real frontend listings and both artifacts.
-Missing, stale, foreign and forged replies keep the source without class paint;
-completed refusals retain their typed, keyed diagnostic on re-elaboration. -/
+/-- Checked replies reach real listings in both artifacts, rejected replies ship the plain source,
+and a completed refusal replays its keyed diagnostic. -/
 def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingProviderInvocationChecks ref
   let t := check ref
@@ -121,7 +116,6 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse bytes | failures ref "listing provider: fixture font invalid"
   let fonts := oneFaceOf font
   let source := ListingProvider.providerSource
-  -- The style a listing declares, none where it declares none.
   let cases : List (Bool × Option Ir.ListingStyle × String) := [
     (false, none, dvDoc "\\usepackage{minted}"
       ("\\begin{minted}{fish}\n" ++ source ++ "\n\\end{minted}")),
@@ -177,14 +171,14 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
             else color.any fun css => hasStr css (HtmlDoc.cssColor ink))
     let forged := answers.map fun a => { a with tokens := #[#[{ text := "changed" }]] }
     let stale := answers.map fun a => { a with request := { a.request with source := "stale" } }
-    -- Exact source still belongs to the language that requested its classes.
+    -- The exact source under another language is still a foreign reply.
     let foreign := answers.map fun a =>
       { a with request := { a.request with language := "foreign-language" } }
     for rejected in [#[], forged, stale, foreign] do
       let (plain, _, _) := Elab.runPrepared "listing" { base with listingReplies := rejected } earlier
       let (_, plainBody, _) := emitIn {} plain .print
       let (_, coldBody, _) := emitIn {} cold .print
-      t "listing provider: missing, stale, foreign and forged answers ship the original plain page"
+      t "listing provider: missing, stale, foreign and forged answers ship the plain page"
         (plainBody.map (Html.render · 0) == coldBody.map (Html.render · 0) &&
           reprStr (layoutOf fonts plain).pages == reprStr (layoutOf fonts cold).pages)
     let .ok (plainReplies, refused) := ListingReply.decode requests

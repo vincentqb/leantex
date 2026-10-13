@@ -3,10 +3,8 @@ module
 import LeanTex.Core.BibStyle
 import LeanTex.Core.Pending
 
-/-! Ordinary bibliography clients can choose the citation and entry style,
-resolve references and transport source metadata. The resolution gate composes
-those contracts with references and images. Scanners, formatting state and
-resolver step lemmas belong to their implementation modules. -/
+/-! An ordinary import lets bibliography clients choose styles, resolve references and carry source
+metadata; scanners and formatting state stay internal. -/
 
 open LeanTex.Core
 

@@ -9,8 +9,7 @@ open LeanTex.Core LeanTex.Cli
 
 namespace DiagnosticLayoutOrigins
 
-/-- Equality of a location intentionally ignores expansion metadata. These
-guards also read the exact command and origin stack carried to shipment. -/
+/-- Location equality, expansion metadata ignored. -/
 private def sameSource (actual : Option Span) (expected : Span) : Bool :=
   actual.any fun s =>
     s == expected && s.pos.command == expected.pos.command &&
@@ -36,10 +35,8 @@ private def picture : String :=
 
 end DiagnosticLayoutOrigins
 
-/-- Diagnostic attribution is metadata: use the exact box/line that raised
-the deficit, preserve expansion evidence, and leave Layout.Out paint and the
-driver's PDF bytes unchanged. Missing source evidence stays missing rather
-than borrowing a neighbouring declaration. All source here is invented. -/
+/-- Diagnostic attribution is metadata: the box or line that raised the deficit, with its expansion
+evidence, and the page and PDF bytes unchanged; missing evidence stays missing. -/
 def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     (fs : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -58,8 +55,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   let doc : Ir.Doc := { body := #[.para content] }
   let out := Layout.run geom fs none doc
   let overfull := out.diags.filter (·.kind == .W0005)
-  -- An overfull line is a place (`DiagCode.namesPlace`): its span keeps the
-  -- written command and the expansion, and its header quotes neither.
+  -- An overfull line is a place: its span keeps command and expansion, its header quotes neither.
   t "layout origins: body overflow keeps each line's command and expansion in its span"
     (overfull.size == 2 &&
       overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
@@ -90,9 +86,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
       d.span.isNone && d.trigger.isNone &&
         d.message == "overfull lines that no source site names; no feasible break" &&
         d.detail == some "2 overfull lines")
-  -- Located and unlocated overfull lines in one document: the unlocated
-  -- lines' one record keeps words of its own, so the log's lines account
-  -- for every overfull line.
+  -- The unlocated lines' one record keeps its words, so the log accounts for every overfull line.
   let mixed : Ir.Doc := { doc with body := doc.body ++ bare.body }
   let mixedW := (Layout.run geom fs none mixed).diags.filter (·.kind == .W0005)
   let shown := (Diag.foldRepeats mixedW).filter (·.severity.isWarning)

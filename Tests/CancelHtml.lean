@@ -8,11 +8,8 @@ open LeanTex.Core LeanTex.Core.Math
 
 mutual
 
-/-- Read the target's font-size level from the emitted tree. MathML Core
-§2.1.6 and §3.4.1: an `msup` script child increments inherited math-depth;
-an explicit `scriptlevel` replaces that increment on that element.
-`+0` on a descendant only preserves the depth its parent already has.
-Unrecognised levels remain `none`, so they cannot certify a size. -/
+/-- The target's font-size level read from the emitted tree, by MathML Core's math-depth rules
+(§2.1.6, §3.4.1); an unrecognised level stays `none`. -/
 private def cancelTargetDepths (parent : Option Nat) (script : Bool)
     (acc : List (Option Nat)) : Html.Node → List (Option Nat)
   | .text s => if s == "7" then parent :: acc else acc
@@ -38,8 +35,7 @@ private def cancelStyleDepth : MathStyle → Nat
   | .script _ => 1
   | .scriptscript _ => 2
 
-/-- Read only the named element's attribute. A descendant's triangle mask
-does not clip its containing box, nor reserve room for that box. -/
+/-- Only the named element's own attribute: a descendant's mask clips nothing above it. -/
 private def cancelAttr (key : String) : Html.Node → String
   | .elem _ attrs _ => (attrs.find? (·.1 == key)).map (·.2) |>.getD ""
   | _ => ""
@@ -52,8 +48,7 @@ private def cancelKids : Html.Node → Array Html.Node
 private def cancelHasStr (hay needle : String) : Bool :=
   (hay.splitOn needle).length > 1
 
-/-- The own CSS declaration, rather than a substring that may name a
-property on a different element. -/
+/-- The node's own CSS declaration of `key`. -/
 private def cancelCss (key : String) (node : Html.Node) : String :=
   let decls := (cancelAttr "style" node).splitOn ";"
   let fields := decls.map fun decl =>
@@ -62,11 +57,8 @@ private def cancelCss (key : String) (node : Html.Node) : String :=
       String.intercalate ":" parts.tail |>.trimAscii.toString)
   (fields.reverse.find? (·.1 == key)).map (·.2) |>.getD ""
 
-/-- A corner triangle's whole containing rectangle lies in the operand:
-right/top anchors and percentage caps govern both axes, and every polygon
-coordinate lies inside that rectangle. A motion path or transform would
-invalidate this argument, even if the other declarations still appeared.
-The browser raster oracle independently checks the platform's paint. -/
+/-- A corner triangle's whole containing rectangle lies in the operand: anchors and percentage caps
+govern both axes, and every polygon coordinate lies inside. -/
 private def cancelHeadPlaced (rule : Nat) (box : Html.Node) : Bool :=
   let head := (cancelKids box).back?.getD (.text "")
   let css := cancelAttr "style" head
@@ -80,17 +72,16 @@ private def cancelHeadPlaced (rule : Nat) (box : Html.Node) : Bool :=
     !cancelHasStr css "offset-" && !cancelHasStr css "transform" &&
     (cancelKids head).isEmpty
 
-/-- Read a CSS length back into the provider's units, rounding only after
-parsing the file's decimal. Unitless zero is legal; missing or foreign
-units are not a measurement. -/
+/-- Read a CSS length back into the provider's units, rounding after parsing the decimal; unitless
+zero is legal, other units are not. -/
 private def cancelReadEm (em : Int) (s : String) : Option Int := do
   if s == "0" then return 0
   if !s.endsWith "em" then none else do
     let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
     return (n * em + (d : Int) / 2) / d
 
-/-- CSS margins carry signed offsets; MathML lspace itself must be
-nonnegative, and the balancing margin keeps the attachment advance zero. -/
+/-- A CSS margin carries a signed offset; MathML lspace stays nonnegative and the balancing margin
+keeps the attachment advance zero. -/
 private def cancelReadOffset (em : Int) (node : Html.Node) : Option Int := do
   let space ← cancelReadEm em (cancelAttr "lspace" node)
   let left ← cancelReadEm em (cancelCss "margin-left" node)
@@ -101,8 +92,8 @@ private def cancelTag : Html.Node → String
   | .elem tag _ _ => tag
   | _ => ""
 
-/-- Mutations change the emitted artifact before its coordinates are read,
-so they exercise the parser and judge together. -/
+/-- Mutations change the emitted artifact before its coordinates are read, so they exercise the
+parser and the judge together. -/
 private def cancelSetAttr (key value : String) : Html.Node → Html.Node
   | .elem tag attrs kids => .elem tag ((attrs.filter (·.1 != key)).push (key, value)) kids
   | other => other
@@ -111,9 +102,8 @@ private def cancelSetChild (i : Nat) (child : Html.Node) : Html.Node → Html.No
   | .elem tag attrs kids => .elem tag attrs (kids.set! i child)
   | other => other
 
-/-- Coordinates read from the emitted SVG viewport and the actual native
-MathML placement boxes. The SVG's downward y is mapped to the parent
-baseline; changing a viewBox, viewport, or offset changes this reading. -/
+/-- Coordinates read from the emitted SVG viewport and the native MathML placement boxes, the SVG's
+downward y mapped to the parent baseline. -/
 private structure CancelHtmlRead where
   width : Int
   top : Int
@@ -178,18 +168,14 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
                 polys, target, svg }
           | _ => none
 
-/-- Six decimal em serialization and this reader's nearest-unit rounding
-can each lose half a provider unit. This is arithmetic slack, not a
-perceptual alignment allowance. -/
+/-- Six-decimal em serialization and this reader's rounding can each lose half a provider unit:
+arithmetic slack, no perceptual allowance. -/
 private def cancelEpsilon (em : Int) : Int := (em + 1999999) / 2000000 + 1
 
 private def cancelNear (eps a b : Int) : Bool := (a - b).natAbs ≤ eps.toNat
 
-/-- Source parity is a projection check: compare the points actually
-mapped by SVG with the shared geometry, after the one common room
-translation read from the operand. It does not certify the geometry
-formula; the independent ray and containment checks below judge that
-projection's attachment and bounds. -/
+/-- Source parity as a projection check: the points SVG maps against the shared geometry, after the
+one common room translation. -/
 private def cancelProjection (em : Int) (i : CancelIn) (room : Bool)
     (r : CancelHtmlRead) : Bool :=
   let g := Math.cancelGeom .to room i
@@ -213,8 +199,7 @@ private def cancelRay (em : Int) (i : CancelIn) (r : CancelHtmlRead) : Bool := I
   let cx := 2 * r.value.1 + i.vleft + i.vright - 2 * tip.1
   let cy := 2 * r.value.2 + i.vbot + i.vtop - 2 * tip.2
   let eps := cancelEpsilon em
-  -- The direction and centre both contain serialized coordinates. Bound
-  -- their propagated cross-product error rather than choosing a slope band.
+  -- The direction and centre both hold serialized coordinates, so their cross error is bounded.
   let bound := max dx dy + eps *
     (4 * (dx.natAbs + dy.natAbs : Nat) + 2 * (cx.natAbs + cy.natAbs : Nat))
   return head.size == 3 && dx > 0 && dy > 0 &&
@@ -238,10 +223,8 @@ private def cancelContained (metric : CancelMetric) (room : Bool)
       (!room || (x + eps ≥ 0 && x - eps ≤ r.width))) &&
     (room || (cancelNear eps r.width i.w && cancelNear eps r.body.1 0))
 
-/-- Room allocation cannot change a cancellation target's font-size level.
-The expected level comes from the same IR style rule the PDF layout reads.
-Smaller targets still step down; `samesize` also preserves inherited script
-and scriptscript size. The checks read emitted MathML, not the IR dump. -/
+/-- Room allocation never changes a cancellation target's font-size level, read off the emitted
+MathML against the IR's style rule. -/
 def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (name :: ·)
@@ -269,8 +252,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
           (cancelTargetDepths (some 0) false [] node ==
             [some (cancelStyleDepth (spec.size.style st))])
 
-  -- Ownership and bounded placement are separate facts: the triangle's
-  -- own clip-path alone does not establish containment in the operand.
+  -- Ownership and bounded placement are separate: the triangle's clip-path proves no containment.
   let emit (mark : CancelMark) (room thick : Bool) : Html.Node :=
     MathMl.nucNode {} false .ord
       (.cancel mark { room, thick } (if mark == .to then one '7' else .nil) (one 'x'))
@@ -325,9 +307,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         (cancelAttr "style" (boxOf mark (emit mark room true)) !=
           cancelAttr "style" (boxOf mark (emit mark room false)))
 
-  -- Invented, asymmetric target ink: its baseline and advance are neither
-  -- its ink centre nor its near edge. The callback is synthetic; the
-  -- separate shared-provider checks establish what real font ink supplies.
+  -- Invented asymmetric ink: its baseline and advance are neither its ink centre nor its edge.
   let input : CancelIn := {
     rule := 28, gap := 85, w := 1000, top := 710, bot := -190
     vw := 610, vleft := -35, vright := 540, vtop := 370, vbot := -120, space := 45 }
@@ -387,9 +367,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
               (let bad := cancelRead em (cancelSetChild 2 overlay node)
                bad.isSome && !(bad.any (cancelProjection em input room)))
 
-  -- Trailing negative mu can leave the operand's advance far inside its
-  -- visible glyph hull. Both its left overhang and right ink must reserve
-  -- room, even when the arrow and value fit well inside that hull.
+  -- Trailing negative mu can leave the advance inside the hull, so both overhangs reserve room.
   let metric : CancelMetric := {
     em := 1000, input := { input with w := 120 }, bodyLeft := -2300, bodyRight := 5100 }
   for room in [false, true] do
@@ -484,9 +462,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((HtmlDoc.mathMarks cfg).metric (.text false) spec (one 'x') (one '7')).isSome &&
       (HtmlDoc.mathMarks cfg).em (.text false) == some metric.em)
 
-  -- Explicit fraction styles are absolute in the IR, but their browser
-  -- transition is relative to the surrounding style. Physical rule widths
-  -- must use that same measured em so responsive pages scale them together.
+  -- A fraction style's browser transition is relative, so rule widths use the same measured em.
   let scales : ScriptScales := { script := 73, scriptscript := 47 }
   for ambient in allStyles do
     for chosen in allStyles do

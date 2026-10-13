@@ -33,15 +33,13 @@ private def insideMedium (geom : Layout.Geom) (fill : Layout.Fill) : Bool :=
   0 < fill.w && 0 < fill.h && 0 ≤ fill.x && 0 ≤ fill.y &&
     fill.x + fill.w ≤ geom.pageW && fill.y + fill.h ≤ geom.pageH
 
-/-- beamer's colour boxes are `\textwidth` wide at every depth: a child
-shares its parent's reach and stands at least the parent's inset inside it
-above and below. -/
+/-- beamer's colour boxes are `\textwidth` wide at every depth: a child shares its parent's reach
+and stands at least the parent's inset inside it. -/
 private def encloses (pad : Dim.Sp) (outer inner : Layout.Fill) : Bool :=
   0 < pad && outer.x == inner.x && outer.w == inner.w && outer.y + pad ≤ inner.y &&
     inner.y + inner.h + pad ≤ outer.y + outer.h
 
-/-- Judge the child's entire painted extent, including its title bar.
-Checking only the body rectangle misses the ancestor's lost top inset. -/
+/-- The child's whole painted extent, title bar included, against the parent's insets. -/
 private def parentInsets (page : Layout.PageOut) (pad : Dim.Sp)
     (childBar : Ir.Color) : Bool :=
   page.fills.all fun child =>
@@ -76,9 +74,8 @@ private def rowNames : Array String :=
   (List.range 16).toArray.map fun i =>
     "R" ++ (if i + 1 < 10 then "0" else "") ++ toString (i + 1) ++ "gyp"
 
-/-- Invented combined counterexample: finite paragraph stretch acts both
-while nested surfaces are open and after their final fragment has closed.
-The following paragraph forces that closed fragment to be distributed. -/
+/-- An invented counterexample where finite paragraph stretch acts while nested surfaces are open
+and after their last fragment closes. -/
 public def closedFlushSource : String :=
   "\\documentclass{article}\n" ++
   "\\fonts{body=\"Source Serif Pro\",mono=\"Source Code Pro\",math=\"Fira Math\"}\n" ++
@@ -91,9 +88,8 @@ public def closedFlushSource : String :=
   String.join (rowNames.toList.map (· ++ "\\par\n")) ++
   "\\end{exampleblock}\n\\end{block}\nEPILOGUE\n\\end{document}\n"
 
-/-- Zero paragraph skip exposes the rule-neighbour path after a filled
-region closes. The nested variant closes both regions before the rule, so
-the outer surface's accumulated padding must remain reserved. -/
+/-- A zero paragraph skip exposes the rule-neighbour path after a filled region closes; `nested`
+closes both regions before the rule. -/
 public def closedRuleSource (nested : Bool) : String :=
   "\\documentclass{article}\n" ++
   "\\fonts{body=\"Source Serif Pro\",mono=\"Source Code Pro\",math=\"Fira Math\"}\n" ++
@@ -107,10 +103,8 @@ public def closedRuleSource (nested : Bool) : String :=
   (if nested then "\\end{exampleblock}\n" else "") ++
   "\\end{block}\n\\rule{20pt}{1pt}\\par\nAFTER\n\\end{document}\n"
 
-/-- A plain peer must not erase a closed box's painted depth. `pos = "b"`
-ties last baselines, `"t"` aligns first baselines, and `""` leaves position
-unspecified. `boxFirst` swaps column order; `nested` adds one inset surface.
-The rule spans both columns. -/
+/-- A plain peer must not erase a closed box's painted depth: `pos` is the box alignment, `boxFirst`
+the column order, `nested` one more inset surface. -/
 public def closedColumnRuleSource (nested boxFirst : Bool) (pos : String := "b") : String :=
   let openCol := "\\begin{minipage}" ++
     (if pos.isEmpty then "" else "[" ++ pos ++ "]") ++ "{90pt}"
@@ -131,9 +125,7 @@ public def closedColumnRuleSource (nested boxFirst : Bool) (pos : String := "b")
   "\\begin{document}\n" ++ row ++
   "\\par\n\\rule{200pt}{1pt}\\par\nAFTER\n\\end{document}\n"
 
-/-- An inherited rule band is not a column contribution. The following
-rule exposes its clearance if an empty column enters the row's join.
-Nonpainting rules and padded empty bodies are deliberate contributions. -/
+/-- An inherited rule band is no column contribution; nonpainting rules and padded empty bodies are. -/
 public def emptyColumnSource (pos : String) (contents : Array String) : String :=
   let openCol := "\\begin{minipage}" ++
     (if pos.isEmpty then "" else "[" ++ pos ++ "]") ++ "{90pt}"
@@ -155,9 +147,8 @@ private def followingRules (out : Layout.Out) : Array Layout.LineOut :=
         w == Dim.pt 200 && thickness == Dim.pt 1 && raise == 0
       | _ => false
 
-/-- These assertions read final `Layout.Out` rectangles and text, not the
-IR dump or the region fitter's intermediate measurements. Presence and
-conservation prevent dropping a title, body, or surface from passing. -/
+/-- Nested titles fit whole, read off the final `Layout.Out` rectangles and text, every title, body
+and surface present once. -/
 public def titleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (doc, diags) := Elab.run "block-region-title.tex" titleSource
   let geom := Layout.Geom.ofPage doc.page
@@ -178,10 +169,7 @@ public def titleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   check ref "block region title: child title joins its body"
     (out.pages.all fun page => titleJoins page innerColor blueBar)
 
-/-- Distribution must retain painted reach after a region closes. The
-body floor comes from the real shipment's resolved furniture geometry;
-the rectangles being judged come from the public final layout entry.
-No expected page count or font-specific coordinates prescribe a reflow. -/
+/-- Distribution keeps a closed region's painted reach, judged on the final layout's rectangles. -/
 public def closedFlushChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let (doc, diags) := Elab.run "block-region-closed-flush.tex" closedFlushSource
@@ -229,11 +217,8 @@ public def closedFlushChecks (ref : IO.Ref (List String))
         (page.fills.filter isSurface).all fun fill => fill.y + fill.h < line.y
       else true)
 
-/-- Closing a filled region reserves its complete painted bottom even
-when the following paragraph contains only a rule. Read the rule's top
-edge from its shipped segment; zero skip permits contact, never overlap.
-Conservation and presence keep dropped ink or a spurious page break from
-making this feasible same-page separation pass vacuously. -/
+/-- Closing a filled region reserves its whole painted bottom before a rule-only paragraph: contact,
+never overlap. -/
 public def closedRuleChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   for (name, nested) in #[("single", false), ("nested", true)] do
@@ -269,9 +254,8 @@ public def closedRuleChecks (ref : IO.Ref (List String))
             | _ => false
         else true)
 
-/-- The column join must retain every closed surface's physical bottom,
-both with aligned baselines and with the default top placement. Swapping
-column order guards against selecting either tied column alone. -/
+/-- The column join keeps every closed surface's bottom, under aligned and default top placement and
+either column order. -/
 public def closedColumnRuleChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   for (posName, pos) in #[("last", "b"), ("first", "t"), ("top-default", "")] do
@@ -294,8 +278,7 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
           ((diags ++ out.diags).all (·.severity == .note))
         check ref (label ++ ": all three words survive once in order on one page")
           (out.pages.size == 1 && bodyText out == words)
-        -- A colour box aligns by its TeX reference, its bottom edge at `[b]`
-        -- (a box of depth zero), as lualatex places it.
+        -- A colour box aligns by its TeX reference, its bottom edge at `[b]`.
         let pad := Layout.titledPaddingOf fonts geom
         let outer := fills.filter (·.color == outerColor)
         check ref (label ++ ": column order and requested alignment survive")
@@ -303,12 +286,7 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
             bodies.all fun body =>
               (pos != "b" || outer.any (fun f => f.y + f.h == peer.y)) &&
               (if boxFirst then body.x < peer.x else peer.x < body.x))
-        -- Owed, both ways: a `[t]` minipage that opens on the block's
-        -- `\par\vskip\medskipamount` is a `\vtop` whose first item is glue,
-        -- so TeX puts its reference at its top and the box stands that skip
-        -- and `\lineskip` below the peer's baseline (lualatex: a beamer
-        -- block's bar top 5.96 bp below it). The engine stands the box's top
-        -- on the peer's baseline. Fixing either side alone fails here.
+        -- Owed both ways: a `[t]` minipage opening on the block's skip stands lower in TeX.
         if pos == "t" then
           check ref (label ++ ": owed: a [t] box's top stands on the peer's baseline")
             (peers.all fun peer => outer.any (fun f => f.y == peer.y))
@@ -334,10 +312,8 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
                 | _ => false
             else true)
 
-/-- Empty peers leave the final rule at the position obtained by omitting
-them, across every box alignment and both source orders. Surface and strut
-controls prevent treating absence of glyphs as absence of a contribution.
-An entirely empty row preserves the preceding page band. -/
+/-- Empty peers leave the final rule where omitting them would, across every box alignment and both
+source orders. -/
 public def emptyColumnChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   for (posName, pos) in #[("top", ""), ("first", "t"), ("last", "b"), ("center", "c")] do
@@ -390,10 +366,8 @@ public def emptyColumnChecks (ref : IO.Ref (List String))
           ((out.pages.flatMap (·.fills) |>.filter isSurface |>.map fun f => (f.y, f.h)) ==
             (reference.pages.flatMap (·.fills) |>.filter isSurface |>.map fun f => (f.y, f.h)))
 
-/-- Bounded artifact guards for complete nested title fitting and finite
-flush-bottom distribution over open and closed surface fragments, plus
-closed-surface clearance before a rule-only paragraph, including column joins
-and empty-column neutrality. -/
+/-- Nested title fitting, flush-bottom distribution over surface fragments, and closed-surface
+clearance before a rule, columns included. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   titleChecks ref fonts
   closedFlushChecks ref fonts

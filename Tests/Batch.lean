@@ -17,8 +17,8 @@ private structure Running where
   started : Array Nat := #[]
   finished : Array Nat := #[]
 
-/-- Exercise the IO consumer of the proved partition: actual overlap,
-exclusive cache ownership, stable answers, and draining after exceptions. -/
+/-- The IO consumer of the proved partition: overlap, exclusive cache ownership, stable answers and
+draining after exceptions. -/
 def batchChecks (ref : IO.Ref (List String)) : IO Unit := do
   for limit in #[0, 1, 2, 4] do
     let state ← Std.Mutex.new ({} : Running)
@@ -41,8 +41,7 @@ def batchChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!seen.collision && seen.peak ≤ max 1 limit && seen.keys.isEmpty &&
         seen.finished.size == input.size)
 
-  -- The first task waits for the second to start. This observes overlap
-  -- without making a speed claim or depending on one task's sleep duration.
+  -- The first task waits for the second to start, observing overlap without a speed claim.
   let started ← Std.Mutex.new (0 : Nat)
   let overlap ← Batch.map 2 id (fun key => do
     started.atomically (modify (· + 1))

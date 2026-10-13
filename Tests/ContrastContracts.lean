@@ -8,8 +8,7 @@ open LeanTex.Core
 
 namespace ContrastContracts
 
-/-- An independent observation of actual placed glyphs. Empty glyph arrays
-and non-text paint do not witness a text-contrast claim. -/
+/-- Every placed run that holds glyphs, with its text, ink and ground. -/
 private def observedContrastRuns (out : Layout.Out) :
     Array (String × Ir.Color × Option Ir.Color) := Id.run do
   let mut runs := #[]
@@ -39,14 +38,8 @@ private def contrastAddressAgrees (out : Layout.Out) (paint : Contrast.RunPaint)
     !glyphs.isEmpty && ink == paint.ink && ground == paint.ground
   | _ => false
 
-/-- Counterexamples to the former claim that the document plan enumerates
-every nonempty placed run. These assertions inspect `Layout.run`, including
-overlay steps and picture paint; no elaboration dump supplies the witness.
-
-Covered paint intentionally has its own quietness contract. Picture labels
-also expose the separate ground problem: a run's absent ground does not say
-that there is no fill behind it. Neither omission licenses a blanket text
-warning over all unplanned pairs. -/
+/-- The run contrast audit reads every nonempty placed run, overlays and picture paint included, and
+leaves unverified what the layout cannot certify. -/
 def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := fun name ok => check ref s!"contrast contracts: {name}" ok
   let data ← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf"

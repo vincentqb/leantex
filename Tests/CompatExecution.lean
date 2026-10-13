@@ -22,9 +22,8 @@ private def controlAllocations (raws : Array Parse.Raw) : IO (Nat × Array Parse
   let after ← IO.getNumHeartbeats
   return (after - before, actual)
 
-/-- Execution preserves the emitted stream and processes each prefix once.
-Doubling linear work tends to 2× allocations, prefix replay to 4×; 3×
-separates those growth rates without depending on the host's elapsed time. -/
+/-- Execution preserves the emitted stream and processes each prefix once, a 3× allocation bound on
+doubled input separating linear work (2×) from prefix replay (4×). -/
 def compatExecutionChecks (ref : IO.Ref (List String)) : IO Unit := do
   for name in ["underline", "textbf", "plain"] do
     let small := repeatedControls name 128

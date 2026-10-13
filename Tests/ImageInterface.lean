@@ -6,8 +6,7 @@ namespace Tests.ImageInterface
 
 open LeanTex.Core
 
--- The driver can probe, plan, select PDF pages, and persist raster plans
--- through an ordinary import.
+-- The driver can probe, plan, select PDF pages and persist raster plans through an ordinary import.
 example : ByteArray → Except String Image.Source := Image.probe
 example : ByteArray → PdfRead.PageSelection → Except String Image.Source := Image.probePage
 example : ByteArray → PdfRead.PageSelection → Except String Image.Source :=

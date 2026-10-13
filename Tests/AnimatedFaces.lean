@@ -8,10 +8,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Poster content can differ in size from frame one. The shipped box
-keeps the first-frame canvas, and the browser names a separate static
-poster for print and reduced motion. These assertions fail when the
-store carries both values but a backend ignores them. -/
+/-- Poster content may differ in size from frame one: the shipped box keeps the first frame's
+canvas, and the browser names a separate static poster for print and reduced motion. -/
 def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -35,16 +33,14 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     { en with webError := some "poster conversion failed" } }
   t "a failed browser conversion preserves the native poster and canvas"
     (placements (layoutOf fonts doc (imgs := failed)) == shipped)
-  -- req: a failed browser-face conversion still reserves the image's exact
-  -- intrinsic pixel box in the placeholder, so the page does not reflow.
+  -- A failed browser-face conversion still reserves the image's intrinsic box: no reflow.
   let (_, failedTree, _) := HtmlDoc.emitTree { imgs := failed } doc
   let failedSpans := elemAttrsList (· == "span") #[] failedTree.toList
   t "a failed conversion placeholder reserves the exact intrinsic pixel box"
     (failedSpans.any fun (_, attrs) =>
       attrs.any fun (key, value) => key == "style" &&
         hasStr value "width: 160px" && hasStr value "height: 107px")
-  -- req: a generated style never begins with a stray separator. An unsized
-  -- animation has only the canvas aspect-ratio, which must not lead with ';'.
+  -- A generated style never opens with a stray separator.
   let barePlan : Image.Plan := { pxW := 60, pxH := 120 }
   let bareStore : Image.Store := { entries := #[
     { src := "sequence.pdf", animated := true, info := some barePlan,
