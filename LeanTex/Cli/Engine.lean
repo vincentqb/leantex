@@ -14,8 +14,8 @@ public def identity (st : World.Stat) : String :=
 /-- The identity this process read, once. -/
 private initialize processEngine : IO.Ref (Option (Option String)) ← IO.mkRef none
 
-/-- The stat of the image this process runs: `/proc/self/exe`, else the binary at `path`.
--/
+/-- The stat of the image this process runs: `/proc/self/exe`, else the binary at
+`path`. -/
 public def imageStat (path : String) : World.Prog (Option World.Stat) :=
   .ask (.stat "/proc/self/exe") fun
     | .ok st => .pure (some st)
@@ -37,8 +37,8 @@ public structure Cache where
   dir : System.FilePath
   engine : String
 
-/-- The running engine's cache in `dir`; none without a directory or an engine identity.
--/
+/-- The running engine's cache in `dir`; none without a directory or an engine
+identity. -/
 public def cache (dir : Option System.FilePath) : IO (Option Cache) := do
   let some dir := dir | return none
   let some engine ← engineId | return none

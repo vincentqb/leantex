@@ -41,8 +41,8 @@ public def Plan.conversion? : Plan → Option Conversion
   | .keep => none
   | .movingSvgWithPoster op | .convertedPrimary op | .animatedWithCompanion op => some op
 
-/-- The browser-face request for an entry, read from its captured source and native plan.
--/
+/-- The browser-face request for an entry, read from its captured source and native
+plan. -/
 public def plan (en : Image.Loaded) : Plan :=
   if en.src.startsWith Ir.picSrcPrefix then .keep else
   match en.info with

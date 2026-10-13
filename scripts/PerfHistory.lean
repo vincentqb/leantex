@@ -1,7 +1,7 @@
 /-
 The performance histories under `testdata/perf/`: `# <provenance>` lines, then
-`run⇥commit⇥binary⇥host⇥item⇥value⇥unit` rows, each run held within ±3% of its host class's
-last.
+`run⇥commit⇥binary⇥host⇥item⇥value⇥unit` rows; a run's instruction counts are reported against
+±3% of its host class's last run, never gated.
 -/
 import Std.Async.System
 

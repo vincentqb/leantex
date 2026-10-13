@@ -97,8 +97,8 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
     ui.errStream.putStrLn (Render.human ui.color d (showOutput := ui.showOutput))
 
 /-- Resolve and print one phase against the document's acceptance (`\allow`,
-`--best-effort`), each repeated wording printed once with its count; porcelain keeps every
-site. -/
+`--best-effort`): a repeated wording prints once with its count, its repeats as notes
+shown under `-v`; porcelain keeps every site. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
   let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
@@ -204,8 +204,8 @@ def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
     else PublicationPaths.placed ((System.FilePath.mk base).parent.getD ".").toString name
   | none => base
 
-/-- The markdown twin's link from the page: the declared name where the page can link it,
-or the derived file's own name. -/
+/-- The markdown twin's link from the page: the declared name, else the derived file's own
+name; none where the page cannot link that name. -/
 def twinHref (mdPath : String) (declared : Option String) : Option String :=
   match declared with
   | some name => PublicationPaths.nameHref name

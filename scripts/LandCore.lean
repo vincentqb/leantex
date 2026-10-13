@@ -200,8 +200,8 @@ def netOf (diff : String) : Array FileNet := Id.run do
   if !key.isEmpty then out := out.push (key, body)
   return out
 
-/-- The path a `diff --git a/<p> b/<p>` line names, or the line itself for another shape.
--/
+/-- The path a `diff --git a/<p> b/<p>` line names, or the line itself for another
+shape. -/
 def pathOfKey (k : String) : String :=
   let pre := "diff --git a/"
   let rest := (k.drop pre.length).toString
@@ -405,8 +405,9 @@ def State.landedIsGated (s : State) : Bool :=
 
 /-- The run's invariant, preserved by every transition: from the fast-forward's
 verification on, and under any verdict claiming a landing, the landing is the gated
-commit's; no gate is recorded before the rebase is judged; every recorded gate read the
-tree back clean at the gated tip. -/
+commit's, and such a verdict appears only at `done`; no gate is recorded before the rebase
+is judged; every recorded gate read the tree back clean at the gated tip; and from the
+rebase on, the gated tip is a sha. -/
 def State.pinned (s : State) : Bool :=
   (!(s.atOrPastFF || s.landedVerdict) || s.landedIsGated)
     && (!s.landedVerdict || s.stage == .done)

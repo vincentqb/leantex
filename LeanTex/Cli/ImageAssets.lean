@@ -61,8 +61,8 @@ private def Spec.recipe (s : Spec) : String :=
   String.intercalate "\n"
     [commandText s.tool (s.args input output), if s.stretch then pdfSvgRoot else ""]
 
-/-- The normalized host-tool recipe behind browser vector faces, which keys their sources.
--/
+/-- The normalized host-tool recipe behind browser vector faces, which keys their
+sources. -/
 public def browserFaceContract : String :=
   String.intercalate "\n" <| ([.canonicalSvg, .pdfPage 1, .picFace] : List Op).map (·.spec.recipe)
 

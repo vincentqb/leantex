@@ -8,8 +8,8 @@ import LeanTex.Cli.ToolProbe
 import LeanTex.Core.Flate
 import LeanTex.Core.Utf8
 
-/-! Fulfil standalone picture requests in owned scratch with checked cache answers; a tool
-finishes its writes before its invocation returns. -/
+/-! Fulfil standalone picture requests in owned scratch with checked cache answers,
+assuming a tool finishes its writes before its invocation returns. -/
 
 namespace LeanTex.Cli.PictureAssets
 

@@ -55,8 +55,8 @@ def toolNeeds (doc : Ir.Doc) (inline : Array (String × String) := #[]) : Array 
   (if pictures == 0 then #[] else #[s!"{pictures} picture(s) outside the rendered subset"])
 
 /-- The assertions the build holds a document to, judged on its shipped pages as the
-driver's gate reads them; an assertion over PDF bytes fails here, since none are written.
--/
+driver's gate reads them; an assertion over PDF bytes fails here, since none are
+written. -/
 def assertFailures (geom : Layout.Geom) (fs : Font.FontSet) (doc : Ir.Doc) (out : Layout.Out)
     (sourceDiags : Array Diag) : Array String :=
   if doc.asserts.isEmpty then #[] else

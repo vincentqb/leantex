@@ -44,8 +44,8 @@ public def verdictOf : FigureFace.Answer → Boundary.Verdict
   | .error why => .refused why
 
 /-- What the external converter answered for a figure's web face: not asked, no converter,
-a face kept or left unchecked, a face the check refused, or no face, each with its words.
--/
+a face kept or left unchecked, a face the check refused, or no face, each with its
+words. -/
 public inductive Answer where
   | notAsked
   | absent

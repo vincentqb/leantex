@@ -107,8 +107,8 @@ def Divergence.excuses : Divergence → List Level
   | .numberPlacement => []
   | .colourModel => []
 
-/-- Is this divergence outside the ladder's subject for good, rather than
-merely unmet by today's levels? -/
+/-- Whether this divergence lies outside the ladder's subject, rather than unmet by its
+current levels. -/
 def Divergence.outOfScope : Divergence → Bool
   | .colourModel => true
   | _ => false
@@ -217,8 +217,8 @@ structure Sidecar where
   /-- The LaTeX format the run loaded, from the log's `LaTeX2e <date>` line. -/
   format : String
   argv : String
-  /-- Every in-repo file the run read, `path=key` per item, from `-recorder`'s input list.
-  -/
+  /-- Every in-repo file the run read, `path=key` per item, from `-recorder`'s input
+  list. -/
   inputs : String
   pages : Nat
   overfull : Nat

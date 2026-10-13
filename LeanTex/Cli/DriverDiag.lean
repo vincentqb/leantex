@@ -133,7 +133,8 @@ public def slotCollapsed (key runs served note : String) (only : Option String)
   let families := match FontDb.monoDefaults.reverse with
     | last :: rest@(_ :: _) => String.intercalate ", " rest.reverse ++ " or " ++ last
     | _ => String.intercalate ", " FontDb.monoDefaults
-  -- A tex document's default also reads lualatex's typewriter shapes, always installed.
+  -- A tex document's default also reads lualatex's typewriter shapes, which every TeX
+  -- distribution installs.
   let listed := if declarable then s!"Latin Modern Mono, {families}" else families
   let declared := if declarable then s!", or declare one: {declare}" else ""
   let help := if key == "mono" then

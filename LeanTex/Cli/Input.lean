@@ -21,8 +21,8 @@ namespace LeanTex.Cli.Input
 
 open LeanTex.Core
 
-/-- The first line of an `IO.Error`'s rendering, since a diagnostic message is one line.
--/
+/-- The first line of an `IO.Error`'s rendering, since a diagnostic message is one
+line. -/
 private def reasonLine (s : String) : String :=
   (s.splitOn "\n").headD s
 
@@ -37,8 +37,8 @@ spliced, and the input encoding. -/
 private structure InputLog where
   diags : Array Diag := #[]
   spliced : Array (String × Option String × Pos) := #[]
-  /-- The declaration every file is read under on a second pass (`none` inside for UTF-8).
-  -/
+  /-- The declaration every file is read under on a second pass (`none` inside for
+  UTF-8). -/
   fixed : Option (Option Encoding.Declared) := none
   /-- The declaration the document's own preamble makes, for a file read before any
   `inputenc` load runs. -/
@@ -51,8 +51,8 @@ private structure InputLog where
   /-- Each file decoded in this run, so a file read twice is decoded once and
   its losses named once. -/
   decoded : Array (String × Encoding.FileText) := #[]
-  /-- Each file read, by the path it was read at, which publication must never overwrite.
-  -/
+  /-- Each file read, by the path it was read at, which publication must never
+  overwrite. -/
   reads : Array String := #[]
 
 private abbrev ReadM := StateT InputLog IO

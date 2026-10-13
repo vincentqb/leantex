@@ -446,8 +446,8 @@ def hParse (src : String) : Array Html.Node := Id.run do
   return kids
 
 
-/-- The one class token a spec example states as content, a fenced block's `language-x`.
--/
+/-- The one class token a spec example states as content, a fenced block's
+`language-x`. -/
 def languageClass? (attrs : Array (String × String)) : Option String :=
   match attrs.find? (·.1 == "class") with
   | none => none
@@ -718,8 +718,8 @@ needs corroboration from outside the reader. -/
 def strictSubjects : List String :=
   ["md:raw-html", "md:indented-code", "md:lazy-continuation"]
 
-/-- One strict refusal a run raised: its subject and the source position the reader gave.
--/
+/-- One strict refusal a run raised: its subject and the source position the reader
+gave. -/
 structure Refusal where
   subject : String
   line : Nat
@@ -1101,8 +1101,8 @@ def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat))
 
 mutual
 
-/-- The rows of every table a page holds, in document order, each the text of its cells.
--/
+/-- The rows of every table a page holds, in document order, each the text of its
+cells. -/
 def tableRowsOf (acc : Array (Array String)) (n : Html.Node) : Array (Array String) :=
   match n with
   | .elem "tr" _ kids =>
@@ -1116,8 +1116,8 @@ def tableRowsOfList (acc : Array (Array String)) : List Html.Node → Array (Arr
 
 end
 
-/-- A cell's text, compared: typographic punctuation read back and white space one space.
--/
+/-- A cell's text, compared: typographic punctuation read back and white space one
+space. -/
 def cellKey (s : String) : String :=
   " ".intercalate (((unsmarten s).splitOn " ").filter (!·.isEmpty))
 

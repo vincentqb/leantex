@@ -17,8 +17,8 @@ rolled down one line, 0.043). -/
 def dssimTolerance : Float := 0.035
 
 /-- The Chrome binaries to try: `LEANTEX_CHROME`, then each Playwright-cached
-`chromium-*/chrome-linux64/chrome`, newest first, the full browser whose viewer is PDFium.
--/
+`chromium-*/chrome-linux64/chrome`, newest first, the full browser whose viewer is
+PDFium. -/
 def chromeCandidates : IO (Array String) := do
   let mut out : Array String := #[]
   if let some p ← IO.getEnv "LEANTEX_CHROME" then out := out.push p

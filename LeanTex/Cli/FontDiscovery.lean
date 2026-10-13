@@ -141,8 +141,8 @@ public def memberImage (file : String) (index : Nat) (want : String → Bool) :
     return none
 
 /-- The face paths of the font files `files`, in order: a standalone file is its own face,
-a collection each face its header counts, and a collection whose header is unreadable or
-counts none or more than 4096 holds none. -/
+a collection each face its header counts, and none for a collection whose header is
+unreadable or counts no face, more than 4096, or more offsets than the file holds. -/
 private def facePaths (files : Array String) : IO (Array String) := do
   let mut out : Array String := #[]
   for f in files do
@@ -213,8 +213,8 @@ public def cacheDir : IO (Option System.FilePath) := do
 public def probeCacheName : String := s!"fontdb-{Font.classifierVersion}.tsv"
 
 /-- One cache line per file: the tab-joined key (path, size, mtime), then the
-classification, or nothing for a rejected file; paths and names hold no tab or line break.
--/
+classification, or nothing for a rejected file; paths and names hold no tab or line
+break. -/
 private def faceLine (key : String) (f : Option Face) : String :=
   match f with
   | some f => String.intercalate "\t" [key, f.family, f.subfamily,

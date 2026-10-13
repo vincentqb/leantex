@@ -172,8 +172,8 @@ private def runCall (call : ToolCall) : BaseIO Ended := do
       | .ok ended => return ended
       | .error e => return unstarted (scrubbed dir real (toString e))
 
-/-- The host's answer to one question, the one place the driver's host access is answered.
--/
+/-- The host's answer to one question, the one place the driver's host access is
+answered. -/
 public def answer : (q : Ask) → BaseIO (Reply q)
   | .env name => IO.getEnv name
   | .cwd => caught do return (← IO.currentDir).toString

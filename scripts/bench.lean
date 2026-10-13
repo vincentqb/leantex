@@ -385,7 +385,7 @@ def benchPictures (n requests : Nat) : IO Unit := do
       let cached ← pictures.readDir
       let mut drawings := 0
       for entry in cached do
-        -- A saved older compiler caches raw PDFs; a current one caches answers, and a refusal is no drawing.
+        -- Older compilers cache raw PDFs, current ones `.answer` files; a refusal is no drawing.
         let bytes ← IO.FS.readBinFile entry.path
         let pdf? := if entry.path.extension == some "answer" then
             match LeanTex.Cli.ConvCache.decode bytes with
@@ -941,16 +941,16 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
-/-- Four times the input may cost at most eight times the phase (linear 4, quadratic 16).
--/
+/-- Four times the input may cost at most eight times the phase (linear 4, quadratic
+16). -/
 def growthBound (label : String) (small big : Nat) : IO Unit := do
   let ratio := (big * 10 + max small 1 / 2) / max small 1
   IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
   if big > 8 * max small 1 then
     die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
 
-/-- A listing's lexing and setting are linear in its length, in lines and within a line.
--/
+/-- A listing's lexing and setting are linear in its length, in lines and within a
+line. -/
 def listingGrowth (n : Nat) : IO Unit := do
   let (smallElab, smallLayout) ← listingElabMs n 2000
   let (bigElab, bigLayout) ← listingElabMs n 8000

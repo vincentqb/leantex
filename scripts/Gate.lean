@@ -67,7 +67,7 @@ def kwSorry : String := "sor" ++ "ry"
 /-- Shared spelling for the totality convention. -/
 def kwPartial : String := "par" ++ "tial"
 
-/-- A banned keyword as a code token: word-delimited, outside strings and `--` comments.
--/
+/-- A banned keyword as a code token: word-delimited, outside strings and `--`
+comments. -/
 def bannedWord (kw l : String) : Bool :=
   hasWord (stripLineComment (stripStrings l)) kw

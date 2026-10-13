@@ -195,12 +195,13 @@ deriving BEq
 def Listed.path : Listed → String
   | .baseline p _ | .notAFile p _ _ => p
 
-/-- A baseline's current path, so tier identity survives the fixture-directory rename. -/
+/-- A baseline's path under `baselineDir`, so a tier keeps its identity in a base that
+filed it elsewhere. -/
 def currentBaselinePath (p : String) : String :=
   s!"{baselineDir}/{((System.FilePath.mk p).fileName).getD p}"
 
-/-- Read `git ls-tree -z` entries, paths as committed; `none` when an entry does not read.
--/
+/-- Read `git ls-tree -z` entries, paths as committed; `none` when an entry does not
+read. -/
 def readListing (listing : String) : Option (Array Listed) := Id.run do
   let mut out : Array Listed := #[]
   for e in listing.splitOn (Char.ofNat 0).toString do
@@ -233,8 +234,8 @@ def treeCopy (p : String) : IO (Except String (Option String)) := do
 check can read; failing closed — commit the tier's baseline as a file"
   return .ok (some (← IO.FS.readFile p))
 
-/-- The tree's direct-child baselines, spelled as the base's listing spells them, sorted.
--/
+/-- The tree's direct-child baselines, spelled as the base's listing spells them,
+sorted. -/
 def treeBaselines : IO (Array String) := do
   let dir : System.FilePath := baselineDir
   let mut out : Array String := #[]
@@ -322,8 +323,8 @@ its format, and any request it still holds"
     if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
-/-- Constructs held back and per-tier deficits, which have no single cross-tier ranking.
--/
+/-- Constructs held back and per-tier deficits, which have no single cross-tier
+ranking. -/
 def queue (limit : Nat) : IO UInt32 := do
   let mut lines : Array String := #[]
   -- The committed blocker ranking, read when present.
@@ -541,8 +542,8 @@ def harnessGit (dir : System.FilePath) (args : Array String) : IO String := do
 {o.stderr.trimAscii.toString}")
   return o.stdout.trimAscii.toString
 
-/-- Make the blob `path` holds at `sha` unreadable, as an unreachable promisor leaves it.
--/
+/-- Make the blob `path` holds at `sha` unreadable, as an unreachable promisor leaves
+it. -/
 def unreadable (dir : System.FilePath) (sha path : String) : IO Unit := do
   let oid ← harnessGit dir #["rev-parse", s!"{sha}:{path}"]
   IO.FS.removeFile (dir / ".git" / "objects" / (oid.take 2).toString / (oid.drop 2).toString)

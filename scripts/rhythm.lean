@@ -14,8 +14,8 @@ namespace Rhythm
 def rhythmDir : String := "testdata/rhythm"
 
 /-- The tolerance a shipped gap is judged within, in thousandths of a bp: half a bp, under
-one review-raster pixel and above the engines' 0.375 % unit difference on a typical gap.
--/
+one review-raster pixel and above the engines' 0.375 % unit difference on a typical
+gap. -/
 def toleranceMilliBp : Int := 500
 
 /-- The second band, in thousandths of a bp: half the 6 bp rhythm quantum at the article
@@ -615,8 +615,8 @@ def dumpLines (name : String) : IO UInt32 := do
   return 0
 
 /-! The HTML report, never a gate: each fixture's page measured in a browser, each gap
-also printed in quanta of its own context's rhythm quantum (`HtmlDoc.backend_gaps_agree`).
--/
+also printed in quanta of its own context's rhythm quantum
+(`HtmlDoc.backend_gaps_agree`). -/
 
 /-- The measuring probe, run by node with Playwright from `PW_MODULE`: every text line's
 baseline and text, and every picture's and image's vertical extent, in CSS px from the

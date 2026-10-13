@@ -23,8 +23,8 @@ def iconvByte (dir : System.FilePath) (charset : String) (b : UInt8) : IO (Optio
 
 def isC1 (v : Nat) : Bool := 0x80 ≤ v && v ≤ 0x9F
 
-/-- The rows an encoding's owner maps differently from glibc, by charset: byte and scalar.
--/
+/-- The rows an encoding's owner maps differently from glibc, by charset: byte and
+scalar. -/
 def ownerRows : List (String × UInt8 × Nat) :=
   [("MACINTOSH", 0xC6, 0x2206), ("MACINTOSH", 0xF0, 0xF8FF)]
 

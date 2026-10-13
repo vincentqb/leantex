@@ -435,8 +435,8 @@ theorem sizeClass_monotone {a b : Nat} (h : a ≤ b) : sizeClass a ≤ sizeClass
   Nat.div_le_div_right (halfClass_monotone h)
 
 /-- The class an artifact reads against its committed class: the committed one while the
-artifact stays within it widened by an eighth of an octave each side, its own otherwise.
--/
+artifact stays within it widened by an eighth of an octave each side, its own
+otherwise. -/
 def heldClass (committed : Option Nat) (bytes : Nat) : Nat :=
   match committed with
   | some k => if 2 * k ≤ halfClass bytes + 1 ∧ halfClass bytes ≤ 2 * k + 2 then k else sizeClass bytes

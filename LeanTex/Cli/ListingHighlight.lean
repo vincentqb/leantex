@@ -86,7 +86,9 @@ public def driverNamed (request : ListingReply.Request) : Bool :=
   -- premise: Tests.inlineCodeRequestChecks — the elaborator names an unregistered language once
   LexerName.known request.language
 
-/-- A decoded batch as the run keeps it: every answer and the driver's named refusals. -/
+/-- A decoded batch as the run keeps it: every answer and the driver's named refusals, but
+neither answer nor line for a refused language outside the registry, which the elaborator
+names. -/
 public def settle (answers : Array ListingReply.Answer)
     (failures : Array (ListingReply.Request × ListingReply.Failure)) :
     Array ListingReply.Answer × Array Diag :=
@@ -94,8 +96,8 @@ public def settle (answers : Array ListingReply.Answer)
   (answers.filter (!unnamed.contains ·.request),
     (failures.filter (driverNamed ·.1)).map fun (request, failure) => diagnostic request failure)
 
-/-- A batch that yields no reusable answer: every request keeps the driver's named loss.
--/
+/-- A batch that yields no reusable answer: every request keeps the driver's named
+loss. -/
 private def failed (requests : Array ListingReply.Request)
     (failure : ListingReply.Failure) : Array ListingReply.Answer × Array Diag :=
   (#[], (requests.filter driverNamed).map fun request => diagnostic request failure)

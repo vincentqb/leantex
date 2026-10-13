@@ -80,8 +80,8 @@ public def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir
 /-- One serialization of a checked tree, the bytes measured and published. -/
 public structure HtmlArtifact where
   render : String
-  /-- The math renderer the page may carry, the one other script element its type admits.
-  -/
+  /-- The math renderer the page may carry, the one other script element its type
+  admits. -/
   renderer : Option String
   render_exact : ∃ page : HtmlDoc.ClosedPage renderer, render = page.render
 

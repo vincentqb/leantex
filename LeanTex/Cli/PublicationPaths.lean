@@ -76,8 +76,8 @@ private structure Standing where
   metadata : World.Metadata
   real : String
 
-/-- Whether two files could be one by their metadata, as two hard links of one file are.
--/
+/-- Whether two files could be one by their metadata, as two hard links of one file
+are. -/
 private def sameShape (a b : World.Metadata) : Bool :=
   a.kind == b.kind && a.size == b.size && a.mtimeSec == b.mtimeSec &&
     a.mtimeNsec == b.mtimeNsec && a.links == b.links
@@ -189,7 +189,8 @@ private def segmentHref (s : String) : String :=
     else (String.singleton c).toUTF8.foldl byte out) ""
 
 /-- A path's segments read lexically, as a browser resolves a link: empty and `.` segments
-dropped, each `..` taking back the segment before it. -/
+dropped, each `..` taking back the segment before it, or kept where none stands before it
+in a relative path. -/
 private def lexical (path : String) : List String :=
   let rooted := path.startsWith "/"
   (path.splitOn "/").foldl (fun acc s =>

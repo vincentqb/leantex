@@ -1,9 +1,9 @@
 module
 
 /-
-The privacy gate's matcher: whether a text names a term of this clone's denylist,
-`info/private-terms` in the git common directory, in any of its readings; a hit is reported by
-where it stands, never by the term.
+The privacy gate's matcher for `info/private-terms` in the git common directory: one term per
+trimmed line (`#` and blank lines aside), case-folded unless prefixed `case:`, diacritics folded,
+found as its words in order in any reading (`readingsOf`); a hit names its place, never the term.
 -/
 
 public import LeanTex.Core.Nfc
@@ -838,8 +838,8 @@ def gzipBody (bs : ByteArray) (cap : Nat) : Option ByteArray :=
     inflateAt bs i cap
 
 /-- The members of a zip archive (PKWARE's APPNOTE §4.3.7): each local file header's data,
-stored or deflated, within `cap` bytes in all; a member's name is in the file's own bytes.
--/
+stored or deflated, within `cap` bytes in all; a member's name is in the file's own
+bytes. -/
 def zipMembers (bs : ByteArray) (cap : Nat) : Array ByteArray := Id.run do
   let sig : Array UInt8 := #[0x50, 0x4B, 0x03, 0x04]
   let mut out : Array ByteArray := #[]

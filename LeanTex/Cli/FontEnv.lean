@@ -53,8 +53,8 @@ public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font
     c.ref.modify (·.push (path, f))
     return .ok f
 
-/-- Parse through the cache when the caller holds one; the answer is the same without it.
--/
+/-- Parse through the cache when the caller holds one; the answer is the same without
+it. -/
 private def parseFace (cache : Option Cache) (path : String) :
     IO (Except String Font.Font) := do
   match cache with

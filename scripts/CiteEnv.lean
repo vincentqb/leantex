@@ -94,8 +94,8 @@ public def requireCompiled (modules : Array String) : IO Unit := do
       throw <| IO.userError s!"cites: no compiled {moduleFile name}. \
         Build every maintained source first: lake build '+{quoted}:olean'"
 
-/-- Import private declarations and server metadata without running project initializers.
--/
+/-- Import private declarations and server metadata without running project
+initializers. -/
 def load (modules : Array String) : IO Environment := do
   requireCompiled modules
   let env ← importModules (modules.map fun name => { module := toModuleName name }) {}
@@ -155,8 +155,8 @@ def shortIndex (env : Environment) (modules : Array String) : IO NameIndex := do
   return idx
 
 /-- The complete declarations a token names from a module and namespace; a
-projection-suffixed answer is no declaration, and reserved names count only once created.
--/
+projection-suffixed answer is no declaration, and reserved names count only once
+created. -/
 def resolvedIn (env : Environment) (moduleName : String) (ns : Name)
     (opens : List OpenDecl) (token : String) : List Name :=
   ((ResolveName.resolveGlobalName (env.setMainModule (toModuleName moduleName)) {}

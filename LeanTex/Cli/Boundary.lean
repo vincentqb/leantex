@@ -207,8 +207,8 @@ private def foldOne (accepted : String → Bool) (ds : Array Diag) (p : String �
   (ds.foldl (placeLine accepted p ds) (#[], #[])).1
 
 /-- Name a picture the rendered subset draws in part once at each place it stands: its
-unaccepted fragments fold into one W0419 line per site, and every other diagnostic stays.
--/
+unaccepted fragments fold into one W0419 line per site, and every other diagnostic
+stays. -/
 public def foldLines (allow : Array String) (allowAll : Bool) (lines : Array (String × LineHelp))
     (ds : Array Diag) : Array Diag :=
   -- premise: pictureRouteChecks — folded refusals are clauses of the picture's line

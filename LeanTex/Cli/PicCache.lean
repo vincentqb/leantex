@@ -1,8 +1,8 @@
 module
 
 /-! Pure boundary outcomes and the tool-version memo policy: a tool's refusal is an answer
-kept like a drawing, and an attempt the tool never finished is no answer and is retried.
--/
+kept like a drawing, and an attempt the tool never finished is no answer and is
+retried. -/
 
 namespace LeanTex.Cli.PicCache
 
@@ -64,7 +64,8 @@ tool wrote last; every other outcome is unchanged. -/
   | .inconclusive why, .absent => if said.isEmpty then o else .inconclusive s!"{why}: {said}"
   | o, _ => o
 
-/-- What the cache keeps of an outcome: the tool's own refusal, and nothing else. -/
+/-- The refusal the cache remembers of an outcome: the tool's own, none for a drawing
+(kept as its PDF) or an unfinished attempt (retried). -/
 public def remembers : Outcome → Option String
   | .drawn => none
   | .refused says => some says

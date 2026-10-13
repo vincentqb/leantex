@@ -318,8 +318,8 @@ def identSegment (s : String) : Bool :=
   | [] => false
 
 /-- How a backticked span is judged: a span with white space is prose, one holding `/`, a
-known extension or a dash a path, a dotted Lean name a declaration, anything else prose.
--/
+known extension or a dash a path, a dotted Lean name a declaration, anything else
+prose. -/
 def pinKind (t : String) : Option PinKind :=
   let pathChar := fun (c : Char) => c.isAlphanum || c == '_' || c == '-' || c == '.' || c == '/'
   let bare := t.all pathChar && ((t.toList.head?.map Char.isAlpha).getD false)
@@ -463,7 +463,7 @@ def judgeDoc (file text : String) (prose : Bool) (names : Pin → Array (String 
       out := out.push ⟨file, b.line, s!"a rule names no check: {excerpt}"⟩
   return out
 
-/-- How many of a document's pins are held today and how many are owed. -/
+/-- How many of a document's pins are held and how many are owed. -/
 def docPinCounts (text : String) : Nat × Nat := Id.run do
   let mut held := 0
   let mut owed := 0

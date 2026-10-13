@@ -24,8 +24,8 @@ structure KRow where
   cls : String
 deriving Inhabited, BEq
 
-/-- Commands whose lualatex meaning is a math symbol, excluded by the engine's own report.
--/
+/-- Commands whose lualatex meaning is a math symbol, excluded by the engine's own
+report. -/
 def mathClass : String := "math_given"
 
 /-- Commands `latex.ltx` defines only as the `\not@base` error, excluded by lualatex's

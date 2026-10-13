@@ -27,8 +27,8 @@ private def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
 /-- The scan produced nothing usable at all. -/
 private def noFontDiag : Diag := DriverDiag.noFont
 
-/-- The host's face scan and its parses, taken once and shared by every assembly of a run.
--/
+/-- The host's face scan and its parses, taken once and shared by every assembly of a
+run. -/
 public structure FaceScan where
   faces : Array FontDb.Face
   docDirs : List String

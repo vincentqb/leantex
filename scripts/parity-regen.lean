@@ -8,8 +8,8 @@ import LeanTex.Cli.PicCache
 
 open LeanTex.Core LeanTex.Cli Parity
 
-/-- The reference engine; `-halt-on-error` is the whole build level on the reference side.
--/
+/-- The reference engine; `-halt-on-error` is the whole build level on the reference
+side. -/
 def refEngine : String := "lualatex"
 
 /-- The trailer `/ID` a reference carries: its reference source's content key, twice, 32

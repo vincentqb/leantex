@@ -527,8 +527,8 @@ def manifestEntries (text : String) : Array String :=
     let l := l.trimAscii.toString
     if l.isEmpty || l.startsWith "#" then none else some l).toArray
 
-/-- Rank the declared public corpus into the tree, every kpsewhich query in `emptiedEnv`.
--/
+/-- Rank the declared public corpus into the tree, every kpsewhich query in
+`emptiedEnv`. -/
 def rankTree : IO UInt32 := do
   let roots ← publicRoots
   if roots.isEmpty then

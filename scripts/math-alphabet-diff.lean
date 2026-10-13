@@ -189,8 +189,8 @@ def milli (s : String) : Option Int := do
   let (mantissa, scale) ← Decl.parseDecimal s
   pure (mantissa * 1000 / (scale : Int))
 
-/-- Horizontal extent in Ghostscript's integer device coordinates, the whole box required.
--/
+/-- Horizontal extent in Ghostscript's integer device coordinates, the whole box
+required. -/
 def bboxX (s : String) : Option (Int × Int) := do
   let [a, b, c, d] := (s.splitOn " ").filter (!·.isEmpty) | none
   let x0 ← a.toInt?

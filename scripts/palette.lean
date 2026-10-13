@@ -58,8 +58,8 @@ private meta def flags : Flags → List String → Except String (Flags × List 
 `Prefix --seeds colors.json`) to stdout; flags before the prefix: `--beamer-blocks` binds
 beamer's elements (block style `--blocks tonal|strong`), `--depth documents|decks` picks
 the ground depth, `--pygments STYLE` adds a listing's code colours, `--series N` adds
-chart series colours, and `--check FILE` exits 1 when FILE is not what the seeds generate.
--/
+chart series colours, and `--check FILE` exits 1 when FILE is not what the seeds
+generate. -/
 public meta def main (args : List String) : IO UInt32 := do
   let (f, args) ← match flags {} args with
     | .ok r => pure r

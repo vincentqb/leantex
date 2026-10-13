@@ -38,8 +38,8 @@ private def decodeMemo (text : String) : Option (String × String) :=
     else none
   | _ => none
 
-/-- The tool's identity: the memo's while its witness matches, else `probe`'s, published
-as a complete checked memo. -/
+/-- The tool's identity: the memo's while its witness matches, else `probe`'s, a present
+version published as a checked memo under a nonempty witness. -/
 public def identify (memoPath : System.FilePath) (stamp : String)
     (probe : IO PicCache.Tool) : IO PicCache.Tool := do
   let memo? := match ← Host.runIO (ask (.readFile memoPath.toString)) with

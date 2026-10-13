@@ -166,8 +166,8 @@ public def slotKey (source : ByteArray) (recipe identity engine : String) : Arra
 public def decodeSlot (bytes : ByteArray) : Option (Except String ByteArray) :=
   (SlotRecord.decode bytes).bind fun (_, record) => decode record
 
-/-- `cachedResult` through the cache in `dir` for `engine`; with neither, nothing is read
-or written. -/
+/-- `cachedResult` through the cache in `dir` for `engine`; missing either, nothing is
+read or written. -/
 public def cachedResultIn (dir : Option System.FilePath) (engine : Option String)
     (source : ByteArray) (recipe : String) (tools : Array String)
     (eligible : Bool) (produce : IO (Result × Bool)) : IO Result := do

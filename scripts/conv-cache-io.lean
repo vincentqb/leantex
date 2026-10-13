@@ -50,7 +50,7 @@ def main (args : List String) : IO UInt32 := do
       let memo ← IO.FS.readFile
         (cacheDir / ("tool-" ++ LeanTex.Core.Flate.contentKey "pdftocairo".toUTF8 ++ ".ver"))
       if let some (stamp, version) := PicCache.readVersionMemo memo then
-        -- A v1 envelope may hold a killed process recorded as a refusal, which a new attempt retires.
+        -- A v1 envelope may hold a killed process as a refusal, which a new attempt retires.
         let recipe := "pdftocairo -svg -f 1 -l 1 <input> <output>\n<svg preserveAspectRatio=\"none\" "
         let identity := "pdftocairo\n" ++ stamp ++ "\n" ++ version
         let variant := LeanTex.Core.Flate.contentKey (String.intercalate "\u0000"

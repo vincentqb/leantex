@@ -224,7 +224,7 @@ def Tsv.pendingRetirements (t : Tsv) : Array String :=
 
 /-- Faults of a committed baseline: row order and uniqueness, and each lowering request
 naming the fall from the floor the file commits (or the cap, for an unbaselined headroom
-item); a record is history and never held to today's rows. -/
+item); a record is never held to the current rows. -/
 def validate (t : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   match t.tierRetired with
@@ -322,8 +322,8 @@ def Lowered.authorises (w : Lowered) : Change → Bool
   | _ => false
 
 /-- Compare a fresh measurement against the committed baseline, retirement read off the
-baseline; in a `headroom` tier an item the baseline never saw is compared against the cap.
--/
+baseline; in a `headroom` tier an item the baseline never saw is compared against the
+cap. -/
 def ratchet (base now : Tsv) : Delta :=
   { changes :=
       base.rows.filterMap (fun r =>
@@ -733,8 +733,8 @@ def discover : IO (Array String × Array String) := do
     if tierNameOk n then names := names.push n else misnamed := misnamed.push n
   return (names.qsort (· < ·), misnamed.qsort (· < ·))
 
-/-- A deficit per item from the tier's own encoding; `raw` skips values below `rawFloor`.
--/
+/-- A deficit per item from the tier's own encoding; `raw` skips values below
+`rawFloor`. -/
 def deficits (t : Tsv) : Array (String × Int) := Id.run do
   let mut out : Array (String × Int) := #[]
   match t.encoding with
@@ -1043,8 +1043,8 @@ def browserFaceFaults (text freshSourceKey : String)
         faults := faults.push s!"browser-face key {key}, committed records give {actual}"
   return faults
 
-/-- A file pinned by the sha256 of the bytes it held when declared, in `sha256sum`'s `<64
-hex> <path>` format. -/
+/-- A file pinned by the sha256 of the bytes it held when declared, in `sha256sum`'s
+`<64 hex>  <path>` format. -/
 structure Entry where
   pin : String
   path : String

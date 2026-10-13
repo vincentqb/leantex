@@ -1695,8 +1695,8 @@ def remoteUrlsOf (cwd : String) (extraEnv : Array (String × Option String)) :
     ++ (if cr == 0 || cr == 1 then urls else ["(a config git could not read)"])
 
 /-- Run the tool under test from `cwd` after the guard: its repository inside the root,
-every remote a bare repository the run made, and its `LAND_SCRATCH_DIR` inside the root.
--/
+every remote a bare repository the run made, and its `LAND_SCRATCH_DIR` inside the
+root. -/
 def runTool (self cwd : String) (args : Array String)
     (extraEnv : Array (String × Option String)) : IO (Nat × String) := do
   let some g ← harnessGuard.get
@@ -2371,7 +2371,7 @@ def VictimState.changed (a b : VictimState) : String :=
   | [] => "none"
   | bad => String.intercalate "," (bad.map (·.1))
 
-/-- A harness started as a hook in a linked worktree starts a program, with `GIT_DIR` and
+/-- A harness started the way a hook in a linked worktree starts a program, `GIT_DIR` and
 `GIT_INDEX_FILE` naming that repository, leaves it and its origin as they were. -/
 def scenarioHookGitDir (self root : String) : IO Outcome := do
   let v ← mkVictim s!"{root}/hookdir"
