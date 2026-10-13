@@ -144,7 +144,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks svgNativeBoundaryChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks
-  markdownInputHtmlChecks disclosurePrintChecks overlaySetChecks overlayOnlyChecks overlayStyleChecks
+  markdownInputHtmlChecks disclosurePrintChecks overlaySetChecks overlayOnlyChecks overlayVisibleChecks
+  overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
   diagnosticOriginChecks diagnosticContrastOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
@@ -1536,8 +1537,10 @@ def reports : List Report := [
     state := .guarded "6f94e4e0" .revert .author },
   { id := "R171", date := "2026-10-13"
     what := "beamer's `visible` overlay command, and `onslide` with its plus modifier, which beamer defines as it, covered their argument on the steps their selector does not select, dimmed as `uncover` covers, where beamer sets the argument invisible there, its space kept"
-    pins := []
-    state := .owed "the overlay owner: an argument invisible off its steps, its space kept, in both artifacts" ["overlayVisibleChecks"] },
+    pins := [check% overlayVisibleChecks, check% Tests.LineRhythm.visibleScreenChecks,
+      thm% HtmlDoc.hidden_script_gated]
+    accept := ["twenty-four of the page guard's assertions fail on the tree before the fix, its guards added: on every step its selector leaves out, the argument of eleven invented frames — inline, a paragraph, a list, an inline and a display formula, a coloured run, a link, an image, an open selector, inside a cover and to the end of its group — shipped covered where its ink should be gone and a gap as wide stand in its place, and an image shipped"]
+    state := .guarded "6d66d873" .before .author },
   { id := "R172", date := "2026-10-13"
     what := "the suite's checks of a tool its budget ends failed under parallel load, and with them every agent's commit: they held the wall clock to a few seconds past a short budget, and a loaded host took longer"
     pins := [check% Tests.World.checks, check% Tests.processRuntimeChecks]
@@ -1585,7 +1588,7 @@ def reports : List Report := [
 def unwitnessedBaseline : Nat := 10
 
 /-- The reports not closed, held the same way. -/
-def owedBaseline : Nat := 5
+def owedBaseline : Nat := 4
 
 def Report.unwitnessed (r : Report) : Bool := r.state matches .unwitnessed
 

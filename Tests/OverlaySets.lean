@@ -17,7 +17,7 @@ private def overlayTextOne (k : Nat) (covered : Bool)
   | .style _ | .script _ _ => acc
   | .elem _ attrs kids =>
     let classes := (snapAttr attrs "class").splitOn " "
-    let shown := snapShows attrs k
+    let shown := snapShows attrs k && !(classes.contains "step-hide" && !snapActive attrs k)
     let covered := covered ||
       ((classes.contains "step" || classes.contains "step-set" ||
         classes.contains "step-end") && !snapActive attrs k)
@@ -177,10 +177,10 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     witness ("uncover " ++ spec) (s!"Lead \\uncover<{spec}>" ++ "{AmberMarker}") active false
     witness ("alt " ++ spec) (s!"Lead \\alt<{spec}>" ++ "{AmberMarker}{BlueMarker}") active true
   let unionSteps := [true, false, false, true]
-  -- `\only` is absent where its selector does not select, as beamer's
-  -- `\alt<s>{x}{}` is; the others cover, keeping their space.
+  -- `\only` is absent where its selector does not select, as beamer's `\alt<s>{x}{}` is, and
+  -- `\visible` invisible there; the others cover.
   for cmd in ["only", "uncover", "visible", "onslide"] do
-    let absent := cmd == "only"
+    let absent := cmd == "only" || cmd == "visible"
     witness (cmd ++ " inline") (s!"Lead \\{cmd}<1,4>" ++ "{AmberMarker}") unionSteps false absent
     witness (cmd ++ " block") (s!"\\{cmd}<1,4>" ++ "{AmberMarker\n\nSecondMarker}")
       unionSteps false absent
@@ -431,5 +431,88 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       (out.pages.size == 2 && (out.pages[1]?.map pageMarks) == (rout.pages[0]?.map pageMarks))
     t s!"nested overlays, {label}: the covered step stands its lines there too"
       ((out.pages[0]?.map place) == (rout.pages[0]?.map place))
+
+end Tests
+
+namespace Tests
+
+/-- A segment's width where it inks: a run, an image, a rule, a decoration or a decorated gap. -/
+private def inkWidth? : Layout.Seg → Option Dim.Sp
+  | .run _ _ _ w .. => some w
+  | .image _ w _ => some w
+  | .rule w .. => some w
+  | .decoration _ w .. => some w
+  | .decoratedGap w .. => some w
+  | .gap .. | .poly .. => none
+
+/-- Does `page` stand every line of `covered`, each segment the same, or where `covered` inks a
+gap as wide, and its polygons none? -/
+private def standsInkless (page covered : Layout.PageOut) : Bool :=
+  page.lines.size == covered.lines.size &&
+    (page.lines.zip covered.lines).all fun (a, c) =>
+      let segs := c.segs.filter fun s => !(s matches .poly ..)
+      (a.x, a.y, a.size, a.setWidth) == (c.x, c.y, c.size, c.setWidth) &&
+        a.segs.size == segs.size &&
+        (a.segs.zip segs).all fun (x, y) =>
+          segMark x == segMark y || (match x, inkWidth? y with
+            | .gap w _, some wy => w == wy
+            | _, _ => false)
+
+/-- Off its steps `\visible`'s argument is invisible and keeps its space: every such step's page
+is the page `\uncover` ships there with the argument's ink gone, a gap as wide in its place, and
+every other step's the same page; `\onslide+` is `\visible`. -/
+def overlayVisibleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let fonts ← mathSetOf fonts
+  -- label, body with `\CMD` for the command, the argument's words, the words beside it, the
+  -- frame's steps and the steps where the argument is hidden
+  let cases : List (String × String × List String × List String × Nat × List Nat) :=
+    [("inline", "Lead words \\CMD<2>{Hidden phrase} tail words.", ["Hidden", "phrase"],
+       ["Lead", "tail"], 2, [1]),
+     ("a paragraph", "Top line.\n\n\\CMD<2>{Middle phrase.}\n\nBottom line.",
+       ["Middle", "phrase"], ["Top", "Bottom"], 2, [1]),
+     ("a list", "\\CMD<2>{\\begin{itemize}\\item Hidden one\\item Hidden two\\end{itemize}}\n\n" ++
+       "After the list.", ["Hidden", "one", "two", "•"], ["After", "list"], 2, [1]),
+     ("a formula", "Lead words \\CMD<2>{$q^2$} tail words.", ["𝑞"], ["Lead", "tail"], 2, [1]),
+     ("a display", "Lead words.\n\\CMD<2>{\\[ q + 2 \\]}\nTail words.", ["𝑞", "+"],
+       ["Lead", "Tail"], 2, [1]),
+     ("a colour", "Lead words \\CMD<2>{\\textcolor{red}{Red phrase}} tail words.", ["Red", "phrase"],
+       ["Lead", "tail"], 2, [1]),
+     ("a link", "Lead words \\CMD<2>{\\href{https://example.org}{Link phrase}} tail words.",
+       ["Link", "phrase"], ["Lead", "tail"], 2, [1]),
+     ("an image", "Lead words \\CMD<2>{\\includegraphics[width=1cm]{absent.png}} tail words.", [],
+       ["Lead", "tail"], 2, [1]),
+     ("an open selector", "Lead words \\CMD<2->{Hidden phrase} tail \\uncover<3>{words.}",
+       ["Hidden", "phrase"], ["Lead", "tail"], 3, [1]),
+     ("inside a cover", "\\uncover<3>{Outer \\CMD<2>{Hidden} words}", ["Hidden"], ["Outer", "words"],
+       3, [1, 3]),
+     ("the rest of its group", "Lead words {\\CMD<2> Hidden phrase} tail words.",
+       ["Hidden", "phrase"], ["Lead", "tail"], 2, [1])]
+  for (label, body, absent, present, steps, hiddenAt) in cases do
+    let label := "visible, " ++ label
+    let spell (cmd : String) : String :=
+      deck169Frame (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
+    let vdoc := (elabStr (spell "visible")).1
+    let vout := layoutOf fonts vdoc
+    let uout := layoutOf fonts (elabStr (spell "uncover")).1
+    let pout := layoutOf fonts (elabStr (spell "onslide+")).1
+    let census := censusOf (coveredColorsOf vdoc) vout
+    t (label ++ ": one page per step") (vout.pages.size == steps && uout.pages.size == steps)
+    t (label ++ ": onslide+ is visible") (pout.pages.map pageMarks == vout.pages.map pageMarks)
+    for k in [1:steps + 1] do
+      match vout.pages[k - 1]?, uout.pages[k - 1]? with
+      | some v, some u =>
+        if hiddenAt.contains k then
+          t (label ++ s!": step {k} stands uncover's page, ink a gap as wide")
+            (standsInkless v u)
+          t (label ++ s!": step {k} ships none of the argument and all beside it")
+            ((census[k - 1]?).any fun page =>
+              absent.all (fun w => !hasStr page.text w && !hasStr page.covered w) &&
+                present.all (fun w => hasStr page.text w || hasStr page.covered w))
+          t (label ++ s!": step {k} ships no image")
+            (v.lines.all fun l => l.segs.all fun s => !(s matches .image ..))
+        else
+          t (label ++ s!": step {k} is uncover's page") (pageMarks v == pageMarks u)
+      | _, _ => t (label ++ s!": step {k} ships") false
 
 end Tests

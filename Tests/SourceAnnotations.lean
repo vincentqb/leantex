@@ -60,16 +60,16 @@ def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("style", Inline.styled .bold), ("color", Inline.colored ink none),
     ("role", Inline.role "accent"), ("link", Inline.link "https://example.invalid"),
     ("decoration", Inline.decorated .underline),
-    ("overlay", Inline.onSteps ⟨2, some 4, []⟩),
+    ("overlay", Inline.onSteps ⟨2, some 4, [], false⟩),
     ("footnote", Inline.footnote (some 1))]
   for (name, wrap) in wrappers do
     let xs := #[.text "left", .located span #[wrap annotated], .text "right"]
     t s!"source annotations: recursive erasure preserves {name} boundaries"
       (Ir.eraseLocationInlines xs == #[.text "left", wrap bare, .text "right"])
   t "source annotations: both overlay alternatives are erased in order"
-    (Ir.eraseLocationInlines #[.altSteps ⟨2, some 4, []⟩ annotated
+    (Ir.eraseLocationInlines #[.altSteps ⟨2, some 4, [], false⟩ annotated
       #[.located span #[.text "other"], .text " page"]] ==
-      #[.altSteps ⟨2, some 4, []⟩ bare #[.text "other page"]])
+      #[.altSteps ⟨2, some 4, [], false⟩ bare #[.text "other page"]])
   let doc := annotationDoc annotated (some span)
   let expected := annotationDoc bare none
   t "source annotations: body, listing, picture, and furniture erasure"
@@ -78,7 +78,7 @@ def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.eraseLocations (Ir.eraseLocations doc) == Ir.eraseLocations doc)
   let content : Array Inline := #[
     .styled .bold #[.text "bold"], .colored ink none #[.text "color"],
-    .onSteps ⟨2, some 4, []⟩ #[.text "overlay"],
+    .onSteps ⟨2, some 4, [], false⟩ #[.text "overlay"],
     .footnote (some 7) #[.text "note"]]
   let located : Array Inline := #[.located span content]
   t "source annotations: no additional semantic leaves"

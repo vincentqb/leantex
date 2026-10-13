@@ -1078,10 +1078,14 @@ private def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
    "defineenv", "block", "framefoot", "pagebreak"]
 
-/-- The overlay commands, whose content dims off its steps; `\only` only where
-`Compat.onlyAlternations` leaves it unread. -/
+/-- The overlay commands, whose content dims off its steps, or with `\visible` is invisible
+there; `\only` only where `Compat.onlyAlternations` leaves it unread. -/
 private def overlayCtrls : List String :=
   ["uncover", "visible", "only", "onslide"]
+
+/-- An overlay command's numbered selector, invisible off its steps for `\visible`. -/
+private def overlaySpecFor (name w : String) : Option Ir.OverlaySpec :=
+  (Ir.overlayRange w).map fun s => { s with invisible := name == "visible" }
 
 private def decorationCtrls : List (String × Ir.Decoration) :=
   [("underline", .underline), ("uline", .underline), ("sout", .lineThrough)]
@@ -5105,7 +5109,7 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]?.bind specWord? with
     | some w =>
-      match Ir.overlayRange w with
+      match overlaySpecFor name w with
       | some spec =>
         let j2 := skipSpaces raws (j + 1)
         have hj2ge := skipSpaces_ge raws (j + 1)
@@ -9558,7 +9562,7 @@ seal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 seal withBlockDecls wrapDeclAlign
 seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal renderedBuiltins structuralNames
-seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
+seal declCtrl runningCtrl titleCtrls overlayCtrls overlaySpecFor blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 seal isColumnStray
@@ -11168,7 +11172,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let jg := skipSpaces raws (j + 1)
         have h2 : i + 1 ≤ jg := by
           have := skipSpaces_ge raws (j + 1); omega
-        match Ir.overlayRange w with
+        match overlaySpecFor n w with
         | some p => pure ⟨(some p, jg), h2⟩
         | none => do
           warnOverlaySpec ctx w pos
@@ -11664,7 +11668,7 @@ unseal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 unseal withBlockDecls wrapDeclAlign
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal renderedBuiltins structuralNames
-unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
+unseal declCtrl runningCtrl titleCtrls overlayCtrls overlaySpecFor blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray

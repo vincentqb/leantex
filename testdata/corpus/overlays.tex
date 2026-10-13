@@ -1,6 +1,7 @@
 % Invented fixture: overlays, dim-not-hide. Item specs, an inline
 % \uncover, and \pause — the PDF handout gets one page per step with
 % pending content dimmed in place; HTML keeps one slide with step data.
+% \visible keeps its argument's place and ships none of it off its steps.
 \documentclass[aspectratio=169]{slides}
 
 \begin{document}
@@ -19,6 +20,10 @@ Before the pause.
 
 \pause
 After the pause.
+\end{frame}
+
+\begin{frame}{Kept in place}
+Before the reveal \visible<2>{a phrase kept in place} and after it.
 \end{frame}
 
 \end{document}

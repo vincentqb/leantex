@@ -1182,4 +1182,67 @@ def centredRuntChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "the centred block keeps TeX's line count and sets its last line two words or more"
     (centred.size == flush.size && (centred.back?.map words).any (2 ≤ ·))
 
+/-- A sheet's rules the screen reads at its default: inside no at-rule but `@media screen`. -/
+private def screenRules (css : String) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  let mut heads : Array String := #[]
+  let mut cur := ""
+  for c in css.toList do
+    if c == '{' then
+      heads := heads.push cur.trimAscii.toString
+      cur := ""
+    else if c == '}' then
+      let decls := cur.trimAscii.toString
+      let screen := (heads.pop).all fun h => !h.startsWith "@" || h == "@media screen"
+      if decls.contains ':' && screen && !(heads.back?.getD "").startsWith "@" then
+        out := out.push ((heads.back?.getD "").trimAscii.toString, decls)
+      heads := heads.pop
+      cur := ""
+    else
+      cur := cur.push c
+  return out
+
+mutual
+
+/-- The tree as snap `k` of a running deck script stands: every track's snap state `k`. -/
+private def snapStateOne (k : Nat) : Html.Node → Html.Node
+  | .elem tag attrs kids =>
+    let attrs := if ((attrs.find? (·.1 == "class")).map (·.2) |>.getD "").splitOn " " |>.contains
+        "slide-track" then (attrs.filter (·.1 != "data-snapped")).push ("data-snapped", toString k)
+      else attrs
+    .elem tag attrs (snapStateList k kids.toList).toArray
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
+private def snapStateList (k : Nat) : List Html.Node → List Html.Node
+  | [] => []
+  | n :: rest => snapStateOne k n :: snapStateList k rest
+
+end
+
+/-- Every snap of a `\visible` frame hides the argument where its selector does not select, the
+script's floor and the selected snaps showing it, through the sheet's own cascade. -/
+def visibleScreenChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for (label, body, hidden) in
+      [("inline", "Lead words \\visible<2>{Hidden phrase} tail words.", "Hidden phrase"),
+       ("a list", "\\visible<2>{\\begin{itemize}\\item Hidden item\\end{itemize}}\n\nAfter.",
+         "Hidden item"),
+       ("an onslide plus", "Lead words \\onslide+<2>{Hidden phrase} tail words.", "Hidden phrase")] do
+    let (h, n, _) := HtmlDoc.emitTree {} (elabStr (deck169Frame body)).1
+    let rules := screenRules (treeCssList "" h.toList)
+    let visibility (tree : Array Html.Node) : Option String := Id.run do
+      let ct := CTree.of tree
+      for i in [0:ct.els.size] do
+        if (ct.el i).text.trimAscii.toString == hidden then
+          return (cascadeInherited ct rules "visibility" i).orElse fun _ => some "visible"
+      return none
+    let scripted (k : Nat) : Array Html.Node :=
+      #[Html.elem "html" (snapStateList k n.toList).toArray #[("data-deck-script", "")]]
+    t s!"visible, {label}: snap 1 hides the argument" (visibility (scripted 1) == some "hidden")
+    t s!"visible, {label}: snap 2 shows it" (visibility (scripted 2) == some "visible")
+    t s!"visible, {label}: with no script the floor shows it"
+      (visibility #[Html.elem "html" n #[]] == some "visible")
+
 end Tests.LineRhythm

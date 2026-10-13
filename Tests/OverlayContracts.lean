@@ -91,7 +91,10 @@ private def contractCarrier (rules : Array (String × String)) (k : Nat)
     if let some value := contractIsRule rules ("html[data-deck-script] " ++ track)
         (s!".step-end[data-step-last=\"{last}\"]") "opacity" then
       opacity ← contractPercent value
-  let mut display := if attrs.any (·.1 == "hidden") then "none" else "contents"
+  let hide := classes.contains "step-hide" && !member && contractRule rules
+    (s!"html[data-deck-script] {snap}.step-hide:not([data-steps~=\"{k}\"])") "visibility" ==
+      some "hidden"
+  let mut display := if attrs.any (·.1 == "hidden") || hide then "none" else "contents"
   if classes.contains "alt-set" then
     display ← contractRule rules
       (snap ++ if member then s!".alt-set[data-steps~=\"{k}\"]"
@@ -165,6 +168,28 @@ private def contractHtmlList (rules : Array (String × String)) (k : Nat)
 
 end
 
+/-- An authored reading's source without what it writes invisible on every step
+(`\visible<0,0>{...}`), which ships nothing. -/
+private def withoutInvisible (src : String) : String := Id.run do
+  let open_ := "\\visible<0,0>{"
+  let mut out := ""
+  let mut rest := src
+  for _ in [0:src.length] do
+    match rest.splitOn open_ with
+    | head :: tail@(_ :: _) =>
+      out := out ++ head
+      let after := open_.intercalate tail
+      let mut depth : Nat := 1
+      let mut i := 0
+      for c in after.toList do
+        if depth == 0 then break
+        if c == '{' then depth := depth + 1
+        if c == '}' then depth := depth - 1
+        i := i + 1
+      rest := String.ofList (after.toList.drop i)
+    | _ => break
+  return out ++ rest
+
 /-- Overlay composition matches authored readings on the layout and on the HTML's multiplied carrier
 opacities. -/
 def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -199,7 +224,7 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       let observed := ["BeforeGuard", "AfterGuard", "ClockMarker"] ++ markers
       for marker in observed do
         let glyphs := styleGlyphs control marker
-        let copies := styleCopies (source reading) marker
+        let copies := styleCopies (withoutInvisible (source reading)) marker
         t (here ++ " authored glyphs for " ++ marker)
           (glyphs.size == (if copies == 0 then 0 else marker.length) &&
             glyphs.all fun g => g.glyph > 0 && g.advance > 0 && g.size > 0)
@@ -238,17 +263,19 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       (readInk nestedTree withoutReset).isSome &&
       readInk nestedTree withoutReset != readInk nestedTree nestedRules)
   let covered (body : String) := "\\uncover<0,0>{" ++ body ++ "}"
+  let invisible (body : String) := "\\visible<0,0>{" ++ body ++ "}"
   let paint := "\\textcolor{blue}{\\textbf{\\underline{InkProbe}}}"
   for cmd in ["only", "uncover", "visible", "onslide"] do
-    -- `\only` is absent off its steps (beamer's `\alt<s>{x}{}`): an empty
-    -- group stands there, both spaces around it kept, as TeX keeps them.
-    let off := if cmd == "only" then "{}" else covered paint
+    -- `\only` is absent off its steps (beamer's `\alt<s>{x}{}`), an empty group kept, and
+    -- `\visible` invisible there.
+    let off := if cmd == "only" then "{}" else if cmd == "visible" then invisible paint
+      else covered paint
     witness ("nested cover " ++ cmd)
       (s!"\\{cmd}<2,4>" ++ "{\\uncover<3,4>{" ++ paint ++ "}}")
       [off, covered paint, off, paint] ["InkProbe"]
   witness "disjoint nested covers"
     ("\\uncover<1,3>{\\visible<2,4>{" ++ paint ++ "}}")
-    [covered paint, covered paint, covered paint, covered paint] ["InkProbe"]
+    [invisible paint, covered paint, invisible paint, covered paint] ["InkProbe"]
   witness "cover outside replacement and modifiers"
     ("\\uncover<2,4>{\\alt<1,3>" ++
       "{\\textbf<2,3>{\\alert<3,4>{\\sout<1,4>{\\textcolor<1,2>{blue}{PrimaryProbe}}}}}" ++
@@ -259,11 +286,11 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   witness "replacement outside covers"
     ("\\alt<1,3>{\\uncover<2,3>{\\textit{PrimaryProbe}}}" ++
       "{\\visible<1,4>{\\sout{OtherProbe}}}")
-    [covered "\\textit{PrimaryProbe}", covered "\\sout{OtherProbe}",
+    [covered "\\textit{PrimaryProbe}", invisible "\\sout{OtherProbe}",
       "\\textit{PrimaryProbe}", "\\sout{OtherProbe}"] ["PrimaryProbe", "OtherProbe"]
   witness "nested positive ranges preserve the outer end"
     ("\\uncover<2-3>{\\visible<3-4>{" ++ paint ++ "}}")
-    [covered paint, covered paint, paint, covered paint] ["InkProbe"]
+    [invisible paint, invisible paint, paint, covered paint] ["InkProbe"]
   witness "positive range cover with replacement"
     "\\uncover<2-3>{\\alt<2-3>{PrimaryProbe}{OtherProbe}}"
     [covered "OtherProbe", "PrimaryProbe", "PrimaryProbe", covered "OtherProbe"]

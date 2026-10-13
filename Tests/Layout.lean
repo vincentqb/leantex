@@ -4833,6 +4833,15 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       unshippedKind r || (match r.leaf with
         | .text s => iconAlts.contains s || numberedCode.contains s || standoutTitles.contains s
         | _ => false)
+    -- A block holding content invisible off its steps ships all its leaves on its steps only.
+    let invisibleTexts := Ir.foldBlocks (fun out b => match b with
+      | .onSteps spec body => if spec.invisible then out.push (Ir.blocksText body) else out
+      | _ => out) (fun out x => match x with
+      | .onSteps spec body => if spec.invisible then out.push (Ir.plainText body) else out
+      | _ => out) (#[] : Array String) doc.body
+    let hidesOff (r : LeafRow) : Bool := match r.leaf with
+      | .text s => invisibleTexts.any (hasStr · s)
+      | _ => false
     -- A glyph no face covers is dropped and named (E0405), so only covered characters are compared.
     let covered (c : Char) : Bool := fs.fonts.any fun f => (f.gid c).isSome
     let lines := allLines out
@@ -4879,7 +4888,7 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
             mismatch := some s!"{n} leaf {r.id} in group {k}: {r.leaf.census.quote} not in \
 {(String.ofList actual.toList).quote}"
       -- Exact only where the block carries no generated ink.
-      let exact := owned.all fun r => !excluded r && !r.marked &&
+      let exact := owned.all fun r => !excluded r && !r.marked && !hidesOff r &&
         (match ownerOf r with
           | some .paragraph | some .cell | some .title => true
           | _ => false)

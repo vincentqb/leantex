@@ -1060,6 +1060,37 @@ public structure Out where
   /-- The document outline, one entry per unpinned-nav link in document order. -/
   outline : Array OutlineEntry := #[]
 
+/-- Is a colour the invisible paint (`Ir.Color.invisible`)? -/
+@[expose] public def invisiblePaint (c : Ir.Color) : Bool := c == Ir.Color.invisible
+
+/-- A segment as it ships: ink in the invisible paint a gap as wide, its polygon nothing. -/
+@[expose] public def Seg.shipped : Seg → Option Seg
+  | .run f c l w gs sz m d r g a =>
+    some (if invisiblePaint c then .gap w false else .run f c l w gs sz m d r g a)
+  | .decoration k w t r c => some (if invisiblePaint c then .gap w false else .decoration k w t r c)
+  | .rule w t r c => some (if invisiblePaint c then .gap w false else .rule w t r c)
+  | .poly pts c => if invisiblePaint c then none else some (.poly pts c)
+  | .decoratedGap w word d =>
+    some (if d.underline.any (invisiblePaint ·.color) || d.lineThrough.any (invisiblePaint ·.color)
+      then .gap w word else .decoratedGap w word d)
+  | .gap w word => some (.gap w word)
+  | .image s w h => some (.image s w h)
+
+/-- Does a placed picture paint only the invisible paint? -/
+@[expose] public def InkOut.inksNothing (k : InkOut) : Bool :=
+  let paints := k.fig.marks.toList.flatMap fun m => match m with
+    | .paint _ _ fl st _ _ => (fl.map (·.paint)).toList ++ (st.map (·.paint)).toList
+    | .raster .. | .shading .. => []
+  !paints.isEmpty && paints.all fun p => match p with
+    | .solid c => invisiblePaint c
+    | .gradient _ => false
+
+/-- A page as it ships: invisible overlay content keeps its place and ships no ink. -/
+@[expose] public def PageOut.shipped (p : PageOut) : PageOut :=
+  { p with lines := p.lines.map fun l => { l with segs := l.segs.filterMap Seg.shipped }
+           fills := p.fills.filter (!invisiblePaint ·.color)
+           inks := p.inks.filter (!·.inksNothing) }
+
 public structure TextStyle where
   slot : Nat := 0
   /-- The weight axis in force (`Ir.Weight`), `\fontseries`'s series. -/
@@ -1121,8 +1152,9 @@ private inductive Tk where
   /-- A strut: zero width, this much height above the baseline. -/
   | strut (height : SymGlue)
   | brk (extra : SymGlue)
-  /-- An image reference, resolved against the store when items are built. -/
-  | img (src : String) (spec : Image.Spec)
+  /-- An image reference, resolved against the store when items are built; `ink` false for one
+  in invisible overlay content, which keeps its box and ships nothing. -/
+  | img (src : String) (spec : Image.Spec) (ink : Bool)
   /-- An elaborated formula, set by `itemsOfInlines` as one unbreakable run attributed `attr`. -/
   | formula (display : Bool) (style : TextStyle) (body : Math.MList) (attr : Attribution)
   /-- An icon: one scalar set in whichever face the per-scalar fallback chain covers it with. -/
@@ -1140,7 +1172,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
-  | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
+  | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ _ | .corr _ _ => none
 
 /-- The Layout-private role a decorating site wraps its
 declared content in; a NUL cannot come from source text. -/
@@ -1344,7 +1376,9 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .icon c _ =>
     let (attr, ctr) := st.ctr.take
     { st with toks := st.toks.push (.icon sty c attr), ctr := ctr }
-  | .image src spec _ => { st with toks := st.toks.push (.img src spec), ctr := st.ctr.skip 1 }
+  | .image src spec _ =>
+    { st with toks := st.toks.push (.img src spec (sty.color != Ir.Color.invisible)),
+              ctr := st.ctr.skip 1 }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
   | .hspace g keep => { st with toks := st.toks.push (.hskip sty g keep) }
@@ -3425,6 +3459,10 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   if pad == 0 && width == g.advance then assembled else
     #[mathKern e size pad] ++ assembled ++ #[mathKern e size (width - pad - g.advance)]
 
+/-- A colour switch inside invisible content keeps the invisible paint. -/
+private def keepInvisible (cur c : Ir.Color) : Ir.Color :=
+  if cur == Ir.Color.invisible then cur else c
+
 mutual
 
 /-- Lay one math list, spacing directly adjacent atoms by their degraded classes. -/
@@ -3434,7 +3472,7 @@ private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .nil => acc
   | .cons (.ink c _) rest =>
     -- A colour switch is no atom, so the spacing walk keeps the atom before it.
-    layMathTail { e with color := c } st raise cls prev acc rest
+    layMathTail { e with color := keepInvisible e.color c } st raise cls prev acc rest
   | .cons x rest =>
     match x.classOf with
     | none =>
@@ -3669,7 +3707,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .cancel mark spec value body =>
     -- cancel.sty boxes its argument in the current style (`\mathpalette`).
     let (bItems, m1) := layMathTail e st 0 (Math.degrade body.classes) none (#[], acc.2) body
-    let ink := (spec.color.map (·.1)).getD e.color
+    let ink := keepInvisible e.color ((spec.color.map (·.1)).getD e.color)
     let (vItems, m2) := layMathTail { e with color := ink } (spec.size.style st) 0
       (Math.degrade value.classes) none (#[], m1) value
     (acc.1 ++ cancelAssemble e st raise mark spec ink bItems vItems, m2)
@@ -4131,7 +4169,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let strut : Item := .rule 0 (max 0 (g.width.resolve size xHeight)) 0
       Ir.Color.black
     { acc with items := acc.items.push strut }
-  | .img src spec =>
+  | .img src spec ink =>
     -- An entry that failed to load keeps the requested size around a default square.
     let idx? := imgs.findRequest? (spec.request src)
     let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.size?) with
@@ -4144,7 +4182,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           spec.height.isNone && w > textW && w > 0 then
         (textW, textW * h / w)
       else (w, h)
-    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h)) }
+    -- An invisible image is a rule of its box in the invisible paint, which ships as a gap.
+    let item : Item := if ink then .img idx? (max 0 w) (max 0 h)
+      else .rule (max 0 w) (max 0 h) 0 Ir.Color.invisible
+    { acc with items := acc.items.push item }
   | .brk extra =>
     let items := acc.items.push (.glue { fil := true, parfill := true })
     let extras :=
@@ -4337,7 +4378,7 @@ private def Tk.sourceChars : Tk → List Char
   | .word _ cs _ => cs.toList
   | .space _ => [' ']
   | .origin _ | .anchor _ | .fill | .hskip _ _ _ | .rule _ _ _ _
-    | .strut _ | .brk _ | .img _ _ | .formula _ _ _ _
+    | .strut _ | .brk _ | .img _ _ _ | .formula _ _ _ _
     | .icon _ _ _ | .note _ _ _ _ | .corr _ _ => []
 
 private theorem pushWord_sourceChars (st : FlattenSt) (sty : TextStyle)
@@ -8937,6 +8978,9 @@ public structure Spacing.Context where
   /-- Inside an overlay step this page does not show, the cover a colour resolved
   here takes, as beamer's `\opaqueness` covers a covered step's colours. -/
   private covering : Option Ir.Cover := none
+  /-- Inside an invisible overlay step this page does not show: every colour resolved here is the
+  invisible paint (`Ir.Cover.invisible`). -/
+  private hidden : Bool := false
   /-- The surface the document was written in (`Ir.Doc.surface`). -/
   private surface : Ir.Surface := .tex
 
@@ -9045,9 +9089,17 @@ private def Spacing.Context.parskip (r : Rd) : Glue := r.resolve r.geom.parskip
 
 /-- A colour resolved at layout, as the step being collected shows it. -/
 private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
+  if r.hidden then Ir.Color.invisible else
   match r.covering with
   | some cover => cover.of c
   | none => c
+
+/-- The context a pending overlay step's content is collected in: hidden for an invisible one,
+covered otherwise. -/
+private def Spacing.Context.pendingStep (r : Rd) (spec : Ir.OverlaySpec) : Rd :=
+  if !spec.pending r.step then r
+  else if spec.invisible then { r with hidden := true }
+  else { r with covering := r.cover }
 
 /-- A list level's `\leftmargin` at `\@listdepth` `lv`: the
 document's own, else the class's, else the engine's indent. -/
@@ -12250,8 +12302,7 @@ private def collectCentered (r : Rd) (a : Acc)
   -- An overlay carrier is grouping, as `collectBlock` reads it: what it
   -- shows on this step centres as the scope's own blocks do.
   | .onSteps spec inner :: rest =>
-    let a := collectCentered (if spec.pending r.step then { r with covering := r.cover } else r)
-      a inner.toList indent false
+    let a := collectCentered (r.pendingStep spec) a inner.toList indent false
     collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
   | .altSteps spec firstPage otherPage :: rest =>
     let a := if spec.showsFirst r.step then
@@ -12560,8 +12611,7 @@ private def collectBlock (r : Rd) (a : Acc)
     collectBlocks r a body indent
   | .onSteps spec body =>
     -- Dimming was painted into the colours before layout; what resolves here takes the cover.
-    collectBlocks (if spec.pending r.step then { r with covering := r.cover } else r)
-      a body indent
+    collectBlocks (r.pendingStep spec) a body indent
   | .altSteps spec firstPage otherPage =>
     -- The counter steps over the group this page does not ink, so the inked one keeps its tree id.
     if spec.showsFirst r.step then
@@ -19343,7 +19393,8 @@ public structure Fitted where
   webSqueeze : Array Nat := #[]
 
 /-- The overflow ladder (`Ir.frameFit`): set every unbreakable frame to measure, decide each
-step as beamer sets it, set the document again where needed, and name every frame moved once. -/
+step as beamer sets it, set the document again where needed, name every frame moved once, and
+ship the pages (`PageOut.shipped`). -/
 public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Fitted :=
@@ -19365,12 +19416,14 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
         | some (.frame _ _ _ _ fbody) =>
           if Ir.frameSqueeze fbody == .none && Ir.holdsList fbody then some i else none
         | some _ | none => none).toList.eraseDups).toArray
-  { out := { final with diags := final.diags ++ account }, setting, decisions, webSqueeze }
+  { out := { final with pages := final.pages.map PageOut.shipped, diags := final.diags ++ account },
+    setting, decisions, webSqueeze }
 
 public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) :
     let f := runFitted geom fs pats doc imgs frameSpans pictureSpans
-    f.out.pages = (run geom fs pats f.setting imgs frameSpans pictureSpans).pages ∧
+    f.out.pages = (run geom fs pats f.setting imgs frameSpans pictureSpans).pages.map
+        PageOut.shipped ∧
       ∃ account, f.out.diags = (run geom fs pats f.setting imgs frameSpans pictureSpans).diags ++
         account := by
   simp only [runFitted]

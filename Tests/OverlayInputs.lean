@@ -95,14 +95,14 @@ private def inputNativeFamilies (ref : IO.Ref (List String)) (fonts : Font.FontS
   inputEquivalent ref fonts "onslide star final"
     "\\onslide*{Probe}<1,3>" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "onslide plus prefix"
-    "\\onslide+<1,3>{Probe}" "\\visible<1,3>{Probe}"
+    "\\onslide+<1,3>{Probe}" "\\visible<1,3>{Probe}" 2
   inputEquivalent ref fonts "native let forwarding"
     "\\let\\Pick\\only\\Pick< 1 , 3 >{Probe}" "\\only<1,3>{Probe}" 2
   for name in ["only", "uncover", "visible", "onslide", "alert", "emph", "textbf"] do
     inputEquivalent ref fonts ("native let freezes " ++ name)
       ("\\let\\Pick\\" ++ name ++ "\\let\\Copy\\Pick\\def\\" ++ name ++
         "#1{Lost}\\Copy<1,3>{Probe}") ("\\" ++ name ++ "<1,3>{Probe}")
-      (if name == "only" then 2 else 3)
+      (if name == "only" || name == "visible" then 2 else 3)
   inputEquivalent ref fonts "saved onslide star keeps native dispatch"
     "\\let\\Pick\\onslide\\def\\only#1{Lost}\\Pick*<1,3>{Probe}" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "saved native wrapper keeps block dispatch"
@@ -315,7 +315,7 @@ def overlayInputChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let args := if command == "textcolor{blue}" then "{blue}{Probe}" else "{Probe}"
     inputEquivalent ref fonts ("spaced selector " ++ command)
       ("\\" ++ head ++ "< 1 , 3 >" ++ args)
-      ("\\" ++ head ++ "<1,3>" ++ args) (if command == "only" then 2 else 3)
+      ("\\" ++ head ++ "<1,3>" ++ args) (if command == "only" || command == "visible" then 2 else 3)
   inputEquivalent ref fonts "spaced interval endpoints"
     "\\only< 1 - 2 >{Probe}" "\\only<1-2>{Probe}" 2
   inputEquivalent ref fonts "parameter selector fragments"

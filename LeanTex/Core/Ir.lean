@@ -2357,6 +2357,8 @@ public structure OverlaySpec where
   first : Nat
   last : Option Nat
   more : List (Nat × Option Nat) := []
+  /-- Off its steps the carried content is invisible, its space kept, rather than covered. -/
+  invisible : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited
 
 namespace OverlaySpec
@@ -2417,7 +2419,7 @@ public theorem pending_nested_exact (s t : OverlaySpec) (k : Nat) :
   simp [pending, Bool.not_and]
 
 @[simp] public theorem singleton_pending_exact (n : Nat) (last : Option Nat) (k : Nat) :
-    (OverlaySpec.mk n last []).pending k = stepPending n last k := by
+    (OverlaySpec.mk n last [] false).pending k = stepPending n last k := by
   simp [pending, selects, ranges]
 
 public theorem showsFirst_id (s : OverlaySpec) : s.showsFirst 1 = true := by
@@ -2547,12 +2549,12 @@ public inductive Inline where
 
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
 @[match_pattern, expose] public def Inline.step (n : Nat) (last : Option Nat) (body : Array Inline) : Inline :=
-  .onSteps ⟨n, last, []⟩ body
+  .onSteps ⟨n, last, [], false⟩ body
 
 /-- Single-interval alternation, with the same page-order storage. -/
 @[match_pattern, expose] public def Inline.alt (n : Nat) (last : Option Nat)
     (firstPage otherPage : Array Inline) : Inline :=
-  .altSteps ⟨n, last, []⟩ firstPage otherPage
+  .altSteps ⟨n, last, [], false⟩ firstPage otherPage
 
 
 /-- An alternation in source order, stored in page order. -/
@@ -4286,12 +4288,12 @@ public inductive Block where
 
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
 @[match_pattern, expose] public def Block.step (n : Nat) (last : Option Nat) (body : Array Block) : Block :=
-  .onSteps ⟨n, last, []⟩ body
+  .onSteps ⟨n, last, [], false⟩ body
 
 /-- Single-interval alternation, with the same page-order storage. -/
 @[match_pattern, expose] public def Block.alt (n : Nat) (last : Option Nat)
     (firstPage otherPage : Array Block) : Block :=
-  .altSteps ⟨n, last, []⟩ firstPage otherPage
+  .altSteps ⟨n, last, [], false⟩ firstPage otherPage
 
 /-- An alternation in source order, stored in page order. -/
 public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block) : Block :=
@@ -8694,12 +8696,12 @@ public def navLinks (body : Array Block) : Array (String × String) :=
   navLinkList #[] body.toList
 
 /-- An overlay range for the dump: a single interval as a step's, a union by
-every declared interval. -/
+every declared interval, and `invisible` where its content is so off its steps. -/
 private def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
   kind ++ " " ++ String.intercalate "," (spec.ranges.map fun (n, last) =>
     match last with
     | some u => s!"{n}-{u}"
-    | none => toString n)
+    | none => toString n) ++ (if spec.invisible then " invisible" else "")
 
 mutual
 
@@ -10653,6 +10655,13 @@ public def Design.cover (d : Design) : Cover :=
   let of := Oklab.cover d.coveredFraction d.bg
   { plain := d.covered.getD (of d.fg), of := of }
 
+/-- The paint of invisible overlay content, its CMYK rider outside every document's range: layout
+places it and ships none of it (`Layout.dropInvisible`). -/
+public def Color.invisible : Color := { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
+
+/-- The cover of invisible overlay content: every colour the invisible paint. -/
+public def Cover.invisible : Cover := { plain := Color.invisible, of := fun _ => Color.invisible }
+
 /-- One component of a numbered overlay: a number, a closed range or an open range. -/
 private def overlayInterval (w : String) : Option (Nat × Option Nat) := do
   match w.trimAscii.toString.splitOn "-" with
@@ -10673,12 +10682,12 @@ public def overlayRange (w : String) : Option OverlaySpec := do
   if !(w.startsWith "<" && w.endsWith ">" && w.length ≥ 3) then none else do
     let ranges ← (((w.drop 1).dropEnd 1).toString.splitOn ",").mapM overlayInterval
     match ranges with
-    | (n, last) :: more => pure ⟨n, last, more⟩
+    | (n, last) :: more => pure { first := n, last := last, more := more }
     | [] => none
 
 /-- The single-interval projection of `OverlaySpec.showsFirst`. -/
 @[expose] public def altShowsFirst (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
-  (OverlaySpec.mk n last []).showsFirst k
+  (OverlaySpec.mk n last [] false).showsFirst k
 
 public theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
     altShowsFirst n last 1 = true :=
@@ -10686,7 +10695,7 @@ public theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
 
 /-- Whether the group stored first is the one a pending step inks. -/
 public def altFirstWhenPending (n : Nat) (last : Option Nat) : Bool :=
-  (OverlaySpec.mk n last []).pending 1
+  (OverlaySpec.mk n last [] false).pending 1
 
 public theorem altShowsFirst_side (n : Nat) (last : Option Nat) (k : Nat) :
     altShowsFirst n last k = (stepPending n last k == altFirstWhenPending n last) := by
@@ -10891,7 +10900,9 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
   | .onSteps spec body =>
-    .onSteps spec (dimBlockList cover k (pending || spec.pending k) #[] body.toList)
+    if spec.invisible && spec.pending k then
+      .onSteps spec (dimBlockList Cover.invisible k true #[] body.toList)
+    else .onSteps spec (dimBlockList cover k (pending || spec.pending k) #[] body.toList)
   | .altSteps spec firstPage otherPage =>
     .altSteps spec (dimBlockList cover k pending #[] firstPage.toList)
       (dimBlockList cover k pending #[] otherPage.toList)
@@ -10992,7 +11003,10 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .decorated kind body => .decorated (kind.dimmed cover pending) (dimInlineList cover k pending #[] body.toList)
   -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
-    if !pending && spec.pending k then
+    if spec.invisible && spec.pending k then
+      .onSteps spec #[.colored Cover.invisible.plain none
+        (dimInlineList Cover.invisible k true #[] body.toList)]
+    else if !pending && spec.pending k then
       .onSteps spec #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
     else .onSteps spec (dimInlineList cover k pending #[] body.toList)
   | .altSteps spec firstPage otherPage =>
@@ -12008,11 +12022,14 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .onSteps spec body =>
     rw [dimInline]
-    by_cases h : (!pending && spec.pending k) = true
-    · simp [h, plainTextOne, plainTextList,
-        dimInlineList_text cover k true body.toList #[]]
-    · simp [h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
-        plainTextList]
+    by_cases hv : (spec.invisible && spec.pending k) = true
+    · simp [hv, plainTextOne, plainTextList,
+        dimInlineList_text Cover.invisible k true body.toList #[]]
+    · by_cases h : (!pending && spec.pending k) = true
+      · simp [hv, h, plainTextOne, plainTextList,
+          dimInlineList_text cover k true body.toList #[]]
+      · simp [hv, h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
+          plainTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending firstPage.toList #[],
@@ -12163,9 +12180,12 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
     simp [blockTextOne, dimColumns_text cover k pending cols.toList #[] acc, blockTextColumns]
   | .onSteps spec body =>
     rw [dimBlock]
-    simp [blockTextOne,
-      dimBlockList_text cover k (pending || spec.pending k) body.toList #[] acc,
-      blockTextList]
+    by_cases hv : (spec.invisible && spec.pending k) = true
+    · simp [hv, blockTextOne, dimBlockList_text Cover.invisible k true body.toList #[] acc,
+        blockTextList]
+    · simp [hv, blockTextOne,
+        dimBlockList_text cover k (pending || spec.pending k) body.toList #[] acc,
+        blockTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending firstPage.toList #[],

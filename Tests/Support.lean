@@ -1714,7 +1714,7 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
   let family := fonts.math.bind (fonts.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let (doc, alphaDiags) := Ir.resolveMathAlphas fonts.mathAlphabets family doc
   let out := Layout.run geom fonts pats doc imgs
-  { out with diags := alphaDiags ++ out.diags }
+  { out with pages := out.pages.map Layout.PageOut.shipped, diags := alphaDiags ++ out.diags }
 
 /-- A document set through the overflow ladder (`Layout.runFitted`), resolved as `layoutOf` resolves
 it. -/

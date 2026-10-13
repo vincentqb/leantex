@@ -72,5 +72,13 @@ frame
   step 2
     para
       text "After the pause."
+frame
+  title
+    text "Kept in place"
+  para
+    text "Before the reveal "
+    step 2-2 invisible
+      text "a phrase kept in place"
+    text " and after it."
 -- diagnostics
 (none)

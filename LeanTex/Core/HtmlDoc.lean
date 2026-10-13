@@ -218,7 +218,7 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
+   "standout", "step", "step-hide", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
    "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "frame-flow-start",
    "fill-before", "squeeze",
    "tok", "tok-long"] ++
@@ -3433,6 +3433,18 @@ private def stepSetGuard : DeckRule :=
     decls := [("opacity", "100%")]
     part := .reduce }
 
+/-- At snap `k` an invisible carrier off its steps hides what it carries, its box kept. -/
+private def stepHideRule (k : Nat) : DeckRule :=
+  { selector := [.lit "html[data-deck-script] [data-snapped=\"", .num k,
+      .lit "\"] .step-hide:not([data-steps~=\"", .num k, .lit "\"])"]
+    decls := [("visibility", "hidden")] }
+
+/-- `stepHideRule`'s reduced-motion counterpart. -/
+private def stepHideGuard : DeckRule :=
+  { selector := [.lit "html[data-deck-script] [data-snapped] .step-hide[data-steps]"]
+    decls := [("visibility", "visible")]
+    part := .reduce }
+
 /-- Under a pending ancestor a descendant's own cover stops, so opacities never multiply. -/
 private def nestedCoverRule (k : Nat) : DeckRule :=
   let parent := [.lit "html[data-deck-script] [data-snapped=\"", .num k,
@@ -3447,23 +3459,25 @@ private def coverStaticFloor : DeckRule :=
     decls := [("opacity", "100%"), ("animation", "none")] }
 
 private def setRules (cp ms : Nat) : List DeckRule :=
-  stepSetGuard :: coverStaticFloor :: (List.range ms).flatMap fun i =>
-    [stepSetPendingRule cp (i + 1), altSetShownRule (i + 1), altSetHiddenRule (i + 1),
-      nestedCoverRule (i + 1)]
+  stepSetGuard :: stepHideGuard :: coverStaticFloor :: (List.range ms).flatMap fun i =>
+    [stepSetPendingRule cp (i + 1), stepHideRule (i + 1), altSetShownRule (i + 1),
+      altSetHiddenRule (i + 1), nestedCoverRule (i + 1)]
 
 private theorem setRules_cases {P : DeckRule → Prop} {cp ms : Nat}
-    (hg : P stepSetGuard) (hf : P coverStaticFloor)
-    (hp : ∀ k, P (stepSetPendingRule cp k))
+    (hg : P stepSetGuard) (hhg : P stepHideGuard) (hf : P coverStaticFloor)
+    (hp : ∀ k, P (stepSetPendingRule cp k)) (hhide : ∀ k, P (stepHideRule k))
     (hs : ∀ k, P (altSetShownRule k)) (hh : ∀ k, P (altSetHiddenRule k))
     (hn : ∀ k, P (nestedCoverRule k)) :
     ∀ r ∈ setRules cp ms, P r := by
   intro r hr
   simp only [setRules, List.mem_cons, List.mem_flatMap, List.mem_range,
     List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | ⟨i, _, rfl | rfl | rfl | rfl⟩
+  rcases hr with rfl | rfl | rfl | ⟨i, _, rfl | rfl | rfl | rfl | rfl⟩
   · exact hg
+  · exact hhg
   · exact hf
   · exact hp _
+  · exact hhide _
   · exact hs _
   · exact hh _
   · exact hn _
@@ -3632,8 +3646,8 @@ public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The property names the floor may use, each universal across current engines per caniuse. -/
 public def baselineProps : List String :=
@@ -3641,7 +3655,7 @@ public def baselineProps : List String :=
    "scroll-behavior", "padding", "padding-bottom", "margin", "margin-top", "max-width",
    "width", "flex", "flex-shrink", "background", "overflow-y",
    "min-height", "max-height", "height", "font-size", "line-height", "color",
-   "text-align", "opacity", "transform", "display", "flex-direction",
+   "text-align", "opacity", "visibility", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
    "break-before", "size", "print-color-adjust", "box-decoration-break",
@@ -3661,8 +3675,8 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The selector fragments that address what the deck shows: frame stages and steps. -/
 public def contentFrags : List String :=
@@ -3681,8 +3695,8 @@ public theorem floor_hides_nothing (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 public def opacityValues (r : DeckRule) : List String :=
   r.decls.filterMap fun d => if d.1 == "opacity" then some d.2 else none
@@ -3721,8 +3735,10 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · exact setRules_cases
       (fun o ho => Or.inl (List.mem_singleton.mp ho))
+      (fun o ho => nomatch ho)
       (fun o ho => Or.inl (List.mem_singleton.mp ho))
       (fun _ o ho => Or.inr (List.mem_singleton.mp ho))
+      (fun _ o ho => nomatch ho)
       (fun _ o ho => nomatch ho) (fun _ o ho => nomatch ho)
       (fun _ o ho => Or.inl (List.mem_singleton.mp ho))
   · exact fun _ o ho => nomatch ho
@@ -3753,8 +3769,19 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+
+/-- A rule hiding what a step carries stands on the deck script's snap state, so no floor hides it. -/
+public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms,
+      (!(r.decls.contains ("visibility", "hidden")) || scriptGated r) = true :=
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The motion properties the reduced-motion contract covers. -/
 public def motionProps : List String := ["animation", "transition", "scroll-behavior"]
@@ -3799,8 +3826,8 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
     (fun _ k => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl))
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl))
     (fun _ => rfl) ?_
   · exact deckBase_cases rfl
       (motionGuarded_of_guard (g := deckGlideGuard)
@@ -3881,8 +3908,8 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
     (fun _ k => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl))
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl))
     (fun _ => rfl) ?_
   · exact deckBase_cases rfl rfl rfl rfl rfl
       (printLifts_of_lift (g := printStageRule)
@@ -3955,8 +3982,8 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
     deckStageMilli x stage * stage ≤ x * 100000 ∧
@@ -4733,9 +4760,9 @@ public def overlayStepTokens (spec : Ir.OverlaySpec) (steps : Nat) : String :=
   String.intercalate " " ((spec.selectedSteps steps).map toString)
 
 /-- Whether a selector uses range animation: one positive range, ordered and within the frame's
-steps, on a multi-reveal track. -/
+steps, on a multi-reveal track, covering what it carries off its steps. -/
 public def overlayUsesRange (steps : Nat) (spec : Ir.OverlaySpec) : Bool :=
-  (2 ≤ steps) && spec.more.isEmpty && (1 ≤ spec.first) &&
+  !spec.invisible && (2 ≤ steps) && spec.more.isEmpty && (1 ≤ spec.first) &&
     match spec.last with
     | none => true
     | some u => spec.first ≤ u && u ≤ steps
@@ -4745,7 +4772,7 @@ public theorem overlayUsesRange_contract (steps : Nat) (spec : Ir.OverlaySpec)
     2 ≤ steps ∧ spec.more = [] ∧ 1 ≤ spec.first ∧
       ∀ u, spec.last = some u → spec.first ≤ u ∧ u ≤ steps := by
   cases spec with
-  | mk n last more =>
+  | mk n last more inv =>
     cases more <;> cases last <;> simp_all [overlayUsesRange]
 
 /-- One body carrier for an exact selector. -/
@@ -4755,7 +4782,7 @@ public def overlayNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     Html.elem tag (stepEndNodes tag spec.last kids)
       ((stepAttrs spec.first spec.last).push ("data-steps", overlayStepTokens spec steps))
   else
-    Html.elem tag kids #[("class", "step-set"),
+    Html.elem tag kids #[("class", if spec.invisible then "step-set step-hide" else "step-set"),
       ("data-steps", overlayStepTokens spec steps)]
 
 /-- Both alternatives, declared once each in page order. -/

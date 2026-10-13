@@ -1235,12 +1235,19 @@ def censusRows6 :
       hasStr (censusText c) "Field Notes" &&
         hasStr (censusText c) "A Detail Too Deep")]),
   ("overlays", fun _ c => [
-    ("one handout page per step", c.size == 5),
+    ("one handout page per step", c.size == 7),
     ("step one dims the later beats in place",
       pageCovered c 0 "Second beat." && pageCovered c 0 "Third beat."),
     ("the dimmed beats still ship", pageHas c 0 "Second beat."),
     ("the last step reveals everything", pageAllRevealed c 2),
-    ("pause dims what follows it", pageCovered c 3 "After the pause.")]),
+    ("pause dims what follows it", pageCovered c 3 "After the pause."),
+    ("visible ships none of its argument off its step",
+      !pageHas c 5 "a phrase kept in place" && !pageCovered c 5 "a phrase kept in place"),
+    ("its line stands where its step sets it, as wide, the phrase inked there",
+      let line (i : Nat) := (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text "and after it").map
+        fun l => (l.x, l.y, l.width)
+      (line 5).isSome && line 5 == line 6 && pageHas c 6 "a phrase kept in place" &&
+        pageAllRevealed c 6)]),
   ("overprint", fun _ c => [
     ("a page per step across the three frames: three, two, one", c.size == 6),
     ("the opening step inks its one reading and neither of the others",
