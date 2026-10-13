@@ -2028,10 +2028,8 @@ def scenarioReserved (self root : String) : IO Outcome := do
          , ok := code == 3 && before == after
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
-/-- `--help` and `-h` print the usage and exit 0 wherever they stand, and an
-argument beginning with `-` that is no option `land` reads prints it and exits
-3, beside a branch the bare-name form would land; none of them makes a run
-directory, takes the lock or writes the ledger. -/
+/-- `--help` and `-h` print the usage and exit 0, and an unknown option prints it and exits 3,
+with no run directory, lock or ledger row. -/
 def scenarioUsage (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/usage" "usage"
   let tries : List (Array String × Nat) :=
