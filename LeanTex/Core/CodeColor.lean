@@ -24,16 +24,21 @@ colours of its own:
   both;
 * keywords and names are the ink's hue family: a tone of the ink's own hue
   where it has one and the literal's hue stands clear of it; else the ink,
-  keywords set apart by weight. Under a palette generated from seeds, whose
-  code is the generator's to complete, each takes a hue of its own instead,
-  planned around the hues the code ships in (a role its own key declares
-  ships as declared): keywords the ink's hue where it stands clear of the
-  literal's and the error's, else the middle of the widest arc the ink's,
-  the error's and the literal's hues leave open (`openArc`), and names the
-  middle of the widest arc left once the keywords' hue is set. Where neither
-  the ink nor the alert shows a hue there is nothing to space from, and
-  keywords and names stay in the ink;
+  keywords set apart by weight;
 * the ink role is the listing's own text colour.
+
+Under a palette generated from seeds, whose code is the generator's to
+complete, the literal, keywords and names each take a hue of their own
+instead (`seededPlan`), planned around the code's fixed hues — the listing's
+ink, the error, and every code role its own key declares, which ships as
+declared: the literal the middle of the widest arc those leave open
+(`openArc`) unless an example is named, keywords the ink's hue where it
+stands clear of the others, else the widest arc's middle, and names the
+middle of the widest arc left once the keywords' hue is set. Where nothing
+shows a hue there is nothing to space from, and keywords and names stay in
+the ink. Exactly equal arcs are a tie the list's order settles; arcs a few
+degrees apart choose by width, so seeds a step apart can move a role's hue
+across the circle.
 
 A derived hue ships as a tone (`tone`): its hue at `codeChroma`, never
 louder than the alert, and the lightness nearest the ground that clears
@@ -135,17 +140,17 @@ private def openHue : List (Int × Int) → Option (Int × Int)
     let s := (u.1 * norm w + w.1 * norm u, u.2 * norm w + w.2 * norm u)
     if s == (0, 0) then some (-u.2, u.1) else some (-s.1, -s.2)
 
-/-- Arcs within a degree of the widest count as wide as it: the hue
-arithmetic and the bisector a literal is set at agree far closer than that,
-and at `codeChroma` a just-noticeable difference spans about 11° of hue, so
-the tie rule, never rounding, chooses between arcs a degree apart. -/
+/-- Arcs within a degree of the widest count as wide as it: a hue set at an
+arc's middle leaves two halves the hue arithmetic measures equal to far
+closer than that, and at `codeChroma` a just-noticeable difference spans
+about 11° of hue, so the tie rule, never rounding, chooses between them. -/
 private def arcSlack : Int := 1000
 
 /-- The middle of the widest arc a list of hues (millidegrees) leaves open on
 the hue circle: each listed hue opens the arc running counter-clockwise to
 the nearest other hue listed, and of the arcs within `arcSlack` of the
-widest the earliest-listed hue's is taken — `openHue`'s rule for two hues,
-at any count. One hue leaves the whole circle, whose middle stands opposite
+widest the earliest-listed hue's is taken: `openHue`'s rule for two hues
+away from a tie, at any count. One hue leaves the whole circle, whose middle stands opposite
 it. -/
 private def openArc (hs : List Int) : Option Int :=
   let width (h : Int) : Int :=
@@ -317,28 +322,56 @@ private def familyOf (p : Reads) (grounds : List Color) (literal : Option (Int �
     | some c => .color c
     | none => .ink
 
-/-- Keywords and names under a palette generated from seeds, each a hue of
-its own, planned around the hues the code ships in — a role's colour where
-its own key declares one (`declared`), else the literal's and the alert's:
-keywords the ink's own hue where it stands clear of the literal's and the
-error's, else the middle of the widest arc the ink's, the error's and the
-literal's hues leave open; names the middle of the widest arc left open once
-the keywords' hue is set too. -/
-private def seededFamily (p : Reads) (grounds : List Color) (literal : Option (Int × Int))
-    (declared : ListingHighlight.Role → Option (Int × Int)) : Derived × Derived :=
+/-- A direction's hue, in millidegrees. -/
+private def hueOfDir (v : Int × Int) : Int := Oklab.hueMilli v.1 v.2
+
+/-- The direction of a hue (millidegrees) at the palette's derived chroma. -/
+private def dirOfHue (p : Reads) (h : Int) : Int × Int :=
+  let l := Oklab.ofLch 0 p.chroma h
+  (l.a, l.b)
+
+/-- A derived hue's tone on the grounds, or the ink where none reads. -/
+private def tonedDir (p : Reads) (grounds : List Color) (v : Int × Int) : Derived :=
+  (hueTone grounds (scaled p.chroma v)).elim .ink .color
+
+/-- The literal under a palette generated from seeds: a named example's
+(`literalOf`), else the middle of the widest arc the code's fixed hues leave
+open, else the rule's own. -/
+private def seededLiteral (p : Reads) (grounds : List Color) (literal : Derived × Option (Int × Int))
+    (fixed : List (Int × Int)) : Derived × Option (Int × Int) :=
+  match p.ex, (openArc (fixed.map hueOfDir)).map (dirOfHue p) with
+  | none, some v => (tonedDir p grounds v, some v)
+  | _, _ => literal
+
+/-- The literal, keywords and names under a palette generated from seeds,
+each a hue of its own, planned around the code's fixed hues: the listing's
+ink (its own key, else the palette's ink), the error (its own key, else the
+alert), a comment its own key declares in a hue, and every keyword, name and
+literal its own key declares — a declared role ships as declared
+(`declared`), and in its own hue where it shows one. In turn: the literal
+(`seededLiteral`); keywords the ink's own hue where it stands clear of every
+other hue set, else the middle of the widest arc those and the literal's
+leave; names the middle of the widest arc left once the keywords' hue is set
+too. Where nothing shows a hue the literal is the rule's own (`literalOf`)
+and keywords and names stay in the ink. -/
+private def seededPlan (p : Reads) (grounds : List Color) (literal : Derived × Option (Int × Int))
+    (declared : ListingHighlight.Role → Option Color) : Derived × Derived × Derived :=
+  let ships (r : ListingHighlight.Role) (planned : Option (Int × Int)) : Option (Int × Int) :=
+    match declared r with
+    | some c => hue? c
+    | none => planned
+  let ink := ships .ink (p.fg.bind hue?)
+  let others := (ships .error (p.alert.bind hue?)).toList ++ ((declared .comment).bind hue?).toList ++
+    [ListingHighlight.Role.keyword, .name, .literal].filterMap fun r => (declared r).bind hue?
+  let lit := seededLiteral p grounds literal (ink.toList ++ others)
+  let around := others ++ (ships .literal lit.2).toList
+  let keyword := (ink.filter fun u => around.all (clear u)).orElse
+    fun _ => (openArc ((ink.toList ++ around).map hueOfDir)).map (dirOfHue p)
+  let name := (openArc ((ink.toList ++ around ++ (ships .keyword keyword).toList).map hueOfDir)).map
+    (dirOfHue p)
   match p.fg with
-  | none => (.none, .none)
-  | some _ =>
-    let hueOf (v : Int × Int) : Int := Oklab.hueMilli v.1 v.2
-    let dirOf (h : Int) : Int × Int := let l := Oklab.ofLch 0 p.chroma h; (l.a, l.b)
-    let toned (v : Int × Int) : Derived := (hueTone grounds (scaled p.chroma v)).elim .ink .color
-    let error := (declared .error).orElse fun _ => p.alert.bind hue?
-    let lit := (declared .literal).orElse fun _ => literal
-    let set := ((p.fg.bind hue?).toList ++ error.toList ++ lit.toList).map hueOf
-    let keyword := (inkHueClear p lit error).orElse fun _ => (openArc set).map dirOf
-    let shipped := (declared .keyword).orElse fun _ => keyword
-    let name := (openArc (set ++ (shipped.map hueOf).toList)).map dirOf
-    (keyword.elim .ink toned, name.elim .ink toned)
+  | none => (lit.1, .none, .none)
+  | some _ => (lit.1, keyword.elim .ink (tonedDir p grounds), name.elim .ink (tonedDir p grounds))
 
 /-- The quietest tone of the ink's own hue and chroma that still reads as
 text on every ground, 0.10 above WCAG 2.2's 4.5:1: a muted step derived from
@@ -375,17 +408,33 @@ private theorem elim_ink_ne_none {α : Type} (o : Option α) (f : α → Derived
   | none => simp
   | some a => exact hf a
 
-private theorem seededFamily_none {p : Reads} {grounds : List Color} {l : Option (Int × Int)}
-    {declared : ListingHighlight.Role → Option (Int × Int)}
-    (h : (seededFamily p grounds l declared).1 = .none ∨ (seededFamily p grounds l declared).2 = .none) :
+private theorem tonedDir_ne_none (p : Reads) (grounds : List Color) (v : Int × Int) :
+    tonedDir p grounds v ≠ .none :=
+  elim_ink_ne_none _ _ fun _ => by simp
+
+private theorem seededPlan_keywords_none {p : Reads} {grounds : List Color}
+    {l : Derived × Option (Int × Int)} {declared : ListingHighlight.Role → Option Color}
+    (h : (seededPlan p grounds l declared).2.1 = .none ∨ (seededPlan p grounds l declared).2.2 = .none) :
     p.fg = none := by
-  unfold seededFamily at h
+  unfold seededPlan at h
+  dsimp only at h
   split at h
   · assumption
-  · have toned : ∀ v : Int × Int,
-        (hueTone grounds (scaled p.chroma v)).elim Derived.ink Derived.color ≠ .none :=
-      fun v => elim_ink_ne_none _ _ fun _ => by simp
-    rcases h with h | h <;> exact absurd h (elim_ink_ne_none _ _ toned)
+  · rcases h with h | h <;> exact absurd h (elim_ink_ne_none _ _ (tonedDir_ne_none p grounds))
+
+private theorem seededLiteral_none {p : Reads} {grounds : List Color} {l : Derived × Option (Int × Int)}
+    {fixed : List (Int × Int)} (h : (seededLiteral p grounds l fixed).1 = .none) : l.1 = .none := by
+  unfold seededLiteral at h
+  split at h
+  · exact absurd h (tonedDir_ne_none p grounds _)
+  · exact h
+
+private theorem seededPlan_literal_none {p : Reads} {grounds : List Color}
+    {l : Derived × Option (Int × Int)} {declared : ListingHighlight.Role → Option Color}
+    (h : (seededPlan p grounds l declared).1 = .none) : l.1 = .none := by
+  unfold seededPlan at h
+  dsimp only at h
+  split at h <;> exact seededLiteral_none h
 
 private theorem literalOf_none {p : Reads} {grounds : List Color}
     (h : (literalOf p grounds).1 = .none) : p.ex = none ∧ p.hues = [] := by
@@ -427,32 +476,39 @@ private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = non
   · simp at h
   · assumption
 
-/-- Keywords and names: the ink's hue family, or under a palette generated
-from seeds a hue of their own each (`seededFamily`), around the hues of the
-code roles the palette declares under their own keys. -/
-private def keywordsNames (pal : Palette) (p : Reads) (grounds : List Color)
-    (literal : Option (Int × Int)) : Derived × Derived :=
+/-- The literal, keywords and names: the rule's own literal and the ink's hue
+family, or under a palette generated from seeds a hue of their own each
+(`seededPlan`), around the code roles the palette declares under their own
+keys. -/
+private def planOf (pal : Palette) (p : Reads) (grounds : List Color)
+    (literal : Derived × Option (Int × Int)) : Derived × Derived × Derived :=
   match pal.seeded with
-  | some _ => seededFamily p grounds literal fun r => (Design.declared? pal (Ir.Role.ofCode r)).bind hue?
-  | none => let family := familyOf p grounds literal; (family, family)
+  | some _ => seededPlan p grounds literal fun r => Design.declared? pal (Ir.Role.ofCode r)
+  | none => let family := familyOf p grounds literal.2; (literal.1, family, family)
 
-private theorem keywordsNames_none {pal : Palette} {p : Reads} {grounds : List Color}
-    {l : Option (Int × Int)}
-    (h : (keywordsNames pal p grounds l).1 = .none ∨ (keywordsNames pal p grounds l).2 = .none) :
+private theorem planOf_keywords_none {pal : Palette} {p : Reads} {grounds : List Color}
+    {l : Derived × Option (Int × Int)}
+    (h : (planOf pal p grounds l).2.1 = .none ∨ (planOf pal p grounds l).2.2 = .none) :
     p.fg = none := by
-  unfold keywordsNames at h
+  unfold planOf at h
   split at h
-  · exact seededFamily_none h
+  · exact seededPlan_keywords_none h
   · exact familyOf_none (by dsimp only at h; rcases h with h | h <;> exact h)
+
+private theorem planOf_literal_none {pal : Palette} {p : Reads} {grounds : List Color}
+    {l : Derived × Option (Int × Int)} (h : (planOf pal p grounds l).1 = .none) : l.1 = .none := by
+  unfold planOf at h
+  split at h
+  · exact seededPlan_literal_none h
+  · exact h
 
 /-- The rule, on the ground a listing stands on: every role derived at once,
 each shared value computed once. -/
 public def derive (pal : Palette) (ground : Color) : RoleTable Derived :=
   let p := reads pal
   let grounds := toneGrounds pal ground
-  let literal := literalOf p grounds
-  let family := keywordsNames pal p grounds literal.2
-  { ink := .ink, keyword := family.1, name := family.2, literal := literal.1
+  let plan := planOf pal p grounds (literalOf p grounds)
+  { ink := .ink, keyword := plan.2.1, name := plan.2.2, literal := plan.1
     comment := commentOf p grounds, error := errorOf p }
 
 /-- **The rule leaves a role to the style only where it `opens`**: on every
@@ -462,9 +518,9 @@ public theorem derive_none_opens (pal : Palette) (ground : Color) (r : ListingHi
     (h : (derive pal ground).get r = .none) : opens pal r = true := by
   cases r <;> simp only [derive, RoleTable.get] at h
   · simp at h
-  · simp [opens, keywordsNames_none (Or.inl h)]
-  · simp [opens, keywordsNames_none (Or.inr h)]
-  · obtain ⟨he, hh⟩ := literalOf_none h
+  · simp [opens, planOf_keywords_none (Or.inl h)]
+  · simp [opens, planOf_keywords_none (Or.inr h)]
+  · obtain ⟨he, hh⟩ := literalOf_none (planOf_literal_none h)
     simp [opens, he, hh]
   · obtain ⟨hm, hf⟩ := commentOf_none h
     simp [opens, hm, hf]

@@ -466,15 +466,16 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
 /-- A generated palette's code is complete: under `\palette[seeds]`, a
-listing's keywords, names and literals each set in a colour of its own,
-showing a hue 60° or more from the others' and from the error's, each
-reading at the code tone on the page; comments set in the generated muted
-step and errors in the alert, and the web page sets every role in the PDF's
-colour. An ink whose hue stands clear of the alert's keeps its keywords in
-it; a role the palette declares under its own key ships as declared and the
-others are spaced around it; and two inks a channel step apart set their
-code in the same hues. Held over the shipped page and the typed HTML, and
-over the export a TeX build reads, from the palette the script builds. -/
+listing's keywords, names and literals each set in a colour of their own,
+showing a hue 60° or more from the others', the error's and a hued listing
+ink's on these invented seeds, each derived one reading at the code tone on
+the page; comments set in the generated muted step and errors in the alert;
+a role its own key declares ships as declared and the others are planned
+around it; and the web page sets every role in the PDF's colour. An ink
+whose hue stands clear of the alert's keeps its keywords in it, and two inks
+a channel step apart, whose arcs tie exactly, set their code in the same
+hues. Held over the shipped page and the typed HTML, and over the export a
+TeX build reads, from the palette the script builds. -/
 def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "seeded code: the serif faces load"
@@ -485,19 +486,25 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("\\begin{frame}[fragile]\n\\begin{minted}{python}\n" ++ source ++ "\n\\end{minted}\n\\end{frame}"))
   let paints (doc : Ir.Doc) : List (Option Ir.Color) :=
     let (laid, _) := codePaints fonts doc
-    ["def", "len", "synthetic", "remark", "NotImplementedError"].map fun w =>
+    ["def", "len", "synthetic", "remark", "NotImplementedError", "probe"].map fun w =>
       (onePaint (ShellHighlight.witnessPaint? source w laid)).map (·.2)
   let black := "ink = #000000, paper = #FFFFFF, accent = #FACC15"
-  for (label, seeds, more, inkHue, declared) in [
-      ("a black ink and a yellow accent", black, "", false, none),
-      ("a neutral ink and a magenta accent", "ink = #1A1A1A, paper = #FFFFFF, accent = #C026D3", "",
-        false, none),
-      ("a violet ink and an orange accent", "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A", "",
-        true, none),
-      ("a declared literal", black, "\\palette{ codeliteral = #15803D }\n", false,
-        some (ListingHighlight.Role.literal, Ir.Color.ofHtml 0x15 0x80 0x3D)),
-      ("a declared keyword", black, "\\palette{ codekeyword = #BE185D }\n", false,
-        some (ListingHighlight.Role.keyword, Ir.Color.ofHtml 0xBE 0x18 0x5D))] do
+  let violet := "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A"
+  let key (k : String) (r : ListingHighlight.Role) (c : Ir.Color) :
+      String × List (ListingHighlight.Role × Ir.Color) :=
+    (s!"\\palette\{ {k} = {c.css} }\n", [(r, c)])
+  for (label, seeds, (more, declared), inkHue) in [
+      ("a black ink and a yellow accent", black, ("", []), false),
+      ("a neutral ink and a magenta accent", "ink = #1A1A1A, paper = #FFFFFF, accent = #C026D3",
+        ("", []), false),
+      ("a violet ink and an orange accent", violet, ("", []), true),
+      ("a declared literal", black, key "codeliteral" .literal (Ir.Color.ofHtml 0x15 0x80 0x3D), false),
+      ("a declared keyword", black, key "codekeyword" .keyword (Ir.Color.ofHtml 0xBE 0x18 0x5D), false),
+      ("a declared keyword at the literal's hue", violet,
+        key "codekeyword" .keyword (Ir.Color.ofHtml 0x04 0x78 0x57), false),
+      ("a declared name", black, key "codename" .name (Ir.Color.ofHtml 0x00 0x63 0x44), false),
+      ("a declared error", black, key "codeerror" .error (Ir.Color.ofHtml 0x2B 0x58 0x8C), false),
+      ("a declared listing ink", black, key "codeink" .ink (Ir.Color.ofHtml 0x14 0x53 0x2D), false)] do
     let (doc, ds) := build seeds more
     t s!"seeded code, {label}: the listing elaborates clean" (ds.all (·.severity != .error))
     let (_, typed) := codePaints fonts doc
@@ -506,28 +513,30 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let alert := Ir.Design.declared? doc.palette .alert
     let muted := Ir.Design.declared? doc.palette .muted
     match paints doc, alert with
-    | [some kw, some nm, some lit, some cm, some err], some al =>
+    | [some kw, some nm, some lit, some cm, some err, some ink], some al =>
       let hued := [kw, nm, lit]
+      let shipped : List (ListingHighlight.Role × Ir.Color) :=
+        [(.keyword, kw), (.name, nm), (.literal, lit), (.comment, cm), (.error, err), (.ink, ink)]
       t s!"seeded code, {label}: keywords, names and literals each set in a colour of their own"
-        (hued.all (· != d.fg) && kw != nm && nm != lit && kw != lit)
+        (hued.all (· != d.fg) && hued.all (· != ink) && kw != nm && nm != lit && kw != lit)
       t s!"seeded code, {label}: each shows a hue"
         (hued.all fun c => Oklab.okJnd ≤ chromaOf c)
-      let apart := (hued ++ [al]).zipIdx
+      let apart := (hued ++ [err]).zipIdx
       t s!"seeded code, {label}: their hues stand 60° or more apart, and from the error's"
         (apart.all fun (c, i) => apart.all fun (c', j) => i == j || hueCosMilli c c' ≤ 500)
-      t s!"seeded code, {label}: each reads at the code tone on the page"
-        (hued.all fun c => CodeColor.codeTone ≤ Contrast.contrastMilli c d.bg ||
-          declared.any (·.2 == c))
+      t s!"seeded code, {label}: names, literals and errors stand 60° or more from a hued listing ink"
+        (chromaOf ink < Oklab.okJnd || [nm, lit, err].all fun c => hueCosMilli c ink ≤ 500)
+      t s!"seeded code, {label}: each derived one reads at the code tone on the page"
+        (hued.all fun c => CodeColor.codeTone ≤ Contrast.contrastMilli c d.bg || declared.any (·.2 == c))
       t s!"seeded code, {label}: comments set in the generated muted step, errors in the alert"
-        (some cm == muted && err == al)
+        (some cm == muted && (err == al || declared.any (·.1 == .error)))
+      t s!"seeded code, {label}: a role its own key declares ships as declared"
+        (declared.all fun (r, c) => shipped.lookup r == some c)
       t s!"seeded code, {label}: the web page sets each role in the PDF's colour"
         ([("def", kw), ("len", nm), ("synthetic", lit), ("remark", cm), ("NotImplementedError", err)].all
           fun (w, c) => (html w).any fun p => p.color.any (hasStr · (HtmlDoc.cssColor c)))
       if inkHue then
         t s!"seeded code, {label}: keywords keep the ink's own hue" (hueCosMilli kw d.fg ≥ 990)
-      if let some (r, c) := declared then
-        t s!"seeded code, {label}: the declared role ships as declared"
-          ((if r == .literal then lit else kw) == c)
       let exported := CodeExport.pageBrushes doc.palette .default
       t s!"seeded code, {label}: the export colours every role but the ink, as the page does"
         ([(ListingHighlight.Role.keyword, kw), (.name, nm), (.literal, lit), (.comment, cm),
@@ -549,12 +558,12 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       let native := CodeExport.pageBrushes doc.palette .default
       t s!"seeded code, {label}: the script's palette paints the native page's code"
         (ListingHighlight.Role.all.all fun r => (script.get r).ink == (native.get r).ink)
-  -- Two inks a channel step apart plan their code alike: equal arcs are a
-  -- tie the rule settles, never rounding.
+  -- Two inks a channel step apart plan their code alike where their arcs tie
+  -- exactly: the tie rule settles it, never rounding.
   let (near, _) := build "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A" ""
   let (next, _) := build "ink = #2C2440, paper = #FFFFFF, accent = #E85D2A" ""
   match paints near, paints next with
-  | [some kw, some nm, some lit, _, _], [some kw', some nm', some lit', _, _] =>
+  | [some kw, some nm, some lit, _, _, _], [some kw', some nm', some lit', _, _, _] =>
     t "seeded code: two inks a step apart set keywords, names and literals in the same hues"
       (hueCosMilli kw kw' ≥ 990 && hueCosMilli nm nm' ≥ 990 && hueCosMilli lit lit' ≥ 990)
   | _, _ => t "seeded code: two inks a step apart ship every role in one colour" false
@@ -642,7 +651,8 @@ def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
             CodeExport.colorName "Probe" r ++ "}{#1}}") &&
           hasStr tex ("\\let\\PYG@tc=\\" ++ CodeExport.colorName "Probe" r ++ "Tok}")
         | none => !hasStr tex (CodeExport.colorName "Probe" r ++ "Tok"))
-    let (_, ds) := elabStr (dvDoc tex "Text.")
+    let (_, ds) := elabStr (dvDoc ("\\usepackage{minted}\n" ++ tex ++ "\\setminted{formatcom=\\ProbePygments}\n")
+      "\\begin{minted}{python}\nx = len(\"probe\") + 1\n\\end{minted}")
     t s!"code export {style.name}: a document that reads the export builds clean ({(ds.filter (·.severity != .note)).map (·.code)})"
       (ds.all (·.severity == .note))
 

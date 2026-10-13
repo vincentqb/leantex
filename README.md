@@ -217,12 +217,14 @@ from the same palette, one tone wherever the listing stands: errors in the
 alert, comments in the muted ink, literals in a named example's colour, and
 otherwise keywords, names and literals each in a hue of its own, spaced
 around the hue circle from the ink's and the alert's. Keywords keep the
-ink's hue where it stands 60° or more from the alert's and the literal's,
-and a code role the palette declares under its own key ships as declared
-and is spaced around. Seeds whose ink and accent show no hue leave nothing
-to space from, so their keywords and names stay in the ink, and on a ground
-where no tone of a role's hue reads as it does on the page, such as the
-standout frame, the role sets in the listing's own ink. The seeds'
+ink's hue where it stands 60° or more from every other hue the code sets
+in, and a code role the palette declares under its own key ships as
+declared and the others are spaced around it. Where nothing the code sets
+in shows a hue, keywords and names stay in the ink; on a ground where no
+tone of a role's hue reads as it does on the page, such as the standout
+frame, the role sets in the listing's own ink; and two arcs within a few
+degrees of each other are chosen between by width, so seeds a step apart
+can move a role's hue across the circle. The seeds'
 ink, paper and accent declare the page's text, ground and accent, so the later
 of a seed and the document's own declaration of that role wins. Any other
 colour the document declares, before `\palette[seeds]` or after it, keeps its
@@ -263,11 +265,13 @@ engine derives from the generated palette: one colour per code role, a
 command setting its argument in that colour (`\SlideCodeKeywordTok`), and a
 `\SlidePygments` command (named by the prefix) redefining the highlighter's
 token macros, with the style's colours only where the palette leaves a role
-open. Load it after `minted` and apply it with
-`\setminted{formatcom=\SlidePygments}`, so a lualatex build sets the colours
-leantex sets; leantex reads the palette itself and runs no `formatcom`, and
-reads the export without a warning where a document both engines build
-loads it.
+open. Load it after `minted` and `xcolor` (beamer loads `xcolor` itself)
+and apply it with `\setminted{formatcom=\SlidePygments}`, so a lualatex build
+sets the colours leantex sets; leantex reads the palette itself and runs no
+`formatcom`, and reads the export without a warning where a document both
+engines build loads it. Such a document keeps `\palette[seeds]` for leantex,
+or names the exported colours under the code roles' own keys
+(`\colorlet{codekeyword}{SlideCodeKeyword}`), which both engines read.
 
 ## Images and code
 
