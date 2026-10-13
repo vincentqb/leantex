@@ -5,8 +5,7 @@ public import Std.Data.HashSet
 
 namespace LeanTex.Core.HtmlResource
 
-/-- Only inert binary images, font programs, and externally checked SVGs
-can supply a rendering URL. CSS and executable documents are not opaque data. -/
+/-- Media an embedded rendering URL may carry: inert images, font programs and validated SVG. -/
 public inductive Media where
   | png | jpeg | ico | svg | ttf | otf
   deriving BEq, Repr
@@ -41,9 +40,7 @@ public structure Embedded where
 public def Embedded.uri (r : Embedded) : String :=
   "data:" ++ r.media.mime ++ ";base64," ++ base64 r.bytes
 
-/-- SVG approval names the exact bytes passed through the driver's existing
-parsed-XML validator. That validator and binary/browser decoders are external
-trust boundaries; no theorem here claims to implement XML or browser semantics. -/
+/-- Whether the bytes may render: SVG among `svgChecked`, other media by their format signature. -/
 public def Embedded.ready (svgChecked : Array ByteArray) (r : Embedded) : Bool :=
   match r.media with
   | .svg => svgChecked.contains r.bytes
@@ -69,9 +66,8 @@ private structure CssScan where
   word : String := ""
   requests : Array Request := #[]
 
-/-- A deliberately bounded CSS vocabulary. Unknown functions and at-rules
-are refused, including string-taking image()/image-set(), imports, identifier/URL escapes,
-and local() font lookup. Escapes inside inert strings retain their CSS meaning. Extending the vocabulary owes a dependency reading. -/
+/-- The CSS functions the scanner admits besides `url()`, which it reads as a request; any other
+function is refused. -/
 private def cssFunction (word : String) : Bool :=
   ["var", "calc", "min", "max", "clamp", "env", "rgb", "rgba", "hsl", "hsla",
    "oklab", "oklch", "lab", "lch", "color", "color-mix", "light-dark",
@@ -96,8 +92,7 @@ private def flushWord (s : CssScan) : CssScan :=
       s.requests.push (.refused ("unsupported CSS at-rule: " ++ word)) else s.requests }
 
 private def cssPlain (s : CssScan) (c : Char) : CssScan :=
-  -- An at-keyword starts a token, even after the hyphens of HTML's CSS
-  -- comment opener. Absorbing @ into that word would hide a string import.
+  -- `@` starts a token even after hyphens, so `<!--@import` still reads as an at-rule
   if c == '@' then { flushWord s with word := "@" }
   else if c.isAlphanum || c == '-' || c == '_' then
     { s with word := s.word.push c }
@@ -144,8 +139,7 @@ private def cssStep (s : CssScan) (c : Char) : CssScan :=
       else { s with word := s.word.push c }
     | .quoted _ | .escaped _ | .comment | .star => s
 
-/-- Projection of rendering dependencies from the supported CSS subset.
-Refusals remain requests, so unsupported syntax cannot disappear from the gate. -/
+/-- The rendering dependencies of a stylesheet; unsupported syntax becomes a refused request. -/
 public def cssRequests (css : String) : Array Request :=
   let s := flushWord (css.foldl cssStep {})
   let requests := if s.state == .plain || s.state == .slash then s.requests else
@@ -178,9 +172,7 @@ private def passiveTag (tag : String) : Bool :=
    "msub", "msup", "msubsup", "munder", "mover", "munderover", "mmultiscripts",
    "mprescripts", "none", "mtable", "mtr", "mtd", "mlabeledtr", "semantics"].contains tag
 
-/-- SVG reference attributes resolve a fragment in the same SVG tree. A
-fragment in a fetch context (CSS url(), image src, or srcset) is not evidence
-of closure: the browser can fetch the current document URL. -/
+/-- Attributes whose fragment reference resolves inside the same SVG tree. -/
 private def svgReferenceAttr (tag name : String) : Bool :=
   if name == "href" || name == "xlink:href" then
     ["use", "lineargradient", "radialgradient", "pattern"].contains tag
@@ -191,8 +183,6 @@ private def svgReferenceAttr (tag name : String) : Bool :=
     ["fill", "stroke", "filter", "clip-path", "mask", "marker", "marker-start",
       "marker-mid", "marker-end"].contains name
 
-/-- Resource dependencies carried by one element's attributes. This is also
-the attribute projection in the typed-tree dependency contract. -/
 public def attrRequests (tag : String) (attrs : Array (String × String)) : Array Request :=
   attrs.foldl (init := #[]) fun acc (name, value) =>
     if name.isEmpty || !name.toList.all (fun c =>
@@ -215,18 +205,13 @@ public def attrRequests (tag : String) (attrs : Array (String × String)) : Arra
       acc ++ refs
     else if ["src", "srcset", "imagesrcset", "poster", "background", "data"].contains name ||
         ((name == "href" || name == "xlink:href") && !navigation tag attrs) then
-      -- Generated srcset carries one data URL with no descriptor. Any richer
-      -- srcset must be modeled explicitly, rather than split at data's comma.
+      -- a generated srcset is one data URL with no descriptor, so it is not split
       acc.push (.url value)
     else acc
 
 mutual
-  /-- A typed artifact walk, not an IR walk: declarations and nested children
-  contribute to the same dependency list, including hidden/media-selected nodes.
-  Raw payloads are checked only in HTML parsing contexts. SVG/MathML, title
-  RCDATA, and discarded void children do not have the raw-text semantics this
-  projection relies on. The refusal latches through their whole subtree,
-  conservatively including foreign-content integration points. -/
+  /-- The rendering dependencies of a node; raw style and script are refused outside HTML
+  raw-text contexts. -/
   public def nodeRequests (rawTextAllowed : Bool) (acc : Array Request) : Html.Node → Array Request
     | .text _ => acc
     | .style css =>
@@ -240,8 +225,7 @@ mutual
         acc.push (.refused "raw HTML script is inside an unsupported parsing context")
       else
         let acc := acc ++ attrRequests "script" attrs
-        -- HTML comment openers enter script escape states even in JSON data;
-        -- in the double-escaped state the closing tag becomes payload.
+        -- `<!--` enters the script escape states, where a closing tag becomes payload
         let raw := js.toLower
         let acc := if (attrs.any fun a => a.1.toLower == "src") || js.contains '\u0000' ||
             ["</script", "<!--"].any (fun marker => (raw.splitOn marker).length > 1) then
@@ -262,10 +246,7 @@ mutual
     | node :: rest => listRequests rawTextAllowed (nodeRequests rawTextAllowed acc node) rest
 end
 
-/-- Artifact-specific: a typed SVG/XHTML carrier contributes every attribute
-and child dependency. It never resets the refusal of raw style/script
-payloads. Opaque SVG resources still require the external XML validator.
-`pictureMathLabelChecks` exercises passive content and active descendants. -/
+/-- Artifact-specific: a `foreignObject` subtree keeps raw payloads refused. -/
 public theorem foreignObject_requests_exact (rawTextAllowed : Bool) (acc : Array Request)
     (attrs : Array (String × String)) (kids : Array Html.Node) :
     nodeRequests rawTextAllowed acc (.elem "foreignObject" attrs kids) =
@@ -276,12 +257,8 @@ public theorem foreignObject_requests_exact (rawTextAllowed : Bool) (acc : Array
 public def requests (head body : Array Html.Node) : Array Request :=
   listRequests true (listRequests true #[] head.toList) body.toList
 
-/-- Whether one request resolves: a rendering URL against a captured
-resource ready to render, a fragment within the page, and a script element
-against the scripts the page's type declares (`scripts`), each of them
-text, never a source a browser fetches. A navigation link is no request
-(`attrRequests`), so this bounds script elements and not a link's URL
-scheme, which is pending work. -/
+/-- Whether a request resolves: a URL to a ready embedded resource, a fragment, or a declared
+script; a navigation link is no request, so its URL scheme is outside the gate. -/
 public def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) : Request → Bool
   | .url value => resources.any (fun r => r.ready svgChecked && r.uri == value)
@@ -290,20 +267,16 @@ public def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
   | .script value => scripts.any fun s => !s.isEmpty && value == s
   | .refused _ => false
 
-/-- Prepare the admitted URIs once, using the exact captured-byte readiness.
-Return a concrete index: a function-valued result lets compiler eta expansion
-move preparation inside each request's lookup. -/
+/-- The URIs of the ready resources, as a concrete index so preparation runs once. -/
 public def compile (resources : Array Embedded) (svgChecked : Array ByteArray) : Std.HashSet String :=
   Std.HashSet.ofArray (resources.filterMap fun r =>
     if r.ready svgChecked then some r.uri else none)
 
-/-- Look up URLs in the prepared index; all other requests keep their policy. -/
 public def resolvesCompiled (urls : Std.HashSet String) (scripts : Array String) : Request → Bool
   | .url value => urls.contains value
   | request => resolves #[] #[] scripts request
 
-/-- Artifact-specific: the prepared resolver equals the original policy for
-every resource set, SVG attestation, script and request. -/
+/-- Artifact-specific. -/
 public theorem compile_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) : resolvesCompiled (compile resources svgChecked) scripts =
       resolves resources svgChecked scripts := by
@@ -318,8 +291,6 @@ public theorem compile_exact (resources : Array Embedded) (svgChecked : Array By
   | script value => rfl
   | refused reason => rfl
 
-/-- A single first-refusal scan admits exactly the original all-requests check,
-for every projection, including empty ones and explicit refusals. -/
 public theorem compile_admission_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) (projected : Array Request) :
     (projected.find? fun r => !resolvesCompiled (compile resources svgChecked) scripts r) = none ↔
@@ -327,23 +298,19 @@ public theorem compile_admission_exact (resources : Array Embedded) (svgChecked 
   rw [compile_exact, Array.find?_eq_none, Array.all_eq_true']
   simp
 
-/-- Artifact-specific: no resource evidence can certify a raw style in a
-context where the dependency projection does not model its parsing. -/
+/-- Artifact-specific. -/
 public theorem style_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) (acc : Array Request) (css : String) :
     (nodeRequests false acc (.style css)).all (resolves resources svgChecked scripts) = false := by
   simp [nodeRequests, resolves]
 
-/-- The same context refusal holds for every script payload and MIME type,
-including an otherwise admitted deck script or inert JSON data block. -/
 public theorem script_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) (acc : Array Request) (attrs : Array (String × String)) (js : String) :
     (nodeRequests false acc (.script attrs js)).all
       (resolves resources svgChecked scripts) = false := by
   simp [nodeRequests, resolves]
 
-/-- Publication owns this checked tree. The constructor owes the computed
-closure check, not a claim about a different tree or a sidecar manifest. -/
+/-- A page whose rendering requests all resolve against its embedded resources. -/
 public structure ClosedPage (scripts : Array String) where
   lang : String
   head : Array Html.Node
@@ -355,16 +322,15 @@ public structure ClosedPage (scripts : Array String) where
 public def ClosedPage.render (page : ClosedPage scripts) : String :=
   Html.document page.lang page.head page.body
 
-/-- A diagnostic names the reference, never an embedded payload. Long names
-are bounded and quoting keeps control characters out of terminal output. -/
+/-- A request's reference as a diagnostic quotes it: a data URL cut before its payload,
+long values truncated. -/
 public def referenceLabel (value : String) : String :=
   let shown := if value.toLower.startsWith "data:" then
       (value.takeWhile (· != ',')).toString ++ ",…"
     else value
   reprStr (if shown.length > 160 then (shown.take 160).toString ++ "…" else shown)
 
-/-- The only successful construction path checks every projected request.
-Unknown/remote/data-only claims all fail without matching captured evidence. -/
+/-- Close a page, or name the first request that does not resolve. -/
 public def close (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) (lang : String) (head body : Array Html.Node) :
     Except String (ClosedPage scripts) :=
@@ -383,9 +349,7 @@ public def close (resources : Array Embedded) (svgChecked : Array ByteArray)
       | .script _ => "an HTML script is none of the scripts the page declares"
       | .refused why => why)
 
-/-- Artifact-specific: successful checked emission covers the actual tree's
-rendering projection. SVG readiness is exact-byte external-validator evidence;
-this is not a kernel proof of XML parsing, decoding, or browser execution. -/
+/-- Artifact-specific. -/
 public theorem close_covers (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) (lang : String) (head body : Array Html.Node) {page : ClosedPage scripts}
     (h : close resources svgChecked scripts lang head body = .ok page) :

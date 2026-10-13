@@ -23,282 +23,142 @@ open LeanTex.Core LeanTex.Core.Ir LeanTex.Core.Dim LeanTex.Core.Html
 
 /-- How much CSS to emit, and whose class names to use. -/
 public inductive CssMode where
-  /-- Our own token-driven stylesheet, inlined. Self-contained by default: no
-  CDN, no webfont round-trip, works offline. -/
+  /-- The engine's token-driven stylesheet, inlined. -/
   | own
-  /-- Bulma's class vocabulary plus a `--bulma-*` binding of our tokens. The
-  framework's sheet is the document's declared `\output{ stylesheet = ... }`,
-  captured and inlined under the closure gate's CSS vocabulary
-  (`HtmlResource.cssRequests`) as every declared sheet is, so a published
-  build of Bulma that steps outside it (an `@charset`, a vendor
-  `@keyframes`, an escaped class name) is refused rather than shipped; a
-  page that names the classes and declares no sheet cannot publish, for
-  nothing would style them (`emitClosed`); no host page supplies the
-  framework. The declared sheet stands after the binding, so a sheet that
-  declares the same properties on `:root`, or more specifically, sets them. -/
+  /-- Bulma's class vocabulary with the tokens bound to `--bulma-*`, styled by the document's
+  declared framework stylesheet. -/
   | bulma
-  /-- Semantic markup only: no engine stylesheet, so the page's sheets are
-  the document's declared stylesheet, if it declares one, and the rules the
-  document's own declarations write (a `\style` hover, say), beside the
-  few inline styles the markup carries in every mode. -/
+  /-- Semantic markup only, styled by the document's declared stylesheet and its own rules. -/
   | none
   deriving Repr, BEq
 
-/-- What a document's table lengths are a share of in the stylesheet, so a
-length keeps on screen the proportion to the type it has on the page: a
-deck's stage height (`vh`, the unit its type is set in), and on every other
-page its class size (`rem`, the size its body text is set at). -/
+/-- The unit a table length is spelled in on screen: the deck's stage height or the class size. -/
 public inductive LengthBasis where
   | stage (height : Sp)
   | classSize (size : Sp)
   deriving Repr, BEq, Inhabited
 
-/-- Each code role's paint in each shipped scheme, by the role's palette key:
-its colour, and the palette role it reads there where it ships as that
-role's colour on the page that role is declared for (`CodeColor.resolve`). -/
+/-- Each code role's colour, and the palette role it reads, in each shipped scheme. -/
 public abbrev CodeRoot := List (Ir.Scheme × List (Ir.Role × Option (Ir.Color × Option Ir.Role)))
 
 public structure Config where
   css : CssMode := .own
-  /-- The document's resolved main locale, set from the document at
-  `emitTree`'s entry: what the backend's generated furniture (the
-  abstract heading, caption prefixes) is worded in. -/
+  /-- The document's main locale, in which generated furniture is worded. -/
   locale : Locale := Locale.en
-  /-- The client-side math renderer the run declares beside native MathML,
-  as its text: the script of the file `--math-boundary` names, which the
-  driver captures (`Publication.captureHtmlResources`). The page carries it
-  inline as one script (`mathBoundaryNodes`), and the closure gate admits
-  exactly it (`admittedScripts`). -/
+  /-- The script of the client-side math renderer the run declares, shipped inline. -/
   mathRenderer : Option String := none
   styles : Styles := {}
-  /-- The document's loaded images, from the driver: `<img>` carries the
-  intrinsic pixel size so the page never reflows while loading. -/
+  /-- The document's loaded images, whose intrinsic sizes `<img>` carries. -/
   imgs : Image.Store := {}
-  /-- The markdown twin's address, from the driver when it writes one: a
-  relative URL from the page to the file, percent-encoded where a URL would
-  read it as something else. The head links it as the alternate representation
-  (`rel=alternate`, HTML §4.6.6.1; `text/markdown`, RFC 7763) — the
-  llms.txt convention's discoverable form. -/
+  /-- The markdown twin's relative URL, linked from the head as the alternate representation. -/
   mdHref : Option String := none
-  /-- The palette in force at this point of the block walk — the epoch
-  state a body `\palette` snapshot is diffed against. Epoch 0 is the
-  document's preamble+theme palette (`emitTree` seeds it); each
-  `.setPalette` replaces it as the walk passes the block. -/
+  /-- The palette in force at this point of the block walk. -/
   pal : Ir.Palette := {}
-  /-- The document's own palette, epoch 0's: an epoch that comes back to it
-  (a group's end restoring the state before a `\color`) paints as epoch 0
-  does, in the stylesheet's ink. -/
+  /-- The document's own palette, the one epoch 0 paints. -/
   docPal : Ir.Palette := {}
-  /-- The colour schemes the page ships, each with the frame the document's
-  colours are carried by there (`Contrast.schemeJudge`), print included where
-  it ships. Empty outside the engine's own stylesheet, where the page holds
-  the light screen alone. -/
+  /-- The colour schemes the page ships, each with its frame; empty outside the engine's
+  stylesheet. -/
   frames : List Ir.SchemeFrame := []
-  /-- The palette in force (`pal`) as each shipped scheme ships it, in
-  `frames`' order (`Ir.Palette.view`). -/
+  /-- The palette in force as each shipped scheme ships it, in `frames`' order. -/
   views : List Ir.Palette := []
-  /-- Every palette the page holds, beside its view in each shipped scheme
-  (`Contrast.SchemeJudgement.views`): what an epoch reads its views from. -/
+  /-- Every palette the page holds, beside its view in each shipped scheme. -/
   paletteViews : List (Ir.Palette × List Ir.Palette) := []
-  /-- The screen scheme the page's `:root` holds as its floor
-  (`floorScheme`). -/
+  /-- The screen scheme the page's `:root` holds. -/
   floor : Ir.Scheme := .light
-  /-- Each code role's colour in each shipped scheme for a listing on the
-  page's own code ground, by the role's palette key: what the page's
-  `:root` states for the code roles (`Config.listingPaints` of a listing
-  that declares nothing). -/
+  /-- The code roles' colours the page's `:root` states for a listing on the page's code ground. -/
   codeRoot : CodeRoot := []
-  /-- A listing on the page's own code ground in every shipped scheme — its
-  ground, its plain text's colour and its code roles' — computed once for
-  every listing that declares nothing and stands on the page as its
-  document leaves it (`Config.listingPaints`). -/
+  /-- Ground, text and code-role colours per shipped scheme for a listing that declares nothing. -/
   codePaints : List (Ir.Scheme × Ir.Color × Ir.Color ×
     List (Ir.Role × Option (Ir.Color × Option Ir.Role))) := []
-  /-- The page, its ink and its code ground in each shipped scheme as the
-  palette in force there resolves them (`boxRoleTexts`): what a listing's box
-  names a role for where it stands on that role's colour. -/
+  /-- The page, ink and code ground per shipped scheme, as the palette in force resolves them. -/
   boxTexts : List (Ir.Role × List (Ir.Scheme × Option String)) := []
-  /-- A listing's local frame colours. Its code panel states the same ground
-  that PDF paints, so default syntax inks have one contrast contract on
-  screen and paper, including standout and title-page frames. -/
+  /-- A listing's local ground, the one the PDF paints. -/
   listingGround : Option Ir.Color := none
   listingFg : Option Ir.Color := none
-  /-- The roles the page's stylesheet declares (`pageRoles`): what a body
-  epoch re-declares when its palette moves one of their defaults. -/
+  /-- The roles the page's stylesheet declares. -/
   cssRoles : List Ir.Role := []
-  /-- Whether the page can declare a role's property, by the role's
-  constructor index (`roleDeclarable`): an element's read of a role it
-  cannot is written as the value CSS would fall back to (`colorRead`).
-  Empty outside the engine's own stylesheet, where every read keeps its
-  fallback. -/
+  /-- Whether the page can declare each role's property, by constructor index. -/
   declarable : Array Bool := #[]
-  /-- A painted body keeps its ground across palette declarations. Its
-  inherited ink retains the declared role, the name a nested run's colour
-  property reads. -/
+  /-- A painted body's ground, kept across palette declarations. -/
   bodyGround : Option Ir.Color := none
   bodyInk : Option (Ir.ColorRef × Ir.Color) := none
-  /-- The token state in force, same door (`.setTokens`). -/
   tokens : Ir.Tokens := {}
-  /-- Whether the emitted page is the paged deck (the slides class's frame
-  model): the frame arm then realizes its declared vertical distribution
-  with flex spacers, which every other class's flow has no use for. -/
+  /-- Whether the page is the paged deck, whose frames realize their vertical distribution. -/
   deck : Bool := false
-  /-- Where the deck's chrome may stand (`Ir.Doc.chromeAllowed`): the input
-  of the IR's frame-area decision (`Ir.frameInTextArea`), under which every
-  frame but the title page opens its body as beamer's `\vbox{}`. -/
   chromeAllowed : Bool := false
-  /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`): the glue a
-  frame's spacers grow by (`vdistShares`). -/
+  /-- The deck's frame-alignment keys, which set the glue its spacers grow by. -/
   frameKeys : Ir.FrameKeys := .beamer
-  /-- A fill here grows nothing on the deck's stage: inside a box or an aside
-(`Ir.Block.listScope`, where a fill stretches nothing the stage
-distributes), an alternation's group, or a list item, which carries the
-fills it ends on itself (`fillCarrier`) — the fill census's deck reading
-skips the same places (`Ir.FillView.deck`). -/
+  /-- Whether a fill here grows nothing on the deck's stage. -/
   fillsInert : Bool := false
-  /-- The frame's numbered extent, used to project union selectors into
-  finite HTML attribute tokens. It is read from the IR, never the surface. -/
+  /-- The frame's overlay step count, which bounds its union selectors. -/
   overlaySteps : Nat := 1
-  /-- The document's page geometry, from the document at `emitTree`'s
-  entry: the deck's image sizing reads the stage and its margins to state
-  every dimension as a share of the stage (`deckStageMilli`), never a
-  print length on a screen. -/
+  /-- The document's page geometry, which deck image sizes are shares of. -/
   page : Ir.PageSpec := {}
-  /-- The document's length basis (`lengthBasisOf`), from the document at
-  `emitTree`'s entry: what a table length a body `\tokens` declares is spelled
-  against, as `tokenVars` spells the preamble's. -/
   lengthBasis : LengthBasis := .classSize Ir.baseFontSize
-  /-- How a narrowing table (`Ir.ColSpec.narrows`, a markdown table's) fits
-  the measure it stands in — the step it sets at and whether it still
-  overhangs at that step — read off that measure and its columns, pads,
-  rows and spans by the page's own decision (`Layout.tableFit`), which the
-  driver hands over with the document's faces: the HTML states the step as
-  the table's font size and centres an overhang across both margins on
-  paper (`bt-overhang`). The default fits every table as declared. -/
+  /-- The step a narrowing table sets at and whether it overhangs, by the page's decision. -/
   tableFit : Sp → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) →
     Array Ir.ColSpan → Option String × Bool := fun _ _ _ _ _ _ => (none, false)
-  /-- The document's list lineage (`Ir.ListLineage`), from the document at
-  `emitTree`'s entry: what a list or quotation level indents by
-  (`Config.deeper`). -/
+  /-- The document's list lineage, which list and quotation levels indent by. -/
   lists : Ir.ListLineage := .sizeFile
-  /-- How many list and quotation levels stand around this content, and the
-  measure they take off its start and end (`Config.deeper`). -/
+  /-- The list and quotation levels around this content. -/
   listDepth : Nat := 0
   inset : Sp := 0
-  /-- The resolved local measurement context. A box replaces the horizontal
-  measures while retaining the page's text height; outside a box, `none`
-  reads the document's text area. Providers share the native vocabulary. -/
+  /-- The local measurement context; `none` reads the document's text area. -/
   measures : Option MeasureValues := none
-  /-- The accumulated custom-property redefinitions the siblings from here
-  on carry on their own style attribute. Properties on an element inherit
-  into it, so styling each following sibling realizes "from here on"
-  without a wrapper element — a wrapper would break the `* + *` sibling
-  adjacency the rhythm gap rules key on. -/
+  /-- Custom-property redefinitions the following siblings carry on their style attribute. -/
   epochStyle : String := ""
-  /-- Concrete paint for ordinary flow after a palette declaration. Kept
-  apart from the inherited tokens: a deck stage resolves its own surface
-  and ink, including standout/title paint and the author's CSS. -/
+  /-- Concrete paint for ordinary flow after a palette declaration. -/
   epochPaint : String := ""
-  /-- Whether that accumulated palette diff changes the rendered page ground.
-  Kept as data: no CSS substring is used to infer a semantic epoch. -/
+  /-- Whether the accumulated palette diff changes the page ground. -/
   epochGround : Bool := false
-  /-- The document's resolved faces, from the driver — the same `FontSet`
-  the PDF embeds from — when the artifact ships them: one `@font-face` per
-  face, carrying its captured font program as a data URL. `none` (a document that declared
-  its `css =` story owns fonts itself, and so does a caller with no font
-  environment) keeps the name-only stacks. -/
+  /-- The document's faces, when the artifact ships them as `@font-face` data URLs. -/
   fonts : Option Font.FontSet := none
-  /-- Exact declared stylesheet spelling and captured text. A missing or
-  mismatched capture remains a link, which checked publication refuses. -/
+  /-- The declared stylesheet's spelling and captured text. -/
   stylesheet : Option (String × String) := none
   /-- Captured icon bytes, keyed by the document's exact favicon spelling. -/
   favicon : Option (String × HtmlResource.Embedded) := none
-  /-- Inside a declared title slot: the slot's font template already wraps
-  what it sets, so the title heading there takes no `titlepage` template
-  of its own — the PDF's `slotTitle` reading, the same one value. -/
+  /-- Inside a declared title slot, whose font template already wraps the title. -/
   slotTitle : Bool := false
-  /-- How a picture label's content measures, from the driver: the same
-  function layout places labels with (`Layout.labelMetric` over the one
-  `FontSet`), so a picture's `viewBox` is the box the PDF reserves
-  (`Pdf.picture_box_agree`). The default answers nothing — a caller with no
-  font environment sizes a picture by its declared box and node borders. -/
+  /-- How a picture label's content measures, as layout places labels. -/
   labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
-  /-- The footline band's box on frame `n`, from the driver: its slots'
-  tallest and deepest ink as the page sets them (`Layout.footBandBox`, the
-  box the page's text-area floor and the band's baseline read), so the deck's
-  footline is as tall as the page's and stands its slots' baseline their
-  glyphs' depth above the closing skip. The default answers nothing — a
-  caller with no font environment keeps the cap-height strut
-  (`footCapDecl`). -/
+  /-- The footline band's box on frame `n`, as the page sets it. -/
   footBox : Nat → Array Ir.BandSlot → Option (Sp × Sp) := fun _ _ => none
-  /-- Where a rule reaching by a block title's lines stands in the title's
-  header (`Ir.BlockReach.lines`, `Ir.BlockTitlePlace`), from the driver, over
-  the faces the page reads (`Layout.blockTitleRule`). The default answers
-  nothing — a caller with no font environment stands the rule on the
-  header's lines. -/
+  /-- Where a rule reaching by a block title's lines stands in its header. -/
   blockTitleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none
-  /-- The part below its baseline of the line box a block's last line stands
-  in, where the block ends on no paragraph (`Layout.blockLastBelow`), from
-  the driver, over the faces the page reads: a rule beside the whole block
-  ends that much less its depth above the block's content's end
-  (`Ir.BlockSpan.whole`). The default answers nothing — the block ends as
-  a body paragraph does (`Ir.BlockTitlePlace.bodyBelow`). -/
+  /-- The depth below the baseline of the line box a block's last line stands in. -/
   blockLastBelow : Option Ir.Block → Option Int := fun _ => none
-  /-- Measured cancellation in the resolved surrounding text style, supplied
-  by the same font environment and assembly as the native backend. -/
+  /-- Measured cancellation in the surrounding text style. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
     Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ _ => none
   /-- The same run's font unit for explicitly sized math lengths. -/
   mathEm : MeasureValues → Array Ir.Style → Math.MathStyle → Option Int := fun _ _ _ => none
-  /-- Text-sourced math alphabets keep the ambient text em, before the math
-  face's x-height matching. Read only at a styled math leaf. -/
+  /-- The ambient text em that text-sourced math alphabets keep. -/
   mathTextEm : MeasureValues → Array Ir.Style → Math.MathStyle → Option Int := fun _ _ _ => none
-  /-- The native resolver folds this ordered history; the HTML walk carries
-  declarations without implementing another font or size interpreter. -/
+  /-- The ordered style history the native resolver folds. -/
   mathStyles : Array Ir.Style := #[]
-  /-- Inside a fill row's group (`fillRow`): a fraction of the text width is
-  a fraction of the row, the line the fill spans, as in TeX — never of the
-  group, whose width that same fraction decides. The image emission states
-  it in `cqi` against the row, which then declares itself the container. -/
+  /-- Inside a fill row's group, where a text-width fraction is a fraction of the row. -/
   inFillRow : Bool := false
 
-/-- The current physical text area, before relative lengths resolve.
-An explicit local context wins over the page's ordinary text area. -/
+/-- The current text area: the local context, else the page's. -/
 public def Config.measureValues (cfg : Config) : MeasureValues :=
   cfg.measures.getD (MeasureValues.horizontal
     (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
 
-/-- One list or quotation level deeper: the level's `\leftmargin` (the
-class's, `Ir.leftMargin` at the next `\@listdepth`; the page's own 1.5 em
-where the lineage declares none, `Layout.listIndentFor`) off the measure's
-start, and for a quotation (`both`) off its end too — the measure the
-page's list and quote arms narrow theirs to, so a table's fit reads the
-measure its page decides against (`tableFit`). A declared
-`\leftmargin⟨n⟩` is not read here. -/
+/-- One list or quotation level deeper: the lineage's left margin, else the page's own 1.5 em
+(`Layout.listIndentFor`), off the measure's start, and for a quotation off its end; a declared
+`\leftmargin⟨n⟩` is not read. -/
 public def Config.deeper (cfg : Config) (both : Bool) : Config :=
   let lv := cfg.listDepth + 1
   let lm := (Ir.leftMargin cfg.lists cfg.page.fontSize lv).getD (cfg.page.fontSize * 3 / 2)
   { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
 
-/-- Enter a box with the same horizontal-measure convention as native
-paragraphs. Descendant widths resolve against it; siblings keep their own
-context because only the child's configuration changes. The box opens at
-list depth zero, its measure its own, as `minipage` resets `\@listdepth`
-(latex.ltx, `\@mplistdepth`). -/
+/-- Enter a box of the given width, at list depth zero. -/
 public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
   { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight)
              listDepth := 0, inset := 0 }
 
 @[expose] public def cssColor (c : Color) : String := c.css
 
-/-- The class an authored role wears in the artifact: verbatim after a
-fixed prefix, so the mapping is injective (`roleClass_inj`) and lands in a
-namespace no engine class enters (`roleClass_engine_disjoint`) and no
-framework convention plausibly claims (Bulma's `.title` vs `u-title`). A
-class, not a custom element: WHATWG HTML §3.2.6 places no constraint on
-class values and encourages nature-of-content names, while a custom
-element (§4.13.1) exists to define behaviour and would swap the `<span>`
-for an unknown element — the wrong tool for a styling hook. -/
 public def roleClass (n : String) : String := "u-" ++ n
 
 private theorem roleClass_toList (n : String) :
@@ -306,27 +166,17 @@ private theorem roleClass_toList (n : String) :
   have h : "u-".toList = ['u', '-'] := by decide
   simp [roleClass, String.toList_append, h]
 
-/-- Two authored names never share a class, so no collision diagnostic can
-fire and none is warranted — the theorem replaces it. -/
 public theorem roleClass_inj (a b : String) (h : roleClass a = roleClass b) : a = b := by
   have hl := congrArg String.toList h
   rw [roleClass_toList, roleClass_toList] at hl
   simp only [List.cons.injEq, true_and] at hl
   exact String.ext hl
 
-/-- The class a ragged scope carries, one per declared side. Two names
-rather than one class plus an inline style, because the side is a
-*declaration* and belongs where a reader's own sheet can address it; the
-rule text is built from `Ir.FlushSide.align` at the one site below
-(`raggedRule`), so the class and the alignment it declares cannot drift. -/
 public def raggedClass : Ir.FlushSide → String
   | .left => "ragged"
   | .right => "ragged-right"
 
-/-- The margins a block-level box — a table — takes on its scope's side:
-`auto` exactly where the page leaves the box slack
-(`box_margins_agree`), so HTML sets a tabular or a lone minipage where the
-PDF does (`Ir.HAlign.boxOffset`). -/
+/-- The margins a block-level box takes on its scope's side. -/
 public def boxMargins : Ir.HAlign → String × String
   | .left => ("0", "auto")
   | .center => ("auto", "auto")
@@ -338,42 +188,24 @@ public def boxJustify : Ir.HAlign → String
   | .center => "center"
   | .right => "end"
 
-/-- The two readings of a scope's side agree: the stylesheet leaves slack
-before a box exactly when the page's offset takes some, and after it
-exactly when the offset leaves some. -/
 public theorem box_margins_agree (h : Ir.HAlign) :
     ((boxMargins h).1 = "auto" ↔ 0 < h.slackHalves) ∧
       ((boxMargins h).2 = "auto" ↔ h.slackHalves < 2) := by
   cases h <;> decide
 
-/-- An alignment scope's rule: its class, the side's `text-align`, and the
-side's box placement as inherited properties — inherited exactly as
-`text-align` is, so a table or a lone minipage anywhere in the scope stands
-on its side, as TeX sets a box in a line wherever the scope's skips are in
-force. -/
+/-- An alignment scope's rule: its `text-align` and box placement, both inherited. -/
 private def alignScopeRule (cls : String) (h : Ir.HAlign) : String :=
   "." ++ cls ++ " { text-align: " ++ h.align ++ "; --ltx-box-left: " ++ (boxMargins h).1 ++
     "; --ltx-box-right: " ++ (boxMargins h).2 ++ "; --ltx-box-justify: " ++ boxJustify h ++
     "; }\n"
 
-/-- One ragged side's stylesheet rule: its class, and the alignment the IR
-declares for it. Both halves come from the IR, so the sheet cannot declare
-an edge the page does not set (`ragged_sides_agree` ties the alignment this
-prints to the origin the page's walk reads). -/
 public def raggedRule (s : Ir.FlushSide) : String := alignScopeRule (raggedClass s) s.halign
 
-/-- The rule is the class and the IR's own alignment, nothing invented
-between them: the projection corollary of `ragged_sides_agree` on this
-backend's side. -/
 private theorem raggedRule_projects (s : Ir.FlushSide) :
     raggedRule s = alignScopeRule (raggedClass s) s.halign ∧ s.halign.align = s.align := by
   cases s <;> exact ⟨rfl, rfl⟩
 
-/-- Every class value the engine itself puts on an element, as tokens (a
-multi-class value like `"slide standout"` is listed split). Maintained by
-grep over this file — `("class", "…")` literals, the `rowClass`/`cls`
-builders, `styleClass`, and the `size-` names `styleClass` derives from
-`Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
+/-- Every class token the engine itself puts on an element. -/
 public def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up", "see-through",
    "section-number", "display", "equation", "eqnum",
@@ -394,10 +226,6 @@ private theorem engineClasses_no_u_prefix :
     (engineClasses.all fun c => decide (c.toList.take 2 ≠ ['u', '-'])) = true := by
   decide
 
-/-- The `u-` prefix makes role classes disjoint from every class the engine
-emits: an authored role can restyle itself without ever colliding with the
-engine's own hooks, and a stylesheet addressing `.u-…` addresses only
-authored roles. -/
 public theorem roleClass_engine_disjoint (n c : String) (hc : c ∈ engineClasses) :
     roleClass n ≠ c := by
   intro h
@@ -407,14 +235,6 @@ public theorem roleClass_engine_disjoint (n c : String) (hc : c ∈ engineClasse
   rw [← h, roleClass_toList]
   rfl
 
-/-- Over the command-name alphabet — the lexer admits only `isAlpha` and
-`'@'` into a control word, so no other character can reach `roleClass`
-from a document — the class is one HTML class token: no whitespace (HTML
-treats a class value as a space-separated set, so a space would split the
-class into two tokens, a break the escaper cannot see) and no quote (the
-attribute-breakout character `escapeAttr` kills). The alphabet is spelled
-inline because a backend never reaches into the lexer; Tests.lean pins the
-spelling to the lexer's own `nameChar` by `rfl`. -/
 public theorem roleClass_single_token (n : String)
     (hn : (n.toList.all fun c => c.isAlpha || c == '@') = true) :
     ((roleClass n).toList.all fun c =>
@@ -427,9 +247,7 @@ public theorem roleClass_single_token (n : String)
   refine ⟨⟨⟨⟨⟨fun h' => ?_, fun h' => ?_⟩, fun h' => ?_⟩, fun h' => ?_⟩,
     fun h' => ?_⟩, fun h' => ?_⟩ <;> (subst h'; exact absurd h (by decide))
 
-/-- Thousandths to a decimal, so `1.2em` round-trips as `1.2em`. It was once
-emitted as `120%`, which for padding is a fraction of the container and pushed
-every styled list off the page. -/
+/-- Thousandths as a decimal numeral. -/
 private def decMilli (n : Int) : String :=
   let sign := if n < 0 then "-" else ""
   let a := n.natAbs
@@ -438,74 +256,44 @@ private def decMilli (n : Int) : String :=
   let frac := String.ofList (frac.toList.reverse.dropWhile (· == '0')).reverse
   s!"{sign}{a / 1000}" ++ (if frac.isEmpty then "" else "." ++ frac)
 
-/-- A length in CSS, its absolute part spelled by `absolute`. `em`/`ex`
-survive as their CSS equivalents rather than being resolved, so the browser
-scales them with the reader's font size — the one place HTML should *not*
-copy what the PDF path does. Zero retains its length unit so it composes
-with other lengths in `calc()`:
-https://www.w3.org/TR/css-values-4/#calc-type-checking. -/
+/-- A length in CSS: its absolute part spelled by `absolute`, its `em` and `ex` kept as CSS units,
+and zero as `0pt` so it composes in `calc()`. -/
 public def cssLengthIn (absolute : Sp → String) (l : Length) : String :=
   let parts :=
     (if l.sp != 0 then [absolute l.sp] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
-    -- CSS has an `ex` unit of its own; the browser measures the real font.
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
   match parts with
   | [] => "0pt"
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
-/-- A length in CSS, its absolute part in points: paper is paper. -/
+/-- A length in CSS, its absolute part in points. -/
 public def cssLength (l : Length) : String :=
   cssLengthIn (fun sp => s!"{sp.toPtString}pt") l
 
-/-- The zero source length keeps its dimension in the artifact spelling,
-including when a custom property substitutes it into a length sum. -/
 public theorem cssLength_zero_exact : cssLength ({} : Length) = "0pt" := by
   simp [cssLength, cssLengthIn]
 
-/-- A length's share of the deck stage, in milli-percent: the one
-projection every deck emission rides when it states a PDF stage length
-against the viewport — the type size over the stage height, an image
-dimension over the stage width or height. `Int` binders, not `Sp`, so
-`omega` can read the ratio statements below. -/
+/-- A length's share of the deck stage, in thousandths of a percent. -/
 public def deckStageMilli (x stage : Int) : Int :=
   x * 100000 / stage
 
-/-- A length on a deck's stage: its absolute part as its share of the stage
-height (`deckStageMilli`, in `vh`, the unit the deck's type is set in, so the
-length keeps its proportion to the type at every viewport), its `em`/`ex`
-as `cssLength` states them. The stage is the page: 6pt of `\tabcolsep` is
-6pt of the PDF page's height in both artifacts, where `cssLength`'s paper
-points put it at less than half that share of a 1280 by 720 stage. -/
+/-- A length on a deck's stage: its absolute part as a share of the stage height, in `vh`. -/
 public def stageLengthCss (stage : Sp) (l : Length) : String :=
   cssLengthIn (fun sp => s!"{decMilli (deckStageMilli sp stage)}vh") l
 
-/-- A length's share of the class size, in milli-rem: the projection a
-table length rides on a page whose body text is set at 1 rem. `Int`
-binders, as `deckStageMilli`'s. -/
+/-- A length's share of the class size, in thousandths. -/
 public def classShareMilli (x size : Int) : Int :=
   x * 1000 / size
 
-/-- A length on a page whose body text is 1 rem: its absolute part as its
-share of the class size (`classShareMilli`, in `rem`), its `em`/`ex` as
-`cssLength` states them. A table length LaTeX fixed at the class size
-keeps its proportion to the body text it pads, as on the page, and stays
-fixed where a table sets smaller, as `rem` stays fixed where `em` would
-not: in points, a 10pt article's rule gap was 0.23 of the body text and a
-12pt one's 0.28, where the page sets both at 0.28. -/
+/-- A length on a page whose body text is 1 rem: its absolute part as a share of the class size. -/
 public def classLengthCss (size : Sp) (l : Length) : String :=
   if size ≤ 0 then cssLength l
   else cssLengthIn (fun sp => s!"{decMilli (classShareMilli sp size)}rem") l
 
-/-- The `:root` property a colour reads where its text is not one across the
-schemes a page ships: its name spells its text in each scheme the page
-ships, in the page's order (`schemeVarTexts` reads it back), so the page's
-scheme blocks state it from the name alone and two colours alike in every
-scheme share one. Every text is a colour (`#rrggbb`) or none, and a text an
-earlier scheme already spells is that scheme's place, one digit. The name
-stands behind `--ltx--`, which no role's key (a word) and no author
-colour's property (`--ltx-c-…`) begins with. -/
+/-- The `:root` property naming a colour's text in each shipped scheme, behind the `--ltx--`
+prefix. -/
 public def schemeVar (texts : List (Ir.Scheme × Option String)) : String :=
   let parts := texts.map fun (_, x) => match x with
     | some t => (t.drop 1).toString
@@ -515,9 +303,7 @@ public def schemeVar (texts : List (Ir.Scheme × Option String)) : String :=
     | some j => if j < 10 then toString j else p
     | none => p)
 
-/-- What a `schemeVar` name spells, read back in the page's scheme order:
-each part a six-digit colour, `none`, or the place of an earlier part it
-repeats; nothing for any other name. -/
+/-- The texts a `schemeVar` name spells, in the page's scheme order. -/
 public def schemeVarTexts (schemes : List Ir.Scheme) (name : String) :
     Option (List (Ir.Scheme × Option String)) := do
   guard (name.startsWith "--ltx--")
@@ -531,12 +317,7 @@ public def schemeVarTexts (schemes : List Ir.Scheme) (name : String) :
     else none) #[]
   return schemes.zip texts.toList
 
-/-- **A colour's texts across the shipped schemes as one declaration states
-them**: its floor text where every scheme reads it alike (`texts`), and
-otherwise the `:root` property its colours in each scheme name
-(`schemeVar` over `colours`), which the page's scheme blocks state — the
-floor's plain value first, so a browser without `light-dark()` keeps the
-page's own colour — in every scheme. -/
+/-- A colour's texts across the shipped schemes as one declaration states them. -/
 public def schemeValue (texts colours : List (Ir.Scheme × Option String)) (floor : Ir.Scheme) :
     String :=
   let f := (texts.lookup floor).join
@@ -544,22 +325,13 @@ public def schemeValue (texts colours : List (Ir.Scheme × Option String)) (floo
   else if colours.all (·.2.all (·.startsWith "#")) then s!"var({schemeVar colours})"
   else f.getD "initial"
 
-/-- **A literal colour as the page ships it**: in each shipped scheme as that
-scheme carries a colour no palette names (`Ir.Design.literalIn`: itself in
-print and on the document's own screen), spelled once across them
-(`schemeValue`) — a colour no palette names has no property to restate, so
-its every scheme rides in its one declaration. -/
+/-- A literal colour as the page ships it in every shipped scheme. -/
 public def Config.literal (cfg : Config) (c : Ir.Color) : String :=
   if cfg.frames.isEmpty then cssColor c else
   let texts := cfg.frames.map fun f => (f.scheme, some (cssColor (Ir.Design.literalIn f c)))
   schemeValue texts texts cfg.floor
 
-/-- What a formula's cancel marks read from the math face, in thousandths
-of an em — its overbar rule and clearance, the two quantities the PDF lays
-the marks with — when the page ships its faces; TeX's own stand-ins
-(`MathMl.Marks`' defaults) where it does not. `aligned`'s `\minalignsep`
-is a print length, as the page states one (`stageLengthCss` on a deck,
-`classLengthCss` elsewhere). -/
+/-- The math face's cancel-mark metrics in thousandths of an em, or TeX's defaults without faces. -/
 public def mathMarks (cfg : Config) : MathMl.Marks :=
   let marks : MathMl.Marks := {
     alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.Length.ofSp Math.minAlignSep)
@@ -578,80 +350,41 @@ public def mathMarks (cfg : Config) : MathMl.Marks :=
     | none => marks
   | none => marks
 
-/-- The one resolving site for a document's length basis: a frame-model
-document's stage height, every other document's class size. -/
 public def lengthBasisOf (doc : Doc) : LengthBasis :=
   if doc.docClass.record.model == .frame then .stage doc.page.height
   else .classSize doc.page.fontSize
 
-/-- A table length (`Ir.tableLengths`) as the stylesheet states it, as its
-share of the document's basis (`lengthBasisOf`): the stage on a deck, the
-class size elsewhere. A declared token and the default it stands in for take
-the one spelling, so a document that declares a table length its default
-already holds ships the stylesheet it shipped without the declaration. -/
 public def tableLengthCss : LengthBasis → Length → String
   | .stage h, l => stageLengthCss h l
   | .classSize size, l => classLengthCss size l
 
-/-- A design token's value as a custom property: a table length through
-`tableLengthCss`, every other token as `cssLength` states it. -/
 public def tokenCss (basis : LengthBasis) (name : String) (l : Length) : String :=
   if (Ir.tableLengths.lookup name).isSome then tableLengthCss basis l else cssLength l
 
-/-- A table length's fallback in the stylesheet: the default the page sets
-an undeclared table by — booktabs' lengths in the preamble's font, as LaTeX
-fixed them when the package loaded (`Ir.PreambleFace`) — through
-`tableLengthCss`. The page reads the same value (`Layout.tableLength`;
-`Pdf.table_length_agree`). -/
+/-- A table length's fallback: the default the page sets an undeclared table by. -/
 @[expose] public def tableLengthFallback (doc : Doc) (name : String) : String :=
   tableLengthCss (lengthBasisOf doc)
     (Length.ofSp (doc.preambleFace.resolve (Ir.tableLengthDefault name)))
 
-/-- The class a table cell states its side by: one per side, so the side is
-a declaration a reader's own sheet can address, never an inline style it
-cannot override. -/
 public def cellSideClass (h : Ir.HAlign) : String := "bt-" ++ h.align
 
-/-- A side class's rule: the side's `text-align` on every cell carrying it,
-at a table cell's own specificity, so neither the UA's centred `th` nor the
-scope's inherited `text-align` reaches a cell. -/
+/-- A side class's `text-align` rule, at a table cell's own specificity. -/
 public def cellSideRule (h : Ir.HAlign) : String :=
   "table.booktabs td." ++ cellSideClass h ++ ", table.booktabs th." ++ cellSideClass h ++
     " { text-align: " ++ h.align ++ "; }\n"
 
-/-- **A token's custom property**: `--` and its name, where the name is
-spelled in what a CSS identifier holds with no escape — ASCII letters,
-digits, `-` and `_` — since the self-contained stylesheet admits no escape
-(`HtmlResource.cssRequests`). A name holding anything else, a TeX internal
-name's `@` among them (`\newdimen\x@y`), has no property: no rule declares
-it, and a rule reading it states its value alone. -/
+/-- A token's custom property, when its name needs no CSS escape. -/
 public def tokenVar? (n : String) : Option String :=
   if !n.isEmpty && n.all (fun c => c.isAlphanum || c == '-' || c == '_') then some ("--" ++ n)
   else none
 
-/-- A sourced length in CSS: the custom property the value was declared
-under, with the resolved length as its fallback. This is the whole reason
-`Ir.Sourced` exists — `tokenVars` emits every declared token into `:root`
-so a reader's stylesheet can override it, and an override only reaches the
-page through a rule that names the property. A value with no declaration
-behind it has nothing to defer to and prints as the length, which is also
-what a rule wants for an engine rhythm quantum: a reader cannot override
-what the engine did not declare.
-
-The fallback is not redundant belt-and-braces. A token declared by a
-theme's bundle but absent from the document's own table is not in `:root`,
-and an unresolved `var()` with no fallback makes the whole declaration
-invalid — the gap would collapse to zero. -/
+/-- A sourced length in CSS: its declared custom property with the resolved length as fallback,
+or the length alone where it has none. -/
 public def cssSourced (g : Ir.Sourced SymGlue) : String :=
   match g.token.bind tokenVar? with
   | some v => s!"var({v}, {cssLength g.value.width})"
   | none => cssLength g.value.width
 
-/-- A declared token reaches the stylesheet as a reference to its own
-custom property, in exactly the form the closure check measures, and its
-resolved length rides along as the fallback. The artifact-level half of
-`Ir.findSourced?_names`: the name the lookup kept is the name the rule
-defers to, so a reader's override lands. -/
 public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
     (h : g.token = some n) (hn : tokenVar? n = some ("--" ++ n)) :
     cssSourced g = s!"var(--{n}, {cssLength g.value.width})" := by
@@ -659,74 +392,34 @@ public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
   simp only [toString, String.append_assoc]
   rfl
 
-/-- The complement: a value no declaration named prints as the bare length,
-so nothing references a property the engine never emitted. -/
 public theorem cssSourced_bare (g : SymGlue) :
     cssSourced (Ir.Sourced.bare g) = cssLength g.width := by
   simp [cssSourced, Ir.Sourced.bare]
 
-/-- The content measure, as the page declared it: text width over the base
-font size, in `em` so it scales with the browser font. `article` is PDF-first
-and its HTML is a faithful degradation, so the measure comes from `\page`
-rather than a fixed reading-column width. -/
+/-- The content measure: text width over the base font size, in `em`. -/
 public def measureEm (page : PageSpec) : String :=
   let textWidth := page.width - 2 * page.hmargin
   s!"{decMilli (textWidth * 1000 / page.fontSize)}em"
 
-/-- The reduced-motion guard for one selector: under the reader's reduce
-preference the transition is removed. `prefers-reduced-motion: reduce` is
-the user's request that the system "minimize the amount of non-essential
-motion" (CSS Media Queries 5 §12.1). -/
+/-- Removes the selector's transition under `prefers-reduced-motion: reduce`. -/
 public def reducedMotionGuard (sel : String) : String :=
   s!"@media (prefers-reduced-motion: reduce) \{ {sel} \{ transition: none; } }\n"
 
-/-- A declared motion's CSS: the transition and, unconditionally, its own
-reduced-motion guard. WCAG 2.2 SC 2.3.3 (Animation from Interactions)
-requires motion animation triggered by interaction to be disableable, and
-sufficient technique C39 is exactly this media query. The base stylesheet's
-global guard already covers a `css = own` page, but a `css = none` page
-ships only the declared rules, so the guard must travel with the
-declaration itself. This is the engine's only site that spells
-`transition:` into a document's styles (`motionSiteChecks` in Tests holds
-the tree to that), and `motionCss_guarded` is the by-construction form. -/
+/-- A declared motion's transition, followed by its own reduced-motion guard. -/
 public def motionCss (sel : String) (ms : Nat) : String :=
   s!"{sel} \{ transition: color {ms}ms, outline-color {ms}ms; }\n" ++
     reducedMotionGuard sel
 
-/-- A declared motion carries its reduced-motion form by construction: the
-emitted CSS is definitionally a transition rule followed by the guard for
-the same selector, so no call to the one transition-emitting site can
-produce an unguarded transition (WCAG 2.2 SC 2.3.3; the guard's query is
-CSS Media Queries 5 §12.1). -/
 public theorem motionCss_guarded (sel : String) (ms : Nat) :
     ∃ rule, motionCss sel ms = rule ++ reducedMotionGuard sel :=
   ⟨_, rfl⟩
 
-/-- The reduced-motion guard for the reveal: under the reader's reduce
-preference the element simply stands, fully visible (WCAG 2.2 SC 2.3.3,
-technique C39; CSS Media Queries 5 §12.1). As `motionCss`, the guard
-travels with the declaration itself — a `css = none` page ships only the
-declared rules, so no global block can be relied on to cover it. -/
+/-- The reveal's reduced-motion guard, which leaves the element visible. -/
 public def revealMotionGuard : String :=
   "@media (prefers-reduced-motion: reduce) \
 { .reveal-scroll { animation: none; } }\n"
 
-/-- The declared reveal's CSS, shipped only when the emitted tree carries a
-`reveal-scroll` element. Where the platform has scroll-driven animations
-(CSS scroll-driven animations, `animation-timeline: scroll()`), the reveal
-is declarative: the element fades in over the first `--reveal-range` of
-scroll, whose default is one viewport, so the element appears as the first
-screenful scrolls away. Where it does not, the element is simply visible.
-
-That degradation is the whole design, and it is why no script is emitted
-here. A compatibility shim is the stylesheet framework's job, not the
-document engine's: the engine states what the page *means* and lets the
-declarative platform — or the framework a document chooses — decide how
-widely it works. Emitting script to paper over one engine's release
-schedule buys a fade and costs a permanent escaping obligation, a payload
-to audit, and a rule ("the backends emit no script") that would then hold
-only approximately. A control that is always visible is not broken; it is
-the honest floor. -/
+/-- The scroll-driven reveal; without scroll-driven animations the element stays visible. -/
 public def revealCss : String :=
   "@keyframes ltx-reveal { from { opacity: 0; visibility: hidden } \
 to { opacity: 1; visibility: visible } }\n" ++
@@ -735,32 +428,18 @@ animation: ltx-reveal linear both; animation-timeline: scroll(); \
 animation-range: 0 var(--reveal-range, 100vh); } }\n" ++
   revealMotionGuard
 
-/-- The reveal carries its reduced-motion form by construction:
-definitionally the keyframes and trigger followed by the guard —
-`motionCss_guarded`'s shape for the one page-level animation site. -/
 public theorem revealCss_guarded : ∃ rule, revealCss = rule ++ revealMotionGuard :=
   ⟨_, rfl⟩
 
 
-/-- A declared marker resolved to what a `::marker` rule can say: the text
-it shows, and the CSS declarations its wrappers translate to. CSS
-Pseudo-Elements 4 §4.1 lists the properties that apply to `::marker`: all
-font properties, `color`, `content`, `white-space`, `unicode-bidi`,
-`direction`, `text-combine-upright` — so a colour and a size step are
-expressible, and what is not is arbitrary inline content (a link, an image,
-math, a step), plus drawn decoration (`text-decoration` is not in the list,
-so an underlined marker does not qualify). -/
+/-- A declared marker as a `::marker` rule: its text and its declarations. -/
 public structure MarkerCss where
   text : String
   decls : Array String := #[]
   deriving Repr, BEq
 
-/-- Font declarations shared by markers and listings (CSS Pseudo-Elements 4
-§4.1 permits all font properties on `::marker`). The bold weight is
-600, the same weight the base stylesheet's level-2 dash carries. An unknown
-size name resolves to nothing, which makes the whole marker inexpressible
-rather than silently unsized. A listing supplies its frame's length
-projection, the same one inline fonts use. -/
+/-- Font declarations for a style, shared by markers and listings: bold is 600, the level-2 list
+dash's weight, and an unknown size gives none. -/
 private def fontStyleDecls (scale : List (String × Nat)) (st : Style)
     (lengthCss : Affine Measure → String := Ir.Track.contextCss) :
     Option (Array String) :=
@@ -782,8 +461,6 @@ private def fontStyleDecls (scale : List (String × Nat)) (st : Style)
   | .fontSize size leading => some #[
       s!"font-size: {lengthCss size};",
       s!"line-height: {lengthCss leading};"]
-  -- a language changes no marker styling; the wrapper is expressible as
-  -- nothing rather than inexpressible
   | .lang _ => some #[]
 
 private def markerColorDecl (c : Ir.Color) (name : Option Ir.ColorRef) : String :=
@@ -791,8 +468,7 @@ private def markerColorDecl (c : Ir.Color) (name : Option Ir.ColorRef) : String 
   | some n => s!"color: var({n.property}, {cssColor c});"
   | none => s!"color: {cssColor c};"
 
-/-- The colour a marker's literal colour declaration (`markerColorDecl`)
-spells, read back: `color: #rrggbb;`. -/
+/-- The colour a `color: #rrggbb;` declaration spells. -/
 private def literalColorDecl? (d : String) : Option Ir.Color := do
   guard (d.startsWith "color: #" && d.endsWith ";" && d.length == 15)
   let hex := ((d.drop 8).take 6).toString.toList
@@ -805,10 +481,8 @@ private def literalColorDecl? (d : String) : Option Ir.Color := do
 
 mutual
 
-/-- The plain text of a marker whose every element is text — anything else
-is not `::marker` content. Diagnostic locations only group those elements.
-This reader stops at a semantic wrapper, unlike the generic text census.
-Explicit arms: a new `Inline` constructor must answer here. -/
+/-- The plain text of a marker whose every element is text; unlike the text census it stops at a
+semantic wrapper. -/
 private def markerTextOne (acc : String) : Inline → Option String
   | .text s => some (acc ++ s)
   | .math _ _ => none
@@ -823,7 +497,6 @@ private def markerTextOne (acc : String) : Inline → Option String
   | .hspace _ _ => none
   | .rule _ _ _ => none
   | .strut _ => none
-  -- a text command's italic correction is a kern: no ::marker content
   | .italicCorr _ => some acc
   | .pageNumber => none
   | .pageCount => none
@@ -831,15 +504,11 @@ private def markerTextOne (acc : String) : Inline → Option String
   | .onSteps _ _ => none
   | .altSteps _ _ _ => none
   | .image _ _ _ => none
-  -- a `content` string cannot carry the icon's accessible name, so an icon
-  -- marker is inexpressible here and diagnosed (W0331), never defaulted
+  -- a `content` string cannot carry an icon's accessible name
   | .icon _ _ => none
-  -- an anchor or a reference in a marker has no ::marker expression
   | .label _ => none
   | .ref _ _ _ _ => none
-  -- a citation resolves to links, which no ::marker can carry
   | .cite _ _ => none
-  -- a footnote's mark is a link, which no ::marker can carry
   | .footnote _ _ => none
 
 private def markerTextInto (acc : String) : List Inline → Option String
@@ -851,12 +520,8 @@ end
 
 mutual
 
-/-- Resolve one marker element for `::marker`: a whole-content style wrapper
-— it must wrap everything inside it, since one `::marker` rule styles the
-whole marker — or plain text. `none` is the inexpressible remainder, which
-the emitter must diagnose, never silently default (`styleRules`): the same
-declaration then reaches both backends or the difference has a name.
-Explicit arms: no wildcard in a backend's IR walk (AGENTS.md § When you add). -/
+/-- One marker element as `::marker` CSS: a style wrapper over the whole content, or plain text;
+`none` when inexpressible. -/
 private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     Inline → Option MarkerCss
   | .text s => some { text := s, decls := decls }
@@ -867,8 +532,6 @@ private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .colored c name body =>
     markerCssList scale (decls.push (markerColorDecl c name)) body.toList
   | .located _ body => markerCssList scale decls body.toList
-  -- a role's class has no ::marker expression; the content passes through,
-  -- as it does on the PDF marker path
   | .role _ body => markerCssList scale decls body.toList
   | .math _ _ => none
   | .formula _ _ _ => none
@@ -907,8 +570,6 @@ end
 
 public def markerCss? (m : Array Inline)
     (scale : List (String × Nat) := Ir.sizeScale) : Option MarkerCss :=
-  -- Wrapper boundaries cannot change whether a style covers the whole
-  -- marker, or turn several text leaves into an inexpressible mixture.
   markerCssList scale #[] (Ir.eraseLocationInlines m).toList
 
 mutual
@@ -959,10 +620,6 @@ private theorem markerCorr_text (xs : List Inline)
 
 mutual
 
-/-- A marker `::marker` can express shows exactly the declared characters:
-the emitted `content` is the marker's own plain text, so the HTML marker and
-the PDF marker (which sets the same declared content as a line of its own)
-can only differ where a diagnostic already names the substitution. -/
 private theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     (x : Inline) (r : MarkerCss)
     (h : markerCssOne scale decls x = some r) : r.text = Ir.plainTextOne x := by
@@ -1030,20 +687,11 @@ public theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
       markerCssList_text scale #[] (Ir.eraseLocationInlines m).toList r h
     _ = Ir.plainText m := Ir.eraseLocationInlines_text m
 
-/-- A CSS string value: the two characters that could end the string or
-start an escape are escaped (CSS Syntax 3 §4.3.7), so a declared marker's
-characters can never break out of their `content` string. -/
 public def cssString (s : String) : String :=
   (s.replace "\\" "\\\\").replace "\"" "\\\""
 
-/-- `\style` declarations as CSS on the element selectors. A declared marker
-becomes a `::marker` rule when it is expressible there — plain text under
-colour and font wrappers (`markerCss?`; CSS Pseudo-Elements 4 §4.1) — and
-the inexpressible remainder is diagnosed at its declaration (W0331).
-A base list element styles
-every nesting level (as the PDF path does), so its marker rule is emitted at
-each depth — the depth-qualified selectors match the level defaults'
-specificity and, standing later in the sheet, win. -/
+/-- `\style` declarations as CSS rules, with a diagnostic for each marker `::marker` cannot
+express. -/
 public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : String × Array Diag :=
   let sel : String → Option String
     | "titlepage" => some "h1:not(.body-heading)"
@@ -1056,11 +704,7 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
     | "enumerate2" => some "ol ol" | "enumerate3" => some "ol ol ol"
     | "enumerate4" => some "ol ol ol ol"
     | "nav" => some "nav"
-    -- A defined role: its style addresses the class hook the role already
-    -- ships (`roleClass`, injective), so a declared rhythm or state lands
-    -- on `.u-<name>` — the same selector a framework stylesheet uses. The
-    -- remaining engine elements (the slides furniture) have no selector
-    -- here and stay skipped, as before.
+    -- a defined role is addressed by its class; other engine elements have no selector
     | e => if Ir.styleableElements.contains e then none else some ("." ++ roleClass e)
   let markerSel : String → String
     | "ul" => "ul > li::marker, ul ul > li::marker, ul ul ul > li::marker, " ++
@@ -1073,9 +717,7 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
   let mut diags : Array Diag := #[]
   for (element, st) in doc.styles.entries do
     let some tag := sel element | continue
-    -- The title heading takes what the page's title door reads, nothing more.
-    -- Its `after` is the whole title block's, a skip of its own after it
-    -- (`Elab`'s title blocks), never the heading's margin.
+    -- the title block's `after` is a skip of its own, not the heading's margin
     let st := if element == "titlepage" then { Ir.titleHeadingStyle st with after := none }
       else st
     let decls :=
@@ -1086,18 +728,13 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
         let color := match n with
           | some name => s!"var({name.property}, {cssColor c})"
           | none => lit c
-        -- The flex items align by baseline; the rule element then lifts
-        -- itself half its own ex — the heading's x-height, since it
-        -- inherits the heading's font — matching the PDF, which raises the
-        -- rule half the heading face's x-height at the heading's size
-        -- (`Layout.paraLineGeom`).
+        -- the rule lifts itself half the heading's ex, as the PDF raises it
         s!"display: flex; align-items: baseline; gap: 0.5em; --rule-color: {color};").toList
     let mut liDecls :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList
     if let some m := st.marker then
       match markerCss? m doc.page.scale with
       | some r =>
-        -- A literal colour reads as the page ships one in every scheme.
         let decls := r.decls.map fun d => match literalColorDecl? d with
           | some c => s!"color: {lit c};"
           | none => d
@@ -1112,11 +749,7 @@ the level default marks these items"
           (help := some "marker = {...} reaches HTML as text with colour \
 and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or \
 an overlay step does not"))
-    -- Interaction states live on the element's links (the interactive
-    -- content a hover or focus can land on; for `nav` that is `nav a`).
-    -- The colour keeps its token spelling, like every named colour here,
-    -- and a declared motion goes through `motionCss` — the guarded form is
-    -- the only form the emitter has.
+    -- interaction states apply to the element's links
     let iSel := s!"{tag} a"
     let tokenColor (c : Ir.Color) (n : Option Ir.ColorRef) : String := match n with
       | some name => s!"var({name.property}, {cssColor c})"
@@ -1127,12 +760,7 @@ an overlay step does not"))
       (st.focus.map fun (c, n) =>
         s!"{iSel}:focus-visible \{ outline-color: {tokenColor c n}; }\n").toList ++
       (st.motion.map fun ms => motionCss iSel ms).toList
-    -- The rule's own geometry, where the document declares it: a baseline
-    -- rule drops the x-height translate (`.ruled::after`) — the empty
-    -- flex item's synthesised baseline is its bottom border edge (CSS
-    -- Flexbox §8.5), which is where TeX's zero-depth `\hrule` ends — and
-    -- a declared thickness is the border weight, the same IR fact the PDF
-    -- raise and weight project (`Ir.RulePosition.raise`).
+    -- a baseline rule drops the x-height lift; a declared thickness is the border weight
     let ruleDecls : List String := if st.rule.isNone then [] else
       (match st.rulePosition with
         | some .baseline => ["transform: none;"]
@@ -1141,8 +769,6 @@ an overlay step does not"))
     let ruleCss := if ruleDecls.isEmpty then "" else
       s!"{tag}.ruled::after \{ {String.intercalate " " ruleDecls} }\n"
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
-    -- Bound first: appending a call's result directly is the shape the
-    -- cost gate rejects; a name makes the one-off append visible as one.
     let liCss := String.join liDecls
     let interCss := String.join interDecls
     css := css ++ own ++ ruleCss ++ liCss ++ interCss
@@ -1155,68 +781,34 @@ private def milliFactor (k : Nat) : String :=
     "".pushn '0' (3 - min 3 s.length) ++ s
   s!"{k / 1000}.{pad (k % 1000)}"
 
-/-- Screen prose leading, per-mille. Screen body text wants more lead than
-the print ratio (`Ir.leadingMilli`, 6/5); Butterick's band for body text is
-120–145% (Practical Typography, "Line spacing"), and the stylesheet takes
-its top. The old 1.55 sat outside the band, undeclared. -/
+/-- Screen prose leading, per-mille: the top of Butterick's 120–145% band for body text. -/
 public def bodyLeadingMilli : Nat := 1450
 
-/-- The screen leading stays inside Butterick's 120–145% band, and never
-under the engine's own print leading — the stylesheet's body text cannot
-drift out of the sourced range without failing the build. -/
 public theorem body_leading_in_band :
     Ir.leadingMilli ≤ bodyLeadingMilli ∧
     1200 ≤ bodyLeadingMilli ∧ bodyLeadingMilli ≤ 1450 := by decide
 
-/-- The print leading as a CSS `line-height` factor, per-mille:
-`Ir.leadingMilli` under the page's declared `\linespread`, the ratio
-`Ir.leadingFor` spaces every PDF baseline by. Lines a strut paces rather than
-running prose — a listing's, a table's rows (latex.ltx's `\@arstrutbox` is
-one `\baselineskip`) — set at it in both artifacts; prose keeps the screen's
-own lead (`bodyLeadingMilli`). Read as prose, a deck's table stood a fifth
-taller on its stage than on its page and ran off the stage's foot. -/
+/-- The print leading as a CSS `line-height` factor, per-mille, for lines a strut paces. -/
 public def printLeadingMilli (page : Ir.PageSpec) : Nat :=
   Ir.leadingMilli * page.leading / 1000
 
-/-- **A strut-paced line sets the PDF's baseline distance** (`_exact`): at
-the default `\linespread`, the CSS line box the factor makes at any size is
-the baseline distance `Ir.leadingFor` gives the PDF at that size, to the
-scaled point. -/
 public theorem printLeading_exact (page : Ir.PageSpec) (size : Int) (h : page.leading = 1000) :
     size * (printLeadingMilli page : Int) / 1000 = Ir.leadingFor size page.leading := by
   simp only [printLeadingMilli, Ir.leadingFor, Ir.leadingMilli, h]
   omega
 
-/-- A vertical gap of `k` screen rhythm quanta, as a rem value. The screen
-context's rhythm unit is its own body leading — `bodyLeadingMilli` over the
-1 rem base — as the print context's is its (`Ir.leadingFor`); the quantum
-is the half-unit in both. A boundary's multiple is declared once
-(`Ir.rhythmGapQuanta`); each backend realizes it in its own context's
-unit. Computed, never re-spelled: 1450 milli halves exactly, so every
-emitted value is exact. -/
+/-- A vertical gap of `k` screen rhythm quanta, in rem. -/
 public def quantaRem (k : Nat) : String := milliFactor (k * bodyLeadingMilli / 2) ++ "rem"
 
-/-- A boundary kind's declared multiple, from the one table. -/
 private def gapK (kind : String) : Nat := (Ir.rhythmGapQuanta.lookup kind).getD 0
 
-/-- A print length as screen milli-rem: its multiple of the print quantum
-at the body size (`Ir.rhythmQuantum`) realized in the screen's, the
-per-context unit `backend_gaps_agree` states, rounded down to the
-milli-rem. The one conversion from a print length to a screen gap: the
-declared parskip (`parskipVar`) and a list level's spaces (`listRules`)
-read it. -/
+/-- A print length as screen milli-rem: its multiple of the print quantum, in the screen's. -/
 public def screenMilli (size v : Int) : Nat :=
   if Ir.rhythmQuantum size ≤ 0 then 0
   else (v * ((bodyLeadingMilli / 2 : Nat) : Int) / Ir.rhythmQuantum size).toNat
 
-/-- `m` milli-rem as CSS. -/
 private def milliRem (m : Nat) : String := milliFactor m ++ "rem"
 
-/-- **A converted gap is its print gap in the screen's quanta** (`_between`):
-cross-multiplied, as `backend_gaps_agree` compares the table's rows, the
-milli-rem `screenMilli` emits stands at most one milli-rem under the print
-length's exact multiple of its quantum — 0.016 CSS px at a 16 px root —
-whatever the size and the length. -/
 public theorem screenMilli_between (size v : Int) (hq : 0 < Ir.rhythmQuantum size) (hv : 0 ≤ v) :
     (screenMilli size v : Int) * Ir.rhythmQuantum size ≤ v * ((bodyLeadingMilli / 2 : Nat) : Int) ∧
       v * ((bodyLeadingMilli / 2 : Nat) : Int) <
@@ -1230,55 +822,17 @@ public theorem screenMilli_between (size v : Int) (hq : 0 < Ir.rhythmQuantum siz
   simp only [hnq, ↓reduceIte, Int.toNat_of_nonneg hnn]
   exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hq), Int.lt_ediv_add_one_mul_self _ hq⟩
 
-/-- The base sheet's block boundaries: every block-level element the
-backend emits into flow, with the declared kind of gap it opens. Emitted
-as adjacent-sibling rules (`blockGapCss`): the element below owns the
-boundary as `margin-top`, every block element's own margins are zero, so a
-boundary has exactly one emitter. That encoding is what the realization
-demands: the theorem is about the gap the box model realizes, not the
-number in the sheet, and with one side of every boundary zero the block
-model (adjacent margins collapse to the larger) and the flex model
-(margins stack) realize the same declared value
-(`single_owner_gap_exact`) — turning a container flex cannot double a gap.
-The site port shipped a 52 px gap where 32 px was declared exactly that
-way: spacing declared on both sides of a boundary, summed by a flex
-column. A container `gap` would also be single-emission, but only where
-the container opts into flex or grid, and one `gap` cannot say that a
-heading opens more space than a paragraph; the sibling rule is
-context-independent and names the boundary.
-
-One boundary is bottom-owned, deliberately: the gap below a heading is the
-heading's own `margin-bottom` (one peer gap, in the base heading rule),
-and the default `margin-top` of whatever follows a heading is suppressed
-(`blockGapCss`'s last rule), so the emitter count stays one. This is the
-PDF's own semantics — a heading's band is the heading's to declare
-(`Acc.flushGap` pays owed glue instead of the default, never both) — and
-it lets a declared `\style{section}{ after = ... }` or a consumer sheet
-own a heading's whole band with one rule on the heading itself. The cost,
-stated: everything following a heading binds at that one peer gap — a
-float or a second heading directly under a heading realizes 1 quantum
-here where the PDF walk gives that element its own larger gap. -/
+/-- The block elements the backend emits into flow, with the kind of gap each opens. -/
 public def blockGapKinds : List (String × String) :=
   [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("dl", "peer"), ("pre", "peer"),
    ("table.booktabs", "peer"), ("details", "peer"),
    ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading"),
    ("h5", "heading"), ("h6", "heading")]
 
-/-- The realized gap equals the emitted gap, in both formatting contexts:
-at a boundary whose upper side declares no margin, collapsing (block flow
-takes the larger of the two adjacent margins) and stacking (a flex or grid
-container adds them) agree on the one declared value. This is the theorem
-the encoding exists to satisfy — with both sides declared it fails: max
-and sum diverge, which is the shipped 52px-for-32px defect. -/
 public theorem single_owner_gap_exact (g : Int) (h : 0 ≤ g) :
     max 0 g = g ∧ 0 + g = g := by
   omega
 
-/-- Every gap rule's kind is a declared row of the table, with a positive
-multiple — no boundary silently falls to zero through a missing lookup.
-The float's rules stand outside `blockGapKinds` (they carry the
-`--floatsep` token), so its row is its own conjunct; the display's space is
-TeX's, not a row (`displayGapRem`), and positive. -/
 private theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
     0 < gapK "caption" ∧ 0 < gapK "trivlist" ∧
@@ -1286,14 +840,7 @@ private theorem blockGap_kinds_covers :
   rw [Ir.displaySkipDefault_base_exact]
   decide
 
-/-- One rule of the block-boundary sheet. `reset` states an element's own
-vertical margins — zero, replacing the user agent's, or a heading's band
-below; `boundary` is a boundary's one emitter, the lower side's
-`margin-top`; `parskip` is the paragraph gap in force inside an element,
-its `--parskip`, which every peer and list boundary under it reads — as
-`\list` makes `\parsep` the `\parskip` inside a list. All render inside
-`:where()` (`GapRule.render`), so the whole sheet stands at zero
-specificity and order alone ranks its rules. -/
+/-- One rule of the block-boundary sheet, rendered inside `:where()`. -/
 public inductive GapRule where
   | reset (sel margin : String)
   | boundary (sel value : String)
@@ -1310,69 +857,39 @@ public def GapRule.isReset : GapRule → Bool
   | .boundary _ _ => false
   | .parskip _ _ => false
 
-/-- The peer gap: the document's resolved `\parskip` where the page
-declares one (`--parskip`, written by `baseCss` through `parskipVar`),
-else the table's peer row — the value the PDF walk's `Rd.parskip` spends. -/
+/-- The peer gap: the declared `\parskip`, else the table's peer row. -/
 private def peerGap : String := s!"var(--parskip, {quantaRem (gapK "peer")})"
 
-/-- A trivlist's own space, its `\topsep`, through the token the PDF walk
-reads (`Ir.trivlistSkip`). -/
+/-- A trivlist's own space, its `\topsep`. -/
 private def trivlistOwn : String :=
   s!"var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")})"
 
-/-- A trivlist's boundary: its `\topsep` on top of the peer gap. -/
 private def trivlistGap : String := s!"calc({trivlistOwn} + {peerGap})"
 
-/-- The class of fancyvrb's `\list` around a listing's code
-(`Ir.ListingFrame.list`): the list levels space it (`listElems`). -/
+/-- The class of fancyvrb's `\list` around a listing's code. -/
 public def verbatimListClass : String := "verbatim-list"
 
-/-- The class of what a code line may not break inside (`codeLineNodes`):
-its rule holds it on one line (`pre .tok`), and the line wraps only where
-the page's own wrap may. -/
+/-- The class of a code unit a line may not break inside. -/
 public def codeTokClass : String := "tok"
 
-/-- The class of a held code unit longer than `codeShortColumns`: what a
-box too narrow to fit it releases (`codeReleaseWidth`). -/
+/-- The class of a held code unit longer than `codeShortColumns`. -/
 public def codeLongTokClass : String := "tok-long"
 
-/-- The most columns a held code unit takes and stays held in every box: an
-operator, `->`, `:=`, `...`, which fits any box wider than its own hang and
-these few columns, as the page never parts it. -/
+/-- The most columns a held code unit takes and stays held in every box: an operator's, as `->`,
+`:=` or `...`. -/
 public def codeShortColumns : Nat := 3
 
-/-- The width below which a box releases the code units its lines hold
-(`codeHoldColumns`): the page's own column at the 320 CSS px viewport the
-cap is cut to, 280 px at the 16 px root. A narrower box — a minipage, a
-column — cannot fit a held unit, which would run past it on screen and, on
-paper, past the sheet or over its neighbour; there a code line breaks where
-it must, as the page's breaks a line wider than its measure. -/
+/-- The box width below which held code units are released: the page column at a 320 px viewport. -/
 public def codeReleaseWidth : String := "17.5em"
 
-/-- The class of a document skip's box (`skipNode`). -/
 public def skipClass : String := "vskip"
 
-/-- The skip box's class is the engine's own, so no authored role class
-can collide with it (`roleClass_engine_disjoint`). -/
 private theorem skipClass_engine : skipClass ∈ engineClasses := by decide
 
-/-- An overlay step's carrier whose first child is a document skip's box:
-it stands where the box would, so it owns the box's boundaries. -/
+/-- An overlay step's carrier whose first child is a skip box, owning the box's boundaries. -/
 public def skipCarrier : String := s!":is(.step, .step-set):has(> .{skipClass}:first-child)"
 
-/-- An element's space below it, as the boundaries it owns: `peer` before
-the follower the sheet assumes — a paragraph, whose peer gap the value folds
-in where the element's space and the paragraph's add — and `own` before a
-document skip's box, or a step carrier opening on one, the element's own
-space alone: TeX puts the skip on the list after the element's space, and
-the follower past the skip pays its own (`skipNode`). So does a slide's
-spacer after its body (`.fill`, the frame's `\vfill`), which no paragraph
-follows to spend its `\parskip`, and a block set in its kind's template
-(`blockShapeCss`), whose first box spends the paragraph's `\parskip` inside
-it, after the template's own skip above. Where the element's
-`peer` folds in TeX's `\parskip` rather than the sheet's peer gap — a list's
-space, a display's — `after` is that term, which the paragraph past the box
-pays in its place. `sels` are the element's own selectors. -/
+/-- An element's space below it, as the boundaries it owns before a paragraph and a skip box. -/
 private def ownsBelow (sels : List String) (peer own : String) (after : Option String := none) :
     List GapRule :=
   let follow (tail : String) := ", ".intercalate (sels.map (· ++ tail))
@@ -1381,25 +898,7 @@ private def ownsBelow (sels : List String) (peer own : String) (after : Option S
   (after.map fun v =>
     [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
 
-/-- A document skip — `\vspace`, `\smallskip`, `\medskip`, `\bigskip`, an
-`Ir.Block.spaced` holding nothing — as a box of its own carrying the skip's
-natural width as `--skip`, in the screen unit every boundary rule is written
-in (`screenMilli` at the body size `size`; an `ex` part at half the size,
-the conventional x-height). The sheet makes a positive skip the box's height
-(`baseCss`) and a negative one its bottom margin (`gapResets`), so the skip
-adds to the boundary it stands at as TeX's glue adds on the vertical list
-(`Layout`'s `vspace` door), negative glue pulling the follower up. The box
-owns no other margin: the element above owns its space below it before the
-box (`ownsBelow`), the element below its space above, and the box is a flow
-root, so no margin collapses through it in block flow, as none collapses in
-a flex column. The extent rides on the box itself too — its height, or a
-negative skip's bottom margin — so a page that ships none of the engine's
-sheet (`css = none`, a framework's) still moves its follower by the skip,
-which is the document's declaration. Fil glue has no natural width and the
-box no height; on a deck's stage it grows by `grow`, `\vfill`'s weight beside
-the frame's own glue (`deckSpacerShares`), so the stage's flex column shares
-the leftover between them as the page's close does. A token-sourced skip
-defers to its property. -/
+/-- A document skip as a box of its own, carrying the skip's natural width as `--skip`. -/
 private def skipNode (size : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat := none) : Node :=
   let v := g.value.width.resolve size (size / 2)
   let rem := milliRem (screenMilli size v.natAbs)
@@ -1413,13 +912,7 @@ private def skipNode (size : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat :=
   let style := if decls.isEmpty then #[] else #[("style", "; ".intercalate decls)]
   Html.elem "div" #[] (#[("class", skipClass)] ++ style)
 
-/-- The elements a list level spaces: every list a list block emits — a
-description's `<dl>` among them (latex.ltx `description` is a `\list`) —
-and every quotation (classes.dtx: `quote` is a `\list`) and fancyvrb's code
-(`verbatimListClass`, a `\list` with no items), and not the
-reference list, whose entries the PDF walk sets a peer gap apart
-(`Layout.collectBibliography`), nor an algorithm's line lists, whose lines
-stand a leading apart. -/
+/-- The elements a list level spaces: lists, quotations and fancyvrb's code list. -/
 private def listElems : List String :=
   ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl",
    "." ++ verbatimListClass]
@@ -1429,59 +922,29 @@ line or an endnote. -/
 private def itemSubject : String :=
   "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
 
-/-- An enclosing list's item, as `\@listdepth` counts the levels: a list
-block's `<li>`, a description's `<dd>` or a quotation (a `\list` itself),
-the element a nested list stands in. -/
+/-- An enclosing list's item, as `\@listdepth` counts the levels. -/
 private def itemAncestor : String := ":is(li, dd, blockquote) "
 
-/-- A list's own space at a boundary: the level's length over the
-paragraph gap in force where the boundary stands, read on the lower
-element — `\@trivlist`'s `\topsep` over the surrounding `\parskip`, and
-`\@item`'s `\itemsep` over the item's own. The fallback is TeX's
-`\parskip`, zero at its natural width (`Layout.Geom.texParskip`), not the
-engine's paragraph mark. -/
+/-- A list's own space at a boundary: the level's length over the paragraph gap in force. -/
 private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip, 0rem))"
 
-/-- The `\parskip` term a list's space folds in (`listSpace`), alone: what
-the paragraph past a skip box after the list pays. -/
+/-- The `\parskip` term a list's space folds in, alone. -/
 private def texParskip : Option String := some "var(--parskip, 0rem)"
 
-/-- One list level's three spaces in screen milli-rem, `\topsep`,
-`\itemsep` and `\parsep` of `Ir.listSkips`, each through `screenMilli`. -/
+/-- One list level's `\topsep`, `\itemsep` and `\parsep`, in screen milli-rem. -/
 public def listLevelGaps (size : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
   (screenMilli size sk.topsep.width.sp, screenMilli size sk.itemsep.width.sp,
    screenMilli size sk.parsep.width.sp)
 
-/-- A list level's `\@topsepadd` where the list opens a paragraph, in
-screen milli-rem: `\topsep` with the level's `\partopsep` on top
-(`Ir.partopsepFor`, the site the PDF walk spends), one conversion of the
-summed length. -/
+/-- A list level's `\@topsepadd` where the list opens a paragraph, in screen milli-rem. -/
 public def listOpenGap (size : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
   screenMilli size (sk.topsep.width.sp + partopsep.width.sp)
 
-/-- One list level's rules, `pre` reaching the level — an item ancestor
-(`itemAncestor`) per enclosing list, as `\@listdepth` counts them over
-every kind: its items', description items' and quotations' paragraphs
-stand `\parsep` apart, each list and quotation stands `\@topsepadd`
-(`opened`) from its neighbours above and below, and each item after the
-first — a description's `<dt>` after the `<dd>` before it — opens
-`\itemsep`. A list or quotation
-whose `\begin` stands inside an open paragraph carries the in-paragraph
-role's class (`Ir.inParagraphRole`), and `\@trivlist` gives it `\topsep`
-alone (latex.ltx:15871-15878): its pair stands after the level's own, and
-only where the level's `\partopsep` is not zero. An item after one whose
-last block is a nested list stands the larger of the two spaces that meet
-there, the nested list's `\@topsepadd` and the item's `\itemsep` —
-`\addvspace` takes the larger, and the item's `\parskip` stands on top —
-the one boundary the nested list's own pair cannot reach, since the item
-after it is its parent's sibling: `nested` is the next level's `\topsep`
-and its `\@topsepadd` where it opens a paragraph, each rule written only
-where it is the larger. -/
+/-- One list level's rules, `pre` reaching the level through an item ancestor per enclosing list. -/
 private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
     (nested : Nat × Nat) (disc : String := "details[open]") : List GapRule :=
   let inPar := roleClass Ir.inParagraphRole
-  -- An item may end on a disclosure whose body ends on the list: read
-  -- through it as the boundary read through carriers reads (`disc`).
+  -- an item may end on a disclosure whose body ends on the list
   let after (sel : String) (m : Nat) : GapRule :=
     let ends := s!":is({", ".intercalate listElems}){sel}:last-child"
     let last := s!":has(> {ends}, > {disc}:last-child > {ends})"
@@ -1496,13 +959,8 @@ private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
   (if nested.1 ≤ g.2.1 then [] else [after "" nested.1]) ++
   (if nested.2 ≤ max g.2.1 nested.1 then [] else [after s!":not(.{inPar})" nested.2])
 
-/-- The list rules a page's class owes: LaTeX's `\@list⟨n⟩` for levels one
-to three — a deeper level keeps the third's, as `Ir.listSkips` clamps —
-read from the one resolving site the PDF walk spends and converted once
-(`listLevelGaps`, `listOpenGap`, over the preamble's `tokens` a declared
-`\partopsep` rides in). The web's lineage owes none: its lists open the
-peer gap and its items stand a leading apart, as its print twin sets
-them. -/
+/-- The list rules a page's class owes, `\@list⟨n⟩` for levels one to three; the web lineage
+owes none. -/
 public def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (disc : String := "details[open]") : List GapRule :=
   let spaces (n : Nat) : Nat × Nat := match Ir.listSkips l size n with
@@ -1513,11 +971,7 @@ public def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
         (listLevelGaps size sk) (spaces n).2 (spaces (n + 1)) disc
     | none => []
 
-/-- A squeezed frame's list rules (`Ir.frameSqueeze`): the class's levels
-again under the frame's `squeeze` class, its items with beamer's
-`\itemsep0pt` (`\beamer@cramped`) and every other space the level's own,
-as `\@listii` resets a nested list's `\topsep` before it opens; standing
-after the class's rules at the same specificity, they win where they apply. -/
+/-- A squeezed frame's list rules: the class's levels with beamer's `\itemsep0pt`. -/
 public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (disc : String := "details[open]") : List GapRule :=
   let squeezed (n : Nat) : Option Ir.ListSkips :=
@@ -1531,15 +985,8 @@ public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
         (listLevelGaps size sk) (spaces n).2 (spaces (n + 1)) disc
     | none => []
 
-/-- A lineage's list indents as CSS, per level: a list's items, a
-description's `<dd>` and a quotation's two edges stand the level's
-`\leftmargin` in, from the one resolving site the page's margins read
-(`Ir.leftMarginMilli`), in the em the class spells it in (the page reads
-the same thousandths of the body size, `Ir.leftMargin`), under the
-custom property of the length a document declares it in
-(`Ir.leftMarginName`, which `tokenVars` writes), each level reached
-through an item ancestor per enclosing list or quotation, to the kernel's
-six. A lineage with no stack, the web's, keeps its lists' one indent. -/
+/-- A lineage's list indents as CSS for the kernel's six levels, under the custom property of
+their length. -/
 public def listIndentCss (l : Ir.ListLineage) : String :=
   String.join ((List.range 6).map fun k =>
     let pre := String.join (List.replicate k itemAncestor)
@@ -1548,13 +995,7 @@ public def listIndentCss (l : Ir.ListLineage) : String :=
       | none => "1.35rem") ++ ")"
     s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n{pre}blockquote \{ padding: 0 {v}; }\n")
 
-/-- The rules a theorem-like block's space owes, on the element its role's
-class marks (`Ir.thmSkips` at the top level, the one resolving site the PDF
-walk spends, converted once through `screenMilli`): the space above, over
-the parskip in force where its spelling's `\@topsep` carries one, and the
-space below, over the next block's; the web's lineage keeps the trivlist's.
-The mode is read as inside a paragraph: this sheet carries no `\partopsep`
-reading of it, as its lists' does not. -/
+/-- The space rules of theorem-like blocks, on the element their role's class marks. -/
 public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
   Ir.ThmSpace.all.flatMap fun k =>
     let c := "." ++ roleClass (Ir.thmSpaceRole k)
@@ -1566,23 +1007,17 @@ public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
         ownsBelow [c] (listSpace below) (milliRem below) texParskip
     | none => .boundary s!"* + {c}" trivlistGap :: ownsBelow [c] trivlistGap trivlistOwn
 
-/-- The resets: every block element's own vertical margins, first; a slide's
-frame title sets flush in its header band, which owns the title's space. -/
+/-- The resets: every block element's own vertical margins. -/
 private def gapResets : List GapRule :=
   [.reset "p, ul, ol, li, dl, dd, pre, blockquote, hr" "0",
    .reset "h1, h2, h3, h4, h5, h6" s!"0 0 {quantaRem (gapK "peer")}",
-   -- A title over a title bar's skip has no band of its own below: the
-   -- bars' skips are the whole rhythm of their block (`Ir.titleBars`).
+   -- a title over a title bar's skip has no band of its own
    .reset s!"h1:not(.body-heading):has(+ .{skipClass} + hr.separator)" "0",
    .reset "section.slide > header h2" "0",
    .reset "figure.float" "0 auto",
-   -- A document skip's box: a negative skip is its bottom margin, nothing
-   -- else; its space above is the boundary's (`ownsBelow`).
+   -- a negative skip is the skip box's bottom margin
    .reset s!".{skipClass}" "0 0 min(0rem, var(--skip, 0rem))"]
 
-/-- The boundaries the list levels stand after: the peer elements', the
-reference list's entries — a peer gap apart, the paragraphs
-`Layout.collectBibliography` sets them as — then the trivlist's pair. -/
 private def gapBeforeLists : List GapRule :=
   (blockGapKinds.filter (·.2 != "heading")).map (fun (sel, _) =>
     .boundary s!"* + {sel}" peerGap) ++
@@ -1590,20 +1025,11 @@ private def gapBeforeLists : List GapRule :=
    .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap] ++
   ownsBelow [s!".{roleClass Ir.trivlistRole}", "blockquote"] trivlistGap trivlistOwn
 
-/-- The display's space, TeX's long `\abovedisplayskip` (`Ir.displaySkipsFor`)
-as the screen's multiple of its quantum (`screenMilli`) — the same multiple
-at every standard body, since the size files scale the skip with the type
-(10, 11 and 12 pt over quanta of 6, 6.6 and 7.2 pt). -/
+/-- The display's space, TeX's `\abovedisplayskip`, in the screen's quanta. -/
 private def displayGapRem : String :=
   milliRem (screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp)
 
-/-- The follower past a skip box — one, or two in a row — where the box
-stands after a heading or opens a container (not a frame, whose opening the
-frame's own rules pay, nor a step carrier, which stands where the box would):
-it pays what its place pays without the box, nothing — the heading's band
-below is the heading's own, the container's edge the container's — as the
-page's walk opens no gap there. It stands after every rule a follower could
-take its gap from, and before the heading's follower, last. -/
+/-- The follower past a skip box after a heading or at a container's opening pays nothing. -/
 private def skipFollowerRule : GapRule :=
   let box := s!".{skipClass}"
   let past (place : String) (edge : String) : List String :=
@@ -1612,14 +1038,6 @@ private def skipFollowerRule : GapRule :=
   .boundary (", ".intercalate (past ":is(h1, h2, h3, h4, h5, h6) + " "" ++
     past ":not(section.slide, .step, .step-set) > " ":first-child")) "0"
 
-/-- The boundaries the list levels stand before: the headings', the float's
-and the display's pairs and the float's caption seam; the skip box's and
-the heading's followers stand after them (`blockGapRules`). A level-1
-heading opens its `<section>` (`sectionize`), so no sibling stands above
-it and `* + h2` never meets it; the heading owns the boundary above its
-section instead, its margin collapsing through the section's edge, which
-carries none — on the heading, where a consumer sheet styling its
-sections as bands keeps them flush. -/
 private def gapAfterLists : List GapRule :=
   let float := s!"var(--floatsep, {quantaRem (gapK "float")})"
   let display := s!"var(--{Ir.displaySkipBelow}, {displayGapRem})"
@@ -1627,76 +1045,45 @@ private def gapAfterLists : List GapRule :=
     .boundary s!"* + {sel}" (quantaRem (gapK kind))) ++
   [.boundary s!"* + section[id] > h{Ir.headingRank 1}:first-child" (quantaRem (gapK "heading")),
    .boundary "* + figure.float" float,
-   -- A title under a title bar stands on the bar's skip alone: the bars'
-   -- skips are the whole rhythm of their block (`Ir.titleBars`).
+   -- a title under a title bar stands on the bar's skip alone
    .boundary "hr.separator + .vskip + h1:not(.body-heading)" "0"] ++
   ownsBelow ["figure.float"] float float ++
   [.boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {displayGapRem})"] ++
   ownsBelow [".display"] display display (some "0rem") ++
-  [ -- The object under a caption above it: the skip facing it is the
-    -- caption's own `margin-bottom`, the float's one internal seam, so the
-    -- object's peer margin yields, as the page's float plan pays that skip
-    -- alone (`Ir.captionSides`).
+  [ -- the caption's margin-bottom is the float's one seam
     .boundary "figure.float > figcaption:first-child + *" "0",
-    -- The first body element owns the frame opening, including a filled
-    -- block with no paragraph margin. A fil spacer cannot pay this fixed
-    -- skip when the frame has no spare space. A list's own space above
-    -- its first item rides on top (`frameOpeningCss`).
-    -- A skip opening an untitled frame stands under beamer's
-    -- `\vskip-\parskip\vbox{}` too: the box, or the carrier opening on
-    -- one, pays it, and the paragraph past it cancels it by its own.
+    -- a skip opening a frame pays beamer's `\vskip-\parskip`, which the paragraph past it cancels
     .boundary (s!"section.slide > :is(.{skipClass}, {skipCarrier}):first-child, " ++
       s!"section.slide > .fill:first-child + :is(.{skipClass}, {skipCarrier})")
       "calc(0rem - var(--parskip, 0rem))",
+    -- the first body element owns the frame opening, which a fil spacer cannot pay
     .boundary "section.slide > .frame-body-start"
       ("calc(var(--frame-body-skip) + var(--frame-title-below, 0pt) + " ++
         "var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))")]
 
-/-- The heading's follower, the sheet's last rule: its band below is the
-heading's own. -/
+/-- The heading's follower takes no gap: the band below is the heading's own. -/
 private def headingFollowerRule : GapRule := .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"
 
-/-- A skip register in force for the sheet (`Ir.skipAmount`, the site the
-PDF walk spends), as a print length: its `em` part at the body size; an
-`ex` part has no face to resolve against here and stands at zero. -/
+/-- A skip register in force, as a print length; an `ex` part stands at zero. -/
 private def skipSp (size : Int) (tokens : Ir.Tokens) (name : String) : Int :=
   (Ir.skipAmount tokens name).width.resolve size 0
 
-/-- A block's own space above it (beamerinnerthemedefault.sty):
-`\medskipamount` and TeX's `\lineskip` between its title box and what
-stands above, the print length's screen multiple (`screenMilli`). -/
+/-- A block's own space above it, `\medskipamount` and `\lineskip` (beamerinnerthemedefault.sty),
+in screen milli-rem. -/
 private def blockAboveMilli (size : Int) (tokens : Ir.Tokens) : Nat :=
   screenMilli size (skipSp size tokens "medskipamount" + Ir.inkClearance)
 
-/-- What stands for a block at a frame's opening: the block, or the overlay
-step carrier (`overlayNode`: `.step` or `.step-set`, a range's end nested in
-it) the block opens (`edge` is `first-child`). The frame's first body element
-is that carrier, and a custom property reaches only down the tree, so the
-carrier declares the opening's authored addend the opening rule reads there
-(`--frame-body-before`); the block's margins meet the carrier through the
-sheet's see-through (`GapRule.throughCarriers`). -/
+/-- What stands for a block at a frame's opening: the block, or the overlay step carrier it
+opens. -/
 private def blockAt (edge : String) : String :=
   s!":is(section.block, :is(.step, .step-set):has(> section.block:{edge}), " ++
     s!":is(.step, .step-set):has(> .step-end > section.block:{edge}))"
 
-/-- A block's boundaries: its space above, `\smallskipamount` below its
-body box — a paragraph after it spends its own `\parskip` too — both the
-registers in force, and no `\parskip` inside the boxes
-(`\@arrayparboxrestore`). A block an overlay step wraps meets its
-neighbours through the step's carrier as every block does
-(`GapRule.throughCarriers`): the block owns its boundary inside the
-carrier, as it would with no carrier there. On a page with a block set in
-its kind's template (`shaped`), that block stands its template's skips as
-its own box's padding (`blockShapeCss`), so a boundary beside it pays only
-what the page's walk spends there beyond them: the follower's `\parskip`,
-or the element above's own space (`ownsBelow`; a trivlist's, whose rules
-stand before these, restated here); and its body keeps the page's
-`\parskip`. -/
+/-- A block's boundaries: its space above, and `\smallskipamount` below its body box. -/
 private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
   let above := blockAboveMilli size tokens
   let below := screenMilli size (skipSp size tokens "smallskipamount")
-  -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`: half a leading
-  -- between the box and the line boxes beside it, `\parskip` taken in.
+  -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`
   let balanced := milliRem (screenMilli size (Ir.rhythmQuantum size))
   let shapedRules : List GapRule := if !shaped then [] else
     .boundary "* + section.block-shaped" "0rem" ::
@@ -1712,26 +1099,10 @@ private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List 
   [.boundary "section.block + section.block" (milliRem (below + above)),
    .parskip "section.block > *" "0rem"] ++ shapedRules ++
   [.boundary "* + section.tcolorbox" balanced] ++
-  -- Below the box its own space is the balanced skip less the `\parskip`
-  -- the paragraph after it spends (`Layout`'s box closing).
   ownsBelow ["section.tcolorbox"] balanced s!"calc({balanced} - {peerGap})" ++
   [.parskip "section.tcolorbox > *" "0rem"]
 
-/-- The boundaries beamer sets by adding where `\addvspace` would take the
-larger, as pair rules standing after every rule they meet: a beamer list
-opens by `\vskip` — its body colour pushed before `\list` opens, so the
-colour's whatsit stands last (`Layout`'s `Spacing.Pending.listOpen`) — and
-a block by its template's `\vskip\medskipamount`, so either one's space adds
-to what the element above owns below it: a block's `\smallskipamount`, a
-list's `\topsep`, a trivlist's, a display's skip below; a trivlist after
-them, and fancyvrb's listing (minted's), take the larger of the two, the
-paragraph gap on top. Measured under
-lualatex in a frame at 10 pt: a list stands its 3 pt further below each than
-a paragraph there, a block its `\medskipamount`, a centred block 8 pt below a
-paragraph and 5 below a block or a list. At the top list level, whose items'
-own lists keep the level rules; only beamer's lineage owes them. A block set
-in its kind's template stands its template's skips as its own padding
-(`blockShapeCss`), so the pairs leave it to the rules that read those. -/
+/-- The boundaries beamer sets by adding where `\addvspace` would take the larger. -/
 private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
     List GapRule :=
   match l, Ir.listSkips l size 1 with
@@ -1758,25 +1129,7 @@ private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
         [.boundary s!"{top}{u} + {triv}" s!"calc(max({own}, {trivlistOwn}) + var(--parskip, 0rem))"])
   | _, _ => []
 
-/-- The block-boundary sheet, the one emitter of every vertical margin a
-block element carries. The resets come first: the element's own margins
-at zero specificity, so no element rule stands above a boundary rule —
-the defect this list replaced, where `p { margin: 0 }` at (0,0,1) beat
-every `:where(* + p)` and no peer gap rendered. Then one adjacent-sibling
-rule per block element (`blockGapKinds`), a pair rule standing later than
-the element rules it meets, so its value wins the boundary while the
-neighbour's own margin stays zero — the PDF walk's `addvspace` taking the
-larger: the trivlist's (`\topsep`); a theorem-like block's (`thmRules`);
-the page's list levels (`listRules`), after them, so a list's `\topsep`
-against a centred block is the larger, and before the headings, so a
-heading's space against a list is; the float's (`--floatsep`) and the
-display's (`Ir.displayAbove`/`displayBelow`); beamer's adding pairs
-(`beamerPairRules`); the skip box's follower (`skipFollowerRule`); and last,
-the follower of a heading, whose band below is the heading's own (the
-reset's `margin-bottom`). Any
-consumer rule — a declared `\style` on the bare element or a reader
-stylesheet owning a container's spacing with `gap` — wins without a
-specificity fight, which is the HTML backend's override contract. -/
+/-- The block-boundary sheet, the one emitter of every vertical margin a block element carries. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (shaped : Bool := false) (squeezed : Bool := false) (disc : String := "details[open]") :
     List GapRule :=
@@ -1785,40 +1138,10 @@ public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     gapAfterLists ++ beamerPairRules l size tokens ++
     [skipFollowerRule, headingFollowerRule]
 
-/-! ### Overlay carriers
+/-! ## Overlay carriers -/
 
-A block overlay (`Ir.Block.onSteps`, `Ir.Block.altSteps`) ships its blocks
-inside carrier elements — one element animates one opacity, so a range's
-start and its declared end each need one (`overlayNode`, `stepEndNodes`,
-`overlayAlternatives`) — and a backend group (`Ir.Block.only`) ships its
-blocks inside a transparent one. A carrier is no block of the flow: the page
-sets the gap between a carrier's first block and the block before it, and
-between its last block and the one after it, as it would with no carrier
-there. The boundaries are adjacent-sibling rules, which a carrier hides —
-its first block has no previous sibling, and the block after it follows the
-carrier, not the block the carrier ended on — so every boundary also reads
-through the carriers, down the chains of first and last children the
-emitted tree stands its boundaries between (`carrierPairs`): `X + Y` holds
-too where `Y` opens a chain of carriers after `X`, and where `X` closes one
-before `Y`; and the spacer after a frame's body meets the block the
-frame's flow ends on through the frame's own marks (`frameFlowEnd`). The
-sheet grows with the shapes of the tree's boundaries, never with how deep
-its carriers nest: a frame of forty `\pause`s reads through the one link a
-frame of one does. Each variant stands in its boundary's own rule, so it
-ranks where the boundary ranks (`blockGapThrough_owner_contract`).
-
-An alternation shows one group at a time, which a snap chooses by
-`display`. Its end is read through either group where both end on the same
-element (`alt-alike`, `altEndsAlike`), and otherwise through the group the
-page shows with no snap state — step 1's reading, the scripting-off floor,
-the print — never the group hidden there. A snap that shows the other group
-of a pair ending apart keeps the first group's boundary: pending work, as
-reading it needs each snap's own selection in the sheet. -/
-
-/-- Whether a class value carries the class `c`. -/
 private def classHas (v c : String) : Bool := (v.splitOn " ").contains c
 
-/-- An element's class value from its attributes, empty where it has none. -/
 private def attrsClass (attrs : Array (String × String)) : String :=
   ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
 
@@ -1826,10 +1149,8 @@ private def classOfNode : Node → String
   | .elem _ attrs _ => attrsClass attrs
   | .text _ | .style _ | .script _ _ => ""
 
-/-- A carrier one element of a chain: an overlay's step, its set and
-declared end, either group of an alternation, and a backend's transparent
-group. An alternation's pair (`isAltPair`) is a carrier too, read down
-both of its groups. -/
+/-- A carrier one element of a chain: an overlay's step, set or end, an alternation's group, or a
+backend group. -/
 private def isLinkCarrier : Node → Bool
   | .elem "div" attrs _ =>
     attrs.any (·.1 == "data-backend") ||
@@ -1842,35 +1163,26 @@ private def isAltPair : Node → Bool
 
 private def isCarrierNode (n : Node) : Bool := isLinkCarrier n || isAltPair n
 
-/-- A disclosure's element, read through upward only: the block its body
-ends on owns the space below it, as on paper, where the disclosure sets
-flat; its top is its own, the summary's boundary the disclosure's
-(`blockGapKinds`). -/
+/-- A disclosure, which a boundary reads through upward only. -/
 private def isDisclosureNode : Node → Bool
   | .elem "details" _ _ => true
   | .elem .. | .text _ | .style _ | .script _ _ => false
 
-/-- A carrier a boundary reads up through: a carrier, or a disclosure. -/
 private def isUpCarrierNode (n : Node) : Bool := isCarrierNode n || isDisclosureNode n
 
-/-- An element the page hides with no snap state: an alternation's other
-group, a speaker note. -/
+/-- An element the page hides with no snap state. -/
 private def hiddenNode : Node → Bool
   | .elem _ attrs _ => attrs.any (·.1 == "hidden")
   | .text _ | .style _ | .script _ _ => false
 
 mutual
 
-/-- The element a carrier ends on, down its last children: its tag and
-class, `none` where it ends on nothing; through an alternation whose groups
-end apart, the end of the group the page shows with no snap state. A
-hand-rolled walk over the emitted tree, as the walks below: the sheet's
-selectors read that tree, and no IR fold sees it. -/
+/-- The tag and class a carrier ends on, down its last children. -/
 private def carrierEndKey : Node → Option (String × String)
   | .elem _ _ kids => endKeyList none kids.toList
   | .text _ | .style _ | .script _ _ => none
 
--- conserves: none — the list face of `carrierEndKey`; it emits nothing.
+-- conserves: none — the list face of `carrierEndKey`
 private def endKeyList (acc : Option (String × String)) : List Node → Option (String × String)
   | [] => acc
   | x :: rest =>
@@ -1888,7 +1200,7 @@ private def floorEndKey : Node → Option (String × String)
   | .elem _ _ kids => floorEndKeyList kids.toList
   | .text _ | .style _ | .script _ _ => none
 
--- conserves: none — the list face of `floorEndKey`; it emits nothing.
+-- conserves: none — the list face of `floorEndKey`
 private def floorEndKeyList : List Node → Option (String × String)
   | [] => none
   | x :: rest =>
@@ -1897,8 +1209,7 @@ private def floorEndKeyList : List Node → Option (String × String)
 
 end
 
-/-- Both groups of an alternation end on the same element, so the block
-after the pair meets one boundary whichever group a step shows. -/
+/-- Both groups of an alternation end on the same element. -/
 private def altEndsAlike (first other : Array Node) : Bool :=
   match endKeyList none first.toList, endKeyList none other.toList with
   | some a, some b => a == b
@@ -1906,17 +1217,14 @@ private def altEndsAlike (first other : Array Node) : Bool :=
 
 mutual
 
-/-- The depths, counted in carriers from `n` down, at which the chains of
-first children `n` opens end on an element — `throughMembers`' `k`: one
-for the carrier's own first child, one more per carrier standing first in
-it, and down both groups of an alternation. -/
+/-- The carrier depths at which the chains of first children `n` opens end on an element. -/
 private def downDepths : Node → List Nat
   | .elem _ attrs kids =>
     if classHas (attrsClass attrs) "alt-pair" then groupDownDepths [] kids.toList
     else firstDepths kids.toList
   | .text _ | .style _ | .script _ _ => []
 
--- conserves: none — the list face of `downDepths`; it emits nothing.
+-- conserves: none — the list face of `downDepths`
 private def firstDepths : List Node → List Nat
   | [] => []
   | x :: rest =>
@@ -1925,7 +1233,7 @@ private def firstDepths : List Node → List Nat
     | .text _ => firstDepths rest
     | .style _ | .script _ _ => [1]
 
--- conserves: none — an alternation's groups for `downDepths`; it emits nothing.
+-- conserves: none — an alternation's groups for `downDepths`
 private def groupDownDepths (acc : List Nat) : List Node → List Nat
   | [] => acc
   | x :: rest =>
@@ -1936,10 +1244,7 @@ end
 
 mutual
 
-/-- The depths of the chains of last children `n` closes, as `downDepths`
-reads first ones — `throughMembers`' `j`; an alternation's down both groups
-where they end alike, and down the one the page shows with no snap state
-where they end apart. -/
+/-- The carrier depths of the chains of last children `n` closes. -/
 private def upDepths : Node → List Nat
   | .elem _ attrs kids =>
     if classHas (attrsClass attrs) "alt-pair" then
@@ -1947,7 +1252,7 @@ private def upDepths : Node → List Nat
     else lastDepths [] kids.toList
   | .text _ | .style _ | .script _ _ => []
 
--- conserves: none — the list face of `upDepths`; it emits nothing.
+-- conserves: none — the list face of `upDepths`
 private def lastDepths (acc : List Nat) : List Node → List Nat
   | [] => acc
   | x :: rest =>
@@ -1956,7 +1261,7 @@ private def lastDepths (acc : List Nat) : List Node → List Nat
     | .text _ => lastDepths acc rest
     | .style _ | .script _ _ => lastDepths [1] rest
 
--- conserves: none — an alternation's groups for `upDepths`; it emits nothing.
+-- conserves: none — an alternation's groups for `upDepths`
 private def groupUpDepths (alike : Bool) (acc : List Nat) : List Node → List Nat
   | [] => acc
   | x :: rest =>
@@ -1965,27 +1270,20 @@ private def groupUpDepths (alike : Bool) (acc : List Nat) : List Node → List N
 
 end
 
-/-- A slide's furniture after its body: the spacer the body's flow meets
-through the frame's own marks (`frameFlowEnd`), and the footer, logo and
-notes, which state or need no gap of their own. -/
+/-- A slide's furniture after its body: spacer, footer, logo and notes. -/
 private def frameFurniture : Node → Bool
   | .elem tag attrs _ =>
     tag == "footer" || tag == "aside" ||
       ["fill", "frame-body-tail", "slide-logo", "snap"].any (classHas (attrsClass attrs) ·)
   | .text _ | .style _ | .script _ _ => false
 
-/-- The boundary shapes two adjacent siblings stand between: the chains
-`p` closes and `y` opens, zero for the element itself. A carrier closes no
-chain onto a slide's furniture: the spacer meets the flow's last block
-through the frame's marks, one member per boundary whatever depth the
-carriers nest to, and the rest states its own gap. -/
+/-- The boundary shapes two adjacent siblings stand between. -/
 private def pairDepths (p y : Node) : List (Nat × Nat) :=
   let js := 0 :: (if isUpCarrierNode p && !frameFurniture y then upDepths p else [])
   let ks := 0 :: (if isCarrierNode y then downDepths y else [])
   js.flatMap fun j => ks.filterMap fun k => if j == 0 && k == 0 then none else some (j, k)
 
-/-- One element's children, pair by adjacent pair, text between them
-aside as sibling combinators set it aside. -/
+/-- One element's children, pair by adjacent pair, text between them aside. -/
 private def siblingPairs (acc : List (Nat × Nat)) (prev : Option Node) :
     List Node → List (Nat × Nat)
   | [] => acc
@@ -2003,43 +1301,33 @@ private def treePairsOne (acc : List (Nat × Nat)) : Node → List (Nat × Nat)
   | .elem _ _ kids => treePairsList (siblingPairs acc none kids.toList) kids.toList
   | .text _ | .style _ | .script _ _ => acc
 
--- conserves: none — every element's children for `carrierPairs`; it emits nothing.
+-- conserves: none — every element's children for `carrierPairs`
 private def treePairsList (acc : List (Nat × Nat)) : List Node → List (Nat × Nat)
   | [] => acc
   | x :: rest => treePairsList (treePairsOne acc x) rest
 
 end
 
-/-- The boundary shapes of an emitted tree (`pairDepths` at every pair of
-adjacent siblings), sorted: what its sheet's boundaries read through
-(`GapRule.throughCarriers`). A tree with no carrier has none, and its sheet
-is the boundaries alone. -/
+/-- The sorted boundary shapes of an emitted tree, which its sheet's boundaries read through. -/
 public def carrierPairs (nodes : Array Node) : List (Nat × Nat) :=
   (treePairsList (siblingPairs [] none nodes.toList) nodes.toList).mergeSort
     fun a b => a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)
 
-/-- The carriers a boundary reads down from: an overlay's step, its set, an
-alternation's pair, and a backend's transparent group. -/
+/-- The carriers a boundary reads down from. -/
 private def carrierTop : String := "div:is(.step, .step-set, .alt-pair, [data-backend])"
 
 
 
-/-- A carrier one element further down a chain of first children: any
-carrier standing first in the one above it, a range's declared end among
-them, and either group of an alternation, one of which is hidden. -/
+/-- A carrier one element further down a chain of first children. -/
 private def carrierFirstLink : String :=
   ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):first-child, div.alt)"
 
-/-- `carrierFirstLink` down a chain of last children: either group of an
-alternation whose groups end alike, and of one ending apart the group the
-page shows with no snap state, and a disclosure the medium shows the body of
-(`disc`: an open one on screen, every one on paper). -/
+/-- `carrierFirstLink` down a chain of last children, through the disclosures `disc` shows. -/
 private def carrierLastLink (disc : String) : String :=
   ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):last-child, " ++
     s!"{disc}:last-child, .alt-alike > div.alt, div.alt:not([hidden]))"
 
-/-- The carriers a boundary reads up from: `carrierTop`, and a disclosure the
-medium shows the body of (`disc`). -/
+/-- The carriers a boundary reads up from: `carrierTop` and the disclosures `disc` shows. -/
 private def carrierTopUp (disc : String) : String :=
   s!":is(div:is(.step, .step-set, .alt-pair, [data-backend]), {disc})"
 
@@ -2058,10 +1346,7 @@ private def splitTop (sep : Char) (sel : String) : List String := Id.run do
       cur := cur.push c
   return (out.push cur.trimAscii.toString).toList
 
-/-- A boundary member `X + Y` as its descendant prefix and its two
-compounds — the last three words, `+` between two compounds, no combinator
-before them — when neither compound is a list's own item, which no carrier
-stands between. Any other member, `none`. -/
+/-- A boundary member `X + Y` as its descendant prefix and its two compounds. -/
 private def siblingMember? (m : String) : Option (String × String × String) :=
   let comb (w : String) : Bool := w == "+" || w == ">" || w == "~"
   let item (w : String) : Bool := w.startsWith "li" || w.startsWith "dd" || w.startsWith "dt"
@@ -2071,16 +1356,7 @@ private def siblingMember? (m : String) : Option (String × String × String) :=
     else some (String.join (pre.reverse.map (· ++ " ")), x, y)
   | _ => none
 
-/-- A boundary member `X + Y` read through the boundary shapes `pairs`
-(`carrierPairs`): itself, and for each shape `(j, k)` the member with `X`
-last in a chain of `j` carriers standing before `Y`, `Y` first in a chain
-of `k` standing after `X` — save a frame's opening carrier, whose first
-block opens the frame — and, where `Y` is any element, the spacer after a
-frame whose flow ends on `X` through its carriers (`frameFlowEnd`). A lower
-side that is any element is no carrier: the carrier's first block takes
-the boundary, and a gap on both would stack in a flex column. An upper side that is any element already meets the carrier
-itself, and `:has()` does not nest. A tree with no carriers keeps its
-member as written. -/
+/-- A boundary member `X + Y` and its variants through the boundary shapes `pairs`. -/
 private def throughMembers (pairs : List (Nat × Nat)) (disc : String) (m : String) :
     List String :=
   match siblingMember? m with
@@ -2096,8 +1372,7 @@ private def throughMembers (pairs : List (Nat × Nat)) (disc : String) (m : Stri
       carrierTopUp disc ++ ":has(> " ++
         String.join (List.replicate (j - 1) (carrierLastLink disc ++ " > ")) ++ x ++ ":last-child)"
     let upOk := !(x == "*" || (x.splitOn ":has(").length > 1)
-    -- a carrier opening on a skip's box already stands where the box would
-    -- and owns its boundary (`skipCarrier`): the box takes none of its own
+    -- a carrier opening on a skip box owns the box's boundary
     let downOk := (y.splitOn ("." ++ skipClass)).length == 1
     let frameEnd := if upOk && pre.isEmpty && y == s!"*:not({carrierTop})" then
         [s!"section.slide:has({x}.frame-flow-end) > .frame-body-tail"]
@@ -2109,9 +1384,7 @@ private def throughMembers (pairs : List (Nat × Nat)) (disc : String) (m : Stri
       else if !downOk then none
       else some (pre ++ up j ++ " + " ++ down k))
 
-/-- A boundary read through the boundary shapes `pairs` (`throughMembers`):
-the same value over its members read through; a reset and a parskip rule
-stand as they are, and so does every rule of a tree with no carriers. -/
+/-- A boundary rule read through the boundary shapes `pairs`; resets and parskip rules stay. -/
 public def GapRule.throughCarriers (pairs : List (Nat × Nat)) (disc : String := "details[open]") :
     GapRule → GapRule
   | .boundary sel v =>
@@ -2120,8 +1393,6 @@ public def GapRule.throughCarriers (pairs : List (Nat × Nat)) (disc : String :=
   | .reset sel m => .reset sel m
   | .parskip sel v => .parskip sel v
 
-/-- Reading through carriers turns no rule into a reset and no reset into
-anything else. -/
 public theorem GapRule.throughCarriers_isReset (pairs : List (Nat × Nat)) (r : GapRule) :
     (r.throughCarriers pairs).isReset = r.isReset := by
   cases r with
@@ -2138,11 +1409,7 @@ public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
   String.join ((blockGapRules l size tokens shaped squeezed).map fun r =>
     (r.throughCarriers pairs).render)
 
-/-- The boundaries paper reads through a closed disclosure, whose body it
-sets (`disclosurePrintCss`): the sheet's own rules read through every
-disclosure (`disc` any `details`), keeping only the members that read
-through one, so on paper a closed disclosure's end stands where an open
-one's stands on screen. A page without a disclosure ships none. -/
+/-- The boundaries paper reads through a closed disclosure, whose body it sets. -/
 public def disclosurePrintGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false) :
     String :=
@@ -2202,14 +1469,6 @@ private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
   intro k _
   split <;> simp [ownsBelow, GapRule.isReset, texParskip]
 
-/-- **Each boundary's gap is its emitter's, and it renders** (`_contract`),
-for every class's list lineage and body size: every rule of the one
-emitter stands at zero specificity, so order alone ranks them, and no
-reset stands after a boundary rule — the premise `single_owner_gap_exact`
-needs before the emitted gap is the rendered one; the heading's follower
-rule stands last. That no base-sheet rule outside the emitter declares a
-margin on an element it spaces is the text's to show, and
-`htmlRhythmChecks` reads it off every golden page's sheet. -/
 public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (shaped : Bool) (squeezed : Bool := false) :
     ((blockGapRules l size tokens shaped squeezed).dropWhile GapRule.isReset).all
@@ -2239,10 +1498,6 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
     exact hall
   · simp [blockGapRules, headingFollowerRule]
 
-/-- **Reading through carriers keeps each boundary's emitter** (`_contract`):
-the sheet read through any boundary shapes still stands its resets first and
-alone and its heading's follower last, so every carrier variant ranks where
-its boundary ranks — each rides inside its boundary's own rule. -/
 public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
     (tokens : Ir.Tokens) (d : List (Nat × Nat)) (shaped : Bool) (squeezed : Bool := false) :
     (((blockGapRules l size tokens shaped squeezed).map (GapRule.throughCarriers d)).dropWhile
@@ -2262,15 +1517,6 @@ public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
   · rw [List.getLast?_map, hc.2]
     rfl
 
-/-- **A list's spaces are LaTeX's `\@list⟨n⟩` on both artifacts** (`_agree`):
-for any level's spaces — so at every lineage, body size and level
-`Ir.listSkips` answers for, the one resolving site the PDF walk spends —
-each of the four lengths the level's rules carry (`listLevelGaps`,
-`listOpenGap`), its `\topsep` above and below a list inside an open
-paragraph, its `\topsep` and `\partopsep` above and below one that opens a
-paragraph, its `\itemsep` before an item and its `\parsep` inside one, is
-the print length as the screen's multiple of its quantum, to within a
-milli-rem (`screenMilli_between`). -/
 public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
     (hq : 0 < Ir.rhythmQuantum size)
     (h0 : 0 ≤ sk.topsep.width.sp ∧ 0 ≤ sk.itemsep.width.sp ∧ 0 ≤ sk.parsep.width.sp)
@@ -2289,41 +1535,23 @@ public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
    screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
-/-- The web's lineage owes no list space: a webpage's lists keep the peer
-gap and its items a leading apart, where its print twin sets them. -/
 public theorem listRules_web_exact (size : Int) (tokens : Ir.Tokens) :
     listRules .web size tokens = [] := by
   simp only [listRules, Ir.listSkips_web_exact]
   rfl
 
-/-- A declared `\parskip`'s natural width in sp, at the body it was set
-under: TeX evaluates `\setlength{\parskip}{0.5em}` once, in the font in
-force (the body's), so the gap is that many points — never an `em` the
-screen would resolve per element, and never its `sp` part alone, which
-dropped every font-relative declaration to zero. `ex` reads the
-conventional half-size x-height, the fallback the shipped-ink judge uses. -/
+/-- A declared `\parskip`'s natural width in sp, at the body size it was set under. -/
 public def parskipSp (page : Ir.PageSpec) (g : SymGlue) : Dim.Sp :=
   g.width.resolve page.fontSize (page.fontSize / 2)
 
-/-- The document's declared `\parskip` as the screen peer gap: its multiple
-of the print quantum at the document's size, realized in the screen's
-(`screenMilli`). Written only where the page
-declares one — the `slides` and `resume` class records declare zero, as
-their PDF spends nothing between paragraphs — so an undeclared page keeps
-the peer rules' fallback. -/
+/-- The document's declared `\parskip` as the screen peer gap, written only where the page
+declares one. -/
 public def parskipVar (page : Ir.PageSpec) : String :=
   match page.parskip with
   | none => ""
   | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize (parskipSp page g))};\n"
 
-/-- The PDF backend's shipped default gap at a boundary kind: the values
-placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
-at an undeclared boundary), twice it above a heading (the walk's
-`addvspace`, `heading_default_before_exact`), and the float and caption
-tokens the float path resolves. The dispatch is the tie between the
-table's row names and the engine's tokens; an unknown name is 0, which
-`backend_gaps_agree` cannot miss (a zero row agrees with no positive
-one). -/
+/-- The PDF backend's default gap at a boundary kind; an unknown kind is zero. -/
 public def pdfGapSp : String → Dim.Sp
   | "peer" => (Ir.parskipDefault Ir.baseFontSize).width.sp
   | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.sp
@@ -2333,75 +1561,33 @@ public def pdfGapSp : String → Dim.Sp
       + (Ir.trivlistSkipDefault Ir.baseFontSize).width.sp
   | _ => 0
 
-/-- The screen backend's emitted default gap, in milli-rem: the number
-`quantaRem` prints for the kind's row. -/
+/-- The screen backend's default gap at a boundary kind, in milli-rem. -/
 public def htmlGapMilliRem (kind : String) : Nat :=
   gapK kind * bodyLeadingMilli / 2
 
-/-- The agreement layer, the user's ask: a document's vertical rhythm does
-not depend on which artifact is built. Both backends realize every default
-boundary from the same declared row (`Ir.rhythmGapQuanta`), each in its
-own context's quantum, so the shipped gaps stand in the same ratios row by
-row — cross-multiplied here over every pair of rows, PDF sp against
-emitted milli-rem, the values the artifacts actually carry. A backend that
-re-spelled one multiple fails this build. Two moduli, named rather than
-hidden:
-
-- **Preferred values only.** CSS has no glue: the HTML side realizes each
-  gap at exactly its preferred value, while the PDF may negotiate within
-  declared rubber — shrink spent only against a page break and always
-  reported (N0200), stretch never. Cross-backend equality is a statement
-  about preferred values; rubber is a PDF-only negotiation, and a document
-  that declares rubber is telling the PDF something HTML cannot honour.
-- **Per-context units.** The shared thing is the multiple, not the
-  length: the PDF's quantum is half its print leading
-  (`Ir.rhythmQuantum`), the screen's half its own body leading
-  (`bodyLeadingMilli`, the top of Butterick's band, over the 1 rem base).
-  Matching absolute lengths would put print leading on a screen or screen
-  leading on paper; the rhythm is per typographic context, and each
-  backend's context is its own. -/
 public theorem backend_gaps_agree :
     (Ir.rhythmGapQuanta.all fun e1 =>
       Ir.rhythmGapQuanta.all fun e2 =>
         pdfGapSp e1.1 * (htmlGapMilliRem e2.1 : Int)
           == pdfGapSp e2.1 * (htmlGapMilliRem e1.1 : Int)) = true := by decide
 
-/-- The slide box's inner padding and corner geometry, one spelling each:
-the frame-title bar bleeds to the slide edge by negating exactly this
-padding, and its top corners round at the slide's radius less the border
-(the nested-corner rule: an inner radius concentric with an outer one is
-the outer less the gap). Four literals that must stay pairwise equal are
-one pair; a 1 px corner mismatch is unrepresentable. -/
+/-- The slide box's inner padding, which the frame-title bar's bleed negates. -/
 private def slidePadV : String := "1.4rem"
 private def slidePadH : String := "1.8rem"
 private def slideRadiusPx : Nat := 8
 private def slideBorderPx : Nat := 1
 
-/-- The deck's safe area: the padding the paged slide keeps clear on
-every side, as a token reference with its engine default. Keynote's
-default themes keep roughly 5–7% of the slide dimension clear (read from
-the bundled masters); the default takes the middle, 6vmin — per mille of
-the smaller viewport dimension, so the ratio holds in either orientation.
-Overridable like any token (`--safearea`), by a bundle or a reader. -/
+/-- The deck's safe area, 6vmin by default: the middle of the 5–7% Keynote's themes keep clear. -/
 private def safeareaVar : String := "var(--safearea, 6vmin)"
 
-/-- A named step as a CSS factor, through the one resolving site: a
-per-mille base makes `Ir.scaleStep` report the step itself, so the bar's
-type reads the scale the PDF sets from rather than a second reading of the
-table. -/
+/-- A named size step as a CSS factor, read through `Ir.scaleStep`. -/
 private def stepFactor (name : String) : String :=
   milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
 
-/-- A standout frame's size step, `\Large` (`\Large\bfseries`, the shipped
-bundles' standout template): what the standout rule sets the frame at and
-its footline undoes. -/
+/-- A standout frame's size step, `\Large`. -/
 private def standoutStep : String := "Large"
 
-/-- The tallest type a footline band's slots set, per mille of the band's
-own step (`Ir.footline.step`): a named size inside a slot is the body's step,
-as the page sets it (`Layout.setBandSlot`), so the band's box is as tall as
-its tallest slot's type, which `footlineCss` reserves through `--foot-cap`.
-Nothing is declared for a band at its own step. -/
+/-- The tallest type a footline band's slots set, per mille of the band's own step. -/
 private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot) :
     List String :=
   let step := (Ir.scaleStepIn scale 1000 Ir.footline.step).toNat
@@ -2411,7 +1597,6 @@ private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot
   let tallest := band.foldl (fun m s => Ir.foldInlines sizeOf m s.content) step
   if tallest ≤ step then [] else [s!"--foot-cap: {milliFactor (tallest * 1000 / max step 1)};"]
 
-/-- The HTML body consumes the same resolved paint as the PDF body. -/
 @[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
     (parent : Ir.ColorPair) : Ir.ColorPair :=
   (Ir.Design.ofPalette pal).titledBodyPaint kind parent
@@ -2421,15 +1606,10 @@ public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind
     titledBodyPaint pal kind parent = (Ir.Design.ofPalette pal).titledBodyPaint kind parent := by
   rfl
 
-/-- HTML retains the shared inset's font-relative unit. At the same body
-font size, its length is exactly the PDF inset, independent of leading. -/
 @[expose] public def titledPadding : Length := Ir.titledPadding
 
-/-- A painted block colour box as CSS, `titledPadding` on every side and
-reaching it beyond the measure, so the text stays on the measure. A body
-box opens flush on its top, where its `\vbox{}` stands — beamer's
-`\vskip-.75ex` cancels that inset. `titledPadding` is one `ex` term, so
-its negation is a single length. -/
+/-- A painted block colour box as CSS: `titledPadding` on every side, reaching beyond the
+measure. -/
 public def titledBoxPaint : String :=
   s!"padding: {cssLength titledPadding}; margin-inline: -{cssLength titledPadding};"
 
@@ -2437,19 +1617,7 @@ public def titledBodyBoxPaint : String :=
   s!"padding: 0 {cssLength titledPadding} {cssLength titledPadding}; " ++
     s!"margin-inline: -{cssLength titledPadding};"
 
-/-- **The title page's slots, pinned**: the stylesheet projection of the IR
-value `Layout.B.placeSlot` places by (`Ir.TitleSlot.place`). Each slot's box
-stands in the stage at the same page point the page puts it at, through the
-same share arithmetic (`Ir.shareOf`; `Ir.pagePoint_agree` proves the
-arithmetic, and `titleSlotShipChecks` tests that each axis's share lands on
-its own property), and the box point is the same translate of the box's own
-extent; the shifts, measure and
-inner sep are `em` of the body size, the unit the deck's type scales in, so
-the box keeps its place as the stage scales. The slot's content takes its
-own template alone, as on the page: the heading's size and weight are the
-slot's (`Config.slotTitle`). Emitted for the paged deck, on screen and on
-paper alike: a printed deck pages the stage itself (`deckPageRule`), so
-the slots stand where the stage puts them. -/
+/-- The title page's slots, pinned on the deck's stage at the points the page places them. -/
 public def titleSlotCss (doc : Doc) : String :=
   let slots := ((doc.styles.find? "titlepage").getD {}).slots
   if slots.isEmpty || doc.docClass != .slides then "" else
@@ -2468,8 +1636,7 @@ public def titleSlotCss (doc : Doc) : String :=
       let dx := ((pl.xshift.map (·.width)).getD zero).add
         (anchorOffset pl.anchor.hshares)
       let dy := (pl.yshift.map (·.width)).getD zero
-      -- TikZ's `yshift` is up; the stage's `top` grows down. Its outer
-      -- sep expands compass anchors but is not CSS padding.
+      -- TikZ's `yshift` is up; the stage's `top` grows down
       let up0 : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
       let up := up0.add (anchorOffset pl.anchor.vshares)
       let sep := (pl.innerSep.map (·.width)).getD
@@ -2489,11 +1656,7 @@ public def titleSlotCss (doc : Doc) : String :=
   "  font-size: 1em; font-weight: inherit; margin: 0; }\n" ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] p { margin: 0; } }\n"
 
-/-- A block template's length as the stylesheet writes it: its print part in
-the page's own unit — on a deck's stage its share of the stage (`vh`, the
-unit the deck's type is set in, so the length keeps its proportion to the
-type at every viewport), elsewhere the screen's rem (`screenMilli`) — and its
-`em` and `ex` parts kept for the face to resolve. -/
+/-- A block template's length in the page's own unit, its `em` and `ex` parts kept. -/
 public def shapeLengthCss (deck : Bool) (page : Ir.PageSpec) (g : SymGlue) : String :=
   let l := g.width
   let sp : String := if deck then s!"{decMilli (deckStageMilli l.sp page.height)}vh"
@@ -2506,36 +1669,10 @@ public def shapeLengthCss (deck : Bool) (page : Ir.PageSpec) (g : SymGlue) : Str
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
-/-- `shapeLengthCss` on the document's own page. -/
 public def blockShapeLength (doc : Doc) (g : SymGlue) : String :=
   shapeLengthCss (doc.docClass.record.model == .frame) doc.page g
 
-/-- **A block template's boxes, rules and skips, as the stylesheet sets
-them**: the projection of each kind's `Ir.BlockShape`, the value the page's
-templated block arm reads. The section stands the template's skips as its
-padding — above the title in the arm the block takes
-(`Ir.BlockShape.skipsAbove`), and below the body — and the header the skips
-between title and body below it, so the boundaries around it pay only the
-follower's own gap (`blockRules`). The title's box is the header, padded
-above by the `\parskip` its line spends and the box's own where its list
-opens on a node; the box holding title and body is the section. A rule
-beside a box is that box's `::before` (left) or `::after` (right), `width`
-wide, `sep` beside the box's edge, from the box's top below the line's
-`\parskip` to its bottom above the skips below it, in the palette entry it
-reads — `var(<its property>, colour)`, the spelling of `Ir.BlockEdge.ink`; a rule
-inside the line pads its box by `width + sep`. A title's box kept empty is
-its struts' line, the title font's `\baselineskip` tall
-(`Ir.blockTitleLeading`, what the PDF's strut reads), or unstrutted a box of
-no height beside no rule, its line one line of the page; a title with no box
-spends its line's `\parskip` once, and empty without struts sets nothing.
-Lengths keep their font-relative units: neither box sets a size of its own,
-so an `em` is the body's, the font the template's rule is read in. A shaped
-block's body keeps the page's `\parskip` (`blockRules`). A rule beside the
-whole block reaching by its lines (`Ir.BlockSpan.whole`) is the section's,
-from its title's part's top below the header's first line box to its depth
-below the body's last baseline, read off the section's end: its last line
-box's part below that baseline, a body paragraph's unless the section says
-otherwise (`--block-last-below`); an untitled block draws none. -/
+/-- Each block kind's template boxes, rules and skips, as the stylesheet sets them. -/
 public def blockShapeCss (doc : Doc)
     (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none)
     (lit : Ir.Color → String := cssColor) : String :=
@@ -2555,15 +1692,11 @@ public def blockShapeCss (doc : Doc)
 {place}: calc({pad} - {len e.sep} - {len e.width}); width: {len e.width}; background: {paint e}; }\n"
   let rules := shapes.map fun (k, sh) =>
     let sel := s!"section.block-shaped.block-{k.name}"
-    -- The `\parskip` a title spends inside the box it opens; a title with
-    -- no box in the block's list spends only its line's.
+    -- the `\parskip` a title spends inside the box it opens
     let inner := if sh.title.parskip && (sh.title.boxed || sh.whole.isSome) then peerGap else "0rem"
     let before := skips sh.before
     let after := skips sh.after
     let between := skips sh.between
-    -- A rule beside the whole block reaching by its lines stands beside no
-    -- box of its own: its title's part beside the header, its body's beside
-    -- the body, one rule the section draws.
     let edges (span : Ir.BlockSpan) := sh.edges.filter fun e =>
       e.span == span && (span == .title || !e.besideTitle)
     let boxRules (span : Ir.BlockSpan) (box : String) (place : Ir.BlockEdge → String × String) :
@@ -2578,10 +1711,6 @@ public def blockShapeCss (doc : Doc)
       (if es.isEmpty then "" else
         s!"{box} \{ position: relative; padding-inline: {padL} {padR}; }\n") ++
       left.getD "" ++ right.getD ""
-    -- A rule reaching by the title's lines stands its offsets from the
-    -- header's first and last line boxes, and keeps the room it takes above
-    -- and below the header; one beside the box, the box. The rise TeX's line
-    -- absorbs differs for a title of one line and one the author breaks.
     let places := (sh.edges.filter (·.besideTitle)).toList.filterMap fun e => titleRule k e.reach
     let room := (places.map (·.room)).foldl max 0
     let below := if room == 0 then between else s!"calc({between} + {len { width := .ofSp room }})"
@@ -2605,14 +1734,6 @@ public def blockShapeCss (doc : Doc)
             let pseudo := if side == .left then "before" else "after"
             s!"{broken}::{pseudo} \{ top: {(titlePlace riseMany e).1}; }\n"))
     let wholeRules := boxRules .whole sel fun _ => (s!"calc({before} + {peerGap})", after)
-    -- A rule beside the whole block reaching by its lines is the section's:
-    -- from its title's part's top, where a rule beside the title stands it
-    -- below the header's first line box, to `depth` below the block's last
-    -- baseline — its last line box's part below that baseline above the
-    -- section's skips below, a body paragraph's unless the block says
-    -- otherwise (`--block-last-below`, `Config.blockLastBelow`); an
-    -- untitled block draws none, as the template draws none without the
-    -- title's part.
     let wholeLines := sh.edges.filter fun e => e.span == .whole && e.besideTitle
     let lineRules := String.join (wholeLines.toList.map fun e =>
       let pseudo := if e.side == .left then "before" else "after"
@@ -2627,9 +1748,7 @@ public def blockShapeCss (doc : Doc)
           s!"{sel}:has(> header br)::{pseudo} \{ top: {top riseMany}; }\n") ++
         s!"{sel}:not(:has(> header))::{pseudo} \{ content: none; }\n")
     let lineBox := if wholeLines.isEmpty then "" else s!"{sel} \{ position: relative; }\n"
-    -- The arm an untitled block takes where its template leaves the title
-    -- out: its own skips, and — the body opening the box around it — the
-    -- line's `\parskip` above that box and the box's own inside it.
+    -- an untitled block whose template leaves the title out
     let bare := match sh.bare with
       | some b =>
         let inside := if sh.whole.isSome then
@@ -2641,10 +1760,6 @@ public def blockShapeCss (doc : Doc)
             let pseudo := if e.side == .left then "before" else "after"
             s!"{sel}:not(:has(> header))::{pseudo} \{ top: calc({skips b.before} + {peerGap}); }\n"))
       | none =>
-        -- The title's box kept empty: its struts' line, the title font's
-        -- `\baselineskip` tall (`Ir.blockTitleLeading`, the PDF's strut), or
-        -- unstrutted no paragraph — a box of no height beside no rule, its
-        -- line one line of the page; with no box, no line at all.
         let hd := s!"{sel} > header:empty"
         let leading := Ir.blockTitleLeading doc.page.scale doc.page.fontSize doc.page.leading
           measures (Ir.blockTitleFont doc.styles k)
@@ -2661,45 +1776,23 @@ public def blockShapeCss (doc : Doc)
       titleRules ++ wholeRules ++ lineBox ++ lineRules ++ bare
   String.join rules
 
-/-- A tcolorbox length (`Ir.tcb…`, TeX millimetres) as CSS: its print
-length at the body size, as the print walk spends it — millimetres the
-screen keeps in proportion to the type, through the stylesheet's own
-print-to-screen projection (`screenMilli`). -/
+/-- A tcolorbox length, in TeX millimetres, as CSS at the body size. -/
 private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSize v)
 
-/-! ### Colour roles as custom properties
+/-! ## Colour roles -/
 
-Every colour the stylesheet paints is a registry role's custom property,
-`--ltx-<css>` (`Ir.CssName.ident`), and every rule reads it plainly,
-`var(--ltx-<role>)`. The values come from one table, `Ir.Design.cssDecl`: a
-declared role its colour, an inherited role an alias of the role its default
-reads (`var(--ltx-<parent>)`), a scheme's own constant otherwise — so the
-fallback chains are the registry's rows, projected, never re-spelled here,
-and a reader stylesheet that overrides a parent's property moves every role
-inheriting from it. The table declares exactly the roles the emitted rules
-read and the roles their aliases name (`cssRoles`). -/
-
-/-- A role's custom property: `--ltx-<css>`. -/
 @[expose] public def roleVar (r : Ir.Role) : String := "--" ++ (Ir.CssName.role r).ident
 
-/-- A rule's read of a role's colour: `var(--ltx-<css>)`. -/
 @[expose] public def roleRef (r : Ir.Role) : String := "var(" ++ roleVar r ++ ")"
 
-/-- A read of a role that may resolve to nothing, with the value CSS gives an
-invalid read — `transparent` for a background. -/
 private def roleRefOr (r : Ir.Role) (fallback : String) : String :=
   "var(" ++ roleVar r ++ ", " ++ fallback ++ ")"
 
-/-- Whether the page can declare a role's property (`Config.declarable`,
-built over `Ir.Role.all`, which lists each role at its constructor index:
-`Ir.Role.all_ctorIdx`). -/
 @[expose] public def Config.declares (cfg : Config) (r : Ir.Role) : Bool :=
   cfg.declarable[r.ctorIdx]?.getD true
 
-/-- A named colour as an element's own style reads it: through its custom
-property, the literal as the fallback, so a host page can restyle it — and
-for a role the page cannot declare, the literal alone, which is what CSS
-reads for a property nothing declares. -/
+/-- A named colour as an element's style reads it: its custom property with the literal as
+fallback, or the literal alone for a role the page cannot declare. -/
 @[expose] public def colorRead (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color) :
     String :=
   match name with
@@ -2707,9 +1800,6 @@ reads for a property nothing declares. -/
   | some n => s!"var({n.property}, {cssColor c})"
   | none => cfg.literal c
 
-/-- **A named colour reads its property wherever the page can declare it**:
-an author colour always, a role where some palette of the page gives it a
-value in a shipped scheme. -/
 public theorem colorRead_names (cfg : Config) (n : Ir.ColorRef) (c : Ir.Color)
     (h : ∀ r, n = .role r → cfg.declares r = true) :
     colorRead cfg (some n) c = s!"var({n.property}, {cssColor c})" := by
@@ -2717,47 +1807,36 @@ public theorem colorRead_names (cfg : Config) (n : Ir.ColorRef) (c : Ir.Color)
   | role r => simp only [colorRead, h r rfl, ite_true]; rfl
   | color m => rfl
 
-/-- A colour as an element's own style reads it: a named colour through its
-property (`colorRead`), a literal as the page ships it (`Config.literal`). -/
 public def Config.paint (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color) : String :=
   match name with
   | some _ => colorRead cfg name c
   | none => cfg.literal c
 
-/-- One declaration's CSS value: a colour, or the alias of its parent. -/
 @[expose] public def cssDeclValue : Ir.CssDecl → String
   | .value c => cssColor c
   | .alias r => roleRef r
 
-/-- The screen scheme a page's `:root` holds as its floor: the page's own
-plain screen where it ships, else that screen's more contrast, else the
-first screen scheme it ships, else the light one — whatever order a declared
-list names them in. -/
+/-- The screen scheme a page's `:root` holds: its own screen, else that screen's more contrast,
+else the first shipped screen, else light. -/
 public def floorScheme (frames : List Ir.SchemeFrame) (home : Ir.Scheme) : Ir.Scheme :=
   let homeMore := if home.onDark then Ir.Scheme.darkMore else .lightMore
   if frames.any (·.scheme == home) then home
   else if frames.any (·.scheme == homeMore) then homeMore
   else ((frames.find? (·.scheme != .print)).map (·.scheme)).getD .light
 
-/-- The palette in force as each shipped scheme ships it, beside the scheme;
-the light screen alone outside the engine's stylesheet. -/
+/-- The palette in force as each shipped scheme ships it; the light screen alone outside the
+engine's stylesheet. -/
 public def Config.tables (cfg : Config) : List (Ir.Scheme × Ir.Palette) :=
   if cfg.frames.isEmpty then [(.light, cfg.pal)]
   else cfg.frames.zip cfg.views |>.map fun (f, v) => (f.scheme, v)
 
-/-- The palette in force as the floor scheme ships it. -/
 public def Config.floorPal (cfg : Config) : Ir.Palette :=
   ((cfg.tables.find? (·.1 == cfg.floor)).map (·.2)).getD cfg.pal
 
-/-- Whether the page ships a scheme. -/
 public def Config.ships (cfg : Config) (s : Ir.Scheme) : Bool :=
   cfg.frames.any (·.scheme == s)
 
-/-- **A role's text in one scheme's view as the page's `:root` states it**: a
-code role's from the page's code root (`Config.codeRoot`), where the page
-has one — the colour a listing on the page's own code ground paints it in
-there, or the palette role it reads as that role's colour — and every other
-role's declaration there (`Ir.Design.cssDecl`). -/
+/-- A role's text in one scheme's view, as the page's `:root` states it. -/
 public def rootText (codeRoot : CodeRoot)
     (v : Ir.Palette) (s : Ir.Scheme) (r : Ir.Role) : Option String :=
   match r.code?, codeRoot.lookup s with
@@ -2766,10 +1845,7 @@ public def rootText (codeRoot : CodeRoot)
     | none => cssColor c
   | _, _ => (Ir.Design.cssDecl v s r).map cssDeclValue
 
-/-- The custom properties a page declares for its colours, each with its
-text in one scheme's view: every role of the page's set — its declared
-colour there, else its default, an alias or a value, a code role's from the
-code root (`rootText`) — then every author colour. -/
+/-- The custom properties a page declares for its colours, with their texts in one scheme's view. -/
 public def schemeProps (v : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.Role)
     (codeRoot : CodeRoot := []) :
     List (String × Option String) :=
@@ -2778,30 +1854,14 @@ public def schemeProps (v : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.Role)
       | .color _ => some (n.property, some (cssColor c))
       | .role _ => none
 
-/-- **What each shipped scheme restates over the page's floor**: the light
-and dark screens as `light-dark()` pairs inside `@supports`, so a browser
-without the function keeps the floor; the more-contrast schemes under
-`prefers-contrast: more`, the floor's polarity plainly and, where both
-screens ship, each polarity's — its more scheme where that ships, else its
-own screen — as pairs inside `@supports` again; and print's own values
-under `@media print`, last, with the printed page's own `color-scheme`
-(`printDark`: light but for a document whose page is dark, whose
-`light-dark()` pairs then read their dark side, as the page prints). Each
-property is restated where its text there differs from what the page would
-otherwise read, and wherever an earlier block under the same conditions
-moved it — print restates every property another block moves, since a
-reader asking more contrast prints with that block in force. `props` is
-each shipped scheme's text of every property, `none` for a scheme the page
-does not ship. -/
+/-- What each shipped scheme restates over the page's floor, in `@supports` and media blocks. -/
 public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option String)))
     (floor : Ir.Scheme) (scheme : Bool := true) (printDark : Bool := false) : String :=
   let floorT := (props floor).getD []
   let names := floorT.map (·.1)
   let textIn (t : List (String × Option String)) (p : String) : Option String := (t.lookup p).join
   let decl (ind p : String) (t : Option String) := s!"{ind}{p}: {t.getD "initial"};\n"
-  -- The pairs a block restates: each property whose texts in the two
-  -- screens differ from what the cascade gives it before the block, or that
-  -- an earlier declaration in the same condition restated (`forced`).
+  -- the properties a block restates: those it changes, and those `forced`
   let pairs (ind : String) (l d lb db : List (String × Option String)) (forced : List String) :
       List String × String :=
     let rows := names.filterMap fun p =>
@@ -2818,10 +1878,7 @@ public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option 
       let x := textIn t p
       if x == textIn floorT p && !forced.contains p then none else some (p, decl ind p x)
     (rows.map (·.1), String.join (rows.map (·.2)))
-  -- A polarity's plain screen; where the page offers none but the floor is
-  -- of that polarity (a list naming a more scheme and not its screen), the
-  -- floor stands for it, so the other polarity's screen still reaches its
-  -- readers.
+  -- a polarity with no plain screen reads the floor when the floor has that polarity
   let lightT := (props .light).orElse fun _ => if floor.onDark then none else some floorT
   let darkT := (props .dark).orElse fun _ => if floor.onDark then some floorT else none
   let (ldNames, lightDark) := match lightT, darkT with
@@ -2831,22 +1888,14 @@ public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option 
         "@supports (color: light-dark(#000, #fff)) {\n  :root {\n" ++
           (if scheme then "    color-scheme: light dark;\n" else "") ++ body ++ "  }\n}\n")
     | _, _ => ([], "")
-  -- Where the reader asks more contrast: the floor polarity's more scheme
-  -- plainly, as a browser without light-dark() shows the page; then, where
-  -- both screens ship, each polarity's — its more scheme where that ships,
-  -- else its own screen — as pairs, every property the plain block moved
-  -- among them, so neither polarity reads the other's values.
+  -- under more contrast: the floor polarity's more scheme plainly, then each polarity's as pairs
   let floorMore := if floor.onDark then Ir.Scheme.darkMore else .lightMore
   let otherMore := if floor.onDark then Ir.Scheme.lightMore else .darkMore
   let (plainNames, morePlain) := ((props floorMore).map (plain "    " · [])).getD ([], "")
-  -- What each polarity reads before the block: its screen where both
-  -- screens ship, else the floor, which every reader then sees.
   let screens := lightT.isSome && darkT.isSome
   let baseL := if screens then lightT.getD floorT else floorT
   let baseD := if screens then darkT.getD floorT else floorT
-  -- The other polarity reaches the page under more contrast where its more
-  -- scheme ships, even without its plain screen, which the block then
-  -- opens (`color-scheme: light dark`).
+  -- the other polarity's more scheme opens the block even without its plain screen
   let opens := !screens && (props otherMore).isSome
   let (moreNames, moreLd) :=
     if !(screens || opens) || ((props .lightMore).isNone && (props .darkMore).isNone) then ([], "")
@@ -2862,8 +1911,7 @@ public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option 
       (if moreLd.isEmpty then "" else
         "  @supports (color: light-dark(#000, #fff)) {\n    :root {\n" ++ moreLd ++ "    }\n  }\n") ++
       "}\n"
-  -- Print restates every property another block moves: a reader asking more
-  -- contrast prints with that block in force too.
+  -- print restates what other blocks move, since they stay in force when printing
   let touched := ldNames ++ plainNames ++ moreNames
   let print := match props .print with
     | some pr =>
@@ -2875,8 +1923,6 @@ public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option 
     | none => ""
   lightDark ++ more ++ print
 
-/-- The page's scheme blocks over its role table and author colours
-(`schemeBlocksOf`, `schemeProps`). -/
 public def schemeBlocks (tables : List (Ir.Scheme × Ir.Palette)) (floor : Ir.Scheme)
     (roles : List Ir.Role) (codeRoot : CodeRoot := []) :
     String :=
@@ -2884,22 +1930,18 @@ public def schemeBlocks (tables : List (Ir.Scheme × Ir.Palette)) (floor : Ir.Sc
       schemeProps v s roles codeRoot) floor
     (printDark := (tables.lookup .print).any (·.darkPage))
 
-/-- A property's text in one scheme's view of a palette: a role's
-declaration there (`Ir.Design.cssDecl`), an author colour's value. -/
 public def propText (v : Ir.Palette) (s : Ir.Scheme) (prop : Ir.ColorRef) : Option String :=
   match prop with
   | .role r => (Ir.Design.cssDecl v s r).map cssDeclValue
   | .color _ => (v.lookup prop).map cssColor
 
-/-- Whether `pat` stands in `b` at byte `i`. -/
 private def bytesAt (b pat : ByteArray) (i : Nat) : Bool := Id.run do
   if b.size < i + pat.size then return false
   for k in [0:pat.size] do
     if (b[i + k]?.getD 0) != (pat[k]?.getD 0) then return false
   return true
 
-/-- A byte a custom property's name holds: an ASCII letter or digit, `-` or
-`_` — `Char.isAlphanum`'s letters and digits are ASCII's. -/
+/-- A byte a custom property's name holds: an ASCII letter or digit, `-` or `_`. -/
 private def nameByte (c : UInt8) : Bool :=
   (48 ≤ c && c ≤ 57) || (65 ≤ c && c ≤ 90) || (97 ≤ c && c ≤ 122) || c == 45 || c == 95
 
@@ -2918,11 +1960,7 @@ private def nameEnd (b : ByteArray) (j : Nat) : Nat := Id.run do
     if k < b.size && nameByte (b[k]?.getD 0) then k := k + 1 else break
   return k
 
-/-- Every custom property a CSS text reads, `var(--<name>` with or without a
-fallback and with spaces before the name, in the order it reads them: one
-pass over the text's bytes. A name ends at the first byte no name holds, so
-a name running straight into `var(` — which no rule the engine writes
-spells, a name being followed by `,`, `)` or a space — reads as one. -/
+/-- Every custom property a CSS text reads with `var(--<name>`, in order. -/
 public def varReads (css : String) : Array String := Id.run do
   let mut out : Array String := #[]
   if !css.contains "var(" then return out
@@ -2939,29 +1977,22 @@ public def varReads (css : String) : Array String := Id.run do
         from_ := k
   return out
 
-/-- Every role by its custom property. -/
 private def roleVars : Std.HashMap String Ir.Role :=
   Ir.Role.all.foldl (fun m r => m.insert (roleVar r) r) {}
 
-/-- The role a custom property is the property of, `--ltx-<css>`. -/
 public def roleOfVar? (name : String) : Option Ir.Role := roleVars[name]?
 
-/-- The roles a stylesheet's rules read: each role whose `var(--ltx-<css>`
-reference it spells, with or without a fallback, in registry order. -/
+/-- The roles a stylesheet's rules read, in registry order. -/
 public def rolesRead (css : String) : List Ir.Role :=
   let reads := (varReads css).toList.filterMap roleOfVar?
   Ir.Role.all.filter reads.contains
 
-/-- The roles a table must declare for a set of reads, in registry order:
-the reads and every role their aliases reach in a scheme the page ships
-(`Ir.Design.reach`), so no alias it declares dangles
-(`cssRoles_closed`). -/
+/-- The roles a table must declare for a set of reads: the reads and every role their aliases
+reach. -/
 @[expose] public def cssRoles (pal : Ir.Palette) (schemes : List Ir.Scheme)
     (seed : List Ir.Role) : List Ir.Role :=
   Ir.Role.all.filter fun r => seed.any fun q => (Ir.Design.reach pal schemes q).contains r
 
-/-- **The page's roles are closed under their aliases**: an alias a declared
-role carries in a scheme the page ships names a declared role. -/
 public theorem cssRoles_closed (pal : Ir.Palette) (schemes : List Ir.Scheme)
     (seed : List Ir.Role) (s : Ir.Scheme) (hs : s ∈ schemes) :
     ∀ r ∈ cssRoles pal schemes seed, ∀ p,
@@ -2972,13 +2003,6 @@ public theorem cssRoles_closed (pal : Ir.Palette) (schemes : List Ir.Scheme)
   exact ⟨List.contains_iff_mem.mp (Ir.Role.all_complete p),
     q, hq, Ir.Design.reach_covers pal schemes q r p s hs hrq hp⟩
 
-/-- **The table a page's stylesheet declares, aliases chased, is the
-resolver** (`_projects`): for every scheme the page ships and every role it
-declares, chasing the declarations it emits — a declared role's value
-(`paletteVars`), an undeclared one's default or alias (`roleDefaultVars`,
-each the `Ir.Design.cssDecl` it prints through `cssDeclValue`) — reads
-exactly `Ir.Design.at`: the HTML's colours are a projection of the one
-resolver, chains included. -/
 public theorem role_css_projects (pal : Ir.Palette) (schemes : List Ir.Scheme)
     (seed : List Ir.Role) (s : Ir.Scheme) (hs : s ∈ schemes) (r : Ir.Role)
     (hr : r ∈ cssRoles pal schemes seed) :
@@ -2987,13 +2011,6 @@ public theorem role_css_projects (pal : Ir.Palette) (schemes : List Ir.Scheme)
   rw [Ir.Design.chase_restrict_exact _ _ (cssRoles_closed pal schemes seed s hs) r hr]
   exact Ir.Design.cssDecl_chase_exact pal s r
 
-/-- **The printed web page paints each role as the PDF does** (`_agree`): print
-ships every palette as declared (`Ir.Palette.frame_print_home`,
-`Ir.Palette.view_home`), so the declarations the page states for print,
-aliases chased, are the resolver in print (`role_css_projects`) — the print
-column the PDF paints a role from (`Ir.Design.ofPalette` is
-`Ir.Design.resolve` in print). A projection corollary over the one palette
-both artifacts read. -/
 public theorem html_print_agree (doc pal : Ir.Palette) (stage : Bool) (schemes : List Ir.Scheme)
     (seed : List Ir.Role) (hs : Ir.Scheme.print ∈ schemes) (r : Ir.Role)
     (hr : r ∈ cssRoles (pal.view (doc.frame .print stage)).1 schemes seed) :
@@ -3003,10 +2020,6 @@ public theorem html_print_agree (doc pal : Ir.Palette) (stage : Bool) (schemes :
   rw [Ir.Palette.view_home pal _ (Ir.Palette.frame_print_home doc stage)] at hr ⊢
   exact role_css_projects pal schemes seed .print hs r hr
 
-/-- **The HTML list marker is the PDF's** (`_agree`): the light
-stylesheet's marker, aliases chased, is the marker the printed page paints,
-for every palette (`Ir.Design.marker_print_light_exact` projected through
-`role_css_projects`). -/
 public theorem marker_css_agree (pal : Ir.Palette) (schemes : List Ir.Scheme)
     (seed : List Ir.Role) (hs : Ir.Scheme.light ∈ schemes)
     (hr : Ir.Role.marker ∈ cssRoles pal schemes seed) :
@@ -3016,29 +2029,18 @@ public theorem marker_css_agree (pal : Ir.Palette) (schemes : List Ir.Scheme)
   rw [role_css_projects pal schemes seed .light hs .marker hr,
     Ir.Design.marker_print_light_exact]
 
-/-- **The declarations a page's stylesheet carries for its roles, in one
-scheme**: each role of the set the palette leaves undeclared, as its
-default — an alias or the scheme's constant. A declared role is declared
-by the document's own block (`paletteVars`), after every scheme's; a code
-role the page's code root colours, as it colours it (`rootText`). -/
+/-- The declarations a page's stylesheet carries, in one scheme, for the roles the palette leaves
+undeclared. -/
 public def roleDefaultVars (pal : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.Role)
     (codeRoot : CodeRoot := []) : List String :=
   roles.filterMap fun r =>
     if (Ir.Design.declared? pal r).isSome then none
     else (rootText codeRoot pal s r).map fun t => s!"    {roleVar r}: {t};"
 
-/-! #### The page's roles
+/-! ## Page roles -/
 
-The page declares a role's property exactly when something on the page reads
-it: a rule of its stylesheet, an element's own paint, a reader alias, or the
-alias another declared role carries — in the document's palette or any
-epoch's, in each scheme the page ships (`pageRoleSet`). A role nothing gives a
-value in any of those has no declaration, so a read of it takes its fallback
-(`resolveRoleVars`), and an epoch's re-declaration of a role nothing reads is
-dropped (`keepRoleStyle`). -/
-
-/-- A style attribute's references: what its ordinary declarations read,
-and each custom property it declares with what that declaration reads. -/
+/-- A style attribute's references: what its declarations read, and each custom property it
+declares with what that reads. -/
 private def styleRefs (style : String) : Array String × Array (String × Array String) :=
   if !style.contains "--" then (#[], #[]) else
   (style.splitOn ";").foldl (fun (acc : Array String × Array (String × Array String)) piece =>
@@ -3051,8 +2053,7 @@ private def styleRefs (style : String) : Array String × Array (String × Array 
 
 mutual
 
-/-- The custom properties an emitted tree reads, and the declarations its
-style attributes carry with what each reads. -/
+/-- The custom properties an emitted tree reads, and the declarations its style attributes carry. -/
 private def nodeRefsOne (acc : Array String × Array (String × Array String)) :
     Node → Array String × Array (String × Array String)
   | .elem _ attrs kids =>
@@ -3072,16 +2073,12 @@ private def nodeRefsList (acc : Array String × Array (String × Array String)) 
 
 end
 
-/-- Whether some table gives a role a value: a palette as one shipped scheme
-ships it declares the role, or that scheme's default stands for it. -/
+/-- Whether some table gives a role a value in a shipped scheme. -/
 private def roleDeclarable (tables : List (Ir.Scheme × Ir.Palette)) (r : Ir.Role) : Bool :=
   tables.any fun (s, p) => (Ir.Design.declared? p r).isSome || (Ir.Design.cssDecl p s r).isSome
 
-/-- **The roles a page declares**: the closure of what it reads (`roots`)
-under the aliases a declared role carries — the registry's in every palette
-as each shipped scheme ships it (`Ir.Design.cssDecl`), and the ones the
-page's own declarations state (`edges`) — less the roles no table gives a
-value and `extra` does not keep. -/
+/-- The roles a page declares: what it reads, closed under aliases, less those no table gives a
+value. -/
 public def pageRoleSet (tables : List (Ir.Scheme × Ir.Palette))
     (roots : List Ir.Role) (edges : Array (Ir.Role × List Ir.Role))
     (extra : Ir.Role → Bool := fun _ => false) : List Ir.Role := Id.run do
@@ -3098,10 +2095,7 @@ public def pageRoleSet (tables : List (Ir.Scheme × Ir.Palette))
     set := next
   return Ir.Role.all.filter fun r => set.contains r && (roleDeclarable tables r || extra r)
 
-/-- One pass of `resolveRoleVars` over a text's bytes: each read of a role
-outside `keep` replaced by its fallback, trimmed, or `initial` where it has
-none; a kept read, or a read of no role, stays whole, its fallback as
-written. The text, and whether anything was replaced. -/
+/-- One pass of `resolveRoleVars`, with whether it replaced anything. -/
 private def resolveRoleVarsPass (keep : Ir.Role → Bool) (s : String) : String × Bool := Id.run do
   let b := s.toUTF8
   let mut out := ""
@@ -3135,17 +2129,11 @@ private def resolveRoleVarsPass (keep : Ir.Role → Bool) (s : String) : String 
   if !changed then return (s, false)
   return (out ++ String.Pos.Raw.extract s ⟨copied⟩ ⟨b.size⟩, true)
 
-/-- How many reads of a role a text spells, `var(--ltx-`: the bound on the
-passes `resolveRoleVars` needs, since each pass that changes the text takes
-away one read at least and a fallback it puts in place was in the text. -/
+/-- How many role reads a text spells, which bounds the passes `resolveRoleVars` needs. -/
 private def roleReadCount (s : String) : Nat :=
   (bytePositions s.toUTF8 "var(--ltx-".toUTF8).size
 
-/-- A CSS text with every read of a role outside `keep` replaced by its
-fallback (`initial` where it has none): a property the page never declares
-reads as its fallback anyway, and stating that keeps every read pointed at a
-declaration. A text that reads no such role is returned as it stands; else
-one pass per read it holds, at most. -/
+/-- A CSS text with every read of a role outside `keep` replaced by its fallback, or `initial`. -/
 public def resolveRoleVars (keep : Ir.Role → Bool) (s : String) : String := Id.run do
   if !s.contains "var(--ltx-" then return s
   let mut text := s
@@ -3155,8 +2143,7 @@ public def resolveRoleVars (keep : Ir.Role → Bool) (s : String) : String := Id
     text := t
   return text
 
-/-- A style attribute with its declarations of roles outside `keep` dropped
-and its reads of them resolved (`resolveRoleVars`). -/
+/-- A style attribute with declarations of roles outside `keep` dropped and their reads resolved. -/
 private def keepRoleStyle (keep : Ir.Role → Bool) (style : String) : String :=
   if !style.contains "--ltx-" then style else
   let pieces := (style.splitOn ";").filter fun piece =>
@@ -3185,47 +2172,32 @@ private def keepRolesList (keep : Ir.Role → Bool) (acc : Array Node) : List No
 
 end
 
-/-- The reader names a stylesheet once read the engine's colours under,
-kept one release as aliases of the roles that now carry them, and each
-author colour's own name: a host stylesheet that reads `var(--bg)` or
-`var(--primary)` keeps working while it moves to `--ltx-*`. An author
-colour keeps its own name where the two meet (`\definecolor{bg}`), as it
-read before the roles moved. Read-only: an override goes to the `--ltx-*`
-property a rule reads. -/
+/-- Read-only aliases of the roles under the engine's reader names, and each author colour's own
+name. -/
 private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : List String := []) :
     List String :=
   let roleNames : List (String × Ir.Role) :=
     [("fg", .ink), ("bg", .page), ("muted", .muted), ("ink", .ink), ("surface", .page),
      ("accent", .accent), ("tint", .codeSurface), ("rule", .rule)]
   let authored (n : String) := pal.colors.any (·.1 == n)
-  -- An author colour's own name stands only where the engine's stylesheet
-  -- does not read that property itself (`--topsep`, `--measure`): there
-  -- the alias would replace the engine's length with a colour.
+  -- an author colour's name is skipped where the engine reads that property itself
   let free (n : String) := !taken.contains ("--" ++ n) && !n.startsWith "ltx-"
   (roleNames.filter fun (n, r) => roles.contains r && !authored n && free n).map
       (fun (n, r) => s!"    --{n}: {roleRef r};") ++
     (pal.colors.toList.filter fun (n, _) => free n && (tokenVar? n).isSome).map
       fun (n, _) => s!"    --{n}: var({(Ir.ColorRef.color n).property});"
 
-/-- A stage length in the deck's unit, its share of the stage's height
-(`deckStageMilli`), as type and the frame opening are stated. -/
+/-- A stage length as its share of the stage's height, in `vh`. -/
 private def stageVh (page : PageSpec) (x : Sp) : String :=
   s!"{decMilli (deckStageMilli x page.height)}vh"
 
-/-- A length a class's lineage fixes, in the page's own unit: on a deck's
-stage its share of the stage (`stageVh`), as the deck's type and frame
-opening are stated, so it keeps its proportion at every viewport and on
-paper; elsewhere the screen's rem (`screenMilli`). -/
+/-- A length a class's lineage fixes, in the page's own unit. -/
 private def lineageLength (doc : Doc) (x : Sp) : String :=
   if doc.docClass.record.model == .frame then stageVh doc.page x
   else milliRem (screenMilli doc.page.fontSize x)
 
-/-- The trivlist's and the float's spaces at a list depth in beamer's
-lineage (`Ir.trivlistSkipFor`, `Ir.floatSpaceFor`), in the page's unit:
-`--topsep` the trivlist's, and `--floatsep` that space with the paragraph
-gap on top, a figure being the `{center}` it opens — a declared
-`\floatsep` alone. Declared where its `--topsep` is, so each level's float
-reads its own level's space. -/
+/-- The trivlist's and the float's spaces at a list depth in beamer's lineage, in the page's
+unit. -/
 private def lineageSkipDecls (doc : Doc) (depth : Nat) (squeezed : Bool := false) : String :=
   let size := doc.page.fontSize
   let t := (Ir.trivlistSkipFor .beamer doc.tokens size depth).width.resolve size 0
@@ -3233,33 +2205,23 @@ private def lineageSkipDecls (doc : Doc) (depth : Nat) (squeezed : Bool := false
     | (_, true) => if squeezed then s!"calc({lineageLength doc t} + var(--parskip, 0rem))"
       else s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
     | (g, false) => lineageLength doc (g.width.resolve size 0)
-  -- A squeezed frame's trivlist inside a list item takes the `\topsep0.5pt`
-  -- beamer's squeeze leaves in force (`Ir.squeezedTopsep`), as the page's
-  -- does; its floats keep their own space, as the page's do.
+  -- a squeezed frame keeps beamer's `\topsep0.5pt`; its floats keep their own space
   let topsep := if squeezed then Ir.squeezedTopsep.width.resolve size 0 else t
   s!"--{Ir.trivlistSkipName}: {lineageLength doc topsep}; --floatsep: {float};"
 
-/-- Whether any of the document's frames, at any depth, sets its lists
-squeezed (`Ir.frameSqueeze`). -/
 private def anySqueezed (doc : Doc) : Bool :=
   Ir.foldBlocks (fun acc b => acc || match b with
       | .frame _ _ _ _ fbody => Ir.frameSqueeze fbody != .none
       | _ => false)
     (fun acc _ => acc) false doc.body
 
-/-- In beamer's lineage, the top level's trivlist and float spaces on the
-root (`lineageSkipDecls`). A declared `\topsep` or `\floatsep` is stated
-here in the page's unit, and `tokenVars` leaves both to this site. -/
+/-- In beamer's lineage, the top level's trivlist and float spaces on the root. -/
 private def lineageSkipVars (doc : Doc) : String :=
   match doc.docClass.record.lists with
   | .beamer => s!"    {lineageSkipDecls doc 0}\n"
   | .sizeFile | .web => ""
 
-/-- Each list level's spaces in beamer's lineage (`lineageSkipDecls`): level
-one inside one enclosing list (a list item, a description's body, a
-quotation, the `\@list⟨n⟩` beamer runs), the deeper levels inside two,
-where `\@listi` has set `\topsep` again and no preamble declaration
-reaches. -/
+/-- Each list level's spaces in beamer's lineage. -/
 private def lineageLevelRules (doc : Doc) : String :=
   match doc.docClass.record.lists with
   | .beamer =>
@@ -3274,27 +2236,18 @@ private def lineageLevelRules (doc : Doc) : String :=
     else "")
   | .sizeFile | .web => ""
 
-/-- The footline band's box as the stage lengths `footlineCss` reads: its
-glyphs' height and depth, the page's own (`Config.footBox`). -/
+/-- The footline band's box as the stage lengths `footlineCss` reads. -/
 private def footBoxDecls (page : PageSpec) : Option (Sp × Sp) → List String
   | some (h, d) => [s!"--foot-h: {stageVh page h};", s!"--foot-d: {stageVh page d};"]
   | none => []
 
-/-- The frame title's step over the body, the size the PDF sets it at
-(`Layout.collectFrameTitle`): the `frametitle` style's font template's
-(`Ir.templateSize`), else the engine's Large. -/
+/-- The frame title's size step: the `frametitle` font template's, else Large. -/
 private def frameTitleStep (doc : Doc) : String :=
   match (doc.styles.find? "frametitle").bind (·.font) with
   | some tpl => milliFactor (Ir.templateSize (1000 : Dim.Sp) tpl).toNat
   | none => stepFactor "Large"
 
-/-- moloch's frame-title box on the stage, as the PDF builds it
-(`Layout.frameBarHeight`): the title's first baseline `frametitlepadding`
-plus the title's strut (`Ir.frameTitleStrut`, seven tenths of its leading)
-below the bar's top, its last `frametitlepadding` above the bar's bottom —
-two struts no font's metrics enter, on the lines' own leading. Each length
-is the PDF's own at an em of the title's size: the token's resolved value
-(`Ir.frameTitlePadding`) and the strut at a 1000 sp title, its milli-em. -/
+/-- moloch's frame-title box on the stage, as the PDF builds it. -/
 private def frameTitleStrutCss (hdr : String := "section.slide > header") : String :=
   let pad := s!"var(--frametitlepadding, {cssLength Ir.frameTitlePadding.width})"
   s!"{hdr} h2::before \{ content: \"\"; display: inline-block;\n" ++
@@ -3302,22 +2255,7 @@ private def frameTitleStrutCss (hdr : String := "section.slide > header") : Stri
   s!"{hdr} h2::after \{ content: \"\"; display: inline-block;\n" ++
   s!"  vertical-align: calc(-1 * {pad}); }\n"
 
-/-- moloch's footline on the stage (beamerouterthememoloch.sty, `footline`
-template, `Ir.footline`): the band stands on the stage's bottom edge, as wide
-as the paper, its slots inset from the paper's sides and their baseline its
-closing `\vskip4pt` above the edge; the text area ends `\footheight` above
-it — the band's box plus 4 pt, the PDF's floor (`Layout.frameFloor`), the
-4 pt the frame's end spacer (`deckAreaCss`), which the band stands after.
-The box is the page's own where the driver measures it (`Config.footBox`):
-its slots' glyph height and depth plus that skip, the slots' baseline their
-depth above the skip, as TeX's box of the line has it; with no font
-environment the cap height of its tallest slot's type (`--foot-cap`, per
-`footCapDecl`) stands for the height and the depth is none. The band sets at
-its own step of the body and at the body's weight whatever frame it closes,
-as the page sets it (`setBandSlot`'s own style): a standout frame's type is
-the whole frame's, so its footline undoes that step for its own, and takes
-the weight the body resolved (`fontCss`'s `--ltx-body-weight`) — `normal`
-only where no face ships, where the body's weight is the platform's. -/
+/-- moloch's footline (beamerouterthememoloch.sty), standing on the stage's bottom edge. -/
 private def footlineCss (page : PageSpec) : String :=
   let raise := stageVh page Ir.footline.raise
   let step := milliFactor (Ir.scaleStepIn page.scale 1000 Ir.footline.step).toNat
@@ -3336,112 +2274,65 @@ private def footlineCss (page : PageSpec) : String :=
   "footer.slide-foot > :is(.band-left, .band-right)::before { content: \"\";\n" ++
   s!"  display: inline-block; height: calc(1cap + {raise} + var(--foot-d, 0px));\n" ++
   s!"  vertical-align: calc(-1 * ({raise} + var(--foot-d, 0px))); }\n" ++
-  -- On screen the band stays on the stage's edge however far a frame's
-  -- content runs past its text area, as beamer's footline stays on the
-  -- page the content overruns: the stage scrolls, and a sticky band is
-  -- its flow position where the content fits (CSS Positioned Layout 3
-  -- §3.4). Paper keeps the flow, which keeps the band with the content.
+  -- on screen the band stays on the stage's edge however far the content runs
   "@media screen { section.slide > footer.slide-foot { position: sticky; bottom: 0; } }\n"
 
-/-- Furniture the semantic palette keys turn on — one shared rule set for
-every theme, so a theme stays a table of values. The conditions read the
-resolved `Design`, the same record the PDF path consumes; a rule fires only
-when the design carries the feature. The colour *values* stay CSS custom
-properties rather than resolved literals, deliberately: a reader's
-stylesheet can override a token, which is the HTML backend's contract. -/
+/-- The furniture rules the semantic palette keys turn on, shared by every theme. -/
 public def themeCss (doc : Doc)
     (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none)
     (lit : Ir.Color → String := cssColor) : String :=
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
-  -- A palette anywhere in the document that declares a role: the opening
-  -- one or an epoch's.
   let declares (r : Ir.Role) : Bool :=
     (Ir.Design.declared? doc.palette r).isSome ||
       Ir.foldBlocks (fun a b => a || match b with
         | .setPalette p => (Ir.Design.declared? p r).isSome
         | _ => false) (fun a _ => a) false doc.body
-  -- The bar a frame title stands on, under `hdr`: every frame's where the
-  -- opening palette declares one, else the frames of an epoch that does
-  -- (`.titlebar`), as the PDF paints them.
   let barRules (hdr : String) : String :=
     s!"{hdr} \{ background: {roleRef .frameTitleBar};\n" ++
     s!"  color: {roleRef .frameTitleInk};\n" ++
-    -- The bar sets at the title's own step, so `frametitlepadding` — an em
-    -- of the title size, `\ht\strutbox` measured after
-    -- `\usebeamerfont{frametitle}` — resolves here against the size it is
-    -- defined in, exactly as `collectFrameTitle` resolves it at
-    -- `titleSize`. Without the declared size the em would resolve against
-    -- the body base and the bar would come out at the body's 0.84em where
-    -- the PDF pays the title's; the inner h2 drops to `1em` in the deck's
-    -- own override so the step is paid once, not squared.
+    -- the bar sets at the title's step, so `frametitlepadding` resolves at the title's size
     s!"  font-size: {stepFactor "Large"}rem;\n" ++
-    -- The first body element pays the shared frame opening skip through
-    -- `blockGapCss`, one emitter per boundary.
     s!"  margin: -{slidePadV} -{slidePadH} 0;\n" ++
     s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
     s!"{hdr} h2 \{ color: inherit; font-size: 1em; }\n" ++
-    -- On the paged deck the slide is the viewport — on paper the page —
-    -- cornerless: the bar squares off with it and bleeds through the
-    -- safe-area padding, negating exactly the token the slide pads by.
+    -- the paged deck's slide is cornerless; the bar bleeds through the safe area
     (if doc.docClass == .slides then
       s!"@media screen, print \{ {hdr} \{ border-radius: 0;\n" ++
-      -- The deck sets type on `main` in `vh`, so the bar retakes the title
-      -- step in `em` to ride the stage rather than pinning to the root.
+      -- the deck sets type in `vh`, so the bar retakes the title step in `em`
       s!"  font-size: {frameTitleStep doc}em;\n" ++
       (if doc.chromeAllowed then s!"  margin: 0 calc(-1 * {safeareaVar}) 0;\n"
        else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
       (if (doc.tokens.find? "frametitlepadding").isSome then
-        -- moloch's bar is the paper's width, its title inset from either
-        -- edge by 0.85 of the title's strut (`Ir.frameTitleInset`, an em of
-        -- the title's size here, where the bar sets at the title's step),
-        -- wherever the chrome stands, as the page sets it.
+        -- moloch's bar spans the paper, its title inset by `Ir.frameTitleInset`
         s!"  padding: 0 {decMilli (Ir.frameTitleInset 1000)}em; line-height: \
 {decMilli (Ir.leadingFor 1000)}; } }\n" ++
         frameTitleStrutCss hdr
        else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
      else "")
-  -- Paint is carried by each block's palette epoch. A document-level
-  -- condition would miss body declarations that add or remove a bar.
+  -- paint comes from each block's palette epoch
   "section.block > header { font-weight: bold; }\n" ++
-  -- A colour box keeps the glue its list holds: no margin collapses
-  -- through its edge (beamer's boxes are TeX boxes). A frame's first
-  -- block spends its own space above at the frame's opening, where the
-  -- frame's `\vskip-\parskip` stands too: the opening's authored addend,
-  -- declared where the opening rule reads it — on the block, or on the
-  -- overlay step's carrier the block opens (`blockAt`).
+  -- a colour box is a flow root: no margin collapses through its edge
   "section.block, section.block > .block-body { display: flow-root; }\n" ++
-  -- tcolorbox's box (`Ir.tcb…`): the title's rule and `boxsep` above it,
-  -- `boxsep` and the title rule below; the upper part's `boxsep` and `top`
-  -- above its text (the frame's rule too, untitled), `bottom`, `boxsep`
-  -- and the rule below; the text the rule, `boxsep` and `left`/`right`
-  -- inside the box's edges.
+  -- tcolorbox's box: its rules, `boxsep` and insets as `Ir.tcb…` states them
   "section.tcolorbox, section.tcolorbox > .tcolorbox-body { display: flow-root; }\n" ++
   s!"section.tcolorbox > header \{ padding: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep)} {tcbLength Ir.tcbInset}; }\n" ++
   s!"section.tcolorbox > .tcolorbox-body \{ padding: {tcbLength (Ir.tcbBoxsep + Ir.tcbTop)} {tcbLength Ir.tcbInset} {tcbLength (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule)}; }\n" ++
   s!"section.tcolorbox > .tcolorbox-body:first-child \{ padding-top: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)}; }\n" ++
   s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then barRules "section.slide > header" else
-    -- Undeclared, an unbarred title takes the ink of what it stands in, as
-    -- every heading does, so the rule stands only where a palette names one.
+    -- an undeclared title ink inherits, as every heading's does
     (if declares .frameTitleInk then
       s!"section.slide > header \{ color: {roleRef .frameTitleInk}; }\n" else "") ++
     "section.slide > header h2 { color: inherit; }\n" ++
-    -- With no bar the title is the first line of the page, where the PDF
-    -- sets it (`Layout.collectFrameTitle`): the slides' top margin
-    -- (`Geom.bodyTop`), the stage's text area opening at its top edge.
+    -- with no bar the title is the page's first line, at the slides' top margin
     (if doc.chromeAllowed then
       "@media screen, print { section.slide:not(.title-page) > header {\n" ++
       s!"  padding-top: {stageVh doc.page doc.page.vmargin}; } }\n"
      else "") ++
-    -- The title stands in beamer's default frametitle box, which ends 1ex
-    -- above its strut's depth (`Ir.defaultFrameTitleBelow`), wherever the
-    -- chrome stands, as the page sets it: the title's line trims to its
-    -- baseline and the body's opening takes the rest, in the title's own em
-    -- and ex at its step over the body (`Ir.plainFrameTitleStep`). A frame
-    -- whose palette epoch declares a bar (`.titlebar`) stands no such box.
+    -- beamer's default frametitle box ends 1ex above the title strut's depth
     (if doc.docClass.record.model == .frame then
       "section.slide:not(.title-page):not(.titlebar) > header h2 \
 { text-box: trim-end text alphabetic; }\n" ++
@@ -3450,18 +2341,7 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
 ({decMilli (Ir.defaultFrameTitleBelow 1000 doc.page.leading 0)}em - 1ex)); }\n"
      else "") ++
     (if declares .frameTitleBar then barRules "section.slide.titlebar > header" else "")) ++
-  -- The headline band: the poster page's <header> around the title matter
-  -- and the two corner-logo slots. Colours are the same frametitle tokens
-  -- the PDF band resolves (one resolving site per backend, one declared
-  -- pair), gated on the pair as the slide bar's rule is; the matter's side
-  -- is the `titlepage` style's declared token (undeclared centres,
-  -- `\@maketitle`'s own rule). A centred matter stands on the band's centre
-  -- whatever logo stands beside it, as the PDF sets it and as the gemini
-  -- headline reserves `\maxlogowidth` on both sides "to keep title
-  -- centered" (beamerthemegemini.sty): two equal flexible tracks around
-  -- it, each logo pinned to its own corner; on a band too narrow for equal
-  -- reserves the matter keeps clear of both logos. A declared side sets the
-  -- matter from the logo beside it.
+  -- the poster's headline band: title matter between two equal tracks, logos in the corners
   (match doc.headline with
    | some _ =>
      let side : Ir.HAlign := ((doc.styles.find? "titlepage").bind (·.align)).getD .center
@@ -3488,11 +2368,7 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
 "
       else "")
    | none => "") ++
-  -- The title page's own ground, gated on the declared pair exactly as the
-  -- bar's rule is: a design that declares none emits no rule, so a page the
-  -- PDF leaves on the document's ground is not painted here either. The
-  -- role is the one the PDF path reads (`Layout.titleGround`, through
-  -- `Ir.Design.ofPalette`); the reference resolves against the role table.
+  -- the title page's ground, only where the design declares it
   (match d.titlepage with
    | some _ =>
      s!"section.slide.title-page \{ background: {roleRef .titlePageGround};\n" ++
@@ -3501,42 +2377,24 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
    | none => "") ++
   titleSlotCss doc ++
   blockShapeCss doc titleRule lit ++
-  -- Rules are available to later palette epochs too; the section node
-  -- itself is gated on that epoch's resolved section-progress pair.
+  -- emitted for every frame deck, since later palette epochs may use it
   (if doc.docClass.record.model == .frame then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++
-    -- The title and the bar share moloch's centred measure, the PDF's own
-    -- (`Ir.sectionPageMeasure`), as the stage's share the deck's type is
-    -- stated in, never past the stage's own width.
+    -- title and bar share moloch's centred measure, as the PDF's
     "section.section-page h2 { display: inline-block; text-align: left;\n" ++
     s!"  width: {sectionMeasure}; margin: 0; color: {roleRef .sectionTitleInk}; }\n" ++
-    -- The height reads the same token the PDF path reads
-    -- (`progressheight`), with the same fallback — moloch's own 1pt
-    -- (beamerouterthememoloch.dtx) — one resolving site per backend, one
-    -- declared value.
+    -- `progressheight`, with moloch's own 1pt fallback
     s!".progress \{ background: {roleRef .sectionProgressTrack};\n" ++
     "  height: var(--progressheight, 1pt);\n" ++
     s!"  width: {sectionMeasure}; margin: {quantaRem 1} auto 0; }\n" ++
     s!".progress > div \{ background: {roleRefOr .sectionProgressFill "transparent"}; height: 100%; }\n" ++
-    -- moloch's section page closes on the subsection title's strut below
-    -- its bar, a subsection in force or not, and centres that whole box as
-    -- the PDF does (`Layout.collectSection`): the one value, at the body's
-    -- em (`Ir.sectionPageStrut_between`).
+    -- moloch's section page closes on the subsection title's strut below its bar
     (if doc.chromeAllowed then
       s!"section.section-page::after \{ content: \"\"; flex: none; \
 height: calc({decMilli (Ir.sectionPageStrut 1000 doc.page.leading)}em - var(--progressheight, 1pt)); }\n"
      else "") ++
-    -- The paged deck's own progress: a hairline across the viewport top,
-    -- scaled by how far the reader has paged through the deck —
-    -- declarative where the platform has scroll-driven animations
-    -- (`scroll(root x)`, Scroll-driven Animations 1: the axis is the
-    -- deck's own), the same tokens as the section-page bar, and the same
-    -- floor as `revealCss`: without the feature the rules never apply and
-    -- the deck is fully navigable without its bar. Screen only: paper has
-    -- no scroll to report, and the hairline does not print — unstyled it
-    -- is an empty box after the last stage's forced break, for which
-    -- Chromium opens a blank sheet.
+    -- the deck's progress hairline, scroll-driven where supported, screen only
     (if doc.docClass == .slides && d.progress.isSome then
       "@media screen { @supports (animation-timeline: scroll()) {\n" ++
       ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
@@ -3549,34 +2407,22 @@ to { transform: scaleX(1) } }\n" ++
       "} }\n" ++
       "@media print { .deck-progress { display: none; } }\n"
      else "") else "") ++
-  -- The chrome footer: colour from the muted key, size from the shared
-  -- scale (the footline step, `Ir.footline`), positions fixed by the declared
-  -- side — each slot pinned to its edge, as `Layout.bandSlotX` pins the
-  -- page's — so nothing a slot contains can move another; a colliding slot
-  -- paints under or over by declared priority (`z-index` from
-  -- `BandSlot.rank`, set per span), never moves. Wherever the chrome may
-  -- stand the band is moloch's footline (`footlineCss`).
+  -- the chrome footer: each slot pinned to its declared edge, collisions ranked by `z-index`
   (if doc.chromeAllowed &&
       (doc.chrome.hasFooter || doc.body.any fun b => match b with
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
     footlineCss doc.page ++
-    -- A named size inside a slot is the body's step, as TeX's size
-    -- commands are absolute and as the page sets it
-    -- (`Layout.setBandSlot`): the footer's own step is undone for it.
+    -- a named size inside a slot is the body's step, as TeX's size commands are absolute
     (let step := (Ir.scaleStepIn doc.page.scale 1000 Ir.footline.step).toNat
      String.join (doc.page.scale.map fun (name, k) =>
        s!"footer.slide-foot .size-{name} \{ font-size: \
 {milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
 
-/-- One palette entry as the CSS custom-property declaration `:root`
-carries — a role's `--ltx-<css>`, an author colour's `--ltx-c-<escape>`: the
-definition site a use's `var(--ltx-…, …)` reference resolves against. This is where a role's palette-dependence lives in the
-artifact, so `role_use_is_palette_dependent` is stated over it. -/
+/-- One palette entry as the custom-property declaration `:root` carries. -/
 private def paletteVar (n : Ir.ColorRef) (c : Ir.Color) : String :=
   "    " ++ n.property ++ ": " ++ cssColor c ++ ";"
 
-/-- Every palette entry's declaration line, in declaration order. -/
 public def paletteVars (p : Ir.Palette) : List String :=
   p.entries.toList.map fun (n, c) => paletteVar n c
 
@@ -3598,11 +2444,6 @@ private theorem hexByte_inj (a b : UInt8)
   have : a.toNat = b.toNat := by omega
   exact UInt8.toNat_inj.mp this
 
-/-- Two colours never share a rendered hex form unless they agree as sRGB:
-`cssColor` determines the screen-facing components exactly — what makes a
-differing `:root` declaration a differing artifact. The CMYK rider is not
-determined and not claimed: it is the PDF's declared-model channel
-(`cmyk_components_kept`), invisible to this backend by design. -/
 public theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
     a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
   have hl := congrArg String.toList h
@@ -3627,16 +2468,6 @@ public theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
   exact ⟨UInt8.toNat_inj.mp (by omega), UInt8.toNat_inj.mp (by omega),
     UInt8.toNat_inj.mp (by omega)⟩
 
-/-- The good theorem, the contrapositive of "frozen at authoring time": for
-a role `r` and palettes that differ at `r`, the emitted `:root` custom
-property declarations differ — so a use of `r` renders in the palette's
-colour for `r`, because its span references `var(--ltx-…, …)`
-(`role_use_names_its_token`) and that reference resolves against exactly
-this block. A hardcoded `\textcolor{#808080}` cannot satisfy this: it
-emits no variable reference and no palette can reach it. Stated over
-`paletteVars ∘ Palette.declare` — the palette-to-artifact dependence lives
-here, not in the whole `emit` string, whose `intercalate` structure would
-only obscure the same fact. -/
 public theorem role_use_is_palette_dependent (p : Ir.Palette) (r : Ir.ColorRef)
     (c₁ c₂ : Ir.Color) (hne : (c₁.r, c₁.g, c₁.b) ≠ (c₂.r, c₂.g, c₂.b)) :
     paletteVars (p.declare r c₁) ≠ paletteVars (p.declare r c₂) := by
@@ -3653,19 +2484,15 @@ public theorem role_use_is_palette_dependent (p : Ir.Palette) (r : Ir.ColorRef)
   have hrgb := cssColor_inj c₁ c₂ (String.ext (List.append_cancel_right h3))
   exact hne (by simp [hrgb.1, hrgb.2.1, hrgb.2.2])
 
-/-- The synthetic family for a slot: `ltx-body`, `ltx-sans`, `ltx-mono` —
-never the face's own name, so an installed font of the same name can never
-substitute for the shipped file. -/
+/-- A slot's synthetic family name, never the face's own, so no installed font can substitute. -/
 private def slotName : Nat → String
   | 0 => "body"
   | 1 => "sans"
   | 2 => "mono"
   | n => toString n
 
-/-- The synthetic families face `i` serves: one per slot any of whose
-index entries — the standard corners and every declared or used weight —
-resolves to it, plus `ltx-math` for the math face. Empty for a face only
-per-glyph fallback reaches. -/
+/-- The synthetic families face `i` serves: each slot resolving to it, and `ltx-math` for the
+math face. -/
 private def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
   let slots := fs.index.foldl (fun n e => max n (e.1.1 + 1)) 3
   ((List.range slots).filterMap fun s =>
@@ -3674,11 +2501,7 @@ private def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
     else none) ++
   (if fs.math == some i then ["ltx-math"] else [])
 
-/-- Every face ships under at least one family: the slots' own, or a
-fallback family of its own (`ltx-fb<i>`) that the slot stacks append, so
-the browser's per-character walk down the family list (CSS Fonts 4 §5.2,
-the font matching algorithm runs per character) reaches it — the same
-per-scalar recourse the PDF path takes through `FontSet.fallback`. -/
+/-- The families face `i` ships under: its slots', or a fallback family of its own. -/
 public def familiesOf (fs : Font.FontSet) (i : Nat) : List String :=
   if (namedFamiliesOf fs i).isEmpty then [s!"ltx-fb{i}"] else namedFamiliesOf fs i
 
@@ -3688,38 +2511,26 @@ public theorem familiesOf_ne_nil (fs : Font.FontSet) (i : Nat) : familiesOf fs i
   · simp
   · next h => exact fun hn => h (by simp [hn])
 
-/-- A slot's full stack: its own family first, then every other family of
-the set in face order, then the honest generic. The browser walks the list
-per character (CSS Fonts 4 §5.2), which is the CSS spelling of
-`FontSet.fallbackFor` — a glyph the slot's face lacks is set from the
-first face that covers it, in the set's own order — so the deck whose
-mono face lacks ⟨⟩ reads them from its math face on both pages. -/
+/-- A slot's font stack: its own family, every other family in face order, then the generic. -/
 private def stackFor (fs : Font.FontSet) (own generic : String) : String :=
   let rest := (((List.range fs.fonts.size).flatMap fun i =>
     familiesOf fs i).eraseDups.filter (· != own)).map fun f => s!"\"{f}\""
   String.intercalate ", " ([s!"\"{own}\""] ++ rest ++ [generic])
 
-/-- The face's file name in the sibling fonts directory. The index prefix
-makes the name collision-free by construction whatever the faces declare;
-the PostScript name, kept to its safe characters, keeps it readable. -/
+/-- The face's file name: its index and its PostScript name's safe characters. -/
 private def fontFileName (i : Nat) (f : Font.Font) : String :=
   let safe := f.psName.toList.filter fun c =>
     c.isAlphanum || c == '-' || c == '_' || c == '.'
   s!"f{i}-{String.ofList safe}." ++ (if f.isCff then "otf" else "ttf")
 
-/-- The browser consumes the resolved font program itself, with the same
-OpenType container distinction the PDF embedding reads. -/
 public def fontResource (f : Font.Font) : HtmlResource.Embedded :=
   { media := if f.isCff then .otf else .ttf, bytes := f.data }
 
 public def fontResources (fs : Font.FontSet) : Array HtmlResource.Embedded :=
   (Array.range fs.fonts.size).map fun i => fontResource (fs.get i)
 
-/-- One `@font-face` the page ships: face `index` of the set under one
-synthetic family, with the descriptors CSS matches on — the face's own
-declared weight and italic flag, never the slot's request, so a family's
-Light stays 300 and the browser's matching (CSS Fonts 4 §5.2) does the
-rest. -/
+/-- One `@font-face` the page ships: a face under one synthetic family, with the face's own
+weight and italic flag. -/
 public structure FontFace where
   index : Nat
   family : String
@@ -3729,11 +2540,8 @@ public structure FontFace where
   format : String
   deriving Repr, BEq
 
-/-- The `@font-face` list of the artifact: every face of the resolved set,
-under every synthetic family it serves — the HTML's projection of the one
-`FontSet` the PDF embeds from. It never sees layout's used-glyph data, so
-it declares the whole set: the superset of the PDF's `keep`, which is what
-`Pdf.html_fonts_cover_pdf` states. -/
+/-- The `@font-face` list: every face of the resolved set, under every synthetic family it
+serves. -/
 public def shipFaces (fs : Font.FontSet) : Array FontFace :=
   (Array.range fs.fonts.size).flatMap fun i =>
     (familiesOf fs i).toArray.map fun fam =>
@@ -3744,8 +2552,6 @@ public def shipFaces (fs : Font.FontSet) : Array FontFace :=
         file := fontFileName i (fs.get i)
         format := if (fs.get i).isCff then "opentype" else "truetype" }
 
-/-- Every face of the set is declared: for each index a `@font-face` entry
-carries it — the emitter-side half of `Pdf.html_fonts_cover_pdf`. -/
 public theorem shipFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
     ∃ ff ∈ shipFaces fs, ff.index = k := by
   obtain ⟨fam, rest, heq⟩ : ∃ a l, familiesOf fs k = a :: l := by
@@ -3760,12 +2566,7 @@ public theorem shipFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts
   simp only [Array.mem_map, List.mem_toArray]
   exact ⟨fam, by simp [heq], rfl⟩
 
-/-- What this emitter realizes of the output contract, as values the driver
-holds against the document's declaration (`Ir.OutputContract.unmet`):
-alternatives as the `alt` attribute, colours sRGB by CSS's definition,
-captured faces embedded in the page when the document's policy asks
-(`shipFaces`), one constant class-gated script, mathematics as MathML
-Core. Nothing in `emit` reads this record. -/
+/-- What this emitter realizes of the output contract. -/
 public def profile : Ir.Realization :=
   { alternatives := .attribute
     color := .srgbByDefinition
@@ -3773,14 +2574,10 @@ public def profile : Ir.Realization :=
     scripting := .constantGated
     math := .mathmlCore }
 
-/-- The undeclared contract is met by this emitter (`_exact`): a document
-that declares no contract key gets no W0701 from its page. -/
 public theorem html_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] :=
   Ir.OutputContract.unmet_default_exact profile
 
-/-- Every face declared in CSS embeds a captured font program from the
-resolved set. This is an artifact resource fact; the shared face-coverage
-contract remains `shipFaces_covers`. -/
+/-- Artifact-specific. -/
 public theorem shipFaces_src_shipped (fs : Font.FontSet) :
     ∀ ff ∈ shipFaces fs, fontResource (fs.get ff.index) ∈ fontResources fs := by
   intro ff hff
@@ -3790,34 +2587,23 @@ public theorem shipFaces_src_shipped (fs : Font.FontSet) :
   obtain ⟨fam, _, rfl⟩ := hmem
   exact Array.mem_map.mpr ⟨i, hi, rfl⟩
 
-/-! ## Captured image resources
+/-! ## Image resources -/
 
-The primary and static media faces are embedded from their captured bytes.
-The legacy asset names below remain staging identities for report readers;
-they no longer determine a published page's URLs or filesystem writes. -/
-
-/-- A captured image's staging identity for report readers, including the
-store entry and whether it is the static poster. Published HTML embeds the
-resource bytes directly. -/
+/-- A captured image's staging identity for report readers. -/
 public structure ImageAsset where
   file : String
   srcIndex : Nat
   poster : Bool := false
   deriving Repr, BEq
 
-/-- The last path segment of a source spelling. -/
 private def basename (p : String) : String := (p.splitOn "/").getLastD p
 
-/-- The path the driver resolved for an entry: graphicx's extension
-resolution recorded in `href` when the spelling was bare, else the spelling
-itself — the file whose bytes were decoded. -/
+/-- The path the driver resolved for an entry, else its spelling. -/
 public def resolvedSrc (en : Image.Loaded) : String :=
   if en.href.isEmpty then en.src else en.href
 
-/-- Which entries supply browser resources: a loaded image with a browser face. An SVG's print
-face is a PDF form, but its original bytes still belong in the browser.
-A PDF may also carry a converted SVG. Boundary pictures publish through
-their own list. -/
+/-- Whether an entry supplies a browser resource: a loaded image with a browser face, boundary
+pictures aside. -/
 public def imageShips (en : Image.Loaded) : Bool :=
   -- premise: Tests.svgAssetChecks — a failed conversion publishes no source bytes.
   -- premise: Tests.svgRasterFigureChecks — a drawn figure's raster ships in the figure's file.
@@ -3826,8 +2612,7 @@ public def imageShips (en : Image.Loaded) : Bool :=
   | some i => i.form.isNone || Image.isSvg (resolvedSrc en) || en.webSvg.isSome
   | none => false
 
-/-- A converted browser face takes the source's basename with an SVG
-extension. The store index still distinguishes different selected pages. -/
+/-- A converted browser face's source: the source's basename with an SVG extension. -/
 private def browserAssetSrc (en : Image.Loaded) : String :=
   if en.webSvg.isSome then ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
   else resolvedSrc en
@@ -3836,8 +2621,7 @@ private def imageFileName (kind : String) (k : Nat) (href : String)
     (data : Option ByteArray) : String :=
   let assetPrefix := kind ++ ListMark.arabicN k ++ "-" ++
     (data.map (fun bytes => Flate.contentKey bytes ++ "-")).getD ""
-  -- Linux NAME_MAX is 255 bytes. Keep the format extension and a readable
-  -- suffix when the content key would push a valid basename over that limit.
+  -- Linux NAME_MAX is 255 bytes
   let budget := 255 - assetPrefix.utf8ByteSize
   let base := basename href
   let suffix := if base.utf8ByteSize ≤ budget then base else
@@ -3846,20 +2630,16 @@ private def imageFileName (kind : String) (k : Nat) (href : String)
       (used, if used ≤ budget then String.singleton c ++ tail else tail)) (0, "")).2
   assetPrefix ++ suffix
 
-/-- The index keeps distinct requests apart (`imageAssetName_inj`).
-Captured bytes add their content key so rebuilding an image changes its
-browser cache identity; the basename keeps the file readable. -/
+/-- An image's asset name: its store index, its content key and its basename. -/
 public def imageAssetName (k : Nat) (href : String) (data : Option ByteArray := none) : String :=
   imageFileName "i" k href data
 
-/-- The static face has its own namespace: the same entry's moving SVG and
-print poster must never overwrite each other. -/
+/-- The static face's asset name, in a namespace of its own. -/
 private def imagePosterName (k : Nat) (en : Image.Loaded) : String :=
   imageFileName "p" k ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
     en.posterSvg
 
-/-- The copy requests of the page: primary faces in store order, followed
-by any static faces selected by print or reduced-motion media. -/
+/-- The page's image assets: primary faces in store order, then static faces. -/
 public def imageAssets (imgs : Image.Store) : Array ImageAsset :=
   ((Array.range imgs.entries.size).filterMap fun k =>
     (imgs.get? k).bind fun en =>
@@ -3872,15 +2652,13 @@ public def imageAssets (imgs : Image.Store) : Array ImageAsset :=
         some { file := imagePosterName k en, srcIndex := k, poster := true }
       else none)
 
-/-- File names remain literal on disk. URL path separators survive encoding,
-but spaces and commas must not split a `srcset` candidate. -/
+/-- An asset's URL, percent-encoded so a `srcset` candidate never splits. -/
 public def imageAssetHref (assetsDir file : String) : String :=
   toString (Std.Http.URI.EncodedString.encode
     (r := fun c => Std.Http.Internal.Char.isUnreserved c || c == '/'.toUInt8)
     (assetsDir ++ "/" ++ file))
 
-/-- A browser face consists of captured bytes, never a path read again at
-publication. Boundary pictures enter through the same converted SVG field. -/
+/-- An entry's browser face, from its captured bytes. -/
 public def imageResource? (en : Image.Loaded) : Option HtmlResource.Embedded := do
   if en.webError.isSome || !(imageShips en ||
       (en.src.startsWith Ir.picSrcPrefix && en.webSvg.isSome)) then none else do
@@ -3897,8 +2675,7 @@ public def imagePosterResource? (en : Image.Loaded) : Option HtmlResource.Embedd
 public def imageResources (imgs : Image.Store) : Array HtmlResource.Embedded :=
   imgs.entries.filterMap imageResource? ++ imgs.entries.filterMap imagePosterResource?
 
-/-- Selection is part of the request key. Missing capture remains unresolved
-and is rejected by checked publication; it is never silently omitted. -/
+/-- The embedded URL of a request's browser face; a missing capture stays unresolved. -/
 public def imageRequestHref (imgs : Image.Store) (req : Image.Request) : String :=
   match imgs.findRequest? req |>.bind imgs.get? with
   | some en => (imageResource? en |>.map (·.uri)).getD (resolvedSrc en)
@@ -3907,7 +2684,7 @@ public def imageRequestHref (imgs : Image.Store) (req : Image.Request) : String 
 public def imageHref (imgs : Image.Store) (src : String) : String :=
   imageRequestHref imgs { src }
 
-/-- The static media source embeds its own captured SVG. -/
+/-- The embedded URL of a request's static face. -/
 public def imagePosterHref (imgs : Image.Store) (req : Image.Request) :
     Option String := do
   let k ← imgs.findRequest? req
@@ -3915,16 +2692,9 @@ public def imagePosterHref (imgs : Image.Store) (req : Image.Request) :
   let r ← imagePosterResource? en
   some r.uri
 
-/-- A length on the CSS ruler, in whole pixels, to nearest: CSS fixes
-1in = 72pt = 96px (CSS Values 4 §6.2), so a point reads as 4/3 px — the
-ruler a browser measures an SVG's `width="56.693pt"` on, and the unit an
-`<img>`'s `width`/`height` attributes are in (HTML §4.8.4.4). Nearest, as
-Chromium reports the natural size of that SVG: 76 × 38. -/
+/-- A length in whole CSS pixels, to nearest, at 1in = 72pt = 96px. -/
 public def cssPxOfSp (l : Int) : Nat := ((4 * l + 3 * spPerPt / 2) / (3 * spPerPt)).toNat
 
-/-- The pixel count is the nearest one (`_between`): for any length, its
-pixel count times the pixel's width in sp lies within half a pixel of it.
-Spelled `Int` so `omega` reads it. -/
 public theorem cssPxOfSp_between (l : Int) (h : 0 ≤ l) :
     3 * spPerPt * (cssPxOfSp l : Int) ≤ 4 * l + 3 * spPerPt / 2 ∧
       4 * l + 3 * spPerPt / 2 < 3 * spPerPt * ((cssPxOfSp l : Int) + 1) := by
@@ -3932,25 +2702,13 @@ public theorem cssPxOfSp_between (l : Int) (h : 0 ≤ l) :
   simp only [spPerPt]
   omega
 
-/-- The size an `<img>` declares, in the CSS pixels a browser measures the
-image in: a raster's pixel grid, and a PDF page's box — a boundary
-picture's too, whose SVG face carries the same box in pt — on the CSS ruler
-(`cssPxOfSp`). A PDF page's pixel fields are its box rounded to whole
-points (`Image.probe`: only the dump and the placeholder read them); written
-as px they undersized every vector image by a quarter, 56 for a box a
-browser draws 76 wide. -/
+/-- The size an `<img>` declares, in CSS pixels: a raster's grid, or a PDF page's box. -/
 public def intrinsicPx (p : Image.Plan) : Nat × Nat :=
   match p.form with
   | some f => (cssPxOfSp f.val.w, cssPxOfSp f.val.h)
   | none => (p.pxW, p.pxH)
 
-/-- Is this entry a page no browser decodes in an `<img>`? A decoded entry
-is a raster or carries an SVG browser face (`imageShips`), or is a
-PDF page with no browser face (a form XObject: vector for the PDF artifact,
-nothing at all to an `<img>`). A boundary picture ships its SVG face and
-is not one. Every other failure — a file that did not load, a boundary picture
-with no SVG face — was named where it failed, by a diagnostic whose subject
-is the source, so it is not named twice. -/
+/-- Whether an entry is a PDF page with no browser face, boundary pictures aside. -/
 public def pdfPageImg (en : Image.Loaded) : Bool :=
   -- premise: Tests.svgAssetChecks — the SVG face is linked and published.
   !en.src.startsWith Ir.picSrcPrefix && !imageShips en &&
@@ -3958,19 +2716,13 @@ public def pdfPageImg (en : Image.Loaded) : Bool :=
   | some p => p.form.isSome
   | none => false
 
-/-- The emitted image requests with no browser face, each once, in page
-order. The typed node's store index retains page and animation selection;
-resolved filenames alone cannot distinguish those requests. -/
+/-- The emitted PDF-page image requests with no browser face, each once, in page order. -/
 public def undecodableIndices (imgs : Image.Store) (uses : Array String) : Array Nat :=
   ((uses.filterMap String.toNat?).foldl (fun acc k =>
     if acc.contains k then acc else acc.push k) #[]).filter fun k =>
       (imgs.get? k).any pdfPageImg
 
-/-- W0605: this image has no browser face. A failed conversion retains its
-reason, as the line's detail; an unconverted PDF retains its format
-explanation. An emitted use carries its store index in the subject so
-distinct requests sharing one filename remain distinct losses under site
-accounting. -/
+/-- W0605, an image with no browser face, its subject keyed by store index. -/
 public def undecodableDiag (src : String) (reason : Option String := none)
     (index : Option Nat := none) : Diag :=
   Diag.of .W0605
@@ -3986,7 +2738,6 @@ placeholder box instead")
     (help := some "for the web page, \\includegraphics a PNG export inside \
 \\begin{ifbackend}{html}, and move this include inside \\begin{ifbackend}{pdf}")
 
-/-- No decimal digit is the separator the asset name is split on. -/
 private theorem arabicN_no_dash (k : Nat) : ∀ c ∈ (ListMark.arabicN k).toList, c ≠ '-' := by
   intro c hc heq
   simp only [ListMark.arabicN, String.toList_ofList, List.mem_reverse] at hc
@@ -4015,10 +2766,6 @@ private theorem dash_split (a a' r r' : List Char)
         (fun x hx => ha' x (List.mem_cons_of_mem _ hx)) h.2
       rw [h.1, this]
 
-/-- Equal asset names come from equal store indices (`_inj`): the index
-prefix carries identity, so two sources with one basename in two
-directories never share a staging identity. Basenames need not be distinct
-and are not claimed to be. -/
 public theorem imageAssetName_inj {k k' : Nat} {h h' : String} {data data' : Option ByteArray}
     (e : imageAssetName k h data = imageAssetName k' h' data') : k = k' := by
   have hl := congrArg String.toList e
@@ -4029,9 +2776,6 @@ public theorem imageAssetName_inj {k k' : Nat} {h h' : String} {data data' : Opt
   exact ListMark.arabicN_inj (String.ext
     (dash_split _ _ _ _ (arabicN_no_dash k) (arabicN_no_dash k') (List.cons.inj hl).2))
 
-/-- Every shipping entry has an asset row (`_covers`): for each store index
-whose entry has a browser face, `imageAssets` carries a request naming it —
-the `shipFaces_covers` shape. -/
 public theorem imageAssets_covers (imgs : Image.Store) {k : Nat} {en : Image.Loaded}
     (hen : imgs.get? k = some en) (hr : imageShips en = true) :
     ∃ a ∈ imageAssets imgs, a.srcIndex = k := by
@@ -4044,8 +2788,6 @@ public theorem imageAssets_covers (imgs : Image.Store) {k : Nat} {en : Image.Loa
   · exact (Array.getElem?_eq_some_iff.mp hen).1
   · simp [hen, hr]
 
-/-- Every embedded primary carrier is drawn from the captured resource
-projection. No claim about a directory or subsequent file read is needed. -/
 public theorem img_request_src_shipped (imgs : Image.Store) (req : Image.Request)
     {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
     (hk : imgs.findRequest? req = some k) (hen : imgs.get? k = some en)
@@ -4055,7 +2797,6 @@ public theorem img_request_src_shipped (imgs : Image.Store) (req : Image.Request
   · exact Array.mem_of_getElem? hen
   · simp [imageRequestHref, hk, hen, hr]
 
-/-- The default request projects the same captured resource guarantee. -/
 public theorem img_src_shipped (imgs : Image.Store) (src : String)
     {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
     (hk : imgs.find? src = some k) (hen : imgs.get? k = some en)
@@ -4063,7 +2804,6 @@ public theorem img_src_shipped (imgs : Image.Store) (src : String)
     r ∈ imageResources imgs ∧ imageHref imgs src = r.uri :=
   img_request_src_shipped imgs { src } hk hen hr
 
-/-- Every static media carrier embeds the exact captured poster bytes. -/
 public theorem imagePosterHref_covers (imgs : Image.Store) (req : Image.Request)
     {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
     (hk : imgs.findRequest? req = some k) (hen : imgs.get? k = some en)
@@ -4078,36 +2818,19 @@ private def fontFaceRule (fs : Font.FontSet) (ff : FontFace) : String :=
   s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
   s!"src: url(\"{(fontResource (fs.get ff.index)).uri}\") format(\"{ff.format}\"); }\n"
 
-/-- The `@font-face` block, one rule per `shipFaces` entry. -/
 private def fontFaceCss (fs : Font.FontSet) : String :=
   String.join ((shipFaces fs).toList.map (fontFaceRule fs))
 
-/-- The face-shipping rules: every `@font-face`, then the body weight the
-document resolved and the synthesis contract. The slot's regular face sets
-text, so the request must name that face's weight — a Light body family is
-a 300, and the browser's matching (CSS Fonts 4 §5.2) would hand a bare
-default `font-weight: 400` the family's Regular instead. And the engine
-never fakes a weight or a slant: a missing variant resolves to a real face
-or stays upright (`FontSet.lookup`), in both backends — so synthesis is
-limited to small caps, which both backends do synthesise (CSS Fonts 4
-§font-synthesis; the PDF's is Layout's own, from its GSUB read). Without
-this line a title asking for 600 over a 300/400 family renders faux-bold
-where the PDF sets the family's real Regular. The weight is also the
-custom property `--ltx-body-weight`, so furniture set outside the frame
-it stands in (the footline, `footlineCss`) restores the body's weight by
-name: a keyword `normal` is 400, the family's Regular again. -/
+/-- The `@font-face` rules, the body weight the document resolved, and small caps as the only
+synthesis. -/
 private def fontCss (fs : Font.FontSet) : String :=
   let w := (fs.get (fs.lookup 0 400 false)).weight
   fontFaceCss fs ++
   s!"body \{ font-weight: {w}; --ltx-body-weight: {w}; " ++
   "font-synthesis: small-caps; }\n"
 
-/-- The generic family closing a slot's stack — what a reader sees only if
-the shipped face fails to load. From the face's own declarations: `post`
-isFixedPitch is monospace, else OS/2 sFamilyClass (8 = Sans Serif, 1–7 the
-serif classes — OpenType spec, OS/2 table, sFamilyClass), else the slot's
-declared kind, passed in by the caller who knows which declaration filled
-the slot — never a guess from the family name. -/
+/-- The generic family closing a slot's stack: monospace by `post` isFixedPitch, else by OS/2
+sFamilyClass (8 sans serif, 1–7 serif; OpenType OS/2 table), else the declared kind. -/
 public def genericFor (fs : Font.FontSet) (slot : Nat) (declared : String) : String :=
   let f := fs.get (fs.lookup slot 400 false)
   if f.isFixedPitch then "monospace"
@@ -4115,30 +2838,22 @@ public def genericFor (fs : Font.FontSet) (slot : Nat) (declared : String) : Str
   else if 1 ≤ f.familyClass && f.familyClass ≤ 7 then "serif"
   else declared
 
-/-- Design tokens become CSS custom properties, so the same declarations drive
-both backends and a reader's stylesheet can override them. With a resolved
-`FontSet` the slot stacks name only the synthetic families (plus the honest
-generic), exactly the faces the sibling directory ships; without one they
-name the declared families against the platform, today's degraded state. -/
+/-- Design tokens as CSS custom properties. -/
 private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
     (taken : List String := []) : String :=
   let pal := cfg.floorPal
   let aliases := readerAliases pal roles taken
-  -- A declared role the page reads nothing of has no declaration either.
   let palette := (pal.entries.toList.filterMap fun (n, c) => match n with
       | .role r => if roles.contains r then some (paletteVar n c) else none
       | .color _ => some (paletteVar n c)) ++ aliases
-  -- beamer's lineage states its trivlist and float spaces in the page's
-  -- unit (`lineageSkipVars`).
+  -- beamer's lineage states these in the page's unit (`lineageSkipVars`)
   let stated (n : String) : Bool :=
     doc.docClass.record.lists == .beamer && (n == Ir.trivlistSkipName || n == "floatsep")
   let tokens := (doc.tokens.entries.toList.filter (!stated ·.1)).filterMap fun (n, g) =>
     (tokenVar? n).map fun v => s!"    {v}: {tokenCss (lengthBasisOf doc) n g.width};"
   let fonts := match cfg.fonts with
     | some fs =>
-      -- The declared kind per slot: in the slides class the text slot is
-      -- filled from the sans declaration (beamer user guide §18, the
-      -- default font theme is sans serif; the driver resolves it so).
+      -- the slides class fills the text slot from the sans declaration, beamer's default
       let bodyDeclared :=
         if doc.docClass == DocClass.slides && doc.fonts.sans.isSome then "sans-serif"
         else "serif"
@@ -4147,7 +2862,6 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
       [s!"    --font-body: {slot 0 bodyDeclared};",
        s!"    --font-sans: {slot 1 "sans-serif"};",
        s!"    --font-mono: {slot 2 "monospace"};"] ++
-      -- Each declared family's slot: its own stack, its generic the body's.
       (doc.fonts.families.toList.zipIdx.map fun (_, i) =>
         let s := Ir.familySlotBase + i
         s!"    --font-{s}: {slot s bodyDeclared};") ++
@@ -4166,30 +2880,16 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
        | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
-/-- One scale step as a CSS size: the same table the PDF sets from
-(`Ir.sizeScale`), so a heading or a standout is the size the scale says,
-never a re-spelled decimal. -/
+/-- One scale step as a CSS size, from `Ir.sizeScale`. -/
 private def scaleSize (name : String) (unit : String) : String :=
   milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
 
-/-- The leading a named size step sets, as a CSS line height over the
-step's own font size, in milli: the page's leading for the step at the
-document's body — `Ir.stepLead` over the document's skip column under the
-page's factor, the function the page's line boxes read — over the step's
-size there, `k` per mille of the body. A unitless line height multiplies
-the element's own size, so on whatever base the step's size scales — the
-body, or a heading's — the box is the step's leading on it, as the page's
-is (`stepLineHeight_between`). -/
+/-- The leading a named size step sets, as a unitless CSS line height in milli. -/
 @[expose] public def stepLineHeightMilli (skips : List (String × Nat)) (factor : Nat)
     (body : Dim.Sp) (step : String) (k : Nat) : Nat :=
   let size := max 1 (body * (k : Int) / 1000)
   ((Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 + size / 2) / size).toNat
 
-/-- **The deck's step line height is the page's leading over the step's
-size, to the milli** (`_between`): for any step of the document's own ladder
-and skip column at its body, the emitted line height times the step's size
-stands within half a milli of that size of the leading the page sets the
-step's lines at — one value of the IR read by both artifacts. -/
 public theorem stepLineHeight_between (skips : List (String × Nat)) (factor : Nat)
     (body : Int) (step : String) (k : Nat) (hs : 0 < body * (k : Int) / 1000)
     (hl : 0 ≤ Ir.stepSkip (Ir.stepLead skips step body) body factor) :
@@ -4209,23 +2909,7 @@ public theorem stepLineHeight_between (skips : List (String × Nat)) (factor : N
   simp only [hm, Int.toNat_of_nonneg hq]
   exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hs), Int.lt_ediv_add_one_mul_self _ hs⟩
 
-/-- Size rules generated from the document's ladder (`Ir.PageSpec.scale`),
-so the two backends cannot drift apart on what `\Huge` means — the PDF
-resolves the same runs through the same ladder (`Layout`'s flatten state).
-`em` rather than `rem`: sizes nest. On a deck a step's leading
-(`stepLineHeightMilli`, over the document's skip column, factor and body) is
-a class of its own, `lead-<step>`, carried by the block whose lines lead at
-the step, over the size the step sets — a paragraph, item or cell set
-wholly in the step carries that size too (`.size-<step>.lead-<step>`), and a
-heading or title the step sets keeps its own size and its content's span,
-which carries the size and takes the leading (`.lead-<step> .size-<step>`):
-the heading itself stands no line height (0), so a strut of its own smaller
-type cannot stand the span's baseline off its leading, and its lines are
-the page's, the step's `\baselineskip` on the base the step scales. Any
-other size span states no line height: it inherits its block's unitless
-one, as the page leads a run at its paragraph's leading in its proportion
-to the paragraph's size (`Ir.runLead`), so a smaller span never moves its
-line. -/
+/-- Size rules from the document's ladder, and on a deck each step's leading class. -/
 private def sizeRules (scale : List (String × Nat))
     (deck : Option (List (String × Nat) × Nat × Dim.Sp) := none) : String :=
   String.join (scale.map fun (name, k) =>
@@ -4239,66 +2923,25 @@ private def sizeRules (scale : List (String × Nat))
           s!"{milliFactor (stepLineHeightMilli skips factor body name k)}; }\n")
     | none => s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
-/-! ### The deck stylesheet, as typed rules
+/-! ## Deck stylesheet -/
 
-The engine cannot prove what a browser does; it can prove what it emits,
-and emit so that correctness does not depend on which features a browser
-has. Each deck rule is a value (`DeckRule`) carrying its selector, its
-declarations, its feature gate and its media partition; one grouping
-emitter (`emitDeckRules`) realizes the `@supports` blocks, the
-reduced-motion partition and the print partition; and the guarantees are
-theorems quantified over the rule set — `deck_css_partition`,
-`floor_is_baseline`, `floor_hides_nothing` with `floor_opacity_mem` and
-`floor_covered_script_gated`, `guards_by_construction`,
-`snapped_uncovers_every_step`, `snap_pages_partition_frames`,
-`deck_text_path_free`, and the two cross-backend ones the overlay rules
-owe (`html_step_pending_agree`, `alt_backend_agree`) — so a new rule is
-in every contract the moment it is written. Minimal changes by
-construction: adding or dropping a feature dependency is one `requires`
-field; adding a browser fact is one `Feature` row; nothing else moves.
-
-What stays measured, never proved: Chromium's directional snapping on
-key presses, Firefox's lack of scroll-driven timelines, the page-scroll
-fraction. Those are browser facts, held by the dated Playwright probes
-recorded in PLAN's vertical-deck entry — the oracle, not a theorem. -/
-
-/-- A browser feature the deck's stylesheet gates on. Each constructor
-carries its `@supports` test (`Feature.test`), a sourced support note
-(`Feature.support`), and the property names and selector fragments whose
-meaning depends on it (`Feature.dependsOn`) — the table
-`deck_css_partition` is stated over. Registering a feature is one
-constructor and one arm in each of the three tables; `all_complete` and
-`all_nodup` make a miscount a build failure in both directions. -/
+/-- A browser feature the deck's stylesheet gates on. -/
 public inductive Feature where
-  /-- Scroll-driven animations' view progress timelines
-  (`animation-timeline: view()`, Scroll-driven Animations 1 §3.1): the
-  push and the scrubbed step uncover ride them. -/
+  /-- View progress timelines, `animation-timeline: view()`. -/
   | viewTimeline
-  /-- Scroll-state container queries (CSS Conditional 5,
-  `container-type: scroll-state`): no rule uses it today; the row stands
-  so a rule adopting `scroll-state()` is in the partition contract the
-  moment it is written. -/
+  /-- Scroll-state container queries, `container-type: scroll-state`. -/
   | scrollState
-  /-- The relational selector `:has()` (Selectors 4 §4.5): no rule uses
-  it today — the floor's fragment-driven uncover moved onto the script's
-  `data-snapped` attribute — and the row stands so a rule adopting
-  `:has()` is in the partition contract the moment it is written. -/
+  /-- The relational selector `:has()`. -/
   | has
   deriving Repr, DecidableEq
 
-/-- The `@supports` condition that detects the feature. The `has` test is
-`selector()` (CSS Conditional 4 §6.1), itself universal since 2020 —
-Chromium 83+, Firefox 69+, Safari 14.1+ (caniuse
-`mdn-css_at-rules_supports_selector`, read 2026-09-20) — so an engine old
-enough to lack it drops the gated block exactly as it would have dropped
-the unparseable selector. -/
+/-- The `@supports` condition that detects the feature. -/
 public def Feature.test : Feature → String
   | .viewTimeline => "(animation-timeline: view())"
   | .scrollState => "(container-type: scroll-state)"
   | .has => "selector(:has(a))"
 
-/-- The sourced support note: engine, version, date — caniuse/MDN, read
-2026-09-20. A browser fact lives here, nowhere else. -/
+/-- The sourced support note: engines and versions, from caniuse and MDN. -/
 public def Feature.support : Feature → String
   | .viewTimeline =>
     "Chromium 115+ (Jul 2023), Safari 26; Firefox release unsupported \
@@ -4311,18 +2954,13 @@ container queries / caniuse, read 2026-09-20"
     "Chromium 105+ (Aug 2022), Firefox 121+ (Dec 2023), Safari 15.4+ \
 (Mar 2022) — caniuse css-has, read 2026-09-20"
 
-/-- The exact property names whose meaning depends on the feature. A
-capability enters a rule through the property that carries it
-(`animation-timeline`, never bare `view(y)`): a value rides its
-property, so the scan reads names, not values. -/
+/-- The property names whose meaning depends on the feature. -/
 public def Feature.dependsOnProps : Feature → List String
   | .viewTimeline => ["animation-timeline", "view-timeline", "animation-range"]
   | .scrollState => []
   | .has => []
 
-/-- The selector fragments whose meaning depends on the feature. Every
-fragment is digit-free, so it lives whole inside one literal selector
-chunk (`SelChunk.lits`). -/
+/-- The digit-free selector fragments whose meaning depends on the feature. -/
 public def Feature.dependsOnSel : Feature → List String
   | .viewTimeline => []
   | .scrollState => ["scroll-state("]
@@ -4336,34 +2974,19 @@ public theorem Feature.all_complete : ∀ f : Feature, f ∈ Feature.all := by
 
 public theorem Feature.all_nodup : Feature.all.Nodup := by decide
 
-/-- Does `s` contain `frag`? Spelled over the character list so the
-partition proofs evaluate it definitionally. -/
 private def hasFragAux (pat : List Char) : List Char → Bool
   | [] => pat.isEmpty
   | l@(_ :: t) => pat.isPrefixOf l || hasFragAux pat t
 
 public def hasFrag (s frag : String) : Bool := hasFragAux frag.toList s.toList
 
-/-- One chunk of a deck selector: literal syntax, an interpolated
-ordinal, or the uncovered-step alternatives of the floor's `:is()`.
-Ordinals stay apart from the syntax so the feature scan reads syntax and
-never a numeral: every fragment in `Feature.dependsOn` is digit-free and
-each syntactic token lives whole in one literal, so scanning
-`SelChunk.lits` is scanning the rendered selector. -/
+/-- One chunk of a deck selector: literal syntax, an interpolated ordinal, or step alternatives. -/
 public inductive SelChunk where
   | lit (s : String)
   | num (n : Nat)
-  /-- The uncovered-step alternatives `.step[data-step="j"], …`: the
-  list is the data (`snapped_uncovers_every_step` reads it, through
-  `uncoveredBy`), the template renders it. -/
+  /-- The uncovered-step alternatives, one `.step[data-step]` compound per step. -/
   | stepAlts (js : List Nat)
-  /-- One compound per declared attribute value on a class:
-  `.step-end[data-step-last="j"], …`, the range ends a snap stands past,
-  and the alternation groups a snap selects. The class and the attribute
-  are the engine's own constants and digit-free, so the rendered
-  selector's syntax still lives whole in the literal chunks; the values
-  are the rule's data, read off `Ir.stepPending` (`endedBy`,
-  `startedBy`). -/
+  /-- One compound per declared attribute value on a class. -/
   | attrAlts (cls attr : String) (js : List Nat)
   deriving Repr, DecidableEq
 
@@ -4385,21 +3008,16 @@ public def SelChunk.render : SelChunk → String
 private def renderSel (sel : List SelChunk) : String :=
   String.join (sel.map SelChunk.render)
 
-/-- Where a rule stands in the feature partition: the ungated base, a
-feature's `@supports` block, or its `@supports not` block. -/
+/-- Where a rule stands in the feature partition: the base, a feature's `@supports` block, or
+its `@supports not` block. -/
 public inductive Gate where
   | base
   | supported (f : Feature)
   | unsupported (f : Feature)
   deriving Repr, DecidableEq
 
-/-- The media partition a rule is emitted into: the screen deck, the
-screen deck under `prefers-reduced-motion: reduce` (CSS Media Queries 5
-§12.1), the printed deck, or `stage` — both media, the rules that make a
-frame a stage wherever it is one: its box, its type, its furniture. The
-printed deck is the screen deck's stage paged, reveal.js's `?print-pdf`
-without its layout pass: the page is the stage (`deckPageRule`), so a
-length stated as a share of the stage means the same on paper. -/
+/-- The media partition a rule is emitted into: screen, reduced motion, print, or the stage in
+both media. -/
 public inductive Part where
   | screen
   | reduce
@@ -4407,8 +3025,6 @@ public inductive Part where
   | stage
   deriving Repr, DecidableEq
 
-/-- One deck rule — what a string concatenation used to spell, as a
-value the deck theorems quantify over. -/
 public structure DeckRule where
   selector : List SelChunk
   decls : List (String × String)
@@ -4416,19 +3032,13 @@ public structure DeckRule where
   part : Part := .screen
   deriving Repr, DecidableEq
 
-/-- Does the rule's syntax use something whose meaning depends on `f`?
-The scan reads the declared property names by equality
-(`Feature.dependsOnProps`) and the selector's literal chunks by
-substring (`Feature.dependsOnSel`); a value rides its property. -/
+/-- Whether the rule's property names or selector literals depend on `f`. -/
 public def DeckRule.uses (r : DeckRule) (f : Feature) : Bool :=
   r.decls.any (fun d => f.dependsOnProps.contains d.1) ||
     f.dependsOnSel.any fun frag =>
       (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s frag
 
-/-- One rule's CSS text: `sel { p: v; … }`. A selector that opens blocks
-of its own (the keyframes chunks) closes every block it left open — its
-opens less the closes it already spelled (the explicit `to` frame rides
-the `ltx-uncover` selector). -/
+/-- One rule's CSS text, closing every block its selector opens. -/
 public def DeckRule.render (r : DeckRule) : String :=
   let sel := renderSel r.selector
   sel ++ " { " ++
@@ -4436,9 +3046,7 @@ public def DeckRule.render (r : DeckRule) : String :=
     "}" ++ String.join (List.replicate
       (sel.toList.count '{' - sel.toList.count '}') " }") ++ "\n"
 
-/-- One partition's rules grouped by gate — the one grouping function all
-three partitions ride: the base in order, then one `@supports` block per
-feature, then the `@supports not` blocks. An empty group emits no block. -/
+/-- One partition's rules grouped by gate: the base, then `@supports`, then `@supports not`. -/
 private def emitGates (rules : List DeckRule) : String :=
   let group (g : Gate) := rules.filter (fun r => r.requires == g)
   let block (test : String) (rs : List DeckRule) : String :=
@@ -4450,13 +3058,8 @@ private def emitGates (rules : List DeckRule) : String :=
     String.join (Feature.all.map fun f =>
       block ("not " ++ f.test) (group (.unsupported f)))
 
-/-- The deck stylesheet from its typed rules: the stage partition under
-both media first, then the screen partition with its gates, then the
-reduced-motion partition *after* the blocks it reverts (equal specificity,
-source order decides — CSS Cascade 5 §6.4), then the print partition.
-Every rule is emitted exactly once, in its declared partition and gate;
-the Tests deck block pins the declaration multiset against the typed
-set. -/
+/-- The deck stylesheet from its typed rules: stage, screen, reduced motion after the blocks it
+reverts, then print. -/
 public def emitDeckRules (rules : List DeckRule) : String :=
   let part (p : Part) := rules.filter (fun r => r.part == p)
   "@media screen, print {\n" ++ emitGates (part .stage) ++ "}\n" ++
@@ -4467,71 +3070,26 @@ public def emitDeckRules (rules : List DeckRule) : String :=
     "}\n" ++
   "@media print {\n" ++ emitGates (part .print) ++ "}\n"
 
-/-- The deck glides between snap pages; `guards_by_construction` holds
-its reduced-motion counterpart (`deckGlideGuard`) to it — the base
-stylesheet's global reduce block covers `animation` and `transition`
-only, and `scroll-behavior` is neither (WCAG 2.2 SC 2.3.3, technique
-C39). -/
 private def deckGlideRule : DeckRule :=
   { selector := [.lit "html"], decls := [("scroll-behavior", "smooth")] }
 
-/-- The one snap door: every snap area of the deck — a stepless frame's
-section, a section page, a stepped frame's spacers — carries `data-snap`
-at emission, and this ungated rule is the only place the deck declares
-snap alignment (CSS Scroll Snap 1 §4.1 `scroll-snap-align`, §4.3
-`scroll-snap-stop: always` so a fling cannot skip a page). The keyboard
-script reads the same attribute (`deckScript` queries `[data-snap]`), so
-the stylesheet and the script cannot name different snap points — and no
-two snap areas can start at one offset, the old horizontal row's
-torn-page suspect: the sticky stage never carries the attribute. -/
+/-- The one rule declaring snap alignment, on every `[data-snap]` area. -/
 private def deckSnapDoor : DeckRule :=
   { selector := [.lit "[data-snap]"]
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")] }
 
-/-- The frame's logo corner: `.slide-logo` spans the stage's safe-area
-content box, pinned to its bottom — the furniture band the PDF lays the
-logo into at the page's bottom margin — and distributes its content
-horizontally by the declared alignment, which rides the element's own
-inline style (`Ir.logoAlign`: `flex-end`, beamer's lower-right default,
-unless the document styles it). The stage anchors the strip
-(`deckStageRule`'s `position: relative`; a stepped track's sticky stage
-is a positioned box already), so the logo stands with its frame on every
-snap page, as the PDF repeats it on every page of the frame. -/
+/-- The frame's logo strip across the stage's safe area, pinned to its bottom. -/
 private def deckLogoRule : DeckRule :=
   { selector := [.lit ".slide-logo"]
     decls := [("position", "absolute"), ("bottom", safeareaVar),
       ("left", safeareaVar), ("right", safeareaVar), ("display", "flex")]
     part := .stage }
 
-/-- The stage's ground and ink: the declared pair in force where the stage
-stands — the document's (`:root`, `paletteVars`) or a body epoch's (the
-node's own inline redefinition, `withEpoch`; custom properties inherit) —
-and the stylesheet's own surface and ink only where nothing is declared.
-The value reveal.js spells per slide as `data-background-color` is the
-declaration this engine already has, the `bg` of the palette in force, so
-a frame's ground is data both backends read, never a stylesheet constant:
-painting `--surface` whatever the document declared shipped a dark
-declared ground as light ink on a light stage, and a theme's dark ink on
-the dark scheme's surface. -/
 public def stageGround : String := roleRef .page
 
-/-- The stage's ink, paired with `stageGround`: `color` is computed where it
-is declared, so a body epoch's `--fg` redefined on the stage reaches its text
-only through a declaration on the stage itself. -/
 public def stageInk : String := roleRef .ink
 
-/-- Every frame fills the viewport as one opaque column of the row:
-`100vw` wide (exactly the scrollport — the root clips y, so no scrollbar
-narrows the viewport under it), one stage tall, its ground and ink the
-declared pair in force (`stageGround`, `stageInk`) — opaque on every path,
-the user's own rule — and content that spills the stage stays reachable
-through the frame's own scroll (`overflow-y: auto`; the scrollbar is the
-visible control, the honest floor). Paper has no scroll, so print lifts
-the bound and the stage grows onto the next sheet
-(`print_lifts_stage_bounds_covers`). `position: relative` anchors the
-stage's own furniture (`deckLogoRule`); in a stepped track the sticky
-override (`stepStageRule`, higher specificity) is a positioned box
-already. -/
+/-- Every frame fills the viewport as one opaque stage, its spill reachable by its own scroll. -/
 private def deckStageRule : DeckRule :=
   { selector := [.lit "section.slide, section.section-page"]
     decls := [("width", "100vw"), ("flex", "0 0 100vw"),
@@ -4541,40 +3099,14 @@ private def deckStageRule : DeckRule :=
       ("position", "relative")]
     part := .stage }
 
-/-- The deck's stage typography, as the three values its base rules state:
-the body size and the root size as shares of the stage height (`vh`), and
-the body's line height as a factor. A deck is the page projected, so each is
-the PDF's own: the body is `deck_type_is_stage_ratio`'s share, the line
-height the leading the page sets the body at (`Ir.stepSkip`), and the root
-the body scaled by the print leading over the screen's (`deckRootMilli`),
-so the screen rhythm unit every gap rule is written in (`quantaRem`,
-`screenMilli`) is the print leading on the stage. -/
+/-- The deck's stage typography: body and root sizes as shares of the stage height, and the
+body's line height. -/
 public structure DeckType where
   body : String
   root : String
   leading : String
 
-/-- The deck's base screen rules — the floor every browser gets, no
-feature gate anywhere. The scroll space is horizontal and snaps
-mandatorily on the root (`html` carries `scroll-snap-type`, which UAs
-apply to the viewport — Scroll Snap 1 §4.1): frames stand `100vw` wide
-in a row, → is next — ←/→, Shift+wheel and a swipe page it natively, the
-constant script (`deckScript`) binds the rest of the keys — and the
-scroll itself is the motion, the physical reading of "the next slide";
-the title band never moves because every frame's band sits at the same
-y. One press lands one page: §6.1–6.2 (paging and arrow scrolls carry an
-intended direction and must ignore the starting snap position,
-`scroll-snap-stop: always` on the door) plus the root's `overflow-y:
-clip` — the deck never scrolls vertically, so no scrollbar can steal
-width from `100vw` and every snap area is exactly one scrollport wide
-(CSS Overflow 3 §3.1; fractional snap widths were the old row's
-several-presses suspect). The deck fills the viewport: type is set on
-`main` in `vh` — the PDF's own fontSize/stage-height ratio
-(`deck_type_is_stage_ratio`) — so every slide scales from the stage, and
-the headings retake their scale steps in `em` to ride the same base.
-`align-items: flex-start` keeps one frame's box its own. A section page
-owns a whole page of the deck, its title and bar centred on both axes
-(its own rule: a frame's children must keep the full slide width). -/
+/-- The deck's base screen rules, which no feature gates. -/
 private def deckBase (ty : DeckType) : List DeckRule :=
   [ { selector := [.lit "html"]
       decls := [("scroll-snap-type", "x mandatory"), ("overflow-y", "clip")] },
@@ -4598,38 +3130,25 @@ private def deckBase (ty : DeckType) : List DeckRule :=
       part := .stage },
     { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
       part := .stage },
-    -- The band keeps its title and padding even when the body overflows.
+    -- the band keeps its title and padding even when the body overflows
     { selector := [.lit "section.slide > header"]
       decls := [("flex-shrink", "0")], part := .stage },
     { selector := [.lit "section.slide > header h2"]
       decls := [("font-size", scaleSize "Large" "em")], part := .stage },
-    -- The root size the sheet's rem gaps read: the stage's rhythm unit.
+    -- the root size the sheet's rem gaps read: the stage's rhythm unit
     { selector := [.lit "html"], decls := [("font-size", ty.root)], part := .stage },
-    -- A listing on the stage is the page's: its lines at the text's edge on
-    -- the stage's own ground. The page pads no listing and paints no ground
-    -- under one, so the reading page's code box — a tinted padding in rem,
-    -- which the stage's rhythm root would scale — is no part of a slide.
+    -- a listing on the stage takes no padding or ground of its own, as on the page
     { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
       part := .stage } ]
 
-/-- `deckGlideRule`'s reduced-motion counterpart: the deck pages jump
-instead of gliding. -/
+/-- `deckGlideRule`'s reduced-motion counterpart. -/
 private def deckGlideGuard : DeckRule :=
   { selector := [.lit "html"], decls := [("scroll-behavior", "auto")]
     part := .reduce }
 
-/-- The deck-wide reduced-motion partition. The base row carries no
-animation — the scroll is the motion, and the reader's own scroll is
-never taken away (WCAG 2.2 SC 2.3.3) — so only the glide needs a guard;
-the stepped track's reverts live with the step rules (`stepFixed`). -/
 private def deckReduce : List DeckRule := [deckGlideGuard]
 
-/-- The stepped track, gated on `view()` timelines: a frame with N
-overlay steps (`Ir.frameSteps`) is one sticky stage over N snap
-spacers. The `.slide-track` wrapper is `N × 100vw` wide — a flex row of
-its stage and N spacers — and declares the frame's named view progress
-timeline (`view-timeline: --frame x`, Scroll-driven Animations 1 §3.4;
-§4.2: descendants find the name, and the steps are descendants). -/
+/-- The stepped track, gated on `view()` timelines: one sticky stage over a snap spacer per step. -/
 private def stepTrackRule : DeckRule :=
   { selector := [.lit ".slide-track"]
     decls := [("display", "flex"), ("align-items", "flex-start"),
@@ -4638,48 +3157,20 @@ private def stepTrackRule : DeckRule :=
       ("view-timeline", "--frame x")]
     requires := .supported .viewTimeline }
 
-/-- The stage rides its track sticky at the scrollport's left edge (CSS
-Positioned Layout 3 §3.4: insets from the nearest scrollport keep the
-box in view *within its containing block*, so the stage pins while its
-spacers scroll underneath — an arrow press advances one snap point and
-the stage does not move; the scroll offset does — and the stage can
-never paint over a neighbouring frame: the inset moves a sticky box only
-within its own track). `margin-right: -100vw` lays the spacers under the
-stage, so spacer k's snap position is `(k−1)·100vw` into the track; the
-stage itself carries no snap alignment — only `[data-snap]` elements do
-(`deckSnapDoor`) — so no two snap areas share the track's first
-offset. -/
+/-- The stage rides its track sticky at the scrollport's left edge, over its spacers. -/
 private def stepStageRule : DeckRule :=
   { selector := [.lit ".slide-track > section.slide"]
     decls := [("position", "sticky"), ("left", "0"),
       ("margin-right", "-100vw")]
     requires := .supported .viewTimeline }
 
-/-- The spacers' geometry on the timeline path: each is one scrollport
-wide — the snap area the door rule aligns — and one stage tall, so the
-area is never degenerate. -/
+/-- Each spacer is one scrollport wide and one stage tall. -/
 private def stepSnapSize : DeckRule :=
   { selector := [.lit ".snap"]
     decls := [("flex", "0 0 100vw"), ("height", "100dvh")]
     requires := .supported .viewTimeline }
 
-/-- The uncover's keyframes, gated with the timeline that plays them: a
-covered step stands at the design's covered fraction as an opacity (dim,
-never hide; the whole step including its own coloured runs, as the PDF's
-per-run cover dims every ink), offset by `--motiondistance` in the
-direction of travel, and the explicit `to` endpoint restores full
-opacity and `transform: none` — the active state is declared, never
-synthesized from the normal style (the user's own rule). Keyframes are
-keyed by their offset, not source order, so `to` rides the selector
-chunk and `from` stays the declaration list `floor_opacity_mem` reads.
-Opacity and transform only: neither reflows, so the frame's layout is
-fixed from the first paint (CSS Transforms 1 §3). Not
-`color: color-mix(… currentColor …)`: inside a keyframe, Chromium
-resolves `currentColor` for the `color` property against the element's
-own colour, so that from-state equals the to-state and nothing dims — a
-rendered probe showed it. Opacity composites in sRGB where the PDF mixes
-in Oklab; the same declared fraction, two blends — the divergence PLAN
-already names for the covered shade. -/
+/-- The uncover's keyframes: a covered step dimmed and offset, the `to` frame fully restored. -/
 private def stepKeyframes (coveredPct : Nat) : DeckRule :=
   { selector := [.lit "@keyframes ltx-uncover \
 { to { opacity: 100%; transform: none } from"]
@@ -4687,19 +3178,7 @@ private def stepKeyframes (coveredPct : Nat) : DeckRule :=
       ("transform", "translateX(var(--motiondistance, 1rem))")]
     requires := .supported .viewTimeline }
 
-/-- The steps' uncover, paced by the reader's own paging key: a `.step`
-(`--step: n`, the track `--steps: N`) animates to place over
-`animation-range: contain (n−2)/(N−1) → contain (n−1)/(N−1)`
-(Scroll-driven Animations 1 §3.1: for a subject wider than the
-scrollport, `contain` 0% is the earliest edge-coincident position —
-snap 1 — and 100% the latest — snap N; the appendix's `animation-range`
-takes `<length-percentage>`, explicitly including `calc()`, and the
-unitless-custom-property calc is verified against this engine's
-Chromium). So item n fades in *during* the smooth scroll from snap n−1
-to snap n and holds (fill-mode both). Step 1 items are never covered
-(`:not([data-step="1"])`). The range's *end* is not this rule's: a
-declared end covers again past itself, on the nested carrier
-(`stepRecoverRule`). -/
+/-- The steps' uncover: each step fades in during the scroll to its snap. -/
 private def stepUncoverRule : DeckRule :=
   { selector := [.lit ".step:not([data-step=\"1\"])"]
     decls := [("animation", "ltx-uncover linear both"),
@@ -4709,48 +3188,27 @@ private def stepUncoverRule : DeckRule :=
 contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)")]
     requires := .supported .viewTimeline }
 
-/-- The floor's spacer collapse: without `view()` timelines the track
-geometry never applies and the spacers hide — the stepped frame is one
-page like any other (`snap_pages_partition_frames`). -/
+/-- Without `view()` timelines the spacers hide, and the stepped frame is one page. -/
 private def stepSnapHide : DeckRule :=
   { selector := [.lit ".snap"], decls := [("display", "none")]
     requires := .unsupported .viewTimeline }
 
-/-- With spacers hidden, the track is the frame's stable snap box. The
-inner stage is sticky: its moving snap area can keep backward-then-forward
-navigation on the preceding frame. -/
+/-- With spacers hidden, the track is the frame's snap box. -/
 private def stepTrackFloorSnap : DeckRule :=
   { selector := [.lit ".slide-track"]
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")]
     requires := .unsupported .viewTimeline }
 
-/-- The floor's covered default, gated on the deck script's presence:
-`deckScript` marks `<html data-deck-script>` at startup, and only under
-that marker do steps start covered on the floor — the script's
-`data-snapped` is the floor's only uncover (`stepSnappedRule`), so with
-scripting off nothing may be dimmed that nothing can restore
-(`floor_covered_script_gated`): the declarative floor survives the
-script's absence at full colour, ←/→ still paging by snap. -/
+/-- On the floor, steps start covered only under the deck script's marker. -/
 private def stepFloorCovered (coveredPct : Nat) : DeckRule :=
   { selector := [.lit "html[data-deck-script] .step:not([data-step=\"1\"])"]
     decls := [("opacity", s!"{coveredPct}%")]
     requires := .unsupported .viewTimeline }
 
-/-- The steps a floor snap `k` uncovers: every step `2..k` (step 1 is
-never covered). The list is the selector's own data — the `:is()`
-alternatives render from it — so `snapped_uncovers_every_step` reads the
-uncover set the browser reads. -/
+/-- The steps a floor snap `k` uncovers: `2..k`. -/
 public def uncoveredBy (k : Nat) : List Nat := (List.range (k - 1)).map (· + 2)
 
-/-- The floor's uncover for snap `k`: the script sets `data-snapped="k"`
-on a stepped frame's track when its k-th snap point is current
-(`deckScript`), and this rule uncovers every step `j ≤ k` of that frame
-— and only that frame's (the attribute lives on the track). Emission
-knows the deck's maximum step count, so the rules are spelled
-numerically — no `calc()`, no `:has()`, nothing for a fallback engine to
-resolve. Outranks the covered default by specificity — two classes and
-two attributes against one type, one class and two attributes — so the
-gate grouping moves no outcome. -/
+/-- The floor's uncover for snap `k`: every step up to `k` of the frame the script marks. -/
 private def stepSnappedRule (k : Nat) : DeckRule :=
   { selector := [.lit ".slide-track[data-snapped=\"", .num k,
       .lit "\"] :is(", .stepAlts (uncoveredBy k), .lit ")"]
@@ -4760,36 +3218,15 @@ private def stepSnappedRule (k : Nat) : DeckRule :=
 private def stepSnapped (maxSteps : Nat) : List DeckRule :=
   (List.range (maxSteps - 1)).map fun i => stepSnappedRule (i + 2)
 
-/-! ### The range's other end
+/-! ## Overlay range ends -/
 
-`\uncover<2-3>` is pending past its end as much as before its start
-(`Ir.stepPending`), and the PDF handout dims it again on step 4. The
-uncover above reads the start alone, so until these rules the two
-artifacts disagreed on every declared end: crisp in HTML, dimmed on
-paper. The end's covering is a second wrapper, not a second declaration
-on the same one, because one element animates one property once — two
-opacity animations compose only by nesting, and opacities multiply, so
-covered-before-the-start times covered-again-past-the-end is exactly the
-predicate. -/
-
-/-- The recover's keyframes, gated with the timeline that plays them: the
-mirror of `stepKeyframes` with the offsets swapped — full colour at the
-range's end, the design's covered fraction past it. Opacity only: the
-step dims in place, as the PDF's per-run cover does, and the uncover's
-`transform` has already landed at `none` by the time this plays. -/
+/-- The recover's keyframes: full colour at the range's end, the covered fraction past it. -/
 private def stepRecoverKeyframes (coveredPct : Nat) : DeckRule :=
   { selector := [.lit "@keyframes ltx-recover { from { opacity: 100% } to"]
     decls := [("opacity", s!"{coveredPct}%")]
     requires := .supported .viewTimeline }
 
-/-- The declared end's carrier, paced by the same reader's key as the
-uncover: a `.step-end` (`--step-last: u`, the track `--steps: N`) dims
-over `animation-range: contain (u−1)/(N−1) → contain u/(N−1)` — the snap
-interval *after* the range's last step, so the step holds full colour
-through `u` and fades as the reader leaves it. An end at the deck's last
-step puts the range start at 100%: the animation then fills with its
-`from` state throughout and nothing dims, which is the honest reading —
-no step past it exists. -/
+/-- A declared end's carrier dims over the snap interval after the range's last step. -/
 private def stepRecoverRule : DeckRule :=
   { selector := [.lit ".step-end"]
     decls := [("animation", "ltx-recover linear both"),
@@ -4799,22 +3236,11 @@ private def stepRecoverRule : DeckRule :=
 contain calc(var(--step-last) / (var(--steps) - 1) * 100%)")]
     requires := .supported .viewTimeline }
 
-/-- The `data-step-last` values a snap stands past, read off the predicate
-itself: `Ir.stepPending 1 (some u) k` is `k > u`, so the enumeration is
-the engine's own pending test and not a second spelling of it. Bounded by
-the deck's step count, which is what makes the enumeration complete
-(`html_step_pending_agree`). -/
+/-- The `data-step-last` values snap `k` stands past, read off `Ir.stepPending`. -/
 public def endedBy (maxSteps k : Nat) : List Nat :=
   ((List.range maxSteps).map (· + 1)).filter fun u => Ir.stepPending 1 (some u) k
 
-/-- The floor's recover for snap `k`: with no `view()` timeline the script's
-`data-snapped` is the deck's step state, and every declared end below `k`
-dims its wrapper again — the floor's mirror of `stepSnappedRule`.
-Script-gated like the covered default it completes: with scripting off no
-snap state exists, so nothing here is declared and the floor stands at full
-colour (`floor_covered_script_gated`). Outranks nothing and is outranked by
-nothing: the uncover it corrects addresses `.step`, this addresses the
-nested `.step-end`, and the two opacities multiply. -/
+/-- The floor's recover for snap `k`: every declared end below `k` dims its carrier again. -/
 private def stepRecoverFloorRule (coveredPct maxSteps k : Nat) : DeckRule :=
   { selector := [.lit "html[data-deck-script] .slide-track[data-snapped=\"", .num k,
       .lit "\"] :is(", .attrAlts "step-end" "data-step-last" (endedBy maxSteps k),
@@ -4825,46 +3251,26 @@ private def stepRecoverFloorRule (coveredPct maxSteps k : Nat) : DeckRule :=
 private def stepRecovered (coveredPct maxSteps : Nat) : List DeckRule :=
   (List.range (maxSteps - 1)).map fun i => stepRecoverFloorRule coveredPct maxSteps (i + 2)
 
-/-- The end carrier's reduced-motion guard, at its own selector: no
-animation, full colour (WCAG 2.2 SC 2.3.3), as `stepGuard` is the
-uncover's. -/
+/-- The end carrier's reduced-motion guard: no animation, full colour. -/
 private def stepRecoverGuard : DeckRule :=
   { selector := [.lit ".step-end"]
     decls := [("opacity", "100%"), ("animation", "none")]
     part := .reduce }
 
-/-- The floor recover's reduced-motion counterpart. Under reduce a stepped
-frame is one page, so its snap state is the frame's own and no end is past;
-this rule says so at the floor recover's own specificity — one element, one
-attribute, one class-and-attribute, one `:is()` compound — and the reduce
-partition is emitted after the blocks it reverts, so source order decides
-(CSS Cascade 5 §6.4). -/
+/-- The floor recover's reduced-motion counterpart, at its own specificity. -/
 private def stepRecoverFloorGuard : DeckRule :=
   { selector := [.lit "html[data-deck-script] .slide-track[data-snapped] \
 :is(.step-end[data-step-last])"]
     decls := [("opacity", "100%")]
     part := .reduce }
 
-/-- Whether the emitted rules leave step `(n, last)` covered at snap `k`,
-from the selectors' own data and nothing else: the uncover has not reached
-its start (`n ∉ uncoveredBy k`, and step 1 is never covered) or the recover
-has passed its declared end (`endedBy`). The HTML side of the covering
-agreement — what a reader of the stylesheet can compute, against what the
-PDF page computes. -/
+/-- Whether the emitted rules leave step `(n, last)` covered at snap `k`. -/
 public def htmlStepPendingAt (maxSteps n : Nat) (last : Option Nat) (k : Nat) : Bool :=
   (!(n == 1) && !((uncoveredBy k).contains n)) ||
     (match last with
      | some u => (endedBy maxSteps k).contains u
      | none => false)
 
-/-- The covering agreement, one range at a time: on every step of a deck
-whose declared ends fit its step count, the HTML rules cover exactly the
-steps `Ir.stepPending` calls pending — the predicate the PDF handout dims
-by. Before these rules the two artifacts disagreed past every declared
-end, `\uncover<2-3>` standing crisp on step 4 in HTML and dimmed on paper.
-`_agree`'s grade: two projections of the one IR predicate, the enumeration
-bounds carried as the hypotheses that make the selectors' numeric spelling
-complete. -/
 public theorem html_step_pending_agree (maxSteps n k : Nat) (last : Option Nat)
     (hn : 1 ≤ n) (hk : 1 ≤ k)
     (hlast : ∀ u, last = some u → 1 ≤ u ∧ u ≤ maxSteps) :
@@ -4894,27 +3300,19 @@ public theorem html_step_pending_agree (maxSteps n k : Nat) (last : Option Nat)
       decide_eq_false_iff_not, beq_eq_false_iff_ne, ne_eq, hstart, hend]
     omega
 
-/-- The steps' reduced-motion guard: no step animates and every step
-stands at full colour (WCAG 2.2 SC 2.3.3; the base sheet's global reduce
-block strips every animation with `!important` — the standing contract —
-and the criterion permits removing more than the motion). -/
+/-- The steps' reduced-motion guard: no step animates, and every step stands at full colour. -/
 private def stepGuard : DeckRule :=
   { selector := [.lit ".step"]
     decls := [("opacity", "100%"), ("animation", "none")]
     part := .reduce }
 
-/-- The covered default's own reduced-motion counterpart, at its exact
-selector: the reduce partition is emitted after the `@supports` blocks
-it reverts, so at equal specificity source order decides (CSS Cascade 5
-§6.4) and the floor too stands at full colour under reduce. -/
+/-- The covered default's reduced-motion counterpart, at its exact selector. -/
 private def stepCoveredGuard : DeckRule :=
   { selector := [.lit "html[data-deck-script] .step:not([data-step=\"1\"])"]
     decls := [("opacity", "100%")]
     part := .reduce }
 
-/-- The track's reduced-motion reverts: one page per stepped frame — the
-spacers collapse (their presses would be dead with the fade gone), the
-track takes one viewport and keeps the frame's snap. -/
+/-- The track's reduced-motion reverts: one page per stepped frame. -/
 private def stepTrackWidthReduce : DeckRule :=
   { selector := [.lit ".slide-track"]
     decls := [("width", "100vw"), ("flex", "0 0 100vw")]
@@ -4929,50 +3327,25 @@ private def stepTrackSnapReduce : DeckRule :=
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")]
     part := .reduce }
 
-/-! ### Alternation, selected declaratively
+/-! ## Alternation -/
 
-`Ir.Inline.alt`/`Ir.Block.alt` hold two groups and the page inks one
-(`Ir.altShowsFirst`). Both groups stand in the tree — the document
-declares both, and a stylesheet cannot choose what was never emitted —
-so the deck selects one per step with `display`, which is a different
-mechanism from `step`'s covering and stays one: a covered step is
-content awaiting its turn, at the design's covered fraction; an
-unselected group is content this page does not have, and has no box at
-all. The group stored first needs no rule to be seen — step 1 inks it
-(`Ir.altShowsFirst_id`), so the emitter marks the other `hidden`, which
-is what a page with no snap state, no script, no stylesheet, or a print
-sheet shows. -/
-
-/-- The `data-step` values a snap has reached, read off the predicate
-itself: a start is reached at `k` exactly when nothing is pending before
-it (`Ir.stepPending n none k` is `k < n`). A start of 1 is in the set,
-unlike `uncoveredBy`'s — an alternation selects from step 1 on, where a
-step's covering has nothing to do. -/
+/-- The `data-step` values snap `k` has reached, read off `Ir.stepPending`. -/
 public def startedBy (maxSteps k : Nat) : List Nat :=
   ((List.range maxSteps).map (· + 1)).filter fun n => !Ir.stepPending n none k
 
-/-- Snap `k` shows the crisp side of every alternation whose start it has
-reached. `display: contents` rather than a box value: the wrapper is a
-carrier, and its group's content must flow exactly as it flows on the
-pages that need no rule at all. -/
+/-- Snap `k` shows the crisp side of every alternation whose start it has reached. -/
 private def altStartCrispRule (maxSteps k : Nat) : DeckRule :=
   { selector := [.lit ".slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
       .attrAlts "alt-crisp" "data-step" (startedBy maxSteps k), .lit ")"]
     decls := [("display", "contents")] }
 
-/-- The same snap hides the pending side of those alternations: exactly one
-group of a node is shown, by construction of the two selectors over one
-enumeration. -/
+/-- Snap `k` hides the pending side of those alternations. -/
 private def altStartPendingRule (maxSteps k : Nat) : DeckRule :=
   { selector := [.lit ".slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
       .attrAlts "alt-pending" "data-step" (startedBy maxSteps k), .lit ")"]
     decls := [("display", "none")] }
 
-/-- Past a declared end the sides swap back — the complement of a mid-deck
-range is two ranges, which is why alternation needs a node and not a pair
-of steps. The correction carries `html`, one element name more than the
-start rules, so it outranks them whatever order they are emitted in (CSS
-Selectors 4 §17). -/
+/-- Past a declared end the sides swap back, outranking the start rules. -/
 private def altEndCrispRule (maxSteps k : Nat) : DeckRule :=
   { selector := [.lit "html .slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
       .attrAlts "alt-crisp" "data-step-last" (endedBy maxSteps k), .lit ")"]
@@ -4991,11 +3364,7 @@ private def altSnapRules (maxSteps k : Nat) : List DeckRule :=
 private def altSnapped (maxSteps : Nat) : List DeckRule :=
   (List.range (maxSteps - 1)).flatMap fun i => altSnapRules maxSteps (i + 2)
 
-/-- Under reduce a stepped frame is one page (`stepSnapReduceHide`), so its
-alternations show step 1's reading: the `hidden` the emitter wrote,
-restored at the snap rules' own specificity — and the reduce partition
-stands after the blocks it reverts, so source order decides (CSS Cascade 5
-§6.4). -/
+/-- Under reduce, alternations show step 1's reading. -/
 private def altReduceHiddenRule : DeckRule :=
   { selector := [.lit "html .slide-track[data-snapped] .alt[hidden]"]
     decls := [("display", "none")]
@@ -5008,30 +3377,14 @@ private def altReduceShownRule : DeckRule :=
 
 private def altReduceFixed : List DeckRule := [altReduceHiddenRule, altReduceShownRule]
 
-/-- Every rule alternation adds, shipped with the step rules. -/
 private def altRules (maxSteps : Nat) : List DeckRule :=
   let snapped := altSnapped maxSteps
   altReduceFixed ++ snapped
 
-/-- Which group the emitted rules select at snap `k`, from their own data
-and the side the emitter tagged the group with: the pending test the start
-and end families implement (`htmlStepPendingAt`), compared against
-`Ir.altFirstWhenPending`. The HTML projection of `Ir.altShowsFirst`. -/
+/-- Which group the emitted rules select at snap `k`. -/
 public def altShownFirstAt (maxSteps n : Nat) (last : Option Nat) (k : Nat) : Bool :=
   htmlStepPendingAt maxSteps n last k == Ir.altFirstWhenPending n last
 
-/-- **`alt_backend_agree`** (`_agree`): the two artifacts ink the same
-group on the same step. Both sides are projections of the one IR
-predicate — the PDF page tests `Ir.altShowsFirst` where it inks
-(`Layout.flattenOne` and `Layout.collectBlock`'s `.alt` arms, whose leaf
-identity is `Struct.alt_leaf_projects`), and the HTML deck tests
-`Ir.stepPending` in its per-snap selectors against the side page order
-put the group on, which is the predicate's own factorization
-(`Ir.altShowsFirst_side`). An artifact that decided this for itself could
-disagree with the other and no theorem would notice; this is why the
-decision is a definition and each backend reads it rather than repeating
-it. The bounds are the hypotheses that make the selectors' numeric
-spelling complete over the deck's steps. -/
 public theorem alt_backend_agree (maxSteps n k : Nat) (last : Option Nat)
     (hn : 1 ≤ n) (hk : 1 ≤ k)
     (hlast : ∀ u, last = some u → 1 ≤ u ∧ u ≤ maxSteps) :
@@ -5039,56 +3392,28 @@ public theorem alt_backend_agree (maxSteps n k : Nat) (last : Option Nat)
   rw [altShownFirstAt, html_step_pending_agree maxSteps n k last hn hk hlast,
     Ir.altShowsFirst_side]
 
-/-- The step rules with a closed spelling — every one whose value reads
-no parameter, checkable in one `decide`. -/
+/-- The step rules whose spelling reads no parameter. -/
 private def stepFixed : List DeckRule :=
   [stepTrackRule, stepStageRule, stepSnapSize, stepUncoverRule,
    stepRecoverRule, stepSnapHide, stepTrackFloorSnap, stepGuard,
    stepRecoverGuard, stepCoveredGuard, stepRecoverFloorGuard,
    stepTrackWidthReduce, stepSnapReduceHide, stepTrackSnapReduce]
 
-/-- Every rule the steps add, shipped exactly when the deck has steps —
-a stepless deck has nothing to reveal and no track to lay out. -/
 private def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
   stepKeyframes coveredPct :: stepRecoverKeyframes coveredPct ::
     stepFloorCovered coveredPct ::
     (stepFixed ++ stepSnapped maxSteps ++ stepRecovered coveredPct maxSteps)
 
-/-- The printed deck's page: the stage the PDF pages on, as `@page`'s
-size with no margin — reveal.js's print export without its layout pass.
-The size is the PDF's own MediaBox in CSS `pt` (the engine's point is
-PostScript's, 1/72 in, and `Sp.toPtString` is the formatter `Pdf.ptObj`
-writes the box with — `deckPageSize` — so the two artifacts' pages are one
-value printed twice). With the page area the stage, every length the deck
-states as a share of the stage (`deckStageMilli`, in `vw`/`dvh`) and the
-stage-ratio type in `vh` mean on paper what they mean on screen (CSS
-Values 4 §6.1.2: in paged media the viewport-percentage lengths are
-relative to the page area). -/
+/-- The printed deck's page: the stage's size, with no margin. -/
 private def deckPageRule (size : String) : DeckRule :=
   { selector := [.lit "@page"], decls := [("size", size), ("margin", "0")]
     part := .print }
 
-/-- The page size `deckPageRule` declares, from the document's stage: the
-two numbers `Pdf.ptObj` writes the MediaBox with. -/
+/-- The page size `deckPageRule` declares: the PDF's MediaBox, in `pt`. -/
 public def deckPageSize (page : PageSpec) : String :=
   s!"{page.width.toPtString}pt {page.height.toPtString}pt"
 
-/-- A stage on paper: it opens and ends its sheet, and it grows with its
-content instead of clipping it — `height` and `overflow-y` lifted
-(`print_lifts_stage_bounds_covers`), one sheet tall at least
-(`min-height`), so a frame that fits still fills its sheet, its declared
-distribution and its furniture where the screen puts them. The break
-before a stage keeps it off a sheet that content outside any stage
-opened (an unthemed deck's section heading stands on its own sheet, as
-it did while a stage could not split). A frame that runs long breaks
-between its lines onto the next sheet, as the PDF's continuation pages
-do, and each continuation opens below the stage's safe area on its own
-ground (`box-decoration-break: clone`, CSS Fragmentation 3 §5.4). The
-ground is the author's, not decoration a reader's toner setting may drop
-(`print-color-adjust: exact`, CSS Color Adjustment 1 §3.1). What the PDF
-adds on a continuation page and a sheet cannot is the frame's title band
-and footer: the HTML has no layout pass to know where a sheet breaks, so
-each stands once, where the frame opens and where it ends. -/
+/-- A stage on paper opens its sheet and grows with its content instead of clipping it. -/
 private def printStageRule : DeckRule :=
   { selector := [.lit "section.slide, section.section-page"]
     decls := [("break-after", "page"), ("break-before", "page"), ("height", "auto"),
@@ -5096,27 +3421,15 @@ private def printStageRule : DeckRule :=
       ("box-decoration-break", "clone"), ("print-color-adjust", "exact")]
     part := .print }
 
-/-- The sheet's own ground: where a frame's last continuation leaves its
-sheet unfilled, the page shows the stage's ground (`stageGround`), not
-white paper — the PDF paints the ground on every page of a frame. The
-root carries it on every sheet, exactly, and the adjustment inherits. -/
+/-- Every sheet shows the stage's ground. -/
 private def printSheetGround : DeckRule :=
   { selector := [.lit "html"]
     decls := [("background", stageGround), ("print-color-adjust", "exact")]
     part := .print }
 
-/-- How far ahead of the declared vertical distribution a frame's end
-spacer claims the leftover (`printFrameEnd`): a hundredfold over the
-largest pair of shares any alignment declares together with a hundred of a
-body's fills (`printEndGrow_outranks_contract`), so the spacer takes its
-whole safe area before a fill grows, to within one part in a hundred of the
-leftover. -/
+/-- How far ahead of the declared vertical distribution a frame's end spacer claims the leftover. -/
 public def printEndGrow : Nat := 100000000
 
-/-- The end spacer outranks every declared distribution a hundredfold, a
-hundred fills beside it: the golden title page's 3618 + 2000 is the largest
-pair, and a new alignment with larger shares fails here instead of moving a
-printed frame's content. `_contract`'s grade: one bound, every alignment. -/
 public theorem printEndGrow_outranks_contract :
     ∀ (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool) (fills : Nat), fills ≤ 100 →
       100 * ((v.shares keys breakable).1 + (v.shares keys breakable).2 + Ir.fillUnit * fills) ≤
@@ -5128,19 +3441,7 @@ public theorem printEndGrow_outranks_contract :
   simp only [printEndGrow]
   omega
 
-/-- A frame's bottom safe area on paper is room its content may take
-before the frame continues, not a box that continues by itself. Padding
-would: a frame whose content fits its sheet but not its sheet less the
-safe area printed one blank sheet holding only its padding — three in a
-measured 31-frame deck, where the HTML's rhythm runs a few points taller
-than the PDF's. So on paper a frame keeps its safe area as a trailing
-spacer that takes its whole safe area from the leftover first
-(`printEndGrow`) and gives it back when the content needs the room: a
-frame with room to spare lays out exactly as its padding would, a frame
-that overruns by less than the safe area prints on one sheet with its
-last line that much nearer the edge, and only content longer than the
-sheet continues. A section page keeps its padding: it holds a title and
-a bar. -/
+/-- On paper a frame keeps its bottom safe area as a trailing spacer that gives the room back. -/
 private def printFrameEnd : List DeckRule :=
   [ { selector := [.lit "section.slide"], decls := [("padding-bottom", "0")]
       part := .print },
@@ -5149,29 +3450,12 @@ private def printFrameEnd : List DeckRule :=
         ("max-height", safeareaVar)]
       part := .print } ]
 
-/-- The fill a `\block[before = fill]{…}` opens its content with, on a deck's
-stage: the box's `::before`, a flex item of the box's own column
-(`fillCarrier`) growing by one fill's weight, `\vfill`'s, ahead of the
-content — the space above the content, where the page sets the fill, with no
-element of its own. -/
+/-- The fill a `\block[before = fill]` opens its content with, as the box's `::before`. -/
 private def fillBeforeCss : String :=
   s!"section.slide .spaced.fill-before::before \{ content: \"\"; flex-grow: {Ir.fillUnit}; }\n"
 
-/-- beamer's text area on the stage, wherever the chrome may stand
-(`Ir.frameInTextArea`; the title page keeps the safe area, as the PDF keeps
-it in the slides margins): the frame opens at the stage's top edge (moloch's
-headline is empty), and its text area ends `\footheight` above the bottom
-edge. The 4 pt of that gap is the frame's end spacer — the grow-only spacer
-a printed frame ends on (`printFrameEnd`), here at the gap, on both media —
-and the footline stands after it, on the edge (`footlineCss`). Nothing
-reaches into the stage's padding: a band pulled onto the edge by a negative
-margin through that padding went to a sheet of its own on paper, a frame
-number alone on it. Where the content needs the room the spacer gives the
-gap back, so a frame that fills its text area keeps its footline on its own
-sheet; and on paper a frame's end — its fills, its end spacer, its footline —
-never opens a sheet (`break-before: avoid`, CSS Fragmentation 3 §3.1), so a
-frame that overruns its sheet carries its last content onto the next one
-with them, never its footline alone. -/
+/-- beamer's text area on the stage: the frame opens at the top edge and ends `\footheight`
+above the bottom. -/
 private def deckAreaCss (doc : Doc) : String :=
   if doc.chromeAllowed then
     "section.slide:not(.title-page) { padding-top: 0; padding-bottom: 0; }\n" ++
@@ -5181,31 +3465,8 @@ private def deckAreaCss (doc : Doc) : String :=
     "  break-before: avoid; } }\n"
   else ""
 
-/-- A frame's content as TeX opens it below its `\vbox{}`
-(beamerbaseframe.sty:115). The first line's baseline stands one
-`\baselineskip` below the opening — the paragraph's leading at its own size
-under the page's `\linespread`, `Ir.leadingFor`, the value the page's
-opening rule reads (`Layout.Spacing.Page.placeLine`) — whatever leading the
-screen gives the line box: an empty inline box that tall on the baseline
-holds the line box's top there (CSS 2.1 §10.8.1), on an opening paragraph
-and on an opening list's first item (its text, or its first paragraph where
-it holds blocks); a line taller than the skip stands on its own box, as TeX's
-`\lineskip` rule stands it. A list opening the content first spends its
-`\@topsepadd` — the box leaves the page in vertical mode, so the level's
-`\partopsep` joins its `\topsep` (latex.ltx `\@trivlist`), the one resolving
-site the page spends (`Ir.listSkips`, `Ir.partopsepFor`) — while the
-`\parskip` the list's boundary adds is the one the opening's
-`\vskip-\parskip` takes back: the stage's share of that length rides on the
-opening's own (`--frame-body-open`). The content ends where its last line's
-glyphs do, not where the screen's line box does: beamer distributes the box
-whose bottom is the last line's depth (`\vskip\beamer@framebottomskip`
-follows it, so the depth stays inside), and the last element's last line —
-through the overlay carriers it ends in, the flow's (`frameFlowEnd`) — is
-trimmed to its baseline (CSS Inline 3 `text-box`), the depth of a line with
-no descender — a paragraph's, a list's, an alignment scope's; a box that
-paints or scrolls (a listing, a block, a figure) ends where its box does, as
-TeX's does, and a trimmed scroll box would hide what it trims. Where the
-feature is missing the line box stands, the floor. -/
+/-- A frame's content as TeX opens it below its `\vbox{}` (beamerbaseframe.sty): the first
+baseline one `\baselineskip` down, the last line trimmed to its baseline. -/
 private def frameOpeningCss (doc : Doc) : String :=
   let l := doc.docClass.record.lists
   let size := doc.page.fontSize
@@ -5233,12 +3494,7 @@ private def frameOpeningCss (doc : Doc) : String :=
 /-- The print rules every deck carries, steps aside. -/
 private def printPaged : List DeckRule := [printStageRule, printSheetGround] ++ printFrameEnd
 
-/-- The print partition: the screen deck's stages, paged — the stage
-partition carries their box, type and furniture onto paper, and the stage
-itself grows onto as many sheets as its content needs (`printPaged`). For
-a stepped deck the snap spacers hide and every step prints at full
-colour: paper has no steps to reveal (the user's own rule, beside the
-unconditional covered floor it was written against). -/
+/-- The print partition: the stages paged, snap spacers hidden, every step at full colour. -/
 private def deckPrint (maxSteps : Nat) : List DeckRule :=
   printPaged ++
     (if 2 ≤ maxSteps then
@@ -5248,10 +3504,7 @@ private def deckPrint (maxSteps : Nat) : List DeckRule :=
           part := .print } ]
      else [])
 
-/-- A numbered union dims precisely outside its emitted membership set.
-Both a stepped track and a one-reveal section own `data-snapped`: the
-script advances the track, while the section declares its only step.
-The script-free floor remains fully uncovered. -/
+/-- A numbered union dims outside its emitted membership set. -/
 private def stepSetPendingRule (cp k : Nat) : DeckRule :=
   { selector := [.lit "html[data-deck-script] [data-snapped=\"", .num k,
       .lit "\"] .step-set:not([data-steps~=\"", .num k, .lit "\"])"]
@@ -5267,17 +3520,13 @@ private def altSetHiddenRule (k : Nat) : DeckRule :=
       .lit "\"] .alt-set:not([data-steps~=\"", .num k, .lit "\"])"]
     decls := [("display", "none")] }
 
-/-- Same specificity as pending's snap selector, emitted after it under
-reduce. Paper already excludes the screen-only pending rule. -/
+/-- `stepSetPendingRule`'s reduced-motion counterpart. -/
 private def stepSetGuard : DeckRule :=
   { selector := [.lit "html[data-deck-script] [data-snapped] .step-set[data-steps]"]
     decls := [("opacity", "100%")]
     part := .reduce }
 
-/-- A pending ancestor has already covered every descendant. Stop the
-descendant's own cover, including its end carrier, so nesting implements
-`OverlaySpec.pending_nested_exact` once rather than multiplying opacity.
-The ancestor's own end carrier is deliberately outside this selector. -/
+/-- Under a pending ancestor a descendant's own cover stops, so opacities never multiply. -/
 private def nestedCoverRule (k : Nat) : DeckRule :=
   let parent := [.lit "html[data-deck-script] [data-snapped=\"", .num k,
     .lit "\"] :is(.step, .step-set):not([data-steps~=\"", .num k, .lit "\"])"]
@@ -5285,9 +3534,7 @@ private def nestedCoverRule (k : Nat) : DeckRule :=
       [.lit " :is(.step, .step-set) > .step-end"]
     decls := [("opacity", "100%"), ("animation", "none")] }
 
-/-- Without a numbered state owner that can advance, the cover floor is
-fully readable. Apply that floor in timeline-capable browsers too: two
-independent opacity timelines cannot implement the shared pending latch. -/
+/-- Without the deck script every cover stands at full colour. -/
 private def coverStaticFloor : DeckRule :=
   { selector := [.lit "html:not([data-deck-script]) :is(.step, .step-end, .step-set)"]
     decls := [("opacity", "100%"), ("animation", "none")] }
@@ -5314,10 +3561,7 @@ private theorem setRules_cases {P : DeckRule → Prop} {cp ms : Nat}
   · exact hh _
   · exact hn _
 
-/-- Every rule of the deck's stylesheet, in emission order. The
-parameters are the whole document-dependence: the stage-ratio type size,
-the printed page's size, the design's covered fraction, and the deck's
-maximum step count. -/
+/-- Every rule of the deck's stylesheet, in emission order. -/
 public def deckRules (ty : DeckType) (pageSize : String) (coveredPct maxSteps : Nat) :
     List DeckRule :=
   deckBase ty ++ deckReduce ++
@@ -5325,11 +3569,6 @@ public def deckRules (ty : DeckType) (pageSize : String) (coveredPct maxSteps : 
       setRules coveredPct maxSteps) ++
     deckPageRule pageSize :: deckPrint maxSteps
 
-/-- The one case split over the deck's rule set: every deck theorem
-below quantifies over `deckRules` through this. A new rule family is a
-new hypothesis here — the compiler names every theorem it now owes. The
-step hypotheses receive the fact that the steps shipped (`2 ≤ ms`), so a
-theorem may cite a step rule's membership. -/
 private theorem deckRules_forall {P : DeckRule → Prop} {v : DeckType} {pg : String} {cp ms : Nat}
     (hbase : ∀ r ∈ deckBase v, P r)
     (hreduce : ∀ r ∈ deckReduce, P r)
@@ -5370,8 +3609,6 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v : DeckType} {pg : St
   · exact hpage pg
   · exact hprint r h
 
-/-- The two reduce-partition alternation rules, as a case split: both are
-closed spellings, so a per-rule fact is two `rfl`s. -/
 private theorem altReduceFixed_cases {P : DeckRule → Prop}
     (h1 : P altReduceHiddenRule) (h2 : P altReduceShownRule) :
     ∀ r ∈ altReduceFixed, P r := by
@@ -5381,9 +3618,6 @@ private theorem altReduceFixed_cases {P : DeckRule → Prop}
   · exact h1
   · exact h2
 
-/-- A decidable or propositional fact over one snap's alternation rules,
-from the four named rules: they share their spelling but for the data, and
-no per-rule check reads the data. -/
 private theorem altSnapRules_cases {P : DeckRule → Prop} {ms k : Nat}
     (h1 : P (altStartCrispRule ms k)) (h2 : P (altStartPendingRule ms k))
     (h3 : P (altEndCrispRule ms k)) (h4 : P (altEndPendingRule ms k)) :
@@ -5392,7 +3626,6 @@ private theorem altSnapRules_cases {P : DeckRule → Prop} {ms k : Nat}
   simp only [altSnapRules, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl <;> assumption
 
-/-- Family memberships, spelled once against the append spine. -/
 private theorem mem_deckRules_base {r : DeckRule} {v : DeckType} {pg : String} {cp ms : Nat}
     (h : r ∈ deckBase v) : r ∈ deckRules v pg cp ms := by
   simp only [deckRules, List.mem_append]
@@ -5410,14 +3643,11 @@ private theorem mem_deckRules_step {r : DeckRule} {v : DeckType} {pg : String} {
   simpa only [ite_eq_left hms, List.mem_append] using
     (Or.inl h : r ∈ stepRules cp ms ∨ r ∈ altRules ms)
 
-/-- A closed step rule's membership, through the `stepFixed` spine. -/
 private theorem mem_stepRules_fixed {r : DeckRule} {cp ms : Nat}
     (h : r ∈ stepFixed) : r ∈ stepRules cp ms := by
   simp only [stepRules, List.mem_cons, List.mem_append]
   exact Or.inr (Or.inr (Or.inr (Or.inl (Or.inl h))))
 
-/-- The print partition of a stepless deck is contained in the stepped
-one, so a decidable per-rule fact is checked once, on `deckPrint 2`. -/
 private theorem deckPrint_subset {ms : Nat} : ∀ r ∈ deckPrint ms, r ∈ deckPrint 2 := by
   intro r hr
   simp only [deckPrint, List.mem_append] at hr ⊢
@@ -5428,10 +3658,6 @@ private theorem deckPrint_subset {ms : Nat} : ∀ r ∈ deckPrint ms, r ∈ deck
     · simpa using h
     · cases h
 
-/-- Discharge a decidable per-rule fact over every rule family at once:
-the closed families by `decide`, the parameter-carrying ones by `rfl` —
-their checks never read a parameter (values are compared by name
-equality only; ordinal chunks carry no syntax). -/
 private theorem deckRules_check {p : DeckRule → Bool} (v : DeckType) (pg : String) (cp ms : Nat)
     (hbase : ∀ r ∈ deckBase v, p r = true)
     (hreduce : ∀ r ∈ deckReduce, p r = true)
@@ -5452,8 +3678,6 @@ private theorem deckRules_check {p : DeckRule → Bool} (v : DeckType) (pg : Str
     (fun _ => haltfix) (fun _ k => haltsnap k) hsets hpage
     (fun r hr => hprint r (deckPrint_subset r hr))
 
-/-- Membership in the base family, for the rules with a parametric
-value: the check is discharged by `rfl` after the case split. -/
 private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
     (h1 : P { selector := [.lit "html"]
               decls := [("scroll-snap-type", "x mandatory"), ("overflow-y", "clip")] })
@@ -5491,18 +3715,10 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
     rfl | rfl | rfl <;>
     assumption
 
-/-- `deck_css_partition`'s per-rule check: a rule whose syntax uses a
-fragment depending on feature `F` is gated `supported F`. -/
+/-- Whether a rule whose syntax depends on a feature is gated on that feature's support. -/
 public def gateRespects (r : DeckRule) : Bool :=
   Feature.all.all fun f => r.requires == Gate.supported f || !(r.uses f)
 
-/-- Every rule using a property or selector fragment whose meaning
-depends on a feature (`Feature.dependsOnProps`, `Feature.dependsOnSel`)
-is emitted inside that feature's supported block, and — contrapositively
-— no rule inside a feature's unsupported block or the base uses one. So
-a browser lacking F never parses a rule that needs it, and never loses a
-rule that does not. `_covers`'s grade, over the whole rule set: a new
-rule enters the contract the moment it is written. -/
 public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, gateRespects r = true :=
   deckRules_check v pg cp ms
@@ -5512,31 +3728,7 @@ public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- The Baseline floor: the property names the base, the `@supports not`
-blocks, the reduced-motion partition and the print handout may use.
-Every entry is universal across current engines (caniuse, read
-2026-09-20): scroll snap (`scroll-snap-*`: Chromium 69+, Firefox 68+,
-Safari 11+), `scroll-behavior` (Chromium 61+, Firefox 36+, Safari
-15.4+), flex and the box properties (universal since 2017), custom
-properties (Chromium 49+, Firefox 31+, Safari 9.1+), `@supports` itself
-(Chromium 28+, Firefox 22+, Safari 9+), animations, transforms,
-opacity, and the fragmentation properties print engines honour
-(`break-*`). The `dvh` unit rides several values (Chromium 108+,
-Firefox 101+, Safari 15.4+; 2022). The box offset properties (`bottom`,
-`left`, `right`) are CSS 2. The printed page's `size` (CSS Paged Media 3
-§7) and `print-color-adjust` (CSS Color Adjustment 1 §3.1) are print-only
-and degrade to the reader's own page and toner setting where unsupported
-— measured honoured by Chromium 151 (the page size and the grounds of a
-printed deck, `print-color-adjust` with backgrounds off). The same holds
-for `box-decoration-break` (CSS Fragmentation 3 §5.4), print-only here:
-Chromium 151 clones a continuing stage's padding onto each sheet
-(measured on a printed breaking frame); where unsupported it degrades to
-`slice`, and every line still reaches paper — a continuation sheet's text
-just starts at its edge. `break-before` is `break-after`'s twin (CSS
-Fragmentation 3 §3.1) and `padding-bottom` is CSS 2's, as `line-height` is
-(CSS 2.1 §10.8.1, the stage's leading). The selector
-side of the floor is `deck_css_partition`; attribute selectors
-(`[data-snap]`, `[data-deck-script]`) are CSS 2. -/
+/-- The property names the floor may use, each universal across current engines per caniuse. -/
 public def baselineProps : List String :=
   ["scroll-snap-type", "scroll-snap-align", "scroll-snap-stop",
    "scroll-behavior", "padding", "padding-bottom", "margin", "margin-top", "max-width",
@@ -5548,19 +3740,13 @@ public def baselineProps : List String :=
    "break-before", "size", "print-color-adjust", "box-decoration-break",
    "bottom", "left", "right"]
 
-/-- Is the rule part of the floor — the CSS every engine applies? The
-base and every `@supports not` block, in every media partition. -/
+/-- Whether a rule is part of the floor: the base and every `@supports not` block. -/
 public def onFloor (r : DeckRule) : Bool :=
   match r.requires with
   | .base => true
   | .unsupported _ => true
   | .supported _ => false
 
-/-- "Works in Firefox", in the only form the engine can state it: every
-property the floor uses is in the declared, sourced `baselineProps` — a
-browser with no gated feature at all still understands every rule it is
-given. `_mem`'s grade: each floor property is drawn from the declared
-set. -/
 public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
@@ -5571,8 +3757,7 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- Content, as the floor theorems see it: the frame stages and the
-steps — the fragments that address what the deck *shows*. -/
+/-- The selector fragments that address what the deck shows: frame stages and steps. -/
 public def contentFrags : List String :=
   ["section.slide", "section.section-page", ".step[", ".step:"]
 
@@ -5580,20 +3765,6 @@ public def targetsContent (r : DeckRule) : Bool :=
   contentFrags.any fun frag =>
     (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s frag
 
-/-- The floor is visible by theorem, not by review: no deck rule — in
-*any* partition — sets `display: none` or `visibility: hidden` on
-content (`contentFrags`). What the guards and the printed deck hide is
-only the spacers. `floor_opacity_mem` and `floor_covered_script_gated`
-are the dimming half.
-
-One family stands deliberately outside `contentFrags`: an overlay
-alternation's group wrappers (`.alt-crisp`, `.alt-pending`), which the
-snap rules do hide with `display: none`. That is the point of the second
-mechanism — an unselected group is content this page does not have, and
-the page's other group is showing in its place, which is a contract about
-*which* of two, not about visibility. `alt_backend_agree` is that
-contract; extending `contentFrags` to cover the groups would make this
-theorem false while saying nothing truer. -/
 public theorem floor_hides_nothing (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(targetsContent r) ||
@@ -5606,14 +3777,9 @@ public theorem floor_hides_nothing (v : DeckType) (pg : String) (cp ms : Nat) :
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- The opacity values a rule sets. -/
 public def opacityValues (r : DeckRule) : List String :=
   r.decls.filterMap fun d => if d.1 == "opacity" then some d.2 else none
 
-/-- The dimming half of the visible floor: every opacity any deck rule
-sets is full or the design's own covered fraction — never below it, and
-never a hide wearing a dim's clothes. `_mem`'s grade: each value is
-drawn from the two the design allows. -/
 public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, ∀ o ∈ opacityValues r,
       o = "100%" ∨ o = s!"{cp}%" := by
@@ -5668,18 +3834,10 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
         · exact fun o ho => Or.inl (List.mem_singleton.mp ho)
       · cases h2
 
-/-- Does the rule's selector carry the deck script's own marker,
-`[data-deck-script]` — the attribute only `deckScript` sets? -/
+/-- Whether the rule's selector carries the deck script's own `[data-deck-script]` marker. -/
 public def scriptGated (r : DeckRule) : Bool :=
   (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s "[data-deck-script]"
 
-/-- The floor never dims without the script: every rule of the base or
-an `@supports not` block that sets an opacity below full carries
-`html[data-deck-script]` in its selector, so with scripting off (or the
-node absent) every step stands at full colour and the deck is the
-pure-CSS pager — the covered state a script cannot uncover is never
-declared. The dimming half of `floor_hides_nothing` made exact.
-`_contract`'s grade. -/
 public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || scriptGated r ||
@@ -5691,10 +3849,7 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- The motion properties the reduced-motion contract covers: the base
-sheet's global reduce block strips `animation` and `transition`;
-`scroll-behavior` is neither and needs the declared guard (WCAG 2.2
-SC 2.3.3, technique C39; CSS Media Queries 5 §12.1). -/
+/-- The motion properties the reduced-motion contract covers. -/
 public def motionProps : List String := ["animation", "transition", "scroll-behavior"]
 
 /-- The static value a guard must set a motion property back to. -/
@@ -5702,28 +3857,21 @@ public def motionOff : String → String
   | "scroll-behavior" => "auto"
   | _ => "none"
 
-/-- Does reduce-partition rule `g` cover `r`'s selector? Equal
-selectors, or `g`'s compound extended by a pseudo-class (`.step` guards
-`.step:not(…)`): everything `r` matches, `g` matches. The prefix test is
-spelled over the character lists so the proofs evaluate it. -/
+/-- Whether reduce-partition rule `g` covers `r`'s selector. -/
 public def guardCovers (g r : DeckRule) : Bool :=
   g.part == Part.reduce &&
     (renderSel g.selector == renderSel r.selector ||
       (renderSel g.selector ++ ":").toList.isPrefixOf
         (renderSel r.selector).toList)
 
-/-- Is every active motion property guarded by some rule of the searched
-set's reduce partition? A property already set to its static value needs
-no second reset. The reduce and print partitions are exempt — the guards
-themselves, and paper, which has no motion; a stage rule plays on screen
-too, so it owes its guard like a screen rule. -/
+/-- Whether every active motion property of `r` is guarded by the set's reduce partition; reduce
+and print rules are exempt. -/
 public def motionGuarded (rules : List DeckRule) (r : DeckRule) : Bool :=
   (r.part == Part.reduce || r.part == Part.print) ||
     r.decls.all fun d =>
       !(motionProps.contains d.1) || d.2 == motionOff d.1 ||
         rules.any fun g => guardCovers g r && g.decls.contains (d.1, motionOff d.1)
 
-/-- `motionGuarded` from one named witness. -/
 private theorem motionGuarded_of_guard {rules : List DeckRule} {r g : DeckRule}
     (hg : g ∈ rules)
     (hchk : ∀ d ∈ r.decls, motionProps.contains d.1 = true →
@@ -5739,12 +3887,6 @@ private theorem motionGuarded_of_guard {rules : List DeckRule} {r g : DeckRule}
       rw [List.any_eq_true.mpr ⟨g, hg, hchk d hd hmp⟩, Bool.or_true]
   · rw [Bool.true_or]
 
-/-- Every rule that activates a motion property (`motionProps`) has a
-reduced-motion counterpart *in the same emitted rule set*, covering its
-selector and setting the property back to its static value: a guard is
-not a suffix a definition happens to end with; it is a rule the reduce
-partition must contain, and the partition is emitted after the blocks it
-reverts (`emitDeckRules`; CSS Cascade 5 §6.4). `_contract`'s grade. -/
 public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, motionGuarded (deckRules v pg cp ms) r = true := by
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
@@ -5799,19 +3941,11 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
         rcases h2 with rfl | rfl <;> rfl
       · cases h2
 
-/-- The declarations that bound a stage on screen and would clip it on
-paper, each with the value that lifts it in print. A scroll container is
-monolithic — it holds no break point, so what exceeds its box is clipped
-at the sheet's edge (CSS Fragmentation 3 §4.1) — and a fixed height stops
-the box growing with its content. Paper has no scroll: the stage grows
-instead, and breaks between its lines as the PDF's continuation pages
-do. -/
+/-- The declarations that bound a stage on screen, each with the value that lifts it in print. -/
 public def stageBounds : List (String × String) := [("height", "auto"), ("overflow-y", "visible")]
 
-/-- Does print-partition rule `g` lift every bound stage rule `r` declares?
-Ungated, so it holds in every engine, and at `r`'s own selector, so the
-print partition — emitted after the stage partition (`emitDeckRules`) —
-wins at equal specificity by source order (CSS Cascade 5 §6.4). -/
+/-- Whether ungated print rule `g` lifts every bound stage rule `r` declares, at `r`'s own
+selector. -/
 public def liftsOnPaper (g r : DeckRule) : Bool :=
   g.part == Part.print && g.requires == Gate.base &&
     renderSel g.selector == renderSel r.selector &&
@@ -5819,14 +3953,12 @@ public def liftsOnPaper (g r : DeckRule) : Bool :=
       | none => true
       | some lift => g.decls.contains (d.1, lift)
 
-/-- A content rule of the stage partition that declares a bound is lifted
-on paper by some rule of the searched set. -/
+/-- Whether a bounded content rule of the stage partition is lifted on paper by the set. -/
 public def printLifts (rules : List DeckRule) (r : DeckRule) : Bool :=
   !(r.part == Part.stage && targetsContent r &&
       r.decls.any fun d => (List.lookup d.1 stageBounds).isSome) ||
     rules.any fun g => liftsOnPaper g r
 
-/-- `printLifts` from one named witness. -/
 private theorem printLifts_of_lift {rules : List DeckRule} {r g : DeckRule}
     (hg : g ∈ rules) (hl : liftsOnPaper g r = true) : printLifts rules r = true := by
   unfold printLifts
@@ -5837,15 +3969,6 @@ private theorem mem_deckRules_print {r : DeckRule} {v : DeckType} {pg : String} 
   simp only [deckRules, List.mem_append, List.mem_cons]
   exact Or.inr (Or.inr h)
 
-/-- A stage never clips on paper: every bound a stage rule declares
-(`stageBounds`) is lifted by an ungated print rule at its own selector, so
-on paper a frame grows with its content and a frame that runs long
-continues on the next sheet, as the PDF's continuation pages do, where on
-screen it scrolls. Before the lift the stage's `height: 100dvh;
-overflow-y: auto` held on paper too, and a breaking frame printed 14 of
-its 30 items. `_covers`'s grade over the rule set, the shape of
-`guards_by_construction`: a stage rule that declares a bound enters the
-contract the moment it is written. -/
 public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, printLifts (deckRules v pg cp ms) r = true := by
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
@@ -5883,14 +4006,6 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
         rcases h2 with rfl | rfl <;> rfl
       · cases h2
 
-/-- Every step of every stepped frame is reachable in the floor: for
-each step `n` of a deck whose maximum step count is `ms`
-(`Ir.frameSteps`; step 1 is never covered), the emitted rules contain
-an uncover rule whose snap is a spacer `k ≥ n` uncovering `n` —
-concretely `k = n`, the `data-snapped` value the script writes when the
-reader's key lands that snap point. The uncover set `uncoveredBy k` is
-the selector's own data: the `:is()` alternatives render from it
-(`SelChunk.stepAlts`). `_covers`'s grade. -/
 public theorem snapped_uncovers_every_step (v : DeckType) (pg : String) (cp ms n : Nat)
     (h2 : 2 ≤ n) (hn : n ≤ ms) :
     ∃ k r, n ≤ k ∧ r ∈ deckRules v pg cp ms ∧
@@ -5907,19 +4022,6 @@ public theorem snapped_uncovers_every_step (v : DeckType) (pg : String) (cp ms n
   · simp only [uncoveredBy, List.mem_map, List.mem_range]
     exact ⟨n - 2, by omega, by omega⟩
 
-/-- The snap partition, from the typed rules — the CSS half of "every
-frame is reachable by paging in every engine", on the horizontal axis.
-The `[data-snap]` door (`deckSnapDoor`, ungated) is the deck's one snap
-declaration: the emitter marks a stepless frame's section, a section
-page, and a stepped frame's spacers (`track_snaps_exact` counts them),
-so on the timeline path the snap points count one per stepless frame
-plus one per step — the PDF handout's own pagination
-(`pages_partition_frames`, the owed PDF half, is this count's twin: its
-per-frame page count is `Ir.frameSteps`, this count's source).
-On the floor the spacers hide (`stepSnapHide`) and the track takes the
-frame's one snap (`stepTrackFloorSnap`): one snap point per frame.
-`_covers`'s grade over the partition: each fact is the membership of the
-rule that carries it, in the gate that scopes it. -/
 public theorem snap_pages_partition_frames (v : DeckType) (pg : String) (cp ms : Nat) (hms : 2 ≤ ms) :
     (∃ r ∈ deckRules v pg cp ms, r.requires = .base ∧
       r.selector = [.lit "[data-snap]"] ∧
@@ -5938,13 +4040,6 @@ public theorem snap_pages_partition_frames (v : DeckType) (pg : String) (cp ms :
      ⟨stepTrackFloorSnap, mem_deckRules_step hms (mem_stepRules_fixed (by decide)),
        rfl, rfl, by decide⟩⟩
 
-/-- The text census does not depend on which path a browser takes:
-trivially, since the stylesheet ships no text — no deck rule sets a
-non-empty `content` — and the tree is one, whichever `@supports` branch
-an engine parses; its census against the IR is the emission conservation
-the census checks pin (`censusTable` in Tests). Stated as the projection
-statement the theorem-layers rule asks for; `_text`'s grade, the census
-contribution being empty. -/
 public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (r.decls.all fun d =>
@@ -5956,10 +4051,6 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- The projection is the ratio, exact up to the printed milli: the
-emitted value times the stage never exceeds the length (at the 100000
-scale) and falls short by less than one stage. The fact both ratio
-statements below instantiate. -/
 public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
     deckStageMilli x stage * stage ≤ x * 100000 ∧
     x * 100000 < deckStageMilli x stage * stage + stage := by
@@ -5974,15 +4065,11 @@ public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
   generalize ha : x * 100000 = a at heq ⊢
   omega
 
-/-- The shared frame opening, scaled with the stage rather than with the
-first child's type size. This remains a fixed margin when the flex
-spacers have no space to distribute. -/
+/-- The shared frame opening, as a share of the stage. -/
 public def frameBodySkipMilli (hasTitle : Bool) (valign : VAlign)
     (size height : Sp) : Int :=
   deckStageMilli ((Ir.frameBodySkip hasTitle valign).resolve size 0) height
 
-/-- The HTML opening projects the IR boundary to within one printed
-milli-percent of the stage. The PDF resolves the same length in sp. -/
 public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign)
     (size height : Sp) (hh : 0 < height) :
     frameBodySkipMilli hasTitle valign size height * height ≤
@@ -5992,36 +4079,16 @@ public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign)
   simpa only [frameBodySkipMilli] using
     deckStageMilli_share ((Ir.frameBodySkip hasTitle valign).resolve size 0) height hh
 
-/-- The cross-backend type ratio, exact up to the printed milli: the
-deck's body size over the viewport height is the very ratio the PDF
-stage declares — `fontSize` over the page height (`Ir.slidesStage169`'s
-90mm carries beamer's 11pt as ≈4.31% of the stage; beamer user guide
-§18.2.1 for the size, the stage for the height) — so the two artifacts
-show the same type-to-stage proportion whatever the screen's size.
-`backend_gaps_agree`'s mold: the shared thing is the ratio, each backend
-realizing it in its own context's unit (the PDF in its stage, the screen
-in its viewport). -/
 public theorem deck_type_is_stage_ratio (fontSize height : Int) (hh : 0 < height) :
     deckStageMilli fontSize height * height ≤ fontSize * 100000 ∧
     fontSize * 100000 < deckStageMilli fontSize height * height + height :=
   deckStageMilli_share fontSize height hh
 
-/-- The deck's root size, in milli-percent of the stage: the body size
-scaled by the print leading over the screen's. The sheet writes every gap
-in the screen's rhythm unit — `bodyLeadingMilli` milli-rem a leading, a
-gap `k` quanta of half of it (`quantaRem`), a print length its multiple of
-the print quantum (`screenMilli`) — so on the stage that unit must be the
-page's own leading, or a deck's gaps stand a fixed pixel length while its
-type scales with the viewport. -/
+/-- The deck's root size as a share of the stage: the body size scaled by the print leading over
+the screen's. -/
 public def deckRootMilli (fontSize height : Int) : Int :=
   deckStageMilli (fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int)) height
 
-/-- **The deck's screen quantum is the print quantum on the stage**
-(`_between`): the emitted root share times the stage brackets the body's
-print-to-screen leading ratio to within one printed milli, so `k` quanta
-of the sheet's rem stand `k` print quanta of the page's stage — the
-multiple `backend_gaps_agree` holds the two backends to, realized here in
-one unit instead of two. -/
 public theorem deck_root_between (fontSize height : Int) (hh : 0 < height) :
     deckRootMilli fontSize height * height ≤
         fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * 100000 ∧
@@ -6029,11 +4096,7 @@ public theorem deck_root_between (fontSize height : Int) (hh : 0 < height) :
         deckRootMilli fontSize height * height + height :=
   deckStageMilli_share _ height hh
 
-/-- A length on the deck's stage: its absolute part as its share of the
-stage height (`deckStageMilli`, in `vh`), its font-relative parts as the
-CSS units they are. The stage is the viewport, so a point length printed
-as CSS points stands a fixed pixel length while every other length scales
-with the slide. -/
+/-- A length on the deck's stage: its absolute part as a share of the stage height. -/
 public def deckLengthCss (stage : Sp) (l : Length) : String :=
   let parts :=
     (if l.sp != 0 then [s!"{decMilli (deckStageMilli l.sp stage)}vh"] else []) ++
@@ -6044,28 +4107,18 @@ public def deckLengthCss (stage : Sp) (l : Length) : String :=
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
-/-- `cssSourced` on the deck's stage: the token a gap was declared under,
-the stage share of its value behind it (`deckLengthCss`). -/
+/-- `cssSourced` on the deck's stage. -/
 public def deckSourced (stage : Sp) (g : Ir.Sourced SymGlue) : String :=
   match g.token.bind tokenVar? with
   | some v => s!"var({v}, {deckLengthCss stage g.value.width})"
   | none => deckLengthCss stage g.value.width
 
-/-- The page's stage typography for its deck (`DeckType`). -/
 private def deckType (page : PageSpec) : DeckType :=
   { body := s!"{milliFactor (deckStageMilli page.fontSize page.height).toNat}vh"
     root := s!"{milliFactor (deckRootMilli page.fontSize page.height).toNat}vh"
     leading := milliFactor
       (stepLineHeightMilli page.skipScale page.leading page.fontSize "normalsize" 1000) }
 
-/-- The cross-backend image ratio, the same mold: the deck's HTML states
-an image dimension as its share of the stage (`deckStageMilli`, printed
-in `vw`/`dvh` — the stage realized as the viewport, CSS Values 4 §6.1.2),
-and the PDF's image box is `Image.resolveSize` over the same request
-(graphicx's semantics, sourced at `resolveSize`). For a declared width
-the two are one number: the box *is* the resolved request (the first
-conjunct, definitional), and the emitted milli times the stage brackets
-the box's share to within one printed milli — both are `size / stage`. -/
 public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int)
     (hs : 0 < stage) :
     (Image.resolveSize { width := some l } iW iH textW textH).1
@@ -6076,43 +4129,10 @@ public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int
         < deckStageMilli (l.resolve textW textH) stage * stage + stage :=
   ⟨rfl, deckStageMilli_share (l.resolve textW textH) stage hs⟩
 
-/-! ### The deck's constant script
+/-! ## Deck script -/
 
-The one script the slides class ships (screen behaviour, no data). The
-architecture rule ("no backend emits script") bends here because every
-reason behind the rule is discharged by construction: the script is one
-closed literal — no document text, palette, or path flows into it
-(`deck_script_constant` pins the exact text; the definition takes no
-argument) — it rides the typed tree as a raw-text script node the
-emitter's `</script` guard already covers, it ships only for the slides
-class (`deck_script_gated`), and the deck degrades to the pure-CSS pager
-when scripting is off (`floor_covered_script_gated`). The user chose
-this over the pure-CSS floor when Home/End did not move the deck. -/
-
-/-- The keyboard, fragment and floor-uncover script. It binds, on the deck's snap
-points: ArrowRight/ArrowDown/PageDown/Space → next; ArrowLeft/ArrowUp/
-PageUp/Shift+Space → previous; Home/End → first/last. It ignores key
-events whose target is editable or that carry modifiers other than
-Shift, and respects reduced motion (`matchMedia` → instant scroll, and
-each stepped frame is one stop, even when its spacers are hidden). "Snap
-point" is the same list the CSS snaps to, read by the same selector the
-stylesheet declares alignment on: `[data-snap]` (`deckSnapDoor`) — one
-door, so the script and the stylesheet cannot name different elements.
-Where `view()` timelines are missing (`CSS.supports` is the same test
-`Feature.viewTimeline` gates on) the spacers are hidden and paging a
-stepped frame moves no pixel; the script still tracks the current snap
-and writes `data-snapped="k"` on its track, which the floor's numeric
-uncover rules read (`stepSnappedRule`). At startup it marks
-`<html data-deck-script>`, the gate the floor's covered default rides
-(`stepFloorCovered`): without the script that covered state is never
-declared. Every snap carries its canonical `data-slide-label`: the shared
-frame number, with a dotted suffix on every reveal of a stepped frame;
-`titlepage` and `section-k` for front matter and `standout` for a standout
-frame, which bears no number (`Ir.Block.countable`); an `appendix-` prefix
-after a frame-number restart. Bare frame numbers still reach the first reveal,
-and authored title-slug links still resolve. Keyboard
-moves push history, native scrolling replaces the current fragment, and
-hash navigation restores the snap without adding history. -/
+/-- The deck's constant script: arrow, page, space, Home and End keys page between `[data-snap]`
+points, and the floor's step state follows the current snap. -/
 public def deckScript : String :=
   "(() => {
   document.documentElement.dataset.deckScript = \"\";
@@ -6225,12 +4245,6 @@ public def deckScript : String :=
   });
 })();"
 
-/-- The script is a constant: this pin *is* the guarantee — the day an
-interpolation or parameter enters `deckScript`, this `rfl` stops
-compiling and the architecture discussion reopens. A constant has no
-escaping obligation (nothing a document writes can reach it), which is
-the condition under which the no-script rule bends. `_exact`'s grade,
-the golden's mechanism in a theorem's seat. -/
 public theorem deck_script_constant : deckScript =
   "(() => {
   document.documentElement.dataset.deckScript = \"\";
@@ -6343,100 +4357,60 @@ public theorem deck_script_constant : deckScript =
   });
 })();" := by rfl
 
-/-- The script's one emission site: a raw-text script node through the
-typed tree — the emitter's `</script` payload guard covers it like every
-script node — exactly when the class is `slides`. -/
+/-- The script's one emission site, for the deck alone. -/
 public def deckScriptNodes (deck : Bool) : Array Node :=
   if deck then #[Node.script #[] deckScript] else #[]
 
-/-- The gate, definitionally: the node ships iff the deck asked for it —
-the webpage fixture's byte-identity is the census half (no other class's
-page moves). `_contract`'s grade, riding the definition. -/
 public theorem deck_script_gated (b : Bool) :
     deckScriptNodes b = if b then #[Node.script #[] deckScript] else #[] := by rfl
 
-/-! ### The declared math renderer
+/-! ## Math renderer -/
 
-The other script a page may carry: the client-side math renderer a run
-names beside native MathML. No document text reaches it, for it is the
-captured text of the file the run names, carried as it stands; a text the
-HTML parser would end early or keep open, or that holds a NUL, is refused
-where it is captured (`Publication.captureMathBoundary`) and by the closure
-gate's raw-text refusal (`HtmlResource.nodeRequests`), never escaped. It
-ships only where the run declares it (`math_boundary_contract`), and with
-scripting off the page is the page without it (`math_boundary_floor_exact`).
-The gate admits its text and fetches nothing; what the script loads when it
-runs is the renderer's own, which no check of the page sees. -/
-
-/-- The renderer's one emission site: its captured text as a raw-text
-script node through the typed tree, exactly when the run declares one. -/
+/-- The renderer's one emission site: its captured text as a script node, when the run declares
+one. -/
 public def mathBoundaryNodes (renderer : Option String) : Array Node :=
   match renderer with
   | some text => #[Node.script #[("data-math-boundary", "")] text]
   | none => #[]
 
-/-- Artifact-specific, the gate definitionally (`_contract`): the node
-ships iff the run declared a renderer, and it carries exactly that text. -/
+/-- Artifact-specific. -/
 public theorem math_boundary_contract (renderer : Option String) :
     mathBoundaryNodes renderer =
       (renderer.map fun text => Node.script #[("data-math-boundary", "")] text).toArray := by
   cases renderer <;> rfl
 
-/-- The slide sections' stylesheet, split by class. A deck (the `slides`
-class) is one tree with two media renderings: on screen a paged
-full-viewport deck laid out as a horizontal row — → is next, one snap
-page per frame (and per overlay step), the scroll itself the motion —
-paging natively on ←/→, Shift+wheel and swipe, and on every other key
-through the constant script (`deckScript`); the scroller is the root
-(`html` carries `scroll-snap-type`, which UAs apply to the viewport —
-Scroll Snap 1 §4.1), so the keys need no focus. In print the stages page:
-one frame or section page per sheet, the sheet the PDF's own page
-(`deckPageRule`). A section page is one snap page like any frame, its
-content centred on both axes. Every other class keeps the card rendering
-on both media: deck rules and the script are the slides class's own,
-which is what keeps the site port's webpage output unchanged. -/
+/-- The slide sections' stylesheet: the paged deck for the slides class, the card for every
+other. -/
 private def slideCss (doc : Doc) : String :=
-  -- The handout card, today's rendering, byte for byte: the only-media
-  -- form for every non-deck class, the print twin for the deck.
+  -- the handout card, every non-deck class's only rendering
   let handout :=
     s!"section.slide \{ border: {slideBorderPx}px solid {roleRef .rule}; border-radius: {slideRadiusPx}px;\n" ++
     s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
     s!"* + section.slide \{ margin-top: {slidePadV}; }\n"
-  -- The slide header's shared type rule, inside this split so the deck's
-  -- screen override below can stand after it and win the cascade; the
-  -- title's margins are the gap sheet's (`gapResets`).
+  -- inside this split, so the deck's screen override stands after it
   let headerH2 :=
     s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "rem"}; }\n"
   if doc.docClass == .slides then
     let maxSteps := doc.body.foldl (fun n b => max n (Ir.frameSteps b)) 1
-    -- The pre-reveal shade is spelled from the resolved design: the very
-    -- fraction the PDF's cover mixes by (`Ir.Design.cover`, Core/Oklab),
-    -- as the uncover's from-state and the floor's covered default. The
-    -- type size on `main` is the PDF's own fontSize/stage-height ratio
-    -- (`deck_type_is_stage_ratio`), printed in vh.
+    -- the covered shade is the PDF cover's own fraction (`Ir.Design.cover`)
     headerH2 ++
       emitDeckRules (deckRules (deckType doc.page)
         (deckPageSize doc.page) (Design.ofDoc doc).coveredFraction maxSteps)
   else handout ++ headerH2
 
-/-- Whether the document carries a listing whose apparatus the stylesheet
-must draw — a caption or line numbers: the gate on the listing CSS, so a
-document without one ships exactly the stylesheet it shipped before. -/
+/-- Whether the document carries a listing with a caption or line numbers, gating the listing
+CSS. -/
 private def docHasListing (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || match bl with
       | .verbatim _ _ spec => spec.caption.isSome || spec.numbers
       | _ => false)
     (fun b _ => b) false doc.body
 
-/-- The class a token wears: its Pygments type's (`ListingHighlight.Kind.cssClass`)
-behind `tok-`, a prefix no engine class and no authored role's class
-(`roleClass`) begins with. -/
+/-- The class a token wears: its Pygments type's, behind `tok-`. -/
 public def tokenClass (k : ListingHighlight.Kind) : String := "tok-" ++ k.cssClass
 
-/-- The classes a document's highlighted listings put on their tokens
-(`tokenClass`), each beside the code role its type paints in, once each in
-order of first use: every role but the ink, which a listing's box states
-for every token it holds (`Config.listingStyle`). -/
+/-- The token classes a document's highlighted listings use, ink-role ones aside, each with its
+code role, in first-use order. -/
 public def docTokenClasses (doc : Doc) : Array (String × ListingHighlight.Role) :=
   let kinds : Array ListingHighlight.Kind := Ir.foldBlocks (fun acc bl => match bl with
       | .verbatim _ _ spec => spec.highlight.foldl (fun acc line => line.foldl (fun acc t =>
@@ -6447,11 +4421,7 @@ public def docTokenClasses (doc : Doc) : Array (String × ListingHighlight.Role)
     let c := tokenClass k
     if k.role == .ink || acc.any (·.1 == c) then acc else acc.push (c, k.role)) #[]
 
-/-- **The rules that colour a document's tokens**: one per code role its
-listings' tokens paint in, every class of that role's types (`tokenClass`)
-reading the role's property, which the page's `:root` states in each scheme
-for a listing on the page's own code ground and a listing restates where its
-colours there differ (`Config.listingStyle`). -/
+/-- The rules that colour a document's tokens, one per code role its listings use. -/
 public def tokenRules (doc : Doc) : String :=
   let classes := docTokenClasses doc
   String.join (ListingHighlight.Role.all.filterMap fun r =>
@@ -6459,50 +4429,32 @@ public def tokenRules (doc : Doc) : String :=
     if cs.isEmpty then none else
       some s!":is({", ".intercalate (cs.toList.map ("." ++ ·))}) \{ color: {roleRef (Ir.Role.ofCode r)}; }\n")
 
-/-- Whether the document carries a table whose columns narrow (a markdown
-table's, `Ir.ColSpec.narrows`): the gate on its print rule, so a document
-without one ships exactly the stylesheet it shipped before. -/
+/-- Whether the document carries a table whose columns narrow, gating its print rule. -/
 private def docHasNarrowingTable (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || match bl with
       | .table cols .. => cols.any (·.narrows)
       | _ => false)
     (fun b _ => b) false doc.body
 
-/-- Whether the document carries a disclosure: the gate on its summary and
-print rules, so a document without one ships none of them. The boundary
-table's `details` row (`blockGapKinds`) stands in every sheet, as every
-row does, and matches nothing on a page without one. -/
+/-- Whether the document carries a disclosure, gating its summary and print rules. -/
 private def docHasDisclosure (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .disclosure ..) (fun b _ => b) false doc.body
 
-/-- A disclosure's summary in its style (`Ir.disclosureSummaryStyle`), the
-one the page's summary line sets in, through the one map a style reads to
-CSS by. -/
 private def disclosureCss : String :=
   s!"summary \{ {" ".intercalate ((fontStyleDecls [] Ir.disclosureSummaryStyle).getD #[]).toList} }\n"
 
-/-- Paper has no collapse: a disclosure prints its body whether or not the
-reader opened it, as the page sets it, and its summary without the marker
-that offers a toggle paper cannot give. -/
+/-- On paper a disclosure prints its body, and its summary without the toggle marker. -/
 private def disclosurePrintCss : String :=
   "  details::details-content { content-visibility: visible; }\n" ++
   "  summary { list-style: none; }\n" ++
   "  summary::-webkit-details-marker { display: none; }\n"
 
-/-- Whether the document carries a reference list: the gate on its rules,
-so a document without one ships exactly the stylesheet it shipped before. -/
+/-- Whether the document carries a reference list, gating its rules. -/
 private def docHasBibliography (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .bibliography ..) (fun b _ => b) false doc.body
 
-/-- The reference list as the page sets it (`Layout.collectBibliography`),
-from the same resolving sites: author-year entries hang their continuation
-lines `\bibhang` in; numbered entries hang their labels right-aligned in a
-column as wide as the widest label, a label the style writes flush left in it
-(`Ir.BibItem.labelFlush`) — a grid whose rows share its columns
-(`subgrid`), since only the browser can measure a label — `\labelsep`
-(.5em, article.cls:338) before the text; `\bibsep` between entries, its
-default the page's value over the page's size, in `em` so it follows the
-reader's type. A declared token reaches both as its custom property. -/
+/-- The reference list as the page sets it: hanging author-year entries, or a label column with
+`\labelsep` (.5em, article.cls) before the text. -/
 private def bibCss (doc : Doc) : String :=
   let hang := s!"var(--{Ir.bibHangName}, {cssLength (Ir.bibHang {}).width})"
   let size := doc.page.fontSize
@@ -6520,20 +4472,14 @@ private def bibCss (doc : Doc) : String :=
   ".bib-marker { text-align: right; }\n" ++
   (if flush then ".bib-marker.flush { text-align: left; }\n" else "")
 
-/-- The HTML projection of an OpenType feature record. Parameterized so
-the backend agreement theorem ranges over the same value the live
-stylesheet resolves below. -/
+/-- The HTML projection of an OpenType feature record. -/
 public def kernCssFor (features : Ir.Features) : String :=
   if features.kern then "  font-kerning: normal;\n" else ""
 
-/-- The kerning request from the one live feature value. -/
 public def kernCss : String := kernCssFor Ir.features
 
-/-- Whether a declared style paints a colour of its own outside the inline
-regions the document walk reads (`Ir.foldDoc` covers each style's font
-template and marker): a heading's rule, a title page's separator, a link's
-hover and focus inks, or a coloured run in the author line's template or a
-title slot's. -/
+/-- Whether a declared style paints a colour of its own outside the inline regions the document
+walk reads. -/
 public def styleColored (st : ElementStyle) : Bool :=
   st.rule.isSome || st.separator.isSome || st.hover.isSome || st.focus.isSome ||
     st.color.isSome ||
@@ -6541,29 +4487,20 @@ public def styleColored (st : ElementStyle) : Bool :=
       s.parts.toList.flatMap fun p => [p.content, p.font.getD #[]])).any
       (Ir.foldInlines (fun a i => a || i matches .colored _ _ _) false)
 
-/-- Whether a loaded image can paint on the page's own ground. Raster
-transparency is explicit in the plan. An SVG can be transparent too, and
-its PDF print face does not certify an opaque browser background. -/
+/-- Whether a loaded image can paint on the page's own ground. -/
 public def imageSeeThrough (en : Image.Loaded) : Bool :=
   imageShips en && match en.info with
     | some p => p.alpha != .opaque || Image.isSvg (resolvedSrc en) || en.webSvg.isSome
     | none => false
 
-/-- The class a float kind's `<figure>` carries: the selector its caption
-scope's rule addresses. A figure is the plain float. -/
+/-- The class a float kind's `<figure>` carries. -/
 private def floatKindClass : Ir.FloatKind → String
   | .figure => "float"
   | .table => "table-float"
   | .sub => "subfloat"
   | .algorithm => "algorithm-float"
 
-/-- Each float kind reads its own caption tokens before the document's,
-the order `Ir.CaptionSkip.keys` resolves them in on the page, and places
-them by the kind's declared position (`Ir.captionSides`, the one resolving
-site): one custom-property indirection per kind and side — `--ltx-capsep`
-facing the object and `--ltx-capfar` on the text side for a caption below,
-the `-top` pair for one above — so a `\captionsetup[table]` gap reaches
-tables and no figure. -/
+/-- Each float kind's caption tokens, placed by its declared caption position. -/
 private def captionScopeCss (doc : Doc) : String :=
   let pos := doc.captionPos
   let chain (s : Ir.CaptionSkip) (k : Ir.FloatKind) : String :=
@@ -6582,42 +4519,28 @@ private def captionScopeCss (doc : Doc) : String :=
     s!"  --ltx-capsep-top: {chain objTop k}; --ltx-capfar-top: {chain farTop k};\n" ++
     s!"  --ltx-capmargin: var(--{s}captionmargin, var(--captionmargin, 0px)); }\n")
 
-/-- Whether the page's paragraphs hyphenate where a line wants it: a justified
-page that hyphenates. A ragged page — beamer's frames, a card — breaks
-against a stretch no hyphen's penalty beats (TeX's `\raggedright`), so its
-lines break at spaces and the screen's must too; `\page{ hyphenate = off }`
-says the same in so many words. -/
+/-- Whether the page's paragraphs hyphenate: a justified page that does not turn hyphenation off. -/
 public def autoHyphens (page : PageSpec) : Bool :=
   page.justify != some false && page.hyphenate != some false
 
-/-- The HTML line-through rule thickness, derived from the one shared token
-`Ir.lineThroughThickness` the PDF path also lowers (`Layout.lineThroughThickness`
-aliases it), so a strike is one weight on either artifact. -/
+/-- The line-through rule thickness, from the token the PDF path also reads. -/
 public def lineThroughThicknessCss : String := s!"{Ir.lineThroughThickness.toPtString}pt"
 
 @[simp] public theorem lineThroughThicknessCss_agree :
     lineThroughThicknessCss = s!"{Ir.lineThroughThickness.toPtString}pt" := by rfl
 
-/-- The class a figure's words stand under (`figureWordsNode`). -/
 public def figureWordsClass : String := "figure-words"
 
-/-- **A figure's words as the page carries them** (`Image.Loaded.webWords`):
-the text its PDF page carries, where find and copy reach it as they reach
-the PDF's form, out of sight (`figureWordsRule`) and out of the
-accessibility tree — the figure's name stays its declared alternative, the
-words being no description of it. -/
+/-- A figure's words as the page carries them, out of sight and out of the accessibility tree. -/
 public def figureWordsNode (words : String) : Node :=
   Html.elem "span" #[Html.text words] #[("class", figureWordsClass), ("aria-hidden", "true")]
 
-/-- Out of flow and clipped to nothing — the visually hidden pattern of
-WCAG 2.2 technique C7 — so a figure's words (`figureWordsNode`) change no
-box and paint nothing, on screen or paper. -/
+/-- Out of flow and clipped to nothing: WCAG technique C7's visually hidden pattern. -/
 public def figureWordsRule : String :=
   s!".{figureWordsClass} \{ position: absolute; width: 1px; height: 1px; overflow: hidden; \
 clip-path: inset(50%); white-space: nowrap; }\n"
 
-/-- The base stylesheet's rules, after its custom properties: what
-`pageRoles` reads the page's roles off. -/
+/-- The base stylesheet's rules, after its custom properties. -/
 public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords : Bool := false) :
     String :=
   let tl := tableLengthFallback doc
@@ -6628,29 +4551,15 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"  background: {roleRef .page};\n" ++
   s!"  color: {roleRef .ink};\n" ++
   "  font-family: var(--font-body);\n" ++
-  -- 1rem: the reader's own declared size, the browser-consensus default.
-  -- It also makes the screen rhythm rational — the unit is exactly
-  -- `bodyLeadingMilli` milli-rem, so every gap `quantaRem` emits is an
-  -- exact decimal.
+  -- the reader's own declared size
   "  font-size: 1rem;\n" ++
   s!"  line-height: {milliFactor bodyLeadingMilli};\n" ++
   "  text-rendering: optimizeLegibility;\n" ++
-  -- The same feature record the PDF path applies (Ir.features): the two
-  -- artifacts request kerning from one value, agreement by the theorem
-  -- `Pdf.features_agree` over this declaration.
   kernCss ++
   "  -webkit-font-smoothing: antialiased;\n" ++
   "}\n" ++
   "main { max-width: var(--measure); margin: 0 auto; }\n" ++
-  -- Headings from the IR's own scale — the sizes the PDF sets
-  -- (`Layout.sectionSize`, classes.dtx §Sectioning: the title at LARGE, a
-  -- section at Large, a subsection at large), so `heading_hierarchy`'s
-  -- ordering covers this backend for free; the line height is the
-  -- engine's one leading ratio. Hand-picked decimals here once drifted a
-  -- rounding step from the scale sixty lines above the rules generated
-  -- from it. Margins are not declared here or on any block element: the
-  -- resets and every boundary's one emitter are `blockGapRules`, all at
-  -- zero specificity, where an element rule here would outrank them.
+  -- headings from the IR's own scale; margins belong to `blockGapRules` alone
   "h1, h2, h3, h4, h5, h6 {\n" ++
   "  font-family: var(--font-sans);\n" ++
   "  font-weight: 600;\n" ++
@@ -6660,33 +4569,17 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
   s!"h2 \{ font-size: {scaleSize "Large" "rem"}; }\n" ++
   s!"h3 \{ font-size: {scaleSize "large" "rem"}; }\n" ++
-  -- The deeper ranks share the layout's body-size floor. `em` follows
-  -- the local body scale, including a deck's stage-sized text.
+  -- the deeper ranks share the body size, in `em` to follow the local scale
   s!"h4, h5, h6 \{ font-size: {scaleSize "normalsize" "em"}; }\n" ++
-  -- hyphens follows the declared language: the browser's dictionaries on
-  -- the same lang= tags the engine's patterns read — one declaration, two
-  -- conforming hyphenators (the agreement is about tags, never breaks).
-  -- A page set ragged or unhyphenated hyphenates nothing on its own
-  -- (`autoHyphens`), as the page's breaker never pays a hyphen there.
+  -- hyphenation follows the declared language; a ragged or unhyphenated page hyphenates nothing
   s!"p \{ hyphens: {if autoHyphens doc.page then "auto" else "manual"}; }\n" ++
-  -- A markdown document's inline code may end a line where it would
-  -- otherwise overflow it, as its page breaks code after url.sty's break
-  -- characters (`Layout.urlBreak`): a browser breaks only an identifier
-  -- wider than the line, at whatever character it must, rather than let it
-  -- push the page sideways. A tex document's `\texttt` keeps LaTeX's rule.
+  -- markdown inline code may break rather than overflow its line, as its page breaks it
   (if doc.surface == .markdown then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
-  -- A list's items, a description's text under its label and a
-  -- quotation's two edges stand their level's `\leftmargin` in, as the
-  -- page sets them (`listIndentCss`).
   listIndentCss doc.docClass.record.lists ++
   (if figureWords then figureWordsRule else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
-  -- The class-default list marking, per nesting level, matching the PDF
-  -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered
-  -- dot; arabic., (alph), roman., Alph.). Descendant selectors count depth
-  -- per list kind, as LaTeX's \@itemdepth/\@enumdepth do. `disc` and
-  -- `decimal` are the browsers' own level-1 defaults, stated for symmetry.
+  -- the class-default list marks per nesting level, as classes.dtx sets them
   "ul { list-style-type: disc; }\n" ++
   "ul ul > li::marker { content: \"\u2013  \"; font-weight: 600; }\n" ++
   "ul ul ul > li::marker { content: \"\u2217  \"; }\n" ++
@@ -6698,13 +4591,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   "ol ol ol > li::marker { content: counter(list-item, lower-roman) \".  \"; }\n" ++
   "ol ol ol ol { list-style-type: upper-alpha; }\n" ++
   "ol ol ol ol > li::marker { content: counter(list-item, upper-alpha) \".  \"; }\n" ++
-  -- A link inherits the document's colour, as it does in the PDF: the anchor
-  -- imposes nothing, the underline and focus outline carry the affordance.
-  -- The underline band comes from the font's own post metrics, as the PDF
-  -- draws it (Font.band): CSS Text Decoration 4 §2.4.1 and §2.8.2 bind
-  -- `from-font` to the face's declared thickness and position ("must"),
-  -- so both backends declare the same band source. The old 0.15em offset
-  -- and 1px thickness were neither sourced nor the font's.
+  -- a link inherits its colour; the underline band is the font's own (`from-font`)
   "a { color: inherit; text-decoration-thickness: from-font;\n" ++
   "    text-underline-position: from-font; text-decoration-skip-ink: auto; }\n" ++
   "u { text-decoration: underline; text-decoration-skip-ink: auto;\n" ++
@@ -6712,29 +4599,16 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"s \{ text-decoration-line: line-through; text-decoration-thickness: {lineThroughThicknessCss};\n" ++
   "    text-decoration-skip-ink: none; }\n" ++
   s!"a:focus-visible \{ outline: 2px solid {roleRef .focus}; outline-offset: 2px; }\n" ++
-  -- Code sets in the mono family and nothing else: inline code takes the
-  -- size around it, as the page sets it (`Ir.Style.mono` changes the slot
-  -- alone), and a listing states its own (`fontStyleDecls`).
   "code, pre { font-family: var(--font-mono); }\n" ++
-  -- A code atom a line may not break inside (`codeLineNodes`): the line
-  -- wraps only where the page's own wrap may (`Listing.codeMarks`), save
-  -- in a box too narrow to fit one (`codeReleaseWidth`), where it breaks
-  -- where it must, on screen and on paper.
+  -- a code unit never breaks, save in a box too narrow to hold it
   s!"pre .{codeTokClass} \{ white-space: nowrap; }\n" ++
   s!"@container (width < {codeReleaseWidth}) \{ pre .{codeLongTokClass} \{ white-space: inherit; } }\n" ++
-  -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
-  -- Keep code at its content height; a crowded stage owns vertical scrolling.
-  -- A class that paints a code ground (the web's) sets its listings in a
-  -- box on it; one that paints none pads no listing, as its page does not.
+  -- a scroll container has no automatic flex minimum (Flexbox 1 §4.5), so code never shrinks
   (if (Design.at doc.palette .light .codeSurface).isSome then
     s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
     "      border-radius: 4px; flex-shrink: 0; }\n"
    else "pre { background: none; padding: 0; overflow-x: auto; flex-shrink: 0; }\n") ++
-  -- A captioned listing wears the figure-caption shape, caption above
-  -- (listings' captionpos default); declared line numbers are a CSS
-  -- counter the stylesheet draws before each line — furniture, outside
-  -- the reader's selection and copy, no script. Emitted only when the
-  -- document carries a listing that needs it.
+  -- a listing's caption stands above (listings' default); line numbers are a CSS counter
   (if docHasListing doc then
     "figure.listing { margin: 0; }\n" ++
     s!"figure.listing > figcaption \{ text-align: center; margin-bottom: {quantaRem 1}; }\n" ++
@@ -6747,67 +4621,37 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   (if docHasBibliography doc then bibCss doc else "") ++
   alignScopeRule "centered" .center ++
   raggedRule .left ++ raggedRule .right ++
-  -- A minipage's or a \parbox's content starts from no side of its own
-  -- (`\@parboxrestore`, latex.ltx), whatever scope the box stands in.
+  -- a box's content starts from no side of its own (`\@parboxrestore`)
   alignScopeRule "column" .left ++
-  -- A table is a box in its scope's line (`alignScopeRule`); outside any
-  -- scope it stands flush left, as it always did.
+  -- outside any alignment scope a table stands flush left
   "table { margin-left: var(--ltx-box-left, 0); margin-right: var(--ltx-box-right, auto); }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
-  -- A document skip's box (`skipNode`): a positive skip is its height, in a
-  -- block formatting context, so no margin collapses through it, and a
-  -- flex item that never shrinks, as a margin never does. Opening a frame
-  -- it pays the frame's `\vskip-\parskip`, which the paragraph after it
-  -- cancels by its own.
+  -- a skip box: a positive skip is its height; opening a frame it pays `\vskip-\parskip`
   s!".{skipClass} \{ display: flow-root; flex: none; height: max(0rem, var(--skip, 0rem));\n" ++
     "  --frame-body-before: calc(0rem - var(--parskip, 0rem)); }\n" ++
   s!"{skipCarrier} \{ --frame-body-before: calc(0rem - var(--parskip, 0rem)); }\n" ++
-  -- General rows keep the prior flex behavior. An exact pair switches to a
-  -- grid that reserves the right max-content column before the left wraps.
+  -- an exact pair is a grid reserving the right column before the left wraps
   ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
   "  align-items: baseline; }\n" ++
   ".entry > .group + .group, .entry-row > .group + .group { margin-left: auto; }\n" ++
-  -- A fill spans its line whatever the paragraph's alignment (TeX's glue
-  -- orders, `Layout.setsToMeasure`): the first group starts at the left.
+  -- a fill spans its line whatever the paragraph's alignment
   ".entry > .group:first-child, .entry-row > .group:first-child { text-align: left; }\n" ++
   ".entry > .group:last-child, .entry-row > .group:last-child { text-align: right; }\n" ++
   ".entry-pair { display: grid;\n" ++
   "  grid-template-columns: minmax(0, 1fr) max-content; }\n" ++
   ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
-  -- The other font-axis classes (fntguide §2.2 through `Ir.Style`): roman
-  -- family, medium series, upright shape — each resets exactly its axis.
+  -- each font-axis class resets exactly its axis
   ".rm { font-family: var(--font-body); }\n" ++
   ".md { font-weight: 400; }\n" ++
   ".up { font-style: normal; font-variant-caps: normal; }\n" ++
   (if docHasDisclosure doc then disclosureCss else "") ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color);\n" ++
-  -- Half the x-height up from the baseline, in the rule's own inherited
-  -- ex — the heading's face — where the PDF draws it (Layout.paraLineGeom;
-  -- Hochuli: a rule relates to the type it cuts). A heading declaring
-  -- `rule-position = baseline` overrides this per element (`styleRules`).
+  -- half the heading's x-height above the baseline, where the PDF draws the rule
   "  transform: translateY(-0.5ex); }\n" ++
-  -- Uniform small caps (CSS Fonts 4 §font-variant-caps: `all-small-caps`
-  -- asks for c2sc + smcp), so mixed-case source sets at one height and the
-  -- text carries the real casing. The browser uses the face's own small
-  -- caps when it has them and synthesises otherwise, which is the better
-  -- of the two mechanisms; the PDF path does the same from its own GSUB
-  -- read, so the two backends agree on what \scshape means.
+  -- `all-small-caps`: mixed-case source sets at one height
   ".sc { font-variant-caps: all-small-caps; }\n" ++
-  -- booktabs' formal table: the three rule weights, their paddings and the
-  -- column gap are the lengths the page sets an undeclared table by
-  -- (`tableLengthFallback`: booktabs' defaults as LaTeX fixes them at load,
-  -- a deck's as their share of the stage), so the two backends cannot
-  -- drift; each is overridable through its token (`--heavyrulewidth` etc.
-  -- land in `tokenVars` when declared, spelled as the fallback is).
-  -- Borders take `currentColor`, as the PDF path draws rules in `fg`. A
-  -- header cell is a `th` for meaning only (`Ir.tableHeaderRows`): every
-  -- cell rule addresses both tags, and the UA's bold `th` is inherited
-  -- away so the head sets exactly as its `td` did — the authored `\textbf`
-  -- is what makes a head bold, in both backends. Every cell states its own
-  -- side (`cellSideClassOf`, `cellSideRule`), so neither the UA's centred
-  -- `th` nor the scope's `text-align` reaches one. The rows stand the print leading
-  -- apart (`printLeadingMilli`), as the PDF's do.
+  -- booktabs' lengths come from `tableLengthFallback`; rows stand at the print leading
   s!"table.booktabs \{ border-collapse: collapse; line-height: {decMilli (printLeadingMilli doc.page)}; }\n" ++
   s!"table.booktabs td, table.booktabs th \{ padding: 0 var(--tabcolsep, {tl "tabcolsep"});\n" ++
   "  vertical-align: top; }\n" ++
@@ -6828,36 +4672,19 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"tr.bt-pre > td, tr.bt-pre > th \{ padding-bottom: var(--aboverulesep, {tl "aboverulesep"}); }\n" ++
   s!"td.bt-cmid, th.bt-cmid \{ border-top: var(--cmidrulewidth, {tl "cmidrulewidth"}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {tl "belowrulesep"}); }\n" ++
-  -- A natural `l`/`c`/`r` column is left to `auto`: the browser measures it,
-  -- as the PDF path measures it from the fonts. CSS reality: `white-space`
-  -- set on a `<col>` has no effect — only `width`, `background`, `border`
-  -- and `visibility` apply to a column (CSS Tables §17.3). So the nowrap
-  -- that stops auto-layout squeezing a natural column to min-content lands
-  -- on its cells (`bt-nowrap`, placed in `tableCellNode`), inside `:where()`
-  -- so it never outranks an authored rule.
+  -- `white-space` has no effect on a `<col>`, so a natural column's nowrap sits on its cells
   ":where(table.booktabs td.bt-nowrap, table.booktabs th.bt-nowrap)" ++
   " { white-space: nowrap; }\n" ++
-  -- Float and caption gaps: the same tokens the PDF path reads, the
-  -- defaults this context's own rhythm multiples of the declared rows
-  -- (`Ir.rhythmGapQuanta`; the boundary rules live in `blockGapCss`).
-  -- Pseudocode lists: nesting indents by the same token the PDF path
-  -- reads (`--algindent`; algorithm2e's \SetInd{0.5em}{1em} + 0.4pt,
-  -- ≈1.5em, following the type), and the declared line numbers are one
-  -- CSS counter over every <li>, nested levels included — generated
-  -- furniture, never content.
+  -- `--algindent` defaults to algorithm2e's \SetInd{0.5em}{1em} + 0.4pt, ≈1.5em
   "ol.algorithm { list-style: none; padding-left: 0; counter-reset: algline; }\n" ++
   "ol.algorithm ol { list-style: none; padding-left: var(--algindent, 1.5em); }\n" ++
-  -- the class-default enumerate markers set ::marker content per level;
-  -- pseudocode lists are not enumerates, so the content resets too
+  -- pseudocode lists are not enumerates, so their marker content resets
   "ol.algorithm li::marker, ol.algorithm ol > li::marker,\n" ++
   "ol.algorithm ol ol > li::marker, ol.algorithm ol ol ol > li::marker {\n" ++
   "  content: none; }\n" ++
   "ol.algorithm.numbered { padding-left: var(--algnumindent, 2em); position: relative; }\n" ++
   "ol.algorithm.numbered li { counter-increment: algline; }\n" ++
-  -- one number column reserved inside the block, whatever the line's
-  -- depth — the PDF's marker column over the same token (`algnumindent`,
-  -- `Layout.collectAlgorithm`): algorithm2e's own inset, so a number
-  -- stands in the algorithm's box and never in the page margin
+  -- one number column inside the block (algorithm2e's own inset), whatever the line's depth
   "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
   s!"  color: {roleRef .marker}; font-size: 0.8em; width: 1.5em;\n" ++
   "  position: absolute; left: 0; text-align: right; }\n" ++
@@ -6867,70 +4694,37 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   "figure.float > figcaption { margin-top: var(--ltx-capsep);\n" ++
   "  padding: 0 var(--ltx-capmargin) var(--ltx-capfar);\n" ++
   "  text-align: center; text-wrap: balance; }\n" ++
-  -- The text-side skip is padding: it stands inside the float, beside
-  -- the float's own separation, and a margin there would collapse into it.
-  -- The object's own peer margin yields to the caption's skip facing it
-  -- (`blockGapCss`'s caption boundary).
+  -- the text-side skip is padding, since a margin would collapse into the float's separation
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs
     (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome)
     (squeezed := anySqueezed doc) ++
-  -- Slides: the class-split deck/handout rules, header type included
-  -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
-  -- A standout frame inverts: the palette's standout keys override, and
-  -- without them the page's own fg/bg swap — the same rule as the PDF path.
-  -- Its size is the scale's own Large step (`\Large\bfseries`, the shipped
-  -- bundles' standout template), never a re-spelled decimal, and it is the
-  -- whole frame's, as moloch's `\usebeamerfont{standout}` is: lists and
-  -- centred blocks set at it too. The footline keeps its own step and
-  -- weight (`footlineCss`).
+  -- a standout frame inverts, at the scale's Large step for the whole frame
   s!"section.slide.standout \{ background: {roleRef .standoutGround};\n" ++
   s!"  color: {roleRef .standoutInk}; text-align: center;\n" ++
   s!"  font-size: {scaleSize standoutStep "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   deckAreaCss doc ++
   (if doc.docClass == .slides then frameOpeningCss doc ++ fillBeforeCss else "") ++
-  -- A deck's steps set their own leading, as the page sets each named
-  -- size's `\baselineskip` (`Ir.stepSkip`); a reading page keeps the
-  -- screen's one line height, inherited.
+  -- a deck's steps set their own leading; a reading page keeps one line height
   sizeRules doc.page.scale
     (if doc.docClass == .slides then
       some (doc.page.skipScale, doc.page.leading, doc.page.fontSize) else none) ++
-  -- The math face the document resolved, through its token — the `math`
-  -- element selector reaches native MathML, whose engine default is the
-  -- `math` generic family (MathML Core, user agent stylesheet); Chromium's
-  -- MathML Core reads the web font's MATH table. The stack behind the var
-  -- is the degraded state for a page with no shipped face.
+  -- the resolved math face; the stack behind it serves a page with no shipped face
   "math, .math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
-  -- A display formula's block centres its line; the skips around it are
-  -- the block boundary's (`blockGapCss`'s display rules, the tokens the
-  -- PDF walk reads), never a margin on the formula element itself — one
-  -- emitter per boundary, so a flex or block container realizes the same
-  -- gap (`single_owner_gap_exact`).
+  -- a display's skips are the block boundary's, never the formula's margin
   ".display { text-align: center; }\n" ++
-  -- The numbered display: the formula's box takes the measure and centres
-  -- its own text; the tag sits on the right edge, vertically centred on
-  -- the formula (amsmath's equation shape).
+  -- a numbered display: the tag on the right edge, centred on the formula (amsmath)
   ".equation { display: flex; align-items: center; }\n" ++
   ".equation > .math { flex: 1 1 auto; text-align: center; }\n" ++
   "@media print {\n" ++
-  -- The sheet's paper and ink are the page's roles, whose print values the
-  -- print block states (`schemeBlocksOf`): the PDF's page and ink, a
-  -- declared one included, on the page's own box. Its grounds are the
-  -- author's, not decoration a reader's toner setting may drop
-  -- (`print-color-adjust: exact`, as a printed deck's are).
+  -- paper and ink are the page's roles, printed exactly
   s!"  html, body \{ print-color-adjust: exact; }\n" ++
   s!"  body \{ background: {roleRef .page}; color: {roleRef .ink}; padding: 0; }\n" ++
-  -- Paper has no scroll, and a scroll box is monolithic there, so it
-  -- clips what runs past it: on paper a code block wraps a line wider than
-  -- itself inside the box instead. A departure from LaTeX's verbatim, which
-  -- overruns the measure: only such a line moves, and every character
-  -- reaches the sheet, since no unit a code line holds whole is wider than
-  -- the narrowest line (`codeHoldColumns`) and a box narrower than that
-  -- line holds none (`codeReleaseWidth`).
+  -- paper has no scroll, so a code line wider than its box wraps inside it
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
   (if docHasDisclosure doc then
     disclosurePrintCss ++
@@ -6939,12 +4733,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
           (Ir.blockShapeOf doc.styles k).isSome)
         (squeezed := anySqueezed doc)
   else "") ++
-  -- A markdown table whose words alone pass the column at its smallest
-  -- step stands centred on it, overhanging both margins equally, as its
-  -- page sets it (`Layout.tableFit`): on paper both margins are room, and
-  -- the right one alone ran its last columns off the sheet. On screen it
-  -- keeps the column's start, where a narrow viewport can still scroll to
-  -- its end.
+  -- an overhanging markdown table stands centred over both margins, as its page sets it
   (if docHasNarrowingTable doc then
     "  table.booktabs.bt-overhang { position: relative; left: 50%; transform: translateX(-50%); }\n"
   else "") ++
@@ -6956,45 +4745,28 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   "  .entry-pair { grid-template-columns: minmax(0, 1fr); }\n" ++
   "}"
 
-/-- The roles the reader aliases read (`readerAliases`): roots of every page's
-set, so a host stylesheet's `var(--bg)` resolves. -/
+/-- The roles the reader aliases read. -/
 public def readerRoles : List Ir.Role := [.page, .ink, .muted, .accent, .codeSurface, .rule]
 
-/-- The roles a set of scheme tables must declare for a set of reads: the
-reads and every role their aliases reach in some table, each in its own
-scheme (`Ir.Design.reach`). -/
+/-- The roles a set of scheme tables must declare for a set of reads, aliases included. -/
 public def cssRolesIn (tables : List (Ir.Scheme × Ir.Palette)) (seed : List Ir.Role) :
     List Ir.Role :=
   Ir.Role.all.filter fun r => seed.any fun q =>
     tables.any fun (s, v) => (Ir.Design.reach v [s] q).contains r
 
-/-- **The roles a page's own stylesheet declares**: every role its rules read
-(`rolesRead` over `baseRules` and `themeCss`), the roles the reader aliases
-name, and the roles their aliases name in turn, in each scheme the page
-ships, as that scheme ships the palette (`cssRolesIn`). -/
+/-- The roles a page's own stylesheet declares. -/
 public def pageRoles (cfg : Config) (doc : Doc) : List Ir.Role :=
   cssRolesIn cfg.tables (rolesRead (baseRules doc ++ themeCss doc) ++ readerRoles)
 
 
-/-- The base stylesheet. Small on purpose: a generated document should not
-ship a framework to use four of its rules. Dark mode is a variant of the same
-token set, not an inversion hack. The typography with an authority behind it
-is derived above (`Ir.sizeScale` for the headings and standout,
-`Ir.leadingMilli` and `bodyLeadingMilli` for the leadings); the remaining
-paddings, margins, radii and breakpoints are this stylesheet's own screen
-furniture — stated as the engine's choices, no external authority names
-them, and each is overridable by a reader stylesheet, which is the HTML
-backend's contract. -/
+/-- The base stylesheet; its unsourced paddings, margins, radii and breakpoints are the engine's
+own screen furniture, each overridable. -/
 public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
     (roles : Option (List Ir.Role) := none) (taken : List String := [])
     (rules : Option String := none) (epochVars : String := "") : String :=
   let parskip := parskipVar doc.page
   let roles := roles.getD (pageRoles cfg doc)
-  -- The roles' defaults come from the registry's columns (`Ir.Role.row`), as
-  -- each shipped scheme carries the document's colours (`Ir.Palette.view`),
-  -- not literals here: every site they create in a scheme the page ships is
-  -- judged legible there (`Contrast.schemeJudge`), and a value only a
-  -- backend knew would be a value no judge covers.
+  -- role defaults come from the registry, never literals here
   let floorPal := cfg.floorPal
   ":root {\n" ++
   s!"    color-scheme: {if cfg.floor.onDark then "dark" else "light"};\n" ++
@@ -7006,12 +4778,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
   "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
   "    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n" ++
   "}\n" ++
-  -- The document's own declarations, then each shipped scheme's: a media
-  -- query and `@supports` add no specificity, so at the shared `:root`
-  -- specificity source order is the whole cascade here — the floor, the
-  -- document's colours there, then what each scheme restates — the same
-  -- equal-specificity, order-decides contract the declared stylesheet link
-  -- relies on below.
+  -- at equal `:root` specificity, source order alone decides between these blocks
   (let tv := tokenVars cfg doc roles taken
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   schemeBlocks cfg.tables cfg.floor roles cfg.codeRoot ++ epochVars ++
@@ -7028,42 +4795,30 @@ private def styleClass : Style → String
   | .normal => "normal"
   | .roman => "rm"
   | .medium => "md"
-  -- unused: the styled arm emits `.series` as a per-run numeric
-  -- `font-weight`, the value CSS matches faces by, never a class
+  -- unused: `.series` ships as a numeric `font-weight`
   | .series w => s!"w{w.css}"
   | .upright => "up"
-  -- unused: the styled arm emits a family as its stack's custom property
+  -- unused: `.family` ships as its stack's custom property
   | .family s => s!"family-{s}"
   | .size n => "size-" ++ n
-  -- unused: arbitrary sizes emit one inline declaration.
+  -- unused: `.fontSize` ships as one inline declaration
   | .fontSize _ _ => "fontsize"
-  -- unused: the styled arm emits `.lang` as a `lang` attribute, the
-  -- declaration WCAG 2.2 SC 3.1.2 reads, never a class
+  -- unused: `.lang` ships as a `lang` attribute
   | .lang tag => "lang-" ++ tag
 
-/-- The shares of a slide's leftover vertical space above and below its
-content: the frame's declared distribution, projected from the one IR
-table (`Ir.VAlign.shares` carries the sourcing) exactly as
-`Layout.VDist.of` projects it for the PDF page — a backend may not read
-another backend, so each projects the IR and `vdist_shares_agree` in
-Tests states the agreement. A page-opening path owes a declared
-distribution, never a default (AGENTS.md § When you add). -/
+/-- The shares of a slide's leftover vertical space above and below its content. -/
 @[expose] public def vdistShares (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool := false) :
     Nat × Nat :=
   Ir.VAlign.shares keys v breakable
 
-/-- The grows a frame's two spacers take: its declared shares, unless its
-glue yields to a `\vfill` its body holds (`Ir.FrameGlue.joins`), when they
-take none — TeX stretches only the highest order present, and the PDF's page
-close gives such a page's leftover to its fills alone
-(`Layout.VDist.filAbove`). -/
+/-- The grows a frame's two spacers take: its declared shares, or none where its glue yields to a
+`\vfill`. -/
 @[expose] public def deckSpacerShares (keys : Ir.FrameKeys) (breakable : Bool) (valign : Ir.VAlign)
     (fills : Nat) : Nat × Nat :=
   if (Ir.frameGlue keys breakable valign).joins || fills == 0 then vdistShares keys valign breakable
   else (0, 0)
 
-/-- The overlay attributes a step's wrapper carries: its range as data, and
-the `--step` index the uncover reads. -/
+/-- The overlay attributes a step's wrapper carries. -/
 public def stepAttrs (n : Nat) (last : Option Nat) : Array (String × String) :=
   (#[("class", "step"), ("data-step", toString n)] ++
     (match last with
@@ -7071,13 +4826,7 @@ public def stepAttrs (n : Nat) (last : Option Nat) : Array (String × String) :=
      | none => #[])) ++
     #[("style", s!"--step: {n}")]
 
-/-- The declared end's own carrier, nested inside the step's wrapper when
-the range has one. Two wrappers rather than one because one element
-animates one property once: the start's uncover and the end's recover both
-ride `opacity`, and opacities multiply through nesting — covered before the
-start, full inside the range, covered again past the end, which is
-`Ir.stepPending` (`html_step_pending_agree`). A range with no declared end
-never covers again and gets no wrapper. -/
+/-- The declared end's own carrier, nested inside the step's wrapper when the range has one. -/
 public def stepEndNodes (tag : String) (last : Option Nat) (kids : Array Node) : Array Node :=
   match last with
   | none => kids
@@ -7086,14 +4835,7 @@ public def stepEndNodes (tag : String) (last : Option Nat) (kids : Array Node) :
       #[("class", "step-end"), ("data-step-last", toString u),
         ("style", s!"--step-last: {u}")]]
 
-/-- One alternation group, in its own wrapper. `first` is page order — the
-group step 1 inks (`Ir.altShowsFirst_id`), so the other carries `hidden`
-and every rendering with no snap state shows step 1's reading: the floor
-with scripting off, the print handout, a page shipped with no stylesheet
-at all. The class names which side of the spec the group stands on, read
-from `Ir.altFirstWhenPending`, so the deck's per-snap selectors decide by
-the same arithmetic the PDF page decides by (`alt_backend_agree`) instead
-of re-deriving the selection here or in CSS. -/
+/-- One alternation group in its own wrapper; the group step 1 does not ink carries `hidden`. -/
 public def altGroupNode (tag : String) (n : Nat) (last : Option Nat) (first : Bool)
     (kids : Array Node) : Node :=
   let pendingSide := Ir.altFirstWhenPending n last == first
@@ -7105,23 +4847,18 @@ public def altGroupNode (tag : String) (n : Nat) (last : Option Nat) (first : Bo
        | none => #[])) ++
       (if first then #[] else #[("hidden", "hidden")]))
 
-/-- The shared selector's finite projection, serialized as CSS whitespace
-separated tokens. No backend interprets overlay source. -/
+/-- The selector's finite projection, as whitespace-separated step tokens. -/
 public def overlayStepTokens (spec : Ir.OverlaySpec) (steps : Nat) : String :=
   String.intercalate " " ((spec.selectedSteps steps).map toString)
 
-/-- Range animations need a multi-reveal track and positive, ordered
-endpoints. Every other selector uses finite membership, including a
-one-reveal frame and zero or reversed endpoints. -/
+/-- Whether a selector uses range animation: one positive range, ordered and within the frame's
+steps, on a multi-reveal track. -/
 public def overlayUsesRange (steps : Nat) (spec : Ir.OverlaySpec) : Bool :=
   (2 ≤ steps) && spec.more.isEmpty && (1 ≤ spec.first) &&
     match spec.last with
     | none => true
     | some u => spec.first ≤ u && u ≤ steps
 
-/-- The optimized representation is used only inside the bounds its CSS
-rules enumerate. Ordered endpoints also prevent two nested carriers from
-covering the same content twice. -/
 public theorem overlayUsesRange_contract (steps : Nat) (spec : Ir.OverlaySpec)
     (h : overlayUsesRange steps spec = true) :
     2 ≤ steps ∧ spec.more = [] ∧ 1 ≤ spec.first ∧
@@ -7130,9 +4867,7 @@ public theorem overlayUsesRange_contract (steps : Nat) (spec : Ir.OverlaySpec)
   | mk n last more =>
     cases more <;> cases last <;> simp_all [overlayUsesRange]
 
-/-- One body carrier for an exact selector. Representable singletons keep
-the range animation; finite membership uses the deck's numbered snap state.
-Without that state the fully uncovered handout floor applies to both. -/
+/-- One body carrier for an exact selector. -/
 public def overlayNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (kids : Array Node) : Node :=
   if overlayUsesRange steps spec then
@@ -7142,8 +4877,7 @@ public def overlayNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     Html.elem tag kids #[("class", "step-set"),
       ("data-steps", overlayStepTokens spec steps)]
 
-/-- Both alternatives stay declared once, in page order. Their finite
-membership sets are complementary at every numbered snap. -/
+/-- Both alternatives, declared once each in page order. -/
 public def overlayAltNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (first : Bool) (kids : Array Node) : Node :=
   if overlayUsesRange steps spec then altGroupNode tag spec.first spec.last first kids
@@ -7156,8 +4890,7 @@ mutual
 
 private def anchorIdsOne (acc : Array String) : Node → Array String
   | .elem _ attrs kids =>
-    -- A figure's own definitions are no anchors: the page numbers each
-    -- rendered figure apart afterwards (`numberFiguresList`).
+    -- a figure's own definitions are no anchors
     let ids := attrs.filterMap fun (key, value) =>
       if key == "id" && (GfxSvg.parseId value).isNone then some value else none
     anchorIdsList (acc ++ ids) kids.toList
@@ -7171,8 +4904,7 @@ end
 
 mutual
 
-/-- Relocate only named anchors. All tags, content, links, accessibility
-attributes and unrelated IDs remain the original typed nodes. -/
+/-- Strip the `id`s listed in `ids`, leaving every other node as it was. -/
 private def unanchorOne (ids : Array String) : Node → Node
   | .elem tag attrs kids => .elem tag
       (attrs.filter fun (key, value) => !(key == "id" && ids.contains value))
@@ -7187,11 +4919,7 @@ private def unanchorList (ids : Array String) (acc : Array Node) : List Node →
 
 end
 
-/-- An anchor shared by exclusive alternatives has one stable target outside
-both carriers. Hidden DOM still owns its IDs (HTML's id uniqueness rule), so
-copying a note reference or label into both branches would create duplicate
-IDs and make backlinks depend on which hidden branch the browser finds first.
-This is an artifact fact: the IR alternatives may share semantic identity. -/
+/-- Exclusive alternatives, their shared anchors moved to one target outside both carriers. -/
 public def overlayAlternatives (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (first other : Array Node) : Array Node :=
   let otherIds := anchorIdsList #[] other.toList
@@ -7201,23 +4929,18 @@ public def overlayAlternatives (tag : String) (steps : Nat) (spec : Ir.OverlaySp
   anchors ++ #[overlayAltNode tag steps spec true (unanchorList shared #[] first.toList),
     overlayAltNode tag steps spec false (unanchorList shared #[] other.toList)]
 
-/-- An artifact-specific projection of IR membership: matching a numbered
-HTML token selects exactly the step layout selects, within the frame. -/
+/-- Artifact-specific. -/
 public theorem overlay_membership_agree (spec : Ir.OverlaySpec) (steps k : Nat)
     (hk : 1 ≤ k) (hsteps : k ≤ steps) :
     (spec.selectedSteps steps).contains k = spec.selects k := by
   apply Bool.eq_iff_iff.mpr
   simp [Ir.OverlaySpec.selectedSteps_mem, hk, hsteps]
 
-/-- Read covering from the representation `overlayNode` emits: range
-selectors or a finite token set. The artifact chooses a representation,
-never a different meaning for the selector. -/
+/-- Covering as read from the representation `overlayNode` emits. -/
 public def overlayPendingAt (steps : Nat) (spec : Ir.OverlaySpec) (k : Nat) : Bool :=
   if overlayUsesRange steps spec then htmlStepPendingAt steps spec.first spec.last k
   else !(spec.selectedSteps steps).contains k
 
-/-- Covering agrees with the IR for every numbered selector and every
-page in the frame; zero, reversed and union intervals need no exclusions. -/
 public theorem overlay_pending_agree (spec : Ir.OverlaySpec) (steps k : Nat)
     (hk : 1 ≤ k) (hsteps : k ≤ steps) :
     overlayPendingAt steps spec k = spec.pending k := by
@@ -7234,15 +4957,11 @@ public theorem overlay_pending_agree (spec : Ir.OverlaySpec) (steps k : Nat)
     rw [ite_eq_right h, overlay_membership_agree spec steps k hk hsteps]
     rfl
 
-/-- Read page-order alternation from either representation actually emitted
-by `overlayAltNode`. The first page is still the script-free reading. -/
+/-- Page-order alternation as read from the representation `overlayAltNode` emits. -/
 public def overlayFirstAt (steps : Nat) (spec : Ir.OverlaySpec) (k : Nat) : Bool :=
   if overlayUsesRange steps spec then altShownFirstAt steps spec.first spec.last k
   else (spec.pageSteps steps true).contains k
 
-/-- Both artifacts select the same alternative for an arbitrary selector.
-The contract is shared by replacements, conditional styles and any payload
-carried through `OverlaySpec.pageOrder`. -/
 public theorem overlay_alternation_agree (spec : Ir.OverlaySpec) (steps k : Nat)
     (hk : 1 ≤ k) (hsteps : k ≤ steps) :
     overlayFirstAt steps spec k = spec.showsFirst k := by
@@ -7258,12 +4977,7 @@ public theorem overlay_alternation_agree (spec : Ir.OverlaySpec) (steps k : Nat)
   · apply Bool.eq_iff_iff.mpr
     simp [overlayFirstAt, h, Ir.OverlaySpec.pageSteps_mem, hk, hsteps]
 
-/-- Does a string carry anything to read: a character that shows something
-(`holdsText`, the markdown reader's test of a summary too). The one
-blankness test for an accessible name, here and in the judge
-(`carriesName`): accname 1.2 does not take a name that is empty once
-trimmed of white space, and a name of invisible characters is empty to a
-reader. -/
+/-- Whether a string carries a character that shows something. -/
 @[expose] public def nonBlank (s : String) : Bool := holdsText s
 
 /-- The first of two strings that carries anything to read. -/
@@ -7276,44 +4990,29 @@ public theorem firstNonBlank_contract (a b : String) (hb : nonBlank b = true) :
   · assumption
   · exact hb
 
-/-- What a picture is called when nothing it says is known: the locale's
-figure word, and the engine's English word only where a locale carries
-none. -/
+/-- The locale's figure word, else English. -/
 public def figureWord (loc : Locale) : String := firstNonBlank loc.figure "figure"
 
 public theorem figureWord_contract (loc : Locale) : nonBlank (figureWord loc) = true :=
   firstNonBlank_contract _ _ (by decide)
 
-/-- An attribute's value on an element's attribute list. -/
 public def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
   (attrs.find? (·.1 == k)).map (·.2)
 
-/-- An `<img>`'s alternative, a function of its one `Alt` by construction.
-Described, `alt` the text (WCAG 2.2 technique H37); decorative, `alt=""`
-with `role="presentation"`, the declared decorative role the page judge
-reads (`a11yElem`); undeclared, `alt=""` — what the engine has always
-shipped there, kept, and named by N0376 instead. -/
+/-- An `<img>`'s alternative attributes, from its one `Alt`. -/
 public def imgAltAttrs : Ir.Alt → Array (String × String)
   | .described t => #[("alt", t)]
   | .decorative => #[("alt", ""), ("role", "presentation")]
   | .undeclared => #[("alt", "")]
 
-/-- A picture or image placeholder's role and name project its one
-alternative. Described, `role="img"` makes its children presentational
-(WAI-ARIA 1.2 §5.3) and `aria-label` names it; decorative,
-`aria-hidden="true"` removes it from the accessibility tree; undeclared,
-the locale's figure word supplies a name. -/
+/-- A picture's role and name, from its one `Alt`. -/
 public def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String)
   | .described t => #[("role", "img"), ("aria-label", firstNonBlank t floor)]
   | .decorative => #[("aria-hidden", "true")]
   | .undeclared => #[("role", "img"), ("aria-label", floor)]
 
-/-- A listing's line height over its own font size: the pitch its source
-lines stand at on the page, the step's leading at the body (`Ir.stepSkip`
-over the document's skip column) less the package's space after each source line
-(`Ir.ListingSpec.lineOverlap`). A `pre` has one line height, so a wrapped
-source line's continuation stands at it too, where the page keeps the
-step's own. -/
+/-- A listing's line height over its own font size: the pitch its source lines stand at on the
+page. -/
 private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : String) :
     String :=
   let k := (page.scale.lookup step).getD 1000
@@ -7322,14 +5021,12 @@ private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : 
     page.leading - spec.lineOverlap
   decMilli (pitch * 1000 / max size 1)
 
-/-- A length of the page's own as the stylesheet writes it: on a deck the
-stage's share (`vh`), elsewhere the screen's rem. -/
+/-- A length of the page's own: on a deck the stage's share, elsewhere screen rem. -/
 private def stageLength (cfg : Config) (v : Int) : String :=
   if cfg.deck then s!"{decMilli (deckStageMilli v cfg.page.height)}vh"
   else milliRem (screenMilli cfg.page.fontSize v)
 
-/-- A block that sets no line box in the flow of the section it stands in:
-what a body's end is read past. -/
+/-- A block that sets no line box in its section's flow. -/
 private def shipsNoLine : Block → Bool
   | .note .. | .nav .. | .logo .. | .pagebreak | .framefoot .. | .setPalette .. | .setTokens .. => true
   | .para .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link ..
@@ -7339,12 +5036,9 @@ private def shipsNoLine : Block → Bool
 
 mutual
 
--- conserves: none — how far a body's last line box reaches below its baseline and past the boxes around it; the walk follows the last block alone, which no fold over every block can say.
-/-- How far the end of a body stands below its last baseline in the web
-page: its last line box's part below that baseline (`Config.blockLastBelow`,
-a body paragraph's where that answers nothing, `Ir.BlockTitlePlace.bodyBelow`),
-and the skips below every shaped block it ends inside, which pad their
-sections' ends. -/
+-- conserves: none — follows the last block alone, which no fold over every block can say
+/-- How far a body's end stands below its last baseline, with the skips of the shaped blocks it
+ends inside. -/
 private def endBelowList (cfg : Config) (para : String) : List Block → String
   | [] => para
   | [b] => endBelowOne cfg para b
@@ -7370,7 +5064,6 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
   | .verbatim covered content spec =>
     match cfg.blockLastBelow (some (.verbatim covered content spec)) with
     | some v =>
-      -- A reading page pads its listings; a deck's stage pads none.
       if cfg.deck then stageLength cfg v else s!"calc({stageLength cfg v} + {quantaRem 1})"
     | none => para
   | .para .. | .section .. | .equation .. | .algorithm .. | .rule .. | .picture ..
@@ -7379,17 +5072,11 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
   | .float .. => para
 
 end
-/-- **An image's element**: a drawn figure the page sets inline
-(`FigureSvg.inlineFigure?`) as its own SVG — named by the image's one
-alternative as a picture is (`pictureAltAttrs`), at the size the `<img>`
-would take (`dims`) — else the `<img>`, inside the print and reduced-motion
-switch when the entry has a still face. -/
+/-- An image's element: an inline drawn figure as its own SVG, else the `<img>`. -/
 public def imageElement (cfg : Config) (index? : Option Nat) (req : Image.Request) (alt : Ir.Alt)
     (dims : Array (String × String)) (img : Node) : Node :=
   match index?.bind (FigureSvg.inlineFigure? cfg.imgs) with
-  -- A figure's marks paint the colours it declares, as a picture's do, so it
-  -- stands on the document's page wherever the screen turns over
-  -- (`schemeRules`' plate under `svg.picture`).
+  -- the `picture` class keeps a figure on the page's own plate in every scheme
   | some fig => FigureSvg.inlineSvg fig
       (pictureAltAttrs (figureWord cfg.locale) alt ++ #[("class", "picture")] ++ dims)
   | none =>
@@ -7399,10 +5086,7 @@ public def imageElement (cfg : Config) (index? : Option Nat) (req : Image.Reques
           ("srcset", poster)], img]
     | none => img
 
-/-- Absolute font size and leading keep their physical lengths in the IR;
-on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
-so they scale with its named size ladder. Context-dependent expressions keep
-their CSS resolution rather than being evaluated against a guessed measure. -/
+/-- A font length in CSS: on a deck an absolute length as its stage share, else its CSS form. -/
 private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
   if cfg.deck && e.rigidAbsolute && !(e.anyRef fun _ => true) then
     let length := (e.eval fun _ => {}).width.sp
@@ -7411,29 +5095,12 @@ private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
 
 mutual
 
-/-- Inline content, pushed onto `acc`. Style maps onto the element that
-carries the *meaning* where one exists (`<strong>`, `<em>`, `<code>`) and
-onto a class otherwise. The accumulator threads through the sibling walk:
-`inlineNode x ++ rest` copied the tail at every element. -/
+/-- Inline content, pushed onto `acc`. -/
 private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :=
   match x with
   | .text s => acc.push (Html.text s)
   | .image src size alt =>
-    -- The typed tree and the escaper carry the attributes; the intrinsic
-    -- pixel size rides as width/height so the page never reflows while the
-    -- file loads, and the requested size becomes CSS. A fraction of the
-    -- text width is a percentage — HTML's measure is the container, which
-    -- is also what the PDF resolves it against (`Layout.collectPara`: the
-    -- current measure, minipage semantics). In flow classes an absolute
-    -- length is `pt` — paper is paper — and a `\textheight` fraction has
-    -- no CSS analog, so the intrinsic size stands. On the paged deck
-    -- (`cfg.deck`) the stage is the viewport, so every stage-resolved
-    -- dimension is emitted as its share of the stage (`deckStageMilli`,
-    -- `image_share_agrees`): absolute lengths and `\textheight` fractions
-    -- become `vw`/`dvh` — a print length on a stage that is the viewport
-    -- was the "very small image" defect. `height: auto` (or width) keeps
-    -- the browser on the intrinsic ratio, the same invariant the PDF path
-    -- proves.
+    -- the intrinsic size rides as width/height; on a deck a stage length is a stage share
     let index? := cfg.imgs.findRequest? (size.request src)
     let loaded? := index?.bind cfg.imgs.get?
     let info? := loaded?.bind (·.info)
@@ -7442,18 +5109,13 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       match canvas? with
       | some (w, h) => (cssPxOfSp w, cssPxOfSp h)
       | none => intrinsicPx inf
-    -- A boundary picture with no face in the store ships its request key as
-    -- the `src`, which draws nothing, so the text alternative is all that
-    -- reaches the page: never decorative. With no author text it is named
-    -- by what it is (`figureWord`); the loss's own code is the fulfilment's
-    -- to carry, and `Image.Loaded` keeps none.
+    -- a boundary picture with no face draws nothing, so its alternative is never decorative
     let alt := if src.startsWith Ir.picSrcPrefix && info?.isNone then
         (match alt with
           | .undeclared => .described (figureWord cfg.locale)
           | .decorative => .decorative
           | .described t => .described t) else alt
-    -- A captured face embeds its bytes. An unresolved request retains the
-    -- resolved source spelling so checked publication can name its loss.
+    -- an unresolved request keeps its source spelling, so publication can name the loss
     let href := imageRequestHref cfg.imgs (size.request src)
     let horizontal (l : Image.Len) : Bool :=
       l.value.anyRef fun m => m != .textHeight
@@ -7478,8 +5140,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       if cfg.deck then deckDim l vertical else cssDim l vertical
     let wCss := size.width.bind (dim · false)
     let hCss := size.height.bind (dim · true)
-    -- In a fill row a text-width fraction is the row's (`Config.inFillRow`),
-    -- in `cqi`, after the percentage a browser without container units keeps.
+    -- in a fill row a text-width fraction is the row's, in `cqi`
     let wRow := size.width.bind fun l =>
       if cfg.inFillRow && horizontal l && !vertical l then
         some (Ir.Track.contextCss l.value)
@@ -7490,9 +5151,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     let style : Option String :=
       match wCss, hCss with
       | some w, some h =>
-        -- `keepaspectratio` is graphicx's fit: the box is the image scaled
-        -- by the smaller of the two ratios (`Image.resolveSize`), so the box
-        -- is what it draws, never a letterbox around it.
+        -- `keepaspectratio` scales by the smaller ratio, as graphicx does
         match size.keepAspect, pixels? with
         | true, some (pw, ph) =>
           let (rw, rh) := canvas?.getD (Int.ofNat pw, Int.ofNat ph)
@@ -7513,8 +5172,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
             else
               s!"width: {Dim.Sp.toPtString scaled}pt; height: auto"
         else none
-    -- animate §6.1 fixes the canvas to frame one. A later poster's natural
-    -- ratio must not replace it once the browser decodes the image.
+    -- animate §6.1 fixes the canvas to frame one
     let style := match canvas? with
       | some (w, h) =>
         let ar := s!"aspect-ratio: {w} / {h}; object-fit: fill"
@@ -7526,8 +5184,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     if loaded?.any (·.webError.isSome) then
       let attrs := pictureAltAttrs (figureWord cfg.locale) alt
       let label := (attrOf? attrs "aria-label").getD ""
-      -- A failed conversion still reserves the exact intrinsic pixel box, so
-      -- the page keeps the same geometry a successful face would have.
+      -- a failed conversion still reserves the intrinsic pixel box
       let dims := match pixels? with
         | some (pw, ph) => [s!"width: {pw}px", s!"height: {ph}px"]
         | none => []
@@ -7551,23 +5208,13 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     | some en => if en.webWords.isEmpty then acc else acc.push (figureWordsNode en.webWords)
     | none => acc
   | .math display src =>
-    -- Until native MathML lands for what the parser cannot model, the
-    -- element's own text is the floor — the formula's content, never its
-    -- markup (`Ir.floorInk_mem`). The source rides in a data attribute,
-    -- where an optional client-side renderer can find it and no reader is
-    -- shown a control sequence.
+    -- unmodelled math ships its floor text, the source in a data attribute
     let tag := if display then "div" else "span"
     acc.push (Html.elem tag #[Html.text (Ir.mathFloor src)]
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)])
   | .formula display src body =>
-    -- Native MathML Core from the parsed atoms — the same math AST the PDF
-    -- lays out; the census theorem (MathMl.mathml_glyphs_agree) holds the
-    -- element's leaf text to the formula's glyph text. The TeX source
-    -- still rides in data-tex so the opt-in --math-boundary client
-    -- renderer can find and replace the element; without the tool the
-    -- MathML itself is the rendering — MathML Core is in every current
-    -- engine (caniuse.com/mathml, 2026: Chromium 109+, Firefox, Safari).
+    -- native MathML Core from the parsed atoms; the TeX source rides in `data-tex`
     acc.push (MathMl.formula display
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)] body (mathMarks cfg))
@@ -7579,27 +5226,18 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     | .emph => acc.push (Html.elem "em" kids)
     | .mono => acc.push (Html.elem "code" kids)
     | .normal => acc ++ kids
-    -- A series is the numeric weight per run (CSS Fonts 4 §2.2): the
-    -- browser matches it against the `@font-face` weights the emission
-    -- ships, the same `(slot, weight, italic)` selection the PDF resolves
-    -- through `FontSet.lookup` (`Layout.weight_agree`).
+    -- a series is the run's numeric weight, matched against the shipped faces
     | .series w =>
       acc.push (Html.elem "span" kids #[("style", s!"font-weight: {w.css}")])
     | .fontSize size leading =>
       acc.push (Html.elem "span" kids #[
         ("style", s!"font-size:{fontLengthCss cfg size};line-height:{fontLengthCss cfg leading}")])
-    -- The language of a run is a declaration, not a style: the span
-    -- carries `lang` (HTML §3.2.6.2; WCAG 2.2 SC 3.1.2), which CSS
-    -- `hyphens: auto` and assistive technology both read.
+    -- a run's language is a `lang` attribute, which hyphenation and assistive technology read
     | .lang tag => acc.push (Html.elem "span" kids #[("lang", tag)])
-    -- A declared family is its slot's stack (`tokenVars`), as the PDF sets
-    -- the run in that slot's face.
     | .family s => acc.push (Html.elem "span" kids #[("style", s!"font-family: var(--font-{s})")])
     | other => acc.push (Html.elem "span" kids #[("class", styleClass other)])
   | .role n body =>
-    -- The class hook survives as an addressable class. A title-part role
-    -- also projects its exact size and baseline skip from the one IR part;
-    -- ordinary authored roles remain style-free.
+    -- a title-part role also states its size and baseline skip; other roles carry only their class
     let part := Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n
     let style := part.bind fun p =>
       let decls :=
@@ -7611,32 +5249,21 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       | some p =>
         match p.size with
         | some size =>
-          -- Cancellation reads the size component of TextStyle.metrics;
-          -- a missing title leading contributes no attachment dimension.
           let st := Ir.Style.fontSize (.lit size) (.lit (p.leading.getD size))
           { cfg with mathStyles := cfg.mathStyles.push st }
         | none => cfg
       | none => cfg
     acc.push (Html.elem "span" (inlineNodesInto inner #[] body.toList) attrs)
   | .colored c name body =>
-    -- A named colour becomes a custom-property reference with the literal as
-    -- fallback, so the token really is the styling API: a host page can
-    -- restyle the document by redefining --primary.
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
       #[("style", "color: " ++ cfg.paint name c)])
   | .located _ body => inlineNodesInto cfg acc body.toList
   | .link url body =>
     acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
       #[("href", url), ("style", "color: inherit")])
-  -- The anchor a cross-reference lands on: an empty span carrying the
-  -- label's id, through the typed tree and the attribute escaper (the key
-  -- is author text entering an attribute; `Ir.labelAnchor_single_token`
-  -- holds its shape).
   | .label key =>
     acc.push (Html.elem "span" #[] #[("id", Ir.labelAnchor key)])
-  -- A resolved reference is an in-page link showing its number; an
-  -- unresolved one shows LaTeX's own '??', already diagnosed by name
-  -- (W0349), with nothing to link to.
+  -- an unresolved reference shows LaTeX's `??`, already diagnosed
   | .ref _ _ text target =>
     match target with
     | some a =>
@@ -7649,35 +5276,17 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       | .lineThrough => "s"
     acc.push (Html.elem tag (inlineNodesInto cfg #[] body.toList))
   | .onSteps spec body =>
-    -- Every step is fully visible here — the handout state, the floor the
-    -- deck's reveal degrades to. On the paged deck the class-gated
-    -- stylesheet uncovers the step in place as the reader's arrow
-    -- advances the frame's snap points (`deckStepCss`); the `--step`
-    -- index names its snap point, and the range rides as data either way.
-    -- A declared end rides its own nested carrier (`stepEndNodes`), which
-    -- is what covers the step again past it.
     acc.push (overlayNode "span" cfg.overlaySteps spec (inlineNodesInto cfg #[] body.toList))
   | .altSteps spec firstPage otherPage =>
-    -- One wrapper per group, each carrying the range and its side: the
-    -- deck's snap rules show exactly one (`alt_backend_agree`), and with
-    -- no snap state the group stored first is what shows. Both groups stay
-    -- in the tree because the document declares both; selection is
-    -- `display`-level, never `step`'s covering.
     acc ++ overlayAlternatives "span" cfg.overlaySteps spec
       (inlineNodesInto cfg #[] firstPage.toList) (inlineNodesInto cfg #[] otherPage.toList)
   | .icon c label =>
-    -- The glyph is a Private Use Area scalar assistive technology cannot
-    -- read, so it is hidden (`aria-hidden`) and the accessible name rides
-    -- the wrapper: `role="img"` names the composite and makes the glyph
-    -- span presentational (WCAG 2.2 SC 1.1.1; WAI-ARIA 1.2 §img — children
-    -- of an img role are presentational). The `icon` class is the styling
-    -- hook a stylesheet uses to name the icon face.
+    -- the PUA glyph is hidden from assistive technology; the `img` wrapper carries its name
     acc.push (Html.elem "span"
       #[Html.elem "span" #[Html.text (String.ofList [c])] #[("aria-hidden", "true")]]
       #[("class", "icon"), ("role", "img"), ("aria-label", label)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
-  -- Glue is room in the line, not ink. Infinite stretch keeps the fill
-  -- carrier; a finite component remains its authored inline offset.
+  -- infinite stretch keeps the fill carrier; a finite part stays an inline offset
   | .hspace e _ =>
     let finite := e.withoutFil
     let room := Ir.Track.css (.affine finite)
@@ -7691,37 +5300,29 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     let r := Ir.Track.contextCss raise
     acc.push (Html.elem "span" #[] #[
       ("style", s!"display:inline-block;inline-size:{w};block-size:{h};vertical-align:{r};background:currentColor")])
-  -- A strut props its line open in print; a continuous page reads at its
-  -- own line-height, so the carrier is empty and adds no box.
+  -- a strut adds no box: the page reads at its own line height
   | .strut _ => acc
-  -- An italic correction is TeX's kern; a browser sets its own italics.
+  -- an italic correction is TeX's kern; a browser sets its own italics
   | .italicCorr _ => acc
-  -- An unresolved citation shows its marks; resolution would have replaced
-  -- this node with the style's linked inlines, and the diagnostic that let
-  -- it through already named the gap.
+  -- an unresolved citation shows its marks, already diagnosed
   | .cite _ keys => acc.push (Html.text (Ir.citeMarks keys))
-  -- The mark: a superscripted link to the note's endnote entry (W3C
-  -- DPUB-ARIA 1.1, doc-noteref). The body renders once, in the one
-  -- doc-endnotes section before the article end — never twice.
+  -- the mark links to the note's endnote entry (DPUB-ARIA `doc-noteref`)
   | .footnote num _ =>
     let n := num.getD 0
     acc.push (Html.elem "sup"
       #[Html.elem "a" #[Html.text (toString n)]
         #[("href", s!"#fn{n}"), ("id", s!"fnref{n}"),
           ("role", "doc-noteref"), ("style", "color: inherit")]])
-  -- Page furniture has no meaning in a continuous document.
+  -- page furniture has no meaning in a continuous document
   | .pageNumber => acc
   | .pageCount => acc
   | .linebreak extra =>
-    -- Extra space after a break is vertical, so it is a sized block rather
-    -- than a second <br>: a doubled <br> would depend on line-height.
+    -- extra space after a break is a sized block, not a second `<br>`
     if extra == ({} : SymGlue) then acc.push (Html.elem "br" #[])
     else (acc.push (Html.elem "br" #[])).push
       (Html.elem "span" #[]
         #[("style", s!"display:block;height:{cssLength extra.width}")])
 
-/-- The list companion keeps the recursion structural; a `flatMap` over the
-children would hide the call behind a lambda. -/
 private def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → Array Node
   | [] => acc
   | x :: rest => inlineNodesInto cfg (inlineNodeInto cfg acc x) rest
@@ -7731,8 +5332,6 @@ end
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
 
-/-- The tag of a table cell: `th` in the header prefix `Ir.tableHeaderRows`
-names, `td` below it. -/
 public def tableCellTag (headerRows i : Nat) : String :=
   if i < headerRows then "th" else "td"
 
@@ -7746,9 +5345,7 @@ public theorem tableCellTag_th_iff (headerRows i : Nat) :
 private def readsInlineMeasure (e : Affine Measure) : Bool :=
   e.anyRef (· != .textHeight)
 
-/-- Whether an emitted inline property reads `cqi`. The leaf runs through
-`Ir.foldInlines`, so nested styles and roles are covered by the shared IR
-walk rather than a backend-specific recursion. -/
+/-- Whether an emitted inline property reads `cqi`. -/
 private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .styled st _ => found || match st with
     | .fontSize size leading => readsInlineMeasure size || readsInlineMeasure leading
@@ -7767,24 +5364,12 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
 private def usesContextUnit (xs : Array Inline) : Bool :=
   Ir.foldInlines contextUnitLeaf false xs
 
-/-- A cell's side class: its spec's side (`Ir.cellSpec`, the value the
-page's `Layout.cellSide` reads), on every cell — `left` included. A cell
-that stated only `center` and `right` inherited its scope's `text-align`, so
-a text column under `\centering` centred in HTML where the PDF set it flush
-left. -/
+/-- A cell's side class, from its spec's side, on every cell. -/
 @[expose] public def cellSideClassOf (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
     (i j : Nat) : String :=
   cellSideClass (Ir.cellSpec cols spans i j).align
 
-/-- A cell's classes, its side first (`cellSideClassOf`): `bt-cmid` when a
-`\cmidrule` spans its column, and `bt-nowrap` on a natural column's cell, so
-auto table layout cannot squeeze the column to min-content (the
-`:where(... td.bt-nowrap ...)` rule). `white-space` on the `<col>` itself would
-do nothing (CSS Tables §17.3), so the class lands on the cell. A narrowing
-column's cell (`Ir.ColSpec.narrows`, a markdown table's) carries none: the
-page fits its table as automatic table layout does (`Layout.fitColumns`),
-and the browser does the same once nothing forbids it. One `class`
-attribute carries them all. -/
+/-- A cell's classes, its side first, then `bt-cmid` and `bt-nowrap` where they apply. -/
 @[expose] public def cellClasses (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (i j : Nat) : List String :=
   let spec := Ir.cellSpec cols spans i j
@@ -7792,29 +5377,17 @@ attribute carries them all. -/
     ((if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b) then ["bt-cmid"] else []) ++
       (if (spec.width matches .natural) && !spec.narrows then ["bt-nowrap"] else []))
 
-/-- The classes a block set wholly in the named step `n` carries: the step's
-size, and on a deck its leading over that size (`sizeRules`), as the page
-sets the block's strut at the step. -/
+/-- The classes of a block set wholly in step `n`: its size, and on a deck its leading. -/
 public def stepClasses (deck : Bool) (n : String) : List String :=
   ("size-" ++ n) :: (if deck then ["lead-" ++ n] else [])
 
-/-- The classes a cell set under one named size carries for it, as a paragraph
-does (`stepNode`): the step of the size declaration standing over the cell
-(`Ir.paraStep?`) — the size in force where the table began, whose strut the
-page stands the row on (`Layout`'s `cellStrut`); a size command inside the
-cell is a scope there (`Ir.paraAt`) and keeps its span. -/
+/-- The step classes of a cell set under one named size declared over it. -/
 public def cellStepClasses (deck : Bool) (cell : Array Inline) : List String :=
   match Ir.paraStep? cell with
   | some "normalsize" | none => []
   | some n => stepClasses deck n
 
-/-- One table cell: its classes (`cellClasses`, its side first) and — for a
-header cell — `scope=col`, the one scope a booktabs head declares (HTML
-§4.9.10: a `th` heading the cells below it). A `\multicolumn` head sets by its own spec
-(`Ir.cellSpec`) and takes `colspan` for the columns it covers (HTML
-§4.9.11), the layout's `spanBox`. Plain cells carry the same `inlines` a
-`td` carried; a cell whose emitted dimensions read `cqi` puts those inlines
-in its content-measure container. -/
+/-- One table cell: its classes, `scope=col` on a header cell, and `colspan` for a spanning head. -/
 public def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline) : Node :=
   let spec := Ir.cellSpec cols spans i j
@@ -7828,21 +5401,17 @@ public def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array
     | .sized e => cfg.atMeasure
       (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
     | .natural | .flex _ => cfg
-  -- The step a cell states in its class (`cellStepClasses`) stands on the
-  -- element, so its scope is lifted out of the content.
+  -- the cell's class states its step, so the scope is lifted out of the content
   let cell := if (Ir.paraStep? cell).isSome then Ir.liftParaStep cell else cell
   let content := inlines child cell
-  -- Chromium does not resolve query units against a table-cell container.
-  -- A block inside the cell has the same content measure and works in both
-  -- screen and print; emit it only where a descendant actually reads cqi.
+  -- Chromium resolves no query units against a table cell, so a block inside it is the container
   let content := if usesContextUnit cell then
       #[Html.elem "div" content
         #[("class", "cell-measure"), ("style", "container-type: inline-size")]]
     else content
   Html.elem (tableCellTag headerRows i) content attrs
 
-/-- Is cell `(i, j)` covered by a `\multicolumn` head to its left? Such a
-cell has no element of its own: the head's `colspan` is its place. -/
+/-- Whether cell `(i, j)` is covered by a `\multicolumn` head to its left. -/
 private def coveredBySpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
   spans.any fun s => s.row == i && s.col < j && j < s.col + s.n
 
@@ -7854,11 +5423,6 @@ public def tableRowCells (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array
     if coveredBySpan spans i j then none
     else some (tableCellNode cfg cols cmids spans headerRows i j (row[j]?.getD #[]))
 
-/-- A cell is a `th` exactly when its row lies in the header prefix — the
-HTML projection of `Ir.tableHeaderRows`, stated over the typed tree the
-table arm builds: every cell element of row `i` is `th` iff
-`i < headerRows`, whatever the column, the alignment, the cmid rules, or
-the spans. -/
 public theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
     (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i : Nat)
     (row : Array (Array Inline)) (nd : Node)
@@ -7873,12 +5437,6 @@ public theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
     simp only [tableCellNode, Html.elem, Html.Node.tag?, Option.some.injEq]
     exact tableCellTag_th_iff headerRows i
 
-/-- **Every cell states its spec's side** (`_projects`): whatever its row,
-column, span, `\cmidrule` or head, a cell element's first attribute is its
-classes (`cellClasses`), the first of them `cellSideClassOf` — the side of
-`Ir.cellSpec`, the value the page's `Layout.cellSide` sets the cell's lines
-by (`Pdf.table_cell_side_agree`) — `left` included, so no cell inherits the
-side of the scope its table stands in. -/
 public theorem tableCellNode_align_projects (cfg : Config) (cols : Array Ir.ColSpec)
     (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i j : Nat)
     (cell : Array Inline) :
@@ -7889,8 +5447,7 @@ public theorem tableCellNode_align_projects (cfg : Config) (cols : Array Ir.ColS
       (cellClasses cols cmids spans i j).head? = some (cellSideClassOf cols spans i j) :=
   ⟨_, _, rfl, by rw [Array.getElem?_append_left (by simp)]; rfl, rfl⟩
 
-/-- Project a relative track hint to CSS, falling back to the declared affine
-width or natural sizing. CSS table layout still measures content and padding. -/
+/-- One column node: a relative track hint, else the declared width, else natural sizing. -/
 public def colElOf (shares : Array (Option Nat)) (j : Nat) (c : Ir.ColSpec) : Node :=
   match shares[j]? with
   | some (some p) => Html.elem "col" #[] #[("style", s!"width: {Ir.percentCss p}")]
@@ -7898,41 +5455,25 @@ public def colElOf (shares : Array (Option Nat)) (j : Nat) (c : Ir.ColSpec) : No
     | .sized e => Html.elem "col" #[] #[("style", s!"width: {Ir.Track.css (.affine e)}")]
     | .flex _ | .natural => Html.elem "col" #[] #[]
 
-/-- One column node per typed column, preserving order. Relative hints use
-`Ir.tableColShares`; tables without a flexible target keep their declared widths. -/
+/-- One column node per typed column, in order. -/
 public def tableColEls (cols : Array Ir.ColSpec) (target : Option Ir.TableTarget) : Array Node :=
   let shares : Array (Option Nat) := match target with
     | some t => Ir.tableColShares cols t
     | none => cols.map fun _ => none
   cols.mapIdx (colElOf shares)
 
-/-- The CSS width spelling is the projection of the IR's relative hint.
-This is a tree-emission fact, not a claim about the browser's measured width. -/
 public theorem tableColEls_share_projects (shares : Array (Option Nat)) (j : Nat)
     (c : Ir.ColSpec) (p : Nat) (h : shares[j]? = some (some p)) :
     colElOf shares j c = Html.elem "col" #[] #[("style", s!"width: {Ir.percentCss p}")] := by
   simp [colElOf, h]
 
-/-- A natural column is projected to a bare `<col>` with no width — CSS `auto`
-— the HTML half of "naturals are excluded from the target split"
-(`Ir.tableColShares_natural_exact` gives it the `some none` share; the nowrap that
-keeps it from collapsing lands on its cells, `tableCellNode`). -/
 public theorem tableColEls_natural_projects (shares : Array (Option Nat)) (j : Nat)
     (c : Ir.ColSpec) (hc : c.width = .natural) (h : shares[j]? = some none) :
     colElOf shares j c = Html.elem "col" #[] #[] := by
   simp [colElOf, h, hc]
 
-/-- booktabs' formal table. Rules land as border classes on the row they
-precede (`-below` on the last row for a rule written after it), and the
-stylesheet draws each class at the sourced weight with its declared
-padding — `Ir.heavyRuleWidth` and friends drive both backends from one
-site. The rows before the first `\midrule` (`Ir.tableHeaderRows`) are the
-head: they ship under `<thead>` as `<th scope=col>`, the rest under
-`<tbody>` as `<td>`; a table with no head has no `<thead>`, one that is
-all head has no `<tbody>`. The grouping is semantic only — the stylesheet
-neutralises the UA's bold, centred `th` so the raster is the `td` one. A
-`gap` rule and `\cmidrule` end-trimming have no HTML spelling yet; the
-PDF path carries both. -/
+/-- booktabs' formal table: rules as border classes on the rows they precede, head rows under
+`<thead>`. -/
 private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
     (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
     (spans : Array Ir.ColSpan) : Node :=
@@ -7968,8 +5509,7 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
       | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
     Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row)
       (if cls.isEmpty then #[] else #[("class", cls)])
-  -- A markdown table too wide for the text block sets at the page's step
-  -- and, still too wide at its floor, overhangs both margins on paper.
+  -- a markdown table too wide sets at the page's step, and overhangs on paper if still too wide
   let (step, overhang) :=
     cfg.tableFit (cfg.measureValues.lineWidth - cfg.inset) cols padL padR rows spans
   let cls := "booktabs" ++ (if padL then "" else " nopadl")
@@ -7992,17 +5532,6 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
     else #[("class", cls), ("style", " ".intercalate decls)]
   Html.elem "table" kids attrs
 
-/-- A use of a role in the artifact references the role, not only its frozen
-value: the emitted span's colour is `var(--n, …)`, resolved against the
-`:root` declaration `paletteVar` writes — so the words follow the palette
-(and a host page's override of the token), with the elaboration-time colour
-only the fallback. Together with `role_use_is_palette_dependent` this is
-the contrapositive of "frozen at authoring time"; a colour that arrived
-with no palette name (`name = none`) has no variable to follow and really
-is frozen. The reference stands wherever the page can declare the property:
-a role no palette of the page gives a value in a shipped scheme has nothing
-to follow, and its span states the value CSS would fall back to
-(`role_use_undeclarable_value`). -/
 private theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
     (c : Ir.Color) (n : Ir.ColorRef) (body : Array Inline)
     (h : ∀ r, n = .role r → cfg.declares r = true) :
@@ -8012,9 +5541,6 @@ private theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
   rw [← colorRead_names cfg n c h]
   simp [inlineNodeInto, Config.paint]
 
-/-- A use of a role the page cannot declare states its value: the read CSS
-would make of a property nothing declares, written as the page ships a
-colour no palette names in every scheme (`Config.literal`). -/
 private theorem role_use_undeclarable_value (cfg : Config) (acc : Array Node)
     (c : Ir.Color) (r : Ir.Role) (body : Array Inline) (h : cfg.declares r = false) :
     inlineNodeInto cfg acc (.colored c (some (.role r)) body) =
@@ -8024,12 +5550,6 @@ private theorem role_use_undeclarable_value (cfg : Config) (acc : Array Node)
   rw [← hv]
   simp [inlineNodeInto, Config.paint]
 
-/-- The class hook's emission half: an authored role (not an internal
-title-part role) reaches the artifact as an element carrying exactly
-`roleClass name`, children the emission of its body. The name enters
-attribute position only through the typed tree, so it passes `escapeAttr`
-by construction (`escapeAttr_no_quote` closes attribute breakout), and
-`roleClass_single_token` keeps the value one class token. -/
 private theorem role_class_reaches_artifact (cfg : Config) (acc : Array Node)
     (n : String) (body : Array Inline)
     (h : Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n = none) :
@@ -8038,13 +5558,6 @@ private theorem role_class_reaches_artifact (cfg : Config) (acc : Array Node)
         #[("class", roleClass n)]) := by
   simp [inlineNodeInto, h]
 
-/-- A link's URL enters the artifact only as the `href` attribute of the
-typed tree — never spliced into markup — so it passes `escapeAttr` by
-construction (`escapeAttr_no_quote`). This is what makes `.bib` field
-text safe in citations and reference entries: a citation's resolved mark
-is a `.link` to `Bib.anchorOf key`, and an entry's URL and DOI fields
-become `.link` nodes, so a `"` or `<` a pasted `.bib` value carries can
-never break out of the attribute or open a tag. -/
 private theorem link_url_enters_attribute_position (cfg : Config) (acc : Array Node)
     (url : String) (body : Array Inline) :
     inlineNodeInto cfg acc (.link url body) =
@@ -8052,14 +5565,6 @@ private theorem link_url_enters_attribute_position (cfg : Config) (acc : Array N
         #[("href", url), ("style", "color: inherit")]) := by
   simp [inlineNodeInto]
 
-/-- **The HTML projection of `Ir.Styles.linkLeafAfford_afford`.** A
-text-bearing link-body leaf emits as the kind's ink span wrapping a `<u>`
-element wrapping the leaf's own emission — the ink CSS and the underline tag
-together, the two affordances the inline `.colored`/`.decorated` arms carry
-(a named colour becomes a `var(--token, …)` reference, so a host page can
-restyle the ink). The HTML half of the one IR value both backends read
-(`Ir.Styles.linkBodyAfford`; Layout's `linkLeafAfford_projects` is the
-PDF half). -/
 private theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
     (s : Ir.Styles) (kind : String) (x : Inline) (h : x.bearsLinkText = true) :
     inlineNodeInto cfg acc (s.linkLeafAfford kind x)
@@ -8074,17 +5579,14 @@ private theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
   | none => simp [inlineNodeInto, inlineNodesInto]
   | some p => obtain ⟨c, n⟩ := p; simp [inlineNodeInto, inlineNodesInto]
 
-/-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
-the CSS equivalent of the stretch it asked for. -/
+/-- Whether a paragraph uses `\hfill`, which makes it a flex row. -/
 private def hasFill (xs : Array Inline) : Bool :=
   xs.any fun x => match x with
     | .fill => true
     | .hspace e _ => e.hasFil
     | _ => false
 
-/-- Split inline content at each `\\`. A stretched row is a column of rows, one
-per break, because `\hfill` stretches within a line: a `<br>` cannot end a flex
-line, so the break has to be structural. -/
+/-- Split inline content at each `\\`, one flex row per break. -/
 private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run do
   let mut out : Array (Array Inline) := #[]
   let mut cur : Array Inline := #[]
@@ -8096,8 +5598,7 @@ private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run d
     | other => cur := cur.push other
   return out.push cur
 
-/-- Split one row at each `\hfill`. The exact two-group case gets a dedicated
-column contract; rows with more groups keep the general flex semantics. -/
+/-- Split one row at each `\hfill`. -/
 private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
   let mut out : Array (Array Inline) := #[]
   let mut cur : Array Inline := #[]
@@ -8118,18 +5619,13 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
     | other => cur := cur.push other
   return out.push cur
 
-/-- The heading tag a section level takes: `h` and the shared rank
-(`Ir.headingRank`, which carries the sourcing), so the tag and the
-markdown marker cannot drift; `heading_renderings_agree` in Tests states
-the agreement over every level. -/
 @[expose] public def headingTag (level : Ir.HeadingLevel) : String :=
   s!"h{Ir.headingRank level}"
 
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
   let groups := splitAtFills xs
   let rowClass := if groups.size == 2 then baseClass ++ " entry-pair" else baseClass
-  -- A row holding an image sized by a text-width fraction is the container
-  -- that fraction is stated against (`Config.inFillRow`).
+  -- a row holding an image sized by a text-width fraction is its container
   let sized := Ir.foldInlines (fun acc x => acc || match x with
     | .image _ size _ => size.width.any fun l =>
         l.value.anyRef (· != .textHeight) && !l.value.anyRef (· == .textHeight)
@@ -8140,30 +5636,19 @@ private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) 
     (#[("class", rowClass)] ++
       (if sized then #[("style", "container-type: inline-size")] else #[]))
 
-/-- Grid tracks from the declared widths, through the IR's own reading
-(`Ir.BoxWidth.trackOf`, spelled by `Ir.Track.css`): a fraction is a
-percentage track, an absolute length a length track, and a widthless box an
-`fr` share of the leftover. With every width declared the leftover spreads
-between the tracks, which is the PDF path's gutter rule.
-`Ir.boxWidth_tracks_agree` is why this and the page's arithmetic cannot
-disagree about which boxes declared a width. -/
+/-- Grid tracks from the declared widths: a percentage, a length, or an `fr` share of the
+leftover. -/
 private def gridTracks (cols : Array (BoxWidth × Array Block)) : String :=
   String.intercalate " " (cols.toList.map fun (w, _) => Ir.Track.css w.trackOf)
 
-/-- Children start their own sibling walk: the parent's accumulated epoch
-style already stands on an ancestor element and inherits into it, so it is
-never re-applied below. The epoch palette and tokens carry in for the
-diffs a nested declaration makes. -/
+/-- Children start their own sibling walk; the parent's epoch style already inherits into them. -/
 public def Config.into (cfg : Config) : Config :=
   { cfg with epochStyle := "", epochPaint := "", epochGround := false }
 
-/-- Project the IR frame's numbered extent, including title and body
-endpoints, into every part of its HTML frame. -/
+/-- The frame's numbered extent, for every part of its HTML frame. -/
 public def Config.inFrame (cfg : Config) (frame : Block) : Config :=
   { cfg with overlaySteps := Ir.frameSteps frame }
 
-/-- Frame context projects the IR selector without dropping any numbered
-step the frame reaches. The same membership holds for title, body and furniture. -/
 public theorem Config.inFrame_membership_agree (cfg : Config) (frame : Block)
     (spec : Ir.OverlaySpec) (k : Nat) (hk : 1 ≤ k) (hsteps : k ≤ Ir.frameSteps frame) :
     (spec.selectedSteps (cfg.inFrame frame).overlaySteps).contains k = spec.selects k :=
@@ -8172,10 +5657,7 @@ public theorem Config.inFrame_membership_agree (cfg : Config) (frame : Block)
 private def joinStyles (a b : String) : String :=
   if a.isEmpty then b else if b.isEmpty then a else a ++ "; " ++ b
 
-/-- An epoch's accumulated declarations with each property's last value kept
-where it last stands: a later declaration of a property wins over an earlier
-one in the same attribute, so the compacted style paints the same and stays
-as long as the properties it sets, however many epochs the flow passed. -/
+/-- An epoch's accumulated declarations, with each property's last value kept. -/
 private def compactStyle (style : String) : String :=
   let decls := (style.splitOn ";").filterMap fun d =>
     let d := d.trimAscii.toString
@@ -8183,22 +5665,16 @@ private def compactStyle (style : String) : String :=
   let kept := decls.foldr (fun (k, d) acc => if acc.any (·.1 == k) then acc else (k, d) :: acc) []
   String.intercalate "; " (kept.map (·.2))
 
-/-- A body palette epoch as semantic changes, before CSS serialization. `none`
-removes a property. -/
+/-- A body palette epoch as semantic changes; `none` removes a property. -/
 public structure PaletteDiff where
   entries : Array (Ir.ColorRef × Option Ir.Color)
-  /-- The page's roles the epoch re-declares by default: a role it leaves
-  undeclared whose default changed, or whose alias names a role the epoch
-  re-declares — a custom property's `var()` resolves where it is declared,
-  so an inherited role is re-stated wherever its parent moves. -/
+  /-- The page's roles the epoch re-declares by default. -/
   defaults : Array (Ir.Role × Option Ir.CssDecl) := #[]
 
-/-- Whether this epoch changes the page ground. -/
 public def PaletteDiff.groundChanged (diff : PaletteDiff) : Bool :=
   diff.entries.any (·.1 == .role .page)
 
-/-- Serialize the semantic palette changes as custom-property declarations:
-the declared entries, a removed role standing for its default instead. -/
+/-- The palette changes as custom-property declarations. -/
 public def PaletteDiff.style (diff : PaletteDiff) : String :=
   let restated := diff.defaults.map (·.1)
   String.intercalate "; " ((diff.entries.toList.filterMap fun
@@ -8209,10 +5685,7 @@ public def PaletteDiff.style (diff : PaletteDiff) : String :=
       | (r, some d) => s!"{roleVar r}: {cssDeclValue d}"
       | (r, none) => s!"{roleVar r}: initial")
 
-/-- The custom-property redefinitions a body `\palette` makes, against the
-palette in force before it, over the page's roles (`pageRoles`). Equality is
-explicitly over the HTML projection: a PDF device rider can change without
-selecting a different screen value. -/
+/-- The custom-property redefinitions a body `\palette` makes against the palette before it. -/
 public def epochPaletteDiff (roles : List Ir.Role) (before after : Ir.Palette) : PaletteDiff :=
   let changed := (after.entries.filter fun (n, c) =>
     (before.lookup n).map cssColor != some (cssColor c)).map fun (n, c) => (n, some c)
@@ -8245,27 +5718,19 @@ public def epochTokenStyle (basis : LengthBasis) (before after : Ir.Tokens) : St
     before.find? n != some g).toList.filterMap fun (n, g) =>
       (tokenVar? n).map fun v => s!"{v}: {tokenCss basis n g.width}")
 
-/-- The colours a listing's box may name by role — the page, its ink and its
-code ground — in each shipped scheme, as each view resolves them. -/
+/-- The colours a listing's box may name by role, page, ink and code ground, per shipped scheme. -/
 public def boxRoleTexts (frames : List Ir.SchemeFrame) (views : List Ir.Palette) :
     List (Ir.Role × List (Ir.Scheme × Option String)) :=
   [Ir.Role.page, .ink, .codeSurface].map fun r =>
     (r, (frames.zip views).map fun (f, v) => (f.scheme, (Ir.Design.at v f.scheme r).map cssColor))
 
-/-- A palette's views in the schemes the page ships: the judge's, else
-carried here (`Ir.Palette.view`). -/
+/-- A palette's views in the schemes the page ships. -/
 public def Config.viewsOf (cfg : Config) (p : Ir.Palette) : List Ir.Palette :=
   match cfg.paletteViews.find? (·.1 == p) with
   | some (_, vs) => vs
   | none => cfg.frames.map fun f => (p.view f).1
 
-/-- **What an epoch restates in every scheme the page ships**: each property
-the epoch moves in some shipped scheme (`epochPaletteDiff` over that scheme's
-views), stated once — its floor text where every scheme reads it alike, else
-through its own `:root` property (`schemeVar`), which the page's scheme
-blocks state in every scheme (`schemeValue`): an inline style, which no
-media query reaches, still ships each scheme's colour. A page shipping its
-floor alone restates as the floor's diff spells it. -/
+/-- What an epoch restates in every scheme the page ships, as one inline style. -/
 public def Config.epochStyleFor (cfg : Config) (floorDiff : PaletteDiff)
     (before after : List Ir.Palette) : String :=
   if cfg.frames.all (·.scheme == cfg.floor) then floorDiff.style else
@@ -8273,14 +5738,12 @@ public def Config.epochStyleFor (cfg : Config) (floorDiff : PaletteDiff)
   let add (out : Array Ir.ColorRef) (d : PaletteDiff) : Array Ir.ColorRef :=
     let out := d.entries.foldl (fun o (n, _) => if o.contains n then o else o.push n) out
     d.defaults.foldl (fun o (r, _) => if o.contains (.role r) then o else o.push (.role r)) out
-  -- A scheme that ships the palette as declared moves what the floor's diff
-  -- moves, where the floor is such a scheme itself.
+  -- a scheme shipping the palette as declared moves what the floor's diff moves
   let floorHome := cfg.frames.any fun f => f.scheme == cfg.floor && f.home
   let props : Array Ir.ColorRef := (cfg.frames.zip (before.zip after)).foldl
     (fun out (f, vb, va) => if floorHome && f.home then out
       else add out (epochPaletteDiff cfg.cssRoles vb va)) (add #[] floorDiff)
-  -- A role the epoch removes restates its default in each scheme: the
-  -- flow's ink reads the role (`epochPaint`), so it must stand there.
+  -- a removed role restates its default, since the flow's ink reads it
   String.intercalate "; " (props.toList.map fun n =>
     let texts := tabs.map fun (sc, _, va) => (sc, propText va sc n)
     let colours := tabs.map fun (sc, _, va) => (sc, (match n with
@@ -8288,16 +5751,13 @@ public def Config.epochStyleFor (cfg : Config) (floorDiff : PaletteDiff)
       | .color _ => va.lookup n).map cssColor)
     s!"{n.property}: {schemeValue texts colours cfg.floor}")
 
-/-- The `:root` properties the page's elements read their colours through
-(`schemeVar`), of those the page reads (`used`), each with the texts its
-name spells. -/
+/-- The `:root` properties the page's elements read their colours through, of those in `used`. -/
 public def Config.epochVars (cfg : Config) (used : List String) :
     List (String × List (Ir.Scheme × Option String)) :=
   let ss := cfg.frames.map (·.scheme)
   (used.eraseDups.filterMap fun v => (schemeVarTexts ss v).map (v, ·))
 
-/-- The epochs' `:root` properties the page reads, stated at the floor and
-restated in each shipped scheme's block (`schemeBlocksOf`). -/
+/-- The epochs' `:root` properties the page reads, at the floor and in each scheme's block. -/
 public def Config.epochVarBlocks (cfg : Config) (used : List String) : String :=
   let evs := cfg.epochVars used
   if evs.isEmpty then "" else
@@ -8307,12 +5767,7 @@ public def Config.epochVarBlocks (cfg : Config) (used : List String) : String :=
         some (evs.map fun (v, texts) => (v, (texts.lookup sc).join)) else none)
       cfg.floor (scheme := false)
 
-/-- Advance the palette tokens and the ordinary flow's default ink
-separately. A surrounding painted body keeps its surface; outside one,
-the page ground follows the new palette. Flow restates its ink on the
-element the epoch styles because a custom property does not recompute an
-ancestor's inherited CSS colour; a deck stage instead reads the tokens
-through its own paint rules. -/
+/-- Advance the palette tokens and the flow's default ink, keeping a painted body's surface. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let views := cfg.viewsOf p
   let boxTexts := boxRoleTexts cfg.frames views
@@ -8325,41 +5780,28 @@ public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
              listingGround := cfg.bodyGround.or (Ir.Design.declared? p .page)
              listingFg := if home then none else some fg, bodyInk := none
              epochStyle := compactStyle (joinStyles cfg.epochStyle (cfg.epochStyleFor diff cfg.views views))
-             -- The flow's ink reads the epoch's text role on the element that
-             -- restates it, so each scheme's ink paints there.
              epochPaint := if home then "" else s!"color: {roleRef .ink};"
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
-/-- Listings inherit the epoch's shared IR ink on the enclosing surface,
-including the default selected when a foreground declaration is erased; an
-epoch back at the document's own palette, outside a painted body, inherits
-the stylesheet's as epoch 0 does. -/
 public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette) :
     (cfg.advancePalette p).listingFg =
       if cfg.bodyGround.isNone && p.sameAs cfg.docPal then none
       else some (Design.ofPalette p).fg := by
   rfl
 
-/-- An epoch back at the document's own palette, outside a painted body,
-paints nothing of its own: its text takes the stylesheet's ink, as epoch 0's
-does, so a group's end that restores the palette restores the page. -/
 public theorem Config.advancePalette_home_exact (cfg : Config) (p : Ir.Palette)
     (hhome : (cfg.bodyGround.isNone && p.sameAs cfg.docPal) = true) :
     (cfg.advancePalette p).epochPaint = "" ∧ (cfg.advancePalette p).listingFg = none := by
   simp only [Config.advancePalette, hhome, ↓reduceIte, and_self]
 
-/-- Token declarations have the same sibling flow as palette declarations;
-a table length among them is spelled as `tokenVars` spells it, against the
-document's basis (`Config.lengthBasis`, `lengthBasisOf`). -/
+/-- Advance the token state; a table length is spelled against the document's basis. -/
 private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
   { cfg with tokens := tk
              epochStyle := compactStyle (joinStyles cfg.epochStyle
                (epochTokenStyle cfg.lengthBasis cfg.tokens tk)) }
 
-/-- The outgoing declarations of ordinary containers continue in source
-order. Columns, notes and navigation are independent content scopes, as
-in layout; a page marker has no content. The context fold applies that
-boundary at every depth, including inside lists and titled bodies. -/
+/-- How declarations flow past a block: through ordinary containers, never out of columns, notes
+or navigation. -/
 private def declarationFlow : Ir.CtxFold Bool Config where
   openBlock := fun visible cfg b => match b with
     | .columns _ | .note _ | .nav _ _ => (cfg, false)
@@ -8378,36 +5820,24 @@ private def Config.afterBlock (cfg : Config) : Block → Config
 private def Config.afterBlocks (cfg : Config) (body : Array Block) : Config :=
   Ir.foldCtxBlocks declarationFlow true cfg body
 
-/-- A column's private declarations cannot change the configuration used
-for the following sibling, regardless of its content or nesting. -/
 private theorem Config.afterBlock_columns_exact (cfg : Config)
     (cols : Array (BoxWidth × Array Block)) :
     cfg.afterBlock (.columns cols) = cfg := rfl
 
-/-- The outgoing state of a palette declaration is its concrete ink
-transition, including its surface, rather than a CSS token update alone. -/
 private theorem Config.afterBlock_palette_projects (cfg : Config) (p : Ir.Palette) :
     cfg.afterBlock (.setPalette p) = cfg.advancePalette p := rfl
 
-/-- A flow epoch that changes the page ground paints each following
-continuous-flow box in that ground. This avoids a wrapper (which would break
-sibling rhythm and host selectors); deck stages already paint their own full
-page from the same `--bg`. -/
+/-- A ground-changing epoch's style, painting each following flow box in that ground. -/
 private def epochSurfaceStyle (style : String) (groundChanged : Bool) : String :=
   if groundChanged then
     joinStyles style ("background: " ++ stageGround)
   else style
 
-/-- Ordinary siblings carry the epoch's concrete flow ink as well as its
-tokens. Deck stages carry only `epochStyle`, so the presence of an overlay
-track cannot change which surface rule wins. -/
+/-- An ordinary sibling's epoch style: its tokens and its concrete flow ink. -/
 private def Config.flowEpochStyle (cfg : Config) : String :=
   joinStyles cfg.epochStyle cfg.epochPaint
 
-/-- The epoch's redefinitions onto one emitted sibling node. The epoch
-comes first, so an element's own style declarations win (CSS style
-attribute: last declaration of a property applies). A text node carries no
-attributes and needs none. -/
+/-- The epoch's redefinitions onto one emitted sibling, before the element's own style. -/
 public def withEpoch (style : String) (groundChanged : Bool) : Node → Node
   | .elem t attrs kids =>
     let style := epochSurfaceStyle style groundChanged
@@ -8420,10 +5850,7 @@ public def withEpoch (style : String) (groundChanged : Bool) : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
-/-- Paint ownership follows the emitted element, including a stage reached
-through structural scopes or returned unchanged by a spacing role. A stage
-or its overlay track carries the epoch's tokens; its own CSS resolves the
-surface. Other flow siblings also need the epoch's concrete inherited ink. -/
+/-- Apply the epoch to a node: tokens alone on a stage or its track, flow ink as well elsewhere. -/
 private def Config.applyEpoch (cfg : Config) (node : Node) : Node :=
   let stage := match node with
     | .elem tag attrs _ =>
@@ -8434,9 +5861,6 @@ private def Config.applyEpoch (cfg : Config) (node : Node) : Node :=
   if stage then withEpoch cfg.epochStyle false node
   else withEpoch cfg.flowEpochStyle cfg.epochGround node
 
-/-- The node with one more class token, appended to an element's `class` or
-added as it: how an engine role that only spaces or styles reaches the
-element it governs without becoming an element of its own. -/
 public def withClass (c : String) : Node → Node
   | .elem t attrs kids =>
     if attrs.any (·.1 == "class") then
@@ -8446,8 +5870,6 @@ public def withClass (c : String) : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
-/-- The node with more declarations in its `style`, appended to an element's
-own or added as it. -/
 public def withStyle (decls : String) : Node → Node
   | .elem t attrs kids =>
     if attrs.any (·.1 == "style") then
@@ -8457,23 +5879,13 @@ public def withStyle (decls : String) : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
-/-- A container holding `n` of its frame's fills on a deck's stage
-(`Ir.FillView.deck`), outside a box: it grows by their weight, a flex column
-of its own so the fills inside it take what it grows by — how the stage's
-column shares the leftover with a fill an overlay step, a trivlist, a list,
-a group or a link holds, as the page's close shares it. A list item stays a
-list item (`item`), whose marker no flex column keeps: it grows by the fills
-it ends on (`Ir.itemTrailingFills`), their space falling at its end, which is
-where they stand; a fill before more of the item grows nothing, and the deck
-names it (W0399). -/
+/-- A container holding `n` of its frame's fills on a deck's stage, growing by their weight. -/
 public def fillCarrier (cfg : Config) (n : Nat) (node : Node) (item : Bool := false) : Node :=
   if !cfg.deck || cfg.fillsInert || n == 0 then node
   else if item then withStyle s!"flex-grow: {Ir.fillUnit * n}" node
   else withStyle s!"flex-grow: {Ir.fillUnit * n}; display: flex; flex-direction: column" node
 
-/-- A generated inline leading margin becomes the authored addend of the
-frame boundary. Keeping an inline `margin-top` would override the shared
-gap rule instead of adding to it. Other declarations remain on their box. -/
+/-- A generated leading margin as the authored addend of the frame boundary. -/
 private def frameBodyBefore (style : String) : String :=
   String.intercalate ";" ((style.splitOn ";").map fun decl =>
     match decl.splitOn ":" with
@@ -8483,9 +5895,7 @@ private def frameBodyBefore (style : String) : String :=
       else decl
     | _ => decl)
 
-/-- Put the frame boundary on its first participating body element. State,
-text and hidden speaker notes do not take it. A generated leading margin
-joins the fixed opening at its one owner; the element tree is unchanged. -/
+/-- Put the frame boundary on its first participating body element. -/
 private def frameBodyStart (kids : Array Node) : Array Node :=
   match kids.findIdx? (fun node => match node with
     | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
@@ -8500,10 +5910,7 @@ private def frameBodyStart (kids : Array Node) : Array Node :=
 
 mutual
 
-/-- The element a carrier's flow ends on, marked `frame-flow-end` down its
-last children — in both groups of an alternation whose groups end alike,
-and in the group the page shows with no snap state where they end apart
-(`throughMembers`). -/
+/-- Mark the element a carrier's flow ends on `frame-flow-end`, down its last children. -/
 private def markFlowEnd : Node → Node
   | .elem tag attrs kids =>
     if isLinkCarrier (.elem tag attrs kids) then .elem tag attrs (markLastList kids.toList).toArray
@@ -8514,7 +5921,7 @@ private def markFlowEnd : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
--- conserves: none — the last element of a carrier for `markFlowEnd`; it marks one class.
+-- conserves: none — the last element of a carrier for `markFlowEnd`
 private def markLastList : List Node → List Node
   | [] => []
   | x :: rest =>
@@ -8523,7 +5930,7 @@ private def markLastList : List Node → List Node
       | .elem .. => markFlowEnd x
       | .text _ | .style _ | .script _ _ => x) :: rest
 
--- conserves: none — an alternation's groups for `markFlowEnd`; it marks one class.
+-- conserves: none — an alternation's groups for `markFlowEnd`
 private def markGroupsList (alike : Bool) : List Node → List Node
   | [] => []
   | x :: rest =>
@@ -8532,13 +5939,8 @@ private def markGroupsList (alike : Bool) : List Node → List Node
 
 end
 
-/-- Where a frame's body ends on a carrier, or on a block hidden speaker
-notes follow, mark the block its flow ends on, through the carriers,
-`frame-flow-end`, and answer that it did: the spacer after the body
-(`frame-body-tail`) then meets that block as it would with neither there,
-through one member per boundary (`throughMembers`) rather than a variant
-per depth of the carriers the body closes. A body ending on a block marks
-nothing, as the spacer already follows that block. -/
+/-- Where a frame's body ends on a carrier or before speaker notes, mark the block its flow ends
+on. -/
 private def frameFlowEnd (kids : Array Node) : Array Node × Bool :=
   match (kids.toList.zipIdx.reverse.find? fun (node, _) => match node with
     | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
@@ -8548,10 +5950,7 @@ private def frameFlowEnd (kids : Array Node) : Array Node × Bool :=
     if isCarrierNode node || notesAfter then (kids.modify i markFlowEnd, true) else (kids, false)
   | none => (kids, false)
 
-/-- Mark a frame's last participating body element: the box whose last line
-ends the content the deck's frame distributes (`frameOpeningCss`) — every
-frame's but the title page's, whose template places its own furniture.
-State, text and hidden speaker notes do not take it. -/
+/-- Mark a frame's last participating body element. -/
 private def frameBodyEnd (kids : Array Node) : Array Node :=
   let ends (node : Node) : Bool := match node with
     | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
@@ -8560,25 +5959,15 @@ private def frameBodyEnd (kids : Array Node) : Array Node :=
   | some i => kids.modify i (withClass "frame-body-end")
   | none => kids
 
-/-- Whether a frame's first body element owns the frame opening
-(`frameBodyStart`): a titled frame's always, as the PDF opens it below the
-title box, and in beamer's text area every frame's — the IR's one decision
-(`Ir.frameInTextArea`, the PDF's `Layout.frameAreaFor`) — so an untitled or
-standout frame opens at the stage's top past `[t]`'s `.2cm`, where the PDF
-opens it (`Layout.openFrameBody`). -/
+/-- Whether a frame's first body element owns the frame opening. -/
 public def frameOpensBody (chromeAllowed hasTitle : Bool) (valign : VAlign) : Bool :=
   hasTitle || Ir.frameInTextArea chromeAllowed valign
 
-/-- An untitled frame opens its body exactly where the IR places it in the
-text area. -/
 public theorem frameOpensBody_projects (chromeAllowed : Bool) (valign : VAlign) :
     frameOpensBody chromeAllowed false valign = Ir.frameInTextArea chromeAllowed valign := by
   simp only [frameOpensBody, Bool.false_or]
 
-/-- One reference-list entry: the style's marker, the formatted content,
-and the anchor its citations link to. A numbered entry's content is one
-element beside its label, so the list's grid can hang the labels in one
-column (`bibCss`); an author-year entry is its content alone. -/
+/-- One reference-list entry: its marker, its content and its anchor. -/
 private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
   let kids : Array Node := match item.marker with
     | some m => #[Html.elem "span" #[Html.text s!"[{m}]"]
@@ -8587,88 +5976,62 @@ private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
     | none => inlines cfg item.content
   Html.elem "li" kids #[("id", Ir.bibAnchor item.key)]
 
-/-- An entry's key enters the artifact only as the `id` attribute of the
-typed tree — the anchor `Bib.anchorOf` links to — so it passes
-`escapeAttr` by construction (`escapeAttr_no_quote`): a `.bib` key is
-author text, and no spelling of one can break out of the attribute. -/
 private theorem bibItemNode_key_enters_attribute_position (cfg : Config)
     (item : Ir.BibItem) :
     ∃ kids, bibItemNode cfg item =
       Html.elem "li" kids #[("id", Ir.bibAnchor item.key)] :=
   ⟨_, rfl⟩
 
-/-- Where one algorithm line stands in the nesting its declared depths
-imply: a node carrying the line, or a group standing in for a level no
-line declared (a depth that skips one). The forest is what `algNest`
-builds from `Ir.Block.algorithm`'s line array and what
-`algorithm_lines_agree` ranges over; the screen backend renders it as
-nested `<ol>`s. -/
+/-- One algorithm line's place in the nesting its declared depths imply. -/
 private inductive AlgTree where
   | node (line : Option Ir.AlgLine) (kids : Array AlgTree)
 
 mutual
 
-/-- The lines one nesting node carries, in document order: its own line
-first, then its kids' — the order the rendered `<li>`s stand in, since a
-nested list follows the text of the item it hangs under. Read by
-`algorithm_lines_agree` only; no emission path walks it. -/
+/-- The lines one nesting node carries, in document order. -/
 private def algLinesOne (acc : Array Ir.AlgLine) : AlgTree → Array Ir.AlgLine
   | .node none kids => algLinesList acc kids.toList
   | .node (some l) kids => algLinesList (acc.push l) kids.toList
 
-/-- `algLinesOne` over one level's forest, threading the accumulator. -/
 private def algLinesList (acc : Array Ir.AlgLine) : List AlgTree → Array Ir.AlgLine
   | [] => acc
   | t :: rest => algLinesList (algLinesOne acc t) rest
 
 end
 
-/-- One finished level attached to the level below it: the level's forest
-becomes the kids of the node it stood under, or of a group where no node
-declared that level. A node takes kids at most once — the close that
-attaches them is either followed by a new last node on that level (the
-line whose shallower depth triggered it) or by the level's own close. -/
+/-- One finished level attached to the node it stood under. -/
 private def algAttach (inner top : Array AlgTree) : Array AlgTree :=
   match top.back? with
   | some (.node l kids) => top.pop.push (.node l (kids ++ inner))
   | none => top.push (.node none inner)
 
-/-- The nesting stack, innermost level first: close the open level into
-the one beneath it. -/
+/-- Close the innermost open level into the one beneath it. -/
 private def algClose : List (Array AlgTree) → List (Array AlgTree)
   | inner :: top :: rest => algAttach inner top :: rest
   | [lvl] => [lvl]
   | [] => []
 
-/-- `algClose` iterated — the unwind, counted rather than conditioned, so
-it is total by structure. -/
 private def algCloseN : Nat → List (Array AlgTree) → List (Array AlgTree)
   | 0, s => s
   | n + 1, s => algCloseN n (algClose s)
 
-/-- Levels opened under the current one, counted the same way. -/
+/-- Open `n` levels under the current one. -/
 private def algOpenN : Nat → List (Array AlgTree) → List (Array AlgTree)
   | 0, s => s
   | n + 1, s => algOpenN n (#[] :: s)
 
-/-- One line onto the stack, at the depth it declares: close back to that
-depth, open down to it, then stand the line on the level it names. -/
+/-- One line onto the stack, at the depth it declares. -/
 private def algStep (s : List (Array AlgTree)) (l : Ir.AlgLine) : List (Array AlgTree) :=
   let closed := algCloseN (s.length - (l.depth + 1)) s
   let opened := algOpenN (l.depth + 1 - closed.length) closed
   (opened.headD #[]).push (.node (some l) #[]) :: opened.tail
 
-/-- The nesting an algorithm's lines declare, as a forest: each line's own
-depth drives it — the parse's truth — so an else standing at its if's
-level nests exactly once. The final unwind leaves one level, the document
-order `algorithm_lines_agree` reads back. -/
+/-- The nesting an algorithm's lines declare, as a forest. -/
 private def algNest (lines : Array Ir.AlgLine) : Array AlgTree :=
   let s := lines.foldl algStep [#[]]
   (algCloseN (s.length - 1) s).headD #[]
 
-/-- Every line the stack holds, bottom level first: a level's lines stand
-before the lines of the levels nested under its last node, which is the
-document order the finished forest reads in. -/
+/-- Every line the stack holds, bottom level first. -/
 private def algStackLines (s : List (Array AlgTree)) : Array Ir.AlgLine :=
   s.foldl (fun acc lvl => algLinesList #[] lvl.toList ++ acc) #[]
 
@@ -8838,17 +6201,6 @@ private theorem algCloseN_length (n : Nat) (s : List (Array AlgTree))
       simp only [List.length_cons] at h
       omega
 
-/-- The two artifacts read one algorithm's lines in one order. The fact is
-of the IR, not of either artifact: the nesting a line's declared depth
-implies (`algNest`) loses no line and reorders none, so reading the forest
-back in document order returns the declared array itself. Print's
-projection is that array read straight through — `Layout`'s `.algorithm`
-arm folds it in order, one display paragraph per element — and screen's is
-this forest, one `<li>` per node. Equality here is therefore the
-agreement: a line cannot reach one artifact and miss the other, nor reach
-the two in different places. The defect it refuses is the one an `\eIf`
-produced before the depths drove the build, where the else nested a second
-time and so stood a level deeper on screen than in print. -/
 private theorem algorithm_lines_agree (lines : Array Ir.AlgLine) :
     algLinesList #[] (algNest lines).toList = lines := by
   rw [algNest]
@@ -8877,10 +6229,7 @@ private theorem algorithm_lines_agree (lines : Array Ir.AlgLine) :
 
 mutual
 
-/-- One nesting node as a list item: the line's own inlines, then the
-nested list its kids form. The payload is a parameter so the nesting and
-the rendering stay separable — `algorithm_lines_agree` ranges over the
-nesting alone. -/
+/-- One nesting node as a list item: its line's inlines, then its kids' nested list. -/
 private def algRenderOne (payload : Ir.AlgLine → Array Node) : AlgTree → Node
   | .node l kids =>
     let pay := match l with
@@ -8889,7 +6238,6 @@ private def algRenderOne (payload : Ir.AlgLine → Array Node) : AlgTree → Nod
     Html.elem "li" (if kids.isEmpty then pay
       else pay.push (Html.elem "ol" (algRenderList payload #[] kids.toList) #[])) #[]
 
-/-- `algRenderOne` over one level's forest, threading the accumulator. -/
 private def algRenderList (payload : Ir.AlgLine → Array Node) (acc : Array Node) :
     List AlgTree → Array Node
   | [] => acc
@@ -8897,19 +6245,12 @@ private def algRenderList (payload : Ir.AlgLine → Array Node) (acc : Array Nod
 
 end
 
-/-- The plaintext recovery for a label inline. Parsed formulas take the
-MathML arm of `labelNodesOne`: their structural floor is a reading, never
-the characters to paint. -/
 private def labelPiece : Inline → String
   | .math _ src => Ir.mathFloor src
   | .formula _ _ body => Ir.formulaFloor body
   | inl => Ir.plainTextOne inl
 
-/-- The face a picture label's run is set in, on the axes the PDF resolves
-for it (`Layout.applyStyle`): the weight, the slant, the family slot, small
-caps, and the size and language switches. A label starts at `{}`, where
-the PDF starts it (`Layout.labelInk` sets a label from the default text
-style under the label's colour). -/
+/-- The face a picture label's run is set in, on the axes the PDF resolves. -/
 public structure LabelFace where
   weight : Ir.Weight := .m
   italic : Bool := false
@@ -8919,14 +6260,7 @@ public structure LabelFace where
   lang : Option String := none
   deriving BEq, Inhabited
 
-/-- One style's step on a label's face, as the PDF takes it: the weight
-through `Style.weight?`, the one map `Layout.weight_agree` holds the PDF
-to; `\emph` toggles the slant, so emphasis inside italic sets upright; NFSS
-shapes are exclusive, so upright clears italic and small caps both; and
-`\textnormal` resets every axis. A backend may not read another backend,
-so the slant and the family are the PDF's step restated here, and the
-per-glyph agreement check (`pictureNodeStyleChecks`) is what holds the
-two to each other. -/
+/-- One style's step on a label's face, as the PDF takes it. -/
 public def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
   let f := { f with weight := (s.weight?).getD f.weight }
   match s with
@@ -8944,15 +6278,7 @@ public def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
   | .fontSize _ _ => f
   | .bold | .medium | .series _ => f
 
-/-- A face as the attributes of the `<tspan>` its run sets in, relative to
-the label's own `<text>`, which inherits the body's regular weight and
-upright shape: the bold series is `font-weight: bolder`, the rendering the
-prose `<strong>` gets (HTML §15.3.4), which over a regular of 400 asks for
-the 700 the PDF's bold series names (`Weight.css`); any other series is
-its numeric weight, italic is `font-style`, the mono slot its family, and
-the sans slot, small caps and a size are the classes the prose `<span>`
-carries (`styleClass`), a language its `lang`. The regular face is no
-attribute at all, so a run the PDF sets regular inherits the regular. -/
+/-- A face as the attributes of its `<tspan>`, relative to the label's regular, upright `<text>`. -/
 public def LabelFace.attrs (f : LabelFace) : Array (String × String) :=
   let weight : Array (String × String) :=
     if f.weight == .m then #[]
@@ -8975,10 +6301,8 @@ public def LabelFace.attrs (f : LabelFace) : Array (String × String) :=
     | none => #[]
   weight ++ slant ++ cls ++ family ++ lang
 
-/-- One run of text in a face: SVG character data or a `<tspan>`, and an
-`mtext` beside native mathematics. MathML uses CSS for the SVG presentation
-attributes; both read the same resolved face. `white-space: pre` retains
-the author's spaces at the text/math boundary (MathML Core §3.2.5). -/
+/-- One run of text in a face: SVG character data or a `<tspan>`, or an `mtext` beside native
+math. -/
 public def LabelFace.run (f : LabelFace) (s : String) (nativeMath : Bool := false) : Node :=
   let a := f.attrs
   if nativeMath then
@@ -8993,24 +6317,7 @@ public def LabelFace.run (f : LabelFace) (s : String) (nativeMath : Bool := fals
 
 mutual
 
-/-- One inline of a picture label as SVG `<text>` children, onto `acc`: the
-same runs the PDF sets, each text run in the face the PDF resolves for it
-(`LabelFace`). A style is no element of its own: it steps the face, and
-every run it covers carries the face in full on its own `<tspan>`
-(`LabelFace.run`), so no weight or slant is ever relative to an enclosing
-run's — which is what lets a reset (`\textnormal`) and a toggle (`\emph`
-inside italic) set what the PDF sets, where nested `bolder` and `italic`
-tspans could only add. A colour is a `<tspan>` of SVG's `fill`, through the
-palette role's custom property as prose's `color` is, and a role its
-class; neither touches the face. With a math configuration, runs are
-`mtext`, colour/role scopes are `mrow`, and parsed formulas are the same
-MathML emitter's content as prose, set as rows (`MathMl.formulaRow`): the
-carrier `pictureKids` opens is already the label's `math` root, and a
-formula's own root inside it would nest one
-(`labelNodesOne_mathFree_contract`). Text styles still reach only text runs,
-so a bold word does not bold its neighbouring formula. Every other inline is
-its plain text in the face in force — the node salvage produces none of
-them. Every string goes through the escaper by construction. -/
+/-- One inline of a picture label as SVG `<text>` children, each run carrying its full face. -/
 public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
     (mathCfg : Option Config := none) : Array Node :=
   let native := mathCfg.isSome
@@ -9039,7 +6346,6 @@ public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x) native)
 
-/-- `labelNodesOne` over a label's inlines, threading the accumulator. -/
 public def labelNodesList (f : LabelFace) (acc : Array Node) (xs : List Inline)
     (mathCfg : Option Config := none) : Array Node :=
   match xs with
@@ -9048,10 +6354,6 @@ public def labelNodesList (f : LabelFace) (acc : Array Node) (xs : List Inline)
 
 end
 
-/-- **A picture formula paints exactly the shared math AST's glyph text**:
-this is the label projection of `MathMl.mathml_glyphs_agree`, for every
-formula, surrounding face and configured font environment. In particular,
-an empty nucleus contributes no punctuation around its script. -/
 public theorem labelFormula_glyphs_agree (f : LabelFace) (cfg : Config)
     (display : Bool) (src : String) (body : Math.MList) :
     MathMl.nodeListChars #[]
@@ -9072,12 +6374,7 @@ private theorem labelRun_mathFree (f : LabelFace) (s : String) (native : Bool) :
 
 mutual
 
-/-- **A label's runs add no `math` root** (`_contract`): whatever the label
-holds, in either mode, its nodes carry no `math` element — a native run's
-text is `mtext`, a scope `mrow`, a formula its row (`MathMl.formulaRow`),
-an SVG run text or `tspan`. So the carrier `pictureKids` opens is the
-label's only root (`pictureKids_unnested_contract`). A fact of the artifact:
-MathML's one root per tree. -/
+/-- Artifact-specific. -/
 public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node) (x : Inline)
     (mathCfg : Option Config)
     (ha : MathMl.tagFreeList (· == "math") acc.toList = true) :
@@ -9117,8 +6414,7 @@ public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
     simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
 
-/-- `labelNodesOne_mathFree_contract` over a list of inlines; a fact of the
-artifact, as that one is. -/
+/-- Artifact-specific. -/
 public theorem labelNodesList_mathFree_contract (f : LabelFace) (acc : Array Node)
     (xs : List Inline) (mathCfg : Option Config)
     (ha : MathMl.tagFreeList (· == "math") acc.toList = true) :
@@ -9132,14 +6428,7 @@ public theorem labelNodesList_mathFree_contract (f : LabelFace) (acc : Array Nod
 
 end
 
-/-- A picture label as SVG: `<text>` runs, or one MathML carrier when it
-holds a formula, its alphabetic baseline at the IR's measured band
-(`Ir.Pic.labelBaseline`), its anchor's side as `text-anchor`. Placed by the
-frame it stands in: at the root the picture's isometry carries its anchor
-exactly; inside a transform the label stands in the figure's own y-up frame,
-so it is set upright about its baseline. The label measures with the same
-metric as the picture's box; without a font environment the zero metric
-leaves the source anchor as the baseline. -/
+/-- A picture label as SVG `<text>` runs or one MathML carrier, at the IR's measured baseline. -/
 public def pictureLabelNode (metric : Ir.Pic.LabelMetric) (cfg : Config) (fr : GfxSvg.SFrame)
     (l : Gfx.LabelSpec) : Node :=
   let anchor := match l.align with
@@ -9162,13 +6451,7 @@ public def pictureLabelNode (metric : Ir.Pic.LabelMetric) (cfg : Config) (fr : G
         | .west => "0%"
         | .east => "-100%"
       let nodes := labelNodesList {} #[] l.content.toList (some { cfg with mathStyles := #[] })
-      -- MathML Core §3.3.6: zero height/depth preserve the baseline and
-      -- all ink. Zero-size XHTML and outer math fonts remove both
-      -- formatting contexts' struts; only the inner row takes the label
-      -- size. This places its natural alphabetic baseline at the SVG y.
-      -- Max-content and translation implement text-anchor.
-      -- SVG 2 §12.5 requires a positive foreignObject viewport to paint.
-      -- Its 1×1 box is only a carrier: both viewports allow all overflow.
+      -- SVG 2 §12.5: a foreignObject paints only with a positive viewport, hence the 1×1 box
       Html.elem "foreignObject" #[
         Html.elem "div" #[
           Html.elem "math" #[
@@ -9187,27 +6470,20 @@ transform: translateX({shift}); color: {cssColor l.color}")]]
   | some _ => node
   | none => Html.elem "g" #[node] #[GfxSvg.transformAttr ⟨1, 0, 0, -1, 0, 0⟩]
 
-/-- The isometry from picture coordinates (y up) into the SVG's frame: the
-box's left edge at x = 0, its top at y = 0, y down. -/
+/-- The isometry from picture coordinates, y up, into the SVG's frame, y down. -/
 @[expose] public def pictureIso (box : Ir.Pic.Box) : Gfx.Iso :=
   { flipY := true, dx := -box.1.1, dy := box.2.2 }
 
-/-- A picture's typed SVG tree in its box: the lowered figure (`Gfx.ofPicture`)
-through the SVG emitter, labels through `pictureLabelNode` — the same
-figure the PDF paints, so the two artifacts' marks agree
-(`Gfx.picture_marks_agree`). -/
+/-- A picture's typed SVG tree in its box: the lowered figure and its labels. -/
 public def pictureTree (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric := fun _ _ => {}) (cfg : Config := {}) : Array GfxSvg.El :=
   GfxSvg.tree (pictureLabelNode metric cfg) #[] (pictureIso box) (Gfx.ofPictureIn box pic)
 
-/-- The shapes of a picture as SVG children, in the box the viewBox
-declares: the typed tree spelled through the escaper. -/
+/-- A picture's shapes as SVG children, in the box the viewBox declares. -/
 public def pictureKids (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric := fun _ _ => {}) (cfg : Config := {}) : Array Node :=
   GfxSvg.spell 0 (pictureTree pic box metric cfg)
 
-/-- A label placed at a picture's root declares the alphabetic baseline at
-the IR's measured band, carried by the picture's isometry. -/
 private theorem pictureLabelNode_baseline (box : Ir.Pic.Box) (metric : Ir.Pic.LabelMetric)
     (cfg : Config) (l : Gfx.LabelSpec) :
     (match pictureLabelNode metric cfg { iso := some (pictureIso box) } l with
@@ -9222,8 +6498,6 @@ private theorem pictureLabelNode_baseline (box : Ir.Pic.Box) (metric : Ir.Pic.La
 
 mutual
 
-/-- Ink lowers to elements that carry no raw node: a picture's labels are
-never ink, so every raw node of a picture's tree is a label's. -/
 private theorem treeOne_lift_rawsAll {L : Type} (lab : GfxSvg.SFrame → L → Node)
     (q : Node → Bool) :
     ∀ (fr : GfxSvg.SFrame) (acc : Array GfxSvg.El) (n : Gfx.Node Empty),
@@ -9264,8 +6538,6 @@ private theorem treeList_lift_rawsAll {L : Type} (lab : GfxSvg.SFrame → L → 
 
 end
 
-/-- Ink that draws, groups, stamps or maps a raster lowers to exactly one
-element. -/
 private theorem treeOne_lift_one {L : Type} (lab : GfxSvg.SFrame → L → Node)
     (fr : GfxSvg.SFrame) (acc : Array GfxSvg.El) (n : Gfx.Node Empty)
     (h : Gfx.shapeOneEl (.ink n) = true) :
@@ -9279,8 +6551,6 @@ private theorem treeOne_lift_one {L : Type} (lab : GfxSvg.SFrame → L → Node)
   | label l => exact nomatch l
   | words w => simp [Gfx.shapeOneEl] at h
 
-/-- Ink no picture tree spells — a recovered word, or a symbol use where the
-tree has no symbol to clone — lowers to no element. -/
 private theorem treeOne_lift_none {L : Type} (lab : GfxSvg.SFrame → L → Node)
     (fr : GfxSvg.SFrame) (acc : Array GfxSvg.El) (n : Gfx.Node Empty)
     (h : Gfx.shapeOneEl (.ink n) = false) :
@@ -9294,11 +6564,6 @@ private theorem treeOne_lift_none {L : Type} (lab : GfxSvg.SFrame → L → Node
   | label l => exact nomatch l
   | words w => simp [Gfx.Node.lift, GfxSvg.treeOne]
 
-/-- A picture's shapes lower, at its root, to elements whose every raw node
-is a label's node; and each shape lowers to one element or none — a label,
-or ink that draws, groups, stamps or maps a raster, one; a recovered word or
-a symbol use, none — so a label shape `i` is the element at the count of the
-shapes before it that lower to one (`Gfx.shapeOneEl`), its node. -/
 private theorem pictureShapes_tree (metric : Ir.Pic.LabelMetric) (cfg : Config) (box : Ir.Pic.Box) :
     ∀ (acc : Array GfxSvg.El) (ss : List Ir.Pic.Shape),
       let lab := pictureLabelNode metric cfg
@@ -9365,16 +6630,12 @@ private theorem pictureShapes_tree (metric : Ir.Pic.LabelMetric) (cfg : Config) 
               simp only [List.take_succ_cons, List.countP_cons, hso]
               simpa using hidx i l hl
 
-/-- A picture's tree is its shapes' elements at the root. -/
 private theorem pictureTree_shapes (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric) (cfg : Config) :
     pictureTree pic box metric cfg = GfxSvg.treeList (pictureLabelNode metric cfg) #[] #[] #[]
       { iso := some (pictureIso box) } #[] (pic.shapes.toList.map Gfx.ofShape) := by
   simp [pictureTree, GfxSvg.tree, Gfx.ofPictureIn, GfxSvg.bodyEls, Gfx.Figure.bodies]
 
-/-- A label's node holds one MathML root at most: a formula's carrier is
-the label's only root (`labelNodesList_mathFree_contract`), a text label
-holds none, and the upright wrapper inside a transform adds none. -/
 private theorem pictureLabelNode_unnested (metric : Ir.Pic.LabelMetric) (cfg : Config)
     (fr : GfxSvg.SFrame) (l : Gfx.LabelSpec) :
     MathMl.unnested (pictureLabelNode metric cfg fr l) = true := by
@@ -9386,8 +6647,6 @@ private theorem pictureLabelNode_unnested (metric : Ir.Pic.LabelMetric) (cfg : C
     simp [Html.elem, MathMl.unnested, MathMl.unnestedList, MathMl.tagFree, MathMl.tagFreeList,
       hm, ht, MathMl.unnestedList_of_mathFree]
 
-/-- `MathMl.unnested` is a property every element a picture's spelling
-writes has once its children have it: none of their names is `math`. -/
 private theorem unnested_spellClosed : GfxSvg.SpellClosed MathMl.unnested := by
   intro t ht attrs kids hk
   have hne : (t == "math") = false := by
@@ -9406,14 +6665,7 @@ private theorem unnested_spellClosed : GfxSvg.SpellClosed MathMl.unnested := by
   simp only [Html.elem, MathMl.unnested, hne, Bool.false_eq_true, ↓reduceIte]
   exact hl kids.toList fun k hk' => hk k (Array.mem_toList_iff.mp hk')
 
-/-- **A picture ships one MathML root per label** (`_contract`): no `math`
-element `pictureKids` emits stands inside another, for every picture, box,
-measure and configuration. A label holding a formula is one carrier whose
-`math` is the label's only root (`labelNodesList_mathFree_contract`), and
-the spelled tree wraps a picture's labels in plain SVG and adds no MathML
-of its own (`GfxSvg.spell_plain_contract`). The carrier once wrapped each
-formula's own root, a second root no engine defines the layout of. A fact
-of the artifact, as `MathMl.formula_unnested_contract` is. -/
+/-- Artifact-specific. -/
 public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric) (cfg : Config) :
     ∀ n ∈ pictureKids pic box metric cfg, MathMl.unnested n = true := by
@@ -9424,16 +6676,6 @@ public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (box : Ir.Pi
   rw [hr _ fun l => pictureLabelNode_unnested metric cfg _ l]
   rfl
 
-/-- **Every shipped label baseline projects the IR's measured band**
-(`_projects`): the node a picture's label shape ships at its element index
-in the picture's SVG children — the spelled tree, its elements naming no
-definition, one node per shape that lowers to one (`Gfx.shapeOneEl`: every
-shape but a recovered word or an unresolvable symbol use), so the count of
-those before it — declares the alphabetic baseline at
-`labelBaseline` carried by the picture's isometry, whose
-`Ir.Pic.labelBaseline_box_exact` also identifies the native page's
-box-top-plus-height placement after its y flip — independent of alignment,
-font, scale and the surrounding shapes. -/
 public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Sp)
     (content : Array Inline) (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
@@ -9467,14 +6709,7 @@ public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pi
   | style _ => simp at hb
   | script _ _ => simp at hb
 
-/-- The picture's box as the element's own size. Lengths are pt, the unit
-the viewBox declares — and in flow classes the element's own size too:
-paper is paper. On the paged deck the stage is the viewport, so the box
-ships as its share of the stage instead (`deckStageMilli`, as images do): a
-pt box against CSS's 96 dpi ruler was the same "very small picture" defect.
-Both shares are stated and the viewBox's own ratio letterboxes inside them
-(SVG 2 §8.7, `meet`), so a viewport of another ratio never distorts the
-ink. -/
+/-- The picture's box as the element's own size: pt in flow classes, a stage share on a deck. -/
 public def pictureBox (cfg : Config) (w h : Dim.Sp) (rise : Dim.Sp := 0) : Array (String × String) :=
   #[("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
     (if cfg.deck then
@@ -9486,15 +6721,9 @@ height: {decMilli (deckStageMilli h cfg.page.height)}dvh" ++
       #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")] ++
         (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toPtString}pt")]))
 
-/-- The words a picture's labels set, as the SVG sets them: the IR's one
-reading (`Ir.Pic.Picture.said`), which the image of a picture drawn at the
-boundary carries as its text alternative too. -/
 public def pictureSaid (pic : Ir.Pic.Picture) : String := pic.said
 
-/-- What a picture says in words to a reader of the page: the alternative it
-resolves to (`Ir.Pic.Picture.alternative` — the author's words, else its
-labels'), and with none, what it is (`figureWord`), so the name is never
-blank (`pictureName_contract`). -/
+/-- What a picture says to a reader: its alternative, else the figure word. -/
 public def pictureName (loc : Locale) (pic : Ir.Pic.Picture) : String :=
   firstNonBlank pic.alternative.text (figureWord loc)
 
@@ -9502,20 +6731,14 @@ public theorem pictureName_contract (loc : Locale) (pic : Ir.Pic.Picture) :
     nonBlank (pictureName loc pic) = true :=
   firstNonBlank_contract _ _ (figureWord_contract loc)
 
-/-- A string's words, one space apart: what a name built from prose reads
-once its line breaks and indentation are gone. -/
+/-- A string's words, one space apart. -/
 public def squashSpace (s : String) : String :=
   String.intercalate " "
     (((s.map fun c => if c.isWhitespace then ' ' else c).splitOn " ").filter (!·.isEmpty))
 
 mutual
 
-/-- The words a subtree shows a sighted reader, onto `acc`: its text, each
-element closed by a space so adjacent blocks keep their words apart, with
-every `hidden` or `aria-hidden="true"` subtree, stylesheet and script left
-out — a speaker note (`hidden`), an alternation's other group, a
-decorative strip. A hand-rolled walk because `Html.Node` has no generic
-fold; the list companion keeps it structural. -/
+/-- The words a subtree shows a sighted reader, hidden subtrees, styles and scripts left out. -/
 public def shownWordsOne (acc : String) : Node → String
   | .text s => acc ++ s
   | .style _ => acc
@@ -9531,12 +6754,8 @@ public def shownWordsList (acc : String) : List Node → String
 
 end
 
-/-- A deck stage's name: its title as the frame's first page shows it
-(`Ir.firstPageText`, the reading its anchor takes too), or — untitled, as a
-title page or a standout statement is — the words it shows
-(`shownWordsList` over its emitted children: a speaker note or a hidden
-alternative never leaks into the name), or at the last the engine's word the
-untitled frame's anchor already starts from (`slide`). -/
+/-- A deck stage's name: its title as its first page shows it, else the words it shows, else
+`slide`. -/
 public def frameName (title : Array Inline) (kids : Array Node) : String :=
   firstNonBlank (squashSpace (Ir.firstPageText title))
     (firstNonBlank (squashSpace (shownWordsList "" kids.toList)) "slide")
@@ -9545,9 +6764,6 @@ public theorem frameName_contract (title : Array Inline) (kids : Array Node) :
     nonBlank (frameName title kids) = true :=
   firstNonBlank_contract _ _ (firstNonBlank_contract _ _ (by decide))
 
-/-- A themed section page's name: its title as its first page shows it
-(`Ir.firstPageText`), else the engine's word its anchor would start from
-(`section`). -/
 public def sectionPageName (title : Array Inline) : String :=
   firstNonBlank (squashSpace (Ir.firstPageText title)) "section"
 
@@ -9555,65 +6771,35 @@ public theorem sectionPageName_contract (title : Array Inline) :
     nonBlank (sectionPageName title) = true :=
   firstNonBlank_contract _ _ (by decide)
 
-/-- A deck stage's keyboard door. On the paged deck every stage is a scroll
-container — content past the stage scrolls inside it (`deckStageRule`,
-`overflow-y: auto`) — and the constant script binds its keys on the
-document, so a reader whose focus has no way into the stage cannot scroll
-what spills (WCAG 2.2 SC 2.1.1; axe `scrollable-region-focusable`).
-`tabindex="0"` puts the stage in the tab order and the name makes it a
-named region (HTML-AAM: a `section` with an accessible name is a
-`region`), so each stop announces which slide it is. Markup only: the
-script is untouched (`deck_script_constant`). Outside the deck a stage is a
-handout card that never scrolls, and carries neither. -/
+/-- A deck stage's keyboard door: a tab stop and a name, so a reader can scroll what spills. -/
 public def stageAttrs (deck : Bool) (name : String) : Array (String × String) :=
   if deck then #[("tabindex", "0"), ("aria-label", name)] else #[]
 
-/-- The picture's role and name (`pictureAltAttrs` over its resolved
-alternative) and its class hook. -/
 public def pictureRole (loc : Locale) (pic : Ir.Pic.Picture) : Array (String × String) :=
   pictureAltAttrs (figureWord loc) pic.alternative ++ #[("class", "picture")]
 
-/-- **The svg's role and name project the one IR value** (`_projects`):
-`Ir.Pic.Picture.alternative`, the value the PDF's picture leaf carries too
-(`Struct.picture_leaf_projects`). -/
 public theorem html_picture_name_projects (loc : Locale) (pic : Ir.Pic.Picture) :
     pictureRole loc pic =
       pictureAltAttrs (figureWord loc) pic.alternative ++ #[("class", "picture")] := by rfl
 
-/-- The box a picture's SVG declares: the IR's one box under the driver's
-label measurement (`Ir.Pic.Picture.box`) — the declared box exactly, else
-every mark's ink and every node's border — so the `viewBox` is the box the
-PDF reserves, never the hull of label anchors. -/
+/-- The box a picture's SVG declares: the IR's box under the driver's label measurement. -/
 public def pictureBoxOf (cfg : Config) (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
   pic.box cfg.labelMetric
 
-/-- The picture as inline SVG. The declared box is a size, never a clip
-(`Ir.Pic.Picture.declared`): the SVG declares `overflow` visible as its
-own presentation attribute, so ink placed past the box paints as the PDF
-paints it, whatever stylesheet mode the page ships under — an inline
-SVG's user-agent default is `overflow: hidden`. -/
+/-- The picture as inline SVG, its declared box a size and never a clip. -/
 public def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
   let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
-  -- The declared baseline is where the line stands (`Ir.Pic.Picture.rise`),
-  -- the value the PDF sets the picture's depth by.
   Html.elem "svg" (pictureKids pic ((px0, py0), (px1, py1)) cfg.labelMetric cfg)
     (pictureBox cfg (px1 - px0) (py1 - py0) (pic.rise cfg.labelMetric) ++
       pictureRole cfg.locale pic ++ #[("overflow", "visible")])
 
-/-- **A picture as a standalone SVG document**: the same lowered figure and
-labels the inline SVG carries (`pictureTree`), in the box the inline SVG
-declares, under the XML declaration in the SVG namespace — a picture
-shipped as its own file. -/
+/-- A picture as a standalone SVG document. -/
 public def pictureDocument (cfg : Config) (pic : Ir.Pic.Picture) : String :=
   let box := pictureBoxOf cfg pic
   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ++
     Html.render (GfxSvg.documentRoot box false
       (GfxSvg.spell 0 (pictureTree pic box cfg.labelMetric cfg))) 0
 
-/-- **A picture's SVG never clips its ink** (`_contract`): the lowered
-figure declares no clip to its box (pgf §15.8), and every picture ships
-`overflow="visible"` — the HTML half of the IR's "ink may stand outside it,
-and nothing is clipped". -/
 public theorem pictureSvg_overflow_contract (cfg : Config) (pic : Ir.Pic.Picture) :
     (Gfx.ofPicture cfg.labelMetric pic).clipToBox = false ∧
     (match pictureSvg cfg pic with
@@ -9626,12 +6812,6 @@ public theorem pictureSvg_overflow_contract (cfg : Config) (pic : Ir.Pic.Picture
       attrOf?] <;>
     split <;> (try split) <;> simp
 
-/-- **The SVG's box is the figure's box** (`_projects`): the `viewBox` a
-picture's SVG declares spans the lowered figure's box under the configured
-measurement, width by height — `Ir.Pic.Picture.box`
-(`Gfx.ofPicture_box_exact`), the value the PDF reserves
-(`Layout.pictureBox`), never a second hull. The HTML half of
-`Pdf.picture_box_agree`. -/
 public theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
     (match pictureSvg cfg pic with
       | .elem _ attrs _ => attrOf? attrs "viewBox"
@@ -9642,26 +6822,15 @@ public theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, attrOf?]
 
-/-- The abstract region's classes: the engine's own hook, and the size
-step its body sets at, read from the one resolving site the PDF's body
-reads (`Ir.abstractBodySize`, `Layout`'s `.abstract` arm). -/
+/-- The abstract region's classes: the engine's hook and its body's size step. -/
 public def abstractClass (styles : Ir.Styles) : String :=
   let step := Ir.abstractBodySize styles
   "abstract size-" ++ step
 
-/-- The most columns a code line holds whole (`codeLineNodes`): a code
-block's continuation line at the width WCAG 2.2's reflow criterion sets
-(SC 1.4.10, a 320 CSS px viewport), as Chromium sets a markdown fence
-there: 208 px of line less the 20 pt hang, at the 7.68 px advance a 0.6 em
-face takes at the fence's 0.8 em, 23 columns — as many as a listing at the
-body's size holds at its 248 px. A held unit wider than its line runs past
-it, so no wider one is held, and a box narrower than the page's own column
-at that viewport releases what it holds (`codeReleaseWidth`). -/
+/-- The most columns a code line holds whole: a continuation line at WCAG's 320 px reflow width. -/
 public def codeHoldColumns : Nat := 23
 
-/-- How many columns a code character takes: two for a wide character of a
-script that wraps between its characters, or an emoji, which a terminal
-and a browser draw two cells wide; one for any other. -/
+/-- How many columns a code character takes: two for a wide character or an emoji, else one. -/
 private def codeColumns (c : Char) : Nat :=
   let n := c.toNat
   if (Listing.wrapsBetweenChars c && !Listing.wrapsAtWords c &&
@@ -9679,7 +6848,7 @@ private def fillHoleOne (hole : String) (fill : Array Node) (acc : Array Node) :
   | .style css => acc.push (.style css)
   | .script attrs js => acc.push (.script attrs js)
 
--- conserves: none — a run's paint around its atoms (`codeLineNodes`); every node of its, once.
+-- conserves: none — a run's paint around its atoms, every node once
 private def fillHoleList (hole : String) (fill : Array Node) (acc : Array Node) :
     List Node → Array Node
   | [] => acc
@@ -9700,20 +6869,8 @@ private def joinPieces (ps qs : Array (Nat × String)) : Array (Nat × String) :
     | some (ri, t) => if ri == q.1 then acc.pop.push (ri, t ++ q.2) else acc.push q
     | none => acc.push q) ps
 
-/-- A code line's nodes: its highlighter runs painted as `Listing.paintRun`
-paints them, and what the line may not break inside held in a `tok` span —
-under whitespace first each stretch between two spaces, so the line wraps
-at a space where one stands, or, in a stretch wider than its line, each
-fallback token of it (`Listing.codeMarks`); under listings' rule each unit,
-with a `<wbr>` between two that are no space, where listings may break and a
-browser might not — but between two characters of scripts that wrap
-between their characters, where a browser breaks as it may: between two
-ideographs, and in Thai and Lao between the words its dictionary finds, a
-subset of the clusters the page may break between. A unit of one character
-is never held, nor one wider than `codeHoldColumns`, which breaks where it
-must. A held unit longer than `codeShortColumns` carries the class a box
-too narrow to fit it releases (`codeLongTokClass`). A held unit that is a
-whole run takes its classes on the run's own element (`withClass`). -/
+/-- A code line's nodes: its highlighter runs painted, and what the line may not break inside
+held in `tok` spans. -/
 private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array Listing.Run)
     (line : Array ListingHighlight.Token) (classes : Array (Option String) := #[]) :
     Array Node := Id.run do
@@ -9721,8 +6878,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
   let atomOf (m : Listing.CodeMark) : Nat := match wrap with
     | .units => m.lex
     | .whitespaceFirst => m.fb
-  -- The line's atoms in order, each its pieces — its characters inside one
-  -- run, by run — and whether it is white space.
+  -- the line's atoms in order: their pieces by run, and whether each is white space
   let mut atoms : Array (Nat × Bool × Array (Nat × String)) := #[]
   let mut i := 0
   for (r, ri) in runs.zipIdx do
@@ -9739,7 +6895,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
     ps.foldl (fun n p => p.2.foldl (fun k c => k + codeColumns c) n) 0
   let fits (ps : Array (Nat × String)) : Bool :=
     2 ≤ ps.foldl (fun n p => n + p.2.length) 0 && columns ps ≤ codeHoldColumns
-  -- The units the line emits, in order: white space, and what it holds.
+  -- the units the line emits, in order: white space, and what it holds
   let mut units : Array (Bool × Bool × Array (Nat × String)) := #[]
   match wrap with
   | .units =>
@@ -9754,8 +6910,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
         stretch := #[]
         unless ps.isEmpty do units := units.push (true, false, ps)
       else stretch := stretch.push ps
-  -- A run's paint, once, around what it holds: its text, the units inside
-  -- it held, and under listings' rule a `<wbr>` between two units.
+  -- a run's paint, once, around what it holds
   let hole := "\uE000\uE001\uE002"
   let paint (ri : Nat) (content : Array Node) : Array Node :=
     match runs[ri]? with
@@ -9769,8 +6924,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
     if columns ps ≤ codeShortColumns then codeTokClass else codeTokClass ++ " " ++ codeLongTokClass
   let held (ps : Array (Nat × String)) (kids : Array Node) : Node :=
     Html.elem "span" kids #[("class", classesOf ps)]
-  -- A run whose whole text is one held unit takes the classes on its own
-  -- element, where it paints as one.
+  -- a run that is one held unit takes the classes on its own element
   let flush (ri : Nat) (content : Array Node) : Array Node :=
     match content with
     | #[.elem "span" #[("class", k)] #[.text t]] =>
@@ -9813,13 +6967,7 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
   if let some (ri, c) := cur then out := out ++ flush ri c
   return out
 
--- Shared by ordinary paragraphs and description items after their label
--- is removed. The block walk recurses only over source children.
-/-- A block of content set wholly in one named size (`Ir.paraStep?`) carries
-the step's class on its own element, the content lifted out of the scope
-(`Ir.liftParaStep`): the element's line box is then the step's, as the
-page sets the paragraph's strut at the step — a size span inside the
-element would leave the body's strut, and its leading, under every line. -/
+/-- A block set wholly in one named size carries the step's class on its own element. -/
 private def stepNode (cfg : Config) (tag : String) (content : Array Inline) : Node :=
   match Ir.paraStep? content with
   | some "normalsize" => Html.elem tag (inlines cfg (Ir.liftParaStep content))
@@ -9827,12 +6975,7 @@ private def stepNode (cfg : Config) (tag : String) (content : Array Inline) : No
       #[("class", " ".intercalate (stepClasses cfg.deck n))]
   | none => Html.elem tag (inlines cfg content)
 
-/-- A deck's heading or title set in one named size (`Ir.paraStep?`) takes
-that step's leading (`lead-<step>`, `sizeRules`), as the page leads a
-display's lines at the step's `\baselineskip` on the base the step scales;
-the element keeps its own size and its content its spans, the step's span
-taking the leading over its own size. Text a template inserts, a frame's
-title, leads as the page leads it (`Ir.insertedStep?`). -/
+/-- A deck's heading or title set in one named size takes that step's leading. -/
 private def withLead (cfg : Config) (content : Array Inline) (node : Node)
     (inserted : Bool := false) : Node :=
   if !cfg.deck then node else
@@ -9841,7 +6984,7 @@ private def withLead (cfg : Config) (content : Array Inline) (node : Node)
   | some n => withClass ("lead-" ++ n) node
 
 private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
-  -- Label anchors alone must not open a blank paragraph.
+  -- label anchors alone must not open a blank paragraph
   if !content.isEmpty && content.all (fun x => x matches .label _) then
     Html.elem "span" (inlines cfg content)
   else
@@ -9855,12 +6998,8 @@ private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
   else
     stepNode cfg "p" content
 
-/-- What a listing stands on and sets its plain text in where it declares no
-ground of its own, in one scheme: an epoch's page and ink as the scheme's
-view of the palette in force holds them, and the ground and ink of a
-painted body around it as declared in print and on the document's own
-screen, carried as a declared ground and ink are elsewhere; else the
-scheme's own ink. -/
+/-- What a listing stands on and sets its plain text in where it declares no ground, in one
+scheme. -/
 private def listingAround (cfg : Config) (f : Ir.SchemeFrame) (v : Ir.Palette) :
     Option Ir.Color × Ir.Color :=
   let s := f.scheme
@@ -9877,24 +7016,8 @@ private def listingAround (cfg : Config) (f : Ir.SchemeFrame) (v : Ir.Palette) :
     | none => (Ir.Design.at v s .ink).getD Ir.Color.black
   (around, ink)
 
-/-- **A listing as one shipped scheme ships it**: the ground it stands on
-there, its plain text's colour, and each code role's colour, by the role's
-palette key (`Ir.Role.ofCode`). In print and on the document's own screen
-(`Ir.SchemeFrame.home`) it is what the PDF paints: the ground the listing
-declares, else the class's code ground (`Ir.ListingSpec.groundIn`), else
-what surrounds it, else the page; the plain text in the code ink the
-document declares, else its surrounding ink, fitted to a code ground
-(`Listing.groundInk`); and the code roles from their one resolving site
-(`CodeColor.resolve`), shipped as `Listing.roleBrushes` ships them. In
-every other scheme a declared ground is carried as a declared ground is
-(`Ir.SchemeFrame.ground`), the class's code ground and the page are the
-scheme's own, and each colour the document or the listing's style states is
-carried at the scheme's gate on that ground as a declared ink is
-(`Ir.Design.carryInk`) — the rule's fit at that gate (`Listing.fitInk`) where
-no tone of its hue reaches it — while what the rule derives is derived there
-again and fitted at that gate, or, where the scheme keeps the page's
-polarity, stays as the declared palette derives it where that reads higher
-and already meets the gate. -/
+/-- A listing as one shipped scheme ships it: its ground, its plain text's colour and each code
+role's. -/
 private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.SchemeFrame)
     (v : Ir.Palette)
     (known : Option (Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role))) := none) :
@@ -9909,17 +7032,13 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
   let carry (c : Ir.Color) : Ir.Color :=
     (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk req ground c)
   let fit := if f.home then Listing.defaultInk ground else Listing.fitInk req ground
-  -- Two schemes that ship the palette as declared paint the code roles alike
-  -- on one ground: the resolution is read once (`known`).
+  -- schemes shipping the palette as declared share one resolution per ground
   let reuse := known.bind fun (g, rs) => if f.home && g == ground then some rs else none
   let roles := match reuse with
     | some rs => rs
     | none =>
     let paints := CodeColor.resolve v ground spec.style
-    -- Where the scheme keeps the page's polarity, a derived colour the
-    -- palette as declared derives on this ground stays where it already
-    -- reads at the gate and no lower than the one derived again: more
-    -- contrast never lowers what already meets it.
+    -- more contrast never lowers a derived colour that already meets the gate
     let homePaints := if f.flip || f.home then none
       else some (CodeColor.resolve cfg.pal ground spec.style)
     let derived (r : ListingHighlight.Role) (c : Ir.Color) : Ir.Color :=
@@ -9942,16 +7061,9 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
     | none => if own.isSome then fit inherited else inherited
   (ground, ink, roles)
 
-/-- A listing in every scheme the page ships, beside each scheme: the page's
-own (`codePaints`) for a listing that declares nothing, on the page in
-force as its document leaves it, which is what it computes there; a scheme
-that ships the palette as declared reads the code roles another such scheme
-read on the same ground. -/
+/-- A listing in every scheme the page ships. -/
 private def Config.listingPaints (cfg : Config) (spec : Ir.ListingSpec) :
     List (Ir.Scheme × Ir.Color × Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role))) :=
-  -- What surrounds the listing is the page as its document leaves it where
-  -- the ground is the page in force and the ink the palette's own
-  -- (`listingAround` reads both as the scheme's view does).
   if !cfg.codePaints.isEmpty && spec.ground.isNone && spec.style.isNone &&
       cfg.pal.sameAs cfg.docPal && cfg.listingGround == Ir.Design.declared? cfg.pal .page &&
       cfg.listingFg.all (· == Ir.Design.printInk cfg.pal) then
@@ -9965,12 +7077,7 @@ private def Config.listingPaints (cfg : Config) (spec : Ir.ListingSpec) :
       (#[], none)
     out.toList
 
-/-- A listing line's runs as the page ships them (`Listing.paintLine`), each
-cut where its tokens' classes change and its ink left to classes: the tokens
-of one type that a shipped scheme colours in a role other than the ink, in
-one part wearing their type's class (`classes`, by type: `tokenClass`), white
-space joining the part before it, and every other token in the colour its
-box states (`Config.listingStyle`); each part beside its class. -/
+/-- A listing line's runs, cut where their tokens' classes change, each beside its class. -/
 private def tokenRuns (classes : Array (ListingHighlight.Kind × Option String))
     (runs : Array Listing.Run) : Array Listing.Run × Array (Option String) :=
   runs.foldl (fun (out : Array Listing.Run × Array (Option String)) r =>
@@ -9988,17 +7095,8 @@ private def tokenRuns (classes : Array (ListingHighlight.Kind × Option String))
       (out.1.push { brush := { r.brush with ink := none }, inked := false, tokens := ts },
        out.2.push c)) out) (#[], #[])
 
-/-- **The colours a listing's box states in every scheme the page ships**
-(`Config.listingPaints`): its ground and its plain text's colour — through
-the page's role where the listing's is that role's in every scheme, else as
-`schemeValue` spells them — and each code role its tokens paint in, where
-it stands in an epoch or a painted body, whose restatements are the roles
-in force there, and otherwise where its colour differs from the one the
-page's `:root` states for a listing on its own code ground (`codeRoot`). A
-plain listing with no ground of its own states its ground
-only where an epoch paints a code ground its class paints none of, and its
-colour only where the document declares a code ink: it stands on what
-surrounds it, as the page's code ground rule paints it. -/
+/-- The colours a listing's box states in every scheme the page ships, where they differ from what
+surrounds it. -/
 private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
     (paints : List (Ir.Scheme × Ir.Color × Ir.Color ×
       List (Ir.Role × Option (Ir.Color × Option Ir.Role)))) : String :=
@@ -10025,8 +7123,7 @@ private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
         else [s!"background: {value ground [.page, .codeSurface]};"]
       let used := (spec.highlight.foldl (fun acc line => line.foldl (fun acc t =>
         if acc.contains t.kind then acc else acc.push t.kind) acc) #[]).map (·.role)
-      -- The code roles in force are `:root`'s only outside an epoch and a
-      -- painted body: an epoch restates them for its own code ground.
+      -- the code roles are `:root`'s only outside an epoch and a painted body
       let atRoot := cfg.bodyGround.isNone && cfg.pal.sameAs cfg.docPal
       let roles := ListingHighlight.Role.all.filterMap fun r =>
         let key := Ir.Role.ofCode r
@@ -10054,18 +7151,14 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let title := match st.font, cfg.slotTitle && level == 0 with
       | some tpl, false => fillTemplate tpl title
       | _, _ => title
-    -- The number is a structural piece of the heading, never text glued
-    -- into the title: the anchor slug reads the title alone, and a
-    -- stylesheet can address the number (`pandoc` sets the same span).
+    -- the number is its own span, so the anchor slug reads the title alone
     let kids := inlines cfg title
     let kids := match num with
       | some n => #[Html.elem "span" #[Html.text n]
           #[("class", "section-number")], Html.text "\u2003"] ++ kids
       | none => kids
     let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
-    -- A deck's section heading outside a frame takes the section title's
-    -- ink where the palette declares it or the ink it follows, and the
-    -- body's otherwise: on paper the print sheet's ink, as the PDF sets it.
+    -- a deck's section heading outside a frame takes the section title's ink where declared
     let attrs := if cfg.deck && level == 1 &&
         ((Ir.Design.declared? cfg.pal .sectionTitleInk).isSome ||
           (Ir.Design.declared? cfg.pal .ink).isSome) then
@@ -10073,8 +7166,6 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let node := withLead cfg title (Html.elem tag kids attrs)
     if level == .h1 then withClass "body-heading" node else node
   | .list ordered items =>
-    -- A description list (every item run in by its label) is HTML's own
-    -- `<dl>`; the label reading is the page's (`Ir.descLabel?`).
     let desc := Ir.listIsDesc ordered items
     let n := Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b
     if desc then
@@ -10083,54 +7174,30 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let tag := if ordered then "ol" else "ul"
     fillCarrier cfg n (Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList))
   | .center body =>
-    -- A display formula's block is the `.display` paragraph the base
-    -- sheet's display rules address — the same shape the PDF walk reads
-    -- (`Ir.displayContent?`); a `<p>`, as a display formula is phrasing
-    -- content standing in one, and its display rule outranks the peer
-    -- rule by standing later at equal specificity. Any other centred
-    -- scope is a `.centered` div.
     match Ir.displayContent? body with
     | some content => Html.elem "p" (inlines cfg content) #[("class", "display")]
     | none =>
       fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
         (Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")])
-  -- The declared side as a class, resolved through the IR's own reader
-  -- (`Ir.FlushSide.align`) so the stylesheet's `text-align` and the page's
-  -- line origin cannot name different edges (`ragged_sides_agree`). Flush
-  -- left is HTML text's resting state and the class still re-declares it,
-  -- so the setting survives a centred ancestor (text-align inherits).
+  -- flush left is still a class, so it survives a centred ancestor
   | .ragged flush body =>
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
       (Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", raggedClass flush)])
-  -- The block half of the class hook: the authored name as a class on a
-  -- generic flow container, through the typed tree and the escaper. The
-  -- trivlist and in-paragraph roles only space, so each is a class on the
-  -- environment's own element and never an element: a consumer sheet's
-  -- child combinators (`main > .centered`) were written against the tree
-  -- without it, and the list levels read the in-paragraph one to spend
-  -- `\topsep` without `\partopsep` (`listLevelRules`).
+  -- spacing-only roles are a class on the environment's own element, never an element of their own
   | .role n body =>
-    -- A display a picture stands for is the `.display` paragraph a display
-    -- formula is (`Ir.displayPicture?`, the PDF walk's reading too): its
-    -- labels' anchors where the formula's stand, then the picture's svg.
     if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
       Html.elem "p" ((inlines cfg anchors).push (pictureSvg cfg pic))
         #[("class", "display")]
     else
-    -- A title slot's role marks its content as the slot's own: set under
-    -- the slot's template alone (`Config.slotTitle`), placed by the rule
-    -- `titleSlotCss` writes for this class hook.
+    -- a title slot's content sets under the slot's template alone
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
       then { cfg with slotTitle := true } else cfg
     let kids := blockNodesInto cfg.into #[] body.toList
-    -- A page-model mark (`Ir.pageMarkerRole`) is a fact of the page alone:
-    -- a continuous medium has no page top, interline glue, or running folio.
+    -- a page-model mark has no meaning in a continuous medium
     if Ir.pageMarkerRole n then Html.text "" else
     match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
         kids.toList with
     | true, [k] => withClass (roleClass n) k
-    -- A display's context (`Ir.DisplayCtx`) is the PDF's placement fact:
-    -- the page's element tree is the display's own.
     | false, [k] =>
       if (Ir.DisplayCtx.ofRole? n).isSome then k
       else fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
@@ -10138,32 +7205,20 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     | _, _ =>
       fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
         (Html.elem "div" kids #[("class", roleClass n)])
-  -- HTML anchors have a transparent content model, so one anchor may own
-  -- arbitrary flow children; elaboration rejects every anchor-bearing
-  -- descendant before this node is built.
+  -- an anchor's content model is transparent; elaboration refuses nested anchors
   | .link target body =>
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
       (Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
         #[("href", target), ("style", "display: block")])
-  -- A quotation is HTML's own construct: `<blockquote>` carries the
-  -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList))
-  -- The platform's own disclosure: its summary stays in view, its body is
-  -- the reader's to open and close, open from the start where it is
-  -- expanded. Its summary's style and the print sheet's expanded body are
-  -- the stylesheet's (`disclosureCss`).
   | .disclosure summary expanded body =>
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "details"
         (#[Html.elem "summary" (inlines cfg summary)] ++ blockNodesInto cfg.into #[] body.toList)
         (if expanded then #[("open", "")] else #[]))
-  -- beamer's titled block: a <section> with its header, through the typed
-  -- tree and the escaper; the kind rides as a class so the stylesheet (a
-  -- reader's own included) can address each. Its two colour boxes stand
-  -- as on the page (`titledBoxPaint`): an untitled block keeps its empty
-  -- header, a painted band or one empty line, as beamer keeps the box.
+  -- an untitled block keeps its empty header, as beamer keeps the box
   | .titled kind title body =>
     let d := Design.ofPalette cfg.pal
     let look := d.titledBody kind
@@ -10173,12 +7228,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let paint := titledBodyPaint cfg.pal kind parent
     let role := if look.fg.isSome then .role (Ir.Role.bodyInk kind) else inherited.1
     let titleLook := Ir.titledLook cfg.pal kind
-    -- Each paint reads its role, so every scheme the page ships paints its own.
     let read (r : Ir.Role) (c : Ir.Color) : String := colorRead cfg (some (.role r)) c
     let barStyle := (titleLook.bar.map fun c =>
       s!"background: {read (Ir.Role.titleBar kind) c}; {titledBoxPaint}").getD ""
     let titleStyle := s!"color: {read (Ir.Role.titleInk kind) titleLook.fg};" ++ barStyle
-    -- The kind's title font (`\setbeamerfont{block title}`), the page's.
     let shown := match Ir.blockTitleFont cfg.styles kind with
       | some tpl => Ir.fillTemplate tpl title
       | none => title
@@ -10193,9 +7246,6 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let kids := blockNodesInto bodyCfg #[] body.toList
     let bodyStyle := s!"color: {colorRead cfg (some role) paint.fg};"
     if kind == .box then
-      -- tcolorbox's box: its title and upper part are its own segments, each
-      -- padded by the stylesheet (`themeCss`) and painted from the plain
-      -- block's roles, an untitled box no title at all.
       let barStyle := (titleLook.bar.map fun c =>
         s!"background: {read (Ir.Role.titleBar kind) c};").getD ""
       let head : Array Html.Node := if title.isEmpty then #[] else
@@ -10209,13 +7259,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     else
     match Ir.blockShapeOf cfg.styles kind with
     | some shape =>
-      -- The kind's own template (`Ir.BlockShape`): no colour box, the title
-      -- in its font on the page's ground, the body's paragraphs keeping the
-      -- page's skip; the boxes' rules are the stylesheet's (`blockShapeCss`).
       let showTitle := shape.showsTitle (!title.isEmpty)
       let titleInk := titleLook.fg
-      -- An empty title box is the stylesheet's, as tall as the template
-      -- sets it (`blockShapeCss`).
       let head : Array Html.Node :=
         if !showTitle then #[]
         else if title.isEmpty then #[Html.elem "header" #[] #[]]
@@ -10224,9 +7269,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let ink := look.fg.getD inherited.2
       let shapedCfg := { cfg.into with
         listingFg := some ink, bodyInk := some (role, look.fg.getD inherited.2) }
-      -- A rule beside the whole block ends below the body's last baseline:
-      -- each such section says how far its body's end stands below it
-      -- (`blockShapeCss`), so none reads an enclosing section's.
+      -- each section states its own body's end, so none reads an enclosing section's
       let lastBelow : String :=
         match shape.edges.find? fun e => e.span == .whole && e.besideTitle with
         | none => ""
@@ -10239,8 +7282,6 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
           #[("class", s!"block block-{kind.name} block-shaped"),
             ("style", s!"color: {cfg.literal ink};" ++ lastBelow)])
     | none =>
-    -- A painted region owns a box, distinct from its independently painted
-    -- title. Unfilled bodies keep their original child structure.
     let kids := match look.bg with
       | some bg => #[Html.elem "div" kids #[("class", "block-body"), ("style",
           bodyStyle ++ s!"background: {read (Ir.Role.bodyGround kind) bg}; {titledBodyBoxPaint}")]]
@@ -10248,36 +7289,19 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let attrs := #[("class", s!"block block-{kind.name}")]
     let attrs := if look.bg.isNone && look.fg.isSome then attrs.push ("style", bodyStyle) else attrs
     Html.elem "section" (head ++ kids) attrs
-  -- The equation's number is a structural element beside the formula,
-  -- never text glued into it: a flex row whose math child takes the
-  -- measure and whose tag sits right, the amsmath shape. `display` puts
-  -- it inside the display skips, as the PDF's `.equation` arm does.
   | .equation num content =>
     let kids := inlines cfg content
     Html.elem "div"
       (kids.push (Html.elem "span" (inlines cfg num) #[("class", "eqnum")]))
       #[("class", "equation display")]
-  -- The abstract is HTML's own titled region: a <section> with a heading,
-  -- exactly the thing a reader's tooling looks for. The heading word is
-  -- class furniture (article.cls's \abstractname), generated here as the
-  -- PDF generates its centred bold line.
   | .abstract body =>
-    -- The heading is an <h2>, so a declared `\style{section}` reaches it
-    -- through the h2 selector — the abstract follows the section heading
-    -- by construction (`Ir.abstract_heading_follows_section`); centred, as
-    -- the class centres it (article.cls §abstract). The body's size is the
-    -- one the PDF sets (`Ir.abstractBodySize`), on the region, where the
-    -- rem-sized heading does not inherit it.
+    -- an `<h2>`, so a declared `\style{section}` reaches the abstract's heading
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "section"
         (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
           blockNodesInto cfg.into #[] body.toList)
         #[("class", abstractClass cfg.styles)])
   | .columns cols =>
-    -- Side-by-side columns as a grid: the declared fractions become
-    -- percentage tracks, so the HTML column really is as wide as the PDF's.
-    -- A lone box takes its scope's side (`alignScopeRule`), as the page
-    -- gives it the side's share of its slack; a row spreads.
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
     let total := cfg.measureValues.lineWidth
     let declared := cols.foldl (fun s c => s + (c.1.resolve total).getD 0) 0
@@ -10288,81 +7312,38 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           s!"justify-content: {justify}")]
   | .onSteps spec body =>
-    -- The block form of the inline step arm: visible — the handout floor —
-    -- with its `--step` index for the class-gated uncover, range as data,
-    -- and the declared end on its own nested carrier.
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
       (overlayNode "div" cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList))
   | .altSteps spec firstPage otherPage =>
-    -- The block form of the inline alternation arm. The groups need one
-    -- carrier each so a selector can reach each range (`alt_backend_agree`);
-    -- the pair rides a container of its own because a block arm ships one
-    -- node, and the container carries no range, no side and no rule — only
-    -- whether its groups end alike, which the gap sheet reads its end
-    -- through (`altEndsAlike`).
-    -- A group's fills grow nothing (`Ir.FillView.deck`): the stage's flex
-    -- column is one for every step, and the groups change from step to step.
+    -- a group's fills grow nothing: the stage's flex column is shared by every step
     let first := blockNodesInto { cfg.into with fillsInert := true } #[] firstPage.toList
     let other := blockNodesInto { cfg.into with fillsInert := true } #[] otherPage.toList
     Html.elem "div" (overlayAlternatives "div" cfg.overlaySteps spec first other)
       #[("class", if altEndsAlike first other then "alt-pair alt-alike" else "alt-pair")]
   | .note body =>
-    -- Inert and hidden: available to a speaker view, invisible in the deck
-    -- and in print.
+    -- hidden: for a speaker view, invisible in the deck and in print
     Html.elem "aside" (blockNodesInto cfg.into #[] body.toList)
       #[("class", "note"), ("hidden", "hidden")]
   | .pagebreak =>
-    -- A continuous medium has no page to break; the boundary leaves no
-    -- element behind.
     Html.text ""
   | .spaced before body =>
-    -- Standing on its own it is a document skip, a box of its own
-    -- (`skipNode`). Carrying a body it is that content's own space above:
-    -- a token-declared gap defers to its own custom property, so a reader
-    -- overriding `--subtitlegap` moves this margin; a computed gap prints
-    -- the length it was handed (`cssSourced`) — on the deck as its share of
-    -- the stage (`deckSourced`), a print length on a stage that is the
-    -- viewport.
     let grows := cfg.deck && !cfg.fillsInert && before.value.fil
     if body.isEmpty then
       skipNode cfg.page.fontSize before (if grows then some Ir.fillUnit else none)
     else
     let style := s!"margin-top: {if cfg.deck then deckSourced cfg.page.height before
       else cssSourced before}"
-    -- Fill glue above content (`\block[before = fill]{…}`) on a deck's
-    -- stage: the box is a flex column of its own (`fillCarrier`) whose
-    -- `::before` takes the fill's weight above the content
-    -- (`fillBeforeCss`).
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
         #[("class", if grows then "spaced fill-before" else "spaced"), ("style", style)])
   | .verbatim covered s spec =>
-    -- `<pre>` preserves the raw lines; the escaper makes the content inert.
-    -- The covered shade never reaches HTML (dimming is the PDF handout's;
-    -- the HTML deck keeps every step visible), but honesty if it ever does.
-    -- Declared line numbers are a CSS counter on per-line elements — the
-    -- numbers are generated furniture the stylesheet draws, so a reader's
-    -- copy takes the code alone; nothing is scripted. A declared caption
-    -- wraps the block in the figure-caption shape, the caption above
-    -- (listings.sty: `\lst@Key{captionpos}{t}` — above is the default),
-    -- numbered from the one site both backends read (`Ir.listingCaption`).
-    -- A declared language is the `code` element's class, read from the one
-    -- IR projection the markdown fence reads too (`listing_language_agree`);
-    -- the attribute value goes through the escaper as every attribute does.
     let lines := spec.tokenLines s
-    -- minted's `bgcolor` is the ground the listing's own tokens stand on,
-    -- and so is the code ground a class paints (`Ir.ListingSpec.groundIn`).
     let own := spec.groundIn cfg.pal .light
     let ground := (own.map (·.1)).or cfg.listingGround
     let brushes := Listing.brushes cfg.pal ground covered spec.style lines
-    -- Under the engine's stylesheet a listing ships in every scheme the
-    -- page does: its tokens wear their type's class, and its box states
-    -- each scheme's colours (`Config.listingStyle`).
     let paints := if cfg.frames.isEmpty || covered.isSome then [] else cfg.listingPaints spec
     let colored (r : ListingHighlight.Role) : Bool :=
       paints.any fun (_, _, _, rs) => ((rs.lookup (Ir.Role.ofCode r)).join).isSome
-    -- Each type the lines hold, its class where a shipped scheme colours its
-    -- role (one reading per type, not per token).
     let classes := brushes.map fun (k, _) =>
       (k, if k.role != .ink && colored k.role then some (tokenClass k) else none)
     let codeAttrs : Array (String × String) := match spec.htmlClass with
@@ -10390,12 +7371,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         s!"color: {cssColor (covered.getD
           (Listing.groundInk cfg.pal g (cfg.listingFg.getD design.fg)))};"
       | none, some (g, _) =>
-        -- The code ground in force, the class's or an epoch's: plain
-        -- verbatim reads it through its role, which a host stylesheet may
-        -- override — the base `pre` rule does where the class paints one,
-        -- and the listing itself where an epoch declares one over a class
-        -- that paints none; a highlighted listing states the ground its
-        -- tokens were fitted to, as it states the page's.
+        -- plain verbatim reads the code ground's role; a highlighted listing states its ground
         if spec.highlight.isEmpty then
           let ground := if (Design.at cfg.docPal .light .codeSurface).isSome then none
             else some s!"background: {roleRef .codeSurface};"
@@ -10417,18 +7393,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         | .size n => s!" line-height: {listingLineHeight cfg.page spec n};"
         | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
-      -- A wrapping block wraps only where the page's rule may
-      -- (`Ir.ListingWrap`): at a space or between two atoms
-      -- (`codeLineNodes`), a run wider than the line between its atoms
-      -- (`overflow-wrap`), never inside one.
       (if spec.breakLines then " white-space: pre-wrap; overflow-wrap: break-word;" else "") ++
-      -- A wrapped line's continuation hangs `breakIndent` in, as listings
-      -- sets it on the page: CSS indents every line but the first after
-      -- each forced break (`hanging each-line`). It measures from the
-      -- block's edge, so an indented source line continues at the break
-      -- indent alone here, where the page adds the line's own indentation
-      -- (`breakautoindent`); a browser without the keywords sets the
-      -- continuation at the edge.
+      -- a wrapped line's continuation hangs `breakIndent` in (`hanging each-line`)
       (match spec.breakIndent with
         | some w =>
           if spec.breakLines then s!" text-indent: {cssLength (.ofSp w)} hanging each-line;"
@@ -10438,9 +7404,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let pre := Html.elem "pre" #[code]
       ((if spec.numbers then #[("class", "numbered")] else #[]) ++
        #[("style", style)] ++
-       -- A code block scrolls sideways (`overflow-x: auto` in `baseCss`),
-       -- so it is a tab stop: a keyboard reaches what a long line spills
-       -- (WCAG 2.2 SC 2.1.1). Its role takes no name, so it carries none.
+       -- a code block scrolls sideways, so it is a tab stop (WCAG 2.2 SC 2.1.1)
        #[("tabindex", "0")])
     let node := match spec.caption with
       | some (n, cap) =>
@@ -10449,22 +7413,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
             pre]
           #[("class", "listing")]
       | none => pre
-    -- The environment's space (`Ir.ListingFrame`), a class on the element
-    -- it governs: a trivlist's, or a list level's.
     match spec.frame with
     | .trivlist => withClass (roleClass Ir.trivlistRole) node
     | .list => withClass verbatimListClass node
     | .none => node
   | .algorithm numbered semis lines =>
-    -- Pseudocode as nested ordered lists: one <ol> per block, depth from
-    -- nesting, line numbers by a CSS counter when declared (declarative,
-    -- no script). Every line — openers, closers, statements — is one
-    -- <li>, through the shared rendering `Ir.AlgLine.rendered`, the site
-    -- the PDF paragraphs read too. The nesting is `algNest`'s, and
-    -- `algorithm_lines_agree` states what it conserves: no line lost, none
-    -- reordered, so an else standing at its if's level nests exactly once.
-    -- Native list semantics carry the structure; no role attribute is
-    -- needed.
     let words := Ir.algWords cfg.locale.tag
     let muted := Ir.mutedOf cfg.pal
     Html.elem "ol"
@@ -10472,34 +7425,18 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         #[] (algNest lines).toList)
       #[("class", if numbered then "algorithm numbered" else "algorithm")]
   | .rule color name thickness =>
-    -- The title page's separator: an <hr> carrying the palette variable for
-    -- its colour and the token variable for its thickness, so a host page
-    -- can override either. The thickness deferred to nothing until the IR
-    -- carried its token name beside the resolved length.
     let c := colorRead cfg name color
     Html.elem "hr" #[] #[("class", "separator"),
       ("style", s!"border: none; height: {cssSourced thickness}; background: {c}")]
   | .frame title standout valign breakable body =>
-    -- One slide of the deck: a linear readable section in every class. On
-    -- the paged deck (`cfg.deck`) the slide is a flex column the height of
-    -- the viewport, and its declared vertical distribution is realized as
-    -- two spacers whose flex-grow carries the declared ratio
-    -- (`vdistShares`) — glue, exactly as the PDF page distributes its
-    -- leftover; in block flow (the print handout, every other class) an
-    -- empty div has no height and the declaration rides along inert.
     let cfg := cfg.inFrame b
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[withLead cfg title (Html.elem "h2" (inlines cfg title))
         (inserted := true)]]
     let design := Ir.Design.ofPalette cfg.pal
-    -- A frame whose palette epoch declares a bar says so, as the page reads
-    -- the bar off the epoch in force (`Layout.collectFrameTitle`).
     let cls := if standout then "slide standout"
       else if valign matches .golden then "slide title-page"
       else if design.frametitle.isSome && !title.isEmpty then "slide titlebar" else "slide"
-    -- beamer's squeezed list spacing, declared or set by the overflow
-    -- ladder (`Ir.frameSqueeze`), read by the sheet's squeezed list rules
-    -- (`squeezeListRules`).
     let cls := if Ir.frameSqueeze body != .none then cls ++ " squeeze" else cls
     let listingFg := if standout then some design.standout.fg
       else if valign matches .golden then design.titlepage.map (·.fg) else none
@@ -10531,30 +7468,19 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem "section" (header ++ kids)
       (#[("class", cls)] ++ stageAttrs cfg.deck (frameName title kids) ++ openingAttrs)
   | .framefoot _ =>
-    -- A state change for the deck walk in `emit`, not content: nothing to
-    -- render where one stands alone.
+    -- a state change, not content
     Html.text ""
   | .setPalette _ =>
-    -- A state change the sibling walks replay (`blockNodesInto`, the
-    -- article and deck walks): nothing to render where one stands alone.
+    -- a state change the sibling walks replay
     Html.text ""
   | .setTokens _ =>
     Html.text ""
   | .only targets body =>
-    -- `emit` already kept this node for HTML (`Ir.keepFor "html"`): by here
-    -- it is a transparent group. The target set rides as data, so a reader
-    -- of the page can see the provenance of single-surface content.
+    -- `emit` already kept this node for HTML, so it is a transparent group
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
       (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
         #[("data-backend", String.intercalate "," targets.toList)])
   | .nav spec body =>
-    -- The navigation landmark (ARIA's `navigation` role comes with the
-    -- element itself). A declared label names the instance (`aria-label`;
-    -- ARIA Authoring Practices, Landmark Regions) and `emit` counts only
-    -- unlabeled navs toward W0325. A declared pin becomes `position:
-    -- fixed` at the declared corner and offset (CSS Positioned Layout 3
-    -- §3.3); the reveal rides as the `reveal-scroll` class plus its range,
-    -- resolved by `revealCss` at the page level.
     let labelAttrs : Array (String × String) :=
       match spec.label with
       | some l => #[("aria-label", l)]
@@ -10575,19 +7501,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "nav" (blockNodesInto cfg.into #[] body.toList) (labelAttrs ++ pinAttrs))
   | .logo _ =>
-    -- A state change, not content: the deck's top-level walk reads it
-    -- (`attachLogo` ships the state as frame furniture), `blockNodesInto`
-    -- skips it, and `emitTree` names the drop in the classes that keep it
-    -- paged-media furniture (W0007). This arm only closes the match.
+    -- a state change the deck's top-level walk reads
     Html.text ""
   | .picture pic => pictureSvg cfg pic
-  -- booktabs' formal table: `tableNode` above, where the header projection
-  -- theorem (`th_iff_header_row`) can read the row builder.
   | .table cols padL padR rows rules spans => tableNode cfg cols padL padR rows rules spans
-  -- `<figure>`/`<figcaption>` is HTML's own construct for a captioned
-  -- object; the caption keeps its source-order side. The gaps are the
-  -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with
-  -- the rhythm defaults from `Ir.caption_gaps_rhythm` as fallbacks.
   | .float kind num capAbove body caption =>
     let capNode : Array Node :=
       if caption.isEmpty then #[]
@@ -10599,26 +7516,14 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
         #[("class", cls)])
-  -- The reference list: one item per resolved entry, carrying the anchor
-  -- its citations link to. The key is author text from the `.bib` and
-  -- enters the id through the typed tree, so it passes the attribute
-  -- escaper by construction — no spelling of a key breaks out of the
-  -- attribute. The style's marker leads the item; an author-year list
-  -- marks nothing and the class carries that.
   | .bibliography _ _ items =>
     let marked := items.any (·.marker.isSome)
-    -- `role="list"`: the list's markers are drawn by its own grid, and a
-    -- list styled without them loses its list semantics in WebKit.
+    -- WebKit drops list semantics from a list styled without markers, hence the explicit role
     Html.elem "ul" (items.map (bibItemNode cfg))
       #[("class", if marked then "bibliography" else "bibliography unmarked"),
         ("role", "list")]
 
-/-- The accumulator threads through the sibling walk, as in
-`inlineNodesInto` — and so does the epoch: a `.setPalette`/`.setTokens`
-updates the state in force, and every following sibling carries the
-accumulated redefinitions on its style attribute. Ordinary containers
-carry their outgoing declarations to later siblings through the same
-context fold; independent content scopes keep their declarations local. -/
+/-- Blocks, pushed onto `acc`, each sibling carrying the epoch in force. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
   | .logo _ :: rest => blockNodesInto cfg acc rest
@@ -10626,8 +7531,6 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
     blockNodesInto (cfg.advancePalette p) acc rest
   | .setTokens tk :: rest =>
     blockNodesInto (cfg.advanceTokens tk) acc rest
-  -- A page-model mark (`Ir.pageMarkerBlock`) ships no node: a continuous
-  -- medium has no page top and no interline glue.
   | b :: rest =>
     if Ir.pageMarkerBlock b then blockNodesInto cfg acc rest
     else blockNodesInto (cfg.afterBlock b)
@@ -10637,16 +7540,12 @@ private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node)
     List (BoxWidth × Array Block) → Array Node
   | [] => acc
   | (w, body) :: rest =>
-    -- The point the box stands on the row's baseline by (`Ir.BoxPos`), as
-    -- the grid's own baseline alignment says it; a top box keeps the
-    -- grid's default. Every box is also the query container for affine
-    -- local measures in its content: `cqi` reads this column's actual
-    -- inline size, never the outer page's.
     let align := match w.pos with
       | .top => ""
       | .first => "align-self: baseline"
       | .center => "align-self: center"
       | .last => "align-self: last baseline"
+    -- every box is the query container its content's `cqi` reads
     let style := if align.isEmpty then "container-type: inline-size"
       else "container-type: inline-size; " ++ align
     let child := cfg.atMeasure ((w.resolve total).getD share)
@@ -10662,10 +7561,8 @@ private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
         (listItem { cfg with fillsInert := true } "li" item.toList) (item := true)))
       rest
 
-/-- A description list's items as HTML's own description list: each label a
-`<dt>` (the inlines the page runs in, `Ir.descLabel?`), the text after it
-and the item's further blocks a `<dd>` — one paragraph's text bare, as a
-list item's is (`listItem`). -/
+/-- A description list's items: each label a `<dt>`, the text after it and further blocks a
+`<dd>`. -/
 private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc
   | ⟨Block.para c :: bs⟩ :: rest =>
@@ -10683,8 +7580,7 @@ private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
           (listItem cfg "dd" item.toList)))
       rest
 
--- A one-paragraph item owns its paint on li/dd. Eliding its p must not
--- elide the epoch with it, or add a wrapper that changes list rhythm.
+-- a one-paragraph item keeps its epoch on the `li` or `dd` it elides the `p` into
 private def listItem (cfg : Config) (tag : String) : List Block → Node
   | [.para content] => cfg.applyEpoch (stepNode cfg tag content)
   | [] => cfg.applyEpoch (Html.elem tag #[])
@@ -10703,9 +7599,6 @@ private def listItem (cfg : Config) (tag : String) : List Block → Node
 
 end
 
-/-- Continuous HTML projects the IR opening's content-free marker fact:
-it creates no wrapper, counter text, or page boundary in the typed tree.
-The titlepage's body remains the ordinary sibling flow. -/
 private theorem pageOpening_projects (cfg : Config) (acc : Array Node)
     (n : String) (opening : Ir.PageOpening) (rest : List Block)
     (h : Ir.pageOpeningOfRole? n = some opening) :
@@ -10713,11 +7606,7 @@ private theorem pageOpening_projects (cfg : Config) (acc : Array Node)
   simp only [blockNodesInto, Ir.pageMarkerBlock, Array.isEmpty_empty,
     Ir.pageOpening_marker_exact n opening h, Bool.true_and, ite_true]
 
-/-- Facts of the emitted tree that the landmark and anchor checks judge:
-the `<nav>` landmarks, the `id` anchors, and the in-page link targets
-(`href="#..."`), collected in one walk over the typed tree. The artifact is
-judged, never the IR — a backend conditional may have dropped a nav or an
-anchor on the way here, and only the tree knows what this page carries. -/
+/-- Facts of the emitted tree the landmark and anchor checks judge, collected in one walk. -/
 private structure PageFacts where
   /-- DOM anchors with the canonical snap that contains them, when any. -/
   ids : Array (String × Option String) := #[]
@@ -10725,12 +7614,9 @@ private structure PageFacts where
   /-- Canonical labels read by the deck's script, in snap order. -/
   slideLabels : Array String := #[]
   deck : Bool := false
-  /-- Unlabeled `<nav>` landmarks: a labeled one is distinguishable, so
-  only these count toward W0325 (ARIA Landmark Regions). -/
+  /-- Unlabeled `<nav>` landmarks, which count toward W0325. -/
   navs : Nat := 0
-  /-- Elements carrying the `reveal-scroll` class: the page-level reveal
-  CSS and script ship exactly when one is here — judged over the tree, so
-  a reveal a conditional dropped ships nothing. -/
+  /-- Elements carrying the `reveal-scroll` class. -/
   reveals : Nat := 0
 
 mutual
@@ -10760,9 +7646,7 @@ private def pageFactsList (stage : Option String) (acc : PageFacts) : List Node 
 
 end
 
-/-- Whether an `svg`'s children close with the definitions a figure's
-spelling writes after its elements (`GfxSvg.spell`): a figure that names an
-id. -/
+/-- Whether an `svg`'s children close with a figure's definitions. -/
 private def definesFigure (kids : Array Node) : Bool :=
   match (kids.back? : Option Node) with
   | some (Node.elem tag _ _) => tag == "defs"
@@ -10773,13 +7657,8 @@ private def definesFigure (kids : Array Node) : Bool :=
 
 mutual
 
--- conserves: none — a renaming of figure ids; text, tags and every other
--- attribute stay (`figureNumberingChecks`).
-/-- Every figure that names an id numbered apart, in document order: the
-`k`-th such `svg` renumbered to figure `k` (`GfxSvg.renumberList`), so no two
-figures on a page share an id and each reference resolves inside its own
-figure — a figure the page renders twice included, since this reads the
-rendered page, not the IR. Run before the page's anchors are judged. -/
+-- conserves: none — a renaming of figure ids
+/-- Every figure that names an id numbered apart, in document order. -/
 private def numberFiguresOne (n : Nat) : Node → Node × Nat
   | .elem tag attrs kids =>
     if tag == "svg" && definesFigure kids then
@@ -10799,20 +7678,11 @@ private def numberFiguresList (n : Nat) (acc : Array Node) : List Node → Array
 
 end
 
-/-- A page's figures numbered apart (`numberFiguresOne`). -/
+/-- A page's figures numbered apart, so no two share an id. -/
 public def numberFigures (body : Array Node) : Array Node := (numberFiguresList 0 #[] body.toList).1
 
-/-- The first free anchor among `taken` (`base`, `base-2`, `base-3`, …),
-plus the holder's title when a *different* title collides — the W0327
-case. k assigned ids can block at most k candidates, so the first free
-one is always found among the k+1 checked. One uniqueness rule for every
-id this backend assigns: the article's sections and the deck's frames
-claim through the same door, which `getElementById` semantics require.
-
-`taken` is keyed, not ordered: every id in it was put there by this
-function after finding it free, so the keys are distinct and the only
-question ever asked of the store is "who holds this id" — an answer no
-ordering changes. Scanning for it made a shared slug cost a cube. -/
+/-- The first free anchor among `taken` (`base`, `base-2`, …), and the holder's title when a
+different title collides. -/
 private def claimId (taken : Std.HashMap String String) (base text : String) :
     String × Option String := Id.run do
   let mut id := base
@@ -10826,20 +7696,15 @@ private def claimId (taken : Std.HashMap String String) (base text : String) :
     | none => break
   return (id, clash)
 
-/-- The first stage name no earlier stage on the page carries: `name`,
-then `name (2)`, `name (3)`, … Two regions named alike are one landmark to
-a reader moving by landmark (axe `landmark-unique`), so a repeated title
-takes its occurrence number, as its repeated anchor does (`claimId`); k
-names taken block at most k candidates, so the first free one is always
-found among the k+1 checked. -/
+/-- The first stage name no earlier stage carries: `name`, then `name (2)`, `name (3)`, and so
+on. -/
 private def claimName (taken : Std.HashSet String) (name : String) : String := Id.run do
   let mut out := name
   for n in [2 : taken.size + 3] do
     if taken.contains out then out := s!"{name} ({n})" else break
   return out
 
-/-- A stage with its accessible name claimed (`claimName`) against the
-names the page's earlier stages carry, and the claim recorded. -/
+/-- A stage with its accessible name claimed against the earlier stages' names. -/
 private def claimStageName (taken : Std.HashSet String) : Node → Node × Std.HashSet String
   | .elem tag attrs kids =>
     match attrOf? attrs "aria-label" with
@@ -10852,13 +7717,7 @@ private def claimStageName (taken : Std.HashSet String) : Node → Node × Std.H
   | .style s => (.style s, taken)
   | .script attrs s => (.script attrs s, taken)
 
-/-- The snap spacers of a stepped frame's track, one per overlay step:
-each carries the canonical fragment `<label>.k` and claims its title-slug
-alias `<frame>-k` through the same door as
-every id this backend assigns (`claimId`), a clash named exactly as a
-frame title's is. Recursion over the step list with threaded
-accumulators, so the spacer count is a statement
-(`track_snaps_exact`), not a reading of a loop. -/
+/-- The snap spacers of a stepped frame's track, one per overlay step, each claiming its aliases. -/
 private def snapWalk (id text label : String) (kids : Array Node)
     (taken : Std.HashMap String String) (diags : Array Diag) :
     List Nat → Array Node × Std.HashMap String String × Array Diag
@@ -10879,9 +7738,6 @@ retitle the frames apart, or link to the numbered anchor")
           ("data-slide-label", s!"{label}.{k}")]))
       (taken.insert sid text) diags rest
 
-/-- The steps a frame with `steps` overlay steps snaps through: 1 to
-`steps`, the range both the spacer walk and the PDF handout's per-step
-pages traverse. -/
 private def stepList (steps : Nat) : List Nat :=
   (List.range steps).map (· + 1)
 
@@ -10900,10 +7756,6 @@ private theorem snapWalk_count (id text label : String) :
     simp only [Array.size_push, List.length_cons]
     omega
 
-/-- A stepped frame's track carries exactly `Ir.frameSteps frame` snap
-spacers beside its one sticky stage. `deckStepCss` reads the same count as
-`--steps`. Physical PDF pages can also include overflow continuations, so
-this contract counts HTML steps rather than physical pages. -/
 private theorem track_snaps_exact (id text label : String)
     (taken : Std.HashMap String String) (diags : Array Diag)
     (frame : Ir.Block) :
@@ -10913,20 +7765,8 @@ private theorem track_snaps_exact (id text label : String)
   rw [snapWalk_count, stepList_length]
   simp
 
-/-- An article's top-level sections become `<section id="...">` containers:
-the heading and everything up to the next level-1 heading. The id gives every
-section an anchor and a styling handle, and the container is what HTML 5 says
-a heading-introduced region is (§4.3.3). Content before the first section
-stays a direct child of `<main>`.
-
-Ids are unique by construction — a section takes the first of `base`,
-`base-2`, `base-3`, … not already assigned, which `getElementById` semantics
-require — and distinct titles are meant to produce distinct anchors. When
-they cannot (two different titles fold to the same slug), the collision is
-named as W0327 rather than resolved silently: an in-page link written from
-the second title's text would reach the first section without any error. A
-repeated identical title takes its number quietly, as every static site
-generator does. -/
+/-- An article's top-level sections as `<section id>` containers; colliding slugs are named
+W0327. -/
 private def sectionize (cfg : Config) (blocks : Array Block) :
     Array Node × Array Diag := Id.run do
   let close (out cur : Array Node) : Option String → Array Node
@@ -10935,12 +7775,9 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   let mut out : Array Node := #[]
   let mut cur : Array Node := #[]
   let mut openId : Option String := none
-  -- Each assigned id with the plain text of the title that holds it.
+  -- each assigned id with the plain text of the title that holds it
   let mut taken : Std.HashMap String String := {}
   let mut diags : Array Diag := #[]
-  -- The epoch state threads through the article's top level exactly as
-  -- through `blockNodesInto`: each node after a body declaration carries
-  -- the redefinitions, whichever section it closes into.
   let mut cfg := cfg
   for b in blocks do
     match b with
@@ -10968,11 +7805,7 @@ retitle the sections apart, or link to the numbered anchor")
       cfg := cfg.afterBlock b
   return (close out cur openId, diags)
 
-/-- Does an element take keyboard focus in sequential navigation — a tab
-stop (HTML §6.6.3)? A `tabindex` that parses decides: zero or more is a
-stop, a negative one takes focus from script only. With none, the elements
-that take focus by default: a link (`a`/`area` with an `href`), an enabled
-form control, `iframe`, `summary`, and media with `controls`. -/
+/-- Whether an element is a sequential-navigation tab stop (HTML §6.6.3). -/
 public def tabbable (tag : String) (attrs : Array (String × String)) : Bool :=
   match (attrOf? attrs "tabindex").bind String.toInt? with
   | some i => decide (0 ≤ i)
@@ -10985,10 +7818,7 @@ public def tabbable (tag : String) (attrs : Array (String × String)) : Bool :=
 
 mutual
 
-/-- Does a subtree hold a tab stop (`tabbable`) outside a `hidden` subtree —
-which is not rendered, so nothing in it takes focus? A hand-rolled walk
-because `Html.Node` has no generic fold; the list companion keeps it
-structural. -/
+/-- Whether a subtree holds a tab stop outside a `hidden` subtree. -/
 public def tabbableOne : Node → Bool
   | .elem tag attrs kids =>
     (attrOf? attrs "hidden").isNone && (tabbable tag attrs || tabbableList kids.toList)
@@ -11002,11 +7832,7 @@ public def tabbableList : List Node → Bool
 
 end
 
-/-- Does an element stand `aria-hidden` over a tab stop, itself or below:
-a keyboard lands on a control assistive technology is told is not there,
-and it has no name to announce (WAI-ARIA 1.2, `aria-hidden`; axe
-`aria-hidden-focus`). The judge counts such stops over a page
-(`A11yFacts.hiddenTabStops`). -/
+/-- Whether an element stands `aria-hidden` over a tab stop, itself or below. -/
 public def hidesTabStop : Node → Bool
   | .elem tag attrs kids =>
     attrOf? attrs "aria-hidden" == some "true" && tabbableOne (.elem tag attrs kids)
@@ -11020,14 +7846,7 @@ private def logoDecoration (content : Array Inline) : Array Inline :=
     | .image src size _ => .image src size .undeclared
     | x => x) content
 
-/-- A logo's box. A logo is decorative furniture by role
-(`Ir.logoImageSrcs`), so its images ship `alt=""` (`deco`) and the box
-leaves the accessibility tree (`role="presentation"`, `aria-hidden`) — WCAG
-2.2 SC 1.1.1: pure decoration is implemented so assistive technology can
-ignore it. Unless something in it takes focus — a linked logo: then hiding
-the box would leave a keyboard stop with no name, so it ships as authored
-(`authored`), the image's own `alt` naming its link. The box is hidden only
-when nothing in it is a tab stop (`logoBox_hidden_contract`). -/
+/-- A logo's box: decorative and hidden from assistive technology, unless it holds a tab stop. -/
 public def logoBox (cls : String) (style : Option String) (deco authored : Array Node) : Node :=
   let styled := match style with
     | some s => #[("style", s)]
@@ -11038,23 +7857,14 @@ public def logoBox (cls : String) (style : Option String) (deco authored : Array
     Html.elem "div" deco
       (#[("class", cls), ("role", "presentation"), ("aria-hidden", "true")] ++ styled)
 
-/-- **A logo's box never hides a tab stop** (`_contract`): whatever the
-logo holds, `aria-hidden` never stands over something a keyboard reaches. A
-fact of the artifact: which elements take focus is HTML's, not the IR's. -/
+/-- Artifact-specific. -/
 public theorem logoBox_hidden_contract (cls : String) (style : Option String)
     (deco authored : Array Node) :
     hidesTabStop (logoBox cls style deco authored) = false := by
   cases style <;> simp only [logoBox] <;> split <;>
     simp_all [hidesTabStop, tabbableOne, tabbable, attrOf?, Html.elem]
 
-/-- A frame's (or section page's) logo, attached as the section's own
-furniture: the logo in force at the deck position (`Ir.logoInForce`, the
-same resolving site the PDF's furniture pass reads per page) renders into
-the `.slide-logo` strip `deckLogoRule` pins to the stage's bottom band, as
-decoration unless it holds a tab stop (`logoBox`) — the same judgement the
-alt census makes (`Ir.logoImageSrcs`). The declared
-alignment (`Ir.logoAlign`) rides as the strip's flex distribution, the
-projection of the PDF's x placement from the one declared value. -/
+/-- A frame's logo in force, attached as the section's own furniture. -/
 private def attachLogo (cfg : Config) (node : Node)
     (logo : Option (Array Inline)) : Node :=
   match logo with
@@ -11076,11 +7886,7 @@ private def attachLogo (cfg : Config) (node : Node)
 
 mutual
 
-/-- Read an image-use attribute in tree order, including hidden uses.
-With no override, an `<img>` contributes `src` and a conversion placeholder
-contributes `data-image-src`. The request census selects `data-image-index`
-through the same walk. `Html.Node` has no generic fold; the list companion
-keeps this walk structural. -/
+/-- An image-use attribute in tree order, hidden uses included. -/
 private def imageAttrsOne (name : Option String) (acc : Array String) : Node → Array String
   | .elem tag attrs kids =>
     let acc :=
@@ -11098,8 +7904,7 @@ private def imageAttrsList (name : Option String) (acc : Array String) : List No
 
 end
 
-/-- Every image source a node carries, including failed conversion
-placeholders whose source is evidence rather than a fetch URL. -/
+/-- Every image source a node carries, failed-conversion placeholders included. -/
 public def imgSrcsOne (acc : Array String) (node : Node) : Array String :=
   imageAttrsOne none acc node
 
@@ -11107,20 +7912,13 @@ public def imgSrcsOne (acc : Array String) (node : Node) : Array String :=
 public def imgSrcsList (acc : Array String) (nodes : List Node) : Array String :=
   imageAttrsList none acc nodes
 
-/-- **What the page owes its schemes beyond its colours**: under forced
-colours, which flatten every ground to the system's, a 1px `CanvasText`
-border on each band a solid ground marks out — a frame title's bar, the
-poster's headline, a standout frame, a block's title — so the band still
-reads as one, a tcolorbox's title among them; and where the screen of the
-other polarity than the document's page ships, a see-through image and a
-picture, whose marks paint the colours they declare, stand on the
-document's own page as it prints, a literal there. -/
+/-- What the page owes its schemes beyond colours: forced-colours band borders, and a plate under
+see-through images. -/
 public def schemeRules (cfg : Config) : String :=
   "@media (forced-colors: active) {\n" ++
   "  section.slide > header, body > header.headline, section.slide.standout,\n" ++
   "  section.block > header, section.tcolorbox > header { border: 1px solid CanvasText; }\n}\n" ++
-  -- The plate is the document's own page as it prints, a literal: on the
-  -- other polarity's screen every role reads that screen's colours.
+  -- the plate is the printed page's colour as a literal, since every role reads the other screen's
   (let page := Ir.Design.printPage cfg.docPal
    let dark := cfg.docPal.darkPage
    if dark && (cfg.ships .light || cfg.ships .lightMore) then
@@ -11133,32 +7931,19 @@ public def schemeRules (cfg : Config) : String :=
      "}\n"
    else "")
 
-/-- Emit a document as its typed tree — head and body nodes — plus any
-diagnostics the backend itself raises; `emit` renders it. The tree is the
-page before serialization: what the cross-backend agreement census judges
-against the PDF's `Layout.Out`, so a divergence is caught on structure, not
-by parsing the rendering back. -/
+/-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
 private def emitTreeCore (cfg : Config) (doc : Doc)
     (styles : (Ir.Color → String) → String × Array Diag) :
     Array Node × Array Node × Array Diag := Id.run do
-  -- The page's view of the document: backend conditionals resolve here, at
-  -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
-  -- content), so every walk below — sectioning, the deck chrome, the
-  -- landmark and anchor checks — sees only what this page carries.
+  -- backend conditionals resolve here, so every walk below sees only this page's content
   let doc := { doc with body := Ir.keepFor "html" doc.body }
-  -- The locale resolves here, once, from the document: the furniture the
-  -- walks below generate is worded in the document's language.
   let cfg := { cfg with locale := doc.info.locale }
-  -- The colour schemes the page ships, judged once (`Contrast.schemeJudge`):
-  -- the engine's own stylesheet declares each role in each of them.
   let judge := if cfg.css == .own then Contrast.schemeJudge doc else {}
   let cfg := { cfg with pal := doc.palette, docPal := doc.palette, frames := judge.frames
                         views := (judge.views.head?.map (·.2)).getD []
                         boxTexts := boxRoleTexts judge.frames ((judge.views.head?.map (·.2)).getD [])
                         paletteViews := judge.views
                         floor := floorScheme judge.frames doc.palette.homeScreen }
-  -- Each code role's colour in each scheme for a listing on the page's own
-  -- code ground: what `:root` states, and what a listing restates against.
   let cfg := if cfg.frames.isEmpty || (docTokenClasses doc).isEmpty then cfg else
     let paints := cfg.listingPaints {}
     { cfg with codeRoot := paints.map fun (sc, _, _, rs) => (sc, rs), codePaints := paints }
@@ -11170,10 +7955,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     diags := diags.push (Diag.of .W0007
       "running head/foot is paged-media furniture; omitted from HTML"
       (help := "body content reaches both backends: move the masthead there"))
-  -- In the frame model a frame is a page and its logo is the frame's own
-  -- furniture, shipped below (`attachLogo`), exactly as the footer is. In
-  -- every other class the logo stays paged-media furniture with no HTML
-  -- analogue, and the drop is named.
+  -- outside the frame model a logo is paged-media furniture, and its drop is named
   if doc.docClass.record.model != .frame &&
       (doc.logo.isSome || doc.body.any (fun b => match b with
         | .logo c => !c.isEmpty
@@ -11192,19 +7974,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       ("keywords", doc.info.keywords)] do
     if let some v := value then
       head := head.push (Html.elem "meta" #[] #[("name", name), ("content", v)])
-  -- The declared web identity, each fact emitted once per surface. The
-  -- canonical URL is `rel=canonical` (RFC 6596); the icon `rel=icon`
-  -- (HTML §4.6.6.8). The Open Graph set is a projection of facts already
-  -- declared once — og:title/og:description/og:url/og:image restate title,
-  -- subject, url, image — never asked for again, which is how the drift
-  -- the site-port found ("Experience" vs "Professional Experience")
-  -- becomes unrepresentable. It appears only when the document declares a
-  -- web identity (url or image): ogp.me requires og:url for a valid
-  -- object, and og:type's own default, `website`, is emitted explicitly
-  -- because ogp.me lists it among the four required properties. X's card
-  -- crawler falls back to og:* for title/description/image, so the one
-  -- twitter-specific tag is the card kind itself (developer.x.com, cards
-  -- markup): `summary`, the base card.
+  -- the declared web identity: canonical URL, icon, and Open Graph from facts declared once
   if let some url := doc.info.url then
     head := head.push (Html.elem "link" #[] #[("rel", "canonical"), ("href", url)])
   if let some icon := doc.info.favicon then
@@ -11229,17 +7999,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     head := head.push (og "og:type" "website")
     head := head.push (Html.elem "meta" #[]
       #[("name", "twitter:card"), ("content", "summary")])
-  -- JSON-LD: the machine-readable projection of the same record, carried
-  -- as a data block — a script with a non-JavaScript type is data, not
-  -- behaviour (HTML §4.12.1), so the no-script architecture holds. The
-  -- shape is schema.org's WebPage (name, description, url, image) with
-  -- the author as a bare Person. Every value goes through the certified
-  -- JSON escaper: `escapeJson_no_quote` says no value can end its own
-  -- string, `escapeJson_no_lt` that the payload can never contain
-  -- `</script` and so survives the raw-payload guard verbatim. The typed
-  -- \person/\organization declaration the site-port report asks for is
-  -- recorded in PLAN as owed; this emits only what the existing
-  -- declarations already support.
+  -- JSON-LD as a data block: schema.org's WebPage, every value through `Html.escapeJson`
   if doc.info.url.isSome then
     let jstr (s : String) : String := "\"" ++ Html.escapeJson s ++ "\""
     let field (k : String) : Option String → List String
@@ -11257,31 +8017,18 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     head := head.push (Node.script #[("type", "application/ld+json")]
       ("{\n" ++ String.intercalate ",\n" fields ++ "\n}"))
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
-  -- Element styles are the document's own design and ride along in every
-  -- mode: they are declarations, not a framework. A marker the sheet cannot
-  -- express retains the declaration's source location (W0331).
   let (styled, styleDiags) := styles cfg.literal
   diags := diags ++ styleDiags
-  -- The shipped faces' rules ride exactly where the slot variables ride:
-  -- a mode that emits no variables ships no rules, and the driver writes
-  -- the captured programs only when it passed the set.
   let faceRules := match cfg.fonts with
     | some fs => fontCss fs
     | none => ""
-  -- The base sheet reads the body's boundary shapes (`carrierPairs`), so
-  -- its slot is held here, in cascade order, and filled once the body is
-  -- built.
+  -- the base sheet's slot is held here, filled once the body's boundary shapes are known
   let cssCfg := cfg
   let styleAt := head.size
   match cfg.css with
   | .own => head := head.push (Node.style "")
   | .bulma =>
-    -- Bind our tokens onto Bulma's own custom properties, for a declared
-    -- framework sheet that reads them; one that declares them itself on
-    -- `:root`, or more specifically, sets them, standing after this binding. Bulma's primary is the declared
-    -- sheet's or the document's own `--primary` (the reader alias of an
-    -- author colour `primary`), else the accent role: an override of
-    -- either reaches it.
+    -- the tokens bound onto Bulma's custom properties, before the declared sheet
     let primary := "var(--primary, " ++ roleRef .accent ++ ")"
     let accentDecl := String.join ((roleDefaultVars doc.palette .light [.accent]).map (· ++ "\n"))
     head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc [.accent] ++ "\n" ++
@@ -11290,9 +8037,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
       "}\n" ++ styled))
   | .none => unless styled.isEmpty do head := head.push (Node.style styled)
-  -- The declared sheet comes after the inline styles: at equal specificity
-  -- the later rule wins, so the document's own stylesheet can restyle the
-  -- defaults instead of fighting them.
+  -- the declared sheet comes last, so it wins at equal specificity
   if let some href := doc.output.stylesheet then
     head := head.push (match cfg.stylesheet with
       | some (source, css) => if source == href then Node.style css else
@@ -11301,8 +8046,6 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""
-  -- Every role is the walk's to re-declare where an epoch moves it; the page
-  -- then keeps the roles something on it reads (`pageRoleSet`).
   let cfg := { cfg with styles := doc.styles
                         cssRoles := match cfg.css with
                           | .own => Ir.Role.all
@@ -11320,10 +8063,6 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                         page := doc.page
                         lengthBasis := lengthBasisOf doc
                         lists := doc.docClass.record.lists }
-  -- The chrome footer: every frame section closes with the section in
-  -- force and its own frame number, in the muted key at the scale's small
-  -- step — the same declarations the PDF path reads. A `\framefoot` note
-  -- takes the left slot for the frames that follow.
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false
@@ -11333,9 +8072,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     else if doc.docClass.record.model != .frame then
       (blockNodesInto cfg #[] doc.body.toList, #[])
     else Id.run do
-      -- The one numbering: the same array the PDF path threads
-      -- (`Ir.frameNumbers`, T2–T4). Content numbers come only from it;
-      -- the local front-matter ordinals name HTML fragment addresses.
+      -- frame numbers come only from `Ir.frameNumbers`, the PDF's own
       let nums := doc.frameNumbers
       let mut total := doc.frameCount
       let mut done := 0
@@ -11343,25 +8080,15 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       let mut sectionPages := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
-      -- The body's `\logo` declarations, keyed by their position: the
-      -- HTML half of the one logo-state sequence, resolved per frame
-      -- through the same fold the PDF's furniture pass reads per page
-      -- (`Ir.logoInForce`; `logo_frames_agree` is why the two keyings
-      -- cannot disagree).
       let mut logoSpans : Array (Nat × Array Inline) := #[]
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
-      -- Each assigned frame id with the plain title that holds it: the
-      -- same uniqueness door the article's sections claim through.
+      -- each assigned frame id with the plain title that holds it
       let mut taken : Std.HashMap String String := {}
-      -- Each stage name claimed so far (`claimName`).
       let mut named : Std.HashSet String := {}
-      -- The epoch state threads through the deck's top level exactly as
-      -- through `blockNodesInto`.
       let mut cfg := cfg
       for h : i in [0:doc.body.size] do
         let b := doc.body[i]
-        -- The part this block stands in, as the PDF walk reads it.
         total := doc.frameCountAt i
         if doc.frameRestart == some i then done := 0
         match b with
@@ -11370,15 +8097,11 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
         | .setTokens tk =>
           cfg := cfg.advanceTokens tk
         | .logo c =>
-          -- A state change for this walk, not content (the PDF's
-          -- `.setLogo` twin): the frames from here on carry `c`, an
-          -- empty `c` clears.
+          -- the frames from here on carry `c`; an empty `c` clears
           logoSpans := logoSpans.push (i, c)
         | .framefoot xs =>
           frameFoot := if xs.isEmpty then none else some xs
-          -- A continuous page has no physical page number: the placeholder
-          -- renders as nothing here while the PDF resolves it, so the drop
-          -- is named — a divergence is declared or reported.
+          -- a continuous page has no physical page number, so the drop is named
           if Ir.hasPhysicalPage xs && walkDiags.isEmpty then
             walkDiags := walkDiags.push (Diag.of .W0007
               "\\pagenumber in a \\framefoot is paged-media furniture; \
@@ -11391,9 +8114,7 @@ via \\chrome is the sequence both backends share"))
           let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
           let label := (labels[i]?.getD none).getD "slide"
           done := num.getD done
-          -- A fill the stage cannot grow where it stands (`Ir.FillView.deck`)
-          -- spaces nothing here while the page shares its frame's leftover
-          -- with it: named, once per frame.
+          -- a fill the stage cannot grow is named once per frame
           let lists := doc.docClass.record.lists
           if Ir.frameFills lists doc.styles .deck fbody <
               Ir.frameFills lists doc.styles .every fbody then
@@ -11402,25 +8123,9 @@ via \\chrome is the sequence both backends share"))
 on the web slide"
               (help := some "end the item at the \\vfill, or move it outside the \\alt")
               (detail := some s!"in frame {label}"))
-          -- One `section` per frame: the deck's steps reveal *in place*
-          -- under the class-gated uncover rules (`deckStepCss`), so the
-          -- HTML section count is the source frame count (`frames_sections`
-          -- in Tests). Physical PDF pages also include overlay steps and
-          -- overflow continuations.
           let (node, named2) := claimStageName named (blockNode frameCfg b)
           named := named2
-          -- The frame's anchor: its title slug, unique among the deck's
-          -- ids (`claimId`), so every slide is fragment-addressable — a
-          -- deep link into the paged deck is `#its-title`. A repeated
-          -- identical title numbers itself quietly; two different titles
-          -- folding to one slug are named as W0327, as in the article.
-          -- A stepless frame carries the anchor on its own section; a
-          -- stepped frame's rides its *track*, not the sticky stage: a
-          -- stage pinned at the scrollport edge reads as already in
-          -- view, so a backward fragment jump onto it would not scroll,
-          -- while the track's flow box always names the frame's place in
-          -- the deck (CSS Scroll Snap 1 §6.2: fragment navigation snaps
-          -- to the target's snap positions where it has them).
+          -- a stepped frame's anchor rides its track: a pinned stage reads as already in view
           let text := Ir.firstPageText title
           let base := slug title
           let base := if base.isEmpty then "slide" else base
@@ -11432,11 +8137,6 @@ on the web slide"
 retitle the frames apart, or link to the numbered anchor")
               (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
           taken := taken.insert id text
-          -- The spacer anchors `<frame>-k`, claimed and built by the one
-          -- walk whose count is a statement (`track_snaps_exact`); each
-          -- spacer carries the `[data-snap]` door, so deep links and the
-          -- script's snap list name the same boxes. A stepless frame has
-          -- no spacer: its section is its own snap page.
           let steps := frameCfg.overlaySteps
           let (spacers, taken2, diags2) :=
             if steps > 1 then
@@ -11445,11 +8145,6 @@ retitle the frames apart, or link to the numbered anchor")
               (#[], taken, walkDiags)
           taken := taken2
           walkDiags := diags2
-          -- The frame's footer: the chrome band slots (`Ir.Chrome.frameFootBand`,
-          -- the same function the PDF's final pass consumes, so the two
-          -- backends resolve the same slots and can only diverge by
-          -- rendering them; fixed positions from the declared side, paint
-          -- order the declared priority, `z-index` carrying `rank`).
           let node := if chromeFoot then
               match doc.chrome.frameFootBand frameFoot curSection num total standout, node with
               | some band, .elem tag attrs kids =>
@@ -11471,19 +8166,7 @@ retitle the frames apart, or link to the numbered anchor")
                         footBoxDecls doc.page (cfg.footBox (num.getD 0) band)))]))
               | _, other => other
             else node
-          -- The frame's logo: the state in force at this position, from
-          -- the shared fold — one strip inside the section, so a stepped
-          -- frame's sticky stage carries it on every snap page, as the
-          -- PDF's furniture pass repeats it on every page of the frame.
           let node := attachLogo frameCfg node (Ir.logoInForce doc.logo logoSpans i)
-          -- A stepped frame rides a `.slide-track`: the sticky stage
-          -- over its snap spacers (`track_snaps_exact` counts them). The
-          -- spacers — static boxes, never the sticky stage — carry the
-          -- deck's snap areas through the `[data-snap]` door
-          -- (`deckSnapDoor` says why no two areas share an offset), and
-          -- the wrapper carries the frame's anchor and `--steps` for the
-          -- uncover ranges. A stepless frame is its own snap page: the
-          -- section carries the anchor, door and its only reveal state.
           let node := if steps > 1 then
               Html.elem "div" (#[node] ++ spacers)
                 (#[("class", "slide-track"), ("style", s!"--steps: {steps}"),
@@ -11500,18 +8183,12 @@ retitle the frames apart, or link to the numbered anchor")
         | .section 1 starred num title =>
           curSection := title
           if (Design.ofPalette cfg.pal).sectionProgress.isSome then
-            -- No clamp, as on the PDF path: `done ≤ total` by theorem
-            -- over the numbering both walks read; a deck with no
-            -- countable frame draws no bar.
+            -- no clamp, as on the PDF path
             let kids := #[Html.elem "h2" (inlines cfg title)]
             let kids := if total == 0 then kids else
               kids.push (Html.elem "div"
                 #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
                 #[("class", "progress")])
-            -- A section page is one snap page of the deck like any
-            -- stepless frame: the section itself carries the
-            -- `[data-snap]` door — and, being a page, the logo state in
-            -- force, as the PDF furnishes every page.
             let name := claimName named (sectionPageName title)
             named := named.insert name
             acc := acc.push (cfg.applyEpoch
@@ -11530,12 +8207,7 @@ retitle the frames apart, or link to the numbered anchor")
           cfg := cfg.afterBlock b
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
-  -- The endnotes: one section before the article end (W3C DPUB-ARIA 1.1
-  -- doc-endnotes), one list item per note in flow order — the same
-  -- `Ir.footnotesOf` flow the marks were numbered in — each carrying its
-  -- body and a back-link to its mark (doc-backlink). No script: the
-  -- mark/note pairing is two plain anchors, and W0326's target check
-  -- holds both directions on the emitted tree.
+  -- the endnotes: one `doc-endnotes` section, each note back-linked to its mark
   let notes := Ir.footnotesOf doc.body
   let inner := if notes.isEmpty then inner else
     inner.push (Html.elem "section"
@@ -11551,17 +8223,12 @@ retitle the frames apart, or link to the numbered anchor")
   let mainAttrs := (if bodyClass.isEmpty then #[] else #[("class", bodyClass)]) ++
     #[("style", "container-type: inline-size")]
   let main := Html.elem "main" inner mainAttrs
-  -- The headline band: the page's own <header> before <main> (the banner
-  -- landmark — the HTML poster is a page, and the band is its header),
-  -- title as the one h1, authors and institute as their own lines, the
-  -- corner logos in the slots the stylesheet lays around the matter.
+  -- the poster's headline band is the page's banner `<header>`
   let headerNode : Array Node := match doc.headline with
     | some hl =>
       let slot (c : Option (Array Ir.Inline)) : Array Html.Node :=
         match c with
         | some xs =>
-          -- Decoration unless it holds a tab stop (`logoBox`), as the
-          -- deck's logo strip is (`attachLogo`).
           #[logoBox "headline-logo" none (inlines cfg (logoDecoration xs)) (inlines cfg xs)]
         | none => #[]
       let line (cls : String) (xs : Array Ir.Inline) : Array Html.Node :=
@@ -11577,23 +8244,15 @@ retitle the frames apart, or link to the numbered anchor")
         #[("class", "headline")]]
     | none => #[]
   let mut body : Array Node := headerNode ++ #[main]
-  -- The deck's own progress hairline uses the base bar. A section-only
-  -- override cannot enable or recolour this separate indicator.
+  -- the progress hairline reads the base bar, never a section-only override
   if doc.docClass == .slides && (Design.ofDoc doc).progress.isSome then
     body := body.push (Html.elem "div" #[]
       #[("class", "deck-progress"), ("aria-hidden", "true")])
-  -- The slides class's constant keyboard/uncover script: one raw-text
-  -- node through the typed tree, gated on the class
-  -- (`deck_script_gated`), its text the pinned constant
-  -- (`deck_script_constant`).
   body := body ++ deckScriptNodes (doc.docClass == .slides)
-  -- Figures named apart before the anchors are judged.
+  -- figures numbered apart before the anchors are judged
   body := numberFigures body
-  -- The landmark and anchor contracts, judged over the emitted tree.
   let facts := pageFactsList none {} body.toList
-  -- premise: slideLabelChecks — these routes ship with the constant script;
-  -- without it only DOM anchors are promised. A bare frame label aliases
-  -- its first reveal, exactly as `deckScript` reads the emitted attributes.
+  -- premise: slideLabelChecks — these routes ship with the constant script
   let routes := if facts.deck then
       facts.slideLabels.foldl (init := ({} : Std.HashMap String String)) fun a label =>
         let a := a.insert label label
@@ -11610,27 +8269,15 @@ slide navigation uses '#{target}'"
             | some label => s!"use '#{label}' to reach the slide holding that anchor"
             | none => "rename the anchor so it differs from a slide label")))
   if facts.navs > 1 then
-    -- One unlabeled landmark per role: "if a specific landmark role is
-    -- used more than once on a page, provide each instance a unique label"
-    -- (W3C ARIA Authoring Practices, Landmark Regions, Step 3 and the
-    -- Navigation role). The engine has no label mechanism yet, so a second
-    -- unlabeled <nav> is indistinguishable to assistive technology.
+    -- ARIA asks each repeated landmark role for a unique label
     diags := diags.push (Diag.of .W0325
       "unlabeled <nav> landmarks repeat on one page, indistinguishable to assistive technology"
       (help := some "repeated landmarks need unique labels (ARIA Landmark \
 Regions): give each one a name, \\begin{nav}[label = Site]")
       (detail := some s!"{facts.navs} on one page"))
   if facts.reveals > 0 then
-    -- Declared reveals resolve at the page level: the CSS (declarative
-    -- where the platform has scroll-driven animations) and the constant
-    -- script fallback ship exactly when the tree carries one.
     head := head.push (Node.style revealCss)
-  -- Every navigation target exists: an in-page link resolves to an anchor
-  -- this page emits, or it is named here rather than shipped broken. '#'
-  -- and any-ASCII-case 'top' always resolve — the HTML spec's fragment
-  -- navigation scrolls both to the top of the document ("select the
-  -- indicated part": an empty fragment, or a decoded fragment that is an
-  -- ASCII case-insensitive match for 'top').
+  -- every in-page link resolves or is named; `#` and `top` in any ASCII case always resolve
   let mut checked : Array String := #[]
   for fref in facts.fragmentRefs do
     let frag := (fref.drop 1).toString
@@ -11645,9 +8292,6 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
 one in the article class"
           else s!"anchors on this page: \
 {String.intercalate ", " (facts.ids.toList.map (fun kv => "#" ++ kv.1))}")))
-  -- Every <img> this page ships is one a browser decodes, or its loss is
-  -- named: judged over the emitted tree, so an image the page never links
-  -- is never named, and one under a hidden strip still is.
   for k in undecodableIndices cfg.imgs
       (imageAttrsList (some "data-image-index") #[] body.toList) do
     if let some en := cfg.imgs.get? k then
@@ -11665,24 +8309,19 @@ one in the article class"
     let roots := (sheetReads ++ bodyReads).toList.filterMap roleOfVar? ++ readerRoles
     let edges := bodyDecls.filterMap fun (name, reads) =>
       (roleOfVar? name).map (·, reads.toList.filterMap roleOfVar?)
-    -- A code role is the page's where its code root colours it or a
-    -- listing restates it (`Config.listingStyle`).
     let coded (r : Ir.Role) : Bool := r.code?.isSome &&
       (cssCfg.codeRoot.any (fun (_, rs) => ((rs.lookup r).join).isSome) ||
         bodyDecls.any (·.1 == roleVar r))
-    -- A code role the root states as a palette role's colour reads that role.
+    -- a code role the root states as a palette role's colour reads that role
     let codeEdges := cssCfg.codeRoot.toArray.flatMap fun (_, rs) => rs.toArray.filterMap
       fun (r, p) => p.bind fun (_, key) => key.map fun k => (r, [k])
     let roles := pageRoleSet allTables roots (edges ++ codeEdges) coded
-    -- The tree changes only where it reads or declares a role outside the
-    -- set; with none, keeping it to the set is the identity.
     let outside (name : String) : Bool := (roleOfVar? name).any (!roles.contains ·)
-    -- The scheme properties the sheet's own rules read are stated too.
     let mut used := sheetReads.toList ++ bodyReads.toList ++
       bodyDecls.toList.flatMap (fun (d : String × Array String) => d.2.toList)
     if bodyReads.any outside || bodyDecls.any (outside ·.1) then
       shipped := keepRolesList roles.contains #[] body.toList
-      -- What a dropped declaration read is no longer read.
+      -- what a dropped declaration read is no longer read
       let (r, d) := nodeRefsList (#[], #[]) shipped.toList
       used := sheetReads.toList ++ r.toList ++
         d.toList.flatMap (fun (d : String × Array String) => d.2.toList)
@@ -11693,30 +8332,21 @@ one in the article class"
           (used.filter (·.startsWith "--ltx--"))) ++ "\n" ++ theme ++ styled))
   return (head, shipped, diags)
 
-/-- Normalize the shared IR at the public entry, before any backend walk. -/
+/-- The document's typed tree, head and body, with its diagnostics, from the normalized IR. -/
 public def emitTree (cfg : Config) (doc : Doc) :
     Array Node × Array Node × Array Diag :=
   let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
   let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
     |>.map (·.family) |>.getD "math face"
   let resolved := Ir.resolveMathAlphas coverage family doc
-  -- Rendering reads the canonical source-free shape: locations must not
-  -- hide a display formula, a description label, or a flex-row separator
-  -- from the backend's structural classifiers. The caller's spanned IR
-  -- remains available for diagnostics.
-  -- The declared math renderer stands after the page the core emits
-  -- without it (`math_boundary_floor_exact`).
+  -- locations erased, so they hide nothing from the structural classifiers
   let tree := emitTreeCore { cfg with mathRenderer := none } (Ir.eraseLocations resolved.1)
     (fun lit => styleRules resolved.1 lit)
-  -- Projections, not a destructuring `let`: matching the emitter's result
-  -- made the kernel evaluate the whole emitter to check
-  -- `emitTree_resolve_agree` (73 s of every HtmlDoc build).
+  -- projections, not a destructuring `let`, keep `emitTree_resolve_agree` cheap to check
   (tree.1, tree.2.1 ++ mathBoundaryNodes cfg.mathRenderer, resolved.2 ++ tree.2.2)
 
--- A bound, not a budget: the check needs under 300 heartbeats over the
--- projections, and the destructuring form exceeds 2000 in the kernel.
+-- a bound below the default, holding the kernel check's cost
 set_option maxHeartbeats 2000 in
-/-- Both tree projections read the IR resolver's one fixed point. -/
 public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
     let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
     let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
@@ -11726,12 +8356,9 @@ public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
       (emitTree cfg resolved).2.1 = (emitTree cfg doc).2.1 := by
   simp only [emitTree, Ir.resolveMathAlphas_fixed_point, and_self]
 
--- A bound, not a budget, as above: the two sides share the emitter's call.
+-- a bound below the default, as above
 set_option maxHeartbeats 2000 in
-/-- Artifact-specific. **With scripting off, the page is the page without
-the renderer** (`_exact`): the declared math renderer is the body's last
-node, and the head, every other body node and the diagnostics are those of
-the page that declares none. -/
+/-- Artifact-specific. -/
 public theorem math_boundary_floor_exact (cfg : Config) (doc : Doc) :
     (emitTree cfg doc).1 = (emitTree { cfg with mathRenderer := none } doc).1 ∧
       (emitTree cfg doc).2.1 =
@@ -11740,41 +8367,27 @@ public theorem math_boundary_floor_exact (cfg : Config) (doc : Doc) :
   refine ⟨rfl, ?_, rfl⟩
   simp only [emitTree, mathBoundaryNodes, Array.append_empty]
 
-/-- Emit a document. Returns the file and any diagnostics the backend itself
-raises — running content is the notable one: page furniture cannot be honoured
-in a continuous document, and dropping it silently would be the kind of quiet
-failure this engine exists to avoid. -/
+/-- Emit a document: the file, and the diagnostics the backend itself raises. -/
 public def emit (cfg : Config) (doc : Doc) : String × Array Diag :=
   let (head, body, diags) := emitTree cfg doc
-  -- <html lang> is the document's declared language (WCAG 2.2 SC 3.1.1;
-  -- a hard-coded "en" on a French page is worse than absent — an
-  -- actively wrong declaration). The tag ships as declared even when no
-  -- locale record backs it: the artifact's declaration and the engine's
-  -- data are different questions.
+  -- `<html lang>` is the document's declared tag, shipped as declared
   (Html.document (doc.info.language.getD "en") head body, diags)
 
-/-- Exact captured resource projection available to this artifact. -/
+/-- The captured resources this artifact may embed. -/
 public def resources (cfg : Config) : Array HtmlResource.Embedded :=
   (cfg.fonts.map fontResources).getD #[] ++ imageResources cfg.imgs ++
     (cfg.favicon.map fun (_, r) => #[r]).getD #[]
 
-/-- The scripts a page may carry, each as its text: the deck's constant
-(`deckScript`, emitted only for the slides class, `deck_script_gated`) and
-the math renderer the run declared, if it declared one
-(`mathBoundaryNodes`). -/
+/-- The scripts a page may carry: the deck's constant and the declared math renderer. -/
 public def admittedScripts (renderer : Option String) : Array String :=
   #[deckScript] ++ renderer.toArray
 
-/-- A checked page, by the renderer it may carry: its type admits the deck's
-constant and that one text as its script elements, and no other script
-element. A link's URL scheme is outside the gate (`HtmlResource.resolves`),
-so a `javascript:` link the document writes is not bounded here: pending
-work. -/
+/-- A checked page whose only scripts are the deck's constant and the declared renderer; a link's
+URL scheme is outside the gate. -/
 public abbrev ClosedPage (renderer : Option String) :=
   HtmlResource.ClosedPage (admittedScripts renderer)
 
-/-- The publication entry checks the actual emitted tree. SVG evidence
-must come from the driver's parsed-XML validator on these exact bytes. -/
+/-- The publication entry: the emitted tree, closed against its captured resources. -/
 public def emitClosed (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray) :
     Except String (ClosedPage cfg.mathRenderer) × Array Diag :=
   let (head, body, diags) := emitTree cfg doc
@@ -11786,9 +8399,7 @@ declares the framework's sheet"
       (doc.info.language.getD "en") head body
   (page, diags)
 
-/-- Artifact-specific closure, enforced before a page can be published:
-the checked page is the emitter's actual serialization and every projected
-rendering reference resolves against its captured resources. -/
+/-- Artifact-specific. -/
 public theorem emitClosed_covers (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray)
     {page : ClosedPage cfg.mathRenderer} (h : (emitClosed cfg doc svgChecked).1 = .ok page) :
     page.render = (emit cfg doc).1 ∧
@@ -11800,29 +8411,15 @@ public theorem emitClosed_covers (cfg : Config) (doc : Doc) (svgChecked : Array 
   · exact HtmlResource.close_covers (resources cfg) svgChecked (admittedScripts cfg.mathRenderer)
       (doc.info.language.getD "en") _ _ h
 
-/-- Every emitted page declares a language: the artifact is
-`Html.document` over the document's declared tag, the engine's `en`
-assumption standing in when it names none — `emit`'s one construction
-site, so with `Html.document_declares_lang` the root element always
-carries `lang` (WCAG 2.2 SC 3.1.1, technique H57). Whether the tag
-matches the text is the document's own truth; the engine judges the
-declaration, never the prose. -/
 public theorem emit_lang_declared (cfg : Config) (doc : Doc) :
     ∃ head body,
       (emit cfg doc).1 = Html.document (doc.info.language.getD "en") head body := by
   rcases h : emitTree cfg doc with ⟨head, body, ds⟩
   exact ⟨head, body, by simp [emit, h]⟩
 
-/-! ## What assistive technology is handed
+/-! ## Accessibility facts -/
 
-The static half of the page's accessibility oracle: facts a checker such as
-axe reports from a browser, read here off the typed tree the page
-serializes, so they can gate with no browser. axe over the rendered corpus
-is the cross-check, never the gate. -/
-
-/-- Does an element carry an accessible name in its own markup: a
-non-blank `aria-labelledby` or `aria-label` (accname 1.2, steps 2B and 2C),
-or — for SVG — a `<title>` child with text (SVG-AAM 1.0, §8.1)? -/
+/-- Whether an element carries an accessible name in its own markup. -/
 public def carriesName : Node → Bool
   | .elem _ attrs kids =>
     attrs.any (fun kv => (kv.1 == "aria-label" || kv.1 == "aria-labelledby") &&
@@ -11836,48 +8433,28 @@ public def carriesName : Node → Bool
   | .style _ => false
   | .script _ _ => false
 
-/-- The page facts assistive technology depends on, as counts over the
-emitted tree. Each `…Unnamed`/`…Unreachable` count is a deficit: a node
-counted in its total that AT cannot name or reach. A subtree under
-`aria-hidden="true"` is not handed to AT at all, so nothing in it counts —
-except a tab stop, which the keyboard still reaches (`hiddenTabStops`). -/
+/-- The page facts assistive technology depends on, as counts over the emitted tree. -/
 public structure A11yFacts where
-  /-- `<h1>` elements: a page's outline has exactly one top (axe's
-  `page-has-heading-one` asks for at least one). -/
   h1s : Nat := 0
-  /-- Tab stops (`tabbable`) under `aria-hidden="true"`, outside a `hidden`
-  subtree: a keyboard stop assistive technology is told is not there —
-  axe's `aria-hidden-focus`, SC 4.1.2. -/
+  /-- Tab stops under `aria-hidden`, outside a `hidden` subtree. -/
   hiddenTabStops : Nat := 0
   imgs : Nat := 0
-  /-- `<img>` with no non-blank `alt` and no declared decorative role
-  (`presentation`/`none`), or a non-SVG `role="img"` with no accessible
-  name: WCAG 2.2 SC 1.1.1. SVG has its own count below. -/
+  /-- `<img>` with no non-blank `alt` and no decorative role, or an unnamed non-SVG `img` role. -/
   imgsUnnamed : Nat := 0
   svgs : Nat := 0
-  /-- `<svg>` that carries no accessible name (`carriesName`): axe's
-  `svg-img-alt`, SC 1.1.1. -/
   svgsUnnamed : Nat := 0
-  /-- Elements the engine's own stylesheet makes scroll containers
-  (`declaresScroll`). -/
+  /-- Elements the engine's own stylesheet makes scroll containers. -/
   scrolls : Nat := 0
-  /-- Scroll containers a keyboard cannot reach — no `tabindex="0"` — or, for
-  a deck stage (a named region once focusable), that carry no name: axe's
-  `scrollable-region-focusable`, SC 2.1.1. -/
+  /-- Scroll containers a keyboard cannot reach, and deck stages with no name. -/
   scrollsUnreachable : Nat := 0
-  /-- `<summary>` elements: a disclosure's control. -/
   summaries : Nat := 0
-  /-- Summaries with no text to name their control (`holdsTextOne`) and no
-  name of their own (`carriesName`): axe's `summary-name`, SC 4.1.2. -/
+  /-- Summaries with no text and no name of their own. -/
   summariesUnnamed : Nat := 0
   deriving Repr, BEq, Inhabited
 
 mutual
 
-/-- Does a subtree hold text a reader is shown: a text node that is not
-blank, outside a `hidden` subtree, which is not rendered. A hand-rolled walk
-because `Html.Node` has no generic fold; the list companion keeps it
-structural. -/
+/-- Whether a subtree holds non-blank text outside a `hidden` subtree. -/
 public def holdsTextOne : Node → Bool
   | .elem _ attrs kids => (attrOf? attrs "hidden").isNone && holdsTextList kids.toList
   | .text s => nonBlank s
@@ -11890,24 +8467,17 @@ public def holdsTextList : List Node → Bool
 
 end
 
-/-- The class tokens of an attribute list. -/
 public def classTokens (attrs : Array (String × String)) : List String :=
   ((attrOf? attrs "class").getD "").splitOn " " |>.filter (!·.isEmpty)
 
-/-- The elements the engine's own stylesheet declares scroll containers
-(`overflow-x`/`overflow-y: auto`): every `pre` (`baseCss`), and on the paged
-deck every stage (`deckStageRule`: `section.slide, section.section-page`).
-Only the `own` stylesheet declares either — under `bulma` or `none` the
-document's declared sheet decides, and the engine claims nothing. -/
+/-- Whether the engine's own stylesheet makes an element a scroll container. -/
 public def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × String)) :
     Bool :=
   own && (tag == "pre" ||
     (deck && tag == "section" &&
       (classTokens attrs).any (fun c => c == "slide" || c == "section-page")))
 
-/-- Can a keyboard reach a scroll container, and assistive technology say
-what it is: `tabindex="0"`, and a name — except on a code block, whose
-generic role takes none (WAI-ARIA 1.2 §5.2.8.6, naming prohibited). -/
+/-- Whether a scroll container is a tab stop with a name; a code block takes no name. -/
 public def scrollReachable : Node → Bool
   | n@(.elem tag attrs _) =>
     attrOf? attrs "tabindex" == some "0" && (tag == "pre" || carriesName n)
@@ -11947,10 +8517,7 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
 
 mutual
 
-/-- The facts of one node onto `acc`; `hidden` is whether an ancestor took
-the subtree out of the accessibility tree, `inert` whether one took it out
-of rendering (the `hidden` attribute), where nothing takes focus. The list
-companion keeps the recursion structural. -/
+/-- The facts of one node onto `acc`, under its `aria-hidden` and `hidden` ancestor flags. -/
 private def a11yOne (own deck hidden inert : Bool) (acc : A11yFacts) : Node → A11yFacts
   | .text _ => acc
   | .style _ => acc
@@ -11970,17 +8537,12 @@ private def a11yList (own deck hidden inert : Bool) (acc : A11yFacts) : List Nod
 
 end
 
-/-- The facts of a page body, under the stylesheet mode and page model it
-was emitted for. -/
+/-- The facts of a page body under its stylesheet mode and page model. -/
 public def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=
   a11yList own deck false false {} body.toList
 
-/-- The pairings a page's own stylesheet creates for its text in one scheme,
-read off the role table it declares there (`Ir.Design.cssDecl_chase_exact`):
-body text on the page, marker text on the page, code text on its surface,
-the focus indicator on the page — each with the ratio it owes in that scheme
-at the medium's need (SC 1.4.3, SC 1.4.11, SC 1.4.6 where the reader asks
-more). -/
+/-- The text pairings a page's own stylesheet creates in one scheme, each with the contrast ratio
+it owes. -/
 public def themePairs (pal : Ir.Palette) (s : Ir.Scheme) (stage : Bool := false) :
     List (String × Ir.Color × Ir.Color × Nat) :=
   let look (r : Ir.Role) := (Ir.Design.at pal s r).getD Ir.Color.black
@@ -11988,16 +8550,12 @@ public def themePairs (pal : Ir.Palette) (s : Ir.Scheme) (stage : Bool := false)
   [("text", look .ink, look .page, text),
    ("muted", look .muted, look .page, text),
    ("marker", look .marker, look .page, text),
-   -- A listing a class paints no ground under stands on the page.
+   -- a listing a class paints no ground under stands on the page
    ("code", look .codeInk, (Ir.Design.at pal s .codeSurface).getD (look .page), text),
    ("accent", look .focus, look .page, Contrast.requiredIn s .nonText)]
 
-/-- The pairings a page fails, in each screen scheme it ships, read off the
-document's palette as that scheme ships it (`Contrast.schemeJudge`): a
-scheme the document's colours were declared for shows them as declared, one
-judgement; any other ships only where its colours read. A page under a
-stylesheet the engine does not own fails none, because the engine paints
-none of them. -/
+/-- The pairings a page fails in each screen scheme it ships; none under a stylesheet the engine
+does not own. -/
 public def schemeFailures (own : Bool) (doc : Doc) : List (String × String) :=
   if !own then [] else
     let j := Contrast.schemeJudge doc
@@ -12007,12 +8565,6 @@ public def schemeFailures (own : Bool) (doc : Doc) : List (String × String) :=
       ((themePairs v f.scheme stage).filter fun p =>
           Contrast.contrastMilli p.2.1 p.2.2.1 < p.2.2.2).map fun p => (f.scheme.name, p.1)
 
-/-- **Every picture the backend emits is named or hidden** (`_contract`):
-the `.picture` arm — the one site that builds an `<svg>` — ships an `svg`
-element that is out of the accessibility tree exactly when the picture is
-decoration, and otherwise carries a non-empty accessible name in its own
-markup, whatever the picture and configuration. `htmlA11yChecks` holds the
-whole-page form over the shipped corpus. -/
 public theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) :
     (blockNode cfg (.picture pic)).tag? = some "svg" ∧
       (pic.alternative ≠ .decorative → carriesName (blockNode cfg (.picture pic)) = true) := by
@@ -12028,12 +8580,7 @@ public theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) 
     simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
       pictureAltAttrs, ha, figureWord_contract]
 
-/-- **Every deck stage the backend emits is reachable** (`_contract`): on
-the paged deck the frame arm's `section` — a scroll container by
-`deckStageRule` — carries `tabindex="0"` and a non-blank name, whatever the
-frame. A fact of the artifact: which boxes scroll is the stylesheet's
-decision, not the IR's. `htmlA11yChecks` holds it, with the section pages
-and code blocks, over every shipped corpus page. -/
+/-- Artifact-specific. -/
 public theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = true)
     (title : Array Inline) (standout : Bool) (valign : VAlign) (br : Bool)
     (body : Array Block) :

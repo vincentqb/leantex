@@ -2,24 +2,15 @@ module
 
 namespace LeanTex.Core.Html
 
-/-! # A typed HTML tree
+/-! Typed HTML tree and its renderer: text and attribute values are escaped, and a
+`style` or `script` payload cannot close its own element. -/
 
-Well-formed by construction: nothing in this module concatenates tag strings,
-so a document can never produce unbalanced or injected markup. Text and
-attribute values pass through the escaper on the way in, and `style`/`script`
-content is checked for its own terminator rather than escaped, because CSS and
-JS have different rules than element content. -/
-
-/-- Escape one character of element content. Kept separate so the safety
-property below is a statement about a 4-way case split rather than about a
-fold. -/
 def escapeCharText (c : Char) : List Char :=
   if c == '&' then "&amp;".toList
   else if c == '<' then "&lt;".toList
   else if c == '>' then "&gt;".toList
   else [c]
 
-/-- Escape element content. `&` first, or the other replacements get mangled. -/
 public def escapeText (s : String) : String :=
   String.ofList (go s.toList)
 where
@@ -35,7 +26,6 @@ def escapeCharAttr (c : Char) : List Char :=
   else if c == '\'' then "&#39;".toList
   else [c]
 
-/-- Escape an attribute value; quotes matter here and not in content. -/
 public def escapeAttr (s : String) : String :=
   String.ofList (go s.toList)
 where
@@ -71,8 +61,6 @@ theorem escapeCharAttr_no_quote (c : Char) : '"' ∉ escapeCharAttr c := by
             intro hc
             exact absurd hc.symm (by simp_all)
 
-/-- The injection-safety property, in miniature: escaped content carries no
-`<`, so no text node can open a tag. -/
 public theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := by
   simp only [escapeText, String.toList_ofList]
   suffices h : ∀ l : List Char, '<' ∉ escapeText.go l by exact h s.toList
@@ -93,16 +81,6 @@ public theorem escapeAttr_no_quote (s : String) : '"' ∉ (escapeAttr s).toList 
     simp only [escapeAttr.go, List.mem_append, not_or]
     exact ⟨escapeCharAttr_no_quote c, ih⟩
 
-/-- Escape one character of a JSON string embedded in a `<script>` data
-block. RFC 8259 §7 lets any character be written as `\uXXXX`, so the three
-that could break the embedding are: the quote (would end the JSON string),
-the backslash (would start an escape), and `<` (could begin `</script>`,
-the one sequence a script data block cannot contain — HTML §4.12.1.3's
-restrictions for contents of script elements). The named C0 escapes RFC
-8259 spells keep their two-character forms; the remaining C0 controls,
-which RFC 8259 forbids raw and which have no meaning in metadata, are
-dropped. Every branch is a concrete literal, which is what lets the two
-safety theorems below close by `decide`. -/
 def escapeCharJson (c : Char) : List Char :=
   if c == '"' then "\\u0022".toList
   else if c == '\\' then "\\u005c".toList
@@ -113,8 +91,9 @@ def escapeCharJson (c : Char) : List Char :=
   else if c.toNat < 0x20 then []
   else [c]
 
-/-- Escape a JSON string value for embedding in a script data block. The
-accumulator threads through the walk (the `#[x] ++ rest` trap). -/
+/-- Escape a JSON string value for a script data block (RFC 8259 §7): quote, backslash and `<`
+become `\uXXXX`, newline, tab and return keep their short escapes, and other C0 controls are
+dropped. -/
 public def escapeJson (s : String) : String :=
   String.ofList (go #[] s.toList).toList
 where
@@ -159,16 +138,10 @@ private theorem escapeJson_go_safe (l : List Char) (acc : Array Char)
     simp only [Array.toList_append, List.mem_append, not_or]
     exact ⟨⟨hacc.1, hc.1⟩, ⟨hacc.2, hc.2⟩⟩
 
-/-- The JSON injection claim, in miniature: escaped content carries no raw
-quote, so no value can end its own string and smuggle structure into the
-object around it. -/
 public theorem escapeJson_no_quote (s : String) : '"' ∉ (escapeJson s).toList := by
   simp only [escapeJson, String.toList_ofList]
   exact (escapeJson_go_safe s.toList #[] (by simp)).1
 
-/-- And no `<` at all: the escaped payload can never contain `</script`, so
-the `rawPayload` guard below never fires on it and the data block reaches
-the page intact rather than as `/* removed */`. -/
 public theorem escapeJson_no_lt (s : String) : '<' ∉ (escapeJson s).toList := by
   simp only [escapeJson, String.toList_ofList]
   exact (escapeJson_go_safe s.toList #[] (by simp)).2
@@ -176,29 +149,20 @@ public theorem escapeJson_no_lt (s : String) : '<' ∉ (escapeJson s).toList := 
 public inductive Node where
   | text (s : String)
   | elem (tag : String) (attrs : Array (String × String)) (kids : Array Node)
-  /-- Stylesheet content. Not escaped — CSS has its own grammar — but the
-  emitter refuses a payload containing its own end tag. -/
+  /-- Stylesheet content, unescaped; the renderer replaces a payload containing its end tag. -/
   | style (css : String)
-  /-- Script content, same contract as `style`. The attrs carry a `type`:
-  a script with a non-JavaScript MIME type is a data block (HTML §4.12.1),
-  which is how JSON-LD rides without emitting behaviour. -/
+  /-- Script content under the `style` contract; a non-JavaScript `type` makes it a data block. -/
   | script (attrs : Array (String × String)) (js : String)
   deriving Inhabited
 
-/-- Elements with no closing tag. -/
 public def voidTags : List String :=
   ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
    "source", "track", "wbr"]
 
-/-- Elements whose whitespace is significant, so the printer must not indent
-inside them. -/
+/-- Elements whose whitespace is significant, printed without indentation inside. -/
 public def preserveTags : List String := ["pre", "code", "textarea"]
 
-/-- Elements whose content is phrasing: their children are rendered without
-added newlines, because in HTML a newline collapses to a space and would
-appear before punctuation that follows a nested element. SVG's `text` and
-`tspan` collapse white space the same way, so a picture label whose word is
-wrapped in a `tspan` would otherwise gain a space its source never had. -/
+/-- Elements whose children print without added newlines, which would render as spaces. -/
 def phrasingTags : List String :=
   ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "span", "a", "strong", "em",
    "code", "u", "s", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label",
@@ -210,8 +174,6 @@ def phrasingTags : List String :=
 
 @[expose] public def text (s : String) : Node := .text s
 
-/-- The tag of an element node; `none` for text, style, and script. What a
-statement about which element a tree ships at a position reads. -/
 @[expose] public def Node.tag? : Node → Option String
   | .elem tag _ _ => some tag
   | .text _ => none
@@ -222,34 +184,21 @@ private def attrString (attrs : Array (String × String)) : String :=
   String.join (attrs.toList.map fun (k, v) =>
     if v.isEmpty then s!" {k}" else s!" {k}=\"{escapeAttr v}\"")
 
-/-- Does this subtree contain only text? Such an element prints on one line,
-which keeps the output readable without introducing stray whitespace. -/
 private def isInlineOnly (kids : Array Node) : Bool :=
   kids.all fun k =>
     match k with
     | .text _ => true
     | _ => false
 
-/-- Does `term` occur in `l`? A structural scan so the refusal below can be a
-theorem rather than an example; `String.splitOn` recurses on positions the
-kernel cannot see through. -/
 private def hasTerm (term : List Char) : List Char → Bool
   | [] => false
   | c :: rest => term.isPrefixOf (c :: rest) || hasTerm term rest
 
-/-- A `style`/`script` payload that closes its own element would break out of
-it; both printers refuse it through here, so neither can disagree. Browsers
-match end tags ASCII-case-insensitively, so the payload is lowered before the
-scan; the terminator literals are already lowercase and omit the final `>`,
-which is what also catches `</script >` and `</script/`. -/
+/-- The payload, or `/* removed */` when it contains `endTag` in any ASCII case. -/
 private def rawPayload (endTag payload : String) : String :=
   if hasTerm endTag.toList (payload.toList.map Char.toLower) then "/* removed */"
   else payload
 
-/-- The guard's contract, the module's remaining injection claim: whatever
-payload arrives, the emitted string never contains the terminator in any ASCII
-case. Conditional on the replacement literal being clean, which `decide`
-discharges below. -/
 private theorem rawPayload_no_terminator (endTag payload : String)
     (h : hasTerm endTag.toList ("/* removed */".toList.map Char.toLower) = false) :
     hasTerm endTag.toList ((rawPayload endTag payload).toList.map Char.toLower) = false := by
@@ -270,10 +219,6 @@ private theorem rawPayload_script_no_terminator (payload : String) :
 
 mutual
 
-/-- Render a node onto `acc`. The accumulator threads through the whole walk:
-building each subtree's string and concatenating (`render k ++ rest`) copies
-the tail at every sibling, which is quadratic in the sibling count — the
-`#[x] ++ rest` trap in its String form. -/
 private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
   let pad := "".pushn ' ' (2 * indent)
   match n with
@@ -294,7 +239,6 @@ private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
       renderListInto (acc ++ pad ++ open' ++ "\n") kids.toList (indent + 1)
         ++ pad ++ "</" ++ tag ++ ">\n"
 
-/-- Render without surrounding whitespace, for content inside a line. -/
 private def inlineRenderInto (acc : String) (n : Node) : String :=
   match n with
   | .text s => acc ++ escapeText s
@@ -306,8 +250,6 @@ private def inlineRenderInto (acc : String) (n : Node) : String :=
     if voidTags.contains tag then acc ++ open'
     else inlineRenderListInto (acc ++ open') kids.toList ++ "</" ++ tag ++ ">"
 
--- The list companions make the recursion structural: a `map` over the
--- children hides the call behind a lambda the checker cannot see through.
 private def renderListInto (acc : String) : List Node → Nat → String
   | [], _ => acc
   | k :: rest, indent => renderListInto (renderInto acc k indent) rest indent
@@ -318,12 +260,9 @@ private def inlineRenderListInto (acc : String) : List Node → String
 
 end
 
-/-- Render a node. Indentation is cosmetic and suppressed where whitespace
-matters. -/
 public def render (n : Node) (indent : Nat) : String :=
   renderInto "" n indent
 
-/-- A complete document: doctype plus the root element. -/
 public def document (lang : String) (head body : Array Node) : String :=
   "<!DOCTYPE html>\n" ++
   inlineRenderTop (elem "html" #[elem "head" head, elem "body" body]
@@ -331,11 +270,6 @@ public def document (lang : String) (head body : Array Node) : String :=
 where
   inlineRenderTop (n : Node) : String := render n 0
 
-/-- The root element always carries the language it was given: `document`
-builds `<html lang=...>` by construction, so no complete page can ship
-without the declaration WCAG 2.2 SC 3.1.1 asks for (the page's default
-human language, programmatically determinable — H57 is exactly this
-attribute). -/
 public theorem document_declares_lang (lang : String) (head body : Array Node) :
     document lang head body =
       "<!DOCTYPE html>\n" ++
