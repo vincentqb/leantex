@@ -509,6 +509,13 @@ public structure Pairing where
   companion : String
   source : String
   license : String
+  /-- The text family's and the companion's x-heights, in thousandths of an
+  em — the ink top of each regular face's own 'x', as the engine measures
+  it (`Font.xInkTop`), from the files the row's source ships — where they
+  were measured: what decides whether a typewriter companion leads
+  lualatex's Latin Modern Mono beside a declared text face
+  (`companionLeads`). -/
+  xHeights : Option (Nat × Nat) := none
   deriving Repr, Inhabited
 
 /-- The designed math companions, as data: one row per body family name the
@@ -691,16 +698,27 @@ public def defaultFamily (faces : Array Face) : Option String :=
     | some f => some f.family
     | none => faces[0]?.map (·.family)
 
-/-- The designed typewriter companions of the default text families, as
-data: one row per `defaultFamilies` entry whose own project or collection
-ships a monospaced family beside it, where that is documented, and the
-companion's licence. A default family with none is on `monoUnpaired`
-instead, so every default family is a decided row (`markdownMonoChecks`).
-The engine ships none of these faces — a row costs nothing until the host
-already has the face. Sources:
+/-- The designed typewriter companions, as data: one row per
+`defaultFamilies` entry whose own project or collection ships a monospaced
+family beside it, where that is documented, and one per text family of a
+superfamily whose project ships its monospace beside it (Fira, Adobe's
+Source, IBM Plex, Noto, DejaVu's serif); each with the companion's licence,
+and the x-heights of the pair where they were measured (`companionLeads`).
+A default family with none is on `monoUnpaired` instead, so every default
+family is a decided row (`markdownMonoChecks`). The engine ships none of
+these faces — a row costs nothing until the host already has the face.
+Sources:
+- github.com/mozilla/Fira — Fira Sans and Fira Mono, one family; SIL OFL.
+- github.com/adobe-fonts/source-code-pro — Source Code Pro, the Source
+  superfamily's monospace, drawn as Source Sans's complement, beside which
+  Source Serif is drawn (github.com/adobe-fonts/source-serif); SIL OFL.
+- github.com/IBM/plex — IBM Plex Sans, Serif and Mono, one superfamily;
+  SIL OFL.
+- github.com/notofonts/latin-greek-cyrillic — Noto Sans and Noto Sans
+  Mono; SIL OFL.
 - github.com/dejavu-fonts/dejavu-fonts (README, "Available fonts") — DejaVu
-  Sans and DejaVu Sans Mono, one family; the DejaVu fonts licence (Bitstream
-  Vera's, with public-domain changes).
+  Sans, DejaVu Serif and DejaVu Sans Mono, one family; the DejaVu fonts
+  licence (Bitstream Vera's, with public-domain changes).
 - github.com/liberationfonts/liberation-fonts (README) — Liberation Sans,
   Serif and Mono, one collection, metric-compatible with Arial, Times New
   Roman and Courier New; SIL OFL.
@@ -714,7 +732,29 @@ already has the face. Sources:
   collection documents); vendor licences. -/
 public def monoCompanions : Array Pairing := #[
   { body := "DejaVu Sans", companion := "DejaVu Sans Mono"
-    source := "github.com/dejavu-fonts/dejavu-fonts", license := "DejaVu fonts licence" },
+    source := "github.com/dejavu-fonts/dejavu-fonts", license := "DejaVu fonts licence"
+    xHeights := some (547, 547) },
+  { body := "DejaVu Serif", companion := "DejaVu Sans Mono"
+    source := "github.com/dejavu-fonts/dejavu-fonts", license := "DejaVu fonts licence"
+    xHeights := some (519, 547) },
+  { body := "Fira Sans", companion := "Fira Mono"
+    source := "github.com/mozilla/Fira", license := "SIL Open Font License"
+    xHeights := some (527, 527) },
+  { body := "Source Sans Pro", companion := "Source Code Pro"
+    source := "github.com/adobe-fonts/source-code-pro", license := "SIL Open Font License"
+    xHeights := some (486, 486) },
+  { body := "Source Serif Pro", companion := "Source Code Pro"
+    source := "github.com/adobe-fonts/source-serif", license := "SIL Open Font License"
+    xHeights := some (475, 486) },
+  { body := "IBM Plex Sans", companion := "IBM Plex Mono"
+    source := "github.com/IBM/plex", license := "SIL Open Font License"
+    xHeights := some (516, 516) },
+  { body := "IBM Plex Serif", companion := "IBM Plex Mono"
+    source := "github.com/IBM/plex", license := "SIL Open Font License"
+    xHeights := some (516, 516) },
+  { body := "Noto Sans", companion := "Noto Sans Mono"
+    source := "github.com/notofonts/latin-greek-cyrillic", license := "SIL Open Font License"
+    xHeights := some (536, 536) },
   { body := "Helvetica", companion := "Courier"
     source := "PostScript core set; psnfss2e", license := "vendor licence" },
   { body := "Arial", companion := "Courier New"
@@ -722,7 +762,8 @@ public def monoCompanions : Array Pairing := #[
   { body := "Liberation Sans", companion := "Liberation Mono"
     source := "github.com/liberationfonts/liberation-fonts", license := "SIL Open Font License" },
   { body := "Nimbus Sans", companion := "Nimbus Mono PS"
-    source := "github.com/ArtifexSoftware/urw-base35-fonts", license := "AGPL with font exception" }]
+    source := "github.com/ArtifexSoftware/urw-base35-fonts", license := "AGPL with font exception"
+    xHeights := some (524, 419) }]
 
 /-- The default text families no project ships a designed typewriter face
 beside: their documents' undeclared slot takes the first platform monospace
@@ -1021,6 +1062,45 @@ public theorem latinModernMono_contract (faces : Array Face)
       exact ⟨latinModernMonoUpright_cover, fun c hc => fixed c (List.all_eq_true.mp hup.1 c hc)⟩
     · cases h
 
+/-- Latin Modern Mono's x-height, in thousandths of an em: the ink top of
+its regular's 'x' (`Font.xInkTop`), 431 of lmmono10-regular.otf's 1000
+units (TeX Live 2026), Latin Modern Roman's own — the text face lualatex
+pairs it with. -/
+public def latinModernMonoXHeight : Nat := 431
+
+/-- How far, in percent of the text's x-height, a companion's x-height may
+stand from it and still lead lualatex's shapes (`companionLeads`): the
+measured companions stand within 5.4% of their text faces', where Latin
+Modern Mono stands 9 to 21% below them. -/
+public def companionXHeightBound : Nat := 6
+
+/-- The distance between two measures. -/
+private def gapOf (a b : Nat) : Nat := if a ≥ b then a - b else b - a
+
+/-- **The companion-first departure, decided on its axis.** lualatex sets
+Latin Modern Mono in the typewriter slot beside any text face a document
+declares; a declared text face's designed companion leads it instead
+(`monoPick`) only where the pairing is measurably better on the axis it is
+drawn on, x-height: the companion's stands nearer the text's than Latin
+Modern Mono's (`latinModernMonoXHeight`), and within
+`companionXHeightBound` percent of it. A row with no measurement keeps
+lualatex's order. Measured, text and companion: Fira Sans and Fira Mono at
+527 and 527, Latin Modern Mono at 82% of the text; Source Sans Pro and
+Source Code Pro at 486 and 486, Latin Modern Mono at 89%; Source Serif Pro
+at 475, its companion at 102%, Latin Modern Mono at 91%; IBM Plex Sans and
+Serif and IBM Plex Mono at 516, Latin Modern Mono at 84%; Noto Sans and Noto
+Sans Mono at 536, Latin Modern Mono at 80%; DejaVu Sans and DejaVu Sans
+Mono at 547, Latin Modern Mono at 79%; DejaVu Serif at 519, its companion
+at 105%, Latin Modern Mono at 83%. Nimbus Sans and Nimbus Mono PS stand at
+524 and 419, 80%, where Latin Modern Mono's 82% is nearer: lualatex's order
+holds there (`companionDepartureChecks`). -/
+public def companionLeads (row : Pairing) : Bool :=
+  match row.xHeights with
+  | some (body, comp) =>
+    0 < body && gapOf comp body < gapOf latinModernMonoXHeight body &&
+      gapOf comp body * 100 ≤ companionXHeightBound * body
+  | none => false
+
 /-- What fills an undeclared typewriter slot: a family, and the face files
 it is set in corner by corner where the answer is a set of files rather than
 one family's faces (lualatex's shapes, which span two families). -/
@@ -1038,22 +1118,34 @@ private def lmPick (tex : Bool) (faces : Array Face) : Option MonoPick :=
 private def listedPick (faces : Array Face) (text : Option String) : Option MonoPick :=
   (monoFor faces text).map fun family => { family }
 
-/-- **The typewriter default, read over one pool of faces.** A tex document
-that declares its text family takes lualatex's own shapes first
-(`latinModernMonoServed`), as lualatex sets them beside a `\setmainfont`,
-and the family `monoFor` answers after them. Any other document takes the
-family `monoFor` answers first — the text family's designed companion, else
-the first platform monospace the pool serves — and a tex document
-lualatex's shapes after it, the last answer before its slot falls to the
-text face; a markdown document has no lualatex answer to keep. A document
-whose text family is the engine's own (`defaultFamily`) does not set its
-text in lualatex's Latin Modern Roman, so lualatex's pairing is not its
-page's: its default's companion is drawn to the text it sits beside —
-DejaVu Sans Mono's x-height is DejaVu Sans's own, 0.547 em, where Latin
-Modern Mono's 0.431 em stands at 79% of it. -/
+/-- The text family's designed companion as a pick, where it leads
+lualatex's shapes (`companionLeads`) and the pool serves it as a
+typewriter family. -/
+private def leadPick (faces : Array Face) (text : Option String) : Option MonoPick :=
+  text.bind fun t => (companionRow monoCompanions t).bind fun row =>
+    -- premise: companionDepartureChecks — a row leads only where its companion's measured x-height stands nearer the text's than Latin Modern Mono's and inside the bound, the suite's pair re-measured by the engine to its row
+    if companionLeads row && servesMono faces row.companion then some { family := row.companion }
+    else none
+
+/-- **The typewriter default, read over one pool of faces.** A document
+that declares its text family takes that family's designed companion first
+where it leads lualatex's shapes on x-height (`companionLeads`, the one
+departure from lualatex here, which sets Latin Modern Mono beside a
+`\setmainfont`), then, a tex document, lualatex's own shapes
+(`latinModernMonoServed`), and then the family `monoFor` answers — a
+companion that does not lead, else the first platform monospace the pool
+serves. Any other document takes the family `monoFor` answers first, and a
+tex document lualatex's shapes after it, the last answer before its slot
+falls to the text face; a markdown document has no lualatex answer to
+keep. A document whose text family is the engine's own (`defaultFamily`)
+does not set its text in lualatex's Latin Modern Roman, so lualatex's
+pairing is not its page's: its default's companion is drawn to the text it
+sits beside — DejaVu Sans Mono's x-height is DejaVu Sans's own, 0.547 em,
+where Latin Modern Mono's 0.431 em stands at 79% of it. -/
 public def monoPick (tex declared : Bool) (faces : Array Face) (text : Option String) :
     Option MonoPick :=
-  if declared then (lmPick tex faces).orElse fun _ => listedPick faces text
+  if declared then
+    ((leadPick faces text).orElse fun _ => lmPick tex faces).orElse fun _ => listedPick faces text
   else (listedPick faces text).orElse fun _ => lmPick tex faces
 
 private theorem orElse_some {α : Type} {o : Option α} {f : Unit → Option α} {a : α}
@@ -1085,10 +1177,23 @@ public theorem monoPick_contract (tex declared : Bool) (faces : Array Face)
     unfold listedPick at hp
     obtain ⟨family, hm, rfl⟩ := Option.map_eq_some_iff.mp hp
     exact ⟨rfl, monoFor_contract faces text family hm⟩
+  have lead : leadPick faces text = some p → p.faces = [] ∧ MonoServed faces p.family := by
+    intro hp
+    unfold leadPick at hp
+    obtain ⟨t, _, ht⟩ := Option.bind_eq_some_iff.mp hp
+    obtain ⟨row, _, hrow⟩ := Option.bind_eq_some_iff.mp ht
+    split at hrow
+    · rename_i hs
+      cases hrow
+      simp only [Bool.and_eq_true] at hs
+      exact ⟨rfl, servesMono_contract faces row.companion hs.2⟩
+    · cases hrow
   unfold monoPick at h
   split at h
   · rcases orElse_some h with hp | hp
-    · exact Or.inl (lm hp)
+    · rcases orElse_some hp with hl | hl
+      · exact Or.inr (lead hl)
+      · exact Or.inl (lm hl)
     · exact Or.inr (listed hp)
   · rcases orElse_some h with hp | hp
     · exact Or.inr (listed hp)

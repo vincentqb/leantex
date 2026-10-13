@@ -110,8 +110,12 @@ A document that declares no typewriter face sets its code in the text face's
 matching monospaced face where one is installed, else in the first of SF
 Mono, Menlo, DejaVu Sans Mono and Liberation Mono that is installed with
 its bold and both its italics or neither, else, for a TeX document, in Latin Modern Mono where a TeX
-distribution installs it, and warns only when none is; a TeX document that
-declares its text face takes Latin Modern Mono first, as lualatex does. A
+distribution installs it, and warns only when none is. A TeX document that
+declares its text face takes Latin Modern Mono first, as lualatex does,
+unless that face's own monospace is installed and matches its x-height more
+closely — Fira Mono beside Fira Sans, Source Code Pro beside Source Sans Pro
+or Source Serif Pro, IBM Plex Mono beside IBM Plex Sans or Serif, Noto Sans
+Mono beside Noto Sans — which then comes first. A
 family installed without italics still serves: italic code sets upright in
 it, and a note says so. A document that bundles its fonts takes these from its own font
 directory first, then from the computer's.

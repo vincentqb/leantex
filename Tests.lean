@@ -321,6 +321,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownWarnings.markdownWarningChecks ref
   Tests.MarkdownWarnings.markdownMonoChecks ref
   Tests.MonoDefault.monoDefaultChecks ref
+  Tests.MonoDefault.companionDepartureChecks ref
   Tests.MonoDefault.faceKeyAgreementChecks ref
   Tests.MonoDefault.fontCollectionChecks ref
   Tests.MarkdownCode.markdownCodeChecks ref
