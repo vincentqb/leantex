@@ -114,7 +114,7 @@ public def writeChecked (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array 
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
     (programs : Array (ByteArray × Bool) := #[]) : Except WriteError ByteArray :=
-  -- premise: ofPictureKeyed_imageFree_exact — a lowered picture paints no raster
+  -- premise: ofPictureKeyed_imageFree_exact — a picture lowered from raster-free shapes paints none
   match inkRasterPage? pages with
   | some i => .error (.inkRaster i)
   | none => (prepare geom fs pages info imgs outline streams tree ops programs).checked

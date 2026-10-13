@@ -1259,7 +1259,7 @@ public structure TChar where
   dy : Rat
   deriving Inhabited
 
-/-- One piece of a text element's content: its text, its style, and its enclosing positioning lists. -/
+/-- One piece of a text element's content: its text and the style it is set in. -/
 public structure Piece where
   text : String
   style : Style

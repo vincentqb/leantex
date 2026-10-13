@@ -164,8 +164,8 @@ private def spelling (o : Obj) : String :=
   | .real raw => raw
   | _ => "0"
 
-/-- The sRGB each corner of the CMYK cube previews as, index `8c + 4m + 2y + k`, as Poppler renders
-device CMYK with no output profile. -/
+/-- The sRGB each corner of the CMYK cube previews as, index `8c + 4m + 2y + k`, as Poppler 26.09's
+pdftoppm renders device CMYK with no output profile. -/
 public def cmykCorners : Array (UInt8 × UInt8 × UInt8) :=
   #[(255, 255, 255), (35, 31, 32), (255, 242, 0), (28, 26, 0),
     (236, 0, 140), (36, 0, 0), (237, 28, 36), (34, 0, 0),

@@ -30,7 +30,8 @@ public inductive Program where
   | missing
   deriving Inhabited
 
-/-- One code of a string: its value, byte length, glyph, advance in glyph-space thousandths, and text. -/
+/-- One code of a string: its value, byte length, glyph, advance in glyph-space thousandths (a Type 3
+font's in glyph space), and text. -/
 public structure Code where
   code : Nat
   bytes : Nat
@@ -504,7 +505,7 @@ public def load (d : Doc) (font : Obj) : Loaded :=
   | some (.name "Type0") => loadComposite d font
   | _ => loadSimple d font
 
-/-- A string's codes (§9.4.3, §9.7.6.2), each with its CID, glyph, width and text. -/
+/-- A string's codes (§9.4.3, §9.7.6.2), each with its byte length, glyph, width and text. -/
 public def Loaded.codes? (f : Loaded) (s : ByteArray) : Array Code := Id.run do
   match f.codes with
   | .simple glyphs widths text =>

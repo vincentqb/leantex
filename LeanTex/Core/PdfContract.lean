@@ -98,7 +98,8 @@ public def IntentReq.leOpt (a b : Option IntentReq) : Prop := a = none ∨ a = b
 public instance : DecidableRel IntentReq.leOpt := fun a b =>
   inferInstanceAs (Decidable (a = none ∨ a = b ∨ b = some .both))
 
-/-- Page boxes: no demand, or exactly one of `/TrimBox` and `/ArtBox` on every page (PDF/X). -/
+/-- Page boxes: no demand, or exactly one of `/TrimBox` and `/ArtBox` on every page (PDF/X-4's rule,
+assumed for X-6). -/
 public inductive BoxPolicy where
   | any
   | trimXorArt
@@ -253,7 +254,8 @@ public def accessible : Contract := {
   boxes := .any
   ids := #[.pdfua] }
 
-/-- PDF/X-6 (ISO 15930-9:2020): a CMYK `GTS_PDFX` intent, Trim-xor-Art boxes, and the `pdfxid` identification. -/
+/-- PDF/X-6 (ISO 15930-9:2020): a `GTS_PDFX` intent (CMYK by default), Trim-xor-Art boxes (assumed
+from PDF/X-4), and the `pdfxid` identification. -/
 public def print : Contract := {
   infoDict := .full
   filters := tableSix

@@ -387,7 +387,8 @@ figure table before spelling. -/
 public def inkRasterPage? (pages : Array PageOut) : Option Nat :=
   pages.findIdx? fun p => p.inks.any fun k => !k.fig.imageFree
 
-/-- The drawn figures the store holds as forms in the kept faces, every resource named 0. -/
+/-- The drawn figures the store holds as forms in the kept faces, each raster named by its store
+entry and every other resource 0 until `namedPageOps` names it onto the table. -/
 public def docFigsWith (fs : FontSet) (keep : Array Nat) (imgs : Image.Store) : Array (Option FigForm) :=
   let remap := remapOf fs keep
   let wt := widthTable fs.fonts keep

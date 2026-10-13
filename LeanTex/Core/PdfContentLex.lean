@@ -30,7 +30,8 @@ public def runEnd (b : ByteArray) (i : Nat) : Nat :=
 @[expose] public def asciiAt (b : ByteArray) (i j : Nat) : String :=
   String.ofList ((List.range (j - i)).map fun k => Char.ofNat (at? b (i + k)))
 
-/-- A number token's object (§7.3.3): a real where it holds a point, else an integer. -/
+/-- A number token's object (§7.3.3): a real where it holds a point, an integer where it reads as
+one, else `none`. -/
 @[expose] public def numberObj (raw : String) : Option Obj :=
   if raw.contains '.' then some (.real raw) else raw.toInt?.map .int
 

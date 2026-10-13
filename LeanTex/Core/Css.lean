@@ -26,7 +26,7 @@ public inductive Combinator where
   | child
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A compound selector: an optional type (`none` for `*`), classes and ids, all required. -/
+/-- A compound selector: an optional type (`none` for `*` or no type), classes and ids, all required. -/
 public structure Compound where
   type : Option String
   classes : Array String

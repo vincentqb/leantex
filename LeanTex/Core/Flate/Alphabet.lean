@@ -5,7 +5,8 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.Frequencies
 
-/-- The declared alphabet's size: through its last live symbol, and at least the format's minimum. -/
+/-- The declared alphabet's size: through its last live symbol, and at least the format's minimum or
+the whole table where shorter. -/
 def usedCount (minimum : Nat) (freqs : Array Nat) : Nat := Id.run do
   let mut n := min minimum freqs.size
   for s in [0:freqs.size] do

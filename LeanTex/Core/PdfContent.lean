@@ -449,7 +449,7 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx 
   let sm := st.size.toPtMilli
   let t0 := penTarget sm st.tz p.xm st.x
   let wf := st.widths.getD idx #[]
-  -- Reserved at full length: growth by doubling doubles the renderer's time.
+  -- Reserved at full length, so the fold never regrows its arrays.
   let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => t0 + runOffset sm P))
     ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, p.adv, 0⟩
   st.pushRun (runItem r.gids r.nums) w { p with adv := r.adv }

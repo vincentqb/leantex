@@ -1724,7 +1724,8 @@ public theorem Loaded.size?_vector_exact (en : Loaded) (fig : Gfx.Figure Gfx.Run
 
 public def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 
-/-- The names graphicx resolves an extensionless source against, in its order under pdfTeX. -/
+/-- The names an extensionless source resolves against: graphicx's order under pdfTeX over the
+formats that embed, then `.svg`. -/
 public def sourceCandidates (src : String) : List String :=
   [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
    src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".svg", src ++ ".SVG"]

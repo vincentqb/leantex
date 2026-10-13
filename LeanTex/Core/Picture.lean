@@ -6,8 +6,8 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 import LeanTex.Core.GfxAffine
 
-/-! The rendered `tikzpicture` subset, evaluated at elaboration into concrete shapes: statements,
-pgfmath arithmetic, loops, colours, paths and nodes. -/
+/-! The rendered `tikzpicture` and `tikzcd` subsets, evaluated at elaboration into concrete shapes:
+statements, pgfmath arithmetic, loops, colours, paths and nodes. -/
 
 namespace LeanTex.Core.Picture
 
@@ -113,7 +113,7 @@ public def ofRaws (raws : Array Parse.Raw) : Array Tok :=
 public def ofSetting (setting : Span × Array Parse.Raw) : Array Tok :=
   ofRawsAt (fun p => some ⟨setting.1.file, p⟩) setting.2
 
-/-- A `\foreach` binding's value: a number in milli, a length in sp, or a list item's raw text. -/
+/-- A bound macro's value: a number in milli, a length in sp, or a list item's raw text. -/
 public inductive Val where
   | num (m : Int)
   | len (sp : Sp)
@@ -412,7 +412,8 @@ public theorem range_unit_size (a b : Int) (hab : a ≤ b) :
     omega
   exact range_size _ _ _ _ hc
 
-/-- How a TeX conditional's test is read: arithmetic, constant, or opaque and refused by name. -/
+/-- How a TeX conditional's test is read: arithmetic, constant, the picture's mode, or opaque and
+refused by name. -/
 public inductive CondKind where
   | num (name : String)
   | always (v : Bool)
@@ -437,8 +438,8 @@ private def condTakesNoTest (n : String) : Bool :=
   n == "iftrue" || n == "iffalse" || n == "ifmmode" || n == "ifhmode" ||
     n == "ifvmode" || n == "ifinner"
 
-/-- How a `\pgfmathset…macro` stores its value: as pgfmath prints it, floored to a whole unit, or
-as a length. -/
+/-- How a `\pgfmathset…macro` stores its value: as pgfmath prints it, truncated toward zero to a
+whole unit, or as a length. -/
 public inductive SetMode where
   | plain
   | trunc
@@ -519,7 +520,8 @@ private inductive Mode where
   | scopeBody
   | scopeHead (bracket : Bool)
   | skip
-  /-- After a conditional opener, collecting its test, which ends at the space TeX's number scan needs. -/
+  /-- After a conditional opener, collecting its test: an arithmetic test ends at the space after its
+  second number, any other at its first space. -/
   | icond (kind : CondKind) (test : Array Tok) (sawRel : Bool)
   deriving Repr, Inhabited
 
@@ -771,7 +773,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
       | none =>
         { (st.outside "this '\\foreach' body")
           with mode := .skip, pending := #[] }
-    -- `.group` never reaches here: `parseToks` owns that arm.
+    -- `.group` never reaches here: `parseTok` owns that arm.
     | _ =>
       { (st.outside "this '\\foreach' body")
         with mode := .skip, pending := #[] }
@@ -819,7 +821,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
         { st with mode := .icond kind (test.push t) true }
       else { st with mode := .icond kind (test.push t) sawRel }
     | .space => if ready then close st else st
-    -- `\else` or `\fi` immediately: a test with no branch at all.
+    -- `\else` or `\fi` straight after the test: an empty then-branch, or no branch at all.
     | .ctrl "else" => (close st).elseHere
     | .ctrl "fi" => (close st).fiHere
     | _ => { st with mode := .icond kind (test.push t) sawRel }
@@ -880,7 +882,8 @@ public structure Cx where
   everyPath : Array (Array Tok) := #[]
   /-- What `every text node part/.style` declared, at the level of `every node`. -/
   everyText : Array (Array Tok) := #[]
-  /-- `node distance` between relatively placed nodes' centres, vertical then horizontal; pgf's default 1 cm. -/
+  /-- `node distance` between relatively placed nodes' facing borders, vertical then horizontal; pgf's
+  default 1 cm. -/
   dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
   /-- Whether the parse named a construct outside the subset, to which an unresolved name then traces. -/
   parseGap : Bool := false
@@ -896,7 +899,7 @@ public structure Cx where
   bodySize : Sp := Ir.baseFontSize
   /-- How a label's content measures at a per-mille size, provided by the driver through the elaborator. -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
-  /-- The current colour (pgf's `.`), black until `\color` or `\textcolor` sets it. -/
+  /-- The current colour (pgf's `.`), black until a colour option, `\color` or `\textcolor` sets it. -/
   ink : Ir.Color := Ir.Color.black
   /-- The font declarations in force, innermost last. -/
   decls : Array String := #[]
@@ -1202,8 +1205,8 @@ public def optKey (opt : Array Tok) : String := Id.run do
     unless t == .space do s := s ++ tokText t
   return s
 
-/-- The picture's inherited entries merged with a path's or node's own, an inherited entry the
-inner bracket renames dropped. -/
+/-- The picture's inherited entries merged with a path's or node's own, dropping an inherited entry
+the inner bracket sets again. -/
 public def inheritOpts (outer inner : Array (Array Tok)) : Array (Array Tok) :=
   let names := inner.map optKey
   outer.filter (fun o => !names.contains (optKey o)) ++ inner
@@ -1563,8 +1566,8 @@ public inductive NodeShape where
   | diamond
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A drawn node's outline as pgf draws it: centred on the text box, per axis the text box plus
-two inner seps or the minimum where larger. -/
+/-- A drawn node's outline as pgf draws it, centred on the text box: its shape circumscribing the
+text box padded by the inner seps, or the minimum size where larger. -/
 public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
     Sp × Sp × Sp :=
   let mid := sy + (lo + hi) / 2
@@ -1654,7 +1657,7 @@ private def nodeAnchorOf : String → Option NodeAnchor
 /-- Milli cosine of 45°, where a circle's corner anchors stand. -/
 private def diag45 : Int := 707
 
-/-- The horizontal reach of a corner anchor: a rectangle's border, 0.707107 of a circle's or
+/-- The horizontal reach of a corner anchor: a rectangle's border, 0.707 of a circle's or
 ellipse's radius, a diamond's mid-side. -/
 public def NodeGeom.cornerA (g : NodeGeom) : Sp :=
   match g.shape with
@@ -1776,7 +1779,8 @@ public structure Ev where
   diags : Array PDiag := #[]
   /-- The box a `\useasboundingbox` declared (`Ir.Pic.Picture.declared`). -/
   declared : Option Ir.Pic.Box := none
-  /-- Each placed node's border: text extent plus `inner sep`. -/
+  /-- The boxes the picture's bounds read: each placed node's border (text extent plus `inner sep`),
+  and a clip's hull in place of what it clips. -/
   borders : Array Ir.Pic.Box := #[]
   /-- Named nodes so far, latest first, which a path endpoint resolves against. -/
   nodes : List (String × NodeGeom) := []
@@ -1784,7 +1788,7 @@ public structure Ev where
   readOpts : Bool := false
   /-- Whether a construct the subset could not reach swallowed declarations. -/
   gapped : Bool := false
-  /-- How many nodes this run deferred because the node they are placed against was not yet in scope. -/
+  /-- How many nodes this run could not place, their `at` or relative target not yet resolved. -/
   deferred : Nat := 0
   /-- The clip the statement just evaluated set, applied to what follows in its scope. -/
   clipGeom : Option Gfx.Geom := none
@@ -1798,7 +1802,8 @@ private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
 public def Ev.toPicture (ev : Ev) (baseline : Option Sp := none) : Ir.Pic.Picture :=
   { shapes := ev.shapes, declared := ev.declared, borders := ev.borders, baseline }
 
-/-- A placed node's name into the table and its border into the picture's box, unless it is a coordinate. -/
+/-- A placed node's name into the table and, unless it is a coordinate, its border into the
+picture's box. -/
 public def Ev.place (ev : Ev) (coordinate : Bool) (border : Ir.Pic.Box)
     (nodes : List (String × NodeGeom)) : Ev :=
   if coordinate then { ev with nodes } else { ev with borders := ev.borders.push border, nodes }
@@ -3567,7 +3572,7 @@ is dropped")
       | .ok d => ysep := some d
       | .error e => ev := ev.diag (.W0334, s!"in 'inner ysep', {e}; the option \
 is dropped")
-    -- `outer sep` moves the anchors past the border and never the drawn path; `auto` is half the line width.
+    -- `outer sep` moves a drawn node's anchors past its border, never the path; `auto` is half the line width.
     | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
       match rest, readDim rest with
       | [.ident "auto"], _ => oxsep := none; oysep := none
@@ -3728,7 +3733,7 @@ outside the rendered picture subset; the label is not drawn")
   let ownB : Sp := match outline? with
     | some (_, h) => h / 2
     | none => borderHalf declB halfB sepY
-  -- pgf's anchors stand one outer sep beyond the border.
+  -- A drawn or filled node's anchors stand one outer sep past its border, any other node's on it.
   let pgfBorder : Bool := draw.isSome || fillCol.isSome
   let (outA, outB) : Sp × Sp :=
     if !pgfBorder then (0, 0)
@@ -3798,7 +3803,7 @@ this one against; the node is not drawn")
               .ink (.draw (.ellipse sx sy (w / 2) (h / 2)) (fillCol.map Ir.Pic.solidFill)
                 (stroke.map Ir.Pic.strokeOf))
             | .diamond =>
-              -- The drawn diamond stands inside its anchors by 1.414213 outer seps less one (`\backgroundpath`).
+              -- The drawn diamond stands √2 outer seps inside its anchors (`\backgroundpath`).
               let dx := w / 2 + outA - outA * 1414213 / 1000000
               let dy := h / 2 + outB - outB * 1414213 / 1000000
               let sub : Gfx.Subpath :=
@@ -3866,7 +3871,6 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
     .draw (.path #[sub]) (some (Ir.Pic.solidFill color)) none
   match k with
   | .to =>
-    -- Stroked at 0.8 line widths, round caps and joins; tip end 0.21 pt and 0.625 line widths ahead.
     let tipEnd : Int := Dim.pt 21 / 100 + lw * 625 / 1000 -- \pgfarrowsrightextend (pgfcorearrows.code.tex)
     let f := frame tipEnd
     let sub : Gfx.Subpath :=
@@ -3877,7 +3881,6 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
       { Ir.Pic.strokeOf { color, width := lw * 8 / 10 } with cap := .round, join := .round }
     some (.node (.draw (.path #[sub]) none (some st)), f 0 0)
   | .cmRightarrow =>
-    -- arrows.meta's Computer Modern Rightarrow: length +1.6pt 2.2, width' +0pt 2.096774, round.
     let len : Int := Dim.pt 16 / 10 + lw * 22 / 10 -- length = +1.6pt 2.2 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 2096774 / 1000000
     let ia := len - lw
@@ -3893,7 +3896,6 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
       { Ir.Pic.strokeOf { color, width := lw } with cap := .round, join := .round }
     some (.node (.draw (.path #[sub]) none (some st)), f (-(lw / 2)) 0)
   | .latex =>
-    -- Filled, its sides curved: the apex 9 units ahead, the back 1 behind.
     let f := frame (9 * a)
     some (.node (filled
       { start := f (9 * a) 0, closed := true
@@ -3901,13 +3903,11 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
           .line (f (-a) (-(375 * a / 100))),
           .cubic (f (2 * a) (-(2 * a))) (f (63333 * a / 10000) (-(a / 2))) (f (9 * a) 0)] }), f 0 0)
   | .stealthOld =>
-    -- Filled: the apex 5 units ahead, the back corners 3 behind, the notch at the origin.
     let f := frame (5 * a)
     some (.node (filled
       { start := f (5 * a) 0, closed := true
         segs := #[.line (f (-3 * a) (4 * a)), .line (f 0 0), .line (f (-3 * a) (-4 * a))] }), f 0 0)
   | .latexMeta =>
-    -- arrows.meta's Latex: length +3pt 4.5 .8, width' +0pt .75, the line width capped at a fifth of the length.
     let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 75 / 100
     let alw : Int := min lw (len / 5)
@@ -3929,7 +3929,6 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
     some (.node (.draw (.path #[sub]) (some (Ir.Pic.solidFill color))
       (some (Ir.Pic.strokeOf { color, width := alw }))), f 0 0)
   | .stealth =>
-    -- arrows.meta's Stealth: length +3pt 4.5 .8, width' +0pt .75, inset' +0pt 0.325.
     let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 75 / 100
     let ins : Int := len * 325 / 1000
@@ -4401,8 +4400,8 @@ public def ShadeSpec.initial : ShadeSpec :=
     middle := Ir.Color.mix (base "gray") 50 (base "white"), bottom := base "white"
     inner := base "gray", outer := base "white", ball := base "blue" }
 
-/-- One shading colour key (tikz.code.tex): the colour it sets and the kind and angle it switches
-to; `none` for an unknown side. -/
+/-- One shading colour key (tikz.code.tex): the colour it sets, the kind it switches to and, for an
+edge, the axis angle; `none` for an unknown key. -/
 public def ShadeSpec.setColor (s : ShadeSpec) (side : String) (c : Ir.Color) :
     Option ShadeSpec :=
   let mid (t b : Ir.Color) : Ir.Color := Ir.Color.mix t 50 b
@@ -5424,7 +5423,7 @@ private def applyTree (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg 
   (2 * (k : Int) - ((n : Int) + 1)) * sd / 2
 
 /-- A child's offset from its parent's centre, pgf's `\tikz@grow@direction`: level distance along
-the growth, siblings spread across it. -/
+the growth and, where `spread` holds, siblings spread across it. -/
 public def growthOffset (grow : Int) (swap spread : Bool) (ld sd : Sp) (n k : Nat) : Sp × Sp :=
   let along : Sp × Sp := (cosDeg grow * ld / 1000, sinDeg grow * ld / 1000)
   if !spread then along else
@@ -6099,7 +6098,7 @@ rendered picture subset; the keys are dropped")
       (env, { ev with declared := some b })
     | .error d => (env, ev.diag d)
   | .set name expr setMode, env, ev =>
-    -- The truncating form floors toward zero to a whole unit, as `\pgfmathtruncatemacro` does.
+    -- Truncation toward zero, as `\pgfmathtruncatemacro` does; `Int` division floors a negative.
     let floorUnit (m : Int) : Int := if m ≥ 0 then m / 1000 * 1000 else -((-m) / 1000 * 1000)
     match evalExpr env expr, setMode with
     | .ok (.num m), .plain => ((name, Val.num m) :: env, ev)
@@ -6246,7 +6245,8 @@ private structure Macro where
   body : List Tok
   deriving Repr, Inhabited
 
-/-- The control words this walk owns, which a document's redefinition does not reach. -/
+/-- The control words this walk owns besides the conditionals, which a document's redefinition does
+not reach. -/
 public def walkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
@@ -6619,7 +6619,8 @@ public def placeholder (code : String) : Ir.Pic.Picture :=
 
 namespace Cd
 
-/-- tikz-cd's row and column separations by name, in milli-em (tikzlibrarycd.code.tex). -/
+/-- tikz-cd's row separations by name, in milli-em (tikzlibrarycd.code.tex); `colSepEm` holds the
+columns'. -/
 public def rowSepEm : List (String × Int) :=
   [("huge", 3600), ("large", 2700), ("normal", 1800), ("scriptsize", 1350), ("small", 900),
    ("tiny", 450)]
