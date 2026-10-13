@@ -142,7 +142,7 @@ public structure PageSpec where
   /-- The rules the document draws on every page, in the order drawn. -/
   drawn : Array DrawnRule := #[]
   /-- Whether the document declares page boxes the engine cannot evaluate, so
-  that its drawn cut marks stand for the trim. -/
+  the trim its drawn cut marks cut stands for them. -/
   trimMarked : Bool := false
   deriving Repr, BEq, Inhabited
 
@@ -1236,7 +1236,8 @@ public def Palette.restore (p opening : Palette) (ref : ColorRef) : Palette :=
   | some c => p.declare ref c (opening.decorative.contains ref)
   | none => p.erase ref
 
-/-- Two palettes that resolve every name alike, whatever order their entries were declared in. -/
+/-- Two palettes that resolve every name alike, whatever their declaration
+order, with the same decorative names and cover. -/
 @[expose] public def Palette.sameAs (a b : Palette) : Bool :=
   -- Equal entry order is the fast path; only a reordered palette pays the quadratic reading.
   (a.entries == b.entries && a.decorative == b.decorative ||
@@ -1788,8 +1789,8 @@ public structure OutputSpec where
   schemes : Option (Array Scheme) := none
   contract : OutputContract := {}
   /-- The conformance profiles the PDF is held to
-  (`profiles = pdf/a-4, pdf/ua-2`), each implying a `pdf.profile` assertion.
-  -/
+  (`profiles = pdf/a-4, pdf/ua-2`), each implying a `pdf.profile`
+  assertion. -/
   profiles : Array String := #[]
   css : Option String := none
   /-- A local stylesheet the driver captures relative to the document, whose
@@ -1856,8 +1857,8 @@ public structure Meta where
   `\pdfmeta{ language = .. }`. -/
   language : Option String := none
   /-- The PDF version the document declares
-  (`\DocumentMetadata{ pdfversion = 1.7 }` or `\pdfmeta{ version = "1.7" }`).
-  -/
+  (`\DocumentMetadata{ pdfversion = 1.7 }` or
+  `\pdfmeta{ version = "1.7" }`). -/
   pdfVersion : Option String := none
   deriving Repr, BEq, Inhabited
 
@@ -2592,8 +2593,8 @@ public inductive Inline where
   /-- `\label{key}`: the anchor a cross-reference lands on. -/
   | label (key : String)
   /-- `\ref{key}`, `\eqref{key}` or cleveref's family: a cross-reference,
-  emitted as `text = "??"` and `target = none` until `resolveRefs` fills both.
-  -/
+  emitted as `text = "??"` and `target = none` until `resolveRefs` fills
+  both. -/
   | ref (key : String) (form : RefForm) (text : String) (target : Option String)
   /-- A drawn text decoration, its geometry resolved from the active face by layout. -/
   | decorated (kind : Decoration) (body : Array Inline)
@@ -2835,7 +2836,8 @@ public inductive LabelAlign where
 /-- One shape of an elaborated picture, in picture coordinates: sp with y
 growing upward, as TikZ has it. -/
 public inductive Shape where
-  /-- A text label whose box is centred on `(x, y)`, at `scale` per mille of the body size. -/
+  /-- A text label standing at `(x, y)` by its `align` anchor, at `scale` per
+  mille of the body size. -/
   | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
       (align : LabelAlign)
   /-- One node of the vector model, which both backends emit as the figure's own. -/
@@ -3928,8 +3930,8 @@ public inductive FloatKind where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- What an algorithm's input/output line declares (algorithm2e's
-`\KwIn`/`\KwOut`/`\KwData`/`\KwResult`, algorithmicx's `\Require`/`\Ensure`).
--/
+`\KwIn`/`\KwOut`/`\KwData`/`\KwResult`, algorithmicx's
+`\Require`/`\Ensure`). -/
 public inductive AlgIo where
   | input
   | output
@@ -4415,7 +4417,8 @@ public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block)
 public def displayPictureRole : String := "display-picture"
 
 /-- Classify a display region: `none` when another semantic inline is present,
-else whether a formula was found among labels and empty annotations. -/
+else whether a formula or display picture was found; hand-rolled, as it reads
+through location and colour wrappers only. -/
 -- conserves: none — a classifier.
 public def displayParts : List Inline → Bool → Option Bool
   | [], seen => some seen
@@ -4473,7 +4476,7 @@ public def leavesEndPeLast : List Block → Bool
 
 end
 
-/-- A list or a quote marked as opened inside a paragraph; anything else as it is. -/
+/-- A block `partopsepEnv` accepts, marked as opened inside a paragraph; anything else as it is. -/
 public def inParagraph (b : Block) : Block :=
   if b.partopsepEnv then .role inParagraphRole #[b] else b
 
@@ -4880,7 +4883,8 @@ public theorem numberFloats_para_exact (xs : Array Inline) :
 
 mutual
 
-/-- The numbers the walk assigned to captioned floats of kind `k`, in document order. -/
+/-- The numbers the walk assigned to captioned floats of kind `k`, in document
+order; for `.sub`, a body's own letters, not those of a nested float. -/
 public def floatNumsList (k : FloatKind) (out : List Nat) : List Block → List Nat
   | [] => out
   | b :: rest => floatNumsList k (floatNumsOne k out b) rest
@@ -6317,7 +6321,8 @@ public theorem FontAxes.template_exact (a : FontAxes) (h : a.Sorted) :
     simp_all [FontAxes.template, fontAxesOf, axesList, axesOne, FontAxes.select]
 
 /-- A block title's font template: the plain block's own, or an alerted or
-example title's axes over the plain block's; `none` is bold. -/
+example title's axes over the plain block's; `none` keeps the built-in
+bold. -/
 public def blockTitleFont (styles : Styles) (kind : TitledKind) : Option (Array Inline) :=
   kind.styleElement.bind fun el =>
     let own := (styles.find? el).bind (·.font)
@@ -7029,8 +7034,9 @@ public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
 public def Doc.frameCount (doc : Doc) : Nat :=
   doc.frameCountAt 0
 
-/-- The name each frame is known by at its body index: its number,
-`standout-n` or `titlepage-n`; `none` at every other block. -/
+/-- The name each frame is known by at its body index: its number
+(`appendix-n` past `frameRestart`), else `standout`, `standout-2`, … or
+`titlepage`, `titlepage-2`, …; `none` at every other block. -/
 public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
   let nums := doc.frameNumbers
   let mut standouts := 0
@@ -7918,7 +7924,6 @@ node in document order, a node before its content. -/
 
 end
 
-/-- `foldInline` over an inline tree, the collectors' entry. -/
 @[expose] public def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
   foldInlineList fi acc xs.toList
 
@@ -8015,7 +8020,6 @@ node first, a frame's title and a float's caption before their bodies. -/
 
 end
 
-/-- `foldBlock` over a block tree. -/
 @[expose] public def foldBlocks (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (xs : Array Block) : α :=
   foldBlockList fb fi acc xs.toList
@@ -8083,7 +8087,6 @@ public def foldCtxInlineList (w : CtxFold γ α) (ctx : γ) (acc : α) : List In
 
 end
 
-/-- `foldCtxInline` over an inline tree, the walk's inline entry. -/
 public def foldCtxInlines (w : CtxFold γ α) (ctx : γ) (acc : α) (xs : Array Inline) : α :=
   foldCtxInlineList w ctx acc xs.toList
 
@@ -8219,7 +8222,6 @@ public def foldCtxBlockCols (w : CtxFold γ α) (ctx : γ) (acc : α) :
 
 end
 
-/-- `foldCtxBlock` over a block tree, the walk's entry. -/
 public def foldCtxBlocks (w : CtxFold γ α) (ctx : γ) (acc : α) (xs : Array Block) : α :=
   foldCtxBlockList w ctx acc xs.toList
 
@@ -8659,8 +8661,9 @@ public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : A
 
 mutual
 
-/-- Every link of a navigation landmark's body, in document order, as
-(text, target). -/
+/-- Every link of a navigation landmark's body, in document order, as (text,
+target); notes and footnotes are never navigation, and a link is read
+whole. -/
 -- conserves: none — projects the links alone.
 private def navLinkList (out : Array (String × String)) : List Block → Array (String × String)
   | [] => out
@@ -9249,7 +9252,6 @@ public def coveredFractionDefault : Nat := 38
 
 section DesignResolve
 
-/-- The colour the palette declares for a role, if any. -/
 public def Design.declared? (pal : Palette) (r : Role) : Option Color :=
   pal.lookup (.role r)
 
@@ -10153,8 +10155,8 @@ public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Pal
   (SeedPalette.Colors.role st.seeds st.colors (((SeedPalette.bound st).lookup r).getD r)).map
     fun c => Color.ofHtml c.r c.g c.b
 
-/-- Each bound element ink the document does not declare is erased where its
-ground stands at another colour than generated. -/
+/-- The palette with each bound element ink the document does not declare
+erased where its ground stands at another colour than generated. -/
 public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette :=
   match pal.seeded with
   | none => pal
@@ -11500,7 +11502,8 @@ public theorem titleBars_text (st : ElementStyle) (ink : Color × Option ColorRe
 
 mutual
 
-/-- Every `.section` level in document order: the document's heading outline. -/
+/-- Every `.section` level in document order, the document's heading outline;
+frame bodies are walked, notes are not. -/
 @[expose] public def headingLevels (xs : Array Block) : Array HeadingLevel := headingLevelList #[] xs.toList
 
 @[expose] public def headingLevelList (out : Array HeadingLevel) : List Block → Array HeadingLevel
@@ -11870,8 +11873,8 @@ public def ChromeSlot.isFrameSequence : ChromeSlot → Bool
   | .frameFraction => true
   | .sectionTitle => false
 
-/-- A `\framefoot` note carrying `\pagenumber`/`\pagecount` beside a
-frame-sequence slot, named rather than mixed silently. -/
+/-- W0332 when a `\framefoot` note carries `\pagenumber`/`\pagecount` beside a
+frame-sequence chrome slot the document did not declare itself. -/
 public def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
   unless doc.docClass.record.chrome && doc.foot.isNone && !doc.chromeDeclared do
     return #[]
@@ -13217,7 +13220,8 @@ public theorem keepFor_covers (avail : List String) (t0 : String) (h0 : t0 ∈ a
 
 mutual
 
-/-- Whether no backend conditional stands anywhere in the blocks. -/
+/-- Whether no backend conditional stands anywhere in the blocks; hand-rolled
+on `keepForList`'s skeleton for its proofs. -/
 @[expose] public def onlyFreeList : List Block → Bool
   | [] => true
   | b :: rest => onlyFreeOne b && onlyFreeList rest
@@ -14185,7 +14189,8 @@ specifications. -/
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
   mapBlockList gp f #[] xs.toList finish listing
 
-/-- The generic map with every picture passed through untouched. -/
+/-- The generic map with every picture passed through untouched; a rewrite
+that must reach label text uses `mapBlocksPic`. -/
 @[expose] public def mapBlocks (f : Inline → Inline) (xs : Array Block)
     (finish : Array Inline → Array Inline := id)
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
@@ -15613,8 +15618,9 @@ public theorem mapBlocks_text (f : Inline → Inline)
     Conserves blocksText (mapBlocks f) :=
   mapBlocksPic_text id f hf
 
-/- Joins neighbouring text leaves only, never across a style, link, overlay,
-footnote or other semantic boundary. -/
+/-- Push one leaf onto a reversed region, joining neighbouring text leaves
+only, never across a style, link, overlay, footnote or other semantic
+boundary. -/
 private def pushLocationText (out : List Inline) (x : Inline) : List Inline :=
   match x with
   | .text s =>
@@ -15866,8 +15872,9 @@ public theorem wrapDecls_text (ds : List Decl) : Conserves plainText (wrapDecls 
 
 mutual
 
-/-- The named size a paragraph is set in, read down the chain of single
-wrappers around its whole content; the outermost size scope wins. -/
+/-- The named size a paragraph is set in: the outermost size scope on the
+chain of single wrappers around its whole content; hand-rolled, not a
+`foldInlines` leaf, because it stops at that scope. -/
 -- conserves: none — a classifier.
 public def paraStepIn (xs : List Inline) : Option String :=
   match xs with
@@ -15898,14 +15905,17 @@ end
 wrapping its whole content. -/
 public def paraStep? (xs : Array Inline) : Option String := paraStepIn xs.toList
 
-/-- The size step text a template inserts leads at: the template's own, since
-a size command inside it ends before its `\par`. -/
+/-- The size step text a template inserts leads at: its own step at or above
+the body's on `scale`; `none`, the template's own leading, for a smaller
+one. -/
 public def insertedStep? (scale : List (String × Nat)) (xs : Array Inline) : Option String :=
   (paraStep? xs).filter fun n => 1000 ≤ ((scale.find? (·.1 == n)).map (·.2)).getD 1000
 
 mutual
 
-/-- The wrapper chain with the size scope `paraStepIn` reads removed, every other wrapper kept. -/
+/-- The wrapper chain with the size scope `paraStepIn` reads removed, every
+other wrapper kept; hand-rolled, not `mapInlines`, as it rewrites only that
+chain. -/
 public def liftParaStepIn (xs : List Inline) : Array Inline :=
   match xs with
   | [x] => liftParaStepOne x
@@ -16444,7 +16454,6 @@ private def resolveRefLeaf (loc : Locale)
   | .ref key form _ _ => resolveOneRefWith loc look key form
   | _ => x
 
-/-- The table read as a lookup. -/
 public def refScan (table : RefTable) : String → Option (String × Option RefBinding) :=
   fun k => table.find? (·.1 == k)
 
@@ -16470,7 +16479,7 @@ private def resolveRefInlinesIdx (loc : Locale)
 public def resolveRefInline (loc : Locale) (table : RefTable) (x : Inline) : Inline :=
   mapInline (resolveRefLeaf loc (refScan table)) x
 
--- conserves: none — the block face of `resolveRefInline`.
+-- conserves: none — rewrites ref placeholders to numbers.
 public def resolveRefs (loc : Locale) (table : RefTable) (xs : Array Block) : Array Block :=
   resolveRefsIdx loc (keyIndex table) xs
 
@@ -16518,7 +16527,7 @@ public theorem resolveOneRef_missing (loc : Locale) (table : RefTable) (key : St
   rw [hfind]
 
 /-- The inline face of `resolveRefs`, for the furniture regions `mapDoc` hands it. -/
--- conserves: none — the inline face of `resolveRefs`.
+-- conserves: none — rewrites ref placeholders to numbers.
 public def resolveRefInlines (loc : Locale) (table : RefTable) (xs : Array Inline) :
     Array Inline :=
   resolveRefInlinesIdx loc (keyIndex table) xs
