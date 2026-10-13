@@ -19,6 +19,7 @@ import Tests.BibModel
 import Tests.PdfNative
 import Tests.SeedPalette
 import Tests.Schemes
+import Tests.SvgRoute
 import scripts.Rung
 import Tests.MonoDefault
 
@@ -198,10 +199,14 @@ def registry : List AuditRow :=
    -- line or the lazy line the reader consumed, and its check holds all
    -- three strict classes and their fix-its.
    ⟨.E0390, .refusal, .fails, check% mdSurfaceChecks⟩,
-   -- A PDF figure's feature the importer does not draw: drawing it natively
-   -- retires both, the route that names it is the boundary's one decision.
+   -- A figure's feature the engine does not draw, PDF or SVG: drawing it
+   -- natively retires both the degraded drawing's code and the converter's
+   -- note, and the route that names it is the boundary's one decision.
    ⟨.W0609, .native, .native, check% figureRouteChecks⟩,
-   ⟨.N0024, .native, .native, check% figureRouteChecks⟩,
+   ⟨.N0024, .native, .native, check% Tests.svgRouteChecks⟩,
+   -- An SVG names a family the document does not declare: the text sets in
+   -- the document's own face, as LaTeX's svg package sets it, and says so.
+   ⟨.N0026, .keep, .rewritten, check% Tests.svgFontMatchChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,

@@ -2,6 +2,11 @@ module
 
 public import Tests.Support
 public import scripts.Gate
+public import LeanTex.Cli.Driver
+public import LeanTex.Core.FigureOutline
+public import LeanTex.Core.FigureStore
+public import Tests.CorpusStore
+public import LeanTex.Core.LayoutFigure
 
 public section
 
@@ -2854,7 +2859,7 @@ def goldenArts (oneFace : Font.FontSet) : IO (Array GoldenArt) := do
   for name in goldenNames do
     let (doc, _) ← goldenDoc name
     let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some oneFace)
     let out := layoutOf oneFace doc geom none store
     let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
     arts := arts.push
@@ -2910,6 +2915,7 @@ def pdfCensusTable :
   ("valign", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
   ("figures", (1, 3, 0, 2, 0, 0, 0, none, ["FlateDecode"])),
+  ("svg-figures", (1, 1, 1, 9, 0, 0, 0, none, ["FlateDecode"])),
   ("math", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-alpha", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("webpage", (1, 1, 0, 0, 0, 6, 0, none, ["FlateDecode"])),
@@ -3077,7 +3083,7 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some oneFace)
     let out := layoutOf oneFace doc geom none store
     let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
     match PdfRead.objects pdf with
@@ -3298,11 +3304,11 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
   let plain (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.contentOpsPlain g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p)
+    Pdf.render (Pdf.contentOpsPlain g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[] p)
   let stripped (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    stripMarkLines (Pdf.render (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p))
+    stripMarkLines (Pdf.render (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[] p))
   let ink (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p))
+    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[] p))
   t "content ops: text, fills, images and rules render to the recorded stream"
     (plain geom contentOpsTextPage == contentOpsTextExpected)
   t "content ops: every path shape and paint renders to the recorded stream"
@@ -3321,7 +3327,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
       && ink bleed contentOpsTextPage == contentOpsBleedExpected)
   -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
-    (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames
+    (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[]
         contentOpsTextPage)
       == Pdf.paintRuns contentOpsTextPage &&
       Pdf.paintRuns contentOpsTextPage == Pdf.pageRuns contentOpsTextPage)
@@ -3341,7 +3347,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
   let typed (p : Layout.PageOut) : String :=
     stripMarkLines (Pdf.render (Pdf.contentOps geom remap
-      (Pdf.widthTable twoFace.fonts #[0, 1]) imgMap (Pdf.tagsOf ⟨#[]⟩) Pdf.figureNames p))
+      (Pdf.widthTable twoFace.fonts #[0, 1]) imgMap (Pdf.tagsOf ⟨#[]⟩) Pdf.figureNames #[] p))
   t "content ops: pageStreams is the typed render under the faces' own widths"
     (streams.map (stripMarkLines <| String.fromUTF8! ·)
       == #[typed contentOpsTextPage, typed contentOpsPathPage])
@@ -3576,7 +3582,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some oneFace)
     let out := layoutOf oneFace doc geom none store
     let tree := Struct.ofDoc (Layout.pdfView doc)
     let tb := Pdf.tableOf geom oneFace out.pages store out.outline tree
@@ -3678,17 +3684,20 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (planAt (full + 1)).chunks.length == 2)
   t "features: objstm-multi exactly when a second object stream opens"
     (!bare.contains .objStmMulti && !multiAt full && multiAt (full + 1))
-  -- The census over the corpus: the four features no fixture emits never, the
-  -- bookkeeping five always, and the census is in registry order.
+  -- The census over the corpus: the three features no fixture emits never, a
+  -- transparency group exactly where a figure paints through a translucent
+  -- group, the bookkeeping five always, and the census is in registry order.
+  let translucent : List String := ["svg-figures"]
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some oneFace)
     let out := layoutOf oneFace doc geom none store
     let fs := Pdf.features geom oneFace out.pages store out.outline
-    t s!"features {n}: never tabs, transparency groups, Brotli or JPX"
-      (!fs.contains .tabs && !fs.contains .transparencyGroup && !fs.contains .brotli &&
-       !fs.contains .jpx)
+    t s!"features {n}: never tabs, Brotli or JPX"
+      (!fs.contains .tabs && !fs.contains .brotli && !fs.contains .jpx)
+    t s!"features {n}: a transparency group exactly where a figure has a translucent group"
+      (fs.contains .transparencyGroup == translucent.contains n)
     t s!"features {n}: always the cross-reference stream, the object stream, XMP, the structure tree, one CIDFontType2"
       (fs.contains .xrefStream && fs.contains .objStm && fs.contains .xmp &&
        fs.contains .structTree && fs.contains .cidFontType2 && !fs.contains .cidFontType0)
@@ -3826,14 +3835,14 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
   let ops (p : Layout.PageOut) :=
-    Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p
+    Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[] p
   t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; leaves under their types"
     (Pdf.render (ops contentOpsTextPage) == artifactTextExpected)
   t "artifacts: furniture lines are pagination groups inside the text object, a leafless line a bare one"
     (Pdf.render (ops artifactFurniturePage) == artifactFurnitureExpected)
   t "artifacts: the furniture page strips to its plain twin"
     (stripMarkLines artifactFurnitureExpected
-      == Pdf.render (Pdf.contentOpsPlain geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames
+      == Pdf.render (Pdf.contentOpsPlain geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames #[]
         artifactFurniturePage))
   t "artifacts: picture paths are grouped per picture under the holder's type"
     (Pdf.render (ops contentOpsPathPage) == artifactPathExpected)

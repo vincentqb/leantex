@@ -10,6 +10,7 @@ public import LeanTex.Core.Contrast
 public import LeanTex.Core.Font
 public import LeanTex.Core.GfxSvg
 public import LeanTex.Core.GfxPicture
+public import LeanTex.Core.FigureSvg
 import LeanTex.Core.Listing
 import LeanTex.Core.ContrastSolve
 import LeanTex.Core.TitleTemplate
@@ -3819,7 +3820,8 @@ A PDF may also carry a converted SVG. Boundary pictures publish through
 their own list. -/
 public def imageShips (en : Image.Loaded) : Bool :=
   -- premise: Tests.svgAssetChecks — a failed conversion publishes no source bytes.
-  !en.src.startsWith Ir.picSrcPrefix && en.webError.isNone &&
+  -- premise: Tests.svgRasterFigureChecks — a drawn figure's raster ships in the figure's file.
+  !en.src.startsWith Ir.picSrcPrefix && en.webError.isNone && en.rasterOf.isNone &&
   match en.info with
   | some i => i.form.isNone || Image.isSvg (resolvedSrc en) || en.webSvg.isSome
   | none => false
@@ -7377,6 +7379,25 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
   | .float .. => para
 
 end
+/-- **An image's element**: a drawn figure the page sets inline
+(`FigureSvg.inlineFigure?`) as its own SVG — named by the image's one
+alternative as a picture is (`pictureAltAttrs`), at the size the `<img>`
+would take (`dims`) — else the `<img>`, inside the print and reduced-motion
+switch when the entry has a still face. -/
+public def imageElement (cfg : Config) (index? : Option Nat) (req : Image.Request) (alt : Ir.Alt)
+    (dims : Array (String × String)) (img : Node) : Node :=
+  match index?.bind (FigureSvg.inlineFigure? cfg.imgs) with
+  -- A figure's marks paint the colours it declares, as a picture's do, so it
+  -- stands on the document's page wherever the screen turns over
+  -- (`schemeRules`' plate under `svg.picture`).
+  | some fig => FigureSvg.inlineSvg fig
+      (pictureAltAttrs (figureWord cfg.locale) alt ++ #[("class", "picture")] ++ dims)
+  | none =>
+    match imagePosterHref cfg.imgs req with
+    | some poster => Html.elem "picture" #[
+        Html.elem "source" #[] #[("media", "print, (prefers-reduced-motion: reduce)"),
+          ("srcset", poster)], img]
+    | none => img
 
 /-- Absolute font size and leading keep their physical lengths in the IR;
 on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
@@ -7516,21 +7537,16 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         (attrs ++ requestAttrs ++ #[("data-image-src", href),
           ("style", styleText)]))
     else
-    let attrs := #[("src", href)] ++ requestAttrs ++ imgAltAttrs alt ++
-      (if loaded?.any imageSeeThrough then #[("class", "see-through")] else #[]) ++
-      (match pixels? with
+    let dims := (match pixels? with
        | some (pw, ph) =>
          #[("width", toString pw), ("height", toString ph)]
        | none => #[]) ++
       (match style with
        | some st => #[("style", st)]
        | none => #[])
-    let img := Html.elem "img" #[] attrs
-    let acc := acc.push (match imagePosterHref cfg.imgs (size.request src) with
-      | some poster => Html.elem "picture" #[
-          Html.elem "source" #[] #[("media", "print, (prefers-reduced-motion: reduce)"),
-            ("srcset", poster)], img]
-      | none => img)
+    let seeThrough := if loaded?.any imageSeeThrough then #[("class", "see-through")] else #[]
+    let img := Html.elem "img" #[] (#[("src", href)] ++ requestAttrs ++ imgAltAttrs alt ++ seeThrough ++ dims)
+    let acc := acc.push (imageElement cfg index? (size.request src) alt dims img)
     match loaded? with
     | some en => if en.webWords.isEmpty then acc else acc.push (figureWordsNode en.webWords)
     | none => acc

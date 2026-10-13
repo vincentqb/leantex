@@ -131,6 +131,7 @@ resume            pass          untested      load,fonts,lang,landmarks,color-sc
 resume-data       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 subfigures        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 tables            pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
+svg-figures       pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 tables-deck       pass          untested      load,fonts,lang,landmarks,snaps,box-side,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,deck-links
 tables-ragged     pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 talk              pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,code-height,stage-fit,deck-links,code-wrap

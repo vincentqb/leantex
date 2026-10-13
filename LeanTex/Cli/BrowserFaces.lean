@@ -5,6 +5,7 @@ public import LeanTex.Core.PdfRead
 public import LeanTex.Core.Flate
 import LeanTex.Core.Ir
 import LeanTex.Core.HtmlDoc
+import LeanTex.Core.SvgJudge
 import LeanTex.Cli.Batch
 import LeanTex.Cli.ImageAssets
 public import LeanTex.Cli.PdfFaces
@@ -42,14 +43,19 @@ public def Plan.conversion? : Plan → Option Conversion
   | .movingSvgWithPoster op | .convertedPrimary op | .animatedWithCompanion op => some op
 
 /-- Select from the captured source and native plan. A previous browser
-conversion must not turn a PDF request into an SVG request on a second pass. -/
+conversion must not turn a PDF request into an SVG request on a second pass.
+An SVG keeps its authored bytes for the browser: one the engine draws
+carries its own still face already (the driver's, from the figure), and
+only one that moves and that the converter drew asks the converter for
+the still face of its pose. -/
 public def plan (en : Image.Loaded) : Plan :=
   if en.src.startsWith Ir.picSrcPrefix then .keep else
   match en.info with
   | none => .keep
   | some info =>
     if info.form.isNone then .keep
-    else if Image.isSvg (HtmlDoc.resolvedSrc en) then .movingSvgWithPoster (.svgPoster en.page)
+    else if Image.isSvg (HtmlDoc.resolvedSrc en) then
+      if en.moving && en.vector.isNone then .movingSvgWithPoster (.svgPoster en.page) else .keep
     else if en.source.isNone then .keep
     else if en.animated && en.companion.isSome then .animatedWithCompanion (.pdfPage en.page)
     else .convertedPrimary (.pdfPage en.page)
@@ -135,7 +141,7 @@ private def preparePrimary (decl : Boundary.Refusal) (en : Image.Loaded) : IO Pr
   let p := plan en
   let some conversion := p.conversion? | return .keep en
   match conversion, conversion.source? en with
-  | .svgPoster page, some svg => return .converted en p (← ImageAssets.svgPoster svg page) #[] false none ""
+  | .svgPoster page, some svg => return .converted en p (← ImageAssets.canonicalPoster svg page) #[] false none ""
   | .svgPoster _, none =>
     return .converted en p (.error "the SVG source has no captured bytes") #[] false none ""
   | .pdfPage page, some pdf =>
@@ -162,9 +168,11 @@ private def Prepared.finish (prepared : Prepared) : IO Finished := do
   match prepared with
   | .keep en => return { entry := en, diags := #[], checked := none, route := none }
   | .converted en p bytes diags checked route words =>
-    let companionOk ← match prepared.companion? with
-      | some svg => Except.isOk <$> ImageAssets.validateSvg svg
-      | none => pure false
+    -- A companion ships as authored: the native judge's resource boundary
+    -- is what admits it.
+    let companionOk := match prepared.companion? with
+      | some svg => (Svg.judge svg).toBool
+      | none => false
     let entry := apply en p { bytes, companionOk, words }
     let checkedFace := if checked then (match bytes with
       | .ok b => some b

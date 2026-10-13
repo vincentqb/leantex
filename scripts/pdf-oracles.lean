@@ -580,7 +580,9 @@ def main : IO Unit := do
     -- The layout this script computes, for the typed census and the
     -- shipped text; the driver's faces are approximated by `fontSetFor`.
     let some fs ← fontSetFor faces doc | die s!"{n}: no face resolves for the census"; continue
-    let store ← corpusStore doc
+    -- Settled in the census's faces, as the driver settles the store in its
+    -- own: a drawn figure's forms and text reach the census only then.
+    let store ← corpusStore doc (some fs)
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf fs doc geom (some pats) store
     -- The structure tree the driver writes, so the census counts its

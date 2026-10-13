@@ -1,11 +1,24 @@
 module
 
 public import LeanTex.Cli.ImageAssets
+public import LeanTex.Core.SvgImport
+public import LeanTex.Core.SvgPoster
+public import LeanTex.Core.GfxSvg
 public import Tests.Support
 
 public section
 
 namespace Tests
+
+open LeanTex.Core
+
+/-- The engine's own drawing of a source's pose as a standalone SVG — what
+an external rasterizer reads to compare two sources' ink. A figure with no
+text needs no faces. -/
+def svgNativeDocument (bytes : ByteArray) (atEnd : Bool := false) : Except String ByteArray := do
+  let pose ← SvgPoster.pose bytes atEnd
+  let fig := (Svg.importTree pose).fig
+  pure (GfxSvg.document (fun _ _ => Html.text "") #[] fig).toUTF8
 
 /-- Check the actual converter output, not the outer image box: a PDF
 poster must stretch its own viewBox when placed on the first-frame canvas,
@@ -79,31 +92,29 @@ def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
             pure ((← IO.FS.readBinFile (input / "sequence.SVG")) == bytes)
           else pure true))
 
-/-- Exercise the driver's second conversion after the native SVG decode
-succeeds. A converter failure must remove the moving browser asset, ship
-a named placeholder and retain the reason in its one diagnostic. This
-oracle needs the built CLI and installed converters, not a mock store. -/
+/-- **A moving figure's still face never asks the converter.** The engine
+draws the figure whole, so print and reduced motion show the engine's
+drawing of its pose: a converter that fails every SVG it is given, and logs
+each call, is never called, and the page ships the authored animation with
+its still face and no loss. This oracle needs the built CLI, not a mock
+store. -/
 def svgFailureDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let found ← IO.Process.output { cmd := "sh", args := #["-c", "command -v rsvg-convert"] }
-  if found.exitCode != 0 then throw <| IO.userError "rsvg-convert is required"
   let path := (← IO.getEnv "PATH").getD ""
   IO.FS.withTempDir fun dir => do
     let tools := dir / "bin"
     IO.FS.createDirAll tools
     let wrapper := tools / "rsvg-convert"
-    IO.FS.writeFile wrapper "#!/bin/sh\n\
-for arg do\n\
-  if [ \"$arg\" = \"--format=svg\" ]; then\n\
-    echo 'deliberate poster conversion failure' >&2\n\
-    exit 19\n\
-  fi\n\
-done\n\
-exec \"$LEANTEX_SVG_CONVERTER\" \"$@\"\n"
+    let log := dir / "calls.log"
+    IO.FS.writeFile wrapper s!"#!/bin/sh\n\
+echo \"$*\" >> '{log}'\n\
+echo 'deliberate conversion failure' >&2\n\
+exit 19\n"
     let mode ← IO.Process.output { cmd := "chmod", args := #["+x", wrapper.toString] }
     unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the converter probe"
-    IO.FS.writeBinFile (dir / "moving.svg") (svgDocument
-      "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>")
+    let moving := svgDocument
+      "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
+    IO.FS.writeBinFile (dir / "moving.svg") moving
     IO.FS.writeFile (dir / "figure.tex")
       "\\documentclass{article}\n\\begin{document}\n\
 \\includegraphics[alt={A moving square}]{moving.svg}\n\\end{document}\n"
@@ -112,34 +123,32 @@ exec \"$LEANTEX_SVG_CONVERTER\" \"$@\"\n"
       cmd := binary.toString, cwd := some dir
       args := #["figure.tex", "-o", (output / "figure.html").toString]
       env := #[("PATH", some (tools.toString ++ ":" ++ path)),
-        ("LEANTEX_SVG_CONVERTER", some found.stdout.trimAscii.toString),
         ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
-    check ref "failed browser poster leaves a buildable labelled fallback" (run.exitCode == 0)
+    check ref "moving figure: the page builds" (run.exitCode == 0)
     let html ← try IO.FS.readFile (output / "figure.html")
       catch err => throw <| IO.userError s!"{err}\n{run.stdout}{run.stderr}"
-    let log := run.stdout ++ run.stderr
-    check ref "driver records the failed poster conversion once"
-      ((log.splitOn "[W0605]").length == 2 &&
-        (log.splitOn "deliberate poster conversion failure").length == 2)
-    check ref "driver emits a named placeholder without a moving image URL"
-      ((html.splitOn "data-image-src=\"moving.svg\"").length == 2 &&
-        (html.splitOn "aria-label=\"A moving square\"").length == 2 &&
-        (html.splitOn "<img ").length == 1)
-    let assets := output / "figure.assets"
-    let published ← if ← assets.pathExists then assets.readDir else pure #[]
-    check ref "driver does not publish the moving bytes after poster failure"
-      published.isEmpty
+    let out := run.stdout ++ run.stderr
+    check ref "moving figure: no loss is reported" (!hasStr out "[W0605]" && !hasStr out "[W0609]")
+    let called ← if ← log.pathExists then pure !(← IO.FS.readFile log).isEmpty else pure false
+    check ref "moving figure: the converter is never called" !called
+    let (_, primary) ← svgPublishedAsset html output "img" "src"
+    let (_, poster) ← svgPublishedAsset html output "source" "srcset"
+    check ref "moving figure: the browser receives the authored animation" (primary == moving)
+    check ref "moving figure: the still face is a static SVG the native judge admits"
+      (match Svg.judge poster with
+        | .ok t => (SvgPoster.tracksOne #[] t).isEmpty && !bytesContain poster "<animate"
+        | .error _ => false)
 
-/-- External oracle (xmllint/librsvg), separate from hermetic tests. A
-converter exit of zero must not admit a source whose outside resources it
-silently discarded. All inputs are synthetic and all references missing. -/
+/-- A source whose outside resources a drawing would silently discard is
+refused by the native judge before anything draws it. All inputs are
+synthetic and all references missing. -/
 def svgValidationConverterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let rect := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   for (name, body) in [
       ("relative image", rect ++ "<image href=\"missing.png\" width=\"20\" height=\"20\"/>"),
       ("relative paint", "<style>rect { fill: url(missing.svg#paint) red }</style>" ++ rect)] do
-    let result ← LeanTex.Cli.ImageAssets.svgPlan .default (svgDocument body)
-    check ref s!"SVG conversion refuses {name} before losing its ink" (svgBoundaryError result)
+    check ref s!"SVG route refuses {name} before losing its ink"
+      (svgBoundaryError (SvgPoster.pose (svgDocument body) false))
 
 /-- An exporter's external doctype is an identifier, not a request to
 load its DTD. Adding it must retain the drawn figure in both artifacts.
@@ -206,9 +215,11 @@ def svgDtdDependencyChecks (ref : IO.Ref (List String)) : IO Unit := do
     for id in [prolog, "<!DOCTYPE svg SYSTEM \"missing.dtd\">"] do
       for body in ["<rect width=\"20\" height=\"20\" fill=\"&outside;\"/>",
           "<text>&outside;</text>"] do
-        let result ← LeanTex.Cli.ImageAssets.validateSvg
-          (id ++ String.fromUTF8! (svgDocument body)).toUTF8
-        check ref "SVG named entities never silently lose their values" (svgBoundaryError result)
+        let result := Svg.judge (id ++ String.fromUTF8! (svgDocument body)).toUTF8
+        check ref "SVG named entities never silently lose their values"
+          (match result with
+            | .error r => hasStr r.message "SVG resource boundary"
+            | .ok _ => false)
     let mut rasters : Array ByteArray := #[]
     for (name, declaration, fill) in [
         ("plain", "", ""), ("default-green", prolog, ""),
@@ -218,7 +229,7 @@ def svgDtdDependencyChecks (ref : IO.Ref (List String)) : IO Unit := do
       IO.FS.writeFile dtd s!"<!ATTLIST rect fill CDATA '{color}'>"
       let source := (declaration ++ String.fromUTF8!
         (svgDocument s!"<rect width=\"20\" height=\"20\"{fill}/>")).toUTF8
-      match ← LeanTex.Cli.ImageAssets.svgPoster source with
+      match svgNativeDocument source with
       | .error err => check ref s!"SVG default comparison {name}: {err}" false
       | .ok bytes =>
         let input := dir / (name ++ ".svg")
@@ -234,76 +245,26 @@ def svgDtdDependencyChecks (ref : IO.Ref (List String)) : IO Unit := do
         (rasters.toList.take 4).all (· == rasters[0]!) && rasters[4]! != rasters[0]!)
 
 /-- The narrow supported subset and its encoded counterexamples, through
-actual XML parsing and conversion. This oracle needs xmllint and librsvg;
-it must be invoked explicitly on a host providing those tools. -/
+the native judge, and the converter's still face of a moving source. This
+oracle needs librsvg, xmllint and Poppler; it must be invoked explicitly on
+a host providing those tools. -/
 def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgPosterCanvasChecks ref
   svgCompanionDriverChecks ref
   svgValidationConverterChecks ref
   svgDoctypeDriverChecks ref
   svgDtdDependencyChecks ref
-  let rect := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   let moving := "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
-  for (name, body) in [
-      ("shape", rect),
-      ("SMIL", moving),
-      ("fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use href=\"#p\"/>"),
-      ("fragment paint", "<defs><linearGradient id=\"paint\"><stop stop-color=\"red\"/></linearGradient></defs><rect width=\"20\" height=\"20\" fill=\"url(#paint)\"/>"),
-      ("aliased fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"&#35;p\"/>"),
-      ("predefined and numeric references", "<title>&quot;&apos;&amp;&lt;&gt;&#65;&#x42;</title><rect aria-label=\"&quot;&apos;&amp;&lt;&gt;&#65;&#x42;\" width=\"20\" height=\"20\" fill=\"red\"/>"),
-      ("plain style CDATA", "<style><![CDATA[rect { fill: red }]]></style>" ++ rect),
-      ("XML comments and prose", "<!-- <image href=\"outside.png\"/> --><title>url(outside.png)</title>" ++ rect),
-      -- pdftocairo's spelling of a raster a boundary picture draws: the
-      -- bytes ride in the reference, which names nothing outside the file.
-      ("inline PNG raster", "<image width=\"1\" height=\"1\" xmlns:l=\"http://www.w3.org/1999/xlink\" " ++
-        "l:href=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEUzZpk7I4HSAAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC\"/>"),
-      ("inline JPEG raster", "<image width=\"2\" height=\"2\" href=\"data:image/jpeg;base64," ++
-        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGB" ++
-        "YUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAC" ++
-        "AAIDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAB//EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAH/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AIi2L3//Z\"/>")] do
-    let result ← LeanTex.Cli.ImageAssets.validateSvg (svgDocument body)
-    check ref s!"SVG validation admits {name}" result.isOk
-  for (name, body) in [
-      ("network image", "<image href=\"https://example.invalid/tile.png\"/>"),
-      ("protocol-relative image", "<image href=\"//example.invalid/tile.png\"/>"),
-      ("absolute image", "<image href=\"/tile.png\"/>"),
-      ("empty href", "<image href=\"\"/>"),
-      ("character-encoded image", "<image href=\"&#x74;&#105;le.png\"/>"),
-      ("aliased image", "<image xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"tile.png\"/>"),
-      ("base URI", "<g xml:base=\"https://example.invalid/\"><use href=\"#p\"/></g>"),
-      ("paint-server fallback", "<defs><linearGradient id=\"paint\"/></defs><rect fill=\"url(#paint) red\"/>"),
-      ("CSS escaped URL", "<style>rect { fill: u\\72l(tile.svg#p) }</style>"),
-      ("CSS import", "<style>@import 'outside.css';</style>"),
-      ("CSS string image", "<style>rect { fill: image-set('tile.png' 1x) }</style>"),
-      ("split style text", "<style>u<!--comment--><![CDATA[rl(tile.png)]]></style>"),
-      ("animated href", "<image><set attributeName=\"l:href\" to=\"tile.png\"/></image>"),
-      ("animated style", "<rect><set attributeName=\"style\" to=\"fill:red\"/></rect>"),
-      ("embedded SVG", "<image href=\"data:image/svg+xml,%3Csvg/%3E\"/>"),
-      ("embedded base64 SVG", "<image href=\"data:image/svg+xml;base64,PHN2Zy8+\"/>"),
-      ("inline raster on a use", "<use href=\"data:image/png;base64,iVBORw0KGgo=\"/>"),
-      ("inline raster as a source", "<image src=\"data:image/png;base64,iVBORw0KGgo=\"/>"),
-      ("inline raster outside base64", "<image href=\"data:image/png;base64,iVBOR(w0KGgo=\"/>"),
-      ("inline raster unencoded", "<image href=\"data:image/png,raw\"/>"),
-      ("foreign object", "<foreignObject><img src=\"tile.png\"/></foreignObject>"),
-      ("script", "<script>fetch('tile.png')</script>"),
-      ("event handler", "<rect onload=\"fetch('tile.png')\"/>")] do
-    let result ← LeanTex.Cli.ImageAssets.validateSvg (svgDocument (rect ++ body))
-    check ref s!"SVG resource boundary refuses {name}" (svgBoundaryError result)
-  for (name, source) in [
-      ("empty", ""), ("whitespace", " \n\t "), ("foreign root", "<html/>"),
-      ("truncated", "<svg href=\""), ("mismatched", "<svg><g></svg>"),
-      ("extra root", "<svg/><svg/>"), ("unclosed", "<svg>"),
-      ("unquoted attribute", "<svg width=20/>"),
-      ("DTD attribute", "<!DOCTYPE svg [<!ATTLIST rect fill CDATA 'green'>]>" ++
-        String.fromUTF8! (svgDocument rect)),
-      ("DTD element", "<!DOCTYPE svg [<!ELEMENT svg ANY>]>" ++
-        String.fromUTF8! (svgDocument rect)),
-      ("entity declaration", "<!DOCTYPE svg [<!ENTITY x 'tile.png'>]>" ++
-        String.fromUTF8! (svgDocument (rect ++ "<image href=\"&x;\"/>"))),
-      ("stylesheet PI", "<?xml-stylesheet href=\"outside.css\"?>" ++ String.fromUTF8! (svgDocument rect))] do
-    let result ← LeanTex.Cli.ImageAssets.validateSvg source.toUTF8
-    check ref s!"SVG validation refuses {name} source" (!result.isOk)
-  let poster ← LeanTex.Cli.ImageAssets.svgPoster (svgDocument moving)
+  for (name, body) in svgBoundaryAdmitted do
+    check ref s!"SVG validation admits {name}" (Svg.judge (svgDocument body)).toBool
+  for (name, body) in svgBoundaryRefused do
+    check ref s!"SVG resource boundary refuses {name}"
+      (match Svg.judge (svgDocument (svgRedSquare ++ body)) with
+        | .error r => hasStr r.message "SVG resource boundary"
+        | .ok _ => false)
+  for (name, source) in svgBoundaryMalformed (String.fromUTF8! (svgDocument svgRedSquare)) do
+    check ref s!"SVG validation refuses {name} source" (!(Svg.judge source.toUTF8).toBool)
+  let poster ← LeanTex.Cli.ImageAssets.canonicalPoster (svgDocument moving)
   match poster with
   | .error err => check ref s!"SVG static poster conversion: {err}" false
   | .ok bytes =>
@@ -314,7 +275,7 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
         "--xpath", "boolean(/*[local-name()='svg']) and not(//*[local-name()='animate' or local-name()='set' or local-name()='animateTransform' or local-name()='animateMotion'])", file.toString] }
       check ref "SVG poster is parsed static SVG"
         (parsed.exitCode == 0 && parsed.stdout.trimAscii.toString == "true")
-  let emptyPoster ← LeanTex.Cli.ImageAssets.svgPoster ByteArray.empty
+  let emptyPoster ← LeanTex.Cli.ImageAssets.canonicalPoster ByteArray.empty
   check ref "SVG poster refuses empty source" (!emptyPoster.isOk)
   svgFailureDriverChecks ref
 

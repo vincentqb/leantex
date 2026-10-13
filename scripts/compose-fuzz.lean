@@ -27,7 +27,7 @@ declared so far. -/
 def safeHeads : List String :=
   ["page", "pdfmeta", "fonts", "output", "chrome", "assert", "allow",
    "runninghead", "runningfoot", "logo", "title", "subtitle", "author",
-   "institute", "date", "urlstyle"]
+   "institute", "date", "urlstyle", "figures"]
 
 /-- Every head that starts a new declaration unit during segmentation. -/
 def declHeads : List String :=
@@ -162,6 +162,7 @@ def synthetic : String :=
   "\\page{ margin = 18mm }\n" ++
   "\\fonts{ body = \"Nonexistent Face\" }\n" ++
   "\\output{ formats = pdf, profiles = pdf/a-4 }\n" ++
+  "\\figures{ convert = none }\n" ++
   "\\chrome{ footer = { left = \\sectiontitle } }\n" ++
   "\\runninghead[from = 2]{An Invented Head}\n" ++
   "\\runningfoot{An Invented Foot}\n" ++

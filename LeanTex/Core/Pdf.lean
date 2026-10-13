@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Dim
 import LeanTex.Core.Flate
+import LeanTex.Core.FigureLoss
 public import LeanTex.Core.Font
 import LeanTex.Core.FontSubset
 import LeanTex.Core.Html
@@ -135,7 +136,8 @@ private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := 
 per glyph id holding the first char witness — the glyph stream is large
 (every glyph on every page), so marks, never a sort, and one walk for all
 the faces, never one walk a face. -/
-private def markUsed (fs : FontSet) (pages : Array PageOut) : Array (Array (Option Char)) :=
+private def markUsed (fs : FontSet) (pages : Array PageOut)
+    (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) : Array (Array (Option Char)) :=
   Id.run do
   let mut seen : Array (Array (Option Char)) :=
     fs.fonts.map fun f => Array.replicate f.numGlyphs none
@@ -150,6 +152,20 @@ private def markUsed (fs : FontSet) (pages : Array PageOut) : Array (Array (Opti
                 if marks[g].isNone then
                   marks := marks.set g (some c)
             return marks
+        -- A drawn figure's text sets in the document's faces: its glyphs
+        -- are the file's as much as a line's are.
+        if let .image (some k) _ _ := s then
+          if let some fig := (shaped[k]?).join then
+            -- A symbol's text is the same glyphs however many uses paint it:
+            -- its bodies are read as written, never expanded.
+            let runs := fig.symbols.foldl (fun acc b => Gfx.Node.labelsList Gfx.Affine.unit acc b.toList)
+              (Gfx.Node.labelsList Gfx.Affine.unit #[] fig.nodes.toList)
+            for (_, r) in runs do
+              for (face, g, c, _) in r.glyphs do
+                seen := seen.modify face fun marks =>
+                  if h : g < marks.size then
+                    if marks[g].isNone then marks.set g (some c) else marks
+                  else marks
   return seen
 
 /-- Used glyphs per face, one char witness per gid, ascending gid: the
@@ -157,13 +173,15 @@ census a PDF build's embedding decisions read — the faces the file keeps
 (`keepFaces`, its `keepOf`), their subset programs (`facePrograms`), and
 the writer's own tables. The driver takes it once for the programs, their
 cache keys and the page operators; `write` takes its own. -/
-public def usedAll (fs : FontSet) (pages : Array PageOut) : Array (Array (Nat × Char)) :=
-  let seen := markUsed fs pages
+public def usedAll (fs : FontSet) (pages : Array PageOut)
+    (shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]) : Array (Array (Nat × Char)) :=
+  let seen := markUsed fs pages shaped
   (Array.range fs.fonts.size).map fun k =>
     ((seen[k]?.getD #[]).zipIdx.filterMap fun (c?, g) => c?.map (g, ·))
 
-private theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut) :
-    (usedAll fs pages).size = fs.fonts.size := by
+private theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut)
+    (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) :
+    (usedAll fs pages shaped).size = fs.fonts.size := by
   simp [usedAll]
 
 /-- The keep set over a per-face used-glyph census: the faces the file
@@ -176,8 +194,9 @@ public def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
 
 /-- The faces `write` embeds for these pages, named so the cross-backend
 contract below can quantify over the writer's own decision, not a copy. -/
-public def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
-  keepOf (usedAll fs pages)
+public def keepFaces (fs : FontSet) (pages : Array PageOut)
+    (shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]) : Array Nat :=
+  keepOf (usedAll fs pages shaped)
 
 /-- The font program `write` embeds for each face the census `used`
 (`usedAll`) keeps, in `keepOf` order: the face's own file minus every glyph
@@ -436,15 +455,22 @@ private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
   return r
 
 /-- Images actually placed and loaded become XObjects, one per file however
-often it is placed; a placeholder is drawn inline and needs no object. -/
+often it is placed; a placeholder is drawn inline and needs no object. A
+drawn figure is no image XObject — its form is the figure's own — but each
+of its rasters is: the store entry holding it (`Image.Loaded.rasterSlots`)
+becomes one where the figure is placed. -/
 private def usedImagesOf (imgs : Image.Store) (pages : Array PageOut) : Array Nat := Id.run do
   let mut out : Array Nat := #[]
   for p in pages do
     for l in p.lines do
       for s in l.segs do
         if let .image (some k) _ _ := s then
-          if ((imgs.get? k).bind (·.info)).isSome && !out.contains k then
+          if ((imgs.get? k).bind (·.info)).isSome && ((imgs.get? k).all (·.vector.isNone)) &&
+              !out.contains k then
             out := out.push k
+          for r in ((imgs.get? k).map (·.rasterSlots)).getD #[] do
+            if ((imgs.get? r).bind (·.info)).isSome && !out.contains r then
+              out := out.push r
   return out
 
 /-- Image index → XObject number, over `usedImagesOf`. -/
@@ -462,11 +488,29 @@ public def tagsOf (tree : Struct.Tree) : Array (Option String) :=
 
 /-- The resource names figure operators are first written with: every
 request named 0, then renamed onto the document's figure table
-(`figureTable`, `namedPageOps`) before anything is spelled. A figure's
-raster has no table: no page's ink paints one (`Gfx.ofPictureKeyed_imageFree_exact`),
+(`figureTable`, `namedPageOps`) before anything is spelled. A raster has
+no table entry: no page's ink paints one (`Gfx.ofPictureKeyed_imageFree_exact`),
 the checked writer refuses an ink that would (`inkRasterPage?`), and a
-vector image's rasters will ride with the image store. -/
+drawn figure's rasters are named by the store entries that hold them
+(`rasterNames`). -/
 @[expose] public def figureNames : GfxPdf.Request → Nat := fun _ => 0
+
+/-- A drawn figure's resource names, the figure at store entry `k`: each
+raster the store entry holding it (`/Ri` and that entry's index, one past
+it, in the resources every form names), every other request 0, as
+`figureNames` names it. -/
+@[expose] public def rasterNames (imgs : Image.Store) (k : Nat) : GfxPdf.Request → Nat
+  | .raster r => ((imgs.get? k).bind fun en => en.rasterSlots[r]?).getD 0
+  | .extG _ _ => 0
+  | .pattern _ => 0
+  | .form _ _ => 0
+
+/-- Whether every raster of the figure at store entry `k` has an entry of
+its own to be named by — what `FigureStore.attach` gives every figure it
+plans (`FigureStore.rasterPlans_exact`). -/
+@[expose] public def rastersSlotted (imgs : Image.Store) (k : Nat) (fig : Gfx.Figure Gfx.Shaped) : Bool :=
+  ((imgs.get? k).map fun en => en.rasterSlots.size == fig.rasters.size &&
+    en.rasterSlots.all fun r => ((imgs.get? r).bind (·.info)).isSome).getD fig.rasters.isEmpty
 
 /-- The first page whose ink would paint a raster: the writer names a
 figure's raster only from the image store, so an ink carrying one is
@@ -474,19 +518,50 @@ refused, never written with a name no resource answers. -/
 public def inkRasterPage? (pages : Array PageOut) : Option Nat :=
   pages.findIdx? fun p => p.inks.any fun k => !k.fig.imageFree
 
-/-- **The figure resources a document's pages name**: every ink's requests
-in page and paint order, interned by content (`collectList`) — the table
-`namedPageOps` names into and the writer spells one object per entry of. A
-label's text group requests none, so the ink is read without its labels. -/
-public def figureTable (geom : Geom) (pages : Array PageOut) : Array FigRes :=
-  pages.foldl (fun t p => p.inks.foldl
-    (fun t k => collectList t (inkPaint geom figureNames (fun _ => none) k).toList) t) #[]
+/-- The drawn figures the store holds, as their forms: each entry's shaped
+figure (`Image.Store.shaped`) emitted in the faces the file keeps —
+`keep`, the writer's `keepFaces` — every resource named 0 until the page
+operators are renamed onto the table (`namedPageOps`). -/
+public def docFigsWith (fs : FontSet) (keep : Array Nat) (imgs : Image.Store) : Array (Option FigForm) :=
+  let remap := remapOf fs keep
+  let wt := widthTable fs.fonts keep
+  imgs.shaped.mapIdx fun k s => s.map fun fig =>
+    -- A raster with no entry of its own has no name a resource answers: the
+    -- form then draws none rather than name an image the file does not hold.
+    -- premise: Tests.svgRasterFigureChecks — the store gives each raster of a
+    -- drawn figure an entry of its own (`FigureStore.rasterPlans_exact`)
+    let fig := if rastersSlotted imgs k fig then fig else FigureLoss.unrastered fig
+    { body := figureBody remap wt (rasterNames imgs k) fig, box := fig.box }
+
+/-- The drawn figures for these pages, in the faces `write` keeps. -/
+public def docFigs (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store) : Array (Option FigForm) :=
+  docFigsWith fs (keepFaces fs pages imgs.shaped) imgs
+
+/-- The drawn figures a page places, by store index, in line order. -/
+public def pageFigureForms (figs : Array (Option FigForm)) (p : PageOut) : Array FigForm :=
+  p.lines.foldl (fun out l => l.segs.foldl (fun out s => match s with
+    | .image (some k) _ _ => match (figs[k]?).join with
+      | some f => out.push f
+      | none => out
+    | _ => out) out) #[]
+
+/-- **The figure resources a document's pages name**: every ink's requests,
+then every drawn figure's form and its requests, in page and paint order,
+interned by content (`collectList`) — the table `namedPageOps` names into
+and the writer spells one object per entry of. A label's text group
+requests none, so an ink is read without its labels. -/
+public def figureTable (geom : Geom) (pages : Array PageOut) (figs : Array (Option FigForm)) :
+    Array FigRes :=
+  pages.foldl (fun t p =>
+    let t := p.inks.foldl
+      (fun t k => collectList t (inkPaint geom figureNames (fun _ => none) k).toList) t
+    (pageFigureForms figs p).foldl (fun t f => collectList t [.xobject none 0 .symbol f.body]) t) #[]
 
 /-- Pages' operators with their figure resources named onto the document's
 table; unchanged when no figure names one. -/
-public def namedPageOps (geom : Geom) (pages : Array PageOut) (ops : Array (Array ContentOp)) :
-    Array (Array ContentOp) :=
-  let t := figureTable geom pages
+public def namedPageOps (geom : Geom) (pages : Array PageOut) (figs : Array (Option FigForm))
+    (ops : Array (Array ContentOp)) : Array (Array ContentOp) :=
+  let t := figureTable geom pages figs
   if t.isEmpty then ops else ops.map (nameOps t)
 
 /-- Whether a table entry is spelled as a form XObject's stream; the others
@@ -575,29 +650,64 @@ public def figDictObj : FigRes → Option PdfRead.Obj
   | .shading g => some (shadingObj g)
   | .form _ _ => none
 
-/-- A form's bounding box in whole points outward, read in its own space:
-a symbol's or a group's the ink box of what its body paints — each mark's
-control hull through its frame, dilated by its stroke's reach — and a
-stamp's its outline's control hull dilated by the reach its key carries,
-since its instances stroke with their own state. The control hull bounds a
-path (`Gfx.cubicAt_between`), the reach a stroke's paint past it
-(`Gfx.Stroke.reach`, by the cap and join geometry it reads), and a box's
-image through a matrix its points' images (`Gfx.Affine.boxImage_covers`).
-A figure form holds no text yet: figure text owes its ink box here. -/
-public def formBBox (kind : FormKind) (body : Array ContentOp) : Int × Int × Int × Int :=
-  let rs : GfxPdf.RState :=
-    { place := { flipY := false, dx := 0, dy := 0 }, placed := false, ctm := Gfx.Affine.unit,
-      base := Gfx.Affine.unit, clips := #[], alphas := #[], ca := Gfx.Alpha.opaque,
-      cA := Gfx.Alpha.opaque, pen := GfxPdf.Pen.initial }
-  let marks := GfxPdf.readList rs #[] body.toList
-  let box := match kind with
-    | .stamp reach => (Gfx.hullOf (Gfx.Mark.geomBox Gfx.rasterUnit) marks).map (·.dilate reach)
-    | .symbol => Gfx.hullOf (Gfx.Mark.inkBox Gfx.rasterUnit) marks
-    | .group => Gfx.hullOf (Gfx.Mark.inkBox Gfx.rasterUnit) marks
-  let floorPt (x : Sp) : Int := if x ≥ 0 then x / spPerPt else -((-x + spPerPt - 1) / spPerPt)
-  match box with
+/-- What the kept faces tell a reader of a figure's text (`GfxPdf.GlyphInk`):
+each glyph's `/W` width (`pdfWidthμ`, what the file states) and its
+outline's hull (`Font.bounds`), in millionths of the em by font resource;
+a glyph whose outline does not decode stands in its advance and the face's
+ascent and descent. -/
+public def glyphInkOf (fs : FontSet) (keep : Array Nat) : GfxPdf.GlyphInk :=
+  { width := fun res g => match keep[res]? with
+      | some f => pdfWidthμ (fs.get f) g
+      | none => 0
+    hull := fun res g => (keep[res]?).map fun f =>
+        let font := fs.get f
+        let lo (v : Int) : Int := Rat.floor (((v * 1000000 : Int) : Rat) / (font.unitsPerEm : Rat))
+        let hi (v : Int) : Int := Rat.ceil (((v * 1000000 : Int) : Rat) / (font.unitsPerEm : Rat))
+        match font.bounds g with
+        | some b => ((lo b.left, lo b.bottom), (hi b.right, hi b.top))
+        | none => ((0, lo font.descent), (hi (font.widths[g]?.getD 0), hi font.ascent)) }
+
+/-- No face: what a reader of forms that set no text needs. -/
+@[expose] public def noGlyphInk : GfxPdf.GlyphInk := { width := fun _ _ => 0, hull := fun _ _ => Option.none }
+
+/-- A coordinate in whole points, rounded down. -/
+@[expose] public def floorPt (x : Int) : Int :=
+  if x ≥ 0 then x / spPerPt else -((-x + spPerPt - 1) / spPerPt)
+
+/-- A form's bounding box in whole points outward, read in its own space
+(`GfxPdf.formBox`): the hull of what its body paints — each mark's control
+hull through its frame dilated by its stroke's reach, a stamp's outline by
+the reach its key carries, and every glyph its text sets, at the pen the
+file's own arithmetic puts it. The control hull bounds a path
+(`Gfx.cubicAt_between`), the reach a stroke's paint past it
+(`Gfx.Stroke.reach`), a box's image through a matrix its points' images
+(`Gfx.Affine.boxImage_covers`), and the whole-point box the hull
+(`formBBox_covers`). -/
+public def formBBox (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array ContentOp) :
+    Int × Int × Int × Int :=
+  match GfxPdf.formBox gi kind body with
   | some ((x0, y0), (x1, y1)) => (floorPt x0, floorPt y0, -(floorPt (-x1)), -(floorPt (-y1)))
   | none => (0, 0, 0, 0)
+
+/-- **The whole-point box holds the form's box** (`_covers`): rounding
+outward to whole points loses nothing a form paints, so with
+`GfxPdf.formBox_covers` every mark and every glyph of the body stands
+inside the `/BBox` the writer spells. -/
+public theorem formBBox_covers (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array ContentOp)
+    (b : Gfx.Box) (h : GfxPdf.formBox gi kind body = some b) :
+    let r := formBBox gi kind body
+    r.1 * spPerPt ≤ b.1.1 ∧ r.2.1 * spPerPt ≤ b.1.2 ∧ b.2.1 ≤ r.2.2.1 * spPerPt ∧
+      b.2.2 ≤ r.2.2.2 * spPerPt := by
+  obtain ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩ := b
+  simp only [formBBox, h]
+  have lo (x : Int) : floorPt x * spPerPt ≤ x := by
+    unfold floorPt spPerPt
+    split <;> omega
+  have hi (x : Int) : x ≤ -floorPt (-x) * spPerPt := by
+    have := lo (-x)
+    unfold spPerPt at *
+    omega
+  exact ⟨lo x0, lo y0, hi x1, hi y1⟩
 
 /-- A group of named resources as a resources dictionary entry, absent
 when the group is empty. -/
@@ -658,12 +768,13 @@ document actually uses and the structure tree's leaf tags: what
 pages, read by the driver off the census it took once. -/
 public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩)
-    (keep : Array Nat := keepFaces fs pages) : Array (Array ContentOp) :=
+    (keep : Array Nat := keepFaces fs pages imgs.shaped) : Array (Array ContentOp) :=
   let remap := remapOf fs keep
   let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
   let tags := tagsOf tree
   let wt := widthTable fs.fonts keep
-  namedPageOps geom pages (pages.map (contentOps geom remap wt imgMap tags figureNames))
+  let figs := docFigsWith fs keep imgs
+  namedPageOps geom pages figs (pages.map (contentOps geom remap wt imgMap tags figureNames figs))
 
 /-- The per-page content streams `write` embeds, uncompressed: the same
 bytes `write` computes for itself, exposed so the driver can deflate them
@@ -879,8 +990,8 @@ counts, the structure tree's element count, and the figure table's two
 spelling kinds (`figureTable`). -/
 public def tableOf (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree := ⟨#[]⟩) : ObjTable :=
-  let figs := figureTable geom pages
-  objTable (keepFaces fs pages) imgs (usedImagesOf imgs pages) pages.size outline.size
+  let figs := figureTable geom pages (docFigs fs pages imgs)
+  objTable (keepFaces fs pages imgs.shaped) imgs (usedImagesOf imgs pages) pages.size outline.size
     (skeleton tree).size (figDictCount figs) (figFormCount figs)
 
 /-- **`blockIds_exact`**: consecutive blocks laid out by `blockStarts` tile
@@ -1263,8 +1374,8 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .formXObject => (tableOf geom fs pages imgs outline).formBases.any Option.isSome ||
     0 < (tableOf geom fs pages imgs outline).nFigForm
   | .copiedGraph => (tableOf geom fs pages imgs outline).formSizes.any (· > 0)
-  | .cidFontType0 => (keepFaces fs pages).any fun k => (fs.get k).isCff
-  | .cidFontType2 => (keepFaces fs pages).any fun k => !(fs.get k).isCff
+  | .cidFontType0 => (keepFaces fs pages imgs.shaped).any fun k => (fs.get k).isCff
+  | .cidFontType2 => (keepFaces fs pages imgs.shaped).any fun k => !(fs.get k).isCff
   | .linkURI =>
     pages.any (fun p => (linkRects geom p).any (fun r => !r.2.2.2.2.startsWith "#"))
       || outline.any (fun e => e.page.isNone && e.url.isSome)
@@ -1277,7 +1388,7 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .markedContent => (pageOps geom fs pages imgs).any fun ops => (lines ops).any Line.isOpen
   -- every PDF is tagged: the structure block is unconditional (pdf-tag-skeleton)
   | .structTree => true
-  | .transparencyGroup => (figureTable geom pages).any fun r => match r with
+  | .transparencyGroup => (figureTable geom pages (docFigs fs pages imgs)).any fun r => match r with
     | .form .group _ => true
     | .form .symbol _ => false
     | .form (.stamp _) _ => false
@@ -1900,9 +2011,9 @@ public def formPrefix (b : Int × Int × Int × Int) (resId : Nat) (kind : FormK
 /-- A figure form's row: its body's operators under `formPrefix`. An entry
 that is no form, which the writer's form block never holds, writes an
 empty content stream, so its slot is still an object. -/
-public def formRow (id resId : Nat) : FigRes → Row
+public def formRow (gi : GfxPdf.GlyphInk) (id resId : Nat) : FigRes → Row
   | .form kind body =>
-    flateRow id (formPrefix (formBBox kind body) resId kind).text (render body).toUTF8
+    flateRow id (formPrefix (formBBox gi kind body) resId kind).text (render body).toUTF8
   | .extG _ _ => flateRow id StreamPrefix.content.text ByteArray.empty
   | .pattern _ => flateRow id StreamPrefix.content.text ByteArray.empty
   | .shading _ => flateRow id StreamPrefix.content.text ByteArray.empty
@@ -1939,8 +2050,8 @@ public theorem flateRow_native_exact (id : Nat) (p : StreamPrefix) (data : ByteA
     (flateRow id p.text data).body.Native :=
   zRow_native_exact id p data _
 
-public theorem formRow_native_exact (id resId : Nat) (r : FigRes) :
-    (formRow id resId r).body.Native := by
+public theorem formRow_native_exact (gi : GfxPdf.GlyphInk) (id resId : Nat) (r : FigRes) :
+    (formRow gi id resId r).body.Native := by
   cases r <;> exact flateRow_native_exact _ _ _
 
 /-- `n` consecutive slices of at most `objStmCapacity` items each, in
@@ -2186,9 +2297,10 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- this census is `keepFaces fs pages` by definition), so the contract
   -- holds of the writer's own decision, not a copy. `allUsed` stays for the
   -- per-face glyph census the kept faces subset.
-  let allUsed : Array (Array (Nat × Char)) := usedAll fs pages
+  let allUsed : Array (Array (Nat × Char)) := usedAll fs pages imgs.shaped
   let keep : Array Nat := keepOf allUsed
   let remap := remapOf fs keep
+  let gi := glyphInkOf fs keep
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!
   let nf := keep.size
   -- The program each kept face embeds: its own file minus every glyph no
@@ -2210,9 +2322,11 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let tags := leafTags sk nLeaves
   -- The typed operators: the caller's when it built them (`pageOps`, the
   -- same walk — `streams` are their render), else built here.
+  let docFigs := docFigsWith fs keep imgs
   let ops := if ops.size == np then ops
     else let wt := widthTable fs.fonts keep
-      namedPageOps geom pages (pages.map (contentOps geom remap wt imgMap tags figureNames))
+      namedPageOps geom pages docFigs
+        (pages.map (contentOps geom remap wt imgMap tags figureNames docFigs))
   let marks := ops.map pageMarks
   let es := fill sk (leafPagesOf nLeaves marks)
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)
@@ -2222,7 +2336,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- The figure table the pages' operators name into (`namedPageOps`),
   -- split by how each entry is spelled: dictionaries in the object stream,
   -- forms as streams.
-  let figs := figureTable geom pages
+  let figs := figureTable geom pages docFigs
   let figDicts := figs.filter fun r => !r.isForm
   let figForms := figs.filter FigRes.isForm
   let t := objTable keep imgs usedImgs np nOut es.size (figDictCount figs) (figFormCount figs)
@@ -2281,8 +2395,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let figEntries (pick : FigRes → Bool) : Array (String × PdfRead.Obj) :=
     figs.zipIdx.filterMap fun (r, k) =>
       if pick r then some (s!"{r.namePrefix}{k + 1}", PdfRead.Obj.ref (figId k) 0) else none
+  -- A drawn figure's raster is also named by its store entry (`rasterNames`),
+  -- the name its figure's form paints it with.
   let imgEntries : Array (String × PdfRead.Obj) :=
-    t.imgIds.zipIdx.map fun (id, n) => (s!"Im{n + 1}", PdfRead.Obj.ref id 0)
+    t.imgIds.zipIdx.map (fun (id, n) => (s!"Im{n + 1}", PdfRead.Obj.ref id 0)) ++
+    (usedImgs.zip t.imgIds).filterMap fun (k, id) =>
+      ((imgs.get? k).bind (·.rasterOf)).map fun _ => (s!"Ri{k + 1}", PdfRead.Obj.ref id 0)
   let resources : PdfRead.Obj := resourcesDict fontResources
     (imgEntries ++ figEntries FigRes.isForm) (figEntries fun r => r.namePrefix == "GS")
     (figEntries fun r => r.namePrefix == "P") (figEntries fun r => r.namePrefix == "Sh")
@@ -2494,9 +2612,11 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           | .colorKey ranges => s!" /Mask [{" ".intercalate (ranges.toList.map toString)}]"
           | .opaque => ""
           | .soft _ _ => ""
+        -- A drawn figure's raster a reader may smooth says so (§8.9.5.3).
+        let interp := if ((imgs.get? k).map (·.interpolate)).getD false then " /Interpolate true" else ""
         let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
-{smaskRef}{maskRef} {filter}"
+{smaskRef}{maskRef}{interp} {filter}"
         rows := rows.push ⟨imgId, .stream dict inf.data⟩
         if let some mid := (t.smaskIds[n]?).join then
           if let .soft plane bpc := inf.alpha then
@@ -2512,7 +2632,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- onto the table, under the shared resources; a transparency group's
   -- form isolated (§11.6.6).
   for (r, j) in figForms.zipIdx do
-    rows := rows.push (formRow (t.figFormId j) t.resId (nameRes figs r))
+    rows := rows.push (formRow gi (t.figFormId j) t.resId (nameRes figs r))
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
@@ -2567,14 +2687,31 @@ private theorem usedImagesOf_loaded (imgs : Image.Store) (pages : Array PageOut)
       · exact h
       · intro s _ out h
         dsimp only [Id.run, bind, pure]
+        -- A placed figure's raster entries: each joins only once it loaded.
+        have slots (init : Array Nat) (hi : P init) (xs : Array Nat) :
+            P (forIn xs init (fun r (acc : Array Nat) =>
+              if (((imgs.get? r).bind fun x => x.info).isSome && !acc.contains r) = true then
+                ForInStep.yield (acc.push r) else ForInStep.yield acc) : Id (Array Nat)).run := by
+          apply Loop.forIn_array_inv P
+          · exact hi
+          · intro r _ acc ha
+            dsimp only [Id.run]
+            split
+            · next hc =>
+              intro j hj
+              rcases Array.mem_push.mp hj with hj | rfl
+              · exact ha j hj
+              · exact (Bool.and_eq_true_iff.mp hc).1
+            · exact ha
         split
         · split
           · rename_i k _ _ _ hk
+            apply slots
             intro j hj
             rcases Array.mem_push.mp hj with hj | rfl
             · exact h j hj
-            · exact (Bool.and_eq_true_iff.mp hk).1
-          · exact h
+            · exact (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp hk).1).1
+          · exact slots _ h _
         · exact h
 
 private theorem usedImagesOf_empty (pages : Array PageOut) :
@@ -2630,7 +2767,7 @@ public theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array 
             ForInStep.value] using h
       · intro x _ rows h
         dsimp only [Id.run, bind, pure]
-        exact push _ _ h (formRow_native_exact _ _ _)
+        exact push _ _ h (formRow_native_exact _ _ _ _)
     · intro k _ _ rows h
       dsimp only [Id.run, bind, pure]
       apply push
@@ -2652,7 +2789,7 @@ public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array P
     (prepare geom fs pages info imgs outline streams tree ops programs).table =
       tableOf geom fs pages imgs outline tree := by
   unfold prepare tableOf
-  simp only [Id.run, pure, bind, keepFaces, fill_size_exact]
+  simp only [Id.run, pure, bind, keepFaces, docFigs, fill_size_exact]
 
 /-- The exact IDs of the producer's object-stream values. -/
 public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
@@ -2723,7 +2860,8 @@ private theorem zRow_id (n : Nat) (d : String) (data z : ByteArray) :
 private theorem flateRow_id (n : Nat) (d : String) (data : ByteArray) :
     (flateRow n d data).id = n := zRow_id ..
 
-private theorem formRow_id (n resId : Nat) (r : FigRes) : (formRow n resId r).id = n := by
+private theorem formRow_id (gi : GfxPdf.GlyphInk) (n resId : Nat) (r : FigRes) :
+    (formRow gi n resId r).id = n := by
   cases r <;> exact flateRow_id ..
 
 private theorem image_slots (keep : Array Nat) (imgs : Image.Store) (used : Array Nat)
@@ -2809,7 +2947,8 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     obtain ⟨inf, hinf⟩ := Option.isSome_iff_exists.mp
       (usedImagesOf_loaded imgs pages k (Array.mem_of_getElem? hs.1))
     have slots := image_slots _ imgs _ pages.size outline.size (skeleton tree).size
-      (figDictCount (figureTable geom pages)) (figFormCount (figureTable geom pages))
+      (figDictCount (figureTable geom pages (docFigsWith fs (keepOf (usedAll fs pages imgs.shaped)) imgs)))
+      (figFormCount (figureTable geom pages (docFigsWith fs (keepOf (usedAll fs pages imgs.shaped)) imgs)))
       k imgId n hs.1 hs.2
     simp only [hinf]
     cases hf : inf.form with
@@ -3078,9 +3217,10 @@ public theorem prepare_entries_contract (geom : Geom) (fs : FontSet) (pages : Ar
     p.entries[0]?.bind PdfRead.xrefEntryLocation = none ∧
     ∀ i, 0 < i → i < p.entries.size →
       (p.entries[i]?.bind PdfRead.xrefEntryLocation).isSome = true :=
-  plan_entries_contract _ (keepFaces fs pages) imgs (usedImagesOf imgs pages)
-    pages.size outline.size (skeleton tree).size (figDictCount (figureTable geom pages))
-    (figFormCount (figureTable geom pages))
+  plan_entries_contract _ (keepFaces fs pages imgs.shaped) imgs (usedImagesOf imgs pages)
+    pages.size outline.size (skeleton tree).size
+    (figDictCount (figureTable geom pages (docFigs fs pages imgs)))
+    (figFormCount (figureTable geom pages (docFigs fs pages imgs)))
     (prepare_table_exact geom fs pages info imgs outline streams tree ops programs)
     (prepare_emission_covers geom fs pages info imgs outline streams tree ops programs)
 

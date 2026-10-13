@@ -43,7 +43,9 @@ slowest page named; the file is the caller's and stays outside the tree.
 figure, cold over an empty private cache and warm over the one it left, and
 reports the html phase (and the faces phase within it, where the compiler
 names one) and the whole build, cold and warm, the median of N pairs.
-The slide run also needs sha256sum, pdftocairo and xmllint.
+`--svg-only` measures documents of 5 and 17 invented SVG figures, built to
+PDF and HTML, cold and warm, with their `images` phase.
+The slide run also needs sha256sum and pdftocairo.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
 to retain every sample, phase median and input/binary fingerprint.
@@ -374,6 +376,63 @@ def benchImageDeck (n frames : Nat) : IO Unit := do
     bench n s!"leantex  image deck, {frames} frames (HTML)" leantex
       #["-q", "build", input.toString, "-o", (dir / "deck.html").toString]
 
+/-- The milliseconds `-v` reports for its `images` phase. -/
+def imagesPhaseMs (log : String) : Option Nat :=
+  (log.splitOn "\n").findSome? fun l =>
+    if l.startsWith "images: " then ((l.splitOn "(").getLast?.bind fun t =>
+      ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
+
+/-- SVG figures in a document, each a distinct invented source: `figures`
+copies of the corpus chart, each recoloured so no two share a content key,
+and one moving figure; built to PDF and to HTML. Cold samples start with an
+empty private content cache, warm ones reuse a primed one, so a compiler
+whose figures go through an external converter pays its process spawns
+cold and its cache reads warm, and one that reads them natively pays
+neither. Reports each run's wall time and its `images` phase. -/
+def benchSvg (n figures : Nat) : IO Unit := do
+  let leantex ← IO.FS.realPath (← compiler)
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
+  let chart ← IO.FS.readFile "testdata/corpus/figures/chart.svg"
+  let pulse ← IO.FS.readBinFile "testdata/corpus/figures/pulse.svg"
+  IO.FS.withTempDir fun dir => do
+    IO.FS.createDirAll (dir / "figures")
+    let mut body := ""
+    for i in [0:figures] do
+      let digits := String.ofList (Nat.toDigits 16 ((0x1f77b4 + 4099 * (i + 1)) % 0x1000000))
+      let shade := "#" ++ "".pushn '0' (6 - digits.length) ++ digits
+      IO.FS.writeFile (dir / "figures" / s!"chart{i}.svg") (chart.replace "#1f77b4" shade)
+      body := body ++ s!"\\includegraphics[width=0.6\\textwidth,alt=\{Invented chart {i}}]\{figures/chart{i}.svg}\n\n"
+    IO.FS.writeBinFile (dir / "figures" / "pulse.svg") pulse
+    body := body ++ "\\includegraphics[width=0.4\\textwidth,alt={An invented pulse}]{figures/pulse.svg}\n"
+    IO.FS.writeFile (dir / "svg.tex")
+      ("\\documentclass{article}\n\\fonts{ dir = \"" ++ fonts.toString ++
+        "\", body = \"Source Serif Pro\", sans = \"Fira Sans\" }\n\\begin{document}\n" ++ body ++
+        "\\end{document}\n")
+    for format in ["pdf", "html"] do
+      for warm in [false, true] do
+        let cache := dir / s!"cache-{format}"
+        if !warm && (← cache.pathExists) then IO.FS.removeDirAll cache
+        let run : IO (Nat × Nat) := do
+          if !warm && (← cache.pathExists) then IO.FS.removeDirAll cache
+          let t0 ← IO.monoMsNow
+          let spawn : IO.Process.SpawnArgs :=
+            { cmd := leantex.toString, cwd := some dir, args := #["-v", "build", "svg.tex", "-o", s!"svg.{format}"],
+              env := #[("XDG_CACHE_HOME", some cache.toString)] }
+          let out ← IO.Process.output spawn
+          let t1 ← IO.monoMsNow
+          if out.exitCode != 0 then die s!"svg benchmark failed:\n{out.stdout}{out.stderr}"
+          return (t1 - t0, (imagesPhaseMs (out.stdout ++ out.stderr)).getD 0)
+        if warm then discard run
+        let mut wall : Array Nat := #[]
+        let mut phase : Array Nat := #[]
+        for _ in [0:n] do
+          let (w, p) ← run
+          wall := wall.push w
+          phase := phase.push p
+        let label := s!"leantex  {figures + 1} SVG figures ({format}, {if warm then "warm" else "cold"})"
+        IO.println s!"{padRight label 42} {padLeft (toString (median wall)) 6} ms, images \
+{median phase} ms (median of {n})"
+
 /-- Measure the real picture boundary, not a synthetic sleep. A private
 content cache makes each cold run comparable; the following warm run must
 ship identical bytes and every requested picture must have a cached PDF. -/
@@ -632,7 +691,7 @@ def binaryHash (binary : System.FilePath) : IO String := do
 
 def toolVersions : IO (Array (String × String)) := do
   let mut versions := #[]
-  for (tool, args) in [("pdftocairo", #["-v"]), ("xmllint", #["--version"])] do
+  for (tool, args) in [("pdftocairo", #["-v"])] do
     let result ← IO.Process.output { cmd := tool, args }
     let version := (result.stdout ++ result.stderr).trimAscii.toString
     require (result.exitCode == 0 && !version.isEmpty) s!"could not read {tool}'s version"
@@ -1160,6 +1219,9 @@ def main (args : List String) : IO UInt32 := do
   if let "--faces-only" :: files := args then
     benchFaces n files
     return 0
+  if args == ["--svg-only"] then
+    for count in [4, 16] do benchSvg n count
+    return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
     benchPictures n 8
@@ -1169,8 +1231,8 @@ def main (args : List String) : IO UInt32 := do
     benchDecode n
     return 0
   if args == ["--concurrency-only"] then
-    unless (← hasCmd "pdftocairo" #["-v"]) && (← hasCmd "xmllint") do
-      die "HTML vector benchmark needs pdftocairo and xmllint"
+    unless ← hasCmd "pdftocairo" #["-v"] do
+      die "HTML vector benchmark needs pdftocairo"
     for count in [8, 32] do benchConcurrent n count false
     for count in [8, 16] do benchConcurrent n count true
     return 0

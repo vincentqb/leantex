@@ -180,20 +180,24 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "face route: a document that refuses the converter keeps the lossy drawing, never asking it"
     (f.route == .nativeWithLoss && f.native && (← asked.get) == 4)
   -- The remedy follows the reason: installing or repairing the converter
-  -- changes a page it gave no face for, and nothing where it drew a face the
-  -- page's check refuses, or where the document refused it.
+  -- changes a page it gave no face for; lifting the declaration changes one
+  -- the document refused it for; and nothing changes one where it drew a
+  -- face the page's check refuses.
   let helpOf (f : PdfFaces.Face) : String := String.join (f.diags.filterMap (·.help)).toList
   let noFace ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
     (pure (.error "the converter is missing")) keeps
   t s!"face route: a converter that gave no face is offered as the remedy ({helpOf noFace})"
     (((helpOf noFace).splitOn "install").length > 1)
-  for (said, face) in [("the page's check refuses the converter's face", ← PdfFaces.face "lossy.pdf"
-      type1FigurePdf .first (pure (.ok converted)) fun _ => pure (.refused "an external reference")),
-      ("the document refuses the converter", ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
-      (pure (.ok converted)) keeps .declared)] do
-    t s!"face route: where {said}, its line offers only accepting the drawing ({helpOf face})"
-      (!(helpOf face).isEmpty && ((helpOf face).splitOn "install").length == 1 &&
-        ((helpOf face).splitOn "\\allow{W0609}").length > 1)
+  let unfit ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (.ok converted))
+    fun _ => pure (.refused "an external reference")
+  t s!"face route: where the page's check refuses the converter's face, its line offers only accepting the drawing ({helpOf unfit})"
+    (((helpOf unfit).splitOn "install").length == 1 && ((helpOf unfit).splitOn "convert = none").length == 1 &&
+      ((helpOf unfit).splitOn "\\allow{W0609}").length > 1)
+  let declared ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (.ok converted)) keeps .declared
+  t s!"face route: where the document refuses the converter, its line names the declaration to lift, or accepting ({helpOf declared})"
+    (((helpOf declared).splitOn "install").length == 1 &&
+      ((helpOf declared).splitOn "convert = none").length > 1 &&
+      ((helpOf declared).splitOn "\\allow{W0609}").length > 1)
   let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first failing keeps
   t "face route: a page the importer refuses and nothing draws has no face"
     (f.route == .refused && f.bytes.isOk == false)

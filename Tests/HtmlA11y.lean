@@ -20,13 +20,23 @@ def a11yCssOf (doc : Ir.Doc) : HtmlDoc.CssMode :=
   | .none => .none
 
 /-- One corpus fixture's page as its typed tree, built in-process the way
-the driver builds it: the document's own stylesheet mode and its images from
-`testdata/corpus` (`corpusStore`). No boundary tool runs here, so a boundary
+the driver builds it: the document's own stylesheet mode, its images from
+`testdata/corpus` (`corpusStore`) and its drawn figures' titles as their
+alternatives (`corpusTitled`). No boundary tool runs here, so a boundary
 picture is its placeholder — what a host with no tool ships. -/
 def a11yCorpusPage (n : String) :
     IO (Ir.Doc × Image.Store × Array Html.Node × Array Html.Node × Array Diag) := do
   let (doc, _) ← goldenDoc n
-  let store ← corpusStore doc
+  -- A drawn figure's text shapes against the shipped face, as the driver
+  -- shapes it against the document's: the page's tree then carries the
+  -- figure the page ships.
+  let fs ← match ← findFont with
+    | some data => pure ((Font.parse data).toOption.map oneFaceOf)
+    | none => pure none
+  let store ← corpusStore doc fs
+  -- A drawn figure's own title answers the alternative the document leaves
+  -- undeclared, as the driver's build gives it.
+  let doc := corpusTitled doc store
   let (head, body, diags) := HtmlDoc.emitTree { css := a11yCssOf doc, imgs := store } doc
   return (doc, store, head, body, diags)
 
@@ -77,8 +87,9 @@ def imgAlts (body : Array Html.Node) : Array (Option String) :=
 
 /-- The format a file's first bytes declare, for the image formats a browser
 decodes in an `<img>` (WHATWG MIME Sniffing §6.1, the image signatures):
-PNG, JPEG, GIF, WebP. `none` for anything else — a PDF page included. Read
-off the bytes, so the judge below does not share the backend's own
+PNG, JPEG, GIF, WebP — and SVG, an XML document a browser draws, read by
+the native judge. `none` for anything else — a PDF page included. Read off
+the bytes, so the judge below does not share the backend's own
 classification. -/
 def sniffBrowserImage (b : ByteArray) : Option String :=
   let at' (i : Nat) (xs : List UInt8) : Bool :=
@@ -87,6 +98,8 @@ def sniffBrowserImage (b : ByteArray) : Option String :=
   else if at' 0 [0xFF, 0xD8, 0xFF] then some "jpeg"
   else if at' 0 [0x47, 0x49, 0x46, 0x38] then some "gif"
   else if at' 0 [0x52, 0x49, 0x46, 0x46] && at' 8 [0x57, 0x45, 0x42, 0x50] then some "webp"
+  -- An SVG the resource boundary admits is a browser image too.
+  else if (Svg.judge b).toBool then some "svg"
   else none
 
 /-- Every `<img src>` a body emits, hidden or not: a browser fetches and

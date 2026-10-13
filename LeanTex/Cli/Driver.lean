@@ -3,12 +3,14 @@ module
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.TexFontTrees
 import LeanTex.Version
-import LeanTex.Core.Diag
+public import LeanTex.Core.Diag
 import LeanTex.Core.Encoding
 import LeanTex.Core.Flate
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfContract
-import LeanTex.Core.Image
+public import LeanTex.Core.Image
+public import LeanTex.Core.Gfx
+public import LeanTex.Core.PdfRead
 import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Struct
@@ -28,6 +30,13 @@ import LeanTex.Core.Layout
 import LeanTex.Core.Check
 import LeanTex.Core.Pdf
 import LeanTex.Core.Ink
+import LeanTex.Core.Xml
+import LeanTex.Core.SvgImport
+import LeanTex.Core.SvgPoster
+import LeanTex.Core.LayoutFigure
+import LeanTex.Core.FigureLoss
+import LeanTex.Core.FigureAlt
+public import LeanTex.Core.FigureStore
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render
 import LeanTex.Cli.DriverDiag
@@ -345,31 +354,144 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     inputs.map fun (cand, _) => Boundary.inputPath dir cand
   return (results, undrawn, staged)
 
+/-- A converter a lossy SVG may ask: given the canonical spelling of the
+native parse and whether the drawing depends on no font, its answer — a
+plan, or the tool's own words for its failure — or none where no tool is
+there to ask. -/
+public abbrev Converter := ByteArray → Bool → IO (Option (Except String Image.Plan))
+
+/-- A tool that is always there, answering as `run` answers. -/
+public def Converter.always (run : ByteArray → Bool → IO (Except String Image.Plan)) : Converter :=
+  fun b i => some <$> run b i
+
+/-- What the native SVG path decided for one source: the plan layout reads,
+the figure the engine draws (none where the converter drew it or nothing
+did), whether its source animates, and the diagnostics the route owes. -/
+public structure SvgFetch where
+  res : Except String Image.Plan
+  vector : Option (Gfx.Figure Gfx.Run) := none
+  /-- The drawn figure's rasters planned, one per raster in order: what the
+  PDF writer embeds for each (`FigureStore.slotRasters`). -/
+  plans : Array Image.Plan := #[]
+  moving : Bool := false
+  diags : Array Diag := #[]
+  /-- The figure's own `<title>`, whichever route drew it. -/
+  title : Option String := none
+
+/-- What the store keeps of a route's answer: the drawn figure, whether it
+moves, and its rasters' plans — the one spelling every caller attaches. -/
+public def SvgFetch.drawn (f : SvgFetch) : FigureStore.Drawn :=
+  { vector := f.vector, moving := f.moving, plans := f.plans }
+
+/-- The plan a drawn figure stands under in the store: its box in CSS
+pixels at their own density — what a browser reports as the authored SVG's
+natural size — and no payload; layout reads the figure's own box
+(`Image.Loaded.size?`), the PDF writer the figure (`Pdf.docFigs`). -/
+public def vectorPlan (fig : Gfx.Figure Gfx.Run) : Image.Plan :=
+  let w := fig.box.2.1 - fig.box.1.1
+  let h := fig.box.2.2 - fig.box.1.2
+  { pxW := HtmlDoc.cssPxOfSp w, pxH := HtmlDoc.cssPxOfSp h, dpiX := 96, dpiY := 96 }
+
+/-- **The SVG route** (`Boundary.route`): judged, posed, imported natively;
+an exact figure is the engine's drawing, a lossy one librsvg's when the
+document allows the converter and it draws, else the engine's with every
+loss named and the reason no converter drew it. `convert` is none exactly
+where the document refused the converter (`svgConverter`). A refusal of the
+judge never reaches a tool. The converter receives the canonical spelling
+of the native parse (`Xml.renderItem`), never the authored bytes. -/
+public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelection) (lang : String)
+    (convert : Option Converter) (params : Image.PlanParams := .default) : IO SvgFetch := do
+  let terminal ← match ImageAssets.svgPosterAtEnd page with
+    | .error e => return { res := .error e }
+    | .ok t => pure t
+  let tree ← match Svg.judge bytes with
+    | .error r => return { res := .error r.message }
+    | .ok t => pure t
+  let pose ← match SvgPoster.poseOf tree terminal with
+    | .error why => return { res := .error why }
+    | .ok t => pure t
+  -- Whether the figure moves is the authored tree's answer: the pose at the
+  -- end of its animation holds none, and the page still owes its still face.
+  let moving := Svg.moves tree
+  let i := Svg.importTree pose lang
+  let (fig, plans) := FigureStore.rasterPlans params i.fig
+  let losses := fig.losses
+  let native : SvgFetch :=
+    { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title }
+  let verdict : Boundary.Verdict := if losses.isEmpty then .exact else .lossy losses
+  let decl : Boundary.Refusal := if convert.isSome then .none else .declared
+  if !verdict.asksTool decl then
+    let diags := Boundary.svgRouteDiags moving src .refused losses
+      (Boundary.route verdict .notAsked decl)
+    return { native with diags }
+  -- premise: Tests.svgRouteChecks — two builds differing only by the converter's
+  -- presence: a lossless figure ships one artifact and runs no tool; a lossy one
+  -- names every loss subject in both builds
+  let answer ← match convert with
+    | some run => run (Xml.renderItem pose) (!Svg.fontDependent pose)
+    | none => pure none
+  let (tool, why) : Boundary.ToolState × FigureLoss.Unconverted := match answer with
+    | some (.ok _) => (.drew, .absent)
+    | some (.error w) => (.failed w, .failed w)
+    | none => (.failed "rsvg-convert is not on PATH", .absent)
+  -- The route decides what the figure owes (`Boundary.route_losses_exact`,
+  -- `svgRouteDiags_named`); the converter's drawing ships exactly when it drew.
+  let route := Boundary.route verdict tool decl
+  let diags := Boundary.svgRouteDiags moving src why losses route
+  match route, answer with
+  | .tool, some (.ok plan) => return { res := .ok plan, moving, title := fig.title, diags }
+  | _, _ => return { native with diags }
+
+/-- The converter a lossy SVG may ask, when the document allows it: `run`,
+asked only while `probe` says the host has it — and `probe` asked the
+first time a figure needs the converter, once, so a document whose figures
+all draw natively never probes the host. -/
+public def svgConverterWith (probe : IO Bool) (run : ByteArray → Bool → IO (Except String Image.Plan))
+    (allowed : Bool) : IO (Option Converter) := do
+  if !allowed then return none
+  let found ← IO.mkRef (none : Option Bool)
+  return some fun canonical independent => do
+    let present ← match ← found.get with
+      | some p => pure p
+      | none =>
+        let p ← probe
+        found.set (some p)
+        pure p
+    if present then some <$> run canonical independent else pure none
+
+/-- librsvg's `rsvg-convert` as that converter (`\figures{ convert = none }`
+refuses it). -/
+public def svgConverter (params : Image.PlanParams) (allowed : Bool) : IO (Option Converter) :=
+  svgConverterWith (do return (← ToolProbe.onPath "rsvg-convert").isSome)
+    (ImageAssets.canonicalPlan params) allowed
+
 /-- One image source's read — the effect half of `Image.fulfil`: a boundary
 picture's source (`Ir.picSrcPrefix`) is answered from the resolved
 boundary results, a path resolves against the document's own directory,
 like `\input`, then through graphicx's extension resolution (a deck says
 `figures/plot` and means the `figures/plot.png` beside it), and decodes in
 the pure core through the content-hash cache when the decode is the
-expensive kind. Returns whether the cache answered, for the phase line,
-whether a fact about the machine stopped an included SVG's plan, for the
-page's placeholder (`Boundary.markUnplanned`), and the files it read or
-found standing where it read: what publication must not write over. -/
+expensive kind. An SVG takes the native route (`svgFetch`), whose answer
+rides beside the fetch. Returns whether the cache answered, for the phase
+line, and the files it read or found standing where it read: what
+publication must not write over. -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
-    (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request)
-    (paths : Array String := #[]) (cache : Option Engine.Cache := none) :
-    IO (Image.Fetch × Bool × Bool × Array String) := do
+    (refused : Array (String × Diag)) (params : Image.PlanParams) (lang : String)
+    (convert : Option Converter)
+    (req : Image.Request) (paths : Array String := #[]) (cache : Option Engine.Cache := none) :
+    IO (Image.Fetch × Bool × SvgFetch × Array String) := do
   let src := req.src
+  let none' : SvgFetch := { res := .error "" }
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
     | some r =>
       return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none,
-        false, false, #[])
+        false, none', #[])
     | none =>
       match refused.find? (·.1 == src) with
-      | some (_, why) => return (.refused why, false, false, #[])
+      | some (_, why) => return (.refused why, false, none', #[])
       | none =>
-        return (.missing "the boundary cache (no picture declares this source)", false, false, #[])
+        return (.missing "the boundary cache (no picture declares this source)", false, none', #[])
   let mut hit : Option (String × System.FilePath) := none
   for cand in Image.searchCandidates paths src do
     let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
@@ -381,17 +503,17 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
   | none =>
     let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
       else dir / src
-    return (.missing p.toString, false, false, #[])
+    return (.missing p.toString, false, none', #[])
   | some (cand, p) =>
     let bytes : Except String ByteArray ← try pure (.ok (← IO.FS.readBinFile p))
       catch e => pure (.error (toString e))
     match bytes with
-    | .error e => return (.unreadable e, false, false, #[p.toString])
+    | .error e => return (.unreadable e, false, none', #[p.toString])
     | .ok bytes =>
       let href := if cand == src then "" else cand
       if Image.isSvg cand then
-        let (res, stopped) ← ImageAssets.svgPlanResult params bytes req.page
-        return (.decoded href res (some bytes) none (some bytes) none, false, stopped, #[p.toString])
+        let f ← svgFetch src bytes req.page lang convert params
+        return (.decoded href f.res (some bytes) none (some bytes) none, false, f, #[p.toString])
       else if req.page != .first || req.animated then
         let res := Image.decodeRequest params bytes req
         -- An animation's companion SVG is read once, here, beside the PDF,
@@ -404,11 +526,11 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
               pure ((← (IO.FS.readBinFile upper).toBaseIO).toOption.map (·, upper))
           else pure none
         return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
-          (some bytes) (companion.map (·.1)), false, false,
+          (some bytes) (companion.map (·.1)), false, none',
           #[p.toString] ++ (companion.map (·.2.toString)).toArray)
       else
         let (res, fromCache) ← PlanCache.decodeCached cache params bytes
-        return (.decoded href res none none (some bytes) none, fromCache, false, #[p.toString])
+        return (.decoded href res none none (some bytes) none, fromCache, none', #[p.toString])
 
 /-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
@@ -420,32 +542,42 @@ did not carry is named after it (`Image.lossDiags`, W0603/W0604;
 are the defaults until a declaration projects them (the profile slices'
 one line). The `Nat` returned is the cache-hit count, for the phase line.
 Image diagnostics inherit the executed request span; located boundary
-refusals keep their own span. An include whose plan a fact about the
-machine stopped carries the page's placeholder (`Boundary.markUnplanned`).
-The files read come last. -/
+refusals keep their own span. A drawn SVG's figure joins its entry
+(`FigureStore.attach`), its route's diagnostics at its request's span, and
+its own title is returned by source, for the alternative the document left
+undeclared. The files read come last. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
-    IO (Image.Store × Array Diag × Nat × Array String) := do
+    IO (Image.Store × Array Diag × Nat × Array (String × String) × Array String) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
-  let mut stopped : Array Image.Request := #[]
+  let mut svgs : Array SvgFetch := #[]
   let mut hits := 0
   let mut reads : Array String := #[]
+  let convert ← svgConverter params doc.figureConvert
   for req in Ir.imageRequests doc do
-    let (f, fromCache, machine, read) ← fetchImage dir pics refused params req doc.graphicsPath cache
+    let (f, fromCache, svg, read) ← fetchImage dir pics refused params doc.info.locale.tag convert req
+      doc.graphicsPath cache
     if fromCache then hits := hits + 1
-    if machine then stopped := stopped.push req
     fetched := fetched.push (req, f)
     reads := reads ++ read
+    svgs := svgs.push svg
   let (store, diags) := Image.fulfilRequests fetched
-  let store := Boundary.markUnplanned stopped store
+  let store := FigureStore.attach store (svgs.map fun f => some f.drawn)
+  -- A figure's route diagnostics are about its request: they stand at the
+  -- span the document names the source at, whatever their subject.
+  let diags := diags ++ (fetched.zip svgs).flatMap fun ((req, _), f) =>
+    f.diags.map (DriverDiag.atImageRequest imageSpans req.src)
   let diags := (diags ++ PlanLoss.ledger store).map fun d =>
     match d.subject with
     | some src => DriverDiag.atImageRequest imageSpans src d
     | none => d
-  return (store, diags, hits, reads)
+  -- A loaded figure's own title, by the source spelling the document wrote.
+  let titles := (store.entries.zip svgs).filterMap fun (en, f) =>
+    if en.info.isSome then f.title.map (en.src, ·) else none
+  return (store, diags, hits, titles, reads)
 
 /-- PDF sources receive a browser image of their selected page, converted
 from the bytes `fetchImage` already read — never a reread. A declared
@@ -810,6 +942,25 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let sourceDiag := front.prepared.sourceTriggers.attribute
     let diags := front.diags.map sourceDiag
     let reqSpans := front.spans
+    -- Images load before the font set settles: a drawn SVG's text sets in
+    -- the document's faces, so its scalars join the per-scalar fallback
+    -- the assembly precomputes, as the body's do. They load before the
+    -- document's diagnostics are read, too: a figure that names itself is
+    -- the alternative the document did not declare. A document already
+    -- failing reads none of them.
+    let failingNow := (Diag.resolveAll doc.allow allowAll (Diag.forOutputs outputs diags)).errors > 0
+    -- The engine's own answers — image plans, flate streams — are read
+    -- from slots this engine wrote, and no other's (`Engine.engineId`).
+    let cache ← Engine.cache (← FontDiscovery.cacheDir)
+    let tImg ← IO.monoMsNow
+    let (imgs0, imgDiags0, imgHits, titles, imgReads0) ← if failingNow then pure ({}, #[], 0, #[], #[])
+      else loadImages file doc pics refused reqSpans.images cache
+    let imgMs ← since tImg
+    let doc := FigureAlt.titled titles doc
+    -- premise: svgTitleAltChecks — two builds differing only by the figure's
+    -- title: with it the page names the figure by the title and N0376 stays
+    -- silent; without it N0376 names the image and the page ships no name
+    let diags := FigureAlt.unanswered titles doc diags
     let mut resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
     if resolved.errors > 0 then
       ui.accepted resolved.accepted
@@ -824,7 +975,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let scan ← match reuse with
       | some s => pure s
       | none => scanFaces ui file doc.fonts
-    match ← buildFontSet doc scan front.cache .settled with
+    match ← buildFontSet doc scan front.cache .settled (Layout.storeScalars imgs0) with
     | .error d =>
       -- No usable font set exists at all: nothing downstream can run, so
       -- this stays fatal whatever the document accepts.
@@ -856,17 +1007,27 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
             (phases := false) (withdrawn := w.ids) (ledger := front.ledger)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
-        pure ((Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
+        pure (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
-      -- The engine's own answers — image plans, flate streams — are read
-      -- from slots this engine wrote, and no other's (`Engine.engineId`).
-      let cache ← Engine.cache (← FontDiscovery.cacheDir)
-      let (imgs, imgDiags, imgHits, imgReads) ← loadImages file doc pics refused reqSpans.images cache
+      -- A re-elaboration that changed what images the document requests
+      -- reads them again; the common case keeps the first read.
+      let (imgs, imgDiags, imgHits, _, imgReads) ←
+        if Ir.imageRequests doc == Ir.imageRequests front.doc then
+          pure (imgs0, imgDiags0, imgHits, titles, imgReads0)
+        else loadImages file doc pics refused reqSpans.images cache
+      -- Every drawn figure's text, set in the settled faces, and a moving
+      -- figure's still face: the one value both backends read.
+      let (imgs, shapeNotes) := FigureStore.settle fs imgs
+      let imgDiags := imgDiags ++ shapeNotes.map fun (src, d) =>
+        DriverDiag.atImageRequest reqSpans.images src d
       let imgDiags := (imgDiags ++ PlanLoss.pictureAlts doc reqSpans.images imgs).map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags)
       unless imgs.entries.isEmpty do
         let cached := if imgHits == 0 then "" else s!", {imgHits} cached"
-        ui.phase "images" s!"{imgs.entries.size} files{cached}" (← since t)
+        let drawn := imgs.entries.filter (·.vector.isSome) |>.size
+        let svgs := imgs.entries.filter (fun en => Image.isSvg (HtmlDoc.resolvedSrc en)) |>.size
+        let figs := if svgs == 0 then "" else s!", {drawn} of {svgs} SVG figures drawn natively"
+        ui.phase "images" s!"{imgs.entries.size} files{cached}{figs}" (imgMs + (← since t))
       let t ← IO.monoMsNow
       -- The main language's patterns; a language whose table has not
       -- landed is honestly unhyphenated (W0368 already named it).
@@ -982,7 +1143,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           ui.phase "withdraw" s!"{htmlOnly.size} pictures drawn by the rendered subset \
 in the HTML" (← since t)
           let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
-          pure (Ir.resolveMathAlphas fs.mathAlphabets family d).1
+          pure (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family d).1)
         let hcfg : HtmlDoc.Config := {
           css := cssMode
           imgs := imgs
@@ -1043,7 +1204,7 @@ in the HTML" (← since t)
         -- build, reads its stream back instead of compressing it. The glyph
         -- census is taken once for the kept faces, their programs and the
         -- page operators; the writer takes its own.
-        let used := Pdf.usedAll fs out.pages
+        let used := Pdf.usedAll fs out.pages imgs.shaped
         let keep := Pdf.keepOf used
         let programs := Pdf.facePrograms fs used
         let fs := { fs with zdata := ← Compression.fontZdata cache fs.fonts.size keep programs }

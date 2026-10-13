@@ -594,8 +594,8 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       gaps.isEmpty
   t s!"pdf features: the golden set reaches marked content, a soft mask, a copied graph, a DCT image, several object streams"
     (["marked-content", "smask", "copied-graph", "dct", "objstm-multi"].all reached.contains)
-  -- No corpus picture paints through a form yet, so the figure forms get a
-  -- page of their own: an alpha group's and a symbol's (the synthetic
+  -- The figure forms also get a page of their own, apart from the corpus's
+  -- translucent captions: an alpha group's and a symbol's (the synthetic
   -- matrix's figures). The census names the forms the file carries — a
   -- census that read only copied pages' bases once left them unnamed —
   -- and the typed census and the parsed bytes agree on every row.
@@ -616,7 +616,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let src ← IO.FS.readFile "testdata/corpus/images.tex"
   let (doc, _) ← elabFixture "images" src
   let geom := Layout.Geom.ofPage doc.page
-  let store ← corpusStore doc
+  let store ← corpusStore doc (some oneFace)
   let out := layoutOf oneFace doc geom none store
   let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
   match walkMutants pdf with

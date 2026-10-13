@@ -242,7 +242,7 @@ def shadingDict : Gradient → String
 
 /-- A form's /BBox: the document writer's (`Pdf.formBBox`). -/
 def bboxOf (kind : Pdf.FormKind) (body : Array Pdf.ContentOp) : String :=
-  let (x0, y0, x1, y1) := Pdf.formBBox kind body
+  let (x0, y0, x1, y1) := Pdf.formBBox Pdf.noGlyphInk kind body
   s!"[{x0} {y0} {x1} {y1}]"
 
 def resPrefix : Pdf.FigRes → String

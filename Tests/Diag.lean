@@ -1,8 +1,10 @@
 module
 
+public import LeanTex.Core.FigureLoss
 public import LeanTex.Cli.FontDiscovery
 public import LeanTex.Cli.FontAssembly
 public import Tests.Support
+public import Tests.CorpusStore
 public import Tests.LayoutInkContracts
 public import Tests.ListingStyleTable
 
@@ -640,16 +642,21 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- The HTML page's own image face: a decoded PDF page, which the PDF
   -- artifact embeds as vectors and no browser decodes in an <img>. The
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
-  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf",
-      DriverDiag.pageIconOmitted "favicon.svg" "xmllint did not finish"]
-  -- A PDF figure whose text is in a Type 1 program the importer does not
-  -- read: its web face is the engine's drawing without it where no
-  -- converter drew the figure (`figureRouteChecks`), the converter's where
-  -- one did.
-  | .W0609 => FigureLoss.diags (FigureLoss.pdfLostDiag "plot.pdf" (.noFace "pdftocairo is missing"))
-      ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[])
+  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
+  -- A figure's feature the engine does not draw — a PDF figure's text in a
+  -- Type 1 program the importer does not read, an SVG figure's filter: with
+  -- no converter drawing the figure the engine's drawing ships without it,
+  -- and with one the converter's drawing, the reason named. The emission
+  -- paths are the routes' (`figureRouteChecks`, `Tests.svgRouteChecks`).
+  | .W0609 => FigureLoss.diags
+      (FigureLoss.pdfLostDiag "plot.pdf" (.failed "pdftocairo produced an empty image"))
+      ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
+    #[FigureLoss.svgLostDiag false "figures/chart.svg" .absent (.property "filter")]
   | .N0024 => FigureLoss.diags (FigureLoss.pdfConvertedDiag "figures/plot.pdf")
-      ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[])
+      ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
+    #[FigureLoss.svgConvertedDiag false "figures/chart.svg" (.property "filter")]
+  -- A font family the document does not declare, set in its sans face.
+  | .N0026 => #[FigureLoss.svgFontDiag "figures/chart.svg" "Example Grotesk" "Open Sans"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395
@@ -685,9 +692,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0378 => #[DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef" .textless,
       DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef" .textlessDeclined,
       DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
-        (.unconverted "pdftocairo: not found (error code: 2)"),
-      DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
-        (.unchecked "xmllint did not finish")]
+        (.unconverted "pdftocairo: not found (error code: 2)")]
   | .W0349 => dvE (w := w) "\\ref{nowhere}"
   | .W0350 => dvE (w := w) "\\section{A}\\label{twice}\\label{twice}"
   | .W0380 => dvE (w := w) "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"

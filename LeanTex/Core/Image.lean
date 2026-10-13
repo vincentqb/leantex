@@ -4,6 +4,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Flate
 public import LeanTex.Core.PdfRead
+public import LeanTex.Core.Gfx
 import LeanTex.Core.Binary
 
 namespace LeanTex.Core.Image
@@ -2084,6 +2085,25 @@ public structure Loaded extends Request where
   /-- The exact bytes of an animation's companion SVG, read once beside the
   PDF, so preserving movement never rereads a second file. -/
   companion : Option ByteArray := none
+  /-- An SVG the engine draws: the figure its importer read from `source`
+  (`Svg.importBytes`), its text runs still to be set. Both backends read
+  it through the store's shaped figures (`Store.shaped`). -/
+  vector : Option (Gfx.Figure Gfx.Run) := none
+  /-- The store entries that hold the vector figure's rasters, one per
+  raster in order: each a planned image the PDF writer embeds as its own
+  XObject, which the figure's form names (`Pdf.docFigsWith`). -/
+  rasterSlots : Array Nat := #[]
+  /-- For an entry that holds a drawn figure's raster, the figure's entry:
+  such an entry is placed only through its figure, and ships no browser
+  asset of its own — the browser reads the raster in the figure's file. -/
+  rasterOf : Option Nat := none
+  /-- For a drawn figure's raster, whether a reader may smooth its samples
+  when it scales them (`Gfx.Raster.smooth`): the PDF's image then says
+  `/Interpolate true`, as the figure's `image-rendering: auto` does. -/
+  interpolate : Bool := false
+  /-- Whether the vector figure animates (a SMIL track in its source): the
+  browser then keeps the source, and print reads a poster. -/
+  moving : Bool := false
   deriving Inhabited
 
 /-- The captured face the browser receives; naming and publication read
@@ -2091,15 +2111,29 @@ these same bytes, even if the source file changes during the build. -/
 @[expose] public def Loaded.browserBytes (en : Loaded) : Option ByteArray :=
   en.webSvg.orElse fun _ => en.source
 
-/-- One intrinsic size for both backends: a successfully loaded image's
-animation canvas, or its own geometry for an ordinary include. -/
+/-- One intrinsic size for both backends: a vector figure's box, a
+successfully loaded image's animation canvas, or its own geometry for an
+ordinary include. -/
 @[expose] public def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=
-  en.info.map fun inf => en.canvasSize.getD (inf.width, inf.height)
+  match en.vector with
+  | some fig => some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2)
+  | none => en.info.map fun inf => en.canvasSize.getD (inf.width, inf.height)
 
 /-- The intrinsic box both backends read keeps a declared animation canvas
 independently of the selected poster's geometry. -/
-public theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some inf) :
+public theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some inf)
+    (hv : en.vector.isNone = true) :
     en.size? = some (en.canvasSize.getD (inf.width, inf.height)) := by
+  cases hvec : en.vector with
+  | some _ => simp [hvec] at hv
+  | none => simp [Loaded.size?, h, hvec]
+
+/-- **A vector figure is sized by its box** (`_exact`): the extent layout
+reserves for a drawn SVG and the HTML image box are the figure's own,
+the root viewport its importer read (`Svg.import_box_exact`). -/
+public theorem Loaded.size?_vector_exact (en : Loaded) (fig : Gfx.Figure Gfx.Run)
+    (h : en.vector = some fig) :
+    en.size? = some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2) := by
   simp [Loaded.size?, h]
 
 /-- Extension recognition for the browser image format. The CLI still
@@ -2134,6 +2168,10 @@ public structure Store where
   the smaller spelling (`Pdf.copiedFormStream`), as it does for font
   programs (`Font.FontSet.zdata`). -/
   formZ : Array (Option ByteArray) := #[]
+  /-- Each entry's vector figure with its text set in the document's faces
+  (`Layout.shapeStore`), filled once the font set is settled: the one
+  value both backends read for a drawn SVG. -/
+  shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]
   deriving Inhabited
 
 @[expose] public def Store.findRequest? (s : Store) (req : Request) : Option Nat :=
@@ -2260,6 +2298,18 @@ public theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f
   | missing looked => exact ⟨_, rfl, by simp only [imageMissing, Diag.of_subject]⟩
   | unreadable err => exact ⟨_, rfl, by simp only [imageUnreadable, Diag.of_subject]⟩
   | refused why => exact ⟨_, rfl, rfl⟩
+
+/-- **A decode that failed is a named gap**: no payload, and a diagnostic
+whose subject is the source. -/
+public theorem fulfilOne_error_named (req : Request) (href e : String)
+    (webSvg : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp))
+    (source companion : Option ByteArray) :
+    (fulfilOne req (.decoded href (.error e) webSvg canvasSize source companion)).1.info = none ∧
+    ∃ d, (fulfilOne req (.decoded href (.error e) webSvg canvasSize source companion)).2 = some d ∧
+      d.subject = some req.src := by
+  have hi : (fulfilOne req (.decoded href (.error e) webSvg canvasSize source companion)).1.info = none := by
+    simp [fulfilOne]
+  exact ⟨hi, fulfilOne_named req _ hi⟩
 
 /-- Every entry the decision writes is the fetched source's, in order. -/
 public theorem fulfilOne_request (req : Request) (f : Fetch) :

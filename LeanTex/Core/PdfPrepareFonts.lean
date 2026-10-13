@@ -133,7 +133,7 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
     have hv := congrArg Prod.snd heq
     dsimp only at hv
     rw [← hv] at hf
-    have hu := figDictObj_untyped_exact (nameRes (figureTable geom pages) r)
+    have hu := figDictObj_untyped_exact (nameRes (figureTable geom pages (docFigsWith fs (keepOf (usedAll fs pages imgs.shaped)) imgs)) r)
     exact False.elim (kindOf_no_subtype_not_font _ hu.1 hu.2 hf)
 
 end LeanTex.Core.Pdf

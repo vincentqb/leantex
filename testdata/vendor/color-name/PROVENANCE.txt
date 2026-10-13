@@ -1,0 +1,19 @@
+# The CSS named-colour keywords, vendored as the source of
+# LeanTex/Core/CssColorData.lean (scripts/gen-csscolor-data.lean).
+#
+# source:   the npm package color-name, version 1.1.4
+#           (https://github.com/colorjs/color-name), whose table is the
+#           <named-color> list of CSS Color Module Level 4 §6.1
+# tarball:  https://registry.npmjs.org/color-name/-/color-name-1.1.4.tgz,
+#           integrity sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==
+# fetched:  2026-10-09, read from an npm cache's unpacked copy of that tarball
+# license:  MIT, Copyright (c) 2015 Dmitry Ivanov; LICENSE beside this file is the
+#           upstream file verbatim, which the licence asks every copy to carry
+# checked:  SHA256SUMS lists the sha256 of each file's upstream bytes;
+#           `sha256sum -c SHA256SUMS` run from this directory verifies them
+#
+# Taken: index.js (the 148 keywords and their sRGB triples) and LICENSE.
+# Not taken: README.md and package.json, which carry no colour.
+# Not in the table, and read by the importer itself: `transparent` and
+# `currentColor`, which CSS Color 4 defines beside the named colours (§6.2,
+# §6.4), not among them.

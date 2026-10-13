@@ -394,9 +394,16 @@ public inductive Anchor where
   | «end»
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- SVG text, shaped by the engine. `xf` places the run's baseline origin. -/
+/-- SVG text, shaped by the engine. `xf` maps the run's own space — its
+baseline origin at (0, 0), y up, one unit an `Sp` at the run's size — into
+the frame it stands in. A run that `follows` continues the text chunk of
+the run before it (SVG 2 §11.10.2): its pen starts where that run's ended,
+moved by `xf`'s translation along x, and the chunk's anchor applies to the
+chunk as a whole, once its advance is known. A run that does not follow
+starts a chunk at `xf`'s origin. -/
 public structure Run where
   xf : Affine
+  follows : Bool
   size : Sp
   text : String
   face : FaceReq
@@ -406,16 +413,26 @@ public structure Run where
   lang : Option String
   deriving Repr, Inhabited
 
-/-- A run after shaping: a face of the document's `FontSet`, glyph ids with
-their pen x, the resolved start already folded into `xf`. -/
+/-- A run after shaping: each glyph's face of the document's `FontSet`, its
+glyph id, the scalar it sets and its pen x from the run's start, in the
+run's own space; the resolved start already folded into `xf`. A run whose
+scalar a face lacks takes a glyph of the face the per-scalar fallback
+names, so one run may set in several faces. `role` is the document's font
+role the run's family list resolved to (0 the body, 1 the sans, 2 the
+mono), `weight` and `italic` the resolved face's own descriptors: what a
+backend that sets the text itself names, so it selects the face the
+shaping did. -/
 public structure Shaped where
-  face : Nat
   size : Sp
   xf : Affine
-  glyphs : Array (Nat × Sp)
+  glyphs : Array (Nat × Nat × Char × Sp)
   text : String
   fill : Option Fill
   stroke : Option Stroke
+  lang : Option String
+  role : Nat
+  weight : Nat
+  italic : Bool
   deriving Repr, Inhabited
 
 /-- A raster's encoded bytes (PNG, or JPEG when `jpeg`), its pixel size,

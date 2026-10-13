@@ -325,9 +325,9 @@ public def declinedHelp : String :=
   "\\pictures{ tool = none } keeps every picture to the rendered subset; without it, \
 lualatex draws this one whole"
 
-/-- Why a boundary picture has no checked SVG face for the HTML artifact:
-each reason has its own words and its own remedy, so two pictures fold to
-one line only where one remedy serves both. -/
+/-- Why a boundary picture has no SVG face for the HTML artifact: each
+reason has its own words and its own remedy, so two pictures fold to one
+line only where one remedy serves both. -/
 public inductive SvgFaceLoss where
   /-- Its text is in a font the engine does not draw, and no converter drew
   it: none was installed, it was interrupted, or its face was refused. -/
@@ -335,14 +335,11 @@ public inductive SvgFaceLoss where
   /-- As `textless`, the document having declined the converter
   (`\figures{ convert = none }`). -/
   | textlessDeclined
-  /-- Its PDF→SVG conversion failed, or the check its SVG must pass did not
-  finish, in the tool's words. -/
+  /-- Its PDF→SVG conversion failed or did not finish, in the tool's
+  words. -/
   | unconverted (why : String)
-  /-- The check its SVG must pass finished when it was converted and not when
-  the page was published, in the check's words. -/
-  | unchecked (why : String)
 
-/-- W0378: a boundary picture has no checked SVG face for the HTML artifact
+/-- W0378: a boundary picture has no SVG face for the HTML artifact
 (`Boundary.htmlFace`), so the page shows the rendered subset's drawing where
 the subset draws the picture in part (`Boundary.htmlWithdraw`), and
 otherwise a placeholder labelled with the picture's text alternative. One
@@ -360,15 +357,10 @@ draw, and the converter is declined", none,
         "\\figures{ convert = none } declines the converter; without it, pdftocairo draws the \
 picture whole, or \\allow{W0378} accepts the loss")
     | .unconverted why =>
-      ("this boundary picture has no browser face: its conversion to SVG failed, or the check \
-its SVG must pass did not finish", some why,
-        "install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, \
-librsvg's rsvg-convert), rebuild if it was interrupted, or \\allow{W0378} accepts the loss")
-    | .unchecked why =>
-      ("this boundary picture has no browser face: the check its SVG must pass did not finish \
-when the page was published", some why,
-        "rebuild to run the check again, install libxml2's xmllint if the reason says it is \
-missing, or \\allow{W0378} accepts the loss")
+      ("this boundary picture has no browser face: its conversion to SVG failed or did not \
+finish", some why,
+        "install poppler's pdftocairo if the reason says it is missing, rebuild if it was \
+interrupted, or \\allow{W0378} accepts the loss")
   Diag.of .W0378 message (subject := some src) (detail := detail) (help := help)
     (output := some .html)
 
@@ -376,21 +368,6 @@ public theorem boundarySvgMissing_subject (src : String) (loss : SvgFaceLoss) :
     (boundarySvgMissing src loss).kind = .W0378 ∧
       (boundarySvgMissing src loss).subject = some src := by
   cases loss <;> simp [boundarySvgMissing, Diag.of_record_exact]
-
-/-- W0605: the declared page icon is an SVG whose check did not finish on
-this machine, so the page ships without the icon instead of refusing. -/
-public def pageIconOmitted (name why : String) : Diag :=
-  Diag.of .W0605
-    s!"favicon '{name}' could not be checked for the web page: {why}; \
-the page ships without it"
-    (help := "install the tool the reason names, rebuild if it was interrupted, or \
-\\pdfmeta{ favicon = \"icon.png\" } declares a PNG icon, which needs no tool")
-    (subject := some name)
-    (output := some .html)
-
-public theorem pageIconOmitted_subject (name why : String) :
-    (pageIconOmitted name why).kind = .W0605 ∧ (pageIconOmitted name why).subject = some name := by
-  simp [pageIconOmitted, Diag.of_record_exact]
 
 /-- W0393: the external classifier supplied no usable answer. The source
 still ships, and the language is the key for counting repeated refusals. -/

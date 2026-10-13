@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80" font-family="serif">
+ <title>Two invented shaded squares</title>
+ <defs>
+  <linearGradient id="along" x2="1"><stop offset="0" stop-color="#2255aa"/><stop offset="1" stop-color="#aaddff"/></linearGradient>
+  <radialGradient id="round"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#cc3322"/></radialGradient>
+  <clipPath id="disc"><circle cx="120" cy="40" r="30"/></clipPath>
+ </defs>
+ <rect width="80" height="80" fill="url(#along)"/>
+ <rect x="80" width="80" height="80" fill="url(#round)" clip-path="url(#disc)"/>
+ <text x="8" y="70" font-size="10">Shaded</text>
+</svg>

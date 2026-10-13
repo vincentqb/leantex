@@ -146,7 +146,7 @@ public structure PicCtx where
   spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
   boundary: `none` here is the declared refusal. -/
   tool : Option String := some "lualatex"
-  /-- Whether an external converter may draw a figure's web face the engine
+  /-- Whether an external converter may draw a figure the engine
   cannot draw whole: open by default; `\figures{ convert = none }` is the
   declared refusal, under which the engine's own drawing ships with every
   loss it names. -/
@@ -17704,10 +17704,11 @@ tool = none refuses the boundary")
   | .figures body pos =>
     match body with
     | some src =>
-      -- The converter door: whether pdftocairo may draw a PDF figure's web
-      -- face the engine cannot draw whole. Open by default, as the picture
-      -- boundary is; `convert = none` refuses it, and the only converter
-      -- the engine runs is the one it pins.
+      -- The converter door: whether the converters the engine pins —
+      -- pdftocairo for a PDF figure's web face, rsvg-convert for an SVG
+      -- figure — may draw a figure the engine cannot draw whole. Open by
+      -- default, as the picture boundary is; `convert = none` refuses both,
+      -- and naming either is the default, since the engine runs no other.
       let mut s := s
       for e in Decl.splitEntries src do
         match Decl.splitEntry e with
@@ -17715,13 +17716,14 @@ tool = none refuses the boundary")
           let v := v.trimAscii.toString
           if v == "none" then
             s := { s with ctx := { s.ctx with pic := { s.ctx.pic with convert := false } } }
-          else if v == "pdftocairo" then
+          else if v == "pdftocairo" || v == "rsvg-convert" then
             s := { s with ctx := { s.ctx with pic := { s.ctx.pic with convert := true } } }
           else
             diag s.ctx .E0321
               s!"cannot read a converter for 'convert' in 'figures': '{v}'" pos
-              (help := "the engine runs only the converter it pins: pdftocairo; \
-convert = none refuses it")
+              (help := "the engine runs only the converters it pins: pdftocairo for a PDF \
+figure's web face and rsvg-convert for an SVG figure; \
+convert = none refuses both")
         | some (key, _) =>
           let d := Decl.unknownKey s.ctx.file "figures" key ["convert"] pos
           modify fun st => { st with diags := st.diags.push d }

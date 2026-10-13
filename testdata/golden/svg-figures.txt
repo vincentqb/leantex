@@ -1,0 +1,43 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+font sans "Fira Sans"
+meta title "Figures Drawn from SVG"
+center
+  section* 0
+    text "Figures Drawn from SVG"
+section 1 number "1"
+  text "A chart and a moving figure"
+para
+  text "A chart drawn by the engine, its labels in the document’s sans face:"
+role trivlist-env
+  center
+    para
+      image "figures/chart.svg" width 800/1000tw
+para
+  text "A moving figure, described:"
+role trivlist-env
+  center
+    para
+      image "figures/pulse.svg" width 500/1000tw alt "A pulsing invented signal"
+para
+  text "Captions in translucent and reused groups, and shaded squares:"
+role trivlist-env
+  center
+    para
+      image "figures/captions.svg" width 600/1000tw
+      text " "
+      image "figures/shades.svg" width 300/1000tw
+para
+  text "A field of values drawn as an embedded raster:"
+role trivlist-env
+  center
+    para
+      image "figures/tiles.svg" width 500/1000tw
+-- diagnostics
+note[N0100] 11:1 '\usepackage{graphicx}' → nothing: the engine does this itself
+note[N0376] 20:1 image 'figures/chart.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+note[N0376] 32:1 image 'figures/captions.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+note[N0376] 33:1 image 'figures/shades.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+note[N0376] 39:1 image 'figures/tiles.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative

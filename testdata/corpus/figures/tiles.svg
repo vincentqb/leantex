@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" viewBox="0 0 160 120" font-family="sans-serif">
+ <title>An invented field of sixteen values</title>
+ <rect width="160" height="120" fill="#ffffff"/>
+ <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAJ0lEQVR42mMwsOmxyVsVtWDLtBMLGOCsO5cqGOCsD9MCGOCsE242ALawHAuZkI1nAAAAAElFTkSuQmCC" x="20" y="10" width="90" height="90" preserveAspectRatio="none" image-rendering="pixelated"/>
+ <rect x="20" y="10" width="90" height="90" fill="none" stroke="#333333" stroke-width="1"/>
+ <text x="65" y="114" font-size="9" text-anchor="middle" fill="#333333">invented field</text>
+ <text x="118" y="20" font-size="8" fill="#333333">high</text>
+ <text x="118" y="100" font-size="8" fill="#333333">low</text>
+</svg>

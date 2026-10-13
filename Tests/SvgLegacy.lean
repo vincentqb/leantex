@@ -1,14 +1,92 @@
 module
 
-/-! A static projection of synchronized SVG animation tracks. libxslt reads
-the XML; this constant stylesheet neither runs authored code nor samples a
-timeline. The poster is the pose approached at the end of one simple duration,
-before repeat/fill handling (SVG 1.1 §19.2.9). Only finite decimal geometry,
-opacity and absolute M/L paths are read; other timelines are refused. -/
+public import Tests.Support
 
-namespace LeanTex.Cli.SvgPoster
+public section
 
-public def stylesheet : String := r#"<xsl:stylesheet version="1.0"
+/-! The SVG boundary and terminal projection as libxml2 and libxslt stated
+them before the native reader replaced them on the render path: kept only
+as the parity oracle's reference (`scripts/svg-check.lean`), which holds the
+native judge and projection to these verdicts over the shared matrices. No
+render path imports this module. -/
+
+namespace Tests.SvgLegacy
+
+/-- A deliberately narrow support boundary, evaluated over libxml's parsed
+XML, never the source spelling. Only fragment references are supported,
+and a raster an `<image>` carries in its own reference — a base64 PNG or
+JPEG `data:` URL (RFC 2397), the spelling pdftocairo gives every raster a
+PDF draws — which names nothing outside the file.
+CSS is plain declarations/rules without functions, escapes or at-rules.
+Color presentation attributes also admit wholly numeric `rgb()`/`rgba()`
+(CSS Color, numeric RGB notation); their alphabet cannot name a resource. This checks
+resource closure, not the validity of every numeric color spelling. Other
+presentation functions are exactly `url(#ASCII-id)`, without paint-server
+fallback syntax such as `url(#id) red`. Transforms and SMIL timing have their
+own non-resource function syntax. Animated resource/style assignments,
+scripts and foreign objects are refused. This is a refusal boundary, not a
+second XML or CSS parser. -/
+def supportedSvg : String :=
+  let localUrl := "(starts-with(normalize-space(.),'url(#') and " ++
+    "substring(normalize-space(.),string-length(normalize-space(.)),1)=')' and " ++
+    "string-length(normalize-space(.))>6 and " ++
+    "translate(substring(normalize-space(.),6,string-length(normalize-space(.))-6)," ++
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:-','')='')"
+  let color := "translate(normalize-space(.),'RGBA','rgba')"
+  let channels := "substring-before(substring-after(" ++ color ++ ",'('),')')"
+  let numericColor :=
+    "((local-name()='fill' or local-name()='stroke' or local-name()='color' or " ++
+      "local-name()='stop-color' or local-name()='flood-color' or local-name()='lighting-color') and " ++
+      "(" ++ color ++ "=concat('rgb('," ++ channels ++ ",')') or " ++
+        color ++ "=concat('rgba('," ++ channels ++ ",')')) and " ++
+      "string-length(" ++ channels ++ ")>0 and " ++
+      "translate(" ++ channels ++ ",'0123456789.%eE+-,/ ','')='')"
+  let cssSyntax := "(contains(.,'(') or contains(.,'\\') or contains(.,'@'))"
+  let dataRaster := "(local-name()='href' and local-name(..)='image' and " ++
+    "(starts-with(normalize-space(.),'data:image/png;base64,') or " ++
+    "starts-with(normalize-space(.),'data:image/jpeg;base64,')) and " ++
+    "translate(substring-after(normalize-space(.),';base64,')," ++
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= ','')='')"
+  let unsupported :=
+    "//processing-instruction() | " ++
+    "//*[local-name()='script' or local-name()='foreignObject'] | " ++
+    "//@*[local-name()='base' or starts-with(local-name(),'on')] | " ++
+    "//@*[local-name()='href' or local-name()='src']" ++
+      "[not(starts-with(normalize-space(.),'#') or " ++ dataRaster ++ ")] | " ++
+    "//*[local-name()='style'][" ++ cssSyntax ++ "] | " ++
+    "//@*[not(local-name()='transform' or local-name()='gradientTransform' or " ++
+      "local-name()='patternTransform' or local-name()='begin' or local-name()='end')]" ++
+      "[" ++ cssSyntax ++ " and not(" ++ localUrl ++ " or " ++ numericColor ++ ")] | " ++
+    "//@*[local-name()='attributeName'][" ++
+      "normalize-space(.)='href' or substring-after(normalize-space(.),':')='href' or " ++
+      "normalize-space(.)='src' or substring-after(normalize-space(.),':')='src' or " ++
+      "normalize-space(.)='base' or substring-after(normalize-space(.),':')='base' or " ++
+      "normalize-space(.)='style' or normalize-space(.)='attributeName' or " ++
+      "normalize-space(.)='from' or normalize-space(.)='to' or normalize-space(.)='by' or " ++
+      "normalize-space(.)='values' or starts-with(normalize-space(.),'on')]"
+  "boolean(/*[local-name()='svg' and namespace-uri()='http://www.w3.org/2000/svg']) and " ++
+    "not(" ++ unsupported ++ ")"
+
+/-- libxml2's SAX events, read as the old boundary read them: DTD
+declarations and entity references refuse, a parser error refuses, and an
+inert doctype is reported for removal. -/
+def saxBoundary (sax : String) : Except String Bool := do
+  let events := (sax.splitOn "\n").map (·.trimAscii.toString)
+  let has := fun name => events.any (·.startsWith ("SAX." ++ name ++ "("))
+  if ["entityDecl", "attributeDecl", "elementDecl", "notationDecl",
+      "unparsedEntityDecl", "resolveEntity", "getParameterEntity",
+      "getEntity", "reference"].any has then
+    throw "SVG resource boundary refuses DTD declarations and external entities"
+  if events.any (fun event =>
+      event.startsWith "SAX.error:" || event.startsWith "SAX.fatalError:") then
+    throw "SVG validation received an XML parser error"
+  unless events.contains "SAX.startDocument()" && events.contains "SAX.endDocument()" do
+    throw "SVG validation received no complete XML parse"
+  return has "internalSubset" || has "externalSubset"
+
+/-- The terminal-pose stylesheet the native projection (`SvgPoster.terminal`)
+replaced. -/
+def stylesheet : String := r#"<xsl:stylesheet version="1.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:s="http://www.w3.org/2000/svg" exclude-result-prefixes="s">
 <xsl:output method="xml" encoding="UTF-8"/>
@@ -154,4 +232,34 @@ public def stylesheet : String := r#"<xsl:stylesheet version="1.0"
 </xsl:template>
 </xsl:stylesheet>"#
 
-end LeanTex.Cli.SvgPoster
+private def run (cmd : String) (args : Array String) : IO IO.Process.Output :=
+  IO.Process.output { cmd, args }
+
+/-- The old boundary's verdict on a source: libxml2's SAX pass, then its
+XPath over the parse. -/
+def judge (bytes : ByteArray) : IO (Except String Unit) := IO.FS.withTempDir fun dir => do
+  let input := dir / "source.svg"
+  IO.FS.writeBinFile input bytes
+  let sax ← run "xmllint" #["--nonet", "--nocatalogs", "--sax", input.toString]
+  if sax.exitCode != 0 then return .error s!"xmllint exited {sax.exitCode}"
+  match saxBoundary sax.stdout with
+  | .error e => return .error e
+  | .ok _ =>
+    let xp ← run "xmllint" #["--nonet", "--nocatalogs", "--xpath", supportedSvg, input.toString]
+    if xp.exitCode != 0 then return .error s!"xmllint exited {xp.exitCode}"
+    return if xp.stdout.trimAscii.toString == "true" then .ok ()
+      else .error "SVG resource boundary refuses the source"
+
+/-- The old projection's terminal pose of a source, as libxslt writes it, or
+its message. -/
+def terminal (bytes : ByteArray) : IO (Except String ByteArray) := IO.FS.withTempDir fun dir => do
+  let input := dir / "source.svg"
+  let style := dir / "terminal.xsl"
+  IO.FS.writeBinFile input bytes
+  IO.FS.writeFile style stylesheet
+  let out ← run "xsltproc" #["--nonet", "--novalid", "--nodtdattr", "--nowrite", "--nomkdir",
+    style.toString, input.toString]
+  if out.exitCode != 0 then return .error (out.stdout ++ out.stderr)
+  return .ok out.stdout.toUTF8
+
+end Tests.SvgLegacy

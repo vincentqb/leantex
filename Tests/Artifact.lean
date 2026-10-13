@@ -1120,6 +1120,175 @@ def artEmbedded (pdf : ByteArray) :
     out := out.push (fn, bytes, painted.getD pn #[])
   return out
 
+/-- Every glyph run a file's forms paint, each in its form's own text
+space — a drawn figure's runs stand under their run's frame (`cm`), which
+the evaluation does not apply, so a run's positions read from its text
+origin, as shaping states them — by the viewer's arithmetic over the fonts
+the form's own resources name. -/
+def artFormRuns (pdf : ByteArray) : Except String (Array ArtRun) := do
+  let es ← PdfRead.objects pdf
+  let esv := es.val
+  let deref := PdfCensus.deref esv
+  let mut out : Array ArtRun := #[]
+  for e in esv do
+    unless e.val.get? "Subtype" == some (.name "Form") do continue
+    let mut fonts : Std.HashMap String ArtFont := {}
+    if let .dict fs := deref ((deref ((e.val.get? "Resources").getD .null)).get? "Font" |>.getD .null) then
+      for (nm, v) in fs do fonts := fonts.insert nm (artFontOf esv (deref v))
+    if fonts.isEmpty then continue
+    match e.decoded with
+    | .ok (some data) => out := out ++ (evalContent fonts (scanContent data)).1
+    | .ok none => throw "a form is not a stream"
+    | .error err => throw s!"a form's stream does not decode: {err}"
+  return out
+
+/-- Each stretch the store's drawn figures set — one face's run of glyphs,
+as the writer opens one text object for it (`Pdf.figureStretches`) — with
+its size and every glyph's pen x from the run's text origin. -/
+def artFigureStretches (store : Image.Store) : Array (Array Dim.Sp × Dim.Sp) :=
+  store.shaped.foldl (fun out fig? => match fig? with
+    | some fig =>
+      -- A symbol's text is written once, in the symbol's own form, however
+      -- many uses paint it: its bodies are read as written, not expanded.
+      let runs := fig.symbols.foldl (fun acc b => Gfx.Node.labelsList Gfx.Affine.unit acc b.toList)
+        (Gfx.Node.labelsList Gfx.Affine.unit #[] fig.nodes.toList)
+      runs.foldl (fun out (_, r) =>
+        (Pdf.figureStretches r.glyphs).foldl (fun out (_, gs, x0) =>
+          let (_, xs) := gs.foldl (fun (x, xs) (_, _, next) => (x + next, xs.push x)) (x0, #[])
+          out.push (xs, r.size)) out) out
+    | none => out) #[]
+
+/-- Shaped stretches no painted run sets where shaping put them: each
+stretch must be painted by a run of its glyph count whose every glyph
+starts within what the file can state of the shaped pen (`artSpellSlack`
+and half a thousandth of the size, `Pdf.place_between`'s bound). Runs
+nothing shaped — a placed PDF figure's own text — are not this check's. -/
+def artFigureGlyphOffences (expected : Array (Array Dim.Sp × Dim.Sp)) (painted : Array ArtRun) :
+    Array String := Id.run do
+  let mut free := painted
+  let mut out : Array String := #[]
+  for (xs, size) in expected do
+    let near (r : ArtRun) : Bool :=
+      r.glyphs.size == xs.size && (r.glyphs.zip xs).all fun ((px, _), x) =>
+        (px - x).natAbs ≤ (artSpellSlack + size / 2000).natAbs
+    match free.findIdx? near with
+    | some i => free := free.eraseIdx! i
+    | none => out := out.push s!"a stretch of {xs.size} glyphs at {(xs[0]?.getD 0).toPtString}pt is painted nowhere it was shaped"
+  return out
+
+/-- A PDF matrix `[a b c d e f]` in points, as `Rat`. -/
+abbrev PdfMat := Rat × Rat × Rat × Rat × Rat × Rat
+
+/-- `m` then `n` (§8.3.4): a point maps through `m` first. -/
+def PdfMat.then (m n : PdfMat) : PdfMat :=
+  let (a, b, c, d, e, f) := m
+  let (a', b', c', d', e', f') := n
+  (a * a' + b * c', a * b' + b * d', c * a' + d * c', c * b' + d * d',
+   e * a' + f * c' + e', e * b' + f * d' + f')
+
+def PdfMat.apply (m : PdfMat) (x y : Rat) : Rat × Rat :=
+  let (a, b, c, d, e, f) := m
+  (a * x + c * y + e, b * x + d * y + f)
+
+def PdfMat.unit : PdfMat := (1, 0, 0, 1, 0, 0)
+
+/-- Every glyph a form's text shows, read off the written file with the
+viewer's arithmetic (§8.3, §9.4.4) — each `cm` and text matrix the stream
+spells, each glyph's `/W` width, each `TJ` number — its ink the hull of
+its face's own outline at that pen, in the form's space; and what the
+form's box (`/BBox`, as `boxOf` reads it) leaves outside. A form's box
+clips (§8.10.1): a glyph outside it is painted nowhere a viewer shows.
+Returns how many glyphs were read and the offences. -/
+def formGlyphOffences (pdf : ByteArray) (fs : Font.FontSet)
+    (boxOf : Array Rat → Array Rat := id) : Except String (Nat × Array String) := do
+  let es ← PdfRead.objects pdf
+  let esv := es.val
+  let deref := PdfCensus.deref esv
+  let pt (v : Int) : Rat := (v : Rat) / 65536
+  let mut seen := 0
+  let mut out : Array String := #[]
+  for e in esv do
+    unless e.val.get? "Subtype" == some (.name "Form") do continue
+    let bb : Array Rat := boxOf (match deref ((e.val.get? "BBox").getD .null) with
+      | .arr xs => xs.map fun o => pt ((PdfRead.Obj.sp? o).getD 0)
+      | _ => #[])
+    let some bx0 := bb[0]? | throw "a form has no /BBox"
+    let (by0, bx1, by1) := (bb[1]?.getD 0, bb[2]?.getD 0, bb[3]?.getD 0)
+    let mut fonts : Std.HashMap String (ArtFont × Option Font.Font) := {}
+    if let .dict fd := deref ((deref ((e.val.get? "Resources").getD .null)).get? "Font" |>.getD .null) then
+      for (nm, v) in fd do
+        let o := deref v
+        let base := match o.get? "BaseFont" with
+          | some (.name n) => artBaseName n
+          | _ => ""
+        fonts := fonts.insert nm (artFontOf esv o, fs.fonts.find? (·.psName == base))
+    let data ← match e.decoded with
+      | .ok (some d) => pure d
+      | _ => throw "a form's stream does not decode"
+    let mut stack : Array CTok := #[]
+    let mut ctm := PdfMat.unit
+    let mut saved : Array PdfMat := #[]
+    let mut tm := PdfMat.unit
+    let mut size : Rat := 0
+    let mut th : Rat := 1
+    let mut font : Option (ArtFont × Option Font.Font) := none
+    let mut penX : Rat := 0
+    for t in scanContent data do
+      match t with
+      | .op o =>
+        let ns := stack.filterMap fun t => match t with
+          | .num v _ => some (pt v)
+          | _ => none
+        if o == "q" then saved := saved.push ctm
+        else if o == "Q" then
+          ctm := saved.back?.getD PdfMat.unit
+          saved := saved.pop
+        else if o == "cm" && ns.size == 6 then
+          ctm := PdfMat.then (ns[0]!, ns[1]!, ns[2]!, ns[3]!, ns[4]!, ns[5]!) ctm
+        else if o == "BT" then
+          tm := PdfMat.unit
+          penX := 0
+        else if o == "Tm" && ns.size == 6 then
+          tm := (ns[0]!, ns[1]!, ns[2]!, ns[3]!, ns[4]!, ns[5]!)
+          penX := 0
+        else if o == "Tf" then
+          let nm := (stack.findSome? fun t => match t with
+            | .name n => some n
+            | _ => none).getD ""
+          font := fonts[nm]?
+          size := ns[0]?.getD 0
+        else if o == "Tz" then th := (ns[0]?.getD 100) / 100
+        else if o == "TJ" || o == "Tj" then
+          for it in stack do
+            match it, font with
+            | .hex d, some (af, face) =>
+              for g in artCodes d do
+                let w : Rat := pt (af.widths[g]?.getD af.defaultWidth) / 1000
+                match face.bind (·.bounds g) with
+                | some b =>
+                  let upem : Rat := ((face.map (·.unitsPerEm)).getD 1000 : Nat)
+                  let gx (u : Int) : Rat := penX + (u : Rat) / upem * size * th
+                  let gy (u : Int) : Rat := (u : Rat) / upem * size
+                  let corners := [(gx b.left, gy b.bottom), (gx b.right, gy b.bottom),
+                    (gx b.left, gy b.top), (gx b.right, gy b.top)].map fun (x, y) =>
+                      let (x, y) := tm.apply x y
+                      ctm.apply x y
+                  seen := seen + 1
+                  let slack : Rat := 1 / 500
+                  let inside := corners.all fun (x, y) =>
+                    bx0 - slack ≤ x && x ≤ bx1 + slack && by0 - slack ≤ y && y ≤ by1 + slack
+                  unless inside do
+                    out := out.push s!"glyph {g} of a form paints outside its /BBox [{bx0} {by0} {bx1} {by1}]"
+                | none => pure ()
+                penX := penX + w * size * th
+            | .num _ raw, _ =>
+              let n : Rat := ((raw.toInt?.getD 0 : Int) : Rat)
+              penX := penX - n / 1000 * size * th
+            | _, _ => pure ()
+        stack := #[]
+      | other => stack := stack.push other
+  return (seen, out)
+
 /-- The artifact tier over the golden corpus: every fixture built the way
 the driver builds it, its bytes read back, and every claim judged on what
 they paint. A recorded offence inverts the judgement — the row must still
@@ -1138,11 +1307,13 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut multiPage := 0
   let mut contentPaths := 0
   let mut subsets := 0
+  let mut figureStretches := 0
+  let mut formGlyphs := 0
   for n in goldenNames do
     let (doc, diags) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some fs)
     let out := layoutOf fs doc geom (some pats) store
     let pdf := driverPdf fs geom doc out store
     let footline := doc.docClass.record.chrome && doc.foot.isNone &&
@@ -1162,6 +1333,30 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         (rd.pages.flatMap artPaintedGlyphs)
       t s!"artifact {n}: every glyph starts where the layout put it: {placed.toList.take 3}"
         placed.isEmpty
+      -- A drawn figure's text, in its form: every stretch shaping set is
+      -- painted where shaping put it, by the viewer's arithmetic.
+      let stretches := artFigureStretches store
+      if !stretches.isEmpty then figureStretches := figureStretches + stretches.size
+      match artFormRuns pdf with
+      | .error e => t s!"artifact {n}: the file's forms read back: {e}" false
+      | .ok runs =>
+        let missed := artFigureGlyphOffences stretches runs
+        t s!"artifact {n}: every figure glyph starts where shaping put it: {missed.toList.take 3}"
+          missed.isEmpty
+        -- Every glyph a form paints stands inside the form's box: a form's
+        -- box clips, so a glyph outside it is one no viewer shows.
+        match formGlyphOffences pdf fs with
+        | .ok (glyphs, offs) =>
+          if 0 < glyphs then formGlyphs := formGlyphs + glyphs
+          t s!"artifact {n}: every glyph a form paints stands inside its box: {offs.toList.take 3}"
+            offs.isEmpty
+        | .error e => t s!"artifact {n}: the file's forms read back for their boxes: {e}" false
+        -- The claim broken once: the same file, every shaped pen moved by
+        -- a point, is painted nowhere it claims.
+        let moved := stretches.map fun (xs, size) => (xs.map (· + Dim.pt 1), size)
+        if !stretches.isEmpty then
+          t s!"artifact {n}: a figure glyph a point from where it was painted is an offence"
+            ((artFigureGlyphOffences moved runs).size == stretches.size)
       -- The embedded programs: every glyph the pages paint is drawn as the
       -- face draws it, and a program named a subset is one.
       match artEmbedded pdf with
@@ -1199,6 +1394,8 @@ fires — delete its row from artKnownOffences" (!offs.isEmpty)
   t s!"artifact corpus: multi-page fixtures are read ({multiPage})" (1 < multiPage)
   t s!"artifact corpus: content paths and images are reached ({contentPaths})" (0 < contentPaths)
   t s!"artifact corpus: embedded faces are subsets ({subsets})" (0 < subsets)
+  t s!"artifact corpus: drawn figures' text is reached ({figureStretches})" (0 < figureStretches)
+  t s!"artifact corpus: glyphs inside figure forms are reached ({formGlyphs})" (0 < formGlyphs)
 
 /-- Each claim broken once, on a file the real writer produced, and each
 one's untouched control passing. The mutation moves ink or re-identifies a
@@ -1215,7 +1412,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some fs)
     return (fs, geom, doc, layoutOf fs doc geom (some pats) store, store)
   let judge (label : String) (prop : ArtProp) (geom : Layout.Geom) (pdf : ByteArray)
       (wantOffence : Bool) : IO Unit :=
@@ -1638,7 +1835,7 @@ def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some fs)
     let out := layoutOf fs doc geom (some pats) store
     match readArtifact (driverPdf fs geom doc out store) with
     | .error e => t s!"band parity {n}: the file reads back: {e}" false
@@ -1787,7 +1984,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let store ← corpusStore doc
+    let store ← corpusStore doc (some fs)
     let out := layoutOf fs doc geom (some pats) store
     let ground := (Ir.Design.ofDoc doc).titlepage.map (·.bg)
     -- A full-page fill in the *declared* colour: the observation that
@@ -2084,7 +2281,7 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     t s!"stage ground {n}: {offs.toList}" offs.isEmpty
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let out := layoutOf fs doc geom none (← corpusStore doc)
+    let out := layoutOf fs doc geom none (← corpusStore doc (some fs))
     let pageOffs := artPageGroundOffences geom (artFrameGroundsAt doc) out.pages
     t s!"stage ground {n} pdf: {pageOffs.toList}" pageOffs.isEmpty
   t s!"stage ground: slides fixtures are judged ({judged})" (0 < judged)

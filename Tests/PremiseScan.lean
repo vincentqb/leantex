@@ -482,8 +482,8 @@ declarations of `home` only `spawner` calls; so `spawner` is a spawner whose
 first argument names the tool, its calls are sites, and a run asked anywhere
 else, or an asker called from anywhere else, is a fault. The rest read the
 tools from a table in the source: Elab's `picTools` with the driver's
-`pictureTool.getD` defaults; the `Op.spec` converters; `Spec.tools` with
-them. -/
+`pictureTool.getD` defaults; the `Op.spec` converters; `Spec.tools`, any
+tool it names beside them, with them. -/
 inductive Via where
   | forwards
   | derives (param : String)
@@ -801,8 +801,8 @@ def derive (inp : Inputs) (src : Source) : Via → Except String (List String)
   | .conversionTools => do
     let validation := strsAfter src.toks "Spec.tools" ["#", "["]
     let converters := strsAfter src.toks "Op.spec" ["⟨"]
-    if validation.isEmpty || converters.isEmpty then
-      throw s!"{src.path}'s Spec.tools and Op.spec read no tool"
+    if converters.isEmpty then
+      throw s!"{src.path}'s Op.spec table reads no tool for Spec.tools"
     return (validation ++ converters).eraseDups
   | .forwards | .derives _ | .alias _ | .asked .. => return []
 

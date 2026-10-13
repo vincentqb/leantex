@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Ir
 public import LeanTex.Core.Gfx
+public import LeanTex.Core.FigureLoss
 public import LeanTex.Cli.PicCache
 public import LeanTex.Cli.World
 import LeanTex.Cli.DriverDiag
@@ -17,14 +18,12 @@ and where none exists the placeholder ships and the loss is named
 (`coldPicture`). When a request was refused either way, a picture the
 rendered subset draws in part is withdrawn from the boundary and drawn by
 the subset (`withdraw`); an attempt that never reached an answer is no
-refusal, and stands. One step here runs tools: a picture's HTML face is
-its PDF converted to SVG and checked as publication checks it (`htmlFace`,
-which runs the converter and the checks); a picture left
-without one ships the page's labelled placeholder (`markFaceless`), as does
-an included image whose plan a fact about the machine stopped
-(`markUnplanned`). Each decision returns its diagnostics, so a test can run
-it rather than restate it, and a driver that stopped naming the loss fails
-the suite instead of passing it. -/
+refusal, and stands. One step here runs a tool: a picture's HTML face is
+its PDF converted to SVG (`htmlFace`), which the face decision's check or
+publication attests, as every embedded SVG is attested; a picture left without one ships the page's
+labelled placeholder (`markFaceless`). Each decision returns its
+diagnostics, so a test can run it rather than restate it, and a driver that
+stopped naming the loss fails the suite instead of passing it. -/
 
 namespace LeanTex.Cli.Boundary
 
@@ -369,59 +368,26 @@ public theorem fold_covers (allow : Array String) (allowAll : Bool) (tool : Stri
 
 /-- **The HTML face withdraws a drawing it cannot show.** A boundary
 picture's page face is its PDF, and its HTML face the SVG converted from
-that PDF, checked (`htmlFace`). Where it is missing (W0378) — the
-conversion failed, or its check did not finish — the image has nothing to
+that PDF (`htmlFace`). Where it is missing (W0378) — the conversion
+failed, or did not finish — the image has nothing to
 show but a request key, so a picture the rendered subset draws in part —
 `fallbacks`, the elaborator's record — is withdrawn from the HTML face
 alone, which the driver elaborates again with it drawn by the subset; the
 PDF keeps the boundary's drawing. The ids, by picture: those among the
-fallbacks whose image source has no checked SVG (`unconverted`). -/
+fallbacks whose image source has no converted SVG (`unconverted`). -/
 public def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
   fallbacks.filter fun id => unconverted.contains (Ir.picSrcPrefix ++ id)
 
-/-- A converted face, read by the check publication will run on it. A check
-that never finished leaves the picture unconverted, as a failed conversion
-does: the page cannot publish bytes it could not check, and a fact about the
-machine must not refuse the page. A check that reached a verdict keeps the
-face, and publication reads that verdict (`Publication.svgVerdict`). -/
-public def checkedFace (svg : ByteArray) : PicCache.Outcome → Except String ByteArray
-  -- premise: machineLossChecks — an unchecked face takes the unconverted path, whose
-  -- W0378 the driver emits at the picture's span; a validator's own refusal is a
-  -- verdict and never lands here
-  | .inconclusive why => .error why
-  | .drawn | .refused _ => .ok svg
-
-/-- **A check that never finished leaves the picture unconverted** (`_exact`):
-the face is withdrawn exactly when its check is inconclusive, in the check's
-own words, so a machine that could not check a face takes the path a machine
-that could not convert it takes — W0378 at the picture's span, and the
-rendered subset's drawing where it draws the picture in part. The defect
-kept the unchecked face, which publication then omitted after the withdrawal
-was decided: the subset never stood in, and W0378 lost its span. -/
-public theorem checkedFace_unfinished_exact (svg : ByteArray) (o : PicCache.Outcome)
-    (why : String) : checkedFace svg o = .error why ↔ o = .inconclusive why := by
-  cases o <;> simp [checkedFace]
-
-/-- **A check that reached a verdict keeps the face** (`_exact`): drawn or
-refused, the converted bytes stand, so the boundary's refusal still refuses
-the page through publication's own check. -/
-public theorem checkedFace_verdict_exact (svg : ByteArray) (o : PicCache.Outcome)
-    (h : ∀ why, o ≠ .inconclusive why) : checkedFace svg o = .ok svg := by
-  cases o with
-  | inconclusive why => exact absurd rfl (h why)
-  | drawn | refused _ => rfl
-
 /-- One boundary picture's HTML face: its PDF converted to SVG
-(`ImageAssets.picFace`), then checked as publication checks every embedded
-SVG (`ImageAssets.validateSvgResult`), and read by `checkedFace`. -/
-public def htmlFace (pdf : ByteArray) : IO (Except String ByteArray) := do
-  match ← ImageAssets.picFace pdf with
-  | .error why => return .error why
-  | .ok svg => return checkedFace svg (← ImageAssets.validateSvgResult svg)
+(`ImageAssets.picFace`). Publication attests it as it attests every
+embedded SVG (`Publication.attestSvg`): a native check, which always
+finishes, so a face that converted is a face the page can judge. -/
+public def htmlFace (pdf : ByteArray) : IO (Except String ByteArray) :=
+  ImageAssets.picFace pdf
 
 /-- A boundary picture's HTML face is missing whatever the cause — no tool
 drew it (W0379), the tool drew nothing or did not finish (W0382), or its face was not
-converted or not checked (W0378) — and that loss was named where it
+converted (W0378) — and that loss was named where it
 happened, so the reason the page records is this constant and adds no
 diagnostic. -/
 public def facelessReason : String :=
@@ -489,72 +455,6 @@ public theorem markFaceless_face_exact (s : Image.Store) (k : Nat) (en : Image.L
     (markFaceless s).get? k = some en := by
   simp only [Image.Store.get?, markFaceless, Array.getElem?_map] at h ⊢
   simp [h, markOne, hface]
-
-/-- The reason an included image's HTML face records when a fact about the
-machine stopped its plan: W0602 named it where the plan stopped, so the
-page's placeholder adds no diagnostic. -/
-public def unplannedReason : String :=
-  "the image's plan did not finish on this machine"
-
-/-- An entry a stopped plan left: no plan, and no face or reason yet. -/
-public def unplanned (stopped : Array Image.Request) (en : Image.Loaded) : Bool :=
-  stopped.contains en.toRequest && en.info.isNone && en.webError.isNone
-
-private def markStopped (stopped : Array Image.Request) (en : Image.Loaded) : Image.Loaded :=
-  -- premise: machineLossChecks — W0602 named the include where its plan stopped, and the
-  -- page names no image that has no plan, so the mark names none
-  if unplanned stopped en then { en with webError := some unplannedReason } else en
-
-/-- **A plan the machine stopped degrades the page instead of refusing it.**
-An included SVG whose check or conversion did not finish — a tool missing,
-killed or out of time — has no plan, so the PDF places its placeholder box
-and W0602 names it; the page kept the authored path as the image's source,
-which no checked resource answers, and the closure check refused the whole
-HTML artifact (E0606). Marked, the entry takes the page's failed-face arm, a
-span labelled with the image's text alternative, and W0602 stays the one
-accounting. A file the tools read and refused keeps the refusal: only the
-requests whose plan a fact about the machine stopped are marked (`stopped`,
-the driver's record). -/
-public def markUnplanned (stopped : Array Image.Request) (s : Image.Store) : Image.Store :=
-  { s with entries := s.entries.map (markStopped stopped) }
-
-/-- **Every stopped include has a reason** (`_covers`). -/
-public theorem markUnplanned_covers (stopped : Array Image.Request) (s : Image.Store) :
-    ∀ en ∈ (markUnplanned stopped s).entries, stopped.contains en.toRequest = true →
-      en.info.isNone = true → en.webError.isSome = true := by
-  intro en hen hreq hinfo
-  simp only [markUnplanned, Array.mem_map] at hen
-  obtain ⟨e, -, rfl⟩ := hen
-  unfold markStopped at hreq hinfo ⊢
-  cases hu : unplanned stopped e with
-  | true => simp
-  | false =>
-    simp only [hu, Bool.false_eq_true, ↓reduceIte] at hreq hinfo ⊢
-    cases hw : e.webError with
-    | some _ => rfl
-    | none =>
-      simp [unplanned, hinfo, hw] at hu
-      exact absurd (by simpa using hreq) hu
-
-/-- **Only the HTML face's reason changes** (`_exact`): with `webError`
-erased, the marked store is the store, so the layout and the PDF writer read
-what they read before. -/
-public theorem markUnplanned_info_exact (stopped : Array Image.Request) (s : Image.Store) :
-    (markUnplanned stopped s).entries.map (fun en => { en with webError := none }) =
-      s.entries.map (fun en => { en with webError := none }) := by
-  simp only [markUnplanned, Array.map_map]
-  congr 1
-  funext en
-  simp only [Function.comp, markStopped]
-  split <;> rfl
-
-/-- **An entry no stopped plan left is unchanged** (`_exact`). -/
-public theorem markUnplanned_kept_exact (stopped : Array Image.Request) (s : Image.Store)
-    (k : Nat) (en : Image.Loaded) (h : s.get? k = some en)
-    (hkept : unplanned stopped en = false) :
-    (markUnplanned stopped s).get? k = some en := by
-  simp only [Image.Store.get?, markUnplanned, Array.getElem?_map] at h ⊢
-  simp [h, markStopped, hkept]
 
 /-! ## A figure's web face: native first -/
 
@@ -652,5 +552,37 @@ public theorem asksTool_lossless_exact (decl : Refusal) : Verdict.exact.asksTool
 refusal no verdict asks it. -/
 public theorem asksTool_declared_exact (v : Verdict) : v.asksTool .declared = false := by
   cases v <;> simp [Verdict.asksTool]
+
+/-- What an SVG figure's route owes: nothing where the engine drew it
+whole; one note per loss where the converter drew it (N0024); one W0609 per
+loss where the engine's drawing ships without the feature, saying why no
+converter drew it. Each under its loss's own subject. -/
+@[expose] public def svgRouteDiags (moving : Bool) (src : String) (why : FigureLoss.Unconverted)
+    (losses : Array Gfx.Loss) : Route → Array Diag
+  | .native => #[]
+  | .tool => FigureLoss.diags (FigureLoss.svgConvertedDiag moving src) losses
+  | .nativeWithLoss | .refused => FigureLoss.diags (FigureLoss.svgLostDiag moving src why) losses
+
+/-- **Every loss is named, whichever drew the figure** (`_named`): on every
+route but the engine's whole drawing, each loss of the census has a
+diagnostic whose subject is its key. -/
+public theorem svgRouteDiags_named (moving : Bool) (src : String) (why : FigureLoss.Unconverted)
+    (losses : Array Gfx.Loss) (r : Route) (hr : r ≠ .native) (l : Gfx.Loss) (h : l ∈ losses) :
+    ∃ d ∈ svgRouteDiags moving src why losses r, d.subject = some (FigureLoss.subject "svg" l) := by
+  cases r with
+  | native => exact absurd rfl hr
+  | tool => exact FigureLoss.svgDiags_named moving src why true losses l h
+  | nativeWithLoss | refused => exact FigureLoss.svgDiags_named moving src why false losses l h
+
+/-- **A figure's import decides its route, never the host alone** (`_exact`):
+a figure whose import names no loss is the engine's whatever the converter
+and the document say, and one that names a loss never is. -/
+public theorem route_losses_exact (losses : Array Gfx.Loss) (t : ToolState) (decl : Refusal) :
+    route (if losses.isEmpty then .exact else .lossy losses) t decl = .native ↔
+      losses.isEmpty = true := by
+  cases h : losses.isEmpty
+  · simp only [Bool.false_eq_true, ↓reduceIte, iff_false]
+    rcases route_lossy_exact losses t decl with e | e <;> simp [e]
+  · simp [route_exact]
 
 end LeanTex.Cli.Boundary

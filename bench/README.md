@@ -171,3 +171,25 @@ from `n` to `4n`, and 4.5x (the notes' PDF) from `4n` to `16n`. Corpus
 fixtures peak at a median of 93.1 MiB as PDF (highest 107.2 MiB) and
 206.4 MiB as HTML, where the five heaviest, which declare no fonts and so
 embed the host's, peak near 500 MiB.
+
+## SVG figures — 2026-10-09
+
+`--svg-only` builds documents of 5 and 17 invented SVG figures (recoloured
+copies of the corpus chart, which sets text, and one moving figure) to PDF
+and to HTML, each cold (an empty private content cache) and warm (a primed
+one), and reports the `images` phase beside the wall time. Before: every
+figure went through xmllint, xsltproc and rsvg-convert, and a figure that
+sets text is font-dependent, so its conversion is never cached and the warm
+run repeats it; the HTML additionally validated every embedded SVG through
+the same tools. After: the engine reads and draws them itself, and no tool
+runs. Median of 5, shared host (load 30–58), so the absolute numbers are
+provisional; the ratio is the claim.
+
+| Build | before | after |
+|---|---:|---:|
+| 5 figures, PDF, warm | 1,288 ms (images 1,162) | 157 ms (images 29) |
+| 5 figures, HTML, warm | 3,599 ms (images 1,132) | 487 ms (images 28) |
+| 17 figures, PDF, warm | 4,554 ms (images 4,430) | 199 ms (images 60) |
+| 17 figures, HTML, warm | 14,047 ms (images 5,083) | 530 ms (images 60) |
+
+The default rows moved within the host's noise.

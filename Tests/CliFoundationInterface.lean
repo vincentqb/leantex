@@ -4,7 +4,6 @@ import LeanTex.Cli.Args
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.Batch
 import LeanTex.Cli.PublicationPaths
-import LeanTex.Cli.SvgPoster
 import LeanTex.Cli.Render
 
 /-! Ordinary imports expose the command and executor APIs, without their
@@ -16,7 +15,6 @@ example : Array (String × String) → IO (Option String) :=
   LeanTex.Cli.PublicationPaths.conflict
 example : String → Option String := LeanTex.Cli.PublicationPaths.nameHref
 example : String → String → String := LeanTex.Cli.PublicationPaths.placed
-example : String := LeanTex.Cli.SvgPoster.stylesheet
 example : Bool → LeanTex.Core.Diag → Bool → String := @LeanTex.Cli.Render.human
 example : LeanTex.Core.Diag → String := LeanTex.Cli.Render.porcelainDiag
 

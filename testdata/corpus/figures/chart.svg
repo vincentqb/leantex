@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="288pt" height="180pt" viewBox="0 0 288 180" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <title>An invented line chart of a measured value</title>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+  <clipPath id="axes-clip">
+   <rect x="40" y="10" width="236" height="140"/>
+  </clipPath>
+  <path id="dot" d="M 0 2 C 0.53 2 1.04 1.79 1.41 1.41 C 1.79 1.04 2 0.53 2 0 C 2 -0.53 1.79 -1.04 1.41 -1.41 C 1.04 -1.79 0.53 -2 0 -2 C -0.53 -2 -1.04 -1.79 -1.41 -1.41 C -1.79 -1.04 -2 -0.53 -2 0 C -2 0.53 -1.79 1.04 -1.41 1.41 C -1.04 1.79 -0.53 2 0 2 z"/>
+ </defs>
+ <g id="figure">
+  <path d="M 0 180 L 288 180 L 288 0 L 0 0 z" style="fill: #ffffff"/>
+  <g id="axes">
+   <path d="M 40 150 L 276 150 L 276 10 L 40 10 z" style="fill: #ffffff"/>
+   <g id="grid">
+    <path d="M 40 115 L 276 115 M 40 80 L 276 80 M 40 45 L 276 45" clip-path="url(#axes-clip)" style="fill: none; stroke: #b0b0b0; stroke-width: 0.8"/>
+   </g>
+   <path d="M 50 140 L 90 121 L 130 93 L 170 71 L 210 44 L 250 31" clip-path="url(#axes-clip)" style="fill: none; stroke: #1f77b4; stroke-width: 1.5"/>
+   <g clip-path="url(#axes-clip)" style="fill: #1f77b4">
+    <use xlink:href="#dot" x="50" y="140"/>
+    <use xlink:href="#dot" x="90" y="121"/>
+    <use xlink:href="#dot" x="130" y="93"/>
+    <use xlink:href="#dot" x="170" y="71"/>
+    <use xlink:href="#dot" x="210" y="44"/>
+    <use xlink:href="#dot" x="250" y="31"/>
+   </g>
+   <path d="M 40 150 L 40 10" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+   <path d="M 40 150 L 276 150" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+   <g id="ticks" style="font-size: 8px; font-family: 'DejaVu Sans', sans-serif; fill: #262626">
+    <text x="50" y="161" style="text-anchor: middle">0</text>
+    <text x="130" y="161" style="text-anchor: middle">2</text>
+    <text x="210" y="161" style="text-anchor: middle">4</text>
+    <text x="36" y="118" style="text-anchor: end">10</text>
+    <text x="36" y="83" style="text-anchor: end">20</text>
+    <text x="36" y="48" style="text-anchor: end">30</text>
+   </g>
+   <text x="158" y="174" style="font-size: 9px; font-family: 'DejaVu Sans', sans-serif; text-anchor: middle">invented quantity</text>
+   <text transform="translate(14 80) rotate(-90)" style="font-size: 9px; font-family: 'DejaVu Sans', sans-serif; text-anchor: middle">measured value</text>
+  </g>
+ </g>
+</svg>

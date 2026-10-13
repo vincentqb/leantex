@@ -4,6 +4,7 @@ import Tests.ToolMemo
 import Tests.SvgImages
 import Tests.SvgValidation
 import Tests.SvgTerminal
+import Tests.SvgParity
 import Tests.ProcessRuntime
 import Tests.PictureAssets
 import Tests.World
@@ -44,7 +45,7 @@ engine's imports reach starts a process only through those primitives.
 
 open LeanTex.Core LeanTex.Cli
 open DiagAudit (Pin suiteText)
-open Tests (listingProviderChecks svgDoctypeChecks htmlContainedSvgColorChecks publicationPathChecks)
+open Tests (listingProviderChecks htmlContainedSvgColorChecks publicationPathChecks)
 
 namespace Premises
 
@@ -179,13 +180,12 @@ def registry : List Premise := [
     unchecked := some "A checksum anyone can compute cannot tell a planted answer from a written one, and the driver reads no owner or mode of the directory that holds it." },
   { name := "exec-failure", residue := .host "process", reach := .render
     statement := "A command the runtime cannot execute exits 255 with the single stderr line `could not execute external process` and the quoted command, a working directory it cannot enter exits 255 with `could not change directory to` and the directory, a child a signal ended exits 128 plus the signal, and a program a shell cannot find, or whose dynamic loader cannot start it, exits 127."
-    consumers := [.gate "LeanTex/Cli/Publication.lean" "svgVerdict" (check% Tests.machineLossChecks)]
     transfers := [thm% PicCache.probed_absent_exact, thm% PicCache.unlogged_retried_exact]
     sites := [("LeanTex/Cli/ImageAssets.lean", "runChecked"), ("LeanTex/Cli/World.lean", "execFailed")]
     checks := [check% Tests.processRuntimeChecks]
     owed := some "Start a program whose shared library is missing and require exit 127 with the loader's line on its stderr." },
   { name := "tool-identity", residue := .host "filesystem", reach := .render
-    statement := "An executable whose resolved path, size and modification time are unchanged, and every regular file of its name earlier on PATH likewise, answers as it did, though an update to a TeX package, to a font luaotfload indexes from the TeX tree or from the directories fontconfig's configuration lists, or to a shared library such as cairo, Poppler, librsvg or libxml2 moves no such witness and can leave a cached answer stale, of which the converters' cache rules out only the fonts, storing an answer only for an SVG xmllint finds free of text and fonts or a PDF that embeds every font, and a change of mode moves no stamp either, so an earlier file of the name made executable starts in place of the one the memo answered for."
+    statement := "An executable whose resolved path, size and modification time are unchanged, and every regular file of its name earlier on PATH likewise, answers as it did, though an update to a TeX package, to a font luaotfload indexes from the TeX tree or from the directories fontconfig's configuration lists, or to a shared library such as cairo, Poppler, librsvg or libxml2 moves no such witness and can leave a cached answer stale, of which the converters' cache rules out only the fonts, storing an answer only for an SVG the native reader finds free of text and fonts or a PDF that embeds every font, and a change of mode moves no stamp either, so an earlier file of the name made executable starts in place of the one the memo answered for."
     transfers := [thm% PicCache.versionStep_remembered_exact, thm% PicCache.versionStep_changed_exact,
       thm% World.ToolPath.probe_located_mem]
     sites := [("LeanTex/Cli/ToolProbe.lean", "witness"), ("LeanTex/Cli/World.lean", "witness"),
@@ -221,7 +221,7 @@ def registry : List Premise := [
     sites := [("LeanTex/Cli/World.lean", "version"), ("LeanTex/Cli/ToolProbe.lean", "identify")]
     owed := some "Start each tool the engine asks a version of by its bare name and by its resolved path, and require the same first line." },
   { name := "tool-exits", residue := .host "tools", reach := .render
-    statement := "No converter or validator the engine runs exits 126 or above for a verdict of its own, as xmllint, xsltproc, pdftocairo and rsvg-convert document, so ImageAssets.runChecked reads 126 and 127 as a run that never started and 128 and above as an attempt that reached no verdict, and remembers neither."
+    statement := "No converter the engine runs exits 126 or above for a verdict of its own, as pdftocairo documents and rsvg-convert shows, so ImageAssets.runChecked reads 126 and 127 as a run that never started and 128 and above as an attempt that reached no verdict, and remembers neither."
     sites := [("LeanTex/Cli/ImageAssets.lean", "runChecked")]
     owed := some "Run each converter and validator on malformed and missing input, and require every exit below 126." },
   { name := "process-group", residue := .host "process", reach := .render
@@ -261,7 +261,7 @@ def registry : List Premise := [
       ("LeanTex/Cli/Host.lean", "scratchRoot")]
     owed := some "Build one document under two environments that select the same tools and faces, and require identical artifacts." },
   { name := "clock-free", residue := .host "clock", reach := .render
-    statement := "The monotonic clock reaches an artifact only where a tool run overruns its budget, which ships the loss the unfinished attempt is named by, such as a failed run under E0382 for a boundary picture, an uncoloured listing under W0393 or a placeholder image under W0602."
+    statement := "The monotonic clock reaches an artifact only where a tool run overruns its budget, which ships the loss the unfinished attempt is named by, such as a failed run under E0382 for a boundary picture, an uncoloured listing under W0393 or a figure drawn without a feature under W0609."
     sites := [("LeanTex/Cli/RunBounded.lean", "runBounded"), ("LeanTex/Cli/AtomicFile.lean", "write")]
     owed := some "Build one document whose tool runs overrun and one whose runs finish, and require the artifacts to differ only by the losses the overruns name." },
   { name := "lualatex", residue := .tool "lualatex", reach := .fallback
@@ -280,25 +280,15 @@ def registry : List Premise := [
     guards := [decl% ListingReply.decode, decl% ListingReply.lookup_contract]
     sites := [("LeanTex/Cli/ListingHighlight.lean", "fulfil")]
     owed := some "Compare the installed Pygments' classification of each corpus listing with the reference build's, token by token." },
-  { name := "xmllint", residue := .tool "xmllint", reach := .render
-    statement := "xmllint parses an SVG input as libxml2 does, loading no network resource or catalog, so the SAX, XPath and doctype passes judge the very bytes the converter then reads."
-    consumers := [.gate "LeanTex/Cli/ImageAssets.lean" "checkSvgFile" (check% svgDoctypeChecks)]
-    sites := [("LeanTex/Cli/ImageAssets.lean", "checkSvgFile")]
-    scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgValidationChecks),
-      ("scripts/svg-check.lean", decl% Tests.svgTerminalDriverChecks)] },
-  { name := "xsltproc", residue := .tool "xsltproc", reach := .render
-    statement := "xsltproc applies the terminal-frame stylesheet to an animated SVG as XSLT 1.0 says, with no network, DTD attributes or writes."
-    sites := [("LeanTex/Cli/ImageAssets.lean", "convert")]
-    scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgTerminalBoundaryChecks),
-      ("scripts/svg-check.lean", decl% Tests.svgTerminalDriverChecks)] },
-  { name := "rsvg-convert", residue := .tool "rsvg-convert", reach := .render
-    statement := "rsvg-convert renders a validated SVG to PDF or SVG as librsvg draws it, and Image.probePdf, ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before an artifact holds it."
+  { name := "rsvg-convert", residue := .tool "rsvg-convert", reach := .fallback
+    statement := "rsvg-convert draws the canonical spelling of a judged SVG whose import names a loss, to PDF or SVG, as librsvg draws it, and Image.probePdf, ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before an artifact holds it."
     guards := [decl% Image.probePdf, decl% HtmlDoc.emitClosed]
-    sites := [("LeanTex/Cli/ImageAssets.lean", "convert")]
+    sites := [("LeanTex/Cli/ImageAssets.lean", "canonicalPlan"),
+      ("LeanTex/Cli/ImageAssets.lean", "canonicalPoster"), ("LeanTex/Cli/Driver.lean", "svgFetch")]
     checks := [check% htmlContainedSvgColorChecks]
     scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgValidationChecks),
       ("scripts/svg-check.lean", decl% Tests.svgTerminalBoundaryChecks)]
-    scripts := ["scripts/html-oracle.lean"] },
+    scripts := ["scripts/svg-diff.lean"] },
   { name := "pdftocairo", residue := .tool "pdftocairo", reach := .render
     statement := "pdftocairo renders the selected page of a PDF to SVG as Poppler draws it, and ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before the HTML holds it."
     guards := [decl% HtmlDoc.emitClosed]
@@ -306,6 +296,17 @@ def registry : List Premise := [
     checks := [check% htmlContainedSvgColorChecks]
     scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgValidationChecks)]
     scripts := ["scripts/html-oracle.lean"] },
+  { name := "libxml2-boundary", residue := .oracle "xmllint", reach := .oracle
+    statement := "xmllint parses an SVG as libxml2 does and xsltproc applies the terminal-frame stylesheet as XSLT 1.0 says, loading no network resource, catalog or DTD attribute, so the parity oracle holds the native reader's verdicts and poses to the boundary they once drew on the render path."
+    sites := [("scripts/svg-check.lean", "main")]
+    tools := ["xmllint", "xsltproc"]
+    scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgParityChecks),
+      ("scripts/svg-check.lean", decl% Tests.svgTerminalDriverChecks)] },
+  { name := "fontconfig", residue := .oracle "fontconfig", reach := .oracle
+    statement := "fc-match answers a generic family in each style with the face fontconfig hands Chromium and librsvg, so the SVG differential sets the engine's drawing in the faces the reference drawings are set in."
+    sites := [("scripts/svg-diff.lean", "hostFacesIn")]
+    tools := ["fc-match"]
+    scripts := ["scripts/svg-diff.lean"] },
   { name := "browsers", residue := .oracle "browsers", reach := .oracle
     statement := "The target browsers render the emitted HTML, CSS, SVG and MathML as their specifications say and run the slides class's constant keyboard script as ECMAScript says, a premise about the artifact that lies outside the build."
     transfers := [thm% HtmlDoc.backend_gaps_agree, thm% HtmlDoc.deck_script_constant,
@@ -376,7 +377,7 @@ def registry : List Premise := [
     sites := [("Tests/PictureAssets.lean", "pictureAssetToolBody"), ("scripts/runboundprobe.lean", "main"),
       ("Tests/World.lean", "pathChecks")]
     tools := ["sh", "cat", "cmp", "sleep", "mkdir", "chmod", "ln", "base64", "ps", "kill", "date",
-      "timeout", "rm", "mktemp", "mkfifo", "sha256sum", "shasum", "cp", "unzip", "cache-identity-tool",
+      "timeout", "rm", "mktemp", "mkfifo", "sha256sum", "shasum", "cp", "unzip", "env", "cache-identity-tool",
       "renderer-format", "tool"]
     checks := [check% listingProviderChecks, check% Tests.pictureAssetsChecks, check% Tests.World.checks] },
   { name := "absent-tool", residue := .dev "an absent executable", reach := .dev
@@ -391,7 +392,7 @@ def registry : List Premise := [
 
 /-- Tool rows of render reach, rows no check can falsify, and rows owed a
 check: counts that fall and rise only when this file says so. -/
-def renderToolBaseline : Nat := 5
+def renderToolBaseline : Nat := 2
 def uncheckedBaseline : Nat := 8
 def owedBaseline : Nat := 22
 

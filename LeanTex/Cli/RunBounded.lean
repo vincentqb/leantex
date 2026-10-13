@@ -6,8 +6,8 @@ import LeanTex.Core.Utf8
 namespace LeanTex.Cli.RunBounded
 
 -- Operational ceilings: one minute per conversion, two seconds for a killed
--- process group's pipes to close, and 16 MiB per textual stream (including
--- xmllint's SAX dump).
+-- process group's pipes to close, and 16 MiB per textual stream (a
+-- converter's log).
 public def convBudgetMs : Nat := 60000
 public def convGraceMs : Nat := 2000
 public def maxCaptureBytes : Nat := 16 * 1024 * 1024

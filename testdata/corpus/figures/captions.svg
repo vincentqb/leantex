@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90" viewBox="0 0 240 90" font-family="sans-serif">
+ <title>Three invented captions</title>
+ <rect width="240" height="90" fill="#f4f4f4"/>
+ <text x="10" y="20" font-size="12" opacity="0.6">A faded caption</text>
+ <g opacity="0.5">
+  <rect x="10" y="32" width="14" height="14" fill="#3366cc"/>
+  <text x="30" y="44" font-size="12">Beside a faded square</text>
+ </g>
+ <defs>
+  <g id="tag"><text x="0" y="0" font-size="12">A reused caption</text></g>
+ </defs>
+ <use href="#tag" x="10" y="72"/>
+</svg>

@@ -533,7 +533,7 @@ def goldenNames : List String :=
    "trio-page", "trio-deck", "trio-card", "valign", "images", "figures", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav", "nav-directory",
    "bibliography", "resume-data",
-   "icons",
+   "icons", "svg-figures",
    "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-shapes",
    "diagram-tikzset", "diagram-strokes", "diagram-tree", "diagram-scope", "diagram-cd",
    "diagram-longtail",
@@ -1023,6 +1023,11 @@ structure CensusPage where
   resolved centre is only visible on the page
   (`Picture.placeRel_exact`, `Picture.place_order_agree`). -/
   pathBoxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+  /-- The drawn figures the page places — an image box the store holds a
+  shaped figure for — and their text, run by run, in placement order: what
+  a fact about a figure's labels shipping reads. -/
+  figures : Nat := 0
+  figureText : String := ""
   /-- Every shipped path's subpaths in paint order, each its segment count,
   with whether its stroke is dashed: what a fact about a joined chain reads
   — one subpath of two segments joins at its corner, where two subpaths of
@@ -1165,7 +1170,7 @@ def markExtent : Gfx.Geom → Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp
     let y0 := ys.foldl min (ys[0]?.getD 0)
     (x0, y0, xs.foldl max (xs[0]?.getD 0) - x0, ys.foldl max (ys[0]?.getD 0) - y0)
 
-def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
+def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.Store := {}) :
     Array CensusPage := Id.run do
   let mut pages : Array CensusPage := #[]
   for p in out.pages do
@@ -1176,6 +1181,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     let mut decorations :
         Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) := #[]
     let mut images := 0
+    let mut figures := 0
+    let mut figureText := ""
     let mut polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
     for l in p.lines do
       let mut px := l.x
@@ -1210,9 +1217,13 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
           ruleSegs := ruleSegs.push (l.y, th)
           decorations := decorations.push (kind, l.y, w, th, raise, color)
         -- an image is decorative ink to the text census, like a rule
-        | .image _ w _ =>
+        | .image k w _ =>
           px := px + w
           images := images + 1
+          if let some fig := k.bind fun i => (imgs.shaped[i]?).join then
+            figures := figures + 1
+            for (_, r) in fig.labels do
+              figureText := figureText ++ r.text ++ " "
         | .poly pts _ => polys := polys.push (pts.map fun (x, y) => (px + x, l.y - y))
       -- The census asks where the text block stands, so a protruded
       -- line reports its measure edge: the ink deliberately hangs
@@ -1245,7 +1256,9 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                             | .path subs => (subs.map (·.segs.size), dashed)
                             | .rect _ _ _ _ => (#[], dashed)
                             | .ellipse _ _ _ _ => (#[], dashed)
-                          images := images }
+                          images := images
+                          figures := figures
+                          figureText := figureText }
   return pages
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
@@ -1749,25 +1762,6 @@ def codeSources : IO (Array (String × List String)) := do
     if f.toString == "LeanTex/Core/Diag.lean" then continue
     out := out.push (f.toString, appliedCodes (stripNonCode (← IO.FS.readFile f)))
   return out
-
-/-- The corpus fixture's images, read from `testdata/corpus/` the way the
-driver reads them beside the document (boundary pictures stay unfulfilled:
-their placeholder boxes are what an unconverted build ships). -/
-def corpusStore (doc : Ir.Doc) : IO Image.Store := do
-  let mut fetched : Array (Image.Request × Image.Fetch) := #[]
-  for req in Ir.imageRequests doc do
-    let src := req.src
-    let mut f : Image.Fetch := .missing src
-    for cand in Image.sourceCandidates src do
-      let p := System.FilePath.mk "testdata/corpus" / cand
-      if ← p.pathExists then
-        let bytes ← IO.FS.readBinFile p
-        let decoded := Image.decodeRequest .default bytes req
-        f := .decoded (if cand == src then "" else cand)
-          (decoded.map (·.1)) none (decoded.toOption.bind (·.2)) (some bytes) none
-        break
-    fetched := fetched.push (req, f)
-  return (Image.fulfilRequests fetched).1
 
 /-- Bytes written big-endian, as a font file's fields are. -/
 def pushBe16 (b : ByteArray) (v : Nat) : ByteArray :=
@@ -2860,3 +2854,276 @@ def runFace (out : Layout.Out) (needle : String) : Option Nat :=
     (lineRuns l).findSome? fun (f, s, _, _) => if hasStr s needle then some f else none
 
 end FontScan
+/-! ## The SVG boundary's matrices
+
+What the resource boundary admits and refuses, and what the terminal-pose
+projection reads and refuses: the matrices the native reader is held to in
+the suite and the external parity oracle reads against libxml2 and libxslt,
+one list each, invented. -/
+
+/-- The red square the refusal bodies stand beside. -/
+def svgRedSquare : String := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
+
+/-- A one-pixel opaque PNG, its bytes spelled out (an invented raster). -/
+def tinyPng : ByteArray := bytes [
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+  0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+  0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+  0x44, 0xAE, 0x42, 0x60, 0x82]
+
+/-- Bodies the boundary admits; `svgBoundaryWidened` names the ones the
+boundary libxml2's XPath stated refused. -/
+def svgBoundaryAdmitted : List (String × String) :=
+  let rect := svgRedSquare
+  let moving := "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
+  [
+    ("shape", rect),
+    ("SMIL", moving),
+    ("fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use href=\"#p\"/>"),
+    ("fragment paint", "<defs><linearGradient id=\"paint\"><stop stop-color=\"red\"/></linearGradient></defs><rect width=\"20\" height=\"20\" fill=\"url(#paint)\"/>"),
+    ("aliased fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"&#35;p\"/>"),
+    ("predefined and numeric references", "<title>&quot;&apos;&amp;&lt;&gt;&#65;&#x42;</title><rect aria-label=\"&quot;&apos;&amp;&lt;&gt;&#65;&#x42;\" width=\"20\" height=\"20\" fill=\"red\"/>"),
+    ("plain style CDATA", "<style><![CDATA[rect { fill: red }]]></style>" ++ rect),
+    ("XML comments and prose", "<!-- <image href=\"outside.png\"/> --><title>url(outside.png)</title>" ++ rect),
+    ("data PNG image", s!"<image href=\"data:image/png;base64,{HtmlResource.base64 tinyPng}\" width=\"20\" height=\"20\"/>"),
+    ("data JPEG image", "<image href=\"data:image/jpeg;base64,/9j/4AAQ\" width=\"20\" height=\"20\"/>"),
+    ("data image of no declared type", s!"<image href=\"data:;base64,{HtmlResource.base64 tinyPng}\"/>"),
+    -- pdftocairo's spelling of a raster a boundary picture draws.
+    ("data PNG image by an aliased reference",
+      "<image width=\"1\" height=\"1\" xmlns:l=\"http://www.w3.org/1999/xlink\" " ++
+      s!"l:href=\"data:image/png;base64,{HtmlResource.base64 tinyPng}\"/>"),
+    ("data image unencoded", "<image href=\"data:image/png,raw\"/>"),
+    ("data image as a source", "<image src=\"data:image/png;base64,iVBORw0KGgo=\"/>"),
+    ("data image outside the base64 alphabet", "<image href=\"data:image/png;base64,iVBOR!w0KGgo=\"/>"),
+    ("fragment with a figure id",
+      "<defs><clipPath id=\"f0~c0\"><rect width=\"20\" height=\"20\"/></clipPath></defs>" ++
+      "<g clip-path=\"url(#f0~c0)\">" ++ rect ++ "</g>"),
+    ("fragment paint in a style attribute",
+      "<defs><linearGradient id=\"paint\"><stop stop-color=\"red\"/></linearGradient></defs>" ++
+      "<rect width=\"20\" height=\"20\" style=\"fill:url(#paint)\"/>"),
+    ("numeric colour in a style sheet", "<style>rect { fill: rgb(255, 0, 0) }</style>" ++ rect),
+    ("numeric colour with alpha in a style attribute",
+      "<rect width=\"20\" height=\"20\" style=\"fill: rgba(255, 0, 0, 0.5)\"/>")]
+
+/-- Whether an admitted body is one of the native reader's widenings of the
+boundary libxml2's XPath stated, which that boundary refused: a `data:`
+image beyond the base64 PNG or JPEG an `<image>`'s reference spelled there —
+of no declared type, percent-encoded, outside the base64 alphabet, or named
+by `src`; a local reference to an id that holds `~` — the separator the
+engine's own figure ids hold, so its own figures pass its own judge; and
+CSS that spells a function the reader reads without fetching anything — a
+fragment `url(#id)` and a numeric `rgb()`/`rgba()`, where that boundary
+refused any parenthesis in CSS, which exporters' style attributes and
+sheets spell constantly. -/
+def svgBoundaryWidened (name : String) : Bool :=
+  ["data image of no declared type", "data image unencoded", "data image as a source",
+    "data image outside the base64 alphabet",
+    "fragment with a figure id", "fragment paint in a style attribute",
+    "numeric colour in a style sheet", "numeric colour with alpha in a style attribute"].contains name
+
+/-- Bodies the boundary refuses, each beside `svgRedSquare`. -/
+def svgBoundaryRefused : List (String × String) :=
+  [
+    ("network image", "<image href=\"https://example.invalid/tile.png\"/>"),
+    ("protocol-relative image", "<image href=\"//example.invalid/tile.png\"/>"),
+    ("absolute image", "<image href=\"/tile.png\"/>"),
+    ("empty href", "<image href=\"\"/>"),
+    ("character-encoded image", "<image href=\"&#x74;&#105;le.png\"/>"),
+    ("aliased image", "<image xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"tile.png\"/>"),
+    ("base URI", "<g xml:base=\"https://example.invalid/\"><use href=\"#p\"/></g>"),
+    ("paint-server fallback", "<defs><linearGradient id=\"paint\"/></defs><rect fill=\"url(#paint) red\"/>"),
+    ("CSS escaped URL", "<style>rect { fill: u\\72l(tile.svg#p) }</style>"),
+    ("CSS import", "<style>@import 'outside.css';</style>"),
+    ("CSS string image", "<style>rect { fill: image-set('tile.png' 1x) }</style>"),
+    ("split style text", "<style>u<!--comment--><![CDATA[rl(tile.png)]]></style>"),
+    ("animated href", "<image><set attributeName=\"l:href\" to=\"tile.png\"/></image>"),
+    ("animated style", "<rect><set attributeName=\"style\" to=\"fill:red\"/></rect>"),
+    ("embedded SVG", "<image href=\"data:image/svg+xml,%3Csvg/%3E\"/>"),
+    ("data image on a use", "<use href=\"data:image/png;base64,iVBORw0KGgo=\"/>"),
+    ("embedded base64 SVG", "<image href=\"data:image/svg+xml;base64,PHN2Zy8+\"/>"),
+    ("data image spelling a parenthesis", "<image href=\"data:image/png;base64,iVBOR(w0KGgo=\"/>"),
+    ("foreign object", "<foreignObject><img src=\"tile.png\"/></foreignObject>"),
+    ("script", "<script>fetch('tile.png')</script>"),
+    ("event handler", "<rect onload=\"fetch('tile.png')\"/>")]
+
+/-- A string's characters as the bytes an ASCII-compatible single-byte
+encoding writes them in, `high` naming the byte each non-ASCII character
+takes. -/
+def singleBytes (s : String) (high : Char → UInt8) : ByteArray :=
+  ⟨s.toList.toArray.map fun c => if c.toNat < 128 then c.toNat.toUInt8 else high c⟩
+
+/-- A string as UTF-16 code units in the order `be` says, after a byte-order
+mark when `bom`. -/
+def utf16Bytes (s : String) (be bom : Bool) : ByteArray := Id.run do
+  let mut out : ByteArray := if !bom then .empty else if be then ⟨#[0xFE, 0xFF]⟩ else ⟨#[0xFF, 0xFE]⟩
+  for c in s.toList do
+    let n := c.toNat
+    let units := if n < 0x10000 then [n] else [0xD800 + (n - 0x10000) / 1024, 0xDC00 + (n - 0x10000) % 1024]
+    for u in units do
+      let (a, b) := ((u / 256).toUInt8, (u % 256).toUInt8)
+      out := if be then (out.push a).push b else (out.push b).push a
+  return out
+
+/-- A string as UTF-32 big-endian code units, after a byte-order mark when
+`bom`. -/
+def utf32Bytes (s : String) (bom : Bool) : ByteArray := Id.run do
+  let mut out : ByteArray := if bom then ⟨#[0x00, 0x00, 0xFE, 0xFF]⟩ else .empty
+  for c in s.toList do
+    let n := c.toNat
+    out := (((out.push (n / 16777216).toUInt8).push ((n / 65536) % 256).toUInt8).push
+      ((n / 256) % 256).toUInt8).push (n % 256).toUInt8
+  return out
+
+/-- An invented drawing with a line of text, declared in `encoding`. -/
+def svgDeclared (encoding text : String) : String :=
+  s!"<?xml version=\"1.0\" encoding=\"{encoding}\"?>" ++
+    s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"20\">" ++
+    s!"<text x=\"2\" y=\"15\">{text}</text></svg>"
+
+/-- Whole sources in the encodings an SVG is written in, with whether the
+reader admits each and, where it does, the text its drawing sets.
+`svgBoundaryNarrowed` names the ones it refuses that libxml2 reads. -/
+def svgBoundaryEncodings : List (String × ByteArray × Option String) :=
+  let curly : Char → UInt8 := fun c => if c == '“' then 0x93 else if c == '”' then 0x94 else 0x3F
+  [("windows-1252", singleBytes (svgDeclared "windows-1252" "“quoted”") curly,
+      some "“quoted”"),
+   ("a Latin-1 label read as windows-1252", singleBytes (svgDeclared "ISO-8859-1" "café “ok”")
+      (fun c => if c == 'é' then 0xE9 else curly c), some "café “ok”"),
+   ("windows-1251", singleBytes (svgDeclared "windows-1251" "АБ")
+      (fun c => if c == 'А' then 0xC0 else 0xC1), some "АБ"),
+   ("KOI8-R", singleBytes (svgDeclared "koi8-r" "а")
+      (fun _ => 0xC1), some "а"),
+   ("UTF-16LE with a byte-order mark", utf16Bytes (svgDeclared "UTF-16" "naïve ✓") false true,
+      some "naïve ✓"),
+   ("UTF-16BE with a byte-order mark", utf16Bytes (svgDeclared "UTF-16" "naïve ✓") true true,
+      some "naïve ✓"),
+   ("UTF-16LE with no byte-order mark", utf16Bytes (svgDeclared "UTF-16LE" "plain") false false,
+      some "plain"),
+   ("UTF-8 with a byte-order mark", ⟨#[0xEF, 0xBB, 0xBF]⟩ ++ (svgDeclared "UTF-8" "été").toUTF8,
+      some "été"),
+   ("Shift_JIS", (svgDeclared "Shift_JIS" "plain").toUTF8, none),
+   ("UTF-32", utf32Bytes (svgDeclared "UTF-32" "plain") false, none),
+   ("UTF-32 with a byte-order mark", utf32Bytes (svgDeclared "UTF-32" "plain") true, none),
+   ("an encoding no standard names", (svgDeclared "x-invented-8bit" "plain").toUTF8, none),
+   ("a byte windows-874 does not map", singleBytes (svgDeclared "windows-874" "ÿ")
+      (fun _ => 0xDB), none),
+   ("a lone UTF-16 surrogate", utf16Bytes (svgDeclared "UTF-16" "a") false true ++ ⟨#[0x00, 0xD8]⟩, none)]
+
+/-- The encoded sources the native reader refuses and libxml2, through
+iconv, reads: the multi-byte encodings and UTF-32 as its declaration names
+it, which the reader names and refuses — save the file as UTF-8. A UTF-32
+byte-order mark libxml2 refuses too (2.15: "Document is empty"), so that
+row is one both readers refuse. -/
+def svgBoundaryNarrowed (name : String) : Bool := ["Shift_JIS", "UTF-32"].contains name
+
+/-- Whole sources the reader refuses, around `drawing`. -/
+def svgBoundaryMalformed (drawing : String) : List (String × String) :=
+  let rect := svgRedSquare
+  [
+    ("empty", ""), ("whitespace", " \n\t "), ("foreign root", "<html/>"),
+    ("truncated", "<svg href=\""), ("mismatched", "<svg><g></svg>"),
+    ("extra root", "<svg/><svg/>"), ("unclosed", "<svg>"),
+    ("unquoted attribute", "<svg width=20/>"),
+    ("DTD attribute", "<!DOCTYPE svg [<!ATTLIST rect fill CDATA 'green'>]>" ++ drawing),
+    ("DTD element", "<!DOCTYPE svg [<!ELEMENT svg ANY>]>" ++ drawing),
+    ("entity declaration", "<!DOCTYPE svg [<!ENTITY x 'tile.png'>]>" ++
+      String.fromUTF8! (svgDocument (rect ++ "<image href=\"&x;\"/>"))),
+    ("parameter entity", "<!DOCTYPE svg [%outside;]>" ++ drawing),
+    ("stylesheet PI", "<?xml-stylesheet href=\"outside.css\"?>" ++ drawing),
+    ("undeclared prefix", "<svg xmlns=\"http://www.w3.org/2000/svg\"><use l:href=\"#p\"/></svg>"),
+    ("named entity", String.fromUTF8! (svgDocument "<text>&outside;</text>")),
+    ("double hyphen in a comment", String.fromUTF8! (svgDocument "<!-- a -- b -->")),
+    ("control character", String.fromUTF8! (svgDocument "<text>\x01</text>")),
+    ("attribute named twice", "<svg xmlns=\"http://www.w3.org/2000/svg\" a=\"1\" a=\"2\"/>")]
+
+/-- Timelines the terminal-pose projection refuses, on a 32×16 document. -/
+def svgTerminalRefused : List (String × String) :=
+  let track (attr values timing : String) :=
+    s!"<animate attributeName=\"{attr}\" values=\"{values}\" {timing}/>"
+  let square (attrs animation : String) :=
+    s!"<rect width=\"16\" height=\"16\" fill=\"red\" {attrs}>{animation}</rect>"
+  let clock := "dur=\"2s\" repeatCount=\"indefinite\" "
+  let linear := clock ++ "calcMode=\"linear\" keyTimes=\"0;1\""
+  let three := clock ++ "calcMode=\"linear\" keyTimes=\"0;0.5;1\""
+  let x := track "x" "0;16" linear
+  let opacity := track "opacity" "0;1" linear
+  let pathStart := "M0,0L16,0L16,16L0,16"
+  let pathEnd := "M16,0L32,0L32,16L16,16"
+  let path (animation : String) :=
+    s!"<path fill=\"red\" d=\"{pathStart}\">{animation}</path>"
+  [
+    ("discrete keyTime one is not the pre-end pose",
+      square "x=\"0\"" (track "x" "0;16" (clock ++ "calcMode=\"discrete\" keyTimes=\"0;1\""))),
+    ("malformed middle scalar", square "x=\"0\"" (track "x" "0;nope;16" three)),
+    ("malformed middle opacity", square "opacity=\"0\"" (track "opacity" "0;0.5oops;1" three)),
+    ("empty middle scalar", square "x=\"0\"" (track "x" "0;;16" three)),
+    ("nonfinite middle scalar", square "x=\"0\"" (track "x" "0;Infinity;16" three)),
+    ("NaN middle scalar", square "x=\"0\"" (track "x" "0;NaN;16" three)),
+    ("unit-bearing middle scalar", square "x=\"0\"" (track "x" "0;8px;16" three)),
+    ("singleton values track", square "x=\"0\"" (track "x" "16" clock)),
+    ("invalid middle M/L path number", path (track "d" (pathStart ++ ";M0,0Lbad,16;" ++ pathEnd) three)),
+    ("invalid final M/L path pair", path (track "d" (pathStart ++ ";M16,0L32,") linear)),
+    ("mismatched linear path length", path (track "d" (pathStart ++ ";M16,0L32,0L32,16") linear)),
+    ("extra M command in path", path (track "d" (pathStart ++ ";M16,0M32,0L32,16L16,16") linear)),
+    ("duplicate target attribute", square "x=\"0\"" (x ++ x)),
+    ("geometry attribute on the wrong target",
+      "<circle cx=\"8\" cy=\"8\" r=\"8\" fill=\"red\">" ++ x ++ "</circle>"),
+    ("opacity on a nongraphical target", "<defs>" ++ opacity ++ "</defs>" ++ square "" ""),
+    ("href fragment target",
+      square "id=\"target\" x=\"0\"" (track "x" "0;16" (linear ++ " href=\"#target\""))),
+    ("aliased xlink fragment target",
+      square "id=\"target\" x=\"0\"" (track "x" "0;16"
+        (linear ++ " xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"#target\""))),
+    ("sibling fragment target",
+      square "id=\"target\" x=\"0\"" "" ++ track "x" "0;16" (linear ++ " href=\"#target\"")),
+    ("inline CSS overrides opacity", square "style=\"opacity:0\"" opacity),
+    ("stylesheet overrides opacity", "<style>rect { opacity: 0 }</style>" ++ square "" opacity),
+    ("unequal durations", square "x=\"0\" opacity=\"0\"" (x ++ track "opacity" "0;1" "dur=\"3s\"")),
+    ("exponent duration", square "x=\"0\"" (track "x" "0;16" "dur=\"2e0s\"")),
+    ("space before duration unit", square "x=\"0\"" (track "x" "0;16" "dur=\"2 s\"")),
+    ("delayed begin", square "x=\"0\"" (track "x" "0;16" (linear ++ " begin=\"1s\""))),
+    ("early end", square "x=\"0\"" (track "x" "0;16" (linear ++ " end=\"1s\""))),
+    ("additive track", square "x=\"0\"" (track "x" "0;16" (linear ++ " additive=\"sum\""))),
+    ("accumulating track", square "x=\"0\"" (track "x" "0;16" (linear ++ " accumulate=\"sum\""))),
+    ("partial repeat", square "x=\"0\"" (track "x" "0;16" "dur=\"2s\" repeatCount=\"1.5\"")),
+    ("set element", square "opacity=\"0\"" "<set attributeName=\"opacity\" to=\"1\" begin=\"1s\"/>"),
+    ("motion element", square "" "<animateMotion path=\"M 0 0 L 16 0\" dur=\"2s\"/>"),
+    ("transform element", square ""
+      "<animateTransform attributeName=\"transform\" type=\"translate\" from=\"0 0\" to=\"16 0\" dur=\"2s\"/>"),
+    ("colour animation element", square "" "<animateColor attributeName=\"fill\" values=\"red;blue\" dur=\"2s\"/>")]
+
+/-- Timelines the projection reads, each with the static pose it ends in. -/
+def svgTerminalAccepted : List (String × String × String) :=
+  let track (attr values timing : String) :=
+    s!"<animate attributeName=\"{attr}\" values=\"{values}\" {timing}/>"
+  let square (attrs animation : String) :=
+    s!"<rect width=\"16\" height=\"16\" fill=\"red\" {attrs}>{animation}</rect>"
+  let clock := "dur=\"2s\" repeatCount=\"indefinite\" "
+  let linear := clock ++ "calcMode=\"linear\" keyTimes=\"0;1\""
+  let three := clock ++ "calcMode=\"linear\" keyTimes=\"0;0.5;1\""
+  let x := track "x" "0;16" linear
+  let pathStart := "M0,0L16,0L16,16L0,16"
+  let pathEnd := "M16,0L32,0L32,16L16,16"
+  let path (animation : String) :=
+    s!"<path fill=\"red\" d=\"{pathStart}\">{animation}</path>"
+  let finalSquare := square "x=\"16\" opacity=\"1\"" ""
+  [
+    ("linear scalar and fractional opacity",
+      square "x=\"0\" opacity=\"0\"" (track "x" "-8;4;16" three ++ track "opacity" "0;0.25;0.5" three),
+      square "x=\"16\" opacity=\"0.5\"" ""),
+    ("discrete last keyTime below one",
+      square "x=\"0\"" (track "x" "0;8;16" (clock ++ "calcMode=\"discrete\" keyTimes=\"0;0.25;0.75\"")),
+      finalSquare),
+    ("default linear keyTimes",
+      square "x=\"0\" opacity=\"0\"" (track "x" "0;8;16" clock ++ track "opacity" "0;0.5;1" clock),
+      finalSquare),
+    ("default discrete keyTimes",
+      square "x=\"0\"" (track "x" "0;8;16" (clock ++ "calcMode=\"discrete\"")), finalSquare),
+    ("absent base x attribute", square "" x, finalSquare),
+    ("empty base x attribute", square "x=\"\"" x, finalSquare),
+    ("matching M/L path structure", path (track "d" (pathStart ++ ";" ++ pathEnd) linear),
+      s!"<path fill=\"red\" d=\"{pathEnd}\"/>"),
+    ("whitespace around M/L coordinates",
+      path (track "d" (pathStart ++ ";M 16 , 0 L 32 , 0 L 32 , 16 L 16 , 16") linear),
+      s!"<path fill=\"red\" d=\"{pathEnd}\"/>")]

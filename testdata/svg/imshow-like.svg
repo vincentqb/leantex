@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Invented, in the shape a plotting library writes for an image plot -->
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="180pt" height="144pt" viewBox="0 0 180 144" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 144 L 180 144 L 180 0 L 0 0 z" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g clip-path="url(#pa1b2c3)">
+    <image xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAJ0lEQVR42mMwsOmxyVsVtWDLtBMLGOCsO5cqGOCsD9MCGOCsE242ALawHAuZkI1nAAAAAElFTkSuQmCC" id="image1" transform="scale(1 -1) translate(0 -108)" x="36" y="-120" width="108" height="108" style="image-rendering:crisp-edges;image-rendering:pixelated"/>
+   </g>
+   <g id="patch_2">
+    <path d="M 36 120 L 36 12" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 36 120 L 144 120" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font: 10px 'DejaVu Sans'; text-anchor: middle" x="90" y="136">invented samples</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pa1b2c3">
+   <rect x="36" y="12" width="108" height="108"/>
+  </clipPath>
+ </defs>
+</svg>

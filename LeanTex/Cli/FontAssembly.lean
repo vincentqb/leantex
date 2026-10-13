@@ -134,7 +134,7 @@ document's own directories were the only reasons to hold them, and both are
 now the scan's (`scanFaces`). Assembly is a function of the document, the
 faces in hand, the parses already made, and which assembly this is. -/
 public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
-    (cache : FontEnv.Cache) (purpose : Purpose) :
+    (cache : FontEnv.Cache) (purpose : Purpose) (figureScalars : Array Char := #[]) :
     IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × Array String)) := do
   let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
@@ -356,7 +356,10 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- declared face covering it; scalars none covers go to the scan.
   let mut fallback : Array (Char × Nat) := #[]
   let mut uncovered : Array Char := #[]
-  for c in Layout.docScalars doc do
+  -- A drawn SVG's text sets in these faces too (`Layout.storeScalars`).
+  let scalars := figureScalars.foldl (fun a c => if a.contains c then a else a.push c)
+    (Layout.docScalars doc)
+  for c in scalars do
     match fonts.findIdx? (fun f => (f.gid c).isSome) with
     | some i => fallback := fallback.push (c, i)
     | none => uncovered := uncovered.push c

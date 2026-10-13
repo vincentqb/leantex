@@ -246,11 +246,17 @@
   suggestion: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
 ── N0024 (info) a figure is drawn by an external converter, because the engine does not draw one of its features
 ℹ [N0024]
-  figure 'figures/plot.pdf' is drawn on the web page by pdftocairo, because the engine does not draw its 'type1' font
+  figure 'figures/plot.pdf' is drawn by pdftocairo, because the engine does not draw its 'type1' font
+ℹ [N0024]
+  figure 'figures/chart.svg' is drawn by rsvg-convert, because the engine does not draw its 'filter' property
 ── N0025 (info) an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads
 ℹ [N0025]
   '\usepackage[latin1]{inputenc}': 'doc.tex' reads as Windows-1252 (Latin-1)
   suggestion: save 'doc.tex' as UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8`), then delete the declaration
+── N0026 (info) an SVG's font family is not the document's; its text is set in one of the document's own faces
+ℹ [N0026]
+  'Example Grotesk' in figure 'figures/chart.svg' is no family of the document; its text is set in 'Open Sans'
+  suggestion: name a generic family (serif, sans-serif or monospace) last in the SVG's font list, or declare the family in \fonts
 ── N0029 (info) a .bib field the bibliography style prints nowhere for its entry's type; the reference list is the style's own
 ℹ [N0029]
   the bibliography style 'plain' prints no 'url' field in @misc entries; 1 entry keeps one (k)
@@ -757,13 +763,9 @@
   this boundary picture has no browser face: its text is in a font the engine does not draw, and the converter is declined
   suggestion: \figures{ convert = none } declines the converter; without it, pdftocairo draws the picture whole, or \allow{W0378} accepts the loss
 ⚠ [W0378]
-  this boundary picture has no browser face: its conversion to SVG failed, or the check its SVG must pass did not finish
+  this boundary picture has no browser face: its conversion to SVG failed or did not finish
   pdftocairo: not found (error code: 2)
-  suggestion: install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, librsvg's rsvg-convert), rebuild if it was interrupted, or \allow{W0378} accepts the loss
-⚠ [W0378]
-  this boundary picture has no browser face: the check its SVG must pass did not finish when the page was published
-  xmllint did not finish
-  suggestion: rebuild to run the check again, install libxml2's xmllint if the reason says it is missing, or \allow{W0378} accepts the loss
+  suggestion: install poppler's pdftocairo if the reason says it is missing, rebuild if it was interrupted, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
 ⚠ [W0379]
   no boundary tool is available for this picture: lualatex's version was not read
@@ -957,17 +959,17 @@
   image 'figures/photo.jpg' carries an orientation tag; the page shows the stored orientation
   orientation tag 6
   suggestion: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
-── W0605 (degraded) an image or the page icon has no usable browser face; the web page shows a placeholder for an image and ships without the icon
+── W0605 (degraded) an image has no usable browser face; the web page shows a placeholder instead
 ⚠ [W0605]
   image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows a placeholder box instead
   suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
-⚠ [W0605]
-  favicon 'favicon.svg' could not be checked for the web page: xmllint did not finish; the page ships without it
-  suggestion: install the tool the reason names, rebuild if it was interrupted, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon, which needs no tool
 ── W0609 (degraded) a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn
 ⚠ [W0609]
-  figure 'plot.pdf' is drawn on the web page without its 'type1' font, which the engine does not draw (pdftocairo is missing)
-  suggestion: install poppler's pdftocairo to draw the figure whole, or accept the engine's drawing with \allow{W0609}
+  figure 'plot.pdf' is drawn without its 'type1' font, which the engine does not draw (pdftocairo produced an empty image)
+  suggestion: install or repair poppler's pdftocairo to draw the figure whole, or accept the loss with \allow{W0609}
+⚠ [W0609]
+  figure 'figures/chart.svg' is drawn without its 'filter' property, which the engine does not draw
+  suggestion: install librsvg's rsvg-convert to draw the figure whole, or accept the loss with \allow{W0609}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel

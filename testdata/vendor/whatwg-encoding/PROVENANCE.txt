@@ -1,0 +1,27 @@
+# The WHATWG Encoding Standard's labels and legacy single-byte indexes,
+# vendored as the source of LeanTex/Core/WhatwgEncodingData.lean
+# (scripts/gen-whatwg-encoding-data.lean).
+#
+# source:   https://github.com/whatwg/encoding, commit
+#           a985b62a9b45c17da3e17a9f0a0b4e30c34c4a8a (the repository's HEAD
+#           when fetched); the files at the repository's root, byte for byte
+# fetched:  2026-10-10, from raw.githubusercontent.com at that commit
+# license:  Creative Commons Attribution 4.0 International, and BSD
+#           3-Clause where incorporated into source code — the generated
+#           module is such a portion; LICENSE beside this file is the
+#           upstream file verbatim. Copyright © WHATWG (Apple, Google,
+#           Mozilla, Microsoft).
+# checked:  SHA256SUMS lists the sha256 of each file's upstream bytes;
+#           `sha256sum -c SHA256SUMS` run from this directory verifies them
+#
+# Taken: encodings.json (every encoding's name and labels) and the index of
+# each legacy single-byte encoding — index-ibm866.txt, index-iso-8859-2.txt
+# … index-iso-8859-16.txt, index-koi8-r.txt, index-koi8-u.txt,
+# index-macintosh.txt, index-windows-874.txt, index-windows-1250.txt …
+# index-windows-1258.txt, index-x-mac-cyrillic.txt (ISO-8859-8-I reads
+# index-iso-8859-8.txt, as the standard says) — and LICENSE.
+# Not taken: the multi-byte indexes (index-jis0208.txt, index-jis0212.txt,
+# index-euc-kr.txt, index-gb18030.txt, index-gb18030-ranges.txt,
+# index-big5.txt) and the standard's own text. The reader that uses this
+# data names the multi-byte encodings by their labels and refuses them;
+# their indexes come in with a decoder for them.

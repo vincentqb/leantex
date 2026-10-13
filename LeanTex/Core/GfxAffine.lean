@@ -491,20 +491,20 @@ public theorem Figure.quantize_fixed_point {L : Type} (ql : L → L) (hl : ∀ l
 
 /-! ## The ink box covers the ink -/
 
-private theorem Box.leOpt_refl (a : Option Box) : Box.leOpt a a := by
+public theorem Box.leOpt_refl (a : Option Box) : Box.leOpt a a := by
   cases a with
   | none => trivial
   | some a => exact Box.le_refl a
 
-private theorem Box.leOpt_trans {a b c : Option Box} (h1 : Box.leOpt a b) (h2 : Box.leOpt b c) :
+public theorem Box.leOpt_trans {a b c : Option Box} (h1 : Box.leOpt a b) (h2 : Box.leOpt b c) :
     Box.leOpt a c := by
   cases a <;> cases b <;> cases c <;> simp_all [Box.leOpt]
   exact Box.le_trans h1 h2
 
-private theorem Box.leOpt_joinOpt_left (a b : Option Box) : Box.leOpt a (Box.joinOpt a b) := by
+public theorem Box.leOpt_joinOpt_left (a b : Option Box) : Box.leOpt a (Box.joinOpt a b) := by
   cases a <;> cases b <;> simp [Box.leOpt, Box.joinOpt, Box.le_refl, Box.le_join_left]
 
-private theorem Box.leOpt_joinOpt_right (a b : Option Box) : Box.leOpt b (Box.joinOpt a b) := by
+public theorem Box.leOpt_joinOpt_right (a b : Option Box) : Box.leOpt b (Box.joinOpt a b) := by
   cases a <;> cases b <;> simp [Box.leOpt, Box.joinOpt, Box.le_refl, Box.le_join_right]
 
 private theorem Box.joinOpt_mono {a a' b b' : Option Box} (ha : Box.leOpt a a')
@@ -538,7 +538,7 @@ private theorem hullOf_list_mono {α : Type} (f g : α → Option Box) (hfg : �
   | nil => exact hab
   | cons x rest ih => exact ih _ _ (Box.joinOpt_mono hab (hfg x))
 
-private theorem hullOf_mem {α : Type} (f : α → Option Box) (xs : Array α) (x : α) (h : x ∈ xs) :
+public theorem hullOf_mem {α : Type} (f : α → Option Box) (xs : Array α) (x : α) (h : x ∈ xs) :
     Box.leOpt (f x) (hullOf f xs) := by
   unfold hullOf
   rw [← Array.foldl_toList]

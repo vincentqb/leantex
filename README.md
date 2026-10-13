@@ -285,16 +285,25 @@ other, nor any but the first within that of the ink.
 
 ## Images and code
 
-PNG, JPEG and PDF images embed directly in PDF output. SVG conversion runs
-automatically during document builds; no manual PDF export is needed.
-Use `\includegraphics{figure.svg}` or an extensionless `{figure}`.
+PNG, JPEG and PDF images embed directly in PDF output. SVG images are read
+and drawn by leantex itself, with no tool and no manual PDF export: shapes,
+paths, gradients, clips, symbols and CSS draw as vectors, embedded PNG and
+JPEG images embed as they would from `\includegraphics`, and an SVG's text
+sets in the document's own fonts, so it matches the page and stays
+selectable. Use `\includegraphics{figure.svg}` or an extensionless
+`{figure}`. A feature leantex does not draw (a filter, a mask, a marker) is
+named in a warning; with `rsvg-convert` installed, that one figure is drawn
+by librsvg instead, and `\figures{ convert = none }` keeps every figure the
+engine's own. An SVG's `<title>` is its text alternative when the document
+gives none. SVG files may be UTF-8, UTF-16, or any single-byte encoding a
+browser reads (`windows-1252`, the ISO 8859 family, KOI8 and others); save
+a Shift_JIS, GBK, Big5, EUC or UTF-32 file as UTF-8.
 
 Optional tools must be on the shell's `PATH`:
 
 | Feature | Dependency |
 |---|---|
-| SVG images | `xmllint`, `rsvg-convert` |
-| Final-frame SVG animation posters | `xsltproc`, plus the SVG tools |
+| SVG features leantex does not draw | `rsvg-convert` |
 | PDF images in HTML | Poppler's `pdftocairo` |
 | Syntax highlighting beyond Lean, Python, shell scripts and sessions, and plain text | Pygments (`python3 -m pip install Pygments`) |
 
@@ -330,11 +339,11 @@ under a TeX engine.
 For image support on macOS:
 
 ```sh
-brew install librsvg libxml2 libxslt poppler
-export PATH="$(brew --prefix)/bin:$(brew --prefix libxml2)/bin:$(brew --prefix libxslt)/bin:$PATH"
+brew install librsvg poppler
 ```
 
-HTML preserves SVG animation. PDF displays a static poster:
+HTML preserves SVG animation, and a still SVG with text ships as the page's
+own SVG, its text live in the page's fonts. PDF displays a static pose:
 `\animategraphics[poster=last]{10}{figure}{}{}` selects the final frame of
-supported SVG animations or a PDF frame sequence. Unsupported animation
-features are diagnosed.
+supported SVG animations or a PDF frame sequence, and the page prints that
+pose. Unsupported animation features are diagnosed.

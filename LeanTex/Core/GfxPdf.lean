@@ -471,6 +471,173 @@ the placement's image, nothing clipped, opaque, PDF's initial state. -/
 @[expose] public def readMarks (place : Iso) (ops : Array ContentOp) : Array Mark :=
   readList (RState.root place) #[] ops.toList
 
+/-! ## Where text paints -/
+
+/-- What the faces a stream's text sets tell a reader of where it paints:
+each glyph's `/W` width and the hull of its outline, both in millionths of
+the em and by font resource and glyph id — the advance the viewer's pen
+takes (§9.4.4), and the box the glyph's ink stands in about its origin. -/
+public structure GlyphInk where
+  width : Nat → Nat → Int
+  hull : Nat → Nat → Option Box
+
+/-- The text state a stream's text is read in (§9.3, §9.4.2): the font
+resource in force and its size as the file spells it, in thousandths of a
+point; the horizontal scale, per mille; and inside a text object the text
+matrix's origin as spelled, thousandths of a point, and the pen's advance
+since it, millionths of the size. -/
+public structure TextPen where
+  font : Option Nat
+  sm : Int
+  tz : Int
+  xm : Int
+  ym : Int
+  adv : Int
+  deriving Repr, Inhabited
+
+/-- PDF's initial text state: no font, a 100 % scale, the origin. -/
+@[expose] public def TextPen.initial : TextPen :=
+  { font := none, sm := 0, tz := 1000, xm := 0, ym := 0, adv := 0 }
+
+/-- A glyph's ink box in text space, outward to whole `Sp`: its hull about
+the pen, at the size and scale in force — `x = (xm + (adv + μ)·sm·tz/10⁹)`
+thousandths of a point and `y = (ym + μ·sm/10⁶)`, the file's own spellings
+throughout, in integers. -/
+@[expose] public def TextPen.glyphBox (p : TextPen) (h : Box) : Box :=
+  let xNum (μ : Int) : Int := (p.xm * 1000000000 + (p.adv + μ) * p.sm * p.tz) * 65536
+  let yNum (μ : Int) : Int := (p.ym * 1000000 + μ * p.sm) * 65536
+  let lo (a b : Int) (d : Int) : Int := Int.fdiv (min a b) d
+  let hi (a b : Int) (d : Int) : Int := -Int.fdiv (-(max a b)) d
+  ((lo (xNum h.1.1) (xNum h.2.1) 1000000000000, lo (yNum h.1.2) (yNum h.2.2) 1000000000),
+   (hi (xNum h.1.1) (xNum h.2.1) 1000000000000, hi (yNum h.1.2) (yNum h.2.2) 1000000000))
+
+/-- One glyph of a `TJ` array: the number set before it moves the pen back
+`1000 n` millionths, the glyph stands at the pen — its box joins the text
+object's — and advances it by its width. A glyph with no font in force
+paints nothing a reader can place. -/
+@[expose] public def TextPen.glyphStep (gi : GlyphInk) (st : TextPen × Option Box)
+    (n : Int) (g : Nat) : TextPen × Option Box :=
+  let p := { st.1 with adv := st.1.adv - 1000 * n }
+  match p.font with
+  | none => (p, st.2)
+  | some f =>
+    let acc := match gi.hull f g with
+      | some h => Box.joinOpt st.2 (some (p.glyphBox h))
+      | none => st.2
+    ({ p with adv := p.adv + gi.width f g }, acc)
+
+/-- A `TJ` element's glyphs onto the text object's box. -/
+@[expose] public def TextPen.showItem (gi : GlyphInk) (st : TextPen × Option Box) :
+    TextItem → TextPen × Option Box
+  | .glyphs gids => gids.foldl (fun st g => TextPen.glyphStep gi st 0 g) st
+  | .kerned gids nums =>
+    (Array.range gids.size).foldl (fun st i => TextPen.glyphStep gi st (nums.getD i 0) (gids.getD i 0)) st
+  | .adjust d => ({ st.1 with adv := st.1.adv - 1000 * d }, st.2)
+
+mutual
+
+-- conserves: none — a measurement: where a text object's glyphs paint,
+-- which a form's box covers (`formBox_covers`).
+/-- One text operator's glyphs onto the text object's box, in text space. -/
+@[expose] public def TextPen.opOne (gi : GlyphInk) (st : TextPen × Option Box) :
+    TextOp → TextPen × Option Box
+  | .scale p => ({ st.1 with tz := p }, st.2)
+  | .move x y => ({ st.1 with xm := x.toPtMilli, ym := y.toPtMilli, adv := 0 }, st.2)
+  | .font res size => ({ st.1 with font := some res, sm := size.toPtMilli }, st.2)
+  | .color _ => st
+  | .show items => items.foldl (TextPen.showItem gi) st
+  | .marked _ body => TextPen.opList gi st body.toList
+
+@[expose] public def TextPen.opList (gi : GlyphInk) (st : TextPen × Option Box) :
+    List TextOp → TextPen × Option Box
+  | [] => st
+  | o :: rest => TextPen.opList gi (TextPen.opOne gi st o) rest
+
+end
+
+/-- A text object's glyphs as one box in the reader's frame: the hull of
+every glyph's box in text space, imaged through the user space it stands
+in — a box's image holds the images of the boxes inside it. -/
+@[expose] public def textObjectInk (gi : GlyphInk) (rs : RState) (st : TextPen × Array Box)
+    (tops : Array TextOp) : TextPen × Array Box :=
+  let r := TextPen.opList gi ({ st.1 with xm := 0, ym := 0, adv := 0 }, none) tops.toList
+  (r.1, match r.2 with
+    | some b => st.2.push (Box.image rs.userCtm b)
+    | none => st.2)
+
+mutual
+
+-- conserves: none — a measurement: the boxes a stream's text paints in
+-- the reader's frame, which a form's box covers (`formBox_covers`).
+/-- One operator's text ink onto the boxes. A text object starts its text
+matrix at the origin and keeps the text state (§9.3.1); a saved state —
+a group's `q … Q`, a form's implicit pair (§8.10.1) — gives the state back
+when it closes, and a marked sequence keeps it. -/
+@[expose] public def textInkOne (gi : GlyphInk) (rs : RState) (st : TextPen × Array Box) :
+    ContentOp → TextPen × Array Box
+  | .text tops => textObjectInk gi rs st tops
+  | .group m gs clips body => (st.1, (textInkList gi (rs.enterGroup m gs clips) st body.toList).2)
+  | .xobject m _ kind body =>
+    match kind with
+    | .symbol => (st.1, (textInkList gi (rs.cm m).enterForm st body.toList).2)
+    | .group => (st.1, (textInkList gi (rs.cm m).enterTransparency st body.toList).2)
+    | .stamp fp sp gs => (st.1, (textInkList gi ((rs.setPen fp sp gs).cm m).enterForm st body.toList).2)
+    | .raster _ => st
+  | .marked _ body => textInkList gi rs st body.toList
+  | .paint _ _ _ _ => st
+  | .shade _ _ => st
+  | .outline _ _ _ => st
+  | .fill _ _ _ _ _ => st
+  | .image _ _ _ _ _ => st
+  | .imageMissing _ _ _ _ => st
+
+@[expose] public def textInkList (gi : GlyphInk) (rs : RState) (st : TextPen × Array Box) :
+    List ContentOp → TextPen × Array Box
+  | [] => st
+  | o :: rest => textInkList gi rs (textInkOne gi rs st o) rest
+
+end
+
+/-- The state a form's own stream is read in: its own space, nothing
+placed, nothing clipped, opaque, PDF's initial state. -/
+@[expose] public def RState.form : RState :=
+  { place := { flipY := false, dx := 0, dy := 0 }, placed := false, ctm := Affine.unit,
+    base := Affine.unit, clips := #[], alphas := #[], ca := Alpha.opaque, cA := Alpha.opaque,
+    pen := Pen.initial }
+
+/-- A mark's box as a form of `kind` must hold it: a stamp's outline grown
+by the reach its instances' strokes carry, any other form's ink. -/
+@[expose] public def markBoxOf (kind : FormKind) (mk : Mark) : Option Box :=
+  match kind with
+  | .stamp reach => (mk.geomBox rasterUnit).map (·.dilate reach)
+  | .symbol => mk.inkBox rasterUnit
+  | .group => mk.inkBox rasterUnit
+
+/-- The text a form's body paints, as boxes in the form's space: each text
+object's glyphs' hull, imaged. -/
+@[expose] public def formText (gi : GlyphInk) (body : Array ContentOp) : Array Box :=
+  (textInkList gi RState.form (TextPen.initial, #[]) body.toList).2
+
+/-- **A form's box**, read in its own space: the hull of what its body
+paints — every mark's box (`markBoxOf`) and every glyph its text
+sets (`formText`). -/
+@[expose] public def formBox (gi : GlyphInk) (kind : FormKind) (body : Array ContentOp) :
+    Option Box :=
+  Box.joinOpt (hullOf (markBoxOf kind) (readList RState.form #[] body.toList))
+    (hullOf some (formText gi body))
+
+/-- **A form's box holds everything its body paints** (`_covers`): each
+mark, and each glyph its text sets — a form's box clips (§8.10.1), so a
+glyph outside it is a glyph no viewer shows. The invariant whose absence
+let a translucent label and the text a `use` paints vanish from the page
+while the text layer still held them. -/
+public theorem formBox_covers (gi : GlyphInk) (kind : FormKind) (body : Array ContentOp) :
+    (∀ mk ∈ readList RState.form #[] body.toList, Box.leOpt (markBoxOf kind mk) (formBox gi kind body)) ∧
+    (∀ b ∈ formText gi body, Box.leOpt (some b) (formBox gi kind body)) := by
+  refine ⟨fun mk h => ?_, fun b h => ?_⟩
+  · exact Box.leOpt_trans (hullOf_mem _ _ mk (by simpa using h)) (Box.leOpt_joinOpt_left _ _)
+  · exact Box.leOpt_trans (hullOf_mem some _ b h) (Box.leOpt_joinOpt_right _ _)
+
 /-! ## The reading is the figure's -/
 
 private theorem subsOf_segs (done : Array Subpath) (st : Pt) (acc : Array Seg) (c : Bool)

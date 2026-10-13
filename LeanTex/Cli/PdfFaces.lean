@@ -55,8 +55,8 @@ public def verdictOf : FigureFace.Answer → Boundary.Verdict
 /-- What the external converter answered for a figure's web face, read by
 the check publication runs on every embedded SVG: not asked; a face — the
 check keeps it, or it was not checked here and publication checks it
-(`checked`); a face the check refuses, with its words; or no face — the
-converter failed, or the check did not finish. -/
+(`checked`); a face the check refuses, with its words; or no face, the
+converter having failed. -/
 public inductive Answer where
   | notAsked
   | drew (bytes : ByteArray) (checked : Bool)
@@ -76,7 +76,7 @@ converter's words; a face the check refused, in the check's; and, where it
 was not asked or its drawing was not taken, the document's refusal
 (`Boundary.route_tool_exact`). -/
 public def Answer.unconverted : Answer → FigureLoss.Unconverted
-  | .failed why => .noFace why
+  | .failed why => .failed why
   | .rejected _ why => .unfit why
   | .notAsked | .drew _ _ => .refused
 

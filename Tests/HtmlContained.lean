@@ -432,7 +432,7 @@ def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
       "--format=png", "--width=20", "--height=20", "--output", output.toString, input.toString] }
     unless run.exitCode == 0 do throw <| IO.userError "the SVG color oracle requires rsvg-convert"
     IO.FS.readBinFile output
-  let poster ← LeanTex.Cli.ImageAssets.svgPoster blue
+  let poster ← LeanTex.Cli.ImageAssets.canonicalPoster blue
   let converted ← LeanTex.Cli.ImageAssets.pdfSvg svgCanvasPdf .last
   IO.FS.withTempDir fun dir => do
     let doc := (elabStr "\\includegraphics[alt={Captured color square}]{figure.svg}").1

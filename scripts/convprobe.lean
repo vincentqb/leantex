@@ -25,8 +25,8 @@ private def probeSource (font : Bool) : ByteArray := Id.run do
 
 def main (args : List String) : IO UInt32 := do
   let result ← match args with
-    | ["svg", file] => ImageAssets.svgPoster (← IO.FS.readBinFile file)
-    | ["last", file] => ImageAssets.svgPoster (← IO.FS.readBinFile file) .last
+    | ["svg", file] => ImageAssets.canonicalPoster (← IO.FS.readBinFile file)
+    | ["last", file] => ImageAssets.canonicalPoster (← IO.FS.readBinFile file) .last
     | ["pic"] => ImageAssets.picFace (probeSource false)
     | _ => ImageAssets.pdfSvg (probeSource (args.contains "font")) .first
   match result with

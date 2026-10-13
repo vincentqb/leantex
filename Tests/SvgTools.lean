@@ -2,6 +2,8 @@ module
 
 public import Tests.Support
 public import LeanTex.Cli.ImageAssets
+public import LeanTex.Cli.Driver
+public import LeanTex.Core.FigureStore
 
 public section
 
@@ -9,94 +11,90 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-private def svgToolRunner (calls : IO.Ref (Array String)) (tool : String)
+/-- The converter's process boundary, simulated: it records each spawn,
+insists on receiving the canonical spelling of a parse (never an authored
+comment), writes a PDF drawing, and answers with the failure set for it. -/
+private def svgToolRunner (calls : IO.Ref (Array String))
     (failure : IO.Ref (Option (Except IO.Error IO.Process.Output)))
-    (source : ByteArray) (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
+    (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
   calls.modify (·.push args.cmd)
   let some input := args.args.back? | throw <| IO.userError "missing captured input"
-  unless (← IO.FS.readBinFile input) == source do
-    throw <| IO.userError "conversion changed the captured source"
+  let canonical ← IO.FS.readBinFile input
+  unless (Xml.parse canonical).toBool && !bytesContain canonical "<!--" do
+    throw <| IO.userError "the converter received bytes that are not a canonical parse"
   -- Even a failing converter may leave bytes; its exit still decides.
   if args.cmd == "rsvg-convert" then
     let some output := args.args[2]? | throw <| IO.userError "missing output argument"
     IO.FS.writeBinFile (System.FilePath.mk output) svgCanvasPdf
-  if args.cmd == tool then
-    if let some result ← failure.get then return ← EIO.ofExcept result
-  return { exitCode := 0, stderr := "", stdout :=
-    if args.cmd == "xmllint" then
-      if args.args.contains "--sax" then "SAX.startDocument()\nSAX.endDocument()\n"
-      else "true"
-    else if args.cmd == "xsltproc" then String.fromUTF8! source
-    else "" }
+  if let some result ← failure.get then return ← EIO.ofExcept result
+  return { exitCode := 0, stderr := "", stdout := "" }
 
-/-- Removing any required executable names its dependency and PATH recovery.
-Restoring it retries the same captured source and replaces the shipped
-placeholder with a PDF form. Only the process boundary is simulated:
-temporary files, PDF import, fulfilment, layout and emission are real. -/
+/-- **A figure asks the converter only for what the engine does not draw,
+and its answer never decides whether the page has a figure.** An exact
+figure runs no tool. A lossy one asks librsvg once, with the canonical
+parse: drawn, the converter's drawing ships and N0024 names why it was
+asked; missing or failing, the engine's drawing ships with every loss named
+(W0609), carrying the tool's own words — the dependency and PATH recovery
+when it could not start, the exit and its stderr when it ran — and the
+same source draws whole once the tool is back. Only the process boundary
+is simulated: the native judge, import, conversion recipe, PDF read,
+fulfilment and layout are real. -/
 def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
-  let source := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
+  let still := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
+  let lossy := svgDocument
+    ("<!-- an authored comment --><filter id=\"soft\"><feGaussianBlur stdDeviation=\"2\"/></filter>" ++
+     "<rect width=\"20\" height=\"20\" fill=\"blue\" filter=\"url(#soft)\"/>")
   let req : Image.Request := { src := "figure.svg" }
   let doc := (elabStr "\\includegraphics[width=20pt,alt={An invented square}]{figure.svg}").1
   let geom := Layout.Geom.ofPage doc.page
-  let fulfil (result : Except String Image.Plan) :=
-    Image.fulfilOne req (.decoded req.src result none none (some source) none)
-  let artifact (entry : Image.Loaded) :=
-    let imgs : Image.Store := { entries := #[entry] }
+  let placed (f : Driver.SvgFetch) (bytes : ByteArray) : Array (Option Nat) :=
+    let (en, _) := Image.fulfilOne req (.decoded "" f.res none none (some bytes) none)
+    let imgs := (FigureStore.settle fonts
+      (FigureStore.attach { entries := #[en] } #[some f.drawn])).1
     let out := layoutOf fonts doc geom none imgs
-    (out, pdfText (Pdf.write geom fonts out.pages {} imgs))
-  let imageIndices (out : Layout.Out) :=
     out.pages.flatMap fun page => page.lines.flatMap fun line =>
       line.segs.filterMap fun
         | .image idx _ _ => some idx
         | _ => none
-  let healthy := #["xmllint", "xmllint", "xsltproc", "rsvg-convert"]
-  for (tool, package, stopped) in [
-      ("xmllint", "libxml2", #["xmllint"]),
-      ("xsltproc", "libxslt", #["xmllint", "xmllint", "xsltproc"]),
-      ("rsvg-convert", "librsvg", healthy)] do
-    -- A tool that cannot start: Lean's exec failure, a spawn that raised, a
-    -- shared library the loader cannot find (127), and a wrapper whose
-    -- command cannot run (126).
-    let exited (code : UInt32) (stderr : String) : Except IO.Error IO.Process.Output :=
-      .ok { exitCode := code, stdout := "", stderr }
-    let unstarted : List (String × Except IO.Error IO.Process.Output) := [
-      ("exec failure", exited 255 s!"could not execute external process '{tool}'\n"),
-      ("exception", .error (IO.Error.noFileOrDirectory tool 2 "missing executable")),
-      ("missing library", exited 127
-        s!"{tool}: error while loading shared libraries: libsynthetic.so.0: cannot open shared object file\n"),
-      ("wrapper", exited 126 s!"/bin/sh: {tool}-real: Permission denied\n")]
-    for (shape, missing) in unstarted do
-      let label := s!"SVG tools {tool} ({shape})"
-      let failure ← IO.mkRef (some missing)
-      let calls ← IO.mkRef #[]
-      let runTool := svgToolRunner calls tool failure source
-      let result ← ImageAssets.svgPlan {} source .last (runTool := some runTool)
-      let (missing, diag) := fulfil result
-      let (before, beforePdf) := artifact missing
-      check ref (label ++ " stops at the unavailable tool") ((← calls.get) == stopped)
-      check ref (label ++ " names the executable and dependency recovery")
-        (diag.any fun d => hasStr (diagWords d) tool &&
-          hasStr (diagWords d) ("brew install " ++ package) && hasStr (diagWords d) "PATH")
-      check ref (label ++ " does not ask the author to re-export")
-        (diag.any fun d => !hasStr (diagWords d) "re-export" &&
-          !(d.help.any (hasStr · "re-export")))
-      check ref (label ++ " keeps W0602 and its source subject")
-        (diag.any fun d => d.kind == .W0602 && !d.demoted && d.subject == some req.src)
-      check ref (label ++ " ships a placeholder, not the failed output")
-        ((imageIndices before).size == 1 && missing.info.isNone &&
-          bytesContain beforePdf "re S" &&
-          !bytesContain beforePdf "/Im1 Do")
-      failure.set none
-      calls.set #[]
-      let restored ← ImageAssets.svgPlan {} source .last (runTool := some runTool)
-      let (loaded, afterDiag) := fulfil restored
-      let (after, afterPdf) := artifact loaded
-      check ref (label ++ " retries the same source after tool restoration")
-        ((← calls.get) == healthy && afterDiag.isNone)
-      check ref (label ++ " restored source ships a form and image paint")
-        (imageIndices after == #[some 0] &&
-          bytesContain afterPdf "/Subtype /Form" && bytesContain afterPdf "/Im1 Do" &&
-          bytesContain afterPdf "0 0 1 rg 0 0 120 80 re f")
+  let calls ← IO.mkRef (#[] : Array String)
+  let failure ← IO.mkRef (none : Option (Except IO.Error IO.Process.Output))
+  let converter : Driver.Converter := Driver.Converter.always fun canonical independent =>
+    ImageAssets.canonicalPlan {} canonical independent (runTool := some (svgToolRunner calls failure))
+  let exact ← Driver.svgFetch req.src still .first "en" (some converter)
+  check ref "SVG tools: an exact figure asks no tool and ships the engine's drawing"
+    ((← calls.get).isEmpty && exact.vector.isSome && exact.diags.isEmpty &&
+      placed exact still == #[some 0])
+  -- A converter that cannot start: Lean's exec failure, a spawn that raised,
+  -- a shared library the loader cannot find (127), and a wrapper whose
+  -- command cannot run (126).
+  let exited (code : UInt32) (stderr : String) : Except IO.Error IO.Process.Output :=
+    .ok { exitCode := code, stdout := "", stderr }
+  let unstarted : List (String × Except IO.Error IO.Process.Output) := [
+    ("exec failure", exited 255 "could not execute external process 'rsvg-convert'\n"),
+    ("exception", .error (IO.Error.noFileOrDirectory "rsvg-convert" 2 "missing executable")),
+    ("missing library", exited 127
+      "rsvg-convert: error while loading shared libraries: libsynthetic.so.0: cannot open shared object file\n"),
+    ("wrapper", exited 126 "/bin/sh: rsvg-convert-real: Permission denied\n")]
+  for (shape, missing) in unstarted do
+    let label := s!"SVG tools rsvg-convert ({shape})"
+    failure.set (some missing)
+    calls.set #[]
+    let degraded ← Driver.svgFetch req.src lossy .first "en" (some converter)
+    check ref (label ++ " asks the converter once, with the canonical parse")
+      ((← calls.get) == #["rsvg-convert"])
+    check ref (label ++ " ships the engine's drawing, never a placeholder")
+      (degraded.vector.isSome && degraded.res.toBool && placed degraded lossy == #[some 0])
+    check ref (label ++ " names every loss with the dependency and PATH recovery")
+      (!degraded.diags.isEmpty && degraded.diags.all fun d =>
+        d.code == "W0609" && hasStr (diagWords d) "rsvg-convert" &&
+          hasStr (diagWords d) "brew install librsvg" && hasStr (diagWords d) "PATH")
+    failure.set none
+    calls.set #[]
+    let restored ← Driver.svgFetch req.src lossy .first "en" (some converter)
+    check ref (label ++ " draws the same source whole once the tool is back")
+      ((← calls.get) == #["rsvg-convert"] && restored.vector.isNone && restored.res.toBool &&
+        !restored.diags.isEmpty && restored.diags.all (·.code == "N0024") &&
+        placed restored lossy == #[some 0])
   for (code, stderr) in [
       (19, "bad SVG geometry"),
       (255, "unsupported SVG feature"),
@@ -104,21 +102,16 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (255, "could not execute external process 'different-tool'"),
       (255, "could not execute external process 'rsvg-convert'\nconverter context"),
       (255, "")] do
-    let calls ← IO.mkRef #[]
-    let failure ← IO.mkRef (some (.ok { exitCode := code, stdout := "ignored", stderr }))
-    let result ← ImageAssets.svgPlan {} source .last
-      (runTool := some (svgToolRunner calls "rsvg-convert" failure source))
-    let (_, diag) := fulfil result
+    failure.set (some (.ok { exitCode := code, stdout := "ignored", stderr }))
+    let failed ← Driver.svgFetch req.src lossy .first "en" (some converter)
     check ref s!"SVG converter error {code}/{stderr} keeps its evidence without install advice"
-      (diag.any fun d => hasStr (diagWords d) s!"rsvg-convert exited {code}: {stderr}" &&
-        !hasStr (diagWords d) "brew install" && d.kind == .W0602)
-  let calls ← IO.mkRef #[]
-  let failure ← IO.mkRef (some (.error (IO.Error.resourceExhausted none 24 "open files")))
-  let result ← ImageAssets.svgPlan {} source .last
-    (runTool := some (svgToolRunner calls "rsvg-convert" failure source))
+      (failed.vector.isSome && !failed.diags.isEmpty && failed.diags.all fun d =>
+        d.code == "W0609" && hasStr (diagWords d) s!"rsvg-convert exited {code}: {stderr}" &&
+          !hasStr (diagWords d) "brew install")
+  failure.set (some (.error (IO.Error.resourceExhausted none 24 "open files")))
+  let exhausted ← Driver.svgFetch req.src lossy .first "en" (some converter)
   check ref "SVG process resource failure keeps its evidence without install advice"
-    (match result with
-      | .error err => hasStr err "open files" && !hasStr err "brew install"
-      | .ok _ => false)
+    (exhausted.vector.isSome && !exhausted.diags.isEmpty && exhausted.diags.all fun d =>
+      hasStr (diagWords d) "open files" && !hasStr (diagWords d) "brew install")
 
 end Tests

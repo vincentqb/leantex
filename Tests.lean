@@ -141,6 +141,9 @@ import Tests.Images
 import Tests.ImageCodec
 import Tests.SvgImages
 import Tests.SvgTools
+import Tests.SvgNative
+import Tests.SvgRoute
+import Tests.SvgHtml
 import Tests.AnimatedGraphics
 import Tests.AnimatedFaces
 import Tests.PdfPageSelection
@@ -377,6 +380,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   gfxIdChecks ref
   gfxStampChecks ref
   gfxKitChecks ref
+  Tests.svgNativeChecks ref
   pdfFiguresChecks ref
   pdfContentLexChecks ref
   glyphListChecks ref
@@ -771,6 +775,16 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   imageChecks ref oneFace
   svgAssetChecks ref
   svgToolChecks ref oneFace
+  Tests.svgNativePdfChecks ref oneFace
+  Tests.svgFontMatchChecks ref oneFace
+  Tests.svgHtmlChecks ref
+  Tests.svgRasterFigureChecks ref oneFace
+  Tests.svgFormTextChecks ref oneFace
+  Tests.svgCorpusHtmlChecks ref oneFace
+  Tests.svgTitleAltChecks ref
+  Tests.svgRouteChecks ref
+  Tests.svgConverterProbeChecks ref
+  Tests.figuresDeclChecks ref
   animatedGraphicsChecks ref oneFace
   animatedFacesChecks ref oneFace
   pdfPageSelectionChecks ref

@@ -105,6 +105,7 @@ import LeanTex
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
 import LeanTex.Cli.Publication
+import LeanTex.Cli.Driver
 import scripts.Gate
 import Lean.Data.Json
 
@@ -886,7 +887,7 @@ both halves: landing a tier and removing its name here are one commit. That
 is what makes the permission narrow rather than a hole the size of
 `declaredTiers`. -/
 def pendingTiers : List String :=
-  ["svg-native"]
+  []
 
 /-- Build every tier producer and its test dependencies before fan-out.
 Interpreted tools otherwise read stale compiled modules. A producer that
@@ -1594,18 +1595,27 @@ def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.Fo
 /-- The document's images, read beside it through graphicx's extension
 resolution, with the bytes read — the page names them, so the key hashes
 them. A boundary picture has no file and stays unfulfilled. -/
-def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
-    IO (Image.Store × Array Diag × Array (String × ByteArray)) := do
+def storeFor (dir : System.FilePath) (doc : Ir.Doc) (fs : Option Font.FontSet := none) :
+    IO (Image.Store × Array Diag × Array (String × ByteArray) × Array (String × String)) := do
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
   let mut read : Array (String × ByteArray) := #[]
+  let mut svgs : Array (Option Driver.SvgFetch) := #[]
   for req in Ir.imageRequests doc do
     let src := req.src
     let mut f : Image.Fetch := .missing src
+    let mut fetchedSvg : Option Driver.SvgFetch := none
     for cand in Image.sourceCandidates src do
       let p := dir / cand
       if ← p.pathExists then
         let bytes ← IO.FS.readBinFile p
         read := read.push (cand, bytes)
+        -- An SVG takes the driver's native route with no converter: the
+        -- hermetic page is what a host with no tool ships.
+        if Image.isSvg cand then
+          let r ← Driver.svgFetch src bytes req.page doc.info.locale.tag none
+          f := .decoded (if cand == src then "" else cand) r.res (some bytes) none (some bytes) none
+          fetchedSvg := some r
+          break
         let decoded := Image.decodeRequest .default bytes req
         let mut companion := none
         if req.animated && !Image.isSvg cand then
@@ -1621,8 +1631,18 @@ def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
           (decoded.map (·.1)) none (decoded.toOption.bind (·.2)) (some bytes) companion
         break
     fetched := fetched.push (req, f)
+    svgs := svgs.push fetchedSvg
   let (store, diags) := Image.fulfilRequests fetched
-  return (store, diags, read)
+  let store := FigureStore.attach store (svgs.map (·.map Driver.SvgFetch.drawn))
+  let titles := (store.entries.zip svgs).filterMap fun (en, r) =>
+    if en.info.isSome then r.bind (·.title) |>.map (en.src, ·) else none
+  let diags := diags ++ svgs.flatMap fun r => (r.map (·.diags)).getD #[]
+  match fs with
+  | none => return (store, diags, read, titles)
+  | some fs =>
+    -- The driver's shaping and still faces, over the same faces.
+    let (store, notes) := FigureStore.settle fs store
+    return (store, diags ++ notes.map (·.2), read, titles)
 
 /-- A canonical spelling for the page-selection part of a browser-face
 conversion request. -/
@@ -1639,7 +1659,7 @@ def faceStandIn (en : Image.Loaded) (p : BrowserFaces.Plan) : ByteArray :=
 /-- Interpret the driver's plan with deterministic success markers. The
 external oracle still has to capture real bytes and report tool failures. -/
 def facedStore (store : Image.Store) : Image.Store :=
-  { entries := store.entries.map fun en =>
+  { store with entries := store.entries.map fun en =>
       let p := BrowserFaces.plan en
       match p.conversion? with
       | none => en
@@ -1745,7 +1765,11 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
   let fs ← fontSetFor cache oneFace faces fontsDir doc
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let (doc, alphaDiags) := Ir.resolveMathAlphas fs.mathAlphabets family doc
-  let (store, imgDiags, read) ← storeFor corpus doc
+  let (store, imgDiags, read, titles) ← storeFor corpus doc (some fs)
+  -- A figure that names itself is the alternative the document left
+  -- undeclared, as the driver ships it.
+  let doc := FigureAlt.titled titles doc
+  let elabDiags := FigureAlt.unanswered titles doc elabDiags
   if (Diag.resolveAll doc.allow false
       (elabDiags ++ bibDiags ++ alphaDiags ++ imgDiags)).errors > 0 then
     return none

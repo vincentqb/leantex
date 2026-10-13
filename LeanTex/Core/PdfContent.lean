@@ -292,6 +292,9 @@ public structure ImgOut where
   h : Sp
   res : Option Nat
   origin : Origin
+  /-- The store entry the image is, when it loaded one: what a drawn
+  figure's form is looked up by. -/
+  store : Option Nat := none
   deriving Repr, BEq, Inhabited
 
 /-- A glyph's advance as the file states it: its `hmtx` width in
@@ -610,7 +613,7 @@ private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize 
   | .image idx w h =>
     { st with images := st.images.push { x := st.x, y := ypdf, w, h,
                                          res := idx.bind fun k => imgMap[k]?.getD none,
-                                         origin := og },
+                                         origin := og, store := idx },
               x := st.x + w }
   | .gap w _ | .decoratedGap w _ _ => { st with x := st.x + w }
   | .run idx color _ w glyphs segSize _ _ raise _ _ =>
@@ -774,18 +777,117 @@ writing time for no reader's benefit. -/
 private def artifactBlock (kind : Option ArtifactKind) (ops : Array ContentOp) : Array ContentOp :=
   if ops.isEmpty then #[] else #[.marked (.artifact kind) ops]
 
-/-- An image that loaded is real content under its line's origin; the
-placeholder box of one that did not is decoration — a layout artifact,
-the diagnostic having already said why. -/
-private def imageOp (i : ImgOut) : ContentOp :=
-  match i.res with
-  | some n => .marked i.origin.mark #[.image i.x i.y i.w i.h n]
-  | none => artifact (some .layout) (.imageMissing i.x i.y i.w i.h)
+/-- A drawn figure as pages paint it: its body, spelled once as a symbol
+form's stream and shared by every page that places it, and the box it
+reserves (`Gfx.Figure.box`). -/
+public structure FigForm where
+  body : Array ContentOp
+  box : Gfx.Box
+  deriving Repr, BEq, Inhabited
 
-private def imageOpPlain (i : ImgOut) : ContentOp :=
-  match i.res with
-  | some n => .image i.x i.y i.w i.h n
-  | none => .imageMissing i.x i.y i.w i.h
+/-- The matrix that sets a figure's box onto an image's rectangle
+`(x, y, w, h)` of the page: each axis scaled by the rectangle's extent over
+the box's, the box's corner onto the rectangle's. Exact rationals. -/
+@[expose] public def figPlace (x y w h : Sp) (box : Gfx.Box) : Gfx.Affine :=
+  let bw := box.2.1 - box.1.1
+  let bh := box.2.2 - box.1.2
+  let sx : Rat := if bw == 0 then 1 else (w : Rat) / (bw : Rat)
+  let sy : Rat := if bh == 0 then 1 else (h : Rat) / (bh : Rat)
+  ⟨sx, 0, 0, sy, (x : Rat) - (box.1.1 : Rat) * sx, (y : Rat) - (box.1.2 : Rat) * sy⟩
+
+/-- The figure an image places, when its store entry is a drawn figure. -/
+@[expose] public def figOf (figs : Array (Option FigForm)) (i : ImgOut) : Option FigForm :=
+  i.store.bind fun k => (figs[k]?).join
+
+/-- A drawn figure on the page: its form under the matrix that sets its
+box onto the image's rectangle. -/
+@[expose] public def figOp (ix : GfxPdf.Request → Nat) (i : ImgOut) (f : FigForm) : ContentOp :=
+  .xobject (some (figPlace i.x i.y i.w i.h f.box)) (ix (.form .symbol f.body)) .symbol f.body
+
+/-- An image that loaded is real content under its line's origin — a drawn
+figure as its form, any other as its image; the placeholder box of one
+that did not is decoration — a layout artifact, the diagnostic having
+already said why. -/
+private def imageOp (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm)) (i : ImgOut) :
+    ContentOp :=
+  match figOf figs i with
+  | some f => .marked i.origin.mark #[figOp ix i f]
+  | none =>
+    match i.res with
+    | some n => .marked i.origin.mark #[.image i.x i.y i.w i.h n]
+    | none => artifact (some .layout) (.imageMissing i.x i.y i.w i.h)
+
+private def imageOpPlain (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm)) (i : ImgOut) :
+    ContentOp :=
+  match figOf figs i with
+  | some f => figOp ix i f
+  | none =>
+    match i.res with
+    | some n => .image i.x i.y i.w i.h n
+    | none => .imageMissing i.x i.y i.w i.h
+
+/-- One face's stretch of a shaped run as a text object's operators: the
+face and size, the colour, the text matrix at the stretch's first glyph,
+then its glyphs, each placed where shaping put it by the viewer's own
+arithmetic over the widths the file declares (`placeStep`, the body
+text's placement — `place_between` bounds each glyph within half a
+thousandth of the em). -/
+public def figureStretchOps (remap : Array Nat) (widths : Array (Array Int)) (color : Ir.Color)
+    (size : Sp) (face : Nat) (glyphs : Array (Nat × Char × Sp)) (x0 : Sp) : Array TextOp :=
+  let sm := size.toPtMilli
+  let wf := widths.getD face #[]
+  let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => runOffset sm P))
+    ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, 0, 0⟩
+  #[.font (remap[face]?.getD 0) size, .color color, .move x0 0, .show #[runItem r.gids r.nums]]
+
+/-- A shaped run's glyphs as stretches of one face each: each stretch its
+glyphs with their advances to the next glyph, and where it starts. -/
+public def figureStretches (glyphs : Array (Nat × Nat × Char × Sp)) :
+    Array (Nat × Array (Nat × Char × Sp) × Sp) := Id.run do
+  let mut out : Array (Nat × Array (Nat × Char × Sp) × Sp) := #[]
+  let mut cur : Option (Nat × Array (Nat × Char × Sp) × Sp) := none
+  for h : k in [0:glyphs.size] do
+    let (f, g, c, x) := glyphs[k]
+    let next : Sp := match glyphs[k + 1]? with
+      | some (_, _, _, nx) => nx - x
+      | none => 0
+    match cur with
+    | some (cf, gs, x0) =>
+      if cf == f then cur := some (cf, gs.push (g, c, next), x0)
+      else
+        out := out.push (cf, gs, x0)
+        cur := some (f, #[(g, c, next)], x)
+    | none => cur := some (f, #[(g, c, next)], x)
+  match cur with
+  | some c => return out.push c
+  | none => return out
+
+/-- **A shaped run of an imported figure as page operators**: one text
+object under the run's frame (`cm`), its fill's alpha an ExtGState when it
+is translucent — real text in the document's faces, selectable and in the
+file's ToUnicode. A run with no solid fill paints nothing. -/
+public def shapedOps (remap : Array Nat) (widths : Array (Array Int)) (ix : GfxPdf.Request → Nat)
+    (fr : GfxPdf.Frame) (s : Gfx.Shaped) : Array ContentOp :=
+  match s.fill with
+  | some { paint := .solid c, alpha, .. } =>
+    let tops := (figureStretches s.glyphs).flatMap fun (face, gs, x0) =>
+      figureStretchOps remap widths c s.size face gs x0
+    let gs : Option ExtG := if alpha = Gfx.Alpha.opaque then none
+      else some { res := ix (.extG alpha Gfx.Alpha.opaque), fill := alpha, stroke := Gfx.Alpha.opaque }
+    if tops.isEmpty then #[] else #[.group (some (fr.lift s.xf)) gs #[] #[.text tops]]
+  | _ => #[]
+
+/-- **An imported figure as the body of its form**: the box as an unpainted
+path, so the form's box spans the figure's whatever its ink, and the
+figure's operators under the placement that keeps its own coordinates,
+clipped to its box when its viewport clips. -/
+public def figureBody (remap : Array Nat) (widths : Array (Array Int)) (ix : GfxPdf.Request → Nat)
+    (fig : Gfx.Figure Gfx.Shaped) : Array ContentOp :=
+  let ((x0, y0), (x1, y1)) := fig.box
+  let boxPath : Array PathOp := #[.rect x0 y0 (x1 - x0) (y1 - y0)]
+  let ops := GfxPdf.emit ix (shapedOps remap widths ix) { flipY := false, dx := 0, dy := 0 } fig
+  let painted := if fig.clipToBox then #[ContentOp.group none none #[(boxPath, .nonzero)] ops] else ops
+  #[ContentOp.paint none none none boxPath] ++ painted
 
 /-- The tag a picture's paths sit under: the structure type the walk gave
 the picture's leaf, or — for a path no leaf owns, which the layout never
@@ -907,12 +1009,12 @@ their rebuild for nothing. Every painting operator sits under exactly one
 wrapper (`mcids_partition_covers`). -/
 public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) : Array ContentOp :=
+    (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let paths := inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags page.inks
   let st := (bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }
-  let images := st.images.map imageOp
+  let images := st.images.map (imageOp ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
   (artifactBlock none fills ++ middle) ++ artifactBlock (some .layout) (rules ++ st.polys.map polyOp)
@@ -922,12 +1024,12 @@ marked content — the writer before this layer, kept so `mark_ink_exact`
 can name the stream it must reproduce. -/
 public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) : Array ContentOp :=
+    (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let paths := page.inks.flatMap (inkPaint geom ix (pageLabels geom remap widths imgMap tags page))
   let st := (bodyLines page).foldl (stepLinePlain geom remap imgMap tags) { widths }
-  let images := st.images.map imageOpPlain
+  let images := st.images.map (imageOpPlain ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let body := (fills ++ paths).push (.text st.ops)
   (body ++ images) ++ (rules ++ st.polys.map polyOp)
@@ -1679,9 +1781,115 @@ private theorem foldl_lines_items (geom : Geom) (remap : Array Nat) (imgMap : Ar
   | nil => exact h
   | cons l rest ih => exact ih _ (stepLine_items ..)
 
-private theorem imageOp_runs (i : ImgOut) : (imageOp i).runs = [] := by
-  unfold imageOp
-  split <;> simp [artifact, ContentOp.runs, ContentOp.runsList]
+/-! ### Where a page's images stand -/
+
+/-- The store index an image segment places, as a one-entry list. -/
+public def segStores : Seg → List (Option Nat)
+  | .image idx _ _ => [idx]
+  | .run .. | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .poly .. => []
+
+/-- Every image a page's lines place, by store index, in order. -/
+public def pageStores (page : PageOut) : List (Option Nat) :=
+  page.lines.toList.flatMap fun l => l.segs.toList.flatMap segStores
+
+private def TextSt.stores (st : TextSt) : List (Option Nat) := st.images.toList.map (·.store)
+
+private theorem closeTJ_images (st : TextSt) : st.closeTJ.images = st.images := by
+  unfold TextSt.closeTJ
+  split <;> rfl
+
+private theorem moveTo_images (st : TextSt) (y : Sp) : (st.moveTo y).images = st.images := by
+  simp [TextSt.moveTo, TextSt.op, closeTJ_images]
+
+private theorem toPen_images (st : TextSt) (changes : Bool) (y : Sp) :
+    (st.toPen changes y).images = st.images := by
+  unfold TextSt.toPen
+  split
+  · dsimp only
+    split
+    · split <;> rfl
+    · exact moveTo_images _ _
+  · exact moveTo_images _ _
+
+private theorem setFace_images (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
+    (c : Ir.Color) : (st.setFace remap idx size c).images = st.images := by
+  unfold TextSt.setFace TextSt.setColor TextSt.setFont
+  split <;> split <;> simp [TextSt.op, closeTJ_images]
+
+private theorem stepRun_images (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (c : Ir.Color)
+    (w : Sp) (glyphs : Array (Nat × Char × Sp)) (ss raise : Sp) :
+    (stepRun remap ls y st idx c w glyphs ss raise).images = st.images := by
+  unfold stepRun
+  split
+  · rfl
+  · dsimp only
+    simp only [TextSt.pushRun, apply_ite TextSt.images, setFace_images, toPen_images, ite_self]
+
+private theorem stepSeg_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+    (og : Origin) (st : TextSt) (seg : Seg) :
+    (stepSeg remap imgMap ls y og st seg).stores = st.stores ++ segStores seg := by
+  cases seg with
+  | image idx w h => simp [stepSeg, TextSt.stores, segStores]
+  | run => simp [stepSeg, TextSt.stores, segStores, stepRun_images]
+  | rule | decoration | gap | decoratedGap | poly => simp [stepSeg, TextSt.stores, segStores]
+
+private theorem foldl_segs_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+    (og : Origin) (segs : List Seg) (st : TextSt) :
+    (segs.foldl (stepSeg remap imgMap ls y og) st).stores = st.stores ++ segs.flatMap segStores := by
+  induction segs generalizing st with
+  | nil => simp
+  | cons s rest ih => simp [ih, stepSeg_stores, List.append_assoc]
+
+private theorem lineSt_stores (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (og : Origin) (st : TextSt) (l : LineOut) :
+    (lineSt geom remap imgMap og st l).stores = st.stores ++ l.segs.toList.flatMap segStores := by
+  unfold lineSt
+  simp only []
+  have h : ∀ t : TextSt, t.closeTJ.stores = t.stores := fun t => by
+    simp [TextSt.stores, closeTJ_images]
+  rw [h, ← Array.foldl_toList, foldl_segs_stores]
+  congr 1
+  split <;> simp [TextSt.stores, TextSt.op]
+
+private theorem stepLine_stores (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
+    (stepLine geom remap imgMap tags st l).stores = st.stores ++ l.segs.toList.flatMap segStores := by
+  unfold stepLine
+  have hs := lineSt_stores geom remap imgMap (Origin.of tags l) st l
+  dsimp only
+  split <;> simpa [TextSt.stores] using hs
+
+private theorem foldl_lines_stores (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (lines : List LineOut) (st : TextSt) :
+    (lines.foldl (stepLine geom remap imgMap tags) st).stores
+      = st.stores ++ lines.flatMap (fun l => l.segs.toList.flatMap segStores) := by
+  induction lines generalizing st with
+  | nil => simp
+  | cons l rest ih => simp [ih, stepLine_stores, List.append_assoc]
+
+/-- The glyph runs a drawn figure's form paints, for an image's store
+index; none for any other image. -/
+public def figStoreRuns (figs : Array (Option FigForm)) (k : Option Nat) : List (Array Nat) :=
+  match k.bind fun k => (figs[k]?).join with
+  | some f => runsOf f.body
+  | none => []
+
+/-- The glyph runs a page's drawn figures paint, in placement order. -/
+public def figureRuns (figs : Array (Option FigForm)) (page : PageOut) : List (Array Nat) :=
+  (pageStores page).flatMap (figStoreRuns figs)
+
+private theorem imageOp_runs (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm)) (i : ImgOut) :
+    (imageOp ix figs i).runs = figStoreRuns figs i.store := by
+  unfold imageOp figStoreRuns
+  cases hf : figOf figs i with
+  | some f =>
+    have hb : (i.store.bind fun k => (figs[k]?).join) = some f := hf
+    simp only [hb, figOp, ContentOp.runs, ContentOp.runsList, List.append_nil, runsOf,
+      ContentOp.runsList_eq]
+  | none =>
+    have hb : (i.store.bind fun k => (figs[k]?).join) = none := hf
+    simp only [hb]
+    split <;> simp [artifact, ContentOp.runs, ContentOp.runsList]
 
 /-- Every operator of the ink groups is one marked sequence of a picture's
 ink: figure operators and its labels' text groups. -/
@@ -2479,9 +2687,12 @@ private theorem inkList_map {α : Type} (f g : α → ContentOp) (l : List α) (
   | nil => rfl
   | cons a rest ih => simp [ContentOp.inkList, h, ih]
 
-private theorem imageOp_ink (i : ImgOut) : (imageOp i).ink = [imageOpPlain i] := by
+private theorem imageOp_ink (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm)) (i : ImgOut) :
+    (imageOp ix figs i).ink = [imageOpPlain ix figs i] := by
   unfold imageOp imageOpPlain
-  split <;> simp [artifact_ink, ContentOp.ink, ContentOp.inkList]
+  split
+  · simp [figOp, ContentOp.ink, ContentOp.inkList]
+  · split <;> simp [artifact_ink, ContentOp.ink, ContentOp.inkList]
 
 /-- The ink an open path group holds. -/
 private def groupInk : Option (Option Nat × Array ContentOp) → List ContentOp
@@ -2711,6 +2922,24 @@ private theorem bodyLines_runs (page : PageOut) :
   · exact withoutGlyphs_runs l
   · rfl
 
+private theorem withoutGlyphs_stores (l : LineOut) :
+    l.withoutGlyphs.segs.toList.flatMap segStores = l.segs.toList.flatMap segStores := by
+  simp only [LineOut.withoutGlyphs, Array.toList_map, List.flatMap_map]
+  apply Gfx.flatMap_congr_mem
+  intro s _
+  cases s <;> rfl
+
+/-- The images the text object places: a held line keeps its images. -/
+private theorem bodyLines_stores (page : PageOut) :
+    (bodyLines page).toList.flatMap (fun l => l.segs.toList.flatMap segStores) = pageStores page := by
+  unfold bodyLines pageStores
+  simp only [Array.toList_map, List.flatMap_map]
+  apply Gfx.flatMap_congr_mem
+  intro l _
+  split
+  · exact withoutGlyphs_stores l
+  · rfl
+
 private theorem stepLinePlain_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) (h : st.items = #[]) :
     (stepLinePlain geom remap imgMap tags st l).runs = st.runs ++ l.glyphRuns ∧
@@ -2846,13 +3075,15 @@ private theorem inkPaint_runs_top (geom : Geom) (ix : GfxPdf.Request → Nat)
 glyph census of the typed content stream is the page's runs in the order
 its stream paints them (`paintRuns`): each picture's labels inside its
 picture, every other line in the text object — no run dropped, none
-invented, none moved but a label into its picture (`paintRuns_text`) — the
-`_text` fact for the PageOut → ContentOp projection (not a `Conserves`
+moved but a label into its picture (`paintRuns_text`) — and then the runs
+the page's drawn figures paint in their forms (`figureRuns`), none
+invented beside them; the `_text` fact for the PageOut → ContentOp projection (not a `Conserves`
 instance: the walk changes type, as `structTree_text` does). -/
 public theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) :
-    runsOf (contentOps geom remap widths imgMap tags ix page) = paintRuns page := by
+    (figs : Array (Option FigForm)) (page : PageOut) :
+    runsOf (contentOps geom remap widths imgMap tags ix figs page) =
+      paintRuns page ++ figureRuns figs page := by
   have hset := pageLabels_setter geom remap widths imgMap tags page
   have hpaths : (inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags
       page.inks).toList.flatMap ContentOp.runs =
@@ -2893,19 +3124,24 @@ public theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array
   unfold runsOf
   simp only [Array.toList_append, List.flatMap_append, artifactBlock_runs, numberMarks_runs_list]
   simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
-    List.flatMap_nil, Array.toList_map, List.flatMap_map, imageOp_runs,
-    flatMap_nil_fun]
+    List.flatMap_nil, Array.toList_map, List.flatMap_map, imageOp_runs]
   simp only [ContentOp.runs, polyOp, flatMap_nil_fun, List.append_nil, List.nil_append]
   rw [hpaths]
   have hr := foldl_lines_runs geom remap imgMap tags (bodyLines page).toList { widths }
   have hi := foldl_lines_items geom remap imgMap tags (bodyLines page).toList { widths } rfl
-  rw [Array.foldl_toList] at hr hi
+  have hs := foldl_lines_stores geom remap imgMap tags (bodyLines page).toList { widths }
+  rw [Array.foldl_toList] at hr hi hs
   simp only [TextSt.runs, hi, Array.toList_empty, List.flatMap_nil, List.append_nil,
     List.nil_append] at hr
+  simp only [TextSt.stores] at hs
   have hr' : ((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).ops.toList.flatMap
       TextOp.runs = (bodyLines page).toList.flatMap Layout.LineOut.glyphRuns := hr
-  rw [hr', bodyLines_runs page]
-  rfl
+  have himg : (((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).images.toList.flatMap
+      fun i => figStoreRuns figs i.store) = figureRuns figs page := by
+    rw [← List.flatMap_map (f := ImgOut.store) (g := figStoreRuns figs), hs]
+    simp [figureRuns, bodyLines_stores]
+  rw [hr', bodyLines_runs page, himg]
+  simp [paintRuns, List.append_assoc]
 
 private theorem flatMap_filter_key_perm {α κ : Type} [BEq κ] [LawfulBEq κ] (g : α → Option κ) :
     ∀ (K : List κ) (L : List α), K.Nodup → (∀ x ∈ L, ∃ k ∈ K, g x = some k) →
@@ -3064,9 +3300,9 @@ identifier numbering rewrites tags only. A fact of the content stream,
 not a projection of an IR statement: the IR never sees marked content. -/
 public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) :
-    inkOps (contentOps geom remap widths imgMap tags ix page)
-      = contentOpsPlain geom remap widths imgMap tags ix page := by
+    (figs : Array (Option FigForm)) (page : PageOut) :
+    inkOps (contentOps geom remap widths imgMap tags ix figs page)
+      = contentOpsPlain geom remap widths imgMap tags ix figs page := by
   have hset := pageLabels_setter geom remap widths imgMap tags page
   unfold contentOps contentOpsPlain
   simp only [inkOps, Array.toList_append, ContentOp.inkList_append, numberMarks_ink_list]
@@ -3087,7 +3323,7 @@ public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array 
     Array.toList_append, ContentOp.inkList, ContentOp.ink, hops, himg, hrul, hpol, List.append_nil]
   rw [inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)
       (geom.bleed + geom.pageH - f.y - f.h) f.w f.h) _ (fun f => by simp [ContentOp.ink]),
-    inkList_map _ imageOpPlain _ imageOp_ink,
+    inkList_map _ (imageOpPlain ix figs) _ (imageOp_ink ix figs),
     inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
     inkList_map _ polyOp _ (fun p => by simp [polyOp, ContentOp.ink])]
@@ -3211,9 +3447,12 @@ private theorem flushGroup_wrapped (tags : Array (Option String)) (out : Array C
     · exact ho o h
     · rfl
 
-private theorem imageOp_wrapped (i : ImgOut) : (imageOp i).wrapped = true := by
+private theorem imageOp_wrapped (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm))
+    (i : ImgOut) : (imageOp ix figs i).wrapped = true := by
   unfold imageOp
-  split <;> rfl
+  split
+  · rfl
+  · split <;> rfl
 
 /-- **Every painting operator sits under exactly one wrapper.** At the top
 of the stream every operation is a marked-content sequence or the text
@@ -3223,8 +3462,8 @@ its structure type, everything else an artifact. The identifier half of
 the statement is `numberMarks_mcids_exact`. -/
 public theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) :
-    ∀ o ∈ contentOps geom remap widths imgMap tags ix page, o.wrapped = true := by
+    (figs : Array (Option FigForm)) (page : PageOut) :
+    ∀ o ∈ contentOps geom remap widths imgMap tags ix figs page, o.wrapped = true := by
   unfold contentOps numberMarks
   intro o ho
   simp only [Array.mem_append] at ho
@@ -3242,17 +3481,17 @@ public theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array 
         (by simp)
       rw [Array.foldl_toList] at this
       exact this
-    · exact imageOp_wrapped i
+    · exact imageOp_wrapped ix figs i
   · rw [mem_artifactBlock hr]; rfl
 
 /-- **No decoration is left bare** — the corollary `wrapped_covers`
 projects: every fill and every placeholder box sits under a wrapper. -/
 public theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) :
-    ∀ o ∈ contentOps geom remap widths imgMap tags ix page, o.decoration = false := by
+    (figs : Array (Option FigForm)) (page : PageOut) :
+    ∀ o ∈ contentOps geom remap widths imgMap tags ix figs page, o.decoration = false := by
   intro o ho
-  have h := wrapped_covers geom remap widths imgMap tags ix page o ho
+  have h := wrapped_covers geom remap widths imgMap tags ix figs page o ho
   cases o <;> simp_all [ContentOp.wrapped, ContentOp.decoration]
 
 /-! ### Identifiers in stream order -/
@@ -3585,11 +3824,11 @@ identifiers its content wrappers carry are `0 … n−1` in stream order —
 the two fill blocks around the numbered middle carry none. -/
 public theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) :
-    (∀ o ∈ contentOps geom remap widths imgMap tags ix page, o.wrapped = true)
-    ∧ (pageMarks (contentOps geom remap widths imgMap tags ix page)).toList.map Prod.fst
-        = List.range (pageMarks (contentOps geom remap widths imgMap tags ix page)).size := by
-  refine ⟨wrapped_covers geom remap widths imgMap tags ix page, ?_⟩
+    (figs : Array (Option FigForm)) (page : PageOut) :
+    (∀ o ∈ contentOps geom remap widths imgMap tags ix figs page, o.wrapped = true)
+    ∧ (pageMarks (contentOps geom remap widths imgMap tags ix figs page)).toList.map Prod.fst
+        = List.range (pageMarks (contentOps geom remap widths imgMap tags ix figs page)).size := by
+  refine ⟨wrapped_covers geom remap widths imgMap tags ix figs page, ?_⟩
   unfold contentOps
   have hA := fillBlock_contentOpens none (page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h)

@@ -83,12 +83,12 @@ private def fallbackSource (fonts : System.FilePath) : String :=
   "\\end{document}\n"
 
 /-- One machine the build runs on: the document, the directory its PATH
-holds (no tool, a synthetic renderer, a synthetic renderer and converter, or
-a validator the machine kills — never one that answers), and the one loss
-that machine owes: its code, its subject (`none`: the picture the run itself
-declares at the boundary, by its N0023), whether it carries the picture's
-source line, and what the page shows in its place — labelled placeholders,
-or the rendered subset's inline drawings. -/
+holds (no tool, or a synthetic renderer — never one that answers the
+picture), and the one loss that machine owes: its code, its subject
+(`none`: the picture the run itself declares at the boundary, by its
+N0023), whether it carries the picture's source line, and what the page
+shows in its place — labelled placeholders, or the rendered subset's inline
+drawings. -/
 private structure MachineCase where
   name : String
   doc : System.FilePath
@@ -152,29 +152,26 @@ def legacySlotChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"machine loss: a v2 slot holding a run that never started is not read ({repr result.ran}): {result.out}{result.err}"
       (result.complete && result.ran == .exited 0)
 
-/-- **A tool this machine lacks, or a check it could not finish, degrades
+/-- **A tool this machine lacks, or a run it could not finish, degrades
 the HTML page instead of refusing it**, on the paths fixed here, and each
 such loss is named once, under its subject: a boundary picture no tool drew
-(W0379); one drawn whose browser face was not converted, or whose face's
-check did not finish (W0378, at the picture's span — and where the rendered
-subset draws the picture in part, the subset's drawing ships whichever step
-failed); an included SVG whose plan a missing or killed validator stopped
-(W0602, which names the PDF's placeholder and the page's at once), a
-validator that cannot start among them (exit 127 from a missing library,
-remembered nowhere, so the next build asks again); and a page icon whose
-check did not finish (W0605). The defects refused the page (E0606) and wrote
+(W0379); one drawn whose browser face was not converted (W0378, at the
+picture's span — and where the rendered subset draws the picture in part,
+the subset's drawing ships). The defects refused the page (E0606) and wrote
 nothing while the PDF shipped, and so did a refused render the document
 accepts (`\allow{E0382}`, the former spelling of W0382), which now ships the
 page's placeholder too. A boundary render that did not finish — killed, a
 spawn that raised, or a nonzero exit with no log, a renderer that cannot
 start after naming its version among them — is W0382 as well, withdrawn
-nowhere and remembered nowhere (`boundaryUnfinishedChecks`). The library
-half holds the pure steps — a faceless boundary picture, or an include whose
-plan stopped, refuses the unmarked page and ships the marked one with no new
-diagnostic and the PDF unchanged, and an omitted face leaves a page that
-closes with its losses named — and the CLI half runs the built binary.
-Invented content; the synthetic tools copy a committed PDF and a generated
-SVG. -/
+nowhere and remembered nowhere (`boundaryUnfinishedChecks`). An SVG is no
+such path: an included SVG, an SVG page icon and a converted face are read
+by the engine itself, so on a machine with no SVG tool, or one whose
+validator is killed or cannot start, each ships, nothing is named and no
+validator is asked. The library half holds the pure step — a faceless
+boundary picture refuses the unmarked page and ships the marked one with no
+new diagnostic and the PDF unchanged — and the CLI half runs the built
+binary. Invented content; the synthetic tools copy a committed PDF and a
+generated SVG. -/
 def machineLossChecks (ref : IO.Ref (List String))
     (binary : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref
@@ -211,67 +208,8 @@ def machineLossChecks (ref : IO.Ref (List String))
           attrIn tag "data-image-src" == some picSrc && labelled tag)
       t s!"machine loss {label}: no image names the request key"
         (!hasStr page.render (" src=\"" ++ Ir.picSrcPrefix))
-  -- An include whose plan the machine stopped: marked, the page ships its
-  -- placeholder and names nothing new, and the PDF is the PDF.
-  let (includeDoc, _) := elabStr (dvDoc ""
-    "\\includegraphics[width=20pt,alt={An invented square}]{square.svg}")
-  let includeReqs := Ir.imageRequests includeDoc
-  t "machine loss stopped plan: the include states one request" (includeReqs.size == 1)
-  let unplannedStore : Image.Store := { entries := includeReqs.map fun req => { toRequest := req } }
-  let stoppedStore := Boundary.markUnplanned includeReqs unplannedStore
-  let includeGeom := Layout.Geom.ofPage includeDoc.page
-  let includePdf (fonts : Font.FontSet) (imgs : Image.Store) : ByteArray :=
-    Pdf.write includeGeom fonts (layoutOf fonts includeDoc includeGeom none imgs).pages {} imgs
-  t "machine loss stopped plan: marking leaves the PDF byte for byte"
-    (fonts.any fun fonts => includePdf fonts unplannedStore == includePdf fonts stoppedStore)
-  t "machine loss stopped plan: a request no fact stopped is left as it was"
-    ((Boundary.markUnplanned #[] unplannedStore).entries.all (·.webError.isNone))
-  let (unmarked, unmarkedDiags) := HtmlDoc.emitClosed { imgs := unplannedStore } includeDoc #[]
-  let (marked, markedDiags) := HtmlDoc.emitClosed { imgs := stoppedStore } includeDoc #[]
-  t "machine loss stopped plan: an unplanned include refuses the unmarked page" (!unmarked.isOk)
-  t "machine loss stopped plan: marking names nothing new"
-    (markedDiags.map (·.code) == unmarkedDiags.map (·.code))
-  match marked with
-  | .error why => t s!"machine loss stopped plan: the marked page closes: {why}" false
-  | .ok page =>
-    let tags := placeholderTags page.render
-    t "machine loss stopped plan: one labelled placeholder stands for the include"
-      (tags.length == 1 && tags.all fun tag =>
-        attrIn tag "data-image-src" == some "square.svg" && labelled tag)
-  -- Validation that never finished omits a face; nothing is refused.
   let square := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   let face := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
-  let icon := svgDocument "<circle cx=\"10\" cy=\"10\" r=\"8\"/>"
-  let (pageDoc, _) := elabStr (dvDoc ""
-    ("\\includegraphics[alt={An invented square}]{figure.svg}\n\n" ++
-      "\\begin{tikzpicture}\n  \\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"))
-  let pageDoc := { pageDoc with info := { pageDoc.info with favicon := some "icon.svg" } }
-  let pagePic := ((Ir.imageRequests pageDoc).find? (·.src.startsWith Ir.picSrcPrefix)).map (·.src)
-  let cfg : HtmlDoc.Config := {
-    imgs := { entries := (Ir.imageRequests pageDoc).map fun req =>
-      if req.src.startsWith Ir.picSrcPrefix then { toRequest := req, info := drawn, webSvg := some face }
-      else { toRequest := req, info := drawn, source := some square } }
-    favicon := some ("icon.svg", { media := .svg, bytes := icon }) }
-  let why := "xmllint did not finish"
-  let (omittedCfg, omittedDoc, omitDiags) :=
-    Publication.omitFaces #[(square, why), (face, why), (icon, why)] cfg pageDoc
-  t "machine loss omitted: unchecked faces still refuse the page"
-    (!(HtmlDoc.emitClosed cfg pageDoc #[]).1.isOk)
-  t "machine loss omitted: the picture is named by W0378 and the icon by W0605, once each"
-    (pagePic.isSome && omitDiags.map (fun d => (d.code, d.subject)) ==
-      #[("W0378", pagePic), ("W0605", some "icon.svg")])
-  t "machine loss omitted: every face carries its reason, and the icon leaves the head"
-    (omittedCfg.imgs.entries.all (·.webError == some why) && omittedCfg.favicon.isNone &&
-      omittedDoc.info.favicon.isNone)
-  match HtmlDoc.emitClosed omittedCfg omittedDoc #[] with
-  | (.error why, _) => t s!"machine loss omitted: the page closes: {why}" false
-  | (.ok page, diags) =>
-    let tags := placeholderTags page.render
-    t "machine loss omitted: the image and the picture ship labelled placeholders"
-      (tags.length == 2 && tags.all labelled && !hasStr page.render "rel=\"icon\"")
-    t "machine loss omitted: the page names the image's face once (W0605)"
-      ((diags.filter (·.code == "W0605")).size == 1 &&
-        diags.all fun d => d.code != "W0605" || (d.subject.any (hasStr · "figure.svg")))
   -- The built binary on machines that lack tools.
   let binary ← IO.FS.realPath binary
   let corpus ← IO.FS.realPath "testdata/corpus"
@@ -321,10 +259,6 @@ def machineLossChecks (ref : IO.Ref (List String))
     let wordsOf (j : Lean.Json) : Option String :=
       (j.getObjValAs? String "message").toOption.map fun m =>
         m ++ ((j.getObjValAs? String "detail").toOption.map ("\n" ++ ·)).getD ""
-    let loaderCase : MachineCase :=
-      { name := "loader-broken SVG check", doc := svgInclude, path := loader, cache := "loader"
-        code := "W0602", subject := some "square.svg", located := true, placeholders := 1
-        drawings := 0 }
     -- Runs on one document share a cache: a missing tool, and a check that
     -- did not finish, are remembered nowhere, so each next machine asks again.
     for c in [
@@ -334,27 +268,8 @@ def machineLossChecks (ref : IO.Ref (List String))
         { name := "no converter", doc := boundary, path := renderer, cache := "boundary"
           code := "W0378", subject := some picSrc, located := true, placeholders := 1
           drawings := 0 },
-        { name := "no face check", doc := boundary, path := converter, cache := "boundary"
-          code := "W0378", subject := some picSrc, located := true, placeholders := 1
-          drawings := 0 },
         { name := "fallback, no converter", doc := fallback, path := renderer, cache := "fallback"
-          code := "W0378", subject := none, located := true, placeholders := 0, drawings := 1 },
-        { name := "fallback, no face check", doc := fallback, path := converter
-          cache := "fallback", code := "W0378", subject := none, located := true
-          placeholders := 0, drawings := 1 },
-        { name := "no SVG tools", doc := svgInclude, path := bare, cache := "include"
-          code := "W0602", subject := some "square.svg", located := true, placeholders := 1
-          drawings := 0 },
-        { name := "killed SVG check", doc := svgInclude, path := killed, cache := "include"
-          code := "W0602", subject := some "square.svg", located := true, placeholders := 1
-          drawings := 0 },
-        loaderCase,
-        { name := "no icon check", doc := corpus / "webpage.tex", path := bare, cache := "webpage"
-          code := "W0605", subject := some "favicon.svg", located := false, placeholders := 0
-          drawings := 0 },
-        { name := "killed icon check", doc := corpus / "webpage.tex", path := killed
-          cache := "webpage", code := "W0605", subject := some "favicon.svg", located := false
-          placeholders := 0, drawings := 0 }] do
+          code := "W0378", subject := none, located := true, placeholders := 0, drawings := 1 }] do
       let out := dir / ((c.name.replace " " "-").replace "," "") / "page.html"
       let run ← build c.doc c.path c.cache out
       let records := recordsOf run
@@ -390,15 +305,34 @@ def machineLossChecks (ref : IO.Ref (List String))
           ((html.splitOn "<svg").length - 1 == c.drawings)
         t s!"machine loss CLI {c.name}: no image names a request key, and no icon is linked"
           (!hasStr html (" src=\"" ++ Ir.picSrcPrefix) && !hasStr html "rel=\"icon\"")
-    -- A validator a missing shared library cannot start said nothing of its
-    -- own: its run is remembered nowhere, so the next build asks it again.
-    let checks : IO Nat := do
-      return (((← IO.FS.readFile (loader / "calls")).splitOn "\n").filter (!·.isEmpty)).length
-    let before ← checks
-    let again ← build loaderCase.doc loaderCase.path loaderCase.cache (dir / "loader-again" / "page.html")
-    let after ← checks
-    t s!"machine loss CLI loader-broken SVG check: the next build asks the validator again ({before} then {after} checks)"
-      (again.exitCode == 0 && before ≥ 1 && after > before)
+    -- No SVG validator is a tool any more: an included SVG, an SVG page icon
+    -- and a boundary picture's converted face are the engine's own reading,
+    -- so a machine with no SVG tool, or with one the machine kills or a
+    -- missing library stops, ships each and names no loss, and no build asks
+    -- a validator.
+    for (name, doc, path, cache, shows) in [
+        ("no SVG tools", svgInclude, bare, "include", "<img"),
+        ("killed SVG validator", svgInclude, killed, "include", "<img"),
+        ("loader-broken SVG validator", svgInclude, loader, "loader", "<img"),
+        ("no icon tools", corpus / "webpage.tex", bare, "webpage", "rel=\"icon\""),
+        ("killed icon validator", corpus / "webpage.tex", killed, "webpage", "rel=\"icon\""),
+        ("no face validator", boundary, converter, "boundary", "<img"),
+        ("fallback, no face validator", fallback, converter, "fallback", "<img")] do
+      let out := dir / ((name.replace " " "-").replace "," "") / "page.html"
+      let run ← build doc path cache out
+      let codes := (recordsOf run).filterMap fun j =>
+        if j.getObjValAs? String "event" == .ok "diagnostic" then
+          (j.getObjValAs? String "code").toOption else none
+      t s!"machine native CLI {name}: the build ships (exit {run.exitCode})" (run.exitCode == 0)
+      t s!"machine native CLI {name}: no machine loss and no refusal ({codes})"
+        (!codes.any (["E0606", "W0378", "W0379", "W0602", "W0605", "W0609"].contains ·))
+      match ← (IO.FS.readFile out).toBaseIO with
+      | .error _ => t s!"machine native CLI {name}: the HTML page is written" false
+      | .ok html =>
+        t s!"machine native CLI {name}: no placeholder, and the page shows its face"
+          ((placeholderTags html).isEmpty && hasStr html shows)
+    t "machine native CLI: no build asks the SVG validator"
+      (!(← (loader / "calls").pathExists))
     -- A refused render the document accepts under the code's former
     -- spelling: the faceless picture's loss is W0382, accepted once, and the
     -- page ships its placeholder.
@@ -439,8 +373,8 @@ def machineLossChecks (ref : IO.Ref (List String))
     let included ← rootless svgInclude loader "rootless-include" (dir / "rootless-include" / "page.html")
     let namesRoot (j : Lean.Json) := (wordsOf j).any fun m =>
       hasStr m "no-such-root" && hasStr m "(TMPDIR)" && !hasStr m "leantex-"
-    t s!"machine loss CLI no scratch root: an SVG include degrades under W0602, naming the root and not the image (exit {included.exitCode})"
-      (included.exitCode == 0 && (recordsOf included).any fun j => codeOf j == some "W0602" && namesRoot j)
+    t s!"machine loss CLI no scratch root: an SVG include needs none, and draws (exit {included.exitCode})"
+      (included.exitCode == 0 && !(recordsOf included).any fun j => codeOf j == some "W0602")
     let asked ← rootless boundary renderer "rootless-version" (dir / "rootless-version" / "page.html")
     t s!"machine loss CLI no scratch root: W0379 says the version could not be asked, naming the root (exit {asked.exitCode})"
       (asked.exitCode == 0 && (recordsOf asked).any fun j => codeOf j == some "W0379" && namesRoot j)

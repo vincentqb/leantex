@@ -1,5 +1,6 @@
 /-
-Fuzz the image probe and planner, and the PDF figure importer. Run from the
+Fuzz the image probe and planner, the PDF figure importer and the native SVG
+reader. Run from the
 repository root:
 
   lake build imgFuzz && .lake/build/bin/imgFuzz
@@ -17,9 +18,16 @@ the shipped fixtures and the synthetics, single-byte mutants at seeded
 random offsets, and random blobs go through `Image.probe` and
 `Image.plan`. The PDF figure importer (`PdfGfx.importPage`) is fuzzed the
 same way, in six classes of 10 000 inputs each, every import inside a
-wall-time budget (`pdfFigureFuzz`). This is an executable oracle, not a
-theorem: it witnesses totality on millions of bytes of input, it does not
-prove it.
+wall-time budget (`pdfFigureFuzz`). The SVG half holds each of the reader's
+input classes — the XML parser, the CSS declaration and sheet readers, the
+path-data reader, the importer, and the terminal-pose projection — to the
+same claim over 10,000 mutants each (every truncation of every invented
+figure besides), anchored by the pristine figures importing to their known
+boxes and verdicts and by the canonical spelling reading back as itself;
+encoded sources, UTF-16 and a legacy single-byte encoding, likewise; and
+large invented inputs each inside a wall-time budget (`svgLargeFuzz`). This
+is an executable oracle, not a theorem: it witnesses totality on millions
+of bytes of input, it does not prove it.
 -/
 import LeanTex
 
@@ -360,8 +368,182 @@ def pdfFigureFuzz : IO Unit := do
   let t ← tally.get
   IO.println s!"img-fuzz: the PDF figure importer read {t.runs} inputs ({t.drawn} drawn, the rest \
 refused), the slowest in {t.worst} ms, under {budget} ms"
+/-- Single-byte mutants of `bases`, `count` in all, each at a seeded random
+offset with a random value; `f` is run on each. Returns the new seed. -/
+def mutate (seed : UInt64) (bases : Array ByteArray) (count : Nat) (f : ByteArray → IO Unit) :
+    IO UInt64 := do
+  let mut s := seed
+  for k in [0:count] do
+    let base := bases[k % bases.size]!
+    if base.size == 0 then continue
+    let (i, s1) := rand s base.size
+    let (v, s2) := rand s1 256
+    s := s2
+    f (base.set! i (UInt8.ofNat v))
+  return s
+
+/-- Whether a tree's canonical spelling reads back as the tree. -/
+def readsBack (t : Xml.Node) : Bool :=
+  match Xml.parse (Xml.render t) with
+  | .ok t' => t' == t
+  | .error _ => false
+
+/-- The SVG reader's classes, each total over its mutants and anchored. -/
+def svgFuzz : IO (Nat × Nat) := do
+  let names := #["testdata/corpus/figures/chart.svg", "testdata/corpus/figures/pulse.svg",
+    "testdata/svg/diagram.svg", "testdata/svg/filtered.svg", "testdata/svg/gradient.svg",
+    "testdata/svg/icons.svg"]
+  let mut figures : Array ByteArray := #[]
+  for n in names do figures := figures.push (← IO.FS.readBinFile n)
+  -- Anchors: the pristine figures' verdicts and boxes, and the canonical
+  -- spelling of each parse reading back as itself.
+  let boxes : Array Nat := #[18874368, 9830400, 9830400, 3932160, 5898240, 4718592]
+  for h : k in [0:figures.size] do
+    let b := figures[k]
+    match Svg.importBytes b with
+    | .exact i =>
+      if names[k]! == "testdata/svg/filtered.svg" then die s!"{names[k]!} imported exactly"
+      unless i.fig.box.2.1 == (boxes[k]! : Int) do die s!"{names[k]!} imported to width {i.fig.box.2.1}"
+    | .lossy i =>
+      unless names[k]! == "testdata/svg/filtered.svg" && i.fig.losses == #[.property "filter"] do
+        die s!"{names[k]!} imported with losses {repr i.fig.losses}"
+    | .refused r => die s!"{names[k]!} refused: {r.message}"
+    match Xml.parse b with
+    | .ok t => unless readsBack t do die s!"{names[k]!}: the canonical spelling reads back differently"
+    | .error e => die s!"{names[k]!}: the pristine figure does not parse: {repr e}"
+  let verdicts ← IO.mkRef (0 : Nat)
+  let readable ← IO.mkRef (0 : Nat)
+  let count (ok : Bool) : IO Unit := do
+    verdicts.modify (· + 1)
+    if ok then readable.modify (· + 1)
+  -- Every truncation of every figure: the importer and the parser.
+  for b in figures do
+    for n in [0:b.size + 1] do
+      let cut := b.extract 0 n
+      count (match Svg.importBytes cut with
+        | .exact _ | .lossy _ => true
+        | .refused _ => false)
+  let mut seed : UInt64 := 6364136223846793005
+  -- XML: 10,000 mutants; a parse that reads is canonical, a refusal a value.
+  seed ← mutate seed figures 10000 fun m => do
+    match Xml.parse m with
+    | .ok t =>
+      unless readsBack t do die "a mutant's canonical spelling reads back differently"
+      count true
+    | .error _ => count false
+  -- The importer over the judge: 10,000 mutants.
+  seed ← mutate seed figures 10000 fun m => count (match Svg.importBytes m with
+    | .exact i | .lossy i => i.fig.box.2.1 ≥ i.fig.box.1.1
+    | .refused _ => false)
+  -- The terminal projection over the moving figure and invented timelines.
+  let doc (b : String) : ByteArray :=
+    ("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"16\">" ++ b ++ "</svg>").toUTF8
+  let moving := #[figures[1]!,
+    doc "<rect width=\"16\" height=\"16\" x=\"0\" opacity=\"0\"><animate attributeName=\"x\" values=\"-8;4;16\" dur=\"2s\" keyTimes=\"0;0.5;1\" calcMode=\"linear\"/><animate attributeName=\"opacity\" values=\"0;0.25;0.5\" dur=\"2s\"/></rect>",
+    doc "<path fill=\"red\" d=\"M0,0L16,0L16,16L0,16\"><animate attributeName=\"d\" values=\"M0,0L16,0L16,16L0,16;M16,0L32,0L32,16L16,16\" dur=\"2s\" repeatCount=\"indefinite\"/></path>",
+    doc "<rect width=\"16\" height=\"16\" x=\"0\"><animate attributeName=\"x\" values=\"0;8;16\" dur=\"2s\" calcMode=\"discrete\" keyTimes=\"0;0.25;0.75\"/></rect>"]
+  seed ← mutate seed moving 10000 fun m => count (SvgPoster.pose m true).toBool
+  -- CSS: declarations and sheets, 10,000 mutants of the figures' styles.
+  let sheets : Array ByteArray := #["*{stroke-linejoin: round; stroke-linecap: butt}",
+    ".k { fill: green } #i { stroke: black } g > rect { opacity: 0.5 }",
+    "rect { fill: url(#paint) !important; stroke: rgb(10, 20, 30) }",
+    "@media print { rect { fill: red } } /* a comment */ text { font: 10px 'A B', serif }"].map (·.toUTF8)
+  seed ← mutate seed sheets 10000 fun m => do
+    let text := String.fromUTF8? m |>.getD ""
+    count ((Css.parseDecls text).toBool || (Css.parseSheet text).toBool)
+  -- Path data: 10,000 mutants of the matrix's and the figures' paths.
+  let paths : Array ByteArray := #["M 0 2 C 0.53 2 1.04 1.79 1.41 1.41 Z", "M2.5.5L10-2.5e1.5 20",
+    "M10 20 A10 10 0 1 1 30 20 a10 5 30 0 0 -20 0", "m2 2 l10 0 h10 v10 z Q20 2 38 20 T38 38",
+    "M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7z"].map (·.toUTF8)
+  seed ← mutate seed paths 10000 fun m => do
+    let (cmds, stop) := PathData.parse (String.fromUTF8? m |>.getD "")
+    count (stop == .done || !cmds.isEmpty)
+  -- Encoded sources: 10,000 mutants of a figure in UTF-16 and in a legacy
+  -- single-byte encoding; a parse that reads is canonical.
+  let utf16 (s : String) : ByteArray := Id.run do
+    let mut out : ByteArray := ⟨#[0xFF, 0xFE]⟩
+    for c in s.toList do
+      let n := c.toNat
+      out := (out.push (n % 256).toUInt8).push (n / 256).toUInt8
+    return out
+  let encoded : Array ByteArray := #[
+    utf16 "<?xml version=\"1.0\" encoding=\"UTF-16\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"9\" height=\"9\"><text x=\"1\" y=\"8\">été</text></svg>",
+    ⟨("<?xml version=\"1.0\" encoding=\"windows-1252\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"9\" height=\"9\"><text x=\"1\" y=\"8\">".toUTF8 ++
+      ⟨#[0x93, 0xE9, 0x94]⟩ ++ "</text></svg>".toUTF8).data⟩]
+  seed ← mutate seed encoded 10000 fun m => do
+    match Xml.parse m with
+    | .ok t =>
+      unless readsBack t do die "an encoded mutant's canonical spelling reads back differently"
+      count true
+    | .error _ => count false
+  -- Random blobs behind an SVG root's opening.
+  for _ in [0:2000] do
+    let (len, s1) := rand seed 512
+    let mut blob : ByteArray := "<svg xmlns=\"http://www.w3.org/2000/svg\">".toUTF8
+    let mut st := s1
+    for _ in [0:len] do
+      let (v, st') := rand st 256
+      st := st'
+      blob := blob.push (UInt8.ofNat v)
+    seed := st
+    count (match Svg.importBytes blob with
+      | .exact _ | .lossy _ => true
+      | .refused _ => false)
+  return (← verdicts.get, ← readable.get)
+
+/-- Large invented inputs, each the shape a reader once spent time
+quadratic in: a long path, a number of three hundred thousand digits in a
+path, a colour and an exponent, a fraction of as many zeros, a long
+transform list and point list, text and an attribute of references, many
+siblings, nesting to the depth budget, a long sheet. Each must reach its
+verdict inside `budgetMs` of wall time — far above a linear reader's need
+even interpreted, far below a quadratic one's — and the whole set inside
+`totalMs`. -/
+def svgLargeFuzz (budgetMs totalMs : Nat) : IO Nat := do
+  let doc (w : Nat) (body : String) : ByteArray :=
+    (s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{w}\">" ++ body ++ "</svg>").toUTF8
+  let digits (n : Nat) (c : Char) : String := String.ofList (List.replicate n c)
+  let rep (n : Nat) (s : String) : String := String.join (List.replicate n s)
+  let cases : List (String × ByteArray) := [
+    ("a path of 20,000 segments", doc 100 s!"<path d=\"M0 0{rep 20000 "l1.5 -0.25"}\" stroke=\"red\"/>"),
+    ("a path number of 300,000 digits", doc 100 s!"<path d=\"M0 0L{digits 300000 '7'} 0\" stroke=\"red\"/>"),
+    ("a path fraction of 300,000 zeros", doc 100 s!"<path d=\"M0.{digits 300000 '0'}1 0L5 5\" stroke=\"red\"/>"),
+    ("an exponent of 300,000 digits", doc 100 s!"<path d=\"M1e{digits 300000 '9'} 0L5 5\" stroke=\"red\"/>"),
+    ("a colour channel of 300,000 digits", doc 100 s!"<rect width=\"9\" height=\"9\" fill=\"rgb({digits 300000 '9'}, 0, 0)\"/>"),
+    ("a styled channel of 300,000 digits", doc 100 s!"<rect width=\"9\" height=\"9\" style=\"fill: rgb(0, {digits 300000 '1'}, 0)\"/>"),
+    ("a transform list of 50,000 functions", doc 100 s!"<rect width=\"9\" height=\"9\" transform=\"{rep 50000 "translate(1 1) "}\"/>"),
+    ("a polyline of 100,000 points", doc 100 s!"<polyline points=\"{rep 100000 "1,2 "}\" stroke=\"red\"/>"),
+    ("text of 100,000 references", doc 100 s!"<text x=\"1\" y=\"9\">{rep 100000 "a&amp;"}</text>"),
+    ("an attribute of 100,000 references", doc 100 s!"<rect width=\"9\" height=\"9\" aria-label=\"{rep 100000 "b&#65;"}\"/>"),
+    ("20,000 sibling shapes", doc 100 (rep 20000 "<rect width=\"1\" height=\"1\"/>")),
+    ("nesting to the depth budget", doc 100 (rep 250 "<g>" ++ "<rect width=\"1\" height=\"1\"/>" ++ rep 250 "</g>")),
+    ("a sheet of 10,000 rules", doc 100 (s!"<style>{rep 10000 ".k > rect { fill: red } "}</style>" ++ "<rect class=\"k\" width=\"1\" height=\"1\"/>"))]
+  let t0 ← IO.monoMsNow
+  let mut n := 0
+  for (name, bytes) in cases do
+    let t ← IO.monoMsNow
+    let verdict := match Svg.importBytes bytes with
+      | .exact i => s!"exact, {i.fig.marks.size} marks"
+      | .lossy i => s!"lossy {repr (i.fig.losses.toList.take 2)}"
+      | .refused r => s!"refused: {r.message}"
+    let ms := (← IO.monoMsNow) - t
+    IO.println s!"img-fuzz: large: {name}: {verdict.take 90} in {ms} ms"
+    if ms > budgetMs then die s!"{name} took {ms} ms, past the {budgetMs} ms budget"
+    n := n + 1
+  let total := (← IO.monoMsNow) - t0
+  if total > totalMs then die s!"the large inputs took {total} ms, past the {totalMs} ms budget"
+  return n
 
 def main : IO Unit := do
+  let t0 ← IO.monoMsNow
+  let (svgVerdicts, svgRead) ← svgFuzz
+  let svgMs := (← IO.monoMsNow) - t0
+  -- The whole SVG half inside a budget: mutants are small, so a reader
+  -- that is linear in its input meets it with room to spare.
+  if svgMs > 600000 then die s!"the SVG half took {svgMs} ms, past its 600000 ms budget"
+  IO.println s!"img-fuzz: svg: {svgVerdicts} inputs, {svgRead} read, rest refused, no crash, no lie, {svgMs} ms"
+  let large ← svgLargeFuzz 20000 120000
+  IO.println s!"img-fuzz: svg: {large} large inputs, each inside its budget"
   let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let jpg ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
   let pdf ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"

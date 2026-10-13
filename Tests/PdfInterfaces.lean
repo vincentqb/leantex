@@ -44,19 +44,20 @@ example (left right : Array Nat)
 
 example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
     (images : Array (Option Nat)) (tags : Array (Option String))
-    (ix : GfxPdf.Request → Nat) (page : Layout.PageOut) :
-    Pdf.runsOf (Pdf.contentOps geom remap widths images tags ix page) = Pdf.paintRuns page :=
-  Pdf.contentOps_text geom remap widths images tags ix page
+    (ix : GfxPdf.Request → Nat) (figs : Array (Option Pdf.FigForm)) (page : Layout.PageOut) :
+    Pdf.runsOf (Pdf.contentOps geom remap widths images tags ix figs page) =
+      Pdf.paintRuns page ++ Pdf.figureRuns figs page :=
+  Pdf.contentOps_text geom remap widths images tags ix figs page
 
 example (page : Layout.PageOut) : (Pdf.paintRuns page).Perm (Pdf.pageRuns page) :=
   Pdf.paintRuns_text page
 
 example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
     (images : Array (Option Nat)) (tags : Array (Option String))
-    (ix : GfxPdf.Request → Nat) (page : Layout.PageOut) :
-    Pdf.inkOps (Pdf.contentOps geom remap widths images tags ix page) =
-      Pdf.contentOpsPlain geom remap widths images tags ix page :=
-  Pdf.mark_ink_exact geom remap widths images tags ix page
+    (ix : GfxPdf.Request → Nat) (figs : Array (Option Pdf.FigForm)) (page : Layout.PageOut) :
+    Pdf.inkOps (Pdf.contentOps geom remap widths images tags ix figs page) =
+      Pdf.contentOpsPlain geom remap widths images tags ix figs page :=
+  Pdf.mark_ink_exact geom remap widths images tags ix figs page
 
 example (plan : Pdf.WritePlan) (before after : List Pdf.Row) (row : Pdf.Row)
     (h : plan.direct.toList = before ++ row :: after) :

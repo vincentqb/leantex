@@ -563,7 +563,7 @@ def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Font
     (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
   let bibDiags := bibDiags ++ ledger.notes
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
-  let (store, imgDiags, _) ← Hermetic.storeFor rhythmDir doc
+  let (store, imgDiags, _, _) ← Hermetic.storeFor rhythmDir doc
   let out := (Layout.runFitted (Layout.Geom.ofPage doc.page) fs (Hyphen.forTag doc.info.locale.tag)
     doc store).out
   let diags := elabDiags ++ bibDiags ++ imgDiags ++ out.diags
@@ -849,7 +849,7 @@ def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Fon
   let (doc, _, _) ← Input.resolveBibliography file doc
     (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
-  let (store, _, read) ← Hermetic.storeFor rhythmDir doc
+  let (store, _, read, _) ← Hermetic.storeFor rhythmDir doc
   let css : HtmlDoc.CssMode := match cssFor doc.output.css with
     | .own => .own
     | .bulma => .bulma

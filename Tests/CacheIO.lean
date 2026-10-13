@@ -40,9 +40,9 @@ def runCacheCwdChild (args : List String) : IO UInt32 := do
     match q with | .env "PATH" => pure (some "../bin") | q => Host.answer q
   check ref s!"cache identity/{stage}: an unavailable cwd gives a relative PATH entry no witness"
     relative.isEmpty
-  let validated ← (ImageAssets.validateSvg (svgDocument "")).toBaseIO
-  check ref s!"cache identity/{stage}: SVG validation returns an inner error"
-    (match validated with | .ok (.error why) => !why.isEmpty | _ => false)
+  let converted ← (ImageAssets.canonicalPoster (svgDocument "")).toBaseIO
+  check ref s!"cache identity/{stage}: an SVG conversion returns an inner error"
+    (match converted with | .ok (.error why) => !why.isEmpty | _ => false)
   let some cache ← IO.getEnv "XDG_CACHE_HOME" |
     throw <| IO.userError "missing isolated cache root"
   let entries ← (System.FilePath.mk cache / "leantex" / "convs").readDir

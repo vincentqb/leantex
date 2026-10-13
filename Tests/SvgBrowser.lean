@@ -19,7 +19,7 @@ markdown included: {docs.map (·.1)}"
     IO.FS.writeBinFile (dir / "sequence.SVG") moving
     let (doc, _) := elabStr
       "\\animategraphics[poster=last,alt={Moving square}]{10}{sequence.PDF}{}{}"
-    let (store, _, read) ← Hermetic.storeFor dir doc
+    let (store, _, read, _) ← Hermetic.storeFor dir doc
     check ref "hermetic source: uppercase companion is captured once"
       (store.entries.any fun en => en.companion == some moving)
     check ref "hermetic source: the recorded input includes the actual companion bytes"

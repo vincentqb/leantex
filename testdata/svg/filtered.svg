@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40">
+ <defs>
+  <filter id="soft"><feGaussianBlur stdDeviation="1.5"/></filter>
+ </defs>
+ <rect x="4" y="4" width="72" height="32" fill="#6a5acd" filter="url(#soft)"/>
+ <text x="40" y="25" text-anchor="middle" font-family="serif" font-size="12" fill="#ffffff">blurred</text>
+</svg>

@@ -345,9 +345,10 @@ def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (GfxSvg.readSteps (HtmlDoc.pictureIso box) (HtmlDoc.pictureTree pic box metric {})).map
         Tests.GfxRegression.stepKind
     let tree := Struct.ofDoc (Layout.pdfView art.doc)
-    -- An image's sequence (a raster under its Figure) reads as no step.
+    -- A picture's sequence stands before the page's text object, an image's
+    -- — a raster, or a drawn figure's form — after it.
     let pdfSteps := ((Pdf.pageOps art.geom oneFace art.out.pages art.store tree).flatMap fun ops =>
-      ops.filterMap fun o => match o with
+      (ops.toList.takeWhile fun o => !(o matches .text _)).toArray.filterMap fun o => match o with
         | .marked (.content "Figure" _ _) body =>
           some ((GfxPdf.readSteps { flipY := true, dx := 0, dy := 0 } body).map
             Tests.GfxRegression.stepKind)

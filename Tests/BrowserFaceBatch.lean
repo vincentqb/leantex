@@ -16,8 +16,20 @@ open LeanTex.Core LeanTex.Cli
 private def capturedPdf (tag : String) : ByteArray :=
   encryptedCanvasPdf ++ ("\n% batch-id:" ++ tag ++ "\n").toUTF8
 
+/-- A captured SVG whose marker survives the canonical spelling a converter
+receives (an element's text, not a comment). -/
 private def capturedSvg (tag : String) : ByteArray :=
-  svgDocument ("<!--batch-id:" ++ tag ++ " --><path d=\"M0 0L20 20\"/>")
+  svgDocument ("<desc>batch-id:" ++ tag ++ "</desc><path d=\"M0 0L20 20\"/>")
+
+/-- A captured SVG that moves: its first and last poses differ. -/
+private def movingSvg (tag : String) : ByteArray :=
+  svgDocument ("<desc>batch-id:" ++ tag ++ "</desc><path d=\"M0 0L20 20\">" ++
+    "<animate attributeName=\"opacity\" values=\"0;1\" dur=\"2s\"/></path>")
+
+/-- A captured companion the native judge refuses: it names an outside
+resource. -/
+private def refusedSvg (tag : String) : ByteArray :=
+  svgDocument ("<desc>batch-id:" ++ tag ++ "</desc><image href=\"outside.png\"/>")
 
 private def pdfEntry (src tag : String) (page : PdfRead.PageSelection := .first)
     (companion : Option ByteArray := none) : IO Image.Loaded := do
@@ -33,13 +45,14 @@ private def entries : IO (Array Image.Loaded) := do
   let a ← pdfEntry "a.pdf" "a"
   let b ← pdfEntry "b.pdf" "b" .last (some (capturedSvg "shared"))
   let c ← pdfEntry "c.pdf" "c" .first (some (capturedSvg "shared"))
+  -- A moving SVG the converter drew: its still face is the converter's.
   let svg : Image.Loaded := { a with
-    src := "moving.svg", source := some (capturedSvg "moving")
-    webSvg := some (capturedSvg "moving") }
-  let fallback ← pdfEntry "fallback.pdf" "fallback" .first (some (capturedSvg "bad"))
+    src := "moving.svg", source := some (movingSvg "moving")
+    webSvg := some (movingSvg "moving"), moving := true }
+  let fallback ← pdfEntry "fallback.pdf" "fallback" .first (some (refusedSvg "bad"))
   let failed ← pdfEntry "failed.pdf" "failed" .first (some (capturedSvg "unused"))
   let fallbackAgain ← pdfEntry "fallback-again.pdf" "fallback-again" .first
-    (some (capturedSvg "bad"))
+    (some (refusedSvg "bad"))
   return #[a, b, c, svg,
     { a with src := "alias-a.pdf", page := .number 1 },
     { b with src := "alias-b.pdf", page := .number 2 },
@@ -74,7 +87,7 @@ private def answerCount (dir : System.FilePath) : IO Nat := do
 judged, and the suite runs it again. -/
 private def deniedExit : UInt32 := 2
 
-/-- The limit whose first run's xmllint answers its first version probe
+/-- The limit whose first run's rsvg-convert answers its first version probe
 past the probe's budget. -/
 private def slowProbeLimit : Nat := 4
 
@@ -119,23 +132,22 @@ def runChild (args : List String) : IO UInt32 := do
         events.idxOf "- pdf-page-2:b" < events.idxOf "- pdf-page-1:a")
   t "browser batch: equal bytes never convert concurrently"
     (!(← (dir / "collision").pathExists))
-  t "browser batch: all primary work finishes before companion validation"
-    (!(← (dir / "early-companion").pathExists))
+  t "browser batch: a companion is judged natively, never converted"
+    (!calls.any (·.startsWith "validate:"))
   if identified then
     for key in ["pdf-page-1:a", "pdf-page-2:b", "pdf-page-1:c",
         "pdf-page-1:fallback", "pdf-page-1:failed", "pdf-page-1:fallback-again",
-        "svg-poster:web-only", "validate:shared", "validate:bad"] do
+        "svg-poster:web-only"] do
       t s!"browser batch: one cold attempt for {key}" (calls.count key == 1)
     t "browser batch: equivalent SVG page spellings share their answer"
       (calls.count "svg-poster:moving" == 2)
-    t "browser batch: only eligible primary/companion conversions run" (calls.length == 11)
+    t "browser batch: only eligible primary conversions run" (calls.length == 9)
   t "browser batch: a valid companion keeps the captured animation and poster"
     (actual[1]!.webSvg == some (capturedSvg "shared") && actual[1]!.posterSvg.isSome)
   t "browser batch: a refused companion falls back to the selected static face"
     (actual[8]!.webSvg.isSome && actual[8]!.posterSvg.isNone && actual[8]!.webError.isNone)
   t "browser batch: primary failure clears payloads and skips the companion"
-    (actual[9]!.webError.isSome && actual[9]!.webSvg.isNone &&
-      actual[9]!.posterSvg.isNone && !calls.contains "validate:unused")
+    (actual[9]!.webError.isSome && actual[9]!.webSvg.isNone && actual[9]!.posterSvg.isNone)
   t "browser batch: missing captured SVG retains its existing refusal"
     (actual[13]!.webError == some "the SVG source has no captured bytes")
   t "browser batch: a failed new source cannot publish old converted bytes"
@@ -157,7 +169,7 @@ def runChild (args : List String) : IO UInt32 := do
   t "browser batch: no staging residue" (cache.all (fun e => !e.fileName.endsWith ".part"))
   if judged then
     t "browser batch: one whole answer per cold conversion"
-      ((cache.filter (·.fileName.endsWith ".answer")).size == 11)
+      ((cache.filter (·.fileName.endsWith ".answer")).size == 9)
   for entry in cache do
     if entry.fileName.endsWith ".answer" then
       t "browser batch: persisted answer checksum is valid"
@@ -188,8 +200,8 @@ case \"$1\" in -v|--version)\n" ++
 
 -- The converter witnesses real overlap via a handshake, not an elapsed-time
 -- assertion. Its source lock and event log cover the actual process boundary.
-private def converterStub (pdf : Bool) : String :=
-  versionStub ++
+private def converterStub (pdf : Bool) (slow : Bool := false) : String :=
+  versionStub slow ++
   (if pdf then
     "kind=pdf-page-$3\ninput=$6\noutput=$7\n"
    else
@@ -252,14 +264,7 @@ def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
         writeScript (dir / "bin" / "pdftocairo")
           (BrowserFaceBatch.converterStub true)
         writeScript (dir / "bin" / "rsvg-convert")
-          (BrowserFaceBatch.converterStub false)
-        writeScript (dir / "bin" / "xsltproc")
-          (BrowserFaceBatch.versionStub ++
-            "for input in \"$@\"; do :; done\n/bin/cat \"$input\"\n")
-        writeScript (dir / "bin" / "xmllint")
-          (BrowserFaceBatch.versionStub slow ++
-            "case \"$3\" in --sax) printf 'SAX.startDocument()\\nSAX.endDocument()\\n';;\n\
-             --xpath) printf 'true\\n';; *) exit 3;; esac\n")
+          (BrowserFaceBatch.converterStub false slow)
         let probe := dir / "probe.lean"
         IO.FS.writeFile probe
           "import Tests.BrowserFaceBatch\n\

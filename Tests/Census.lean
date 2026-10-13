@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Cli.FontDiscovery
 public import Tests.Support
+public import Tests.CorpusStore
 
 public section
 
@@ -951,6 +952,23 @@ def censusRows4 :
     ("the sentence around the inline image ships",
       hasStr (censusText c) "sits in the line"),
     ("the figure caption ships with its number", hasStr (censusText c) "Figure 1: Three rectangles, fitted")]),
+  ("svg-figures", fun _ c => [
+    ("one page", c.size == 1),
+    ("the prose around the figures ships",
+      hasStr (censusText c) "A chart drawn by the engine" &&
+        hasStr (censusText c) "A moving figure, described" &&
+        hasStr (censusText c) "Captions in translucent and reused groups" &&
+        hasStr (censusText c) "A field of values drawn as an embedded raster"),
+    ("all five figures ship as boxes on the page", (c.map (·.images)).foldl (· + ·) 0 == 5),
+    ("all five are the engine's own drawings", (c.map (·.figures)).foldl (· + ·) 0 == 5),
+    ("the chart's labels ship as the figure's text",
+      c.any fun p => hasStr p.figureText "invented quantity" && hasStr p.figureText "measured value"),
+    ("the moving figure's label ships", c.any fun p => hasStr p.figureText "invented signal"),
+    ("captions in a translucent text, a translucent group and a reused group all ship",
+      c.any fun p => hasStr p.figureText "A faded caption" &&
+        hasStr p.figureText "Beside a faded square" && hasStr p.figureText "A reused caption"),
+    ("the shaded squares' label ships", c.any fun p => hasStr p.figureText "Shaded"),
+    ("the raster figure's labels ship", c.any fun p => hasStr p.figureText "invented field")]),
   ("figures", fun _ c => [
     ("one page", c.size == 1),
     ("the prose around the embedded PDF ships",
@@ -1649,8 +1667,11 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, diags) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let out := (fittedOf fs doc geom (some pats)).out
-    let c := censusOf (coveredColorsOf doc) out
+    -- The census reads the pages the driver ships: images fetched beside
+    -- the fixture, drawn figures shaped in its faces.
+    let store ← corpusStore doc (some fs)
+    let out := (fittedOf fs doc geom (some pats) store).out
+    let c := censusOf (coveredColorsOf doc) out store
     if mdGoldenNames.contains n then seen := seen.push (n, doc, out, c, diags)
     inkMarkupChecks ref n c
     for (label, ok) in facts geom c do
