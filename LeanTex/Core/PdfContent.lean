@@ -5,21 +5,8 @@ public import LeanTex.Core.Layout
 public import LeanTex.Core.PdfOps
 public import LeanTex.Core.GfxPdf
 
-/-!
-# PDF content streams as typed operators
-
-A page's content stream is built as an `Array ContentOp` — one constructor
-per painting operator the writer emits — and rendered by `render`, a pure
-serializer with an equational theory (`render_lines_exact` and its
-per-constructor twins). The construction (`contentOps`) is the layout
-walk that decides pen moves, `TJ` arrays, and graphics-state changes; the
-rendering is spelling only. Marked content (`BDC`/`BMC` … `EMC`) is one
-constructor, `marked (tag) (body)`, on both the text object's operators
-and the page's: an ill-nested pair is unrepresentable, the body's ink is
-what it was (`mark_ink_exact`), and `render` opens and closes each
-sequence on lines of its own (`render_lines_exact`), so the stream with
-those lines removed is the stream of the unwrapped operators.
--/
+/-! A page's content stream as typed operators: the layout walk that builds them and the pure
+renderer that spells them. -/
 
 namespace LeanTex.Core.Pdf
 
@@ -31,10 +18,6 @@ public def hexDigit (n : Nat) : Char :=
   | 0 => '0' | 1 => '1' | 2 => '2' | 3 => '3' | 4 => '4' | 5 => '5' | 6 => '6' | 7 => '7'
   | 8 => '8' | 9 => '9' | 10 => 'A' | 11 => 'B' | 12 => 'C' | 13 => 'D' | 14 => 'E' | _ => 'F'
 
-/-- `acc` with a glyph id's four hex digits pushed — the digits an
-Identity-H CID string spells (ISO 32000-2 §9.7.4.2: two bytes per CID).
-Pushing in place is the hot path (every glyph on every page); `gidHex` is
-its four-character value, `pushGid_eq` the equation between them. -/
 private def pushGid (acc : String) (g : Nat) : String :=
   (((acc.push (hexDigit (g / 4096))).push (hexDigit (g / 256))).push (hexDigit (g / 16))).push
     (hexDigit g)
@@ -44,12 +27,8 @@ public def gidHex (g : Nat) : String := pushGid "" g
 private theorem pushGid_eq (acc : String) (g : Nat) : pushGid acc g = acc ++ gidHex g := by
   simp only [pushGid, gidHex, String.push_eq_append, String.empty_append, String.append_assoc]
 
-/-- The line that opens the sequence: the tag and its property dictionary
-before `BDC` (Table 352), or the tag alone before `BMC` when there are no
-properties to give (§14.6.1 — `BDC` takes two operands; a bare tag before
-it is a syntax error on which a reader drops the rest of the page). Closed
-literals: the opener is spelled once per rule and once per fill group on
-every page. -/
+/-- The line that opens a marked sequence: the tag and its properties before `BDC`, or the tag
+alone before `BMC` (§14.6.1). -/
 public def MarkTag.opener : MarkTag → String
   | .artifact none => "/Artifact BMC"
   | .artifact (some .pagination) => "/Artifact << /Type /Pagination >> BDC"
@@ -57,20 +36,14 @@ public def MarkTag.opener : MarkTag → String
   | .artifact (some .page) => "/Artifact << /Type /Page >> BDC"
   | .content s mcid _ => s!"/{s} << /MCID {mcid} >> BDC"
 
-/-- What a line's ink stands for, read off the layout: running furniture;
-a structure leaf, under the structure type the structure walk gave the
-element holding that leaf; or ink no leaf owns (a rules-only line, the
-generated heading of an abstract), which is an artifact of no stated
-type. Decided once per line and once per image — the origin is known at
-the line and lost after. -/
+/-- What a line's ink stands for: running furniture, a structure leaf under its holder's type, or ink no leaf owns. -/
 public inductive Origin where
   | furniture
   | unattributed
   | leaf (k : Nat) (tag : String)
   deriving Repr, BEq, Inhabited
 
-/-- A line's origin: `tags` is the structure walk's answer per leaf id
-(`PdfStruct.leafTags`), `none` for a leaf no element holds. -/
+/-- A line's origin, `tags` giving each leaf's holder type or `none`. -/
 public def Origin.of (tags : Array (Option String)) (l : LineOut) : Origin :=
   if l.furniture then .furniture else
   match l.leaf with
@@ -80,9 +53,7 @@ public def Origin.of (tags : Array (Option String)) (l : LineOut) : Origin :=
     | none => .unattributed
   | none => .unattributed
 
-/-- The tag an origin's operators sit under. The marked-content identifier
-is a placeholder here: `numberMarks` assigns them in stream order once the
-page's operators are all built. -/
+/-- The tag an origin's operators sit under, its identifier a placeholder until `numberMarks`. -/
 public def Origin.mark : Origin → MarkTag
   | .furniture => .artifact (some .pagination)
   | .unattributed => .artifact none
@@ -110,8 +81,7 @@ public def TextItem.render : TextItem → String
 
 mutual
 
-/-- One text operator, without its line end: the text object and a marked
-sequence each put every operator on a line of its own. -/
+/-- One text operator's line, without its line end. -/
 public def TextOp.render : TextOp → String
   | .scale p => s!"{p / 10}.{p % 10} Tz"
   | .move x y => s!"1 0 0 1 {x.toPtString} {y.toPtString} Tm"
@@ -120,15 +90,12 @@ public def TextOp.render : TextOp → String
   | .show items => (items.foldl (fun acc it => acc ++ it.render) "[") ++ "] TJ"
   | .marked t body => TextOp.renderLines (t.opener ++ "\n") body.toList ++ "EMC"
 
-/-- The operators onto `acc`, each followed by its line end. -/
 private def TextOp.renderLines (acc : String) : List TextOp → String
   | [] => acc
   | o :: rest => TextOp.renderLines (acc ++ o.render ++ "\n") rest
 
 end
 
-/-- A paint set for filling: a device colour's operator, or the pattern
-colour space and a shading pattern (§8.6.6.2, §8.7.3). -/
 private def pdfPaintFill : PdfPaint → String
   | .solid c => c.pdfFill
   | .pattern res _ => s!"/Pattern cs /P{res + 1} scn"
@@ -137,7 +104,6 @@ private def pdfPaintStroke : PdfPaint → String
   | .solid c => c.pdfStroke
   | .pattern res _ => s!"/Pattern CS /P{res + 1} SCN"
 
-/-- Line caps and joins as `J`/`j` operands (§8.4.3.3–4). -/
 private def capCode : Gfx.Cap → Nat
   | .butt => 0
   | .round => 1
@@ -148,7 +114,6 @@ private def joinCode : Gfx.Join → Nat
   | .round => 1
   | .bevel => 2
 
-/-- A dash pattern, §8.4.3.6: the array in points, then the phase. -/
 private def dashSpelling (d : Array Sp) (p : Sp) : String :=
   "[" ++ " ".intercalate (d.toList.map Sp.toPtString) ++ "] " ++ p.toPtString ++ " d "
 
@@ -156,8 +121,6 @@ private def fillState : Option PaintFill → String
   | some f => pdfPaintFill f.paint ++ " "
   | none => ""
 
-/-- A stroke's state: its paint and width always, then what differs from
-the initial graphics state — caps, joins, the miter limit, the dash. -/
 private def strokeState : Option PaintStroke → String
   | some st =>
     s!"{pdfPaintStroke st.paint} {st.width.toPtString} w " ++
@@ -179,17 +142,12 @@ private def gsState : Option ExtG → String
   | some g => s!"/GS{g.res + 1} gs "
   | none => ""
 
-/-- The path-painting operator the declared paints select (§8.5.3, Table
-60): `B` fills then strokes, `S` strokes, `f` fills, `n` ends the path
-without painting; a star fills by the even–odd rule. -/
 private def paintOp : Option PaintFill → Option PaintStroke → String
   | some f, some _ => if f.evenOdd then "B*" else "B"
   | none, some _ => "S"
   | some f, none => if f.evenOdd then "f*" else "f"
   | none, none => "n"
 
-/-- The operator a stamp form's outline paints with (§8.5.3, Table 60), by
-the paints it names and its fill rule. -/
 private def outlineOp : Option Gfx.Rule → Bool → String
   | some .nonzero, true => "B"
   | some .evenOdd, true => "B*"
@@ -215,15 +173,12 @@ public def groupHeader (m : Option Gfx.Affine) (gs : Option ExtG)
     " " ++ String.join (c.1.toList.map PathOp.render) ++ rule)
   "q" ++ cm ++ gsS ++ clipS
 
-/-- An XObject's name: a figure raster `/Ri`, a form `/Fm`. -/
 private def xobjectName (res : Nat) : XKind → String
   | .raster _ => s!"/Ri{res + 1}"
   | .symbol => s!"/Fm{res + 1}"
   | .group => s!"/Fm{res + 1}"
   | .stamp _ _ _ => s!"/Fm{res + 1}"
 
-/-- The state a stamp's instance sets for its form to paint with: its
-alphas, its fill colour, its stroke's colour and parameters. -/
 private def xobjectState : XKind → String
   | .stamp fp sp gs =>
     gsState gs ++
@@ -247,8 +202,7 @@ public def ContentOp.render : ContentOp → String
   | .image x y w h res =>
     s!"q {w.toPtString} 0 0 {h.toPtString} {x.toPtString} {y.toPtString} cm /Im{res + 1} Do Q"
   | .imageMissing x y w h =>
-    -- A neutral grey hairline box: the failure is visible where the figure
-    -- would stand, and the diagnostic already said why.
+    -- A neutral grey hairline box marks where the figure would stand.
     s!"q 0.62 0.62 0.66 RG 0.75 w {x.toPtString} {y.toPtString} {w.toPtString} \
 {h.toPtString} re S Q"
   | .marked t body => ContentOp.renderLines (t.opener ++ "\n") body.toList ++ "EMC"
@@ -263,15 +217,12 @@ public def ContentOp.render : ContentOp → String
       | none => ""
     "q" ++ cm ++ " " ++ xobjectState kind ++ xobjectName res kind ++ " Do Q"
 
-/-- The operations onto `acc`, each followed by its line end. -/
 private def ContentOp.renderLines (acc : String) : List ContentOp → String
   | [] => acc
   | o :: rest => ContentOp.renderLines (acc ++ o.render ++ "\n") rest
 
 end
 
-/-- One step of `render`: the first operation opens the stream, every
-later one follows a newline. -/
 private def renderStep : Option String → ContentOp → Option String
   | none, op => some op.render
   | some s, op => some (s ++ "\n" ++ op.render)
@@ -279,12 +230,8 @@ private def renderStep : Option String → ContentOp → Option String
 /-- The stream: operations one per line. -/
 public def render (ops : Array ContentOp) : String := (ops.foldl renderStep none).getD ""
 
-/-! ## Construction: the layout walk -/
-
-/-- An image the text walk gathered for painting after `ET`: its box, its
-XObject resource when it loaded, and the origin of the line it stood in
-— a loaded image is real content under its line's leaf, a furniture
-line's image (a logo) a pagination artifact. -/
+/-- An image the text walk gathered for painting after `ET`: its box, its XObject when it loaded,
+and its line's origin. -/
 public structure ImgOut where
   x : Sp
   y : Sp
@@ -292,55 +239,28 @@ public structure ImgOut where
   h : Sp
   res : Option Nat
   origin : Origin
-  /-- The store entry the image is, when it loaded one: what a drawn
-  figure's form is looked up by. -/
+  /-- The store entry the image is, when it loaded one. -/
   store : Option Nat := none
   deriving Repr, BEq, Inhabited
 
-/-- A glyph's advance as the file states it: its `hmtx` width in
-millionths of the em, rounded to the nearest — what the `/W` array spells,
-to three decimals of a thousandth, and so the width a viewer's pen
-advances by (`TextSt.widths`). Exact in thousandths for a face on a
-1000-unit em; to 5·10⁻⁷ em otherwise, where whole thousandths would drift
-the pen up to one per glyph. -/
 private def widthμOf (upem units : Nat) : Int := ((units * 1000000 + upem / 2) / upem : Nat)
 
 public def pdfWidthμ (font : Font.Font) (g : Nat) : Int :=
   widthμOf font.unitsPerEm (font.widths[g]?.getD 0)
 
-/-- The embedded faces' `pdfWidthμ` widths, by layout face index (`keep`,
-the faces the file embeds; any other face ships no glyph): the writer's
-pen reads one width per glyph shipped, so they are tabled once per
-document — by the same `widthμOf` — and read by index with a `0` past a
-face's last glyph, as `pdfWidthμ` answers there. -/
+/-- The embedded faces' `/W` widths in millionths of the em, by layout face index; other faces have none. -/
 public def widthTable (fonts : Array Font.Font) (keep : Array Nat) : Array (Array Int) :=
   fonts.mapIdx fun k f => if keep.contains k then f.widths.map (widthμOf f.unitsPerEm) else #[]
 
 
-/-- The viewer's pen inside the open `TJ` array, as the writer computes it
-from what it wrote (§9.4.4): `xm` the x the array's `Tm` spells, in
-thousandths of a point (`Sp.toPtMilli`, the value a reader parses back),
-`y` the baseline it spells, and `adv` the advance since then in millionths
-of the text size — each glyph adds its `/W` width in that unit, each `TJ`
-number `n` subtracts `1000 n`. The horizontal scale multiplies both terms
-alike, so it enters only where a layout length is converted
-(`penTarget`). -/
+/-- The viewer's pen in the open `TJ` array, as the writer computes it from what it wrote (§9.4.4). -/
 public structure Pen where
   xm : Int
   y : Sp
   adv : Int
   deriving Repr, BEq, Inhabited
 
-/-- The text object's walk state. `items` is the open `TJ` array — empty
-exactly when no array is open. `font` is the layout face index in force
-(`-1` before the first `Tf`), `size` and `color` likewise; `tz` the live
-expansion in per-mille delta from 100 %; `x` the layout position; `pen`
-where the viewer's pen is (`Pen`), once a `Tm` has set it; `widths` each
-face's `/W` widths in millionths of the em, by layout face index and glyph
-id (`widthTable`) — what the file tells the viewer, and so what the pen
-advances by. Rules and
-images gather here and paint after `ET`: path and `Do` operators may not
-appear inside a text object. -/
+/-- The text object's walk state; rules and images gather here and paint after `ET`. -/
 public structure TextSt where
   ops : Array TextOp := #[]
   items : Array TextItem := #[]
@@ -352,8 +272,7 @@ public structure TextSt where
   pen : Option Pen := none
   widths : Array (Array Int) := #[]
   rules : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
-  /-- The filled polygons the lines carried (a formula's cancel marks), in
-  page coordinates: layout ink like the rules, painted with them. -/
+  /-- The filled polygons the lines carried, in page coordinates. -/
   polys : Array (Ir.Color × Array (Sp × Sp)) := #[]
   images : Array ImgOut := #[]
 
@@ -362,22 +281,11 @@ private def TextSt.op (st : TextSt) (o : TextOp) : TextSt := { st with ops := st
 private def TextSt.closeTJ (st : TextSt) : TextSt :=
   if st.items.isEmpty then st else { st with ops := st.ops.push (.show st.items), items := #[] }
 
-/-- `num / den` rounded to the nearest integer, half away from zero, the
-numerator given as a sign and a magnitude: every product the pen's
-conversions round is formed in `Nat`, where a value below 2⁶³ is a machine
-word — an `Int` past 2³¹ is a heap number, and these run once per glyph. -/
 @[inline] private def roundDiv (neg : Bool) (num den : Nat) : Int :=
   if den == 0 then 0 else
     let q : Nat := (2 * num + den) / (2 * den)
     if neg then -(q : Int) else q
 
-/-- A layout x as the pen advance that reaches it, in the pen's unit:
-`(x − Tm) / (size · scale)` in millionths, with the `Tm` x and the size as
-the file spells them (`xm`, `sm`: thousandths of a point) and the scale
-`1000 + tz` per mille, rounded to the nearest millionth — that is,
-`(1000·x − 65536·xm) · 1953125 / (128 · sm · (1000 + tz))`, since
-10⁹ / 65536 = 1953125 / 128; the difference is split into its positive and
-negative parts so it is formed as a magnitude (`roundDiv`). -/
 private def penTarget (sm tz xm : Int) (x : Sp) : Int :=
   let den : Nat := 128 * sm.toNat * (1000 + tz).toNat
   let pos : Nat := 1000 * x.toNat + 65536 * (-xm).toNat
@@ -385,43 +293,21 @@ private def penTarget (sm tz xm : Int) (x : Sp) : Int :=
   if neg ≤ pos then roundDiv false ((pos - neg) * 1953125) den
   else roundDiv true ((neg - pos) * 1953125) den
 
-/-- A laid-out advance `P` from a run's start as the pen advance it needs,
-in millionths of the size the file spells (`sm`): `P · 1953125 / (128 · sm)`,
-rounded. The line's expansion cancels out of it — the layout scales the run
-by the factor the viewer scales the pen by. -/
 @[inline] private def runOffset (sm : Int) (P : Sp) : Int :=
   roundDiv (P < 0) (P.natAbs * 1953125) (128 * sm.natAbs)
 
-/-- The `TJ` number that brings a pen standing `d` millionths past its
-target (short of it when negative) to within half a thousandth: `d / 1000`
-rounded to the nearest integer, half up — zero exactly when the pen is
-already that close. -/
+/-- The `TJ` number that brings a pen `d` millionths past its target to within half a thousandth. -/
 @[inline] public def nudge (d : Int) : Int := (d + 500) / 1000
 
-/-- **A nudged pen stands within half a thousandth of the em of its
-target.** Whatever the distance `d`, the residue `d − 1000 · nudge d` lies
-in `[−500, 499]` millionths: the resolution of a `TJ` number, and nothing
-more. -/
 public theorem nudge_between (d : Int) :
     -500 ≤ d - 1000 * nudge d ∧ d - 1000 * nudge d ≤ 499 := by
   unfold nudge
   omega
 
-/-- An absolute move: the open array closed, `Tm` at the layout x and
-`runY`, and the pen restarted at the x the `Tm` spells. -/
 private def TextSt.moveTo (st : TextSt) (runY : Sp) : TextSt :=
   { st.closeTJ.op (.move st.x runY) with
     pen := some { xm := st.x.toPtMilli, y := runY, adv := 0 } }
 
-/-- Bring the pen to a run at `(st.x, runY)`. Inside an open array with
-the face unchanged and the baseline the same, the move is the number that
-puts the viewer's pen within half a thousandth of the em of the layout's
-x (`nudge`, measured from where the file's own arithmetic left it), unless
-that number exceeds ±32000 — a viewer that keeps adjustments in sixteen
-bits (macOS Preview drops the whole array past ±32767) never sees one that
-large. Any other move is an absolute `Tm` (`moveTo`), which closes the
-array: a face or size change re-bases the pen, whose unit is the size. A
-fresh line has no pen until its first run sets one. -/
 private def TextSt.toPen (st : TextSt) (changes : Bool) (runY : Sp) : TextSt :=
   match st.pen with
   | some p =>
@@ -441,34 +327,26 @@ private def TextSt.setFont (st : TextSt) (remap : Array Nat) (idx : Nat) (size :
 private def TextSt.setColor (st : TextSt) (color : Ir.Color) : TextSt :=
   if st.color != color then { st.op (.color color) with color := color } else st
 
-/-- A `TJ` array cannot switch fonts or colours mid-array, so a run in a
-different face or colour closes it and emits `Tf`/`rg` before reopening. -/
 private def TextSt.setFace (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
     (color : Ir.Color) : TextSt :=
   ((st.closeTJ).setFont remap idx size).setColor color
 
-/-- A run's string being placed: its glyph ids, their numbers beside
-them, the pen (`Pen.adv`'s unit) and the laid-out advance `P` reached. One
-record of scalars and scalar arrays, updated in place — a nested tuple
-would cost the loop three allocations a glyph. -/
+/-- A run's string being placed: its glyph ids and numbers, the pen, and the laid-out advance reached. -/
 public structure PlaceSt where
   gids : Array Nat
   nums : Array Int
   adv : Int
   P : Sp
 
-/-- One glyph of a run onto its string: the number that brings the pen
-from where the previous glyph's `/W` width left it to `tgt P` — the
-glyph's layout position, `P` its laid-out advance from the run's start —
-then the glyph and its own width. -/
+/-- One glyph of a run onto its string: the number that brings the pen to its layout position,
+then the glyph. -/
 @[inline] public def placeStep (wμ : Nat → Int) (tgt : Sp → Int) (st : PlaceSt) :
     Nat × Char × Sp → PlaceSt
   | (g, _, a) =>
     let n := nudge (st.adv - tgt st.P)
     ⟨st.gids.push g, st.nums.push n, st.adv - 1000 * n + wμ g, st.P + a⟩
 
-/-- `placeStep`'s string as a list: each glyph with the number set before
-it, from pen `adv` at laid-out advance `P`. -/
+/-- `placeStep`'s string as a list: each glyph with the number set before it. -/
 public def placeSpec (wμ : Nat → Int) (tgt : Sp → Int) :
     Int → Sp → List (Nat × Char × Sp) → List (Nat × Int)
   | _, _, [] => []
@@ -476,9 +354,7 @@ public def placeSpec (wμ : Nat → Int) (tgt : Sp → Int) :
     let n := nudge (adv - tgt P)
     (g, n) :: placeSpec wμ tgt (adv - 1000 * n + wμ g) (P + a) rest
 
-/-- Where a viewer's pen stands as each glyph of a kerned string begins,
-from pen `p` — §9.4.4's arithmetic, the number first, then the glyph's
-width — whatever chose the numbers. -/
+/-- Where a viewer's pen stands as each glyph of a kerned string begins (§9.4.4). -/
 public def penStarts (wμ : Nat → Int) : Int → List (Nat × Int) → List Int
   | _, [] => []
   | p, (g, n) :: rest => (p - 1000 * n) :: penStarts wμ (p - 1000 * n + wμ g) rest
@@ -488,8 +364,6 @@ public def glyphStarts : Sp → List (Nat × Char × Sp) → List Sp
   | _, [] => []
   | P, (_, _, a) :: rest => P :: glyphStarts (P + a) rest
 
-/-- The fold builds `placeSpec`'s string: its glyph ids, and beside them
-its numbers. -/
 public theorem placeStep_fold_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (ga : Array Nat) (na : Array Int) (adv : Int) (P : Sp) :
     (gs.foldl (placeStep wμ tgt) ⟨ga, na, adv, P⟩).gids.toList
@@ -513,15 +387,12 @@ public theorem placeSpec_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (gs : 
     obtain ⟨g, c, a⟩ := x
     simp [placeSpec, ih]
 
-/-- Placing a run keeps its glyphs, in order: only numbers are added. -/
 public theorem place_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
     (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).gids = glyphs.map (·.1) := by
   apply Array.toList_inj.mp
   rw [Array.toList_map, ← Array.foldl_toList, (placeStep_fold_exact ..).1]
   simpa using placeSpec_glyphs_id wμ tgt glyphs.toList adv 0
 
-/-- The numbers the fold writes are `placeSpec`'s, the ones `place_between`
-places by. -/
 public theorem place_nums_exact (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
     (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).nums.toList
       = (placeSpec wμ tgt adv 0 glyphs.toList).map (·.2) := by
@@ -544,16 +415,6 @@ public theorem glyphStarts_length_exact (P : Sp) (gs : List (Nat × Char × Sp))
     obtain ⟨g, c, a⟩ := x
     simp [glyphStarts, ih]
 
-/-- **Every glyph a run paints starts where the layout put it**, to the
-resolution of the file: by the viewer's own arithmetic over the numbers
-`placeStep` writes and the widths the file declares (`penStarts`), each
-glyph's pen stands within `[−500, 499]` millionths of the em — under half
-a thousandth — of its target, the layout's position for it (both lists
-hold one entry per glyph: `placeSpec_length_exact`,
-`glyphStarts_length_exact`). The written advances are the laid-out
-advances, pair kerns included; and since each number is chosen from where
-the file's arithmetic actually left the pen, the residue never accumulates
-along a line. -/
 public theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) (P : Sp)
     (gs : List (Nat × Char × Sp)) :
     ∀ d ∈ List.zipWith (· - ·) (penStarts wμ adv (placeSpec wμ tgt adv P gs))
@@ -569,22 +430,12 @@ public theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) 
       omega
     · exact ih _ _ d hd
 
-/-- A run's string: plain when no glyph needed a number, kerned otherwise. -/
 private def runItem (gids : Array Nat) (nums : Array Int) : TextItem :=
   if nums.all (· == 0) then .glyphs gids else .kerned gids nums
 
-/-- A placed run onto the open array: its string, the layout x past its
-width, and the pen where the file's arithmetic left it. -/
 private def TextSt.pushRun (st : TextSt) (item : TextItem) (w : Sp) (pen : Pen) : TextSt :=
   { st with items := st.items.push item, x := st.x + w, pen := some pen }
 
-/-- One glyph run: the pen, then the face and colour when they change,
-then the glyphs, each placed where the layout put it (`placeStep`): a
-glyph's layout position is the run's x plus its laid-out advance from the
-run's start — the pair kerns the layout applied included — under the
-line's expansion as the layout scaled the run (`w + w·f/1000`). The pen
-the file's arithmetic reaches is where every later move is measured from.
-A kern (a run with no glyphs) only moves the layout position, like a gap. -/
 private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
     (color : Ir.Color) (w : Sp) (glyphs : Array (Nat × Char × Sp)) (segSize raise : Sp) :
     TextSt :=
@@ -598,8 +449,7 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx 
   let sm := st.size.toPtMilli
   let t0 := penTarget sm st.tz p.xm st.x
   let wf := st.widths.getD idx #[]
-  -- Sized once: grown by doubling, these arrays' freed halves left the page
-  -- renderer to fresh allocator pages, and rendering took twice as long.
+  -- Reserved at full length: growth by doubling doubles the renderer's time.
   let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => t0 + runOffset sm P))
     ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, p.adv, 0⟩
   st.pushRun (runItem r.gids r.nums) w { p with adv := r.adv }
@@ -619,15 +469,6 @@ private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize 
   | .run idx color _ w glyphs segSize _ _ raise _ _ =>
     stepRun remap lineSize ypdf st idx color w glyphs segSize raise
 
-/-- One line's operators, walked from a state whose `ops` are empty: the
-expansion factor when it changes (`Tz`, §9.3.4, scales shapes and
-advances alike — exactly hz-style expansion, and the run widths layout
-emitted are already rescaled by the same factor), then the segments from
-the line's left edge with no pen, then the array closed. The result's
-`ops` are the line's own, for `stepLine` to append or to wrap; the images
-it gathers carry the line's origin. The bleed shifts everything: layout
-works in trim coordinates and the trim box sits `bleed` in from the
-medium's corner. -/
 private def lineSt (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat)) (og : Origin)
     (st : TextSt) (l : LineOut) : TextSt :=
   let ypdf := geom.bleed + geom.pageH - l.y
@@ -637,29 +478,18 @@ private def lineSt (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat
   let st := { st with x := geom.bleed + l.x, pen := none }
   (l.segs.foldl (stepSeg remap imgMap l.size ypdf og) st).closeTJ
 
-/-- A polygon's path: to its first point, a line to each next, closed. -/
 private def polyPath (pts : Array (Sp × Sp)) : Array PathOp :=
   match pts.toList with
   | [] => #[]
   | (x, y) :: rest =>
     (rest.foldl (fun acc (x, y) => acc.push (.lineTo x y)) #[.moveTo x y]).push .close
 
-/-- A line's polygon as the operator that fills it. -/
 private def polyOp (p : Ir.Color × Array (Sp × Sp)) : ContentOp :=
   .paint (some { paint := .solid p.1, evenOdd := false }) none none (polyPath p.2)
 
-/-- The tag every furniture line's operators sit under: running heads,
-feet and page numbers are pagination artifacts (Table 363). -/
 private def furnitureTag : MarkTag := .artifact (some .pagination)
 
-/-- One line onto the text object, under the wrapper its origin names: a
-furniture line's operators as one pagination artifact; a line painting a
-structure leaf as one marked-content sequence of that leaf's structure
-type (identifier assigned later by `numberMarks`); a line no leaf owns as
-one artifact of no type. A line whose operators are empty (an image-only
-line, whose ink paints after `ET`) adds nothing — a sequence around
-nothing would be an identifier with no content. A furniture line is
-wrapped whatever it holds: the furniture census counts lines. -/
+/-- One line onto the text object, under the wrapper its origin names; a line with no operators adds nothing. -/
 public def stepLine (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
   let og := Origin.of tags l
@@ -672,9 +502,6 @@ public def stepLine (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Na
     { s with ops := if s.ops.isEmpty then st.ops
                     else st.ops.push (.marked (.content tag 0 k) s.ops) }
 
-/-- The specification twin of `stepLine`: the same line, nothing wrapped —
-what the writer emitted before marked content existed. `mark_ink_exact`
-is stated against it. -/
 private def stepLinePlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
   let s := lineSt geom remap imgMap (Origin.of tags l) st l
@@ -685,12 +512,7 @@ edge (the bleed), y up from its bottom. -/
 @[expose] public def pageIso (geom : Geom) : Gfx.Iso :=
   { flipY := true, dx := geom.bleed, dy := geom.bleed + geom.pageH }
 
-/-! ### A picture's labels inside its picture's sequence -/
-
-/-- A page line's picture label key, when the page may set it inside its
-picture: the picture and shape the label was laid for
-(`LabelAudit.Stamp.origin`). A furniture line stays in the text object,
-where the furniture census counts it (`furniture_covers`). -/
+/-- A page line's picture label key, when the page may set it inside its picture. -/
 public def _root_.LeanTex.Core.Layout.LineOut.labelKey? (l : LineOut) : Option (Nat × Nat) :=
   if l.furniture then none else l.pictureLabel.map (·.origin)
 
@@ -699,11 +521,8 @@ ink's top-level labels, in node order. -/
 public def inkLabelKeys (inks : Array InkOut) : List (Nat × Nat) :=
   inks.toList.flatMap fun k => k.fig.nodes.toList.flatMap fun n => n.label?.toList
 
-/-- **Whether a page sets its pictures' labels inside their pictures**:
-every ink's labels stand at its top level, no ink reuses a symbol, and no
-key is set twice — so each label line paints exactly once, where its node
-stands among its picture's ink (`paintRuns_text`). A page that fails any of
-the three keeps every line in its text object, as before labels moved. -/
+/-- Whether a page sets its pictures' labels inside their pictures: top-level labels, no symbols,
+and no key set twice. -/
 public def routesLabels (inks : Array InkOut) : Bool :=
   inks.all (fun k => k.fig.labelsTop && k.fig.symbols.isEmpty) && decide (inkLabelKeys inks).Nodup
 
@@ -725,8 +544,7 @@ public def _root_.LeanTex.Core.Layout.Seg.withoutGlyphs : Seg → Seg
   | .image store w h => .image store w h
   | .poly pts color => .poly pts color
 
-/-- A line with its glyphs taken out: what the text object walks for a label
-line its picture sets — its rules, images and polygons where they stood. -/
+/-- A line with its glyphs taken out, its rules, images and polygons kept. -/
 public def _root_.LeanTex.Core.Layout.LineOut.withoutGlyphs (l : LineOut) : LineOut :=
   { l with segs := l.segs.map Layout.Seg.withoutGlyphs }
 
@@ -736,10 +554,7 @@ public def bodyLines (page : PageOut) : Array LineOut :=
   let held := heldBy (routesLabels page.inks) (inkLabelKeys page.inks)
   page.lines.map fun l => if held l then l.withoutGlyphs else l
 
-/-- The text a label key's held lines set, walked as the page walks a line
-from a fresh state — a text object of its own inside its own saved state
-(`GfxPdf.textGroup`), so it reads no font, colour or pen the page's text set
-— or nothing where no held line carries the key. -/
+/-- The text a label key's held lines set, as a text object in its own saved state, or nothing. -/
 public def labelText (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (held : List LineOut)
     (k : Nat × Nat) : Option (Array TextOp) :=
@@ -757,37 +572,25 @@ public def pageLabels (geom : Geom) (remap : Array Nat) (widths : Array (Array I
   if route then labelText geom remap widths imgMap tags (page.lines.toList.filter (heldBy route keys))
   else fun _ => none
 
-/-- A picture's ink as operators: its figure under layout's placement
-composed into the page's PDF space (`GfxPdf.emit`), each label set where its
-node stands as the text `tx` gives its key (`GfxPdf.textGroup`), or nothing. -/
+/-- A picture's ink as operators in the page's PDF space, each label set where its node stands. -/
 @[expose] public def inkPaint (geom : Geom) (ix : GfxPdf.Request → Nat)
     (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) : Array ContentOp :=
   GfxPdf.emit ix (fun _ key => (tx key).toArray.map GfxPdf.textGroup)
     ((pageIso geom).compose k.place) k.fig
 
-/-- A single operation under an artifact wrapper. -/
 private def artifact (kind : Option ArtifactKind) (o : ContentOp) : ContentOp :=
   .marked (.artifact kind) #[o]
 
-/-- A block of operations under one artifact wrapper, or nothing when
-there are none: a page's fills are one sequence and its rules another —
-one opener and one `EMC` per block, where one per operation cost a
-rule-heavy document seven per cent of its size and a fifth of its
-writing time for no reader's benefit. -/
 private def artifactBlock (kind : Option ArtifactKind) (ops : Array ContentOp) : Array ContentOp :=
   if ops.isEmpty then #[] else #[.marked (.artifact kind) ops]
 
-/-- A drawn figure as pages paint it: its body, spelled once as a symbol
-form's stream and shared by every page that places it, and the box it
-reserves (`Gfx.Figure.box`). -/
+/-- A drawn figure as pages paint it: its body, spelled once as a shared form, and its box. -/
 public structure FigForm where
   body : Array ContentOp
   box : Gfx.Box
   deriving Repr, BEq, Inhabited
 
-/-- The matrix that sets a figure's box onto an image's rectangle
-`(x, y, w, h)` of the page: each axis scaled by the rectangle's extent over
-the box's, the box's corner onto the rectangle's. Exact rationals. -/
+/-- The exact matrix that sets a figure's box onto an image's rectangle `(x, y, w, h)`. -/
 @[expose] public def figPlace (x y w h : Sp) (box : Gfx.Box) : Gfx.Affine :=
   let bw := box.2.1 - box.1.1
   let bh := box.2.2 - box.1.2
@@ -804,10 +607,6 @@ box onto the image's rectangle. -/
 @[expose] public def figOp (ix : GfxPdf.Request → Nat) (i : ImgOut) (f : FigForm) : ContentOp :=
   .xobject (some (figPlace i.x i.y i.w i.h f.box)) (ix (.form .symbol f.body)) .symbol f.body
 
-/-- An image that loaded is real content under its line's origin — a drawn
-figure as its form, any other as its image; the placeholder box of one
-that did not is decoration — a layout artifact, the diagnostic having
-already said why. -/
 private def imageOp (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm)) (i : ImgOut) :
     ContentOp :=
   match figOf figs i with
@@ -826,12 +625,7 @@ private def imageOpPlain (ix : GfxPdf.Request → Nat) (figs : Array (Option Fig
     | some n => .image i.x i.y i.w i.h n
     | none => .imageMissing i.x i.y i.w i.h
 
-/-- One face's stretch of a shaped run as a text object's operators: the
-face and size, the colour, the text matrix at the stretch's first glyph,
-then its glyphs, each placed where shaping put it by the viewer's own
-arithmetic over the widths the file declares (`placeStep`, the body
-text's placement — `place_between` bounds each glyph within half a
-thousandth of the em). -/
+/-- One face's stretch of a shaped run as text operators, each glyph placed by the viewer's arithmetic. -/
 public def figureStretchOps (remap : Array Nat) (widths : Array (Array Int)) (color : Ir.Color)
     (size : Sp) (face : Nat) (glyphs : Array (Nat × Char × Sp)) (x0 : Sp) : Array TextOp :=
   let sm := size.toPtMilli
@@ -840,8 +634,7 @@ public def figureStretchOps (remap : Array Nat) (widths : Array (Array Int)) (co
     ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, 0, 0⟩
   #[.font (remap[face]?.getD 0) size, .color color, .move x0 0, .show #[runItem r.gids r.nums]]
 
-/-- A shaped run's glyphs as stretches of one face each: each stretch its
-glyphs with their advances to the next glyph, and where it starts. -/
+/-- A shaped run's glyphs split into one-face stretches, each with its start. -/
 public def figureStretches (glyphs : Array (Nat × Nat × Char × Sp)) :
     Array (Nat × Array (Nat × Char × Sp) × Sp) := Id.run do
   let mut out : Array (Nat × Array (Nat × Char × Sp) × Sp) := #[]
@@ -862,10 +655,8 @@ public def figureStretches (glyphs : Array (Nat × Nat × Char × Sp)) :
   | some c => return out.push c
   | none => return out
 
-/-- **A shaped run of an imported figure as page operators**: one text
-object under the run's frame (`cm`), its fill's alpha an ExtGState when it
-is translucent — real text in the document's faces, selectable and in the
-file's ToUnicode. A run with no solid fill paints nothing. -/
+/-- A shaped run of an imported figure as one text object under the run's frame; a run with no
+solid fill paints nothing. -/
 public def shapedOps (remap : Array Nat) (widths : Array (Array Int)) (ix : GfxPdf.Request → Nat)
     (fr : GfxPdf.Frame) (s : Gfx.Shaped) : Array ContentOp :=
   match s.fill with
@@ -877,10 +668,8 @@ public def shapedOps (remap : Array Nat) (widths : Array (Array Int)) (ix : GfxP
     if tops.isEmpty then #[] else #[.group (some (fr.lift s.xf)) gs #[] #[.text tops]]
   | _ => #[]
 
-/-- **An imported figure as the body of its form**: the box as an unpainted
-path, so the form's box spans the figure's whatever its ink, and the
-figure's operators under the placement that keeps its own coordinates,
-clipped to its box when its viewport clips. -/
+/-- An imported figure as its form's body: the box as an unpainted path, then the figure's
+operators, clipped when it clips. -/
 public def figureBody (remap : Array Nat) (widths : Array (Array Int)) (ix : GfxPdf.Request → Nat)
     (fig : Gfx.Figure Gfx.Shaped) : Array ContentOp :=
   let ((x0, y0), (x1, y1)) := fig.box
@@ -889,10 +678,6 @@ public def figureBody (remap : Array Nat) (widths : Array (Array Int)) (ix : Gfx
   let painted := if fig.clipToBox then #[ContentOp.group none none #[(boxPath, .nonzero)] ops] else ops
   #[ContentOp.paint none none none boxPath] ++ painted
 
-/-- The tag a picture's paths sit under: the structure type the walk gave
-the picture's leaf, or — for a path no leaf owns, which the layout never
-ships (`placePicture` stamps every path with its picture's leaf) — an
-artifact of no type. -/
 private def groupTag (tags : Array (Option String)) : Option Nat → MarkTag
   | some k =>
     match (tags[k]?).join with
@@ -900,17 +685,11 @@ private def groupTag (tags : Array (Option String)) : Option Nat → MarkTag
     | none => .artifact none
   | none => .artifact none
 
-/-- An open group of paths closed onto the stream as one sequence. -/
 private def flushGroup (tags : Array (Option String)) (out : Array ContentOp) :
     Option (Option Nat × Array ContentOp) → Array ContentOp
   | none => out
   | some (lf, ops) => out.push (.marked (groupTag tags lf) ops)
 
-/-- Picture ink grouped per picture: consecutive inks stamped with the same
-leaf are one picture's and sit under one sequence (the layout pushes a
-picture's one ink with its leaf, `placePicture`). An ink that paints nothing
-opens nothing. Structural on the list; the open group travels as state so
-the walk needs no lookahead. -/
 private def inkGroupsList (geom : Geom) (ix : GfxPdf.Request → Nat)
     (tx : (Nat × Nat) → Option (Array TextOp)) (tags : Array (Option String))
     (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp)) :
@@ -932,11 +711,6 @@ private def inkGroups (geom : Geom) (ix : GfxPdf.Request → Nat)
 
 mutual
 
-/-- Marked-content identifiers assigned in stream order from `n`: every
-`content` tag takes the next number, artifacts take none, and the walk
-descends every body — so identifiers are unique per page whatever the
-construction nested (`numberMarks_mcids_exact`). The tag's type and leaf
-are kept; only the identifier changes. -/
 private def TextOp.number (n : Nat) : TextOp → TextOp × Nat
   | o@(.scale _) => (o, n)
   | o@(.move _ _) => (o, n)
@@ -995,18 +769,8 @@ stream order from 0. -/
 public def numberMarks (ops : Array ContentOp) : Array ContentOp :=
   (ContentOp.numberList 0 #[] ops.toList).1
 
-/-- One page's operations: fills first, in order (the page background,
-then any bars), as one artifact of no stated type — the layout ships
-backgrounds, bars and cut marks in one array; then picture paths, one
-sequence per picture under its figure's type, each label of the picture set
-inside it where its node stands among the ink (`pageLabels`); then the text
-object, each other line under its origin's wrapper; then the images the
-text walk gathered, each under its line's origin, a placeholder a layout
-artifact; then the rules it gathered, as one layout artifact. Identifiers
-in stream order over the middle — paths, text, images; the two artifact
-blocks hold fills only and carry none, and a rule-heavy page would pay
-their rebuild for nothing. Every painting operator sits under exactly one
-wrapper (`mcids_partition_covers`). -/
+/-- One page's operations: fills, picture paths with their labels, the text object, images, then
+rules, each painting operator under one wrapper. -/
 public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
@@ -1019,9 +783,7 @@ public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array I
   let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
   (artifactBlock none fills ++ middle) ++ artifactBlock (some .layout) (rules ++ st.polys.map polyOp)
 
-/-- The specification twin of `contentOps`: the same operations with no
-marked content — the writer before this layer, kept so `mark_ink_exact`
-can name the stream it must reproduce. -/
+/-- `contentOps` with no marked content. -/
 public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
@@ -1034,10 +796,6 @@ public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Ar
   let body := (fills ++ paths).push (.text st.ops)
   (body ++ images) ++ (rules ++ st.polys.map polyOp)
 
-/-! ## The glyph census -/
-
-/-- The glyph runs an item carries: a `TJ` string is one run, an
-adjustment none. -/
 private def TextItem.runs : TextItem → List (Array Nat)
   | .glyphs gids => [gids]
   | .kerned gids _ => [gids]
@@ -1053,7 +811,7 @@ private def TextOp.runs : TextOp → List (Array Nat)
   | .show items => items.toList.flatMap TextItem.runs
   | .marked _ body => TextOp.runsList body.toList
 
-/-- The glyph census of a text-operator sequence, also used by artifact checks. -/
+/-- The glyph census of a text-operator sequence. -/
 public def TextOp.runsList : List TextOp → List (Array Nat)
   | [] => []
   | o :: rest =>
@@ -1087,14 +845,7 @@ end
 /-- Every glyph run a content stream paints, in stream order. -/
 public def runsOf (ops : Array ContentOp) : List (Array Nat) := ops.toList.flatMap ContentOp.runs
 
-/-! ## Marked content: the line spec and the ink underneath -/
-
-/-- One line of a content stream as the renderer lays it: an operator's
-spelling, the opener with its tag (`BDC`, or `BMC` when the tag carries
-no properties), or an `EMC`. `lines` is the structural
-spec `render` computes (`render_lines_exact`): a fact about which lines
-open and close sequences is stated here, and reaches the bytes through
-that theorem. -/
+/-- One line of a content stream as the renderer lays it: an operator, a sequence opener, or an `EMC`. -/
 public inductive Line where
   | op (s : String)
   | open (tag : MarkTag)
@@ -1164,9 +915,7 @@ end
 /-- The stream's lines, in order. -/
 public def lines (ops : Array ContentOp) : List Line := ContentOp.linesList ops.toList
 
-/-- Lines joined by their separators: the stream `render` spells. A spec,
-not the writer's path (`render` accumulates); the tails are bound so the
-copy each prepend makes is visible where it stands. -/
+/-- Lines joined by their separators, the stream `render` spells. -/
 public def joinLines : List Line → String
   | [] => ""
   | l :: rest =>
@@ -1179,8 +928,6 @@ where
       let tail := joinTail rest
       "\n" ++ l.render ++ tail
 
-/-- Lines each closed by its line end: the body of a marked sequence, or
-of the text object. -/
 private def termLines : List Line → String
   | [] => ""
   | l :: rest =>
@@ -1189,8 +936,6 @@ private def termLines : List Line → String
 
 mutual
 
-/-- The ink under a text operator: a marked sequence flattened to its
-body, in order; a leaf as it is. -/
 private def TextOp.ink : TextOp → List TextOp
   | .scale p => [.scale p]
   | .move x y => [.move x y]
@@ -1211,8 +956,6 @@ private def inkText (ops : Array TextOp) : Array TextOp := (TextOp.inkList ops.t
 
 mutual
 
-/-- The ink under a page operation: wrappers dropped at every depth, the
-text object's own wrappers included. -/
 private def ContentOp.ink : ContentOp → List ContentOp
   | .fill c x y w h => [.fill c x y w h]
   | .paint fl st gs segs => [.paint fl st gs segs]
@@ -1237,8 +980,7 @@ end
 order: the operators that paint. -/
 public def inkOps (ops : Array ContentOp) : Array ContentOp := (ContentOp.inkList ops.toList).toArray
 
-/-- A decoration leaf: a fill or a placeholder box — the operations this
-layer never leaves bare (`artifacts_covers`). -/
+/-- A decoration leaf: a fill or a placeholder box. -/
 public def ContentOp.decoration : ContentOp → Bool
   | .fill _ _ _ _ _ => true
   | .imageMissing _ _ _ _ => true
@@ -1251,8 +993,7 @@ public def ContentOp.decoration : ContentOp → Bool
   | .image _ _ _ _ _ => false
   | .marked _ _ => false
 
-/-- The glyph run a segment ships: a run's glyph ids when it has any (a
-kern is a run with none, and paints nothing). -/
+/-- The glyph run a segment ships: a run's glyph ids, none for a kern. -/
 public def segRuns : Seg → List (Array Nat)
   | .run _ _ _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then [] else [glyphs.map (·.1)]
   | .gap _ _ | .decoratedGap _ _ _ => []
@@ -1260,18 +1001,10 @@ public def segRuns : Seg → List (Array Nat)
   | .image _ _ _ => []
   | .poly _ _ => []
 
-/-- The shipped glyph census of a page: every run's glyphs, line by line
-in segment order — what `pdftotext` reads back, before spelling. -/
+/-- The shipped glyph census of a page: every run's glyphs, line by line in segment order. -/
 public def pageRuns (page : PageOut) : List (Array Nat) :=
   page.lines.toList.flatMap fun l => l.segs.toList.flatMap segRuns
 
-/-! ## The equational theory of `render`
-
-Every renderer above is a left fold that appends; these are the list
-equations it computes, so a fact about the bytes is a fact about the
-typed array. -/
-
-/-- The general fold-with-append law under an arbitrary accumulator. -/
 private theorem foldl_append_acc (f : α → String) (l : List α) (acc : String) :
     l.foldl (fun s x => s ++ f x) acc = acc ++ l.foldl (fun s x => s ++ f x) "" := by
   induction l generalizing acc with
@@ -1285,9 +1018,6 @@ private theorem foldl_append_eq (f : α → String) (l : List α) (acc : String)
   rw [String.join_eq_foldl]
   rw [List.foldl_map, foldl_append_acc]
 
-/-- The stream's shape as a list equation: operations joined by newlines.
-The specification `render` is proved to compute (`content_render_exact`);
-`render` itself accumulates. -/
 private def renderList : List ContentOp → String
   | [] => ""
   | [o] => o.render
@@ -1304,11 +1034,6 @@ private theorem renderList_go (l : List ContentOp) (acc : String) :
     | nil => rfl
     | cons y rest' => simp only [renderList, String.append_assoc]
 
-/-- **The renderer computes its list specification.** The accumulating
-`render` and the structural `renderList` agree on every operator array —
-the equation the old string builder had no way to state, and the one a
-fact about the bytes (`mark_ink_exact`, once marked content lands) reduces
-to a fact about the typed array through. -/
 private theorem content_render_exact (ops : Array ContentOp) :
     render ops = renderList ops.toList := by
   unfold render
@@ -1334,8 +1059,6 @@ public theorem show_render_exact (items : Array TextItem) :
   simp only [TextOp.render]
   rw [← Array.foldl_toList, foldl_append_eq]
 
-/-- The glyph string: the ids' hex digits between the angle brackets that
-delimit a PDF hexadecimal string (ISO 32000-2 §7.3.4.3). -/
 public theorem glyphs_render_exact (gids : Array Nat) :
     (TextItem.glyphs gids).render
       = String.singleton '<' ++ String.join (gids.toList.map gidHex) ++ String.singleton '>' := by
@@ -1352,14 +1075,10 @@ private theorem paint_render_exact (fl : Option PaintFill) (st : Option PaintStr
   simp only [ContentOp.render]
   rw [← Array.foldl_toList, foldl_append_eq]
 
-/-! ### Figure operators -/
-
 mutual
 
-/-- An operator a figure paints with: a path, a shading, a saved state or
-an XObject over figure operators — never text, a page image, a placeholder
-or marked content, so it carries no glyph run and no marked-content
-sequence, and its ink is itself. -/
+/-- An operator a figure paints with: a path, a shading, a saved state or an XObject over figure
+operators, carrying no glyph run and no marked content. -/
 public def ContentOp.figureOnly : ContentOp → Bool
   | .paint _ _ _ _ => true
   | .shade _ _ => true
@@ -1478,9 +1197,6 @@ private theorem emitList_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
 
 end
 
-/-- A figure's operators under a label setter that adds only figure
-operators are figure operators only: no glyph run, no marked-content
-sequence. -/
 private theorem emit_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
     (labelOps : GfxPdf.Frame → L → Array ContentOp)
     (hl : ∀ fr l, ∀ o ∈ labelOps fr l, o.figureOnly = true) (place : Gfx.Iso) (fig : Gfx.Figure L) :
@@ -1495,7 +1211,6 @@ private theorem emit_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
 
 mutual
 
-/-- A label-free node writes what it writes whatever sets the labels. -/
 private theorem emitOne_labelOps_irrel {L : Type} (ix : GfxPdf.Request → Nat)
     (lo₁ lo₂ : GfxPdf.Frame → L → Array ContentOp) (outlines : Array (Array Gfx.Subpath))
     (bodyOps : Array (Array ContentOp)) :
@@ -1530,14 +1245,9 @@ private theorem emitList_labelOps_irrel {L : Type} (ix : GfxPdf.Request → Nat)
 
 end
 
-/-- What a picture's ink may hold: figure operators, and its labels' text
-groups, whose text carries no marked-content sequence of its own. -/
 private def PicOp (o : ContentOp) : Prop :=
   o.figureOnly = true ∨ ∃ t, o = GfxPdf.textGroup t ∧ inkText t = t
 
-/-- The two kinds of label setter a page's ink is painted with: none (a
-page that routes no label), or text groups of plain text over a figure
-whose labels stand at its top level and that reuses no symbol. -/
 private def InkSetter (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) : Prop :=
   (∀ key, tx key = none) ∨
     ((k.fig.labelsTop = true ∧ k.fig.symbols = #[]) ∧ ∀ key t, tx key = some t → inkText t = t)
@@ -1608,7 +1318,6 @@ private theorem figureOnlyList_runs : ∀ (l : List ContentOp), ContentOp.figure
       List.append_nil]
 
 end
-/-- The runs a walk state holds: those already in ops, then the open array's. -/
 private def TextSt.runs (st : TextSt) : List (Array Nat) :=
   st.ops.toList.flatMap TextOp.runs ++ st.items.toList.flatMap TextItem.runs
 
@@ -1728,9 +1437,6 @@ private theorem lineSt_items (geom : Geom) (remap : Array Nat) (imgMap : Array (
   unfold lineSt
   exact closeTJ_items _
 
-/-- The runs of a text object's operators after one line: the line's runs
-in segment order appended, whatever wrapper the origin chose — a wrapper
-ships its body's runs, and an empty line ships none. -/
 private theorem stepLine_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
     (stepLine geom remap imgMap tags st l).runs = st.runs ++ l.segs.toList.flatMap segRuns := by
@@ -1780,8 +1486,6 @@ private theorem foldl_lines_items (geom : Geom) (remap : Array Nat) (imgMap : Ar
   induction lines generalizing st with
   | nil => exact h
   | cons l rest ih => exact ih _ (stepLine_items ..)
-
-/-! ### Where a page's images stand -/
 
 /-- The store index an image segment places, as a one-entry list. -/
 public def segStores : Seg → List (Option Nat)
@@ -1867,8 +1571,7 @@ private theorem foldl_lines_stores (geom : Geom) (remap : Array Nat) (imgMap : A
   | nil => simp
   | cons l rest ih => simp [ih, stepLine_stores, List.append_assoc]
 
-/-- The glyph runs a drawn figure's form paints, for an image's store
-index; none for any other image. -/
+/-- The glyph runs a drawn figure's form paints, for an image's store index. -/
 public def figStoreRuns (figs : Array (Option FigForm)) (k : Option Nat) : List (Array Nat) :=
   match k.bind fun k => (figs[k]?).join with
   | some f => runsOf f.body
@@ -1891,8 +1594,6 @@ private theorem imageOp_runs (ix : GfxPdf.Request → Nat) (figs : Array (Option
     simp only [hb]
     split <;> simp [artifact, ContentOp.runs, ContentOp.runsList]
 
-/-- Every operator of the ink groups is one marked sequence of a picture's
-ink: figure operators and its labels' text groups. -/
 private theorem inkGroupsList_shape (geom : Geom) (ix : GfxPdf.Request → Nat)
     (tx : (Nat × Nat) → Option (Array TextOp))
     (tags : Array (Option String)) (inks : List InkOut) (hk : ∀ k ∈ inks, InkSetter tx k)
@@ -1969,7 +1670,6 @@ private theorem artifactBlock_runs (k : Option ArtifactKind) (ops : Array Conten
 
 mutual
 
-/-- Numbering the marked-content identifiers touches no glyph run. -/
 private theorem TextOp.number_runs : ∀ (o : TextOp) (n : Nat), (TextOp.number n o).1.runs = o.runs
   | .scale _, _ => rfl
   | .move _ _, _ => rfl
@@ -2057,9 +1757,6 @@ private theorem gidHex_toList (g : Nat) :
       = [hexDigit (g / 4096), hexDigit (g / 256), hexDigit (g / 16), hexDigit g] := by
   simp [gidHex, pushGid, String.toList_push]
 
-/-- A glyph id in the Identity-H range is recoverable from its four hex
-digits: the spelling is injective below 65536 (above it, the leading
-digits wrap — the honest bound). -/
 public theorem gidHex_inj {g₁ g₂ : Nat} (h₁ : g₁ < 65536) (h₂ : g₂ < 65536)
     (h : gidHex g₁ = gidHex g₂) : g₁ = g₂ := by
   have hl := congrArg String.toList h
@@ -2096,10 +1793,6 @@ private theorem join_gidHex_inj : ∀ (l₁ l₂ : List Nat), (∀ g ∈ l₁, g
       (fun g hg => h₂ g (by simp [hg])) (String.ext hr)
     rw [hxy, hrest]
 
-/-- **The glyph string is injective on Identity-H ids.** Two `TJ` glyph
-items that spell the same carry the same ids, when every id is below
-65536 — the strongest injectivity the stream honestly has: `render`
-itself is not injective (`render_not_inj`). -/
 public theorem glyphs_inj {a b : Array Nat} (ha : ∀ g ∈ a, g < 65536) (hb : ∀ g ∈ b, g < 65536)
     (h : (TextItem.glyphs a).render = (TextItem.glyphs b).render) : a = b := by
   rw [glyphs_render_exact, glyphs_render_exact] at h
@@ -2108,10 +1801,6 @@ public theorem glyphs_inj {a b : Array Nat} (ha : ∀ g ∈ a, g < 65536) (hb : 
   exact Array.toList_inj.mp (join_gidHex_inj _ _ (fun g hg => ha g (Array.mem_toList_iff.mp hg))
     (fun g hg => hb g (Array.mem_toList_iff.mp hg)) h)
 
-/-- `render` is not injective: a page fill and a fill-only rectangle path
-spell the same operators (as they must — one `re f` is one `re f`), so no
-theorem may read an operator array back from its bytes. Every fact about
-what the stream carries is stated over the typed array. -/
 public theorem render_not_inj : ∃ a b : Array ContentOp, a ≠ b ∧ render a = render b :=
   ⟨#[.fill Ir.Color.black 0 0 1 1],
     #[.paint (some { paint := .solid Ir.Color.black, evenOdd := false }) none none #[.rect 0 0 1 1]],
@@ -2123,8 +1812,6 @@ public theorem render_not_inj : ∃ a b : Array ContentOp, a ≠ b ∧ render a 
       simp [ContentOp.render, PathOp.render, fillState, strokeState, gsState, paintOp,
         pdfPaintFill, String.append_assoc] <;>
         rfl⟩
-
-/-! ## Marked content: the line spec, balance, and the ink underneath -/
 
 private theorem joinTail_append_singleton (a : List Line) (x : Line) :
     joinLines.joinTail (a ++ [x]) = joinLines.joinTail a ++ ("\n" ++ x.render) := by
@@ -2145,8 +1832,6 @@ private theorem termLines_eq_joinTail (l : List Line) :
     simp only [termLines, joinLines.joinTail, String.append_assoc]
     rw [ih]
 
-/-- The shape of a marked sequence and of the text object: an opening
-line, a terminated body, a closing line — as joined lines. -/
 private theorem open_body_close_eq (a : String) (l : List Line) (z : String) :
     a ++ "\n" ++ termLines l ++ z = a ++ (joinLines.joinTail l ++ ("\n" ++ z)) := by
   induction l generalizing a with
@@ -2170,8 +1855,6 @@ private theorem joinLines_append (a b : List Line) (ha : a ≠ []) (hb : b ≠ [
   obtain ⟨x, rest, rfl⟩ := List.exists_cons_of_ne_nil ha
   simp [joinLines, joinTail_append _ _ hb, String.append_assoc]
 
-/-- A non-empty line list closed by its line end is the joined lines
-followed by one. -/
 private theorem termLines_cons (l : Line) (rest : List Line) :
     termLines (l :: rest) = joinLines (l :: rest) ++ "\n" := by
   simp only [termLines, joinLines, String.append_assoc]
@@ -2221,8 +1904,6 @@ private theorem TextOp.renderLines_exact : ∀ (l : List TextOp) (acc : String),
 
 end
 
-/-- **Every text operator renders as its lines joined**, a marked
-sequence as its opening line, its body's lines, and its `EMC` line. -/
 public theorem TextOp.render_lines_exact (o : TextOp) : o.render = joinLines o.lines :=
   TextOp.render_lines o
 
@@ -2273,9 +1954,6 @@ private theorem ContentOp.renderLines_exact : ∀ (l : List ContentOp) (acc : St
 
 end
 
-/-- **Every page operation renders as its lines joined**: the text object
-as `BT`, its operators' lines, `ET`; a marked sequence as its opening
-line, its body's lines, and its `EMC` line. -/
 public theorem ContentOp.render_lines_exact (o : ContentOp) : o.render = joinLines o.lines :=
   ContentOp.render_lines o
 
@@ -2299,10 +1977,6 @@ private theorem renderList_eq_joinLines (l : List ContentOp) :
         joinLines_append _ _ (ContentOp.lines_ne_nil o) (ContentOp.linesList_ne_nil p rest')]
       simp
 
-/-- **The stream is its lines joined.** `render`'s bytes are `lines`'
-spelling: what opens and closes a marked-content sequence on the page is
-decided on the typed line list, and this equation carries it to the
-bytes. -/
 public theorem render_lines_exact (ops : Array ContentOp) : render ops = joinLines (lines ops) := by
   rw [content_render_exact, lines, renderList_eq_joinLines]
 
@@ -2360,11 +2034,6 @@ private theorem ContentOp.linesList_balanced : ∀ l : List ContentOp,
 
 end
 
-/-- **Every stream opens as many marked-content sequences as it closes**:
-opening (`BDC`/`BMC`) and `EMC` lines pair off, whatever the operator array — the
-executable form of "ill-nesting is unrepresentable", since `marked` is
-the only constructor that spells either. Reaches the bytes through
-`render_lines_exact`. -/
 public theorem lines_marked_balanced (ops : Array ContentOp) :
     (lines ops).countP Line.isOpen = (lines ops).countP Line.isEmc :=
   ContentOp.linesList_balanced _
@@ -2405,8 +2074,6 @@ private theorem ContentOp.inkList_append (a b : List ContentOp) :
 
 mutual
 
-/-- The lines of an operator's ink are its lines with the marked-content
-lines stripped. -/
 private theorem TextOp.lines_ink : ∀ o : TextOp, TextOp.linesList o.ink = stripMarks o.lines
   | .scale p => by simp [TextOp.ink, TextOp.lines, TextOp.linesList, stripMarks_cons_op, stripMarks_nil]
   | .move x y => by
@@ -2467,10 +2134,6 @@ private theorem ContentOp.linesList_ink : ∀ l : List ContentOp,
 
 end
 
-/-- **The ink's stream is the stream with its marked-content lines
-removed.** `inkOps` drops every wrapper; on the bytes that is exactly a
-strip of the opening and `EMC` lines (`render_lines_exact`) — the equation
-the artifact acceptance's stripped-stream comparison executes. -/
 public theorem inkOps_lines_exact (ops : Array ContentOp) : lines (inkOps ops) = stripMarks (lines ops) := by
   simp only [lines, inkOps, List.toList_toArray]
   exact ContentOp.linesList_ink _
@@ -2478,8 +2141,6 @@ public theorem inkOps_lines_exact (ops : Array ContentOp) : lines (inkOps ops) =
 public theorem render_inkOps_exact (ops : Array ContentOp) :
     render (inkOps ops) = joinLines (stripMarks (lines ops)) := by
   rw [render_lines_exact, inkOps_lines_exact]
-
-/-! ### The text walk under `inkText` -/
 
 private theorem inkText_append (a b : Array TextOp) : inkText (a ++ b) = inkText a ++ inkText b := by
   simp [inkText, TextOp.inkList_append]
@@ -2492,8 +2153,6 @@ private theorem inkText_push_marked (ops : Array TextOp) (t : MarkTag) (body : A
     inkText (ops.push (.marked t body)) = inkText ops ++ inkText body := by
   simp [inkText, TextOp.inkList_append, TextOp.inkList, TextOp.ink]
 
-/-- A state's ops seen through `inkText`: what the text walk decides that
-the marking cannot change. -/
 private def TextSt.plain (st : TextSt) : TextSt := { st with ops := inkText st.ops }
 
 private theorem lineSt_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
@@ -2501,9 +2160,6 @@ private theorem lineSt_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (
     lineSt geom remap imgMap og st.plain l = lineSt geom remap imgMap og st l := by
   simp [lineSt, TextSt.plain]
 
-/-- **Marking a line moves no ink**: the wrapped line and the plain line
-agree on everything but the wrapper — whichever wrapper the origin chose,
-and when the line's operators are empty and nothing is wrapped. -/
 private theorem stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
     (stepLine geom remap imgMap tags st l).plain
@@ -2542,7 +2198,6 @@ private theorem foldl_stepLinePlain_resp (geom : Geom) (remap : Array Nat) (imgM
   | nil => exact h
   | cons l rest ih => exact ih (stepLinePlain_resp geom remap imgMap tags h l)
 
-/-- The marked walk and the plain walk agree under `inkText`, line by line. -/
 private theorem foldl_stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (ls : List LineOut) (st : TextSt) :
     (ls.foldl (stepLine geom remap imgMap tags) st).plain
@@ -2553,8 +2208,6 @@ private theorem foldl_stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap :
     simp only [List.foldl_cons]
     rw [ih, foldl_stepLinePlain_resp geom remap imgMap tags rest
       (stepLine_plain geom remap imgMap tags st l)]
-
-/-! ### The plain walk pushes only leaves -/
 
 private theorem op_plainOps (st : TextSt) (o : TextOp) (h : inkText st.ops = st.ops) (hl : o.ink = [o]) :
     inkText (st.op o).ops = (st.op o).ops := by
@@ -2661,8 +2314,6 @@ private theorem foldl_stepLinePlain_plainOps (geom : Geom) (remap : Array Nat)
   | nil => exact h
   | cons l rest ih => exact ih _ (stepLinePlain_plainOps _ _ _ _ _ _ h)
 
-/-! ### The theorems this layer owes -/
-
 private theorem artifact_ink (k : Option ArtifactKind) (o : ContentOp) : (artifact k o).ink = o.ink := by
   simp [artifact, ContentOp.ink, ContentOp.inkList]
 
@@ -2694,7 +2345,6 @@ private theorem imageOp_ink (ix : GfxPdf.Request → Nat) (figs : Array (Option 
   · simp [figOp, ContentOp.ink, ContentOp.inkList]
   · split <;> simp [artifact_ink, ContentOp.ink, ContentOp.inkList]
 
-/-- The ink an open path group holds. -/
 private def groupInk : Option (Option Nat × Array ContentOp) → List ContentOp
   | none => []
   | some (_, ops) => ContentOp.inkList ops.toList
@@ -2744,8 +2394,6 @@ private theorem inkList_self (l : List ContentOp) (h : ∀ o ∈ l, o.ink = [o])
     simp only [ContentOp.inkList, h o (List.mem_cons_self ..),
       ih fun o' h' => h o' (List.mem_cons_of_mem _ h'), List.singleton_append]
 
-/-- A picture's ink is its own ink: no marked sequence under a figure
-operator, none in a label's text. -/
 private theorem picOp_ink (o : ContentOp) (h : PicOp o) : o.ink = [o] := by
   rcases h with h | ⟨t, rfl, ht⟩
   · exact figureOnly_ink o h
@@ -2758,8 +2406,6 @@ private theorem inkPaint_ink (geom : Geom) (ix : GfxPdf.Request → Nat)
     ContentOp.inkList (inkPaint geom ix tx k).toList = (inkPaint geom ix tx k).toList :=
   inkList_self _ fun o ho => picOp_ink o (inkPaint_picOps geom ix tx k h o (Array.mem_toList_iff.mp ho))
 
-/-- Grouping a page's ink per picture moves no mark: the ink under the
-groups is the inks' operators, in order. -/
 private theorem inkGroupsList_ink (geom : Geom) (ix : GfxPdf.Request → Nat)
     (tx : (Nat × Nat) → Option (Array TextOp))
     (tags : Array (Option String)) (inks : List InkOut) (hk : ∀ k ∈ inks, InkSetter tx k)
@@ -2794,8 +2440,6 @@ private theorem inkGroups_ink (geom : Geom) (ix : GfxPdf.Request → Nat)
   unfold inkGroups
   rw [inkGroupsList_ink geom ix tx tags inks.toList (fun k h => hk k (Array.mem_toList_iff.mp h))]
   simp [groupInk, ContentOp.inkList]
-
-/-! ### The glyph census, in paint order -/
 
 mutual
 
@@ -2850,7 +2494,6 @@ private theorem ContentOp.inkList_runs : ∀ l : List ContentOp,
 
 end
 
-/-- Unwrapping ships every run: the wrappers carry none of their own. -/
 private theorem runsOf_inkOps (ops : Array ContentOp) : runsOf (inkOps ops) = runsOf ops := by
   unfold runsOf inkOps
   rw [← ContentOp.runsList_eq, ← ContentOp.runsList_eq, List.toList_toArray,
@@ -2860,10 +2503,8 @@ private theorem runsOf_inkOps (ops : Array ContentOp) : runsOf (inkOps ops) = ru
 public def _root_.LeanTex.Core.Layout.LineOut.glyphRuns (l : LineOut) : List (Array Nat) :=
   l.segs.toList.flatMap segRuns
 
-/-- **A page's glyph runs in the order its content stream paints them**:
-each picture's labels where its picture paints them, in ink order and node
-order — the lines each key's labels sit on — then every other line, in
-order. On a page that routes no label, the page's runs (`pageRuns`). -/
+/-- A page's glyph runs in the order its content stream paints them: each picture's labels where
+the picture paints them, then every other line. -/
 public def paintRuns (page : PageOut) : List (Array Nat) :=
   let keys := inkLabelKeys page.inks
   let route := routesLabels page.inks
@@ -2872,9 +2513,7 @@ public def paintRuns (page : PageOut) : List (Array Nat) :=
    else []) ++
     (page.lines.toList.filter fun l => !heldBy route keys l).flatMap Layout.LineOut.glyphRuns
 
-/-- A page's lines in the order its content stream paints their glyphs:
-each picture's label lines where its picture paints them, then every other
-line. The order a reader of the file's glyphs meets the layout's in. -/
+/-- A page's lines in the order its content stream paints their glyphs. -/
 public def paintLines (page : PageOut) : List LineOut :=
   let keys := inkLabelKeys page.inks
   let route := routesLabels page.inks
@@ -2882,7 +2521,6 @@ public def paintLines (page : PageOut) : List LineOut :=
   (if route then keys.flatMap fun k => held.filter (·.labelKey? == some k) else []) ++
     page.lines.toList.filter fun l => !heldBy route keys l
 
-/-- The paint-order census is the paint-order lines' runs. -/
 public theorem paintRuns_lines_exact (page : PageOut) :
     paintRuns page = (paintLines page).flatMap Layout.LineOut.glyphRuns := by
   simp only [paintRuns, paintLines]
@@ -2906,7 +2544,6 @@ private theorem flatMap_ite_filter {α β : Type} (p : α → Bool) (f : α → 
     · rw [List.flatMap_cons, List.filter_cons]
       simp [h, ih]
 
-/-- The text object's runs: the lines it walks, a held line glyphless. -/
 private theorem bodyLines_runs (page : PageOut) :
     (bodyLines page).toList.flatMap Layout.LineOut.glyphRuns =
       (page.lines.toList.filter fun l =>
@@ -2929,7 +2566,6 @@ private theorem withoutGlyphs_stores (l : LineOut) :
   intro s _
   cases s <;> rfl
 
-/-- The images the text object places: a held line keeps its images. -/
 private theorem bodyLines_stores (page : PageOut) :
     (bodyLines page).toList.flatMap (fun l => l.segs.toList.flatMap segStores) = pageStores page := by
   unfold bodyLines pageStores
@@ -2965,7 +2601,6 @@ private theorem foldl_stepLinePlain_runs (geom : Geom) (remap : Array Nat)
     refine ⟨?_, hi'⟩
     simp [hr', hr, List.append_assoc]
 
-/-- A label key's text paints the runs of the lines it was set from. -/
 private theorem labelText_runs (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (held : List LineOut)
     (k : Nat × Nat) :
@@ -2984,7 +2619,6 @@ private theorem labelText_runs (geom : Geom) (remap : Array Nat) (widths : Array
       TextOp.runsList_eq]
     exact hr
 
-/-- A label key's text is plain: no marked sequence inside it. -/
 private theorem labelText_plain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (held : List LineOut)
     (k : Nat × Nat) (t : Array TextOp) (h : labelText geom remap widths imgMap tags held k = some t) :
@@ -2997,7 +2631,6 @@ private theorem labelText_plain (geom : Geom) (remap : Array Nat) (widths : Arra
     cases h
     exact foldl_stepLinePlain_plainOps geom remap imgMap tags (l :: rest) { widths } rfl
 
-/-- A page's label setter is one its ink may be painted with. -/
 private theorem pageLabels_setter (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     ∀ k ∈ page.inks, InkSetter (pageLabels geom remap widths imgMap tags page) k := by
@@ -3015,7 +2648,6 @@ private theorem pageLabels_setter (geom : Geom) (remap : Array Nat) (widths : Ar
     intro key
     simp [hr]
 
-/-- The runs a picture's ink paints: none under no label setter. -/
 private theorem inkPaint_runs_none (geom : Geom) (ix : GfxPdf.Request → Nat)
     (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) (h : ∀ key, tx key = none) :
     ContentOp.runsList (inkPaint geom ix tx k).toList = [] := by
@@ -3034,8 +2666,6 @@ private theorem inkPaint_runs_none (geom : Geom) (ix : GfxPdf.Request → Nat)
     have := emit_figureOnly ix (fun _ _ => #[]) (by simp) _ k.fig _ (Array.mem_toList_iff.mp ho)
     simp [GfxPdf.textGroup, ContentOp.figureOnly, ContentOp.figureOnlyList] at this
 
-/-- **A picture's ink paints its labels' runs, in node order**, where its
-labels stand at its top level and it reuses no symbol. -/
 private theorem inkPaint_runs_top (geom : Geom) (ix : GfxPdf.Request → Nat)
     (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut)
     (htop : k.fig.labelsTop = true) (hsym : k.fig.symbols = #[]) :
@@ -3071,14 +2701,6 @@ private theorem inkPaint_runs_top (geom : Geom) (ix : GfxPdf.Request → Nat)
     exact figureOnly_runs o (emitOne_figureOnly ix (fun _ _ => #[]) (by simp) _ #[] (by simp) n _ #[]
       (by simp) o (Array.mem_toList_iff.mp ho))
 
-/-- **The PDF paints every glyph run the page shipped, in paint order.** The
-glyph census of the typed content stream is the page's runs in the order
-its stream paints them (`paintRuns`): each picture's labels inside its
-picture, every other line in the text object — no run dropped, none
-moved but a label into its picture (`paintRuns_text`) — and then the runs
-the page's drawn figures paint in their forms (`figureRuns`), none
-invented beside them; the `_text` fact for the PageOut → ContentOp projection (not a `Conserves`
-instance: the walk changes type, as `structTree_text` does). -/
 public theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) :
@@ -3180,10 +2802,6 @@ private theorem flatMap_filter_key_perm {α κ : Type} [BEq κ] [LawfulBEq κ] (
     rw [List.flatMap_cons, hrest]
     exact ((ih L₂ hn.2 hL₂).append_left _).trans (List.filter_append_perm _ L)
 
-/-- **Moving a label into its picture moves no run** (`_text`, the census
-as a multiset): a page's runs in paint order (`paintRuns`) are its runs in
-line order (`pageRuns`), each as often — every held line's runs paint
-exactly once, at the one key no other ink sets (`routesLabels`). -/
 public theorem paintRuns_text (page : PageOut) : (paintRuns page).Perm (pageRuns page) := by
   unfold paintRuns pageRuns
   by_cases hr : routesLabels page.inks = true
@@ -3212,7 +2830,6 @@ public theorem paintRuns_text (page : PageOut) : (paintRuns page).Perm (pageRuns
 
 mutual
 
-/-- Numbering the identifiers touches no ink. -/
 private theorem TextOp.number_ink : ∀ (o : TextOp) (n : Nat), (TextOp.number n o).1.ink = o.ink
   | .scale _, _ => rfl
   | .move _ _, _ => rfl
@@ -3289,15 +2906,6 @@ public theorem numberMarks_ink (ops : Array ContentOp) : inkOps (numberMarks ops
   unfold inkOps
   rw [numberMarks_ink_list]
 
-/-- **Marking moves no ink.** The stream this layer builds, with every
-marked-content wrapper removed, is the stream the writer built before the
-layer existed (`contentOpsPlain`, the specification twin): same
-operators, same order, same operands — so the same bytes
-(`render_inkOps_exact`), and the strip of marked-content lines the
-acceptance runs is this equation on the file. Both wrapper kinds are
-covered: artifacts and structure content alike hide nothing, and the
-identifier numbering rewrites tags only. A fact of the content stream,
-not a projection of an IR statement: the IR never sees marked content. -/
 public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) :
@@ -3330,8 +2938,6 @@ public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array 
   apply Array.toList_inj.mp
   simp [Array.toList_append, Array.toList_push, Array.toList_map, Array.toList_flatMap]
 
-/-! ### Every painting operator sits under a wrapper -/
-
 private def TextOp.isMarked : TextOp → Bool
   | .marked _ _ => true
   | .scale _ => false
@@ -3340,8 +2946,8 @@ private def TextOp.isMarked : TextOp → Bool
   | .color _ => false
   | .show _ => false
 
-/-- A page-level operation the layer leaves nothing bare under: a wrapper,
-or the text object with every operator of its own wrapped. -/
+/-- A page-level operation with nothing bare under it: a wrapper, or the text object with every
+operator of its own wrapped. -/
 public def ContentOp.wrapped : ContentOp → Bool
   | .marked _ _ => true
   | .text ops => ops.all TextOp.isMarked
@@ -3404,8 +3010,6 @@ private theorem ContentOp.numberList_wrapped (l : List ContentOp) (n : Nat) (acc
     · exact ha o' h
     · exact ContentOp.number_wrapped o n (hl o (List.mem_cons_self ..))
 
-/-- Every operator the line walk puts on the text object is under a
-wrapper: a line's operators are wrapped or, when empty, absent. -/
 private theorem stepLine_marked (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut)
     (h : ∀ o ∈ st.ops, o.isMarked = true) :
@@ -3454,12 +3058,6 @@ private theorem imageOp_wrapped (ix : GfxPdf.Request → Nat) (figs : Array (Opt
   · rfl
   · split <;> rfl
 
-/-- **Every painting operator sits under exactly one wrapper.** At the top
-of the stream every operation is a marked-content sequence or the text
-object, and every operator of the text object is a marked-content
-sequence: no fill, path, glyph run or image is bare — real content under
-its structure type, everything else an artifact. The identifier half of
-the statement is `numberMarks_mcids_exact`. -/
 public theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) :
@@ -3484,8 +3082,6 @@ public theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array 
     · exact imageOp_wrapped ix figs i
   · rw [mem_artifactBlock hr]; rfl
 
-/-- **No decoration is left bare** — the corollary `wrapped_covers`
-projects: every fill and every placeholder box sits under a wrapper. -/
 public theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) :
@@ -3494,10 +3090,6 @@ public theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Arra
   have h := wrapped_covers geom remap widths imgMap tags ix figs page o ho
   cases o <;> simp_all [ContentOp.wrapped, ContentOp.decoration]
 
-/-! ### Identifiers in stream order -/
-
-/-- A content opener's identifier and leaf; nothing for an artifact or an
-operator. -/
 private def Line.contentOpen : Line → Option (Nat × Nat)
   | .open (.content _ m k) => some (m, k)
   | .open (.artifact _) => none
@@ -3513,16 +3105,11 @@ public def Line.isPaginationOpen : Line → Bool
   | .op _ => false
   | .emc => false
 
-/-- The `(identifier, leaf)` pairs a stream's content openers carry, in
-stream order. -/
+/-- The `(identifier, leaf)` pairs a stream's content openers carry, in stream order. -/
 public def contentOpens (ls : List Line) : List (Nat × Nat) := ls.filterMap Line.contentOpen
 
 mutual
 
-/-- The content openers under a text operator, without rendering them:
-`TextOp.lines` spells every operator on the way to the same list
-(`marksList_eq_contentOpens`), which on a rule-heavy page is a full render
-paid a second time. -/
 private def TextOp.marks (acc : Array (Nat × Nat)) : TextOp → Array (Nat × Nat)
   | .scale _ => acc
   | .move _ _ => acc
@@ -3559,8 +3146,7 @@ private def ContentOp.marksList (acc : Array (Nat × Nat)) : List ContentOp → 
 
 end
 
-/-- The marked content of one page: its identifiers and the leaves they
-paint, read off the typed stream — what the structure walk keys on. -/
+/-- The marked content of one page: its identifiers and the leaves they paint. -/
 public def pageMarks (ops : Array ContentOp) : Array (Nat × Nat) := ContentOp.marksList #[] ops.toList
 
 private theorem contentOpens_append (a b : List Line) :
@@ -3571,7 +3157,6 @@ private theorem contentOpens_op (s : String) : contentOpens [.op s] = [] := rfl
 private theorem contentOpens_emc : contentOpens [.emc] = [] := rfl
 private theorem contentOpens_nil : contentOpens [] = [] := rfl
 
-/-- Two adjacent ranges are one, however the second's start is spelled. -/
 private theorem range'_append_of (s m s' n : Nat) (h : s' = s + m) :
     List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
   subst h
@@ -3595,8 +3180,6 @@ private theorem range'_cons_of (n m : Nat) (h : n + 1 ≤ m) :
 
 mutual
 
-/-- The identifiers the numbering hands out are the run from `n` of the
-count it returns, in stream order. -/
 private theorem TextOp.number_mcids : ∀ (o : TextOp) (n : Nat),
     (contentOpens (TextOp.number n o).1.lines).map Prod.fst
       = List.range' n ((TextOp.number n o).2 - n)
@@ -3772,16 +3355,12 @@ private theorem ContentOp.marksList_eq_contentOpens : ∀ (l : List ContentOp) (
 
 end
 
-/-- The page's marks are the content openers of its lines, in order. -/
 public theorem pageMarks_eq_contentOpens (ops : Array ContentOp) :
     pageMarks ops = (contentOpens (lines ops)).toArray := by
   unfold pageMarks lines
   rw [ContentOp.marksList_eq_contentOpens]
   simp
 
-/-- **`numberMarks_mcids_exact`**: a numbered stream's marked-content
-identifiers, in stream order, are exactly `0, 1, …, n−1` — unique per page
-(§14.7.5.1), with no gap, however the construction nested them. -/
 public theorem numberMarks_mcids_exact (ops : Array ContentOp) :
     (pageMarks (numberMarks ops)).toList.map Prod.fst = List.range (pageMarks (numberMarks ops)).size := by
   have h := ContentOp.numberList_mcids ops.toList 0 #[]
@@ -3793,7 +3372,6 @@ public theorem numberMarks_mcids_exact (ops : Array ContentOp) :
   rw [List.length_map, List.length_range'] at hl
   rw [List.toList_toArray, List.size_toArray, hl, h.1, List.range_eq_range']
 
-/-- A block of fills and filled paths opens no content sequence. -/
 private theorem fillBlock_contentOpens (k : Option ArtifactKind) (fills : Array ContentOp)
     (hf : ∀ o ∈ fills, (∃ c x y w h, o = ContentOp.fill c x y w h) ∨
       ∃ fl st gs segs, o = ContentOp.paint fl st gs segs) :
@@ -3818,10 +3396,6 @@ private theorem fillBlock_contentOpens (k : Option ArtifactKind) (fills : Array 
       List.filterMap_nil]
     rw [← contentOpens, hl fills.toList (fun o ho => hf o (Array.mem_toList_iff.mp ho))]
 
-/-- **`mcids_partition_covers`** (the `_covers` statement): every painting
-operator of a page is under exactly one wrapper (`wrapped_covers`), and the
-identifiers its content wrappers carry are `0 … n−1` in stream order —
-the two fill blocks around the numbered middle carry none. -/
 public theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (figs : Array (Option FigForm)) (page : PageOut) :
@@ -3858,8 +3432,6 @@ public theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths 
   rw [hmid _ _ _ hA hC]
   exact numberMarks_mcids_exact _
 
-/-! ### Furniture -/
-
 /-- The pagination artifacts at the top of a text object. -/
 public def textArtifacts (ops : Array TextOp) : Nat :=
   (TextOp.linesList ops.toList).countP Line.isPaginationOpen
@@ -3882,7 +3454,6 @@ private theorem lineSt_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap :
   unfold textArtifacts
   rw [← h, inkText, List.toList_toArray, TextOp.linesList_ink, stripMarks_countP_pagination]
 
-/-- A line is furniture exactly when its origin says so. -/
 public theorem Origin.of_furniture_iff (tags : Array (Option String)) (l : LineOut) :
     Origin.of tags l = .furniture ↔ l.furniture = true := by
   unfold Origin.of
@@ -3945,10 +3516,6 @@ private theorem stepLine_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap
     · rw [hpush]
       simp [hf, Line.isPaginationOpen]
 
-/-- **Every furniture line is one pagination artifact, and no flow line
-is any.** The text object `contentOps` ships carries exactly one
-pagination wrapper per line the furniture pass laid — the count is the
-census the artifact acceptance reads. -/
 public theorem furniture_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (lines : Array LineOut) :
     textArtifacts (lines.foldl (stepLine geom remap imgMap tags) {}).ops

@@ -5,26 +5,12 @@ public import LeanTex.Core.SvgImport
 public import LeanTex.Core.Image
 public import LeanTex.Core.FigureLoss
 
-/-!
-# What the native SVG route owes, stated
-
-The route's accounting: a refused source is a named gap — the judge's
-refusal is a fulfilment error, which `Image.fulfilOne_error_named` holds to
-no payload and a diagnostic naming the source — and every loss an import
-records is named whichever drew the figure (`import_named`). What the boundary admits is the
-judge's own statement (`Svg.closure_covers`). An import's uses expand
-within their budget, or not at all (`expand_between`).
--/
+/-! The native SVG route's accounting: refused sources and import losses are named, and uses expand within budget. -/
 
 namespace LeanTex.Core.Svg
 
 open LeanTex.Core LeanTex.Core.Gfx
 
-/-- **Every loss an import records is named** (`_named`), whichever drew the
-figure: the census is the import's own losses, and each has a diagnostic
-whose subject is its key, in the converter's words or the engine's
-(`FigureLoss.svgDiags_named`) — the two the driver's route chooses between
-(`Cli.Boundary.svgRouteDiags_named`). -/
 public theorem import_named (t : Xml.Item) (lang : String) (moving : Bool) (src : String)
     (why : FigureLoss.Unconverted) (converted : Bool) (l : Gfx.Loss)
     (h : l ∈ (importTree t lang).fig.losses) :
@@ -33,10 +19,6 @@ public theorem import_named (t : Xml.Item) (lang : String) (moving : Bool) (src 
       d.subject = some (FigureLoss.subject "svg" l) :=
   FigureLoss.svgDiags_named moving src why converted _ l h
 
-/-- **The viewBox fills the viewport where the figure keeps no aspect
-ratio** (`_exact`): under `preserveAspectRatio="none"` the viewBox's origin
-maps to the viewport's and its far corner to the viewport's far corner
-(SVG 2 §8.2), in the model's sp, exactly. -/
 public theorem viewBox_exact (vb : ViewBox) (vx vy vw vh : Rat) (hw : vb.w ≠ 0) (hh : vb.h ≠ 0) :
     let m := viewMap vb { align := none, slice := false } vx vy vw vh
     m.apply (vb.x * (pxSp : Rat), vb.y * (pxSp : Rat)) = (vx * (pxSp : Rat), vy * (pxSp : Rat)) ∧
@@ -49,9 +31,6 @@ public theorem viewBox_exact (vb : ViewBox) (vx vy vw vh : Rat) (hw : vb.w ≠ 0
   · simp only [Prod.mk.injEq]; constructor <;> grind
   · simp only [Prod.mk.injEq]; constructor <;> grind
 
-/-- **A kept aspect ratio meets the viewport** (`_between`): with `meet`,
-the uniformly scaled viewBox lies inside the viewport on both axes and
-fills it on one (SVG 2 §8.2). -/
 public theorem viewBox_meet_between (vb : ViewBox) (al : Align × Align) (vw vh : Rat)
     (hw : 0 < vb.w) (hh : 0 < vb.h) :
     let s := (viewScale vb { align := some al, slice := false } vw vh).1
@@ -75,9 +54,6 @@ public theorem viewBox_meet_between (vb : ViewBox) (al : Align × Align) (vw vh 
     rw [h1] at this
     exact this
 
-/-- **Absolute lengths are exact** (`_exact`): the units relate as CSS
-Values 4 §6.2 fixes them — 96 px, 72 pt and 6 pc to the inch, 2.54 cm,
-25.4 mm — and one SVG point is one point of the model, 65536 sp. -/
 public theorem length_exact :
     LenUnit.factor .inch = 96 ∧ 72 * LenUnit.factor .pt = LenUnit.factor .inch ∧
     6 * LenUnit.factor .pc = LenUnit.factor .inch ∧
@@ -85,20 +61,15 @@ public theorem length_exact :
     (254 / 10 : Rat) * LenUnit.factor .mm = LenUnit.factor .inch ∧
     LenUnit.factor .pt * (pxSp : Rat) = 65536 := by decide +kernel
 
-/-- An absolute length measures its value times its unit's factor, with
-no rounding before the one to sp (`spOf`). -/
 public theorem length_toPx_exact (v em base : Rat) (u : LenUnit)
     (hu : u ≠ .em ∧ u ≠ .ex ∧ u ≠ .pct) :
     Length.toPx { value := v, unit := u } em base = v * u.factor := by
   obtain ⟨h1, h2, h3⟩ := hu
   cases u <;> simp_all [Length.toPx]
 
-/-! ## Uses held to their budget -/
-
 mutual
 
--- conserves: none — a census of a tree's nodes, which the expansion bound reads.
-/-- A node's size: itself and, a group, its kids'. -/
+-- conserves: none — a census of a tree's nodes.
 @[expose] public def Node.count : Node Run → Nat
   | .group _ _ _ kids => Node.countList kids.toList + 1
   | .draw _ _ _ => 1
@@ -172,8 +143,6 @@ private theorem expandList_none : ∀ xs : List (Node Run),
     omega
 end
 
-/-- Symbol sizes against expanded bodies: each size at least the body's
-node count, capped. -/
 private def SizesCover (cap : Nat) (done : Array (Array (Node Run))) (sizes : Array Nat) : Prop :=
   ∀ k, k < done.size → min cap (Node.countList (done[k]?.getD #[]).toList) ≤ sizes[k]?.getD 0
 
@@ -272,7 +241,6 @@ public theorem boundUses_between (bud : Budget) (symbols : Array (Array (Node Ru
     rw [hE] at hover
     omega
 
-/-- The figure-level statement, for a figure over `boundUses`'s output. -/
 public theorem expand_between_of (bud : Budget) (symbols : Array (Array (Node Run))) (body : Array (Node Run))
     (fig : Figure Run) (xf : Affine) (a : Alpha)
     (hs : fig.symbols = (boundUses bud symbols body).1)
@@ -288,11 +256,6 @@ public theorem expand_between_of (bud : Budget) (symbols : Array (Array (Node Ru
   dsimp only at h
   omega
 
-/-- **An import's expansion stays within its budget, or within its own
-drawing** (`_between`): the nodes the figure's uses expand to number at most
-the expansion budget past the root group — or, where the uses were past it,
-no more than the drawing paints itself, its uses dropped and the drop named.
-Every walk a backend makes over the expansion is bounded by it. -/
 public theorem expand_between (t : Xml.Item) (lang : String) (bud : Budget) :
     let f := (importTree t lang bud).fig
     Node.countList f.expanded.toList ≤ max (bud.expanded + 1) (Node.countList f.nodes.toList) := by

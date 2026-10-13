@@ -8,10 +8,9 @@ import all LeanTex.Core.PdfObjectRecovery
 namespace LeanTex.Core.Pdf
 open PdfRead
 
-/-! Locations read from the actual file, joined to the producer's source
-objects and serializer offsets. These are artifact contracts. -/
+/-! Locations read from the produced file, joined to the producer's source objects and serializer offsets. -/
 
-/-- The xref value computed by the production reader on a bounded plan. -/
+/-- The xref the reader computes on a bounded plan. -/
 public def WritePlan.readback (p : WritePlan) : PdfRead.Xref :=
   (readXrefSubsection (Xref.encode p.widths p.entries) 1 p.widths.first p.widths.second
     0 p.table.size 0
@@ -31,8 +30,6 @@ public theorem WritePlan.readback_locations_exact (p : WritePlan)
   simpa only [WritePlan.readback, p.measure_xref_exact, hs,
     Std.HashMap.get?_eq_getElem?] using hx
 
-/-- An in-range id with one source position selects that exact position,
-through the real dense object-stream index. -/
 public theorem compressedIndex_entry_exact (size : Nat) (objects : List (Nat × Obj))
     (id i : Nat) (value : Obj) (hid : id < size)
     (hi : objects[i]? = some (id,value))
@@ -57,8 +54,6 @@ public theorem compressedIndex_absent_exact (size : Nat) (objects : List (Nat ×
     obtain ⟨v,hv⟩ := compressedIndex_mem size objects id i hi
     exact False.elim (h (List.mem_map.mpr ⟨(id,v), List.mem_of_getElem? hv, rfl⟩))
 
-/-- The allocation's consecutive id transcript makes the array position
-the id itself. The actual producer proves this transcript separately. -/
 public theorem WritePlan.entry_index_exact (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (id : Nat) (hid : id < p.table.size) :
@@ -101,8 +96,6 @@ public theorem indexObjects_unique_exact {α : Type} (size : Nat)
   intro r hr he
   exact hnot (List.mem_map.mpr ⟨r, hr, he⟩)
 
-/-- Each object stream's recorded offset is where its serializer wrote it,
-given the rows' ids are distinct. -/
 public theorem WritePlan.stm_offset_exact (p : WritePlan) (k : Nat) (c : List (Nat × Obj))
     (hk : p.chunks[k]? = some c) (hi : p.table.objStmId k < p.table.size)
     (hn : (p.rows.toList.map Row.id).Nodup) :
@@ -137,7 +130,6 @@ public theorem WritePlan.stm_offset_exact (p : WritePlan) (k : Nat) (c : List (N
   · exact Array.mem_toList_iff.mpr (Array.mem_of_getElem? hoff)
   · exact (serialize_locs_covers p.head p.rows).symm ▸ hn
 
-/-- The reader finds each object stream at its recorded offset. -/
 public theorem WritePlan.stm_location_exact (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (k : Nat) (c : List (Nat × Obj)) (hk : p.chunks[k]? = some c)
@@ -154,8 +146,6 @@ public theorem WritePlan.stm_location_exact (p : WritePlan)
     compressedIndex_absent_exact _ _ _ hc, p.stm_offset_exact k c hk hi hn,
     xrefEntryLocation]
 
-/-- The reader finds the compressed object at position `i` in object
-stream `i / objStmCapacity`, at index `i % objStmCapacity`. -/
 public theorem WritePlan.compressed_location_exact (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (id i : Nat) (value : Obj) (hpos : 0 < id) (hi : id < p.table.size)
@@ -170,11 +160,6 @@ public theorem WritePlan.compressed_location_exact (p : WritePlan)
     Bool.false_eq_true, compressedIndex_entry_exact _ _ _ _ _ hi hs hn,
     xrefEntryLocation]
 
-/-- **`compressed_stream_between`**: reading any one compressed object
-inflates exactly one object stream, which holds at most `objStmCapacity`
-objects — the reader's location for the object at position `i` names
-stream `i / objStmCapacity`, whose dictionary declares its own count,
-and the object's index lies inside it. -/
 public theorem WritePlan.compressed_stream_between (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (id i : Nat) (v : Obj) (hpos : 0 < id) (hi : id < p.table.size)
@@ -200,10 +185,6 @@ public theorem WritePlan.compressed_stream_between (p : WritePlan)
   simp only [List.length_append, List.length_cons]
   omega
 
-/-- Complete compressed-object recovery through the actual file's xref,
-from the object stream that holds it. The premises concern source
-allocation, numeric bounds, and grammar. There is no supplied parser,
-location, or decompression result. -/
 public theorem WritePlan.compressed_readback_exact (p : WritePlan) (h : p.WithinBounds)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (hstm : ∀ k, k < p.chunks.length → 0 < p.table.objStmId k ∧

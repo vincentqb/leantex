@@ -7,7 +7,6 @@ import Init.Data.Array.Extract
 
 namespace LeanTex.Core.Flate.DynamicHeader
 
-/-- The complete RFC permutation, checked over its nineteen positions. -/
 theorem inverseOrder_contract :
     ∀ i : Fin 19, inverseOrder[i.val]?.getD 0 < 19 ∧
       order[inverseOrder[i.val]?.getD 0]? = some i.val := by
@@ -20,8 +19,6 @@ theorem fields_contract (lengths : Array Nat) :
   have hs : (ordered lengths).size = 19 := by simp [ordered, order]
   simpa only [fields, hs, show min 4 19 = 4 by decide] using h
 
-/-- Trimming removes zero fields only; restoring the RFC order recovers every
-entry of the original code-length alphabet, including omitted zero entries. -/
 theorem restore_fields_exact (lengths : Array Nat) (hs : lengths.size = 19) :
     restore (fields lengths) = lengths := by
   apply Array.ext_getElem?
@@ -74,8 +71,6 @@ theorem append_width_exact (litLens distLens : Array Nat)
   · exact hl s
   · exact hd _
 
-/-- The actual header writer retains all earlier fields. Its RLE alphabet
-comes from the length vectors it transmits. -/
 theorem write_contract (litLens distLens : Array Nat) (w : Bw) (hw : w.Valid)
     (hl : ∀ s : Nat, litLens[s]?.getD 0 < 16)
     (hd : ∀ s : Nat, distLens[s]?.getD 0 < 16) :
@@ -98,9 +93,6 @@ theorem write_contract (litLens distLens : Array Nat) (w : Bw) (hw : w.Valid)
       ((push_extends_exact w1 _ 5 h1 (by decide)).trans
         (push_extends_exact w _ 5 hw (by decide)))))⟩
 
-/-- A complete dynamic header reads back the exact two arrays used by the
-payload encoder. The sizes are the RFC alphabet bounds, and the final byte
-array may contain any later payload and trailer preserving these fields. -/
 theorem read_write_exact (litLens distLens : Array Nat) (w : Bw) (data : ByteArray)
     (hw : w.Valid) (hls : 257 ≤ litLens.size ∧ litLens.size ≤ 286)
     (hds : 1 ≤ distLens.size ∧ distLens.size ≤ 30)

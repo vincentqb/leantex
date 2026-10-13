@@ -4,25 +4,8 @@ public import LeanTex.Core.Xml
 public import LeanTex.Core.SvgJudge
 import LeanTex.Core.PathData
 
-/-!
-# The pose at the end of an SVG animation
-
-A static projection of synchronized SVG animation tracks, read from the
-parsed tree: the pose approached at the end of one simple duration, before
-repeat and fill handling (SVG 1.1 §19.2.9). It neither runs authored code
-nor samples a timeline. Each `animate` names an attribute of its parent and
-a `values` list; the projection writes the list's last value into that
-attribute and drops the animation, and every other node stands as it is.
-
-Only the timelines whose end is that last value are read: one linear or
-discrete track per shape geometry or opacity attribute, starting at zero,
-every track one finite duration in seconds, keyframes finite unitless
-decimals (an absolute M/L path for `d`). Any other timeline — motion,
-transforms, `set`, CSS, a delayed begin, a fractional repeat count — is refused with
-the reason, never projected to a pose it does not reach. This is the
-projection the XSLT stylesheet this module replaces stated, read the same
-way.
--/
+/-! An SVG animation's terminal pose: each track's last value written into its attribute, or the
+reason the timeline is refused. -/
 
 namespace LeanTex.Core.SvgPoster
 
@@ -41,15 +24,14 @@ public def scalarValue (s : String) : Rat :=
   | some (d, _) => d.toRat
   | none => 0
 
-/-- What projecting a track can fail with: the boundary's own words. -/
+/-- The reason a timeline outside the projection is refused. -/
 @[expose] public def refusedTimeline : String :=
   "SVG last poster requires plain attribute animations without CSS, motion, transforms or set elements"
 
 @[expose] public def refusedTrack : String :=
   "SVG last poster requires one linear/discrete values track per shape geometry or opacity attribute, starting at zero with the same finite duration in seconds; other targets or timing require a PDF frame sequence"
 
-/-- Is the track's attribute a geometry of its parent element, or an
-opacity of a graphical one? -/
+/-- Whether an attribute is a geometry of its parent element, or an opacity of a graphical one. -/
 public def geometryOf (parent attr : String) : Bool :=
   let isIn (xs : List String) := xs.contains attr
   (parent == "rect" && isIn ["x", "y", "width", "height", "rx", "ry"]) ||
@@ -88,13 +70,11 @@ public def pathPoints? (v : String) : Bool :=
       | [x, y] => scalar? (Svg.normalizeSpace x) && scalar? (Svg.normalizeSpace y)
       | _ => false)
 
-/-- A track's values as the projection reads them: split on `;`, each
-whitespace-normalized. -/
+/-- A track's values split on `;`, each whitespace-normalized. -/
 @[expose] public def trackValues (values : String) : List String :=
   (values.splitOn ";").map Svg.normalizeSpace
 
-/-- The keyframes a track's terminal value is read from, checked: every
-value and keyTime one the projection reads. -/
+/-- Checks that every value and keyTime of a track is one the projection reads. -/
 public def checkKeyframes (attr : String) (values : String) (times : Option String)
     (discrete : Bool) : Except String Unit := do
   let vs := trackValues values
@@ -131,17 +111,12 @@ public def checkKeyframes (attr : String) (values : String) (times : Option Stri
       if ["width", "height", "r", "rx", "ry"].contains attr && scalarValue v < 0 then
         throw "SVG last poster requires nonnegative sizes in every keyframe"
 
-/-- **A track's terminal value** (`terminal_exact`): its last value, when
-every keyframe and keyTime is one the projection reads; else the reason. -/
+/-- A track's terminal value, its last, when every keyframe and keyTime is one the projection reads. -/
 public def terminalValue (attr : String) (values : String) (times : Option String)
     (discrete : Bool) : Except String String := do
   checkKeyframes attr values times discrete
   return (trackValues values).getLastD ""
 
-/-- **The terminal value is the track's last value** (`_exact`): whatever a
-projection writes into an animated attribute is the last of the track's
-values, as written — the pose at the end of one simple duration (SVG 1.1
-§19.2.9), never a sampled or interpolated one. -/
 public theorem terminal_exact (attr values : String) (times : Option String) (discrete : Bool)
     (v : String) (h : terminalValue attr values times discrete = .ok v) :
     v = (trackValues values).getLastD "" := by
@@ -176,14 +151,11 @@ public def checkTrack (parent : String) (earlier : List String) (firstDur : Opti
   let some secs := seconds? ((get "dur").getD "") | throw refusedTrack
   unless firstDur == some secs do throw refusedTrack
 
-/-- Is a node an SVG `animate` element? -/
 @[expose] public def isAnimate : Xml.Item → Bool
   | .elem ns name _ _ => ns == Svg.svgNs && name == "animate"
   | .text _ => false
 
-/-- An element's tracks read in order: the attributes they animate (latest
-first), and each one's terminal value to write; else the first track's
-reason. -/
+/-- An element's tracks in order: the attributes they animate, latest first, and each one's terminal value. -/
 public def trackSets (name : String) (firstDur : Option Rat) (tracks : Array Xml.Item) :
     Except String (List String × Array Xml.Attr) := do
   let mut earlier : List String := []
@@ -199,7 +171,6 @@ public def trackSets (name : String) (firstDur : Option Rat) (tracks : Array Xml
     set := set.push { ns := "", name := attr, value := v }
   return (earlier, set)
 
-/-- No track, nothing written. -/
 private theorem trackSets_empty (name : String) (firstDur : Option Rat) :
     trackSets name firstDur #[] = .ok ([], #[]) := by
   simp [trackSets]
@@ -207,11 +178,8 @@ private theorem trackSets_empty (name : String) (firstDur : Option Rat) :
 
 mutual
 
--- conserves: none — a projection that writes each animated attribute's
--- terminal value; `terminal_fixed_point` and `terminal_exact` state it.
-/-- One node projected: an element with `animate` children gets each
-animated attribute's terminal value and loses the animations; every other
-node stands, its children projected. -/
+-- conserves: none — a projection of each animated attribute's terminal value.
+/-- One node projected: each animated attribute takes its terminal value and the animations go. -/
 public def projectOne (firstDur : Option Rat) : Xml.Item → Except String Xml.Item
   | .text s => .ok (.text s)
   | .elem ns name attrs kids => do
@@ -245,14 +213,12 @@ end
 
 private theorem ok_bind {α β ε : Type} (x : α) (f : α → Except ε β) : (Except.ok x >>= f) = f x := rfl
 
-/-- A list holds no animate exactly when none of its nodes is one. -/
 private theorem stillList_iff (ns : List Xml.Item) :
     stillList ns = true ↔ ∀ n ∈ ns, stillOne n = true := by
   induction ns with
   | nil => simp [stillList]
   | cons n rest ih => simp [stillList, ih]
 
-/-- A still node is no animate. -/
 private theorem stillOne_not_animate (n : Xml.Item) (h : stillOne n = true) : isAnimate n = false := by
   cases n with
   | text s => rfl
@@ -262,8 +228,6 @@ private theorem stillOne_not_animate (n : Xml.Item) (h : stillOne n = true) : is
 
 mutual
 
-/-- **A pose projects to itself**: a tree holding no animation is its own
-projection. -/
 private theorem projectOne_still (fd : Option Rat) (n : Xml.Item) (h : stillOne n = true) :
     projectOne fd n = .ok n := by
   match n with
@@ -313,10 +277,8 @@ end
 
 mutual
 
--- conserves: none — a census of a tree's elements by namespace and local
--- name, in document order, which the timeline checks read.
-/-- Every element of a node and its descendants: its namespace and local
-name. -/
+-- conserves: none — a census of a tree's elements.
+/-- Every element of a node and its descendants by namespace and local name. -/
 public def kindsOne (acc : Array (String × String)) : Xml.Item → Array (String × String)
   | .text _ => acc
   | .elem ns name _ kids => kindsList (acc.push (ns, name)) kids.toList
@@ -326,8 +288,6 @@ public def kindsList (acc : Array (String × String)) : List Xml.Item → Array 
   | n :: rest => kindsList (kindsOne acc n) rest
 
 end
-
-/-! ### The projection's fixed point -/
 
 mutual
 
@@ -383,7 +343,6 @@ private theorem kindsList_append (a b : List Xml.Item) :
 
 mutual
 
-/-- A pose holds no track and no SVG `animate` element. -/
 private theorem still_kinds (n : Xml.Item) (h : stillOne n = true) :
     tracksOne #[] n = #[] ∧ ∀ k ∈ kindsOne #[] n, ¬(k.1 = Svg.svgNs ∧ k.2 = "animate") := by
   match n with
@@ -429,8 +388,6 @@ end
 
 mutual
 
-/-- **What a projection leaves**: a node that is no animation projects to a
-pose, every element of which was an element of the node. -/
 private theorem projectOne_out (fd : Option Rat) (n p : Xml.Item) (hn : isAnimate n = false)
     (h : projectOne fd n = .ok p) :
     stillOne p = true ∧ ∀ k ∈ kindsOne #[] p, k ∈ kindsOne #[] n := by
@@ -522,8 +479,7 @@ transform, a colour, a `set`, a `discard`. -/
 @[expose] public def otherAnimationKind (k : String × String) : Bool :=
   (k.2.startsWith "animate" && k.2 != "animate") || k.2 == "set" || k.2 == "discard"
 
-/-- An `animate` in another namespace: no SVG track — the stylesheet's
-element test reads local names, so it refuses those too. -/
+/-- An `animate` in another namespace, which is no SVG track. -/
 @[expose] public def foreignAnimateKind (k : String × String) : Bool :=
   k.2 == "animate" && k.1 != Svg.svgNs
 
@@ -531,8 +487,7 @@ element test reads local names, so it refuses those too. -/
 @[expose] public def firstDurOf (tracks : Array (Array Xml.Attr)) : Option Rat :=
   tracks[0]?.bind fun a => seconds? ((Xml.Attr.get? a "" "dur").getD "")
 
-/-- **The terminal pose of a tree**, or why it has none this projection
-reads. -/
+/-- The terminal pose of a tree, or why it has none this projection reads. -/
 public def terminal (t : Xml.Item) : Except String Xml.Item := do
   let kinds := kindsOne #[] t
   let tracks := tracksOne #[] t
@@ -541,10 +496,6 @@ public def terminal (t : Xml.Item) : Except String Xml.Item := do
     throw refusedTimeline
   projectOne (firstDurOf tracks) t
 
-/-- **The terminal pose is a fixed point** (`_fixed_point`): the pose of a
-pose is itself — projected, a tree holds no SVG animation left to read, and
-it passes every check the tree passed, since each of its elements was the
-tree's. -/
 public theorem terminal_fixed_point (t p : Xml.Item) (ht : isAnimate t = false)
     (h : terminal t = .ok p) : terminal p = .ok p := by
   simp only [terminal] at h
@@ -578,10 +529,7 @@ public theorem terminal_fixed_point (t p : Xml.Item) (ht : isAnimate t = false)
 public def poseOf (tree : Xml.Item) (atEnd : Bool) : Except String Xml.Item :=
   if atEnd then terminal tree else pure tree
 
-/-- **The pose a figure is drawn in**: its judged tree as authored, or —
-where the request asks for the end of its animation — the terminal pose;
-else the boundary's or the projection's reason. What both the PDF's
-drawing and the browser's still face read, so the two draw one pose. -/
+/-- The pose a figure is drawn in: its judged tree as authored, or its terminal pose; else the reason. -/
 public def pose (bytes : ByteArray) (atEnd : Bool) : Except String Xml.Item := do
   let tree ← match Svg.judge bytes with
     | .ok t => pure t

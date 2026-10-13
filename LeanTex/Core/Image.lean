@@ -11,45 +11,18 @@ namespace LeanTex.Core.Image
 
 open LeanTex.Core.Dim
 
-/-! # External images
+/-! External images: `probe` reads a file's header into a `Source`, and `plan` decides, purely, the
+stream the PDF writer embeds. -/
 
-Two pure halves. `probe` reads a file's header into a `Source` — every fact
-the embedding decision can read cheaply: dimensions, density, sample
-layout, the palette, a colour key, an embedded profile, an orientation tag,
-and the compressed payload as a slice of the input, never a decoded
-surface. `plan` is a pure match from a `Source` and the `PlanParams` a
-declaration projects onto images to the `Plan` the PDF writer embeds: the
-colour space, filter, and alpha as three sums, the stream bytes, and a
-`losses` ledger naming every `Source` fact the plan does not carry
-(`plan_losses_accounts` — the planner never drops a fact wordlessly).
-Reading the file is the driver's effect; everything here is total over a
-`ByteArray` — a truncated or foreign file yields an error value, never a
-crash and never a wrong number. Opaque and indexed PNGs pass their IDAT
-through untouched (`plan_passthrough_exact`); a PNG with an alpha channel
-inflates once and deinterleaves its filtered rows into a colour stream and
-a soft-mask stream — never its pixels — since a PDF image holds exactly
-its colour space's samples and carries opacity as a separate `/SMask`
-image. A `tRNS` chunk on the pass-through types becomes the exact
-colour-key `/Mask`, or a refusal where no single range can carry it.
-Interlaced and 16-bit-alpha PNGs, CMYK JPEGs, and the formats no PDF
-filter decodes (WebP, AVIF, JPEG XL) are refused with a reason that names
-them. `decode` is `plan PlanParams.default ∘ probe`. -/
-
-/-- Both specs can leave the physical size undeclared — PNG's pHYs is
-optional and "the physical size of each pixel is unknown" without it
-(ISO/IEC 15948 §11.3.5.3), JFIF density unit 0 declares aspect ratio only
-(ISO/IEC 10918-5 §5). The engine then adopts 72 pixels per inch, pdfTeX's
-`\pdfimageresolution` default, so one pixel is one point. -/
+/-- The density adopted when a file declares none, pdfTeX's default: one pixel is one point. -/
 @[expose] public def defaultDpi : Nat := 72
 
-/-- What the signature says a file is. The last four are recognised so the
-refusal can name them — no PDF filter decodes WebP, AVIF, or JPEG XL (ISO
-32000-2 Table 6), and a JPEG 2000 codestream passes through only under a
-permitting declaration, a later slice's arm. -/
+/-- What the signature says a file is; WebP, AVIF, JPEG XL and JPEG 2000 are recognised so a
+refusal can name them. -/
 public inductive Format where
   | png
   | jpeg
-  /-- A selected PDF page, embedded as a form XObject: vector stays vector. -/
+  /-- A selected PDF page, embedded as a form XObject. -/
   | pdf
   | webp
   | avif
@@ -58,8 +31,7 @@ public inductive Format where
   | jpx
   deriving Repr, BEq, Inhabited
 
-/-- The name a refusal shows the reader: the one constant
-`plan_refuses_named` is stated over. -/
+/-- The format's name, as a refusal shows it. -/
 public def Format.name : Format → String
   | .png => "PNG"
   | .jpeg => "JPEG"
@@ -69,8 +41,7 @@ public def Format.name : Format → String
   | .jxl => "JPEG XL"
   | .jpx => "JPEG 2000"
 
-/-- The colour interpretation a PNG declares: what `colorKeyRanges` judges
-a `tRNS` chunk against. -/
+/-- The colour interpretation a PNG declares. -/
 public inductive Space where
   | gray
   | rgb
@@ -84,12 +55,7 @@ public def Space.components : Space → Nat
   | .rgb => 3
   | .indexed => 1
 
-/-- The `/ColorSpace` a plan declares (ISO 32000-2 §8.6). `iccBased` is
-produced only under `IccPolicy.carry` and carries the profile as zlib
-bytes for a `/FlateDecode` stream; its alternate is the device space of
-`n` components. The writer's `/ICCBased` emission is a later slice's —
-until then the arm writes the alternate, and the default policy never
-plans it (`plan_losses_accounts`). -/
+/-- The `/ColorSpace` a plan declares (ISO 32000-2 §8.6); `iccBased` carries its profile as zlib bytes. -/
 public inductive ColorSpaceDecl where
   | gray
   | rgb
@@ -105,11 +71,8 @@ public def ColorSpaceDecl.components : ColorSpaceDecl → Nat
   | .indexed _ => 1
   | .iccBased n _ => n
 
-/-- The `/Filter` a plan declares. `flatePredictor` is a PNG-predicted zlib
-stream — a pass-through IDAT, or the colour plane deinterleaved from an
-alpha PNG's filtered rows and deflated again — legal as `/FlateDecode`
-with Predictor 15 declared (ISO 32000-2 §7.4.4.4); `dct` is a whole JPEG
-file. -/
+/-- The `/Filter` a plan declares: a PNG-predicted zlib stream (Predictor 15, §7.4.4.4), or a
+whole JPEG file. -/
 public inductive FilterDecl where
   | flatePredictor
   | dct
@@ -118,31 +81,21 @@ public inductive FilterDecl where
 /-- How a plan carries transparency, or that it has none. -/
 public inductive Alpha where
   | opaque
-  /-- Colour-key masking (ISO 32000-2 §8.9.6.4): the `/Mask` ranges, two
-  per component in sample units at the plan's bit depth, a pixel inside
-  every range not painted — a PNG `tRNS` chunk mapped exactly
-  (`colorKeyRanges`). -/
+  /-- Colour-key masking (ISO 32000-2 §8.9.6.4): two `/Mask` range values per component, in sample units. -/
   | colorKey (ranges : Array Nat)
-  /-- An alpha channel as its own zlib-compressed gray plane under the
-  source rows' own filters: the PDF soft mask, Predictor 15 declared, at
-  `bpc` bits per sample. -/
+  /-- An alpha channel as its own zlib gray plane under the source rows' filters, at `bpc` bits. -/
   | soft (plane : ByteArray) (bpc : Nat)
   deriving BEq, Inhabited
 
-/-- A `Source` fact the plan does not carry: the ledger the driver turns
-into diagnostics, one per entry. -/
+/-- A `Source` fact the plan does not carry, each one diagnostic. -/
 public inductive PlanLoss where
-  /-- An embedded colour profile (PNG `iCCP`, JPEG `APP2`) dropped; the
-  page reads the samples as device colour. -/
+  /-- An embedded colour profile dropped; the page reads the samples as device colour. -/
   | iccDropped
-  /-- An Exif orientation other than 1 dropped; the page shows the stored
-  orientation. -/
+  /-- An Exif orientation other than 1 dropped; the page shows the stored orientation. -/
   | orientationDropped
   deriving Repr, DecidableEq, Inhabited
 
-/-- What the PDF writer embeds and placement reads. `data` is the stream
-the writer embeds as-is: a PNG's concatenated IDAT zlib stream, a JPEG's
-whole file, or the recoded colour plane of an alpha PNG. -/
+/-- What the PDF writer embeds and placement reads; `data` is the stream embedded as is. -/
 public structure Plan where
   pxW : Nat
   pxH : Nat
@@ -153,24 +106,16 @@ public structure Plan where
   filter : FilterDecl := .flatePredictor
   data : ByteArray := ByteArray.empty
   alpha : Alpha := .opaque
-  /-- Did the plan do real work — inflate, split, recompress? The driver's
-  cache gate, declared by the planner (`recodes_iff`), never peeked from
-  the bytes. -/
+  /-- Whether the plan inflated, split or recompressed: the driver's cache gate. -/
   recoded : Bool := false
   losses : Array PlanLoss := #[]
-  /-- The Exif orientation the source declared, 1–8; carried for the
-  rotation arm a later slice adds, dropped meanwhile (`.orientationDropped`). -/
+  /-- The Exif orientation the source declared, 1–8. -/
   orientation : Nat := 1
-  /-- A PDF page read as a form XObject: the box, the content, and the
-  copied resource graph. The `wf` witness rides with it —
-  `PdfRead.resources_closed` — so the writer never meets a dangling
-  reference. -/
+  /-- A PDF page read as a form XObject, with its closure witness. -/
   form : Option { f : PdfRead.Form // f.wf } := none
   deriving Inhabited
 
-/-- Intrinsic physical width: pixels over density, in sp — and for a PDF
-page, its box, exact to the sp (the `form_bbox_exact` half of the story:
-the intrinsic size *is* the page box). -/
+/-- Intrinsic physical width in sp: pixels over density, or a PDF page's box. -/
 @[expose] public def Plan.width (i : Plan) : Sp :=
   match i.form with
   | some f => f.val.w
@@ -181,15 +126,10 @@ the intrinsic size *is* the page box). -/
   | some f => f.val.h
   | none => (i.pxH : Int) * 72 * spPerPt / max i.dpiY 1
 
-/-- At the default density one pixel is one point: the convention is not
-just a comment, it is what `Plan.width` computes. -/
 public theorem width_at_default_dpi (px : Nat) :
     Plan.width { pxW := px, pxH := px } = Dim.pt px := by
   show ((px : Int) * 72 * 65536) / (((72 : Nat) : Int)) = (px : Int) * 65536
   omega
-
--- Byte readers, all bounds-checked: the parsers below must be total over
--- arbitrary input.
 
 private def u8? (b : ByteArray) (i : Nat) : Option Nat :=
   (b[i]?).map (·.toNat)
@@ -209,7 +149,6 @@ private def u24le? (b : ByteArray) (i : Nat) : Option Nat := do
 private def u32le? (b : ByteArray) (i : Nat) : Option Nat := do
   return (← u16le? b i) + (← u16le? b (i + 2)) * 65536
 
-/-- A 16-bit read in the byte order a TIFF header declares (`le`). -/
 private def u16? (le : Bool) (b : ByteArray) (i : Nat) : Option Nat :=
   if le then u16le? b i else u16be? b i
 
@@ -219,73 +158,30 @@ private def u32? (le : Bool) (b : ByteArray) (i : Nat) : Option Nat :=
 private def sliceEq (b : ByteArray) (i : Nat) (pat : List Nat) : Bool :=
   pat.zipIdx.all fun (v, k) => u8? b (i + k) == some v
 
-/-- Pixels-per-metre to pixels-per-inch, rounded: 1 in = 25.4 mm exactly. -/
 private def ppmToDpi (ppm : Nat) : Nat := (ppm * 254 + 5000) / 10000
-
-/-! ## PNG
-
-Signature, then chunks of `length type data crc`. IHDR carries the
-dimensions and sample layout, pHYs the density, PLTE the palette, IDAT the
-zlib stream (possibly split across chunks). Greyscale (0), truecolour (2),
-and indexed (3) samples pass through to a PDF `/FlateDecode` image XObject
-with the PNG predictor declared — their scanlines are pure sample runs after
-the per-row filter byte, which is exactly what the predictor describes. An
-alpha channel (types 4 and 6, 8-bit) interleaves samples a PDF colour space
-cannot hold: ISO 32000-2 §8.9.5 gives an image exactly `/Colors` samples per
-pixel, and per-pixel opacity is a separate gray image named by `/SMask`
-(§11.6.5.3). So those inflate and deinterleave — the filtered residuals as
-they stand, each row's filter byte kept, never the pixels — into two
-predicted planes that deflate again (`splitPredictedAlpha`). Adam7
-interlacing and 16-bit alpha are refused with the reason. -/
 
 private def pngSig : List Nat := [137, 80, 78, 71, 13, 10, 26, 10]
 
-/-! ### Channel projection commutes with the row filters
-
-The five row filters predict each byte from the byte `bpp` to its left, the
-byte above, and the byte above-left (ISO/IEC 15948 §9.2; a PDF reader's
-Predictor 15 undoes the same five, ISO 32000-2 §7.4.4.4). Keeping `k` of a
-`chs`-sample pixel's samples sends byte `j` of a projected run to byte
-`j / k * chs + sel (j % k)` of the source run, and that map carries
-neighbours to neighbours: one projected pixel back is one source pixel back.
-So the filtered residuals deinterleave as they stand, and the two planes
-unfilter to the two projections of the source pixels — `splitPredictedAlpha_exact`.
-Stated over the artifact's encoding, not the IR: what a PDF reader
-reconstructs from the two streams the writer emits is a fact of the
-artifact, with no IR value behind it. -/
-
-/-- Source byte of byte `j` of a projected run of pixels. -/
 @[inline] private def embPlane (chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
   j / k * chs + sel (j % k)
 
-/-- Keep `k` samples of every `chs`-sample pixel, chosen by `sel`. -/
 @[specialize] private def project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) : ByteArray :=
   Flate.build (px.size / chs * k) fun out => px[embPlane chs k sel out.size]?.getD 0
 
-/-- Split decoded pixels into the colour plane and the alpha plane:
-`chs` is 4 (RGBA) or 2 (grey + alpha), the alpha always last. The semantic
-route — what the fast path is proved to equal, and the tests' oracle; the
-engine itself never reconstructs the pixels. -/
+/-- Decoded pixels split into the colour plane and the alpha plane, the alpha last of `chs` samples. -/
 public def splitAlpha (px : ByteArray) (chs : Nat) : ByteArray × ByteArray :=
   (project px chs (chs - 1) id, project px chs 1 fun _ => chs - 1)
 
-/-- Source byte of byte `j` of a projected *predicted* stream: rows of
-`1 + W * k` bytes, each opening with the filter byte its source row (of
-`1 + W * chs` bytes) opens with. -/
 @[inline] private def embPred (W chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
   let r := j / (1 + W * k)
   let t := j % (1 + W * k)
   if t = 0 then r * (1 + W * chs) else r * (1 + W * chs) + 1 + embPlane chs k sel (t - 1)
 
-/-- Project a predicted stream of `pxH` rows, `W` pixels of `chs` samples
-each, onto `k` samples per pixel — one read and one write per output byte. -/
 @[specialize] private def projectPred (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
     ByteArray :=
   Flate.build (pxH * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0
 
-/-- The inflated IDAT of an alpha PNG (`chs` 4 or 2) as two predicted
-planes, colour and alpha, each row's filter byte preserved — what the PDF
-writer deflates and declares Predictor 15 on. -/
+/-- An alpha PNG's inflated IDAT as two predicted planes, colour and alpha, each row's filter byte kept. -/
 public def splitPredictedAlpha (raw : ByteArray) (pxH W chs : Nat) : ByteArray × ByteArray :=
   (projectPred raw pxH W chs (chs - 1) id, projectPred raw pxH W chs 1 fun _ => chs - 1)
 
@@ -320,9 +216,6 @@ private theorem projectPred_sample (raw : ByteArray) (pxH W chs k : Nat) (sel : 
     rw [Nat.add_assoc, Nat.mul_comm r, Nat.mul_add_mod, Nat.mod_eq_of_lt (by omega)]
   simp [hq, hm]
 
-/-- Projection is an embedding of pixel runs: byte `j` of the projection is
-`j / (W * k)` rows down and `embPlane (j % (W * k))` into the source row —
-and that offset stays inside the row. -/
 private theorem embPlane_row (chs k W : Nat) (sel : Nat → Nat) (hk : 0 < k)
     (hsel : ∀ c < k, sel c < chs) (hW : 0 < W) (j : Nat) :
     embPlane chs k sel j = j / (W * k) * (W * chs) + embPlane chs k sel (j % (W * k)) ∧
@@ -343,8 +236,6 @@ private theorem embPlane_row (chs k W : Nat) (sel : Nat → Nat) (hk : 0 < k)
     rw [Nat.add_mul, Nat.one_mul] at this
     omega
 
-/-- One projected pixel back is one source pixel back: subtracting `m`
-projected pixels from `j` subtracts `m` source pixels from its source byte. -/
 private theorem embPlane_sub (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k) (j m : Nat)
     (h : k * m ≤ j) :
     embPlane chs k sel (j - k * m) = embPlane chs k sel j - m * chs ∧
@@ -355,7 +246,6 @@ private theorem embPlane_sub (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k) (j m
   rw [Nat.sub_mul_div_of_le _ _ _ h, Nat.sub_mul_mod h, Nat.sub_mul]
   omega
 
-/-- A projected byte has a left neighbour exactly when its source byte does. -/
 private theorem embPlane_ge_iff (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k)
     (hsel : ∀ c < k, sel c < chs) (j : Nat) :
     chs ≤ embPlane chs k sel j ↔ k ≤ j := by
@@ -370,12 +260,6 @@ private theorem embPlane_ge_iff (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k)
     have := (embPlane_sub chs k sel hk j 1 (by omega)).2
     rwa [Nat.one_mul] at this
 
-/-- The heart of `splitPredictedAlpha_exact`: byte `j` of the unfiltered
-projected plane is byte `embPlane j` of the unfiltered source plane, by
-strong induction along the plane — each byte's three neighbours are earlier
-bytes whose sources are the source byte's three neighbours (`embPlane_sub`),
-and the residual and filter byte are the same bytes (`projectPred_sample`,
-`projectPred_filter`). -/
 private theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
     (hk : 0 < k) (hsel : ∀ c < k, sel c < chs) (hW : 0 < W) :
     ∀ j, j < pxH * (W * k) →
@@ -393,20 +277,16 @@ private theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel 
     obtain ⟨hrow, hsmall⟩ := embPlane_row chs k W sel hk hsel hW j
     have hr : j / (W * k) < pxH := (Nat.div_lt_iff_lt_mul hWk).mpr hj
     have hi := Nat.mod_lt j hWk
-    -- The source byte's row and column.
     have hJr : embPlane chs k sel j / (W * chs) = j / (W * k) := by
       rw [hrow, Nat.mul_comm (j / (W * k)), Nat.mul_add_div hWc, Nat.div_eq_of_lt hsmall]
       rfl
     have hJi : embPlane chs k sel j % (W * chs) = embPlane chs k sel (j % (W * k)) := by
       rw [hrow, Nat.mul_comm (j / (W * k)), Nat.mul_add_mod_self_left, Nat.mod_eq_of_lt hsmall]
-    -- Neighbours: one pixel left, one row up, both.
     have hleft := embPlane_sub chs k sel hk j 1
     have hup := embPlane_sub chs k sel hk j W
     have hboth := embPlane_sub chs k sel hk j (W + 1)
     have hcond := embPlane_ge_iff chs k sel hk hsel (j % (W * k))
     have hmodle := Nat.mod_le j (W * k)
-    -- Each neighbour read, when it happens, is an earlier byte of the same
-    -- plane, and the induction hypothesis carries it across.
     have hread : ∀ m, k * m ≤ j → m * chs ≤ embPlane chs k sel j →
         (Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k))[j - k * m]?
           = (Flate.build (embPlane chs k sel j)
@@ -432,7 +312,6 @@ private theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel 
         · rw [Nat.div_eq_of_lt hlt, Nat.zero_mul, Nat.zero_add] at hrow
           omega
         · exact hge
-    -- The three neighbour terms, in the shape the unfolded byte reads them.
     have hL : (if k ≤ j % (W * k) then
           ((Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k))[j - k]?.getD
             0).toNat else 0) =
@@ -480,14 +359,6 @@ private theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel 
       projectPred_sample raw pxH W chs k sel _ _ hr hi, Option.getD_some]
     rw [hL, hU, hUL]
 
-/-- Deinterleaving the *filtered* residuals is exact: unfiltering the colour
-and alpha planes `splitPredictedAlpha` writes yields exactly the colour and
-alpha projections (`splitAlpha`) of unfiltering the original — for every
-predicted stream the engine's unfilter accepts, at every width and height,
-under every mix of the five row filters. The PDF reader's Predictor 15
-reconstructs what the pixel route would have shipped, and the engine never
-materializes the pixels. Stated over the artifact's encoding, not the IR
-(see the section note). -/
 public theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2 : 2 ≤ chs)
     (hW : 0 < W) (px : ByteArray)
     (h : Flate.pngUnfilter raw pxH (W * chs) chs = .ok px) :
@@ -496,8 +367,6 @@ public theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2
       Flate.pngUnfilter (splitPredictedAlpha raw pxH W chs).2 pxH W 1 =
         .ok (splitAlpha px chs).2 := by
   have hchs : 0 < chs := by omega
-  -- What the hypothesis says: the source stream is long enough, its filter
-  -- bytes are legal, and `px` is its plane.
   unfold Flate.pngUnfilter at h
   split at h
   · exact absurd h (by simp)
@@ -505,7 +374,6 @@ public theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2
   · next _ hft =>
     have hpx : px = Flate.unfilterAll raw pxH (W * chs) chs := (Except.ok.inj h).symm
     subst hpx
-    -- One projection at a time, both instances of the same fact.
     have core : ∀ k (sel : Nat → Nat), 0 < k → (∀ c < k, sel c < chs) →
         Flate.pngUnfilter (projectPred raw pxH W chs k sel) pxH (W * k) k =
           .ok (project (Flate.unfilterAll raw pxH (W * chs) chs) chs k sel) := by
@@ -546,22 +414,6 @@ public theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2
       rwa [Nat.mul_one] at this
   · exact absurd h (by simp)
 
-/-! ### Colour-key transparency
-
-A `tRNS` chunk on the pass-through colour types names transparency a PDF
-expresses without touching the samples: colour-key masking (ISO 32000-2
-§8.9.6.4), `/Mask [min₁ max₁ … minₙ maxₙ]` over the image's `n` components
-in sample units, a pixel whose every component falls inside its range not
-painted. Greyscale and truecolour tRNS name one fully transparent sample
-value (ISO/IEC 15948 §11.3.2.1), so the ranges are degenerate and the
-mapping exact. An indexed tRNS gives each palette entry an alpha; with
-`n = 1` the mask is a single index interval, so the mapping is exact when
-the transparent entries form one interval and every other entry is
-opaque — and anything else, a fractional alpha or two separated runs, is
-refused rather than approximated (a soft mask is the exact form; it is
-not this slice's). Entries past the chunk's length are opaque (§11.3.2.1),
-which the interval never reaches. -/
-
 /-- Sample `i` of a tRNS payload of two-byte big-endian samples. -/
 public def trnsSample (trns : ByteArray) (i : Nat) : Nat :=
   (trns[2 * i]?.getD 0).toNat * 256 + (trns[2 * i + 1]?.getD 0).toNat
@@ -569,9 +421,6 @@ public def trnsSample (trns : ByteArray) (i : Nat) : Nat :=
 /-- Palette entry `i`'s alpha as the tRNS chunk states it. -/
 public def trnsEntry (trns : ByteArray) (i : Nat) : Nat := (trns[i]?.getD 0).toNat
 
-/-- Where a left-to-right scan of an indexed tRNS stands: no transparent
-entry yet, inside the transparent run that opened at `lo`, or past the
-run `[lo, hi]`. -/
 private inductive KeyState where
   | before
   | inside (lo : Nat)
@@ -583,8 +432,6 @@ public def partialAlphaMsg : String :=
 separated transparent entries) is not supported; re-export with a full alpha channel or \
 flatten it"
 
-/-- One entry: opaque keeps or closes the run, transparent opens or
-continues it, and a second run or a fractional value is the refusal. -/
 private def keyStep (st : KeyState) (i a : Nat) : Except String KeyState :=
   if a = 255 then
     match st with
@@ -598,7 +445,6 @@ private def keyStep (st : KeyState) (i a : Nat) : Except String KeyState :=
     | .after _ _ => .error partialAlphaMsg
   else .error partialAlphaMsg
 
-/-- The scan state after the first `n` entries. -/
 private def keyScan (trns : ByteArray) : Nat → Except String KeyState
   | 0 => .ok .before
   | n + 1 =>
@@ -606,7 +452,6 @@ private def keyScan (trns : ByteArray) : Nat → Except String KeyState
     | .ok st => keyStep st n (trnsEntry trns n)
     | .error e => .error e
 
-/-- The mask an indexed scan ends in: nothing, or the one interval. -/
 private def indexedKey (trns : ByteArray) : Except String (Array Nat) :=
   match keyScan trns trns.size with
   | .ok .before => .ok #[]
@@ -614,10 +459,7 @@ private def indexedKey (trns : ByteArray) : Except String (Array Nat) :=
   | .ok (.after lo hi) => .ok #[lo, hi]
   | .error e => .error e
 
-/-- The `/Mask` ranges a tRNS chunk denotes for an image of `space` at
-`bitDepth` over `palette`, or the refusal: a malformed length, a sample
-past the bit depth, more entries than the palette or the depth allows,
-or indexed transparency no single interval can express. -/
+/-- The `/Mask` ranges a tRNS chunk denotes for an image of `space` at `bitDepth`, or the refusal. -/
 public def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteArray) :
     Except String (Array Nat) :=
   match space with
@@ -640,15 +482,11 @@ public def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteA
       .error "corrupt PNG: tRNS has more entries than the bit depth allows"
     else indexedKey trns
 
-/-- Greyscale tRNS is exact: one sample, in range, is the degenerate range
-`[v v]`. -/
 public theorem colorKeyRanges_gray_exact (bitDepth : Nat) (trns palette : ByteArray)
     (hsz : trns.size = 2) (hv : trnsSample trns 0 < 2 ^ bitDepth) :
     colorKeyRanges .gray bitDepth trns palette = .ok #[trnsSample trns 0, trnsSample trns 0] := by
   simp [colorKeyRanges, hsz, Nat.not_le.mpr hv]
 
-/-- Truecolour tRNS is exact: three samples, in range, are the three
-degenerate ranges. -/
 public theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArray)
     (hsz : trns.size = 6) (h0 : trnsSample trns 0 < 2 ^ bitDepth)
     (h1 : trnsSample trns 1 < 2 ^ bitDepth) (h2 : trnsSample trns 2 < 2 ^ bitDepth) :
@@ -657,22 +495,16 @@ public theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArr
         trnsSample trns 2, trnsSample trns 2] := by
   simp [colorKeyRanges, hsz, Nat.not_le.mpr h0, Nat.not_le.mpr h1, Nat.not_le.mpr h2]
 
-/-- Is entry `i` inside the transparent run a scan state describes? -/
 private def KeyState.keyed : KeyState → Nat → Bool
   | .before, _ => false
   | .inside lo, i => lo ≤ i
   | .after lo hi, i => lo ≤ i && i ≤ hi
 
-/-- The run a state describes lies within the entries read. -/
 private def KeyState.wf : KeyState → Nat → Prop
   | .before, _ => True
   | .inside lo, n => lo < n
   | .after lo hi, n => lo ≤ hi ∧ hi < n
 
-/-- The scan invariant: a state reached after `n` entries is well formed,
-and every entry read is 0 exactly inside the run it describes and 255
-everywhere else — so a scan that completes has read only 0 and 255, and
-the run is the whole truth about the zeros. -/
 private theorem keyScan_spec (trns : ByteArray) :
     ∀ (n : Nat) (st : KeyState), keyScan trns n = .ok st →
       st.wf n ∧ ∀ i < n, trnsEntry trns i = if st.keyed i then 0 else 255 := by
@@ -689,8 +521,6 @@ private theorem keyScan_spec (trns : ByteArray) :
     split at h
     · next st hst =>
       obtain ⟨hwf, hent⟩ := ih st hst
-      -- The new entry decides the step; each arm extends the invariant by
-      -- one index.
       have hstep : ∀ i < n + 1, i < n ∨ i = n := fun i hi => by omega
       unfold keyStep at h
       split at h
@@ -747,10 +577,6 @@ private theorem keyScan_spec (trns : ByteArray) :
         · exact absurd h (by simp)
     · exact absurd h (by simp)
 
-/-- **The interval is the whole truth about the transparent entries.** An
-indexed tRNS that maps to `/Mask [lo hi]` has entry `i` transparent
-exactly when `lo ≤ i ≤ hi` — over every index, the entries past the chunk
-being opaque by the PNG rule. -/
 public theorem colorKeyRanges_indexed_covers (bitDepth : Nat) (trns palette : ByteArray) (lo hi : Nat)
     (h : colorKeyRanges .indexed bitDepth trns palette = .ok #[lo, hi]) :
     ∀ i, (i < trns.size ∧ trnsEntry trns i = 0) ↔ (lo ≤ i ∧ i ≤ hi) := by
@@ -801,9 +627,6 @@ public theorem colorKeyRanges_indexed_covers (bitDepth : Nat) (trns palette : By
       simp [KeyState.keyed, hlo, hhi]
   · exact absurd h (by simp)
 
-/-- Every emitted range value is a legal sample at the bit depth: the
-`/Mask` array the dictionary writes is in range for its
-`/BitsPerComponent`. -/
 public theorem colorKeyRanges_between (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
     (ks : Array Nat) (h : colorKeyRanges space bitDepth trns palette = .ok ks) :
     ∀ v ∈ ks, v < 2 ^ bitDepth := by
@@ -863,10 +686,6 @@ public theorem colorKeyRanges_between (space : Space) (bitDepth : Nat) (trns pal
       rcases hv with rfl | rfl <;> omega
     · exact absurd h (by simp)
 
-/-- **An empty mask is paid for.** For every tRNS shape, the mapping
-returns no ranges only for an indexed chunk whose every entry is opaque —
-there was no transparency to carry. Greyscale and truecolour tRNS never
-map to an empty mask: they are exact or refused. -/
 public theorem colorKeyRanges_accounts (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
     (h : colorKeyRanges space bitDepth trns palette = .ok #[]) :
     space = .indexed ∧ ∀ i < trns.size, trnsEntry trns i = 255 := by
@@ -903,9 +722,6 @@ public theorem colorKeyRanges_accounts (space : Space) (bitDepth : Nat) (trns pa
     · exact absurd h (by simp)
     · exact absurd h (by simp)
 
-/-- **Lossy transparency is refused, never dropped.** An indexed tRNS
-carrying any alpha other than 0 or 255 maps to no ranges at all: the
-result is an error the driver names. -/
 public theorem colorKeyRanges_partial_accounts (bitDepth : Nat) (trns palette : ByteArray)
     (hpartial : ∃ i < trns.size, trnsEntry trns i ≠ 0 ∧ trnsEntry trns i ≠ 255) :
     ∃ e, colorKeyRanges .indexed bitDepth trns palette = .error e := by
@@ -932,16 +748,6 @@ public theorem colorKeyRanges_partial_accounts (bitDepth : Nat) (trns palette : 
     · exact hz hent
     · exact ho hent
 
-/-! ## The source: what a header says
-
-`Source` is every fact the embedding decision can read from a file's
-header, format by format, plus the compressed payload as a slice of the
-input. Nothing here is a decision: a `Source` may describe an interlaced
-PNG, a CMYK JPEG, or a WebP file — `plan` is where each is embedded or
-refused by name. `probe` is the one loop over the bytes; its totality is
-the fuzz oracle's claim (`scripts/img-fuzz.lean`), not a theorem, and the
-theorems live on `plan`, the pure match after it. -/
-
 public structure Source where
   format : Format
   pxW : Nat
@@ -956,12 +762,9 @@ public structure Source where
   interlace : Bool := false
   /-- PNG PLTE payload, RGB triples. -/
   palette : ByteArray := ByteArray.empty
-  /-- PNG tRNS payload, verbatim; `none` when the chunk is absent (an empty
-  chunk is a present, all-opaque one). -/
+  /-- PNG tRNS payload verbatim; `none` when absent, an empty chunk being all opaque. -/
   trns : Option ByteArray := none
-  /-- An embedded colour profile: a PNG iCCP's compressed bytes (zlib,
-  `iccIsZlib`), or a JPEG's APP2 `ICC_PROFILE` segments concatenated in
-  sequence order (raw). Empty when none. -/
+  /-- An embedded colour profile: a PNG iCCP's zlib bytes or a JPEG's APP2 segments in sequence order. -/
   icc : ByteArray := ByteArray.empty
   iccIsZlib : Bool := false
   /-- PNG sRGB chunk: the rendering intent. -/
@@ -974,18 +777,12 @@ public structure Source where
   orientation : Nat := 1
   /-- JPEG APP14 Adobe segment: the colour transform flag. -/
   adobeTransform : Option Nat := none
-  /-- The stream a pass-through plan embeds: a PNG's concatenated IDAT, a
-  JPEG's whole file. Empty for a PDF page. -/
+  /-- The stream a pass-through plan embeds: a PNG's concatenated IDAT or a JPEG's whole file. -/
   payload : ByteArray := ByteArray.empty
   /-- A PDF's page 1 as a form XObject, with its closure witness. -/
   form : Option { f : PdfRead.Form // f.wf } := none
   deriving Inhabited
 
-/-- The PNG colour type table (ISO/IEC 15948 §11.2.2): the sample
-interpretation and, for the alpha types, the channel count that must
-really decode. The one place the type numbers are spelled — `plan` and
-`Plan.recodes` both read it, which is what ties the cache gate to the
-planner (`recodes_iff`). -/
 private def pngSpace : Nat → Option (Space × Option Nat)
   | 0 => some (.gray, none)
   | 2 => some (.rgb, none)
@@ -994,13 +791,6 @@ private def pngSpace : Nat → Option (Space × Option Nat)
   | 6 => some (.rgb, some 4)
   | _ => none
 
-/-- A PNG header into a `Source`: signature, IHDR first, then chunks of
-`length type data crc` — pHYs, PLTE, tRNS, iCCP, sRGB, gAMA, cHRM read,
-IDAT concatenated, IEND ends the walk. Structural corruption is refused
-here (a lying length, a chunk out of order, a colour type the spec has
-no row for); what the spec allows but the engine does not embed
-(interlace, a 16-bit alpha) is a fact on the `Source` for `plan` to
-refuse by name. -/
 private def probePng (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 pngSig do
     throw "not a PNG file (bad signature)"
@@ -1022,9 +812,6 @@ private def probePng (b : ByteArray) : Except String Source := do
     throw s!"corrupt PNG: truecolour at bit depth {bitDepth}"
   if alpha.isSome && bitDepth < 8 then
     throw s!"corrupt PNG: an alpha channel at bit depth {bitDepth}"
-  -- Walk the chunks. `i` advances by at least 12 per step, so the loop over
-  -- `b.size` iterations covers every well-formed file; a lying length that
-  -- points past the end is caught by the bounds-checked reads.
   let mut dpiX := defaultDpi
   let mut dpiY := defaultDpi
   let mut palette := ByteArray.empty
@@ -1041,24 +828,19 @@ private def probePng (b : ByteArray) : Except String Source := do
     let some t0 := u8? b (i + 4) | break
     if i + 12 + len > b.size then
       throw "truncated PNG: a chunk overruns the file"
-    -- Chunk types compared byte-wise; the reads are in bounds by the check.
     if t0 == 112 && sliceEq b (i + 4) [112, 72, 89, 115] then  -- pHYs
       if len == 9 then
         let some px := u32be? b (i + 8) | break
         let some py := u32be? b (i + 12) | break
         let some unit := u8? b (i + 16) | break
-        -- Unit 1 is the metre; unit 0 declares aspect ratio only, and the
-        -- physical size stays unknown (the default density).
+        -- Unit 1 is the metre; unit 0 declares aspect ratio only, leaving the default density.
         if unit == 1 && px > 0 && py > 0 then
           dpiX := max 1 (ppmToDpi px)
           dpiY := max 1 (ppmToDpi py)
     else if t0 == 80 && sliceEq b (i + 4) [80, 76, 84, 69] then  -- PLTE
       palette := b.extract (i + 8) (i + 8 + len)
     else if t0 == 116 && sliceEq b (i + 4) [116, 82, 78, 83] then  -- tRNS
-      -- One chunk, after PLTE and before IDAT, never on an alpha type
-      -- (ISO/IEC 15948 §5.6, §11.3.2.1): the transparency it names is
-      -- carried exactly or refused, so the walk keeps the payload and
-      -- `colorKeyRanges` judges it once the geometry is known.
+      -- One tRNS chunk, after PLTE and before IDAT, never on an alpha type (ISO/IEC 15948 §11.3.2.1).
       if trns.isSome then
         throw "corrupt PNG: more than one tRNS chunk"
       if !idat.isEmpty then
@@ -1069,9 +851,7 @@ private def probePng (b : ByteArray) : Except String Source := do
         throw "corrupt PNG: tRNS before PLTE"
       trns := some (b.extract (i + 8) (i + 8 + len))
     else if t0 == 105 && sliceEq b (i + 4) [105, 67, 67, 80] then  -- iCCP
-      -- Profile name (1–79 bytes, null-terminated), compression method
-      -- (0 = zlib, the only one defined), then the compressed profile
-      -- (ISO/IEC 15948 §11.3.3.3).
+      -- Profile name, null-terminated, compression method 0 (zlib), then the profile (ISO/IEC 15948 §11.3.3.3).
       if !icc.isEmpty then
         throw "corrupt PNG: more than one iCCP chunk"
       let mut nameEnd := i + 8
@@ -1109,28 +889,9 @@ private def probePng (b : ByteArray) : Except String Source := do
            interlace := interlace != 0, palette, trns, icc, iccIsZlib := true,
            srgbIntent, gamma, chrm, payload := idat }
 
-/-! ## JPEG
-
-A marker stream: `FF xx`, most segments carrying a big-endian length that
-includes its own two bytes. `SOFn` carries the dimensions (ISO/IEC 10918-1
-§B.2.2), the JFIF `APP0` the density, an `APP1` Exif block the orientation
-(tag 0x0112 in IFD0, CIPA DC-008), `APP2 ICC_PROFILE` segments the colour
-profile in numbered pieces (ICC.1 Annex B.4), `APP14 Adobe` the colour
-transform flag. The entropy-coded data after `SOS` never contains a bare
-`FF xx` marker except via `FF 00` stuffing and the restart markers, so the
-header walk stops there — the dimensions must have appeared first for the
-file to be an image at all. -/
-
-/-- Is this marker byte an SOFn frame header? DHT (C4), JPG (C8) and DAC
-(CC) share the Cx block and are not. -/
 private def isSof (m : Nat) : Bool :=
   0xC0 ≤ m && m ≤ 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC
 
-/-- The Exif orientation an APP1 segment at `t` (the TIFF header) states:
-byte order, the 42, IFD0's offset, then its entries — tag, type, count,
-value — read for tag 0x0112 as a SHORT. Only a value in 1–8 counts;
-anything else, or no tag, is the default orientation. Every read stays
-inside `end_`, the segment's end. -/
 private def exifOrientation (b : ByteArray) (t end_ : Nat) : Nat := Id.run do
   let le := u8? b t == some 0x49 && u8? b (t + 1) == some 0x49
   let be := u8? b t == some 0x4D && u8? b (t + 1) == some 0x4D
@@ -1155,8 +916,7 @@ private def probeJpeg (b : ByteArray) : Except String Source := do
   let mut dims : Option (Nat × Nat × Nat × Nat) := none
   let mut orientation := 1
   let mut adobeTransform : Option Nat := none
-  -- ICC pieces by sequence number (1-based), the count from the first
-  -- piece seen: concatenated in sequence order whatever the file order.
+  -- ICC pieces by 1-based sequence number, concatenated in sequence order whatever the file order.
   let mut iccPieces : Array ByteArray := #[]
   for _ in [0:b.size] do
     -- Fill bytes: any number of FFs may precede a marker.
@@ -1222,15 +982,6 @@ private def probeJpeg (b : ByteArray) : Except String Source := do
   return { format := .jpeg, pxW, pxH, dpiX, dpiY, bitDepth := precision, colorType := ncomp,
            icc, orientation, adobeTransform, payload := b }
 
-/-! ## The formats no PDF filter decodes
-
-Recognised by signature, their dimensions read from the container so a
-later HTML-only path can size an `<img>`, and refused for the PDF by name
-(`plan_refuses_named`). Nothing here decodes a pixel. -/
-
-/-- WebP (RIFF `WEBP`): a `VP8 ` key frame's 14-bit dimensions, a `VP8L`
-header's packed 14-bit dimensions plus one, or a `VP8X` canvas's 24-bit
-dimensions plus one. -/
 private def probeWebp (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 [0x52, 0x49, 0x46, 0x46] && sliceEq b 8 [0x57, 0x45, 0x42, 0x50] do
     throw "not a WebP file (no RIFF WEBP header)"
@@ -1250,19 +1001,13 @@ private def probeWebp (b : ByteArray) : Except String Source := do
   let some (pxW, pxH) := dims | throw "truncated WebP file: no readable image header"
   return { format := .webp, pxW, pxH }
 
-/-- Find a four-byte box or chunk tag in the first `limit` bytes. -/
 private def findTag (b : ByteArray) (tag : List Nat) (limit : Nat) : Option Nat := Id.run do
   for i in [0:min b.size limit] do
     if sliceEq b i tag then return some i
   return none
 
-/-- The bytes a header scan reads before giving up: the boxes that carry
-dimensions sit inside the first few kilobytes of every container; the
-bound keeps the probe a header walk on a large file. -/
 private def headerScanLimit : Nat := 65536
 
-/-- AVIF (ISOBMFF, `ftyp` brand `avif`/`avis`): dimensions from the `ispe`
-item property — version/flags, then width and height as u32. -/
 private def probeAvif (b : ByteArray) : Except String Source := do
   unless sliceEq b 4 [0x66, 0x74, 0x79, 0x70] &&
       (sliceEq b 8 [0x61, 0x76, 0x69, 0x66] || sliceEq b 8 [0x61, 0x76, 0x69, 0x73]) do
@@ -1273,12 +1018,9 @@ private def probeAvif (b : ByteArray) : Except String Source := do
   let some pxH := u32be? b (i + 12) | throw "truncated AVIF file: ispe too short"
   return { format := .avif, pxW, pxH }
 
-/-- Bit `k` of a little-endian bit stream starting at byte `off`
-(ISO/IEC 18181-1 reads its headers LSB first). -/
 private def bitAt (b : ByteArray) (off k : Nat) : Option Nat := do
   return (← u8? b (off + k / 8)) / 2 ^ (k % 8) % 2
 
-/-- `n` bits from bit position `k`, LSB first. -/
 private def bitsAt (b : ByteArray) (off k n : Nat) : Option Nat := Id.run do
   let mut v := 0
   for j in [0:n] do
@@ -1286,10 +1028,6 @@ private def bitsAt (b : ByteArray) (off k n : Nat) : Option Nat := Id.run do
     v := v + bit * 2 ^ j
   return some v
 
-/-- A JPEG XL `SizeHeader` at byte `off`: `small` picks 5-bit multiples of
-eight, else a `U32` with selectors for 9, 13, 18, or 30 bits (each plus
-one); a 3-bit aspect ratio replaces the width when non-zero (the table is
-the codec's `FixedAspectRatios`). Returns width and height. -/
 private def jxlSize (b : ByteArray) (off : Nat) : Option (Nat × Nat) := do
   let small ← bitAt b off 0
   -- (value, bits consumed) for one U32.
@@ -1313,9 +1051,6 @@ private def jxlSize (b : ByteArray) (off : Nat) : Option (Nat × Nat) := do
     | _ => some (h * 2) : Option Nat)
   return (w, h)
 
-/-- JPEG XL: a bare codestream (`FF 0A`) or the ISOBMFF container (the
-`JXL ` signature box), whose codestream sits in a `jxlc` box or begins in
-the first `jxlp` box after its 4-byte index. -/
 private def probeJxl (b : ByteArray) : Except String Source := do
   let codestream : Option Nat :=
     if sliceEq b 0 [0xFF, 0x0A] then some 0
@@ -1330,9 +1065,6 @@ private def probeJxl (b : ByteArray) : Except String Source := do
   let some (pxW, pxH) := jxlSize b (cs + 2) | throw "truncated JPEG XL file: size header cut"
   return { format := .jxl, pxW, pxH }
 
-/-- JPEG 2000: a JP2 container (signature box, dimensions from `ihdr` —
-height then width) or a raw J2K codestream (`SOC SIZ`, dimensions
-`Xsiz − XOsiz` by `Ysiz − YOsiz`, ISO/IEC 15444-1 Annex A.5.1). -/
 private def probeJpx (b : ByteArray) : Except String Source := do
   if sliceEq b 0 [0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A] then
     let some i := findTag b [0x69, 0x68, 0x64, 0x72] headerScanLimit
@@ -1348,9 +1080,7 @@ private def probeJpx (b : ByteArray) : Except String Source := do
     return { format := .jpx, pxW := xsiz - xo, pxH := ysiz - yo }
   else throw "not a JPEG 2000 file (no signature)"
 
-/-- A PDF page's geometry and resource closure, shared by default and
-explicit page selection. The pixel fields round to whole points; placement
-reads the form's box exactly. -/
+/-- A PDF page's geometry and resource closure; placement reads the form's box exactly. -/
 public def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
     Except String Source := do
   let f ← PdfRead.readForm b page
@@ -1359,10 +1089,7 @@ public def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
            pxH := (max 0 f.val.h / spPerPt).toNat
            form := some f }
 
-/-- Read any asset's header, told apart by signature: PNG, JPEG, a PDF
-whose page 1 reads as a form XObject, and the recognised-but-unembeddable
-containers. Total over every input — the fuzz oracle's claim, not a
-theorem: the loops are bounded by the file and every read is checked. -/
+/-- Reads any asset's header, told apart by signature. -/
 public def probe (b : ByteArray) : Except String Source :=
   if sliceEq b 0 pngSig then probePng b
   else if sliceEq b 0 [0xFF, 0xD8] then probeJpeg b
@@ -1380,50 +1107,31 @@ public def probe (b : ByteArray) : Except String Source :=
     probeJpx b
   else .error "not a PNG, JPEG, or PDF file (unrecognised signature)"
 
-/-- PDFs resolve the requested physical page. Raster readers discard the
-page value, including zero and out-of-range ordinals: `luatex.def`'s
-`Gread@png` clears `Gin@page`, and `Gread@jpg` aliases it. The ordinary
-probe still owns format validation and its named refusals. -/
+/-- A PDF's requested page; a raster reader ignores the page, as luatex.def's readers do. -/
 public def probePage (b : ByteArray) (page : PdfRead.PageSelection) : Except String Source :=
   if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then probePdf b page
   else probe b
 
-/-! ## The plan: a pure match
-
-Every non-source input to the embedding decision is a `PlanParams` field —
-the projection of a declared output contract onto images (a later slice
-wires it; the driver passes `default` today) — and every field is in the
-cache key (`PlanParams.key`, injective by `planParams_serialize_inj`), so
-two plans that could differ never share a cache entry and nothing that is
-not a plan input (a document path, an output path) enters the key. -/
-
-/-- What to do with an embedded colour profile: carry it as `/ICCBased`
-(the emission is a later slice's; the plan is typed for it), or drop it
-and say so (`.iccDropped`, the driver's W0603). -/
+/-- What to do with an embedded colour profile: carry it as `/ICCBased`, or drop it and say so. -/
 public inductive IccPolicy where
   | dropWithDiag
   | carry
   deriving Repr, DecidableEq, Inhabited
 
 public structure PlanParams where
-  /-- May a JPEG 2000 codestream pass through as `/JPXDecode`? The arm is a
-  later slice's; every value refuses today, and the key already carries it. -/
+  /-- Whether a JPEG 2000 codestream may pass through as `/JPXDecode`; the planner refuses one
+  under either value, and only the serialized key carries it. -/
   jpxPermitted : Bool := false
-  /-- May a plan carry a soft mask (`/SMask`)? A profile that forbids
-  transparency says no, and the alpha arm then refuses instead of
-  flattening. -/
+  /-- Whether a plan may carry a soft mask; when not, the alpha arm refuses rather than flattening. -/
   softMaskPermitted : Bool := true
-  /-- The deepest sample a pass-through may declare; deeper refuses (never
-  downsampled). -/
+  /-- The deepest sample a pass-through may declare; deeper refuses. -/
   maxBpc : Nat := 16
   iccPolicy : IccPolicy := .dropWithDiag
   deriving Repr, DecidableEq, Inhabited
 
-/-- The parameters the driver passes until a declaration projects them. -/
 public def PlanParams.default : PlanParams := {}
 
-/-- Fixed-width bytes: two flags, `maxBpc` as u32, the policy tag. The
-shape `planParams_serialize_inj` reads. -/
+/-- Fixed-width bytes: two flags, `maxBpc` as u32, the policy tag. -/
 public def PlanParams.serialize (p : PlanParams) : ByteArray :=
   ⟨#[cond p.jpxPermitted 1 0, cond p.softMaskPermitted 1 0,
      UInt8.ofNat (p.maxBpc / 16777216 % 256), UInt8.ofNat (p.maxBpc / 65536 % 256),
@@ -1435,9 +1143,6 @@ private theorem ofNat_inj_of_lt (x y : Nat) (hx : x < 256) (hy : y < 256)
   have := congrArg UInt8.toNat h
   simpa [UInt8.toNat_ofNat, Nat.mod_eq_of_lt hx, Nat.mod_eq_of_lt hy] using this
 
-/-- **The key tells plans apart.** Two parameter records with the same
-serialization are the same record (for a `maxBpc` inside the u32 the
-format spells — every declared depth is). -/
 public theorem planParams_serialize_inj (a b : PlanParams)
     (ha : a.maxBpc < 4294967296) (hb : b.maxBpc < 4294967296)
     (h : a.serialize = b.serialize) : a = b := by
@@ -1468,8 +1173,6 @@ public def PlanParams.key (p : PlanParams) : String := Id.run do
     s := s.push (digits[byte.toNat % 16]?.getD '0')
   return s
 
-/-- The refusal for a format no PDF filter decodes: the format's own name
-opens it (`plan_refuses_named`). -/
 private def unembeddableMsg (f : Format) : String :=
   f.name ++ " images cannot be embedded in a PDF (no PDF filter decodes the format); \
 re-export as PNG or JPEG"
@@ -1477,25 +1180,16 @@ re-export as PNG or JPEG"
 private def jpxRefusedMsg : String :=
   Format.jpx.name ++ " images are not passed through yet; re-export as PNG or JPEG"
 
-/-- Is the source's profile dropped by this plan? Yes under the dropping
-policy, and for an indexed image under either (an `/Indexed` base of
-`/ICCBased` is the emission slice's). -/
 private def iccDropped (p : PlanParams) (s : Source) (space : Space) : Bool :=
   s.icc.size != 0 && (p.iccPolicy matches .dropWithDiag || space matches .indexed)
 
-/-- The ledger every successful plan carries: each `Source` fact this
-slice's plans do not carry, named once. -/
 private def lossesOf (p : PlanParams) (s : Source) (space : Space) : Array PlanLoss :=
   (if iccDropped p s space then #[.iccDropped] else #[]) ++
     (if s.orientation != 1 then #[.orientationDropped] else #[])
 
-/-- The profile as `/FlateDecode` bytes: an iCCP payload is zlib already, a
-JPEG's concatenated segments deflate here. -/
 private def iccZlib (s : Source) : ByteArray :=
   if s.iccIsZlib then s.icc else Flate.deflate s.icc
 
-/-- The colour space a plan declares for `space`, the profile carried only
-when the policy says so and the base is a device space. -/
 private def colorOf (p : PlanParams) (s : Source) (space : Space) : ColorSpaceDecl :=
   match space, iccDropped p s space || s.icc.size == 0 with
   | .indexed, _ => .indexed s.palette
@@ -1504,11 +1198,6 @@ private def colorOf (p : PlanParams) (s : Source) (space : Space) : ColorSpaceDe
   | .gray, false => .iccBased 1 (iccZlib s)
   | .rgb, false => .iccBased 3 (iccZlib s)
 
-/-- The PNG arm: pass-through for colour types 0/2/3 (`plan_passthrough_exact`),
-the alpha split for 4/6, and the named refusals — interlace, a 16-bit
-alpha, a depth over the declared limit, a colour key the readers drop, a
-soft mask the declaration forbids. Spelled as matches, not a `do` block, so
-each theorem is a case split. -/
 private def planPng (p : PlanParams) (s : Source) : Except String Plan :=
   if s.interlace then .error "interlaced (Adam7) PNG is not supported; re-export without interlacing"
   else match pngSpace s.colorType with
@@ -1522,13 +1211,7 @@ private def planPng (p : PlanParams) (s : Source) : Except String Plan :=
         | some tr => colorKeyRanges space s.bitDepth tr s.palette : Except String (Array Nat)) with
     | .error e => .error e
     | .ok key =>
-      -- A 16-bit colour key is exact by the spec (`colorKeyRanges_rgb_exact`)
-      -- and ignored by two of the four target readers, measured: Poppler
-      -- and PDFium reduce the samples to 8 bits and compare the key
-      -- unscaled, so the keyed pixels paint. Ghostscript and pdf.js honour
-      -- it. A mask half the readers drop is the silent loss moved into the
-      -- reader, so it is refused until the reader matrix says otherwise or
-      -- the soft-mask arm carries it as an 8-bit `/SMask`.
+      -- A 16-bit colour key is refused: Poppler and PDFium compare it unscaled, so keyed pixels paint.
       if s.bitDepth == 16 && !key.isEmpty then
         .error "PNG with a 16-bit colour key (tRNS) is not shown transparent by common PDF \
 readers; re-export at 8 bits or with a full alpha channel"
@@ -1546,12 +1229,6 @@ re-export at 8 bits or flatten it"
       .error "PNG with an alpha channel needs a soft mask, which the declared output forbids; \
 flatten it onto a background and re-export"
     else
-      -- The samples cannot pass through as one stream: inflate against the
-      -- size the geometry declares, then deinterleave the filtered residuals
-      -- into the colour plane and the alpha plane — each row's own filter
-      -- kept, no pixel ever reconstructed (`splitPredictedAlpha_exact`) —
-      -- and deflate each, so the embedded object costs on the order of what
-      -- the source cost, never what the raw samples weigh.
       let rowBytes := s.pxW * channels
       match Flate.inflate s.payload (s.pxH * (1 + rowBytes)) with
       | .error e => .error e
@@ -1565,8 +1242,6 @@ flatten it onto a background and re-export"
                 data := Flate.deflate planes.1, alpha := .soft (Flate.deflate planes.2) 8,
                 recoded := true, losses := lossesOf p s space, orientation := s.orientation }
 
-/-- The JPEG arm: the whole file as `/DCTDecode`, one or three components
-at 8 bits; CMYK and other precisions refused by name. -/
 private def planJpeg (p : PlanParams) (s : Source) : Except String Plan :=
   if s.bitDepth != 8 then
     .error s!"JPEG sample precision {s.bitDepth} is not supported (8 expected)"
@@ -1592,23 +1267,16 @@ public def plan (p : PlanParams) (s : Source) : Except String Plan :=
   | .jxl => .error (unembeddableMsg .jxl)
   | .jpx => .error jpxRefusedMsg
 
-/-- Does planning this source do real work — inflate, split, recompress?
-True exactly for the PNG colour types with an alpha channel (4 and 6): what
-the driver's image cache keys on, decided from the header alone and agreeing
-with the planner on every plan that succeeds (`recodes_iff`). -/
+/-- Whether planning this source inflates, splits or recompresses: exactly for PNG colour types 4 and 6. -/
 public def Plan.recodes (_p : PlanParams) (s : Source) : Bool :=
   match s.format, pngSpace s.colorType with
   | .png, some (_, some _) => true
   | _, _ => false
 
-/-- Decode any embeddable asset under the default parameters: today's one
-call for every consumer. -/
+/-- Decodes any embeddable asset under the default parameters. -/
 public def decode (b : ByteArray) : Except String Plan :=
   probe b >>= plan PlanParams.default
 
-/-- **Pass-through is verbatim.** A plan for a PNG of colour type 0, 2, or 3
-embeds the source's IDAT bytes as they stand and recodes nothing — for
-every parameter record and every source the planner accepts. -/
 public theorem plan_passthrough_exact (p : PlanParams) (s : Source) (pl : Plan)
     (hf : s.format = .png) (hct : s.colorType = 0 ∨ s.colorType = 2 ∨ s.colorType = 3)
     (h : plan p s = .ok pl) : pl.data = s.payload ∧ pl.recoded = false := by
@@ -1633,7 +1301,6 @@ public theorem plan_passthrough_exact (p : PlanParams) (s : Source) (pl : Plan)
       subst h
       exact ⟨rfl, rfl⟩
 
-/-- `.iccDropped` sits in the ledger whenever the policy drops. -/
 private theorem mem_lossesOf_icc (p : PlanParams) (s : Source) (space : Space)
     (hp : p.iccPolicy = .dropWithDiag) (hi : s.icc.size ≠ 0) :
     PlanLoss.iccDropped ∈ lossesOf p s space := by
@@ -1641,13 +1308,11 @@ private theorem mem_lossesOf_icc (p : PlanParams) (s : Source) (space : Space)
     simp [iccDropped, hp, hi]
   simp [lossesOf, hd]
 
-/-- `.orientationDropped` sits in the ledger whenever the tag is not 1. -/
 private theorem mem_lossesOf_orientation (p : PlanParams) (s : Source) (space : Space)
     (ho : s.orientation ≠ 1) :
     PlanLoss.orientationDropped ∈ lossesOf p s space := by
   simp [lossesOf, ho]
 
-/-- Under the dropping policy no plan's colour carries a profile. -/
 private theorem colorOf_dropWithDiag (p : PlanParams) (s : Source) (space : Space)
     (hp : p.iccPolicy = .dropWithDiag) (n : Nat) (prof : ByteArray) :
     colorOf p s space ≠ .iccBased n prof := by
@@ -1658,19 +1323,11 @@ private theorem colorOf_dropWithDiag (p : PlanParams) (s : Source) (space : Spac
   unfold colorOf
   rcases hd with hd | hd <;> cases space <;> simp [hd]
 
-/-- **No fact is dropped wordlessly.** Every plan the planner accepts
-carries in `losses` each `Source` fact this slice does not embed: an
-embedded profile under the dropping policy (and the plan's colour is then
-a device space — the profile went nowhere else), and an orientation other
-than 1. The driver maps each entry to its diagnostic (W0603, W0604). -/
 public theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
     (h : plan p s = .ok pl) :
     (p.iccPolicy = .dropWithDiag → s.icc.size ≠ 0 →
       PlanLoss.iccDropped ∈ pl.losses ∧ ∀ n prof, pl.color ≠ .iccBased n prof) ∧
     (s.orientation ≠ 1 → PlanLoss.orientationDropped ∈ pl.losses) := by
-  -- Every accepting arm writes `losses := lossesOf p s space` and
-  -- `color := colorOf p s space` (or a device space), so the two ledger
-  -- lemmas close each.
   have arm : ∀ space, pl.losses = lossesOf p s space →
       (∀ n prof, pl.color ≠ .iccBased n prof ∨ pl.color = colorOf p s space) →
       (p.iccPolicy = .dropWithDiag → s.icc.size ≠ 0 →
@@ -1735,9 +1392,6 @@ public theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
   · exact absurd h (by simp)
   · exact absurd h (by simp)
 
-/-- **The cache gate is the planner's decision.** On every plan the planner
-accepts, `recoded` and the header-only `Plan.recodes` agree — the two read
-the one colour-type table. -/
 public theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p s = .ok pl) :
     pl.recoded = true ↔ Plan.recodes p s = true := by
   unfold plan at h
@@ -1794,28 +1448,11 @@ public theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p
   · exact absurd h (by simp)
   · exact absurd h (by simp)
 
-/-- **A refusal names the format.** A source whose signature said WebP,
-AVIF, or JPEG XL is refused, and the refusal opens with the format's own
-name — stated over `Format.name`, the one constant the message reads. -/
 public theorem plan_refuses_named (p : PlanParams) (s : Source)
     (hf : s.format = .webp ∨ s.format = .avif ∨ s.format = .jxl) :
     ∃ rest, plan p s = .error (s.format.name ++ rest) := by
   rcases hf with hf | hf | hf <;> exact ⟨_, by unfold plan; rw [hf]; rfl⟩
 
-/-! ## The driver's image cache: serialization
-
-A plan as bytes: the value the driver files under the source's content key
-and the parameters' key, so the expensive plan (inflate, split, deflate)
-runs once per content and parameters. Only raster fields ride — a form
-XObject never enters the cache; its plan is cheap and its `wf` witness
-cannot be serialized. Transparency is `decodeBin_encodeBin_id`: a cache hit *is* the
-recomputation's value, keeping the artifact a function of the document
-and the font environment. The magic carries a format version: a change
-here orphans old entries rather than misreading them. -/
-
-/-- `LTIMG3`, the magic-and-format-version the decoder checks: version 3 is
-the typed plan (three tag bytes for the three sums, the ledger, the
-orientation), so every `LTIMG1` and `LTIMG2` entry is a miss. -/
 private def binMagic : ByteArray := [76, 84, 73, 77, 71, 51].toByteArray
 
 private def colorTag : ColorSpaceDecl → Nat
@@ -1853,13 +1490,7 @@ private def binFields (i : Plan) : Array Nat :=
   #[i.pxW, i.pxH, i.dpiX, i.dpiY, i.bitDepth, i.orientation, iccN,
     palette.size, profile.size, keys.size, softBpc, plane.size, i.data.size, i.losses.size]
 
-/-- Serialize a raster `Plan` (`form` is dropped; the cache never holds
-one — `Plan.recodes` gates what is cached). Layout: magic; the colour,
-filter, alpha tags and the recoded flag; u32s for the geometry (width,
-height, two densities, bit depth, orientation), then the variable parts'
-sizes (profile components, palette, profile, key count, soft-mask depth,
-plane, data, losses); then the key values as u32s, the loss tags, and the
-palette, profile, plane and data bytes. -/
+/-- A raster `Plan` serialized for the image cache; `form` is dropped. -/
 public def encodeBin (i : Plan) : ByteArray :=
   let (palette, _, profile) := colorParts i.color
   let (keys, _, plane) := alphaParts i.alpha
@@ -1916,12 +1547,10 @@ private def readBin : Binary.Reader Plan := do
   return { pxW, pxH, dpiX, dpiY, bitDepth, color, filter, data, alpha
            recoded := rc == 1, losses, orientation }
 
-/-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
-truncated, or older-format file is a cache miss, never a wrong image. -/
+/-- `encodeBin`'s bytes read back; a foreign, truncated or older file is `none`. -/
 public def decodeBin (b : ByteArray) : Option Plan := readBin.run b
 
-/-- Raster cache representability: every stored natural and payload length fits
-its unsigned 32-bit field. PDF forms are deliberately outside this format. -/
+/-- A raster plan the cache format holds: every stored length fits 32 bits, and no form. -/
 @[expose] public def binBounded (i : Plan) : Prop :=
   i.form = none ∧ i.pxW < 4294967296 ∧ i.pxH < 4294967296 ∧
     i.dpiX < 4294967296 ∧ i.dpiY < 4294967296 ∧ i.bitDepth < 4294967296 ∧
@@ -2011,40 +1640,25 @@ private theorem readBin_encodeBin (i : Plan) (hb : binBounded i) :
       simp only [hr, ← hb.1]
       rfl))
 
-/-- Every representable raster plan survives the persisted LTIMG3 codec,
-including empty payloads and every color, alpha and filter variant. -/
 public theorem decodeBin_encodeBin_id (i : Plan) (hb : binBounded i) :
     decodeBin (encodeBin i) = some i :=
   Binary.Reads.run_id readBin i (encodeBin i) (readBin_encodeBin i hb)
 
-/-- Equal cache bytes identify the same representable raster plan. -/
 public theorem encodeBin_inj (a b : Plan) (ha : binBounded a) (hb : binBounded b)
     (h : encodeBin a = encodeBin b) : a = b := by
   have h := congrArg decodeBin h
   rw [decodeBin_encodeBin_id a ha, decodeBin_encodeBin_id b hb] at h
   exact Option.some.inj h
 
-/-! ## The store: effects as data
-
-An image requests a source and a page (`Ir.imageRequests` lists them);
-the CLI driver reads and decodes each,
-and layout and the backends consume this value. An entry whose `info` is
-`none` did not load — the driver has already said why — and every consumer
-places its placeholder box instead. -/
-
-/-- Everything that can change which image reaches a page. Sizing is local
-to the include and does not change the loaded asset. -/
+/-- Everything that can change which image reaches a page. -/
 public structure Request where
   src : String
   page : PdfRead.PageSelection := .first
-  /-- An animated include may use its source SVG for the browser while
-  the selected PDF page supplies the static print face. -/
+  /-- Whether the include animates: its source SVG for the browser, the PDF page for print. -/
   animated : Bool := false
   deriving Repr, BEq, ReflBEq, LawfulBEq, DecidableEq, Inhabited
 
-/-- The animate manual §6.1 fixes the animation canvas from its first
-frame, independently of the poster. The selected plan still supplies the
-ink; both backends read the separate canvas when sizing the include. -/
+/-- The plan for a request, with an animation's canvas from its first frame (animate §6.1). -/
 public def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Request) :
     Except String (Plan × Option (Dim.Sp × Dim.Sp)) := do
   let selected ← probePage bytes req.page >>= plan params
@@ -2056,71 +1670,46 @@ public def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Reques
   return (selected, canvas)
 
 public structure Loaded extends Request where
-  /-- The relative path the driver resolved, when it differs from `src`: a
-  bare graphicx name (`figures/plot`) gains the extension the file on disk
-  has, and an HTML link must name it. -/
+  /-- The relative path the driver resolved, when it differs from `src`. -/
   href : String := ""
   info : Option Plan := none
-  /-- An animation's canvas comes from its first frame (animate §6.1),
-  even when the selected poster has a different aspect ratio. -/
+  /-- An animation's canvas, from its first frame (animate §6.1). -/
   canvasSize : Option (Dim.Sp × Dim.Sp) := none
-  /-- A browser SVG supplied by the driver: original animation bytes or
-  the selected PDF page converted to SVG. It is published as an image
-  asset, never inserted into the document's HTML tree. -/
+  /-- The browser SVG the driver supplied, published as an image asset. -/
   webSvg : Option ByteArray := none
-  /-- A static browser face of the selected animation poster. HTML uses
-  it for print and reduced motion, while `webSvg` carries the animation. -/
+  /-- A static browser face of the animation's poster, for print and reduced motion. -/
   posterSvg : Option ByteArray := none
-  /-- The words the figure `webSvg` shows says, as its PDF page carries
-  them (`Gfx.Figure.said`): the page lays them beside the face for find
-  and copy, hidden from sight and from assistive technology, whose name for
-  the figure stays its declared alternative. Empty where none were read. -/
+  /-- The words the figure `webSvg` shows says, laid beside the face for find and copy. -/
   webWords : String := ""
-  /-- A mandatory browser-face conversion failed. Keep the native plan,
-  but publish a named placeholder rather than the uncooked source. -/
+  /-- A failed mandatory browser-face conversion, which publishes a named placeholder. -/
   webError : Option String := none
-  /-- The exact bytes the driver read for this source (`fetchImage`), kept
-  so the browser-face conversion uses them without rereading the file. -/
+  /-- The exact bytes the driver read for this source. -/
   source : Option ByteArray := none
-  /-- The exact bytes of an animation's companion SVG, read once beside the
-  PDF, so preserving movement never rereads a second file. -/
+  /-- The exact bytes of an animation's companion SVG. -/
   companion : Option ByteArray := none
-  /-- An SVG the engine draws: the figure its importer read from `source`
-  (`Svg.importBytes`), its text runs still to be set. Both backends read
-  it through the store's shaped figures (`Store.shaped`). -/
+  /-- The figure the engine draws for an SVG, its text runs still to be set. -/
   vector : Option (Gfx.Figure Gfx.Run) := none
-  /-- The store entries that hold the vector figure's rasters, one per
-  raster in order: each a planned image the PDF writer embeds as its own
-  XObject, which the figure's form names (`Pdf.docFigsWith`). -/
+  /-- The store entries holding the vector figure's rasters, one per raster in order. -/
   rasterSlots : Array Nat := #[]
-  /-- For an entry that holds a drawn figure's raster, the figure's entry:
-  such an entry is placed only through its figure, and ships no browser
-  asset of its own — the browser reads the raster in the figure's file. -/
+  /-- For an entry holding a drawn figure's raster, the figure's entry. -/
   rasterOf : Option Nat := none
-  /-- For a drawn figure's raster, whether a reader may smooth its samples
-  when it scales them (`Gfx.Raster.smooth`): the PDF's image then says
-  `/Interpolate true`, as the figure's `image-rendering: auto` does. -/
+  /-- For a drawn figure's raster, whether a reader may smooth its samples. -/
   interpolate : Bool := false
-  /-- Whether the vector figure animates (a SMIL track in its source): the
-  browser then keeps the source, and print reads a poster. -/
+  /-- Whether the vector figure animates. -/
   moving : Bool := false
   deriving Inhabited
 
-/-- The captured face the browser receives; naming and publication read
-these same bytes, even if the source file changes during the build. -/
+/-- The captured face the browser receives. -/
 @[expose] public def Loaded.browserBytes (en : Loaded) : Option ByteArray :=
   en.webSvg.orElse fun _ => en.source
 
-/-- One intrinsic size for both backends: a vector figure's box, a
-successfully loaded image's animation canvas, or its own geometry for an
-ordinary include. -/
+/-- One intrinsic size for both backends: a vector figure's box, an animation's canvas, or the
+image's own geometry. -/
 @[expose] public def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=
   match en.vector with
   | some fig => some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2)
   | none => en.info.map fun inf => en.canvasSize.getD (inf.width, inf.height)
 
-/-- The intrinsic box both backends read keeps a declared animation canvas
-independently of the selected poster's geometry. -/
 public theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some inf)
     (hv : en.vector.isNone = true) :
     en.size? = some (en.canvasSize.getD (inf.width, inf.height)) := by
@@ -2128,49 +1717,32 @@ public theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some
   | some _ => simp [hvec] at hv
   | none => simp [Loaded.size?, h, hvec]
 
-/-- **A vector figure is sized by its box** (`_exact`): the extent layout
-reserves for a drawn SVG and the HTML image box are the figure's own,
-the root viewport its importer read (`Svg.import_box_exact`). -/
 public theorem Loaded.size?_vector_exact (en : Loaded) (fig : Gfx.Figure Gfx.Run)
     (h : en.vector = some fig) :
     en.size? = some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2) := by
   simp [Loaded.size?, h]
 
-/-- Extension recognition for SVG, which the driver reads natively
-(`Driver.svgFetch`). -/
 public def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 
-/-- graphicx resolves an extensionless name against its extension list; the
-same convention here, over the formats that embed — `.pdf` first past the
-name as written, graphicx's own order under pdfTeX. -/
+/-- The names graphicx resolves an extensionless source against, in its order under pdfTeX. -/
 public def sourceCandidates (src : String) : List String :=
   [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
    src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".svg", src ++ ".SVG"]
 
-/-- Where graphicx looks for an included file under a `\graphicspath`
-(`paths`, as written): each of the extension candidates
-(`sourceCandidates`) as written, then under each directory in order —
-graphics.sty's `\Gin@getbase` tries one extension at a time through
-`\IfFileExists`, which reads the file as named before `\input@path`,
-the directories `\graphicspath` sets. -/
+/-- Where graphicx looks for an included file under a `\graphicspath`: each candidate as written,
+then under each directory. -/
 public def searchCandidates (paths : Array String) (src : String) : List String :=
   (sourceCandidates src).flatMap fun c => c :: paths.toList.map (· ++ c)
 
-/-- **No search path, the candidates as they were** (`_id`). -/
 public theorem searchCandidates_empty_id (src : String) :
     searchCandidates #[] src = sourceCandidates src := by
   simp [searchCandidates]
 
 public structure Store where
   entries : Array Loaded := #[]
-  /-- Each entry's copied PDF page content deflated, when the driver
-  deflated it through its content-hash cache — the writer then only picks
-  the smaller spelling (`Pdf.copiedFormStream`), as it does for font
-  programs (`Font.FontSet.zdata`). -/
+  /-- Each entry's copied PDF page content deflated, when the driver deflated it. -/
   formZ : Array (Option ByteArray) := #[]
-  /-- Each entry's vector figure with its text set in the document's faces
-  (`Layout.shapeStore`), filled once the font set is settled: the one
-  value both backends read for a drawn SVG. -/
+  /-- Each entry's vector figure with its text set in the document's faces. -/
   shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]
   deriving Inhabited
 
@@ -2183,22 +1755,12 @@ public structure Store where
 @[expose] public def Store.get? (s : Store) (i : Nat) : Option Loaded :=
   s.entries[i]?
 
-/-- The decoded image behind a source, when the driver loaded one: the one
-resolving question a consumer asks of the store — `none` is the placeholder
-box, whatever the reason (`Ir.pending` counts exactly these). -/
+/-- The decoded image behind a request, when the driver loaded one; `none` is the placeholder box. -/
 @[expose] public def Store.infoRequest? (s : Store) (req : Request) : Option Plan :=
   (s.entries.find? (·.toRequest == req)).bind (·.info)
 
 @[expose] public def Store.info? (s : Store) (src : String) : Option Plan :=
   s.infoRequest? { src }
-
-/-! ## Fulfilment: the decision half of the image effect
-
-The driver reads files; deciding what each read means — an entry with a
-payload, or a placeholder box with the diagnostic that names it — is a
-pure function here, so the naming is a theorem (`fulfil_named`) and the
-store's coverage another (`fulfil_covers`), not a convention of the
-driver's loop. -/
 
 /-- W0601: the image file exists but reading it failed. -/
 public def imageUnreadable (src err : String) : Diag :=
@@ -2234,7 +1796,6 @@ public def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
 \\allow{W0604}")
     (subject := some src)
 
-/-- The diagnostic one ledger entry names, for the plan that carries it. -/
 private def lossDiag (src : String) (pl : Plan) : PlanLoss → Diag
   | .iccDropped => imageIccDropped src
   | .orientationDropped => imageOrientationDropped src pl.orientation
@@ -2243,13 +1804,8 @@ private def lossDiag (src : String) (pl : Plan) : PlanLoss → Diag
 public def lossDiags (src : String) (pl : Plan) : Array Diag :=
   pl.losses.map (lossDiag src pl)
 
-/-- What the driver found for one image source, before the pure decision
-names it: a file (or a boundary picture's drawn PDF) decoded — through the
-driver's content cache, which equals the pure decode
-(`decodeBin_encodeBin_id`) — with the relative path an HTML link needs; no
-file; a file that would not read; or a boundary picture nothing drew,
-carrying the boundary's own diagnostic (W0382, W0379), whose subject
-`fulfil` sets so the refusal names the picture whatever words it chose. -/
+/-- What the driver found for one image source: a decoded file, no file, an unreadable file, or a
+boundary picture nothing drew. -/
 public inductive Fetch where
   | decoded (href : String) (res : Except String Plan) (webSvg : Option ByteArray)
       (canvasSize : Option (Dim.Sp × Dim.Sp)) (source : Option ByteArray)
@@ -2258,9 +1814,7 @@ public inductive Fetch where
   | unreadable (err : String)
   | refused (why : Diag)
 
-/-- One source's decision: its store entry, and the diagnostic naming the
-gap when there is one. Every arm that leaves `info := none` also returns
-a diagnostic whose subject is the source — `fulfilOne_named`. -/
+/-- One source's decision: its store entry, and the diagnostic naming the gap when there is one. -/
 public def fulfilOne (req : Request) : Fetch → Loaded × Option Diag
   | .decoded href (.ok info) webSvg canvasSize source companion =>
     ({ toRequest := req, href, info := some info, webSvg, canvasSize, source, companion }, none)
@@ -2277,8 +1831,7 @@ private def fulfilList (entries : Array Loaded) (diags : Array Diag) :
     fulfilList (entries.push (fulfilOne src f).1)
       (match (fulfilOne src f).2 with | some d => diags.push d | none => diags) rest
 
-/-- The store and the diagnostics one run's reads decide, in the order the
-document requested them (`Ir.imageRequests`, the driver's loop). -/
+/-- The store and diagnostics one run's reads decide, in request order. -/
 public def fulfilRequests (fetched : Array (Request × Fetch)) : Store × Array Diag :=
   fulfilList #[] #[] fetched.toList
 
@@ -2286,8 +1839,6 @@ public def fulfilRequests (fetched : Array (Request × Fetch)) : Store × Array 
 public def fulfil (fetched : Array (String × Fetch)) : Store × Array Diag :=
   fulfilRequests (fetched.map fun (src, f) => ({ src }, f))
 
-/-- A gap is named: whenever the decision leaves no payload, it also returns
-a diagnostic whose subject is the source. -/
 public theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f).1.info = none) :
     ∃ d, (fulfilOne req f).2 = some d ∧ d.subject = some req.src := by
   cases f with
@@ -2299,8 +1850,6 @@ public theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f
   | unreadable err => exact ⟨_, rfl, by simp only [imageUnreadable, Diag.of_subject]⟩
   | refused why => exact ⟨_, rfl, rfl⟩
 
-/-- **A decode that failed is a named gap**: no payload, and a diagnostic
-whose subject is the source. -/
 public theorem fulfilOne_error_named (req : Request) (href e : String)
     (webSvg : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp))
     (source companion : Option ByteArray) :
@@ -2311,7 +1860,6 @@ public theorem fulfilOne_error_named (req : Request) (href e : String)
     simp [fulfilOne]
   exact ⟨hi, fulfilOne_named req _ hi⟩
 
-/-- Every entry the decision writes is the fetched source's, in order. -/
 public theorem fulfilOne_request (req : Request) (f : Fetch) :
     (fulfilOne req f).1.toRequest = req := by
   cases f with
@@ -2321,13 +1869,6 @@ public theorem fulfilOne_request (req : Request) (f : Fetch) :
 public theorem fulfilOne_src (req : Request) (f : Fetch) : (fulfilOne req f).1.src = req.src :=
   congrArg Request.src (fulfilOne_request req f)
 
-/-- **A decoded source's bytes reach its store entry unchanged.** When the
-driver decodes a source, the entry the store carries holds exactly the
-bytes `fetchImage` read — its `source` and animation `companion` — so the
-browser-face conversion converts those bytes and never rereads the file.
-Stated on the `.ok` arm, the only one that loads a plan and so the only one
-a browser face is planned for; a failed decode carries no bytes and needs
-none. -/
 public theorem fulfilOne_bytes (req : Request) (href : String) (info : Plan)
     (webSvg source companion : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp)) :
     (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.source = source ∧
@@ -2359,10 +1900,6 @@ private theorem fulfilList_named (entries : Array Loaded) (diags : Array Diag)
       rw [hd]
       simp
 
-/-- **Every gap in the store is named.** An entry with no payload — the
-placeholder box every consumer places — has a diagnostic in the same
-run's output whose subject is its source. The image half of the
-resolution gate (`pending_named`). -/
 public theorem fulfilRequests_named (fetched : Array (Request × Fetch)) :
     ∀ en ∈ (fulfilRequests fetched).1.entries, en.info = none →
       ∃ d ∈ (fulfilRequests fetched).2, d.subject = some en.src :=
@@ -2386,9 +1923,6 @@ private theorem fulfilList_covers (entries : Array Loaded) (diags : Array Diag) 
     rw [ih]
     simp [Array.toList_map, Array.toList_push, fulfilOne_request]
 
-/-- **The store covers the request.** The entries are the fetched sources,
-one each, in order: the driver fetches `Ir.imageRequests doc`, so every source
-the document names has an entry to read. -/
 public theorem fulfilRequests_covers (fetched : Array (Request × Fetch)) :
     (fulfilRequests fetched).1.entries.map (·.toRequest) = fetched.map (·.1) := by
   rw [← Array.toList_inj, fulfilRequests, fulfilList_covers]
@@ -2400,20 +1934,7 @@ public theorem fulfil_covers (fetched : Array (String × Fetch)) :
     (fulfilRequests_covers (fetched.map fun (src, f) => ({ src }, f)))
   simpa [fulfil, Array.map_map, Function.comp_def] using h
 
-/-! ## Sizing
-
-The request a document states (`width = 0.8\textwidth`, `height = 3cm`,
-`scale = 0.5`, `keepaspectratio`) resolves against the intrinsic physical
-size. The semantics are graphicx's: one declared dimension scales the other
-to the intrinsic ratio; both declared set the box exactly, unless
-`keepaspectratio` fits the image inside them; neither takes the intrinsic
-size, times any `scale`. The theorems after the function are the contract:
-declared size wins to the sp, and every derived dimension holds the
-intrinsic ratio to within one sp of rounding. -/
-
-/-- A requested dimension as the shared typed affine algebra. Local measure
-names survive only as `Measure` constructors until the layout context is
-known. -/
+/-- A requested dimension in the shared affine algebra over local measures. -/
 public structure Len where
   value : Affine Measure := .lit {}
   deriving Repr, BEq, Inhabited
@@ -2425,14 +1946,11 @@ public structure Len where
 @[expose] public def Len.frac (measure : Measure) (permille : Int) : Len :=
   ⟨Affine.scaleQ permille 1000 (.ref measure)⟩
 
-/-- Resolve with the local horizontal measure and text height supplied by
-layout. Every horizontal source name denotes the containing box here, as a
-minipage initializes them. -/
+/-- Resolves against the local horizontal measure and text height layout supplies. -/
 @[expose] public def Len.resolve (l : Len) (textW textH : Sp) : Sp :=
   l.value.resolveWidth (MeasureValues.horizontal textW textH)
 
-/-- The sizing request from the source, unresolved. `scaleNum/scaleDen`
-carry `scale = 0.6` exactly; 1/1 is unscaled. -/
+/-- The sizing request from the source, unresolved; `scaleNum/scaleDen` carry the scale exactly. -/
 public structure SizeSpec where
   width : Option Len := none
   height : Option Len := none
@@ -2441,8 +1959,7 @@ public structure SizeSpec where
   keepAspect : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- An include's local sizing plus the asset selection shared by both
-backends. An animation's selected page is its static PDF poster. -/
+/-- An include's local sizing and the asset selection both backends share. -/
 public structure Spec extends SizeSpec where
   page : PdfRead.PageSelection := .first
   animated : Bool := false
@@ -2451,7 +1968,7 @@ public structure Spec extends SizeSpec where
 @[expose] public def Spec.request (spec : Spec) (src : String) : Request :=
   { src, page := spec.page, animated := spec.animated }
 
-/-- The placed box, in sp. `iW`/`iH` are the intrinsic physical size. -/
+/-- The placed box in sp, from the request and the intrinsic size `iW` × `iH`. -/
 @[expose] public def resolveSize (spec : SizeSpec) (iW iH : Sp) (textW textH : Sp) : Sp × Sp :=
   match spec.width, spec.height with
   | none, none =>
@@ -2470,8 +1987,6 @@ public structure Spec extends SizeSpec where
     else
       (w, h)
 
-/-- Division against a positive divisor loses less than one unit: the fact
-every aspect statement below reduces to. -/
 private theorem ediv_within_one (a d : Int) (hd : 0 < d) :
     a / d * d ≤ a ∧ a < (a / d + 1) * d := by
   have h : a % d + d * (a / d) = a :=
@@ -2491,21 +2006,15 @@ private theorem ediv_within_one (a d : Int) (hd : 0 < d) :
       _ < d + d * (a / d) := Int.add_lt_add_right h1 _
       _ = d * (a / d) + d := Int.add_comm _ _
 
-/-- Declared size wins: with both dimensions given and no `keepaspectratio`,
-the box is exactly the declared size. -/
 public theorem resolveSize_both_exact (w h : Len) (n : Int) (d : Nat) (iW iH textW textH : Sp) :
     resolveSize { width := some w, height := some h, scaleNum := n, scaleDen := d }
       iW iH textW textH = (w.resolve textW textH, h.resolve textW textH) := by
   simp [resolveSize]
 
-/-- With nothing declared the box is the intrinsic physical size. -/
 public theorem resolveSize_intrinsic (ka : Bool) (iW iH textW textH : Sp) :
     resolveSize { keepAspect := ka } iW iH textW textH = (iW, iH) := by
   simp [resolveSize]
 
-/-- With `width` alone, the width is exact and the height holds the
-intrinsic ratio to within one sp: `out.2 / out.1 = iH / iW` up to the
-division's unit of rounding, stated multiplicatively so it is exact. -/
 public theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka : Bool)
     (iW iH textW textH : Sp) (hW : 0 < iW) :
     (resolveSize { width := some w, scaleNum := n, scaleDen := d, keepAspect := ka }
@@ -2518,7 +2027,6 @@ public theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka 
   have h := ediv_within_one (w.resolve textW textH * iH) iW hW
   exact ⟨rfl, h.1, h.2⟩
 
-/-- The mirror statement for `height` alone. -/
 public theorem resolveSize_height_keeps_aspect (h : Len) (n : Int) (d : Nat) (ka : Bool)
     (iW iH textW textH : Sp) (hH : 0 < iH) :
     (resolveSize { height := some h, scaleNum := n, scaleDen := d, keepAspect := ka }
@@ -2531,9 +2039,6 @@ public theorem resolveSize_height_keeps_aspect (h : Len) (n : Int) (d : Nat) (ka
   have hh := ediv_within_one (h.resolve textW textH * iW) iH hH
   exact ⟨rfl, hh.1, hh.2⟩
 
-/-- With both given and `keepaspectratio`, the box fits inside the declared
-rectangle: the binding dimension is exact and the other never exceeds its
-declaration. -/
 public theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Sp)
     (hW : 0 < iW) (hH : 0 < iH) :
     (resolveSize { width := some w, height := some h, keepAspect := true }
@@ -2548,12 +2053,9 @@ public theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Sp)
   rw [hred]
   split
   · next hc =>
-    -- Width binds: (w·iH/iW)·iW ≤ w·iH ≤ h·iW, and dividing out the
-    -- positive iW keeps the order.
     have h1 := (ediv_within_one (w.resolve textW textH * iH) iW hW).1
     exact ⟨Int.le_refl _, Int.le_of_mul_le_mul_right (Int.le_trans h1 hc) hW⟩
   · next hc =>
-    -- Height binds: (h·iW/iH)·iH ≤ h·iW < w·iH, same argument against iH.
     have h1 := (ediv_within_one (h.resolve textW textH * iW) iH hH).1
     have hlt : h.resolve textW textH * iW < w.resolve textW textH * iH :=
       Int.not_le.mp hc

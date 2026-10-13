@@ -21,8 +21,7 @@ public def distExtra : Array Nat :=
   #[0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
     11, 11, 12, 12, 13, 13]
 
-/-- Largest length code whose base is ≤ `len` — code 285 alone covers 258
-(RFC 1951 §3.2.5's table). -/
+/-- The largest length code whose base is at most `len` (RFC 1951 §3.2.5). -/
 def lenSymOf (len : Nat) : Nat := Id.run do
   let mut sym := 0
   for k in [0:lenBase.size] do
@@ -41,16 +40,13 @@ public def lenSymTab : Array Nat := (Array.range 259).map lenSymOf
 /-- `dist → distance code` for distances ≤ 256. -/
 def distSymTab1 : Array Nat := (Array.range 257).map distSymOf
 
-/-- Distances past 256 bucket by `(d-1) >>> 7`: every base past 256 is
-≡ 1 (mod 128), so a bucket never straddles two codes. -/
+/-- Distance codes past 256 by bucket `(d-1) >>> 7`; every base past 256 is ≡ 1 (mod 128). -/
 def distSymTab2 : Array Nat := (Array.range 256).map fun k => distSymOf (k * 128 + 1)
 
-/-- One LZ77 token: a literal byte, or bit 31 set with `(len-3) <<< 15`
-and `dist-1` packed beside it. -/
+/-- One LZ77 token: a literal byte, or bit 31 set with `(len-3) <<< 15` and `dist-1` packed beside it. -/
 public def matchToken (len dist : Nat) : UInt32 :=
   (0x80000000 : UInt32) ||| ((len - 3).toUInt32 <<< 15) ||| (dist - 1).toUInt32
 
-/-- Match payload and tag occupy disjoint bits throughout the RFC range. -/
 theorem matchToken_toNat (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
     (hd : 1 ≤ dist ∧ dist ≤ 32768) :
     (matchToken len dist).toNat = 2147483648 + (len - 3) * 32768 + (dist - 1) := by
@@ -73,7 +69,6 @@ theorem matchToken_toNat (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
   rw [Nat.or_two_pow_eq_add_of_lt hlow31]
   simp only [Nat.reducePow, Nat.add_assoc, Nat.add_comm]
 
-/-- The actual scalar token reader recovers both fields without truncation. -/
 theorem matchToken_fields_exact (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
     (hd : 1 ≤ dist ∧ dist ≤ 32768) :
     (((matchToken len dist >>> 15) &&& 255).toNat + 3 = len) ∧
@@ -90,11 +85,7 @@ theorem matchToken_fields_exact (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258
   omega
 
 
-/-- A match token read back: its length, its distance, and the distance
-code that distance selects — the inverse of `matchToken`'s packing, spelled
-once for the two loops that read every token (frequencies, then bits). The
-bit work stays in `UInt32`: a `Nat` shift is an out-of-line bignum call
-with no scalar fast path, which is `Bw`'s own lesson one loop out. -/
+/-- A match token's length, distance and distance code, the inverse of `matchToken`. -/
 public def matchOf (t : UInt32) : Nat × Nat × Nat :=
   let distBits := t &&& 32767
   let dist := distBits.toNat + 1

@@ -4,40 +4,28 @@ public import LeanTex.Core.PdfObj
 import LeanTex.Core.PdfRead
 import LeanTex.Core.Flate
 
-/-!
-# Stream filters
-
-The decoding filters of ISO 32000-2 §7.4 a figure's streams may name,
-chained in the order written: ASCIIHexDecode, ASCII85Decode, LZWDecode and
-FlateDecode with their TIFF and PNG predictors, RunLengthDecode. DCTDecode
-is left encoded — a JPEG a browser shows as it is — and JBIG2Decode,
-JPXDecode, CCITTFaxDecode and Crypt are refused by name, each a feature
-the importer names as a loss. Total over arbitrary bytes, every output
-capped at `PdfRead.maxDecoded`.
--/
+/-! The stream filters of ISO 32000-2 §7.4 a figure's streams may name, chained in order, every
+output capped at `PdfRead.maxDecoded`. -/
 
 namespace LeanTex.Core.PdfFilters
 
 open LeanTex.Core.PdfRead (Obj)
 
-/-- What a filter chain leaves: decoded bytes, a JPEG whose DCT decoding is
-the viewer's, or a filter this reader does not decode. -/
+/-- What a filter chain leaves: decoded bytes, a JPEG for the viewer to decode, or an undecoded filter. -/
 public inductive Decoded where
   | bytes (b : ByteArray)
   | dct (jpeg : ByteArray)
   | refused (feature : String)
   deriving Inhabited
 
-/-- A filter's full name, its inline-image abbreviation read (§8.9.7,
-Table 92). -/
+/-- A filter's full name, its inline-image abbreviation read (§8.9.7, Table 92). -/
 public def filterName (n : String) : String :=
   if n == "AHx" then "ASCIIHexDecode" else if n == "A85" then "ASCII85Decode"
   else if n == "LZW" then "LZWDecode" else if n == "Fl" then "FlateDecode"
   else if n == "RL" then "RunLengthDecode" else if n == "CCF" then "CCITTFaxDecode"
   else if n == "DCT" then "DCTDecode" else n
 
-/-- ASCIIHexDecode (§7.4.2): hexadecimal digit pairs up to `>`, white space
-ignored, an odd final digit followed by 0. -/
+/-- ASCIIHexDecode (§7.4.2): digit pairs up to `>`, white space ignored, an odd final digit followed by 0. -/
 public def asciiHex (b : ByteArray) : ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut hi : Option Nat := none
@@ -55,8 +43,7 @@ public def asciiHex (b : ByteArray) : ByteArray := Id.run do
   if let some h := hi then out := out.push (UInt8.ofNat (h * 16))
   return out
 
-/-- ASCII85Decode (§7.4.3): groups of five base-85 digits to four bytes,
-`z` for four zeros, a short final group padded with `u`, up to `~>`. -/
+/-- ASCII85Decode (§7.4.3): five base-85 digits to four bytes, `z` for four zeros, up to `~>`. -/
 public def ascii85 (b : ByteArray) : Except String ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut group : Array Nat := #[]
@@ -84,8 +71,7 @@ public def ascii85 (b : ByteArray) : Except String ByteArray := Id.run do
   if group.size > 1 then out := flush out group
   return .ok out
 
-/-- RunLengthDecode (§7.4.5): a length byte copies the next `n + 1` bytes,
-or repeats the next one `257 − n` times; 128 ends the data. -/
+/-- RunLengthDecode (§7.4.5): a length byte copies `n + 1` bytes or repeats one `257 − n` times; 128 ends. -/
 public def runLength (b : ByteArray) (cap : Nat) : Except String ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut i := 0
@@ -103,9 +89,7 @@ public def runLength (b : ByteArray) (cap : Nat) : Except String ByteArray := Id
     if out.size > cap then return .error "a run-length stream decodes past the size limit"
   return .ok out
 
-/-- LZWDecode (§7.4.4): variable-length codes from 9 to 12 bits, 256 the
-clear-table code and 257 the end of data; `early` codes switch width one
-code early, as the parameter's default says. -/
+/-- LZWDecode (§7.4.4): codes of 9 to 12 bits, 256 clearing the table and 257 ending; `early` switches width early. -/
 public def lzw (b : ByteArray) (early : Bool) (cap : Nat) : Except String ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut table : Array ByteArray := (Array.range 256).map fun c => ByteArray.empty.push (UInt8.ofNat c)
@@ -147,8 +131,7 @@ public def lzw (b : ByteArray) (early : Bool) (cap : Nat) : Except String ByteAr
       if out.size > cap then return .error "an LZW stream decodes past the size limit"
   return .ok out
 
-/-- The TIFF predictor (§7.4.4.3, Predictor 2): each sample after the first
-of its row adds the one before it, for 8-bit components. -/
+/-- The TIFF predictor (§7.4.4.3, Predictor 2) for 8-bit components. -/
 public def tiffUnpredict (data : ByteArray) (columns colors bpc : Nat) : Except String ByteArray := do
   if bpc != 8 then throw s!"the TIFF predictor at {bpc} bits per component is not supported"
   let row := max 1 (columns * colors)
@@ -160,11 +143,9 @@ public def tiffUnpredict (data : ByteArray) (columns colors bpc : Nat) : Except 
       out := out.set! k (UInt8.ofNat v)
   return out
 
-/-- A filter's parameter, an integer with its default. -/
 private def parm (p : Option Obj) (k : String) (d : Int) : Int :=
   ((p.bind (·.get? k)).bind Obj.int?).getD d
 
-/-- The predictor stage of LZW and Flate (§7.4.4.4). -/
 private def unpredict (p : Option Obj) (data : ByteArray) : Except String ByteArray := do
   let pred := parm p "Predictor" 1
   if pred ≤ 1 then return data
@@ -179,7 +160,6 @@ private def unpredict (p : Option Obj) (data : ByteArray) : Except String ByteAr
     return ← Flate.pngUnfilter data rows rowBytes bpp
   throw s!"stream predictor {pred} is not supported"
 
-/-- One filter applied. -/
 private def applyOne (name : String) (p : Option Obj) (data : ByteArray) : Except String Decoded := do
   let cap := PdfRead.maxDecoded
   match filterName name with
@@ -197,10 +177,8 @@ private def applyOne (name : String) (p : Option Obj) (data : ByteArray) : Excep
   | "Crypt" => return .refused "crypt"
   | other => return .refused s!"filter-{other}"
 
-/-- **A stream's data through its filter chain** (§7.4): the filters named
-by `Filter` (or `F`), each with its `DecodeParms` (or `DP`) entry, in
-order. A JPEG is handed on as it stands after the filters before it; a
-filter after `DCTDecode` refuses. -/
+/-- A stream's data through its filter chain (§7.4), each filter with its parameters; a filter after
+`DCTDecode` is refused. -/
 public def decode (dict : Obj) (raw : ByteArray) : Except String Decoded := do
   let get (k abbr : String) : Option Obj := (dict.get? k).orElse fun _ => dict.get? abbr
   let names : Array String := match get "Filter" "F" with

@@ -2,40 +2,23 @@ module
 
 public import LeanTex.Core.PdfObj
 
-/-!
-# The content-stream tokenizer
-
-A content stream (ISO 32000-2 §7.8.2) is a sequence of operands and
-operators. An operand is a PDF object — a number, a string, a name, an
-array, a dictionary — so this tokenizer reads every operand with the
-object reader (`PdfRead.parseVal`), numbers and strings keeping their
-spelling, arrays and dictionaries whole; what is left is an operator, a
-run of regular characters (§7.2.2), or an inline image (§8.9.7): `BI`, its
-abbreviated dictionary, `ID`, the bytes, `EI`.
-
-Total over arbitrary bytes: the loop's bound is the byte count, every step
-consumes at least one byte, and a byte that starts no token — a stray `)`,
-`>`, `]`, a brace — is skipped. The writer's spelling reads back
-(`scan_render_exact`), and the artifact tier and the figure importer read
-every stream through this one reading.
--/
+/-! The content-stream tokenizer (ISO 32000-2 §7.8.2), total over arbitrary bytes: operands through
+the object reader, operators, and inline images. -/
 
 namespace LeanTex.Core.PdfContentLex
 
 open LeanTex.Core.PdfRead (Obj)
 open LeanTex.Core.PdfLex
 
-/-- One token of a content stream: an operand, an operator, or an inline
-image — its dictionary in the order written (abbreviations kept) and the
-bytes between `ID` and `EI`, verbatim. -/
+/-- One token of a content stream: an operand, an operator, or an inline image with its dictionary
+and verbatim data. -/
 public inductive Tok where
   | val (o : Obj)
   | op (name : String)
   | inline (dict : Array (String × Obj)) (data : ByteArray)
   deriving Inhabited
 
-/-- A regular character (§7.2.2): neither white space nor a delimiter, and
-inside the file. Operators and keywords are runs of them. -/
+/-- A regular character (§7.2.2) inside the file: neither white space nor a delimiter. -/
 @[expose] public def regular (c : Nat) : Bool := c != 256 && !isWs c && !isDelim c
 
 /-- Where the run of regular characters that starts at `i` ends. -/
@@ -47,14 +30,11 @@ public def runEnd (b : ByteArray) (i : Nat) : Nat :=
 @[expose] public def asciiAt (b : ByteArray) (i j : Nat) : String :=
   String.ofList ((List.range (j - i)).map fun k => Char.ofNat (at? b (i + k)))
 
-/-- A number token's object (§7.3.3): a real where it holds a point, an
-integer where it reads as one, nothing else. -/
+/-- A number token's object (§7.3.3): a real where it holds a point, else an integer. -/
 @[expose] public def numberObj (raw : String) : Option Obj :=
   if raw.contains '.' then some (.real raw) else raw.toInt?.map .int
 
-/-- The component count of an inline image's colour space, spelled out or
-abbreviated (§8.9.7, Table 93); `none` for a named resource, whose count
-the stream cannot tell. -/
+/-- The component count of an inline image's colour space (§8.9.7, Table 93); `none` for a named resource. -/
 public def inlineComponents : Obj → Option Nat
   | .name n =>
     if n == "G" || n == "DeviceGray" || n == "I" || n == "Indexed" then some 1
@@ -71,9 +51,7 @@ public def inlineComponents : Obj → Option Nat
 public def inlineGet (d : Array (String × Obj)) (k abbr : String) : Option Obj :=
   ((d.find? (·.1 == abbr)).map (·.2)).orElse fun _ => (d.find? (·.1 == k)).map (·.2)
 
-/-- How many bytes an unfiltered inline image holds, when its dictionary
-says (§8.9.7): rows of `⌈W·BPC·components / 8⌉` bytes, `H` of them. An image
-mask is one bit per sample. -/
+/-- How many bytes an unfiltered inline image holds, when its dictionary says (§8.9.7). -/
 public def inlineLength (d : Array (String × Obj)) : Option Nat := do
   if (inlineGet d "Filter" "F").isSome then none
   let w ← (inlineGet d "Width" "W").bind Obj.int?
@@ -96,10 +74,8 @@ public def eiFrom (b : ByteArray) (i : Nat) : Option Nat :=
     pure (if j ≥ b.size then ForInStep.done (j, none)
       else if eiAt b j then .done (j, some j) else .yield (j + 1, none))) : Id (Nat × Option Nat)).run.2
 
-/-- An inline image's data from `start`: its stated length when it has
-one and `EI` follows it, else up to the first `EI` marker (a filtered
-image's bytes say nothing of their length until decoded). The data and
-the position after `EI`; `none` when no marker ends it. -/
+/-- An inline image's data from `start` and the position after `EI`: its stated length when `EI`
+follows it, else up to the first `EI`. -/
 public def inlineData (b : ByteArray) (d : Array (String × Obj)) (start : Nat) :
     Option (ByteArray × Nat) :=
   let byLength : Option (ByteArray × Nat) := do
@@ -114,9 +90,7 @@ public def inlineData (b : ByteArray) (d : Array (String × Obj)) (start : Nat) 
     let e ← eiFrom b start
     return (b.extract start e, e + 3)
 
-/-- An inline image's dictionary, read from after `BI` up to `ID`: key and
-value pairs, each read by the object reader. The entries and the position
-just past `ID`; `none` when it does not reach one. -/
+/-- An inline image's dictionary from after `BI`, and the position just past `ID`. -/
 public def inlineDict (b : ByteArray) (i : Nat) : Option (Array (String × Obj) × Nat) :=
   let r := (forIn [0:b.size + 1] (i, (#[] : Array (String × Obj)), (none : Option Nat))
     (fun _ (j, es, _) =>
@@ -140,15 +114,10 @@ public structure State where
   out : Array Tok
   deriving Inhabited
 
-/-- Whether an operand the object reader reads starts at a byte: a string,
-a hexadecimal string or dictionary, an array, a name. -/
+/-- Whether a byte starts an operand the object reader reads: a string, dictionary, array or name. -/
 @[expose] public def objStart (c : Nat) : Bool := c == 40 || c == 60 || c == 91 || c == 47
 
-/-- One step: skip white space and comments, then read one token — a
-number by itself (§7.8.2: a content stream's operands are direct objects,
-never references, so `1 0 R` is three tokens to it), an operand through the
-object reader, a keyword-valued operand, an operator, an inline image — or
-skip one byte that starts none. -/
+/-- One step: white space and comments skipped, then one token read, or one byte that starts none skipped. -/
 public def step (b : ByteArray) (s : State) : ForInStep State :=
   let i := skipWs b s.pos
   if b.size ≤ i then .done { s with pos := i } else
@@ -183,16 +152,12 @@ public def step (b : ByteArray) (s : State) : ForInStep State :=
     else .yield { pos := max j (i + 1), out := s.out.push (.op name) }
   else .yield { s with pos := i + 1 }
 
-/-- **A content stream's tokens**, in order. -/
+/-- A content stream's tokens, in order. -/
 public def scan (b : ByteArray) : Array Tok :=
   ((forIn [0:b.size + 2] ({ pos := 0, out := #[] } : State)
     (fun _ s => pure (step b s)) : Id State).run).out
 
-/-! ## Spelling tokens -/
-
-/-- A token's bytes onto `acc`: an operand as the object writer spells it,
-an operator as its characters, an inline image as `BI`, its entries, `ID`,
-one space, the data and `EI` on a line of its own. -/
+/-- A token's bytes onto `acc`. -/
 public def Tok.renderInto (acc : ByteArray) : Tok → ByteArray
   | .val o => acc ++ o.render
   | .op n => acc ++ n.toUTF8
@@ -201,20 +166,11 @@ public def Tok.renderInto (acc : ByteArray) : Tok → ByteArray
       (a ++ (Obj.name k).render).push 32 ++ v.render |>.push 32) (acc ++ "BI ".toUTF8)
     (head ++ "ID ".toUTF8 ++ data).push 10 ++ "EI".toUTF8
 
-/-- Tokens spelled one after another, a line feed after each: what `scan`
-reads back, for operands and operators, whole (`scan_render_exact`). An
-inline image's data is found again by its stated length or the `EI` that
-ends it, which the theorem does not cover: the suite's lexer cases hold
-it (`pdfContentLexChecks`). -/
+/-- Tokens spelled one after another, a line feed after each. -/
 public def render (toks : Array Tok) : ByteArray :=
   toks.foldl (fun acc t => (t.renderInto acc).push 10) ByteArray.empty
 
-/-! ## Reading operands -/
-
-/-- A number operand's parts (§7.3.3): its sign, its digits as one
-natural `n`, and the power of ten `scale` they are over — an integer's
-scale is 1, and a real's spelling is read exactly (an optional sign,
-digits, at most one point). `none` for anything else. -/
+/-- A number operand's sign, digits as one natural, and the power of ten they stand over (§7.3.3). -/
 public def numParts? (o : Obj) : Option (Bool × Nat × Nat) :=
   match o with
   | .int n => some (decide (n < 0), n.natAbs, 1)
@@ -226,9 +182,7 @@ public def numParts? (o : Obj) : Option (Bool × Nat × Nat) :=
     (digitsOf s 0 1 false false).map fun (n, scale) => (neg, n, scale)
   | _ => none
 where
-  /-- A real's digits read onto `n`, the point once, `scale` the power of
-  ten the digits after it stand over; `none` past any other character, or
-  with no digit at all. -/
+  /-- A real's digits and point read onto `n` and `scale`; `none` past any other character or with no digit. -/
   digitsOf : List Char → Nat → Nat → Bool → Bool → Option (Nat × Nat)
     | [], n, scale, _, seen => if seen then some (n, scale) else none
     | c :: rest, n, scale, dot, seen =>
@@ -242,17 +196,13 @@ public def numRat? (o : Obj) : Option Rat :=
     let v : Rat := mkRat n scale
     if neg then -v else v
 
-/-- `numRat?` is its parts' rational. -/
 public theorem numRat?_parts (o : Obj) : numRat? o = (numParts? o).map fun (neg, n, scale) =>
     let v : Rat := mkRat n scale
     if neg then -v else v := by
   unfold numRat?
   rfl
 
-/-- A string operand's bytes, its escapes resolved (§7.3.4): a literal's
-backslash sequences — `\n \r \t \b \f \( \) \\`, up to three octal digits,
-a line continuation — and a hexadecimal string's digit pairs, an odd last
-digit followed by 0. -/
+/-- A string operand's bytes with its escapes resolved (§7.3.4). -/
 public def strBytes? (o : Obj) : Option ByteArray :=
   match o with
   | .str raw =>

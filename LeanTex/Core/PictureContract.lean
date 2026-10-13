@@ -10,9 +10,7 @@ namespace LeanTex.Core.Elab
 
 open LeanTex.Core Parse Ir
 
-/-- An unread setting from the actual prepared configuration, with all
-earlier definitions in force. The prefix is input provenance, not a list
-of reporting events. Empty, repeated and shadowed definitions are allowed. -/
+/-- An unread setting key of the prepared configuration, with every earlier definition in force. -/
 @[expose] public def UnreadPictureSetting (sets : Array (Span × Array Raw)) (key : String) : Prop :=
   ∃ before setting after,
     sets.toList = before ++ setting :: after ∧
@@ -23,8 +21,6 @@ of reporting events. Empty, repeated and shadowed definitions are allowed. -/
 @[expose] public def PictureKeyNamed (ds : Array Diag) (key : String) : Prop :=
   ∃ d ∈ ds, d.kind = .W0334 ∧ d.subject = some ("picture:set:" ++ key)
 
-/-- Reading the actual loop as a fold is a proof equation; the production
-operation remains the loop over the setting's unread keys. -/
 private theorem pictureSettingState_run_exact (ctx : Ctx)
     (acc : List (String × Array Picture.Tok) × ESt) (setting : Span × Array Raw) :
     pictureSettingState ctx acc setting =
@@ -38,8 +34,6 @@ private theorem reportPictureKeys_run_exact (ctx : Ctx) (sets : Array (Span × A
     reportPictureKeys ctx sets st = (sets.foldl (pictureSettingState ctx) ([], st)).2 := by
   simp [reportPictureKeys, Array.forIn_pure_yield_eq_foldl]
 
-/-- The reporting prefix interprets exactly the style table the drawing
-starts from; it does not approximate or reset earlier definitions. -/
 private theorem pictureSettingStyles_drawer_agree (before : List (Span × Array Raw)) :
     before.foldl pictureSettingStyles [] =
       Picture.documentStyles (before.toArray.map Picture.ofSetting) := by
@@ -101,8 +95,6 @@ private theorem settingFold_preserves (ctx : Ctx) (sets : List (Span × Array Ra
   | nil => exact h
   | cons setting rest ih => exact ih _ (settingState_preserves ctx acc setting key h)
 
-/-- Progress-indexed state equation: after this exact input prefix, the
-reporter holds the interpretation of that prefix and no later definition. -/
 private theorem settingFold_styles (ctx : Ctx) (sets : List (Span × Array Raw))
     (acc : List (String × Array Picture.Tok) × ESt) :
     (sets.foldl (pictureSettingState ctx) acc).1 =
@@ -112,9 +104,6 @@ private theorem settingFold_styles (ctx : Ctx) (sets : List (Span × Array Raw))
   | cons setting rest ih =>
     simp only [List.foldl_cons, ih, pictureSettingState_run_exact]
 
-/-- Every unread key from every prepared setting is named, with the same
-earlier style environment the renderer uses. Repetition only demotes a
-site; it never removes the site's structured identity. -/
 public theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Span × Array Raw))
     (st : ESt) (key : String) (h : UnreadPictureSetting sets key) :
     PictureKeyNamed (reportPictureKeys ctx sets st).diags key := by
@@ -144,8 +133,6 @@ private theorem named_tally (ds : Array Diag) (key : String)
   · simpa only [he] using hk'.trans (he ▸ hk)
   · simpa only [he] using hs'.trans (he ▸ hs)
 
-/-- The public prepared-frontend tail preserves the setting's code and
-subject through attribution, document judges and site tallying. -/
 public theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) (key : String)
@@ -161,8 +148,6 @@ public theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
   apply accountRecovered_mem
   simp only [Array.mem_append, hd, or_true, true_or]
 
-/-- The actual prepared run: an engine picture in the returned document
-forces accounting for every unread key of its prepared configuration. -/
 public theorem runPrepared_pictureKeys_named (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String)
     (key : String)
@@ -174,13 +159,9 @@ public theorem runPrepared_pictureKeys_named (file : String) (p : Prepared)
   rw [heq] at hdrew ⊢
   exact completePrepared_pictureKeys_named file p earlier doc table report st key hdrew h
 
--- The equations above are the interface across the body interpreter.
--- Finalization must not unfold that recursive interpreter while reducing
--- the small withdrawal selection around it.
+-- Finalization must not unfold the recursive interpreter: the equations above are its interface.
 attribute [local irreducible] runPrepared prepare prepareExecuted
 
-/-- Source erasure and the final reference judge preserve the diagnostic
-identity of the prepared run selected by boundary withdrawal. -/
 public theorem runPreparedFinal_pictureKeys_named (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (key : String)
     (hdrew : 0 < enginePictures (runPreparedFinal file p earlier metric).1.body)
@@ -204,10 +185,6 @@ public theorem runPreparedFinal_pictureKeys_named (file : String) (p : Prepared)
   rcases hchosen with ⟨d, hd, hk, hs⟩
   exact ⟨d, Array.mem_append.mpr (Or.inl hd), hk, hs⟩
 
-/-- The file-free frontend's complete picture-key guarantee. It quantifies
-over the configuration actually prepared for this run, including any
-number of earlier style definitions, rather than assuming the source
-census survives expansion unchanged. -/
 public theorem pictureKeys_named (file : String) (raws : Array Raw)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (key : String)
     (hdrew : 0 < enginePictures (runRaws file raws earlier metric).1.body)
@@ -218,8 +195,6 @@ public theorem pictureKeys_named (file : String) (raws : Array Raw)
     hdrew h with ⟨d, hd, hk, hs⟩
   exact Array.any_eq_true'.mpr ⟨d, hd, by simp only [hk, hs, BEq.rfl]; rfl⟩
 
-/-- The same guarantee for the production path whose inputs were fulfilled
-through `executeInputs`. Both public paths use the same prepared runner. -/
 public theorem runExecuted_pictureKeys_named (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (key : String)
     (hdrew : 0 < enginePictures (runExecuted file executed earlier metric).1.body)
@@ -230,14 +205,8 @@ public theorem runExecuted_pictureKeys_named (file : String) (executed : Compat.
 
 end LeanTex.Core.Elab
 
-/-! ## Facts over shipped constants
-
-Kernel decisions over constants the boundary and the shadings ship, kept in
-this leaf module off the import chain to the elaborator. -/
-
 namespace LeanTex.Core.Ir
 
-/-- A ten-point document's standalone opens as it always did. -/
 public theorem standaloneHead_ten_exact :
     standaloneHead (Dim.pt 10) = "\\documentclass{standalone}\n\\usepackage{tikz}\n" := by
   decide
@@ -246,13 +215,6 @@ end LeanTex.Core.Ir
 
 namespace LeanTex.Core.Picture
 
-/-- **A shading's stops are pgf's** (`_exact`): the axis shading's bottom
-colour up to a quarter of its run, its middle at the half, its top from
-three quarters; the radial's inner colour at the centre and its outer from
-half the radius out; the ball's five stops at 0, 9, 18, 25 and 50 of its
-50 bp — each offset the declared one to the nearest 65536th, each colour
-the declared one (tikz.code.tex, `\pgfdeclareverticalshading{axis}` and the
-two `\pgfdeclareradialshading`s). -/
 public theorem shade_stops_exact (s : ShadeSpec) :
     s.stops.map (·.offset.val) = (match s.kind with
       | .axis => #[0, 16384, 32768, 49152, 65536]

@@ -2,8 +2,6 @@ module
 
 namespace LeanTex.Core.Flate.Progress
 
-/-- A loop's partial-state invariant records its consumed index. An early
-return must already establish the final postcondition. -/
 theorem forIn_range'_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ → Prop)
     (f : Nat → σ → Id (ForInStep σ)) (lo count : Nat) (init : σ)
     (h0 : P lo init)
@@ -30,7 +28,6 @@ theorem forIn_range'_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ → Pro
         (fun s hp => hfinish s
           (by simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using hp))
 
-/-- Progress and early-return postconditions for the actual range loop. -/
 public theorem forIn_range_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ → Prop)
     (f : Nat → σ → Id (ForInStep σ)) (lo hi : Nat) (init : σ)
     (hle : lo ≤ hi) (h0 : P lo init)
@@ -50,8 +47,6 @@ public theorem forIn_range_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ �
     apply hfinish s
     simpa [Std.Legacy.Range.size, Nat.add_sub_cancel' hle] using hp
 
-/-- A value invariant records the consumed prefix, including when the values
-repeat. Early returns must already establish the final postcondition. -/
 theorem forIn_list_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ → Prop)
     (f : α → σ → Id (ForInStep σ)) (xs consumed : List α) (init : σ)
     (h0 : P consumed init)
@@ -85,7 +80,6 @@ theorem forIn_list_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ �
         apply hfinish s
         simpa only [List.append_assoc, List.singleton_append] using hs
 
-/-- The consumed-prefix invariant applies to the actual array loop. -/
 public theorem forIn_array_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ → Prop)
     (f : α → σ → Id (ForInStep σ)) (xs : Array α) (init : σ)
     (h0 : P [] init)

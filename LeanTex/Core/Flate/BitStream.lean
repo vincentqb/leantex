@@ -10,8 +10,6 @@ public def Bw.pushExtra (w : Bw) (value width : Nat) : Bw :=
 
 namespace BitStream
 
-/-- Shared array-writing loop. Specialization retains the scalar writer state
-for each concrete emitter; proofs read this loop through its append equation. -/
 @[specialize] public def write {α : Type} (emit : Bw → α → Bw) (entries : Array α)
     (initial : Bw) : Bw := Id.run do
   let mut w := initial

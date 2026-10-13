@@ -4,19 +4,7 @@ public import LeanTex.Core.GfxPdf
 public import LeanTex.Core.GfxSvg
 public import LeanTex.Core.GfxPicture
 
-/-!
-# The two artifacts paint one figure
-
-The statements that need both emitters. `backend_marks_agree` is the
-invariant whose absence let a picture's two artifacts differ — rectangle
-fills painted before every path in one, continuing segments broken into
-caps in the other, a zero width invisible, corners bevelled at SVG's miter
-limit: the marks the PDF says and the marks the SVG says are one reading,
-because each is the figure's (`GfxPdf.marks_projects`,
-`GfxSvg.marks_projects`). Labels are not ink, and their order among the ink
-is one statement of its own: both artifacts set a figure's labels where its
-nodes stand (`labelOrder_agree`, `picture_labelOrder_agree`).
--/
+/-! The statements that need both emitters: the two artifacts paint one figure and set its labels in one order. -/
 
 namespace LeanTex.Core.Gfx
 
@@ -32,8 +20,6 @@ private theorem expandList_append {L : Type} (done : Array (Array (Node L))) (bo
     simp only [List.cons_append, Node.expandList]
     rw [Node.expandList_acc, ih, Node.expandList_acc done bound (Node.expandOne done bound #[] n) rest,
       Array.append_assoc]
-
-/-! ## Taking labels out moves no mark -/
 
 mutual
 
@@ -61,14 +47,11 @@ private theorem dropLabelsList_append {L : Type} (a b : List (Node L)) :
     rw [Node.dropLabelsList_acc, ih, Node.dropLabelsList_acc (Node.dropLabelsOne #[] n) rest,
       Array.append_assoc]
 
-/-- A body with its labels taken out. -/
 private def dropBody {L : Type} (b : Array (Node L)) : Array (Node Empty) :=
   Node.dropLabelsList #[] b.toList
 
 mutual
 
-/-- Expanding a tree and taking its labels out commute, given bodies that
-already agree. -/
 private theorem expand_drop_one {L : Type} (done : Array (Array (Node L))) (bound : Nat) :
     ∀ n : Node L,
       Node.expandList (done.map dropBody) bound #[] (Node.dropLabelsOne #[] n).toList =
@@ -163,9 +146,6 @@ private theorem marks_drop_list {L : Type} (outlines : Array (Array Subpath)) :
 
 end
 
-/-- **Taking a figure's labels out moves no mark** (`_id`): a picture's ink
-on the page — its figure with the labels the page sets as lines — paints
-exactly what the whole figure paints. -/
 public theorem Figure.dropLabels_marks_id {L : Type} (fig : Figure L) :
     fig.dropLabels.marks = fig.marks := by
   unfold Figure.marks Figure.expanded
@@ -174,15 +154,6 @@ public theorem Figure.dropLabels_marks_id {L : Type} (fig : Figure L) :
   simp only [Figure.dropLabels] at h ⊢
   rw [h, marks_drop_list]
 
-/-- **The two artifacts paint one figure** (`_agree`): the PDF's operators
-read with PDF's meaning and the SVG's typed tree read with SVG's meaning
-are the same marks, whatever the figure, the placements and the resource
-naming — because each is the figure's (`GfxPdf.marks_projects`,
-`GfxSvg.marks_projects`). The invariant whose absence let a picture's
-rectangle fills paint first on one page and in order on the other, an
-edge's joins become caps in one, a zero width disappear and a corner bevel
-there: each of those is a pair of readings that differ. Ink only; labels
-are each backend's own text. -/
 public theorem backend_marks_agree {L : Type} (ix : GfxPdf.Request → Nat)
     (labelOps : GfxPdf.Frame → L → Array Pdf.ContentOp)
     (hl : ∀ fr l rs acc, GfxPdf.readList rs acc (labelOps fr l).toList = acc)
@@ -193,11 +164,6 @@ public theorem backend_marks_agree {L : Type} (ix : GfxPdf.Request → Nat)
   (GfxPdf.marks_projects ix labelOps hl pdfPlace fig).trans
     (GfxSvg.marks_projects labelEl rasters svgPlace fig).symm
 
-/-- **A picture's PDF ink and its SVG paint the same marks** (`_agree`): the
-page's ink (the picture keyed, `Layout.pictureInk`), its labels set as the
-text groups the page gives them, under any placement, and the HTML's typed
-tree of the lowered picture (`HtmlDoc.pictureTree`), read back as one list.
-A label's text group paints no mark of the figure's. -/
 public theorem picture_marks_agree (ix : GfxPdf.Request → Nat) (pdfPlace svgPlace : Iso)
     (tx : Nat × Nat → Option (Array Pdf.TextOp))
     (labelEl : GfxSvg.SFrame → LabelSpec → Html.Node) (id : Nat) (box : Box)
@@ -213,8 +179,6 @@ public theorem picture_marks_agree (ix : GfxPdf.Request → Nat) (pdfPlace svgPl
     | none => simp [GfxPdf.readList]
     | some t => simp [GfxPdf.readList, GfxPdf.readOne, GfxPdf.textGroup]
   rw [GfxPdf.marks_projects ix _ hl pdfPlace _, ofPictureKeyed_marks_exact, GfxSvg.marks_projects]
-
-/-! ## What a figure says survives a repaint and the print grid -/
 
 mutual
 
@@ -269,8 +233,6 @@ private theorem words_quantize_list {L : Type} (text : L → String) (ql : L →
     rw [words_quantize_one text ql hql n acc, words_quantize_list text ql hql rest]
 
 end
-
-/-! ## Expanding commutes with repainting and the print grid -/
 
 private def recolorBody {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L) (b : Array (Node L)) :
     Array (Node L) := Node.recolorList f fl #[] b.toList
@@ -423,25 +385,18 @@ private theorem bodies_quantize {L : Type} (ql : L → L) (fig : Figure L) :
     rw [Array.size_map, expand_quantize_list ql done done.size sym.toList]
     simp [quantizeBody, Array.map_push]
 
-/-- A repainted figure's expansion is its expansion repainted. -/
 private theorem expanded_recolor {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L) (fig : Figure L) :
     (fig.recolor f fl).expanded = Node.recolorList f fl #[] fig.expanded.toList := by
   unfold Figure.expanded
   rw [bodies_recolor, Array.size_map]
   exact expand_recolor_list f fl fig.bodies fig.bodies.size fig.nodes.toList
 
-/-- A quantized figure's expansion is its expansion quantized. -/
 private theorem expanded_quantize {L : Type} (ql : L → L) (fig : Figure L) :
     (fig.quantize ql).expanded = Node.quantizeList ql #[] fig.expanded.toList := by
   unfold Figure.expanded
   rw [bodies_quantize, Array.size_map]
   exact expand_quantize_list ql fig.bodies fig.bodies.size fig.nodes.toList
 
-/-- **What a figure says survives a repaint and the print grid** (`_text`):
-dimming a figure under an overlay cover and quantizing it to the grid both
-emitters print keep its words — a symbol's, read through each use, included
-— given label rewrites that keep each label's text: the census a picture's
-alternative text and the figure's text layer read. -/
 public theorem Figure.said_text {L : Type} (text : L → String) (f : Ir.Color → Ir.Color)
     (fl ql : L → L) (hfl : ∀ l, text (fl l) = text l) (hql : ∀ l, text (ql l) = text l) :
     Ir.Conserves (Figure.said text) (Figure.recolor f fl) ∧
@@ -451,8 +406,6 @@ public theorem Figure.said_text {L : Type} (text : L → String) (f : Ir.Color �
     rw [expanded_recolor, words_recolor_list text f fl hfl]
   · simp only [Figure.said]
     rw [expanded_quantize, words_quantize_list text ql hql]
-
-/-! ## The two artifacts set a figure's labels in one order -/
 
 private theorem flatMap_labelsBy_single {L α : Type} (g : L → α) (xs : Array (Step L)) :
     xs.flatMap (Step.labelsBy fun l => #[g l]) = xs.map (Step.mapLabel g) := by
@@ -473,19 +426,6 @@ private theorem mapLabel_comp {L α β : Type} (f : L → α) (g : α → β) (x
   intro s _
   cases s <;> rfl
 
-/-- **The two artifacts set a figure's labels in one order** (`_agree`):
-for a figure whose labels stand at its top level, the PDF's operators —
-each label its text group — and the SVG's typed tree — each label its
-content — read back with each format's meaning interleave the same labels
-with the same marks in the same order, whatever the placements: a label
-paints over the ink written before it and under the ink written after, on
-the page and on the web page alike, because each reading is the figure's
-steps (`GfxPdf.steps_projects`, `GfxSvg.steps_projects`). A label is read
-back through a key each artifact's spelling of it gives (`k₁`, `k₂`): the
-unit key compares the interleaving alone; a key that names the label
-compares which label stands where. The invariant whose absence let the PDF
-paint every picture label after all of its picture's ink while the HTML
-painted them in the order the source wrote them. -/
 public theorem labelOrder_agree {L K : Type} (ix : GfxPdf.Request → Nat)
     (tx : L → Array Pdf.TextOp) (labelEl : GfxSvg.SFrame → L → Html.Node)
     (rasters : Array GfxSvg.RasterRef) (pdfPlace svgPlace : Iso)
@@ -515,13 +455,6 @@ public theorem labelOrder_agree {L K : Type} (ix : GfxPdf.Request → Nat)
   | mark m => rfl
   | label l => simp [Step.mapLabel, hk l]
 
-/-- **A picture's labels paint in statement order in both artifacts**
-(`_agree`): the page's ink — the picture keyed (`ofPictureKeyed`), each
-label set as its line's text — and the HTML's picture tree, the lowered
-picture (`HtmlDoc.pictureTree` writes `GfxSvg.tree` of `ofPictureIn`), read
-back with each format's meaning interleave the picture's labels with its
-ink identically: in the order the picture's statements wrote them, in the
-PDF as in the HTML (`labelOrder_agree`, `ofPictureKeyed_steps_exact`). -/
 public theorem picture_labelOrder_agree (ix : GfxPdf.Request → Nat) (id : Nat) (box : Box)
     (pic : Ir.Pic.Picture) (tx : Nat × Nat → Array Pdf.TextOp)
     (labelEl : GfxSvg.SFrame → LabelSpec → Html.Node) (rasters : Array GfxSvg.RasterRef)

@@ -7,9 +7,7 @@ namespace LeanTex.Core.PdfRead
 
 open PdfLex
 
-/-! Recovery of the actual writer's `startxref` footer. The scan is the
-reader's backwards, bounded range loop. Its invariant tracks the first
-hit in scan order; the decimal parser reads the footer's own bytes. -/
+/-! Recovery of the writer's `startxref` footer. -/
 
 private def scanStep (b : ByteArray) (f : Nat → Nat) (k : Nat)
     (s : Option Nat) : Id (ForInStep (Option Nat)) :=
@@ -158,8 +156,7 @@ private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n <
     rw [he]
     exact no_s _ (List.getElem_mem hj)
 
-/-- Discover the last `startxref` in the PDF tail and read its byte offset.
-The 2048-byte search window is the reader's existing bounded policy. -/
+/-- The byte offset the last `startxref` in the file's final 2048 bytes names. -/
 public def readStartxref (b : ByteArray) : Except String Nat := do
   let some pos := findStartxref b
     | throw "malformed PDF: no startxref"
@@ -227,9 +224,6 @@ private theorem footer_number (pre : ByteArray) (n : Nat) :
   rw [hskip]
   exact parse_nat hn (Or.inr (Or.inl (by rw [hend]; rfl)))
 
-/-- Every 64-bit writer offset is recovered from its exact decimal footer,
-regardless of the preceding bytes. The numeric bound implies the whole
-footer fits in the reader's search window; it is not a parser premise. -/
 public theorem readStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 2^64) :
     readStartxref (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8) = .ok n := by
   simp only [readStartxref, findStartxref_footer_exact pre n hn, footer_number]

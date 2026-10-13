@@ -128,9 +128,6 @@ private theorem slice_neg_int (s : String.Slice) (n : Nat) (hs : s.copy = "-" ++
        exact (String.append_right_inj "-").mp heq.symm
      simp only [String.Slice.toInt?, he, slice_nat rest n hr, Option.map_some]
 
-/-- Decimal integer spellings round-trip for every magnitude and sign.
-The proof follows the standard library digit generator and scanner; it
-does not bound the integer or evaluate a sample. -/
 public theorem int_toString_id (n : Int) : (toString n).toInt? = some n := by
    cases n with
    | ofNat n =>

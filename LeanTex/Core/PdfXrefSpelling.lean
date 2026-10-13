@@ -11,8 +11,7 @@ import LeanTex.Core.Loop
 namespace LeanTex.Core.Pdf
 open PdfLex PdfRead
 
-/-! The typed dictionary and exact byte spelling of the writer's xref
-stream. This is an artifact grammar contract, independent of the IR. -/
+/-! The typed dictionary and exact byte spelling of the writer's xref stream. -/
 
 private def HexChars (s : String) : Prop :=
   ∀ c ∈ s.toList, hexVal c.toNat ≠ none ∧ c.toNat < 128
@@ -63,9 +62,7 @@ public theorem hex16_string_exact (x : UInt64) :
   obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hc
   exact Or.inl (hx d hd).1
 
-/-- The typed value of the xref dictionary the writer spells. The hashes
-are the same 64-bit values used for the two file identifiers; `w` is the
-row layout the payload was encoded in. -/
+/-- The typed xref stream dictionary the writer spells; `w` is the row layout of its payload. -/
 public def xrefStreamDict (count info : Nat) (w : Xref.Widths) (idA idB : UInt64)
     (filtered : Bool) (len : Nat) : Obj :=
   .dict (#[ ("Type", .name "XRef"), ("Size", .int count),

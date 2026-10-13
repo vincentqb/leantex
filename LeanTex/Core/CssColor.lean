@@ -4,20 +4,7 @@ public import LeanTex.Core.CssColorData
 public import LeanTex.Core.Color
 import LeanTex.Core.PathData
 
-/-!
-# CSS colour values
-
-The colours an SVG paint may spell (CSS Color 4 §4–§6, as SVG 2 §13.2
-reads `<color>`): a named colour from the generated table
-(`CssColorData`), `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, and `rgb()` and
-`rgba()` with numbers or percentages, comma- or space-separated, an
-optional alpha after `/` or a fourth comma. Out-of-range channels clamp, as
-CSS computes them. `transparent` is black at alpha zero; `currentColor` is
-the caller's, since it reads the `color` property in force.
-
-The contract the table owes is stated here, beside the lookup that reads
-it: its keywords sorted and distinct, every channel a byte.
--/
+/-! CSS colour values an SVG paint may spell (CSS Color 4 §4–§6), and the named-colour table's contract. -/
 
 namespace LeanTex.Core.CssColor
 
@@ -32,12 +19,9 @@ public structure Value where
 /-- The table's keywords, in order. -/
 @[expose] public def keywords : List String := CssColorData.table.toList.map (·.1)
 
-/-- **The keywords are sorted and distinct** (`_contract`): one keyword,
-one row, and `named?` cannot answer two ways. -/
 public theorem keywords_contract : keywords.Pairwise (· < ·) := by
   decide +kernel
 
-/-- **Every channel is a byte** (`_contract`). -/
 public theorem channels_contract :
     CssColorData.table.toList.all (fun (_, r, g, b) => r < 256 && g < 256 && b < 256) = true := by
   decide +kernel
@@ -47,7 +31,6 @@ public def named? (s : String) : Option (Nat × Nat × Nat) :=
   let k := s.toLower
   (CssColorData.table.find? (·.1 == k)).map (·.2)
 
-/-- **A name answers with its own row** (`_mem`). -/
 public theorem named?_mem (s : String) (v : Nat × Nat × Nat) (h : named? s = some v) :
     ∃ n, (n, v) ∈ CssColorData.table := by
   unfold named? at h
@@ -84,10 +67,7 @@ public def hex? (s : String) : Option Value := do
            alpha := alphaOfByte (a1 * 16 + a2) }
   | _ => none
 
-/-- A decimal number in thousandths, rounded half away from zero: digits, an
-optional fraction, an optional sign and exponent — read as path data reads
-a number (`PathData.number`), so in time linear in its digits whatever it
-spells, its significant digits and range bounded. -/
+/-- A decimal number in thousandths, rounded half away from zero, read as path data reads one. -/
 public def milli? (s : String) : Option Int := do
   let (d, rest) ← PathData.number s.toList
   unless rest.isEmpty do none
@@ -95,7 +75,6 @@ public def milli? (s : String) : Option Int := do
   let v : Nat := (d.m.natAbs * 1000 * 2 + q) / (2 * q)
   return if d.m < 0 then -(v : Int) else v
 
-/-- One channel of `rgb()`: a number 0–255, or a percentage of 255. -/
 private def channel? (s : String) : Option UInt8 := do
   if s.endsWith "%" then
     let m ← milli? (s.dropEnd 1).toString
@@ -106,7 +85,6 @@ private def channel? (s : String) : Option UInt8 := do
     let v := (m + 500) / 1000
     some (byte (max 0 v).toNat)
 
-/-- An alpha: a number 0–1, or a percentage. -/
 private def alpha? (s : String) : Option Nat := do
   if s.endsWith "%" then
     let m ← milli? (s.dropEnd 1).toString
@@ -132,8 +110,7 @@ public def rgb? (s : String) : Option Value := do
     some { color := { r := ← channel? r, g := ← channel? g, b := ← channel? b }, alpha := ← alpha? a }
   | _ => none
 
-/-- **A colour value**, or `none` when the text is no colour this reader
-reads. `currentColor` is not read here: it is the caller's `color`. -/
+/-- A colour value, or `none` when the text is no colour this reader reads; `currentColor` is the caller's. -/
 public def parse (s : String) : Option Value :=
   let t := s.trimAscii.toString
   if t.startsWith "#" then hex? t

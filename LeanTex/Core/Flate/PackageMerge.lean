@@ -11,8 +11,7 @@ def pairWeights (weights : Array Nat) : Array Nat := Id.run do
     pairs := pairs.push (weights[2 * k]?.getD 0 + weights[2 * k + 1]?.getD 0)
   return pairs
 
-/-- Merge the original leaves with the preceding level's pairs. The flag is
-the provenance the backtrace reads; weight ties prefer a leaf. -/
+/-- Merges the leaves with the previous level's pairs, flagging each item's provenance; a tie prefers a leaf. -/
 def merge (items pairs : Array Nat) : Array Nat × Array Bool := Id.run do
   let mut weights : Array Nat := Array.mkEmpty (items.size + pairs.size)
   let mut flags : Array Bool := Array.mkEmpty (items.size + pairs.size)
@@ -39,7 +38,7 @@ def levels (items : Array Nat) (limit : Nat) : Array (Array Bool) := Id.run do
     (weights, flags) := merge items (pairWeights weights)
   return out.push flags
 
-/-- Count the two kinds of coin in the selected prefix. -/
+/-- Counts the leaves and packages in the selected prefix. -/
 def selected (flags : Array Bool) (take : Nat) : Nat × Nat := Id.run do
   let mut leaves := 0
   let mut pairs := 0
@@ -47,8 +46,7 @@ def selected (flags : Array Bool) (take : Nat) : Nat × Nat := Id.run do
     if flags[j]?.getD true then leaves := leaves + 1 else pairs := pairs + 1
   return (leaves, pairs)
 
-/-- A selected leaf buys one bit for its symbol. A level's leaves occur in
-the original sorted order, so only their count is needed. -/
+/-- Adds one bit to the length of each of the first `leaves` symbols of `sorted`. -/
 def addBits (sorted lens : Array Nat) (leaves : Nat) : Array Nat := Id.run do
   let mut lens := lens
   for j in [0:leaves] do
@@ -56,8 +54,7 @@ def addBits (sorted lens : Array Nat) (leaves : Nat) : Array Nat := Id.run do
     lens := lens.set! s (lens[s]?.getD 0 + 1)
   return lens
 
-/-- Expand the selected packages, counting each selected leaf once per
-level. All working collections remain arrays. -/
+/-- Expands the selected packages, counting each selected leaf once per level. -/
 def backtrace (sorted : Array Nat) (size : Nat) (levels : Array (Array Bool)) :
     Array Nat := Id.run do
   let mut lens := Array.replicate size 0
@@ -70,9 +67,7 @@ def backtrace (sorted : Array Nat) (size : Nat) (levels : Array (Array Bool)) :
     if take == 0 then break
   return lens
 
-/-- Length-limited package-merge. Each selected leaf increases the length
-of its symbol; a one-symbol alphabet uses the one-bit code required by
-RFC 1951 §3.2.7. The alphabet must fit `limit` bits. -/
+/-- Length-limited package-merge; a one-symbol alphabet takes the one-bit code (RFC 1951 §3.2.7). -/
 public def lengths (freqs : Array Nat) (limit : Nat) : Array Nat := Id.run do
   let syms := (Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0
   let n := syms.size

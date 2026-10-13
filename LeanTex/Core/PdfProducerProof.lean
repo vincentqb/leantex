@@ -10,11 +10,9 @@ import all LeanTex.Core.PdfRead
 namespace LeanTex.Core.Pdf
 open PdfRead
 
-/-! Contracts over the complete bytes returned by the checked producer.
-The parser and codec in these statements are the production functions. -/
+/-! Contracts over the complete bytes the checked producer returns. -/
 
-/-- The actual xref dictionary, including the writer's compression choice
-and its two identifiers. This value describes the emitted bytes. -/
+/-- The xref dictionary the writer emits, with its compression choice and two identifiers. -/
 public def WriteMeasurement.xrefDict (m : WriteMeasurement) (t : ObjTable) : Obj :=
   let z := Flate.deflate m.xrefPayload
   let filtered := decide (z.size < m.xrefPayload.size)
@@ -43,9 +41,6 @@ public theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : O
     String.toUTF8_eq_toByteArray]
   all_goals rfl
 
-/-- The complete emitted file parses through the real footer scan,
-dictionary parser, stream extraction, Flate decoder, checksum check, and
-xref traversal. Only byte-offset and decoded-payload bounds are assumed. -/
 public theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTable)
     (hb : m.body.size < 2^64) (hp : m.xrefPayload.size ≤ maxDecoded) :
     readXref (m.bytes t) =
@@ -83,9 +78,6 @@ public theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTa
   · exact fields.2.2.2.2.1
   · exact fields.2.2.2.2.2.1
 
-/-- The numeric checked domain suffices to recover the complete xref
-stream from a plan's actual emitted file. Allocation coverage determines
-which of these rows are live; no parser or codec premise is required. -/
 public theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
     readXref p.bytes =
       .ok ((readXrefSubsection (Xref.encode p.widths p.entries) 1 p.widths.first
@@ -94,9 +86,6 @@ public theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
          trailer := some (p.measure.xrefDict p.table)}).1) := by
   exact p.measure.readXref_exact p.table h.1 h.2.2
 
-/-- A numerically bounded plan yields a readable xref whose root and
-declared size are exactly the allocation's. Relating that declared size
-to the number of live locations additionally needs emission coverage. -/
 public theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBounds) :
     ∃ x, readXref p.bytes = .ok x ∧ x.root = some 1 ∧
       (x.trailer.bind (·.get? "Size")).bind Obj.int? = some p.table.size ∧
@@ -121,9 +110,6 @@ public theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBou
     some (.int p.table.size) from fields.2.2.1]
   rfl
 
-/-- Checked production supplies the storage bounds for the actual xref.
-The source-grammar check further restricts successful production without
-weakening the xref theorem on numerically bounded raw plans. -/
 public theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
     (h : p.checked = .ok b) :
     ∃ x, readXref b = .ok x ∧ x.root = some 1 ∧
@@ -132,14 +118,6 @@ public theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArra
   obtain ⟨domain, rfl⟩ := (p.checked_exact b).mp h
   exact p.readXref_contract domain.1
 
-/-- The complete production writer's xref contract on its checked numeric
-domain. The actual reader recovers the catalog root and exactly `/Size - 1`
-live objects. This includes every image, copied resource, outline,
-structure element, and cached input accepted by the writer.
-
-The premises are storage bounds only. Footer parsing, compression,
-checksums, binary row decoding, allocation coverage, and the reader's
-live-object count are proved here through their production functions. -/
 public theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
@@ -183,9 +161,6 @@ public theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
   have hcount : p.table.size = x.locs.size + 1 := by omega
   rw [hcount]
 
-/-- Every successful result from the checked producer satisfies the
-complete xref obligation. The publisher needs no separate bounds proof:
-success of the API that supplied its bytes establishes that domain. -/
 public theorem writeChecked_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))

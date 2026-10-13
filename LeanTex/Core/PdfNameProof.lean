@@ -42,8 +42,7 @@ private theorem keep_char (c : Char) (h : (c.isAlphanum || c == '-' || c == '.')
   · subst c; decide
   · subst c; decide
 
-/-- ISO 32000-2 §7.3.5 byte escaping. The byte bound is imposed on the
-original name by the round-trip contract, not by the writer. -/
+/-- The ISO 32000-2 §7.3.5 escaping of one name character. -/
 public def nameChars (c : Char) : List Char :=
   if c.isAlphanum || c == '-' || c == '.' then [c]
   else ['#', hexChar (c.toNat / 16), hexChar c.toNat]
@@ -166,8 +165,6 @@ public theorem parseName_exact {b : ByteArray} {i : Nat} {s : String}
   rw [hs]
   simp
 
-/-- The actual name writer and decoder are inverses on nonempty byte-valued
-names. Unicode scalars above 255 are outside this byte codec. -/
 public theorem parseName_escapeName_id (s : String) (hne : s ≠ "")
     (hc : ∀ c ∈ s.toList, c.toNat < 256) :
     parseName ("/" ++ escapeName s).toUTF8 0 =

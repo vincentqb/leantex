@@ -40,7 +40,6 @@ theorem first_later_between (count : Nat → Nat) (k d : Nat) :
       _ ≤ first count (k + 1 + d) * 2 := Nat.mul_le_mul_right _ ih
       _ ≤ _ := Nat.mul_le_mul_right _ (Nat.le_add_right ..)
 
-/-- No strict prefix of a later canonical code lies in an earlier code interval. -/
 theorem first_prefix_between (count : Nat → Nat) (width k code : Nat)
     (hk : 1 ≤ k) (hkw : k < width) (hc : first count (width - 1) ≤ code) :
     first count (k - 1) + count k ≤ code / 2 ^ (width - k) := by
@@ -90,7 +89,6 @@ theorem reverseBits_bit_exact (code width k : Nat) (hk : k < width) :
       congr 1
       omega
 
-/-- Reversing a bounded code twice recovers the whole code. -/
 theorem reverseBits_id (code width : Nat) (hc : code < 2 ^ width) :
     reverseBits (reverseBits code width) width = code := by
   apply Nat.eq_of_testBit_eq

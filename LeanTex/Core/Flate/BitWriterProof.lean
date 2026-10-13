@@ -26,7 +26,6 @@ theorem Bw.Field.extend {a b : Bw} {start width value : Nat}
   ⟨Nat.le_trans hf.1 he.1, fun k hk =>
     (he.2 _ (by have := hf.1; dsimp only [Bw.position]; omega)).trans (hf.2 k hk)⟩
 
-/-- Every supported push preserves all previously emitted fields. -/
 theorem pushU_extends_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
     (hn : n.toNat ≤ 16) : (w.pushU v n).Extends w := by
   constructor
@@ -66,8 +65,7 @@ theorem push_field_exact (w : Bw) (v n : Nat) (hw : w.Valid)
     pushU_field_exact w v.toUInt64 n.toUInt64 hw
       (by simpa only [width_toUInt64 n hn] using hn)
 
-/-- Bytes containing the writer's complete stream, possibly followed by more
-data. This is a relation over the actual bytes, not a second encoder. -/
+/-- The bytes begin with the writer's complete stream, possibly followed by more data. -/
 def Bw.Realizes (w : Bw) (data : ByteArray) : Prop :=
   w.position ≤ data.size * 8 ∧
     ∀ i < w.position,
@@ -101,7 +99,6 @@ theorem flush_realizes_exact (w : Bw) (hw : w.Valid) : w.Realizes w.flush :=
   ⟨by simpa only [Bw.position, Nat.mul_comm] using flush_position_between w hw,
     fun i hi => flush_bits_exact w hw i hi⟩
 
-/-- Appending a checksum byte cannot change an earlier bit field. -/
 theorem BitField.push {data : ByteArray} {start width value : Nat}
     (hf : BitField data start width value) (b : UInt8) :
     BitField (data.push b) start width value := by
@@ -113,8 +110,6 @@ theorem BitField.push {data : ByteArray} {start width value : Nat}
     have hb : (start + k) / 8 < data.size := by have := hf.1; omega
     simpa only [getElem?_push, hb, ite_true] using hf.2 k hk
 
-/-- A production Huffman code stays decodable in the final stream after any
-later writes, byte draining, padding, and trailing bytes. -/
 theorem packageMerge_push_decode_exact (freqs : Array Nat) (limit : Nat) (w : Bw)
     (data : ByteArray) (s : Nat) (hw : w.Valid)
     (hl : 0 < limit ∧ limit ≤ 15) (hfit : freqs.size ≤ 2 ^ limit)
@@ -139,7 +134,6 @@ theorem packageMerge_push_decode_exact (freqs : Array Nat) (limit : Nat) (w : Bw
   rw [(canonCodes_exact _ hb).2 s (by simpa [hc.1.size_eq] using hi)]
   exact Canonical.reverseBits_between _ _
 
-/-- Realization preserves each completed byte, including the zlib wrapper. -/
 theorem Bw.Realizes.byte_exact {w : Bw} {data : ByteArray} (hr : w.Realizes data)
     (i : Nat) (hi : i < w.out.size) : data[i]? = w.out[i]? := by
   have hd : i < data.size := by have := hr.1; dsimp only [Bw.position] at this; omega

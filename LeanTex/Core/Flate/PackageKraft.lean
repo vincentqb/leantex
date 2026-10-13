@@ -17,8 +17,6 @@ private theorem get_not_mem_take (sorted : Array Nat) (hn : sorted.toList.Nodup)
   have hij : j = i := hn.eq_of_getElem_eq hj' hi' (by simpa using he)
   omega
 
-/-- Each selected leaf gains exactly one bit, and all other symbols keep
-their length. This follows the encoder's actual array update loop. -/
 theorem addBits_exact (sorted lens : Array Nat) (leaves : Nat)
     (hn : sorted.toList.Nodup)
     (hv : ∀ s ∈ sorted.toList, s < lens.size) (hl : leaves ≤ sorted.size) :
@@ -52,8 +50,7 @@ theorem addBits_exact (sorted lens : Array Nat) (leaves : Nat)
     simp [hvj, htake, hold]
   · simp [he, ho.2, htake, Ne.symm he]
 
-/-- The integer-scaled Kraft mass of the live alphabet. The scale is
-`2^limit`, so there is no rational arithmetic in the backtrace invariant. -/
+/-- The live alphabet's Kraft sum, scaled by `2^limit` to stay integral. -/
 def mass (limit : Nat) (sorted lens : Array Nat) : Nat :=
   (sorted.toList.map fun s => 2 ^ (limit - lens[s]?.getD 0)).sum
 
@@ -85,8 +82,6 @@ private theorem mass_split (limit : Nat) (sorted lens : Array Nat) (leaves : Nat
   conv => lhs; rw [← List.take_append_drop leaves sorted.toList]
   rw [List.map_append, List.sum_append]
 
-/-- Buying a bit at level `i` removes at least that level's denomination
-from Kraft mass. Earlier purchases only increase this reduction. -/
 theorem addBits_mass_monotone (sorted lens : Array Nat) (leaves limit i : Nat)
     (hn : sorted.toList.Nodup)
     (hv : ∀ s ∈ sorted.toList, s < lens.size) (hl : leaves ≤ sorted.size)
@@ -116,8 +111,7 @@ theorem addBits_mass_monotone (sorted lens : Array Nat) (leaves limit i : Nat)
     mass_split limit sorted lens leaves, ht]
   omega
 
-/-- The properties consumed by canonical-code construction. The alphabet
-is explicit: unused symbols must keep length zero. -/
+/-- The properties canonical-code construction consumes; unused symbols keep length zero. -/
 structure LengthsFor (sorted : Array Nat) (size limit : Nat) (lens : Array Nat) : Prop where
   size_eq : lens.size = size
   width_le : ∀ s : Nat, lens[s]?.getD 0 ≤ limit
@@ -204,9 +198,6 @@ private theorem trace_finish (sorted : Array Nat) (size limit i : Nat)
   rw [he, Nat.zero_mul, Nat.add_zero] at hc
   omega
 
-/-- The actual package backtrace produces bounded lengths satisfying
-Kraft's inequality. Its premises are alphabet bounds and the proven
-leaf/package counts at each level, not an encoder/decoder inversion. -/
 theorem backtrace_contract (sorted : Array Nat) (size : Nat) (levels : Array (Array Bool))
     (hn : sorted.toList.Nodup) (hv : ∀ s ∈ sorted.toList, s < size)
     (hpos : 0 < sorted.size) (hl : 0 < levels.size) (hfit : sorted.size ≤ 2 ^ levels.size)

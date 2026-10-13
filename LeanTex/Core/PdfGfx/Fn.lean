@@ -1,15 +1,7 @@
 module
 
-/-!
-# A PDF function of one input, read
-
-The figure importer draws a shading's function (ISO 32000-2 §7.10) as a
-gradient: colours at stops, linear between them. This is the function as
-the importer reads it — an exponential (Type 2), a sampled function
-(Type 0), or a stitching of them (Type 3) — what evaluating it means, and
-the stops it is drawn at, with whether linear interpolation between them is
-the function itself.
--/
+/-! A PDF function of one input as the figure importer reads it (ISO 32000-2 §7.10): its value, and
+the stops a gradient draws it at. -/
 
 namespace LeanTex.Core.PdfGfx
 
@@ -28,9 +20,8 @@ public structure Expo where
   c1 : Array Rat
   n : Rat
 
-/-- A sampled function of one input (§7.10.2): its domain, its sample
-count, bits per sample and outputs, its encode pair, each output's decode
-pair, and its decoded stream. -/
+/-- A sampled function of one input (§7.10.2): domain, sample count, bits, outputs, encode and
+decode pairs, and its decoded stream. -/
 public structure Sampled where
   d0 : Rat
   d1 : Rat
@@ -42,9 +33,8 @@ public structure Sampled where
   decode : Array Rat
   raw : Option ByteArray
 
-/-- A function standing alone or joined by a stitching: an exponential, a
-sampled function, or one the importer does not read — a calculator, a
-stitching inside a stitching, an unknown type. -/
+/-- A function alone or within a stitching: an exponential, a sampled function, or one the importer
+does not read. -/
 public inductive Piece where
   | expo (e : Expo)
   | sampled (s : Sampled)
@@ -63,17 +53,13 @@ public inductive Fn where
   | piece (p : Piece)
   | stitch (s : Stitch)
 
-/-! ## Evaluation -/
-
-/-- An exponential at `t`: exactly where its exponent is a whole number up
-to 16, linearly otherwise, which its stops name. -/
+/-- An exponential at `t`: exact where its exponent is a whole number up to 16, else linear. -/
 @[expose] public def Expo.eval (e : Expo) (t : Rat) : Array Rat :=
   let t := clampTo e.d0 e.d1 t
   let tn : Rat := if e.n.den == 1 && 0 ≤ e.n && e.n ≤ 16 then t ^ e.n.num.toNat else t
   blend e.c0 e.c1 tn
 
-/-- A sampled function at `t`, at 8 or 16 bits: linearly between the two
-samples around `t`, as its default order says. -/
+/-- A sampled function at `t`, at 8 or 16 bits, linear between the two samples around `t`. -/
 public def Sampled.eval (sm : Sampled) (t : Rat) : Option (Array Rat) := do
   let raw ← sm.raw
   guard ((sm.bps == 8 || sm.bps == 16) && sm.size ≥ 1)
@@ -120,17 +106,13 @@ for the last. -/
   if s.hi k == s.lo k then s.e0 k
   else s.e0 k + (t - s.lo k) * (s.e1 k - s.e0 k) / (s.hi k - s.lo k)
 
-/-- The piece of a stitching for `t`: as many as the bounds at or below the
-input held to its domain. `left` counts, at a bound inside the domain, only
-the bounds below it — the piece that ends there rather than the one that
-starts there, the value the stitching approaches from below. -/
+/-- The piece of a stitching for `t`; `left` takes, at an inner bound, the piece that ends there. -/
 @[expose] public def Stitch.index (s : Stitch) (t : Rat) (left : Bool) : Nat :=
   let t' := clampTo s.d0 s.d1 t
   min (s.bounds.toList.filter fun b => if left && s.d0 < t && t ≤ s.d1 then b < t' else b ≤ t').length
     (s.subs.size - 1)
 
-/-- **A function of one input at `t`** (§7.10): a piece; or a stitching's
-piece for `t`, at the input its encoding carries `t` to. -/
+/-- A function of one input at `t` (§7.10). -/
 @[expose] public def Fn.eval : Fn → Rat → Bool → Option (Array Rat)
   | .piece p, t, _ => p.eval t
   | .stitch s, t, left =>
@@ -138,15 +120,11 @@ piece for `t`, at the input its encoding carries `t` to. -/
     let k := s.index t left
     (s.subs[k]?.getD .unread).eval (s.carry k (clampTo s.d0 s.d1 t))
 
-/-! ## Stops -/
-
 /-- The points of `xs` strictly inside `(s0, s1)`. -/
 @[expose] public def inside (s0 s1 : Rat) (xs : Array Rat) : Array Rat :=
   xs.filter fun x => s0 < x && x < s1
 
-/-- An exponential's stops over `[s0, s1]`: its ends and where its domain
-holds its input, and exact where its exponent is 1; otherwise 17 points,
-which are not the curve. -/
+/-- An exponential's stops over `[s0, s1]`, exact where its exponent is 1, else 17 points. -/
 @[expose] public def Expo.stops (e : Expo) (s0 s1 : Rat) : Array Rat × Bool :=
   if e.n = 1 then (#[s0] ++ inside s0 s1 #[e.d0, e.d1] ++ #[s1], true)
   else ((Array.range 17).map fun (k : Nat) => s0 + (s1 - s0) * mkRat k 16, false)
@@ -164,31 +142,21 @@ domain holds its input. -/
   | .sampled s, s0, s1 => s.stops s0 s1
   | .unread, s0, s1 => (#[s0, s1], false)
 
-/-- The stops a stitching's piece `k` sets inside `(t0, t1)`: its
-function's own, carried back through its encoding to the stitching's
-input; and whether they are exact. -/
+/-- The stops a stitching's piece `k` sets inside `(t0, t1)`, carried back through its encoding, and
+whether they are exact. -/
 @[expose] public def Stitch.back (s : Stitch) (t0 t1 : Rat) (k : Nat) : Array Rat × Bool :=
   let r := (s.subs[k]?.getD .unread).stops (min (s.e0 k) (s.e1 k)) (max (s.e0 k) (s.e1 k))
   (inside t0 t1 (if s.e1 k == s.e0 k then #[] else
       r.1.map fun u => s.lo k + (u - s.e0 k) * (s.hi k - s.lo k) / (s.e1 k - s.e0 k)),
     r.2)
 
-/-- A stitching laid out as §7.10.4 lays one: one bound fewer than its
-functions, its bounds in order inside its domain. -/
+/-- A stitching laid out as §7.10.4 lays one: one bound fewer than its functions, bounds in order. -/
 @[expose] public def Stitch.wellFormed (s : Stitch) : Bool :=
   s.subs.size == s.bounds.size + 1 &&
     decide ((s.d0 :: s.bounds.toList ++ [s.d1]).Pairwise fun a b => a ≤ b)
 
-/-- **Where a function's stops stand over `[t0, t1]`**, and whether linear
-interpolation between them is the function itself (§7.10): an
-exponential's ends and where its domain holds its input, exact where its
-exponent is 1; a sampled function at every sample and where its domain
-holds its input; a stitching at the ends of its domain, its bounds, and
-each piece's own stops carried back through its encoding — exact where
-every piece is and the stitching is laid out as §7.10.4 lays one. Between
-two points with no stop strictly between them, an exponential and a
-stitching of them are the line between their values there
-(`stitch_exact`); for a sampled function that is pending work. -/
+/-- Where a function's stops stand over `[t0, t1]`, and whether linear interpolation between them is
+the function itself (§7.10). -/
 @[expose] public def Fn.stops : Fn → Rat → Rat → Array Rat × Bool
   | .piece p, t0, t1 => p.stops t0 t1
   | .stitch s, t0, t1 =>
@@ -205,8 +173,6 @@ stitching of them are the line between their values there
   | .piece (.expo _) => true
   | .piece _ => false
   | .stitch s => s.subs.all fun | .expo _ => true | _ => false
-
-/-! ## Exactness -/
 
 /-- `g` is the line between its values at `a` and `b`, over `[a, b]`. -/
 def AffOn (g : Rat → Rat) (a b : Rat) : Prop :=
@@ -236,8 +202,6 @@ private theorem frac_unit (a b t : Rat) (hab : a < b) (h1 : a ≤ t) (h2 : t ≤
     have : 0 < ((t - a) / (b - a) - 1) * (b - a) := Rat.mul_pos (by grind) hba
     grind
 
-/-- A clamp of a line is a line where neither end of the clamp falls
-strictly inside it. -/
 private theorem clamp_lerp (d0 d1 x y s : Rat) (h0 : 0 ≤ s) (h1 : s ≤ 1)
     (k0 : ¬ (min x y < d0 ∧ d0 < max x y)) (k1 : ¬ (min x y < d1 ∧ d1 < max x y)) :
     clampTo d0 d1 (x + s * (y - x)) = clampTo d0 d1 x + s * (clampTo d0 d1 y - clampTo d0 d1 x) := by
@@ -246,8 +210,6 @@ private theorem clamp_lerp (d0 d1 x y s : Rat) (h0 : 0 ≤ s) (h1 : s ≤ 1)
   generalize hv' : x + s * (y - x) = v at hv ⊢
   grind
 
-/-- Where a line through `[a, b]` meets `d` strictly between its ends, the
-point it carries back to is strictly inside `(a, b)`. -/
 private theorem back_between (lo hi e0 e1 a b d : Rat) (hhl : hi ≠ lo) (he : e1 ≠ e0) (hab : a < b)
     (hd : min (e0 + (a - lo) * (e1 - e0) / (hi - lo)) (e0 + (b - lo) * (e1 - e0) / (hi - lo)) < d ∧
       d < max (e0 + (a - lo) * (e1 - e0) / (hi - lo)) (e0 + (b - lo) * (e1 - e0) / (hi - lo))) :
@@ -338,8 +300,6 @@ private theorem mem_inside {s0 s1 x : Rat} {xs : Array Rat} :
     x ∈ inside s0 s1 xs ↔ x ∈ xs ∧ s0 < x ∧ x < s1 := by
   simp [inside, Array.mem_filter]
 
-/-- In a sorted list, the elements a predicate closed downward holds of are
-exactly those before the count of them. -/
 private theorem filter_sorted_index (P : Rat → Bool) (hP : ∀ y z, y ≤ z → P z = true → P y = true) :
     ∀ (l : List Rat), l.Pairwise (· ≤ ·) → ∀ i (h : i < l.length), (P l[i] = true ↔ i < (l.filter P).length)
   | [], _, i, h => absurd h (by simp)
@@ -393,13 +353,6 @@ private theorem min_max_ne {x y d : Rat} (h : min x y < d ∧ d < max x y) : x �
   subst e
   grind
 
-/-- **A function is the line between its stops** (`_exact`): for an
-exponential, or a stitching of exponentials, whose stops over `[t0, t1]`
-are exact, between two points `a < b` of `[t0, t1]` with no stop strictly
-between them the function at every `t` in `[a, b)` is its value at `a`
-carried the fraction `(t − a)/(b − a)` of the way to its value approaching
-`b` from below — which is what a gradient interpolating between those
-stops paints. -/
 public theorem stitch_exact (f : Fn) (t0 t1 a b t : Rat) (hf : f.expoOnly = true)
     (hex : (f.stops t0 t1).2 = true) (hab : a < b) (h0 : t0 ≤ a) (h1 : b ≤ t1)
     (hgap : ∀ p ∈ (f.stops t0 t1).1, ¬ (a < p ∧ p < b)) (hta : a ≤ t) (htb : t < b) :
@@ -459,7 +412,6 @@ public theorem stitch_exact (f : Fn) (t0 t1 a b t : Rat) (hf : f.expoOnly = true
       rw [Array.all_eq_true] at hall
       have := hall k (by simpa using hk)
       simpa using this
-    -- The piece every point of `[a, b)` falls in, and `b` approached from below.
     let K := (s.bounds.toList.filter fun β => decide (β ≤ clampTo s.d0 s.d1 a)).length
     have hKle : K ≤ s.bounds.size := by
       have := List.length_filter_le (fun β => decide (β ≤ clampTo s.d0 s.d1 a)) s.bounds.toList
@@ -504,12 +456,10 @@ public theorem stitch_exact (f : Fn) (t0 t1 a b t : Rat) (hf : f.expoOnly = true
         Fn.eval (.stitch s) x left = some (blend E.c0 E.c1 (clampTo E.d0 E.d1 (s.carry K (clampTo s.d0 s.d1 x)))) := by
       intro x left hx
       simp [Fn.eval, hn0, hx, hE, Piece.eval, expo_eval_one E hEn]
-    -- `c` is the line through its ends on `[a, b]`, and so is its carry into piece `K`.
     have hc : AffOn (clampTo s.d0 s.d1) a b := affOn_clamp s.d0 s.d1 a b (fun t => t) hab
       (affOn_id a b hab) (by grind) (by grind)
     have hu : AffOn (fun x => s.carry K (clampTo s.d0 s.d1 x)) a b :=
       affOn_carry s K a b (clampTo s.d0 s.d1) hc
-    -- No end of piece `K`'s domain is carried strictly inside the carried `[a, b]`.
     have noKink : ∀ d, (d = E.d0 ∨ d = E.d1) →
         ¬ (min (s.carry K (clampTo s.d0 s.d1 a)) (s.carry K (clampTo s.d0 s.d1 b)) < d ∧
           d < max (s.carry K (clampTo s.d0 s.d1 a)) (s.carry K (clampTo s.d0 s.d1 b))) := by

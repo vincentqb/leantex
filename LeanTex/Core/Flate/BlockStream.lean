@@ -49,20 +49,17 @@ def readStep (maxOut : Nat) (state : ByteArray × Br) :
   let (out, r) ← readBody btype r out maxOut
   return if bfinal == 1 then .inl out else .inr (out, r)
 
-/-- Every block consumes at least three bits. The original format-derived
-bound drives the production loop, including malformed and nonfinal input. -/
+/-- Reads blocks through the final one, bounded by the three bits every block consumes. -/
 public def read (r : Br) (out : ByteArray) (maxOut : Nat) : Except String ByteArray :=
   DecodeLoop.run (8 * r.data.size / 3 + 2) (readStep maxOut) (out, r)
     "deflate: no final block"
 
-/-- Both payload alphabets use the production boundary package-merge encoder,
-limited to fifteen bits as required by RFC 1951 §3.2.7. -/
+/-- Both payload alphabets' code lengths, limited to fifteen bits (RFC 1951 §3.2.7). -/
 def lengths (tokens : Array UInt32) : Array Nat × Array Nat :=
   let (litFreq, distFreq) := TokenBlock.alphabets tokens
   (PackageMerge.lengths litFreq 15, PackageMerge.lengths distFreq 15)
 
-/-- Write a final dynamic block. The transmitted header and payload receive
-the very same two length arrays. -/
+/-- Writes a final dynamic block whose header and payload use the same two length arrays. -/
 public def write (tokens : Array UInt32) (w : Bw) : Bw :=
   let (litLens, distLens) := lengths tokens
   let w := (w.push 1 1).push 2 2

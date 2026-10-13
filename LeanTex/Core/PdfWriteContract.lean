@@ -7,22 +7,10 @@ import all LeanTex.Core.Pdf
 
 namespace LeanTex.Core.Pdf
 
-/-! Checked storage and source-spelling domains for the actual writer.
-These bounds concern artifact bytes, not a viewer's interpretation of
-font programs. No predicate below calls a PDF parser. -/
+/-! Checked storage and source-spelling domains for the writer. -/
 
-/-- The storage the structural reader needs, and nothing the format
-itself would refuse: offsets that fit 64 bits, so the `startxref` decimal
-lies in the reader's search window, and decoded object and xref streams
-inside the reader's decompression limit. The xref field widths are not a
-bound — the writer sizes them to the rows (`entries_fits`) — and every
-object stream holds at most `objStmCapacity` objects whatever the
-document's size (`chunks_between`).
-
-The byte offsets are measured on the actual serialized direct objects.
-The decoded payload bounds cover the xref and the object streams that
-the structural reader must inflate. They do not certify cached page
-operators, copied image streams, font program validity, or viewer output. -/
+/-- The storage the structural reader needs: offsets within 64 bits and decoded streams within the
+reader's decompression limit. -/
 @[expose] public def WritePlan.WithinBounds (p : WritePlan) : Prop :=
   p.serialized.1.size < 2 ^ 64 ∧
   (∀ c ∈ p.chunks, (objectStream c).bytes.size ≤ PdfRead.maxDecoded) ∧
@@ -32,9 +20,7 @@ public instance (p : WritePlan) : Decidable p.WithinBounds := by
   unfold WritePlan.WithinBounds
   infer_instance
 
-/-- Every compressed source object uses the encoder's supported grammar.
-This finite check inspects names, numbers, strings, and nested containers
-before serialization; it never asks the reader for an answer. -/
+/-- Every compressed source object uses the encoder's supported grammar. -/
 @[expose] public def WritePlan.Encodable (p : WritePlan) : Prop :=
   p.compressed.all (fun e => e.2.encodable) = true
 
@@ -42,10 +28,7 @@ public instance (p : WritePlan) : Decidable p.Encodable := by
   unfold WritePlan.Encodable
   infer_instance
 
-/-- The complete checked source domain: storage and decoded sizes, plus
-the grammar of every object placed in an object stream. Native
-direct-stream dictionaries have their own unconditional spelling proofs;
-imported resource graphs retain their separate acceptance requirements. -/
+/-- The checked source domain: the storage bounds and every object-stream entry's grammar. -/
 @[expose] public def WritePlan.WithinDomain (p : WritePlan) : Prop :=
   p.WithinBounds ∧ p.Encodable
 
@@ -62,9 +45,7 @@ private theorem WritePlan.find_unencodable_none (p : WritePlan) :
     p.compressed.find? (fun e => !e.2.encodable) = none ↔ p.Encodable := by
   simp [Encodable, List.find?_eq_none]
 
-/-- Typed refusals, carrying the observed byte size or object id. The CLI
-translates these values to its diagnostic registry. Core does not format
-diagnostics or decide publication policy. -/
+/-- Typed write refusals, each carrying the observed byte size or object id. -/
 public inductive WriteError where
   | byteOffset (bytes : Nat)
   | objectStreamSize (bytes : Nat)
@@ -73,12 +54,7 @@ public inductive WriteError where
   | inkRaster (page : Nat)
   deriving BEq, Repr
 
-/-- Check source spellings first, then measure once. The body and xref
-payload used by the remaining checks are retained for emission. Calling
-this function does not repeat serialization or compression to evaluate
-`WithinDomain`; the theorem relates those independent spellings.
-Accepted artifacts are held to this boundary when their publisher uses
-only this function's successful result. -/
+/-- Checks source spellings, then measures once, returning the bytes or the refusal. -/
 public def WritePlan.checked (p : WritePlan) : Except WriteError ByteArray :=
   match p.compressed.find? (fun e => !e.2.encodable) with
   | some e => .error (.objectSpelling e.1)
@@ -124,7 +100,6 @@ public theorem WritePlan.checked_exact (p : WritePlan) (b : ByteArray) :
       intro h
       omega
 
-/-- Every refusal falsifies a storage or source-grammar premise. -/
 public theorem WritePlan.checked_error_gated (p : WritePlan) (e : WriteError)
     (h : p.checked = .error e) : ¬ p.WithinDomain := by
   intro hb
@@ -132,27 +107,18 @@ public theorem WritePlan.checked_error_gated (p : WritePlan) (e : WriteError)
   rw [h] at he
   contradiction
 
-/-- The producer boundary for positioned pages. It takes the same cache
-inputs as `write`; callers publish its successful bytes directly and
-translate `WriteError` to a typed diagnostic on refusal. -/
+/-- The producer boundary for positioned pages: the checked bytes, or a typed refusal. -/
 public def writeChecked (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array Layout.OutlineEntry := #[])
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
     (programs : Array (ByteArray × Bool) := #[]) : Except WriteError ByteArray :=
-  -- premise: ofPictureKeyed_imageFree_exact — a lowered picture paints a raster
-  -- only where a shape's own ink holds one, which no evaluator door builds;
-  -- the refusal guards that case and every other caller.
+  -- premise: ofPictureKeyed_imageFree_exact — a lowered picture paints no raster
   match inkRasterPage? pages with
   | some i => .error (.inkRaster i)
   | none => (prepare geom fs pages info imgs outline streams tree ops programs).checked
 
-/-- Success checks the source domain — no page's ink paints a raster the
-writer has no image table for, the storage bounds, the spellings — and
-returns exactly the actual writer's bytes for every input and cache
-argument. It does not assume successful parsing, decompression, or font
-validity. -/
 public theorem writeChecked_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
@@ -169,23 +135,14 @@ public theorem writeChecked_exact (geom : Layout.Geom) (fs : Font.FontSet)
     simpa [write] using
       WritePlan.checked_exact (prepare geom fs pages info imgs outline streams tree ops programs) b
 
-/-- Every row of the actual xref payload fits the widths the plan
-declares, with no premise: the widths are read off these rows. -/
 public theorem WritePlan.entries_fits (p : WritePlan) :
     ∀ e ∈ p.entries, e.Fits p.widths :=
   writerXrefEntries_fits _ _ _ _
 
-/-- Every object stream the plan writes holds at least one and at most
-`objStmCapacity` objects, for every document: reading one compressed
-object inflates one such stream, never the whole file's objects. -/
 public theorem WritePlan.chunks_between (p : WritePlan) :
     ∀ c ∈ p.chunks, 0 < c.length ∧ c.length ≤ objStmCapacity :=
   objStmChunks_between _
 
-/-- Each selected xref row retains all its fields at its actual byte
-position, `p.widths.row` bytes per id. This theorem composes the field
-widths with the real encoder; the complete file's traversal is composed
-in `WritePlan.readXref_exact`. -/
 public theorem WritePlan.xref_fields_exact (p : WritePlan)
     (i : Nat) (e : Xref.Entry) (hi : p.entries[i]? = some e) :
     Binary.readNatBE 1 (Xref.encode p.widths p.entries) (p.widths.row * i) =
@@ -199,10 +156,6 @@ public theorem WritePlan.xref_fields_exact (p : WritePlan)
     Xref.encode_index_fields_exact p.widths p.entries i e hi
       (p.entries_fits e (Array.mem_of_getElem? hi)) ByteArray.empty ByteArray.empty
 
-/-- The actual subsection reader recovers every location encoded in a
-plan's retained xref payload, at the widths the plan declares.
-`WritePlan.readXref_exact` composes this reading with the actual footer,
-object parser, and inflation. -/
 public theorem WritePlan.xref_locations_exact (p : WritePlan)
     (x0 : PdfRead.Xref) (hx : x0.locs = {}) (k : Nat) :
     (PdfRead.readXrefSubsection p.measure.xrefPayload 1 p.widths.first p.widths.second
@@ -215,9 +168,6 @@ public theorem WritePlan.xref_locations_exact (p : WritePlan)
   · rename_i hk
     simp [show p.entries.size ≤ k by omega]
 
-/-- The complete emitted file's footer recovers the exact byte position
-where the writer put its xref object. This includes the actual backward
-scan and decimal parsing, before xref stream traversal. -/
 public theorem WritePlan.startxref_exact (p : WritePlan) (h : p.WithinBounds) :
     PdfRead.readStartxref p.bytes = .ok p.measure.body.size := by
   unfold WritePlan.bytes WriteMeasurement.bytes

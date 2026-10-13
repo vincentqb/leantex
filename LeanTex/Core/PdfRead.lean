@@ -15,33 +15,11 @@ namespace LeanTex.Core.PdfRead
 open LeanTex.Core.Dim
 open PdfLex
 
-/-! # Reading a PDF page as a form XObject
+/-! A total reader that embeds a page of an existing PDF as a form XObject: it follows the
+cross-reference, selects the page and copies its content and resources, claiming only its box. -/
 
-The asset half of PLAN's graphics boundary: `\includegraphics{file.pdf}` —
-and every boundary result — embeds a selected page of an existing PDF as a
-form XObject, defaulting to page 1, so vector stays vector. This module is
-the pure reader: a total function over a `ByteArray` that follows the
-cross-reference (classic tables *and* xref streams with object streams —
-modern lualatex output uses the streams), selects in physical `/Kids`
-order, takes the page's box, concatenates its decoded content streams, and
-copies its `/Resources` dictionary with the whole object graph behind it —
-fonts, XObjects, ExtGState — renumbered into a local space the writer
-offsets. Stream payloads (font programs above all) are copied verbatim,
-never re-parsed. A PDF the reader cannot follow is a named error value,
-never a crash: every read is bounds-checked and every loop bounded by the
-input's size (the `Ink` reader discipline).
-
-The trust label: the engine claims the *box* — placement and measurement
-from the file's own page box — never the contents of the copied streams.
-Structure and section references are ISO 32000-2. -/
-
-/-- Decompressed streams are capped: a hostile deflate stream can claim a
-1000× expansion, and a reader that honours it is a memory bomb. 64 MiB
-holds any figure this engine should meet; past it the file is refused by
-name. -/
+/-- The cap on a decoded stream's size, 64 MiB; past it the file is refused by name. -/
 @[expose] public def maxDecoded : Nat := 1 <<< 26
-
--- ## Objects (§7.3)
 
 /-- A numeric object in sp: `72` or `595.276`, exact to the sp. -/
 public def Obj.sp? (o : Obj) : Option Sp :=
@@ -91,17 +69,12 @@ public def Obj.sp? (o : Obj) : Option Sp :=
     return some (if neg then -v else v)
   | _ => none
 
--- ## The cross-reference (§7.5)
-
 /-- Where an object lives: at a byte offset, or inside an object stream. -/
 public inductive Loc where
   | direct (off : Nat)
   | inStm (stm : Nat) (idx : Nat)
   deriving Inhabited
 
-/-- `num gen obj <value>` at a byte offset (§7.3.10). Returns the object
-number the file spells there, the value, and the position after it, where
-`stream` may follow. -/
 private def parseIndirectAt (b : ByteArray) (off : Nat) :
     Except String (Nat × Obj × Nat) := do
   let some (num, i) := parseUInt b (skipWs b off)
@@ -113,9 +86,6 @@ private def parseIndirectAt (b : ByteArray) (off : Nat) :
   let (v, after) ← parseVal b k
   return (num, v, after)
 
-/- The indirect-object invariant is stated on the actual byte span, before
-stream decoding. It consumes the writer's decimal header and the already
-proved value grammar; no reader result is a hypothesis. -/
 private theorem nat_start_skip {b : ByteArray} {i : Nat} (n : Nat)
     (hs : Span b i (octets (toString n).toUTF8)) : skipWs b i = i := by
   rw [numeric_octets _ (nat_numeric n)] at hs
@@ -211,9 +181,8 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
   simp only [hskip1, hz, hskip2, hkey, hp]
   rfl
 
-/-- Decode one stream's data by its declared filter: none, or
-`/FlateDecode`, with a PNG predictor honoured when `/DecodeParms` declares
-one (§7.4.4). Any other filter is a refusal naming it. -/
+/-- Decodes a stream by its declared filter: none, or `/FlateDecode` with a PNG predictor
+(§7.4.4); another filter is refused by name. -/
 public def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray := do
   let filter := dict.get? "Filter"
   let parms := (dict.get? "DecodeParms").bind fun d =>
@@ -231,9 +200,7 @@ public def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray
     | some n => if 0 ≤ n && n.toNat ≤ maxDecoded then n.toNat else maxDecoded
     | none => maxDecoded
   let data ← Flate.inflate raw cap
-  -- The zlib trailer (RFC 1950 §2.2) is checked here, where the reader
-  -- judges a file: `Flate.inflate` leaves it to its callers, and a byte
-  -- corrupted inside a Huffman block otherwise decodes to quiet garbage.
+  -- The zlib trailer (RFC 1950) is checked here; `Flate.inflate` leaves it to its callers.
   let n := raw.size
   let stated := (raw[n - 4]?.getD 0).toNat * 16777216 + (raw[n - 3]?.getD 0).toNat * 65536 +
     (raw[n - 2]?.getD 0).toNat * 256 + (raw[n - 1]?.getD 0).toNat
@@ -255,15 +222,12 @@ public def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray
       throw s!"PDF stream predictor {p} is not supported"
   | none => return data
 
-/-- A big-endian field of `w` bytes at `i`; a zero-width field reads 0. -/
 private def beField (data : ByteArray) (i w : Nat) : Nat := Id.run do
   let mut v := 0
   for k in [0:w] do
     v := v * 256 + (data[i + k]?.getD 0).toNat
   return v
 
-/- The loop is progress-indexed by its field width. The equation below is
-a proof about the forIn loop above, not a replacement implementation. -/
 private theorem beField_succ (data : ByteArray) (i w : Nat) :
     beField data i (w+1) = beField data i w * 256 + (data[i+w]?.getD 0).toNat := by
   unfold beField
@@ -283,17 +247,13 @@ private theorem beField_read (data : ByteArray) (i w v : Nat)
     rw [beField_succ, ih n hn, hb]
     rfl
 
-/-- The object location represented by a writer entry. Free entries do
-not contribute to the reader's live-object map. This is a semantic
-projection; it does not encode or parse any bytes. -/
+/-- The object location a writer entry represents; a free entry has none. -/
 @[expose] public def xrefEntryLocation : Pdf.Xref.Entry → Option Loc
   | .free _ _ => none
   | .direct off _ => some (.direct off)
   | .compressed stm idx => some (.inStm stm idx)
 
-/-- The location carried by one cross-reference-stream row. A free,
-unknown, or truncated row contributes no live object; a zero-width type
-field has the PDF-specified default of one (§7.5.8.3). -/
+/-- The location one cross-reference-stream row carries; a zero-width type field defaults to one (§7.5.8.3). -/
 public def readXrefRow (data : ByteArray) (base w0 w1 w2 : Nat) : Option Loc :=
   if base + (w0+w1+w2) ≤ data.size then
     let f1 := if w0 == 0 then 1 else beField data base w0
@@ -304,10 +264,6 @@ public def readXrefRow (data : ByteArray) (base w0 w1 w2 : Nat) : Option Loc :=
     else none
   else none
 
-/-- The actual reader recovers the location of any encoded writer row,
-inside arbitrary surrounding bytes, at the widths the row was encoded in.
-The only premise beyond selecting the row is its numeric representability;
-no parsing result is assumed. -/
 public theorem readXrefRow_encode_exact (w : Pdf.Xref.Widths) (es : Array Pdf.Xref.Entry)
     (i : Nat) (e : Pdf.Xref.Entry) (hi : es[i]? = some e) (he : e.Fits w)
     (pre post : ByteArray) :
@@ -334,10 +290,8 @@ public theorem readXrefRow_encode_exact (w : Pdf.Xref.Widths) (es : Array Pdf.Xr
   rw [a, b, c]
   cases e <;> rfl
 
-/-- The cross-reference as read: where every listed object lives, the
-catalog's number, the newest section's trailer dictionary (a classic
-trailer, or the cross-reference stream's own dictionary — the two carry
-the same keys, §7.5.8.2), and the offset `startxref` named. -/
+/-- The cross-reference as read: every listed object's location, the catalog, the newest trailer,
+and the `startxref` offset. -/
 public structure Xref where
   locs : Std.HashMap Nat Loc := {}
   root : Option Nat := none
@@ -347,17 +301,13 @@ public structure Xref where
 private def Xref.add (x : Xref) (num : Nat) (l : Loc) : Xref :=
   if x.locs.contains num then x else { x with locs := x.locs.insert num l }
 
-/-- The newest trailer wins: a section already recorded keeps its
-dictionary, as its entries keep their locations. -/
 private def Xref.seen (x : Xref) (trailer : Obj) : Xref :=
   let x := if x.trailer.isNone then { x with trailer := some trailer } else x
   if x.root.isNone then
     if let some (.ref r _) := trailer.get? "Root" then { x with root := some r } else x
   else x
 
-/-- Consume one `/Index` subsection of decoded xref rows. The second
-result is the next physical row, distinct from the subsection's starting
-object number. The same loop serves the stream reader and its proofs. -/
+/-- Reads one `/Index` subsection of decoded xref rows, returning the next physical row. -/
 public def readXrefSubsection (data : ByteArray) (w0 w1 w2 start count row0 : Nat)
     (x0 : Xref) : Xref × Nat := Id.run do
   let mut x := x0
@@ -382,7 +332,6 @@ private theorem readXrefSubsection_succ (data : ByteArray)
   simp only [List.forIn_pure_yield_eq_foldl]
   simp [List.range'_concat, List.foldl_append]
 
-/-- Progress of the actual subsection loop through physical rows. -/
 public theorem readXrefSubsection_row_exact (data : ByteArray)
     (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
     (readXrefSubsection data w0 w1 w2 start count row0 x0).2 = row0+count := by
@@ -390,10 +339,6 @@ public theorem readXrefSubsection_row_exact (data : ByteArray)
   | zero => simp [readXrefSubsection]
   | succ count ih => simp only [readXrefSubsection_succ, ih, Nat.add_assoc]
 
-/-- Every consumed, representable row is recovered in the actual reader
-map at its object number. Unconsumed rows are absent. The empty initial
-map is the newest xref section's state, and the induction advances the
-physical row and object number together. -/
 public theorem readXrefSubsection_locations_exact (w : Pdf.Xref.Widths)
     (es : Array Pdf.Xref.Entry)
     (hf : ∀ e ∈ es, e.Fits w) (count : Nat) (hc : count ≤ es.size)
@@ -444,9 +389,6 @@ public theorem readXrefSubsection_locations_exact (w : Pdf.Xref.Widths)
         have hlt : (k < n+1) = (k < n) := propext (by omega)
         simp only [hlt]
 
-/-- The actual reader's live-object count for a writer table with object
-zero free and every nonzero object live. These are properties of the
-semantic entries, not assumptions about successful parsing. -/
 public theorem readXrefSubsection_size_exact (w : Pdf.Xref.Widths) (es : Array Pdf.Xref.Entry)
     (hf : ∀ e ∈ es, e.Fits w)
     (hzero : es[0]?.bind xrefEntryLocation = none)
@@ -502,7 +444,6 @@ public theorem readXrefSubsection_size_exact (w : Pdf.Xref.Widths) (es : Array P
       simp only [Std.HashMap.mem_iff_contains, fresh, Bool.false_eq_true, ↓reduceIte]
       omega
 
-/-- Reading rows preserves the trailer, root, and startxref metadata. -/
 public theorem readXrefSubsection_metadata_exact (data : ByteArray)
     (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
     let x := (readXrefSubsection data w0 w1 w2 start count row0 x0).1
@@ -520,9 +461,6 @@ public theorem readXrefSubsection_metadata_exact (data : ByteArray)
         simp only [Xref.add]
         split <;> exact ih
 
-/-- One classic xref section (§7.5.4) at `off`: subsections of 20-byte
-entries, then the trailer dictionary. Returns the updated table and the
-`/Prev` and `/XRefStm` offsets, if declared. -/
 private def readClassicSection (b : ByteArray) (off : Nat) (x0 : Xref) :
     Except String (Xref × Option Nat × Option Nat) := Id.run do
   let mut x := x0
@@ -561,7 +499,6 @@ private def readClassicSection (b : ByteArray) (off : Nat) (x0 : Xref) :
     let xstm := ((trailer.get? "XRefStm").bind Obj.int?).map (·.toNat)
     return .ok (x, prev, xstm)
 
-/-- One cross-reference stream (§7.5.8) at `off`. -/
 private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
     Except String (Xref × Option Nat) := do
   let (_, dict, j) ← parseIndirectAt b off
@@ -598,9 +535,6 @@ private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
   let prev := ((dict.get? "Prev").bind Obj.int?).map (·.toNat)
   return (x, prev)
 
-/-- Follow `startxref` and the `/Prev` chain over every cross-reference
-section, classic or stream (a hybrid file's `/XRefStm` too). Newest
-section first: an entry already seen is never overridden. -/
 private def readXrefFrom (b : ByteArray) (off0 : Nat) : Except String Xref := Id.run do
   let mut work : Array Nat := #[off0]
   let mut seen : Array Nat := #[]
@@ -762,10 +696,6 @@ private theorem readXref_span_exact {b : ByteArray} {i : Nat}
   simp only [readXref, ht, bind, Except.bind]
   exact readXrefFrom_stream_exact b i _ hk hsec
 
-/-- The actual footer scan, indirect-object parser, stream boundary,
-subsection loop, and section traversal recover a single emitted xref
-stream. The codec premise is local to its payload and is discharged by
-the writer's compression contract when this lemma is composed. -/
 public theorem readXref_stream_exact (pre : ByteArray) (n : Nat)
     (dict : Obj) (hd : dict.Representable) (raw data : ByteArray)
     (count root : Nat) (w : Pdf.Xref.Widths) (hi : pre.size < 2^64)
@@ -796,25 +726,16 @@ public theorem readXref_stream_exact (pre : ByteArray) (n : Nat)
   · exact hp
   · exact hr
 
--- ## Fetching objects
-
 private structure Reader where
   b : ByteArray
   locs : Std.HashMap Nat Loc
 
-/-- Bootstrap an object stream's indirect `/Length`: §7.5.7 excludes
-these length objects from object streams. A single direct integer,
-never a chain or a recursive dependency on another object stream. -/
 private def Reader.directIntAt (r : Reader) (num : Nat) : Option Int := do
   if let some (.direct off) := r.locs.get? num then
     if let .ok (_, .int n, _) := parseIndirectAt r.b off then
       return n
   none
 
-/-- The raw (still encoded) stream bytes after an object's value at `j`,
-when `stream` stands there (§7.3.8): `/Length` direct or one indirect hop,
-and `endstream` where the length says it ends — a length that stops short
-or overruns is refused, never read through. -/
 private def Reader.streamAfterWith (r : Reader) (intAt : Nat → Option Int)
     (v : Obj) (j : Nat) :
     Except String (Option ByteArray) := do
@@ -827,8 +748,7 @@ private def Reader.streamAfterWith (r : Reader) (intAt : Nat → Option Int)
     let len ← match (v.get? "Length") with
       | some (.int n) => pure n
       | some (.ref ln _) =>
-        -- Even when enumerated as an ordinary object, an object stream
-        -- cannot bootstrap from a compressed length (§7.5.7).
+        -- An object stream cannot bootstrap from a compressed length (§7.5.7).
         let length := if v.get? "Type" == some (.name "ObjStm")
           then r.directIntAt ln else intAt ln
         match length with
@@ -842,9 +762,7 @@ private def Reader.streamAfterWith (r : Reader) (intAt : Nat → Option Int)
       throw "malformed PDF: a stream's /Length does not reach its endstream"
     return some (r.b.extract dataStart dataEnd)
 
-/-- The ordered decimal pairs at the start of an object stream (§7.5.7).
-The progress invariant is the unread header suffix together with the
-pairs already consumed. -/
+/-- The ordered decimal pairs at the start of an object stream (§7.5.7). -/
 public def readObjectStreamHeader (data : ByteArray) (count : Nat) :
     Except String (Array (Nat × Nat)) := do
   let mut i := 0
@@ -858,8 +776,6 @@ public def readObjectStreamHeader (data : ByteArray) (count : Nat) :
     pairs := pairs.push (onum, ooff)
   return pairs
 
-/-- An object stream (§7.5.7) decoded: its data, the header's
-`(objnum, offset)` pairs in order, and `/First`. -/
 private def Reader.objStm (r : Reader) (stm : Nat) :
     Except String (ByteArray × Array (Nat × Nat) × Nat) := do
   let some (.direct off) := r.locs.get? stm
@@ -875,11 +791,6 @@ private def Reader.objStm (r : Reader) (stm : Nat) :
   let pairs ← readObjectStreamHeader data n.toNat
   return (data, pairs, first.toNat)
 
-/-- Fetch the value without reading its stream. A direct object also
-returns the position after its value; compressed objects cannot carry
-streams (§7.5.7). Separating these readings lets a compressed integer
-supply an ordinary stream's length without making object lookup recursive.
-An object the table does not list is null (§7.3.10). -/
 private def Reader.valueAt (r : Reader) (num : Nat) :
     Except String (Obj × Option Nat) := do
   match r.locs.get? num with
@@ -894,15 +805,9 @@ private def Reader.valueAt (r : Reader) (num : Nat) :
     let (v, _) ← parseVal data (first + ooff)
     return (v, none)
 
-/-- One resolved integer, independent of its physical storage. The value
-reader's object-stream bootstrap only uses `directIntAt`, so this cannot
-re-enter itself, even on cyclic or malformed references. -/
 private def Reader.intAt (r : Reader) (num : Nat) : Option Int :=
   (r.valueAt num).toOption.bind (fun (v, _) => v.int?)
 
-/-- Artifact-specific shape facts about the actual value reader: arbitrary
-integer values, offsets and object-stream indices, conditional on parsing
-those values. These do not claim every arbitrary byte string parses. -/
 private theorem Reader.intAt_direct_exact (r : Reader) (num off header j : Nat) (n : Int)
     (hloc : r.locs.get? num = some (.direct off))
     (hval : parseIndirectAt r.b off = .ok (header, .int n, j)) :
@@ -922,14 +827,11 @@ private theorem Reader.intAt_compressed_exact (r : Reader) (num stm idx first he
   simp only [hidx, hval]
   rfl
 
-/-- Artifact-specific bootstrap restriction: no compressed entry can
-supply an object stream's own length, including a self or mutual cycle. -/
 private theorem Reader.directIntAt_compressed_exact (r : Reader) (num stm idx : Nat)
     (hloc : r.locs.get? num = some (.inStm stm idx)) :
     r.directIntAt num = none := by
   simp only [Reader.directIntAt, hloc]
 
-/-- Fetch an object's value and its raw (still encoded) stream, if any. -/
 private def Reader.get (r : Reader) (num : Nat) :
     Except String (Obj × Option ByteArray) := do
   let (v, after) ← r.valueAt num
@@ -938,31 +840,20 @@ private def Reader.get (r : Reader) (num : Nat) :
     | some j => r.streamAfterWith r.intAt v j
   return (v, raw)
 
-/-- One level of indirection: a `ref` fetched, anything else unchanged. -/
 private def Reader.deref (r : Reader) (o : Obj) : Except String Obj := do
   match o with
   | .ref n _ => return (← r.get n).1
   | _ => return o
 
--- ## One read of a file: object streams decoded once
-
-/-- An object stream's decoded data, header pairs and `/First`, as
-`Reader.objStm` reads it. -/
+/-- An object stream's decoded data, header pairs and `/First`. -/
 public abbrev ObjStm := ByteArray × Array (Nat × Nat) × Nat
 
-/-- An object stream (§7.5.7) decoded, as the plain reader of a file's
-bytes and cross-reference decodes it: the one computation the memo below
-caches. -/
+/-- An object stream (§7.5.7) decoded by the plain reader, the computation the memo caches. -/
 public def objStmOf (b : ByteArray) (locs : Std.HashMap Nat Loc) (stm : Nat) :
     Except String ObjStm :=
   ({ b, locs } : Reader).objStm stm
 
-/-- A read PDF: its bytes, its object locations, and its object streams
-decoded at most once — a thunk per object stream the cross-reference names,
-holding exactly what `objStmOf` decodes (`memo_ok`). Selecting page 224 of
-a 224-page file walks `/Kids` through objects that share a handful of
-object streams; decoded per lookup, each walk step inflated its stream
-again, and the read slowed with the page index. -/
+/-- A read PDF: its bytes, object locations, catalog, trailer, and its object streams decoded at most once. -/
 public structure Doc where
   bytes : ByteArray
   locs : Std.HashMap Nat Loc
@@ -973,10 +864,8 @@ public structure Doc where
   /-- The trailer dictionary the cross-reference read last. -/
   trailer : Obj
 
-/-- The plain reader of a document's bytes. -/
 private def Doc.reader (d : Doc) : Reader := { b := d.bytes, locs := d.locs }
 
-/-- One object stream more in a memo, under its own computation. -/
 private def memoAdd (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (m : { m : Std.HashMap Nat (Thunk (Except String ObjStm)) //
       ∀ k t, m.get? k = some t → t.get = objStmOf b locs k }) (stm : Nat) :
@@ -993,7 +882,6 @@ private def memoAdd (b : ByteArray) (locs : Std.HashMap Nat Loc)
       rfl
     · exact m.property k t h⟩
 
-/-- The memo of every object stream a cross-reference names. -/
 private def memoOf (b : ByteArray) (locs : Std.HashMap Nat Loc) :
     { m : Std.HashMap Nat (Thunk (Except String ObjStm)) //
       ∀ k t, m.get? k = some t → t.get = objStmOf b locs k } :=
@@ -1007,17 +895,13 @@ public def Doc.objStm (d : Doc) (stm : Nat) : Except String ObjStm :=
   | some t => t.get
   | none => objStmOf d.bytes d.locs stm
 
-/-- **The memo answers what a fresh decode answers** (`_agree`): every
-object stream read through the memo is the stream the plain reader
-decodes, so memoizing changes how often a stream inflates and nothing a
-read returns. -/
 public theorem Doc.memo_agree (d : Doc) (stm : Nat) : d.objStm stm = objStmOf d.bytes d.locs stm := by
   unfold Doc.objStm
   split
   · next t ht => exact d.memo_ok stm t ht
   · rfl
 
-/-- `Reader.valueAt` through the memo. -/
+/-- An object's value and the position after it, read through the memo. -/
 public def Doc.valueAt (d : Doc) (num : Nat) : Except String (Obj × Option Nat) := do
   match d.locs.get? num with
   | none => return (.null, none)
@@ -1036,8 +920,6 @@ public def valueAtOf (b : ByteArray) (locs : Std.HashMap Nat Loc) (num : Nat) :
     Except String (Obj × Option Nat) :=
   ({ b, locs } : Reader).valueAt num
 
-/-- **A memoized read is a plain read** (`_agree`): every object value the
-document reads through its memo is the value the plain reader reads. -/
 public theorem Doc.valueAt_agree (d : Doc) (num : Nat) :
     d.valueAt num = valueAtOf d.bytes d.locs num := by
   unfold Doc.valueAt valueAtOf Reader.valueAt
@@ -1067,9 +949,7 @@ public def Doc.field (d : Doc) (o : Obj) (k : String) : Except String (Option Ob
     | none => return none
   | _ => return none
 
-/-- A stream object's dictionary and its decoded data (`decodeStream`:
-none, or Flate with a PNG predictor), or `none` when the value carries no
-stream. -/
+/-- A stream object's dictionary and decoded data, or `none` when the value carries no stream. -/
 public def Doc.stream (d : Doc) (o : Obj) : Except String (Option (Obj × ByteArray)) := do
   match o with
   | .ref n _ =>
@@ -1095,27 +975,18 @@ public def Doc.ofBytes (b : ByteArray) : Except String Doc := do
 document's graph is bounded by it. -/
 public def Doc.objectCount (d : Doc) : Nat := d.locs.size
 
-/-- The object numbers the cross-reference lists. -/
 public def Doc.objectNumbers (d : Doc) : List Nat := d.locs.keys
 
-/-- Whether the cross-reference lists an object. -/
 public def Doc.lists (d : Doc) (num : Nat) : Bool := d.locs.contains num
 
-/-- **A listed object is among the object numbers** (`_mem`). -/
 public theorem Doc.lists_mem (d : Doc) (num : Nat) (h : d.lists num = true) :
     num ∈ d.objectNumbers := by
   unfold Doc.lists at h
   unfold Doc.objectNumbers
   exact Std.HashMap.mem_keys.mpr (Std.HashMap.mem_iff_contains.mpr h)
 
--- ## Every object (§7.5.4, §7.5.7): the substrate a census reads
-
-/-- One object the cross-reference lists, fetched: where the table put it,
-the number the file spells beside it — `num gen obj` at a direct offset,
-or its object stream's header pair — its value, and its raw (still
-encoded) stream bytes when it carries one. `header` is data the reader
-keeps rather than a check it made, so `wf` below can restate the check as
-a property the type carries. -/
+/-- One listed object, fetched: its table number, the number the file spells beside it, its value
+and its raw stream. -/
 public structure Entry where
   num : Nat
   loc : Loc
@@ -1129,13 +1000,6 @@ public structure Entry where
 
 @[expose] public def entriesWf (es : Array Entry) : Bool := es.all Entry.wf
 
-/-- **`objects_num_covers`** (the `_covers` statement, artifact-specific:
-a fact of the file's own bookkeeping, with no IR statement behind it):
-every object `objects` hands back is spelled in the file under the number
-the cross-reference lists it by — at its offset, or in its object stream's
-header. A cross-reference row pointing at the wrong object, or an object
-stream whose header pairs were permuted, is refused by name before this
-value exists; the subtype carries the property, as `readForm`'s does. -/
 public theorem objects_num_covers (es : { es : Array Entry // entriesWf es }) :
     ∀ e ∈ es.val, e.header = e.num := by
   intro e he
@@ -1154,9 +1018,6 @@ private structure ObjectScan where
   entries : Array Entry := #[]
   afters : Std.HashMap Nat Nat := {}
 
-/-- One iteration of object enumeration. Naming its state makes the
-cache, consumed entries, and deferred stream positions part of the same
-progress invariant; the production loop below executes this step. -/
 private def Reader.collect (r : Reader) (size? : Option Nat) (num : Nat)
     (s : ObjectScan) : Except String ObjectScan := do
   if let some size := size? then
@@ -1187,10 +1048,8 @@ private def Reader.collect (r : Reader) (size? : Option Nat) (num : Nat)
       stms := stms
       entries := s.entries.push { num, loc := .inStm stm idx, header, val, stream := none } }
 
-/-- The local evidence needed to enumerate one object. Direct entries
-name the parsed value's end and its raw stream; compressed entries name
-the decoded object stream, header slot, and payload value. These are
-intermediate parsing contracts, not assumptions of a producer theorem. -/
+/-- The local evidence that enumerates one object: a direct value's end and raw stream, or a
+compressed object's stream, header slot and payload value. -/
 public def Entry.Reads (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (e : Entry) (after : Option Nat) : Prop :=
   e.header = e.num ∧ locs.get? e.num = some e.loc ∧
@@ -1257,9 +1116,6 @@ private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Opti
     hbound', decide_false, Bool.or_self, he']
   simp only [show j+7+1=j+8 by omega, hskip, hkey, Option.isSome_some, ↓reduceIte]
 
-/-- A complete emitted direct stream supplies its actual local reading.
-The byte-span premise includes the closing marker, so a guessed length
-or merely parseable dictionary cannot establish this contract. -/
 public theorem Entry.reads_stream_spelling_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num off : Nat) (dict : Obj) (spelling : ByteArray) (hd : dict.Spelling spelling) (raw : ByteArray)
     (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
@@ -1273,7 +1129,6 @@ public theorem Entry.reads_stream_spelling_exact (b : ByteArray) (locs : Std.Has
   intro intAt
   exact Reader.streamAfter_span_exact {b, locs} intAt num off dict spelling hd raw hs hl
 
-/-- Canonical dictionary rendering is one of the concrete stream spellings. -/
 public theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
     (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
@@ -1285,9 +1140,6 @@ public theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat 
       b locs (some (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size)) :=
   Entry.reads_stream_spelling_exact b locs num off dict dict.render (.render hd) raw hs hl hn
 
-/-- A compressed object's local reading follows from the actual reading of
-its containing stream, payload decoding, header slot, and value parse.
-This exposes the bootstrap composition without exporting the private reader. -/
 public theorem Entry.reads_compressed_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num stm idx off j count first objoff next : Nat)
     (dict val : Obj) (raw data : ByteArray) (pairs : Array (Nat × Nat))
@@ -1514,14 +1366,8 @@ private theorem Reader.finish_exact (r : Reader) (model : Nat → Entry × Optio
         simp only [hnum, hl, hs]
         rfl
 
-/-- Every object a read cross-reference lists, in object-number order,
-each fetched and checked against the number the file spells for it. The
-strict reading the engine applies to its own output and a census applies
-to any: `startxref` must name the exact start of a section (§7.5.5 — a
-tolerant reader skips whitespace, and would pass an offset off by one),
-every number lies below the trailer's `/Size`, every object stream's
-header agrees with the table, every stream's `/Length` reaches its
-`endstream`. Object streams are decoded once each. -/
+/-- Every object a read cross-reference lists, in object-number order, each fetched and checked
+strictly against the number the file spells for it. -/
 public def objectsOf (b : ByteArray) (x : Xref) :
     Except String { es : Array Entry // entriesWf es } := do
   let s := x.start
@@ -1534,19 +1380,12 @@ public def objectsOf (b : ByteArray) (x : Xref) :
   let mut scan : ObjectScan := {}
   for num in nums do
     scan ← r.collect size? num scan
-  -- All values are now available, including compressed length integers.
-  -- Reuse them instead of decoding object streams again for each length.
   let es ← r.finish scan
   if h : entriesWf es then
     return ⟨es, h⟩
   else
     throw "malformed PDF: an object's spelled number disagrees with the cross-reference"
 
-/-- Local byte reads compose through the actual enumeration loop, its
-object-stream cache, deferred stream extraction, and final number check.
-The returned array is exactly the supplied entry model in object-number
-order. A producer contract must establish `Entry.Reads` from its emitted
-spans; this theorem does not itself establish those spelling facts. -/
 public theorem objectsOf_reads_exact (b : ByteArray) (x : Xref)
     (model : Nat → Entry × Option Nat)
     (hstart : (isWs (at? b x.start) || at? b x.start == 256 ||
@@ -1596,8 +1435,6 @@ public def trailer (b : ByteArray) : Except String Obj := do
   let x ← readXref b
   return x.trailer.getD (.dict #[])
 
--- ## Page selection (§7.7.3)
-
 /-- A page selected by its physical, one-based position in `/Kids` order. -/
 public inductive PageSelection where
   | first
@@ -1605,8 +1442,7 @@ public inductive PageSelection where
   | number (oneBased : Nat)
   deriving Inhabited, BEq, ReflBEq, LawfulBEq, DecidableEq, Repr
 
-/-- A selected page: its dictionary and the attributes it inherits from
-the page tree (§7.7.3.4), each the value its nearest declaration states. -/
+/-- A selected page: its dictionary and the attributes it inherits from the page tree (§7.7.3.4). -/
 public structure Page where
   node : Obj
   mediaBox : Option Obj
@@ -1615,12 +1451,6 @@ public structure Page where
   rotate : Option Obj
   deriving Inhabited
 
-/-- Walk `/Kids` depth-first, counting actual `/Type /Page` leaves and
-carrying inheritable attributes (§7.7.3.4). `/Count` never decides a page's
-ordinal or whether the traversal is finished. The first or numbered leaf
-can return immediately; the last requires an exhausted worklist.
-Revisited indirect nodes are malformed, and exhausting the reader's
-xref-sized visit bound also refuses, even when a leaf has been seen. -/
 private def selectPage (r : Doc) (root : Nat) (selection : PageSelection) :
     Except String (Nat × Page) := do
   if selection == .number 0 then
@@ -1669,37 +1499,27 @@ private def selectPage (r : Doc) (root : Nat) (selection : PageSelection) :
     throw s!"PDF page {n} is out of range (the file has {count} pages)"
   | _, _ => throw "malformed PDF: no page found in the page tree"
 
-/-- The shared file validation and selection path for form inclusion and
-physical page-number resolution. -/
 private def readPage (b : ByteArray) (page : PageSelection) :
     Except String (Doc × (Nat × Page)) := do
   let r ← Doc.ofBytes b
   return (r, ← selectPage r r.root page)
 
-/-- A page of a read document, selected by its physical position in
-`/Kids` order, with its one-based number and inherited attributes. -/
+/-- A page selected by its physical position in `/Kids` order, with its one-based number. -/
 public def Doc.page (d : Doc) (page : PageSelection) : Except String (Nat × Page) :=
   selectPage d d.root page
 
-/-- A page's `Contents` as its ordered stream references (§7.7.3.3): an
-array resolved, a single stream kept as the reference it is, not its
-dictionary. -/
+/-- A page's `Contents` as its ordered stream references (§7.7.3.3). -/
 public def Doc.contentParts (r : Doc) (contents : Obj) : Except String (Array Obj) := do
   match ← r.deref contents with
   | .arr xs => return xs
   | _ => return #[contents]
 
-/-- Artifact-specific: every resolved array is preserved exactly,
-including order, multiplicity and the empty value, whichever storage form
-supplied it. The premise is the reader's actual dereference. -/
 public theorem Doc.contentParts_array_exact (r : Doc) (contents : Obj) (xs : Array Obj)
     (h : r.deref contents = .ok (.arr xs)) :
     r.contentParts contents = .ok xs := by
   simp only [Doc.contentParts, h]
   rfl
 
-/-- Artifact-specific: resolving a single stream's dictionary does not
-replace the reference from which the caller reads its stream bytes. -/
 public theorem Doc.contentParts_stream_exact (r : Doc) (num gen : Nat)
     (es : Array (String × Obj)) (raw : ByteArray)
     (h : r.get num = .ok (.dict es, some raw)) :
@@ -1707,8 +1527,7 @@ public theorem Doc.contentParts_stream_exact (r : Doc) (num gen : Nat)
   simp only [Doc.contentParts, Doc.deref, h]
   rfl
 
-/-- A page's content streams decoded and joined by line feeds (§7.8.2: the
-division between streams falls only between operators). -/
+/-- A page's content streams decoded and joined by line feeds (§7.8.2). -/
 public def Doc.content (r : Doc) (page : Page) : Except String ByteArray := do
   let mut content := ByteArray.empty
   match page.node.get? "Contents" with
@@ -1727,27 +1546,18 @@ public def Doc.content (r : Doc) (page : Page) : Except String ByteArray := do
       content := content.push 10
   return content
 
-/-- Resolve a selection to its one-based physical page number, using the
-same `/Kids` traversal and selection checks as `readForm`. Contents and
-resource streams need not be decoded to resolve an ordinal. -/
+/-- A selection's one-based physical page number, by the traversal `readForm` uses. -/
 public def pageNumber (b : ByteArray) (page : PageSelection := .first) : Except String Nat := do
   let (_, selected) ← readPage b page
   return selected.1
 
--- ## The copied graph, renumbered
-
-/-- A fragment of a serialized object: raw bytes, or a hole naming a copied
-object by its local index — the writer fills each hole with its own object
-number. Holes are only ever created beside an enqueued target, and `wf`
-below re-checks the closure so the guarantee is carried by the type. -/
+/-- A fragment of a serialized object: raw bytes, or a hole naming a copied object by its local index. -/
 public inductive Chunk where
   | bytes (b : ByteArray)
   | ref (l : Nat)
   deriving Inhabited
 
-/-- One copied object: its serialized value, and its verbatim (still
-encoded) stream payload when it has one — a font program is bytes in,
-bytes out, never re-parsed. -/
+/-- One copied object: its serialized value and its verbatim stream payload, if any. -/
 public structure XObjOut where
   chunks : Array Chunk
   stream : Option ByteArray := none
@@ -1767,8 +1577,6 @@ private def SerSt.localOf (st : SerSt) (num : Nat) : SerSt × Nat :=
 private def pushStr (out : Array Chunk) (s : String) : Array Chunk :=
   out.push (.bytes s.toUTF8)
 
-/-- Re-escape a name on the way out (§7.3.5): regular characters ride,
-everything else is `#`-coded. -/
 private def nameOut (n : String) : String := Id.run do
   let hexDigit (v : Nat) : Char := ("0123456789ABCDEF".toList[v % 16]?).getD '0'
   let mut out := "/"
@@ -1781,8 +1589,6 @@ private def nameOut (n : String) : String := Id.run do
   return out
 
 mutual
-/-- Serialize an object into chunks, references becoming holes and their
-targets enqueued: the one place a `Chunk.ref` is made. -/
 private def serObj (st : SerSt) (out : Array Chunk) : Obj → SerSt × Array Chunk
   | .null => (st, pushStr out "null")
   | .bool true => (st, pushStr out "true")
@@ -1816,11 +1622,8 @@ private def serPairs (st : SerSt) (out : Array Chunk) :
     serPairs st (pushStr out " ") rest
 end
 
--- ## The result
-
-/-- A selected page of a read PDF, ready to embed: the page box in sp, the
-decoded content, and the `/Resources` graph renumbered into `objects`'
-local space. The engine claims the box; the copied streams stay opaque. -/
+/-- A selected page ready to embed: its box in sp, its decoded content, and its `/Resources`
+graph renumbered into `objects`' local space. -/
 public structure Form where
   x0 : Sp
   y0 : Sp
@@ -1840,38 +1643,19 @@ private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
     | .ref l => l < n
     | .bytes _ => true
 
-/-- Every hole in the copied graph points into `objects`: the writer can
-renumber the whole graph without meeting a dangling reference. -/
+/-- Every hole in the copied graph points into `objects`. -/
 public def Form.wf (f : Form) : Bool :=
   chunksWf f.objects.size f.resources &&
   f.objects.all (fun o => chunksWf f.objects.size o.chunks)
 
-/-- **`resources_closed`** (the `_covers` statement): a form the reader
-hands back never carries a dangling reference — every object the copied
-page references is copied, renumbered into the local space. This is what
-makes "vector stays vector" true in a viewer: a form whose `/Resources`
-named a font object the file did not carry would render blank or error.
-The reader returns the subtype, so the property is carried by the type:
-`readForm`'s one success path checks `wf` and refuses otherwise. -/
 public theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
   f.property
 
-/-- The composite placement map on one axis, as an exact rational
-`(numerator, denominator)`: the form's `/Matrix` normalizes its box
-`[lo, hi]` to `[0, 1]` (ISO 32000-2 §8.10.1: the matrix maps form space
-into the space the `Do` executes in) and the image path's
-`cm len 0 0 len' dst dst'` (§8.3.4) maps that to `[dst, dst + len]`.
-`placeX lo hi dst len p = ((p - lo) * len + dst * (hi - lo), hi - lo)`. -/
+/-- The composite placement map on one axis as an exact rational `(numerator, denominator)`: the
+form's `/Matrix` (§8.10.1) and the image path's `cm` (§8.3.4) composed. -/
 @[expose] public def placeX (lo hi dst len p : Int) : Int × Int :=
   ((p - lo) * len + dst * (hi - lo), hi - lo)
 
-/-- **`form_bbox_exact`**: the placed box is the page box scaled to the
-requested size, exactly, in the rational arithmetic the emitted `/Matrix`
-and `cm` render to decimals: the box's low edge lands on `dst` and its
-high edge on `dst + len` — `value * den = num` is the fraction read
-without dividing. The decimal rendering rounds each matrix entry once, at
-the ninth digit (`ratString` in the writer), the same one-unit story as
-every `Sp.toPtString`. -/
 public theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
     (placeX lo hi dst len lo).1 = dst * (placeX lo hi dst len lo).2 ∧
     (placeX lo hi dst len hi).1 = (dst + len) * (placeX lo hi dst len hi).2 ∧
@@ -1881,12 +1665,8 @@ public theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
   rw [Int.add_mul, Int.mul_comm (hi - lo) len]
   omega
 
-/-- **A page's box** (§14.11.2): its CropBox when declared, else its
-MediaBox — pdfTeX's rule for PDF inclusion — each element followed one
-reference and read as a length, the corners ordered `(x0, y0, x1, y1)`;
-refused when it is not four numbers or encloses nothing. The one reading
-of the box the PDF backend places a page in and the figure importer draws
-it in. -/
+/-- A page's box (§14.11.2): its CropBox when declared, else its MediaBox, refused unless four
+numbers enclosing area. -/
 public def Doc.pageBox (r : Doc) (page : Page) : Except String (Sp × Sp × Sp × Sp) := do
   let some boxObj := page.cropBox.or page.mediaBox
     | throw "malformed PDF: the selected page has no /MediaBox"
@@ -1911,19 +1691,15 @@ public def Doc.pageBox (r : Doc) (page : Page) : Except String (Sp × Sp × Sp �
     throw "malformed PDF: the page box is empty"
   return (x0, y0, x1, y1)
 
-/-- Whether a page is drawn as it stands: a `/Rotate` other than 0 is
-refused, as neither reader turns a page. -/
+/-- Whether a page is drawn as it stands: a `/Rotate` other than 0 is refused. -/
 public def Doc.unrotated (r : Doc) (page : Page) : Except String Unit := do
   match (← r.deref (page.rotate.getD (.int 0))).int?.getD 0 with
   | 0 => pure ()
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
 
-/-- A page's form but its box: the decoded content streams concatenated,
-and the resources graph copied and renumbered. -/
 private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     Except String (ByteArray × Array Chunk × Array XObjOut) := do
   let content ← r.content page
-  -- The resources graph, copied whole and renumbered.
   let mut st : SerSt := {}
   let resObj := page.resources.getD (.dict #[])
   let (st1, resChunks) := serObj st #[] resObj
@@ -1942,9 +1718,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
       st := st'
       objects := objects.push { chunks }
     | some raw =>
-      -- The dict re-serializes with its `/Length` made direct — the raw
-      -- bytes are already in hand — so an indirect length never needs a
-      -- copied integer object.
+      -- The dictionary re-serializes with its `/Length` direct, so no copied integer is needed.
       let es : Array (String × Obj) := match v with
         | .dict es => es.filter (fun kv => kv.1 != "Length")
         | _ => #[]
@@ -1956,10 +1730,8 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     throw "malformed PDF: the resource graph is larger than the file"
   return (content, resChunks, objects)
 
-/-- Read a selected page of a PDF into an embeddable form, defaulting to
-page 1: the box (`Doc.pageBox`), the decoded content streams concatenated,
-and the resources graph copied and renumbered. Total over arbitrary bytes;
-anything the reader cannot follow is a named error. -/
+/-- A selected page of a PDF read into an embeddable form, page 1 by default; anything the reader
+cannot follow is a named error. -/
 public def readForm (b : ByteArray) (page : PageSelection := .first) :
     Except String { f : Form // f.wf } := do
   let (r, selected) ← readPage b page
@@ -1972,8 +1744,6 @@ public def readForm (b : ByteArray) (page : PageSelection := .first) :
   else
     throw "malformed PDF: the resource graph did not close"
 
-/-- **The form's box is the page's** (`_exact`): a form read from a page
-stands in that page's box (`Doc.pageBox`) of the document the bytes are. -/
 public theorem readForm_box_exact (b : ByteArray) (sel : PageSelection) (f : { f : Form // f.wf })
     (h : readForm b sel = .ok f) :
     ∃ d n p, Doc.ofBytes b = .ok d ∧ d.page sel = .ok (n, p) ∧

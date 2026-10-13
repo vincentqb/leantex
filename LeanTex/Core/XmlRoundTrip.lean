@@ -6,34 +6,12 @@ public import LeanTex.Core.XmlContract
 import Std.Data.HashSet.Lemmas
 import all Init.Data.Repr
 
-/-!
-# The XML writer, read back
-
-The reader reads a rendered tree back as it stands (`parse_render_id`): a
-tree whose root is an element, whose names are ASCII names within the name
-budget, whose attributes are named once in each element, whose text and
-attribute values are characters XML admits within the text budget — no text
-node empty and no two adjacent — and whose spelling lies within the size,
-depth and node budgets.
-
-`render` writes ASCII — a literal character as itself, every other as a
-decimal reference — so the proof reads the spelling a character a byte, and
-follows the reader token by token: a start tag, an end tag, a run of literal
-text and a reference are each one forward step, and a tree's spelling is the
-steps of its tags around its kids'. A round trip is a claim about what the
-reader's loops return, which no invariant sees (`LeanTex.Core.Loop`), so each
-loop is read by its progress: a body that ignores its index, stepped a
-counted number of times (`loopN`, `loopE`, `Reach`).
--/
+/-! The XML round trip: the reader reads a rendered canonical tree back as it stands. -/
 
 namespace LeanTex.Core.Xml
 
-/-! ## An ASCII spelling, byte for character -/
-
-/-- Characters of the first 128 code points. -/
 private def Ascii (l : List Char) : Prop := ∀ c ∈ l, c.toNat < 128
 
-/-- The bytes of an ASCII character list, one each. -/
 private def bytesOf (l : List Char) : ByteArray := (l.map fun c => UInt8.ofNat c.toNat).toByteArray
 
 private theorem size_bytesOf (l : List Char) : (bytesOf l).size = l.length := by
@@ -88,9 +66,6 @@ private theorem fromUTF8?_bytesOf (l : List Char) (hl : Ascii l) :
 private theorem validateUTF8_bytesOf (l : List Char) (hl : Ascii l) : (bytesOf l).validateUTF8 = true :=
   ByteArray.validateUTF8_eq_true_iff.mpr ⟨l, (utf8Encode_ascii l hl).symm⟩
 
-/-! ## Loops whose body ignores its index -/
-
-/-- `n` steps of a loop body that ignores its index. -/
 private def loopN {β : Type} (g : β → ForInStep β) : Nat → β → β
   | 0, b => b
   | n + 1, b => match g b with
@@ -117,9 +92,6 @@ private theorem forIn_range_loopN {β : Type} (g : β → ForInStep β) (f : Nat
   rw [this]
   exact forIn_range'_loopN g f hf _ n b
 
-/-! ## Scanning a run -/
-
-/-- The scan's step: one more byte while `pred` holds. -/
 private def scanStep (b : ByteArray) (pred : Nat → Bool) (j : Nat) : ForInStep Nat :=
   if pred (at? b j) then .yield (j + 1) else .done j
 
@@ -129,7 +101,6 @@ private theorem scanWhile_loopN (b : ByteArray) (pred : Nat → Bool) (i : Nat) 
   exact forIn_range_loopN (scanStep b pred) _ (fun _ j => by
     simp only [scanStep]; split <;> rfl) _ i
 
-/-- The run of characters from `l` that `pred` reads as bytes. -/
 private def runLen (pred : Nat → Bool) (l : List Char) : Nat := (l.takeWhile fun c => pred c.toNat).length
 
 private theorem loopN_scan (l : List Char) (hl : Ascii l) (pred : Nat → Bool) (h256 : pred 256 = false) :
@@ -166,7 +137,6 @@ private theorem runLen_le (pred : Nat → Bool) (l : List Char) : runLen pred l 
   unfold runLen
   exact (List.takeWhile_sublist _).length_le
 
-/-- **A scan over an ASCII spelling stops at the end of its run.** -/
 private theorem scanWhile_bytesOf (l : List Char) (hl : Ascii l) (pred : Nat → Bool) (h256 : pred 256 = false)
     (j : Nat) : scanWhile (bytesOf l) pred j = j + runLen pred (l.drop j) := by
   rw [scanWhile_loopN, size_bytesOf]
@@ -183,47 +153,36 @@ private theorem extract_bytesOf (l : List Char) (i j : Nat) :
 private theorem ascii_sub (l : List Char) (hl : Ascii l) (i k : Nat) : Ascii ((l.drop i).take k) :=
   fun c hc => hl c (List.mem_of_mem_drop (List.mem_of_mem_take hc))
 
-/-- **A slice of an ASCII spelling is its characters.** -/
 private theorem slice_bytesOf (l : List Char) (hl : Ascii l) (i j : Nat) :
     slice (bytesOf l) i j = String.ofList ((l.drop i).take (j - i)) := by
   unfold slice
   rw [extract_bytesOf, fromUTF8?_bytesOf _ (ascii_sub l hl i (j - i))]
   rfl
 
-/-! ## The spelling as characters -/
-
-/-- A character's reference, as characters. -/
 private def refL (c : Char) : List Char := '&' :: '#' :: (Nat.toDigits 10 c.toNat ++ [';'])
 
-/-- A character's spelling: itself when literal, else its reference. -/
 private def pieceL (c : Char) : List Char := if literal c then [c] else refL c
 
-/-- Characters, canonically spelled. -/
 private def escL (s : List Char) : List Char := s.flatMap pieceL
 
-/-- An attribute list's spelling. -/
 private def attrsL : List (String × String) → List Char
   | [] => []
   | (k, v) :: rest => ' ' :: (k.toList ++ ('=' :: '"' :: (escL v.toList ++ ('"' :: attrsL rest))))
 
 mutual
-/-- A node's spelling after `out`, as `renderOne` writes it. -/
 private def nodeOn (out : List Char) : Node → List Char
   | .elem name attrs kids =>
     let out := out ++ '<' :: (name.toList ++ attrsL attrs.toList)
     if kids.isEmpty then out ++ ['/', '>']
     else kidsOn (out ++ ['>']) kids.toList ++ '<' :: '/' :: (name.toList ++ ['>'])
   | .text s => out ++ escL s.toList
-/-- A list of nodes' spelling after `out`. -/
 private def kidsOn (out : List Char) : List Node → List Char
   | [] => out
   | n :: rest => kidsOn (nodeOn out n) rest
 end
 
-/-- A node's spelling, as `render` writes it. -/
 private def nodeL (n : Node) : List Char := nodeOn [] n
 
-/-- A list of nodes' spelling. -/
 private def kidsL (ks : List Node) : List Char := kidsOn [] ks
 
 mutual
@@ -319,8 +278,6 @@ private theorem renderOne_toList (out : String) (n : Node) :
     (renderOne out n).toList = out.toList ++ nodeL n := by
   rw [renderOne_nodeOn, nodeOn_eq]
 
-/-! ## Decimal references -/
-
 private theorem digitChar_toNat (n : Nat) (h : n < 10) : (Nat.digitChar n).toNat = 48 + n := by
   match n, h with
   | 0, _ => rfl | 1, _ => rfl | 2, _ => rfl | 3, _ => rfl | 4, _ => rfl
@@ -353,7 +310,6 @@ private theorem toDigits_length_le (n : Nat) (h : n < 10000000) : (Nat.toDigits 
   have := (Nat.length_toDigits_le_iff (b := 10) (n := n) (k := 7) (by decide) (by decide)).mpr
   exact this (by simpa using h)
 
-/-- The byte at `i + k` is the `k`-th character after `i`. -/
 private theorem at?_drop (R : List Char) (hl : Ascii R) (i k : Nat) :
     at? (bytesOf R) (i + k) = (((R.drop i)[k]?).map Char.toNat).getD 256 := by
   rw [at?_bytesOf R _ hl, List.getElem?_drop]
@@ -388,7 +344,6 @@ private theorem runLen_append (pred : Nat → Bool) (a rest : List Char) (ha : �
     simp only [List.cons_append, List.takeWhile_cons, hc, ↓reduceIte, List.length_cons]
     rw [ih (fun d hd => ha d (by simp [hd]))]
 
-/-- The value loop of a decimal reference over its digits. -/
 private theorem refValue_fold (R : List Char) (hl : Ascii R) (d0 m : Nat) (v : Nat) (hm : d0 + m ≤ R.length) :
     List.foldl (fun v k => v * 10 + (hexVal (at? (bytesOf R) k)).getD 0) v (List.range' d0 m) =
       List.foldl (fun v (ch : Char) => v * 10 + (hexVal ch.toNat).getD 0) v ((R.drop d0).take m) := by
@@ -420,7 +375,6 @@ private theorem fold_digits_value (n : Nat) :
       exact ih _ (fun x hx => h x (by simp [hx]))
   rw [heq _ 0 (toDigits_digit n), foldDigits]
 
-/-- **A decimal reference reads back as its character.** -/
 private theorem readReference_ref (R : List Char) (hl : Ascii R) (i : Nat) (c : Char) (rest : List Char)
     (hR : R.drop i = refL c ++ rest) (hc : xmlChar c.toNat = true) :
     readReference (bytesOf R) i = .ok (c, i + (refL c).length) := by
@@ -493,17 +447,13 @@ private theorem readReference_ref (R : List Char) (hl : Ascii R) (i : Nat) (c : 
   congr 2
   omega
 
-/-! ## Names -/
-
-/-- A name the reader reads back: ASCII, a name-start byte first and name
-bytes after. -/
+/-- A name the reader reads back: ASCII, a name-start byte first and name bytes after. -/
 @[expose] public def CanonName (s : String) : Prop :=
   (∃ c cs, s.toList = c :: cs ∧ nameStart c.toNat = true) ∧ (∀ d ∈ s.toList, nameByte d.toNat = true) ∧
     ∀ d ∈ s.toList, d.toNat < 128
 
 private theorem nameByte_256 : nameByte 256 = false := by decide
 
-/-- **A name reads back as itself.** -/
 private theorem readName_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i : Nat) (name : String)
     (rest : List Char) (hR : R.drop i = name.toList ++ rest) (hn : CanonName name)
     (hb : name.toList.length ≤ bud.name) (hstop : ∀ c ∈ rest.head?, nameByte c.toNat = false) :
@@ -521,9 +471,6 @@ private theorem readName_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i : N
   rw [slice_bytesOf R hl, hR, Nat.add_sub_cancel_left, List.take_left, String.ofList_toList]
   rfl
 
-/-! ## Fallible loops -/
-
-/-- `n` steps of a fallible loop body that ignores its index. -/
 private def loopE {ε β : Type} (g : β → Except ε (ForInStep β)) : Nat → β → Except ε β
   | 0, b => .ok b
   | n + 1, b => match g b with
@@ -554,8 +501,6 @@ private theorem forIn_range_loopE {ε β : Type} (f : Nat → β → Except ε (
   rw [this]
   exact forIn_range'_loopE f hf _ n b
 
-/-! ## Attribute values -/
-
 private theorem escL_cons (c : Char) (w : List Char) : escL (c :: w) = pieceL c ++ escL w := by
   simp [escL]
 
@@ -572,7 +517,6 @@ private theorem literal_toNat (c : Char) (h : literal c = true) :
   · intro e; exact h5 (Char.ext (UInt32.toNat_inj.mp e))
   · intro e; exact h6 (Char.ext (UInt32.toNat_inj.mp e))
 
-/-- A character a run of literal value characters holds: literal, not a space. -/
 private def runChar (c : Char) : Bool := literal c && c != ' '
 
 private theorem runChar_toNat (c : Char) (h : runChar c = true) :
@@ -607,9 +551,6 @@ private theorem mem_takeWhile_pred {p : Char → Bool} : ∀ {l : List Char} {x 
       · exact mem_takeWhile_pred h'
     · simp at h
 
-/-- The value loop over a value's spelling, read through its step's four
-behaviours: a run of literal characters is appended, a space is appended,
-a reference pushes its character, the closing quote stops. -/
 private theorem loopE_value {ε : Type} (g : String × Nat → Except ε (ForInStep (String × Nat)))
     (R rest v : List Char) (limit : Nat) (hlimit : (String.ofList v).utf8ByteSize ≤ limit)
     (hquote : ∀ out j, R.drop j = '"' :: rest → g (out, j) = .ok (.done (out, j)))
@@ -738,7 +679,6 @@ private theorem escL_length (v : List Char) : v.length ≤ (escL v).length := by
     have := pieceL_length c
     omega
 
-/-- **An attribute value reads back as its characters.** -/
 private theorem readValue_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i : Nat) (v : List Char)
     (rest : List Char) (hR : R.drop i = '"' :: (escL v ++ '"' :: rest))
     (hv : ∀ c ∈ v, xmlChar c.toNat = true) (hb : (String.ofList v).utf8ByteSize ≤ bud.text) :
@@ -825,8 +765,6 @@ private theorem readValue_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i : 
   congr 2
   omega
 
-/-! ## White space and tags -/
-
 private theorem skipSpace_stop (R : List Char) (hl : Ascii R) (j : Nat) (c : Char) (rest : List Char)
     (h : R.drop j = c :: rest) (hc : isSpace c.toNat = false) : skipSpace (bytesOf R) j = j := by
   unfold skipSpace
@@ -842,11 +780,9 @@ private theorem skipSpace_one (R : List Char) (hl : Ascii R) (j : Nat) (c : Char
     (by intro x hx; simp at hx; subst hx; decide) (by intro x hx; simp at hx; subst hx; exact hc)]
   rfl
 
-/-- An attribute's spelling's length. -/
 private def attrLen (kv : String × String) : Nat := 1 + kv.1.toList.length + 2 + (escL kv.2.toList).length + 1
 
-/-- What the reader asks of an attribute it reads back: a name it reads, a
-value of characters XML admits within the text budget. -/
+/-- An attribute the reader reads back: a name it reads, and a value of admitted characters within the text budget. -/
 @[expose] public def CanonAttr (bud : Budget) (kv : String × String) : Prop :=
   CanonName kv.1 ∧ kv.1.toList.length ≤ bud.name ∧ (∀ c ∈ kv.2.toList, xmlChar c.toNat = true) ∧
     kv.2.utf8ByteSize ≤ bud.text
@@ -859,14 +795,10 @@ private theorem attrsL_length_cons (kv : String × String) (rest : List (String 
     (attrsL (kv :: rest)).length = attrLen kv + (attrsL rest).length := by
   rw [attrsL_cons]; simp [attrLen]; omega
 
-/-- The names an attribute list leaves remembered. -/
 private def insertAll (seen : Std.HashSet String) : List (String × String) → Std.HashSet String
   | [] => seen
   | kv :: rest => insertAll (seen.insert kv.1) rest
 
-/-- The attribute loop of a start tag, read through its step's behaviours:
-an attribute is pushed and its name remembered, the tag's end stops with
-the result. -/
 private theorem loopE_attrs {ε α : Type} (bud : Budget)
     (g : Option α × Array (String × String) × Std.HashSet String × Nat →
       Except ε (ForInStep (Option α × Array (String × String) × Std.HashSet String × Nat)))
@@ -933,7 +865,6 @@ private theorem loopE_attrs {ε α : Type} (bud : Budget)
     rw [harr, h]
     simp only [List.append_assoc, List.singleton_append, attrsL_length_cons, Nat.add_assoc, insertAll]
 
-/-- A start tag's closing: `/>` for an empty element, `>` for one with content. -/
 private def tagEnd (empty : Bool) : List Char := if empty then ['/', '>'] else ['>']
 
 private theorem nameStart_not (c : Char) (h : nameStart c.toNat = true) :
@@ -942,7 +873,6 @@ private theorem nameStart_not (c : Char) (h : nameStart c.toNat = true) :
   simp only [isSpace, Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq]
   omega
 
-/-- **A start tag reads back as its name and attributes.** -/
 private theorem readStartTag_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i : Nat) (name : String)
     (attrs : List (String × String)) (empty : Bool) (rest : List Char)
     (hR : R.drop i = '<' :: (name.toList ++ (attrsL attrs ++ (tagEnd empty ++ rest))))
@@ -1037,9 +967,6 @@ private theorem readStartTag_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i
   simp only [List.nil_append]
   rfl
 
-/-! ## The reader's steps over the spelling -/
-
-/-- A state with `k` more nodes counted. -/
 private def bump (s : State) (k : Nat) : State := { s with nodes := s.nodes + k }
 
 private theorem tick_ok (bud : Budget) (s : State) (h : s.nodes + 1 ≤ bud.nodes) :
@@ -1049,8 +976,6 @@ private theorem tick_ok (bud : Budget) (s : State) (h : s.nodes + 1 ≤ bud.node
   simp only [this, ↓reduceIte]
   rfl
 
-/-- **A start tag is one step**: an empty element given to its parent, or an
-element opened, one more node counted. -/
 private theorem step_start (R : List Char) (hl : Ascii R) (bud : Budget) (s : State) (name : String)
     (attrs : List (String × String)) (empty : Bool) (rest : List Char)
     (hR : R.drop s.pos = '<' :: (name.toList ++ (attrsL attrs ++ (tagEnd empty ++ rest))))
@@ -1085,7 +1010,6 @@ private theorem step_start (R : List Char) (hl : Ascii R) (bud : Budget) (s : St
   simp only [hd', ↓reduceIte]
   cases empty <;> rfl
 
-/-- **An end tag is one step**: the open element closed onto its parent. -/
 private theorem step_end (R : List Char) (hl : Ascii R) (bud : Budget) (s : State) (name : String)
     (rest : List Char) (f : Frame)
     (hR : R.drop s.pos = '<' :: '/' :: (name.toList ++ ('>' :: rest)))
@@ -1110,8 +1034,6 @@ private theorem step_end (R : List Char) (hl : Ascii R) (bud : Budget) (s : Stat
     ↓reduceIte, hrn, hk, h62, hf, hname, show ((62 : Nat) != 62) = false from rfl, Bool.false_eq_true,
     bne_self_eq_false]
 
-/-- **A reference is one step**: its character appended to the open
-element's text, within the text budget, one more node counted. -/
 private theorem step_ref (R : List Char) (hl : Ascii R) (bud : Budget) (s : State) (c : Char)
     (rest : List Char) (hR : R.drop s.pos = refL c ++ rest) (hc : xmlChar c.toNat = true)
     (hopen : s.stack.isEmpty = false) (f : Frame) (hf : s.stack.back? = some f)
@@ -1128,8 +1050,6 @@ private theorem step_ref (R : List Char) (hl : Ascii R) (bud : Budget) (s : Stat
     Bool.false_eq_true, ↓reduceIte, hopen, readReference_ref R hl s.pos c rest hR hc, hnb]
   rw [tick_ok bud _ (by rw [hchars]; exact hnodes)]
   rfl
-
-/-! ## Matching a spelling -/
 
 private theorem forIn_match_true (b t : ByteArray) (i : Nat) : ∀ (l : List Nat) (ok : Bool),
     (forIn l ok (fun k (ok : Bool) => (if (at? b (i + k) != at? t k) = true then pure (ForInStep.done false)
@@ -1151,7 +1071,6 @@ private theorem forIn_match_true (b t : ByteArray) (i : Nat) : ∀ (l : List Nat
       · simpa using hk
       · exact h2 x hx
 
-/-- **What `bytesAt` reports**: the string's bytes stand at `i`. -/
 private theorem bytesAt_spec (b : ByteArray) (i : Nat) (s : String) (h : bytesAt b i s = true) :
     i + s.toUTF8.size ≤ b.size ∧ ∀ k < s.toUTF8.size, at? b (i + k) = at? s.toUTF8 k := by
   unfold bytesAt at h
@@ -1165,7 +1084,6 @@ private theorem bytesAt_spec (b : ByteArray) (i : Nat) (s : String) (h : bytesAt
   simp only [Std.Legacy.Range.size, List.mem_range'_1]
   omega
 
-/-- `find`'s loop, ignoring its index. -/
 private def findStep (b : ByteArray) (s : String) (first : Nat) (st : Option (Option Nat) × Nat) :
     ForInStep (Option (Option Nat) × Nat) :=
   if st.2 ≥ b.size then .done (some none, st.2)
@@ -1190,7 +1108,6 @@ private theorem loopN_find (b : ByteArray) (s : String) (first k : Nat) :
       · simp only [findStep, hj, hm, ↓reduceIte, Bool.false_eq_true] at h
         exact ih (j + 1) h
 
-/-- **What `find` reports**: the string stands where it says. -/
 private theorem find_eq (b : ByteArray) (i : Nat) (s : String) :
     find b i s = (match (loopN (findStep b s (at? s.toUTF8 0)) (b.size + 1) (none, i)).1 with
       | some r => r
@@ -1221,7 +1138,6 @@ private theorem ascii3 : Ascii [']', ']', '>'] := by
 private theorem cdataEnd_toUTF8 : "]]>".toUTF8 = bytesOf [']', ']', '>'] := by
   rw [toUTF8_ascii _ (by rw [toList_ascii3]; exact ascii3), toList_ascii3]
 
-/-- **No `]]>` stands in a run of literal characters**, which holds no `>`. -/
 private theorem find_cdataEnd_none (r : List Char) (hlit : ∀ c ∈ r, literal c = true) :
     find (bytesOf r) 0 "]]>" = none := by
   have hasc : Ascii r := fun c hc => by have := literal_toNat c (hlit c hc); omega
@@ -1248,8 +1164,6 @@ private theorem contains_bytesOf (r : List Char) (n : UInt8) (hn : ∀ c ∈ r, 
   obtain ⟨c, hc, he⟩ := h
   exact hn c hc he
 
-/-- **A run of literal characters reads as itself**: no line end to
-normalize. -/
 private theorem normalizeEol_literal (r : List Char) (hlit : ∀ c ∈ r, literal c = true) :
     normalizeEol (bytesOf r) = String.ofList r := by
   have hasc : Ascii r := fun c hc => by have := literal_toNat c (hlit c hc); omega
@@ -1264,7 +1178,6 @@ private theorem normalizeEol_literal (r : List Char) (hlit : ∀ c ∈ r, litera
   rw [fromUTF8?_bytesOf r hasc]
   rfl
 
-/-- **Character data of literal characters reads back as itself.** -/
 private theorem readChars_run (R : List Char) (hl : Ascii R) (i : Nat) (r tail : List Char)
     (hlit : ∀ c ∈ r, literal c = true) (hR : R.drop i = r ++ tail)
     (htail : ∀ c ∈ tail.head?, c = '&' ∨ c = '<') :
@@ -1292,8 +1205,6 @@ private theorem isEmpty_of_back (a : Array Frame) (f : Frame) (h : a.back? = som
     subst he
     simp at h
 
-/-- **A run of literal characters is one step**: appended to the open
-element's text, one more node counted. -/
 private theorem step_chars (R : List Char) (hl : Ascii R) (bud : Budget) (s : State) (r tail : List Char)
     (hr : r ≠ []) (hlit : ∀ c ∈ r, literal c = true) (hR : R.drop s.pos = r ++ tail)
     (htail : ∀ c ∈ tail.head?, c = '&' ∨ c = '<') (f : Frame) (hf : s.stack.back? = some f)
@@ -1320,9 +1231,6 @@ private theorem step_chars (R : List Char) (hl : Ascii R) (bud : Budget) (s : St
   rw [tick_ok bud _ (by rw [hchars]; exact hnodes)]
   rfl
 
-/-! ## The reader's run -/
-
-/-- `m` steps, each one forward, take the reader from `s` to `t`. -/
 private inductive Reach (bud : Budget) (b : ByteArray) : State → State → Nat → Prop
   | refl (s : State) : Reach bud b s s 0
   | cons {s t u : State} {m : Nat} : step bud b s = .ok t → s.pos < t.pos → Reach bud b t u m →
@@ -1349,7 +1257,6 @@ private theorem Reach.pos_le {bud : Budget} {b : ByteArray} {s t : State} {m : N
 private theorem Reach.cast {bud : Budget} {b : ByteArray} {s t t' : State} {m : Nat} (h : Reach bud b s t m)
     (he : t = t') : Reach bud b s t' m := he ▸ h
 
-/-- The run's step, ignoring its index. -/
 private def runStep (bud : Budget) (b : ByteArray) (acc : Except Refusal State) : ForInStep (Except Refusal State) :=
   match acc with
   | .error e => .done (.error e)
@@ -1380,7 +1287,6 @@ private theorem loopN_reach {bud : Budget} {b : ByteArray} {s t : State} {m : Na
     simp only [h1, ↓reduceIte, hs, h2]
     exact ih ht k
 
-/-- **A run of forward steps to the end is the reader's run.** -/
 private theorem run_reach {bud : Budget} {b : ByteArray} {start : Nat} {u : State} {m : Nat}
     (h : Reach bud b { pos := start, stack := #[], root := none, nodes := 0, doctype := false } u m)
     (hu : u.pos = b.size) : run bud b start = .ok u := by
@@ -1389,8 +1295,6 @@ private theorem run_reach {bud : Budget} {b : ByteArray} {start : Nat} {u : Stat
   simp only at hle
   rw [show b.size + 1 = (b.size - m + 1) + m by omega, loopN_reach h (by omega)]
   simp only [loopN, runStep, hu, ge_iff_le, Nat.le_refl, ↓reduceIte]
-
-/-! ## States -/
 
 private theorem chars_push (s : State) (stk : Array Frame) (f : Frame) (h : s.stack = stk.push f) (t : String) :
     s.chars t = { s with stack := stk.push { f with text := f.text ++ t } } := by
@@ -1414,11 +1318,6 @@ private theorem give_bump (s : State) (k : Nat) (n : Node) : (bump s k).give n =
   simp only [State.give, bump]
   split <;> rfl
 
-/-! ## Text -/
-
-/-- **A text's spelling reads back as its characters**, appended to the
-open element's text: a run of literal characters a step, a reference a
-step. -/
 private theorem text_reads (R : List Char) (hl : Ascii R) (bud : Budget) :
     ∀ (n : Nat) (l : List Char) (s : State) (stk : Array Frame) (f : Frame) (rest : List Char),
     l.length < n → s.stack = stk.push f → R.drop s.pos = escL l ++ rest →
@@ -1526,34 +1425,26 @@ private theorem text_reads (R : List Char) (hl : Ascii R) (bud : Budget) :
           String.append_assoc, ← hofl]
         congr 1 <;> omega
 
-/-! ## Trees -/
-
-/-- A node handed to the reader's state as its spelling hands it: text to
-the open element's text, an element to the open element or the root. -/
 private def State.take (s : State) : Node → State
   | .text t => s.chars t
   | .elem name attrs kids => s.give (.elem name attrs kids)
 
-/-- The open element once a node is handed to it. -/
 private def Frame.takes (f : Frame) : Node → Frame
   | .text t => { f with text := f.text ++ t }
   | .elem name attrs kids => { f.flush with kids := f.flush.kids.push (.elem name attrs kids) }
 
-/-- Is the node text? -/
 @[expose] public def Node.isText : Node → Bool
   | .text _ => true
   | .elem .. => false
 
-/-- Does the list open with text? -/
 @[expose] public def startsText : List Node → Bool
   | n :: _ => n.isText
   | [] => false
 
 mutual
 
--- conserves: none — a bound on the reader's count over a tree's spelling, which the budget bounds.
-/-- At most the nodes the reader counts reading a tree's spelling: an element
-one, a text one per character at most. -/
+-- conserves: none — a bound on the reader's count over a tree's spelling.
+/-- An upper bound on the nodes the reader counts reading a tree's spelling. -/
 @[expose] public def Node.ticks : Node → Nat
   | .elem _ _ kids => Node.ticksList kids.toList + 1
   | .text t => t.length
@@ -1565,9 +1456,8 @@ end
 mutual
 
 -- conserves: none — a condition on a tree, not a walk over it.
-/-- What the reader asks of a tree it reads back as it stands: names it
-reads, each attribute named once, characters XML admits within the text
-budget, no text empty and no two texts adjacent. -/
+/-- A tree the reader reads back as it stands: names it reads, each attribute named once, admitted
+characters within the text budget, and no empty or adjacent texts. -/
 @[expose] public def CanonNode (bud : Budget) : Node → Prop
   | .elem name attrs kids => CanonName name ∧ name.toList.length ≤ bud.name ∧
       (∀ kv ∈ attrs.toList, CanonAttr bud kv) ∧ (attrs.toList.map (·.1)).Nodup ∧ CanonKids bud kids.toList
@@ -1642,8 +1532,6 @@ private theorem depth_le_of_mem (l : List Node) (k : Node) (h : k ∈ l) : k.dep
     · omega
     · have := ih h; omega
 
-/-- A node's spelling at the reader's position reads back as the node,
-handed to the state. -/
 private def NodeReads (R : List Char) (bud : Budget) (n : Node) : Prop :=
   ∀ (s : State) (rest : List Char), R.drop s.pos = nodeL n ++ rest → CanonNode bud n →
     (n.isText = true → (∃ (stk : Array Frame) (f : Frame), s.stack = stk.push f ∧ f.text = "") ∧
@@ -1652,7 +1540,6 @@ private def NodeReads (R : List Char) (bud : Budget) (n : Node) : Prop :=
     s.stack.size + n.depth ≤ bud.depth → s.nodes + n.ticks ≤ bud.nodes →
     ∃ k m, k ≤ n.ticks ∧ Reach bud (bytesOf R) s ((bump (s.take n) k).at (s.pos + (nodeL n).length)) m
 
-/-- A list of kids' spelling, read into the open element. -/
 private def KidsReads (R : List Char) (bud : Budget) (ks : List Node) : Prop :=
   ∀ (s : State) (stk : Array Frame) (f : Frame) (rest : List Char),
     s.stack = stk.push f → (f.text = "" ∨ startsText ks = false) →
@@ -1810,7 +1697,6 @@ private theorem elem_reads (R : List Char) (hl : Ascii R) (bud : Budget) (name :
       List.length_append, s₂, s₁, State.openAt, j, tagEnd, List.length_nil]
     congr 1 <;> omega
 
-/-- **Every tree's spelling reads back as the tree**, by depth. -/
 private theorem all_reads (R : List Char) (hl : Ascii R) (bud : Budget) :
     ∀ (D : Nat) (n : Node), n.depth ≤ D → NodeReads R bud n := by
   intro D
@@ -1833,9 +1719,6 @@ private theorem all_reads (R : List Char) (hl : Ascii R) (bud : Budget) :
       simp only [Node.depth] at hn
       omega
 
-/-! ## The spelling's characters -/
-
-/-- Characters a reader reads one byte each, none a control. -/
 private def Plain (l : List Char) : Prop := ∀ c ∈ l, 32 ≤ c.toNat ∧ c.toNat ≤ 126
 
 private theorem plain_append {a b : List Char} (ha : Plain a) (hb : Plain b) : Plain (a ++ b) := by
@@ -1932,15 +1815,12 @@ private theorem plain_nodeL (bud : Budget) : ∀ (D : Nat) (n : Node), n.depth �
 private theorem ascii_of_plain {l : List Char} (h : Plain l) : Ascii l := fun c hc => by
   have := h c hc; omega
 
-/-! ## The document -/
-
 private theorem toList_xmlDecl : "<?xml".toList = ['<', '?', 'x', 'm', 'l'] := by decide
 
 private theorem xmlDecl_toUTF8 : "<?xml".toUTF8 = bytesOf ['<', '?', 'x', 'm', 'l'] := by
   rw [toUTF8_ascii _ (by rw [toList_xmlDecl]; intro c hc; simp at hc; rcases hc with rfl | rfl | rfl | rfl | rfl <;> decide),
     toList_xmlDecl]
 
-/-- **A spelling that opens with a tag is UTF-8 with no declaration.** -/
 private theorem decode_tag (R : List Char) (hl : Ascii R) (c : Char) (rest : List Char) (hR : R = '<' :: c :: rest)
     (hc : nameStart c.toNat = true) : decode (bytesOf R) = .ok (bytesOf R, 0) := by
   have h0 : at? (bytesOf R) 0 = 60 := by rw [at?_bytesOf R 0 hl, hR]; rfl
@@ -1974,7 +1854,6 @@ private theorem forIn'_yield {β : Type} : ∀ (l : List Nat) (init : β) (f : (
     rw [List.forIn'_cons, h a List.mem_cons_self]
     exact ih init _ (fun a' ha' => h a' (List.mem_cons_of_mem a ha'))
 
-/-- **No character of a printable spelling is one XML refuses.** -/
 private theorem badCharAt_plain (l : List Char) (hp : Plain l) : badCharAt (bytesOf l) = none := by
   unfold badCharAt
   rw [Std.Legacy.Range.forIn'_eq_forIn'_range']
@@ -1995,12 +1874,10 @@ private theorem badCharAt_plain (l : List Char) (hp : Plain l) : badCharAt (byte
     have h2 : (l[i].toNat == 239) = false := by simp; omega
     simp only [h1, h2, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
 
-/-- What the round trip asks of a tree: an element the reader reads back
-as it stands, within the budget. -/
+/-- A tree the round trip holds for: an element the reader reads back as it stands, within the budget. -/
 @[expose] public def Canon (bud : Budget) (n : Node) : Prop :=
   n.isText = false ∧ CanonNode bud n ∧ n.depth ≤ bud.depth ∧ n.ticks ≤ bud.nodes ∧ (render n).size ≤ bud.bytes
 
-/-- **The reader reads a rendered tree back as it stands.** -/
 public theorem parseWith_render_id (bud : Budget) (n : Node) (h : Canon bud n) : parseWith bud (render n) = .ok n := by
   obtain ⟨htext, hc, hdepth, hticks, hsize⟩ := h
   have hp : Plain (nodeL n) := plain_nodeL bud n.depth n (Nat.le_refl _) hc
@@ -2029,8 +1906,6 @@ public theorem parseWith_render_id (bud : Budget) (n : Node) (h : Canon bud n) :
     rw [run_reach hreach (by simp [State.at, size_bytesOf])]
     simp [State.take, give_root, State.at, bump, size_bytesOf]
 
-/-- **The reader reads a rendered tree back as it stands**, under the
-standard budget. -/
 public theorem parse_render_id (n : Node) (h : Canon Budget.standard n) : parse (render n) = .ok n :=
   parseWith_render_id Budget.standard n h
 

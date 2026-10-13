@@ -6,8 +6,7 @@ import all Init.Data.Range.Basic
 
 namespace LeanTex.Core.Flate
 
-/-- The wire code and its extra bits cover the entire requested value. These
-are format bounds, independent of any input or Huffman frequencies. -/
+/-- The wire code and its extra bits cover the requested value. -/
 def SymbolIn (bases extras : Array Nat) (symbol value : Nat) : Prop :=
   symbol < bases.size ∧ symbol < extras.size ∧
     extras[symbol]?.getD 0 ≤ 13 ∧ bases[symbol]?.getD 0 ≤ value ∧
@@ -19,8 +18,6 @@ instance (bases extras : Array Nat) (symbol value : Nat) :
   infer_instance
 
 set_option maxRecDepth 8192 in
-/-- Exhaust the RFC's complete finite length alphabet, not a sample of
-compressed inputs. Kernel reduction checks the production lookup table. -/
 private theorem length_alphabet_contract :
     ∀ n : Fin 259, 3 ≤ n.val →
       SymbolIn lenBase lenExtra (lenSymTab[n.val]?.getD 0) n.val := by
@@ -37,8 +34,6 @@ private theorem distance_low_contract :
   decide +kernel
 
 set_option maxRecDepth 8192 in
-/-- Every high-distance bucket fits within one RFC distance code. Checking
-the bucket's two endpoints covers all 128 distances inside it. -/
 private theorem distance_bucket_contract :
     ∀ k : Fin 256, 2 ≤ k.val →
       let s := distSymTab2[k.val]?.getD 0
@@ -62,8 +57,6 @@ theorem distance_symbol_contract (dist : Nat) (hd : 1 ≤ dist ∧ dist ≤ 3276
     dsimp only at h
     refine ⟨h.1, h.2.1, h.2.2.1, ?_, ?_⟩ <;> omega
 
-/-- The encoder's scalar token unpacking selects the code whose proven span
-contains the original distance. -/
 theorem matchOf_exact (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
     (hd : 1 ≤ dist ∧ dist ≤ 32768) :
     matchOf (matchToken len dist) = (len, dist, distanceSymbol dist) := by

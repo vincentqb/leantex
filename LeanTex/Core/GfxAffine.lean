@@ -2,44 +2,30 @@ module
 
 public import LeanTex.Core.Gfx
 
-/-!
-# The figure frame's algebra
-
-The proofs `Gfx` keeps off the import chain to the elaborator: exact
-rational transforms compose associatively with a unit, application commutes
-with composition, an integer isometry inverts exactly on points, rectangles
-and geometry, and an affine image of a box covers the image of every point
-inside it; the print grid both emitters spell is a fixed point; the ink box
-covers every mark and label and the geometry box; a cubic stays inside its
-control hull.
--/
+/-! The figure frame's algebra, and the box, print-grid and control-hull facts both emitters rest on. -/
 
 namespace LeanTex.Core.Gfx
 
 open LeanTex.Core.Dim
 
-/-- Applying a composite is applying its parts in turn. -/
 public theorem Affine.apply_compose_exact (m n : Affine) (p : Rat × Rat) :
     (m.compose n).apply p = m.apply (n.apply p) := by
   cases m; cases n; cases p
   simp only [Affine.compose, Affine.apply, Prod.mk.injEq]
   constructor <;> grind
 
-/-- Composition is associative, exactly: frames nest without rounding. -/
 public theorem Affine.compose_assoc_exact (m n o : Affine) :
     (m.compose n).compose o = m.compose (n.compose o) := by
   cases m; cases n; cases o
   simp only [Affine.compose, Affine.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> grind
 
-/-- The identity is a unit on both sides. -/
 public theorem Affine.compose_unit_id (m : Affine) :
     m.compose Affine.unit = m ∧ Affine.unit.compose m = m := by
   cases m
   simp only [Affine.compose, Affine.unit, Affine.mk.injEq]
   grind
 
-/-- An isometry's matrix applies as the isometry does. -/
 public theorem Iso.toAffine_apply_exact (t : Iso) (p : Pt) :
     t.toAffine.apply ((p.1 : Rat), (p.2 : Rat)) =
       (((t.apply p).1 : Rat), ((t.apply p).2 : Rat)) := by
@@ -48,7 +34,6 @@ public theorem Iso.toAffine_apply_exact (t : Iso) (p : Pt) :
   cases fl <;> simp only [Iso.toAffine, Affine.apply, Iso.apply, Prod.mk.injEq,
     Bool.false_eq_true, ↓reduceIte] <;> push_cast <;> constructor <;> grind
 
-/-- Composition of isometries is application in turn. -/
 public theorem Iso.compose_apply_exact (s t : Iso) (p : Pt) :
     (s.compose t).apply p = s.apply (t.apply p) := by
   obtain ⟨fs, sx, sy⟩ := s
@@ -69,14 +54,12 @@ public theorem Iso.compose_apply_exact (s t : Iso) (p : Pt) :
   · simp only [Iso.compose, Iso.apply, bne_self_eq_false, ↓reduceIte, Bool.false_eq_true] <;>
       exact Prod.ext (hx x tx sx) (tt y ty sy)
 
-/-- An isometry's inverse matrix cancels its matrix, exactly. -/
 public theorem Iso.inv_compose_unit_id (t : Iso) :
     t.inv.toAffine.compose t.toAffine = Affine.unit := by
   obtain ⟨fl, dx, dy⟩ := t
   cases fl <;> simp only [Iso.inv, Iso.toAffine, Affine.compose, Affine.unit,
     Bool.false_eq_true, ↓reduceIte, Affine.mk.injEq] <;> push_cast <;> grind
 
-/-- The rectangle carried by the inverse is the rectangle carried back. -/
 public theorem Iso.rect_inv_id (t : Iso) (x y w h : Sp) :
     let r := t.rect x y w h
     t.inv.rect r.1 r.2.1 r.2.2.1 r.2.2.2 = (x, y, w, h) := by
@@ -89,7 +72,6 @@ public theorem Iso.rect_inv_id (t : Iso) (x y w h : Sp) :
   · simp only [Iso.inv, Iso.rect, ↓reduceIte] <;>
       exact Prod.ext (hx x dx) (Prod.ext (hy y dy h) rfl)
 
-/-- Mapping a point list by the inverse undoes mapping it by the isometry. -/
 private theorem Seg.map_inv_id (t : Iso) (s : Seg) : (s.map t.apply).map t.inv.apply = s := by
   cases s <;> simp [Seg.map, Iso.inv_apply_id]
 
@@ -102,9 +84,6 @@ private theorem Subpath.map_inv_id (t : Iso) (s : Subpath) :
   intro a _
   exact Seg.map_inv_id t a
 
-/-- **A geometry carried by an isometry comes back exactly** (`_id`): the
-reader of either artifact recovers the figure's geometry from the placed
-one, whatever the placement flips. -/
 public theorem Geom.mapIso_inv_id (t : Iso) (g : Geom) : (g.mapIso t).mapIso t.inv = g := by
   cases g with
   | rect x y w h =>
@@ -122,8 +101,6 @@ public theorem Geom.mapIso_inv_id (t : Iso) (g : Geom) : (g.mapIso t).mapIso t.i
     intro a _
     exact Subpath.map_inv_id t a
 
-/-- A product with a coordinate inside an interval is inside the interval
-the endpoints' products span, whatever the factor's sign. -/
 private theorem mul_between (a x0 x x1 : Rat) (h0 : x0 ≤ x) (h1 : x ≤ x1) :
     min (a * x0) (a * x1) ≤ a * x ∧ a * x ≤ max (a * x0) (a * x1) := by
   rcases Rat.le_total (a := 0) (b := a) with h | h
@@ -134,8 +111,6 @@ private theorem mul_between (a x0 x x1 : Rat) (h0 : x0 ≤ x) (h1 : x ≤ x1) :
     have := Rat.mul_le_mul_of_nonneg_left h1 (show 0 ≤ -a by grind)
     grind
 
-/-- An affine coordinate over a box is between its values at the box's
-corners: linear in each axis, so its extremes are corners. -/
 private theorem affine_between (a c e x0 x1 y0 y1 x y : Rat)
     (hx0 : x0 ≤ x) (hx1 : x ≤ x1) (hy0 : y0 ≤ y) (hy1 : y ≤ y1) :
     min (min (a * x0 + c * y0 + e) (a * x1 + c * y0 + e))
@@ -147,10 +122,6 @@ private theorem affine_between (a c e x0 x1 y0 y1 x y : Rat)
   have hc := mul_between c y0 y y1 hy0 hy1
   grind
 
-/-- **An affine image of a box covers the image of every point inside it**
-(`_covers`): the image's x and y lie between the rounded-outward box's
-edges. What makes a box carried through a frame a sound bound for the ink
-the frame paints. -/
 public theorem Affine.boxImage_covers (m : Affine) (b : Box) (x y : Rat)
     (hx0 : (b.1.1 : Rat) ≤ x) (hx1 : x ≤ (b.2.1 : Rat))
     (hy0 : (b.1.2 : Rat) ≤ y) (hy1 : y ≤ (b.2.2 : Rat)) :
@@ -178,18 +149,12 @@ private theorem image_monotone_core (m : Affine) (ax0 ay0 ax1 ay1 bx0 by0 bx1 by
   refine ⟨Rat.le_floor_iff.mpr ?_, Rat.le_floor_iff.mpr ?_, Rat.ceil_le_iff.mpr ?_,
     Rat.ceil_le_iff.mpr ?_⟩ <;> grind
 
-/-- **A box carried through a frame grows with the box** (`_monotone`):
-every corner of an ordered smaller box is a point of the larger, so its
-image is inside the larger's image, and the outward rounding keeps the
-order. -/
 public theorem Box.image_monotone (m : Affine) {a b : Box} (h : Box.le a b)
     (hx : a.1.1 ≤ a.2.1) (hy : a.1.2 ≤ a.2.2) :
     Box.le (Box.image m a) (Box.image m b) := by
   obtain ⟨⟨ax0, ay0⟩, ⟨ax1, ay1⟩⟩ := a
   obtain ⟨⟨bx0, by0⟩, ⟨bx1, by1⟩⟩ := b
   exact image_monotone_core m ax0 ay0 ax1 ay1 bx0 by0 bx1 by1 h.1 h.2.1 h.2.2.1 h.2.2.2 hx hy
-
-/-! ## Reading walks: accumulators and expansion -/
 
 public theorem Node.marksList_append {L : Type} (outlines : Array (Array Subpath)) (cx : Ctx)
     (acc : Array Mark) (a b : List (Node L)) :
@@ -277,9 +242,6 @@ public theorem Node.expandList_useFree {L : Type} (done : Array (Array (Node L))
 
 end
 
-/-- **Every expanded symbol body is use-free** (`_covers`): body `j` reads
-only bodies before it, each already expanded, so no `use` survives — what
-lets a form body be read without a further lookup. -/
 public theorem Figure.bodies_useFree_covers {L : Type} (fig : Figure L) :
     ∀ b ∈ fig.bodies, Node.useFreeList b.toList = true := by
   unfold Figure.bodies
@@ -293,10 +255,6 @@ public theorem Figure.bodies_useFree_covers {L : Type} (fig : Figure L) :
 
 
 
-/-! ## The print grid is a fixed point -/
-
--- The grid arithmetic is stated over bare `Int`: `omega` does not see
--- through `Sp`.
 private theorem milli_back (M : Int) :
     (((M * 65536 + 500) / 1000) * 1000 + 32768) / 65536 = M := by
   omega
@@ -317,7 +275,6 @@ private theorem toPtMilli_qSp_core (x : Int) : Sp.toPtMilli (qSp x) = Sp.toPtMil
     have := milli_back m
     split <;> omega
 
-/-- A length on the print grid stays where it is (`_fixed_point`). -/
 public theorem qSp_fixed_point (x : Sp) : qSp (qSp x) = qSp x := by
   have hg : ∀ y : Sp, qSp y = (fun m : Int =>
       if m < 0 then -(((-m) * 65536 + 500) / 1000) else (m * 65536 + 500) / 1000) (Sp.toPtMilli y) :=
@@ -345,8 +302,6 @@ private theorem qRat_mkRat (v : Int) : qRat (mkRat v 1000000000) = mkRat v 10000
     simpa using hq
   rw [hq', round_mul v _ hd]
 
-/-- A matrix entry on the nine-decimal grid stays where it is
-(`_fixed_point`). -/
 public theorem qRat_fixed_point (r : Rat) : qRat (qRat r) = qRat r := qRat_mkRat _
 
 public theorem qPt_fixed_point (p : Pt) : qPt (qPt p) = qPt p := by
@@ -469,11 +424,6 @@ private theorem Node.quantizeList_fixed_point {L : Type} (ql : L → L)
 
 end
 
-/-- **The print grid is a fixed point** (`_fixed_point`): quantizing a
-quantized figure moves nothing — every length is already on the milli-point
-grid `Sp.toPtString` prints, every matrix entry on the nine-decimal grid
-`ratString` prints — so a read-back identity stated over quantized figures
-holds of the figure a reader parses back. Labels by `ql`, itself idempotent. -/
 public theorem Figure.quantize_fixed_point {L : Type} (ql : L → L) (hl : ∀ l, ql (ql l) = ql l)
     (fig : Figure L) : (fig.quantize ql).quantize ql = fig.quantize ql := by
   simp only [Figure.quantize, qPt_fixed_point, Array.map_map]
@@ -488,8 +438,6 @@ public theorem Figure.quantize_fixed_point {L : Type} (ql : L → L) (hl : ∀ l
   · apply Array.map_congr_left
     intro a _
     exact Node.quantizeList_fixed_point ql hl a.toList
-
-/-! ## The ink box covers the ink -/
 
 public theorem Box.leOpt_refl (a : Option Box) : Box.leOpt a a := by
   cases a with
@@ -572,7 +520,6 @@ private theorem ptsHull_ordered (acc : Option Box)
       simp only [Box.join, Box.point]
       exact ⟨hmin _ _ _ ha.1, hmin _ _ _ ha.2⟩
 
-/-- A geometry's hull has its corners in order. -/
 private theorem Geom.hull_ordered (g : Geom) :
     ∀ b, g.hull = some b → b.1.1 ≤ b.2.1 ∧ b.1.2 ≤ b.2.2 := by
   have hmm : ∀ x y : Int, min x y ≤ max x y := by intro x y; omega
@@ -615,12 +562,6 @@ private theorem Mark.geomBox_le_inkBox (mk : Mark) :
   | raster ctm k w h => exact Box.le_refl _
   | shading g clips alphas => trivial
 
-/-- **The ink box covers every mark's ink and every label's measured box**
-(`_covers`): each mark's geometry dilated by its stroke's reach through its
-frame, and each label's box through the frame it stands in, lies inside the
-figure's ink box — quantified over the label measurement, as
-`Ir.Pic.Picture.inkBbox_covers` is, because the model cannot measure a
-label. -/
 public theorem Figure.inkBox_covers {L : Type} (fig : Figure L) (labelBox : L → Option Box) :
     (∀ mk ∈ fig.marks, Box.leOpt (Mark.inkBox rasterUnit mk) (fig.inkBox labelBox)) ∧
     (∀ p ∈ fig.labels, Box.leOpt ((labelBox p.2).map (Box.image p.1)) (fig.inkBox labelBox)) := by
@@ -629,14 +570,9 @@ public theorem Figure.inkBox_covers {L : Type} (fig : Figure L) (labelBox : L �
   · exact Box.leOpt_trans (hullOf_mem (fun (p : Affine × L) => (labelBox p.2).map (Box.image p.1))
       _ p hp) (Box.leOpt_joinOpt_right _ _)
 
-/-- **The ink box covers the geometry box** (`_covers`): reach is never
-negative and an affine image grows with its box, so the box ink claims holds
-the box layout reserves from geometry — whatever the labels measure. -/
 public theorem Figure.inkBox_geom_covers {L : Type} (fig : Figure L) (labelBox : L → Option Box) :
     Box.leOpt fig.geomBox (fig.inkBox labelBox) :=
   Box.leOpt_trans (hullOf_mono _ _ Mark.geomBox_le_inkBox fig.marks) (Box.leOpt_joinOpt_left _ _)
-
-/-! ## A cubic stays in its control hull -/
 
 private theorem convex4_between (lo hi a b c d w0 w1 w2 w3 : Rat)
     (hw0 : 0 ≤ w0) (hw1 : 0 ≤ w1) (hw2 : 0 ≤ w2) (hw3 : 0 ≤ w3) (hs : w0 + w1 + w2 + w3 = 1)
@@ -667,12 +603,6 @@ private theorem bernstein (t : Rat) (h0 : 0 ≤ t) (h1 : t ≤ 1) :
     Rat.mul_nonneg (Rat.mul_nonneg (Rat.mul_nonneg h3 hs) h0) h0,
     Rat.mul_nonneg (Rat.mul_nonneg h0 h0) h0, by grind⟩
 
-/-- **A cubic stays inside any box holding its control points**
-(`_between`): at every `t` in `[0, 1]` the Bernstein weights are
-non-negative and sum to one, so each coordinate of the curve's point is a
-convex combination of the four controls' — between the box's edges. The
-convex-hull fact `Geom.hull` and `Ir.Pic.PathSeg.box` bound a drawn curve
-by. -/
 public theorem cubicAt_between (p0 c1 c2 p1 : Pt) (b : Box) (t : Rat) (h0 : 0 ≤ t) (h1 : t ≤ 1)
     (hp : ∀ p ∈ [p0, c1, c2, p1], Box.le (Box.point p) b) :
     (b.1.1 : Rat) ≤ (cubicAt p0 c1 c2 p1 t).1 ∧ (cubicAt p0 c1 c2 p1 t).1 ≤ (b.2.1 : Rat) ∧

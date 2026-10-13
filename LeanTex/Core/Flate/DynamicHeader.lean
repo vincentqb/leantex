@@ -21,7 +21,7 @@ def inverseOrder : Array Nat :=
 def ordered (lengths : Array Nat) : Array Nat :=
   order.map (fun symbol => lengths[symbol]?.getD 0)
 
-/-- Omitted trailing fields mean zero; retain the four mandatory fields. -/
+/-- The code-length fields in transmission order, trailing zeros dropped down to the mandatory four. -/
 def fields (lengths : Array Nat) : Array Nat :=
   Frequencies.trim 4 (ordered lengths)
 
@@ -32,9 +32,7 @@ def restore (values : Array Nat) : Array Nat :=
 def codeLengths (litLens distLens : Array Nat) : Array Nat :=
   PackageMerge.lengths (CodeLengths.frequencies (CodeLengths.encode (litLens ++ distLens))) 7
 
-/-- Write the declared alphabet sizes, the three-bit fields, and the RLE
-length vector. The payload writer receives these same literal and distance
-arrays, so the transmitted tables are its actual tables. -/
+/-- Writes the declared alphabet sizes, the three-bit fields and the run-length-encoded lengths. -/
 public def write (litLens distLens : Array Nat) (w : Bw) : Bw :=
   let lengths := codeLengths litLens distLens
   let values := fields lengths
@@ -43,8 +41,7 @@ public def write (litLens distLens : Array Nat) (w : Bw) : Bw :=
   let w := FieldStream.write 3 values w
   CodeLengths.write lengths (canonCodes lengths) (CodeLengths.encode (litLens ++ distLens)) w
 
-/-- Read a dynamic block's two length arrays before constructing the payload
-tables. This boundary exposes the concrete arrays the bit stream declared. -/
+/-- Reads a dynamic block's literal and distance length arrays. -/
 public def read (r : Br) : Except String (Array Nat × Array Nat × Br) := do
   let some (hlit, r) := r.bits 5 | .error "deflate: truncated"
   let some (hdist, r) := r.bits 5 | .error "deflate: truncated"

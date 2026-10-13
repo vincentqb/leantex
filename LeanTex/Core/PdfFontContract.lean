@@ -28,9 +28,6 @@ private theorem fontObjects_embedded (t : ObjTable) (k : Nat) (font : Font.Font)
       have hfile := (fontObjects_links_exact t k font baseFont widths).2.2.2
       cases hcff : font.isCff <;> simp_all
 
-/-- A font row in the emitted family satisfies the census once its
-descriptor reference resolves. The third row is a descriptor and cannot
-enter the font census. -/
 public theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
     (font : Font.Font) (baseFont : String) (widths : PdfRead.Obj)
     (es : Array PdfRead.Entry) (e : PdfRead.Entry)
@@ -48,14 +45,6 @@ public theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
     change PdfCensus.Kind.fontDescriptor = .font at hf
     contradiction
 
-/-- The read-side font census follows from recovered font dictionaries
-and descriptor references. These premises are the reader boundary:
-parsing, decompression, and object-stream lookup must recover the writer's
-values, and any foreign font needs a separate contract.
-
-The conclusion is the census's rule (a descriptor carries a program
-reference), not validation of the font program's bytes. No reader success
-or font-program validity is inferred from construction alone. -/
 public theorem fontObjects_census_contract (t : ObjTable) (font : Nat → Font.Font)
     (baseFont : Nat → String) (widths : Nat → PdfRead.Obj)
     (trailer : PdfRead.Obj) (es : Array PdfRead.Entry)

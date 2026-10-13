@@ -4,11 +4,7 @@ public import LeanTex.Core.Binary
 
 namespace LeanTex.Core.Pdf.Xref
 
-/-! The writer's cross-reference fields, ISO 32000-2 §7.5.8.3. The type
-field is one byte; the other two take the widths their largest values
-need (`widthsOf`), as pdfTeX and LuaTeX size `/W`, so no offset, object
-number or stream index meets a ceiling the writer chose. These laws are
-artifact-specific byte bookkeeping. -/
+/-! The writer's cross-reference fields (ISO 32000-2 §7.5.8.3), each as wide as its largest value needs. -/
 
 /-- The byte widths of the second and third fields: `/W [1 first second]`. -/
 public structure Widths where
@@ -19,8 +15,7 @@ public structure Widths where
 /-- Bytes per row, the type byte included. -/
 @[expose] public def Widths.row (w : Widths) : Nat := 1 + w.first + w.second
 
-/-- One cross-reference row: type, byte offset or object-stream number,
-generation or index within the object stream. -/
+/-- One cross-reference row: type, byte offset or object-stream number, generation or index. -/
 public def row (w : Widths) (kind : UInt8) (first second : Nat) : ByteArray :=
   let kindBytes := Binary.natBE 1 kind.toNat
   let firstBytes := Binary.natBE w.first first
@@ -31,8 +26,6 @@ public def row (w : Widths) (kind : UInt8) (first second : Nat) : ByteArray :=
     (row w kind first second).size = w.row := by
   simp [row, Widths.row]
 
-/-- Every field reads back at its declared offset, inside any surrounding
-file, provided the two integer fields are representable in their widths. -/
 public theorem row_fields_exact (w : Widths) (kind : UInt8) (first second : Nat)
     (hfirst : first < 256 ^ w.first) (hsecond : second < 256 ^ w.second)
     (pre post : ByteArray) :
@@ -56,8 +49,7 @@ public theorem row_fields_exact (w : Widths) (kind : UInt8) (first second : Nat)
       Binary.readNatBE_natBE_id w.second second hsecond
         (pre ++ Binary.natBE 1 kind.toNat ++ Binary.natBE w.first first) post
 
-/-- The three row types of §7.5.8.3. The second field of a compressed
-entry is an index, not an object number or a byte offset. -/
+/-- The three row types of §7.5.8.3; a compressed entry's second field is an index. -/
 public inductive Entry where
   | free (next generation : Nat)
   | direct (offset generation : Nat)
@@ -69,8 +61,7 @@ public inductive Entry where
   | .direct off gen => (1, off, gen)
   | .compressed stm idx => (2, stm, idx)
 
-/-- Precisely the two representability requirements of `/W [1 first second]`.
-This is a numeric input domain, independent of encoding or decoding. -/
+/-- The representability requirements of `/W [1 first second]` on an entry's fields. -/
 @[expose] public def Entry.Fits (w : Widths) (e : Entry) : Prop :=
   e.fields.2.1 < 256 ^ w.first ∧ e.fields.2.2 < 256 ^ w.second
 
@@ -80,7 +71,7 @@ public def Entry.bytes (w : Widths) (e : Entry) : ByteArray :=
 @[simp] public theorem Entry.bytes_size (w : Widths) (e : Entry) : (e.bytes w).size = w.row :=
   row_size_exact _ _ _ _
 
-/-- The actual writer's accumulator for its cross-reference payload. -/
+/-- The writer's accumulator for its cross-reference payload. -/
 def encodeList (w : Widths) (out : ByteArray) : List Entry → ByteArray
   | [] => out
   | e :: es => encodeList w (out ++ e.bytes w) es
@@ -116,9 +107,6 @@ theorem encodeList_size (w : Widths) (out : ByteArray) (es : List Entry) :
     (encode w es).size = w.row * es.size := by
   simp [encode, encodeList_size]
 
-/-- All three fields of any row in the writer's payload, at the byte
-position determined by its index. Prefix and suffix bytes are arbitrary.
-Only this row needs to fit; nothing is assumed about the encoder. -/
 public theorem encode_entry_fields_exact (w : Widths) (before after : Array Entry) (e : Entry)
     (he : e.Fits w) (pre post : ByteArray) :
     let data := pre ++ encode w (before ++ #[e] ++ after) ++ post
@@ -136,8 +124,6 @@ public theorem encode_entry_fields_exact (w : Widths) (before after : Array Entr
     row_fields_exact w e.fields.1 e.fields.2.1 e.fields.2.2 he.1 he.2
       (pre ++ encode w before) (encode w after ++ post)
 
-/-- Any selected encoded row, at the position declared by its array index.
-The surrounding bytes are arbitrary; only the selected row must fit. -/
 public theorem encode_index_fields_exact (w : Widths) (es : Array Entry) (i : Nat) (e : Entry)
     (hi : es[i]? = some e) (he : e.Fits w) (pre post : ByteArray) :
     let data := pre ++ encode w es ++ post
@@ -154,15 +140,12 @@ public theorem encode_index_fields_exact (w : Widths) (es : Array Entry) (i : Na
   simpa only [hsplit, Array.size_extract, Nat.min_eq_left (by omega : i ≤ es.size),
     Nat.sub_zero] using h
 
-/-- The fewest bytes, never zero, a field needs to hold `n`: a zero width
-would declare the field absent (ISO 32000-2 §7.5.8.2). -/
+/-- The fewest bytes, never zero, a field needs to hold `n` (ISO 32000-2 §7.5.8.2). -/
 public def width (n : Nat) : Nat :=
   if n < 256 then 1 else width (n / 256) + 1
 termination_by n
 decreasing_by omega
 
-/-- **`width_between`**: `n` needs every byte `width` gives it and fits
-in them — the width is the least one, at least one byte, that holds `n`. -/
 public theorem width_between (n : Nat) :
     1 ≤ width n ∧ (width n = 1 ∨ 256 ^ (width n - 1) ≤ n) ∧ n < 256 ^ width n := by
   induction n using Nat.strongRecOn with
@@ -188,8 +171,6 @@ public theorem width_between (n : Nat) :
         have := (Nat.div_lt_iff_lt_mul (by decide : 0 < 256)).mp hhi
         omega
 
-/-- `width_between`'s lower bound read the other way: a field of at least
-one byte that holds `n` is at least `width n` wide. -/
 private theorem width_le_of_lt (n k : Nat) (hk : 1 ≤ k) (h : n < 256 ^ k) : width n ≤ k := by
   obtain ⟨_, hlo, _⟩ := width_between n
   rcases hlo with hw | hw
@@ -222,7 +203,7 @@ private theorem foldl_max_lt {α : Type} (f : α → Nat) (xs : List α) (acc b 
     exact ih _ (by have := hx x List.mem_cons_self; omega)
       (fun y hy => hx y (List.mem_cons_of_mem _ hy))
 
-/-- The largest second and third field among the rows. -/
+/-- The largest second field among the rows. -/
 @[expose] public def maxFirst (es : Array Entry) : Nat :=
   es.foldl (fun m e => max m e.fields.2.1) 0
 
@@ -233,8 +214,6 @@ private theorem foldl_max_lt {α : Type} (f : α → Nat) (xs : List α) (acc b 
 @[expose] public def widthsOf (es : Array Entry) : Widths :=
   ⟨width (maxFirst es), width (maxSecond es)⟩
 
-/-- Every row fits the widths computed from the rows: the field bounds the
-old fixed `/W [1 4 2]` needed as premises hold by construction. -/
 public theorem widthsOf_fits (es : Array Entry) : ∀ e ∈ es, e.Fits (widthsOf es) := by
   intro e he
   have hm := Array.mem_toList_iff.mpr he
@@ -244,9 +223,6 @@ public theorem widthsOf_fits (es : Array Entry) : ∀ e ∈ es, e.Fits (widthsOf
     Nat.lt_of_le_of_lt ((foldl_max_ge (fun e : Entry => e.fields.2.2) es.toList 0).2 e hm)
       (width_between _).2.2⟩
 
-/-- **`widthsOf_between`**: each computed width lies between one byte and
-the width of any `/W` of nonzero widths that every row fits — the computed
-widths are the narrowest a fitting `/W` could declare. -/
 public theorem widthsOf_between (es : Array Entry) (w : Widths) (h1 : 1 ≤ w.first)
     (h2 : 1 ≤ w.second) (hw : ∀ e ∈ es, e.Fits w) :
     (1 ≤ (widthsOf es).first ∧ (widthsOf es).first ≤ w.first) ∧

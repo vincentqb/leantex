@@ -8,9 +8,7 @@ import all LeanTex.Core.PdfRead
 namespace LeanTex.Core.Pdf
 open PdfRead PdfCensus
 
-/-! The production object dictionaries satisfy the embedding census.
-The reader composition supplies recovered source values; these proofs
-establish the font links from the actual preparation code. -/
+/-! The prepared font dictionaries satisfy the embedding census. -/
 
 private theorem find_choice {α : Type} (p : α → Bool)
     (c : Prop) [Decidable c] (xs ys : Array α) :
@@ -23,10 +21,6 @@ private theorem catalog_not_font (root : Option Nat) (xmp : Nat)
   rw [kindOf_catalog_exact _ (by simp [catalogDict, Obj.get?, Array.find?_append])]
   decide
 
-/-- The dictionaries actually prepared for native fonts satisfy the
-read-side census when their source values and references are recovered.
-The recovery premises are discharged by the complete reader composition;
-the construction of font and descriptor links is proved here. -/
 public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)

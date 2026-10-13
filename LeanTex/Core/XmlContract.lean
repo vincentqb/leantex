@@ -3,26 +3,13 @@ module
 public import LeanTex.Core.Xml
 import LeanTex.Core.Loop
 
-/-!
-# What the XML reader's output holds
-
-An accepted document lies within the reader's budgets (`parseWith_between`):
-no element deeper than the depth budget, no more nodes — elements and runs
-of text — than the node budget, and no text longer than the text budget,
-whatever the bytes ask and however they spell a text: literal, by reference
-or in a CDATA section. Every step the reader takes keeps two invariants: the
-open elements within the depth budget and each finished subtree fitting
-under its frame, every node the state holds counted, the count within the
-budget; and every text the state holds, pending or finished, within the
-text budget. The loop carries both.
--/
+/-! The XML reader's budget contract: an accepted document lies within its depth, node and text budgets. -/
 
 namespace LeanTex.Core.Xml
 
 mutual
 
--- conserves: none — a measure of a tree's nesting, which the budget bounds.
-/-- A node's depth: an element one more than its deepest kid, text none. -/
+-- conserves: none — a measure of a tree's nesting.
 @[expose] public def Node.depth : Node → Nat
   | .elem _ _ kids => Node.depthList kids.toList + 1
   | .text _ => 0
@@ -33,8 +20,7 @@ end
 
 mutual
 
--- conserves: none — a census of a tree's nodes, which the budget bounds.
-/-- A node's size: an element itself and its kids, a run of text one. -/
+-- conserves: none — a census of a tree's nodes.
 @[expose] public def Node.size : Node → Nat
   | .elem _ _ kids => Node.sizeList kids.toList + 1
   | .text _ => 1
@@ -64,7 +50,6 @@ private theorem Node.depthList_le (l : List Node) (D : Nat) (h : ∀ k ∈ l, k.
     have := ih (fun k hk => h k (by simp [hk]))
     omega
 
-/-- A frame's nodes: itself, its kids, its pending text. -/
 private def Frame.size (f : Frame) : Nat := Node.sizeList f.kids.toList + (if f.text.isEmpty then 0 else 1) + 1
 
 private def framesSize : List Frame → Nat
@@ -76,12 +61,8 @@ private theorem framesSize_append (a b : List Frame) : framesSize (a ++ b) = fra
   | nil => simp [framesSize]
   | cons f rest ih => simp only [List.cons_append, framesSize, ih]; omega
 
-/-- Every node a state holds: its open frames' and its root's. -/
 private def State.total (s : State) : Nat := framesSize s.stack.toList + (s.root.map Node.size).getD 0
 
-/-- Open frames, bottom first: the one at position `i` is an element at
-depth `i + 1`, so each of its kids' subtrees fits under depth `D` when the
-kid's depth and `i + 1` together stay under it. -/
 private def framesFit (D : Nat) : Nat → List Frame → Prop
   | _, [] => True
   | i, f :: rest => (∀ k ∈ f.kids.toList, k.depth + i + 1 ≤ D) ∧ framesFit D (i + 1) rest
@@ -96,10 +77,6 @@ private theorem framesFit_append (D i : Nat) (l : List Frame) (f : Frame) :
     · rintro ⟨h1, h2, h3⟩; exact ⟨⟨h1, h2⟩, fun k hk => by have := h3 k hk; omega⟩
     · rintro ⟨⟨h1, h2⟩, h3⟩; exact ⟨h1, h2, fun k hk => by have := h3 k hk; omega⟩
 
-/-- What a reader's state holds at every step: the open elements within
-the depth budget and each finished subtree fitting under its frame, the
-root within it, and every node it holds counted, the count within the node
-budget. -/
 private structure Inv (bud : Budget) (s : State) : Prop where
   depth : s.stack.size ≤ bud.depth
   fit : framesFit bud.depth 0 s.stack.toList
@@ -222,7 +199,6 @@ private theorem State.tick_ok (bud : Budget) (s s' : State) (h : s.tick bud = .o
   · cases h
   · next hn => cases h; exact ⟨rfl, by omega⟩
 
-/-- Text onto the open element, one more node counted. -/
 private theorem State.charsTick_inv (bud : Budget) (s s' : State) (t : String) (h : Inv bud s)
     (ht : (s.chars t).tick bud = .ok s') (p : Nat) : Inv bud { s' with pos := p } := by
   obtain ⟨rfl, hn⟩ := State.tick_ok bud _ _ ht
@@ -236,7 +212,6 @@ private theorem State.charsTick_inv (bud : Budget) (s s' : State) (t : String) (
 private theorem State.give_nodes (s : State) (n : Node) : (s.give n).nodes = s.nodes := by
   unfold State.give; split <;> rfl
 
-/-- An element closed onto its parent, or made the root. -/
 private theorem State.close_inv (bud : Budget) (s : State) (f : Frame) (h : Inv bud s)
     (hb : s.stack.back? = some f) (p : Nat) :
     Inv bud { (s.popped.give f.close) with pos := p } := by
@@ -415,7 +390,6 @@ private theorem charData_inv (bud : Budget) (b : ByteArray) (s s' : State) (hs :
         · cases h
         · next s1 ht => cases h; exact State.charsTick_inv bud s s1 _ hs ht _
 
-/-- **A step keeps the reader's invariant** (`step` is one token). -/
 private theorem step_inv (bud : Budget) (b : ByteArray) (s s' : State) (hs : Inv bud s)
     (h : step bud b s = .ok s') : Inv bud s' := by
   unfold step at h
@@ -432,13 +406,10 @@ private theorem step_inv (bud : Budget) (b : ByteArray) (s s' : State) (hs : Inv
     · exact reference_inv bud b s s' hs h
     · exact charData_inv bud b s s' hs h
 
-/-- What the reader's loop carries, read through its invariant: a state
-that holds it, or a refusal. -/
 private def Carried (bud : Budget) : Except Refusal State → Prop
   | .ok s => Inv bud s
   | .error _ => True
 
-/-- **Every state the reader reaches keeps its invariant.** -/
 private theorem run_inv (bud : Budget) (b : ByteArray) (start : Nat) (s : State)
     (h : run bud b start = .ok s) : Inv bud s := by
   have hc : Carried bud (run bud b start) := by
@@ -465,8 +436,7 @@ private theorem run_inv (bud : Budget) (b : ByteArray) (start : Nat) (s : State)
 
 mutual
 
--- conserves: none — a condition on a tree's texts, which the budget bounds.
-/-- Every text a node holds within `m` bytes. -/
+-- conserves: none — a condition on a tree's texts.
 @[expose] public def Node.textsWithin (m : Nat) : Node → Prop
   | .elem _ _ kids => Node.textsWithinList m kids.toList
   | .text t => t.utf8ByteSize ≤ m
@@ -481,13 +451,9 @@ private theorem Node.textsWithinList_iff (m : Nat) (l : List Node) :
   | nil => simp [Node.textsWithinList]
   | cons n rest ih => simp [Node.textsWithinList, ih]
 
-/-- A frame's texts within `m` bytes: its pending text and its kids'. -/
 private def Frame.textsWithin (m : Nat) (f : Frame) : Prop :=
   f.text.utf8ByteSize ≤ m ∧ ∀ k ∈ f.kids.toList, k.textsWithin m
 
-/-- What a reader's state holds of its texts at every step: every open
-element's pending text and finished kids, and the root, within the text
-budget. -/
 private structure TextInv (bud : Budget) (s : State) : Prop where
   frames : ∀ f ∈ s.stack.toList, f.textsWithin bud.text
   root : ∀ r, s.root = some r → r.textsWithin bud.text
@@ -690,13 +656,10 @@ private theorem step_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : T
     · exact reference_texts bud b s s' hs h
     · exact charData_texts bud b s s' hs h
 
-/-- What the reader's loop carries of its texts: a state that holds them
-within the budget, or a refusal. -/
 private def CarriedTexts (bud : Budget) : Except Refusal State → Prop
   | .ok s => TextInv bud s
   | .error _ => True
 
-/-- **Every state the reader reaches holds its texts within the budget.** -/
 private theorem run_texts (bud : Budget) (b : ByteArray) (start : Nat) (s : State)
     (h : run bud b start = .ok s) : TextInv bud s := by
   have hc : CarriedTexts bud (run bud b start) := by
@@ -721,10 +684,6 @@ private theorem run_texts (bud : Budget) (b : ByteArray) (start : Nat) (s : Stat
   rw [h] at hc
   exact hc
 
-/-- **An accepted document lies within its budgets** (`_between`): no
-element deeper than the depth budget, no more nodes — elements and runs of
-text — than the node budget, and no text longer than the text budget, however
-the bytes spell it. -/
 public theorem parseWith_between (bud : Budget) (input : ByteArray) (n : Node)
     (h : parseWith bud input = .ok n) :
     n.depth ≤ bud.depth ∧ n.size ≤ bud.nodes ∧ n.textsWithin bud.text := by

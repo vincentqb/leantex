@@ -149,8 +149,6 @@ theorem codeStarts_exact (counts : Array Nat) :
         simp only [he, ite_false, hs.2.2 k, he']
   exact hloop.2
 
-/-- The encoder assigns precisely the canonical start plus the symbol's rank
-among earlier symbols of the same width, for every bounded length vector. -/
 theorem canonCodes_exact (lengths : Array Nat)
     (hb : ∀ s < lengths.size, lengths[s]?.getD 0 ≤ 15) :
     (canonCodes lengths).size = lengths.size ∧
@@ -272,7 +270,6 @@ theorem canonical_symbols_lookup_exact (lengths : Array Nat) (width s k : Nat)
       rw [List.getElem?_append_left hp.1]
       exact hp.2
 
-/-- Every nonzero width's rank in the decoder table names the original symbol. -/
 theorem mkHuff_symbols_exact (lengths : Array Nat) (s width : Nat)
     (hs : s < lengths.size) (hw : 0 < width ∧ width ≤ 15)
     (hl : lengths[s]?.getD 0 = width) :
@@ -283,7 +280,6 @@ theorem mkHuff_symbols_exact (lengths : Array Nat) (s width : Nat)
     (Nat.le_refl _) hs hl
   simpa only [mkHuff, ← Array.getElem?_toList, huffSymbols_exact] using hp.2
 
-/-- The rank of a present symbol is strictly below its width's count. -/
 theorem canonical_rank_between (lengths : Array Nat) (s width : Nat)
     (hs : s < lengths.size) (hw : 0 < width ∧ width ≤ 15)
     (hl : lengths[s]?.getD 0 = width) :
@@ -298,9 +294,6 @@ theorem canonical_rank_between (lengths : Array Nat) (s width : Nat)
     List.take_of_length_le (by simp)
   simpa only [Canonical.rank, htake] using hp.1
 
-/-- Every symbol's actual encoder value is recognized by the actual decoder
-table. The premises describe the length vector's bound and available code
-space; no encoder/decoder equation is assumed. -/
 theorem canonCodes_decode_exact (lengths : Array Nat) (r : Br) (s width : Nat)
     (hb : ∀ s < lengths.size, lengths[s]?.getD 0 ≤ 15)
     (hs : s < lengths.size) (hw : 0 < width)

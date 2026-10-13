@@ -5,13 +5,11 @@ import Init.Data.List.Nat.Sum
 
 namespace LeanTex.Core.Flate.Canonical
 
-/-- A symbol's occupied slots at a given code width. Unused symbols and
-longer codes do not occupy a slot at this width. -/
+/-- The slots a code of length `len` occupies at `width`; unused and longer codes occupy none. -/
 def cost (width len : Nat) : Nat :=
   if 0 < len ∧ len ≤ width then 2 ^ (width - len) else 0
 
-/-- Integer-scaled Kraft mass, including only codes no longer than the
-scale. At the maximum length this is the complete code-space budget. -/
+/-- The integer-scaled Kraft sum at `width`, over the codes no longer than `width`. -/
 def kraft (lengths : List Nat) (width : Nat) : Nat :=
   (lengths.map (cost width)).sum
 
@@ -45,8 +43,6 @@ private theorem kraft_zero (lengths : List Nat) : kraft lengths 0 = 0 := by
   | nil => rfl
   | cons len lengths ih => rw [kraft_cons, hz, ih]
 
-/-- Moving to the next width doubles occupied slots and adds the codes
-whose declared length is exactly that new width. -/
 theorem kraft_step_exact (lengths : List Nat) (width : Nat) :
     kraft lengths (width + 1) = 2 * kraft lengths width + lengths.count (width + 1) := by
   induction lengths with
@@ -56,8 +52,6 @@ theorem kraft_step_exact (lengths : List Nat) (width : Nat) :
     simp only [List.count_cons, beq_iff_eq]
     by_cases he : len = width + 1 <;> simp only [he, ite_true, ite_false] <;> omega
 
-/-- Canonical intervals count exactly the slots occupied by all widths
-through the current one. The bucket counts are those of `mkHuff`. -/
 theorem start_kraft_exact (lengths : Array Nat) (width : Nat) (hw : width ≤ 15) :
     start (fun k => (huffCounts lengths)[k]?.getD 0) width +
       (huffCounts lengths)[width]?.getD 0 = kraft lengths.toList width := by
@@ -79,7 +73,6 @@ private theorem cost_scale (width limit len : Nat) (hw : width ≤ limit) :
     exact Nat.le_refl _
   · simp only [cost, hl, ite_false, Nat.zero_mul, Nat.zero_le]
 
-/-- A shorter-width code budget embeds into every larger-width budget. -/
 theorem kraft_scale_between (lengths : List Nat) (width limit : Nat)
     (hw : width ≤ limit) :
     kraft lengths width * 2 ^ (limit - width) ≤ kraft lengths limit := by
@@ -90,8 +83,6 @@ theorem kraft_scale_between (lengths : List Nat) (width limit : Nat)
     rw [kraft_cons, kraft_cons, Nat.add_mul]
     omega
 
-/-- Kraft's bound on the actual length vector discharges the canonical
-decoder's code-space premise for every used width. -/
 theorem kraft_code_space_between (lengths : Array Nat) (limit width : Nat)
     (hl : limit ≤ 15) (hw : width ≤ limit)
     (hk : kraft lengths.toList limit ≤ 2 ^ limit) :

@@ -4,8 +4,7 @@ import Init.Data.ByteArray.Basic
 
 namespace LeanTex.Core.PdfLex
 
-/-! Byte-level PDF token rules shared by the object reader and its
-round-trip contracts. Strings retain their original bytes. -/
+/-! Byte-level PDF token rules shared by the object reader and its round-trip contracts. -/
 
 @[expose] public def isWs (c : Nat) : Bool :=
   c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
@@ -50,13 +49,12 @@ public def parseUInt (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) :=
     (fun _ s => pure (uintStep b s)) : Id UIntState).run
   if s.seen then some (s.value, s.pos) else none
 
-/-- A keyword comparison step. A mismatch ends the scan immediately. -/
+/-- A keyword comparison step; a mismatch ends the scan. -/
 def keywordStep (b : ByteArray) (i : Nat) (bytes : ByteArray) (k : Nat)
     (_ : Bool) : ForInStep Bool :=
   if at? b (i+k) == (bytes[k]?.getD 0).toNat then .yield true else .done false
 
-/-- Does the keyword stand at `i`, ended by whitespace, a delimiter, or the
-file's end? Returns the position after it. -/
+/-- The position after the keyword at `i`, when it stands there ended by white space, a delimiter or the end. -/
 public def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat :=
   let bytes := kw.toUTF8
   let matched := (forIn [0:bytes.size] true
@@ -88,9 +86,7 @@ def literalStep (b : ByteArray) (s : LiteralState) : ForInStep LiteralState :=
     else .yield next
   else .yield { s with pos := s.pos + 1 }
 
-/-- Scan a literal string `(…)` (§7.3.4.2): parentheses balance, and a
-backslash escapes the next byte. Returns the position after the closing
-parenthesis. -/
+/-- The position after a literal string `(…)` at `i0` (§7.3.4.2), parentheses balanced and escapes honoured. -/
 public def scanLitString (b : ByteArray) (i0 : Nat) : Option Nat :=
   ((forIn [0:b.size + 1] (LiteralState.mk (i0+1) 1 none)
     (fun _ s => pure (literalStep b s)) : Id LiteralState).run).result
@@ -134,8 +130,7 @@ public def scanNumber (b : ByteArray) (i0 : Nat) : String × Nat :=
     (fun _ s => pure (numberStep b s)) : Id TextState).run
   (s.text, s.pos)
 
-/-- After a non-negative integer, does ` gen R` follow (§7.3.10)? The
-two-token lookahead an indirect reference needs. -/
+/-- The generation and end of ` gen R` after a non-negative integer (§7.3.10), if one follows. -/
 public def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
   let (gen, j) ← parseUInt b (skipWs b i0)
   let k := skipWs b j
@@ -145,16 +140,12 @@ public def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
       return (gen, k + 1)
   none
 
-/-- A nibble as its uppercase hex digit — the spelling `#xx` escapes and
-`parseName`'s `hexVal` read back. -/
+/-- A nibble as its uppercase hex digit. -/
 def hexChar (n : Nat) : Char :=
   let d := n % 16
   if d < 10 then Char.ofNat (48 + d) else Char.ofNat (55 + d)
 
-/-- A name's byte escape (§7.3.5). The existing writer substitutes
-`Embedded` for an empty name and keeps only the low byte of escaped
-characters. Its inverse contract therefore requires a nonempty name with
-character values below 256. -/
+/-- A name's byte escape (§7.3.5); an empty name becomes `Embedded`, and each character keeps its low byte. -/
 public def escapeName (s : String) : String := Id.run do
   let mut out := ""
   for c in s.toList do

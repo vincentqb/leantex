@@ -5,52 +5,22 @@ public import LeanTex.Core.GfxAffine
 public import LeanTex.Core.GfxSteps
 public import LeanTex.Core.Html
 
-/-!
-# A figure as SVG
-
-Two layers. `tree` lowers a figure onto a typed SVG element tree — typed
-geometry and typed presentation attributes, each attribute present exactly
-where it differs from SVG's initial value — and `readMarks` reads that tree
-with SVG's own meaning (SVG 2 §13: fill initially black, stroke initially
-none, width 1, miter limit 4; a zero width paints nothing; a `rect` or
-`ellipse` of zero size draws nothing, and one under a dashed stroke runs
-from its own start; a group's `opacity` composites it as one isolated
-group). `marks_projects` is the
-statement that the reading is the figure's marks, before a byte is spelled.
-`spell` is the second layer: the total spelling of that tree into
-`Html.Node`, through the certified escaper, with presentation attributes
-only — never a style element, never a tag string.
-
-The placement into the SVG's frame (y down, the viewBox's origin) is an
-isometry applied to coordinates exactly; a group's transform composes it in
-once, at the first transformed group, and so does a gradient's
-`gradientTransform` where its shape's coordinates are still placed — a
-`userSpaceOnUse` gradient reads its numbers in the placed frame, so its own
-frame map must carry the placement as the shape's points do. The reader
-places it back in the figure frame (`readPaint`), which is what
-`marks_projects` holds it to. Every group is a `g`, so a TikZ edge's
-wrapper is today's.
--/
+/-! A figure as SVG: a typed element tree read back with SVG's meaning, then spelled through the
+certified escaper. -/
 
 namespace LeanTex.Core.GfxSvg
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 
-/-! ## The typed tree -/
-
-/-- A paint attribute's value: `none`, a colour, or a gradient reference —
-the gradient as its definition spells it, its frame map the
-`gradientTransform` from its own frame to the user space of the element it
-paints (`userSpaceOnUse`, SVG 2 §14.2), its id assigned when spelled. -/
+/-- A paint attribute's value: `none`, a colour, or a gradient whose frame map is its
+`gradientTransform` (SVG 2 §14.2). -/
 public inductive SPaint where
   | none
   | color (c : Ir.Color)
   | url (g : Gradient)
   deriving Repr, Inhabited
 
-/-- A stroke width as spelled: a length in the viewBox's units, or the
-hairline — one CSS pixel that does not scale (`vector-effect`), the
-thinnest visible line, as PDF's width 0 is one device pixel. -/
+/-- A stroke width as spelled: a length in the viewBox's units, or the non-scaling one-pixel hairline. -/
 public inductive SWidth where
   | len (w : Sp)
   | hairline
@@ -79,20 +49,14 @@ public structure ClipRef where
   rule : Rule
   deriving Repr, Inhabited
 
-/-- A raster as the SVG references it: its URL (a `data:` URI for an
-embedded one), and whether a reader may smooth its samples when it scales
-them (`Gfx.Raster.smooth`). -/
+/-- A raster as the SVG references it: its URL, and whether a reader may smooth it. -/
 public structure RasterRef where
   href : String
   smooth : Bool
   deriving Inhabited
 
-/-- One element of the typed tree. A shape draws its geometry with its
-attributes (`rect`, `circle` or `ellipse`, `path` by the geometry's kind); a
-`g` has an optional transform, group opacity and clip; a `use` paints symbol
-`sym` and carries its body for the reader; a stamp paints outline
-`outline` with its own attributes; an image maps raster `k`'s unit square;
-a raw node is engine-set label content. -/
+/-- One element of the typed tree: a shape, a group, a symbol use, an outline stamp, an image, or
+raw label content. -/
 public inductive El where
   | shape (g : Geom) (a : ShapeAttrs)
   | g (xf : Option Affine) (opacity : Option Alpha) (clip : Option ClipRef) (kids : Array El)
@@ -101,8 +65,6 @@ public inductive El where
   | image (k : Nat) (m : Affine) (ref : RasterRef)
   | raw (n : Html.Node)
   deriving Inhabited
-
-/-! ## Emission -/
 
 /-- SVG's initial miter limit (SVG 2 §13.5.5). -/
 @[expose] public def svgMiter : Rat := 4
@@ -126,18 +88,12 @@ public structure SFrame where
   | some t => g.mapIso t
   | none => g
 
-/-- A paint in the element's user space: a gradient's frame map carried
-into it as coordinates are — the placement composed in where the
-coordinates are still placed. -/
+/-- A paint in the element's user space, a gradient's frame map placed as coordinates are. -/
 @[expose] public def sPaint (fr : SFrame) : Paint → SPaint
   | .solid c => .color c
   | .gradient g => .url (g.withXf (fr.lift g.xf))
 
-/-- A draw's attributes: `fill="none"` stated when it does not fill (SVG
-fills black otherwise); the stroke's every field where it differs from
-SVG's initial value — the miter limit included, since pgf's and PDF's 10 is
-not SVG's 4 — and the width always, the hairline as `vector-effect`; each
-paint in the element's user space (`sPaint`). -/
+/-- A draw's attributes, each stated where it differs from SVG's initial value, the width always. -/
 @[expose] public def attrsOf (fr : SFrame) (fl : Option Fill) (st : Option Stroke) : ShapeAttrs :=
   { fill := some (match fl with
       | some f => sPaint fr f.paint
@@ -169,10 +125,7 @@ paint in the element's user space (`sPaint`). -/
   | none => fr
   | some _ => { iso := none }
 
-/-- A clip's geometry as its element: a rectangle of zero or negative size
-as the path it outlines (`Geom.normal`) — SVG clips to no such `rect`,
-where PDF clips to the region the path encloses — and any other as it
-stands. -/
+/-- A clip's geometry as its element, a degenerate rectangle as the path it outlines. -/
 @[expose] public def clipGeom : Geom → Geom
   | .rect x y w h => (Geom.rect x y w h).normal
   | .ellipse cx cy rx ry => .ellipse cx cy rx ry
@@ -184,26 +137,21 @@ stands. -/
   | c :: rest => #[.g none none (some { geom := fr.place (clipGeom c.geom), rule := c.rule })
       (nestClips fr kids rest)]
 
-/-- **A draw's geometry as the element SVG draws as the model does**: a
-rectangle or ellipse as its own element only where it encloses area and its
-stroke is solid — SVG draws no `rect` or `ellipse` of zero or negative size
-(SVG 2 §10.2, §10.4), and starts and runs its outline its own way, which a
-dash pattern shows — else as the path the model draws (`Geom.drawn`),
-placed point by point. -/
+/-- A draw's geometry as the element SVG draws as the model does: its own element only where it
+encloses area under a solid stroke. -/
 @[expose] public def shapeOf (fr : SFrame) (g : Geom) (dashed : Bool) : Geom :=
   match g with
   | .rect _ _ w h => if 0 < w ∧ 0 < h ∧ dashed = false then fr.place g else fr.place (g.drawn dashed)
   | .ellipse _ _ rx ry => if 0 < rx ∧ 0 < ry ∧ dashed = false then fr.place g else fr.place (g.drawn dashed)
   | .path _ => fr.place g
 
-/-- Flip a raster's unit square, one frame unit on a side (`rasterUnit`):
-the model's (0,0) is its bottom-left, an SVG image's its top-left. -/
+/-- Flips a raster's unit square: the model's (0,0) is its bottom-left, an SVG image's its top-left. -/
 @[expose] public def unitFlip : Affine := ⟨1, 0, 0, -1, 0, 65536⟩
 
 mutual
 
 -- conserves: none — an emitter: what it keeps is `marks_projects`.
-/-- One node's elements. A label is set by `labelEl`, which reads the frame. -/
+/-- One node's elements; a label is set by `labelEl`. -/
 @[expose] public def treeOne {L : Type} (labelEl : SFrame → L → Html.Node)
     (outlines : Array (Array Subpath)) (rasters : Array RasterRef)
     (bodies : Array (Array El)) (fr : SFrame) (acc : Array El) : Node L → Array El
@@ -219,8 +167,7 @@ mutual
     | some body => acc.push (.use k (fr.lift xf) body)
     | none => acc
   | .stamp o xf fl st =>
-    -- The paints stand in the stamp's own frame: the cloned outline's
-    -- user space is the use's, its transform applied.
+    -- The paints stand in the stamp's own frame, the cloned outline's user space.
     acc.push (.stamp o (fr.lift xf) (outlines[o]?.getD #[]) (attrsOf { iso := none } fl st))
   | .image k xf => acc.push (.image k (fr.lift xf) (rasters[k]?.getD default))
   | .label l => acc.push (.raw (labelEl fr l))
@@ -241,18 +188,13 @@ frame. -/
     (fig : Figure L) : Array (Array El) :=
   fig.bodies.map fun b => treeList labelEl fig.outlines rasters #[] { iso := none } #[] b.toList
 
-/-- **A figure as a typed SVG tree** under the placement into the SVG's
-frame; `rasters` are the rasters' data URIs. -/
+/-- A figure as a typed SVG tree under the placement into the SVG's frame. -/
 @[expose] public def tree {L : Type} (labelEl : SFrame → L → Html.Node) (rasters : Array RasterRef)
     (place : Iso) (fig : Figure L) : Array El :=
   treeList labelEl fig.outlines rasters (bodyEls labelEl rasters fig) { iso := some place } #[]
     fig.nodes.toList
 
-/-! ## Spelling -/
-
-/-- What the spelling carries: the figure's ordinal, the next clip and
-gradient numbers, the definitions collected so far, and the symbols and
-outlines already defined. -/
+/-- What the spelling carries: the figure's ordinal, the next ids, and the definitions so far. -/
 public structure Spell where
   ord : Nat
   clips : Nat
@@ -271,24 +213,16 @@ public inductive IdKind where
   | outline
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The letter an id spells its kind with. -/
 @[expose] public def IdKind.letter : IdKind → Char
   | .gradient => 'g'
   | .clip => 'c'
   | .symbol => 's'
   | .outline => 'o'
 
-/-- The character a figure's ids put between the figure's ordinal and the
-kind: one no other id this backend writes can hold — a label's anchor
-keeps only letters, digits, `:`, `.`, `-` and `_` (`Ir.labelAnchor`), a
-title's slug only letters, digits and `-` (`Ir.slug`), a reference entry's
-starts `ref-` — so a figure's ids never take an anchor the document names. -/
+/-- The separator a figure's ids hold, a character no anchor this backend writes can hold. -/
 @[expose] public def idSep : Char := '~'
 
-/-- An element id: `f{figure}~{kind}{index}`. Distinct triples never share
-an id (`ids_inj`), and the parts read back (`parseId_svgId_exact`), so the
-page numbers its figures apart (`renumberList`) and the spelling is stable
-across builds. -/
+/-- An element id, `f{figure}~{kind}{index}`. -/
 @[expose] public def svgId (ord : Nat) (kind : IdKind) (i : Nat) : String :=
   "f" ++ toString ord ++ String.singleton idSep ++ String.singleton kind.letter ++ (toString i)
 
@@ -330,10 +264,6 @@ private theorem svgId_chars (o : Nat) (k : IdKind) (i : Nat) :
     String.toList_singleton, List.append_assoc, List.cons_append, List.nil_append]
   rfl
 
-/-- **Element ids are injective** (`_inj`): a figure's ordinal, the kind
-and the index are read back from the id, because a decimal numeral holds no
-separator and the kind is one letter — so two definitions of one figure, or
-of two figures numbered apart, never share an id. -/
 public theorem ids_inj {o o' i i' : Nat} {k k' : IdKind} (h : svgId o k i = svgId o' k' i') :
     o = o' ∧ k = k' ∧ i = i' := by
   have h' := congrArg String.toList h
@@ -343,7 +273,6 @@ public theorem ids_inj {o o' i i' : Nat} {k k' : IdKind} (h : svgId o k i = svgI
   simp only [List.cons.injEq] at hr
   exact ⟨toDigits_inj ho, letter_inj hr.1, toDigits_inj hr.2⟩
 
-/-- A kind read from its letter. -/
 @[expose] public def IdKind.ofLetter? (c : Char) : Option IdKind :=
   if c = 'g' then some .gradient else if c = 'c' then some .clip
   else if c = 's' then some .symbol else if c = 'o' then some .outline else none
@@ -351,9 +280,7 @@ public theorem ids_inj {o o' i i' : Nat} {k k' : IdKind} (h : svgId o k i = svgI
 private theorem ofLetter_letter (k : IdKind) : IdKind.ofLetter? k.letter = some k := by
   cases k <;> rfl
 
-/-- A figure id's parts, read from its characters: `f`, the figure's
-numeral, the separator, the kind's letter, the index's numeral — anything
-else is no figure id. -/
+/-- A figure id's parts read back from its characters, or `none` for any other id. -/
 @[expose] public def parseIdChars (cs : List Char) : Option (Nat × IdKind × Nat) :=
   match cs with
   | [] => none
@@ -381,8 +308,6 @@ private theorem span_digits (a r : List Char) (ha : ∀ c ∈ a, c.isDigit = tru
     have ih' := ih (fun y hy => ha y (by simp [hy]))
     simp [hx, ih'.1, ih'.2]
 
-/-- **A figure id reads back as its parts** (`_exact`): the ordinal, the
-kind and the index `svgId` spelled — what renumbering a page's figures reads. -/
 public theorem parseId_svgId_exact (o : Nat) (k : IdKind) (i : Nat) :
     parseId (svgId o k i) = some (o, k, i) := by
   have hs : idSep.isDigit = false := by decide
@@ -397,9 +322,7 @@ public theorem parseId_svgId_exact (o : Nat) (k : IdKind) (i : Nat) :
 definition's own id, a `use`'s `href`, a paint or a clip. -/
 @[expose] public def refKeys : List String := ["id", "href", "fill", "stroke", "clip-path"]
 
-/-- An attribute value naming one of figure 0's definitions — the id, a `#`
-reference, a `url(#…)` paint or clip, each spelling `spell` writes —
-renumbered to figure `n`; any other value as it is. -/
+/-- An attribute value naming one of figure 0's definitions, renumbered to figure `n`. -/
 @[expose] public def renumberValue (n : Nat) (v : String) : String :=
   let cs := v.toList
   match parseIdChars cs with
@@ -420,11 +343,8 @@ renumbered to figure `n`; any other value as it is. -/
 
 mutual
 
--- conserves: none — a renaming of the attribute values that name a
--- figure's definitions; text and structure stay (`renumberChecks`).
-/-- A figure's spelled nodes renumbered to figure `n`: every attribute that
-names one of its definitions. A nested `svg` is another figure's, and keeps
-its own numbering. -/
+-- conserves: none — a renaming of definition references.
+/-- A figure's spelled nodes renumbered to figure `n`; a nested `svg` keeps its own numbering. -/
 public def renumberOne (n : Nat) : Html.Node → Html.Node
   | .elem tag attrs kids =>
     if tag == "svg" then .elem tag attrs kids
@@ -459,10 +379,8 @@ public def pathD (subs : Array Subpath) : String :=
 one. -/
 @[expose] public def pointlike (s : Subpath) : Bool := s.points.all (· == s.start)
 
-/-- A shape's geometry as spelled: under square caps a path's dots left out —
-SVG paints a square at one and PDF nothing (ISO 32000-2 §8.5.3.2: a
-degenerate subpath is painted only under round caps), and a dot encloses no
-area to fill. -/
+/-- A shape's geometry as spelled: under square caps a path's dots left out, which PDF does not
+paint (ISO 32000-2 §8.5.3.2). -/
 @[expose] public def spelledGeom (g : Geom) (square : Bool) : Geom :=
   match g with
   | .rect x y w h => .rect x y w h
@@ -482,16 +400,14 @@ public def geomEl (g : Geom) (attrs : Array (String × String)) : Html.Node :=
     else
       Html.elem "ellipse" #[] (#[("cx", cx.toPtString), ("cy", cy.toPtString),
         ("rx", rx.toPtString), ("ry", ry.toPtString)] ++ attrs)
-  -- An empty path spells no `d`: an empty value is a bare attribute, which
-  -- no XML reader of a standalone SVG accepts.
+  -- An empty path spells no `d`: an empty value is a bare attribute, which XML refuses.
   | .path subs => Html.elem "path" #[] ((if subs.isEmpty then #[] else #[("d", pathD subs)]) ++ attrs)
 
 /-- An alpha as an opacity, to three decimals. -/
 @[expose] public def alphaSpell (a : Alpha) : String := ratString a.val 1000
 
-/-- A gradient as its element, its coordinates in the user space of the
-shape it paints (`userSpaceOnUse`), its own frame its `gradientTransform`,
-pad spread. -/
+/-- A gradient as its element in the user space of the shape it paints, its frame its
+`gradientTransform`, pad spread. -/
 public def gradientEl (id : String) : Gradient → Html.Node
   | .linear p0 p1 stops xf =>
     Html.elem "linearGradient" (stops.map stopEl) #[("id", id), ("gradientUnits", "userSpaceOnUse"),
@@ -560,14 +476,12 @@ each present only where the typed tree says. -/
     optAttr "stroke-miterlimit" (a.miter.map ratDecimal) ++
     optAttr "stroke-opacity" (a.strokeOpacity.map alphaSpell), sv.2)
 
-/-- A transform attribute. -/
 @[expose] public def transformAttr (m : Affine) : String × String := ("transform", s!"matrix({m.operands})")
 
 mutual
 
--- conserves: none — a spelling: `spell_plain_exact` and the matrix pin it.
-/-- One element spelled onto `acc`. A clip, a gradient, a symbol's body and
-an outline go once into the definitions, under their ids. -/
+-- conserves: none — a spelling.
+/-- One element spelled onto `acc`; a clip, gradient, symbol body or outline goes once into the definitions. -/
 public def spellOne (sp : Spell) (acc : Array Html.Node) : El → Array Html.Node × Spell
   | .shape g a =>
     let (attrs, sp) := attrsSpell sp a
@@ -621,19 +535,13 @@ public def spellList (sp : Spell) (acc : Array Html.Node) : List El → Array Ht
 
 end
 
-/-- **A typed tree spelled**: its elements, then one `defs` when it defines
-anything — after them, so element `j` of the tree is node `j` of its
-spelling whatever the tree defines (`spell_raw_exact`); a reference to a
-definition later in its own `svg` resolves (SVG 2 §5.6). `ord` numbers the
-figure in its document. -/
+/-- A typed tree spelled: its elements, then one `defs` when it defines anything; `ord` numbers the figure. -/
 public def spell (ord : Nat) (els : Array El) : Array Html.Node :=
   let start : Spell :=
     { ord := ord, clips := 0, grads := 0, defs := #[], syms := #[], outlines := #[] }
   let (items, sp) := spellList start #[] els.toList
   if sp.defs.isEmpty then items else items.push (Html.elem "defs" sp.defs)
 
-/-- Every element spells one node onto what came before, a raw element its
-own node. -/
 private theorem spellOne_one (sp : Spell) (acc : Array Html.Node) (e : El) :
     ∃ node, (spellOne sp acc e).1 = acc.push node ∧ ∀ n, e = .raw n → node = n := by
   cases e with
@@ -647,7 +555,6 @@ private theorem spellOne_one (sp : Spell) (acc : Array Html.Node) (e : El) :
   | image k m ref => exact ⟨_, rfl, fun _ h => by cases h⟩
   | raw n => exact ⟨n, rfl, fun _ h => by cases h; rfl⟩
 
-/-- A list spells one node per element, in order, each raw element as itself. -/
 private theorem spellList_one (sp : Spell) (acc : Array Html.Node) (els : List El) :
     ∃ nodes : Array Html.Node, (spellList sp acc els).1 = acc ++ nodes ∧
       nodes.size = els.length ∧
@@ -672,9 +579,6 @@ private theorem spellList_one (sp : Spell) (acc : Array Html.Node) (els : List E
         rw [Array.getElem?_append_right (by simp)]
         simpa using h3 j n hj
 
-/-- **Element `j` of a tree is node `j` of its spelling** (`_exact`), whatever
-the tree defines: a raw element — a label's node — ships as itself at its
-own index, the definitions standing after every element. -/
 public theorem spell_raw_exact (ord : Nat) (els : Array El) (j : Nat) (n : Html.Node)
     (hj : els[j]? = some (El.raw n)) : (spell ord els)[j]? = some n := by
   obtain ⟨nodes, h1, h2, h3⟩ := spellList_one
@@ -689,8 +593,6 @@ public theorem spell_raw_exact (ord : Nat) (els : Array El) (j : Nat) (n : Html.
   · rw [h1, Array.empty_append, Array.getElem?_push_lt hlt, ← Array.getElem?_eq_getElem hlt]
     exact h3 j n hj'
 
-/-! ## A tree that names no definition spells element for element -/
-
 @[expose] public def SPaint.plain : SPaint → Bool
   | .none => true
   | .color _ => true
@@ -699,9 +601,7 @@ public theorem spell_raw_exact (ord : Nat) (els : Array El) (j : Nat) (n : Html.
 mutual
 
 -- conserves: none — a predicate.
-/-- An element that names no definition — no gradient paint, no clip, no
-symbol, no stamp: what spells with nothing to define, one node per element.
-A TikZ picture's elements are. -/
+/-- An element that names no definition: no gradient, clip, symbol or stamp. -/
 @[expose] public def El.plain : El → Bool
   | .shape _ a => a.fill.all SPaint.plain && a.stroke.all SPaint.plain
   | .g _ _ clip kids => clip.isNone && El.plainList kids.toList
@@ -792,9 +692,6 @@ private theorem spellList_plain (sp : Spell) :
 
 end
 
-/-- **A tree that names no definition spells element for element**
-(`_exact`): no `defs`, and a raw element — a label's node — ships as
-itself at its own index. -/
 public theorem spell_plain_exact (ord : Nat) (els : Array El) (h : El.plainList els.toList = true)
     (j : Nat) (n : Html.Node) (hj : els[j]? = some (El.raw n)) : (spell ord els)[j]? = some n := by
   obtain ⟨hs, nodes, h1, _, h3⟩ := spellList_plain
@@ -805,8 +702,7 @@ public theorem spell_plain_exact (ord : Nat) (els : Array El) (h : El.plainList 
   simp only [Array.isEmpty_empty, ↓reduceIte, h1, Array.empty_append]
   exact h3 j n hj'
 
-/-- The element names a plain element spells into: geometry, groups and
-images. A plain tree defines nothing, so these are all its own nodes. -/
+/-- The element names a plain element spells into: geometry, groups and images. -/
 @[expose] public def plainTags : List String := ["rect", "circle", "ellipse", "path", "g", "image"]
 
 mutual
@@ -827,14 +723,12 @@ mutual
 
 end
 
-/-- The raw-node predicate over two runs of elements is the two runs'. -/
 public theorem El.rawsAllList_append (q : Html.Node → Bool) (a b : List El) :
     El.rawsAllList q (a ++ b) = (El.rawsAllList q a && El.rawsAllList q b) := by
   induction a with
   | nil => simp [El.rawsAllList]
   | cons e rest ih => simp [El.rawsAllList, ih, Bool.and_assoc]
 
-/-- A group's clips wrap its kids and carry no raw node of their own. -/
 public theorem El.rawsAllList_nestClips (q : Html.Node → Bool) (fr : SFrame) (kids : Array El)
     (cs : List Clip) :
     El.rawsAllList q (nestClips fr kids cs).toList = El.rawsAllList q kids.toList := by
@@ -914,12 +808,6 @@ private theorem spellList_closed (q : Html.Node → Bool) (hq : PlainClosed q) (
 
 end
 
-/-- **A plain tree's spelling wraps its raw nodes in plain SVG**
-(`_contract`): every node a tree that names no definition spells has any
-property each plain SVG element has once its children do, as soon as the
-tree's raw nodes have it — the spelling adds geometry, groups and images
-around what a producer passed in, and nothing else. A picture's raw nodes
-are its labels. -/
 public theorem spell_plain_contract (q : Html.Node → Bool) (hq : PlainClosed q) (ord : Nat)
     (els : Array El) (h : El.plainList els.toList = true)
     (hr : El.rawsAllList q els.toList = true) : ∀ n ∈ spell ord els, q n = true := by
@@ -930,10 +818,7 @@ public theorem spell_plain_contract (q : Html.Node → Bool) (hq : PlainClosed q
   rw [hs]
   simpa only [Array.isEmpty_empty, ↓reduceIte] using hall
 
-/-- Every element name a spelling writes: the plain ones, and the
-definitions behind one `defs` — a clip path, a gradient and its stops, a
-symbol's body, an outline's path — with the `use` that paints a symbol or
-an outline. -/
+/-- Every element name a spelling writes. -/
 @[expose] public def spellTags : List String :=
   plainTags ++ ["use", "defs", "clipPath", "linearGradient", "radialGradient", "stop", "symbol"]
 
@@ -1102,12 +987,6 @@ private theorem spellList_closed_all (q : Html.Node → Bool) (hq : SpellClosed 
 
 end
 
-/-- **A spelling wraps its raw nodes in SVG and nothing else**
-(`_contract`): every node a typed tree spells has any property each element
-the spelling writes has once its children do, as soon as the tree's raw
-nodes have it — the spelling adds geometry, groups, images and the
-definitions they name (`spellTags`) around what a producer passed in. A
-picture's raw nodes are its labels. -/
 public theorem spell_contract (q : Html.Node → Bool) (hq : SpellClosed q) (ord : Nat)
     (els : Array El) (hr : El.rawsAllList q els.toList = true) :
     ∀ n ∈ spell ord els, q n = true := by
@@ -1127,12 +1006,8 @@ top-left corner at the origin, y down. -/
 @[expose] public def documentIso (box : Box) : Iso :=
   { flipY := true, dx := -box.1.1, dy := box.2.2 }
 
-/-- **A figure as a standalone SVG document's root**: spelled children in
-the SVG namespace, the viewBox the figure's box in points from its
-top-left corner, the size the same in `pt`, overflow hidden exactly when
-the figure clips to its box; a figure that `stretch`es fills whatever box
-it is shown in, as the PDF form an include scales does, instead of SVG's
-default fit inside it. -/
+/-- A figure as a standalone SVG root: the viewBox its box in points, clipping when the figure
+does; a `stretch`ing figure fills the box it is shown in. -/
 public def documentRoot (box : Box) (clipToBox : Bool) (kids : Array Html.Node)
     (stretch : Bool := false) : Html.Node :=
   let w := (box.2.1 - box.1.1).toPtString
@@ -1149,14 +1024,11 @@ public def document {L : Type} (labelEl : SFrame → L → Html.Node) (rasters :
     Html.render (documentRoot fig.box fig.clipToBox
       (spell 0 (tree labelEl rasters (documentIso fig.box) fig)) stretch) 0
 
-/-! ## Reading back -/
-
 /-- SVG's initial fill colour. -/
 @[expose] public def svgBlack : Ir.Color := { r := 0, g := 0, b := 0 }
 
-/-- What a reader of the tree carries: the placement to undo while
-coordinates are placed, the figure-frame matrix once a transform was read,
-the clips and group opacities in force. -/
+/-- What a reader of the tree carries: the placement to undo, the matrix read, and the clips and
+opacities in force. -/
 public structure SState where
   place : Iso
   placed : Bool
@@ -1208,13 +1080,7 @@ ellipse is its four arcs. -/
 @[expose] public def SState.geom (ss : SState) (g : Geom) : Geom :=
   (if ss.placed then g.mapIso ss.place.inv else g).normal
 
-/-- **A shape element's geometry in the figure frame, as SVG draws it**
-(SVG 2 §10): a `rect` or `ellipse` of zero or negative size draws nothing;
-one under a dashed stroke is the path SVG traces for it in its own
-coordinates — a `rect` from its corner along x, an `ellipse` from angle 0
-toward y (`Geom.traced`) — carried back point by point; one under a solid
-stroke or none is the region it outlines, whose start and direction no
-reader sees; a path is itself, carried back. -/
+/-- A shape element's geometry in the figure frame as SVG draws it (SVG 2 §10), or `none` where it draws nothing. -/
 @[expose] public def SState.shapeGeom (ss : SState) (g : Geom) (dashed : Bool) : Option Geom :=
   let back (g : Geom) : Geom := if ss.placed then g.mapIso ss.place.inv else g
   match g with
@@ -1267,14 +1133,10 @@ end
 @[expose] public def SState.root (place : Iso) : SState :=
   { place := place, placed := true, ctm := Affine.unit, clips := #[], alphas := #[] }
 
-/-- **What a typed SVG tree paints**, read with SVG's meaning. -/
+/-- What a typed SVG tree paints, read with SVG's meaning. -/
 @[expose] public def readMarks (place : Iso) (els : Array El) : Array Mark :=
   readList (SState.root place) #[] els.toList
 
-/-! ## The reading is the figure's -/
-
-/-- The model's reading context, the emitter's frame and the SVG reader's
-state at one point of the tree. -/
 private structure Agrees (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState) : Prop where
   hplace : ss.place = place
   hiso : fr.iso = if ss.placed then some place else none
@@ -1305,7 +1167,6 @@ private theorem normal_rect_neg {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
   · next hn => exact absurd hn hp
   · rfl
 
-/-- A normal geometry is its own normal form. -/
 private theorem normal_normal (g : Geom) : g.normal.normal = g.normal := by
   cases g with
   | rect x y w h =>
@@ -1315,15 +1176,12 @@ private theorem normal_normal (g : Geom) : g.normal.normal = g.normal := by
   | ellipse cx cy rx ry => rfl
   | path subs => rfl
 
-/-- A clip's element outlines what the clip covers. -/
 private theorem clipGeom_normal (g : Geom) : (clipGeom g).normal = g.normal := by
   cases g with
   | rect x y w h => exact normal_normal (.rect x y w h)
   | ellipse cx cy rx ry => rfl
   | path subs => rfl
 
-/-- The element a draw spells reads back, with SVG's meaning, as the outline
-the draw paints (`Geom.drawn`). -/
 private theorem shape_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.place = place)
     (hi : fr.iso = if ss.placed then some place else none) (g : Geom) (d : Bool) :
     ss.shapeGeom (shapeOf fr g d) d = some (g.drawn d) := by
@@ -1396,7 +1254,6 @@ private theorem shape_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.p
     rw [show (Geom.path subs).drawn d = .path subs by cases d <;> rfl]
     exact hpath subs
 
-/-- A draw's attributes state a dash exactly where its stroke has one. -/
 private theorem attrsOf_dashed (fr : SFrame) (fl : Option Fill) (st : Option Stroke) :
     (attrsOf fr fl st).dash.isSome = st.any Stroke.dashed := by
   cases st with
@@ -1407,8 +1264,6 @@ private theorem attrsOf_dashed (fr : SFrame) (fl : Option Fill) (st : Option Str
     · simp [h]
     · simp [h]
 
-/-- A paint spelled in a user space reads back as the paint under the frame
-that user space's coordinates were lifted from. -/
 private theorem readPaint_sPaint (ss : SState) (fr : SFrame) (m : Affine)
     (h : ∀ x, ss.userCtm.compose (fr.lift x) = m.compose x) (p : Paint) :
     readPaint ss (sPaint fr p) = some (p.under m) := by
@@ -1468,7 +1323,6 @@ private theorem readStroke_attrsOf (ss : SState) (fr : SFrame) (m : Affine)
     · simp [readStroke, attrsOf, hp, hw, hc, hj, hm, hd, hph, ha, Stroke.under]
     · simp [readStroke, attrsOf, hp, hw, hc, hj, hm, hd, hph, ha, Stroke.under]
 
-/-- A read transform composes onto the user space's frame. -/
 private theorem cm_some_frameCtm (ss : SState) (m : Affine) :
     (ss.cm (some m)).frameCtm = ss.userCtm.compose m := rfl
 
@@ -1488,13 +1342,10 @@ private theorem cm_lift_frameCtm (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SS
     simp only [SState.userCtm, hpl, ↓reduceIte, SFrame.lift, hi, h.hplace, ← hc]
     rw [← Affine.compose_assoc_exact, Iso.inv_compose_unit_id, (Affine.compose_unit_id xf).2]
 
-/-- Where the three sides agree, the user space's coordinates were lifted
-from the model's frame. -/
 private theorem agrees_user (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
     (h : Agrees place cx fr ss) : ∀ x, ss.userCtm.compose (fr.lift x) = cx.ctm.compose x := fun x =>
   (cm_some_frameCtm ss _).symm.trans (cm_lift_frameCtm place cx fr ss h x)
 
-/-- Inside a lifted transform, the user space is the new frame. -/
 private theorem lift_user (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
     (h : Agrees place cx fr ss) (xf : Affine) :
     ∀ x, (ss.cm (some (fr.lift xf))).userCtm.compose (({ iso := none } : SFrame).lift x) =
@@ -1539,8 +1390,6 @@ private theorem agrees_lift (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
   hclips := by simp [SState.cm, Ctx.enter, h.hclips]
   halphas := by rw [enter_alphas]; simp [SState.cm, h.halphas]
 
-/-- The clips past the first read back as one more clip each, in the same
-frame. -/
 private theorem read_nestClips (place : Iso) (fr : SFrame) (inner : Array El) (acc : Array Mark) :
     ∀ (rest : List Clip) (ss : SState), ss.place = place →
       (fr.iso = if ss.placed then some place else none) →
@@ -1557,8 +1406,6 @@ private theorem read_nestClips (place : Iso) (fr : SFrame) (inner : Array El) (a
     congr 2
     simp [SState.frameCtm]
 
-/-- The state a group's body is read in: its transform and opacity, then
-each of its clips in the transformed frame. -/
 private def groupState (ss : SState) (t : Option Affine) (op : Option Alpha)
     (clips : List Clip) : SState :=
   let s := ss.enterG t op none
@@ -1579,7 +1426,6 @@ private theorem enterG_none (ss : SState) (t : Option Affine) (op : Option Alpha
         | none => (ss.cm t).alphas) := by
   cases op <;> exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
-/-- After a group's transform, opacity and clips, the three sides agree. -/
 private theorem agrees_group (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
     (h : Agrees place cx fr ss) (xf : Affine) (clips : Array Clip) (alpha : Alpha) :
     Agrees place (cx.enter xf clips alpha) (fr.enter (groupXf fr xf))
@@ -1608,7 +1454,6 @@ private theorem agrees_group (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState
     · have hb : (alpha == Alpha.opaque) = false := by simpa using ha
       simp [ha, hb, Ctx.enter]
 
-/-- A group's element reads back as its body read in the group's state. -/
 private theorem read_group (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.place = place)
     (hi : fr.iso = if ss.placed then some place else none) (xf : Affine) (clips : Array Clip)
     (op : Option Alpha) (inner : Array El) (acc : Array Mark) :
@@ -1778,23 +1623,12 @@ private theorem read_treeList {L : Type} (labelEl : SFrame → L → Html.Node) 
 
 end
 
-/-- **What the SVG says is what the figure paints** (`_projects`): the typed
-tree `tree` builds, read with SVG's meaning — fill initially black, stroke
-initially none, width 1, miter limit 4, a zero width painting nothing,
-transforms composing, clips in the transformed frame, group opacity
-isolated — is the figure's marks, for every figure, placement and label
-setter, before a byte is spelled. The other half of `backend_marks_agree`:
-an attribute the emitter leaves out is SVG's initial value the figure asked
-for, and an attribute it states — the miter limit 10, the hairline — is
-there because SVG's would differ. -/
 public theorem marks_projects {L : Type} (labelEl : SFrame → L → Html.Node)
     (rasters : Array RasterRef) (place : Iso) (fig : Figure L) :
     readMarks place (tree labelEl rasters place fig) = fig.marks := by
   unfold readMarks tree Figure.marks Figure.expanded
   exact read_treeList labelEl rasters fig place fig.nodes.toList Ctx.root _ (SState.root place) #[]
     (agrees_root place)
-
-/-! ## Labels among the ink -/
 
 /-- One top-level element's steps: label content is that label; any other
 element the marks it paints, read with SVG's meaning at the root. -/
@@ -1803,8 +1637,7 @@ element the marks it paints, read with SVG's meaning at the root. -/
   | e@(.shape ..) | e@(.g ..) | e@(.use ..) | e@(.stamp ..) | e@(.image ..) =>
     (readOne (SState.root place) #[] e).map .mark
 
-/-- **What a typed SVG tree paints, its labels among its ink**, read with
-SVG's meaning: each top-level element's steps, in document order. -/
+/-- What a typed SVG tree paints, its labels among its ink, in document order. -/
 @[expose] public def readSteps (place : Iso) (els : Array El) : Array (Step Html.Node) :=
   els.foldl (fun acc e => acc ++ readStep place e) #[]
 
@@ -1876,7 +1709,6 @@ private theorem treeList_flatMap {L : Type} (labelEl : SFrame → L → Html.Nod
     apply Array.toList_inj.mp
     simp
 
-/-- A label-free node writes no label content at the top of what it writes. -/
 private theorem treeOne_noRaw {L : Type} (labelEl : SFrame → L → Html.Node)
     (outlines : Array (Array Subpath)) (rasters : Array RasterRef) (bodies : Array (Array El))
     (fr : SFrame) (n : Node L) (hf : n.labelFree = true) :
@@ -1890,11 +1722,6 @@ private theorem treeOne_noRaw {L : Type} (labelEl : SFrame → L → Html.Node)
     split at he <;> simp at he
   | draw | group | stamp | image | words => simp [treeOne] at he
 
-/-- **What the SVG says, its labels among its ink, is what the figure
-paints** (`_projects`): for a figure whose labels stand at its top level,
-the typed tree `tree` builds — each label the content its setter gives it —
-read with SVG's meaning, element by element, is the figure's steps: its
-marks as `marks_projects` reads them, each label where its node stands. -/
 public theorem steps_projects {L : Type} (labelEl : SFrame → L → Html.Node)
     (rasters : Array RasterRef) (place : Iso) (fig : Figure L) (h : fig.labelsTop = true) :
     readSteps place (tree labelEl rasters place fig) =

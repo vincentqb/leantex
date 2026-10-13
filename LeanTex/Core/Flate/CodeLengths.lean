@@ -10,8 +10,7 @@ public abbrev Entry := Nat × Nat × Nat
 def Run (seq : Array Nat) (p count value : Nat) : Prop :=
   p + count ≤ seq.size ∧ ∀ k < count, seq[p + k]?.getD 0 = value
 
-/-- A code-length entry spells this part of the vector. The repeat entry
-reads its previous value from the already decoded prefix. -/
+/-- A code-length entry spells this part of the vector; a repeat reads its value from the decoded prefix. -/
 inductive Step (seq : Array Nat) : Nat → Entry → Nat → Prop where
   | literal (p v : Nat) (hv : v < 16) (h : Run seq p 1 v) :
       Step seq p (v, 0, 0) (p + 1)
@@ -25,8 +24,7 @@ inductive Step (seq : Array Nat) : Nat → Entry → Nat → Prop where
       (h : Run seq p count 0) :
       Step seq p (18, count - 11, 7) (p + count)
 
-/-- A progress-indexed account of the entries emitted by the actual RLE
-loop. It keeps the consumed vector position, including across repeats. -/
+/-- The entries the RLE loop emits, indexed by the vector position they consume. -/
 inductive Covers (seq : Array Nat) (start : Nat) : Array Entry → Nat → Prop where
   | empty (h : start ≤ seq.size) : Covers seq start #[] start
   | push {out : Array Entry} {p q : Nat} {entry : Entry}
@@ -224,7 +222,7 @@ theorem emitRun_covers {seq : Array Nat} {start p v r bound : Nat} {out : Array 
     have he : p + (result.2.1 - p) = result.2.1 := by omega
     simpa only [he] using hr.slice (result.2.1 - p) result.2.2 (by omega)
 
-/-- RFC 1951 code-length RLE. Each iteration consumes at least one length. -/
+/-- RFC 1951 code-length run-length encoding. -/
 public def encode (seq : Array Nat) : Array Entry := Id.run do
   let mut out : Array Entry := #[]
   let mut p := 0
@@ -261,8 +259,6 @@ theorem encode_covers (seq : Array Nat) (hv : ∀ i < seq.size, seq[i]?.getD 0 <
     have he : s.2 = seq.size := by have := hs.2; omega
     simpa only [Q, he] using hs.1
 
-/-- The real RLE emits only encodable symbols/payloads, and its entry count
-fits the decoder's progress bound. -/
 theorem encode_contract (seq : Array Nat) (hv : ∀ i < seq.size, seq[i]?.getD 0 < 16) :
     (encode seq).size ≤ seq.size ∧ ∀ entry ∈ (encode seq).toList, entry.Valid := by
   have h := (encode_covers seq hv).contract

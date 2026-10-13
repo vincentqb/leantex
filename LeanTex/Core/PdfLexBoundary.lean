@@ -32,10 +32,6 @@ public theorem Span.first_number {b i cs} (h : Span b i cs)
   | nil => contradiction
   | cons c cs => rw [h.head]; exact hc c (by simp)
 
-/-- Scanning the unsigned prefix of a numeric token either stops at a
-sign/decimal point, or reaches its terminating byte. Both stops exclude
-`R` after whitespace. This follows the actual scanner's consumed prefix,
-without replacing it by a digit fold or assuming its result. -/
 theorem uint_numeric_stops {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b i cs) (hc : ∀ c ∈ cs, numByte c = true)
     (he : ¬ (48 ≤ at? b (i+cs.length) ∧ at? b (i+cs.length) ≤ 57))

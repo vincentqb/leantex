@@ -73,8 +73,6 @@ private theorem pushBe32_trailer (b : ByteArray) (v : Nat) (hv : v < 256^4) :
     ↓reduceIte, Option.getD_some, UInt8.toNat_ofNat', Nat.mod_mod]
   omega
 
-/-- The complete compressor output ends in its Adler-32 checksum. The width
-bound is proved over the production loop, without exposing the bit writer. -/
 public theorem deflate_checksum_exact (data : ByteArray) :
     let raw := Flate.deflate data
     let n := raw.size

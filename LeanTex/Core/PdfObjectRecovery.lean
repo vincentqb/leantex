@@ -13,12 +13,9 @@ import all LeanTex.Core.PdfLex
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
 
-/-! Recovery from the production file's object streams. The source domain
-describes spelling and numeric storage; no parser or codec result is an
-assumption. This is a contract of the serialized artifact. -/
+/-! Recovery of objects from the object streams of the file the writer produces. -/
 
-/-- The fields of one of the writer's object streams, including its
-actual compression choice and the length of the retained payload. -/
+/-- The dictionary of one of the writer's object streams, with its compression choice and retained length. -/
 public def objectStreamDict (count first : Nat) (filtered : Bool) (len : Nat) : Obj :=
   .dict (#[("Type", .name "ObjStm"), ("N", .int count), ("First", .int first)] ++
     (if filtered then #[("Filter", .name "FlateDecode")] else #[]) ++
@@ -71,8 +68,7 @@ public theorem objectStreamDict_render_exact (count first : Nat) (filtered : Boo
     Int.repr_eq_ite, Int.natCast_nonneg, ↓reduceIte, Int.toNat_natCast]
   all_goals rfl
 
-/-- The dictionary the writer spells for the object stream holding `c`:
-its count, its header's size, and its compression choice. -/
+/-- The dictionary the writer spells for the object stream holding `c`. -/
 public def chunkDict (c : List (Nat × Obj)) : Obj :=
   let data := (objectStream c).bytes
   let z := Flate.deflate data
@@ -85,8 +81,6 @@ public def chunkRaw (c : List (Nat × Obj)) : ByteArray :=
   let z := Flate.deflate data
   if z.size < data.size then z else data
 
-/-- One object stream's row spells exactly its typed dictionary and its
-retained bytes, whichever compression choice it made. -/
 public theorem objStmRow_bytes_exact (id : Nat) (c : List (Nat × Obj)) :
     rowInto ByteArray.empty id (objStmRow id c.length (objectStream c)).body =
       (s!"{id} 0 obj\n").toUTF8 ++ (chunkDict c).render ++ "\nstream\n".toUTF8 ++
@@ -113,8 +107,6 @@ private theorem span_append {b : ByteArray} {off : Nat} {cs : List Nat}
     rw [at?_append_left b tail (off+j) (by have := h.bound; omega)]
     exact h.byte j hj
 
-/-- The complete file begins with the serialized rows, direct rows then
-object streams; the xref and footer follow them. -/
 public theorem WritePlan.rows_suffix_exact (p : WritePlan) :
     ∃ tail, p.bytes = (serialize p.head p.rows).1 ++ tail := by
   rw [WritePlan.bytes, p.measure.bytes_stream_exact, p.measure_body_exact]
@@ -131,8 +123,6 @@ private theorem serializeList_row_span_exact (head : ByteArray)
   rw [serializeList_bytes, rowInto_bytes]
   exact PdfLex.Span.of_bytes _ _ _
 
-/-- Every row of the plan, direct or object stream, is spelled in the
-complete file at the offset its serializer reaches it. -/
 public theorem WritePlan.row_span_exact (p : WritePlan) (before after : List Row) (r : Row)
     (hs : p.rows.toList = before ++ r :: after) :
     PdfLex.Span p.bytes (serialize p.head before.toArray).1.size
@@ -144,20 +134,16 @@ public theorem WritePlan.row_span_exact (p : WritePlan) (before after : List Row
   rw [hs]
   exact serializeList_row_span_exact ..
 
-/-- The object-stream rows, as a list. -/
 private theorem stmRowsOf_getElem? (t : ObjTable) (p : WritePlan) (k : Nat)
     (c : List (Nat × Obj)) (hk : p.chunks[k]? = some c) :
     (stmRowsOf t p.packed).toList[k]? = some (objStmRow (t.objStmId k) c.length (objectStream c)) := by
   simp only [stmRowsOf, List.toList_toArray, List.getElem?_map, List.getElem?_zipIdx,
     WritePlan.packed, hk, Option.map_some, Nat.zero_add]
 
-/-- Where object stream `k` is written: after the direct rows and every
-stream before it. -/
+/-- Where object stream `k` is written: after the direct rows and every stream before it. -/
 public def WritePlan.stmOffset (p : WritePlan) (k : Nat) : Nat :=
   (serialize p.head (p.direct.toList ++ (stmRowsOf p.table p.packed).toList.take k).toArray).1.size
 
-/-- Object stream `k` spells its dictionary and retained bytes at its
-offset in the complete file, for every stream the plan writes. -/
 public theorem WritePlan.stm_span_exact (p : WritePlan) (k : Nat) (c : List (Nat × Obj))
     (hk : p.chunks[k]? = some c) :
     PdfLex.Span p.bytes (p.stmOffset k)
@@ -204,7 +190,6 @@ private theorem objectStreamDict_decode_exact (count first : Nat) (data : ByteAr
     exact decodeStream_unfiltered_exact _ data
       (objectStreamDict_fields_exact count first false data.size).2.2.2.1
 
-/-- Every object stream of a bounded plan decodes to its exact payload. -/
 public theorem WritePlan.stm_decode_exact (p : WritePlan) (h : p.WithinBounds)
     (c : List (Nat × Obj)) (hc : c ∈ p.chunks) :
     decodeStream (chunkDict c) (chunkRaw c) = .ok (objectStream c).bytes :=
@@ -237,8 +222,6 @@ private theorem objectStreamDict_retained_fields (count first : Nat) (data : Byt
   · simpa only [hz, ↓reduceIte] using h.1
   · simpa only [hz, ↓reduceIte] using h.1
 
-/-- The retained stream's dictionary declares exactly its retained byte
-length and the stream's object count and payload boundary. -/
 public theorem chunkDict_fields_exact (c : List (Nat × Obj)) :
     (chunkDict c).get? "Length" = some (.int (chunkRaw c).size) ∧
     (chunkDict c).get? "N" = some (.int c.length) ∧
@@ -246,8 +229,6 @@ public theorem chunkDict_fields_exact (c : List (Nat × Obj)) :
   objectStreamDict_retained_fields c.length (objectStream c).header.utf8ByteSize
     (objectStream c).bytes
 
-/-- The production file itself supplies each object stream's reading. The
-location premise is discharged by the writer's xref-location contract. -/
 public theorem WritePlan.stm_reads_exact (p : WritePlan) (k : Nat) (c : List (Nat × Obj))
     (hk : p.chunks[k]? = some c) (locs : Std.HashMap Nat Loc)
     (hloc : locs.get? (p.table.objStmId k) = some (.direct (p.stmOffset k))) :
@@ -267,7 +248,6 @@ private theorem payload_cons_size (id : Nat) (v : Obj) (xs : List (Nat × Obj)) 
   simp only [ObjectStream.push, ByteArray.size_append, ByteArray.size_push,
     ByteArray.size_empty, Nat.zero_add]
 
-/-- A header slot points to the size of the actual preceding payload. -/
 public theorem objectStreamPositions_entry_exact (before after : List (Nat × Obj))
     (offset num : Nat) (v : Obj) :
     (objectStreamPositions offset (before ++ (num,v)::after))[before.length]? =
@@ -284,12 +264,6 @@ public theorem objectStreamPositions_entry_exact (before after : List (Nat × Ob
     congr 2
     omega
 
-/-- A representable source object is recovered from the writer's complete
-file, through its own object stream's spelling, compression decision,
-decoder, decimal header, and payload parser: the stream at
-`before.length / objStmCapacity`, at index `before.length % objStmCapacity`.
-Only the two locations still have to be supplied by the actual xref
-transcript; no reader result is assumed. -/
 public theorem WritePlan.compressed_reads_exact (p : WritePlan) (h : p.WithinBounds)
     (locs : Std.HashMap Nat Loc) (before after : List (Nat × Obj))
     (num : Nat) (v : Obj)

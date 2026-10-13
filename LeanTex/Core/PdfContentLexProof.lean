@@ -12,25 +12,11 @@ import LeanTex.Core.PdfLexBoundary
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.PdfNumber
 
-/-!
-# The content tokenizer reads back what its writer spells
-
-`scan_render_exact`: tokens the writer spells (`Spelled`) come back from
-`render` whole and in order. The proof follows the actual scanner, step by
-step (`scan_stops`, progress-indexed over the token list): at each token's
-first byte the step reads exactly the token — a number by `scanNumber`, a
-word by `runEnd`, an object by the object reader's own round trip
-(`parseVal_render_span_exact`) — and stops at its line feed; the byte after
-it is where the next begins (`skip_after`), and the object reader's
-reference lookahead never closes there (`tryRef_after`), the reference
-marker standing only as an operator's first letter.
--/
+/-! The content tokenizer reads back the tokens its writer spells. -/
 
 namespace LeanTex.Core.PdfContentLex
 
 open LeanTex.Core.PdfLex LeanTex.Core.PdfRead
-
-/-! ## Lemmas -/
 
 theorem runEnd_stops {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b i cs) (hr : ∀ c ∈ cs, regular c = true)
@@ -69,7 +55,6 @@ theorem asciiAt_exact {b : ByteArray} {i : Nat} {cs : List Nat} (h : Span b i cs
   simp only [List.getElem_map, List.getElem_range]
   rw [h.byte k (by simpa using h2)]
 
-/-- An operator's bytes read back as its characters. -/
 theorem ascii_name (n : String) :
     String.ofList ((n.toList.map Char.toNat).map Char.ofNat) = n := by
   rw [List.map_map]
@@ -95,10 +80,8 @@ theorem tryRef_none_of {b : ByteArray} {i0 : Nat}
     · simp [hr]
 
 
-/-! ## The writer's tokens -/
-
-/-- An operator the writer spells: regular ASCII characters, the first no
-number's, not a word the tokenizer reads itself nor the reference marker. -/
+/-- An operator the writer spells: regular ASCII, the first no number's, neither a tokenizer keyword
+nor the reference marker. -/
 public structure OpSpelled (n : String) : Prop where
   ne : n.toList ≠ []
   ascii : ∀ c ∈ n.toList, c.toNat < 128
@@ -106,8 +89,7 @@ public structure OpSpelled (n : String) : Prop where
   lead : ∀ c, n.toList.head? = some c → numByte c.toNat = false
   word : n ≠ "true" ∧ n ≠ "false" ∧ n ≠ "null" ∧ n ≠ "BI" ∧ n ≠ "R"
 
-/-- An operand the writer spells: one the object writer spells, other than
-a reference — a content stream holds none (§7.8.2). -/
+/-- An operand the writer spells: a representable object other than a reference (§7.8.2). -/
 public def ValSpelled (o : Obj) : Prop := o.Representable ∧ ∀ n g, o ≠ .ref n g
 
 /-- Whether the object reader reads an operand: a string, a name, an
@@ -121,18 +103,13 @@ array, a dictionary. -/
   | .op n => n.toList.head? == some 'R'
   | .val _ | .inline _ _ => false
 
-/-- A token the writer spells, so that the round trip holds of it: an
-operand, an operator. An inline image is not one — where its data ends is
-found by its length or its `EI`, outside this theorem. -/
+/-- A token the writer spells: an operand or an operator, never an inline image. -/
 @[expose] public def TokSpelled : Tok → Prop
   | .val o => ValSpelled o
   | .op n => OpSpelled n
   | .inline _ _ => False
 
-/-- **Tokens the writer spells** so that `scan` reads them back: each token
-spelled, and no operand the object reader reads followed by an operator
-spelled with a leading `R` — what the reader's reference lookahead would
-otherwise need to rule out (the writer's `RG` follows numbers only). -/
+/-- Tokens the writer spells, with no object-read operand followed by an operator spelled with a leading `R`. -/
 public def Spelled : List Tok → Prop
   | [] => True
   | t :: rest => TokSpelled t ∧
@@ -205,8 +182,6 @@ theorem render_eq (toks : Array Tok) (h : Spelled toks.toList) : render toks = r
   rw [← Array.foldl_toList, foldl_render ByteArray.empty toks.toList (spelled_all h)]
   simp
 
-/-! ## First bytes -/
-
 /-- What a spelled token's first byte tells the reader at its start. -/
 structure Head (c : Nat) : Prop where
   ws : isWs c = false
@@ -261,8 +236,6 @@ theorem octets_word (s : String) (h : ∀ c ∈ s.toList, c.toNat < 128) :
   simpa using octets_ascii s.toList h
 
 
-/-! ## One token read -/
-
 theorem nl_size : (⟨#[10]⟩ : ByteArray).size = 1 := rfl
 
 theorem nl_at (P S R : ByteArray) : at? (P ++ S ++ ⟨#[10]⟩ ++ R) (P.size + S.size) = 10 := by
@@ -307,9 +280,6 @@ structure Word (w : String) : Prop where
 
 theorem OpSpelled.word' {n : String} (h : OpSpelled n) : Word n := ⟨h.ne, h.ascii, h.reg, h.lead⟩
 
-/-- **A word at a token's start reads whole**: its first byte no number's,
-no operand's, a regular one; its run ends at the line feed after it; its
-bytes spell it. -/
 theorem word_read {P R : ByteArray} {w : String} (hw : Word w) :
     let B := P ++ w.toUTF8 ++ ⟨#[10]⟩ ++ R
     ¬ B.size ≤ P.size ∧ numByte (at? B P.size) = false ∧ objStart (at? B P.size) = false ∧
@@ -459,11 +429,6 @@ theorem step_real {P R : ByteArray} (r : String) (hr : Obj.RealSpelling r) {q : 
 
 
 
-/-! ## What follows a token -/
-
-/-- A spelled token's spelling opens with a byte that starts a token —
-not white space, not a comment — and is the reference marker only as an
-operator's first letter, a regular character after it. -/
 theorem head_spell (u : Tok) (hu : TokSpelled u) :
     ∃ c cs, octets (spell u) = c :: cs ∧ isWs c = false ∧ c ≠ 37 ∧ c < 256 ∧
       (c = 82 → leadR u = true ∧ ∃ d ds, cs = d :: ds ∧ regular d = true) := by
@@ -564,8 +529,6 @@ theorem at_spell_second {Q R : ByteArray} {u : Tok} {c d : Nat} {ds : List Nat}
   rw [h] at hs
   exact hs.tail.head
 
-/-- What stands where a list of spelled tokens begins: the end of the
-input, or a token's first byte. -/
 theorem renderL_head {Q : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, TokSpelled t) :
     (at? (Q ++ renderL rest) Q.size = 256) ∨
       (isWs (at? (Q ++ renderL rest) Q.size) = false ∧ at? (Q ++ renderL rest) Q.size ≠ 37 ∧
@@ -588,7 +551,6 @@ theorem renderL_head {Q : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, Tok
     rw [at_spell_second hcs]
     exact hreg
 
-/-- After a token's line feed, the reader stands where the next begins. -/
 theorem skip_after {P S : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, TokSpelled t) :
     skipWs (P ++ S ++ ⟨#[10]⟩ ++ renderL rest) (P.size + S.size) = P.size + S.size + 1 := by
   have hh := renderL_head (Q := P ++ S ++ ⟨#[10]⟩) hs
@@ -613,9 +575,6 @@ theorem digit_not_numByte_false {c : Nat} (h : 48 ≤ c ∧ c ≤ 57) : numByte 
   simp only [numByte, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
   omega
 
-/-- **After a token's line feed, no reference completes** — the reference
-marker stands only as the first letter of an operator, a regular character
-after it, so the reader's lookahead from there never closes one. -/
 theorem tryRef_after {P S : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, TokSpelled t) :
     tryRef (P ++ S ++ ⟨#[10]⟩ ++ renderL rest) (P.size + S.size) = none := by
   apply tryRef_none_of
@@ -638,7 +597,6 @@ theorem tryRef_after {P S : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, T
     rw [← hQ] at hp
     obtain ⟨c, cs, hcs, hw, hc, hlt, hr⟩ := head_spell u hsu
     have hhead := at_spell_head (Q := Q) (R := renderL rest') hcs
-    -- A first byte that is no digit starts no unsigned integer.
     by_cases hd : 48 ≤ c ∧ c ≤ 57
     · cases u with
       | inline _ _ => exact absurd hsu (by simp [TokSpelled])
@@ -660,7 +618,6 @@ theorem tryRef_after {P S : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, T
         obtain ⟨hro, hnr⟩ := hsu
         have hspan := span_tok Q (spell (.val o)) (renderL rest')
         have hnl := nl_at Q (spell (.val o)) (renderL rest')
-        -- A head byte known to be no digit closes the case.
         have nodigit : ∀ d ds, octets (spell (.val o)) = d :: ds → ¬ (48 ≤ d ∧ d ≤ 57) → False := by
           intro d ds hdd hnd
           rw [hdd] at hcs
@@ -789,9 +746,6 @@ theorem obj_head (o : Obj) (hro : o.Representable) (hb : readByObj o = true) :
   | real _ => simp [readByObj] at hb
   | ref _ _ => simp [readByObj] at hb
 
-/-- The byte after an object operand's line feed is no reference marker: a
-token spelled with one is an operator spelled with a leading `R`, which no
-object operand is followed by. -/
 theorem next_not_R {Q : ByteArray} {rest : List Tok} (hs : ∀ t ∈ rest, TokSpelled t)
     (hR : ∀ u ∈ rest.head?, leadR u = false) : at? (Q ++ renderL rest) Q.size ≠ 82 := by
   cases rest with
@@ -843,8 +797,6 @@ theorem step_obj {P : ByteArray} {o : Obj} {rest : List Tok} (ho : ValSpelled o)
   rfl
 
 
-/-- **One spelled token read**: from where the reader stands before it, a
-step reads exactly the token and stops at its line feed. -/
 theorem step_tok {P : ByteArray} {t : Tok} {rest : List Tok} (hs : Spelled (t :: rest)) {q : Nat}
     (hq : skipWs (P ++ spell t ++ ⟨#[10]⟩ ++ renderL rest) q = P.size) (out : Array Tok) :
     step (P ++ spell t ++ ⟨#[10]⟩ ++ renderL rest) { pos := q, out } =
@@ -875,9 +827,6 @@ theorem renderL_size (ts : List Tok) : ts.length ≤ (renderL ts).size := by
     simp only [renderL_cons, ByteArray.size_append, nl_size, List.length_cons]
     omega
 
-/-- **The reading of spelled tokens runs to the end** (progress-indexed): from
-where the reader stands before them, one step per token and one to stop,
-leaving every token read in order. -/
 theorem scan_stops (P : ByteArray) (rest : List Tok) (hs : Spelled rest) (q : Nat)
     (hq : skipWs (P ++ renderL rest) q = P.size) (out : Array Tok) :
     Loop.Stops (fun s => pure (step (P ++ renderL rest) s)) { pos := q, out } (rest.length + 1)
@@ -910,10 +859,6 @@ theorem scan_stops (P : ByteArray) (rest : List Tok) (hs : Spelled rest) (q : Na
     simpa [List.length_cons, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using hh
 
 
-/-- **The tokenizer reads back what its writer spells** (`_exact`): tokens
-the writer spells (`Spelled`) — operands the object writer spells, not
-references; operators of regular characters that no operand starts — come
-back from their spelling, in order, whole. -/
 public theorem scan_render_exact (toks : Array Tok) (h : Spelled toks.toList) :
     scan (render toks) = toks := by
   rw [render_eq toks h]
@@ -932,16 +877,6 @@ public theorem scan_render_exact (toks : Array Tok) (h : Spelled toks.toList) :
     (by have := renderL_size toks.toList; omega)]
   simp
 
-
-/-! ## Tokens joined by white space
-
-The content stream's writer (`PdfContent.render`) separates tokens by one
-space within an operation and one line feed between operations, and ends
-the stream with its last token: `renderSep` is that spelling, each token
-with the byte after it, the last at the end. `scan_renderSep_exact` reads it
-back, as `scan_render_exact` reads `render`, by the same steps: the byte
-after a token is white space or the end (`TermByte`), which ends every
-token kind the steps read. -/
 
 /-- Tokens joined by their separators: each token spelled, then its byte,
 but the last, which ends the stream. -/
@@ -983,7 +918,6 @@ theorem TermByte.end_byte {c : Nat} (h : TermByte c) : EndByte c := by
   · exact Or.inl h
   · exact Or.inr (Or.inl h)
 
-/-- The byte after a token is the first of what follows it. -/
 theorem after_at (P S R : ByteArray) : at? (P ++ S ++ R) (P.size + S.size) = at? R 0 := by
   have h := at?_append_right (P ++ S) R 0
   simpa [ByteArray.size_append] using h
@@ -1015,7 +949,6 @@ theorem span_tok' (P S R : ByteArray) : Span (P ++ S ++ R) P.size (octets S) := 
 theorem size_tok' (P S R : ByteArray) : (P ++ S ++ R).size = P.size + S.size + R.size := by
   simp [ByteArray.size_append]
 
-/-- **A word at a token's start reads whole**, whatever ends it. -/
 theorem word_read' {P R : ByteArray} {w : String} (hw : Word w) (hT : TermByte (at? R 0)) :
     let B := P ++ w.toUTF8 ++ R
     ¬ B.size ≤ P.size ∧ numByte (at? B P.size) = false ∧ objStart (at? B P.size) = false ∧
@@ -1150,8 +1083,6 @@ theorem step_real' {P R : ByteArray} (r : String) (hr : Obj.RealSpelling r) (hT 
     intro h; have := hr.1; rw [h] at this; simp at this
   exact step_number' hr.2 hne (numberObj_real r hr) hT hq out
 
-/-- What stands where a joined list of spelled tokens begins: the end, or a
-token's first byte. -/
 theorem renderSep_head {Q : ByteArray} {rest : List (Tok × UInt8)} (hs : ∀ t ∈ rest, TokSpelled t.1) :
     (at? (Q ++ renderSep rest) Q.size = 256) ∨
       (isWs (at? (Q ++ renderSep rest) Q.size) = false ∧ at? (Q ++ renderSep rest) Q.size ≠ 37 ∧
@@ -1177,8 +1108,6 @@ theorem renderSep_head {Q : ByteArray} {rest : List (Tok × UInt8)} (hs : ∀ t 
     rw [hspan.tail.head]
     exact hreg
 
-/-- After a token, the reader stands where the next begins: past its
-separator, or at the end. -/
 theorem skip_after' {P S : ByteArray} {w : UInt8} (hw : isWs w.toNat = true) {rest : List (Tok × UInt8)}
     (hs : ∀ t ∈ rest, TokSpelled t.1) :
     skipWs (P ++ S ++ sepOf w rest ++ renderSep rest) (P.size + S.size) =
@@ -1211,8 +1140,6 @@ theorem skip_after' {P S : ByteArray} {w : UInt8} (hw : isWs w.toNat = true) {re
     · simp only [sepOf, ByteArray.size_append, single_size]; omega
 
 
-/-- **After a token and what separates it from the next, no reference
-completes** — as after a line feed (`tryRef_after`). -/
 theorem tryRef_after' {P S : ByteArray} {w : UInt8} (hw : isWs w.toNat = true) {rest : List (Tok × UInt8)}
     (hs : ∀ t ∈ rest, TokSpelled t.1) (hws : ∀ t ∈ rest, isWs t.2.toNat = true) :
     tryRef (P ++ S ++ sepOf w rest ++ renderSep rest) (P.size + S.size) = none := by
@@ -1372,8 +1299,6 @@ theorem tryRef_after' {P S : ByteArray} {w : UInt8} (hw : isWs w.toNat = true) {
     · rw [parseUInt_none (by rw [hhead]; exact hd)] at hp
       exact absurd hp (by simp)
 
-/-- The byte after an object operand and its separator is no reference
-marker (`next_not_R`). -/
 theorem next_not_R' {Q : ByteArray} {rest : List (Tok × UInt8)} (hs : ∀ t ∈ rest, TokSpelled t.1)
     (hR : ∀ u ∈ rest.head?, leadR u.1 = false) : at? (Q ++ renderSep rest) Q.size ≠ 82 := by
   cases rest with
@@ -1434,7 +1359,6 @@ theorem step_obj' {P : ByteArray} {o : Obj} {w : UInt8} {rest : List (Tok × UIn
   simp only [hq, hsz, ↓reduceIte, hhead, hnum, hobj, Bool.false_eq_true, hpv, hpos]
   rfl
 
-/-- **One spelled token read**, whatever separates it from the next. -/
 theorem step_tok' {P : ByteArray} {t : Tok} {w : UInt8} {rest : List (Tok × UInt8)}
     (hs : Spelled (t :: rest.map (·.1))) (hw : isWs w.toNat = true) (hws : ∀ u ∈ rest, isWs u.2.toNat = true)
     {q : Nat} (hq : skipWs (P ++ spell t ++ sepOf w rest ++ renderSep rest) q = P.size) (out : Array Tok) :
@@ -1472,7 +1396,6 @@ theorem step_tok' {P : ByteArray} {t : Tok} {w : UInt8} {rest : List (Tok × UIn
     | dict hk hv => exact step_obj' ho rfl hw hall hws (hR' rfl) hq out
     | ref n g => exact absurd rfl (ho.2 n g)
 
-/-- **The reading of joined tokens runs to the end** (progress-indexed). -/
 theorem scanSep_stops (P : ByteArray) (rest : List (Tok × UInt8)) (hs : Spelled (rest.map (·.1)))
     (hws : ∀ u ∈ rest, isWs u.2.toNat = true) (q : Nat)
     (hq : skipWs (P ++ renderSep rest) q = P.size) (out : Array Tok) :
@@ -1523,10 +1446,6 @@ theorem renderSep_size (ts : List (Tok × UInt8)) (hs : ∀ t ∈ ts, TokSpelled
     | nil => simp [ByteArray.size_append, sepOf] at this ⊢
     | cons q rs => simp [ByteArray.size_append, sepOf, single_size] at this ⊢; omega
 
-/-- **The tokenizer reads back the writer's joined tokens** (`_exact`):
-tokens it spells (`Spelled`) joined by white-space bytes, the last at the
-end — the content stream's own spelling (`PdfContent.render`) — come back
-in order, whole. -/
 public theorem scan_renderSep_exact (ts : List (Tok × UInt8)) (h : Spelled (ts.map (·.1)))
     (hws : ∀ t ∈ ts, isWs t.2.toNat = true) :
     scan (renderSep ts) = (ts.map (·.1)).toArray := by

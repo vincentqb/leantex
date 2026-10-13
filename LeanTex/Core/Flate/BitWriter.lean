@@ -2,19 +2,11 @@ module
 
 import all LeanTex.Core.Flate.Huffman
 
-/-! The production bit writer and its pending-bit and field invariants.
-Keeping the state and its equations together lets stream proofs retain earlier
-fields while subsequent writes drain the same fixed-width accumulator. -/
+/-! The bit writer and its pending-bit and field invariants. -/
 
 namespace LeanTex.Core.Flate
 
-/-- A bit writer, LSB-first within each byte (RFC 1951 §3.1.1: "bits of
-each byte starting with the least-significant"). Huffman codes arrive
-already bit-reversed (`canonCodes`), so one writer serves codes and extra
-bits alike. Fewer than eight bits are pending between pushes, so a push
-of at most sixteen drains at most two bytes. Fixed-width arithmetic
-throughout: `Nat`'s shift is an out-of-line bignum call with no scalar
-fast path (measured at ~80 ns; it was three quarters of the compressor). -/
+/-- A bit writer, LSB-first within each byte (RFC 1951 §3.1.1), with fewer than eight bits pending. -/
 public structure Bw where
   out : ByteArray
   bits : UInt64
@@ -79,8 +71,6 @@ theorem pushU_payload_between (w : Bw) (v n : UInt64) (hw : w.Valid)
     _ = _ := Nat.mul_comm _ _
 
 
-/-- Draining the packed payload emits exactly its complete bytes and retains
-exactly its high, incomplete byte. No runtime arithmetic wraps. -/
 theorem pushU_pending_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
     (hn : n.toNat ≤ 16) :
     let total := w.nbits.toNat + n.toNat
@@ -131,7 +121,6 @@ theorem pushU_pending_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
         Nat.zero_mul, Nat.pow_zero, Nat.div_one, Nat.add_zero, and_self]
 
 
-/-- The pending-bit invariant is preserved by every supported writer push. -/
 theorem pushU_valid (w : Bw) (v n : UInt64) (hw : w.Valid)
     (hn : n.toNat ≤ 16) : (w.pushU v n).Valid := by
   have hp := pushU_pending_exact w v n hw hn
@@ -149,7 +138,6 @@ theorem pushU_valid (w : Bw) (v n : UInt64) (hw : w.Valid)
     rw [he]
     exact hb
 
-/-- A push advances the bit position by exactly its field width. -/
 theorem pushU_position_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
     (hn : n.toNat ≤ 16) :
     8 * (w.pushU v n).out.size + (w.pushU v n).nbits.toNat =
@@ -159,8 +147,6 @@ theorem pushU_position_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
   omega
 
 
-/-- Read-back of one appended byte, shared by the bit writer, the inflater's
-prefix proof and the PNG reconstruction builder. -/
 public theorem getElem?_push (a : ByteArray) (b : UInt8) (i : Nat) :
     (a.push b)[i]? = if i < a.size then a[i]? else if i = a.size then some b else none := by
   by_cases h1 : i < a.size
@@ -223,7 +209,6 @@ private theorem pushU_drain_bits (w : Bw) (v n : UInt64) (i : Nat) :
     · exact drainByte_bits_exact w.out p 0 0 i
     · rfl
 
-/-- Appending a field preserves every old bit and supplies exactly its new bits. -/
 theorem pushU_bits_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
     (hn : n.toNat ≤ 16) (i : Nat)
     (hi : i < 8 * w.out.size + w.nbits.toNat + n.toNat) :
@@ -311,7 +296,6 @@ theorem Bw.Field.flush (w : Bw) (hw : w.Valid) {start width value : Nat}
     have he := congrArg Bool.toNat ((flush_bits_exact w hw _ hi).trans (hf.2 k hk))
     simpa only [Nat.toNat_testBit, Nat.shiftRight_eq_div_pow, Nat.and_one_is_mod] using he
 
-/-- A field pushed through the actual writer is read back by the actual reader. -/
 theorem pushU_read_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
     (hn : n.toNat ≤ 16) (hv : v.toNat < 2 ^ n.toNat) :
     ({data := (w.pushU v n).flush, bitPos := 8 * w.out.size + w.nbits.toNat} : Br).bits
@@ -322,9 +306,6 @@ theorem pushU_read_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
     (Bw.Field.flush (w.pushU v n) (pushU_valid w v n hw hn)
       (pushU_field_exact w v n hw hn))
 
-/-- A bounded canonical code written by the actual bit writer is decoded by
-the actual Huffman decoder, at any valid starting byte alignment. The table
-interval identifies the decoded symbol; constructing that interval is separate. -/
 theorem push_huff_decode_exact (w : Bw) (h : Huff) (width code : Nat)
     (hw : w.Valid) (hwidth : 1 ≤ width ∧ width ≤ 15) (hcode : code < 2 ^ width)
     (hlo : Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1) ≤ code)

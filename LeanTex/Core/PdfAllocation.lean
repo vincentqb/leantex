@@ -5,8 +5,7 @@ import all LeanTex.Core.Pdf
 
 namespace LeanTex.Core.Pdf
 
-/-! The producer's two emission transcripts partition its allocation.
-The statements concern source ids, independently of bytes or parsing. -/
+/-! The producer's two emission transcripts partition its allocation. -/
 
 private theorem count_flatMap_cons {α : Type} (xs : List α)
     (f : α → Nat) (g : α → List Nat) (n : Nat) :
@@ -61,10 +60,6 @@ private theorem allocation_perm (t : ObjTable) :
     List.count_cons, List.count_nil, Nat.add_zero, Nat.zero_add]
   all_goals ac_rfl
 
-/-- The actual compressed and direct transcripts, with the object-stream
-ids and the xref's, are a permutation of every allocated slot. Thus no
-source id can be silently replaced by another emission with the same
-number. -/
 public theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
@@ -78,8 +73,6 @@ public theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
   rw [prepare_compressed_ids_exact, prepare_direct_ids_exact]
   exact allocation_perm _
 
-/-- Every producer allocation is the consecutive positive range named
-by its trailer, regardless of caches, images, or structure input. -/
 public theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
@@ -91,8 +84,6 @@ public theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
   rw [prepare_table_exact]
   exact objTable_ids_exact ..
 
-/-- The production emissions themselves have unique ids; this is
-stronger than allocation coverage and prevents last-write-wins aliases. -/
 public theorem prepare_emission_inj (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)

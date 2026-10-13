@@ -32,8 +32,6 @@ private theorem member_mass (xs : List Nat) (f : Nat → Nat)
       simp only [List.length_cons, List.map_cons, List.sum_cons]
       omega
 
-/-- With at least two leaves, a zero-width live symbol alone would spend
-the entire Kraft budget; every other leaf still has positive mass. -/
 theorem LengthsFor.live_positive (sorted lens : Array Nat) (size limit : Nat)
     (h : LengthsFor sorted size limit lens) (hn : 1 < sorted.size)
     (s : Nat) (hs : s ∈ sorted.toList) : 0 < lens[s]?.getD 0 := by
@@ -104,9 +102,6 @@ private theorem singleton_contract (syms : Array Nat) (size limit : Nat)
     simp only [hg, he, List.mem_singleton]
     split <;> simp_all
 
-/-- Package-merge gives every positive-frequency symbol a bounded,
-positive length, leaves every unused symbol at zero, and satisfies Kraft.
-The alphabet and bit limit are the actual encoder inputs. -/
 theorem lengths_contract (freqs : Array Nat) (limit : Nat) (hl : 0 < limit)
     (hfit : freqs.size ≤ 2 ^ limit) :
     LengthsFor ((Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0)

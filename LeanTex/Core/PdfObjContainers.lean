@@ -38,9 +38,6 @@ public theorem push_append_toArray {α : Type} (acc : Array α) (x : α) (xs : L
     acc.push x ++ xs.toArray = acc ++ (x::xs).toArray := by
   rw [List.toArray_cons,Array.append_singleton_assoc]
 
-/-- Read the remaining array elements and the actual closing byte. The
-tail is proved first, so each numeric element's reference lookahead is
-discharged from the following rendered token. -/
 theorem arrayBody_reads (xs : List Obj) (hx : ∀ x ∈ xs, Reads x)
     {b : ByteArray} {i : Nat} (h : Span b i (Obj.arrayBody xs)) :
     Start b i ∧

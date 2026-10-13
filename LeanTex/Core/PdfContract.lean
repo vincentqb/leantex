@@ -8,49 +8,11 @@ namespace LeanTex.Core.PdfContract
 open LeanTex.Core.PdfCensus (Census)
 open LeanTex.Core.Ir (OutputContract)
 
-/-! # The PDF conformance contract
+/-! What a declared PDF conformance profile demands of the file, as values, judged over the
+read-side census of the built bytes. -/
 
-What a declared conformance profile *demands* of the file, as values —
-the `ClassRecord` discipline: a profile is a record, never a module with
-its own writer. A document declares a *set* of profile names
-(`\output{ profiles = pdf/a-4, pdf/ua-2 }`); each name is one `Contract`,
-the set is their `meet` (fieldwise stricter), and the writer will read the
-meet, never a name. Until the writer does, nothing here changes a byte:
-this module judges.
-
-Judging is `violations : Contract → Census → Option String → Array
-Violation` over the read-side census of the bytes just built
-(`PdfCensus.census`) — never over the writer's intent, so a copied foreign
-page is judged like anything else. Each rule reads a census field; a rule
-the census cannot yet see is not judged and is named below, never
-approximated from what the writer meant:
-
-- device colour painted by content-stream operators (`rg`, `k`) — the
-  census classifies image colour spaces only, so the colour rule judges
-  the presence of an output intent and the image spaces;
-- an output intent's own profile kind, a page `/Group /CS`, a `Default*`
-  resource space, an `/Indexed` base space — all read as absent;
-- `/Tabs` on annotated pages, whether a destination is a structure
-  destination, and whether every non-real content operator is marked as an
-  artifact (PDF/UA-2 8.2.2) — none is a census field;
-- page boxes are censused for the file, not per page, so Trim-xor-Art is
-  judged on the file's set;
-- the `/Info` dictionary's keys (PDF/A-4 6.1.3-5) — its presence is the one
-  violation, and the one fix removes both.
-
-The title is the one fact judged from the document rather than the
-bytes: the census does not parse XMP, and `dc:title` is the writer's
-projection of `Meta.title`.
-
-This module imports the census and the IR and never the writer: a
-contract that could see the writer's spellings would be a contract on
-intent (the pre-commit hook holds that line, as it does for the census). -/
-
-/-- A stream filter, as the allowlist names it. `none` is the unfiltered
-stream — a census never reports it, so it is a member of the domain for
-`meet` and never the subject of a violation. `other` carries a name the
-engine has no constructor for: Table 6 filters it never emits, and
-extension filters (`BrotliDecode`). -/
+/-- A stream filter as the allowlist names it; `none` is the unfiltered stream and `other` a filter
+the engine has no constructor for. -/
 public inductive Filter where
   | flate
   | dct
@@ -58,16 +20,13 @@ public inductive Filter where
   | other (name : String)
   deriving DecidableEq, Repr, Inhabited
 
-/-- The census spells filters by their PDF name (ISO 32000-2 Table 6). -/
+/-- A filter by its PDF name (ISO 32000-2 Table 6). -/
 public def Filter.ofName : String → Filter
   | "FlateDecode" => .flate
   | "DCTDecode" => .dct
   | n => .other n
 
-/-- The trailer's `/Info` dictionary: kept (`full`, today's file) or
-forbidden (`absent`: PDF/A-4 6.1.3 — a document information dictionary is
-deprecated in PDF 2.0, and A-4 refuses it unless the catalog has
-`/PieceInfo`). -/
+/-- The trailer's `/Info` dictionary: kept, or forbidden (PDF/A-4 6.1.3). -/
 public inductive InfoPolicy where
   | full
   | absent
@@ -90,12 +49,8 @@ public inductive IccKind where
   | gray
   deriving DecidableEq, Repr, Inhabited
 
-/-- How device colour is given meaning: `device` (no demand — today's
-file), `intent k` (a device space needs an output intent whose profile is
-of kind `k`, or a matching `Default*` space: PDF/A-4 6.2.4.3), `conflict`
-(two profiles demand intents of different kinds; one file carries one
-destination profile, so no device space can be satisfied — the top of the
-order, reached only by a `meet` that `ofProfiles` then refuses). -/
+/-- How device colour is given meaning: no demand, an output intent of a kind (PDF/A-4 6.2.4.3),
+or a conflict no file can satisfy. -/
 public inductive ColourPolicy where
   | device
   | intent (kind : IccKind)
@@ -120,9 +75,8 @@ public inductive IntentSubtype where
   | gtsPdfX
   deriving DecidableEq, Repr, Inhabited
 
-/-- What output intents the file must carry: one, or both subtypes sharing
-one destination profile (PDF/A-4 6.2.3: when several intents exist, every
-`DestOutputProfile` is the same indirect object). -/
+/-- The output intents the file must carry: one, or both subtypes sharing one destination profile
+(PDF/A-4 6.2.3). -/
 public inductive IntentReq where
   | one (subtype : IntentSubtype)
   | both
@@ -144,10 +98,7 @@ public def IntentReq.leOpt (a b : Option IntentReq) : Prop := a = none ∨ a = b
 public instance : DecidableRel IntentReq.leOpt := fun a b =>
   inferInstanceAs (Decidable (a = none ∨ a = b ∨ b = some .both))
 
-/-- Page boxes: `any` (today's file: bleed emits Trim, Bleed and Art
-together, no bleed emits none), `trimXorArt` (PDF/X: every page carries
-exactly one of `/TrimBox` and `/ArtBox` — carried from ISO 15930-7 as a
-hypothesis for X-6, flagged on `print`). -/
+/-- Page boxes: no demand, or exactly one of `/TrimBox` and `/ArtBox` on every page (PDF/X). -/
 public inductive BoxPolicy where
   | any
   | trimXorArt
@@ -161,10 +112,7 @@ public def BoxPolicy.le (a b : BoxPolicy) : Prop := a = .any ∨ a = b
 
 public instance : DecidableRel BoxPolicy.le := fun a b => inferInstanceAs (Decidable (a = .any ∨ a = b))
 
-/-- An XMP identification block a claim writes: the three the ISO profiles
-define, each with its fixed schema. A finite enumeration, so the union in
-`meet` is by equality and its set statement is clean; the schema strings
-are functions of the constructor, never data a meet could disagree on. -/
+/-- An XMP identification block a claim writes, one per ISO profile. -/
 public inductive XmpId where
   | pdfa
   | pdfua
@@ -194,9 +142,7 @@ public def XmpId.rev : XmpId → Option String
   | .pdfua => some "2024"
   | .pdfx => none
 
-/-- The demands of a profile set on the PDF file, values only. The name a
-profile was declared under is a key of `Profile.contract?`, not a demand —
-the meet of two names is not a name — so it is not a field. -/
+/-- The demands of a profile set on the PDF file, values only. -/
 public structure Contract where
   infoDict : InfoPolicy
   /-- The filters the file may declare on a stream; the meet intersects. -/
@@ -233,9 +179,7 @@ public def Contract.meet (a b : Contract) : Contract := {
   boxes := a.boxes.meet b.boxes
   ids := a.ids ++ b.ids.filter fun i => decide (i ∉ a.ids) }
 
-/-- `a ≤ b`: every demand of `a` is a demand of `b` — `b` forbids at least
-what `a` forbids (its filter allowlist is inside `a`'s), and claims at
-least what `a` claims. A decidable record predicate. -/
+/-- `a ≤ b`: every demand of `a` is a demand of `b`. -/
 @[expose] public def Contract.le (a b : Contract) : Prop :=
   a.infoDict.le b.infoDict ∧
   (∀ f ∈ b.filters, f ∈ a.filters) ∧
@@ -253,29 +197,19 @@ public instance : DecidableRel Contract.le := fun a b => by
   unfold Contract.le
   infer_instance
 
-/-- Two contracts with the same demands: every scalar field equal, the
-two set-valued fields equal as sets. Array order is not a demand. -/
+/-- Two contracts with the same demands: scalar fields equal, set-valued fields equal as sets. -/
 public def Contract.same (a b : Contract) : Prop :=
   a.infoDict = b.infoDict ∧ a.colour = b.colour ∧ a.intent = b.intent ∧
   a.tagged = b.tagged ∧ a.structDests = b.structDests ∧ a.tabs = b.tabs ∧
   a.needsLang = b.needsLang ∧ a.needsTitle = b.needsTitle ∧ a.boxes = b.boxes ∧
   (∀ f, f ∈ a.filters ↔ f ∈ b.filters) ∧ (∀ i, i ∈ a.ids ↔ i ∈ b.ids)
 
-/-- ISO 32000-2 Table 6 minus `LZWDecode`, the set PDF/A-4 6.1.7 permits;
-`Crypt` is left out with encryption (A-4 6.1.3 forbids `/Encrypt`).
-Spelled as the engine's constructors where it has them and by name where
-it never emits the filter. -/
 private def tableSix : Array Filter :=
   #[.flate, .dct, .none, .other "ASCIIHexDecode", .other "ASCII85Decode",
     .other "RunLengthDecode", .other "CCITTFaxDecode", .other "JBIG2Decode",
     .other "JPXDecode"]
 
-/-- Today's file: nothing demanded, nothing claimed; every filter PDF 2.0
-itself names (Table 6 whole, `Crypt` included) — a file under no profile
-may carry what the standard allows, copied graphs included. The bottom of
-the profile order, and `ofProfiles`' starting point; the Brotli extension
-permits one filter more and so sits below it, which is why an extension
-will have to start the fold rather than join it. -/
+/-- No profile: nothing demanded or claimed, every filter ISO 32000-2 Table 6 names allowed. -/
 public def plain : Contract := {
   infoDict := .full
   filters := tableSix ++ #[.other "LZWDecode", .other "Crypt"]
@@ -289,12 +223,8 @@ public def plain : Contract := {
   boxes := .any
   ids := #[] }
 
-/-- PDF/A-4 (ISO 19005-4:2020): no `/Info`, Table 6 filters, device colour
-under an RGB output intent — the engine's working space is sRGB, so the
-destination profile it will carry is RGB (the CMYK model then needs a
-`DefaultCMYK` resource space, the colour plan's work) — the `GTS_PDFA1`
-intent, the `pdfaid` identification. No tagging demand: A-4 has no
-conformance levels and leaves structure to PDF/UA. -/
+/-- PDF/A-4 (ISO 19005-4:2020): no `/Info`, Table 6 filters, device colour under an RGB output
+intent, and the `pdfaid` identification. -/
 public def archive : Contract := {
   infoDict := .absent
   filters := tableSix
@@ -308,11 +238,8 @@ public def archive : Contract := {
   boxes := .any
   ids := #[.pdfa] }
 
-/-- PDF/UA-2 (ISO 14289-2:2024): tagged with structure destinations,
-`/Tabs` on annotated pages, a language and a title; no Info, colour or box
-demand of its own. The filter set is the base standard's Table 6 — UA-2
-adds no filter rule (hypothesis). Declarable today and failing honestly on
-the census until the structure slices land. -/
+/-- PDF/UA-2 (ISO 14289-2:2024): tagged with structure destinations, `/Tabs` on annotated pages, a
+language and a title. -/
 public def accessible : Contract := {
   infoDict := .full
   filters := tableSix
@@ -326,11 +253,7 @@ public def accessible : Contract := {
   boxes := .any
   ids := #[.pdfua] }
 
-/-- PDF/X-6 (ISO 15930-9:2020): a `GTS_PDFX` printer intent — its kind is
-CMYK here as the default press profile's, until the `intent =` key names
-a document's own — Trim-xor-Art boxes (hypothesis carried from X-4, not
-yet read from the X-6 text or a validator), the `pdfxid` identification.
-Declarable and failing honestly until the print slice emits its intent. -/
+/-- PDF/X-6 (ISO 15930-9:2020): a CMYK `GTS_PDFX` intent, Trim-xor-Art boxes, and the `pdfxid` identification. -/
 public def print : Contract := {
   infoDict := .full
   filters := tableSix
@@ -344,11 +267,7 @@ public def print : Contract := {
   boxes := .trimXorArt
   ids := #[.pdfx] }
 
-/-- The Brotli extension (PDF Association, extension to ISO 32000-2):
-`plain` plus `BrotliDecode` in the allowlist, no claim. Experimental —
-reachable only through `extensions =`, which this grammar does not yet
-have; the constant exists so `meet` has its full domain and so any
-profile's meet removes the filter. -/
+/-- The Brotli extension to ISO 32000-2: `plain` with `BrotliDecode` allowed, no claim. -/
 public def brotli : Contract := { plain with filters := plain.filters.push (.other "BrotliDecode") }
 
 /-- One violated rule, as the assertion reports it: the clause the rule
@@ -375,10 +294,7 @@ private def filters (c : Contract) (x : Census) : Array Violation :=
     if Filter.ofName f ∈ c.filters then none
     else some ⟨"6.1.7", s!"stream filter /{f} outside the profile's filters"⟩
 
-/-- PDF/A-4 6.2.4.3: an intent demanded and none in the catalog. Every
-content stream paints in device colour (the initial colour space is
-DeviceGray, ISO 32000-2 §8.4.1), which an output intent alone gives
-meaning to — the operators themselves are not censused. -/
+/-- PDF/A-4 6.2.4.3: an intent demanded and none in the catalog. -/
 private def intent (c : Contract) (x : Census) : Array Violation :=
   match c.intent with
   | none => #[]
@@ -387,10 +303,7 @@ private def intent (c : Contract) (x : Census) : Array Violation :=
       #[⟨"6.2.4.3", "no output intent: device colour has no device-independent meaning"⟩]
     else #[]
 
-/-- Does an image's device space have meaning under this kind of intent?
-Gray needs any intent (PDF/A-4 6.2.4.3-4), RGB an RGB one, CMYK a CMYK one;
-a non-device family (ICCBased, Indexed — whose base the census does not
-read) asks nothing. -/
+/-- Whether an image's device space has meaning under an intent of this kind (PDF/A-4 6.2.4.3-4). -/
 private def spaceHolds (k : IccKind) (intents : Nat) : String → Bool
   | "DeviceGray" => intents > 0
   | "DeviceRGB" => k == .rgb && intents > 0
@@ -412,8 +325,7 @@ private def spaces (c : Contract) (x : Census) : Array Violation :=
       if isDevice s then some ⟨"6.2.4.3", s!"image colour space /{s} with no matching output intent"⟩
       else none
 
-/-- PDF/A-4 6.2.9: transparency (an image `/SMask`) with no intent; a page
-`/Group /CS` would also satisfy the rule and is not censused. -/
+/-- PDF/A-4 6.2.9: transparency, an image `/SMask`, with no intent. -/
 private def smask (c : Contract) (x : Census) : Array Violation :=
   match c.intent with
   | none => #[]
@@ -455,8 +367,8 @@ private def boxes (c : Contract) (x : Census) : Array Violation :=
 
 end Rule
 
-/-- Every rule of the contract the census breaks, in rule order. Empty
-means the file satisfies the contract as far as the census sees. -/
+/-- Every rule of the contract the census breaks, in rule order; empty when the file satisfies it
+as far as the census sees. -/
 public def violations (c : Contract) (x : Census) (title : Option String) : Array Violation :=
   Rule.info c x ++ Rule.filters c x ++ Rule.intent c x ++ Rule.spaces c x ++
     Rule.smask c x ++ Rule.tagged c x ++ Rule.lang c x ++ Rule.title c title ++
@@ -473,8 +385,6 @@ public def Profile.contract? : String → Option Contract
   | "pdf/x-6" => some print
   | _ => none
 
-/-- Every registered name denotes a contract, and only registered names do
-(`_covers`): the grammar's list and the table are one. -/
 public theorem Profile.names_covers :
     (∀ n ∈ Profile.names, (Profile.contract? n).isSome) ∧
     (∀ n, (Profile.contract? n).isSome → n ∈ Profile.names) := by
@@ -482,19 +392,15 @@ public theorem Profile.names_covers :
   unfold Profile.contract? at h
   split at h <;> simp_all [Profile.names]
 
-/-- The backend-neutral demands a profile folds into the output contract
-at elaboration: PDF/UA-2 requires an alternative for every image
-(`alternatives = required`); PDF/A-4 gives colour a device-independent
-meaning (`color = srgb`). Everything else a profile demands is a PDF-side
-fact and lives in its `Contract`. -/
+/-- The backend-neutral demands a profile folds into the output contract: PDF/UA-2 requires image
+alternatives, PDF/A-4 sRGB colour. -/
 public def Profile.implies : String → OutputContract
   | "pdf/a-4" => { color := .srgb }
   | "pdf/ua-2" => { alternatives := .required }
   | _ => {}
 
-/-- The contract of a declared set: the meet of each name's contract from
-`plain`. An unregistered name is refused (the grammar refuses it first),
-and so is a set whose intents cannot share one destination profile. -/
+/-- The contract of a declared set, the meet of each name's contract; an unregistered name or
+conflicting intents are refused. -/
 public def Contract.ofProfiles (names : Array String) : Except Violation Contract := do
   let mut c := plain
   for n in names do
@@ -505,8 +411,6 @@ public def Contract.ofProfiles (names : Array String) : Except Violation Contrac
     throw ⟨"6.2.4.3",
       "the declared profiles demand output intents of different colour kinds; one file carries one destination profile"⟩
   return c
-
-/-! ## The algebra -/
 
 public theorem InfoPolicy.meet_comm (a b : InfoPolicy) : a.meet b = b.meet a := by
   cases a <;> cases b <;> rfl
@@ -532,8 +436,6 @@ public theorem IntentReq.meetOpt_comm (a b : Option IntentReq) : meetOpt a b = m
 public theorem BoxPolicy.meet_comm (a b : BoxPolicy) : a.meet b = b.meet a := by
   cases a <;> cases b <;> rfl
 
-/-- **`meet_comm`** (`_exact` on every scalar field, `_set_eq` on the two
-set-valued ones): the order two profiles are declared in is not a demand. -/
 public theorem meet_comm (a b : Contract) : (a.meet b).same (b.meet a) := by
   refine ⟨InfoPolicy.meet_comm .., ColourPolicy.meet_comm .., IntentReq.meetOpt_comm ..,
     Bool.or_comm .., Bool.or_comm .., Bool.or_comm .., Bool.or_comm .., Bool.or_comm ..,
@@ -566,10 +468,6 @@ public theorem IntentReq.meetOpt_idem (a : Option IntentReq) : meetOpt a a = a :
 
 public theorem BoxPolicy.meet_idem (a : BoxPolicy) : a.meet a = a := by cases a <;> rfl
 
-/-- **`meet_idem`** (`_exact`): declaring a profile twice is declaring it
-once — `profiles = pdf/a-4, pdf/a-4` demands what `pdf/a-4` demands, as a
-record equality: the filter intersection keeps every element, the id union
-adds none. -/
 public theorem meet_idem (a : Contract) : a.meet a = a := by
   simp only [Contract.meet, InfoPolicy.meet_idem, ColourPolicy.meet_idem, IntentReq.meetOpt_idem,
     Bool.or_self, BoxPolicy.meet_idem]
@@ -596,7 +494,6 @@ public theorem IntentReq.leOpt_meet (a b : Option IntentReq) : leOpt a (meetOpt 
 public theorem BoxPolicy.le_meet (a b : BoxPolicy) : a.le (a.meet b) := by
   cases a <;> cases b <;> simp [BoxPolicy.le, BoxPolicy.meet]
 
-/-- `a ≤ a ⊓ b`: the meet demands everything `a` does. -/
 public theorem le_meet_left (a b : Contract) : a.le (a.meet b) := by
   refine ⟨InfoPolicy.le_meet .., fun f hf => ?_, ColourPolicy.le_meet .., IntentReq.leOpt_meet ..,
     fun h => by simp [Contract.meet, h], fun h => by simp [Contract.meet, h],
@@ -605,10 +502,6 @@ public theorem le_meet_left (a b : Contract) : a.le (a.meet b) := by
   · exact (Array.mem_filter.1 hf).1
   · simp [Contract.meet, hi]
 
-/-- **`meet_covers`** (`_covers`): the meet of two contracts demands
-everything either demands — a file passing the meet passes each, once
-`violations_monotone` is read with it. The right half is the left half
-read through `meet_comm`, spelled out because `same` is not `le`. -/
 public theorem meet_covers (a b : Contract) : a.le (a.meet b) ∧ b.le (a.meet b) := by
   refine ⟨le_meet_left a b, ?_⟩
   have hl := le_meet_left b a
@@ -619,13 +512,9 @@ public theorem meet_covers (a b : Contract) : a.le (a.meet b) ∧ b.le (a.meet b
     fun h => h4 ▸ l5 h, fun h => h5 ▸ l6 h, fun h => h6 ▸ l7 h, fun h => h7 ▸ l8 h,
     fun h => h8 ▸ l9 h, h9 ▸ l10, fun i hi => (h11 i).1 (l11 i hi)⟩
 
-/-- **`filters_meet_set_eq`** (`_set_eq`): the meet's allowlist is the
-intersection. -/
 public theorem filters_meet_set_eq (a b : Contract) (f : Filter) :
     f ∈ (a.meet b).filters ↔ f ∈ a.filters ∧ f ∈ b.filters := by
   simp [Contract.meet]
-
-/-! ### Monotonicity, one rule at a time -/
 
 namespace Rule
 
@@ -737,10 +626,6 @@ private theorem boxes_mono {a b : Contract} (h : a.boxes.le b.boxes) (x : Census
 
 end Rule
 
-/-- **`violations_monotone`** (`_monotone`): a file that satisfies the
-stricter contract satisfies the weaker — so a file passing a declared
-set's meet passes each member (`meet_covers`), and "PDF/A-4 + PDF/UA-2
-compose" is a theorem, not a sentence. -/
 public theorem violations_monotone {a b : Contract} (h : a.le b) (x : Census) (t : Option String)
     (hb : violations b x t = #[]) : violations a x t = #[] := by
   obtain ⟨h1, h2, h3, h4, h5, _, _, h8, h9, h10, _⟩ := h
@@ -751,14 +636,11 @@ public theorem violations_monotone {a b : Contract} (h : a.le b) (x : Census) (t
     Rule.spaces_mono h3 x b4⟩, Rule.smask_mono h4 x b5⟩, Rule.tagged_mono h5 x b6⟩,
     Rule.lang_mono h8 x b7⟩, Rule.title_mono h9 t b8⟩, Rule.boxes_mono h10 x b9⟩
 
-/-- **`needsTitle_accounts`** (`_accounts`): a contract that demands a title
-and a document with none is a named violation, never a silent pass. -/
 public theorem needsTitle_accounts (c : Contract) (x : Census) (h : c.needsTitle = true) :
     violations c x none ≠ #[] := by
   unfold violations
   simp [Rule.title, h]
 
-/-- The empty set demands today's file (`_exact`). -/
 public theorem ofProfiles_plain : Contract.ofProfiles #[] = .ok plain := by rfl
 
 end LeanTex.Core.PdfContract

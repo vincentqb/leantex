@@ -17,7 +17,6 @@ theorem frequencies_contract (entries : Array Entry) :
   intro entry he hs
   exact h.2.2 entry he entry.1 rfl (by simpa using hs)
 
-/-- One prelude entry preserves the preceding fields and writer validity. -/
 theorem writeEntry_contract (lengths codes : Array Nat) (w : Bw) (entry : Entry)
     (hw : w.Valid) (hl : lengths[entry.1]?.getD 0 ≤ 16) (he : entry.2.2 ≤ 16) :
     (writeEntry lengths codes w entry).Valid ∧
@@ -37,9 +36,6 @@ theorem write_contract (lengths codes : Array Nat) (entries : Array Entry) (w : 
     writeEntry_contract lengths codes w entry hw (hl entry.1)
       (by have := (he entry hm).2.1; omega))
 
-/-- A written RLE entry reads back through the real Huffman and extra-bit
-readers. The table is derived from frequencies by the production package-merge
-algorithm; the only stream premise is preservation in the final byte array. -/
 theorem writeEntry_read_exact {seq out : Array Nat} {p q : Nat} {entry : Entry}
     (freqs : Array Nat) (w : Bw) (data : ByteArray)
     (hf : freqs.size ≤ 128) (hs : 0 < freqs[entry.1]?.getD 0)
@@ -82,8 +78,6 @@ theorem writeEntry_read_exact {seq out : Array Nat} {p q : Nat} {entry : Entry}
     have hv : entry.2.1 = 0 := by have := he.2.2; simp only [hz] at this; omega
     simp [writeEntry, hz, hv, Br.bits_zero_id, mid]
 
-/-- Reconstruct the entire consumed prefix through the actual reader steps.
-Its transition count is the number of entries the writer really emitted. -/
 theorem write_steps_exact {seq out : Array Nat} {start p : Nat} {entries : Array Entry}
     (freqs : Array Nat) (w : Bw) (data : ByteArray)
     (hf : freqs.size ≤ 128) (hw : w.Valid) (hp : Prefix seq start out)
@@ -140,9 +134,6 @@ theorem Prefix.complete {seq out : Array Nat} (hp : Prefix seq seq.size out) :
   · have ho : ¬ i < out.size := by rw [hp.1]; exact hi
     simp only [getElem?_neg out i ho, getElem?_neg seq i hi]
 
-/-- A complete dynamic code-length prelude reconstructs its input vector.
-The bound is the decoder's own `seq.size + 1`, derived from the certified RLE
-progress, and the Huffman frequencies are counted from the emitted entries. -/
 theorem read_write_exact (seq : Array Nat)
     (hv : ∀ i < seq.size, seq[i]?.getD 0 < 16) (w : Bw) (data : ByteArray)
     (hw : w.Valid)

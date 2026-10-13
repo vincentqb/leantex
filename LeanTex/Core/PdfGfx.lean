@@ -13,41 +13,8 @@ import LeanTex.Core.PdfFilters
 import LeanTex.Core.PngEncode
 import LeanTex.Core.Ink
 
-/-!
-# A PDF page as a figure
-
-The interpreter of a content stream's graphics (ISO 32000-2 §8) and text
-(§9) onto the one vector model both backends emit (`Gfx.Figure`): what the
-PDF backend embeds verbatim, the HTML backend draws from this reading.
-
-The graphics state is read as PDF defines it; its structure becomes the
-model's. A `cm` or a clip opens a group whose kids are everything painted
-after it until the `Q` that restores the state it changed — so the frames
-compose and the clips accumulate exactly as the state did, and no path is
-ever carried back through an inverted matrix. A box that is the state's
-rather than the path's — a constant soft mask's, a shading's — clips each
-mark painted under it in the space it was declared in (`clipIn`). A form becomes a group under its matrix
-(a symbol when it paints more than once with one inherited state), an
-isolated transparency group a group with the alpha that composites it; a
-glyph of an embedded font program a stamp of its outline (one outline per
-glyph, one stamp per placement); a Type 3 glyph procedure a stamp of what
-it fills, or a symbol when it paints with its own colours; an image a
-raster, re-encoded as PNG (a JPEG passes through); a shading a gradient.
-
-What the model cannot say is a keyed loss (`Gfx.Loss`), never silence: a
-Type 1 or unembedded font, text shown with none set, vertical writing, a
-shading of types 1 and 4–7, a shading function its stops only approach, a
-radial shading whose start circle leaves its end circle, a shading pattern
-that does not extend, a tiling pattern that strokes or paints a glyph, a
-stencil mask painted with a pattern, a JPEG under a remapping `Decode`, a
-JBIG2, JPX or CCITT image, a soft mask other than a constant one, alpha
-read as shape, a transfer function, a blend mode, a knockout group, a text
-clip mode, an ICC profile other than sRGB, Separation, DeviceN, Lab and an
-unknown colour space, and a resource its name does not resolve. A device
-CMYK colour previews as a viewer previews it (`cmykRgb`). Total over
-arbitrary bytes: a form is never re-entered along the path that reached it
-(`Entered`), and every loop is bounded by its input.
--/
+/-! The interpreter of a PDF content stream's graphics (ISO 32000-2 §8) and text (§9) onto the
+vector figure model, every meaning it cannot give a keyed loss. -/
 
 namespace LeanTex.Core.PdfGfx
 
@@ -55,20 +22,15 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 open LeanTex.Core.PdfRead (Obj Doc)
 open LeanTex.Core.PdfContentLex (Tok)
 
-/-! ## Numbers and matrices -/
-
 /-- A number operand exactly. -/
 public def ratOf (o : Obj) : Option Rat := PdfContentLex.numRat? o
 
-/-- A rational in sp, `65536` to the point, rounded half away from zero —
-`Obj.sp?`'s reading of a decimal. -/
+/-- A rational in sp, `65536` to the point, rounded half away from zero. -/
 public def spOfRat (r : Rat) : Sp :=
   let v := r * 65536
   if v < 0 then -((-v + (1 : Rat) / 2).floor) else (v + (1 : Rat) / 2).floor
 
-/-- A number's parts (`PdfContentLex.numParts?`) in sp, in integers: its
-`n / scale` points times 65536, rounded half away from zero — `spOfRat`'s
-value with no rational arithmetic (`spOf_exact`). -/
+/-- A number's parts in sp, in integer arithmetic, rounded half away from zero. -/
 public def spOfParts (p : Bool × Nat × Nat) : Sp :=
   let (neg, n, scale) := p
   let q : Int := ((2 * 65536 * n + scale) / (2 * scale) : Nat)
@@ -145,9 +107,6 @@ private theorem spOfParts_rat (neg : Bool) (n s : Nat) :
         simp only [spOfParts, spOfRat, ↓reduceIte, hneg]
         rw [hflip, key, hq]
 
-/-- **A length read in integers is its exact reading, rounded** (`_exact`):
-`spOf`'s integer arithmetic over a number's parts is `spOfRat` of the
-number's exact rational — one rounding, at a sample's cost. -/
 public theorem spOf_exact (o : Obj) : spOf o = (ratOf o).map spOfRat := by
   unfold spOf ratOf
   rw [PdfContentLex.numRat?_parts]
@@ -158,14 +117,12 @@ public theorem spOf_exact (o : Obj) : spOf o = (ratOf o).map spOfRat := by
     simp only [Option.map_some]
     exact congrArg some (spOfParts_rat neg n s)
 
-/-- Six numbers as a matrix (§8.3.4): the linear part as it stands, the
-translation from points to sp. -/
+/-- Six numbers as a matrix (§8.3.4), the translation from points to sp. -/
 public def affineOf (xs : Array Rat) : Option Affine :=
   if h : xs.size = 6 then
     some ⟨xs[0], xs[1], xs[2], xs[3], xs[4] * 65536, xs[5] * 65536⟩
   else none
 
-/-- A matrix's determinant. -/
 public def Affine.det (m : Affine) : Rat := m.a * m.d - m.b * m.c
 
 /-- A matrix's exact inverse, where it has one. -/
@@ -175,12 +132,8 @@ public def Affine.inv? (m : Affine) : Option Affine :=
   some { a := m.d / det, b := -m.b / det, c := -m.c / det, d := m.a / det
          e := (m.c * m.f - m.d * m.e) / det, f := (m.b * m.e - m.a * m.f) / det }
 
-/-! ## Colour -/
-
-/-- The colour spaces a figure paints in (§8.6). Indexed reads its base
-through its lookup table; Pattern names a pattern, with the space of its
-colour when the pattern is uncoloured; Separation, DeviceN and Lab are read
-as their component counts and named as a loss. -/
+/-- The colour spaces a figure paints in (§8.6); Separation, DeviceN and Lab are read as their
+component counts. -/
 public inductive Space where
   | gray
   | rgb
@@ -190,7 +143,6 @@ public inductive Space where
   | lossy (key : String) (n : Nat)
   deriving Inhabited
 
-/-- How many components a colour in the space has. -/
 public def Space.comps : Space → Nat
   | .gray => 1
   | .rgb => 3
@@ -204,41 +156,29 @@ public def byteOf (v : Rat) : UInt8 :=
   let x := (v * 255 + (1 : Rat) / 2).floor
   UInt8.ofNat (max 0 (min 255 x)).toNat
 
-/-- A component clamped to [0, 1]. -/
 private def unit01 (v : Rat) : Rat := max 0 (min 1 v)
 
-/-- A number's spelling as the PDF wrote it. -/
 private def spelling (o : Obj) : String :=
   match o with
   | .int n => toString n
   | .real raw => raw
   | _ => "0"
 
-/-- **A CMYK colour as a screen shows a figure's**: the sRGB each corner of
-the CMYK cube previews as, index `8c + 4m + 2y + k`, as pdftoppm (Poppler
-26.09) renders a device CMYK fill with no output profile — measured by
-`scripts/pdffig-diff.lean --cmyk`, which holds the interpolation
-(`cmykRgb`) to its rendering of interior colours too. The engine's own
-CMYK colours preview by xcolor's formula (`Ir.Color.ofCmyk`); this is what
-a PDF viewer makes of an imported figure's, whose PDF face the viewer
-paints. -/
+/-- The sRGB each corner of the CMYK cube previews as, index `8c + 4m + 2y + k`, as Poppler renders
+device CMYK with no output profile. -/
 public def cmykCorners : Array (UInt8 × UInt8 × UInt8) :=
   #[(255, 255, 255), (35, 31, 32), (255, 242, 0), (28, 26, 0),
     (236, 0, 140), (36, 0, 0), (237, 28, 36), (34, 0, 0),
     (0, 173, 239), (0, 15, 36), (0, 166, 80), (0, 19, 0),
     (46, 49, 146), (0, 0, 2), (54, 54, 57), (0, 0, 0)]
 
-/-- A corner's weight at a colour: the product, over the four components,
-of the component where the corner's bit is set and its complement where it
-is not. -/
 private def cornerWeight (v : Array Rat) (i : Nat) : Rat :=
   (List.range 4).foldl (fun acc j =>
     let x := v[j]?.getD 0
     acc * (if (i / 2 ^ (3 - j)) % 2 == 1 then x else 1 - x)) 1
 
-/-- **A CMYK colour's preview** (`cmykCorners`), components in [0, 1]:
-the corners' colours weighted multilinearly, each channel rounded to its
-nearest byte. -/
+/-- A CMYK colour's preview, components in [0, 1]: the corners' colours weighted multilinearly,
+rounded to bytes. -/
 public def cmykRgb (c m y k : Rat) : UInt8 × UInt8 × UInt8 :=
   let v := #[unit01 c, unit01 m, unit01 y, unit01 k]
   let ch (f : UInt8 × UInt8 × UInt8 → UInt8) : UInt8 :=
@@ -246,9 +186,7 @@ public def cmykRgb (c m y k : Rat) : UInt8 × UInt8 × UInt8 :=
       acc + cornerWeight v i * ((f (cmykCorners[i]?.getD (0, 0, 0))).toNat : Rat)) 0 / 255)
   (ch (·.1), ch (·.2.1), ch (·.2.2))
 
-/-- `cmykRgb` over byte components, in integers: each corner's weight in
-`255⁴`ths, the sum rounded to the nearest byte — the same rounding of the
-same exact value (`pdfStateChecks`), at a sample's cost. -/
+/-- `cmykRgb` over byte components, in integer arithmetic. -/
 public def cmykRgb8 (c m y k : UInt8) : UInt8 × UInt8 × UInt8 := Id.run do
   let b : Array UInt64 := #[c.toUInt64, m.toUInt64, y.toUInt64, k.toUInt64]
   let mut r : UInt64 := 0
@@ -267,9 +205,7 @@ public def cmykRgb8 (c m y k : UInt8) : UInt8 × UInt8 × UInt8 := Id.run do
   let round (x : UInt64) : UInt8 := ((2 * x + n) / (2 * n)).toUInt8
   return (round r, round g, round bl)
 
-/-- A device colour from its components (§8.6.4): its screen preview — CMYK
-as a viewer previews it (`cmykRgb`) — and its device model with the
-components as the PDF spelled them. -/
+/-- A device colour from its components (§8.6.4): its screen preview and its device model as spelled. -/
 public def deviceColor (sp : Space) (cs : Array Obj) : Ir.Color :=
   let v (i : Nat) : Rat := unit01 ((cs[i]?.bind ratOf).getD 0)
   let raw (i : Nat) : String := spelling (cs[i]?.getD (.int 0))
@@ -287,9 +223,7 @@ public def deviceColor (sp : Space) (cs : Array Obj) : Ir.Color :=
   | .pattern _ => { r := 0, g := 0, b := 0 }
   | .lossy _ _ => { r := 128, g := 128, b := 128 }
 
-/-- An indexed space's palette as screen colours, entry by entry (§8.6.6.3):
-the lookup table's bytes in the base space, a CMYK base previewed as a
-viewer previews it. -/
+/-- An indexed space's palette as screen colours (§8.6.6.3), a CMYK base previewed. -/
 public def palette (base : Space) (hival : Nat) (lookup : ByteArray) : Array (UInt8 × UInt8 × UInt8) :=
   let n := base.comps
   (Array.range (hival + 1)).map fun i =>
@@ -321,8 +255,6 @@ public def Space.initial (sp : Space) : Array Obj :=
   | .pattern _ => #[]
   | .lossy _ n => Array.replicate n (.int 1)
 
-/-! ## The reading state -/
-
 /-- What a fill or stroke paints with: a colour, or a pattern by its
 resource name, with the colour an uncoloured pattern paints in. -/
 public inductive Ink where
@@ -330,9 +262,8 @@ public inductive Ink where
   | pattern (name : String) (under : Option Ir.Color)
   deriving Inhabited
 
-/-- The graphics state (§8.4.1), its text state (§9.3) included, in the
-frame of the stream that reads it: `ctm` is the current user space in the
-figure's frame. -/
+/-- The graphics state (§8.4.1), its text state (§9.3) included; `ctm` is the current user space in
+the figure's frame. -/
 public structure GState where
   ctm : Affine
   fillSpace : Space
@@ -355,11 +286,9 @@ public structure GState where
   leading : Rat
   rise : Rat
   render : Nat
-  /-- A soft mask read as the constant alpha it is (`maskConst`). -/
+  /-- A soft mask read as its constant alpha. -/
   mask : Alpha
-  /-- The box outside which that mask paints nothing, with the figure-frame
-  matrix of the user space the `gs` that set it stood in: part of the state,
-  so `q`/`Q` save and restore it and a later `gs` replaces or drops it. -/
+  /-- The box outside which that mask paints nothing, with its user space's figure-frame matrix. -/
   maskClip : Option (Affine × Clip)
   deriving Inhabited
 
@@ -371,8 +300,7 @@ public def GState.initial (ctm : Affine) : GState :=
     size := 0, charSpace := 0, wordSpace := 0, hScale := 1, leading := 0, rise := 0, render := 0
     mask := Alpha.opaque, maskClip := none }
 
-/-- Two alphas composited: their product, in thousandths, rounded. (Not
-`Fin`'s multiplication, which wraps.) -/
+/-- Two alphas composited: their product in thousandths, rounded, never wrapping. -/
 public def alphaProduct (a b : Alpha) : Alpha := ⟨min 1000 ((a.val * b.val + 500) / 1000), by omega⟩
 
 /-- The constant alpha a fill paints with: the state's, under its mask. -/
@@ -390,9 +318,7 @@ public structure Open where
   kids : Array (Node Run)
   deriving Inhabited
 
-/-- What the reading has built that outlives one stream: the outlines,
-symbols and rasters the figure will hold, its losses, and the caches that
-read each font, glyph, form and image once. -/
+/-- What the reading builds that outlives one stream: outlines, symbols, rasters, losses and read caches. -/
 public structure Store where
   outlines : Array (Array Subpath)
   symbols : Array (Array (Node Run))
@@ -403,8 +329,7 @@ public structure Store where
   type3 : Std.HashMap (Nat × String) (Option (Bool × Nat))
   forms : Std.HashMap String Nat
   images : Std.HashMap String (Option Nat)
-  /-- Font dictionaries read in place (not by reference): each takes a key
-  of its own past every object number, so no two share a glyph cache. -/
+  /-- The next key for a font dictionary read in place, past every object number. -/
   direct : Nat
   deriving Inhabited
 
@@ -412,19 +337,15 @@ public def Store.empty : Store :=
   { outlines := #[], symbols := #[], rasters := #[], losses := #[], fonts := {}, glyphs := {}
     type3 := {}, forms := {}, images := {}, direct := 0 }
 
-/-- Where the keys of fonts read in place start: past any object number a
-PDF can hold (ISO 32000-2 Annex C: below 2²³). -/
+/-- Where the keys of fonts read in place start: past any object number a PDF can hold (Annex C). -/
 public def directKeyBase : Nat := 2 ^ 32
 
-/-- A loss, once. -/
+/-- A loss, recorded once. -/
 public def Store.lose (s : Store) (l : Loss) : Store :=
   if s.losses.contains l then s else { s with losses := s.losses.push l }
 
-/-- The state of one stream's reading. `saved` is the graphics-state
-stack (§8.4.2), each entry the state `q` saved and the frame count it saw;
-`level` is the frame count at the innermost `q` — what a `cm` or clip
-folds into — kept beside the stack so that no operator but `q` and `Q`
-reads the stack, which no operator but they writes (`gsave_restore_id`). -/
+/-- The state of one stream's reading; its graphics-state stack (§8.4.2) is read and written only by
+`q` and `Q`. -/
 public structure St where
   gs : GState
   saved : Array (GState × Nat)
@@ -445,10 +366,8 @@ public structure St where
   store : Store
   deriving Inhabited
 
-/-- Where a stream is read: the document, the resources its names resolve
-in, the figure-frame matrix of its default space (what a pattern's matrix
-maps into, §8.7.2), the optional-content groups that are off, and the
-figure's box. -/
+/-- Where a stream is read: the document, its resources, its default space's figure matrix
+(§8.7.2), the hidden optional content, and the figure box. -/
 public structure Ctx where
   doc : Doc
   res : Obj
@@ -456,23 +375,17 @@ public structure Ctx where
   off : Array Nat
   box : Box
 
-/-! ## Groups -/
-
-/-- A closed group into its parent's kids: its kids spliced when it changes
-nothing, dropped when it holds nothing. -/
 private def closeInto (parent : Open) (g : Open) : Open :=
   if g.kids.isEmpty then parent
   else if g.xf = Affine.unit ∧ g.clips.isEmpty ∧ g.alpha = Alpha.opaque then
     { parent with kids := parent.kids ++ g.kids }
   else { parent with kids := parent.kids.push (.group g.xf g.clips g.alpha g.kids) }
 
-/-- Close open groups until `n` remain (the root is never closed). -/
 private def closeTo (frames : Array Open) (n : Nat) : Array Open := Id.run do
   let mut fs := frames
   for _ in [0:frames.size] do
     if fs.size ≤ max n 1 then break
-    -- Popped before they are joined, so a group's kids are appended to in
-    -- place: a shared parent would copy every kid it holds at each close.
+    -- Popped before joining, so kids append in place rather than copying a shared parent.
     let top := fs.back?
     fs := fs.pop
     let parent := fs.back?
@@ -482,23 +395,14 @@ private def closeTo (frames : Array Open) (n : Nat) : Array Open := Id.run do
     | _, _ => break
   return fs
 
-/-- The frame count the current `q` level opened groups above. -/
 private def St.levelBase (st : St) : Nat := st.level
 
-/-- A node clipped to a box declared in another user space, `rel` that
-space's matrix into the current one: the box itself where the two agree;
-else a group in the box's own frame, holding one back in the current frame
-under `rel`'s inverse — exact, so the node's frame is the one it was painted
-in. A degenerate `rel` paints nothing visible, and the node stands. -/
 private def clipIn (rel : Affine) (c : Clip) (n : Node Run) : Node Run :=
   if rel = Affine.unit then .group Affine.unit #[c] Alpha.opaque #[n] else
   match Affine.inv? rel with
   | some back => .group rel #[c] Alpha.opaque #[.group back #[] Alpha.opaque #[n]]
   | none => n
 
-/-- A node clipped to the box of the constant soft mask in force
-(`GState.maskClip`): outside it the mask paints nothing (§11.6.5.2). Words
-carry no ink. -/
 private def St.masked (st : St) (n : Node Run) : Node Run :=
   match st.gs.maskClip, n with
   | _, .words _ => n
@@ -508,14 +412,10 @@ private def St.masked (st : St) (n : Node Run) : Node Run :=
     | some ic => clipIn (ic.compose m0) c n
     | none => n
 
-/-- A node painted into the innermost open group, under the soft mask in
-force (`St.masked`). -/
 private def St.emit (st : St) (n : Node Run) : St :=
   if st.hidden > 0 then st else
   let n := st.masked n
-  -- The frames taken out of the state, and the innermost one out of them,
-  -- before its kids grow: each held once, so the push is in place. A
-  -- frame shared with the state would copy every kid it holds per node.
+  -- Frames are taken out of the state before the push, so it happens in place.
   let frames := st.frames
   let st := { st with frames := #[] }
   match frames.back? with
@@ -524,9 +424,6 @@ private def St.emit (st : St) (n : Node Run) : St :=
     { st with frames := frames.push { top with kids := top.kids.push n } }
   | none => { st with frames }
 
-/-- A `cm`: the user space moves, and what is painted after it until the
-level's `Q` lives in a child frame — folded into the innermost group when
-that group was opened at this level and holds nothing yet. -/
 private def St.concat (st : St) (m : Affine) : St :=
   if m = Affine.unit then st else
   let gs := { st.gs with ctm := st.gs.ctm.compose m }
@@ -537,8 +434,6 @@ private def St.concat (st : St) (m : Affine) : St :=
     else { st with gs, frames := st.frames.push { xf := m, clips := #[], alpha := Alpha.opaque, kids := #[] } }
   | none => st
 
-/-- A clip: what is painted after it until the level's `Q` is clipped to it,
-in the current user space. -/
 private def St.addClip (st : St) (c : Clip) : St :=
   match st.frames.back? with
   | some top =>
@@ -547,16 +442,11 @@ private def St.addClip (st : St) (c : Clip) : St :=
     else { st with frames := st.frames.push { xf := Affine.unit, clips := #[c], alpha := Alpha.opaque, kids := #[] } }
   | none => st
 
-/-! ## Resources -/
-
-/-- A resource by category and name, one reference followed. -/
 private def resource (cx : Ctx) (cat name : String) : Option Obj :=
   match (cx.doc.field cx.res cat).toOption.getD none with
   | some (.dict es) => (es.find? (·.1 == name)).map (·.2)
   | _ => none
 
-/-- An operand one name or reference resolved: a colour space named in the
-resources, a reference followed. -/
 private def resolveSpace (cx : Ctx) (o : Obj) : Obj :=
   let o := (cx.doc.deref o).toOption.getD .null
   let family (n : String) : Bool :=
@@ -568,9 +458,6 @@ private def resolveSpace (cx : Ctx) (o : Obj) : Obj :=
     else ((resource cx "ColorSpace" n).bind fun r => (cx.doc.deref r).toOption).getD o
   else o
 
-/-- A colour space read with nothing under it: a device family, ICCBased by
-its component count (§8.6.5.5), the CIE families as their device family,
-the three families named as losses. -/
 private def flatSpace (cx : Ctx) (o : Obj) : Space :=
   match o with
   | .name "DeviceGray" | .name "G" | .name "CalGray" => .gray
@@ -599,8 +486,6 @@ private def flatSpace (cx : Ctx) (o : Obj) : Space :=
     | _ => .lossy "colorspace-unknown" 1
   | _ => .lossy "colorspace-unknown" 1
 
-/-- An ICC profile's description (ICC.1 §9.2.41: the `desc` tag, as v2's
-text description or v4's first localized string). -/
 private def iccDescription (p : ByteArray) : Option String := do
   let u32 (o : Nat) : Nat := (p[o]?.getD 0).toNat * 16777216 + (p[o + 1]?.getD 0).toNat * 65536 +
     (p[o + 2]?.getD 0).toNat * 256 + (p[o + 3]?.getD 0).toNat
@@ -621,10 +506,6 @@ private def iccDescription (p : ByteArray) : Option String := do
     some (String.ofList (units.map Char.ofNat))
   else none
 
-/-- The loss an ICC-based space's reading carries (§8.6.5.5): none for an
-RGB profile that describes itself as sRGB — the space a screen's device RGB
-is — and otherwise the profile, which a colour-managed reader converts
-through and the device family of its component count only stands in for. -/
 private def iccLoss (cx : Ctx) (profileRef : Obj) : Option String :=
   match (cx.doc.stream profileRef).toOption.getD none with
   | some (dict, raw) =>
@@ -637,9 +518,6 @@ private def iccLoss (cx : Ctx) (profileRef : Obj) : Option String :=
     if srgb then none else some "icc-profile"
   | none => some "icc-profile"
 
-/-- **The loss a colour space's reading carries** where the device family
-stands in for it (`iccLoss`), the space under an Indexed base or a
-pattern's colour included. -/
 private def spaceApprox (cx : Ctx) (o : Obj) : Option String :=
   let icc (o : Obj) : Option String := match o with
     | .arr xs =>
@@ -654,10 +532,7 @@ private def spaceApprox (cx : Ctx) (o : Obj) : Option String :=
     | _ => none
   | _ => none
 
-/-- **A colour space by its operand** (§8.6): a device family's name,
-`Pattern`, a resource name, or an array — Indexed over a base, Pattern over
-the space an uncoloured pattern's colour is in; the base read flat, as the
-space a base may be (§8.6.6.3: neither Indexed nor Pattern). -/
+/-- A colour space by its operand (§8.6): a device family, `Pattern`, a resource name, or an array. -/
 public def spaceOf (cx : Ctx) (o : Obj) : Space :=
   match resolveSpace cx o with
   | .arr xs =>
@@ -673,9 +548,6 @@ public def spaceOf (cx : Ctx) (o : Obj) : Space :=
     | _ => flatSpace cx (.arr xs)
   | o => flatSpace cx o
 
-/-! ## Functions and shadings -/
-
-/-- A function object's dictionary, and its stream data when it has one. -/
 private def fnDict (doc : Doc) (f : Obj) : Obj × Option ByteArray :=
   match (doc.stream f).toOption.getD none with
   | some (d, raw) =>
@@ -684,22 +556,16 @@ private def fnDict (doc : Doc) (f : Obj) : Obj × Option ByteArray :=
     | _ => (d, none)
   | none => ((doc.deref f).toOption.getD .null, none)
 
-/-- A function's numbers under a key. -/
 private def fnNums (doc : Doc) (dict : Obj) (k : String) : Array Rat :=
   match (dict.get? k).bind fun x => (doc.deref x).toOption with
   | some (.arr xs) => xs.filterMap fun x => (doc.deref x).toOption.bind ratOf
   | _ => #[]
 
-/-- The functions a stitching joins, as written. -/
 private def stitchFns (doc : Doc) (dict : Obj) : Array Obj :=
   match (dict.get? "Functions").bind fun x => (doc.deref x).toOption with
   | some (.arr xs) => xs
   | _ => #[]
 
-/-- A function object read as a piece (§7.10): an exponential or a sampled
-function, the defaults its dictionary leaves out filled as §7.10.2–3 say;
-anything else — a calculator, a stitching inside a stitching — read as
-nothing. -/
 private def readPiece (doc : Doc) (f : Obj) : Piece :=
   let (dict, data) := fnDict doc f
   let ty := ((dict.get? "FunctionType").bind Obj.int?).getD (-1)
@@ -720,8 +586,6 @@ private def readPiece (doc : Doc) (f : Obj) : Piece :=
                decode := if dec.size == range.size && !dec.isEmpty then dec else range, raw := data }
   else .unread
 
-/-- **A function object read** (§7.10): a stitching of the pieces it joins
-(Type 3), or a piece. -/
 private def readFn (doc : Doc) (f : Obj) : Fn :=
   let (dict, _) := fnDict doc f
   if ((dict.get? "FunctionType").bind Obj.int?) == some 3 then
@@ -730,17 +594,6 @@ private def readFn (doc : Doc) (f : Obj) : Fn :=
               enc := fnNums doc dict "Encode", subs := (stitchFns doc dict).map (readPiece doc) }
   else .piece (readPiece doc f)
 
-/-- **A shading's stops** (§8.7.4.5.3): its function read at each point
-its stops give (`Fn.stops`) — at a stop after the first, both the value
-the function approaches from below and the one it takes there, one stop
-where they agree and two at one offset where the colour jumps — each colour
-in the shading's space. The second component is whether the gradient is
-the shading: the function's stops are exact (`stitch_exact` for an
-exponential and a stitching of them; pending work for a sampled
-function), every component at every stop is inside [0, 1], so the colour
-space clips none of the line between them, and a CMYK colour previews as a
-line between stops — at most one of its components changing between any
-two. -/
 private def shadingStops (cx : Ctx) (sh : Obj) (sp : Space) : Option (Array Stop × Bool) := do
   let fnObj ← sh.get? "Function"
   let dom : Array Rat := match (sh.get? "Domain").bind fun x => (cx.doc.deref x).toOption with
@@ -788,35 +641,21 @@ where
     cs.all (fun v => v.all fun x => 0 ≤ x && x ≤ 1) &&
       match sp with
       | .cmyk =>
-        -- The preview is multilinear (`cmykRgb`): a line between two stops
-        -- stays a line where at most one component changes along it. The
-        -- colours are read stop by stop as each segment's two ends (`seen`:
-        -- a stop's value, then the next one's as approached), so a
-        -- segment is a pair at an even index; the pair after it is a jump.
+        -- The preview is multilinear: a line between stops stays one where at most one component changes.
         (List.range (cs.size / 2)).all fun i =>
           let a := cs[2 * i]?.getD #[]
           let b := cs[2 * i + 1]?.getD #[]
           ((List.range 4).filter fun j => a[j]?.getD 0 != b[j]?.getD 0).length ≤ 1
       | _ => true
 
-/-- A shading read as a gradient in its own space: whether it extends past
-its start and its end, and the loss key of what the gradient only
-approaches — a function its stops do not equal, a radial shading whose
-start circle is not inside its end circle (the model's radial gradients
-are; a cone is not). -/
 private structure Shade where
   g : Gradient
   e0 : Bool
   e1 : Bool
   approx : Option String
-  /-- The shading's `BBox` (§8.7.4.5.1), a clip in the space it paints in. -/
   bbox : Option Clip
-  /-- The loss its colour space's reading carries (`spaceApprox`). -/
   spaceLoss : Option String
 
-/-- A shading dictionary as a gradient in its own space (§8.7.4.5): an
-axial or radial shading over a function the stops read; the loss key where
-it is not one. -/
 private def gradientOf (cx : Ctx) (shObj : Obj) : Except String Shade := do
   let sh ← match (cx.doc.stream shObj).toOption.getD none with
     | some (d, _) => pure d
@@ -863,11 +702,6 @@ private def gradientOf (cx : Ctx) (shObj : Obj) : Except String Shade := do
            approx := if inside then fnLoss else some "shading-radial-cone", bbox
            spaceLoss := spaceApprox cx ((sh.get? "ColorSpace").getD (.name "DeviceRGB")) }
 
-/-- The region an axial shading paints without extension, over an area
-whose corners are `area`: the strip between the normals through its ends,
-reaching past every corner — a normal's length at least the farthest
-corner's distance from the start, so no point of the area the shading
-paints is outside it. -/
 private def stripPath (p0 p1 : Pt) (area : Box) (e0 e1 : Bool) : Subpath :=
   let dx := p1.1 - p0.1
   let dy := p1.2 - p0.2
@@ -885,16 +719,11 @@ private def stripPath (p0 p1 : Pt) (area : Box) (e0 e1 : Bool) : Subpath :=
     segs := #[.line (b.1 + nx, b.2 + ny), .line (b.1 - nx, b.2 - ny), .line (a.1 - nx, a.2 - ny)]
     closed := true }
 
-/-! ## Images -/
-
-/-- An image's rows as samples (§8.9.3): `bpc` bits each, each row padded
-to whole bytes; a 16-bit sample read by its high byte. -/
 private structure Samples where
   data : ByteArray
   bpc : Nat
   rowBytes : Nat
 
-/-- The `k`th sample of row `r`. -/
 private def Samples.at (s : Samples) (r k : Nat) : Nat :=
   if s.bpc == 8 then (s.data[r * s.rowBytes + k]?.getD 0).toNat
   else if s.bpc == 16 then (s.data[r * s.rowBytes + 2 * k]?.getD 0).toNat
@@ -903,12 +732,8 @@ private def Samples.at (s : Samples) (r k : Nat) : Nat :=
     let byte := (s.data[r * s.rowBytes + bit / 8]?.getD 0).toNat
     (byte >>> (8 - s.bpc - bit % 8)) % (2 ^ s.bpc)
 
-/-- The largest value a sample reads as. -/
 private def sampleFull (bpc : Nat) : Nat := if bpc == 16 then 255 else 2 ^ bpc - 1
 
-/-- **A component's decoding as a table** (§8.9.5.2): each sample value's
-byte through the `Decode` array's pair for component `j`, so a row decodes
-at one lookup a sample. -/
 private def decodeLut (bpc : Nat) (decode : Array Rat) (j : Nat) : Array UInt8 :=
   let full := sampleFull bpc
   (Array.range (full + 1)).map fun (v : Nat) =>
@@ -917,24 +742,14 @@ private def decodeLut (bpc : Nat) (decode : Array Rat) (j : Nat) : Array UInt8 :
       | some d0, some d1 => d0 + x * (d1 - d0)
       | _, _ => x))
 
-/-- Whether a `Decode` array is the default for `n` components in [0, 1]. -/
 private def decodeIdentity (decode : Array Rat) (n : Nat) : Bool :=
   decode.isEmpty || decode == (List.replicate n [(0 : Rat), 1]).flatten.toArray
 
-/-- An image's pixels as a PNG holds them: its header, its rows, the
-palette an indexed one keeps. -/
 private structure Pixels where
   header : PngEncode.Header
   rows : ByteArray
   palette : Option ByteArray := none
 
-/-- **An image's samples as PNG rows** (§8.9): a grey or indexed image under
-the default decoding at its own depth — its rows are PNG's as they stand, an
-indexed one beside its palette, clamped as PDF clamps an index — and an RGB
-one at eight bits; otherwise one byte a component through each component's
-decoding table (`decodeLut`), CMYK previewed as a viewer previews it
-(`cmykRgb8`), a stencil mask painted in the fill colour, an alpha beside.
-Integer work, a lookup a sample. -/
 private def imagePixels (sp : Space) (w h bpc : Nat) (data : ByteArray) (decode : Array Rat)
     (mask : Option Ir.Color) (alpha : Option ByteArray) : Option Pixels := Id.run do
   let comps := if mask.isSome then 1 else sp.comps
@@ -1003,8 +818,6 @@ private def imagePixels (sp : Space) (w h bpc : Nat) (data : ByteArray) (decode 
       return some { header := header 8 (if hasAlpha then 6 else 2), rows := out }
     | _ => return none
 
-/-- One 8-bit value a pixel of an image `w × h`, read from a grey image
-`mw × mh` nearest-sampled (§11.6.5.3): its samples through its decoding. -/
 private def grayResampled (w h mw mh bpc : Nat) (data : ByteArray) (decode : Array Rat) :
     Option ByteArray := Id.run do
   if w == 0 || h == 0 || mw == 0 || mh == 0 || !([1, 2, 4, 8, 16].contains bpc) then return none
@@ -1019,8 +832,6 @@ private def grayResampled (w h mw mh bpc : Nat) (data : ByteArray) (decode : Arr
       out := out.push (lut[s.at sy (x * mw / w)]?.getD 255)
   return some out
 
-/-- A soft mask's samples (§11.6.5.3) as one 8-bit alpha per pixel of an
-image `w × h`, nearest-sampled when its own size differs. -/
 private def smaskAlpha (cx : Ctx) (o : Obj) (w h : Nat) : Option ByteArray := do
   let (dict, raw) ← (cx.doc.stream o).toOption.getD none
   let mw := ((dict.get? "Width").bind Obj.int?).getD 0 |>.toNat
@@ -1032,10 +843,6 @@ private def smaskAlpha (cx : Ctx) (o : Obj) (w h : Nat) : Option ByteArray := do
     | _ => #[]
   grayResampled w h mw mh bpc data decode
 
-/-- **An image as a raster** (§8.9.5): its stream decoded and re-encoded as
-PNG — a stream deflated under a PNG predictor in gray or RGB at eight bits
-becomes the PNG's data as it stands — or a JPEG handed on whole; a soft
-mask or a colour-key mask as alpha. The loss key where it cannot be. -/
 private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir.Color) :
     Except String Raster := do
   let get (k abbr : String) : Option Obj :=
@@ -1056,8 +863,7 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
   if isMask && fill.isNone then throw "stencil-pattern"
   let alpha := (dict.get? "SMask").bind fun s => smaskAlpha cx s w h
   if (dict.get? "SMask").isSome && alpha.isNone then throw "smask-image"
-  -- A matte names colours pre-blended with it (§11.6.5.3), which a raster
-  -- with straight alpha would show blended twice.
+  -- A matte names colours pre-blended with it (§11.6.5.3), which straight alpha would blend twice.
   if ((dict.get? "SMask").bind fun s => (cx.doc.stream s).toOption.getD none).any
       fun (md, _) => (md.get? "Matte").isSome then throw "smask-matte"
   if (get "SMaskInData" "SMaskInData").isSome then throw "smask-in-data"
@@ -1068,16 +874,13 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
   | .refused f => throw f
   | .dct jpeg =>
     if alpha.isSome || isMask || (dict.get? "Mask").isSome then throw "dct-alpha"
-    -- The JPEG's samples stand as they are; a `Decode` other than the
-    -- identity would remap them.
+    -- A JPEG's samples stand as they are; a non-identity `Decode` would remap them.
     let identity : Array Rat := (List.replicate sp.comps [(0 : Rat), 1]).flatten.toArray
     unless decode.isEmpty || decode == identity do throw "dct-decode"
     match sp with
     | .gray | .rgb => return { bytes := jpeg, jpeg := true, pxW := w, pxH := h, smooth }
     | _ => throw "dct-cmyk"
   | .bytes data =>
-    -- The predictor's rows, unfiltered by the decode, are what a PNG
-    -- holds: the original deflated stream stands as its data.
     let parms := (dict.get? "DecodeParms").orElse fun _ => dict.get? "DP"
     let parm (k : String) (d : Int) : Int := ((parms.bind (·.get? k)).bind Obj.int?).getD d
     let pred := parm "Predictor" 1
@@ -1089,8 +892,6 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
       | .gray => some 0
       | .rgb => some 2
       | _ => none
-    -- The rows stand as a PNG's only where the predictor's row layout is
-    -- the image's own: its colours, eight bits each, its width.
     if pred ≥ 10 && filterIsFlate && bpc == 8 && decode.isEmpty && alpha.isNone && !isMask &&
         (dict.get? "Mask").isNone && colorType.isSome &&
         (colors == 1 || colors == 3) && (colors == 1) == (colorType == some 0) &&
@@ -1122,8 +923,7 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
         | some (md, mraw) =>
           match PdfFilters.decode md mraw with
           | .ok (.bytes mdata) =>
-            -- §8.9.6.3: a stencil mask whose 0 samples paint, under its
-            -- own decoding; as an alpha, 255 where the image shows.
+            -- §8.9.6.3: a stencil mask's 0 samples paint, under its own decoding.
             let mw := ((md.get? "Width").bind Obj.int?).getD 0 |>.toNat
             let mh := ((md.get? "Height").bind Obj.int?).getD 0 |>.toNat
             let inverted := match md.get? "Decode" with
@@ -1137,19 +937,12 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
       | throw "image-samples"
     return { bytes := PngEncode.encode px.header px.rows px.palette, jpeg := false, pxW := w, pxH := h, smooth }
 
-/-- A raster smoothed where it is drawn smaller than its samples: more than
-one sample per point along its width, where a reader that paints each
-sample as a square only aliases. A sample larger than a point stays a
-square unless the image asks to be smoothed (`/Interpolate`). -/
 private def smoothAt (r : Raster) (ctm : Affine) : Raster :=
   if r.smooth then r else
   let w2 := ctm.a * ctm.a + ctm.b * ctm.b
   if ((r.pxW * r.pxW : Nat) : Rat) ≥ w2 then { r with smooth := true } else r
 
-/-! ## Glyph outlines -/
-
-/-- An `Ink` outline as subpaths, one font unit to one frame unit (65536
-sp): quadratics raised to the cubics that draw them, every contour closed. -/
+/-- An `Ink` outline as closed subpaths, one font unit to one frame unit, quadratics raised to cubics. -/
 public def outlineOf (cmds : Array Ink.Cmd) : Array Subpath := Id.run do
   let u : Int := 65536
   let mut out : Array Subpath := #[]
@@ -1178,17 +971,12 @@ public def outlineOf (cmds : Array Ink.Cmd) : Array Subpath := Id.run do
   if let some s := cur then out := out.push { s with closed := true }
   return out
 
-/-! ## Reading a stream -/
-
-/-- The object numbers a reading has entered on the path that reached it:
-distinct, each listed by the document — so the nesting of forms, Type 3
-glyphs and tiling patterns is bounded by the document's own size. -/
+/-- The distinct listed objects a reading entered on its path, which bounds form, glyph and pattern nesting. -/
 public structure Entered (d : Doc) where
   list : List Nat
   nodup : list.Nodup
   listed : ∀ x ∈ list, x ∈ d.objectNumbers
 
-/-- A nodup list inside another list is no longer than it. -/
 private theorem nodup_length_le {l u : List Nat} (hn : l.Nodup) (hs : ∀ x ∈ l, x ∈ u) :
     l.length ≤ u.length := by
   induction l generalizing u with
@@ -1209,7 +997,6 @@ private theorem nodup_length_le {l u : List Nat} (hn : l.Nodup) (hs : ∀ x ∈ 
 /-- How many more objects a reading may enter. -/
 public def Entered.room {d : Doc} (e : Entered d) : Nat := d.objectNumbers.length - e.list.length
 
-/-- One object more entered. -/
 public def Entered.push {d : Doc} (e : Entered d) (n : Nat) (hn : d.lists n = true)
     (hf : n ∉ e.list) : Entered d :=
   { list := n :: e.list, nodup := List.nodup_cons.mpr ⟨hf, e.nodup⟩
@@ -1218,46 +1005,32 @@ public def Entered.push {d : Doc} (e : Entered d) (n : Nat) (hn : d.lists n = tr
       · exact d.lists_mem x hn
       · exact e.listed x h }
 
-/-- **Entering an object leaves less room** (`_between`): what bounds the
-recursion through forms, Type 3 glyphs and tiling patterns. -/
 public theorem Entered.push_room_between {d : Doc} (e : Entered d) (n : Nat) (hn : d.lists n = true)
     (hf : n ∉ e.list) : (e.push n hn hf).room < e.room := by
   have hle := nodup_length_le (e.push n hn hf).nodup (e.push n hn hf).listed
   simp only [Entered.room, Entered.push, List.length_cons] at hle ⊢
   omega
 
-/-- **The nesting a reading can reach is bounded** (`_between`): the forms,
-Type 3 glyph procedures and tiling cells a reading is inside — each entered
-inside the one before — are distinct objects the document lists, so they
-and the room left (`Entered.room`, which each entry shrinks) part the
-document's object count between them: neither exceeds it. -/
 public theorem forms_between {d : Doc} (e : Entered d) :
     e.list.length + e.room = d.objectNumbers.length ∧ e.room ≤ d.objectNumbers.length := by
   have h := nodup_length_le e.nodup e.listed
   unfold Entered.room
   omega
 
-/-- The initial state of a stream's reading under a graphics state. -/
 private def St.initial (gs : GState) (store : Store) : St :=
   { gs, saved := #[], level := 1, frames := #[{ xf := Affine.unit, clips := #[], alpha := Alpha.opaque, kids := #[] }]
     path := #[], cur := (0, 0), start := (0, 0), clip := none, tm := Affine.unit, tlm := Affine.unit
     inText := false, words := "", ops := #[], hidden := 0, marks := #[], compat := 0, store }
 
-/-- A stream's reading finished: every group closed, the words of an open
-text object kept. -/
 private def St.finish (st : St) : Array (Node Run) :=
   let fs := closeTo st.frames 1
   let kids := (fs[0]?.map (·.kids)).getD #[]
   if st.words.isEmpty then kids else kids.push (.words st.words)
 
-/-- The operands as numbers. -/
 private def St.nums (st : St) : Array Rat := st.ops.filterMap ratOf
 
-/-- The `i`th operand. -/
 private def St.op (st : St) (i : Nat) : Option Obj := st.ops[i]?
 
-/-- The luminosity of a colour in a group's space (ISO 32000-2 §11.5.3):
-grey as it is, RGB weighted 0.3, 0.59, 0.11. -/
 private def luminosity (sp : Space) (cs : Array Rat) : Option Rat :=
   let v (i : Nat) : Rat := unit01 (cs[i]?.getD 0)
   match sp with
@@ -1265,13 +1038,6 @@ private def luminosity (sp : Space) (cs : Array Rat) : Option Rat :=
   | .rgb => some ((3 : Rat) / 10 * v 0 + (59 : Rat) / 100 * v 1 + (11 : Rat) / 100 * v 2)
   | _ => none
 
-/-- **A soft mask that is a constant alpha** (§11.6.5.2), as cairo spells an
-opacity over a gradient: a luminosity mask, no transfer function, a black
-backdrop, whose group paints one constant colour over its whole box — an
-axial shading extended both ways whose function is constant, or a
-rectangle filled. Inside its box the mask is that colour's luminosity, and
-outside the backdrop's, nothing: the alpha it is, and the box as a clip, in
-the space the `gs` that sets it stands in. Any other mask is a loss. -/
 private def maskConst (cx : Ctx) (sm : Obj) : Option (Alpha × Clip) := do
   let smd ← (cx.doc.deref sm).toOption
   guard (smd.get? "S" == some (.name "Luminosity"))
@@ -1284,8 +1050,7 @@ private def maskConst (cx : Ctx) (sm : Obj) : Option (Alpha × Clip) := do
   let data ← match PdfFilters.decode gd graw with
     | .ok (.bytes b) => some b
     | _ => none
-  -- Luminosity is read in the group's blending space (§11.5.3): grey and
-  -- RGB weigh a colour the same way whichever of the two it was set in.
+  -- Luminosity is read in the group's blending space (§11.5.3).
   let blendOk : Bool := match (gd.get? "Group").bind fun x => (cx.doc.deref x).toOption with
     | some grp => match spaceOf cx ((grp.get? "CS").getD (.name "DeviceGray")) with
       | .gray | .rgb => true
@@ -1365,9 +1130,6 @@ private def maskConst (cx : Ctx) (sm : Obj) : Option (Alpha × Clip) := do
   let y1 := spOfRat (max (bbox[1]?.getD 0) (bbox[3]?.getD 0))
   return (a, { geom := .rect x0 y0 (x1 - x0) (y1 - y0), rule := .nonzero })
 
-/-- The graphics-state parameters an ExtGState sets (§8.4.5): line width,
-caps, joins, miter limit, dash, alphas, the font; a soft mask other than
-`None`, a blend mode other than `Normal` named as a loss. -/
 private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
   let some r := resource cx "ExtGState" name
     | return { st with store := st.store.lose (.resource "extgstate-unresolved") }
@@ -1402,10 +1164,6 @@ private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
     | none =>
       st := { st with gs := { st.gs with mask := Alpha.opaque, maskClip := none }
                       store := st.store.lose (.property "soft-mask") }
-  -- §11.6.4.3: alpha read as shape changes how a group composites; a
-  -- transfer function remaps every colour component (§10.5). Black
-  -- generation, undercolour removal and halftones shape a printer's
-  -- separations, not what a screen shows.
   if val "AIS" == some (.bool true) then
     st := { st with store := st.store.lose (.property "alpha-is-shape") }
   for k in ["TR", "TR2"] do
@@ -1420,18 +1178,10 @@ private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
   | some _ => st := { st with store := st.store.lose (.property "blend-mode") }
   return st
 
-/-- What an ink paints with: its paint, and the clip it carries — a shading
-pattern's `BBox`, in pattern space, with that space's matrix into the current
-user space (`clipIn`). -/
 private structure Painted where
   paint : Paint
   clip : Option (Affine × Clip)
 
-/-- The paint an ink resolves to, read in the current user space: a colour,
-or a shading pattern's gradient — its matrix maps pattern space to the
-stream's default space (§8.7.2), so the gradient's own frame is that
-matrix carried back through the current one. A tiling pattern fills a path
-by `tileNodes`; anything else it paints — a stroke, a glyph — is a loss. -/
 private def paintOf (cx : Ctx) (st : St) (ink : Ink) : St × Option Painted :=
   let solid (c : Ir.Color) : Painted := { paint := .solid c, clip := none }
   match ink with
@@ -1450,9 +1200,7 @@ private def paintOf (cx : Ctx) (st : St) (ink : Ink) : St × Option Painted :=
           | _ => Affine.unit
         match gradientOf cx ((pat.get? "Shading").getD .null), Affine.inv? st.gs.ctm with
         | .ok sh, some inv =>
-          -- A pattern paints its shading only where the shading paints:
-          -- an unextended one leaves the rest of the path unpainted, which
-          -- a gradient paint, padded, does not.
+          -- A pattern paints only where its shading does: an unextended one leaves the rest unpainted.
           let st := match sh.approx with
             | some k => { st with store := st.store.lose (.resource k) }
             | none => st
@@ -1467,24 +1215,17 @@ private def paintOf (cx : Ctx) (st : St) (ink : Ink) : St × Option Painted :=
       else if ty == 1 then ({ st with store := st.store.lose (.resource "tiling-paint") }, under.map solid)
       else ({ st with store := st.store.lose (.resource "pattern-type") }, under.map solid)
 
-/-- A node under the clip its paint carries. -/
 private def withPaintClip (clip : Option (Affine × Clip)) (n : Node Run) : Node Run :=
   match clip with
   | some (rel, c) => clipIn rel c n
   | none => n
 
-/-- The current path's geometry, as the typed operators read it: one `re`
-of negative extent is the path PDF traces for it, from its corner toward
-the negative extents — a figure's rectangles have none, and a dash pattern
-starts where the path does. -/
 private def St.geom (st : St) : Geom :=
   match GfxPdf.geomOf st.path.toList with
   | .rect x y w h => if w < 0 || h < 0 then .path #[Kit.rectPath x y w h] else .rect x y w h
   | .ellipse cx cy rx ry => .ellipse cx cy rx ry
   | .path subs => .path subs
 
-/-- A path painted (§8.5.3): filled by its rule, stroked with the state in
-force, each with its constant alpha; then the clip it was marked for. -/
 private def paintPath (cx : Ctx) (st : St) (fill : Option Rule) (stroke : Bool) (close : Bool)
     (tiles : Option (Array (Node Run)) := none) : St :=
   let st := if close && !st.path.isEmpty then { st with path := st.path.push .close } else st
@@ -1520,26 +1261,18 @@ private def paintPath (cx : Ctx) (st : St) (fill : Option Rule) (stroke : Bool) 
     | none => st
   { st with path := #[], clip := none }
 
-/-- The point a `v` or `y` takes from the current point. -/
 private def St.moveTo (st : St) (p : Pt) : St :=
   { st with path := st.path.push (.moveTo p.1 p.2), cur := p, start := p }
 
-/-- The text rendering matrix's frame for one glyph (§9.4.4): the text
-matrix, the font size, the horizontal scale and the rise, in the current
-user space. -/
 private def textFrame (st : St) : Affine :=
   st.tm.compose ⟨st.gs.size * st.gs.hScale, 0, 0, st.gs.size, 0, st.gs.rise * 65536⟩
 
-/-- The text matrix moved along the baseline by `tx` text-space units. -/
 private def St.advance (st : St) (tx : Rat) : St :=
   { st with tm := st.tm.compose ⟨1, 0, 0, 1, tx * 65536, 0⟩ }
 
-/-- A font matrix as an affine map, translation in sp. -/
 private def fontMatrix (m : Array Rat) : Affine :=
   (affineOf m).getD ⟨mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0⟩
 
-/-- What a text rendering mode paints (§9.3.6): fill, stroke, whether it
-adds to the clip. -/
 private def renderPaints (mode : Nat) : Bool × Bool × Bool :=
   match mode with
   | 0 => (true, false, false)
@@ -1551,21 +1284,16 @@ private def renderPaints (mode : Nat) : Bool × Bool × Bool :=
   | 6 => (true, true, true)
   | _ => (false, false, true)
 
-/-- The factor a frame scales every length by, where it is an axis-aligned
-similarity: no shear, no rotation, the two axes scaled alike up to a
-reflection. -/
+/-- The factor an axis-aligned similarity frame scales every length by, if it is one. -/
 public def frameScale? (m : Affine) : Option Rat :=
   if m.b = 0 ∧ m.c = 0 ∧ m.a ≠ 0 ∧ (m.d = m.a ∨ m.d = -m.a) then
     some (if m.a < 0 then -m.a else m.a)
   else none
 
-/-- A user-space length carried into a glyph frame: its sp divided by the
-frame's scale (`frameScale?`), rounded once to the frame's sp; `none` where
-the frame scales no length alike in every direction. -/
+/-- A user-space length carried into a glyph frame, `none` where the frame scales lengths unevenly. -/
 public def strokeIn (m : Affine) (w : Sp) : Option Sp :=
   (frameScale? m).map fun s => spOfRat ((w : Rat) / 65536 / s)
 
-/-- `spOfRat` rounds to the nearest sp: within half of one. -/
 public theorem spOfRat_between (r : Rat) :
     r * 65536 - 1 / 2 ≤ (spOfRat r : Rat) ∧ (spOfRat r : Rat) ≤ r * 65536 + 1 / 2 := by
   unfold spOfRat
@@ -1584,12 +1312,6 @@ public theorem spOfRat_between (r : Rat) :
     push_cast at h1 h2 ⊢
     constructor <;> grind
 
-/-- **A length carried into a glyph frame lands back on itself**
-(`_between`): where `strokeIn` answers, the frame scales lengths by a
-positive `s`, and the carried length drawn through the frame is the user
-space's within half of the frame's sp — one rounding, in the frame. A
-glyph stroked through its frame strokes the width, dash and phase the
-graphics state set. -/
 public theorem strokeIn_between (m : Affine) (w w' : Sp) (h : strokeIn m w = some w') :
     ∃ s : Rat, 0 < s ∧ m.b = 0 ∧ m.c = 0 ∧ (m.a = s ∨ m.a = -s) ∧ (m.d = s ∨ m.d = -s) ∧
       (w : Rat) - s / 2 ≤ (w' : Rat) * s ∧ (w' : Rat) * s ≤ (w : Rat) + s / 2 := by
@@ -1618,16 +1340,11 @@ public theorem strokeIn_between (m : Affine) (w w' : Sp) (h : strokeIn m w = som
       exact ⟨hlo, hhi⟩
   · simp at h
 
-/-- The colour a stencil mask paints in (§8.9.6.2): the fill colour; a
-pattern is none, and `rasterOf` names the mask a loss. -/
 private def fillColor (st : St) : Option Ir.Color :=
   match st.gs.fill with
   | .color c => some c
   | .pattern _ _ => none
 
-/-- The inherited state a form's reading starts from, as a key: two `Do`s
-of one form with one key read the same, so the second uses the first's
-symbol. -/
 private def stateKey (gs : GState) : String :=
   let ink : Ink → String
     | .color c => s!"{c.r} {c.g} {c.b} {reprStr c.pdfModel} {reprStr c.cmyk}"
@@ -1640,7 +1357,6 @@ private def stateKey (gs : GState) : String :=
 {gs.dash}|{gs.phase}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
 {gs.hScale}|{gs.leading}|{gs.rise}|{gs.render}"
 
-/-- Whether an optional-content reference names a group that is off. -/
 private def ocOff (cx : Ctx) (o : Obj) : Bool :=
   match o with
   | .ref n _ =>
@@ -1648,8 +1364,7 @@ private def ocOff (cx : Ctx) (o : Obj) : Bool :=
     match (cx.doc.deref o).toOption with
     | some d =>
       if d.get? "Type" == some (.name "OCMD") then
-        -- `OCGs` is one group's reference or an array of them (§8.11.2.2);
-        -- the visibility policy reads the array.
+        -- `OCGs` is one group's reference or an array of them (§8.11.2.2).
         let refs : Array Nat := match d.get? "OCGs" with
           | some (.ref m g) => match (cx.doc.deref (.ref m g)).toOption with
             | some (.arr xs) => xs.filterMap fun x => match x with
@@ -1670,7 +1385,6 @@ private def ocOff (cx : Ctx) (o : Obj) : Bool :=
     | none => false
   | _ => false
 
-/-- The ink box of nodes in their own frame, rasters by their unit square. -/
 private def nodesInk (nodes : Array (Node Run)) (outlines : Array (Array Subpath))
     (symbols : Array (Array (Node Run))) : Option Box :=
   let fig : Figure Run :=
@@ -1678,8 +1392,6 @@ private def nodesInk (nodes : Array (Node Run)) (outlines : Array (Array Subpath
       title := none, losses := #[] }
   fig.inkBox fun _ => none
 
-/-- A form's box as a rectangle clip, when what it painted reaches past it:
-a box that holds every mark's ink clips nothing, so it is no clip at all. -/
 private def bboxClip (dict : Obj) (doc : Doc) (body : Array (Node Run)) (store : Store) : Array Clip :=
   match (dict.get? "BBox").bind fun x => (doc.deref x).toOption with
   | some (.arr xs) =>
@@ -1696,10 +1408,6 @@ private def bboxClip (dict : Obj) (doc : Doc) (body : Array (Node Run)) (store :
     else #[]
   | _ => #[]
 
-/-- A shading painted over the current clip (`sh`, §8.7.4.2): its gradient in
-the current user space, over the figure's box carried into that space — the
-region a shading without extension paints, where it does not extend: the
-strip between its normals, or its end circle less its start circle. -/
 private def shadeOp (cx : Ctx) (st : St) : St :=
   if st.hidden > 0 then st else
   match st.op 0 with
@@ -1736,8 +1444,6 @@ private def shadeOp (cx : Ctx) (st : St) : St :=
         st.emit (withPaintClip (sh.bbox.map (Affine.unit, ·)) draw)
   | _ => st
 
-/-- The words a text object says, a space put where the pen jumps by more
-than a fifth of the font size. -/
 private def St.addWords (st : St) (t : String) : St :=
   if t.isEmpty then st else { st with words := st.words ++ t }
 
@@ -1766,7 +1472,6 @@ public def fontOf (cx : Ctx) (st : St) : St × Option (PdfFont.Loaded × Nat) :=
       let st := { st with store := f.losses.foldl Store.lose st.store }
       (st, some (f, key))
 
-/-- A glyph's outline index in an `Ink` program, decoded once. -/
 private def glyphOutline (st : St) (key : Nat) (src : Ink.Src) (gid : Nat) : St × Option Nat :=
   match st.store.glyphs.get? (key, gid) with
   | some r => (st, r)
@@ -1784,8 +1489,6 @@ private def glyphOutline (st : St) (key : Nat) (src : Ink.Src) (gid : Nat) : St 
       ({ st with store := { (st.store.lose (.font "glyph-undecodable")) with
                             glyphs := st.store.glyphs.insert (key, gid) none } }, none)
 
-/-- One glyph stamped at the text frame: its outline under the frame and
-the font's matrix, painted by the rendering mode. -/
 private def stampGlyph (cx : Ctx) (st : St) (outline : Nat) (gm : Affine) (rule : Rule) : St :=
   let (fillP, strokeP, clipP) := renderPaints st.gs.render
   let st := if clipP then { st with store := st.store.lose (.value "text-clip") } else st
@@ -1795,8 +1498,7 @@ private def stampGlyph (cx : Ctx) (st : St) (outline : Nat) (gm : Affine) (rule 
   let fl := fp.map fun p => ({ paint := p.paint, rule, alpha := st.gs.fillAlpha } : Fill)
   let (st, sk) := match sp with
     | some p =>
-      -- The stroke's lengths — width, dash and phase — are the user space's,
-      -- carried into the glyph frame by its scale.
+      -- The stroke's width, dash and phase are the user space's, carried into the glyph frame.
       match strokeIn xf st.gs.width, st.gs.dash.mapM (strokeIn xf), strokeIn xf st.gs.phase with
       | some w, some dash, some phase =>
         (st, some ({ paint := p.paint, width := w, cap := st.gs.cap, join := st.gs.join
@@ -1839,24 +1541,13 @@ private theorem marksList_notWords {L : Type} (os : Array (Array Subpath)) (cx :
     cases n <;> simp only [Node.marksList, List.filter_cons, notWords, Bool.false_eq_true,
       ↓reduceIte] <;> first | exact ih _ | (simp only [Node.marksOne]; exact ih _)
 
-/-- **What a Type 3 procedure stamps** (§9.6.4): the outline of its one
-fill, when it is a `d1` procedure — whose colour is the text's — whose one
-painting is a fill by the nonzero rule and no stroke. One fill is what a
-stamp painted in the text's fill reproduces: several fills are not one
-path's nonzero fill where their windings meet, so they stay a symbol. -/
+/-- What a `d1` Type 3 procedure stamps (§9.6.4): the outline of its one nonzero fill, if that is all it paints. -/
 public def type3Stamp? (isD1 : Bool) (body : Array (Node Run)) : Option (Array Subpath) :=
   if !isD1 then none else
   match (body.filter notWords).toList with
   | [.draw g (some fl) none] => if fl.rule = .nonzero then some (subpathsOf g) else none
   | _ => none
 
-/-- **A Type 3 stamp paints its procedure's ink** (`_exact`): `type3Stamp?`
-answers only for a `d1` procedure whose reading paints, in every frame,
-exactly one mark — a fill by the nonzero rule and no stroke — and the
-outline it answers is the path that fill's geometry traces, a rectangle as
-its `re` path. So the stamp `type3Glyph` places in the glyph's frame
-(`Node.marksOne`'s stamp arm) paints the procedure's one outline there, in
-the text's fill, which is a `d1` procedure's colour. -/
 public theorem type3_marks_exact (isD1 : Bool) (body : Array (Node Run)) (subs : Array Subpath)
     (h : type3Stamp? isD1 body = some subs) :
     isD1 = true ∧ ∃ (g : Geom) (fl : Fill), fl.rule = .nonzero ∧ g.traced = .path subs ∧
@@ -1880,15 +1571,11 @@ public theorem type3_marks_exact (isD1 : Bool) (body : Array (Node Run)) (subs :
       · simp at h
     · simp at h
 
-/-- The loss an image's colour space carries (`spaceApprox`); a stencil
-mask has none. -/
 private def imageSpaceLoss (cx : Ctx) (dict : Obj) : Option String :=
   let get (k abbr : String) : Option Obj := (dict.get? k).orElse fun _ => dict.get? abbr
   if get "ImageMask" "IM" == some (.bool true) then none
   else (get "ColorSpace" "CS").bind (spaceApprox cx)
 
-/-- A raster painted in the unit square of the current space: smoothed as
-it is drawn (`smoothAt`), its colour space's loss named. -/
 private def St.paintRaster (cx : Ctx) (st : St) (dict : Obj) (r : Raster) : St × Nat :=
   let r := smoothAt r st.gs.ctm
   let k := st.store.rasters.size
@@ -1898,7 +1585,6 @@ private def St.paintRaster (cx : Ctx) (st : St) (dict : Obj) (r : Raster) : St �
     | none => store
   ({ st with store } |>.emit (.image k Affine.unit), k)
 
-/-- An inline image (§8.9.7) painted, or its loss named. -/
 private def inlineImage (cx : Ctx) (st : St) (dict : Array (String × Obj)) (data : ByteArray) : St :=
   if st.hidden > 0 then st else
   match rasterOf cx (.dict dict) data (fillColor st) with
@@ -1907,8 +1593,8 @@ private def inlineImage (cx : Ctx) (st : St) (dict : Array (String × Obj)) (dat
 
 mutual
 
-/-- **Read a content stream's tokens** from `i`: an operand kept for the
-operator after it, an operator read, an inline image painted. -/
+/-- Reads a content stream's tokens from `i`: operands kept for the operator after them, operators
+read, inline images painted. -/
 public def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat) (st : St) : St :=
   if h : i < toks.size then
     let st := match toks[i] with
@@ -1919,10 +1605,6 @@ public def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat) 
   else st
 termination_by (e.room, 3, toks.size - i)
 
-/-- **One operator read** (ISO 32000-2 Annex A): `q` saves the graphics
-state, `Q` restores the one saved last, and every other operator is
-`stepRest`'s, which reads and writes the state but its stack: the stack
-and the level it opened stand as they were. -/
 private def stepOp (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : St :=
   if name == "q" then { st with saved := st.saved.push (st.gs, st.frames.size), level := st.frames.size }
   else if name == "Q" then
@@ -1940,11 +1622,9 @@ private def stepOp (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : S
     { stepRest cx e name st with saved, level }
 termination_by (e.room, 2, 1)
 
-/-- Every operator but `q` and `Q`. -/
 private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : St :=
   let n := st.nums
   let num (i : Nat) : Rat := n[i]?.getD 0
-  -- A coordinate in integers (`spOf_exact`: `spOfRat` of the number).
   let sps := st.ops.filterMap spOf
   let sp (i : Nat) : Sp := sps[i]?.getD 0
   let pt (i : Nat) : Pt := (sp i, sp (i + 1))
@@ -2048,8 +1728,6 @@ private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) :
       match resource cx "Font" fName with
       | some fo => { st with gs := { st.gs with font := some (fo, 0), size } }
       | none =>
-        -- A name the resources do not hold shows nothing; a reader whose
-        -- resources it misses can only say so.
         { st with gs := { st.gs with font := none, size }, store := st.store.lose (.resource "font-unresolved") }
     | _ => st
   | "Td" =>
@@ -2107,8 +1785,6 @@ private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) :
     if st.compat > 0 then st else { st with store := st.store.lose (.operator other) }
 termination_by (e.room, 2, 0)
 
-/-- A path painted, its fill a tiling pattern's tiles where the fill
-names one (§8.7.3.1). -/
 private def paintWith (cx : Ctx) (e : Entered cx.doc) (st : St) (fill : Option Rule) (stroke : Bool)
     (close : Bool) : St :=
   match fill, st.gs.fill with
@@ -2127,10 +1803,6 @@ private def paintWith (cx : Ctx) (e : Entered cx.doc) (st : St) (fill : Option R
   | _, _ => paintPath cx st fill stroke close
 termination_by (e.room, 1, 2)
 
-/-- **A tiling pattern's tiles over a region** (§8.7.3): its cell read once
-in pattern space as a symbol clipped to the cell's box, used at every step
-its matrix carries across the region's box — at most `tileCap` tiles, past
-which the loss is named. An uncoloured pattern is a loss. -/
 private def tileNodes (cx : Ctx) (e : Entered cx.doc) (st : St) (pat : Obj) (region : Geom) :
     St × Option (Array (Node Run)) :=
   match pat with
@@ -2178,8 +1850,6 @@ private def tileNodes (cx : Ctx) (e : Entered cx.doc) (st : St) (pat : Obj) (reg
           match Affine.inv? q, region.hull with
           | some invQ, some box =>
             let pb := Box.image invQ box
-            -- Tile `i` covers the cell moved by `i` steps; it meets the
-            -- region where the open intervals overlap.
             let lo (v : Sp) (step : Rat) (cellHi : Rat) : Int := ((((v : Rat) / 65536) - cellHi) / step).floor + 1
             let hi (v : Sp) (step : Rat) (cellLo : Rat) : Int := ((((v : Rat) / 65536) - cellLo) / step).ceil - 1
             let sx := if xs < 0 then -xs else xs
@@ -2210,8 +1880,6 @@ decreasing_by
   apply Prod.Lex.left
   exact Entered.push_room_between e _ _ _
 
-/-- A `TJ` array: strings shown, numbers moving the pen back by thousandths
-of the font size. -/
 private def showArray (cx : Ctx) (e : Entered cx.doc) (items : List Obj) (st : St) : St :=
   match items with
   | [] => st
@@ -2227,13 +1895,8 @@ private def showArray (cx : Ctx) (e : Entered cx.doc) (items : List Obj) (st : S
     showArray cx e rest st
 termination_by (e.room, 1, items.length + 1)
 
-/-- A string shown (§9.4.3): each code's glyph stamped at the pen, the pen
-advanced by its width, the character and word spacing, and the horizontal
-scale. -/
+/-- A string shown (§9.4.3): each code's glyph stamped at the pen and the pen advanced. -/
 public def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) : St :=
-  -- Reading the font and painting a glyph change the store and the frames,
-  -- never the words or the hidden depth: those are kept by construction,
-  -- what `words_exact` reads.
   let (loaded, fo) := fontOf cx st
   let st := { loaded with words := st.words, hidden := st.hidden }
   match fo with
@@ -2263,14 +1926,6 @@ public def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) 
       st.advance (((w / 1000) * st.gs.size + st.gs.charSpace + space) * st.gs.hScale)) st
 termination_by (e.room, 1, 0)
 
-/-- A Type 3 glyph (§9.6.4): its procedure read in glyph space with the
-graphics state in force — the frame the glyph's own, the soft mask's box
-left to where the glyph is placed. A `d1` procedure is a stencil whose
-colours are the text's: read once with neutral colours, its one nonzero fill
-(`type3Stamp?`) is a stamp, painted with the text's paints wherever it is
-shown. Any other procedure is a symbol of what it paints, read once per
-inherited state, since a `d0` glyph paints with whatever it does not set
-itself — colours, line width, dash, alphas. -/
 private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (key : Nat)
     (proc : String) (fm : Affine) (st : St) : St :=
   let inherited := { st.gs with ctm := Affine.unit, maskClip := none }
@@ -2343,11 +1998,6 @@ decreasing_by
     apply Prod.Lex.left
     exact Entered.push_room_between e _ _ _
 
-/-- An XObject painted (§8.8, §8.10): an image as a raster in the unit
-square of the current space; a form read in its own space under its matrix
-— an isolated transparency group with the alpha in force as the group's,
-and the alpha reset inside it — once per inherited state, every later
-`Do` with that state using the first reading's symbol. -/
 private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St) : St :=
   match resource cx "XObject" xName with
   | some (.ref xn _) =>
@@ -2400,8 +2050,7 @@ private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St)
               let store := inner.store
               let clips := bboxClip dict cx.doc body store
               let body := if clips.isEmpty then body else #[.group Affine.unit clips Alpha.opaque body]
-              -- The reading is kept as a symbol: a later `Do` of this form
-              -- with this state uses it.
+              -- The reading is kept as a symbol a later `Do` of this form with this state reuses.
               let k := store.symbols.size
               let store := { store with symbols := store.symbols.push body, forms := store.forms.insert key k }
               { st with store } |>.emit (.group Affine.unit #[] alpha #[.use k m])
@@ -2417,8 +2066,6 @@ decreasing_by
 
 end
 
-/-! ## The graphics-state stack -/
-
 /-- One token's reading, as `runToks` takes it. -/
 public def tokStep (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok) : St :=
   match t with
@@ -2426,7 +2073,6 @@ public def tokStep (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok) : St :=
   | .inline dict data => inlineImage cx { st with ops := #[] } dict data
   | .op name => { stepOp cx e name st with ops := #[] }
 
-/-- `runToks` is the fold of `tokStep` over the tokens it has left. -/
 private theorem runToks_foldl (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) :
     ∀ (i : Nat) (st : St), runToks cx e toks i st = (toks.toList.drop i).foldl (tokStep cx e) st := by
   intro i
@@ -2466,7 +2112,6 @@ private theorem inlineImage_saved (cx : Ctx) (st : St) (dict : Array (String × 
     · exact (emit_saved _ _).1
     · rfl
 
-/-- No token but `q` and `Q` touches the stack. -/
 private theorem tokStep_saved (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok)
     (hq : t ≠ .op "q") (hQ : t ≠ .op "Q") : (tokStep cx e st t).saved = st.saved := by
   cases t with
@@ -2481,9 +2126,7 @@ private theorem tokStep_saved (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok
     rw [stepOp]
     simp [h1, h2]
 
-/-- How deep a run of tokens leaves the stack from depth `d`: one deeper at
-each `q`, one shallower at each `Q`; `none` when a `Q` would pop below the
-run's start. -/
+/-- How deep a run of tokens leaves the stack from depth `d`; `none` when a `Q` would pop below the start. -/
 @[expose] public def qDepth? : List Tok → Nat → Option Nat
   | [], d => some d
   | .op n :: ts, d =>
@@ -2493,9 +2136,6 @@ run's start. -/
   | .val _ :: ts, d => qDepth? ts d
   | .inline _ _ :: ts, d => qDepth? ts d
 
-/-- **A run reaches no deeper into the stack than it may** — the entries
-below the `d` it may pop are untouched, and it leaves its final depth's
-worth above them. -/
 private theorem foldl_saved (cx : Ctx) (e : Entered cx.doc) :
     ∀ (ts : List Tok) (d d' : Nat) (st : St), d ≤ st.saved.size → qDepth? ts d = some d' →
       ∃ ext : List (GState × Nat),
@@ -2574,7 +2214,6 @@ private theorem foldl_saved (cx : Ctx) (e : Entered cx.doc) :
       rw [hs] at he
       exact ⟨ext, he, hl⟩
 
-/-- `Q` restores the state the stack's top saved, and pops it. -/
 private theorem tokStep_Q (cx : Ctx) (e : Entered cx.doc) (st : St) (g : GState) (k : Nat)
     (h : st.saved.back? = some (g, k)) :
     (tokStep cx e st (.op "Q")).gs = g ∧ (tokStep cx e st (.op "Q")).saved = st.saved.pop := by
@@ -2582,10 +2221,6 @@ private theorem tokStep_Q (cx : Ctx) (e : Entered cx.doc) (st : St) (g : GState)
   rw [stepOp]
   simp [h]
 
-/-- **A `q … Q` pair restores the graphics state** (`_id`, §8.4.2): reading
-`q`, then a run whose own `q` and `Q` pair up, then `Q`, leaves the graphics
-state, and the stack of states saved before it, as they were — whatever the
-run between painted, clipped, transformed or set. -/
 public theorem gsave_restore_id (cx : Ctx) (e : Entered cx.doc) (inner : List Tok)
     (h : qDepth? inner 0 = some 0) (st : St) :
     let st' := runToks cx e (#[.op "q"] ++ inner.toArray ++ #[.op "Q"]) 0 st
@@ -2614,8 +2249,6 @@ public theorem gsave_restore_id (cx : Ctx) (e : Entered cx.doc) (inner : List To
   simp only [List.foldl_cons, List.foldl_nil]
   exact ⟨hg, by rw [hs, hinner]; simp⟩
 
-/-! ## The words a figure says -/
-
 /-- The text a string's codes mean, in order. -/
 @[expose] public def codesText (codes : Array PdfFont.Code) : String :=
   String.join (codes.toList.map (·.text))
@@ -2640,11 +2273,6 @@ private theorem fold_words (f : St → PdfFont.Code → St)
     · simp [hh]
     · simp [hh, String.join_cons, List.map_cons, String.append_assoc]
 
-/-- **A shown string says its codes' text** (`_exact`, §9.10): a string
-shown in visible content adds to the words, in order, the text each of its
-codes means through the font — its `ToUnicode` entry, else its glyph name —
-and in hidden optional content adds none; reading the font and painting
-the glyphs never touch the words. -/
 public theorem words_exact (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) :
     (showString cx e s st).words = st.words ++
       (match (fontOf cx st).2 with
@@ -2674,10 +2302,6 @@ public theorem words_exact (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st :
       exact ⟨h1, h2⟩
     · simp
 
-/-! ## A page as a figure -/
-
-/-- The optional-content groups a document's default configuration turns
-off (§8.11.4.3). -/
 private def offGroups (doc : Doc) : Array Nat :=
   match (doc.get doc.root).toOption with
   | some (cat, _) =>
@@ -2694,17 +2318,13 @@ private def offGroups (doc : Doc) : Array Nat :=
     | none => #[]
   | none => #[]
 
-/-- What importing a page returns: the figure, and the page's one-based
-number. -/
+/-- An imported page: its figure and its one-based page number. -/
 public structure Imported where
   figure : Figure Run
   page : Nat
   deriving Inhabited
 
-/-- **A content stream read as a figure** where `cx` places it: every
-token read from PDF's initial state (`runToks`), the figure in `cx`'s box,
-clipped to it, its losses named — a page's reading over its resources
-(`importPage`), and what the read-back statement (`readback_id`) reads. -/
+/-- A content stream read as a figure from PDF's initial state, in `cx`'s box and clipped to it. -/
 public def readStream (cx : Ctx) (content : ByteArray) : Figure Run :=
   let toks := PdfContentLex.scan content
   let e : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
@@ -2713,21 +2333,15 @@ public def readStream (cx : Ctx) (content : ByteArray) : Figure Run :=
   { box := cx.box, clipToBox := true, nodes := st.finish, outlines := s.outlines, symbols := s.symbols
     rasters := s.rasters, title := none, losses := s.losses }
 
-/-- A page's content read in its default space as a figure in `box`,
-clipped to it, its losses named. -/
 private def figureOf (doc : Doc) (page : PdfRead.Page) (box : Box) (content : ByteArray) : Figure Run :=
   let res := ((page.resources.map fun r => (doc.deref r).toOption.getD .null)).getD (.dict #[])
   readStream { doc, res, base := Affine.unit, off := offGroups doc, box } content
 
-/-- **A PDF page as a figure** (ISO 32000-2 §8, §9): its box — the page's
-(`Doc.pageBox`), as the PDF backend places it (`PdfRead.readForm`) —
-clipping, its content read in the page's default space, its losses named.
-A rotated page is refused, as the PDF backend refuses it. -/
+/-- A PDF page as a figure in its page box, its losses named; a rotated page is refused. -/
 public def importPage (bytes : ByteArray) (sel : PdfRead.PageSelection := .first) :
     Except String Imported := do
   let doc ← Doc.ofBytes bytes
-  -- §7.6: an encrypted file's strings and streams are ciphertext; reading
-  -- them as content would draw noise.
+  -- §7.6: an encrypted file's strings and streams are ciphertext.
   if (doc.trailer.get? "Encrypt").isSome then
     throw "the PDF is encrypted; its content cannot be read"
   let (num, page) ← doc.page sel
@@ -2736,8 +2350,6 @@ public def importPage (bytes : ByteArray) (sel : PdfRead.PageSelection := .first
   let content ← doc.content page
   return { page := num, figure := figureOf doc page ((x0, y0), (x1, y1)) content }
 
-/-- **The figure's box is the page's** (`_exact`): an imported figure
-stands in the page box (`Doc.pageBox`) of the page it was read from. -/
 public theorem import_box_exact (b : ByteArray) (sel : PdfRead.PageSelection) (imp : Imported)
     (h : importPage b sel = .ok imp) :
     ∃ d n p, Doc.ofBytes b = .ok d ∧ d.page sel = .ok (n, p) ∧
@@ -2771,11 +2383,6 @@ public theorem import_box_exact (b : ByteArray) (sel : PdfRead.PageSelection) (i
               subst h
               exact ⟨d, n, p, rfl, hp, by simp [figureOf, readStream, hb]⟩
 
-/-- **A PDF figure's two faces stand in one box** (`_agree`): the box the
-PDF backend places the page's form in (`PdfRead.readForm`) and the box the
-web face's figure is drawn in — its standalone SVG's viewBox — are one
-reading of the page (`Doc.pageBox`), so the two artifacts reserve the same
-extent and aspect for the figure. -/
 public theorem _root_.LeanTex.Core.Gfx.pdfHtml_box_agree (b : ByteArray) (sel : PdfRead.PageSelection)
     (f : { f : PdfRead.Form // f.wf }) (imp : Imported)
     (hf : PdfRead.readForm b sel = .ok f) (hi : importPage b sel = .ok imp) :

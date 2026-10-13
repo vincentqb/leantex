@@ -4,10 +4,8 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.DecodeLoop
 
-/-- A bounded decoder keeps its continuation state separate from a completed
-answer. Terminal branches must not retain the previous continuation: that
-would share its output buffer across `step` and copy the prefix on append.
-The bound is the format's input or output bound, supplied by its caller. -/
+/-- Runs `step` from `initial` at most `count` times to an answer, else fails with `exhausted`;
+a finished state drops its continuation so the output buffer stays unshared. -/
 @[specialize] public def run {ε σ α : Type} (count : Nat)
     (step : σ → Except ε (Sum α σ)) (initial : σ) (exhausted : ε) : Except ε α :=
   let result := (forIn [0:count] (.inr initial) fun _ state => do
@@ -23,8 +21,7 @@ The bound is the format's input or output bound, supplied by its caller. -/
   | .inl answer => answer
   | .inr _ => .error exhausted
 
-/-- A successful execution trace of the real one-step reader. The final step
-is counted, so the statement includes the decoder's termination budget. -/
+/-- A successful trace of `step`, its final step counted. -/
 inductive Finishes {ε σ α : Type} (step : σ → Except ε (Sum α σ)) :
     σ → Nat → α → Prop
   | done {state answer} (h : step state = .ok (.inl answer)) :
@@ -37,7 +34,6 @@ theorem Finishes.positive {ε σ α : Type} {step : σ → Except ε (Sum α σ)
     {state count answer} (h : Finishes step state count answer) : 0 < count := by
   cases h <;> omega
 
-/-- A successful trace that fits the actual loop bound returns its answer. -/
 theorem run_exact {ε σ α : Type} (step : σ → Except ε (Sum α σ))
     (initial : σ) (answer : α) (count budget : Nat) (exhausted : ε)
     (h : Finishes step initial count answer) (hb : count ≤ budget) :

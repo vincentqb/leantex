@@ -6,79 +6,36 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 import LeanTex.Core.GfxAffine
 
-/-!
-The rendered `tikzpicture` subset: a coordinate system with `scale=`,
-`\fill ... rectangle` with a colour expression, `\node[...] at (x,y) {text}`,
-`\foreach` over a literal list (the `{a,...,b}` range and the `\x/\y` pair
-form included), and `\pgfmathsetmacro`/`\pgfmathtruncatemacro` with the
-arithmetic those need (`+ - * /`, `<`/`>`, parens, `max`/`min`,
-`ifthenelse` with `"..."` string branches). The subset is scoped to what
-one real diagram needs (PLAN M8, the tikz slice): everything is evaluated
-here, at elaboration — loops unrolled, expressions reduced, colours
-resolved through the document palette, `scale=` applied — so the IR
-carries concrete shapes (`Ir.Pic.Shape`) and the backends never see the
-source.
-
-The boundary is named, never silent: a construct outside the subset is
-W0334 (pending — the graphics story continues in M8) naming the construct;
-an expression, range, or colour inside the subset that cannot evaluate is
-E0333 naming it, and only its shape is lost. `\foreach` is total by
-construction: the range's count is decided before its values exist
-(`rangeCount`/`range`, with `range_size`/`range_get` the enumeration
-facts), so a range that would not terminate is a diagnostic, not a hang.
-
-Colour mixes reuse `Palette.resolve` (xcolor's `!` chains) and numbers
-reuse `Decl.parseDecimal`: the evaluator here adds only the arithmetic
-layer neither has.
--/
+/-! The rendered `tikzpicture` subset, evaluated at elaboration into concrete shapes: statements,
+pgfmath arithmetic, loops, colours, paths and nodes. -/
 
 namespace LeanTex.Core.Picture
 
 open LeanTex.Core LeanTex.Core.Dim
 
-/-- A diagnostic the picture walk raises: code and message; the elaborator
-adds the environment's position. -/
+/-- A diagnostic the picture walk raises, positioned later by the elaborator. -/
 public abbrev PDiag := DiagCode × String
 
-/-- **Does the native drawing lose something the document declared?** A
-content loss is one whose floor is not inert (`Loss.floor`): `dropped`,
-`pending` and `degraded` — a shape, a construct or a formula TikZ itself
-would draw. A `standard`, `config` or `info` diagnostic names a decision or
-a standard the declaration already meets, so the boundary would draw the
-same page and routing there would only trade the engine's ink for an
-opaque box. -/
+/-- Whether a diagnostic names a content loss, one whose floor is not inert. -/
 public def namesLoss (ds : Array PDiag) : Bool :=
   ds.any fun d => d.1.floor != .inert
 
-/-- One micro-token of picture source. The lexer's words run punctuation
-together (`++(0.92,0.92);` is one word), so `ofRaws` re-splits them into
-numbers, identifiers, and single symbols; braces arrive pre-matched as
-groups from `Parse.Raw`. -/
+/-- One micro-token of picture source: lexer words re-split into numbers, identifiers and symbols,
+braces as groups. -/
 public inductive Tok where
   | ctrl (name : String)
   | ident (s : String)
-  /-- A number literal, in thousandths (`Decl.parseDecimal`, exact to the
-  milli the subset's arithmetic works in). -/
+  /-- A number literal in thousandths. -/
   | num (milli : Int)
   | sym (c : Char)
   | space
   | group (body : List Tok)
-  /-- A math span (`$X$` in a node body): carried whole and elaborated by
-  the hook the elaborator provides (`Cx.math`) — the picture walk owns no
-  math parser — with the source site of its opener where the reader that
-  converted it can name one (`ofRawsAt`): a picture body's opener where the
-  elaborator locates it, a document style's in the file that wrote the
-  style, and none for a definition the walk re-read from its text. -/
+  /-- A math span, carried whole for the elaborator's math layer, with its opener's source site. -/
   | math (display : Bool) (body : List Parse.Raw) (site : Option Span)
-  /-- Source the subset cannot even tokenise into itself (a nested
-  environment, verbatim): named so the diagnostic can say what stood
-  here. -/
+  /-- Source the subset cannot tokenise, named for its diagnostic. -/
   | other (what : String)
   deriving Repr, BEq, Inhabited
 
-/-- Split one lexer word into micro-tokens: digit runs (with `.`) become
-numbers, letter runs identifiers, everything else single symbols. A `.`
-starts a number only when a digit follows, so `...` stays three symbols. -/
 private def splitWord (acc : Array Tok) (s : String) : Array Tok := Id.run do
   let cs := s.toList.toArray
   let mut out := acc
@@ -123,8 +80,6 @@ public def scopeCtrl : String := "scope env"
 
 mutual
 
-/-- `Parse.Raw` to picture micro-tokens; groups keep their tree, and a math
-span carries the source site `site` gives its opener's position. -/
 private def ofRawList (site : Pos → Option Span) (acc : Array Tok) :
     List Parse.Raw → Array Tok
   | [] => acc
@@ -138,17 +93,14 @@ private def ofRawOne (site : Pos → Option Span) (acc : Array Tok) : Parse.Raw 
   | .sym c _ => acc.push (.sym c)
   | .group body _ => acc.push (.group (ofRawList site #[] body.toList).toList)
   | .math d body p => acc.push (.math d body.toList (site p))
-  -- A `scope` is its body as one group behind a control word a document
-  -- cannot spell (it holds a space): the walk reads its options and
-  -- statements as a TeX group's.
+  -- A scope is its body as one group behind a control word no document can spell.
   | .env "scope" body _ => (acc.push (.ctrl scopeCtrl)).push (.group (ofRawList site #[] body.toList).toList)
   | .env n _ _ => acc.push (.other s!"environment '{n}'")
   | .verb _ _ _ => acc.push (.other "verbatim")
 
 end
 
-/-- Source whose positions `site` places in a file: the one conversion every
-reading shares, so a formula's site is decided where its source is known. -/
+/-- Picture tokens from source whose positions `site` places in a file. -/
 public def ofRawsAt (site : Pos → Option Span) (raws : Array Parse.Raw) : Array Tok :=
   ofRawList site #[] raws.toList
 
@@ -157,27 +109,18 @@ carry no site. -/
 public def ofRaws (raws : Array Parse.Raw) : Array Tok :=
   ofRawsAt (fun _ => none) raws
 
-/-- One document setting (`Compat.tikzsetKeys`): its key lists, whose
-formulas are sited in the file that wrote the setting. A style's formula is
-written there, whichever picture applies it — the attribution a setting's
-own keys take (`Elab.reportPictureKeys`). -/
+/-- A document setting's tokens, its formulas sited in the file that wrote the setting. -/
 public def ofSetting (setting : Span × Array Parse.Raw) : Array Tok :=
   ofRawsAt (fun p => some ⟨setting.1.file, p⟩) setting.2
 
--- Expression evaluation: pgfmath's arithmetic over milli fixed point.
-
-/-- A `\foreach` binding's value: a number in milli, a length in sp — what
-pgfmath calls a value with units declared, a `\pgfmathsetlengthmacro`
-result, or a literal like `0.5cm` — or the raw text of a list item that is
-not one (a label like `alpha`). -/
+/-- A `\foreach` binding's value: a number in milli, a length in sp, or a list item's raw text. -/
 public inductive Val where
   | num (m : Int)
   | len (sp : Sp)
   | str (s : String)
   deriving Repr, BEq, Inhabited
 
-/-- Render a milli value the way pgf prints a macro: an integer without a
-point, otherwise up to three decimals. -/
+/-- A milli value as pgf prints a macro: an integer without a point, else up to three decimals. -/
 public def milliString (m : Int) : String :=
   let neg := m < 0
   let n := m.natAbs
@@ -198,27 +141,21 @@ public def Val.text : Val → String
   | .len sp => lenString sp
   | .str s => s
 
-/-- A literal like `0.5cm` in an expression or a coordinate: its length in
-the engine's one unit system (`Decl.parseLength`, the reader every document
-length goes through), or `none` where the word is no absolute unit —
-font-relative units are the face's and stay out. -/
+/-- A literal like `0.5cm` as a length, or `none` for a font-relative or unknown unit. -/
 public def unitLen? (m : Int) (u : String) : Option Sp :=
   (Decl.parseLength (milliString m ++ u)).bind fun l =>
     if l.em == 0 && l.ex == 0 then some l.sp else none
 
-/-- A unitless milli value read as points, where units are declared beside
-it: pgfmath's rule (`1cm+1` is a centimetre and a point). -/
+/-- A unitless milli value read as points where units are declared beside it, as pgfmath reads it. -/
 public def milliPt (m : Int) : Sp :=
   let n := m * Dim.spPerPt
   if n < 0 then -((-n + 500) / 1000) else (n + 500) / 1000
 
-/-- A length's points in milli: what a length means where a plain number
-is asked (`\pgfmathsetmacro{\x}{2*1cm}` is two centimetres' points). -/
+/-- A length's points in milli, what a length means where a plain number is asked. -/
 public def spMilliPt (sp : Sp) : Int :=
   let n := sp * 1000
   if n < 0 then -((-n + 32768) / 65536) else (n + 32768) / 65536
 
-/-- A token named for a diagnostic. -/
 private def tokText : Tok → String
   | .ctrl n => s!"'\\{n}'"
   | .ident s => s!"'{s}'"
@@ -229,7 +166,6 @@ private def tokText : Tok → String
   | .math _ _ _ => "math"
   | .other what => what
 
-/-- One RPN element of a parsed expression. -/
 private inductive Rp where
   | push (v : Val)
   | neg
@@ -238,8 +174,6 @@ private inductive Rp where
   | fmax | fmin | fite
   deriving Repr, BEq
 
-/-- Operator precedence for the shunting yard; `neg` binds tightest,
-comparisons loosest (pgfmath's ordering). -/
 private def prec : Rp → Nat
   | .neg => 4
   | .mul | .div => 3
@@ -247,13 +181,7 @@ private def prec : Rp → Nat
   | .lt | .gt => 1
   | _ => 0
 
-/-- Evaluate an expression's micro-tokens against the macro environment:
-shunting-yard to RPN, then a stack evaluation — two flat passes, total by
-construction. Values are numbers in milli or strings (`"black"`, an
-`ifthenelse` branch); arithmetic on a string names it. Every failure names
-what stopped it. -/
 private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val := Id.run do
-  -- To RPN. `expectOperand` distinguishes unary minus from subtraction.
   let mut out : Array Rp := #[]
   let mut ops : Array Rp := #[]  -- operators and '(' markers (calls double as markers)
   let mut marks : Array Bool := #[]  -- per '(': is it a function call
@@ -278,8 +206,6 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
       match t with
       | .space => pure ()
       | .num m =>
-        -- A unit after a number makes it a length (pgfmath's units
-        -- declared): `0.5cm`, `1.5pt`.
         match toks[i]? with
         | some (.ident u) =>
           match unitLen? m u with
@@ -307,7 +233,6 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
         | _ => return .error s!"{tokText t} needs '(...)'"
       | .ident name => return .error s!"unknown function or name '{name}'"
       | .sym '"' =>
-        -- A pgfmath string literal: one word between quotes.
         match toks[i]?, toks[i+1]? with
         | some (.ident s), some (.sym '"') =>
           i := i + 2
@@ -330,7 +255,6 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
           expectOperand := false
         | _, _ => return .error "unmatched ')'"
       | .sym ',' =>
-        -- Argument separator: flush to the enclosing call marker.
         let (o2, p2) := flushTo out ops 1
         out := o2
         ops := p2
@@ -380,19 +304,13 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
     if op == .fmax || op == .fmin || op == .fite then
       return .error "unclosed '('"
     out := out.push op
-  -- Evaluate the RPN. Arithmetic wants numbers; a string operand names
-  -- itself. `ifthenelse` is pgfmath's: a nonzero condition picks the
-  -- second argument, zero the third, and the branches may be strings.
   let mut stack : Array Val := #[]
-  -- A value's number and whether units are declared on it: a length in sp,
-  -- a number in milli.
   let q (v : Val) : Except String (Int × Bool) :=
     match v with
     | .num m => .ok (m, false)
     | .len sp => .ok (sp, true)
     | .str s => .error s!"'{s}' where a number is needed"
-  -- Two operands on one scale: where either is a length, both are, a
-  -- unitless one read as points (pgfmath's units declared).
+  -- Where either operand is a length both are, a unitless one read as points (pgfmath).
   let common (a b : Int × Bool) : Int × Int × Bool :=
     if a.2 || b.2 then
       ((if a.2 then a.1 else milliPt a.1), (if b.2 then b.1 else milliPt b.1), true)
@@ -429,8 +347,7 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
             | .add => stack := stack'.push (mk (x + y) l)
             | .sub => stack := stack'.push (mk (x - y) l)
             | .mul =>
-              -- A length times a number scales it; two lengths multiply
-              -- their points, units still declared; two numbers in milli.
+              -- A length times a number scales it; two lengths multiply their points; two numbers, milli.
               let v := if a.2 && b.2 then a.1 * b.1 / 65536 else a.1 * b.1 / 1000
               stack := stack'.push (mk v (a.2 || b.2))
             | .fmax => stack := stack'.push (mk (max x y) l)
@@ -450,8 +367,6 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
   | [] => return .error "empty expression"
   | _ => return .error "malformed expression"
 
-/-- An expression in a place that needs a number: a scale, a count, a test.
-A length there is its points, as pgfmath reads it. -/
 private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
   match evalExpr env toks with
   | .ok (.num m) => .ok m
@@ -459,10 +374,6 @@ private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except Str
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
   | .error e => .error e
 
-/-- A coordinate's component: a number of the picture's unit vector, or a
-length where the expression declares units (TikZ manual §13.2.1: `(1cm,
-2pt)` is a point in lengths, `(1, 2)` one in units of the x and y vectors,
-and `(\h, 1)` mixes the two). -/
 private def evalComp (env : List (String × Val)) (toks : Array Tok) :
     Except String (Int × Bool) :=
   match evalExpr env toks with
@@ -471,11 +382,7 @@ private def evalComp (env : List (String × Val)) (toks : Array Tok) :
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
   | .error e => .error e
 
--- `\foreach` ranges: the count is decided before the values exist.
-
-/-- How many values `{a,...,b}` (step `step`) enumerates: `none` when the
-step is zero or walks away from the bound — the range that would never
-terminate is a diagnostic, not a hang. -/
+/-- How many values `{a,...,b}` with step `step` enumerates; `none` when the range would not terminate. -/
 public def rangeCount (a step b : Int) : Option Nat :=
   if step > 0 && a ≤ b then some (((b - a) / step).toNat + 1)
   else if step < 0 && b ≤ a then some (((a - b) / (-step)).toNat + 1)
@@ -485,13 +392,10 @@ public def rangeCount (a step b : Int) : Option Nat :=
 public def range (a step b : Int) : Option (Array Int) :=
   (rangeCount a step b).map fun n => (Array.range n).map fun i => a + step * Int.ofNat i
 
-/-- The enumeration is exactly its count long. -/
 public theorem range_size (a step b : Int) (n : Nat) (h : rangeCount a step b = some n) :
     (range a step b).map (·.size) = some n := by
   simp [range, h]
 
-/-- The k-th value is `a + step·k`: the range enumerates its arithmetic
-progression exactly, no value skipped or invented. -/
 public theorem range_get (a step b : Int) (xs : Array Int) (hx : range a step b = some xs)
     (i : Nat) (h : i < xs.size) : xs[i] = a + step * i := by
   simp only [range, Option.map_eq_some_iff] at hx
@@ -499,8 +403,6 @@ public theorem range_get (a step b : Int) (xs : Array Int) (hx : range a step b 
   subst hmap
   simp
 
-/-- The brief's instance: `{a,...,b}` in whole units (milli ×1000, the
-default step) enumerates `b − a + 1` values. -/
 public theorem range_unit_size (a b : Int) (hab : a ≤ b) :
     (range (1000 * a) 1000 (1000 * b)).map (·.size) = some ((b - a).toNat + 1) := by
   have hc : rangeCount (1000 * a) 1000 (1000 * b) = some ((b - a).toNat + 1) := by
@@ -510,23 +412,7 @@ public theorem range_unit_size (a b : Int) (hab : a ≤ b) :
     omega
   exact range_size _ _ _ _ hc
 
--- Statements.
-
-/-- How a TeX conditional's test is read. Every control word beginning
-`if` is a conditional opener — TeX's own convention, and what `\newif`
-builds on (TeXbook chapter 20) — but only the arithmetic tests carry a
-shape this walk can compute:
-
-* `num` is `\ifnum`/`\ifdim`, the ⟨number⟩⟨relation⟩⟨number⟩ form, and the
-  `\foreach`-counter idiom;
-* `always` is `\iftrue`/`\iffalse`, whose value is the primitive itself;
-* `opaque` is every other test — `\ifdefined`, `\ifx`, `\ifcase`, a mode
-  test. Their answers are facts about TeX's own state or about a control
-  sequence table this walk does not have, so evaluating them would be
-  *guessing*, and a guessed branch is wrong ink rather than missing ink.
-  They are refused by name, and both branches stay separate so nothing the
-  document did not ask for is drawn.
--/
+/-- How a TeX conditional's test is read: arithmetic, constant, or opaque and refused by name. -/
 public inductive CondKind where
   | num (name : String)
   | always (v : Bool)
@@ -534,20 +420,11 @@ public inductive CondKind where
   | opaque (name : String)
   deriving Repr, BEq, Inhabited
 
-/-- The answer a mode test gives at a picture's statements: pgf builds the
-picture in a horizontal box (`\pgfpicture` sets it with `\hbox`), so there
-TeX is in restricted horizontal mode — `\ifhmode` and `\ifinner` hold,
-`\ifvmode` and `\ifmmode` fail, whatever mode the picture stands in
-(measured against lualatex). -/
 private def pictureMode (n : String) : Option Bool :=
   if n == "ifhmode" || n == "ifinner" then some true
   else if n == "ifvmode" || n == "ifmmode" then some false
   else none
 
-/-- The conditional a control word opens, or `none` where it opens none.
-Keyed on the `if` prefix rather than on a list of primitives, because
-`\newif` lets a document mint `\ifmyflag` and a closed list cannot hold
-those — the same closed-list lesson the boundary's macro closure records. -/
 private def condKindOf (n : String) : Option CondKind :=
   if n == "ifnum" || n == "ifdim" then some (.num n)
   else if n == "iftrue" then some (.always true)
@@ -556,59 +433,40 @@ private def condKindOf (n : String) : Option CondKind :=
   else if n.startsWith "if" && n.length > 2 then some (.opaque n)
   else none
 
-/-- Does the head take no test at all? `\iftrue`/`\iffalse` are their own
-value and the four mode tests read TeX's state (TeXbook chapter 20), so
-the branch begins with the very next token: collecting a test up to a
-space would swallow the branch's first statement, since TeX drops the
-space after a control word before this walk sees it. -/
 private def condTakesNoTest (n : String) : Bool :=
   n == "iftrue" || n == "iffalse" || n == "ifmmode" || n == "ifhmode" ||
     n == "ifvmode" || n == "ifinner"
 
-/-- How a `\pgfmathset…macro` stores its value: as pgfmath prints it
-(`setmacro` — a length's points, units dropped), floored to a whole unit
-(`truncatemacro`), or as a length (`setlengthmacro`, where a unitless value
-reads as points). -/
+/-- How a `\pgfmathset…macro` stores its value: as pgfmath prints it, floored to a whole unit, or
+as a length. -/
 public inductive SetMode where
   | plain
   | trunc
   | length
   deriving Repr, BEq, Inhabited
 
-/-- One parsed picture statement. `fill` and `node` keep their tokenslices — coordinates and options are evaluated per loop iteration, where
-the bindings live. -/
+/-- One parsed picture statement; paths and nodes keep their tokens for evaluation per loop iteration. -/
 public inductive Stmt where
   | fill (toks : Array Tok)
   | node (toks : Array Tok)
   | draw (toks : Array Tok)
-  /-- `\path (a) edge (b);` — a path whose operations draw only where one
-  asks: pgf's `every edge` carries `draw`, so an `edge` operation strokes
-  where a bare `\path ... -- ...` paints nothing. -/
+  /-- `\path (a) edge (b);`: a path whose `edge` operations draw (pgf's `every edge`). -/
   | path (toks : Array Tok)
-  /-- `\useasboundingbox (a) rectangle (b);` — pgf's `\path[use as bounding
-  box]`: a size declaration, not a drawing. The rectangle is the picture's
-  box from here on (pgf manual §15.8). -/
+  /-- `\useasboundingbox`: the rectangle is the picture's box from here on (pgf manual §15.8). -/
   | bbox (toks : Array Tok)
   /-- `\pgfmathsetmacro`, `\pgfmathtruncatemacro` and
   `\pgfmathsetlengthmacro`, by `mode`. -/
   | set (name : String) (expr : Array Tok) (mode : SetMode)
   | foreach (vars : Array String) (list : Array Tok) (body : List Stmt)
-  /-- `\ifnum <num><rel><num> ... \else ... \fi` and its siblings — TeX's
-  conditionals. The test's tokens are kept for evaluation, because a macro
-  it names is bound while the statements run and not while they are parsed;
-  `kind` says which test this is, because only the arithmetic ones are
-  computable here. -/
+  /-- A TeX conditional, its test kept for evaluation where its macros are bound. -/
   | cond (kind : CondKind) (test : Array Tok) (thenS : List Stmt) (elseS : List Stmt)
-  /-- `\coordinate (name) at (…);` — a node of no extent and no text
-  (TikZ manual §17.2.1, the `coordinate` shape): a name to place against. -/
+  /-- `\coordinate (name) at (…);`: a named node of no extent (TikZ manual §17.2.1). -/
   | coordinate (toks : Array Tok)
   /-- `\filldraw[…] …;` — `\path[fill, draw]`. -/
   | filldraw (toks : Array Tok)
-  /-- A TeX group of statements — `{…}`, or `\textcolor{c}{…}` with the
-  colour it sets: what is declared inside stays inside (TeXbook ch. 5). -/
+  /-- A TeX group of statements, or `\textcolor{c}{…}` with its colour; declarations stay inside. -/
   | grouped (color : Option (Array Tok)) (body : List Stmt)
-  /-- `\color{c}`: the current colour for the statements after it in its
-  group — every path's and node's default ink (pgf: the colour `.`). -/
+  /-- `\color{c}`: the default ink for the statements after it in its group. -/
   | setColor (spec : Array Tok)
   /-- A font declaration (`\bfseries`, `\small`): every node's text after
   it in its group sets in it. -/
@@ -616,15 +474,12 @@ public inductive Stmt where
   /-- `\begin{scope}[opts] … \end{scope}` (TikZ manual §12.3.1): a group
   whose options transform its coordinates and set keys for its statements. -/
   | scope (opts : Array Tok) (body : List Stmt)
-  /-- `\shade[…] …;` and `\shadedraw[…] …;` — `\path[shade]` and
-  `\path[shade, draw]`: the path painted with a shading (pgf manual §15.7). -/
+  /-- `\shade` and `\shadedraw`: the path painted with a shading (pgf manual §15.7). -/
   | shade (toks : Array Tok) (draw : Bool)
-  /-- `\clip[…] …;` — `\path[clip]`: what follows it in its scope paints
-  inside the path (pgf manual §15.9). -/
+  /-- `\clip`: what follows in its scope paints inside the path (pgf manual §15.9). -/
   | clip (toks : Array Tok)
   deriving Repr, Inhabited
 
-/-- The `;`-terminated statement kinds the machine collects. -/
 private inductive StKind where
   | fill
   | node
@@ -650,48 +505,24 @@ private def StKind.name : StKind → String
   | .shadedraw => "shadedraw"
   | .clip => "clip"
 
-/-- What the statement machine is in the middle of. -/
 private inductive Mode where
   | top
-  /-- Collecting a `\fill`/`\node`/`\draw` statement's tokens to its `;`. -/
   | stmt (kind : StKind) (acc : Array Tok)
-  /-- After `\pgfmathsetmacro` (or a sibling, by `mode`), expecting `{\name}`. -/
   | sname (mode : SetMode)
-  /-- After `{\name}`, expecting the `{expr}` group. -/
   | sexpr (name : String) (mode : SetMode)
-  /-- After `\foreach`, collecting `\x` or `\x/\y` until `in`. -/
   | fvars (vars : Array String)
-  /-- After `in`, expecting the `{list}` group. -/
   | flist (vars : Array String)
-  /-- After the list, expecting the body: a group, a nested `\foreach`,
-  or one `;`-terminated statement. -/
   | fbody (vars : Array String) (list : Array Tok)
-  /-- After `\textcolor`, expecting the colour's group. -/
   | tcolor
-  /-- After `\textcolor{c}`, expecting the body's group. -/
   | tbody (spec : Array Tok)
-  /-- After `\color`, expecting the colour's group. -/
   | scolor
-  /-- After a `scope`'s control word, expecting its body group. -/
   | scopeBody
-  /-- At a scope body's start: its option bracket, inside it or not. -/
   | scopeHead (bracket : Bool)
-  /-- Recovering from a construct outside the subset: to the next `;`. -/
   | skip
-  /-- After a conditional opener, collecting the test's tokens. TeX
-  terminates a ⟨number⟩ with one optional space, and the second number of
-  an arithmetic test is the last thing the test contains — so that test
-  ends at the first space standing after a relation and at least one token
-  of its right side. A document must write that space for TeX itself, so
-  this is the rule and not an approximation of one. Every other test ends
-  at its first space, which is what a document writes for the same
-  reason. -/
+  /-- After a conditional opener, collecting its test, which ends at the space TeX's number scan needs. -/
   | icond (kind : CondKind) (test : Array Tok) (sawRel : Bool)
   deriving Repr, Inhabited
 
-/-- One conditional whose branch is being collected: which test it is, the
-test's tokens, the statements the branch has taken so far, the statements
-the `then` branch took once `\else` has been seen, and whether it has. -/
 private structure CondFrame where
   kind : CondKind
   test : Array Tok
@@ -703,36 +534,13 @@ private structure CondFrame where
 private structure PSt where
   out : Array Stmt := #[]
   bad : Array PDiag := #[]
-  /-- Enclosing `\foreach` headers whose body is the statement being
-  built, innermost last. -/
   pending : Array (Array String × Array Tok) := #[]
-  /-- Enclosing `\ifnum`s whose branch is being collected, innermost last.
-  A finished statement goes to the innermost frame's current branch rather
-  than to `out`, which is what makes the two branches separate answers
-  instead of one run of statements the evaluator cannot tell apart. -/
   conds : Array CondFrame := #[]
   mode : Mode := .top
-  /-- A scope body's option bracket, as its head read it (`Mode.scopeHead`). -/
   scopeOpts : Array Tok := #[]
-  /-- The font declarations a statement may stand among — the size switches
-  of the document's ladder and the elaborator's declarations, handed down
-  as `Cx.ladder` and `Cx.declStyles` are, so the walk keeps no table of its
-  own: each sets every node after it in its group (`Stmt.setDecl`). -/
   declNames : List String := []
 
-/-- A `\draw`/`\path` statement's subpaths. A path ends at its last
-coordinate, so a `(` standing where an *operation* would begin starts a new
-subpath: `\path (a) edge (b) (c) edge (d);` is two paths, and that is how a
-pgf author writes several edges of one diagram in a single statement (pgf
-manual §14, the path operations). Split here, at the statement machine, so
-each subpath reaches the evaluator as the single chain it already reads; the
-option bracket belongs to the statement, so it rides on every slice.
-
-One slice always comes back, so a statement with no boundary in it is
-unchanged — and a malformed one still reaches the evaluator, which names
-it. -/
 private def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
-  -- The leading option bracket, which every subpath inherits.
   let mut head := 0
   for _ in [0:acc.size + 1] do
     if acc[head]? == some .space then head := head + 1 else break
@@ -748,9 +556,6 @@ private def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
     head := j
   let mut slices : Array (Array Tok) := #[]
   let mut cur : Array Tok := #[]
-  -- Whether the last token that was not a space closed a group at the
-  -- outer level: only there does a following `(` begin a coordinate rather
-  -- than continue one.
   let mut depth := 0
   let mut closed := false
   for k in [head:acc.size] do
@@ -773,14 +578,7 @@ private def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
         | .space => pure ()
         | _ => closed := false
   slices := slices.push cur
-  -- A path may legally *end* at a coordinate: it moves the current point
-  -- and draws nothing (pgf manual §14, the move-to). The split turns such a
-  -- tail into its own slice, and a slice of one coordinate is what the
-  -- evaluator refuses for want of a second endpoint — so dropping the tail
-  -- here is the difference between a no-op and a fatal error on a legal
-  -- statement. Only a *tail among several*: a statement that is nothing but
-  -- a coordinate is still the evaluator's to name, and if every slice is a
-  -- move the whole statement goes through unchanged.
+  -- A path may end at a coordinate, a move that draws nothing (pgf manual §14).
   let moveOnly (s : Array Tok) : Bool := Id.run do
     let ts := s.filter (· != .space)
     unless ts[0]? == some (.sym '(') do return false
@@ -800,10 +598,6 @@ private def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
     if s.isEmpty then none else some (s.foldl Array.push pre)
   return if out.isEmpty then #[acc] else out
 
-/-- Where a finished statement goes: the innermost `\ifnum` frame's current
-branch if one is open, otherwise the picture's own statement list. One sink,
-so a statement cannot reach `out` from inside a branch — which is the whole
-of what keeps a conditional's two sides apart. -/
 private def PSt.emit (st : PSt) (ss : List Stmt) : PSt :=
   match st.conds.back? with
   | none => { st with out := ss.foldl Array.push st.out }
@@ -811,8 +605,6 @@ private def PSt.emit (st : PSt) (ss : List Stmt) : PSt :=
     let f2 : CondFrame := { f with taken := ss.foldl Array.push f.taken }
     { st with conds := st.conds.pop.push f2 }
 
-/-- Close one finished statement: wrap it in every pending `\foreach`
-header (an unbraced body is one statement), emit, reset. -/
 private def PSt.finishMany (st : PSt) (ss : List Stmt) : PSt := Id.run do
   let mut ss := ss
   let mut pending := st.pending
@@ -833,9 +625,6 @@ private def PSt.diag (st : PSt) (code : DiagCode) (msg : String) : PSt :=
 private def PSt.outside (st : PSt) (what : String) : PSt :=
   st.diag .W0334 s!"{what} is outside the rendered picture subset; not drawn"
 
-/-- `\else` on the open frame: the statements collected so far are the
-`then` branch's, and what follows is the `else` branch's. A second `\else`
-is the document's error and is named. -/
 private def PSt.elseHere (st : PSt) : PSt :=
   match st.conds.back? with
   | none => (st.outside "an '\\else' with no conditional open")
@@ -846,8 +635,6 @@ conditional is not drawn"
       let f2 : CondFrame := { f with thenS := f.taken, taken := #[], inElse := true }
       { st with conds := st.conds.pop.push f2 }
 
-/-- `\fi`: close the innermost frame and emit the conditional as one
-statement into whatever sink encloses it. -/
 private def PSt.fiHere (st : PSt) : PSt :=
   match st.conds.back? with
   | none => (st.outside "a '\\fi' with no conditional open")
@@ -857,10 +644,6 @@ private def PSt.fiHere (st : PSt) : PSt :=
     let st := { st with conds := st.conds.pop }
     st.finishMany [.cond f.kind f.test thenS.toList elseS.toList]
 
-/-- Close every conditional still open at the end of the body: an
-unbalanced `\fi` is the document's error, and the statements its branches
-collected may not simply vanish. Each open frame becomes its conditional,
-innermost first, so nothing a branch read is stranded in the parser. -/
 private def PSt.drain (st : PSt) : PSt := Id.run do
   let mut st := st
   for _ in [0:st.conds.size] do
@@ -870,9 +653,6 @@ private def PSt.drain (st : PSt) : PSt := Id.run do
   return st.diag .E0333 "a conditional in this picture is never closed by \
 '\\fi'; its statements are not drawn"
 
-/-- One non-recursive machine step: every case except a `\foreach` body
-group, which `parseToks` handles so the recursion into the group subtree
-stays structural. -/
 private def step (t : Tok) (st : PSt) : PSt :=
   match st.mode with
   | .top =>
@@ -1027,9 +807,6 @@ private def step (t : Tok) (st : PSt) : PSt :=
   | .icond kind test sawRel =>
     let close (st : PSt) : PSt :=
       { st with conds := st.conds.push { kind := kind, test := test }, mode := .top }
-    -- An arithmetic test ends at the space TeX's own ⟨number⟩ scan needs;
-    -- every other test ends at its first space, which is what a document
-    -- writes for the same reason.
     let ready : Bool :=
       match kind with
       | .num _ =>
@@ -1049,11 +826,6 @@ private def step (t : Tok) (st : PSt) : PSt :=
 
 mutual
 
-/-- Parse micro-tokens into statements: one fold, the only recursion into
-pre-matched group subtrees (a `\foreach` body), so totality is structural.
-Anything outside the subset is named (W0334) and skipped to the next `;` —
-never silently dropped, and never able to take the rest of the picture
-with it. -/
 private def parseList : List Tok → PSt → PSt
   | [], st =>
     match st.mode with
@@ -1082,7 +854,6 @@ private def parseTok (t : Tok) (st : PSt) : PSt :=
   | .scopeBody, .group g =>
     let sub := parseList g { declNames := st.declNames, mode := .scopeHead false }
     { st with bad := st.bad ++ sub.bad, mode := .top }.finish (.scope sub.scopeOpts sub.out.toList)
-  -- A scope body's head: its option bracket, or the first statement.
   | .scopeHead false, .group g =>
     let sub := parseList g { declNames := st.declNames }
     { st with bad := st.bad ++ sub.bad, mode := .top }.finish (.grouped none sub.out.toList)
@@ -1093,111 +864,58 @@ private def parseTok (t : Tok) (st : PSt) : PSt :=
 
 end
 
-/-- Evaluation context: the document palette (colour names resolve against
-it), the picture's `scale=`, per mille, the named option bundles its
-`name/.style={...}` options declared, and whether `transform shape` opted
-the nodes into the scale (pgf manual §25.4: transformations do not apply
-to nodes unless `transform shape` is given). -/
+/-- The evaluation context: the palette, the picture's scale and styles, and what the elaborator hands down. -/
 public structure Cx where
   pal : Ir.Palette
   scale : Int := 1000
   styles : List (String × Array Tok) := []
   transformShape : Bool := false
-  /-- What the document's `\tikzset` lines set for every picture in it
-  (`documentOpts`): the outermost bracket every statement inherits, so a
-  key declared once in the preamble — an arrow tip is the motivating one —
-  is read where the statement's own bracket declared nothing. The picture's
-  own entries and the statement's own both beat it (`mergeOpts`). -/
+  /-- The document's `\tikzset` entries, the outermost bracket every statement inherits. -/
   global : Array (Array Tok) := #[]
-  /-- The picture-level option entries its contents inherit: what a style
-  named in `\begin{tikzpicture}[...]` expanded to, and the keys that
-  bracket set itself, already split into entries. Every path and node reads
-  them before its own (`inheritOpts`). -/
+  /-- The picture-level option entries its contents inherit. -/
   opts : Array (Array Tok) := #[]
-  /-- What `every node/.style={...}` declared, split into entries: pgf runs
-  it inside the node's own scope, so it stands between the picture's
-  entries and the node's bracket (`mergeOpts`). -/
+  /-- What `every node/.style` declared, between the picture's entries and the node's own. -/
   everyNode : Array (Array Tok) := #[]
   /-- What `every path/.style={...}` declared: the same level for a path. -/
   everyPath : Array (Array Tok) := #[]
-  /-- What `every text node part/.style={...}` declared: the keys every
-  node's text reads, at the level of `every node`. -/
+  /-- What `every text node part/.style` declared, at the level of `every node`. -/
   everyText : Array (Array Tok) := #[]
-  /-- `node distance`: the separation a relative placement (`right=of a`)
-  puts between the two node centres, vertical then horizontal, as pgf
-  spells the pair. pgf's `positioning` library measures *border* to
-  border; this subset does not measure a node body's extent at all (see
-  the emission note in `evalNode`), so centre to centre is the only
-  separation it can define — a stated approximation, exact where the two
-  nodes carry the same declared extent. Default 1 cm, pgf's own. -/
+  /-- `node distance` between relatively placed nodes' centres, vertical then horizontal; pgf's default 1 cm. -/
   dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
-  /-- Did the *parse* name a construct outside the subset? A declaration
-  the parse skipped is gone before evaluation begins, so a name that then
-  resolves to nothing traces to that gap rather than to the document. Read
-  at the one place a name is resolved, beside `Ev.gapped`. -/
+  /-- Whether the parse named a construct outside the subset, to which an unresolved name then traces. -/
   parseGap : Bool := false
-  /-- How a math span in a node body elaborates: provided by the
-  elaborator, so `{$X$}` renders through the same math layer a
-  paragraph's does — the picture walk owns no math parser. The result is
-  the inline plus any losses the elaboration names. -/
+  /-- How a math span in a node body elaborates, provided by the elaborator. -/
   math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag
-  /-- The one-argument text commands and the style each names
-  (`\textbf` bold, `\emph` emphasis, …): the elaborator's own table, handed
-  down as `math` is, so a text command in a node body means what it means
-  in a paragraph — the picture walk owns no font-axis table, and a second
-  one here would drift from the first. -/
+  /-- The one-argument text commands and the style each names, the elaborator's own table. -/
   argStyles : List (String × Ir.Style) := []
-  /-- The size ladder in force for the document (`Ir.PageSpec.scale`): what
-  a size switch in a node's `font=` or at a label line's start means, per
-  mille of the body — the same step the document's paragraphs set it at,
-  including a venue's read-out redefinition. -/
+  /-- The document's size ladder, per mille of the body. -/
   ladder : List (String × Nat) := Ir.sizeScale
-  /-- The font declarations and the style each names (`\bfseries` bold,
-  `\itshape` italic, …): the elaborator's own table, as `argStyles` is, so
-  a `font=` switch means what the same declaration does in a paragraph. -/
+  /-- The font declarations and the style each names, the elaborator's own table. -/
   declStyles : List (String × Ir.Style) := []
-  /-- The document's body size, passed by the elaborator: the dimension
-  font for relative separation and the size `nodeLineLead` scales. -/
+  /-- The document's body size. -/
   bodySize : Sp := Ir.baseFontSize
-  /-- How a label's content measures at a per-mille size: the face,
-  arriving as a function because the walk has none of its own. The driver
-  resolves it and the elaborator passes it down; the default answers
-  nothing, which is the pre-face behaviour (a node's extent is its declared
-  minimum alone). -/
+  /-- How a label's content measures at a per-mille size, provided by the driver through the elaborator. -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
-  /-- The current colour (pgf's `.`): what a path strokes and fills and a
-  node's text sets in where no key names a colour — black, until a
-  `\color` or a `\textcolor` group sets it. -/
+  /-- The current colour (pgf's `.`), black until `\color` or `\textcolor` sets it. -/
   ink : Ir.Color := Ir.Color.black
-  /-- The font declarations in force, innermost last (`Stmt.setDecl`): a
-  node's text sets in them before its own `font=`. -/
+  /-- The font declarations in force, innermost last. -/
   decls : Array String := #[]
-  /-- The coordinate transformation in force (pgf's): the map from the
-  points a statement spells, in sp, to the picture's canvas — the identity
-  until a scope moves, scales or turns it, or a tree child stands
-  somewhere. Where a node with no `at` stands is its image of the origin. A
-  named node's point is the canvas's and never moves. -/
+  /-- The coordinate transformation in force, from the points a statement spells to the canvas. -/
   xf : Gfx.Affine := Gfx.Affine.unit
-  /-- Does the document load arrows.meta? Then `To`, and so the `->`
-  shorthand's heads, is its Computer Modern arrow (`tipKindOf`). -/
+  /-- Whether the document loads arrows.meta, which makes `To` its Computer Modern arrow. -/
   metaArrows : Bool := false
 
-/-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
-scale. One multiplication, one rounding division. -/
+/-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared scale. -/
 public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
   m * cx.scale * Dim.mm 10 / 1000000
 
-/-- The size the declarations in force set a node's text at, per mille of
-the body, under the node's own factor: the innermost size step of the
-document's ladder among them — one written in the picture (`Stmt.setDecl`)
-or around it (`elabPicture`'s `outerDecls`) — as a node, on a path or on
-its own, sets in the font current where it stands. -/
+/-- The size the declarations in force set a node's text at, per mille of the body, under the
+node's own factor. -/
 public def Cx.declScale (cx : Cx) (factor : Nat) : Nat :=
   let declSize : Option Nat :=
     cx.decls.foldl (fun z n => (cx.ladder.lookup n).orElse fun _ => z) none
   (declSize.map fun k => k * factor / 1000).getD factor
 
-/-- A rational to the nearest `Sp`, half up. -/
 private def roundRat (q : Rat) : Sp := (q + 1 / 2).floor
 
 /-- A point a statement spells, in sp, on the canvas (`Cx.xf`). -/
@@ -1215,14 +933,10 @@ public def Cx.placeVec (cx : Cx) (x y : Sp) : Sp × Sp :=
 rectangle stays a rectangle and an ellipse an axis-aligned one? -/
 public def Cx.axisAligned (cx : Cx) : Bool := cx.xf.b == 0 && cx.xf.c == 0
 
-/-- A coordinate component in sp (`evalComp`): a number of the 1 cm unit
-vector, or a length — both through the declared scale, since a
-transformation moves every coordinate, with units or without. -/
+/-- A coordinate component in sp: a number of the 1 cm unit vector or a length, both through the scale. -/
 public def Cx.compSp (cx : Cx) (v : Int × Bool) : Sp :=
   if v.2 then v.1 * cx.scale / 1000 else cx.toSp v.1
 
-/-- Split on a separator symbol at zero paren depth (groups are subtrees,
-so only `(`/`)` count). -/
 private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) := Id.run do
   let mut out : Array (Array Tok) := #[]
   let mut cur : Array Tok := #[]
@@ -1239,19 +953,6 @@ private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) := Id.r
     | _ => cur := cur.push t
   return out.push cur
 
-/-- A style body read once, at the definition: its entries as written, with
-a reference to a bundle *already defined* spliced in place of its name.
-
-**Expansion is at the definition, never at the use.** pgf's own model is
-textual — a style's body is re-read as keys where the style is applied —
-and a body that names another style would then have to be expanded again,
-with no bound on the depth and no bound at all on a body that names
-itself. So the splice happens here, once, and a use site expands exactly
-one level whatever the nesting depth. A style that names itself, or any
-cycle of styles, therefore finds nothing to splice and keeps its own name
-as a literal key — which the option loop that reads it then names as a key
-outside the subset (W0334), never silently dropped and never chased. No
-fuel, no fixed point: the recursion does not exist. -/
 private def expandBody (styles : List (String × Array Tok)) (g : List Tok) :
     Array Tok := Id.run do
   let mut expanded : Array Tok := #[]
@@ -1265,33 +966,10 @@ private def expandBody (styles : List (String × Array Tok)) (g : List Tok) :
     | _ => expanded := expanded ++ part
   return expanded
 
-/-- Fold one `name/.style={...}` definition into the bundles already read,
-newest first, so an inner definition shadows an outer one of the same name
-(pgf scopes keys; a picture's own `[...]` is inside the document's
-`\tikzset`). The body is read by `expandBody`, which is where the
-termination property lives. -/
 private def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     List (String × Array Tok) :=
   (n, expandBody styles g) :: styles
 
-/-- Fold one `name/.append style={...}` definition in: pgf's own reading is
-that the keys are *added* to the bundle of that name rather than replacing
-it, so the prior body stands and the new entries follow it. Where both
-bodies set a key the option loops assign — a colour, a dash, a shape — the
-appended value is the one read last and stands; the `minimum` family is the
-exception this subset carries, since it accumulates by maximum within one
-bracket and a style body is one bracket, so appending a *smaller* minimum
-leaves the larger one standing.
-
-Termination is the same property `expandBody` has, for the same reason: the
-new entries are spliced against the bundles *already defined*, once, at the
-definition. Appending is one concatenation on top of that splice, so a use
-site still expands exactly one level. A style appending to itself
-(`a/.append style={a}`) therefore resolves the reference to the body `a`
-already had — a finite array — and yields that body twice over; nothing is
-chased, and the option loop reads the same keys it read before. Appending
-to a name nothing defined defines it, which is the reading that applies the
-keys the document asked for. -/
 private def appendStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     List (String × Array Tok) :=
   let added := expandBody styles g
@@ -1302,47 +980,26 @@ private def appendStyle (styles : List (String × Array Tok)) (n : String) (g : 
     else (n, prior.push (.sym ',') ++ added) :: styles
   | none => (n, added) :: styles
 
-/-- Where a declared arrow tip is kept: one bundle environment carries the
-definitions, because the elaborator hands the reader one list, and a tip is
-not an option bundle — so its slot is a name no key list can spell (a key
-path is idents, joined by single spaces). -/
 private def tipKey (n : String) : String := ".tip " ++ n
 
-/-- Fold one `name/.tip={...}` declaration in. The body is kept as written
-and never re-read as keys: it is an arrow-tip construction, not an option
-bundle, so there is nothing here to expand and nothing to chase. -/
 private def declareTip (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     List (String × Array Tok) :=
   (tipKey n, g.toArray) :: styles
 
-/-- The name of the `every node` level, and of the `every path` level: the
-two key paths the option loops read (pgf manual §12.4.1 — every X is
-executed inside the X's own scope). -/
 private def everyNodeKey : String := "every node"
 private def everyPathKey : String := "every path"
-/-- The style the text part of every node runs (tikz.code.tex): the keys a
-node's text reads, such as `align=`. -/
 private def everyTextKey : String := "every text node part"
 
-/-- Is this token that symbol? A structural match rather than `==`, which
-for a recursive inductive's derived `BEq` is compiled by well-founded
-recursion and reduces for nothing — so a statement about where a run splits
-could not be proved through it. The predicate is the factorization the
-proof asked for, and it decides exactly what the comparison did. -/
 private def isSym (c : Char) : Tok → Bool
   | .sym d => d == c
   | _ => false
 
-/-- Split a token list at the first occurrence of a symbol, keeping neither
-side's separator. -/
 private def splitSym (c : Char) : List Tok → Option (List Tok × List Tok)
   | [] => none
   | t :: rest =>
     if isSym c t then some ([], rest)
     else (splitSym c rest).map fun (pre, post) => (t :: pre, post)
 
-/-- `splitSym` at a separator the run before it does not contain: the split
-is exactly that run and the rest. -/
 private theorem splitSym_append (c : Char) : ∀ (q r : List Tok),
     (∀ t ∈ q, isSym c t = false) → splitSym c (q ++ (.sym c :: r)) = some (q, r)
   | [], r, _ => by simp [splitSym, isSym]
@@ -1352,36 +1009,16 @@ private theorem splitSym_append (c : Char) : ∀ (q r : List Tok),
     simp only [List.cons_append, splitSym, ht, Bool.false_eq_true,
       splitSym_append c q r hq, Option.map_some, ite_false]
 
-/-- A run of idents read as one name, joined the way pgf spells it. An
-*arrow tip*'s name only: a tip is not a key path (`tipKey`), so its
-spelling is deliberately the narrow one — the tip vocabulary pgf's
-`arrows` libraries declare is identifiers, and admitting more would turn a
-malformed spec into a plausible tip name. Key paths read through
-`keyName`. -/
 private def identPath : List Tok → Option String
   | [.ident n] => some n
   | .ident n :: rest => (identPath rest).map fun s => n ++ " " ++ s
   | _ => none
 
-/-- Is this token's text a run of key-name *word* characters? `splitWord`
-takes letter runs and digit runs greedily, so two word tokens can only be
-adjacent across a space the entry filter removed — which is how `keyName`
-puts the space back. -/
 private def wordTok : Tok → Bool
   | .ident _ => true
   | .num _ => true
   | _ => false
 
-/-- One token's own characters as a key name spells them, or `none` where
-the token is not part of a name at all.
-
-pgf's key-name grammar (manual §87.2, "The Key Tree"): a key is a path,
-`/` separates its components, `.` introduces a handler, `,` separates
-entries in a list and `=` starts a value. **Every other character is the
-name's** — which is why `-`, `:`, `@` and digits belong to it, and why a
-grammar written as "a run of identifiers" is not the grammar but a guess
-about it. A group, a math span, a control word and unreadable source are
-not characters and end a name here. -/
 private def keyTokText : Tok → Option String
   | .ident s => some s
   | .num m => some (milliString m)
@@ -1389,17 +1026,7 @@ private def keyTokText : Tok → Option String
   | .sym c => if c == '/' || c == ',' || c == '=' then none else some (String.singleton c)
   | .ctrl _ | .group _ | .math _ _ _ | .other _ => none
 
-/-- A key path's name, in pgf's own grammar: every token's characters, with
-the space restored between two adjacent word tokens (an entry's spaces are
-filtered before it is read, so `every node` and `every  node` arrive here
-alike) and the surrounding space stripped, as pgfkeys strips it.
-
-**One reader for both ends.** A name is stored under this and looked up
-under this — `readDef` for the declaration, `expandOpts` for the use,
-`keyPath` for the vocabularies the option loops match against — which is
-what `styleName_agree` pins. The defect that made it one function was a
-name cut at its first hyphen: stored under nothing, named as a dropped key
-under its first component, and unfound at every bracket that used it. -/
+/-- A key path's name in pgf's grammar, the one reader for both a definition and its use. -/
 public def keyName (ts : List Tok) : Option String := Id.run do
   let mut out := ""
   let mut prevWord := false
@@ -1413,26 +1040,16 @@ public def keyName (ts : List Tok) : Option String := Id.run do
   let name := out.trimAscii.toString
   return if name.isEmpty then none else some name
 
-/-- The styles a tree reads by name (TikZ manual §21.4): `level` (with the
-level as its argument), `level <n>`, `edge from parent`, `every child` and
-`every child node`. -/
 private def treeStyleKey (n : String) : Bool :=
   n == "level" || n == "edge from parent" || n == "every child" || n == "every child node" ||
     (match n.splitOn " " with
      | ["level", k] => !k.isEmpty && k.all Char.isDigit
      | _ => false)
 
-/-- A key path this reader can honour: a single word, which an option
-bracket can apply by name, or one of the three `every X` levels the option
-loops read. Any other path (`every label`, a two-word name no bracket can
-spell) is left unread, so the line that wrote it names the loss — storing a
-bundle nothing will ever look up would drop it in silence. -/
 private def readableKey (n : String) : Bool :=
   n == everyNodeKey || n == everyPathKey || n == everyTextKey || treeStyleKey n ||
     !n.contains ' '
 
-/-- One definition entry as a key path, a handler name, and the handler's
-group: `every node/.style={draw}` reads as `every node`, `style`, `draw`. -/
 private def readDef (entry : List Tok) : Option (String × String × List Tok) := do
   let (path, rest) ← splitSym '/' entry
   let name ← keyName path
@@ -1445,11 +1062,6 @@ private def readDef (entry : List Tok) : Option (String × String × List Tok) :
     | _ => none
   | _ => none
 
-/-- Fold one definition entry into the bundles, or refuse it: `none` where
-the entry is not a definition at all, or names a handler or a key path
-outside the subset. The one router both a document's `\tikzset` and a
-picture's own bracket go through, so the two cannot differ about what a
-definition means. -/
 private def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) :
     Option (List (String × Array Tok)) :=
   match readDef entry with
@@ -1461,37 +1073,6 @@ private def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) 
     if readableKey n then some (declareTip styles n g) else none
   | _ => none
 
-/-- **The name a definition stores is the name a use looks up.** One reader
-answers both ends of a bundle's life, so a key name the document writes is
-the key name the walk reads — for every name pgf's grammar admits, not for
-an enumerated few.
-
-This is the declaration side, stated where it is computable: the name
-`readDef` keys a `/.style` entry on is exactly `keyName` of the entry's
-path, whatever characters that path is spelled with. The use side is
-`expandOpts`, which looks the bundle up under `keyName` of the entry's own
-tokens *by construction* — one line of its body, and a reader that gave it
-a pattern of its own instead would have to delete this docstring to do it.
-That half is checked rather than proved (`pictureHyphenKeyChecks`, read off
-`Layout.Out`): the pipeline between the two runs a comma split and a space
-filter over a token array, and stating their composition needs an invariant
-carried through two `Id.run` loops that the fact itself never mentions —
-the factorization is noted and not taken here.
-
-The hypotheses are pgf's own grammar restated (manual §87.2): a name
-carries no path separator, and a handler's own path no value separator.
-They restrict nothing this reader accepts — `keyName` answers `none` on
-either character regardless — they are what lets the two splits be
-computed. The handler rides as a token run rather than a literal, because
-the conclusion is about the *name* and holds whichever handler follows it —
-whichever handler *reads*, which is the third hypothesis: an entry whose
-handler is not a name is no definition, and this says nothing about it.
-
-The defect it closes: `-` is an ordinary key-name character, the reader
-admitted identifier runs only, and a declaration written `edge-muted` was
-stored under nothing, reported as a dropped key `edge`, and found by no
-bracket that used it. Nineteen uses of four such names in one figure read
-as one dropped key. -/
 private theorem styleName_agree (p handler g : List Tok)
     (hp : ∀ t ∈ p, isSym '/' t = false)
     (hh : ∀ t ∈ handler, isSym '=' t = false)
@@ -1503,11 +1084,6 @@ private theorem styleName_agree (p handler g : List Tok)
   · cases h : keyName p <;>
       simp [readDef, splitSym_append '/' p _ hp, splitSym_append '=' handler _ hh, h, hk]
 
-/-- The tip name an arrow spec ends in, where the spec is one this subset
-draws: `-name`, `-{name}`, or `->`. A declared tip draws the engine's own
-arrow head, the way `latex` already does — pgf manual §16 names many tip
-kinds and this subset has one head to draw them with, so the substitution
-is the established one, not a new claim. -/
 private def tipName : List Tok → Option String
   | [.group g] => identPath (g.filter (· != .space))
   | ts => identPath ts
@@ -1517,11 +1093,6 @@ private def arrowTipName : List Tok → Option String
   | [.sym '-', t] => tipName [t]
   | _ => none
 
-/-- An arrow specification's two ends (pgf manual §16.2, `⟨start⟩-⟨end⟩`):
-the tip each end draws, `none` where it draws none — `<` and `>` the
-shorthand's own heads, so `<-` is a tip at the start and `<->` one at
-each end. `none` where the tokens are no arrow specification; a bare `-`
-is one, with no tip at either end. -/
 private def arrowSpec (ts : List Tok) : Option (Option String × Option String) :=
   let isDash : Tok → Bool := fun t => t == .sym '-'
   (ts.findIdx? isDash).bind fun k =>
@@ -1537,12 +1108,6 @@ private def arrowSpec (ts : List Tok) : Option (Option String × Option String) 
     | some a, some b => some (a, b)
     | _, _ => none
 
-/-- The tips the subset draws, each by its own declaration: pgf's `to`, what
-the `->` shorthand draws (pgfcorearrows.code.tex: `<-> /.tip = {To}`,
-`To /.tip = to`); arrows.meta's `Computer Modern Rightarrow`, what it draws
-where the document loads arrows.meta (`To /.tip = {Computer Modern
-Rightarrow}`); pgf's `latex` and `stealth`; and arrows.meta's `Latex` and
-`Stealth` at their defaults. -/
 private inductive TipKind where
   | to
   | cmRightarrow
@@ -1552,9 +1117,6 @@ private inductive TipKind where
   | stealth
   deriving BEq
 
-/-- The tip a name draws, `none` for a name no declaration here gives;
-`metaLib` says the document loads arrows.meta, which makes `To` — and so the
-shorthand's heads — the Computer Modern arrow. -/
 private def tipKindOf (metaLib : Bool) : String → Option TipKind
   | ">" | "<" | "To" => some (if metaLib then .cmRightarrow else .to)
   | "to" => some .to
@@ -1565,17 +1127,13 @@ private def tipKindOf (metaLib : Bool) : String → Option TipKind
   | "Stealth" => some .stealth
   | _ => none
 
-/-- The names a group of a preamble line lists: the text between the first
-`{` and the next `}`, split at commas, each trimmed. -/
 private def groupNames (line : String) : List String :=
   match line.splitOn "{" with
   | _ :: rest :: _ =>
     ((rest.splitOn "}").headD "").splitOn "," |>.map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   | _ => []
 
-/-- The TikZ libraries a picture preamble loads (`Compat.boundaryScan`'s
-lines): every `\usetikzlibrary` line's names, and `cd` for a load of the
-tikz-cd package, whose file runs `\usetikzlibrary{cd}` (tikz-cd.sty). -/
+/-- The TikZ libraries a picture preamble loads, with `cd` for a load of tikz-cd. -/
 public def preambleLibraries (pre : String) : List String :=
   (pre.splitOn "\n").flatMap fun line =>
     let line := line.trimAscii.toString
@@ -1588,27 +1146,16 @@ public def preambleLibraries (pre : String) : List String :=
       if (groupNames pkgLine).contains "tikz-cd" then ["cd"] else []
     else []
 
-/-- **Does the preamble make `->` arrows.meta's Computer Modern arrow?**
-arrows.meta itself, or the cd library, which loads it
-(tikzlibrarycd.code.tex: `\usetikzlibrary{matrix,quotes,arrows.meta}`), so a
-document that loads tikz-cd draws every picture's `->` with that head. -/
+/-- Whether the preamble makes `->` arrows.meta's Computer Modern arrow: arrows.meta itself, or the
+cd library. -/
 public def metaArrowsOf (pre : String) : Bool :=
   (preambleLibraries pre).any fun l => l == "arrows.meta" || l == "cd"
 
-/-- Does a name draw as one of this subset's arrow heads? A tip the document
-declared with `/.tip`, or one the subset draws by its own declaration
-(`tipKindOf`). Anything else stays outside the subset and is named, which
-is what keeps a tip kind it does not draw a visible loss rather than a
-silent head of the wrong shape. -/
 private def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
   (tipKindOf false n).isSome || (styles.lookup (tipKey n)).isSome
 
-/-- Read a `\tikzset` key list: every definition entry this reader knows
-folds into the bundles, in source order so a later definition may name an
-earlier one. Every other entry comes back unread — `/.tip`, `/.append
-style`, a bare key — for the caller to name at the line that wrote it,
-which is where such a diagnostic belongs: the line is the document's, not
-any one picture's. -/
+/-- Reads a `\tikzset` key list: known definitions fold into the bundles in order, every other
+entry comes back unread. -/
 public def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok) :
     List (String × Array Tok) × Array (Array Tok) := Id.run do
   let mut styles := styles
@@ -1623,37 +1170,21 @@ public def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok
       | other => unread := unread.push other.toArray
   return (styles, unread)
 
-/-- The bundles a document's `\tikzset` lines define, folded in source
-order: what every picture in it starts from. -/
+/-- The bundles a document's `\tikzset` lines define, folded in source order. -/
 @[expose] public def documentStyles (sets : Array (Array Tok)) : List (String × Array Tok) := Id.run do
   let mut styles : List (String × Array Tok) := []
   for keys in sets do
     styles := (readStyleList styles keys).1
   return styles
 
-/-- The name before an entry's `=`, in pgf's key-name grammar: what
-`unreadKeys` and the placement reader both name an entry by. The same
-reader the declaration stores under (`keyName`), so a vocabulary match and
-a bundle lookup cannot disagree about what an entry is called. -/
 private def keyPath (toks : List Tok) : String :=
   (keyName (toks.takeWhile (· != .sym '='))).getD ""
 
-/-- The keys this subset reads outside a style definition, so a `\tikzset`
-line that sets one is read rather than named as dropped. -/
 private def engineKeyNames : List String := ["node distance"]
 
-/-- Does this entry set a key the engine reads? -/
 private def setsEngineKey (entry : Array Tok) : Bool :=
   engineKeyNames.contains (keyPath entry.toList)
 
-/-- Split an option bracket into entries and expand a declared bundle's
-name one level into the bundle's own entries. One level is all a use site
-needs: `addStyle` spliced any nested bundle in at the definition.
-
-The name is read with `keyName`, the one reader a definition is stored
-under, so every name pgf's grammar admits is looked up whole. An entry
-carrying a value is no bundle use — `keyName` stops at the `=` and answers
-`none` — so a key and a bundle of the same name cannot be confused. -/
 private def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok) :
     Array (Array Tok) := Id.run do
   let mut opts : Array (Array Tok) := #[]
@@ -1663,9 +1194,7 @@ private def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok)
     | none => opts := opts.push opt
   return opts
 
-/-- The key an option entry sets: its tokens up to the `=`, so `draw` and
-`draw=red` name one key as they do in pgf, and `minimum size=8mm` names
-`minimum size`. -/
+/-- The key an option entry sets: its tokens up to the `=`. -/
 public def optKey (opt : Array Tok) : String := Id.run do
   let mut s := ""
   for t in opt do
@@ -1673,26 +1202,12 @@ public def optKey (opt : Array Tok) : String := Id.run do
     unless t == .space do s := s ++ tokText t
   return s
 
-/-- Merge the picture's inherited entries with a path's or node's own.
-
-**The inner setting wins, exactly.** The inherited entries come first, and
-an inherited entry whose key the inner bracket also names is dropped
-rather than merely overwritten — so `\begin{tikzpicture}[thin]` with
-`\draw[thick]` strokes thick, pgf's rule, and it holds for every key
-including those this subset accumulates rather than assigns: a `minimum
-size` takes a maximum *within* one bracket, so an inherited one left in
-place would beat a smaller inner one. Keys whose names differ compose
-exactly as they would written in one bracket, the picture's first.
-
-The two facts are `inherit_inner_exact` and `inherit_covers`; they are of
-this reader, not of either artifact, because a picture's keys are consumed
-here and never reach the IR. -/
+/-- The picture's inherited entries merged with a path's or node's own, an inherited entry the
+inner bracket renames dropped. -/
 public def inheritOpts (outer inner : Array (Array Tok)) : Array (Array Tok) :=
   let names := inner.map optKey
   outer.filter (fun o => !names.contains (optKey o)) ++ inner
 
-/-- Precedence: an entry in the merge whose key some inner entry also names
-is the inner bracket's own. -/
 public theorem inherit_inner_exact {outer inner : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ inheritOpts outer inner)
     (hk : ∃ e ∈ inner, optKey e = optKey o) : o ∈ inner := by
@@ -1703,13 +1218,11 @@ public theorem inherit_inner_exact {outer inner : Array (Array Tok)} {o : Array 
     exact absurd hek (hp e he)
   · exact h
 
-/-- Nothing the inner bracket said is lost to the merge. -/
 public theorem inherit_covers {outer inner : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ inner) : o ∈ inheritOpts outer inner := by
   simp only [inheritOpts, Array.mem_append]
   exact Or.inr h
 
-/-- The merge invents nothing: every entry came from one of the two sides. -/
 public theorem inherit_mem {outer inner : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ inheritOpts outer inner) : o ∈ outer ∨ o ∈ inner := by
   simp only [inheritOpts, Array.mem_append, Array.mem_filter] at hm
@@ -1717,37 +1230,16 @@ public theorem inherit_mem {outer inner : Array (Array Tok)} {o : Array Tok}
   · exact Or.inl h
   · exact Or.inr h
 
-/-- The four levels one bracket's entries are read under, outermost first.
-
-**document < picture < every X < the bracket's own.** pgf executes a
-`\tikzset` key list in the scope it stands in, so a key set once in the
-preamble is set for every picture; a picture's keys are set in the
-picture's scope, inside that; an `every node`/`every path` style is
-executed inside the node's or path's own scope, which is inside the
-picture's; and the bracket's own keys are read there too, after it. So each
-level beats the ones outside it and loses to the ones inside — and because
-each is an `inheritOpts`, a key a later level names is *dropped* from the
-earlier one rather than merely preceded by it: the `minimum` family
-accumulates by maximum within one bracket, so a surviving document-level
-`minimum size=12mm` would beat an inner `4mm` and draw the opposite of what
-the node says.
-
-`merge_own_exact`, `merge_every_exact` and `merge_picture_exact` are the
-three boundaries, `merge_covers` that nothing the bracket said is lost, and
-`merge_global_covers` that a key set once for the document reaches a
-bracket that renamed nothing. -/
+/-- One bracket's entries under its four levels, document < picture < every X < its own, each
+beating those outside it. -/
 public def mergeOpts (global picture every own : Array (Array Tok)) : Array (Array Tok) :=
   inheritOpts (inheritOpts (inheritOpts global picture) every) own
 
-/-- Precedence, innermost level: an entry whose key the bracket's own also
-names is the bracket's own. -/
 public theorem merge_own_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ own, optKey e = optKey o) : o ∈ own :=
   inherit_inner_exact hm hk
 
-/-- Precedence, third level: an entry whose key `every X` names and the
-bracket's own does not is the `every X` style's. -/
 public theorem merge_every_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ every, optKey e = optKey o)
@@ -1756,10 +1248,6 @@ public theorem merge_every_exact {global picture every own : Array (Array Tok)} 
   · exact inherit_inner_exact h hk
   · exact absurd ⟨o, h, rfl⟩ ho
 
-/-- Precedence, second level: an entry whose key the picture names and
-neither inner level does is the picture's, not the document's. Without this
-the outermost level could shadow the picture's own and the boundaries
-further in would not notice. -/
 public theorem merge_picture_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ picture, optKey e = optKey o)
@@ -1771,13 +1259,10 @@ public theorem merge_picture_exact {global picture every own : Array (Array Tok)
     · exact absurd ⟨o, h2, rfl⟩ he
   · exact absurd ⟨o, h, rfl⟩ ho
 
-/-- Nothing the bracket's own entries said is lost to any outer level. -/
 public theorem merge_covers {global picture every own : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ own) : o ∈ mergeOpts global picture every own :=
   inherit_covers h
 
-/-- Nothing the outer level said is lost where no inner entry names its
-key: the level survives the filter, not only the append. -/
 public theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ outer) (hk : ∀ e ∈ inner, optKey e ≠ optKey o) :
     o ∈ inheritOpts outer inner := by
@@ -1787,10 +1272,6 @@ public theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array
     decide_eq_false_iff_not, Array.mem_map, not_exists, not_and]
   exact fun e he => hk e he
 
-/-- Precedence, third level from the outside: what the picture set reaches
-the merge where neither later level names its key. Without this the
-picture's entries could be dropped wholesale and the boundary facts would
-still hold. -/
 public theorem merge_picture_covers {global picture every own : Array (Array Tok)}
     {o : Array Tok}
     (h : o ∈ picture) (he : ∀ e ∈ every, optKey e ≠ optKey o)
@@ -1798,13 +1279,6 @@ public theorem merge_picture_covers {global picture every own : Array (Array Tok
     o ∈ mergeOpts global picture every own :=
   inherit_outer_covers (inherit_outer_covers (inherit_covers h) he) ho
 
-/-- **A key the document set for every picture is set on this bracket.** The
-outermost level reaches the merge wherever no level inside it names that
-key — so an arrow tip declared once in the preamble is read at an edge that
-carries no bracket of its own, exactly as if the edge had carried it. The
-statement the arrowhead defect needed: before it the entry was dropped
-between the `\tikzset` line and the picture, and every edge relying on it
-was drawn headless. -/
 public theorem merge_global_covers {global picture every own : Array (Array Tok)}
     {o : Array Tok}
     (h : o ∈ global) (hp : ∀ e ∈ picture, optKey e ≠ optKey o)
@@ -1813,23 +1287,14 @@ public theorem merge_global_covers {global picture every own : Array (Array Tok)
     o ∈ mergeOpts global picture every own :=
   inherit_outer_covers (inherit_outer_covers (inherit_outer_covers h hp) he) ho
 
-/-- An option entry named for a diagnostic: its whole key, as pgf reads
-`key=value` (`text width`, not `text`), else its first token. The first
-token alone reported three different dropped keys as one supported-looking
-`'text'`, one site where there were three. -/
 private def optName (opt : List Tok) : String :=
   let key := keyPath opt
   if key.isEmpty then (opt.head?.map tokText).getD "an empty option" else s!"'{key}'"
 
-/-- A picture-level key outside the subset, named at the bracket that
-wrote it. -/
 private def outsideOpt (opt : List Tok) : PDiag :=
   (.W0334, s!"picture option {optName opt} is outside the \
 rendered picture subset; the option is dropped")
 
-/-- Substitute macros into a colour spelling and hand it to
-`Palette.resolve`, the engine's one `!`-mix parser. A computed percentage
-rounds to the whole percent xcolor's grammar takes. -/
 private def evalColor (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
     Except String Ir.Color := Id.run do
   let pct (m : Int) : Except String String :=
@@ -1859,8 +1324,6 @@ private def evalColor (cx : Cx) (env : List (String × Val)) (toks : Array Tok) 
   | some c => return .ok c
   | none => return .error s!"colour '{s}' does not resolve against the palette"
 
-/-- The balanced contents of one coordinate, shared by numeric, named and
-calc endpoints. Arithmetic function calls may nest inside it. -/
 private def readCoordBody (toks : Array Tok) (i : Nat) :
     Except String (Array Tok × Nat) := Id.run do
   unless toks[i]? == some (.sym '(') do
@@ -1891,18 +1354,11 @@ private def readCoord (toks : Array Tok) (i : Nat) :
   | [xs, ys] => return ((xs, ys), next)
   | _ => throw "a coordinate needs exactly 'x, y'"
 
--- Border anchoring: where an edge meets a node's outline — pgf's
--- `\pgfpointshapeborder`, in closed form per shape.
-
 /-- Integer square root of an `Int` (callers pass sums of squares). -/
 public def isqrt (n : Int) : Int := (Nat.sqrt n.toNat : Nat)
 
-/-- Where the ray from a rectangle's centre `(cx, cy)` (half-extents
-`a`, `b`) toward `(qx, qy)` crosses its border — `\pgfpointshapeborder`
-for the rectangle shape (pgf manual, Nodes and Shapes), as algebra: the
-dominant axis (`|dy|·a ≤ |dx|·b`) decides which edge, that coordinate is
-exact, and the other rounds one exact rational (`rectBorder_exact`). A
-ray with no direction answers the centre. -/
+/-- Where the ray from a rectangle's centre toward `(qx, qy)` crosses its border (pgf's
+`\pgfpointshapeborder`); the centre for no direction. -/
 public def rectBorder (cx cy a b qx qy : Int) : Int × Int :=
   let dx := qx - cx
   let dy := qy - cy
@@ -1914,24 +1370,16 @@ public def rectBorder (cx cy a b qx qy : Int) : Int × Int :=
   else
     (cx + dx * b / ady, if dy > 0 then cy + b else cy - b)
 
-/-- Division bound: `x ≤ c·q` gives `x/c ≤ q` (positive `c`). -/
 private theorem ediv_le_of_le_mul {x c q : Int} (hc : 0 < c) (h : x ≤ c * q) :
     x / c ≤ q := by
   have h2 := Int.ediv_le_ediv hc h
   rwa [Int.mul_ediv_cancel_left _ (Int.ne_of_gt hc)] at h2
 
-/-- Division bound: `c·q ≤ x` gives `q ≤ x/c` (positive `c`). -/
 private theorem le_ediv_of_mul_le {x c q : Int} (hc : 0 < c) (h : c * q ≤ x) :
     q ≤ x / c := by
   have h2 := Int.ediv_le_ediv hc h
   rwa [Int.mul_ediv_cancel_left _ (Int.ne_of_gt hc)] at h2
 
-/-- An edge between two nodes starts and ends on their borders — the
-rectangle half: the anchor lands **on** the border (the dominant
-coordinate sits exactly on an edge; a directionless ray answers the
-centre) and never outside it (both coordinates stay within the
-extents). Sourced at `rectBorder`; the one division is exact on the
-dominant axis and a single rounding on the other. -/
 public theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b) :
     ((rectBorder cx cy a b qx qy).1 = cx - a ∨ (rectBorder cx cy a b qx qy).1 = cx + a ∨
      (rectBorder cx cy a b qx qy).2 = cy - b ∨ (rectBorder cx cy a b qx qy).2 = cy + b ∨
@@ -1947,8 +1395,6 @@ public theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b
     split
     · next hle =>
       dsimp only
-      -- The vertical-edge branch: dx ≠ 0 (a zero dx with a nonzero dy
-      -- fails the branch test, since ady·a ≥ a > 0).
       have hdx : qx - cx ≠ 0 := by
         intro h0
         rw [h0] at hle
@@ -1979,8 +1425,6 @@ public theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b
       · refine ⟨?_, ?_, by omega, by omega⟩ <;> split <;> omega
     · next hgt =>
       dsimp only
-      -- The horizontal-edge branch: dy ≠ 0 (both-zero was the first
-      -- branch, and dy = 0 with dx ≠ 0 satisfies the vertical test).
       have hdy : qy - cy ≠ 0 := by
         intro h0
         rw [h0] at hgt
@@ -2009,10 +1453,7 @@ public theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b
         · exact .inr (.inr (.inl rfl))
       · refine ⟨by omega, by omega, ?_, ?_⟩ <;> split <;> omega
 
-/-- Where the ray from a circle's centre toward `(qx, qy)` meets its
-border: `c + r·d/‖d‖`, the normalisation through one integer square
-root — `\pgfpointshapeborder` for the circle shape. A ray with no
-direction answers the centre. -/
+/-- Where the ray from a circle's centre toward `(qx, qy)` meets its border; the centre for no direction. -/
 public def circleBorder (cx cy r qx qy : Int) : Int × Int :=
   let dx := qx - cx
   let dy := qy - cy
@@ -2020,15 +1461,6 @@ public def circleBorder (cx cy r qx qy : Int) : Int × Int :=
   if n = 0 then (cx, cy)
   else (cx + r * dx / n, cy + r * dy / n)
 
-/-- An edge between two nodes starts and ends on their borders — the
-circle half, stated as the rounding bound it is (not `_exact`, said at
-review): each component of `p − c` is the exact rational `r·d_i/‖d‖`
-rounded once (within one `n`-th, where `n = ⌊√‖d‖²⌋` and
-`n² ≤ ‖d‖² < (n+1)²`), so the anchor misses `‖p − c‖ = r` by at most one
-sp per axis plus the square root's own step. The squared-distance
-corollary follows by squaring these bounds; that squaring is nonlinear
-algebra the statement deliberately stops short of — the per-axis bound
-is what the renderer's ±1 sp claim rests on. -/
 public theorem circleBorder_step (cx cy r qx qy : Int)
     (hn : isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ≠ 0) :
     isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
@@ -2086,28 +1518,20 @@ public theorem circleBorder_step (cx cy r qx qy : Int)
   rw [e1, e2]
   exact ⟨by omega, by omega, by omega, by omega, hsq⟩
 
-/-- Where the ray from an ellipse's centre toward `q` meets it (pgf's
-`\pgfpointborderellipse`, the `ellipse` shape's `\anchorborder`): the
-direction scaled by `a·b / √((dx·b)² + (dy·a)²)`; the centre toward itself. -/
+/-- Where the ray from an ellipse's centre toward `q` meets it (pgf's `\pgfpointborderellipse`). -/
 public def ellipseBorder (cx cy a b qx qy : Int) : Int × Int :=
   let dx := qx - cx
   let dy := qy - cy
   let n := isqrt ((dx * b) * (dx * b) + (dy * a) * (dy * a))
   if n == 0 then (cx, cy) else (cx + dx * a * b / n, cy + dy * a * b / n)
 
-/-- Where the ray from a diamond's centre toward `q` meets its border — the
-diamond of half diagonals `a` and `b`, `|x|/a + |y|/b = 1` (the `diamond`
-shape's `\anchorborder`, the intersection with the side the ray reaches);
-the centre toward itself. -/
+/-- Where the ray from a diamond's centre toward `q` meets its border, `|x|/a + |y|/b = 1`. -/
 public def diamondBorder (cx cy a b qx qy : Int) : Int × Int :=
   let dx := qx - cx
   let dy := qy - cy
   let n : Int := (dx.natAbs : Int) * b + (dy.natAbs : Int) * a
   if n == 0 then (cx, cy) else (cx + dx * a * b / n, cy + dy * a * b / n)
 
-/-- **A diamond's border toward a point on its axis is its corner**
-(`_exact`): straight right of the centre, the ray meets the diamond at its
-east corner, one half diagonal out — the anchor `east` names. -/
 public theorem diamondBorder_axis_exact (cx cy a b d : Int) (hb : 0 < b) (hd : 0 < d) :
     diamondBorder cx cy a b (cx + d) cy = (cx + a, cy) := by
   have hx : cx + d - cx = d := by omega
@@ -2124,17 +1548,14 @@ public theorem diamondBorder_axis_exact (cx cy a b d : Int) (hb : 0 < b) (hd : 0
   have hb0 : (d * b == 0) = false := by simpa using hne
   simp only [hb0, Bool.false_eq_true, ↓reduceIte, hq, Int.zero_ediv, Int.add_zero]
 
-/-- `inner sep`'s default, in ten-thousandths of an em: pgf's `0.3333em`
-(TikZ manual §17.2.2, the `inner sep`/`inner xsep`/`inner ysep` keys). -/
+/-- `inner sep`'s default in ten-thousandths of an em: pgf's `0.3333em` (TikZ manual §17.2.2). -/
 private def innerSepDefault : Int := 3333
 
 /-- One inner sep at this em. -/
 public def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
 
-/-- A node's shape: pgf's `rectangle` and `circle` (pgfmoduleshapes.code.tex)
-and the `shapes.geometric` library's `ellipse` and `diamond`, the diamond at
-its default aspect — what its border, its corner anchors and its drawn
-outline are. -/
+/-- A node's shape: pgf's `rectangle` and `circle`, and `shapes.geometric`'s `ellipse` and
+default-aspect `diamond`. -/
 public inductive NodeShape where
   | rectangle
   | circle
@@ -2142,16 +1563,8 @@ public inductive NodeShape where
   | diamond
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- **A drawn node's outline is the shape pgf draws**, for a node that does
-not declare its whole extent (pgfmoduleshapes.code.tex, the `rectangle`
-shape's `\northeast` and the `circle` shape's `\radius`): centred on the
-text box, and per axis the text box plus two inner seps, or the declared
-minimum where that is larger — a circle's radius is the length of the
-vector from the text box's centre to its corner one inner sep out, or half
-the larger minimum. The glyph box `lo`–`hi` is relative to the node's
-centre `sy`. Returns the outline's centre height and its width and height
-(a circle's are both its diameter), so a governing minimum is met to the
-sp. -/
+/-- A drawn node's outline as pgf draws it: centred on the text box, per axis the text box plus
+two inner seps or the minimum where larger. -/
 public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
     Sp × Sp × Sp :=
   let mid := sy + (lo + hi) / 2
@@ -2162,18 +1575,12 @@ public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX se
   | .circle =>
     let d := max (max minW minH) (2 * isqrt (tx * tx + ty * ty))
     (mid, d, d)
-  -- The ellipse's radii are its text box's half extents one inner sep out,
-  -- times pgf's 1.4142136 (pgflibraryshapes.geometric.code.tex, `\radius`).
+  -- An ellipse's radii: the half extents one inner sep out, times pgf's 1.4142136 (`\radius`).
   | .ellipse =>
     (mid, max minW (2 * (tx * 14142136 / 10000000)), max minH (2 * (ty * 14142136 / 10000000)))
-  -- The diamond at its default aspect reaches the sum of the half extents
-  -- on both axes (`\outernortheast`).
+  -- A default-aspect diamond reaches the sum of the half extents on both axes (`\outernortheast`).
   | .diamond => (mid, max minW (2 * (tx + ty)), max minH (2 * (tx + ty)))
 
-/-- **The outline covers the letters, one inner sep out** (`_covers`): the
-drawn rectangle is centred on the text box and at least the text box plus
-two inner seps on each axis — the room pgf gives a node's text, whatever
-minimum it declares — and a governing minimum is its size exactly. -/
 public theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
     (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).1 = sy + (lo + hi) / 2 ∧
       2 * (textHalfW + sepX) ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
@@ -2186,24 +1593,12 @@ public theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int)
     intros; omega
   exact step minW minH (textHalfW + sepX) ((hi - lo) / 2 + sepY)
 
-/-- **Where pgf seats a node's text box**: centred on the node
-(pgfmoduleshapes.code.tex, the `rectangle` and `circle` shapes' `center`
-anchor, `.5\wd` across and `.5\ht − .5\dp` up from the box's origin, which
-`\pgfmultipartnode` shifts onto the node's coordinate). A box of height `ht`
-and depth `dp` stands with its baseline `(ht − dp)/2` below the node, so it
-spans `dp` below that baseline and `ht` above it. Returns the baseline and
-the box's lower and upper edges, relative to the node's position. -/
+/-- Where pgf seats a node's text box, centred on the node: its baseline and lower and upper
+edges, relative to the node. -/
 public def textSeat (ht dp : Sp) : Sp × Sp × Sp :=
   let b := -((ht - dp) / 2)
   (b, b - dp, b + ht)
 
-/-- **A drawn outline stands on its node, whatever its letters** (`_exact`):
-the outline of a text box pgf seats is centred on the node's own position,
-to the scaled point, for every height and depth the box can have. A node's
-frame, the anchors on it and the edges from them therefore follow the node
-and never its glyphs. The defect centred each outline on its letters' box
-instead, so `g` stood 2 bp above `A` at one declared height and a
-`right=of` chain climbed by the difference at every step. -/
 public theorem nodeOutline_seat_exact (shape : NodeShape) (minW minH sy textHalfW ht dp sepX sepY : Int) :
     (nodeOutline shape minW minH sy textHalfW (textSeat ht dp).2.1 (textSeat ht dp).2.2
       sepX sepY).1 = sy := by
@@ -2211,60 +1606,29 @@ public theorem nodeOutline_seat_exact (shape : NodeShape) (minW minH sy textHalf
     intro s h d; omega
   cases shape <;> exact step sy ht dp
 
-/-- **A node's border half-extent: its text, plus one inner sep, or the
-declared minimum where that is larger.** pgf manual §17.2.2 — a node's
-border is its text *plus* `inner sep`, and §17.5.2's anchors sit on the
-border, not on the letters. One site, so the extent an anchor resolves
-against and the extent a relative placement measures are the same number. -/
+/-- A node's border half-extent: its text plus one inner sep, or the declared minimum where larger
+(TikZ manual §17.2.2). -/
 public def borderHalf (decl ink sep : Sp) : Sp := max decl (ink + sep)
 
-/-- **The border stands between the letters and one inner sep beyond
-them.** The registered `_between` shape, and the tighter sibling of
-`anchorPoint_between`: that one says every anchor is inside the box the node
-registered; this says the box the node registers is strictly outside the box
-its label inks, by the sep and no more. Composed at `g.a := borderHalf …`,
-an anchor lies between the ink and the border — which is pgf's own reading.
-
-The strict lower bound is what the defect failed: the extent was
-`max decl ink`, the ink itself, so every anchor sat one inner sep inside
-where pgf puts it and an edge drawn to a node's `west` started inside the
-label's first letter. Spelled over bare `Int` binders, since `omega` does
-not read an `Sp`-typed structure field. -/
 public theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
     (hs : 0 < sep) : ink < borderHalf decl ink sep ∧ borderHalf decl ink sep ≤ ink + sep := by
   have step : ∀ d i s : Int, d ≤ i + s → 0 < s → i < max d (i + s) ∧ max d (i + s) ≤ i + s := by
     intro d i s h1 h2; omega
   exact step decl ink sep hd hs
 
-/-- A named node's anchoring geometry: centre, border half-extents (a
-circle's radius twice, an ellipse's radii, a diamond's half diagonals) and
-shape. What an edge's `(name)` endpoint resolves to. -/
+/-- A named node's anchoring geometry: centre, border half-extents and shape. -/
 public structure NodeGeom where
   x : Sp
   y : Sp
   a : Sp := 0
   b : Sp := 0
   shape : NodeShape := .rectangle
-  /-- Where this node's own text baseline stands, in the picture's
-  coordinates: what the `base` family of anchors reads. Nodes centre their
-  label, so the baseline sits below the centre by half the measured ink
-  less its depth — `Ir.labelBaseline`, the one site that says so, read
-  rather than restated here. The default is the centre, which is what a
-  node whose body measured nothing has. -/
+  /-- Where the node's own text baseline stands, which the `base` anchors read. -/
   base : Sp := 0
   deriving Repr, BEq, Inhabited
 
-/-- A named anchor on a node's border: `(n.west)` and its siblings, pgf's
-core positioning vocabulary. The set *and* each one's position are the
-`rectangle` shape's own `\anchor` declarations (pgf,
-`pgfmoduleshapes.code.tex`, `\pgfdeclareshape{rectangle}`): `center`,
-`base`, `mid`, the four sides, the four corners, and `base`/`mid` paired
-with `east` and `west`.
-
-`mid` sits half an ex above the baseline and an ex is the face's, which
-this walk cannot ask for (the same missing measurement `Cx.metric` names) —
-so the `mid` family is not a constructor here and is named where it is
-written. -/
+/-- A named anchor on a node's border: the `rectangle` shape's own `\anchor` declarations, the
+`mid` family aside. -/
 public inductive NodeAnchor where
   | center
   | north | south | east | west
@@ -2272,10 +1636,6 @@ public inductive NodeAnchor where
   | base | baseEast | baseWest
   deriving Repr, BEq, Inhabited
 
-/-- The anchor a spelling names, keyed on pgf's own name with its spaces
-removed. An endpoint's tokens are space-filtered before its name is joined,
-so `south west` — pgf's declared spelling — and `southwest` arrive here as
-the same string, and one table answers both. -/
 private def nodeAnchorOf : String → Option NodeAnchor
   | "center" => some .center
   | "north" => some .north
@@ -2291,15 +1651,11 @@ private def nodeAnchorOf : String → Option NodeAnchor
   | "basewest" => some .baseWest
   | _ => none
 
-/-- Milli cosine of 45°, ⌊1000·cos 45° + ½⌋ = 707: where a circle's corner
-anchors stand. pgf's `circle` shape puts `north east` on the *circle* at
-45° (`\pgfdeclareshape{circle}`), not on the bounding box's corner, so a
-corner is the radius times this on each axis. -/
+/-- Milli cosine of 45°, where a circle's corner anchors stand. -/
 private def diag45 : Int := 707
 
-/-- The horizontal reach of a corner anchor: a rectangle's corner is its
-own border, a circle's and an ellipse's the point at 0.707107 of their radii
-(the shapes' `north east`), a diamond's the middle of its side (`.5\pgf@x`). -/
+/-- The horizontal reach of a corner anchor: a rectangle's border, 0.707107 of a circle's or
+ellipse's radius, a diamond's mid-side. -/
 public def NodeGeom.cornerA (g : NodeGeom) : Sp :=
   match g.shape with
   | .rectangle => g.a
@@ -2313,18 +1669,11 @@ public def NodeGeom.cornerB (g : NodeGeom) : Sp :=
   | .circle | .ellipse => g.b * diag45 / 1000
   | .diamond => g.b / 2
 
-/-- The baseline the `base` family stands on, held inside the node's own
-extent. The clamp is inert wherever the extent covers the label's ink —
-which is what `Ir.Pic.nodeExtent_covers` says of the number `evalNode`
-registers — and a guard where a metric answers a descender deeper than the
-node's own border: an anchor may not name a point outside the box every
-relative placement measures from. -/
+/-- The baseline the `base` anchors stand on, held inside the node's own extent. -/
 public def NodeGeom.baseY (g : NodeGeom) : Sp :=
   max (g.y - g.b) (min (g.y + g.b) g.base)
 
-/-- Where a named anchor stands. Arithmetic on the centre and the
-half-extents the node registered, arm by arm so each position reads off the
-declaration it came from rather than off an offset table. -/
+/-- Where a named anchor stands, from the centre and the half-extents the node registered. -/
 public def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
   | .center => (g.x, g.y)
   | .north => (g.x, g.y + g.b)
@@ -2339,10 +1688,6 @@ public def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
   | .baseEast => (g.x + g.a, g.baseY)
   | .baseWest => (g.x - g.a, g.baseY)
 
-/-- Each corner is exactly its two sides, on a node whose corners are its
-own border: the pairing rather than four coordinates restated, so a sign
-error in the table is one failing conjunct. `offset_corners_exact` is the
-same shape one level up, over the relative-placement vocabulary. -/
 public theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.shape = .rectangle) :
     g.anchorPoint .northEast = ((g.anchorPoint .east).1, (g.anchorPoint .north).2) ∧
     g.anchorPoint .northWest = ((g.anchorPoint .west).1, (g.anchorPoint .north).2) ∧
@@ -2352,11 +1697,6 @@ public theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.shape = .rectangl
   have cb : g.cornerB = g.b := by simp [NodeGeom.cornerB, h]
   simp only [NodeGeom.anchorPoint, ca, cb, and_self]
 
-/-- The two sides of an axis are opposite displacements of the centre: a
-sign error puts `west` where `east` belongs and this is the conjunct that
-fails. The `_exact` sibling of `offset_opposite_exact`. Spelled through
-bare `Int` binders because `omega` does not read an `Sp`-typed structure
-field — the workaround `Ir.Pic.labelInkSpan_covers_anchor` records. -/
 public theorem anchorPoint_opposite_exact (g : NodeGeom) :
     (g.anchorPoint .east).1 - g.x = g.x - (g.anchorPoint .west).1 ∧
     (g.anchorPoint .north).2 - g.y = g.y - (g.anchorPoint .south).2 ∧
@@ -2364,22 +1704,6 @@ public theorem anchorPoint_opposite_exact (g : NodeGeom) :
   have flip : ∀ v d : Int, v + d - v = v - (v - d) := by intro v d; omega
   exact ⟨flip g.x g.a, flip g.y g.b, rfl⟩
 
-/-- **An anchor lies on its own node's border, never outside it.** Every
-name this subset resolves is a point of the box the node registered, for
-every anchor in the vocabulary — so an edge anchored by name starts inside
-the region a relative placement parts, and the placement theorems
-(`placeRight_border_exact` and its three siblings) reason about the right
-box for an anchored endpoint too. `Ir.Pic.nodeExtent_covers` is the other
-half of the pair: that same box holds the label's ink.
-
-The registered `_between` shape, the two named bounds being the extent
-box's own corners. A containment rather than an equality because it has to
-hold for all twelve at once: a circle's corners stand at the radius times
-`diag45`, strictly inside the bounding box, and the `base` family stands
-wherever the face put the baseline — held in by `NodeGeom.baseY`, which is
-why this needs no hypothesis about the measurement. Every arithmetic step
-is a lemma over bare `Int` binders applied to the fields, because `omega`
-does not read an `Sp`-typed structure field. -/
 public theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
     (an : NodeAnchor) :
     Gfx.Box.le (g.anchorPoint an, g.anchorPoint an)
@@ -2433,17 +1757,12 @@ public theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g
   · exact key _ (hi g.x g.a ha).1 (hi g.x g.a ha).2 hbase.1 hbase.2
   · exact key _ (lo g.x g.a ha).1 (lo g.x g.a ha).2 hbase.1 hbase.2
 
-/-- A `(name.anchor)` endpoint split into its two halves. pgf reads
-everything after the first `.` as the anchor name (`\pgfpointanchor`), so a
-node's own name carries no dot. -/
 private def splitAnchor (s : String) : Option (String × String) :=
   match s.splitOn "." with
   | [nm, an] => if nm.isEmpty || an.isEmpty then none else some (nm, an)
   | _ => none
 
-/-- A node placed against another once that one stands: a `label=` or a
-`pin=` (TikZ manual §17.10) — the node it hangs on, its spec as written, and
-the distance a key set (`none`: the pin's 3 ex). -/
+/-- A `label=` or `pin=` node placed against another once it stands (TikZ manual §17.10). -/
 public structure After where
   main : NodeGeom
   pin : Bool
@@ -2451,74 +1770,44 @@ public structure After where
   dist : Option Sp
   deriving Repr, Inhabited
 
-/-- Shapes and named losses, accumulated across the unrolled walk. A
-diagnostic dedupes on its message: one construct looped over forty times
-is one problem, not forty. -/
+/-- Shapes and named losses accumulated across the unrolled walk, each diagnostic once. -/
 public structure Ev where
   shapes : Array Ir.Pic.Shape := #[]
   diags : Array PDiag := #[]
   /-- The box a `\useasboundingbox` declared (`Ir.Pic.Picture.declared`). -/
   declared : Option Ir.Pic.Box := none
-  /-- Each placed node's border, text extent plus `inner sep`
-  (`Ir.Pic.Picture.borders`). -/
+  /-- Each placed node's border: text extent plus `inner sep`. -/
   borders : Array Ir.Pic.Box := #[]
-  /-- Named nodes seen so far, latest first: what a `\draw` endpoint's
-  `(name)` resolves against. -/
+  /-- Named nodes so far, latest first, which a path endpoint resolves against. -/
   nodes : List (String × NodeGeom) := []
-  /-- Did some path or node read the picture's inherited options? If
-  nothing did, the picture's own bracket names them rather than dropping
-  them: `\fill`'s bracket is a colour spelling, not a key list, so a
-  picture of nothing but fills reads no keys at all. -/
+  /-- Whether some path or node read the picture's inherited options. -/
   readOpts : Bool := false
-  /-- Did some construct the subset could not reach swallow declarations?
-  A node inside an `\ifnum` whose test the walk cannot compute is a
-  different refusal from a node nothing declared: the first traces to a
-  named gap, the second to the document. Set only where that gap was
-  named, so the demotion below can never be the whole story. -/
+  /-- Whether a construct the subset could not reach swallowed declarations. -/
   gapped : Bool := false
-  /-- How many nodes this run refused because the node they are placed
-  relative to was not in scope yet. The walk is re-run with what it
-  learned (`evalFixed`), so a node placed relative to one declared later
-  resolves; a count that stops falling is a cycle or a name no node
-  carries, and the refusals the final run carries name it. -/
+  /-- How many nodes this run deferred because the node they are placed against was not yet in scope. -/
   deferred : Nat := 0
-  /-- The clip the statement just evaluated set (`\clip`, or a `clip` key):
-  the statement walk applies it to what follows in the scope
-  (`clipAfter`) and clears it. -/
+  /-- The clip the statement just evaluated set, applied to what follows in its scope. -/
   clipGeom : Option Gfx.Geom := none
-  /-- The labels and pins the node just evaluated asked for, placed once it
-  stands (`drainAfter`). -/
+  /-- The labels and pins the node just evaluated asked for. -/
   after : Array After := #[]
 
 private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
 
-/-- The evaluated marks and authored bounds passed to both backends.
-Node anchor borders and measured text remain separate: a declared text
-height or negative padding may deliberately put text outside its border. -/
+/-- The evaluated marks and authored bounds both backends read. -/
 public def Ev.toPicture (ev : Ev) (baseline : Option Sp := none) : Ir.Pic.Picture :=
   { shapes := ev.shapes, declared := ev.declared, borders := ev.borders, baseline }
 
-/-- Where a placed node goes: its name into the table every edge resolves
-against, and its border into the picture's box — unless it is a coordinate,
-whose shape reaches no box (TikZ manual §17.2.1, the `coordinate` shape). -/
+/-- A placed node's name into the table and its border into the picture's box, unless it is a coordinate. -/
 public def Ev.place (ev : Ev) (coordinate : Bool) (border : Ir.Pic.Box)
     (nodes : List (String × NodeGeom)) : Ev :=
   if coordinate then { ev with nodes } else { ev with borders := ev.borders.push border, nodes }
 
-/-- **A coordinate names a point and reaches no box.** The node table it
-leaves is the one the placement resolved — its name included — and the
-picture's borders are untouched, so a coordinate can never widen a picture;
-a node's border is added exactly once. -/
 public theorem coordinate_exact (ev : Ev) (border : Ir.Pic.Box)
     (nodes : List (String × NodeGeom)) :
     (ev.place true border nodes).nodes = nodes ∧ (ev.place true border nodes).borders = ev.borders ∧
       (ev.place false border nodes).borders = ev.borders.push border := ⟨rfl, rfl, rfl⟩
 
-/-- Every emitted label's measured text lies in the reserved picture
-extent, unless the author explicitly replaced that extent. This projects
-the IR hull contract onto the actual picture producer; it does not claim
-that an authored node border encloses its text. -/
 public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
@@ -2530,10 +1819,6 @@ public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
   apply Gfx.Box.le_trans (b := Ir.Pic.labelGlyphBox x y align (m content scale)) _ cover
   exact ⟨Int.le_refl _, Int.min_le_right _ _, Int.le_refl _, Int.le_max_right _ _⟩
 
-/-- `(x,y) rectangle (x',y')` (or `++(dx,dy)`, relative) from token `i` to
-the end: the rectangle's corners in sp, sorted — `(x0, y0, x1, y1)` with
-`x0 ≤ x1` and `y0 ≤ y1`. `what` names the statement and `cost` what a
-refusal costs, so each caller's diagnostic says its own loss. -/
 private def readRect (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i0 : Nat)
     (what cost : String) : Except PDiag (Sp × Sp × Sp × Sp) := Id.run do
   let mut i := i0
@@ -2563,14 +1848,12 @@ rendered picture subset; {cost}")
     | .error e, _, _, _ | _, .error e, _, _ | _, _, .error e, _ | _, _, _, .error e =>
       return .error (.E0333, s!"in {what}, {e}; {cost}")
   let (x1c, y1c, x2c, y2c) := vals
-  -- A relative corner adds in the unit it was written in, so two unitless
-  -- components round once, as they always have.
+  -- A relative corner adds in the unit it was written in, so two unitless components round once.
   let addComp (a b : Int × Bool) : Sp :=
     if !a.2 && !b.2 then cx.toSp (a.1 + b.1) else cx.compSp a + cx.compSp b
   let (x1, y1) := (cx.compSp x1c, cx.compSp y1c)
   let (x2, y2) := if relative then (addComp x1c x2c, addComp y1c y2c)
     else (cx.compSp x2c, cx.compSp y2c)
-  -- The four corners on the canvas: a turned rectangle's box is their hull.
   let cs := #[cx.place x1 y1, cx.place x2 y1, cx.place x2 y2, cx.place x1 y2]
   let xs := cs.map (·.1)
   let ys := cs.map (·.2)
@@ -2578,10 +1861,6 @@ rendered picture subset; {cost}")
   let y0 := ys.foldl min (ys[0]?.getD 0)
   return .ok (x0, y0, xs.foldl max (xs[0]?.getD 0), ys.foldl max (ys[0]?.getD 0))
 
-/-- Whether a `\fill` is the one rectangle `evalFill` reads: its optional
-colour bracket, a corner, `rectangle`, the other corner, and nothing after.
-Any other fill is a path filled, the draw evaluator's. A malformed corner
-stays `evalFill`'s to name. -/
 private def fillIsRect (toks : Array Tok) : Bool := Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
@@ -2599,9 +1878,6 @@ private def fillIsRect (toks : Array Tok) : Bool := Id.run do
     | .error _ => return true
     | .ok (_, i3) => return i3 == ts.size
 
-/-- `\fill[colour] (x,y) rectangle ++(dx,dy);` — the one drawing shape of
-the subset (`++` relative, or a second absolute corner). The rectangle is
-stored corner-sorted, so the IR shape always has non-negative extents. -/
 private def evalFill (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
     Except PDiag Ir.Pic.Shape := Id.run do
   let ts := toks.filter (· != .space)
@@ -2626,80 +1902,34 @@ private def evalFill (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
   | .ok (x0, y0, x1, y1) => return .ok (.rect x0 y0 (x1 - x0) (y1 - y0) color)
   | .error d => return .error d
 
-/-- `\useasboundingbox (a) rectangle (b);`: the declared box, corners sorted.
-The one path shape the declaration takes here is the rectangle, read by the
-same reader `\fill` uses, so the two cannot disagree about a corner. -/
 private def evalBBox (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
     Except PDiag Ir.Pic.Box := do
   let (x0, y0, x1, y1) ← readRect cx env (toks.filter (· != .space)) 0
     "'\\useasboundingbox'" "the declared box is ignored"
   return ((x0, y0), (x1, y1))
 
-/-- One line of a node label: its inline content and the size it sets at,
-per mille of the node's own. A label is one line per `\\`, because
-`Ir.Pic.Shape.label` carries one size and one anchor — so a second line is
-a second shape, stacked by `nodeLineLead`, not a break inside one. -/
+/-- One line of a node label: its content and its size per mille of the node's own. -/
 public abbrev LabelLine := Array Ir.Inline × Nat
 
-/-- The baseline-to-baseline distance between a node label's lines: the
-engine's own leading over the size the *following* line sets at, as TeX's
-`\baselineskip` is the value current where the line ends. Reusing
-`Ir.leadingFor` rather than restating `plain.tex`'s 1.2 keeps one source for
-the engine's vertical rhythm — a second constant here would drift from the
-one every paragraph uses.
-
-The size is the document's body size times the label's scale, the same
-size the artifact's label metric reads. -/
 private def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
   Ir.leadingFor (bodySize * (scale : Int) / 1000)
 
-/-- The stand-in a label sets when its salvage comes to nothing and a loss
-was named: the same bracketed ellipsis a degraded formula inks, for the
-same reason — a blank tells a reader nothing stood there.
-`nodeLabel_accounts` is the statement that the case is never silent. -/
+/-- The placeholder a label sets when its salvage kept nothing and a loss was named. -/
 public def nodeFloorPlaceholder : String := String.ofList Ir.mathFloorPlaceholder
 
-/-- Commands whose content is invisible by definition: a phantom sets a box
-of its argument's size and no ink. Read rather than refused, so a
-`\vphantom{p}Member` label is `Member` and a body of nothing but a phantom
-is honestly empty — the placeholder would claim ink where TeX shows none.
-The height a phantom props is not lost either: this subset measures no
-node body's extent at all (see the emission note in `evalNode`), so there
-is no height here to keep. -/
+/-- Commands whose content is invisible by definition: a phantom sets no ink, so its body reads as empty. -/
 public def phantomCtrl : List String := ["vphantom", "hphantom", "phantom"]
 
-/-- What a node body's salvage is in the middle of. The modes let the walk
-read one token at a time, so a construct spanning several of them needs no
-lookahead and the recursion stays structural — the shape `step` already
-uses for the statement machine. -/
 private inductive SalMode where
   | text
-  /-- An optional `[...]` run may stand here: it belongs to the construct
-  just read (`\\[2ex]` is how an author spaces a label's lines, and
-  `\textcolor[rgb]{...}` names a colour model), so it is dropped where it
-  appears. `then_` is how many naming groups follow it. -/
   | optMaybe (then_ : Nat)
-  /-- Inside that run, dropping to its `]`. -/
   | optDrop (then_ : Nat)
-  /-- The next `n` groups name rather than carry (`Ir.floorNamedArgs`), so
-  they are dropped instead of salvaged: `\ref{key}`'s key is not a word the
-  label meant to say. -/
   | dropArgs (n : Nat)
-  /-- `\textcolor`'s first group: the palette role. -/
   | colorRole
-  /-- `\textcolor`'s second group, to set in the role it named. -/
   | colorBody (c : Ir.Color) (role : Option Ir.ColorRef)
-  /-- A text command's argument (`\textbf{...}`, read from `Cx.argStyles`):
-  the next group, or the one word standing there, sets in the style the
-  command names — what the same command does in a paragraph. -/
   | styleBody (st : Ir.Style)
   deriving Repr, BEq, Inhabited
 
-/-- A node label under construction: the lines already closed, the current
-line's inlines and its pending text run, the size that line sets at, and
-the losses named so far. `fresh` is whether the current line has had
-anything contributed yet — a size switch may only open a line, since a
-label shape carries one size. -/
 private structure Sal where
   lines : Array LabelLine := #[]
   out : Array Ir.Inline := #[]
@@ -2709,15 +1939,7 @@ private structure Sal where
   consumeNocorr : Bool := false
   next : Option Tok := none
   fresh : Bool := true
-  /-- How many groups deep the walk stands. A size switch inside a group is
-  the group's own, and a label shape carries one size, so only a switch at
-  the top of a line can be honoured — one inside a group is named rather
-  than applied to the line or dropped in silence. -/
   depth : Nat := 0
-  /-- Whether closing a line trims its ends. A label's own lines are
-  trimmed at both, as TikZ sets a node's text; a spliced body's are not,
-  because the body's edges stand inside a line, and `splice` trims only
-  the ends a `\\` inside the body made. -/
   trim : Bool := true
   diags : Array PDiag := #[]
   mode : SalMode := .text
@@ -2725,18 +1947,15 @@ private structure Sal where
 
 namespace Sal
 
-/-- Add readable characters to the current line. -/
 private def str (s : Sal) (t : String) : Sal :=
   if t.isEmpty then s else { s with text := s.text ++ t, fresh := false }
 
-/-- Close the pending text run, so an inline can follow it in order. -/
 private def flush (s : Sal) : Sal :=
   if s.text.isEmpty then s
   else
     let xs := s.styles.foldr (fun st inner => #[.styled st inner]) #[.text s.text]
     { s with out := xs.foldl Array.push s.out, text := "" }
 
-/-- Add elaborated inlines under the declarations in force. -/
 private def inlines (s : Sal) (xs : Array Ir.Inline) : Sal :=
   if xs.isEmpty then s
   else
@@ -2744,25 +1963,18 @@ private def inlines (s : Sal) (xs : Array Ir.Inline) : Sal :=
     let xs := f.styles.foldr (fun st inner => #[.styled st inner]) xs
     { f with out := xs.foldl Array.push f.out, fresh := false }
 
-/-- Add one elaborated inline (a math span, a coloured group). -/
 private def inline (s : Sal) (i : Ir.Inline) : Sal :=
   s.inlines #[i]
 
 private def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
   { s with diags := ds.foldl Array.push s.diags }
 
-/-- Back to reading content: a mode the token at hand does not continue. -/
 private def mode0 (s : Sal) : Sal := { s with mode := .text }
 
-/-- Name one construct the subset could not read. The label keeps what it
-can read; the diagnostic says what was not drawn. -/
 private def refuse (s : Sal) (what : String) : Sal :=
   { s with diags := s.diags.push (.W0334, s!"{what} in a node body is outside \
 the rendered picture subset; the label sets the text it can read") }
 
-/-- Space trimmed off a line's left end, its right end, or both, as the
-braces' inner space is in TeX. Only drops characters, so it cannot invent
-ink. -/
 private def trimEnds (left right : Bool) (xs : Array Ir.Inline) : Array Ir.Inline :=
   let trimL (t : String) : String := String.ofList (t.toList.dropWhile (· == ' '))
   let trimR (t : String) : String :=
@@ -2775,32 +1987,15 @@ private def trimEnds (left right : Bool) (xs : Array Ir.Inline) : Array Ir.Inlin
     else inl
   xs.filter (· != .text "")
 
-/-- Close the current line and start the next: what `\\` does. -/
 private def newline (s : Sal) : Sal :=
   let s := s.flush
   { s with lines := s.lines.push (trimEnds s.trim s.trim s.out, s.scale)
            out := #[], text := "", scale := 1000, fresh := true, mode := .text }
 
-/-- A nested group's own salvage, sharing the losses named so far and the
-line's size but not its content. -/
 private def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags, depth := s.depth }
 
-/-- The salvage a styled or coloured body is walked in (`splice`): one
-group deeper, so a size switch inside it is named rather than set, and
-with its lines' ends untrimmed, since the body's edges are inside a line. -/
 private def inner (s : Sal) : Sal := { s.sub with depth := s.depth + 1, trim := false }
 
-/-- Splice a nested body's salvage into this label, every line of it
-wrapped (`wrap`, a style or a colour): the body's first line continues the
-current one, and each later line — a `\\` inside the body — closes the
-current line and opens the next, as the break does in TeX. So a break
-inside `\textbf{…}` is a real break whose both lines are bold, where
-merging the lines would have been a loss nothing named. The body was
-walked untrimmed (`inner`), so a space just inside its braces stays, as it
-does in a paragraph, and only the ends a break made are trimmed here. An
-empty line wraps nothing, so no empty wrapper ships; the body's own losses
-join this label's. The body was walked one group deeper, so no size switch
-inside it set a line's size — a size it asked for was named instead. -/
 private def splice (s : Sal) (body : Sal)
     (wrap : Bool → Bool → Array Ir.Inline → Array Ir.Inline) : Sal := Id.run do
   let body := body.newline
@@ -2813,38 +2008,18 @@ private def splice (s : Sal) (body : Sal)
       unless xs.isEmpty do s := s.inlines (wrap (k == 0) (k + 1 == n) xs)
   return { s with mode := .text }
 
-/-- Does this label ship ink? The inlines it ships, counted across its
-lines: an empty line contributes none, so a label of nothing but blank
-lines is inkless — which is what `labelFloor` pays for. `inked` counts
-inlines rather than glyphs, and that is exact for what it guards: every
-inline the salvage pushes is a non-empty text run, a math span (which
-carries its own floor) or a non-empty coloured or styled group (`splice`
-wraps no empty line). -/
 private def inkCount (ls : Array LabelLine) : Nat := ls.foldl (fun n l => n + l.1.size) 0
 
 private def inked (ls : Array LabelLine) : Bool := 0 < inkCount ls
 
-/-- Has the machine come to rest? `.text` has, and so has `.optMaybe 0` —
-a trailing option run *may* follow a construct and need not. Every other
-mode means a construct the body opened and never closed, which is why
-`nodeLabel` names it: a mode pending at the end of a body has eaten the
-rest of that body, and eating it silently is the very loss the floor
-exists to prevent. -/
 private def settled : SalMode → Bool
   | .text => true
   | .optMaybe k => k == 0
   | .optDrop _ | .dropArgs _ | .colorRole | .colorBody _ _ | .styleBody _ => false
 
-/-- Settle a mode this token does not continue, so the content arm reads it
-instead. Idempotent on `.text`, which is why `salOne` may apply it twice and
-so hand a token from a construct's option position to its argument position
-to the line. A colour whose body never came is named here rather than
-dropped in silence: the mathematics of it is that the *role* was read and
-the group it was to paint was not. -/
 private def settle (t : Tok) (s : Sal) : Sal :=
   match s.mode, t with
-  -- A starred command's star is part of its name (`\hspace*{1pt}`), and a
-  -- space before an argument is the command's, as TeX reads it.
+  -- A starred command's star is part of its name, and a space before an argument is the command's.
   | .optMaybe _, .sym '[' => s
   | .optMaybe _, .sym '*' => s
   | .optMaybe _, .space => s
@@ -2860,10 +2035,6 @@ private def settle (t : Tok) (s : Sal) : Sal :=
   | .colorBody _ _, .space => s
   | .colorBody _ _, .group _ => s
   | .colorBody _ _, _ => (s.refuse "a colour with no body").mode0
-  -- A text command's argument is a group or the one word standing there, as
-  -- the elaborator reads it; anything else (a command, math, an
-  -- environment) is not an argument this subset can style, so the style is
-  -- named and the token goes on to be read as content.
   | .styleBody _, .space => s
   | .styleBody _, .group _ => s
   | .styleBody _, .ident _ => s
@@ -2874,21 +2045,6 @@ private def settle (t : Tok) (s : Sal) : Sal :=
 
 end Sal
 
-/-- The mode a control sequence the subset cannot draw puts the salvage
-into, and the loss it names. Five are read rather than refused, because
-nothing a reader can see is lost: `\\` opens a line, a phantom is
-invisible by definition, a size switch opening a line sets that line's
-size, `\textcolor` sets its body in the role it names, and a text command
-(`\textbf`, `\emph`, `\textsc`, …) sets its argument in its style.
-Everything else drops its own name — and the arguments `Ir.floorNamedArgs`
-says name rather than carry, so a key or a length never rides onto the
-page as ink — and keeps what its content groups say.
-
-`Ir.floorNamedArgs` is the math floor's own table, read here rather than
-restated: which arguments of a command are names is one fact about LaTeX,
-and a second list would drift from the first. The text commands are the
-elaborator's own table for the same reason (`Cx.argStyles`), and a size
-switch is a step of the document's own ladder (`Cx.ladder`). -/
 private def salCtrl (cx : Cx) (env : List (String × Val))
     (n : String) (s : Sal) : Sal :=
   match env.lookup n with
@@ -2921,16 +2077,11 @@ private def fontCmdNocorr : Tok → Bool
   | .ctrl "nocorr" => true
   | _ => false
 
-/-- A label's formula at the source site its opener carries (`Tok.math`),
-so a note the formula census raises after elaboration — an alphabet the face
-lacks, the face it loaded — names where the formula was written; bare where
-no file holds its opener. -/
 private def locatedAt (site : Option Span) (inl : Ir.Inline) : Ir.Inline :=
   match site with
   | some span => .located span #[inl]
   | none => inl
 
-/-- Locating a label's formula changes no character of its text. -/
 private theorem locatedAt_text (site : Option Span) :
     Ir.Conserves Ir.plainTextOne (locatedAt site) := by
   intro inl
@@ -2946,32 +2097,15 @@ private def fontCmdEdges (body : List Tok) (next? : Option Tok) : Bool × Bool :
 
 mutual
 
-/-- Salvage a node body's tokens into label lines: one fold, the only
-recursion into a pre-matched group subtree, so totality is structural. -/
 private def salList (cx : Cx) (env : List (String × Val)) : List Tok → Sal → Sal
   | [], s => s
   | t :: rest, s => salList cx env rest (salOne cx env t { s with next := rest.head? })
 
-/-- One token. The mode settles first — twice, because a construct's own
-run can hand the same token from one mode to the next (`\hspace` opens
-`optMaybe 1`, and a `*` then has to stay with the *name* rather than count
-as the argument) — and `.text` is a fixed point, so two passes reach it.
-After settling, the content arm runs at most once per token and the walk
-needs no lookahead beyond `Sal.next`, the token after a text-command
-argument. -/
 private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
   let s : Sal := Sal.settle t (Sal.settle t s)
   match s.mode with
-  -- Only a `[`, a `*` or a space reaches here: settling sent every other
-  -- token on. A star belongs to the name it follows, as in LaTeX.
   | .optMaybe k => if t == .sym '[' then { s with mode := .optDrop k } else s
-  -- `]` closes the run and leaves another one possible: the options trail
-  -- the named arguments in `\raisebox{lift}[h][d]{body}`, so sweeping only
-  -- one left the second on the page.
   | .optDrop k => if t == .sym ']' then { s with mode := .optMaybe k } else s
-  -- Only a group reaches here, so only a group counts as an argument: a
-  -- counter any token satisfies spent `\color`'s drop on the `\textcolor`
-  -- that followed it and set the colour name as ink.
   | .dropArgs n => { s with mode := .optMaybe (if n ≤ 1 then 0 else n - 1) }
   | .colorRole =>
     match t with
@@ -2988,9 +2122,6 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
     match t with
     | .group g => s.splice (salList cx env g s.inner) fun _ _ xs => #[.colored c role xs]
     | _ => s
-  -- Only a space, a group or one word reaches here (`Sal.settle`): the
-  -- group is the argument, and a word standing where it would be is the
-  -- argument too, as the elaborator reads `\textbf x`.
   | .styleBody st =>
     let add (s : Sal) (raw : List Tok) (inner : Array Ir.Inline) : Sal :=
       { (s.inlines (Ir.fontCmdInlines st (fontCmdEdges raw s.next) inner)) with mode := .text }
@@ -3009,8 +2140,7 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
     | .num m => s.str (milliString m)
     | .space => s.str " "
     | .sym c => s.str (String.singleton c)
-    -- A group is grouping: its content is the line's, and a size it set is
-    -- the group's own, as TeX scopes a size switch.
+    -- A group's size switch is its own, as TeX scopes one.
     | .group g =>
       let nested : Sal := { s with depth := s.depth + 1 }
       let nested : Sal := { nested with consumeNocorr := false }
@@ -3030,27 +2160,11 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
 
 end
 
-/-- The lines a label actually ships: its salvage, or the declared
-placeholder when the salvage kept nothing and a loss was named. The same
-shape `Ir.floorInk` gives a degraded formula, and for the same reason — a
-blank page region is not an honest floor, because it tells a reader nothing
-stood there. -/
+/-- The lines a label ships: its salvage, or the placeholder when it kept nothing and a loss was named. -/
 public def labelFloor (lines : Array LabelLine) (named : Bool) : Array LabelLine :=
   if Sal.inked lines || !named then lines
   else #[(#[.text nodeFloorPlaceholder], 1000)]
 
-/-- **A label that named a loss ships ink.** The registered `_accounts`
-shape: an empty result is paid for by a write. Before it the engine did the
-reverse — one unreadable macro in one body dropped the whole label, so a
-diagram of such nodes shipped an outline with nothing inside it while every
-warning said so where no reader looks.
-
-What it does not say, since the distinction matters: it is one-sided. It
-holds for a salvage that kept nothing at all, because the placeholder then
-pays for it. `nodeLabel_source_mem` bounds the result by its actual text
-sources, including elaborated mathematics. The whole-label rows in
-`pictureNodeFloorChecks` cover selection: naming arguments are discarded
-and readable content is kept. -/
 public theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h : named) :
     (0 < (labelFloor lines named).foldl (fun n l => n + l.1.size) 0 : Bool) := by
   unfold labelFloor
@@ -3063,34 +2177,16 @@ public theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h :
     simpa only [Sal.inkCount] using hk
   · decide
 
-/-- A node body's label lines. Words, numbers and bound macros become text,
-a math span elaborates through `Cx.math`, a text command sets its argument
-in the style the elaborator's own table gives it (`Cx.argStyles`), `\\`
-opens a line, and a construct the subset cannot draw drops its own spelling
-and keeps what it says (`salCtrl`).
-
-**A body the subset cannot fully read still ships the text it can read.**
-Dropping a label whole is the worse recovery: the reader sees an empty
-diagram and has no way to know a word stood there, while the diagnostic
-that would have told them is the thing they never see. This is the same
-judgement `Ir.mathFloor` makes for a formula the engine cannot set, one
-module over — and the same placeholder closes it, so a named loss never
-ships a blank (`labelFloor_accounts`). -/
+/-- A node body's label lines: what the subset can read of it, a construct it cannot draw named
+and its words kept. -/
 public def nodeLabel (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     Array LabelLine × Array PDiag :=
   let walked := salList cx env toks {}
-  -- A construct the body opened and never closed has eaten the rest of the
-  -- body: an unterminated `[...]`, a `\textcolor` whose body never came, a
-  -- naming argument that is not there. Named here, at the one place that
-  -- can see the machine come to rest, because the alternative is the loss
-  -- this floor exists to prevent — content gone with nothing said.
   let s := if Sal.settled walked.mode then walked
            else walked.refuse "a node body that ends mid-construct"
   let s := s.newline
   (labelFloor s.lines (!s.diags.isEmpty), s.diags)
 
-/-- The page side of `labelFloor_accounts`: a node body whose salvage named
-a loss ships ink, whatever the body was. -/
 public theorem nodeLabel_accounts (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     ¬ (nodeLabel cx env toks).2.isEmpty →
       (0 < (nodeLabel cx env toks).1.foldl (fun n l => n + l.1.size) 0 : Bool) := by
@@ -3265,8 +2361,6 @@ private theorem Sal.settle_from (P : Char → Prop) (s : Sal) (t : Tok)
   unfold Sal.settle
   split <;> (try split) <;> exact hs
 
-/-- Content safety for the existing splice loop. Consumption is accounted
-for by `salList_from`'s induction over the source tree. -/
 private theorem Sal.splice_from (P : Char → Prop) (s body : Sal)
     (wrap : Bool → Bool → Array Ir.Inline → Array Ir.Inline)
     (hs : s.from P) (hb : body.from P)
@@ -3295,9 +2389,7 @@ private theorem Sal.splice_from (P : Char → Prop) (s body : Sal)
   · intro s hs
     exact hs
 
-/-- A literal source token, before any salvage decision. A number's
-spelling is the token reader's canonical `milliString`, since `Tok.num`
-retains its value rather than its original spelling. -/
+/-- A literal source token before any salvage decision, a number spelled by `milliString`. -/
 public inductive LabelLiteral where
   | word (text : String)
   | number (milli : Int)
@@ -3311,9 +2403,7 @@ public def LabelLiteral.text : LabelLiteral → String
   | .symbol c => String.singleton c
   | .space => " "
 
-/-- An independently enumerable input to a node label. A substitution
-retains its declaration name and value; a math input retains its original
-body and display mode, not a certificate attached to the produced inline. -/
+/-- An independently enumerable input to a node label: a literal, a substitution, or a math input. -/
 public inductive LabelInput where
   | literal (source : LabelLiteral)
   | substitution (name : String) (value : Val)
@@ -3327,10 +2417,7 @@ public def LabelInput.text (cx : Cx) : LabelInput → String
 
 mutual
 
-/-- The independent source census: flatten source groups and resolve
-declared substitutions. It reads no salvage state, output or diagnostic.
-In particular it enumerates math *inputs* without invoking the callback.
-This walk is over `Tok`, whose group tree is not the document IR. -/
+/-- The label's source census: groups flattened and declared substitutions resolved, reading no salvage state. -/
 public def labelInputList (env : List (String × Val)) (acc : Array LabelInput) :
     List Tok → Array LabelInput
   | [] => acc
@@ -3353,8 +2440,6 @@ end
 
 mutual
 
-/-- The census preserves its initial sources exactly, including through
-nested groups. This equation exposes its accumulator to consumers. -/
 public theorem labelInputList_prefix_exact (env : List (String × Val))
     (initial acc : Array LabelInput) (ts : List Tok) :
     labelInputList env (initial ++ acc) ts =
@@ -3382,7 +2467,6 @@ public theorem labelInputText_append (cx : Cx) (a b : Array LabelInput) :
     labelInputText cx (a ++ b) = labelInputText cx a ++ labelInputText cx b := by
   simp [labelInputText, String.join_append]
 
-/-- A character in the census text has an actual input witness. -/
 public theorem labelInputText_mem (cx : Cx) (inputs : Array LabelInput) (c : Char) :
     c ∈ (labelInputText cx inputs).toList ↔
       ∃ input ∈ inputs, c ∈ (input.text cx).toList := by
@@ -3395,16 +2479,13 @@ public theorem labelInputText_mem (cx : Cx) (inputs : Array LabelInput) (c : Cha
         String.toList_append, List.mem_append] at ih ⊢
       simp_all
 
-/-- Potential readable label characters. This projection of the source
-census allows arbitrary math callback output. Salvage may discard sources
-used as options or names, so the bound is containment, not equality. -/
+/-- The characters a label's sources could contribute, a bound on what the salvage keeps. -/
 public def labelSources (cx : Cx) (env : List (String × Val)) (ts : List Tok) : String :=
   labelInputText cx (labelInputList env #[] ts)
 
 public def labelSource (cx : Cx) (env : List (String × Val)) (t : Tok) : String :=
   labelInputText cx (labelInputOne env #[] t)
 
-/-- The single-token equation of the independently collected text. -/
 public theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok) :
     labelSource cx env t = match t with
       | .ident w => w
@@ -3444,9 +2525,7 @@ public def LabelOrigin.text (cx : Cx) : LabelOrigin → String
   | .source input => input.text cx
   | .generated kind => kind.text
 
-/-- Source permission depends only on the input census. The one generated
-fallback is permitted only when the run names a loss. Neither permission
-uses a source tag supplied by the salvage implementation. -/
+/-- Which origins a label character may have: its sources, or the placeholder when the run names a loss. -/
 public def LabelOrigin.Permitted (env : List (String × Val)) (toks : List Tok)
     (named : Bool) : LabelOrigin → Prop
   | .source input => input ∈ labelInputList env #[] toks
@@ -3570,18 +2649,6 @@ private theorem nodeLabel_from (P : Char → Prop) (cx : Cx) (env : List (String
     split <;> exact hw
   exact labelFloor_from P _ _ (Sal.newline_from P closed hc).1 hp
 
-/-- **Every output character has a permitted, typed origin.** The source
-census is computed independently from the token tree and declarations.
-Its witnesses distinguish literal tokens, resolved substitutions and
-math inputs; math text is read from the callback applied to that very
-input. The only generated text is the closed `nodeFloor` case, and its
-witness requires a diagnostic from this run.
-
-This quantifies over every context, binding environment and token tree,
-including malformed bodies, literal brackets and arbitrary math callback
-output. It bounds the actual `salList`/`salOne` salvage, its style/colour
-splice loop and its final floor. It makes no claim that every source is
-selected, nor that each occurrence has a unique origin. -/
 public theorem nodeLabel_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     ∀ line ∈ (nodeLabel cx env toks).1,
       ∀ c ∈ (Ir.plainText line.1).toList,
@@ -3603,8 +2670,6 @@ public theorem nodeLabel_mem (cx : Cx) (env : List (String × Val)) (toks : List
   intro line hl
   exact (plainText_from P line.1).mpr (h line hl)
 
-/-- A run without a diagnostic needs only genuine input witnesses; the
-generated fallback cannot account for any of its characters. -/
 public theorem nodeLabel_clean_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok)
     (clean : (nodeLabel cx env toks).2.isEmpty = true) :
     ∀ line ∈ (nodeLabel cx env toks).1,
@@ -3618,15 +2683,6 @@ public theorem nodeLabel_clean_mem (cx : Cx) (env : List (String × Val)) (toks 
     cases kind
     simp [LabelOrigin.Permitted, clean] at ho
 
-/-- Every character returned by the label reader comes from literal text,
-a resolved macro value, the math elaborator's output, or the declared
-fallback. This holds inside all style and colour wrappers and across line
-breaks. Literal punctuation remains content; command names and parser
-markers cannot become a source merely because the reader encountered them.
-
-The bound is on provenance, not selection: options may carry readable
-characters which the reader intentionally discards. `nodeLabel_accounts`
-covers the separate guarantee that a named loss leaves visible ink. -/
 public theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     ∀ line ∈ (nodeLabel cx env toks).1,
       ∀ c ∈ (Ir.plainText line.1).toList,
@@ -3638,19 +2694,12 @@ public theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks
   intro line hl
   exact (plainText_from P line.1).mpr (h line hl)
 
-/-- A label's lines as shapes, stacked so the block centres on the anchor:
-one `Ir.Pic.Shape.label` per line, baselines `nodeLineLead` apart, each at
-the size its line opened with. A label shape carries one size and one
-anchor, so a multi-line label is several of them — `\\` is a real break,
-not a degradation, and layout sets one line per label shape. An empty line
-ships no shape: a blank contributes its height, which this subset does not
-measure, and no ink. -/
+/-- A label's lines as shapes, one per line, `nodeLineLead` apart and centred on the anchor; an
+empty line ships none. -/
 public def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Color)
     (align : Ir.Pic.LabelAlign) (lines : Array LabelLine)
     (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape := Id.run do
-  -- Each gap is the leading of the line *below* it, so a smaller second
-  -- line sits closer; the block then shifts up by half its own height, so
-  -- its middle is the node's anchor whatever the sizes are.
+  -- Each gap is the leading of the line below it, so a smaller second line sits closer.
   let mut tops : Array Sp := #[]
   let mut acc0 : Sp := 0
   for k in [0:lines.size] do
@@ -3666,9 +2715,6 @@ public def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Colo
         out := out.push (.label x (y + dy) content color (scale * rel / 1000) align)
   return out
 
-/-- A dimension literal in a node option (`8mm`, `2pt`), in sp. Only the
-physical units: a font-relative unit (`em`, `ex`) needs the node's face,
-which is layout's question, so it stays outside the subset by name. -/
 private def readDim (toks : List Tok) : Except String Sp :=
   match toks with
   | [.num m, .ident u] =>
@@ -3680,41 +2726,23 @@ private def readDim (toks : List Tok) : Except String Sp :=
     | u => .error s!"the unit '{u}' is outside the rendered picture subset"
   | _ => .error "a length like '8mm' is needed"
 
-/-- A length in a node's options, the font-relative units included: `em` is
-the node's em and `ex` its face's x-height at the node's size, which is how
-TeX reads them where the key is evaluated (fontdimens 6 and 5). -/
 private def readNodeDim (em ex : Sp) (toks : List Tok) : Except String Sp :=
   match toks with
   | [.num m, .ident "em"] => .ok (m * em / 1000)
   | [.num m, .ident "ex"] => .ok (m * ex / 1000)
   | ts => readDim ts
 
-/-- pgf's named line widths, as tikz.code.tex defines them (lines
-1575–1581): each is the style `line width=<w>`, so a name and the key it
-abbreviates stroke one width. `thin` and `thick` are the IR's own two
-widths, read rather than restated. -/
 private def lineWidthStyles : List (String × Sp) :=
   [("ultra thin", Dim.pt 1 / 10), ("very thin", Dim.pt 1 / 5),
    ("thin", Ir.Pic.thinWidth), ("semithick", Dim.pt 3 / 5),
    ("thick", Ir.Pic.thickWidth), ("very thick", Dim.pt 6 / 5),
    ("ultra thick", Dim.pt 8 / 5)]
 
-/-- A width entry: a named width or `line width=<length>`, read; `none`
-where the entry sets no width. The one reader every stroke site and every
-vocabulary check reads, so a width a path strokes and a width a picture's
-bracket carries down are the same keys. -/
 private def readLineWidth (opt : List Tok) : Option (Except String Sp) :=
   match opt with
   | .ident "line" :: .ident "width" :: .sym '=' :: rest => some (readDim rest)
   | ts => ((keyName ts).bind fun n => lineWidthStyles.lookup n).map .ok
 
-/-- A `font=` value as TikZ runs it before a node's text: switches, each a
-size step of the document's ladder (`Cx.ladder`) or a declaration of the
-elaborator's table (`Cx.declStyles`), braces being grouping. The last size
-written wins, as in TeX; the declarations apply in order; `\selectfont`
-selects what they already chose. A switch outside both tables is returned
-by name, so the loss names what it could not set and the rest still
-applies. -/
 private def readFont (cx : Cx) (toks : List Tok) : Option Nat × Array Ir.Style × Array String :=
   Id.run do
   let flat := toks.flatMap fun t => match t with
@@ -3734,29 +2762,17 @@ private def readFont (cx : Cx) (toks : List Tok) : Option Nat × Array Ir.Style 
     | t => unread := unread.push (tokText t)
   return (size, sts, unread)
 
-/-- A label's lines set in the declarations a `font=` named, the first
-written outermost; an empty line stays empty, so no empty wrapper ships. -/
 private def fontLines (sts : Array Ir.Style) (lines : Array LabelLine) : Array LabelLine :=
   if sts.isEmpty then lines
   else lines.map fun (xs, rel) =>
     (if xs.isEmpty then xs else sts.foldr (fun st inner => #[.styled st inner]) xs, rel)
 
-/-- The line alignment an `align=` value chooses (tikz.code.tex, the `align`
-choice key), as the side each line stands flush to: `.west` for left,
-`.east` for right, `.center` for centred. `left` and `flush left` set lines
-broken with `\\` alike, as do their siblings; the spellings differ only in
-how TeX breaks a paragraph of declared width. -/
 private def textAlignOf : List Tok → Option Ir.Pic.LabelAlign
   | [.ident "left"] | [.ident "flush", .ident "left"] => some .west
   | [.ident "right"] | [.ident "flush", .ident "right"] => some .east
   | [.ident "center"] | [.ident "flush", .ident "center"] => some .center
   | _ => none
 
-/-- A node's centred lines set flush to one side of its text box, as
-`align=` asks: each moves to stand that edge on the box's, and the widest
-line — the box's width — stays exactly where centring put it, so the block
-and the node's extent do not move. A line anchored any other way stands as
-it was. -/
 private def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
     (ls : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
   let w := ls.foldl (fun w s => match s with
@@ -3770,9 +2786,7 @@ private def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
       else s
     | .ink _ => s
 
-/-- A relative placement's direction: the `positioning` keys this subset
-reads — the four sides and the four corners. Public because the placement
-facts range over it: a statement needs a name to talk about. -/
+/-- A relative placement's direction: the four sides and four corners of the `positioning` keys. -/
 public inductive Dir where
   | left | right | above | below
   | aboveLeft | aboveRight | belowLeft | belowRight
@@ -3789,13 +2803,7 @@ private def dirOf : String → Option Dir
   | "below right" => some .belowRight
   | _ => none
 
-/-- The centre-to-centre offset a direction puts between the placed node
-and the one it names, given the separation each axis asks for: the
-horizontal member for the left-right pair, the vertical for the up-down
-pair, and both for a corner — pgf spells the pair vertical first. The
-caller adds the two nodes' half-extents to the declared `node distance`,
-which is how pgf measures the gap: border to border, not centre to
-centre (`positioning` library). -/
+/-- The centre-to-centre offset a direction puts between the placed node and the one it names. -/
 public def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
   match d with
   | .left => (-sep.2, 0)
@@ -3807,10 +2815,8 @@ public def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
   | .belowLeft => (-sep.2, -sep.1)
   | .belowRight => (sep.2, -sep.1)
 
-/-- The anchor a bare direction key stands on the node's coordinate, and
-the shift a length after it gives (TikZ manual §17.5.2): `above` is
-`anchor=south`, `below left=2pt` is `anchor=north east` two points down and
-left — the shift in both axes of a corner. -/
+/-- The anchor a bare direction key stands on the coordinate, and the shift a length after it
+gives (TikZ manual §17.5.2). -/
 public def dirAnchor (d : Dir) (len : Sp) : NodeAnchor × (Sp × Sp) :=
   match d with
   | .above => (.south, (0, len))
@@ -3822,11 +2828,7 @@ public def dirAnchor (d : Dir) (len : Sp) : NodeAnchor × (Sp × Sp) :=
   | .belowLeft => (.northEast, (-len, -len))
   | .belowRight => (.northWest, (len, -len))
 
-/-- A node's placement after its coordinate expressions and options have
-been read. Relative placement names exactly one geometry to read; absolute
-placement reads none. Keeping that dependency explicit lets the resolver's
-order contract cover every direction without assuming that arbitrary
-source statements commute. -/
+/-- A node's placement once its coordinates and options are read: absolute, or relative to one named geometry. -/
 public inductive NodePlacement where
   | absolute (x y : Sp)
   | relative (dir : Dir) (target : String) (sep : Sp × Sp)
@@ -3836,9 +2838,7 @@ public def NodePlacement.target : NodePlacement → Option String
   | .absolute .. => none
   | .relative _ name _ => some name
 
-/-- Resolve the centre from the declared gap and both nodes' anchor
-extents. Failure carries the missing name so the caller can account for
-it without recovering a name from diagnostic text. -/
+/-- The centre from the declared gap and both nodes' extents; a failure carries the missing name. -/
 public def NodePlacement.position (p : NodePlacement) (a b : Sp)
     (nodes : List (String × NodeGeom)) : Except String (Sp × Sp) :=
   match p with
@@ -3850,10 +2850,7 @@ public def NodePlacement.position (p : NodePlacement) (a b : Sp)
       let (ox, oy) := dir.offset (sep.1 + g.b + b, sep.2 + g.a + a)
       .ok (g.x + ox, g.y + oy)
 
-/-- The measured node and its optional name, before placement. `shape.base`
-is the text baseline relative to the node centre; resolution translates
-it together with the centre. `evalNode` uses this value for both the
-geometry it emits and the geometry later nodes read. -/
+/-- A measured node and its optional name, before placement. -/
 public structure NodePlan where
   name : Option String
   placement : NodePlacement
@@ -3871,17 +2868,13 @@ public def NodePlan.register (p : NodePlan) (resolved : Option NodeGeom)
   | some name, some g => (name, g) :: nodes
   | _, _ => nodes
 
-/-- Resolve once, then register precisely that geometry if the node has a
-name. An unnamed or unresolved node cannot change another node's lookup. -/
+/-- Resolves once, then registers that geometry under the node's name, if any. -/
 public def NodePlan.run (p : NodePlan) (nodes : List (String × NodeGeom)) :
     Except String NodeGeom × List (String × NodeGeom) :=
   let resolved := p.resolve nodes
   (resolved, p.register resolved.toOption nodes)
 
-/-- Two placements are independent when their writes are distinct and
-neither reads the other's write. Repeated names and a node placed against
-the other node fail these conditions; both are legitimate source programs
-whose order can matter. -/
+/-- Two placements are independent when their writes are distinct and neither reads the other's. -/
 public def NodePlan.Independent (p q : NodePlan) : Prop :=
   (∀ n, p.name = some n → q.name ≠ some n) ∧
   (∀ n, p.placement.target = some n → q.name ≠ some n) ∧
@@ -3923,10 +2916,6 @@ public theorem NodePlan.register_order (p q : NodePlan) (pg qg : Option NodeGeom
       cases pg <;> cases qg <;> simp [register, hp, hq, List.lookup_cons]
       split <;> split <;> simp_all
 
-/-- Independent measured placements commute for every named lookup, even
-when a reference is missing. This is a contract of the resolver `evalNode`
-uses, not of arbitrary statements: redefining a node or changing a macro
-between nodes can intentionally change the result. -/
 public theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String × NodeGeom))
     (h : p.Independent q) (name : String) :
     (q.run (p.run nodes).2).2.lookup name =
@@ -3936,8 +2925,6 @@ public theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String
       NodePlan.resolve_register _ _ _ _ h.2.2]
   exact (NodePlan.register_order _ _ _ _ _ h.1 name).symm
 
-/-- Distinct named absolute placements, as produced by `at (x,y)`, satisfy
-the independence premise for all positions and measured shapes. -/
 public theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
     (px py qx qy : Sp) (pg qg : NodeGeom) :
     Independent ⟨some pn, .absolute px py, pg⟩ ⟨some qn, .absolute qx qy, qg⟩ := by
@@ -3947,10 +2934,7 @@ public theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
   · intro n hn; cases hn
   · intro n hn; cases hn
 
-/-- TikZ's `auto` anchor, including diagonal corners. tikz.code.tex's
-`tikz@auto@anchor` ignores normalized tangent components within ±.05;
-comparing twenty times the component with the length avoids division.
-Swapping sides reverses the tangent before making the same decision. -/
+/-- TikZ's `auto` anchor direction, ignoring tangent components within ±.05 (tikz.code.tex). -/
 public def autoDir (left : Bool) (dx dy : Sp) : Dir :=
   let x := if left then dx else -dx
   let y := if left then dy else -dy
@@ -3963,27 +2947,10 @@ public def autoDir (left : Bool) (dx dy : Sp) : Dir :=
     else if 20 * y < -n then .belowRight else .below
   else if y > 0 then .left else .right
 
-/-- Reversing a path and swapping its automatic side attach to the same
-side of the same label box, for every tangent, including a zero tangent. -/
 public theorem autoDir_swap_exact (left : Bool) (dx dy : Sp) :
     autoDir (!left) dx dy = autoDir left (-dx) (-dy) := by
   cases left <;> simp [autoDir]
 
-/-- **A relative placement leaves exactly the declared separation between
-the two borders.** pgf's `positioning` rule, as arithmetic over the values
-the walk actually threads: the reference node's centre `gx` and half-extent
-`ga`, the placed node's half-extent `ownA`, and the separation `s` the
-entry or `node distance` declared. `right` puts the placed centre at
-`gx + (s + ga + ownA)`, so its near border stands at `gx + ga + s` — the
-reference's far border plus `s`, with the two extents accounted and
-nothing left over.
-
-This is the invariant whose absence let the first version of this slice
-put node *centres* one `node distance` apart, which drew a diagram whose
-boxes touched. Stated per axis because the two axes read different members
-of the pair; the corner directions are their conjunction
-(`offset_corners_exact`). Binders are `Int` so `omega` can read them, as
-the convention asks. -/
 public theorem placeRight_border_exact (gx ga ownA s : Int) :
     gx + (Dir.right.offset (0, s + ga + ownA)).1 - ownA - (gx + ga) = s := by
   simp [Dir.offset]
@@ -4004,16 +2971,11 @@ public theorem placeBelow_border_exact (gy gb ownB s : Int) :
   simp [Dir.offset]
   omega
 
-/-- The four sides are two opposite pairs: a sign error in the vocabulary
-cannot hide behind a direction nothing tests. -/
 public theorem offset_opposite_exact (s : Sp × Sp) :
     Dir.left.offset s = (-(Dir.right.offset s).1, (Dir.right.offset s).2) ∧
       Dir.above.offset s = ((Dir.below.offset s).1, -(Dir.below.offset s).2) := by
   simp [Dir.offset]
 
-/-- Each corner is exactly its two sides: `above left` moves by what
-`left` moves along x and what `above` moves along y, so the corner cases
-cannot drift from the sides they are named for. -/
 public theorem offset_corners_exact (s : Sp × Sp) :
     Dir.aboveLeft.offset s = ((Dir.left.offset s).1, (Dir.above.offset s).2) ∧
       Dir.aboveRight.offset s = ((Dir.right.offset s).1, (Dir.above.offset s).2) ∧
@@ -4021,16 +2983,11 @@ public theorem offset_corners_exact (s : Sp × Sp) :
       Dir.belowRight.offset s = ((Dir.right.offset s).1, (Dir.below.offset s).2) := by
   simp [Dir.offset]
 
-/-- The offset moves along one axis per member of the separation and
-invents no distance: every component is `0`, a member of the pair, or its
-negation. What stops a direction from quietly scaling the gap. -/
 public theorem offset_mem (d : Dir) (s : Sp × Sp) :
     ((d.offset s).1 = 0 ∨ (d.offset s).1 = s.2 ∨ (d.offset s).1 = -s.2) ∧
       ((d.offset s).2 = 0 ∨ (d.offset s).2 = s.1 ∨ (d.offset s).2 = -s.1) := by
   cases d <;> simp [Dir.offset]
 
-/-- A node name written as a coordinate's contents: idents and digit runs
-joined, which is how `(a)`, `(a1)` and `(x y)` all spell one name. -/
 private def nameOfToks (ts : List Tok) : Option String :=
   let s := ts.foldl (fun acc t => acc ++ (match t with
     | .ident n => n
@@ -4039,36 +2996,24 @@ private def nameOfToks (ts : List Tok) : Option String :=
     | _ => "")) ""
   if s.isEmpty then none else some s
 
-/-- A relative placement option, in the spellings pgf accepts: `right=of a`
-(the `positioning` library), `right of=a` (the older `calc` spelling), and
-`right=2cm of a`, whose own length replaces `node distance`. The separation
-comes back undivided; the caller turns it into a centre offset once it
-knows both nodes' extents. `none` where the entry is not a placement at
-all. A bare `right` is *not* one — on a node it is an anchor, which this
-subset reads where an edge label declares it. -/
 private def readPlace (dist : Sp × Sp) (toks : List Tok) :
     Option (Dir × String × (Sp × Sp)) := do
   let path := keyPath toks
   let rest := (toks.dropWhile (· != .sym '=')).drop 1
   let words := path.splitOn " "
-  -- `right of=a`: the older `calc` spelling carries `of` in the key path
   if words.getLast? == some "of" then
     let dir ← dirOf (String.intercalate " " words.dropLast)
     let nm ← nameOfToks rest
     return (dir, nm, dist)
   let dir ← dirOf path
   match rest with
-  -- `right=of a`
   | .ident "of" :: tail => (nameOfToks tail).map fun nm => (dir, nm, dist)
-  -- `right=2cm of a`: the declared length stands in for `node distance`
   | .num m :: .ident u :: .ident "of" :: tail => do
     let own ← (readDim [.num m, .ident u]).toOption
     let nm ← nameOfToks tail
     some (dir, nm, (own, own))
   | _ => none
 
-/-- `node distance = 1cm and 1cm`, vertical then horizontal as pgf spells
-it; one length sets both. `none` where the entry is not that key. -/
 private def readNodeDistance (toks : List Tok) : Option (Sp × Sp) := do
   guard (keyPath toks == "node distance")
   let rest := (toks.dropWhile (· != .sym '=')).drop 1
@@ -4081,17 +3026,10 @@ private def readNodeDistance (toks : List Tok) : Option (Sp × Sp) := do
     some (v, h)
   | _ => none
 
-/-- The To-Path keys a path statement reads (`ToSpec.read`), so a bundle or
-an outer bracket that sets one reaches every `to` below it. -/
 private def toKeyNames : List String :=
   ["out", "in", "bend left", "bend right", "bend angle", "relative", "looseness",
    "out looseness", "in looseness"]
 
-/-- The keys a path statement's option loop reads, so an entry declared for
-the whole document or for the picture can be carried into a path's bracket
-instead of dropped. A tip counts only where this subset can draw it
-(`drawsAsArrow`): an undrawable one is a real loss, and is named once at
-the line that declared it rather than at every edge that inherited it. -/
 private def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
   match arrowSpec opt.toList with
   | some (a, b) => a.all (drawsAsArrow styles) && b.all (drawsAsArrow styles)
@@ -4109,9 +3047,6 @@ private def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok)
         (keyPath ts) ||
         toKeyNames.contains (keyPath ts) || (readLineWidth ts).isSome
 
-/-- Is a `\fill`'s bracket a list of keys a path reads (`fill opacity=0.3`,
-`rounded corners`) rather than one colour spelling? A colour, resolvable or
-not, stays the rectangle's, where an unknown colour is named as one. -/
 private def fillBracketIsKeys (cx : Cx) (env : List (String × Val)) (toks : Array Tok) : Bool :=
   let ts := toks.filter (· != .space)
   if ts[0]? != some (.sym '[') then false else
@@ -4122,10 +3057,6 @@ private def fillBracketIsKeys (cx : Cx) (env : List (String × Val)) (toks : Arr
     inner.contains (.sym '=') || inner.contains (.sym ',') ||
       ((evalColor cx env inner) matches .error _ && readsPathOpt cx.styles inner)
 
-/-- The keys a node statement's option loop reads. A placement and a width
-are read through the functions the loop reads them with, so the vocabulary
-cannot drift from the loop that consumes it; a `font=` is read whole, and
-the loop names any switch in it that it cannot set (`readFont`). -/
 private def readsNodeOpt (opt : Array Tok) : Bool :=
   if (readPlace (0, 0) opt.toList).isSome then true
   else match opt.toList with
@@ -4137,60 +3068,34 @@ private def readsNodeOpt (opt : Array Tok) : Bool :=
         (keyPath ts) ||
       (dirOf (keyPath ts)).isSome || (readLineWidth ts).isSome
 
-/-- The tree keys this subset reads. -/
 private def treeKeyNames : List String :=
   ["grow", "grow'", "level distance", "sibling distance", "parent anchor", "child anchor",
    "missing"]
 
-/-- An entry some statement of this subset reads: what a declaration made
-once for the document, or once for the picture, carries into the brackets
-below it. An entry no shape reads is honoured by nobody, so it stays a
-named loss at the line that wrote it. -/
+/-- Whether some statement of this subset reads an entry, which an outer declaration then carries in. -/
 public def readsOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
   readsPathOpt styles opt || readsNodeOpt opt || treeKeyNames.contains (keyPath opt.toList)
 
-/-- The two outer brackets as the shape at hand reads them. Neither was
-written at this statement, so an entry for the other shape is not a loss
-here — a document-level arrow tip is no complaint at a node — and the
-entries no shape reads are named where they were declared. -/
+/-- The two outer brackets as the shape at hand reads them. -/
 public def outerRead (reads : Array Tok → Bool) (global picture : Array (Array Tok)) :
     Array (Array Tok) × Array (Array Tok) :=
   (global.filter reads, picture.filter reads)
 
-/-- **A picture starts at pgf's line width.** `\pgfpicture` runs
-`\pgfsetlinewidth{0.4pt}` before anything the picture declares
-(pgfcorescopes.code.tex, `\pgf@picture`), so a width a `\tikzset` line sets
-outside every picture reaches none: lualatex strokes such a picture at
-0.4 pt. The line's other keys do reach it. -/
+/-- Whether an entry sets a width, which every picture resets to pgf's 0.4 pt (`\pgf@picture`). -/
 public def pictureResets (o : Array Tok) : Bool := (readLineWidth o.toList).isSome
 
-/-- One `\tikzset` line folded into what the document has set so far: its
-definitions into the bundles, and the entries the subset reads into the
-outermost bracket — a later line's value replacing an earlier one's rather
-than standing beside it, the rule `inheritOpts` holds within a bracket and
-for the same reason — except a width, which every picture resets
-(`pictureResets`). The fold's body as its own function, so
-`documentOptsStep_covers` can state what one line contributes without
-reducing the fold. -/
+/-- One `\tikzset` line folded into what the document has set so far, a later value replacing an
+earlier one. -/
 public def documentOptsStep (sa : List (String × Array Tok) × Array (Array Tok))
     (keys : Array Tok) : List (String × Array Tok) × Array (Array Tok) :=
   let (after, unread) := readStyleList sa.1 keys
   (after, inheritOpts sa.2 (unread.filter fun o => readsOpt after o && !pictureResets o))
 
-/-- What a document's `\tikzset` lines set for every picture in it: the
-entries that are not definitions, that the subset reads, and that no
-picture resets, folded in source order. The definitions those lines carry
-are `documentStyles`; what neither reads is `unreadKeys`. -/
+/-- What a document's `\tikzset` lines set for every picture: read entries that are no definition
+and that no picture resets. -/
 public def documentOpts (sets : Array (Array Tok)) : Array (Array Tok) :=
   (sets.foldl documentOptsStep ([], #[])).2
 
-/-- **A line's read entry is one the document has set.** An entry of a
-`\tikzset` line that is no definition, that the subset reads and that no
-picture resets enters the outermost bracket, whatever the lines before it
-set — so a tip declared once in the preamble is a key of the document and
-not a dropped one. With `outerRead_covers` and `merge_global_covers` this is
-the chain from the line that wrote the key to the bracket a statement
-reads. -/
 public theorem documentOptsStep_covers {styles : List (String × Array Tok)}
     {acc : Array (Array Tok)} {keys o : Array Tok}
     (h : o ∈ (readStyleList styles keys).2)
@@ -4200,12 +3105,6 @@ public theorem documentOptsStep_covers {styles : List (String × Array Tok)}
   simp only [documentOptsStep, inheritOpts, Array.mem_append, Array.mem_filter]
   exact Or.inr ⟨h, by simp [hr, hw]⟩
 
-/-- **No document-level line sets a picture's width** (`_mem`): every entry
-the document's `\tikzset` lines hand the pictures is drawn from those no
-picture resets. The defect handed them the line's width, so a document
-whose preamble said `semithick` stroked every picture at 0.6 pt where
-lualatex strokes 0.4 pt — and the private reference corpus's pictures with
-it, on every page. -/
 public theorem documentOpts_mem (sets : Array (Array Tok)) {o : Array Tok}
     (h : o ∈ documentOpts sets) : pictureResets o = false := by
   unfold documentOpts at h
@@ -4225,77 +3124,43 @@ public theorem documentOpts_mem (sets : Array (Array Tok)) {o : Array Tok}
     (fun i sa hsa => step sa sets[i] hsa)
   exact this o h
 
-/-- The shape filter keeps what this shape reads: an entry a statement's own
-loop would read is not dropped on its way in from an outer bracket. -/
 public theorem outerRead_covers {reads : Array Tok → Bool}
     {global picture : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ global) (hr : reads o) : o ∈ (outerRead reads global picture).1 := by
   simp only [outerRead, Array.mem_filter]
   exact ⟨h, hr⟩
 
-/-- What one `\tikzset` key list leaves unread, named for a diagnostic at
-the line that wrote it. The elaborator's one caller; the fold the pictures
-read is `documentStyles`. A key the engine reads (`setsEngineKey`) is not
-among them, nor is one a statement reads (`readsOpt`, carried into every
-bracket by `documentOpts`): those are honoured, not dropped. -/
+/-- What one `\tikzset` key list leaves unread, named at the line that wrote it. -/
 public def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
   let (after, unread) := readStyleList styles keys
   (unread.filter fun e => !setsEngineKey e && !readsOpt after e).filterMap fun e =>
-    -- The key's own name, whole: the path before any `/`, which is the name
-    -- whether the entry is a bare key or a definition the subset has no
-    -- loop for. Naming the entry's *first token* reported `every` for
-    -- `every label` and `edge` for `edge-muted` — a message about a key
-    -- nothing in the document is called.
     (keyName ((e.toList.filter (· != .space)).takeWhile
       (fun t => !isSym '/' t))).map (fun n => s!"'{n}'")
       |>.orElse fun _ => (e[0]?).map tokText
 
-/-- One part of a `\node` statement's prologue: everything before the
-body. pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
-number of times, ending at the `{text}` (TikZ manual §17.2, the node
-specification), so a prologue is a *fold* over these rather than a fixed
-sequence — a second bracket is ordinary pgf, and so is a bracket standing
-after `at`. -/
+/-- One part of a `\node` statement's prologue, read in any order and any number of times (TikZ manual §17.2). -/
 public inductive Part where
   | brack (inner : Array Tok)
   | name (n : String)
-  /-- `at (…)`: the coordinate's contents — `x, y`, a node's name or anchor,
-  or a calc computation — read where the node is placed. -/
+  /-- `at (…)`: the coordinate's contents, read where the node is placed. -/
   | atCoord (inner : Array Tok)
   deriving Repr, Inhabited
 
 /-- A node's prologue as read so far. -/
 public structure Prologue where
-  /-- Every option bracket's inner tokens, in source order: a later
-  bracket's keys stand later, so precedence stays the merge's own rule
-  (`mergeOpts`) and is not this reader's to decide. -/
+  /-- Every option bracket's inner tokens, in source order. -/
   brackets : Array (Array Tok) := #[]
   name : Option String := none
   /-- The `at (…)` coordinate's contents. -/
   at? : Option (Array Tok) := none
   deriving Repr, Inhabited
 
-/-- Fold one part in. The shape is what makes the reader order-free by
-construction rather than by inspection: each part touches one field, so no
-part can be the one a position forgot. -/
+/-- Folds one part in; each part touches one field. -/
 public def Prologue.step (p : Prologue) : Part → Prologue
   | .brack inner => { p with brackets := p.brackets.push inner }
   | .name n => { p with name := p.name.orElse fun _ => some n }
   | .atCoord inner => { p with at? := some inner }
 
-/-- **A name is the node's whichever side of the bracket it stands on, and
-a bracket is the node's whichever side of `at`.** Folding two different
-parts in either order leaves the same prologue: the registered `_agree`
-shape over the spellings pgf reads alike.
-
-The defect this closes was a reader one position short of a loop — one
-bracket, and only before `at` — so `\node[keys] (n) [keys] {text}` and
-`\node (n) at (c) [keys] {text}`, both of which pgf compiles without
-complaint, reached the body arm with a `[` where a `{` was expected and
-were refused for *needing a body they had written*. Three errors on the
-private reference corpus read as a missing label. Stated as commutation
-rather than as a list of accepted orders, because the list is what the old
-reader was. -/
 public theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : String)
     (at_ : Array Tok) :
     (p.step (.brack inner)).step (.name n) = (p.step (.name n)).step (.brack inner) ∧
@@ -4305,10 +3170,6 @@ public theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : Strin
       = (p.step (.atCoord at_)).step (.name n) := by
   exact ⟨rfl, rfl, rfl⟩
 
-/-- Nothing a bracket said is lost to a later part: a fold step either
-leaves the bracket list alone or appends to it, and never rewrites it — so
-a key cannot be dropped by what was written after it. The `_covers` half of
-the pair above. -/
 public theorem prologue_brackets_covers (p : Prologue) (part : Part) :
     (p.step part).brackets = p.brackets ∨
       ∃ inner, (p.step part).brackets = p.brackets.push inner := by
@@ -4317,8 +3178,6 @@ public theorem prologue_brackets_covers (p : Prologue) (part : Part) :
   · exact Or.inl rfl
   · exact Or.inl rfl
 
-/-- A `(name)` group at `i`: the name and the index past its `)`. A name
-holding a `,` is a coordinate, not a name. -/
 private def readName (ts : Array Tok) (i : Nat) : Option (String × Nat) := Id.run do
   unless ts[i]? == some (.sym '(') do return none
   let mut j := i + 1
@@ -4334,12 +3193,6 @@ private def readName (ts : Array Tok) (i : Nat) : Option (String × Nat) := Id.r
   | some nm => if nm.contains ',' then return none else return some (nm, j + 1)
   | none => return none
 
-/-- A node's prologue from `i0`: `[keys]`, `(name)` and `at (…)`, in any
-order and any number of times (TikZ manual §17.2), folded through
-`Prologue.step` — whose `prologue_swap_agree` is why no position can be the
-one a part was forgotten in — and the index past it, the `{text}` body where
-the node has one. The one reader a node statement and a tree's walk read a
-node's name through (`nodeNameOf`). -/
 private def readPrologue (ts : Array Tok) (i0 : Nat) : Prologue × Nat × Option PDiag := Id.run do
   let mut i := i0
   let mut pro : Prologue := {}
@@ -4377,25 +3230,12 @@ private def readPrologue (ts : Array Tok) (i0 : Nat) : Prologue × Nat × Option
     else break
   return (pro, i, bad)
 
-/-- The name a node's tokens give it: the first `(name)` of its prologue. -/
 private def nodeNameOf (toks : Array Tok) : Option String :=
   (readPrologue (toks.filter (· != .space)) 0).1.name
 
-/-- A name that resolved to nothing. Which refusal it is depends on *why*
-there is no such node: a declaration the walk could not reach is a gap in
-the rendered subset (`W0334`, `pending`), and a name nothing declared is the
-document's (`E0333`, `dropped`). Reporting both as the second is what made
-one unreadable conditional read as five separate errors, each naming a node
-the author had written.
-
-This is not a demotion of a loss but a correction of the code: the loss was
-always `pending` where the cause is a construct outside the subset, and the
-walk was classifying by the symptom — a missing name — rather than by the
-cause. The gate's premise is structural: `Ev.gapped` and `Cx.parseGap` are
-set only where a `W0334` naming that construct was raised, so the quiet
-answer can never be the whole story a reader gets.
--- premise: unreachedName_accounts — the gate reads a flag set only beside a
--- named gap, so a picture with no gap cannot take this path. -/
+-- premise: unreachedName_accounts — the flag is set only beside a named gap
+/-- A name that resolved to nothing: a gap in the subset (W0334) where a construct outside it was
+named, else the document's own error (E0333). -/
 public def unreachedName (gapped : Bool) (what : String) (site : String := "'\\draw'")
     (cost : String := "the edge is not drawn") : PDiag :=
   if gapped then
@@ -4403,10 +3243,6 @@ public def unreachedName (gapped : Bool) (what : String) (site : String := "'\\d
 picture subset, so no node carries it; {cost}")
   else (.E0333, s!"in {site}, no node is named '{what}'; {cost}")
 
-/-- **A quiet refusal is paid for by a named gap.** The registered
-`_accounts` shape: the pending answer is reachable only when a construct
-outside the subset was named, so the two codes stay one code one meaning and
-the reader is never left with the softer of the two alone. -/
 public theorem unreachedName_accounts (gapped : Bool) (what site cost : String)
     (h : (unreachedName gapped what site cost).1 = .W0334) : gapped = true := by
   cases gapped
@@ -4414,8 +3250,6 @@ public theorem unreachedName_accounts (gapped : Bool) (what site cost : String)
     exact absurd h (by simp)
   · rfl
 
-/-- An endpoint of a `\draw` path: a named node, whose border anchors the
-segment, or a bare coordinate. -/
 private inductive Anchor where
   | node (g : NodeGeom)
   | point (x y : Sp)
@@ -4430,9 +3264,8 @@ public inductive CoordMode where
   | advance
   deriving BEq
 
-/-- TikZ §13.4.3: `+` leaves the relative reference unchanged; `++`
-updates it. Inputs already have the picture's scale, so addition does not
-scale a named anchor a second time. The result is endpoint, then reference. -/
+/-- A relative coordinate step (TikZ §13.4.3): `+` keeps the reference, `++` moves it; the
+endpoint, then the reference. -/
 public def coordStep (mode : CoordMode) (base p : Int × Int) :
     (Int × Int) × (Int × Int) :=
   match mode with
@@ -4447,15 +3280,12 @@ public theorem coordStep_offset_exact (base p : Int × Int) :
     (coordStep .offset base p).2 = base := by
   simp [coordStep]
 
-/-- Chained advances consume each displacement exactly once, independently
-of how the parser grouped the chain. -/
 public theorem coordStep_advance_exact (base p q : Int × Int) :
     coordStep .advance (coordStep .advance base p).2 q =
       coordStep .advance base (p.1 + q.1, p.2 + q.2) := by
   simp [coordStep, Int.add_assoc]
 
-/-- TikZ §14.2: `|-` takes x from its start and y from its end;
-`-|` takes the other pair. This is the corner the segment writer reads. -/
+/-- The corner of `|-` (x from the start, y from the end) or `-|` (TikZ §14.2). -/
 public def orthogonalCorner (verticalFirst : Bool) (p q : Int × Int) : Int × Int :=
   if verticalFirst then (p.1, q.2) else (q.1, p.2)
 
@@ -4472,8 +3302,7 @@ private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
   | [xs, ys] =>
     let x ← (evalComp env xs).mapError fun e => (.E0333, s!"in {site}, {e}; {cost}")
     let y ← (evalComp env ys).mapError fun e => (.E0333, s!"in {site}, {e}; {cost}")
-    -- A point goes through the transformation in force; a displacement
-    -- through its linear part alone.
+    -- A point goes through the transformation in force, a displacement through its linear part.
     let (px, py) := if displacement then cx.placeVec (cx.compSp x) (cx.compSp y)
       else cx.place (cx.compSp x) (cx.compSp y)
     return .point px py
@@ -4508,10 +3337,6 @@ picture subset; {cost}")
 picture subset; {cost}")
       | none => throw (unreachedName (ev.gapped || cx.parseGap) nm site cost)
 
-/-- Where a calc term's factor ends (TikZ manual §13.5.1, `⟨factor⟩*⟨coordinate⟩`):
-the `*` standing before the term's coordinate at paren depth zero. `none`
-where the term opens with its coordinate — a `+`, `-` or `!` at depth zero
-comes first. -/
 private def factorEnd (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
   let mut depth : Int := 0
   for k in [i:ts.size] do
@@ -4523,7 +3348,6 @@ private def factorEnd (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
     | _ => pure ()
   return none
 
-/-- The next `!` at paren depth zero from `i`: the end of a calc modifier. -/
 private def bangAt (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
   let mut depth : Int := 0
   for k in [i:ts.size] do
@@ -4534,11 +3358,6 @@ private def bangAt (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
     | _ => pure ()
   return none
 
-/-- Calc coordinates (TikZ manual §13.5): a sum or difference of terms, each
-an optional factor times a coordinate (`2*(a)`, `\x*(a)`), then any number
-of partway modifiers — `!t!(b)`, the point `t` of the way to `(b)`, or with
-a length, that far toward it (§13.5.3). Every coordinate goes through the
-one reader a plain endpoint does. The token count bounds the walk. -/
 private def calcAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
     (raw : List Parse.Raw) (site : String := "'\\draw'") (cost : String := "the edge is not drawn") :
     Except PDiag Anchor := do
@@ -4608,73 +3427,39 @@ private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
   let (point, reference) := coordStep mode base a.center
   return (if mode == .absolute then a else .point point.1 point.2, next, reference)
 
-/-- `\node[circle, draw, minimum size=8mm] at (x,y) {$X$};` — a centred
-label, its optional outline, optionally named (`\node (u) at ...`; the
-name is parsed and dropped: only an edge could consume it, and edges are
-outside the subset). An option outside the subset loses only itself
-(named); a node without `at` or a readable body loses the node. An option
-naming a declared style bundle expands to the bundle's own options, so a
-loss inside a bundle is named by its real spelling, never by the
-bundle's. -/
 private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     (ev : Ev) (coordinate : Bool := false) (defaultName : Option String := none) : Ev :=
     Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
   let mut color := cx.ink
-  -- `transform shape` opts the node into the picture's scale (pgf manual
-  -- §25.4); `font=` then sets its size relative to that.
+  -- `transform shape` opts the node into the picture's scale (pgf manual §25.4).
   let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
-  -- The declarations in force where the node stands (`Stmt.setDecl`): a
-  -- size step of the document's ladder, or a font declaration. A size
-  -- switch is a size step, every other declaration a style: what a
-  -- `font=` value's switches mean (`readFont`).
   let baseStyles : Array Ir.Style := cx.decls.filterMap fun n =>
     if (cx.ladder.lookup n).isSome then none else cx.declStyles.lookup n
   let mut scale : Nat := cx.declScale factor
   let mut ev := ev
-  -- The node's outline, gathered from its options: shape kind (pgf's
-  -- default node shape is a rectangle), whether it draws and/or fills,
-  -- how it strokes, and the declared minimum extents.
   let mut nodeShape : NodeShape := .rectangle
-  -- `label=` and `pin=` (TikZ manual §17.10): nodes placed against this one
-  -- once it stands (`drainAfter`), and the distances their keys set.
   let mut extras : Array (Bool × List Tok) := #[]
   let mut labelDist : Sp := 0
   let mut pinDist : Option Sp := none
-  -- `fit=(a) (b) …` (tikzlibraryfit.code.tex): the node's text box covers
-  -- what the list names.
   let mut fitTo : Option (List Tok) := none
   let mut draw : Option (Option Ir.Color) := none
   let mut fillCol : Option Ir.Color := none
   let mut dash : Ir.Pic.Dash := .solid
   let mut width : Sp := Ir.Pic.thinWidth
-  -- The declarations a `font=` named, wrapping every label line.
   let mut fontStyles : Array Ir.Style := #[]
-  -- `text height=`/`text depth=` as written: font-relative units resolve
-  -- against the node's own face, once its label is measured.
   let mut textHt : Option (List Tok) := none
   let mut textDp : Option (List Tok) := none
-  -- `align=`: the side the text's lines stand flush to (centred by default).
   let mut textAlign : Ir.Pic.LabelAlign := .center
   let mut minW : Sp := 0
   let mut minH : Sp := 0
-  -- `inner sep` as the document set it, per axis; `none` is pgf's default,
-  -- resolved below against this node's own em.
   let mut xsep : Option Sp := none
   let mut ysep : Option Sp := none
-  -- `outer sep` likewise; `none` is pgf's `auto`, half the line width.
   let mut oxsep : Option Sp := none
   let mut oysep : Option Sp := none
   let mut own : Array (Array Tok) := #[]
-  -- The anchor a placement key stands on the node's coordinate, with its
-  -- shift: `above` is `anchor=south` (TikZ manual §17.5.2).
   let mut anchorAt : Option (NodeAnchor × (Sp × Sp)) := none
-  -- pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
-  -- number of times, up to the `{text}` (TikZ manual §17.2). So the
-  -- prologue is a loop over the three parts, folded through
-  -- `Prologue.step` — whose `prologue_swap_agree` is why no position can
-  -- be the one a part was forgotten in.
   let (pro, i1, bad) := readPrologue ts i
   i := i1
   if let some d := bad then return ev.diag d
@@ -4697,7 +3482,6 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     | none =>
     match opt.toList with
     | .ident "font" :: .sym '=' :: rest =>
-      -- The key replaces what an earlier `font=` set, as TikZ's does.
       let (sz, sts, unread) := readFont cx rest
       scale := (sz.map fun k => k * factor / 1000).getD factor
       fontStyles := sts
@@ -4767,11 +3551,7 @@ is dropped")
       | .ok d => minH := max minH d
       | .error e => ev := ev.diag (.W0334, s!"in 'minimum height', {e}; the option \
 is dropped")
-    -- `inner sep` moves the node's *border*: pgf manual §17.2.2 has it
-    -- padding the text on every side, and §17.5.2's anchors sit on the
-    -- border. So it moves where an anchor stands, how far a relative
-    -- placement parts two nodes, and a drawn outline around its text; a
-    -- declared minimum, where larger, is the outline instead.
+    -- `inner sep` moves the node's border, not the letters (pgf manual §17.2.2, §17.5.2).
     | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => xsep := some d; ysep := some d
@@ -4787,9 +3567,7 @@ is dropped")
       | .ok d => ysep := some d
       | .error e => ev := ev.diag (.W0334, s!"in 'inner ysep', {e}; the option \
 is dropped")
-    -- `outer sep` moves the anchors past the border and never the drawn
-    -- path (pgfmoduleshapes.code.tex); `auto` is its initial value, half
-    -- the node's line width.
+    -- `outer sep` moves the anchors past the border and never the drawn path; `auto` is half the line width.
     | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
       match rest, readDim rest with
       | [.ident "auto"], _ => oxsep := none; oysep := none
@@ -4806,18 +3584,11 @@ is dropped")
       | .ok d => oysep := some d
       | .error e => ev := ev.diag (.W0334, s!"in 'outer ysep', {e}; the option \
 is dropped")
-    -- `node contents={...}`: the body a bundle carries, so a use site can
-    -- write `\node[bundle] (n);` with nothing of its own (pgf manual
-    -- §17.2.1). A body written at the use site wins.
     | .ident "node" :: .ident "contents" :: .sym '=' :: rest =>
-      -- `node contents={x}` and `node contents=x` alike: pgf takes the
-      -- braces off a single group, and a bare run is the body itself.
       let g : List Tok := if let [.group inner] := rest then inner else rest
       let (ls, ds) := nodeLabel cx env g
       contents := some ls
       ev := ds.foldl Ev.diag ev
-    -- `anchor=<name>`: the named anchor stands on the node's coordinate
-    -- (TikZ manual §17.5.1), every name the shape declares.
     | .ident "anchor" :: .sym '=' :: rest =>
       match nameOfToks rest >>= nodeAnchorOf with
       | some a => anchorAt := some (a, (0, 0))
@@ -4826,8 +3597,6 @@ is dropped")
 names an anchor outside the rendered picture subset; the node is centred")
     | [] => pure ()
     | o :: rest =>
-      -- `above`, `below left=2pt` and their siblings: the opposite anchor on
-      -- the coordinate, shifted by the length where one is given (§17.5.2).
       match (keyName ((o :: rest).takeWhile (· != .sym '='))).bind dirOf with
       | some d =>
         let value := ((o :: rest).dropWhile (· != .sym '=')).drop 1
@@ -4840,9 +3609,6 @@ node is placed by its anchor alone")
       | none =>
         ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
 picture subset; the option is dropped")
-  -- The fit library's box (`\tikz@lib@fit`): the named nodes' west, east,
-  -- north and south anchors and the bare points, their hull the node's
-  -- text box, centred on its centre, the node anchored there.
   let mut fitBox : Option (Sp × Sp × Sp × Sp) := none
   if let some ft := fitTo then
     let fts := (ft.filter (· != .space)).toArray
@@ -4868,15 +3634,7 @@ fits the rest")
       let y1 := pts.foldl (fun m p => max m p.2) p0.2
       fitBox := some ((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)
       anchorAt := none
-  -- pgf places a node with no `at` at the path's current point, which at
-  -- the start of a node statement is the origin; a relative placement
-  -- (`right=of a`) puts it one `node distance` from the node it names.
-  -- Resolution reads the node table the run was seeded with, so
-  -- declaration order does not decide it (`evalFixed`): a reference to a
-  -- node written later resolves on the next run, and only a name no node
-  -- carries — or a cycle — is refused, by that name.
-  -- `at (…)`: a point, a node or its anchor, or a calc computation — read
-  -- by the one reader every endpoint is.
+  -- A node with no `at` stands at the path's current point, the origin at a statement's start.
   let atAnchor : Option (Except PDiag Anchor) := match fitBox with
     | some (fx, fy, _, _) => some (.ok (.point fx fy))
     | none => pro.at?.map fun inner =>
@@ -4905,28 +3663,19 @@ outside the rendered picture subset; the label is not drawn")
       | none =>
         .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
   let bodyOf := bodyOf.map fun (ls, ds) => (fontLines (baseStyles ++ fontStyles) ls, ds)
-  -- The label's lines set at the origin: the one set of shapes the node's
-  -- extent, its baseline and its text box are all read off, through the
-  -- face the driver resolved (`Cx.metric`) — the measurement the picture's
-  -- box reads (`Ir.Pic.Shape.inkBox`), so neither can drift from it.
   let shapes0 : Array Ir.Pic.Shape :=
     match bodyOf with
     | .ok (lines, _) => stackLabels 0 0 cx.bodySize scale color .center lines #[]
     | .error _ => #[]
-  -- The half-extents the anchors stand on: the face's band around each line
-  -- (`Ir.Pic.labelInkBox`), which is where the engine seats the letters.
   let inkHalf : Sp × Sp :=
     let bands := shapes0.filterMap fun s => match s with
       | .label lx ly content _ sz al => some (Ir.Pic.labelInkBox lx ly al (cx.metric content sz))
       | .ink _ => none
     let ((bx0, by0), (bx1, by1)) := Gfx.Box.hull bands
-    -- A fitted node's text box is as wide as what it fits (`text width`).
     match fitBox with
     | some (_, _, fw, _) => (fw / 2, max (-by0) by1)
     | none => (max (-bx0) bx1, max (-by0) by1)
-  -- Each line's baseline and measurement. The label's *first* line is the
-  -- node's baseline, as it is for any TeX box: what the `base` family of
-  -- anchors reads.
+  -- The label's first line is the node's baseline, as for any TeX box.
   let lineInks : Array (Sp × Ir.Pic.LabelInk) := shapes0.filterMap fun s =>
     match s with
     | .label _ ly content _ sz al =>
@@ -4934,37 +3683,14 @@ outside the rendered picture subset; the label is not drawn")
       some (Ir.Pic.labelBaseline ly al m, m)
     | .ink _ => none
   let baseOff : Sp := (lineInks[0]?.map (·.1)).getD 0
-  -- The border is the text *plus* `inner sep` (pgf manual §17.2.2), so an
-  -- anchor stands clear of the letters rather than on them. The default is
-  -- font-relative and this node's own size is its em, which is why it is
-  -- resolved here and not a constant; its ex is the face's.
   let em : Sp := cx.bodySize * (scale : Int) / 1000
   let ex : Sp := (lineInks[0]?.map (·.2.ex)).getD 0
-  -- A coordinate is a point: no text, no separation, no extent.
   let sepX : Sp := if coordinate then 0 else xsep.getD (innerSep em)
   let sepY : Sp := if coordinate then 0 else ysep.getD (innerSep em)
-  -- **The node's text box** (pgf's `\pgfnodeparttextbox`), around the
-  -- node's centre: how far the glyphs of its lines reach above and below
-  -- them, or the height and depth `text height`/`text depth` declare
-  -- (tikz.code.tex, `\tikz@fig@continue`, which sets the box's `\ht` and
-  -- `\dp`). A declared box is TikZ's to the letter: the node centres it, so
-  -- its baseline stands half the height less the depth below the centre
-  -- and every anchor is one inner sep beyond it. So is the glyphs' own box
-  -- of a drawn node outlined around its text (`nodeOutline`): its outline,
-  -- the anchors on it and the edges from them follow the node's position
-  -- and never its letters (`nodeOutline_seat_exact`), and the letters sit
-  -- one inner sep inside it on every side. Any other undeclared box keeps
-  -- the engine's placement — the face's band centred on the node, the same
-  -- seat for every label whatever its letters (`Ir.Pic.labelBaseline`), and
-  -- the anchors on that band's border — and the room the picture reserves
-  -- is the glyphs' own box, so a label with no descender keeps one inner
-  -- sep below it and not the face's descent as well.
   let glyphs : Sp × Sp := lineInks.foldl (fun (lo, hi) (b, m) =>
     (min lo (b - m.boxDepth), max hi (b + m.boxHeight))) (baseOff, baseOff)
   let dimOf (ts : Option (List Tok)) : Option Sp :=
     ts.bind fun ts => (readNodeDim em ex ts).toOption
-  -- A fitted node's text box is as tall as what it fits, centred on it
-  -- (`text height` and `text depth` the fit library sets).
   let declHt := match fitBox with
     | some (_, _, _, fh) => some (fh / 2)
     | none => dimOf textHt
@@ -4975,14 +3701,10 @@ outside the rendered picture subset; the label is not drawn")
     if let some ts := ts then
       if let .error e := readNodeDim em ex ts then
         ev := ev.diag (.W0334, s!"in '{key}', {e}; the option is dropped")
-  -- A node declaring both minimums (a circle, its size) keeps the declared
-  -- outline and the anchors it always had; any other drawn one is outlined.
   let declaredExtent : Bool := match nodeShape with
     | .circle => max minW minH > 0
     | .rectangle => minW > 0 && minH > 0
     | .ellipse | .diamond => false
-  -- An ellipse or a diamond is its outline drawn or not: its anchors stand on
-  -- the shape's border, which `nodeOutline` computes from its text box.
   let outlined : Bool :=
     (draw.isSome || fillCol.isSome || nodeShape == .ellipse || nodeShape == .diamond) &&
       !declaredExtent
@@ -4993,18 +3715,11 @@ outside the rendered picture subset; the label is not drawn")
       let dp := declDp.getD (baseOff - glyphs.1)
       let (b0, lo, hi) := textSeat ht dp
       (b0, lo, hi, (ht + dp) / 2)
-  -- The drawn outline's width and height (`nodeOutline`, centred on the
-  -- node by `nodeOutline_seat_exact`), where the node has one.
   let outline? : Option (Sp × Sp) :=
     if outlined then
       let (_, w, h) := nodeOutline nodeShape (dimF minW) (dimF minH) 0 inkHalf.1 boxLo boxHi sepX sepY
       some (w, h)
     else none
-  -- The placed node's own half-extents, its side of the border-to-border
-  -- gap a relative placement leaves: its drawn outline's where it has one,
-  -- else the declared minimum, or the label's own reach where the text
-  -- stands proud of it (`Ir.Pic.nodeExtent`, whose `nodeExtent_covers` is
-  -- why a placement parts text and not centres).
   let declA : Sp := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minW / 2
   let declB : Sp := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minH / 2
   let ownA : Sp := match outline? with
@@ -5013,16 +3728,7 @@ outside the rendered picture subset; the label is not drawn")
   let ownB : Sp := match outline? with
     | some (_, h) => h / 2
     | none => borderHalf declB halfB sepY
-  -- **pgf's anchors stand one outer sep beyond its border** (the
-  -- rectangle's `\northeast`/`\southwest` add `outer xsep`/`outer ysep`, the
-  -- circle's `\radius` the larger of the two; `auto`, their initial value,
-  -- is half the node's line width), while the drawn path stays on the
-  -- border: so an edge meets a drawn outline at its stroke's outer edge, and
-  -- a relative placement parts two drawn nodes by the node distance and both
-  -- outer seps. An undrawn node keeps its anchors on its border: pgf puts
-  -- them half a line width out there too, a remainder PLAN records beside
-  -- the engine's point, which sets a label 0.37% wider than TeX's
-  -- (`Dim.mm`: the big point).
+  -- pgf's anchors stand one outer sep beyond the border.
   let pgfBorder : Bool := draw.isSome || fillCol.isSome
   let (outA, outB) : Sp × Sp :=
     if !pgfBorder then (0, 0)
@@ -5032,9 +3738,6 @@ outside the rendered picture subset; the label is not drawn")
       if nodeShape == .circle then (max ox oy, max ox oy) else (ox, oy)
   let anchA : Sp := ownA + outA
   let anchB : Sp := ownB + outB
-  -- A placement anchor moves the centre so the named anchor stands on the
-  -- coordinate, the shift beyond it: the anchors of this node's own shape,
-  -- read where it stands at the origin.
   let anchorShift : Sp × Sp := match anchorAt with
     | some (an, (dx, dy)) =>
       let p := ({ x := 0, y := 0, a := anchA, b := anchB, shape := nodeShape, base } :
@@ -5068,49 +3771,21 @@ the rendered picture subset, so no node carries it; the node is not drawn")
       else
         .error (.E0333, s!"in '\\node', no node is named '{target}' to place \
 this one against; the node is not drawn")
-  -- The body: its own `{...}` group, or what a `node contents=` key
-  -- supplied — a style that carries the body is how pgf lets a bundle
-  -- draw a node with nothing written at the use site.
-  --
-  -- **A body the subset cannot read costs the construct, never the label
-  -- and never the node.** A node's position and outline are functions of
-  -- its options alone, and a name is what every relative placement and
-  -- every edge resolves against — so refusing the whole node for one
-  -- unreadable inline used to take every node placed against it, and every
-  -- edge touching it, with it. The label is the same judgement one level
-  -- in: `nodeLabel` keeps the text the body says and names what it could
-  -- not draw, because an empty diagram tells a reader nothing where a
-  -- degraded word tells them almost everything.
   match pos with
   | .ok (geom, nodes) =>
         let sx := geom.x
         let sy := geom.y
-        -- pgf's natural bounding box includes the node's shape — its text
-        -- box plus `inner sep`, or the declared minimum where larger —
-        -- whether or not a path paints it (§17.2.2); a drawn outline is
-        -- that shape.
+        -- pgf's bounding box includes the node's shape whether or not it is drawn.
         let border : Ir.Pic.Box :=
           if outline?.isSome then ((sx - ownA, sy - ownB), (sx + ownA, sy + ownB))
           else
             ((sx - ownA, sy + min (boxLo - sepY) (-declB)),
              (sx + ownA, sy + max (boxHi + sepY) declB))
-        -- The resolver registered the same geometry the node now uses.
-        -- pgf anchors on a named shape even when its path is never painted.
-        -- A coordinate adds no box of its own (pgf's `coordinate` shape
-        -- reaches no bounding box): it only names its point.
         ev := ev.place coordinate border nodes
         for (pin, spec) in extras do
           let x : After := { main := geom, pin, spec, dist := if pin then pinDist else some labelDist }
           ev := { ev with after := ev.after.push x }
-        -- The node's outline, before its label so the fill paints under
-        -- the text. A declared extent is the declared minimum (pgf manual
-        -- §"Shapes": extent = max(minimum, text extent + 2·inner sep) per
-        -- axis, and the minimum is the whole answer when it dominates the
-        -- body — a body wider than both declared minimums stands proud of
-        -- the border); an undeclared one is `nodeOutline`'s, centred on the
-        -- node. pgf draws a node's path only when `draw` or `fill` asks it
-        -- to. Minimums scale with the picture only under `transform shape`
-        -- (§25.4); the line width is graphic state and never scales.
+        -- The outline before the label, so the fill paints under the text.
         if draw.isSome || fillCol.isSome then
           let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
             { color := c.getD cx.ink
@@ -5123,8 +3798,7 @@ this one against; the node is not drawn")
               .ink (.draw (.ellipse sx sy (w / 2) (h / 2)) (fillCol.map Ir.Pic.solidFill)
                 (stroke.map Ir.Pic.strokeOf))
             | .diamond =>
-              -- The drawn diamond stands inside its anchors by 1.414213 outer
-              -- seps less one (the shape's `\backgroundpath`).
+              -- The drawn diamond stands inside its anchors by 1.414213 outer seps less one (`\backgroundpath`).
               let dx := w / 2 + outA - outA * 1414213 / 1000000
               let dy := h / 2 + outB - outB * 1414213 / 1000000
               let sub : Gfx.Subpath :=
@@ -5141,9 +3815,6 @@ this one against; the node is not drawn")
         | .error d => return ev.diag d
         | .ok (lines, mdiags) =>
           ev := mdiags.foldl Ev.diag ev
-          -- A declared text box moves the letters to its baseline; the
-          -- engine's own placement moves nothing. `align=` then stands
-          -- each line flush within the box.
           let placed := alignLabels cx.metric textAlign
             (stackLabels sx (sy + (base - baseOff)) cx.bodySize scale color .center lines #[])
           ev := { ev with shapes := ev.shapes ++ placed }
@@ -5151,10 +3822,7 @@ this one against; the node is not drawn")
   | .error d =>
     return (if unresolved then { ev with deferred := ev.deferred + 1 } else ev).diag d
 
-/-- Sine of whole degrees 0–90 in milli, ⌊1000·sin d° + ½⌋: what the
-`to[out=, in=]` control points read. Any integer degree folds in by the
-circle's symmetries (`sinDeg`); whole-degree milli precision is below
-one part in two thousand of any control distance. -/
+/-- Sine of whole degrees 0–90 in milli, ⌊1000·sin d° + ½⌋. -/
 private def sinTable : Array Int :=
   #[0, 17, 35, 52, 70, 87, 105, 122, 139, 156, 174, 191, 208, 225, 242,
     259, 276, 292, 309, 326, 342, 358, 375, 391, 407, 423, 438, 454, 469,
@@ -5172,8 +3840,6 @@ private def sinDeg (d : Int) : Int :=
 
 private def cosDeg (d : Int) : Int := sinDeg (d + 90)
 
-/-- Where a segment toward `q` leaves this anchor: the border for a node
-with extents (`circleBorder`/`rectBorder`), the point itself otherwise. -/
 private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
   match a with
   | .point x y => (x, y)
@@ -5185,32 +3851,22 @@ private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
       | .ellipse => ellipseBorder g.x g.y g.a g.b q.1 q.2
       | .diamond => diamondBorder g.x g.y g.a g.b q.1 q.2
 
-/-- The tip an end of a path draws, as marks of the vector model: a
-producer's own triangle (`Ir.Pic.Tip`), or the tip's own drawing. -/
 private inductive TipInk where
   | tri (t : Ir.Pic.Tip)
   | node (n : Gfx.Node Empty)
 
-/-- The tip of kind `k` whose tip end stands on `q`, arriving along `(dx,
-dy)`, for a path of width `lw` in `color`: its marks, and where the path
-stops for it — each tip's own frame (x along the arrival, its tip end on
-`q`) and its own declaration of what it draws and where its line ends.
-`none` for no direction. -/
 private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Color) :
     Option (TipInk × Sp × Sp) :=
   let n := isqrt (dx * dx + dy * dy)
   if n == 0 then none else
-  -- A point of the tip's frame whose tip end is `tipEnd` ahead of its origin.
   let frame (tipEnd s t : Int) : Sp × Sp :=
     (q.1 + ((s - tipEnd) * dx - t * dy) / n, q.2 + ((s - tipEnd) * dy + t * dx) / n)
-  -- The old arrows' unit (pgfcorearrows.code.tex: `0.28pt` and `.3\pgflinewidth`).
-  let a : Int := Dim.pt 28 / 100 + lw * 3 / 10 -- \pgfutil@tempdima=0.28pt (pgfcorearrows.code.tex)
+  let a : Int := Dim.pt 28 / 100 + lw * 3 / 10 -- 0.28pt + .3\pgflinewidth (pgfcorearrows.code.tex)
   let filled (sub : Gfx.Subpath) : Gfx.Node Empty :=
     .draw (.path #[sub]) (some (Ir.Pic.solidFill color)) none
   match k with
   | .to =>
-    -- Stroked at 0.8 of the line width with round caps and joins; its tip
-    -- end 0.21 pt and 0.625 line widths ahead, its line end its origin.
+    -- Stroked at 0.8 line widths, round caps and joins; tip end 0.21 pt and 0.625 line widths ahead.
     let tipEnd : Int := Dim.pt 21 / 100 + lw * 625 / 1000 -- \pgfarrowsrightextend (pgfcorearrows.code.tex)
     let f := frame tipEnd
     let sub : Gfx.Subpath :=
@@ -5221,11 +3877,7 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
       { Ir.Pic.strokeOf { color, width := lw * 8 / 10 } with cap := .round, join := .round }
     some (.node (.draw (.path #[sub]) none (some st)), f 0 0)
   | .cmRightarrow =>
-    -- arrows.meta's `Computer Modern Rightarrow` (`length = +1.6pt 2.2`,
-    -- `width' = +0pt 2.096774`, round): stroked at the line width with round
-    -- caps and joins, the inner length and width a line width less; its tip
-    -- end half a line width ahead of its origin, its line end half one
-    -- behind.
+    -- arrows.meta's Computer Modern Rightarrow: length +1.6pt 2.2, width' +0pt 2.096774, round.
     let len : Int := Dim.pt 16 / 10 + lw * 22 / 10 -- length = +1.6pt 2.2 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 2096774 / 1000000
     let ia := len - lw
@@ -5249,19 +3901,13 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
           .line (f (-a) (-(375 * a / 100))),
           .cubic (f (2 * a) (-(2 * a))) (f (63333 * a / 10000) (-(a / 2))) (f (9 * a) 0)] }), f 0 0)
   | .stealthOld =>
-    -- Filled: the apex 5 units ahead, the back corners 3 behind, the notch
-    -- at the origin.
+    -- Filled: the apex 5 units ahead, the back corners 3 behind, the notch at the origin.
     let f := frame (5 * a)
     some (.node (filled
       { start := f (5 * a) 0, closed := true
         segs := #[.line (f (-3 * a) (4 * a)), .line (f 0 0), .line (f (-3 * a) (-4 * a))] }), f 0 0)
   | .latexMeta =>
-    -- arrows.meta's `Latex` (`length = +3pt 4.5 .8`, `width' = +0pt .75`):
-    -- the line width capped at a fifth of the length; the front miter
-    -- `lw·√(1 + 9(L/W)²)`, half of it and half the line width taken off the
-    -- length; the back corners' height half the width less the miter the
-    -- normalised `(0.3L, 0.2333333W)` gives. Filled and stroked, mitred, its
-    -- tip end half a line width short of the length, its line end its origin.
+    -- arrows.meta's Latex: length +3pt 4.5 .8, width' +0pt .75, the line width capped at a fifth of the length.
     let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 75 / 100
     let alw : Int := min lw (len / 5)
@@ -5283,13 +3929,7 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
     some (.node (.draw (.path #[sub]) (some (Ir.Pic.solidFill color))
       (some (Ir.Pic.strokeOf { color, width := alw }))), f 0 0)
   | .stealth =>
-    -- arrows.meta's `Stealth` (`length = +3pt 4.5 .8`, `width' = +0pt .75`,
-    -- `inset' = +0pt 0.325`): the line width capped at a quarter of the
-    -- length less the inset; the front corner `½·lw·√(1 + 4(L/W)²)` short of
-    -- the tip end, the back corners' miters from the half angle between the
-    -- dart's sides, the inset `½·lw·√(1 + 4(I/W)²)` deeper. Filled and
-    -- stroked, mitred; the path stops at the inset less a quarter line width
-    -- (`\pgfarrowssetlineend`).
+    -- arrows.meta's Stealth: length +3pt 4.5 .8, width' +0pt .75, inset' +0pt 0.325.
     let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 75 / 100
     let ins : Int := len * 325 / 1000
@@ -5313,24 +3953,14 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
     some (.node (.draw (.path #[dart]) (some (Ir.Pic.solidFill color))
       (some (Ir.Pic.strokeOf { color, width := alw }))), f (ins + insetMiter - alw / 4) 0)
 
-/-- The tip a straight side draws where it arrives at `q`, coming from `p`:
-the one geometry both ends read, a start tip being the arrival at the start
-from the far end. -/
 private def tipArrival (k : TipKind) (p q : Sp × Sp) (lw : Sp) (color : Ir.Color) :
     Option (TipInk × Sp × Sp) :=
   tipAlong k q (q.1 - p.1) (q.2 - p.2) lw color
 
-/-- A segment run the other way: the same points, its ends swapped. -/
 private def segReverse : Ir.Pic.PathSeg → Ir.Pic.PathSeg
   | .line x1 y1 x2 y2 => .line x2 y2 x1 y1
   | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => .cubic x2 y2 c2x c2y c1x c1y x1 y1
 
-/-- **One side of a path between its two ends**, as `evalDraw` draws every
-straight or elbowed side: the start's tip when `startT` names one — the
-arrival at `p1` from the elbow or the far end — the shaft stopping where
-that tip's line end stands, through the elbow when there is one, to the end,
-stopping where the end's tip (`endT`) puts its line end. The segments, the
-start's and the end's tip ink, and where the shaft starts. -/
 private def sideShaft (startT endT : Option TipKind) (corner : Option (Sp × Sp))
     (p1 p2 : Sp × Sp) (lw : Sp) (color : Ir.Color) :
     Array Ir.Pic.PathSeg × Option TipInk × Option TipInk × (Sp × Sp) :=
@@ -5348,13 +3978,6 @@ private def sideShaft (startT endT : Option TipKind) (corner : Option (Sp × Sp)
     | none => p2
   (elbow.push (.line departure.1 departure.2 q2.1 q2.2), startHit.map (·.1), endHit.map (·.1), q1)
 
-/-- **`<-` draws what `->` draws on the side run the other way** (`_exact`):
-the side from `p` to `q` with a tip at its start is the side from `q` to `p`
-with that tip at its end — the same head, standing at `p` and pointing at
-it, and the same shaft between the same two points, run backwards — because
-pgf reads an arrow specification's start as an arrival from the far end
-(pgf manual §16.2: a specification names its two ends). Stated over the
-side step `evalDraw` draws every straight side with. -/
 private theorem reversedTip_exact (k : TipKind) (p q : Sp × Sp) (w : Sp) (c : Ir.Color) :
     (sideShaft (some k) none none p q w c).1 =
         (sideShaft none (some k) none q p w c).1.map segReverse ∧
@@ -5367,31 +3990,13 @@ private theorem reversedTip_exact (k : TipKind) (p q : Sp × Sp) (w : Sp) (c : I
     obtain ⟨t, bx, byy⟩ := hit
     simp [segReverse]
 
-/-- Where a segment leaving in direction `deg` (degrees) exits this
-anchor: the border along the declared tangent, for a node with extents. -/
 private def Anchor.towardDir (a : Anchor) (deg : Int) : Sp × Sp :=
   let c := a.center
   a.toward (c.1 + cosDeg deg, c.2 + sinDeg deg)
 
-/-- A `to[out=α, in=β]` control point: `dist` along the declared angle
-`deg` from the endpoint — the To-Path library's rule (pgf manual, "To
-Paths": control points sit on the departure and arrival tangents). The
-angle reads the milli sine table, one rounding division per axis. -/
 private def curveControl (px py dist deg : Int) : Int × Int :=
   (px + dist * cosDeg deg / 1000, py + dist * sinDeg deg / 1000)
 
-/-- The curve leaves and arrives along its declared angles: a cubic
-Bézier's endpoint tangents are its control offsets — `B′(0) = 3(c₁ − p)`
-and `B′(1) = 3(q − c₂)`, the derivative of the ISO 32000-2 §8.5.2.2
-(PDF `c`) / SVG `C` cubic — and the offset `curveControl` builds is
-`dist·(cos deg, sin deg)` in milli, each axis rounded once (within one
-thousandth of `dist`, under the sine table's own stated precision).
-One statement covers both ends: `evalDraw` builds `c₂` from the arrival
-point by the same function, the in-angle pointing back along the
-arrival tangent as pgf's `in=` does. The endpoints themselves anchor on
-node borders through `Anchor.towardDir`, which is `rectBorder_exact` /
-`circleBorder_step` — reused, not restated. Rounding-bound shape, as
-`circleBorder_step` (said at review). -/
 private theorem curveControl_tangent (px py dist deg : Int) :
     1000 * ((curveControl px py dist deg).1 - px) ≤ dist * cosDeg deg ∧
     dist * cosDeg deg < 1000 * ((curveControl px py dist deg).1 - px) + 1000 ∧
@@ -5402,15 +4007,6 @@ private theorem curveControl_tangent (px py dist deg : Int) :
   generalize dist * sinDeg deg = e
   omega
 
-/-- The To-Path library's settings for one `to` (pgf's
-tikzlibrarytopaths.code.tex, TeX Live 2026). Tangents are whole degrees;
-`rel` reads them against the chord (`relative`, which `bend left`/`bend
-right` turn on); `bend` is the angle the value-less bend keys read
-(`\def\tikz@to@bend{30}`, line 119); each end's looseness is in milli
-(`\def\tikz@to@out@looseness{1}`, line 124); `curved` is
-`\tikz@to@switch@on`, without which a `to` is the straight line. A curve
-switched on by one tangent keeps the library's other one
-(`\def\tikz@to@out{45}`, `\def\tikz@to@in{135}`, lines 121–122). -/
 private structure ToSpec where
   outA : Int := 45
   inA : Int := 135
@@ -5420,16 +4016,10 @@ private structure ToSpec where
   inL : Int := 1000
   curved : Bool := false
 
-/-- `bend left=α` and `bend right=α` (lines 30–53): the angle becomes the
-bend, `out` is it or its negation, `in` is 180 − `out`, and both read
-against the chord. -/
 private def ToSpec.bendTo (s : ToSpec) (left : Bool) (b : Int) : ToSpec :=
   let o := if left then b else -b
   { s with bend := b, outA := o, inA := 180 - o, rel := true, curved := true }
 
-/-- One option entry read as a To-Path key, in the order the library applies
-them. `none` when the entry is no To-Path key; the error is a value that
-does not evaluate. -/
 private def ToSpec.read (s : ToSpec) (env : List (String × Val)) (opt : Array Tok) :
     Option (Except String ToSpec) :=
   let num (rest : List Tok) (k : Int → ToSpec) : Option (Except String ToSpec) :=
@@ -5454,31 +4044,16 @@ private def ToSpec.read (s : ToSpec) (env : List (String × Val)) (opt : Array T
     num rest fun m => { s with inL := m, curved := true }
   | _ => none
 
-/-- `p` turned about `c` by `deg`: where pgf's relative curve looks from a
-node's centre (lines 262–296 rotate the other endpoint about this one before
-asking the shape for its border). Milli trigonometry, one rounding per axis. -/
 private def turnAbout (c p : Sp × Sp) (deg : Int) : Sp × Sp :=
   let dx := p.1 - c.1
   let dy := p.2 - c.2
   (c.1 + (dx * cosDeg deg - dy * sinDeg deg) / 1000,
    c.2 + (dx * sinDeg deg + dy * cosDeg deg) / 1000)
 
-/-- A relative curve's control point (lines 318–352): in the frame whose
-x-axis runs along the chord `v` from the start's border to the target's,
-`dist` along the declared angle, where `dist` is 0.3915·‖v‖ scaled by the
-end's looseness — so the offset is the chord itself turned by the angle and
-scaled, which needs neither a square root nor an arctangent. -/
 private def turnedControl (px py vx vy deg loose : Int) : Int × Int :=
   (px + (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose / 10000000000,
    py + (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose / 10000000000)
 
-/-- **A bent edge leaves at its angle to its chord.** The control offset is
-the chord turned by the declared angle — `(vₓ cos α − v_y sin α, vₓ sin α +
-v_y cos α)` over the milli table — times the To-Path factor 0.3915 and the
-looseness, inside one rounding per axis. pgf builds the same point as
-`\pgfpointpolar{α}{dist}` under the transform `[n −n⊥]` of the unit chord
-`n`, and `dist·n` is `0.3915·looseness·v`. The same function builds both
-ends, the arrival one from the target with `in`, as the library does. -/
 private theorem turnedControl_between (px py vx vy deg loose : Int) :
     10000000000 * ((turnedControl px py vx vy deg loose).1 - px) ≤
       (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose ∧
@@ -5493,32 +4068,15 @@ private theorem turnedControl_between (px py vx vy deg loose : Int) :
   generalize (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose = e
   omega
 
-/-- One path operation between two endpoints: pgf manual §14.13 (to
-paths) — `--` and a bare `to` are the straight line; a `to` whose keys
-switched the curve on is the cubic its `ToSpec` describes, the control
-points 0.3915·‖d‖·looseness along the departure and arrival tangents (the
-To-Path library's own factor), absolute or against the chord. -/
 private inductive DrawOp where
   | straight
   | orthogonal (verticalFirst : Bool)
   | curve (spec : ToSpec)
-  /-- `rectangle`: the box the current point and the next corner span, a
-  closed subpath of its own (pgf manual §14.4). -/
   | rect
-  /-- `-- cycle`: the side back to the current subpath's start, closing it
-  (pgf manual §14.2). -/
   | cycle
-  /-- `circle (r)`, `ellipse (a and b)`: a closed ellipse about the current
-  point, which stays where it was (pgf manual §14.6). -/
   | ellipse (rx ry : Sp)
-  /-- `arc (s:e:r)`: the arc of the ellipse through the current point from
-  angle `s` to `e` (milli-degrees), radii in sp; the arc's end is the next
-  current point (pgf manual §14.7). -/
   | arc (s e : Int) (rx ry : Sp)
 
-/-- What a path statement paints of itself: `\draw` strokes, `\path`
-nothing (only what a key or an `edge` asks), `\fill` fills, `\filldraw`
-both (TikZ manual §14.1). -/
 private inductive PathMode where
   | draw
   | path
@@ -5529,8 +4087,6 @@ private inductive PathMode where
   | clip
   deriving BEq
 
-/-- A length key's value as `\pgfmathsetlength` reads it: a length, `em`
-and `ex` the face's, or pgfmath with units, a unitless value in points. -/
 private def optLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Sp :=
   match readNodeDim cx.bodySize (cx.metric #[.text "x"] 1000).ex toks with
   | .ok d => .ok d
@@ -5540,7 +4096,6 @@ private def optLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Ex
     | .ok (m, false) => .ok (milliPt m)
     | .error e => .error e
 
-/-- An opacity key's value, `0` to `1` in thousandths, clamped. -/
 private def optAlpha (env : List (String × Val)) (toks : List Tok) : Except String Gfx.Alpha :=
   match evalNum env toks.toArray with
   | .ok m =>
@@ -5548,32 +4103,21 @@ private def optAlpha (env : List (String × Val)) (toks : List Tok) : Except Str
     .ok ⟨min n 1000, by omega⟩
   | .error e => .error e
 
-/-- The point `d` from `p` toward `q` (pgf's `\pgfpointlineatdistance`);
-`p` itself where the two coincide. -/
 private def towardBy (p q : Sp × Sp) (d : Sp) : Sp × Sp :=
   let dx := q.1 - p.1
   let dy := q.2 - p.2
   let n := isqrt (dx * dx + dy * dy)
   if n == 0 then p else (p.1 + dx * d / n, p.2 + dy * d / n)
 
-/-- A rounded corner's control coordinate: 0.5522847 of the way from the
-curve's end `s` to the corner `b` (pgf's `\pgfprocess@@specialround`). -/
+/-- A rounded corner's control coordinate, 0.5522847 of the way from the curve's end `s` to the
+corner `b` (pgf's `\pgfprocess@@specialround`). -/
 @[expose] public def cornerControl (s b : Int) : Int := s + (b - s) * 5522847 / 10000000
 
-/-- **A rounded corner stays inside its corner.** Each control of the curve
-pgf puts in a corner lies between the curve's end and the corner, on both
-axes, so the curve — inside its controls' hull (`Gfx.cubicAt_between`) —
-never crosses either side it joins. -/
 public theorem roundedCorners_between (s b : Int) :
     min s b ≤ cornerControl s b ∧ cornerControl s b ≤ max s b := by
   unfold cornerControl
   constructor <;> omega
 
-/-- pgf's corner rounding (`\pgfprocess@@specialround`): at a joint `b`
-between a side from `a` and a side to `c`, the first side stops `r` short of
-the corner, a curve whose controls stand `cornerControl` of the way to the
-corner turns it, and the next side starts `r` past it. pgf clamps `r` to
-neither side's length, and neither does this. -/
 private def roundJoints (r : Sp) (segs : Array Ir.Pic.PathSeg) : Array Ir.Pic.PathSeg := Id.run do
   let mut out : Array Ir.Pic.PathSeg := #[]
   let mut held : Option Ir.Pic.PathSeg := none
@@ -5596,10 +4140,6 @@ private def roundJoints (r : Sp) (segs : Array Ir.Pic.PathSeg) : Array Ir.Pic.Pa
   if let some h := held then out := out.push h
   return out
 
-/-- An arc's angles and radii from token `i` (TikZ manual §14.7): `(s:e:r)`,
-`(s:e:a and b)`, or the option form `[start angle=s, end angle=e, delta
-angle=d, radius=r, x radius=a, y radius=b]` — angles in milli-degrees, radii
-through the picture's scale — and the index past them. -/
 private def readArc (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
     Except PDiag (Int × Int × Sp × Sp × Nat) := do
   let err (e : String) : PDiag := (.E0333, s!"in an 'arc', {e}; the path is not drawn")
@@ -5656,11 +4196,8 @@ the path is not drawn")
     | some k => return (a, b, ← len (r.extract 0 k), ← len (r.extract (k + 1) r.size), next)
   | _ => throw (err "'(start:end:radius)' is needed")
 
-/-- cos and sin of milli-degrees, in 2⁻³⁰ (`Gfx.Trig.cosSin`). -/
 private def cosSinMilli (m : Int) : Int × Int := Gfx.Trig.cosSin (m * Gfx.Trig.pi / 180000)
 
-/-- One arc piece carried onto the canvas from the current point: its
-segment, and its end as the next current point. -/
 private def arcStep (onCanvas : Sp × Sp → Sp × Sp) (acc : Array Ir.Pic.PathSeg × (Sp × Sp)) :
     Gfx.Seg → Array Ir.Pic.PathSeg × (Sp × Sp)
   | .line q =>
@@ -5672,8 +4209,6 @@ private def arcStep (onCanvas : Sp × Sp → Sp × Sp) (acc : Array Ir.Pic.PathS
     let q' := onCanvas q
     (acc.1.push (.cubic acc.2.1 acc.2.2 c1'.1 c1'.2 c2'.1 c2'.2 q'.1 q'.2), q')
 
-/-- The current point after a run of pieces is the canvas image of the last
-one's end, or the point it started from. -/
 private theorem arcStep_end (onCanvas : Sp × Sp → Sp × Sp) :
     ∀ (segs : List Gfx.Seg) (acc : Array Ir.Pic.PathSeg × (Sp × Sp)),
       (segs.foldl (arcStep onCanvas) acc).2 =
@@ -5687,11 +4222,6 @@ private theorem arcStep_end (onCanvas : Sp × Sp → Sp × Sp) :
     | none => simp at h
     | some l => rfl
 
-/-- An arc's pieces on the canvas, from its start `p`: the ellipse arc of
-radii `rx`, `ry` from `s` to `e`, laid out in the picture's own frame
-(`Gfx.Kit.arcCubics`, which ends exactly on the declared end) and carried
-through the transformation's linear part, the start pinned to `p` — and the
-end, which is the next current point. -/
 private def arcPieces (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
     Array Ir.Pic.PathSeg × (Sp × Sp) :=
   let u := Gfx.Trig.unit
@@ -5705,10 +4235,6 @@ private def arcPieces (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
     (p.1 + d.1, p.2 + d.2)
   pieces.foldl (arcStep onCanvas) (#[], p)
 
-/-- **An arc ends where its end angle stands** (`_exact`): the next current
-point — where the path goes on — is the canvas image of the ellipse's point
-at the end angle, measured from the point the arc started at, whatever the
-trigonometry rounded on the way (`Gfx.Kit.arcCubics_exact`). -/
 private theorem arc_end_exact (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
     (arcPieces cx p s e rx ry).2 =
       let u := Gfx.Trig.unit
@@ -5732,10 +4258,6 @@ private theorem arc_end_exact (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
     simp only [Option.map_some, Option.some.injEq] at hl
     simp only [Option.map_some, Option.getD_some, hl]
 
-/-- An ellipse about a canvas centre under the transformation: an
-axis-aligned one keeps the model's own geometry, its radii scaled by the
-axes; a turned or sheared one is the ellipse's quarter arcs carried through
-the linear part (Bézier curves follow an affine map exactly). -/
 private def ellipseOnCanvas (cx : Cx) (c : Sp × Sp) (rx ry : Sp) :
     Sum (Sp × Sp × Sp × Sp) Gfx.Subpath :=
   if cx.axisAligned then
@@ -5752,11 +4274,6 @@ private def ellipseOnCanvas (cx : Cx) (c : Sp × Sp) (rx ry : Sp) :
              | .line q => .line (on q)
              | .cubic c1 c2 q => .cubic (on c1) (on c2) (on q) }
 
-/-- A rectangle's outline from canvas corners `a` and `c` under the
-transformation, as a closed loop of sides starting halfway along its first,
-so every corner is interior: the user-space rectangle the two corners span,
-its other corners carried through the linear part (TikZ turns a rectangle
-with its coordinate system). -/
 private def rectLoop (cx : Cx) (a c : Sp × Sp) : Array Ir.Pic.PathSeg :=
   let m := cx.xf
   let det := m.a * m.d - m.b * m.c
@@ -5771,10 +4288,6 @@ private def rectLoop (cx : Cx) (a c : Sp × Sp) : Array Ir.Pic.PathSeg :=
   #[.line mx my b.1 b.2, .line b.1 b.2 c.1 c.2, .line c.1 c.2 d.1 d.2, .line d.1 d.2 a.1 a.2,
     .line a.1 a.2 mx my]
 
-/-- The radii a `circle` or `ellipse` operation reads from token `i`:
-`(r)`, `(a and b)`, or the option form `[radius=r]` / `[x radius=a, y
-radius=b]` (TikZ manual §14.6) — each a number of the picture's unit or a
-length, through the picture's scale — and the index past them. -/
 private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
     Except PDiag (Sp × Sp × Nat) := do
   let err (e : String) : PDiag := (.E0333, s!"in a 'circle' radius, {e}; the path is not drawn")
@@ -5814,7 +4327,6 @@ subset; the path is not drawn")
     let vb ← (evalComp env (inner.extract (k + 1) inner.size)).mapError err
     return (cx.compSp va, cx.compSp vb, next)
 
-/-- A tip's filled triangle in the colour of the stroke it ends. -/
 private def tipNode (st : Ir.Pic.Stroke) (t : Ir.Pic.Tip) : Gfx.Node Empty :=
   .draw (.path #[Ir.Pic.tipSubpath t]) (some (Ir.Pic.solidFill st.color)) none
 
@@ -5822,9 +4334,6 @@ private def tipInkNode (st : Ir.Pic.Stroke) : TipInk → Gfx.Node Empty
   | .tri t => tipNode st t
   | .node n => n
 
-/-- An edge and its tips: the subset's edge shape where it has at most one
-tip and that one the triangle (`Ir.Pic.Shape.edge`), else one group of the
-path and each tip. -/
 private def edgeWithTips (segs : Array Ir.Pic.PathSeg) (st : Ir.Pic.Stroke)
     (tips : Array TipInk) : Ir.Pic.Shape :=
   match tips.toList with
@@ -5836,10 +4345,7 @@ private def edgeWithTips (segs : Array Ir.Pic.PathSeg) (st : Ir.Pic.Stroke)
 
 mutual
 
-/-- A node with every fill at `fa` and every stroke at `sa` (pgf's
-`fill opacity` and `draw opacity`, which set the paints' own alphas: no
-transparency group). A walk over the vector model, not the IR. -/
--- conserves: none — a repaint of paints' alpha; it carries no text.
+-- conserves: none — a repaint of paints' alpha.
 private def alphaOne (fa sa : Gfx.Alpha) : Gfx.Node Empty → Gfx.Node Empty
   | .draw g fl st => .draw g (fl.map ({ · with alpha := fa })) (st.map ({ · with alpha := sa }))
   | .group m clips a kids => .group m clips a (alphaList fa sa #[] kids.toList)
@@ -5856,10 +4362,7 @@ private def alphaList (fa sa : Gfx.Alpha) (acc : Array (Gfx.Node Empty)) :
 
 end
 
-/-- The one geometry a filled path, or one holding an ellipse, paints as: a
-lone rectangle or a lone ellipse as the model's own geometry, anything else
-one path of every side, rectangle and ellipse the statement made, filled by
-the nonzero rule. -/
+/-- The one geometry a filled path, or one holding an ellipse, paints as, filled by the nonzero rule. -/
 @[expose] public def paintedGeom (segs : Array Ir.Pic.PathSeg)
     (rects ellipses : Array (Sp × Sp × Sp × Sp)) (extra : Array Gfx.Subpath := #[]) :
     Gfx.Geom :=
@@ -5871,17 +4374,14 @@ the nonzero rule. -/
     let ellSubs := ellipses.flatMap fun (ex, ey, rx, ry) => Gfx.Kit.ellipse ex ey rx ry
     .path (Ir.Pic.edgeSubpaths segs ++ rectSubs ++ ellSubs ++ extra)
 
-/-- The three shadings TikZ declares (tikz.code.tex: `axis`, `radial`,
-`ball`). -/
+/-- The three shadings TikZ declares: `axis`, `radial` and `ball` (tikz.code.tex). -/
 public inductive ShadeKind where
   | axis
   | radial
   | ball
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A path's shading as TikZ's options leave it (tikz.code.tex, the shading
-options): its kind, its angle in milli-degrees, and the colours each kind
-reads. -/
+/-- A path's shading as TikZ's options leave it: its kind, angle in milli-degrees, and colours. -/
 public structure ShadeSpec where
   kind : ShadeKind
   angle : Int
@@ -5893,20 +4393,16 @@ public structure ShadeSpec where
   ball : Ir.Color
   deriving Repr, Inhabited
 
-/-- What TikZ sets before any key (the `\pgfutil@colorlet` lines after
-tikz.code.tex's declarations, xcolor's colours as TikZ copied them when it
-loaded): the axis shading gray over white with their mix between, the
-radial gray to white, the ball blue; the axis kind, no angle. -/
+/-- TikZ's initial shading (tikz.code.tex): the axis shading gray over white, the radial gray to
+white, the ball blue. -/
 public def ShadeSpec.initial : ShadeSpec :=
   let base (n : String) : Ir.Color := ((default : Ir.Palette).resolve n).getD Ir.Color.black
   { kind := .axis, angle := 0, top := base "gray"
     middle := Ir.Color.mix (base "gray") 50 (base "white"), bottom := base "white"
     inner := base "gray", outer := base "white", ball := base "blue" }
 
-/-- One shading colour key (tikz.code.tex): the colour it sets, the middle
-it mixes again from top and bottom, the kind and the angle it switches to —
-`left` and `right` are `top` and `bottom` a quarter turn round. `none` for a
-side no key names. -/
+/-- One shading colour key (tikz.code.tex): the colour it sets and the kind and angle it switches
+to; `none` for an unknown side. -/
 public def ShadeSpec.setColor (s : ShadeSpec) (side : String) (c : Ir.Color) :
     Option ShadeSpec :=
   let mid (t b : Ir.Color) : Ir.Color := Ir.Color.mix t 50 b
@@ -5921,15 +4417,12 @@ public def ShadeSpec.setColor (s : ShadeSpec) (side : String) (c : Ir.Color) :
   | "ball" => some { s with ball := c, kind := .ball }
   | _ => none
 
-/-- A stop `num/den` of the way along a gradient's run, in the model's
-65536ths, rounded half up. -/
+/-- A stop `num/den` of the way along a gradient's run, in 65536ths, rounded half up. -/
 @[expose] public def stopAt (num den : Nat) (c : Ir.Color) : Gfx.Stop :=
   { offset := ⟨min 65536 ((num * 65536 + den / 2) / den), Nat.lt_succ_of_le (Nat.min_le_left _ _)⟩
     color := c }
 
-/-- A shading's stops as tikz.code.tex declares them: the axis shading's
-`color(0bp)` to `color(100bp)` over its 100 bp, the radial's and the ball's
-over the 50 bp radius, the ball's colour mixed with white and black. -/
+/-- A shading's stops as tikz.code.tex declares them, over the axis shading's 100 bp or the 50 bp radius. -/
 @[expose] public def ShadeSpec.stops (s : ShadeSpec) : Array Gfx.Stop :=
   match s.kind with
   | .axis => #[stopAt 0 100 s.bottom, stopAt 25 100 s.bottom, stopAt 50 100 s.middle,
@@ -5940,12 +4433,6 @@ over the 50 bp radius, the ball's colour mixed with white and black. -/
       stopAt 18 50 (Ir.Color.mix s.ball 70 Ir.Color.black),
       stopAt 25 50 (Ir.Color.mix s.ball 50 Ir.Color.black), stopAt 50 50 Ir.Color.black]
 
-/-- **Where a shading stands** (pgfcoreshade.code.tex, `\pgfshadepath`): the
-shading's own frame — its 100 bp square about its centre — scaled so that
-its middle 50 bp covers the path's box, `(w·|cos| + h·|sin|)/(|cos| + |sin|)`
-across and the roles swapped up, then turned by its angle and set on the
-box's centre. `none` for a box with no extent on an axis, which pgf leaves
-unshaded. -/
 private def shadeFrame (angle : Int) (box : Gfx.Box) : Option Gfx.Affine :=
   let ((x0, y0), (x1, y1)) := box
   if x1 ≤ x0 || y1 ≤ y0 then none else
@@ -5962,13 +4449,6 @@ private def shadeFrame (angle : Int) (box : Gfx.Box) : Option Gfx.Affine :=
   let sy := (w * as + h * ac) / ((ac + as) * half)
   some ⟨c * sx, s * sx, -s * sy, c * sy, ((x0 : Rat) + x1) / 2, ((y0 : Rat) + y1) / 2⟩
 
-/-- The fill a shading paints its path with (`\pgfshadepath`, then the
-declaration): the axis shading a linear gradient up its own 100 bp, the
-radial ones from their start circle — a point, the centre or the ball's
-highlight 10 bp up and to the left — to the 50 bp circle about the centre,
-in the frame `shadeFrame` fits to the path's box. A turned shading of a long
-box can reach past its own square, where pgf paints nothing and the model
-pads with the end colour. -/
 private def shadeFill (s : ShadeSpec) (box : Gfx.Box) : Option Gfx.Fill :=
   (shadeFrame s.angle box).map fun xf =>
     let r := Dim.pt 50 -- the shading's 100 bp square (pgfcoreshade.code.tex)
@@ -5978,16 +4458,12 @@ private def shadeFill (s : ShadeSpec) (box : Gfx.Box) : Option Gfx.Fill :=
       | .ball => .radial (-(Dim.pt 10), Dim.pt 10) 0 (0, 0) r s.stops xf -- \pgfqpoint{-10bp}{10bp}
     { paint := .gradient g, rule := .nonzero, alpha := Gfx.Alpha.opaque }
 
-/-- The brace decoration's keys (pgfmoduledecorations.code.tex and
-tikzlibrarydecorations.code.tex): its amplitude, 2.5 pt until set; the
-aspect its tip stands at, half way; `mirror` and `raise`. -/
 private structure BraceSpec where
   amplitude : Sp := Dim.pt 25 / 10 -- \pgfdecorationsegmentamplitude2.5pt (pgfmoduledecorations.code.tex)
   aspect : Int := 500
   mirror : Bool := false
   raise : Sp := 0
 
-/-- A `decoration=` value read as the brace: its name and its keys. -/
 private def readBrace (cx : Cx) (env : List (String × Val)) (rest : List Tok) :
     Except String BraceSpec := do
   let inner : List Tok := match rest with
@@ -6011,12 +4487,6 @@ picture subset"
   unless named do throw "a decoration other than the brace is outside the rendered picture subset"
   return b
 
-/-- The brace along a straight side (pgflibrarydecorations.pathreplacing,
-`\pgfdeclaredecoration{brace}`): in the side's frame — x along it from its
-start, y to its left, raised and then mirrored as the keys ask — a curve up
-to half the amplitude, a line, the tip's two curves up to the amplitude at
-the aspect and down again, a line and the curve back to the side's end;
-each end's run the amplitude, or on a short side half its part. -/
 private def braceSegs (b : BraceSpec) (x0 y0 x1 y1 : Sp) : Array Ir.Pic.PathSeg :=
   let dx := x1 - x0
   let dy := y1 - y0
@@ -6046,24 +4516,15 @@ private def braceSegs (b : BraceSpec) (x0 y0 x1 y1 : Sp) : Array Ir.Pic.PathSeg 
     ln p3 p4,
     cub p4 (at_ (d - xc / 2) (a / 2)) (at_ (d - 15 * xc / 100) (3 * a / 10)) p5]
 
-/-- **A circle operation is the model's own circle about its point** (TikZ
-manual §14.6): `circle (r)` standing alone paints the ellipse of two equal
-radii centred where the path stood, never a path approximating one. -/
 public theorem circleOp_exact (x y r : Sp) :
     paintedGeom #[] #[] #[(x, y, r, r)] = .ellipse x y r r := rfl
 
-/-- **The box a circle operation reaches is its bounding square**, the
-radius on every side of its centre: what pgf's bounding box adds for it
-before the stroke's reach. -/
 public theorem circlePath_box_exact (x y r : Int) (h : 0 ≤ r) :
     (paintedGeom #[] #[] #[(x, y, r, r)]).hull = some ((x - r, y - r), (x + r, y + r)) := by
   simp only [circleOp_exact, Gfx.Geom.hull, Option.some.injEq, Prod.mk.injEq]
   exact ⟨⟨Int.min_eq_left (by omega), Int.min_eq_left (by omega)⟩,
     Int.max_eq_right (by omega), Int.max_eq_right (by omega)⟩
 
-/-- A path node's resolved text and attachment. Separation is per axis,
-as in pgf's rectangle shape; an undeclared outer separation reads the
-path's eventual stroke width. -/
 private structure EdgeLabel where
   lines : Array LabelLine
   color : Ir.Color
@@ -6073,21 +4534,14 @@ private structure EdgeLabel where
   align : Ir.Pic.LabelAlign
   inner : Sp × Sp
   outer : Option Sp × Option Sp
-  /-- A node written after its endpoint stands there unless `midway`
-  declares a position on the preceding segment (pgf manual §17.8). -/
   atEnd : Bool
 
-/-- Move an already measured label without changing its text or baseline
-rule. Other shapes are unchanged: this is the final step of path-label
-placement, after the path itself has been resolved. -/
+/-- Moves a measured label without changing its text or baseline rule; other shapes are unchanged. -/
 public def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
   | .label x y content color size align =>
     .label (x + offset.1) (y + offset.2) content color size align
   | s@(.ink _) => s
 
-/-- The emitted label's text box is exactly the translated IR box.
-Attachments can therefore use `Box.attachOffset_contract` without a
-second, backend-dependent measurement. -/
 public theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
     (content : Array Ir.Inline) (color : Ir.Color) (size : Nat)
     (align : Ir.Pic.LabelAlign) (metric : Ir.Pic.LabelMetric) :
@@ -6100,13 +4554,6 @@ public theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
     | .ink _ => False :=
   Ir.Pic.labelTextBox_translate_exact x y align (metric content size) offset
 
-/-- Stack and align once, then attach the whole measured text box. All
-path operations use this translation: individual lines retain their
-leading, and both backends receive the same coordinates and baselines.
-The anchor is the path point; direction is explicit or its local tangent's
-automatic side. pgfmoduleshapes.code.tex declares inner sep=.3333em and
-outer sep=.5\pgflinewidth; the caller resolves the font-relative inner sep.
-`Ir.Pic.Box.attachOffset_contract` guarantees each requested clearance. -/
 private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
     (anchor tangent : Sp × Sp) : Array Ir.Pic.Shape :=
   let lines := alignLabels cx.metric label.align
@@ -6132,34 +4579,22 @@ private def readEdgeLabel (cx : Cx) (env : List (String × Val))
   let mut i := start
   let mut ev := before
   let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
-  -- an in-path `node[...] {...}`: an edge label at the segment's
-  -- midpoint; placement attaches the whole text box there
   let mut mid : Option EdgeLabel := none
   if ts[i]? == some (.ident "node") then
     i := i + 1
-    -- An edge label reads its own bracket alone: neither the picture's
-    -- entries nor an `every node` style reaches it, so a declared one
-    -- is named here rather than dropped in silence.
     unless cx.everyNode.isEmpty do
       ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
 the rendered picture subset; the keys are dropped")
     let mut mcolor := cx.ink
     let mut mscale : Nat := cx.declScale factor
     let mut mstyles : Array Ir.Style := #[]
-    -- `none` is "this label declared no placement": it then takes the
-    -- side `auto` computes from the path's direction, or the path's
-    -- midpoint where no `auto` is in force.
     let mut malign : Option Dir := none
     let mut mAuto := autoOn
     let mut mLeft := autoLeft
     let mut atEnd := trailing
-    -- Keep dimension keys separate from text-font keys. PGF's `font=`
-    -- and body switches change the text box, not its dimension font.
+    -- `font=` and body switches change the text box, not the dimension font.
     let mut mseps : Array (String × List Tok) := #[]
-    -- `align=`: the side the label's lines stand flush to.
     let mut mtext : Ir.Pic.LabelAlign := .center
-    -- An edge label is a node: what `every text node part` declared
-    -- reaches its text, and its own bracket follows.
     let mut mopts : Array (Array Tok) := cx.everyText
     if ts[i]? == some (.sym '[') then
       let mut j := i + 1
@@ -6208,7 +4643,6 @@ is outside the rendered picture subset; the lines stay centred")
         mseps := mseps.push ("outer xsep", rest)
       | .ident "outer" :: .ident "ysep" :: .sym '=' :: rest =>
         mseps := mseps.push ("outer ysep", rest)
-      -- The label's own side, on top of whatever the path set.
       | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
       | [.ident "auto"] => mAuto := true
       | [.ident "auto", .sym '=', .ident "left"] => mAuto := true; mLeft := true
@@ -6252,15 +4686,6 @@ the rendered picture subset; the option is dropped")
 edge is not drawn"))
   return .ok (mid, i, ev)
 
-/-- `\draw[opts] (a) -- (b) to[out=α,in=β] (c) ...;` — a stroked edge
-chain between named nodes and coordinates, border-anchored at named
-endpoints (along the declared tangent for a curve), with `rectangle`
-outlines and `-- cycle` closing a subpath. Options: `thick`,
-`dashed`/`dotted` (and the densely form), an arrow spec (`->`/`-latex`,
-both the triangle tip), a colour, and declared style bundles; an in-path
-`node[...] {...}` is an edge label at the segment's midpoint. Anything
-else outside the subset loses only itself where an option, and the edge
-by name where a path operation. -/
 private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     (ev : Ev) (mode : PathMode := .draw) : Ev := Id.run do
   let ts := toks.filter (· != .space)
@@ -6269,56 +4694,28 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut color := cx.ink
   let mut dash : Ir.Pic.Dash := .solid
   let mut width : Sp := Ir.Pic.thinWidth
-  -- The tips each end draws (`arrowSpec`): `latex-` the start's, `->` the
-  -- end's, `<->` both.
   let mut startArrow := false
   let mut endArrow := false
-  -- `\path` paints nothing of itself; an `edge` operation or an explicit
-  -- `draw` key is what makes it stroke (pgf's `every edge` carries `draw`).
+  -- `\path` paints nothing of itself; an `edge` or a `draw` key makes it stroke.
   let mut strokes := mode == .draw || mode == .filldraw || mode == .shadedraw
-  -- `\fill` and `\filldraw` fill, as does a `fill` key; `fill=<colour>`
-  -- names the colour, else the path's own colour fills it.
   let mut fills := mode == .fill || mode == .filldraw
   let mut fillColor : Option Ir.Color := none
-  -- `\shade`, `\shadedraw` and every shading key paint the path with a
-  -- shading, pgf's defaults until a key sets one.
   let mut shades := mode == .shade || mode == .shadedraw
   let mut shading : ShadeSpec := ShadeSpec.initial
-  -- `\clip` and the `clip` key: what follows in the scope paints inside the
-  -- path (`clipAfter`).
   let mut clips := mode == .clip
-  -- `decorate` with `decoration={brace, …}`: the path replaced by the brace
-  -- along it.
   let mut decorate := false
   let mut brace : Option BraceSpec := none
-  -- The tip names each end draws, and the one `>=` makes the shorthand's.
   let mut startName : Option String := none
   let mut endName : Option String := none
   let mut shorthand : Option String := none
-  -- `shorten <=`/`shorten >=` (pgf manual §16.3.1): the path stops short of
-  -- its ends, and a tip stands where it stops.
   let mut shortenStart : Sp := 0
   let mut shortenEnd : Sp := 0
-  -- `rounded corners=r` (pgf manual §14.5): every corner the path turns is
-  -- a curve; `sharp corners` takes it back.
   let mut rounded : Option Sp := none
-  -- `opacity`, `fill opacity`, `draw opacity` (pgf manual §23.2): the
-  -- paints' own alphas.
   let mut fillAlpha : Gfx.Alpha := Gfx.Alpha.opaque
   let mut strokeAlpha : Gfx.Alpha := Gfx.Alpha.opaque
-  -- Did one of the chain's operation brackets already declare a stroke?
-  -- The subset draws one stroke per edge, so a second declaration is a
-  -- loss to name rather than resolve in silence.
   let mut opStroke := false
-  -- `auto`/`swap` (pgf manual §17.8): whether an in-path label stands beside
-  -- the path, and on which side of its direction. Set at any level — the
-  -- document's `\tikzset`, the picture's bracket, `every path`, or this
-  -- statement's own — because that is where pgf reads it; a label's own
-  -- bracket still wins, as every inner setting does.
   let mut autoOn := false
   let mut autoLeft := true
-  -- The To-Path keys the statement sets: every `to` and `edge` of the chain
-  -- starts from them, and its own bracket refines them.
   let mut toSpec : ToSpec := {}
   let mut own : Array (Array Tok) := #[]
   if ts[0]? == some (.sym '[') then
@@ -6339,7 +4736,6 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   for opt in mergeOpts gOuter pOuter cx.everyPath own do
     match arrowSpec opt.toList with
     | some (st, en) =>
-      -- A later specification replaces an earlier one, end for end.
       startArrow := st.any (drawsAsArrow cx.styles)
       endArrow := en.any (drawsAsArrow cx.styles)
       startName := st
@@ -6357,9 +4753,6 @@ picture subset; the edge is drawn without a head")
     | none =>
     match opt.toList with
     | [.ident "draw"] => strokes := true
-    -- `auto` puts an in-path label beside the path instead of on it;
-    -- `auto=left`/`auto=right` name the side and `auto=false` turns it off.
-    -- `swap` (and its `'` shorthand) flips whichever side is in force.
     | [.ident "auto"] => autoOn := true
     | [.ident "auto", .sym '=', .ident "left"] => autoOn := true; autoLeft := true
     | [.ident "auto", .sym '=', .ident "right"] => autoOn := true; autoLeft := false
@@ -6367,8 +4760,6 @@ picture subset; the edge is drawn without a head")
     | [.ident "swap"] | [.sym '\''] => autoLeft := !autoLeft
     | [.ident "dashed"] => dash := .dashed
     | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
-    -- `>=<tip>` names which head the `->` shorthand draws; a declared tip
-    -- draws this subset's own head, so the key changes no shape here.
     | .sym '>' :: .sym '=' :: rest =>
       match tipName rest with
       | some tip =>
@@ -6379,8 +4770,6 @@ picture subset; the edge is drawn without a head")
       | none =>
         ev := ev.diag (.W0334, "'>=' without a tip name is outside the rendered \
 picture subset; the option is dropped")
-    -- `draw=none` strokes nothing; `draw=<colour>` and a bare colour both
-    -- set the stroke, as in pgf
     | [.ident "draw", .sym '=', .ident "none"] => strokes := false
     | .ident "draw" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
@@ -6462,7 +4851,6 @@ rendered picture subset; the option is dropped")
         return ev.diag (.E0333, s!"in '\\draw' option '{keyPath opt.toList}', {e}; \
 the edge is not drawn")
       | none =>
-      -- A remaining option is a colour spelling, or names itself.
       match evalColor cx env opt with
       | .ok c => color := c
       | .error _ =>
@@ -6479,8 +4867,6 @@ rendered picture subset; the option is dropped")
     reference := base
   for _ in [0:ts.size + 1] do
     if h : i < ts.size then
-      -- the path operation: `--` (closing with `cycle`), `rectangle`, or
-      -- `to` with its optional tangents
       let mut op := DrawOp.straight
       if ts[i]? == some (.sym '-') && ts[i+1]? == some (.sym '-') then
         i := i + 2
@@ -6509,8 +4895,7 @@ rendered picture subset; the option is dropped")
           i := next
         | .error d => return ev.diag d
       else if ts[i]? == some (.ident "to") || ts[i]? == some (.ident "edge") then
-        -- `edge` is `to` with `every edge`'s `draw` in force: the same
-        -- operation, and the reason a `\path` of edges paints.
+        -- `edge` is `to` with `every edge`'s `draw` in force.
         if ts[i]? == some (.ident "edge") then strokes := true
         i := i + 1
         if ts[i]? == some (.sym '[') then
@@ -6527,10 +4912,6 @@ rendered picture subset; the option is dropped")
 not drawn")
           i := j + 1
           let mut spec := toSpec
-          -- Through the same expansion a node's and a path's bracket goes
-          -- through, so a bundle applied on an edge operation is the bundle
-          -- it names. Reading this one bracket raw was the last place a
-          -- declared name reached no reader (`styleName_agree`'s use side).
           for opt in expandOpts cx.styles inner do
             match spec.read env opt with
             | some (.ok s) => spec := s
@@ -6549,12 +4930,6 @@ subset; the last one is drawn")
               ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
             | none =>
             match opt.toList with
-            -- An operation's own bracket carries stroke keys too, and on
-            -- `\path (a) edge [dashed] (b)` they are the whole point: the
-            -- dash is what the diagram means by that edge. The subset has
-            -- one stroke per edge shape, so a chain whose operations
-            -- declare *different* strokes can only draw one — named, not
-            -- silently resolved.
             | [.ident "dashed"] =>
               if opStroke then ev := ev.diag (.W0334, "a chain whose \
 operations declare more than one stroke is outside the rendered picture \
@@ -6595,21 +4970,16 @@ outside the rendered picture subset; the edge is not drawn")
         mid := label
         i := next
         ev := after
-      -- `cycle` names no endpoint: its segment ends where the subpath began,
-      -- which the segment walk below knows; the chain's first point stands
-      -- in its slot.
       if op matches .cycle then
         let first := pts[0]?.getD (.point 0 0)
         pts := pts.push first
         reference := first.center
         ops := ops.push (op, mid)
       else if op matches .ellipse _ _ then
-        -- The current point stays: the centre stands in the next slot.
         let here := (pts.back?.map Anchor.center).getD (0, 0)
         pts := pts.push (.point here.1 here.2)
         ops := ops.push (op, mid)
       else if let .arc sa ea rx ry := op then
-        -- The arc's end is the next current point.
         let here := (pts.back?.map Anchor.center).getD (0, 0)
         let (_, fin) := arcPieces cx here sa ea rx ry
         pts := pts.push (.point fin.1 fin.2)
@@ -6622,8 +4992,6 @@ outside the rendered picture subset; the edge is not drawn")
           pts := pts.push a
           i := i2
           reference := base
-          -- TikZ accepts a path node on either side of the endpoint.
-          -- Both spellings use one option reader and one attachment.
           match readEdgeLabel cx env ts i ev autoOn autoLeft true with
           | .error failed => return failed
           | .ok (label, next, after) =>
@@ -6641,10 +5009,6 @@ the rendered picture subset; the edge is not drawn")
     { color := color
       width := width
       dash := dash }
-  -- The tip each end draws: the name it wrote, the shorthand's own heads
-  -- the tip `>=` named.
-  -- A declared tip (`name/.tip = {…}`) draws what it is declared as, the
-  -- triangle-sided `latex` where that is no tip of these.
   let kindOf1 := tipKindOf cx.metaArrows
   let declared (n : String) : TipKind :=
     ((cx.styles.lookup (tipKey n)).bind fun ts => (tipName ts.toList).bind kindOf1).getD .latex
@@ -6663,17 +5027,10 @@ the rendered picture subset; the edge is not drawn")
   let mut tip : Option TipInk := none
   let mut startTip : Option TipInk := none
   let mut labels : Array Ir.Pic.Shape := #[]
-  -- A rectangle's outline: a closed frame, which both backends stroke as
-  -- one path with every corner joined.
   let mut frames : Array Ir.Pic.Shape := #[]
-  -- The same rectangles and the path's ellipses as geometry, for a path that
-  -- fills or holds an ellipse and so paints as one.
   let mut rects : Array (Sp × Sp × Sp × Sp) := #[]
   let mut ellipses : Array (Sp × Sp × Sp × Sp) := #[]
-  -- Closed outlines the transformation turned, which only a path spells.
   let mut extraSubs : Array Gfx.Subpath := #[]
-  -- Where the current subpath began (its index in `segs` and its first
-  -- point) and where it stands now: what `cycle` closes back to.
   let mut subStart : Option (Nat × Sp × Sp) := none
   let mut cur : Option (Sp × Sp) := none
   for k in [0:ops.size] do
@@ -6685,15 +5042,12 @@ the rendered picture subset; the edge is not drawn")
         let (x1, y1) := a.center
         let (x2, y2) := c.center
         if rounded.isSome || !cx.axisAligned then
-          -- A rounded or turned rectangle is its loop of sides, which the
-          -- corner pass rounds and the paint strokes or fills as a path.
           segs := segs ++ rectLoop cx (x1, y1) (x2, y2)
         else
           if strokes then
             frames := frames.push (.frame (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
               (max y1 y2 - min y1 y2) (some stroke) none)
           rects := rects.push (min x1 x2, min y1 y2, max x1 x2 - min x1 x2, max y1 y2 - min y1 y2)
-        -- A node on a rectangle stands on its diagonal, as on a straight side.
         if let some label := mid then
           labels := labels ++ label.place cx width
             (if label.atEnd then (x2, y2) else ((x1 + x2) / 2, (y1 + y2) / 2))
@@ -6703,10 +5057,6 @@ the rendered picture subset; the edge is not drawn")
       | .cycle =>
         match subStart, cur with
         | some (f, sx, sy), some (ex, ey) =>
-          -- The closing side, then the first side split at its midpoint when
-          -- it is straight, so the subpath runs from that midpoint round to
-          -- it: every corner is interior and the PDF joins it, where a path
-          -- that ended on its first corner would cap it twice.
           segs := segs.push (.line ex ey sx sy)
           if let some (.line _ _ x2 y2) := segs[f]? then
             let mx := (sx + x2) / 2
@@ -6733,7 +5083,6 @@ the rendered picture subset; the edge is not drawn")
         if subStart.isNone || cur != some p then subStart := some (segs.size, p.1, p.2)
         segs := segs ++ pieces
         cur := some fin
-        -- A tip rides the arc's tangent at its end, as on a curve.
         if last && endArrow then
           if let some (.cubic _ _ _ _ c2x c2y ex ey) := pieces.back? then
             tip := (tipFor endKind (c2x, c2y) (ex, ey)).map (·.1)
@@ -6746,21 +5095,12 @@ the rendered picture subset; the edge is not drawn")
         let labelCorner := match op with
           | .orthogonal vertical => some (orthogonalCorner vertical a.center c.center)
           | .straight | .curve _ | .rect | .cycle | .ellipse _ _ | .arc _ _ _ _ => none
-        -- An axis-aligned elbow is one straight segment. In particular,
-        -- its zero final leg cannot swallow the arrival arrow or cause
-        -- a named node to be approached from its own centre.
-        -- PGF's halfway timer still names the corner when a leg is zero
-        -- (tikz@timer@vhline/hvline, §17.8); keep that attachment separately.
         let corner := labelCorner.filter fun q => q != a.center && q != c.center
         let p1 := a.toward (corner.getD c.center)
         let p2 := c.toward (corner.getD a.center)
-        -- `shorten` moves the path's own ends along its first and last
-        -- sides; a tip then stands where the path stops.
         let p1 := if k == 0 && shortenStart != 0 then towardBy p1 (corner.getD p2) shortenStart
           else p1
         let p2 := if last && shortenEnd != 0 then towardBy p2 (corner.getD p1) shortenEnd else p2
-        -- A tip at the start shortens the first side, pointing back at its
-        -- anchor, as one at the end shortens the last (`sideShaft`).
         let (side, sTip, eTip, p1) :=
           sideShaft (if k == 0 && startArrow then some startKind else none)
             (if last && endArrow then some endKind else none) corner p1 p2 stroke.width
@@ -6770,8 +5110,6 @@ the rendered picture subset; the edge is not drawn")
         let first := segs.size
         segs := segs ++ side
         let departure := corner.getD p1
-        -- A side that does not start where the last ended opens a subpath,
-        -- as pgf moves to a node's border toward the next point.
         if subStart.isNone || cur != some p1 then subStart := some (first, p1.1, p1.2)
         cur := some p2
         if let some label := mid then
@@ -6780,11 +5118,6 @@ the rendered picture subset; the edge is not drawn")
               labelCorner.getD ((p1.1 + p2.1) / 2, (p1.2 + p2.2) / 2))
             (p2.1 - departure.1, p2.2 - departure.2)
       | .curve spec =>
-        -- Absolute tangents anchor each end on its border along its own
-        -- angle and aim the controls along those angles. Relative ones
-        -- (lines 246–358) turn the other centre about this one to find
-        -- the border, then aim the controls in the frame of the chord
-        -- between the two borders.
         let (p1, p2) :=
           if spec.rel then
             (a.toward (turnAbout a.center c.center spec.outA),
@@ -6807,12 +5140,8 @@ the rendered picture subset; the edge is not drawn")
         if k == 0 && startArrow then
           startTip := (tipFor startKind c1 p1).map (·.1)
         if last && endArrow then
-          -- the tip rides the arrival tangent; the curve keeps its
-          -- endpoint and the filled tip covers its last reach
           tip := (tipFor endKind c2 p2).map (·.1)
         if let some label := mid then
-          -- B(½) and its local tangent B′(½), with the common positive
-          -- factor 3/4 omitted: the chord can point to a different side.
           labels := labels ++ label.place cx width
             (if label.atEnd then p2 else
               ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8,
@@ -6820,12 +5149,7 @@ the rendered picture subset; the edge is not drawn")
             (if label.atEnd then (p2.1 - c2.1, p2.2 - c2.2) else
               (-p1.1 - c1.1 + c2.1 + p2.1, -p1.2 - c1.2 + c2.2 + p2.2))
     | _, _, _ => pure ()
-  -- A `\path` whose operations never asked to draw paints nothing of its
-  -- own; its in-path labels still stand, as pgf sets them. A chain of
-  -- nothing but rectangles strokes no edge of its own.
   let tips : Array TipInk := startTip.toArray ++ tip.toArray
-  -- A decorated side is the brace along it (`braceSegs`): the one
-  -- decoration this subset draws, on the one path it reads, a straight side.
   if decorate then
     match brace, segs.toList, rects.isEmpty && ellipses.isEmpty && extraSubs.isEmpty with
     | some b, [.line x0 y0 x1 y1], true => segs := braceSegs b x0 y0 x1 y1
@@ -6834,14 +5158,10 @@ outside the rendered picture subset; the path is drawn undecorated")
     | none, _, _ => ev := ev.diag (.W0334, "'decorate' without a decoration this subset draws \
 is outside the rendered picture subset; the path is drawn undecorated")
   if let some r := rounded then segs := roundJoints r segs
-  -- One geometry for a fill, a shading, a clip or an ellipse: every side,
-  -- rectangle and ellipse of the statement — a lone rectangle or ellipse as
-  -- its own geometry.
   let geom := paintedGeom segs rects ellipses extraSubs
   let painted : Array Ir.Pic.Shape :=
     if fills || shades || !ellipses.isEmpty || !extraSubs.isEmpty then
-      -- Filled by the nonzero rule, then shaded (tikz.code.tex paints the
-      -- fill, then the shading, then the stroke), then stroked once.
+      -- Filled, then shaded, then stroked once, as tikz.code.tex paints them.
       let fill := if fills then some (Ir.Pic.solidFill (fillColor.getD color)) else none
       let shade := if shades then geom.hull.bind (shadeFill shading) else none
       let st := if strokes then some (Ir.Pic.strokeOf stroke) else none
@@ -6862,54 +5182,37 @@ is outside the rendered picture subset; the path is drawn undecorated")
   return { ev with shapes := ev.shapes ++ painted ++ labels
                    clipGeom := if clips then some geom else ev.clipGeom }
 
--- Trees (TikZ manual §21): `\node {root} child {node {a} child {…}} …;`.
-
-/-- One node of a tree as the flattening walk read it: its parent's index in
-the walk's array (`none` for the root), its level and its 1-based place among
-its siblings (pgf's `\tikznumberofcurrentchild`), what its `child [...]`
-carried, and the parts of its body. A body that names no node is a
-coordinate, pgf's `[shape=coordinate]{}`. -/
+/-- One node of a tree as the flattening walk read it: parent index, level, sibling place, child
+options and body parts. -/
 public structure TreeItem where
   parent : Option Nat := none
   level : Nat := 0
   index : Nat := 1
   childOpts : Array Tok := #[]
-  /-- The node's own tokens after `node` (`[keys] (name) at (…) {text}`), or
-  a coordinate's after `coordinate`. -/
   node : Array Tok := #[]
   coordinate : Bool := true
-  /-- Options between the node and its children (`{root} [grow=up] child …`):
-  keys for the rest of its path — its children and its own edge. -/
   pathOpts : Array Tok := #[]
-  /-- `edge from parent [...]`'s options, and the label nodes after it. -/
   edgeOpts : Array Tok := #[]
   edgeNodes : Array Tok := #[]
   /-- How many children it has: pgf's `\tikznumberofchildren`. -/
   children : Nat := 0
   deriving Repr, Inhabited
 
-/-- Where the flattening walk stands in one body. -/
 private inductive TMode where
   | start
-  /-- A node's prologue: inside a `[...]` or not, and the paren depth. -/
   | prologue (bracket : Bool) (paren : Nat)
-  /-- A coordinate's prologue, at this paren depth. -/
   | cprologue (paren : Nat)
   | tail
   | pathBracket
-  /-- After `child`: inside its `[...]` or not. -/
   | child (bracket : Bool)
-  /-- After `edge`: how much of `from parent` was read (0–2). -/
   | edge (stage : Nat)
   | edgeBracket
   | edgeNodes
-  /-- After a construct outside the subset, to the next `child`. -/
   | skipping
   deriving Repr, Inhabited
 
 private structure TSt where
   items : Array TreeItem := #[{}]
-  /-- Did the walk read a `child` at all? -/
   tree : Bool := false
   cur : Nat := 0
   mode : TMode := .start
@@ -6923,7 +5226,6 @@ private def TSt.modifyCur (st : TSt) (f : TreeItem → TreeItem) : TSt :=
 private def TSt.diag (st : TSt) (d : PDiag) : TSt :=
   if st.bad.any (·.2 == d.2) then st else { st with bad := st.bad.push d }
 
-/-- A child pushed under the current item, one past its siblings so far. -/
 private def TSt.pushChild (st : TSt) : TSt × Nat :=
   let parent := st.cur
   let p := st.items[parent]?.getD {}
@@ -6933,7 +5235,6 @@ private def TSt.pushChild (st : TSt) : TSt × Nat :=
   let items := (st.items.modify parent fun q => { q with children := idx }).push item
   ({ st with items, pendingOpts := #[] }, items.size - 1)
 
-/-- A token of a body's tail: a path bracket, a `child`, an `edge from parent`. -/
 private def treeTail (t : Tok) (st : TSt) : TSt :=
   match t with
   | .space => st
@@ -6943,7 +5244,6 @@ private def treeTail (t : Tok) (st : TSt) : TSt :=
   | t => { st.diag (.W0334, s!"a tree continues with {tokText t}, outside the rendered \
 picture subset; it is dropped") with mode := .skipping }
 
-/-- One step of the walk, every case but a child's body group. -/
 private def treeStep (t : Tok) (st : TSt) : TSt :=
   let push (st : TSt) : TSt := st.modifyCur fun i => { i with node := i.node.push t }
   match st.mode with
@@ -7022,10 +5322,6 @@ rendered picture subset; it is dropped") with mode := .skipping }
 
 mutual
 
-/-- Flatten a tree into its items in preorder: the one recursion into a
-child's body group, so the walk's totality is structural, as `parseList`'s
-is. A child's body is read under a state whose current item is the child,
-and the walk returns to its parent's tail after it. -/
 private def treeList : List Tok → TSt → TSt
   | [], st =>
     match st.mode with
@@ -7044,18 +5340,11 @@ private def treeTok (t : Tok) (st : TSt) : TSt :=
 
 end
 
-/-- A `\node` statement's tree: the root's node and every child below it, in
-preorder, or `none` where the statement reads no `child`. -/
+/-- A `\node` statement's tree: the root and every child in preorder, or `none` where it reads no `child`. -/
 public def flattenTree (toks : Array Tok) : Option (Array TreeItem × Array PDiag) :=
   let st := treeList (.ident "node" :: toks.toList) {}
   if st.tree then some (st.items, st.bad) else none
 
-/-- The tree keys in force (tikz.code.tex's tree options): the growth
-direction in degrees, whether `grow'` turned the sibling order, the level
-`grow` was set at (pgf's `\tikz@special@level`, whose children are not
-spread), the two distances, the edge's anchors, and the entries that are no
-tree key — in force for every path and node of the subtree, as keys set in a
-scope are. -/
 private structure TreeCfg where
   grow : Int := -90
   swap : Bool := false
@@ -7067,7 +5356,6 @@ private structure TreeCfg where
   scope : Array (Array Tok) := #[]
   deriving Inhabited
 
-/-- A growth direction (`\tikz@grow@direction@<name>`), or an integer angle. -/
 private def growAngle (env : List (String × Val)) (toks : List Tok) : Option Int :=
   match keyName toks with
   | some "down" | some "south" => some (-90)
@@ -7083,14 +5371,9 @@ private def growAngle (env : List (String × Val)) (toks : List Tok) : Option In
     | .ok m => some (if m < 0 then -((-m) / 1000) else m / 1000)
     | .error _ => none
 
-/-- A tree distance as `\pgfmathsetlength` reads it: a length, `em` and
-`ex` the face's, or pgfmath with units, a unitless value in points. -/
 private def treeLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Sp :=
   optLen cx env toks
 
-/-- One entry read as a tree key at `level`; `none` where it is none. A
-distance is a shift in the picture's coordinate system, so it scales with
-it. -/
 private def treeKey (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg : TreeCfg)
     (entry : Array Tok) : Option (Except PDiag TreeCfg) :=
   let e := entry.toList.filter (· != .space)
@@ -7121,9 +5404,6 @@ picture subset; the edge meets the border")
   else if key == "missing" then some (.ok cfg)
   else none
 
-/-- A bracket's entries read at `level`: tree keys into the configuration,
-every other entry a shape reads into its scope, and an entry no shape reads
-named — a key set in a tree is never dropped in silence. -/
 private def applyTree (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg : TreeCfg)
     (entries : Array (Array Tok)) (ev : Ev) : TreeCfg × Ev := Id.run do
   let mut cfg := cfg
@@ -7139,17 +5419,12 @@ private def applyTree (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg 
         else ev := ev.diag (outsideOpt e.toList)
   return (cfg, ev)
 
-/-- The `k`-th of `n` siblings' signed distance across the growth direction:
-`(k − (n+1)/2)` sibling distances, the half step kept exact by spelling it
-`(2k − n − 1)·sd / 2` (tikz.code.tex adds `(n+1)·½sd` one way and `k·sd` the
-other). -/
+/-- The `k`-th of `n` siblings' signed distance across the growth direction, `(2k − n − 1)·sd / 2`. -/
 @[expose] public def siblingSpread (sd : Sp) (n k : Nat) : Sp :=
   (2 * (k : Int) - ((n : Int) + 1)) * sd / 2
 
-/-- pgf's `\tikz@grow@direction`: a child's offset from its parent's centre.
-`level distance` along the growth direction, then — unless `grow` was set
-at this level — the `k`-th of `n` siblings `(k − (n+1)/2)` sibling distances
-along the direction turned +90° (−90° under `grow'`). -/
+/-- A child's offset from its parent's centre, pgf's `\tikz@grow@direction`: level distance along
+the growth, siblings spread across it. -/
 public def growthOffset (grow : Int) (swap spread : Bool) (ld sd : Sp) (n k : Nat) : Sp × Sp :=
   let along : Sp × Sp := (cosDeg grow * ld / 1000, sinDeg grow * ld / 1000)
   if !spread then along else
@@ -7157,10 +5432,6 @@ public def growthOffset (grow : Int) (swap spread : Bool) (ld sd : Sp) (n k : Na
   let t := siblingSpread sd n k
   (along.1 + cosDeg across * t / 1000, along.2 + sinDeg across * t / 1000)
 
-/-- **A child stands between its first and last siblings.** Across the
-growth direction, the `k`-th of `n` children is no nearer the start than
-the first and no farther than the last, whatever the sibling distance — so
-a tree's level spreads in sibling order and never folds back over itself. -/
 public theorem Tree.children_between (sd : Int) (n k : Nat) (hsd : 0 ≤ sd) (hk : 1 ≤ k)
     (hn : k ≤ n) :
     siblingSpread sd n 1 ≤ siblingSpread sd n k ∧ siblingSpread sd n k ≤ siblingSpread sd n n := by
@@ -7173,7 +5444,6 @@ public theorem Tree.children_between (sd : Int) (n k : Nat) (hsd : 0 ≤ sd) (hk
     apply Int.mul_le_mul_of_nonneg_right _ hsd
     omega
 
-/-- The entries of a style the tree reads by name, `#1` its argument. -/
 private def treeStyle (cx : Cx) (name : String) (arg : Nat := 0) : Array (Array Tok) :=
   match cx.styles.lookup name with
   | none => #[]
@@ -7193,7 +5463,6 @@ private def treeStyle (cx : Cx) (name : String) (arg : Nat := 0) : Array (Array 
       return out
     (splitTop (subst.filter (· != .space)) ',').filter (!·.isEmpty)
 
-/-- Entries as one option bracket, none where there are none. -/
 private def bracketOf (entries : Array (Array Tok)) : Array Tok := Id.run do
   if entries.isEmpty then return #[]
   let mut out : Array Tok := #[.sym '[']
@@ -7204,31 +5473,15 @@ private def bracketOf (entries : Array (Array Tok)) : Array Tok := Id.run do
     out := out ++ e
   return out.push (.sym ']')
 
-/-- A node's name, and an anchor where one is given, as coordinate tokens. A
-name the engine gives holds a space, which no name a document writes can
-(`nameOfToks` drops every space), so the two never meet. -/
 private def nameCoord (name : String) (anchor : Option String) : Array Tok :=
   #[.sym '(', .ident name] ++ ((anchor.map fun a => #[.sym '.', .ident a]).getD #[]) ++
     #[.sym ')']
 
-/-- `\node … child {…} …;` — a tree, placed as pgf's default growth
-function places it (`growthOffset`), each child's `edge from parent` a
-`\path` from its parent to it through the `edge from parent` style and the
-options its `edge from parent [...]` gave, so its tips, dashes and colours
-are the one path reader's. Level styles are read for a level's children,
-`every child` and a child's own options for it, and the options between a
-node and its children for the rest of its path, the child's own edge
-included, as pgf runs that rest as the edge's path. The edges stand under
-the nodes, which pgf sets after the path. The items are in preorder, so a
-parent is placed before its children. A child's default name is pgf's own
-`<parent>-<k>`. -/
 private def evalTree (cx : Cx) (env : List (String × Val)) (items : Array TreeItem)
     (bad : Array PDiag) (ev : Ev) : Ev := Id.run do
   let mut ev := bad.foldl Ev.diag ev
   let before := ev.shapes.size
   let mut edges : Array Ir.Pic.Shape := #[]
-  -- The keys the document and the picture set: tree keys from them start
-  -- the configuration, at level 0 where pgf reads them.
   let mut base : TreeCfg := {}
   let outer := cx.global ++ cx.opts
   for e in outer do
@@ -7267,8 +5520,6 @@ private def evalTree (cx : Cx) (env : List (String × Val)) (items : Array TreeI
       let (c3, ev3) := applyTree cx env level c2 own ev
       ev := ev3
       match ev.nodes.lookup pname with
-      -- A parent the walk refused names its own loss; nothing stands to
-      -- grow from.
       | none => pure ()
       | some g =>
         unless missing do
@@ -7293,16 +5544,11 @@ private def evalTree (cx : Cx) (env : List (String × Val)) (items : Array TreeI
   return { ev with shapes := ev.shapes.extract 0 before ++ edges ++
     ev.shapes.extract before ev.shapes.size }
 
-/-- One `\foreach` list item: values (`1`, `2/3`, a word), or the `...`
-range marker. -/
 private inductive Item where
   | vals (vs : Array Val)
   | dots
   deriving Repr, BEq
 
-/-- Read the literal list: items split on `,`, `...` recognised, `/` the
-tuple form. Numeric expressions keep their evaluator; literal node names
-(including digits, hyphens and anchor suffixes) ride as text. -/
 private def readItems (env : List (String × Val)) (toks : Array Tok) :
     Except String (Array Item) := Id.run do
   let mut out : Array Item := #[]
@@ -7329,9 +5575,6 @@ private def readItems (env : List (String × Val)) (toks : Array Tok) :
       out := out.push (.vals vs)
   return .ok out
 
-/-- Unroll the list, ranges expanded through `range` — count first, values
-indexed off it, so termination is by construction and a range that walks
-away from its bound is named instead of spun. -/
 private def expandItems (items : Array Item) : Except String (Array (Array Val)) := Id.run do
   let mut out : Array (Array Val) := #[]
   let mut i := 0
@@ -7370,8 +5613,6 @@ private def expandItems (items : Array Item) : Except String (Array (Array Val))
     else break
   return .ok out
 
-/-- Bind the `\x/\y` variables to one item; pgf repeats the last given
-part when the item is shorter than the variable list. -/
 private def bindVars (vars : Array String) (item : Array Val)
     (env : List (String × Val)) : List (String × Val) := Id.run do
   let mut out := env
@@ -7381,10 +5622,6 @@ private def bindVars (vars : Array String) (item : Array Val)
       out := (vars[k], (item[k]?).getD last) :: out
   return out
 
-/-- An `\ifnum` test split into its two sides and its relation, at paren
-depth zero. TeX's ⟨relation⟩ is one of `<`, `=`, `>` (TeXbook chapter 20),
-and the first one at depth zero is it — a pgfmath expression holds no
-relation of its own, so there is nothing to disambiguate. -/
 private def splitRel (toks : Array Tok) : Option (Array Tok × Char × Array Tok) := Id.run do
   let mut depth := 0
   for k in [0:toks.size] do
@@ -7403,14 +5640,6 @@ integer relations and nothing else. -/
 public def relHolds (rel : Char) (a b : Int) : Bool :=
   if rel == '<' then a < b else if rel == '>' then a > b else a == b
 
-/-- **A test takes exactly one branch, and the three relations are the
-trichotomy.** Exactly one of `<`, `=`, `>` holds of any two integers, so a
-conditional can never ship both sides' ink and can never ship neither — a
-picture's ink is a function of the test's value alone. The defect this
-states away is the recovery it replaced: an `\ifnum` was named and skipped
-to the next `;`, so every statement of *both* branches after the first was
-drawn, which is wrong ink rather than missing ink. The registered `_exact`
-shape. -/
 public theorem relTrichotomy_exact (a b : Int) :
     (relHolds '<' a b = true) = !(relHolds '>' a b || relHolds '=' a b) ∧
     (relHolds '>' a b = true) = !(relHolds '<' a b || relHolds '=' a b) ∧
@@ -7418,38 +5647,13 @@ public theorem relTrichotomy_exact (a b : Int) :
   simp only [relHolds]
   refine ⟨?_, ?_, ?_⟩ <;> (by_cases h1 : a < b <;> by_cases h2 : b < a <;> simp_all <;> omega)
 
-/-- Which branch a conditional whose test this walk cannot compute ships:
-the one that draws, preferring the first where both do. A reader shown one
-coherent reading of a diagram has lost almost nothing, and a reader shown an
-empty box has lost the diagram — the recorded ordering the math and
-node-label floors already follow ("native first; imperfectly-but-visibly
-beats not at all"). Drawing *neither* is the worse recovery twice over: the
-picture ships no ink at all, and an all-refused picture is what routes whole
-to the external boundary, where an empty page is the one degradation that
-tells a reader nothing.
-
-Preferring the drawing branch rather than always the first is what the
-reference corpus taught: a guard is as often written
-`\ifdefined\x \else <content> \fi` — the interesting side in the `\else`
-— as the other way round, and always taking `then` cost that diagram a
-whole overlay step, measured as a page that stopped existing.
-
-The recovery this replaced drew statement-for-statement from *both*
-branches, which is not a reading of the diagram at all. So the floor is one
-branch, and the assumption is named where the test was written. -/
+/-- Whether an unreadable conditional ships its first branch: the branch that draws, the first where both do. -/
 public def condFloorTakesThen (thenS : List Stmt) : Bool := !thenS.isEmpty
 
-/-- The branch the floor ships, as a value the statements below range over.
-The evaluator reads `condFloorTakesThen` at its branch point, so this is the
-same decision applied and not a second description of it. -/
+/-- The branch the floor ships. -/
 public def condFloor (thenS elseS : List Stmt) : List Stmt :=
   if condFloorTakesThen thenS then thenS else elseS
 
-/-- **An unreadable test still ships a branch.** The registered `_accounts`
-shape and a sibling of `labelFloor_accounts`: where either branch holds a
-statement, the floor ships statements — so a conditional the walk could not
-compute never silently empties a picture. Both branches empty is the one
-case that ships nothing, and then there was nothing to ship. -/
 public theorem condFloor_accounts (thenS elseS : List Stmt)
     (h : ¬ (thenS.isEmpty ∧ elseS.isEmpty)) : (condFloor thenS elseS) ≠ [] := by
   simp only [condFloor, condFloorTakesThen, List.isEmpty_iff, not_and] at *
@@ -7457,8 +5661,6 @@ public theorem condFloor_accounts (thenS elseS : List Stmt)
   | nil => exact h rfl
   | cons a as => simp
 
-/-- The floor is one of the two branches, never a mixture: the shape of the
-defect it replaced, which shipped statements from both. -/
 public theorem condFloor_mem (thenS elseS : List Stmt) :
     condFloor thenS elseS = thenS ∨ condFloor thenS elseS = elseS := by
   simp only [condFloor]
@@ -7466,10 +5668,6 @@ public theorem condFloor_mem (thenS elseS : List Stmt) :
   · exact Or.inl rfl
   · exact Or.inr rfl
 
-/-- One scope key as the transformation it composes, in the scope's own
-coordinates (pgf manual §25.3): `shift={(x,y)}`, `xshift`, `yshift`,
-`scale`, `xscale`, `yscale` and `rotate`; `none` where the key is no
-transformation. -/
 private def scopeKeyXf (cx : Cx) (env : List (String × Val)) (entry : List Tok) :
     Option (Except String Gfx.Affine) :=
   let key := keyPath entry
@@ -7499,9 +5697,6 @@ private def scopeKeyXf (cx : Cx) (env : List (String × Val)) (entry : List Tok)
       ⟨c / u, s / u, -s / u, c / u, 0, 0⟩)
   else none
 
-/-- A scope's transformation: its keys composed in the order written, each
-applied to points before the ones before it (pgf post-multiplies the matrix
-in force), and what a key cost. -/
 private def scopeXf (cx : Cx) (env : List (String × Val)) (entries : Array (Array Tok)) :
     Gfx.Affine × Array PDiag := Id.run do
   let mut m := Gfx.Affine.unit
@@ -7514,10 +5709,6 @@ it is ignored")
     | none => pure ()
   return (m, ds)
 
-/-- A scope's other keys: definitions into the bundles (a scope's own
-`every node/.style` too), `transform shape`, and the keys a statement
-reads into the entries its statements inherit, as a picture's bracket's
-are; a key nothing reads is named. -/
 private def scopeKeys (cx : Cx) (env : List (String × Val)) (entries : Array (Array Tok)) :
     Cx × Array PDiag := Id.run do
   let mut cx := cx
@@ -7537,8 +5728,6 @@ private def scopeKeys (cx : Cx) (env : List (String × Val)) (entries : Array (A
     | none =>
       if e.toList == [.ident "transform", .ident "shape"] then cx := { cx with transformShape := true }
       else
-      -- A colour, bare or as `color=`, is pgf's current colour for
-      -- everything the scope holds.
       let colour := match e.toList with
         | .ident "color" :: .sym '=' :: rest => evalColor cx env rest.toArray
         | _ => evalColor cx env e
@@ -7549,8 +5738,6 @@ private def scopeKeys (cx : Cx) (env : List (String × Val)) (entries : Array (A
         else ds := ds.push (outsideOpt e.toList)
   return (cx, ds)
 
-/-- The context a scope's statements read: its keys, and its transformation
-inside the one in force. -/
 private def scopeCx (cx : Cx) (env : List (String × Val)) (opts : Array Tok) :
     Cx × Array PDiag :=
   let entries := expandOpts cx.styles opts
@@ -7558,10 +5745,6 @@ private def scopeCx (cx : Cx) (env : List (String × Val)) (opts : Array Tok) :
   let (cx2, ds2) := scopeKeys cx env entries
   ({ cx2 with xf := cx.xf.compose m }, ds ++ ds2)
 
-/-- **A scope's transformation runs inside the one in force.** The map a
-scope's statements place their points by is the outer map after the
-scope's own keys — so a point a nested scope spells lands where the outer
-transformation puts the inner one's image of it, whatever the depth. -/
 private theorem scope_compose_exact (cx : Cx) (env : List (String × Val)) (opts : Array Tok)
     (p : Rat × Rat) :
     (scopeCx cx env opts).1.xf.apply p =
@@ -7569,11 +5752,9 @@ private theorem scope_compose_exact (cx : Cx) (env : List (String × Val)) (opts
   simp only [scopeCx]
   exact Gfx.Affine.apply_compose_exact _ _ p
 
-/-- Which branch a decided test draws, in words. -/
 private def condDrawnWords (holds : Bool) : String :=
   if holds then "the branch before '\\else' is drawn" else "only the '\\else' branch is drawn"
 
-/-- A shape's ink node, `none` for a label. -/
 private def inkOf : Ir.Pic.Shape → Option (Gfx.Node Empty)
   | .ink n => some n
   | .label .. => none
@@ -7582,11 +5763,6 @@ private def isLabelShape : Ir.Pic.Shape → Bool
   | .label .. => true
   | .ink _ => false
 
-/-- TikZ's `auto` anchor (tikz.code.tex, `\tikz@auto@anchor` and its primed
-twin): from a unit direction `(ux, uy)` in thousandths, the anchor that
-puts a node on the left of it — on the right under `swap` — a component
-counting where it exceeds 0.05. What a diagram's arrow label and a node's
-`label=` read. -/
 private def labelAutoAnchor (ux uy : Int) (swap : Bool) : NodeAnchor :=
   let px := ux > 50
   let nx := ux < -50
@@ -7601,30 +5777,17 @@ private def labelAutoAnchor (ux uy : Int) (swap : Bool) : NodeAnchor :=
     else if nx then (if py then .southWest else if ny then .southEast else .south)
     else (if uy > 0 then .west else .east)
 
-/-- `acc` with the clip group one run of consecutive ink stands in, nothing
-for no ink. -/
 private def clipFlush (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
     (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
   if run.isEmpty then acc
   else acc.push (.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque run))
 
-/-- The shapes after a clip, in statement order: each run of consecutive ink
-one group the clip path clips, each label between them where it stood — a
-node written before a fill still paints under it, as in pgf. Accumulates,
-`run` the ink since the last label. -/
 private def clipRuns (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
     (acc : Array Ir.Pic.Shape) : List Ir.Pic.Shape → Array Ir.Pic.Shape
   | [] => clipFlush g run acc
   | .ink n :: rest => clipRuns g (run.push n) acc rest
   | s@(.label ..) :: rest => clipRuns g #[] ((clipFlush g run acc).push s) rest
 
-/-- What a clip does to the statements after it in its scope (pgf manual
-§15.9; pgfcorepathusage.code.tex): their ink paints inside the clip path —
-each run of it one group of the model, clipped by it, so a label between two
-runs keeps its place in the painting order (`clipRuns`) — and nothing after
-it reaches the picture's size, the clip path's own box standing for it. A
-node's letters are set as text, outside the model, so a label the clip
-would cut is named; one inside a rectangular clip is cut by nothing. -/
 private def clipAfter (cx : Cx) (before : Ev) (g : Gfx.Geom) (inner : Ev) : Ev :=
   let labels := inner.shapes.filter isLabelShape
   let inside (s : Ir.Pic.Shape) : Bool := match s, g with
@@ -7638,8 +5801,6 @@ private def clipAfter (cx : Cx) (before : Ev) (g : Gfx.Geom) (inner : Ev) : Ev :
   else ev.diag (.W0334, "a node after a '\\clip' is set whole; the clip reaches only the \
 picture's paths")
 
-/-- A flush keeps what it was handed, and adds the run's group where the run
-holds ink. -/
 private theorem clipFlush_mem (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
     (acc : Array Ir.Pic.Shape) :
     (∀ s ∈ acc, s ∈ clipFlush g run acc) ∧
@@ -7657,8 +5818,6 @@ private theorem run_nonempty {α : Type} (run : Array α) (a : α) (h : a ∈ ru
   | false => rfl
   | true => simp [Array.isEmpty_iff.mp hr] at h
 
-/-- Every shape `clipRuns` was handed past `acc` ships: a label as itself,
-a mark of ink inside a group the clip path clips. -/
 private theorem clipRuns_covers (g : Gfx.Geom) :
     ∀ (run : Array (Gfx.Node Empty)) (acc : Array Ir.Pic.Shape) (ss : List Ir.Pic.Shape),
       (∀ s ∈ acc, s ∈ clipRuns g run acc ss) ∧
@@ -7703,9 +5862,6 @@ private theorem clipRuns_covers (g : Gfx.Geom) :
       · cases hn
       · exact hink n hn
 
-/-- **A clip covers what follows it** (`_covers`): every shape before the
-clip ships as it was, every label after it ships, and every mark of ink
-after it ships inside a group the clip path clips. -/
 private theorem clip_covers (cx : Cx) (before inner : Ev) (g : Gfx.Geom) :
     (∀ s ∈ before.shapes, s ∈ (clipAfter cx before g inner).shapes) ∧
     (∀ s ∈ inner.shapes, isLabelShape s → s ∈ (clipAfter cx before g inner).shapes) ∧
@@ -7735,10 +5891,6 @@ private theorem clip_covers (cx : Cx) (before inner : Ev) (g : Gfx.Geom) :
 
 mutual
 
-/-- Does a statement hold a clip that reaches past its own end — one inside
-a TeX group, a conditional's branch or a loop's body, none of which is a
-scope in pgf's sense (pgf manual §15.9: a clip lasts to the end of its
-scope, which only a `scope` and the picture make)? -/
 private def leaksOne : Stmt → Bool
   | .grouped _ body => leaksList body
   | .cond _ _ t e => leaksList t || leaksList e
@@ -7752,8 +5904,6 @@ private def leaksList : List Stmt → Bool
 
 end
 
-/-- The angle of a named label position (tikz.code.tex,
-`tikz@label@angle@is@…`), in milli-degrees. -/
 private def labelAngleOf : String → Option Int
   | "right" => some 0
   | "above right" => some 45000
@@ -7765,10 +5915,6 @@ private def labelAngleOf : String → Option Int
   | "below right" => some 315000
   | _ => none
 
-/-- A label's or a pin's spec as written (`[opts]angle:text`, TikZ manual
-§17.10.2): its own options, its angle in milli-degrees (`none` on the
-node's centre), and its text. A spec with no colon is its text at the
-default position, above. -/
 private def readExtra (env : List (String × Val)) (spec : List Tok) :
     Except String (Array Tok × Option Int × List Tok) := do
   let ts := match spec.filter (· != .space) with
@@ -7795,15 +5941,12 @@ private def readExtra (env : List (String × Val)) (spec : List Tok) :
       | none => (evalNum env pos.toArray).map some
   return (opts.toArray, angle, text)
 
-/-- The anchor TikZ gives a label on a node of no extent
-(`\tikz@compute@direction`): the side away from the angle, by its sector. -/
 private def sectorAnchor (m : Int) : NodeAnchor :=
   let d := ((m / 1000) % 360 + 360) % 360
   if d < 4 then .west else if d < 87 then .southWest else if d < 94 then .south
   else if d < 177 then .southEast else if d < 184 then .east else if d < 267 then .northEast
   else if d < 274 then .north else if d < 357 then .northWest else .west
 
-/-- An anchor's name as a node option spells it. -/
 private def anchorSpelling : NodeAnchor → List String
   | .center => ["center"]
   | .north => ["north"]
@@ -7818,12 +5961,6 @@ private def anchorSpelling : NodeAnchor → List String
   | .baseEast => ["base", "east"]
   | .baseWest => ["base", "west"]
 
-/-- The labels and pins the node just placed asked for (TikZ manual §17.10;
-tikz.code.tex, `tikz@label@post`): each a node of its own, its `auto`
-anchor on the side away from its node, standing on that node's border
-point at its angle and `label distance` beyond it (0 pt, a pin's 3 ex) — or,
-on a node of no extent, beside its point by the angle's sector — with a
-pin's edge drawn from the node's border to the pin's in `help lines`. -/
 private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := Id.run do
   let pend := ev.after
   let mut ev := { ev with after := #[] }
@@ -7880,8 +6017,6 @@ the rendered picture subset; it is dropped")
 
 mutual
 
-/-- Evaluate statements in order, threading the macro environment: a
-`\pgfmathsetmacro` binds for the statements after it in its own scope. -/
 private def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | [], env, ev => (env, ev)
@@ -7904,24 +6039,17 @@ its scope in pgf; the statements after it are drawn unclipped")
       let (env3, inner) := evalList cx rest env2 { ev2 with clipGeom := none, shapes := #[] }
       (env3, clipAfter cx ev2 g inner)
     | none => evalList cx rest env2 ev2
-  -- A group's declarations change the context its statements read, so the
-  -- context is no fixed parameter and the measure is stated: a statement
-  -- list or a statement by its size, a loop by its body's and then the
-  -- items left, its body running first.
+  -- The context changes inside a group, so the measure is stated over the statements alone.
   termination_by ss _ _ => (sizeOf ss, 0, 0)
 
 private def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | .fill toks, env, ev =>
-    -- A fill of anything but one rectangle is a path filled (`\fill` is
-    -- `\path[fill]`, TikZ manual §14.1): the draw evaluator's own.
+    -- A fill of anything but one rectangle is a path filled (TikZ manual §14.1).
     if !fillIsRect toks || fillBracketIsKeys cx env toks || !cx.axisAligned then
       (env, evalDraw cx env toks ev (mode := .fill)) else
     match evalFill cx env toks with
     | .ok shape =>
-      -- `\fill`'s bracket is a colour spelling, not a key list, so no
-      -- option loop runs here and an `every path` style cannot reach it.
-      -- Named rather than dropped in silence: pgf would apply those keys.
       let ev := if cx.everyPath.isEmpty then ev else
         ev.diag (.W0334, "an 'every path' key on a '\\fill' is outside the \
 rendered picture subset; the keys are dropped")
@@ -7955,7 +6083,6 @@ rendered picture subset; the keys are dropped")
         (env, ev2)
   | .setColor _, env, ev => (env, ev)
   | .setDecl _, env, ev => (env, ev)
-  -- A scope is a group whose keys transform and style what it holds.
   | .scope opts body, env, ev =>
     let (cx2, ds) := scopeCx cx env opts
     let (_, ev2) := evalList cx2 body env (ds.foldl Ev.diag ev)
@@ -7963,9 +6090,7 @@ rendered picture subset; the keys are dropped")
   | .bbox toks, env, ev =>
     match evalBBox cx env toks with
     | .ok b =>
-      -- pgf never shrinks a box already established (§15.8): what the
-      -- marks before the declaration reached stays inside it, and a
-      -- second declaration joins the first.
+      -- pgf never shrinks a box already established (§15.8).
       let before := ev.shapes.map (Ir.Pic.Shape.inkBox cx.metric) ++ ev.borders
       let b := if before.isEmpty then b else Gfx.Box.join (Gfx.Box.hull before) b
       let b := match ev.declared with
@@ -7974,14 +6099,12 @@ rendered picture subset; the keys are dropped")
       (env, { ev with declared := some b })
     | .error d => (env, ev.diag d)
   | .set name expr setMode, env, ev =>
-    -- The truncating form floors toward zero to a whole unit, as
-    -- `\pgfmathtruncatemacro` does.
+    -- The truncating form floors toward zero to a whole unit, as `\pgfmathtruncatemacro` does.
     let floorUnit (m : Int) : Int := if m ≥ 0 then m / 1000 * 1000 else -((-m) / 1000 * 1000)
     match evalExpr env expr, setMode with
     | .ok (.num m), .plain => ((name, Val.num m) :: env, ev)
     | .ok (.num m), .trunc => ((name, Val.num (floorUnit m)) :: env, ev)
-    -- A unitless length is points (pgfmath's `\pgfmathsetlengthmacro{\r}{2}`
-    -- is `2.0pt`); a length kept by the plain form prints its points.
+    -- A unitless length is points, as `\pgfmathsetlengthmacro` reads it.
     | .ok (.num m), .length => ((name, Val.len (milliPt m)) :: env, ev)
     | .ok (.len sp), .plain => ((name, Val.num (spMilliPt sp)) :: env, ev)
     | .ok (.len sp), .trunc => ((name, Val.num (floorUnit (spMilliPt sp))) :: env, ev)
@@ -8003,16 +6126,9 @@ is not set"))
       match expandItems items with
       | .error e => (env, ev.diag (.E0333, s!"in a '\\foreach' list, {e}"))
       | .ok expanded =>
-        -- The loop's bindings are scoped to its body: the environment
-        -- given back is the caller's own.
+        -- The loop's bindings are scoped to its body: the caller's environment comes back.
         (env, evalForeach cx vars body expanded.toList env ev)
-  -- A conditional: one branch runs, the other is not evaluated at all — so
-  -- a node it declared never registers, which is a *named* gap and not a
-  -- name the document forgot (`Ev.gapped`). Only the arithmetic tests are
-  -- computable here; every other one is a fact about TeX's own state or its
-  -- control-sequence table, so its answer is not known and the floor stands
-  -- instead (`condFloor`): one coherent reading of the diagram,
-  -- named where the test was written.
+  -- One branch runs and the other is not evaluated, so its nodes never register.
   | .cond kind test thenS elseS, env, ev =>
     match kind with
     | .always v =>
@@ -8059,8 +6175,6 @@ rendered picture subset; the branch that draws is drawn")
         match evalNum env lhs, evalNum env rhs with
         | .ok a, .ok b =>
           let holds := relHolds rel a b
-          -- Computed, not assumed: named all the same, so a reader can see
-          -- which values the picture's own walk decided a branch from.
           let ev := ev.diag (.N0114, s!"'\\{n}' is computed from the picture's own values \
 and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
           if holds then
@@ -8080,9 +6194,6 @@ and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
             (env, ev2)
   termination_by s _ _ => (sizeOf s, 0, 0)
 
-/-- One body evaluation per item: the recursion is on the item list, the
-body a fixed subterm of its `\foreach`, so the unrolling is bounded by the
-expanded list — which `range` bounded before any value existed. -/
 private def evalForeach (cx : Cx) (vars : Array String) (body : List Stmt) :
     List (Array Val) → List (String × Val) → Ev → Ev
   | [], _, ev => ev
@@ -8093,10 +6204,6 @@ private def evalForeach (cx : Cx) (vars : Array String) (body : List Stmt) :
 
 end
 
-/-- **A colour group sets its statements in its colour, and only those.**
-`\textcolor{c}{…}` evaluates its statements with pgf's current colour `c`
-(`Cx.ink`), and the macro environment after it is the one before it: what
-the group declared stays inside, as TeX's groups keep it (TeXbook ch. 5). -/
 private theorem colorGroup_exact (cx : Cx) (spec : Array Tok) (body : List Stmt)
     (env : List (String × Val)) (ev : Ev) (c : Ir.Color) (h : evalColor cx env spec = .ok c) :
     evalOne cx (.grouped (some spec) body) env ev =
@@ -8104,9 +6211,6 @@ private theorem colorGroup_exact (cx : Cx) (spec : Array Tok) (body : List Stmt)
   rw [evalOne]
   simp only [h]
 
-/-- The node table with each name once, the latest registration kept: what
-a re-run is seeded with, so the table cannot grow without bound across the
-runs `evalFixed` makes. -/
 private def dedupNodes (ns : List (String × NodeGeom)) :
     List (String × NodeGeom) := Id.run do
   let mut seen : Array String := #[]
@@ -8117,18 +6221,7 @@ private def dedupNodes (ns : List (String × NodeGeom)) :
       out := out.push (n, g)
   return out.toList
 
-/-- Retry unresolved references using the previous pass's node table.
-
-The walk stops when all references resolve or their unresolved count
-ceases to fall. The first pass's count bounds the number of retries.
-This permits forward references without claiming that arbitrary source
-permutations agree: repeated names and macro assignments are ordered
-writes. `NodePlan.place_order_agree` gives the local commutation contract
-for resolved operations whose reads and writes are independent.
-
-The common case costs one run. A picture whose placements all read
-backwards — every picture written the way TikZ demands — defers nothing and
-returns immediately, so no existing document pays for this. -/
+/-- Re-runs the walk with the previous pass's node table until unresolved references stop falling. -/
 public def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
   let (_, ev0) := evalList cx sts [] {}
   if ev0.deferred == 0 then return ev0
@@ -8139,11 +6232,6 @@ public def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
     prev := ev
   return prev
 
-/-- Every label resolved from the source fits the picture's reserved
-extent under the resolving context's metric. Explicit bounding boxes are
-authoritative; node borders need not enclose text when the author changes
-text dimensions or uses negative padding. The shared IR hull, projected
-through the actual producer, covers all alignments, sizes and placements. -/
 public theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
@@ -8153,35 +6241,19 @@ public theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
       (((evalFixed cx sts).toPicture baseline).box cx.metric) :=
   Ev.labelExtent_covers _ _ _ _ _ _ _ _ _ hs hd
 
-/-- A document macro as the picture walk uses it: how many arguments it
-takes, and its body's tokens. -/
 private structure Macro where
   arity : Nat
   body : List Tok
   deriving Repr, Inhabited
 
-/-- The control words this walk owns, so a document that redefined one does
-not redefine the picture language out from under itself. `\node`, `\draw`
-and their siblings are the statement heads `step` reads; `\else`/`\fi` close
-a conditional and `condKindOf` opens one. A macro of such a name is left to
-the walk and named where it stands, which is the honest answer: expanding
-it would silently delete the construct, and honouring the redefinition
-would need a picture language this walk does not have. Read off the one
-place the vocabulary lives (`step`), so the two cannot drift. -/
+/-- The control words this walk owns, which a document's redefinition does not reach. -/
 public def walkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
    "shadedraw", "clip", "else", "fi"]
 
-/-- Does this walk give the name a meaning of its own? -/
 private def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
 
-/-- The names a picture binds for itself: a `\foreach` variable and a
-`\pgfmathsetmacro` target. pgf binds them in the picture's own scope, so
-they are the picture's whatever the document also called them — which is
-why they are cut from the macro table before a single expansion happens.
-A scan over the token stream rather than over the parsed statements,
-because the binding has to be known before the stream is rewritten. -/
 private def boundNames (ts : Array Tok) : List String := Id.run do
   let mut out : List String := []
   let mut inVars := false
@@ -8201,9 +6273,6 @@ private def boundNames (ts : Array Tok) : List String := Id.run do
 
 mutual
 
-/-- `#k` replaced by the k-th argument, through the body's own tree. An
-accumulator rather than an append of the recursive call, so the walk costs
-one copy and not one per token. -/
 private def substList (args : Array (List Tok)) (acc : Array Tok) :
     List Tok → Array Tok
   | [] => acc
@@ -8223,15 +6292,9 @@ private def substTok (args : Array (List Tok)) : Tok → Tok
 
 end
 
-/-- Does `n` open an arithmetic conditional, whose test the walk computes? -/
 private def numCondHead (n : String) : Bool :=
   (condKindOf n) matches some (.num _)
 
-/-- How many tokens after an arithmetic conditional's head its test takes,
-as the walk's own reader closes it (`step`'s `icond` arm): through the
-right side of a relation, up to the space that ends it, or none at all when
-an `\else` or `\fi` comes first. `sawRel`: a relation has been read; `last`:
-the latest token the test holds. -/
 private def numTestLen : List Tok → Nat → Bool → Option Tok → Nat
   | [], n, _, _ => n
   | .space :: rest, n, sawRel, last =>
@@ -8250,27 +6313,10 @@ private def numTestLen : List Tok → Nat → Bool → Option Tok → Nat
 
 mutual
 
-/-- One expansion level over the whole stream: every name in the table
-replaced by its body with its arguments substituted, and the bodies' own
-groups walked so a macro inside a group expands too.
-
-**Arity 0, 1 and 2, and a name is otherwise left standing.** The bound is
-not a taste: each arm's recursive call has to be on a strictly shorter list
-for the walk to terminate by a measure the checker can see, and consuming a
-*computed* number of argument groups is exactly the shape whose measure it
-cannot. Three arities cover the picture idiom (a bare alias, a one-word
-wrapper, a two-word one); a wider macro is left in place, so `salCtrl`
-names it and the label keeps the words it can read — a named loss rather
-than a body substituted against the wrong arguments. -/
 private def expandList (tbl : List (String × Macro)) (acc : Array Tok) :
     List Tok → Nat → Array Tok
   | [], _ => acc
-  -- The test of an arithmetic conditional is read as written: a document
-  -- macro there is not expanded from this table, which says what a name
-  -- means somewhere in the document and not where the picture stands. The
-  -- conditional pass decided every test it could read at the picture's
-  -- site before this walk ran, so what is left here is a test over the
-  -- picture's own values, or one the walk names and floors.
+  -- An arithmetic conditional's test is read as written, its macros unexpanded.
   | t :: rest, skip + 1 => expandList tbl (acc.push t) rest skip
   -- A space between a name and its argument is the name's, as TeX reads it.
   | .ctrl n :: .space :: rest, 0 =>
@@ -8329,22 +6375,6 @@ private def expandTok (tbl : List (String × Macro)) : Tok → Tok
 
 end
 
-/-- **A document's macros reach its picture before the walk reads it.**
-Expansion precedes execution, as it does in TeX: the stream the statement
-reader and the label salvage see is one a macro has already been taken out
-of, so a macro works in a node body, an edge label, a coordinate and a
-conditional's test alike, and neither the mode machine nor the salvage has
-to learn a table. The salvage's `nodeLabel_mem` now reads an independent
-census of that expanded source and proves provenance through the actual
-mode machine. Keeping macro expansion outside it leaves the shrinking
-declaration table with the token rewrite that consumes it.
-
-**The bound is the table, not a budget.** One pass resolves one level of
-nesting, so a chain of distinct names is exhausted in as many passes as the
-table has entries; the loop stops earlier the moment a pass changes
-nothing. A cycle therefore leaves its name standing and is *named* by the
-salvage rather than hanging the run — which is what a fuel parameter would
-have bought, at the cost of a number nobody can justify. -/
 private def expandMacros (tbl : List (String × Macro)) (ts : Array Tok) : Array Tok :=
   Id.run do
   if tbl.isEmpty then return ts
@@ -8357,12 +6387,6 @@ private def expandMacros (tbl : List (String × Macro)) (ts : Array Tok) : Array
 
 mutual
 
-/-- The highest `#k` a body references, through the body's own tree, which
-is the macro's arity when the definer's spelling does not carry one
-(TeXbook chapter 20: a macro's parameters are `#1`–`#9` and its body is
-what references them). A tree walk and not a flat scan: `\textcolor{role}
-{#1}` keeps its parameter one group in, which is where a wrapper macro
-always puts it. -/
 private def refArityList (acc : Nat) (prevHash : Bool) : List Tok → Nat
   | [] => acc
   | .sym '#' :: rest => refArityList acc true rest
@@ -8382,31 +6406,8 @@ private def refArityTok : Tok → Nat
 
 end
 
-/-- The arity a body's own parameter references imply. -/
 private def refArity (body : List Tok) : Nat := refArityList 0 false body
 
-/-- One document macro, read from its definition as the document wrote it.
-
-The four definer families share one shape — a head, the name, the
-arity or parameter text, then the body as the *last* group
-(`\newcommand{\c}[n][d]{defn}` and its siblings, clsguide;
-`\DeclareDocumentCommand{\c}{spec}{defn}`, xparse; `\def\c<param>{defn}`,
-TeXbook chapter 20; the native `\define`) — so the body is read by that
-shape rather than by recognising which family wrote it. The arity is the
-first all-digit `[k]` run before the body where the spelling carries one,
-and otherwise the body's own highest `#k`: a family that states its arity
-is believed, and one that does not is read the way TeX reads it. The cost
-is a macro whose declared parameter its body never uses, which reads as
-arity zero and leaves its argument standing as content — a visible wrong,
-not a silent one.
-
-Read with the real lexer and parser because the body is a *tree* — braces,
-control words, math — and the definition arrives as the source text of one.
-The engine's own re-emission is source the document could have written, so
-this is a LaTeX reader and not a reader of a private spelling. Its formulas
-carry no source site (`ofRaws`): the lexer's coordinates index this text,
-not the file the definition stands in, and the call that brings the body in
-is a token the walk keeps no position for. -/
 private def readMacro (line : String) : Option Macro := Id.run do
   let (toks, _) := Lex.lex "" line
   let (raws, _) := Parse.parse "" toks
@@ -8416,7 +6417,6 @@ private def readMacro (line : String) : Option Macro := Id.run do
   let some bi := bodyAt | return none
   let some (.group body _) := raws[bi]? | return none
   let bodyToks := (ofRaws body).toList
-  -- The declared arity: the first `[k]` run standing before the body.
   let mut declared : Option Nat := none
   for k in [0:bi] do
     match raws[k]?, raws[k+1]?, raws[k+2]? with
@@ -8426,17 +6426,6 @@ private def readMacro (line : String) : Option Macro := Id.run do
     | _, _, _ => pure ()
   return some { arity := declared.getD (refArity bodyToks), body := bodyToks }
 
-/-- The macro table one picture reads: the document's definitions, less
-every name the walk owns and every name the picture binds for itself, and
-less any whose definition this reader cannot read. `names` is the document's
-reachable set as the elaborator collected it (`Elab.PicCtx.macros`), one
-entry per name, in document order.
-
-A font switch is the font reader's (`readFont`), as it is the elaborator's:
-a size name means its step of the document's ladder, which is where the
-elaborator reads a venue's `\@setfontsize` redefinition out, so expanding
-the redefinition here would set a picture's `font=\small` by a body the
-paragraphs never run. -/
 private def macroTable (ladder : List (String × Nat)) (declStyles : List (String × Ir.Style))
     (names : Array (String × String)) (ts : Array Tok) :
     List (String × Macro) := Id.run do
@@ -8448,16 +6437,6 @@ private def macroTable (ladder : List (String × Nat)) (declStyles : List (Strin
       if let some m := readMacro line then out := (n, m) :: out
   return out
 
-/-- `baseline=` (pgf manual §12.2.1) as a height in picture coordinates:
-the bare key is 0pt, a length is itself, and a coordinate is its y —
-`(x,y)` read as a path reads a coordinate's component (`evalComp`, the
-manual's §13.2.1: a number of the y vector, or a length where the
-component declares units), or a node's anchor such as `(n.base)`, where
-the picture's own reading put it. pgf reads the coordinate when the
-picture ends, after its scope has closed, so no transformation of the
-picture's own applies: `[scale=2,baseline={(0,5pt)}]` stands on 5pt and
-`(0,0.5)` on half a centimetre, as lualatex sets them. Braces around the
-value are TeX's grouping. -/
 private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : List Tok) :
     Except String Sp :=
   let toks := if let [.group body] := toks then body.filter (· != Tok.space) else toks
@@ -8486,35 +6465,8 @@ private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : L
     | _ => .error "the coordinate misses its ')'"
   | ts => readDim ts
 
-/-- Elaborate one `tikzpicture` body: the leading `[scale=...]` option
-block, the statements, then the unrolled evaluation. Everything the
-subset cannot render is a named diagnostic beside the shapes that did.
-`sets` carries the document's `\tikzset` key lists in source order
-(`Compat.tikzsetKeys`), whose `/.style` definitions every picture starts
-from — a style reaches its picture wherever the author wrote it — and the
-picture's own `[...]` definitions shadow them.
-
-A style *applied* in the picture's own bracket reaches the contents:
-pgf sets those keys in the picture's scope, so every path and node reads
-them before its own, and a key set in both takes the inner value
-(`inheritOpts`). An `every node`/`every path` style is the third level
-between them: pgf executes it inside the node's or path's own scope, so it
-beats what the picture set and loses to the bracket's own (`mergeOpts`).
-An `every X` this subset has no loop for stays unread and is named at the
-line that declared it. `argStyles` is the elaborator's text-command table
-(`Cx.argStyles`), and it has no default on purpose: a caller that forgot
-it would set every styled node label in the regular face, the defect the
-parameter exists to close. `ladder` and `declStyles` are the document's
-size ladder and the elaborator's declaration table, without defaults for
-the same reason: a forgotten ladder sets a venue's `\small` at the engine's
-step. `bodySize` is likewise required: label leading and relative lengths
-must read the same document size as their artifact measurement. `locate`
-places a position of the picture's own body where the elaborator reads it
-(`Tok.math`'s site); a setting carries its own file (`ofSetting`), and a
-macro's definition text none (`readMacro`). `outerDecls` are the font
-declarations in force where the picture stands — the size switch around
-it, `{\large …}` — which every node's text sets in, as a node sets in the
-font current at its statement. -/
+/-- Elaborates one `tikzpicture` body: its options, statements and unrolled evaluation, everything
+outside the subset named. -/
 public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
@@ -8531,22 +6483,16 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map ofSetting)
-  -- `node distance` is a key, not a definition: the document's `\tikzset`
-  -- lines set it in source order, and the picture's own bracket may reset
-  -- it below.
   let mut dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
   for setting in sets do
     for entry in splitTop (ofSetting setting) ',' do
       if let some d := readNodeDistance (entry.toList.filter (· != .space)) then
         dist := d
   let mut transformShape := false
-  -- A colour in the picture's bracket, bare or as `color=`: pgf's current
-  -- colour for everything the picture holds.
   let mut ink0 : Option Ir.Color := none
   let probe : Cx := { pal := pal, math := math }
   let mut inherited : Array (Array Tok) := #[]
   let mut diags : Array PDiag := #[]
-  -- `baseline=`'s value, read once the nodes it may name are placed.
   let mut baselineSpec : Option (List Tok) := none
   let mut i := 0
   for _ in [0:toks.size] do
@@ -8564,11 +6510,6 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
       i := j + 1
       for opt in splitTop inner ',' do
         let entry := opt.toList.filter (· != .space)
-        -- A definition goes through the one router the document's
-        -- `\tikzset` lines go through, so a picture's own definition and a
-        -- document-level one cannot differ in what they mean. Consed on
-        -- top, so a picture's own definition shadows the document's of
-        -- that name.
         match readOneDef styles entry with
         | some s => styles := s
         | none =>
@@ -8580,8 +6521,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
               diags := diags.push (.E0333, "'scale' must be positive; it is ignored")
             else scale := m
           | .error e => diags := diags.push (.E0333, s!"in 'scale=', {e}; it is ignored")
-        -- `transform shape`: nodes take the picture's scale (pgf manual
-        -- §25.4, "transformations do not apply to nodes" without it).
+        -- `transform shape`: nodes take the picture's scale (pgf manual §25.4).
         | [.ident "transform", .ident "shape"] => transformShape := true
         | [.ident "baseline"] => baselineSpec := some []
         | .ident "baseline" :: .sym '=' :: rest => baselineSpec := some rest
@@ -8591,13 +6531,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
           | none =>
             diags := diags.push (.E0333, "in 'node distance', a length like \
 '1cm' (or '1cm and 2cm') is needed; it is ignored")
-        -- A bare name that resolves is a style applied to the picture
-        -- itself: pgf sets it in the picture's scope, so its options are
-        -- what the contents inherit (`Cx.opts`, merged by `mergeOpts`).
-        -- A name that resolves to no bundle, and any other entry, is a key:
-        -- carried to the statements that read it, and named here where no
-        -- shape does — the same rule the document's own lines follow, so
-        -- one entry means one thing wherever it was written.
+        -- A bare name that resolves is a style applied in the picture's own scope.
         | [.ident n] =>
           match styles.lookup n with
           | some bundle => inherited := inherited ++ splitTop bundle ','
@@ -8642,18 +6576,8 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    bodySize := bodySize
                    decls := outerDecls
                    ink := ink0.getD Ir.Color.black
-                   -- A declaration the parse skipped is gone before
-                   -- evaluation begins, so a name that then resolves to
-                   -- nothing traces to that gap (`unreachedName`).
                    parseGap := st.bad.any fun d => d.1 == .W0334 }
   let ev := evalFixed cx st.out.toList
-  -- What the inherited entries cost, named at the picture rather than at a
-  -- statement, because neither is where they were written. An entry no
-  -- shape reads is honoured by nobody, whatever the picture contains; one
-  -- some shape reads is lost only where no statement read keys at all (a
-  -- picture of nothing but `\fill`, whose bracket is a colour spelling).
-  -- Either way the standing rule holds: a key the subset does not use is
-  -- never silently dropped.
   let mut unread : Array PDiag := #[]
   let mut baseline : Option Sp := none
   if let some spec := baselineSpec then
@@ -8671,8 +6595,6 @@ edge stands on the line")
         unread := unread.push (.W0334, s!"picture option {optName opt.toList} reached no path \
 or node; the option is dropped")
   let all := diags ++ st.bad ++ ev.diags ++ unread
-  -- One message, once: the parse and eval sides dedupe among themselves;
-  -- this joins them under the same rule.
   let mut seen : Array String := #[]
   let mut out : Array PDiag := #[]
   for d in all do
@@ -8681,12 +6603,8 @@ or node; the option is dropped")
       out := out.push d
   return (ev.toPicture baseline, out)
 
-/-- The stand-in for a picture whose every construct was refused: one
-outlined box carrying the diagnostic code, following the image precedent
-(an image that did not load renders as an outlined placeholder of its
-requested size; W0601). The size is the image default — 1 in square —
-because no honest extent is known, and the outline colour is the image
-placeholder's own grey, so the two failure modes read alike. -/
+/-- The stand-in for a picture whose every construct was refused: a 1 in outlined box carrying the
+code, as an image placeholder is drawn. -/
 public def placeholder (code : String) : Ir.Pic.Picture :=
   let side := Dim.inch 1     -- the image-request default when nothing loads
   let th := Dim.pt 3 / 4     -- the image placeholder's 0.75 pt outline
@@ -8699,21 +6617,9 @@ public def placeholder (code : String) : Ir.Pic.Picture :=
       .label (side / 2) (side / 2) #[.text code] grey 1000 .center] }
 
 
-/-! ## Commutative diagrams: tikz-cd's matrix of math cells and the arrows between them
-
-The library (tikzlibrarycd.code.tex) is a TikZ matrix of math nodes in the
-`asymmetrical rectangle` shape — a rectangle whose `center` stands at the
-math axis above its text's baseline, so a row's cells align on their axes
-and a horizontal arrow runs at axis height — with every `\arrow` saved and
-drawn after the matrix as a `\path … to …` between two cells' borders. This
-section reads that grammar and lays it out as pgf's matrix does: each
-column as wide as its widest cell either side of the cell origins, each row
-as tall as its tallest, the separations between their boxes. -/
-
 namespace Cd
 
-/-- tikz-cd's row and column separations by name, in milli-em
-(tikzlibrarycd.code.tex, `row sep/<name>/.initial` and `column sep/…`). -/
+/-- tikz-cd's row and column separations by name, in milli-em (tikzlibrarycd.code.tex). -/
 public def rowSepEm : List (String × Int) :=
   [("huge", 3600), ("large", 2700), ("normal", 1800), ("scriptsize", 1350), ("small", 900),
    ("tiny", 450)]
@@ -8740,13 +6646,10 @@ structure Arrow where
   labels : Array Label := #[]
   deriving Inhabited
 
-/-- Raws with their spaces dropped at both ends. -/
 private def trimRaws (rs : Array Parse.Raw) : Array Parse.Raw :=
   let a := rs.toList.dropWhile (· matches .space)
   (a.reverse.dropWhile (· matches .space)).reverse.toArray
 
-/-- Split raws at their top-level commas: a comma inside a word ends one
-entry and starts the next, a group stays whole. -/
 private def splitEntries (raws : Array Parse.Raw) : Array (Array Parse.Raw) := Id.run do
   let mut out : Array (Array Parse.Raw) := #[]
   let mut cur : Array Parse.Raw := #[]
@@ -8764,7 +6667,6 @@ private def splitEntries (raws : Array Parse.Raw) : Array (Array Parse.Raw) := I
   out := out.push (trimRaws cur)
   return out.filter (!·.isEmpty)
 
-/-- The raws of a `[…]` bracket opening at `i`, and the index past its `]`. -/
 private def readBracket (raws : Array Parse.Raw) (i : Nat) : Option (Array Parse.Raw × Nat) := Id.run do
   unless raws[i]? matches some (.sym '[' _) do return none
   let mut depth : Nat := 0
@@ -8782,14 +6684,12 @@ private def readBracket (raws : Array Parse.Raw) (i : Nat) : Option (Array Parse
     | none => pure ()
   return none
 
-/-- Skip spaces from `i`. -/
 private def skipSp (raws : Array Parse.Raw) (i : Nat) : Nat := Id.run do
   let mut j := i
   for _ in [i:raws.size] do
     if raws[j]? matches some .space then j := j + 1 else break
   return j
 
-/-- A run of direction letters (`r`, `dr`, `uul`) as rows and columns. -/
 private def dirOf (s : String) : Option (Int × Int) :=
   if s.isEmpty then none else
   s.toList.foldl (fun acc c => acc.bind fun (r, k) => match c with
@@ -8799,19 +6699,14 @@ private def dirOf (s : String) : Option (Int × Int) :=
     | 'u' => some (r - 1, k)
     | _ => none) (some (0, 0))
 
-/-- Option keys from raws, as the picture walk's token entries. -/
 private def keyEntries (raws : Array Parse.Raw) : Array (Array Tok) :=
   (splitTop ((ofRaws raws).filter (· != .space)) ',').filter (!·.isEmpty)
 
-/-- A quoted label (the `quotes` library's `"text"'` and `"text" keys`):
-the raws between the quotes, then what follows them. `none` where the entry
-opens with no quote. -/
 private def quotedLabel (entry : Array Parse.Raw) : Option Label := Id.run do
   match (entry[0]? : Option Parse.Raw) with
   | some (.word s p) =>
     unless s.startsWith "\"" do return none
     let body := (s.drop 1).toString
-    -- The closing quote in the opening word itself: `"f"` or `"f"'`.
     match body.splitOn "\"" with
     | inner :: rest@(_ :: _) =>
       let after := "\"".intercalate rest
@@ -8831,7 +6726,6 @@ private def quotedLabel (entry : Array Parse.Raw) : Option Label := Id.run do
       return some { content }
   | _ => return none
 where
-  /-- What follows the closing quote: `'` swaps, a group or words are keys. -/
   labelTail (content : Array Parse.Raw) (after : String) (rest : Array Parse.Raw) (p : Pos) : Label := Id.run do
     let mut l : Label := { content }
     let mut tail := after
@@ -8850,7 +6744,6 @@ where
       | _ => l := { l with keys := l.keys.push e }
     return l
 
-/-- One option entry of an arrow: a quoted label, a direction, or a key. -/
 private def arrowEntry (a : Arrow) (entry : Array Parse.Raw) : Arrow :=
   match quotedLabel entry with
   | some l => { a with labels := a.labels.push l }
@@ -8863,11 +6756,6 @@ private def arrowEntry (a : Arrow) (entry : Array Parse.Raw) : Arrow :=
       | none => { a with keys := a.keys.push e }
     | _ => { a with keys := a.keys ++ es }
 
-/-- A cell's raws read as its content and the arrows it starts: `\arrow`,
-`\ar` and the direction shortcuts (`\rar`, `\drar`, …), each with its
-bracket of keys in the new syntax, and in the old one a direction group
-then any number of labels, each with an optional bracket (the library's
-`\tikzcd@ar@old` and `\tikzcd@ar@getlabel`). -/
 private def splitCell (raws : Array Parse.Raw) : Array Parse.Raw × Array Arrow := Id.run do
   let shortcuts : List (String × String) :=
     [("rar", "r"), ("lar", "l"), ("dar", "d"), ("uar", "u"), ("drar", "dr"), ("dlar", "dl"),
@@ -8888,7 +6776,7 @@ private def splitCell (raws : Array Parse.Raw) : Array Parse.Raw × Array Arrow 
         if let some (inner, next) := readBracket raws j then
           for e in splitEntries inner do a := arrowEntry a e
           j := skipSp raws next
-        -- The old syntax: a direction group, then labels.
+        -- tikz-cd's legacy spelling: a direction group, then labels.
         if short.isNone then
           if let some (.group g _) := raws[j]? then
             if let some (r, k) := dirOf (Parse.rawSrc g).trimAscii.toString then
@@ -8919,9 +6807,6 @@ private def splitCell (raws : Array Parse.Raw) : Array Parse.Raw × Array Arrow 
       i := i + 1
   return (trimRaws content, arrows)
 
-/-- The rows of a diagram body and their cells: rows end at `\\`, cells at
-`&`, or at `\&` under `ampersand replacement`. A trailing empty row is no
-row. -/
 private def splitRows (raws : Array Parse.Raw) (amp : Bool) : Array (Array (Array Parse.Raw)) := Id.run do
   let mut rows : Array (Array (Array Parse.Raw)) := #[]
   let mut row : Array (Array Parse.Raw) := #[]
@@ -8949,9 +6834,6 @@ public def padRows (rows : Array (Array (Array Parse.Raw))) : Array (Array (Arra
   let width := rows.foldl (fun w r => max w r.size) 0
   rows.map fun r => r ++ Array.replicate (width - r.size) #[]
 
-/-- **A diagram's cells are a rectangle.** Every row of the grid the layout
-reads has as many cells as the widest row the source wrote, so a column's
-width and a row's height are each read over one complete set of cells. -/
 public theorem cells_rectangular (rows : Array (Array (Array Parse.Raw))) :
     ∀ r ∈ padRows rows, r.size = rows.foldl (fun w r => max w r.size) 0 := by
   intro r hr
@@ -8977,18 +6859,10 @@ public theorem cells_rectangular (rows : Array (Array (Array Parse.Raw))) :
   simp only [Array.size_append, Array.size_replicate]
   omega
 
-/-- Where a cell's border meets the ray from its centre toward `q`: the
-`asymmetrical rectangle`'s `\anchorborder` — the rectangle's border, its
-half-height above the centre toward a point above it and below toward a
-point below, the centre standing at the math axis. -/
+/-- Where a cell's border meets the ray from its centre toward `q`: the `asymmetrical rectangle`'s `\anchorborder`. -/
 public def cellBorder (x y a up down qx qy : Int) : Int × Int :=
   rectBorder x y a (if qy > y then up else down) qx qy
 
-/-- **An arrow ends on its cell's border** (`_exact`): toward any point
-other than the centre, the end has the dominant coordinate exactly on one
-of the cell's sides — the left or right one, or the top toward a point above
-the axis, the bottom toward one below — and stays within the cell's extent
-on the other, so an arrow neither stops short of a cell nor enters it. -/
 public theorem arrow_border_exact (x y a up down qx qy : Int) (ha : 0 < a) (hu : 0 < up)
     (hd : 0 < down) :
     let b := if qy > y then up else down
@@ -9004,11 +6878,6 @@ public theorem arrow_border_exact (x y a up down qx qy : Int) (ha : 0 < a) (hu :
   simp only [cellBorder]
   exact rectBorder_exact x y a b qx qy ha hb
 
-/-- The tip tikz-cd draws (`cm to`: arrows.meta's Computer Modern
-Rightarrow at `length=+0pt 6.2`, its width 2.096774 of its length, round
-caps and joins, stroked at the arrow's width): its path in the frame of the
-arrow's end, `d` the unit direction in thousandths, ending at the path's
-end point. -/
 private def cmTo (end_ : Sp × Sp) (dx dy : Int) (lw : Sp) : Gfx.Subpath :=
   let a := 52 * lw / 10
   let b := 12 * lw
@@ -9023,12 +6892,10 @@ private def cmTo (end_ : Sp × Sp) (dx dy : Int) (lw : Sp) : Gfx.Subpath :=
         (at_ (-a * 81731 / 100000) (-b * 2 / 10)) (at_ (-a) (-b / 2))]
     closed := false }
 
-/-- A unit direction in thousandths from a vector, `(1000, 0)` for none. -/
 private def unitOf (dx dy : Int) : Int × Int :=
   let n := isqrt (dx * dx + dy * dy)
   if n == 0 then (1000, 0) else (dx * 1000 / n, dy * 1000 / n)
 
-/-- The cubic at `t` (thousandths), and its tangent there. -/
 private def cubicAtMilli (p0 c1 c2 p1 : Sp × Sp) (t : Int) : (Sp × Sp) × (Sp × Sp) :=
   let s := 1000 - t
   let pt (a b c d : Int) : Int :=
@@ -9038,8 +6905,6 @@ private def cubicAtMilli (p0 c1 c2 p1 : Sp × Sp) (t : Int) : (Sp × Sp) × (Sp 
   ((pt p0.1 c1.1 c2.1 p1.1, pt p0.2 c1.2 c2.2 p1.2),
    (dv p0.1 c1.1 c2.1 p1.1, dv p0.2 c1.2 c2.2 p1.2))
 
-/-- The centre of a box of half-extents `(a, b)` whose `an` anchor stands on
-`p` (a rectangle's anchors). -/
 private def centreFor (p : Sp × Sp) (a b : Sp) : NodeAnchor → Sp × Sp
   | .center | .base | .baseEast | .baseWest => p
   | .north => (p.1, p.2 - b)
@@ -9051,22 +6916,14 @@ private def centreFor (p : Sp × Sp) (a b : Sp) : NodeAnchor → Sp × Sp
   | .southEast => (p.1 - a, p.2 + b)
   | .southWest => (p.1 + a, p.2 + b)
 
-/-- A label shape whose text baseline stands at `b` and whose left edge at
-`x0`: the band arithmetic `Ir.Pic.labelBaseline` reads, solved for the
-anchor. -/
 private def labelAt (x0 b : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (m : Ir.Pic.LabelInk) : Ir.Pic.Shape :=
   let tall := m.height + m.depth
   .label x0 (b + m.height - tall + tall / 2) content color scale .west
 
-/-- What a diagram's statement of itself costs: an option the library reads
-that this reader does not. -/
 private def outside (what : String) : PDiag :=
   (.W0334, s!"{what} is outside the rendered diagram subset; it is dropped")
 
-/-- A cell's node options, when the cell opens with them — `|[…]|`, the
-library's spelling of options for the cell's node (tikzlibrarycd.code.tex,
-`|[...]|`) — and the cell's content after them. -/
 private def cellOptions (raws : Array Parse.Raw) : Option (Array Parse.Raw × Array Parse.Raw) :=
   let i := skipSp raws 0
   match raws[i]? with
@@ -9081,21 +6938,14 @@ private def cellOptions (raws : Array Parse.Raw) : Option (Array Parse.Raw × Ar
       | _ => none
   | _ => none
 
-/-- A separation value: a name the library declares, or a length. -/
 private def sepValue (names : List (String × Int)) (em ex : Sp) (toks : List Tok) :
     Except String Sp :=
   match (keyName toks).bind (fun n => List.lookup n names) with
   | some m => .ok (m * em / 1000)
   | none => readNodeDim em ex toks
 
-/-- **A diagram, natively** (tikzlibrarycd.code.tex): the matrix of math
-cells laid out as pgf's matrix lays one out — the `asymmetrical rectangle`
-cells aligned on their centres, which stand at the math axis, columns and
-rows separated between their widest and tallest cells by `column sep` and
-`row sep` — and every arrow a path from its cell's border to its target's,
-at the math face's rule thickness, ending in `cm to`, its labels in script
-style at the middle of the path, placed `auto` by its tangent. What the
-reader does not draw is named, and the caller routes the diagram whole. -/
+/-- A commutative diagram, natively (tikzlibrarycd.code.tex): math cells laid out as pgf's matrix
+lays them, arrows between their borders. -/
 public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag)
     (metric : Ir.Pic.LabelMetric) (bodySize : Sp) (ground : Ir.Color) (size : Nat := 1000) :
@@ -9104,13 +6954,9 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
   let note (d : PDiag) (ds : Array PDiag) : Array PDiag :=
     if ds.any (·.2 == d.2) then ds else ds.push d
   let cx : Cx := { pal := pal, math := math, metric := metric, bodySize := bodySize }
-  -- The size in force (`size`, per mille of the body): the cells' math, the
-  -- labels' script style and every em and ex of the separations read it, as
-  -- the diagram's matrix sets in the font current where it stands.
   let probe := metric #[.text "x"] size
   let em : Sp := bodySize * (size : Int) / 1000
   let ex : Sp := probe.ex
-  -- The diagram's own options.
   let mut i := skipSp raws 0
   let mut amp := false
   let mut rowSep : Sp := 1800 * em / 1000
@@ -9132,15 +6978,13 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           diags := note (.E0333, s!"in the diagram's '{key}', {err}; it is ignored") diags
       else diags := note (outside s!"diagram option {optName e.toList}") diags
   let grid := padRows (splitRows (raws.extract i raws.size) amp)
-  -- Each cell: its content, arrows, and measured box.
   let mut cells : Array (Array (Option (Ir.Inline × Ir.Pic.LabelInk))) := #[]
   let mut arrowsAt : Array (Nat × Nat × Arrow) := #[]
   for h : r in [0:grid.size] do
     let mut row : Array (Option (Ir.Inline × Ir.Pic.LabelInk)) := #[]
     for h2 : c in [0:grid[r].size] do
       let (content, arrows) := splitCell grid[r][c]
-      -- A cell's own node options (`|[…]|`, tikz-cd §3) are named, never
-      -- set as the cell's mathematics.
+      -- A cell's own node options are named, never set as the cell's mathematics.
       let mut content := content
       if let some (opts, rest) := cellOptions content then
         diags := note (outside s!"the cell options '|[{Parse.rawSrc opts}]|'") diags
@@ -9156,8 +7000,6 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
   let xsep : Sp := ex
   let ysep : Sp := 85 * ex / 100
   let axisOf (m : Ir.Pic.LabelInk) : Sp := m.axis
-  -- Per column, the widest cell either side of the origin; per row, the
-  -- tallest above and below it.
   let halfOf (m : Ir.Pic.LabelInk) : Sp := m.w / 2 + xsep
   let upOf (m : Ir.Pic.LabelInk) : Sp := m.boxHeight + ysep - axisOf m
   let downOf (m : Ir.Pic.LabelInk) : Sp := m.boxDepth + ysep + axisOf m
@@ -9181,7 +7023,6 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
   for r in [0:cells.size] do
     if r > 0 then y := y - rowDown.getD (r - 1) 0 - rowSep - rowUp.getD r 0
     ys := ys.push y
-  -- The cells.
   let mut shapes : Array Ir.Pic.Shape := #[]
   let mut borders : Array Ir.Pic.Box := #[]
   for r in [0:cells.size] do
@@ -9192,7 +7033,6 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         shapes := shapes.push (labelAt (cx0 - m.w / 2) base #[inl] cx.ink size m)
         borders := borders.push ((cx0 - halfOf m, base - m.boxDepth - ysep),
           (cx0 + halfOf m, base + m.boxHeight + ysep))
-  -- The arrows, after the matrix, as the library draws them.
   let geomOf (r c : Nat) : Option (Sp × Sp × Sp × Sp × Sp) :=
     match cells[r]?.bind (·[c]?) with
     | some (some (_, m)) => some (xs.getD c 0, ys.getD r 0, halfOf m, upOf m, downOf m)
@@ -9230,8 +7070,6 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           match evalColor cx [] e with
           | .ok col => color := col
           | .error _ => diags := note (outside s!"arrow option {optName e.toList}") diags
-      -- The ends: an anchor where one is declared, else the border toward
-      -- the other end (along the bend's own angle where the arrow bends).
       let anchorOf (x y a up down : Sp) : NodeAnchor → Sp × Sp
         | .center => (x, y)
         | .north => (x, y + up)
@@ -9267,8 +7105,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           (turnedControl p1.1 p1.2 vx vy spec.outA spec.outL,
            turnedControl p2.1 p2.2 vx vy spec.inA spec.inL)
         else (p1, p2)
-      -- The tip's direction is the arrival tangent; the shaft stops one line
-      -- width short, where the tip's line end stands.
+      -- The tip follows the arrival tangent; the shaft stops one line width short.
       let (dx, dy) := if spec.curved then unitOf (p2.1 - c2.1) (p2.2 - c2.2)
         else unitOf (p2.1 - p1.1) (p2.2 - p1.2)
       let shaftEnd : Sp × Sp := (p2.1 - dx * lw / 1000, p2.2 - dy * lw / 1000)
@@ -9283,7 +7120,6 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         shapes := shapes.push (.ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque
           #[.draw (.path #[shaft]) none (some stroke),
             .draw (.path #[cmTo p2 dx dy lw]) none (some tipStroke)]))
-      -- Labels: at the path's middle, `auto` by its tangent there.
       for l in a.labels do
         let (pos, tan) :=
           if spec.curved then cubicAtMilli p1 c1 c2 p2 500
@@ -9295,7 +7131,6 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           | .ok col => lcolor := col
           | .error _ => diags := note (outside s!"label option {optName e.toList}") diags
         let script : Nat := if probe.script > 0 then probe.script else 700
-        -- A phantom's label sets in the cell's own style, centred.
         let scale : Nat := if draws then script * size / 1000 else size
         let (inl, ds) := math false l.content
         diags := ds.foldl (fun acc d => note d acc) diags
@@ -9314,10 +7149,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     | _, _ =>
       diags := note (.E0333, s!"an arrow from row {r + 1}, column {c + 1} reaches no cell; \
 it is not drawn") diags
-  -- Where the diagram stands on its line: tikz-cd's `every diagram` sets
-  -- `baseline=+0pt` around a matrix centred on the origin, so the baseline
-  -- runs through the matrix's centre, and a 1-row diagram's on its row's
-  -- base (`1-row diagram`).
+  -- tikz-cd's `every diagram` sets `baseline=+0pt` around a matrix centred on the origin.
   let baseline : Option Sp :=
     if ys.isEmpty then none
     else if cells.size == 1 then

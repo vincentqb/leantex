@@ -7,16 +7,14 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.TokenBlock
 
-/-- The two Huffman alphabet keys of a packed token. A literal has no
-distance key; a match is unpacked once for both counters. -/
+/-- The literal/length and distance symbols of a packed token; a literal has no distance symbol. -/
 def symbols (t : UInt32) : Nat × Option Nat :=
   if t < 256 then (t.toNat, none)
   else
     let (len, _, di) := matchOf t
     (257 + lenSymTab[len]?.getD 0, some di)
 
-/-- Count both alphabets in one pass, with the mandatory end-of-block symbol
-present before the first token. -/
+/-- Both alphabets' frequencies, with the end-of-block symbol counted once. -/
 def frequencies (tokens : Array UInt32) : Array Nat × Array Nat := Id.run do
   let mut freqs := ((Array.replicate 286 0).set! 256 1, Array.replicate 30 0)
   for t in tokens do
@@ -80,8 +78,7 @@ theorem frequencies_contract (tokens : Array UInt32) :
       subst i
       exact Frequencies.bump_positive _ _ (by omega)
 
-/-- Trim only unused suffixes, before assigning codes. Thus both the writer
-and the declared wire alphabet use exactly the same length vector. -/
+/-- Both alphabets' frequencies with unused suffixes trimmed. -/
 public def alphabets (tokens : Array UInt32) : Array Nat × Array Nat :=
   let (lit, dist) := frequencies tokens
   (Frequencies.trim 257 lit, Frequencies.trim 1 dist)

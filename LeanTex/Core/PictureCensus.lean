@@ -7,13 +7,11 @@ namespace LeanTex.Core.Elab
 
 open Ir
 
-/-- Only an engine picture block contributes to this census. -/
 private def pictureCountStep (n : Nat) : Block → Nat
   | .picture _ => n + 1
   | _ => n
 
-/-- Engine pictures at every body depth. Boundary images have no picture
-block and cannot silence losses in engine pictures beside them. -/
+/-- The engine pictures at every body depth; a boundary image has no picture block. -/
 public def enginePictures (blocks : Array Block) : Nat :=
   Ir.foldBlocks pictureCountStep (fun n _ => n) 0 blocks
 
@@ -171,8 +169,6 @@ private theorem mapCols_pictureCount (gp : Pic.Picture → Pic.Picture)
 
 end
 
-/-- An inline, listing or picture-payload rewrite preserves the number of
-engine picture blocks, for arbitrary nested block structure. -/
 public theorem mapBlocksPic_pictureCount_exact (gp : Pic.Picture → Pic.Picture)
     (f : Inline → Inline) (finish : Array Inline → Array Inline)
     (listing : ListingSpec → ListingSpec) (blocks : Array Block) :
@@ -180,8 +176,6 @@ public theorem mapBlocksPic_pictureCount_exact (gp : Pic.Picture → Pic.Picture
   simp only [enginePictures, foldBlocks, mapBlocksPic, mapBlockListWith_toList, List.nil_append]
   exact mapList_pictureCount gp f finish listing 0 blocks.toList
 
-/-- Final source-location erasure does not change the gate on unread
-picture settings. Both artifacts receive this same document body. -/
 public theorem eraseLocations_pictureCount_exact (doc : Doc) :
     enginePictures (Ir.eraseLocations doc).body = enginePictures doc.body := by
   exact mapBlocksPic_pictureCount_exact _ _ _ _ doc.body

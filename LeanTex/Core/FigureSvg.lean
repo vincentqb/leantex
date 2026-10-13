@@ -5,32 +5,14 @@ public import LeanTex.Core.GfxSvg
 public import LeanTex.Core.Html
 public import LeanTex.Core.Image
 
-/-!
-# A drawn figure as the page's own SVG, its text live
-
-An imported SVG the engine draws whole, and whose text it shaped in the
-document's faces (`Image.Store.shaped`), ships in the HTML as inline SVG:
-the figure through the SVG emitter (`GfxSvg.tree`), and each run a
-`<text>` in its role's family — the custom property the page's body text
-reads (`--font-body`, `--font-sans`, `--font-mono`) — at the resolved
-face's own weight and style, every glyph at the pen x the shaping gave. So
-the browser sets the scalars the PDF sets, in the face the PDF sets them
-in, where the PDF sets them, and the words stay text a reader can select
-and a search can find.
-
-Only such a figure: one that moves keeps its authored bytes in an
-`<img>`, where its animation runs, and so does one the engine draws with a
-loss, one that embeds a raster (an inline `<image>` names a resource the
-page would have to carry twice) and one that sets no text, which an `<img>`
-already draws exactly (`inlineable`).
--/
+/-! A drawn SVG figure as the page's own inline SVG, its text live `<text>` in the document's faces
+at the shaped pens. -/
 
 namespace LeanTex.Core.FigureSvg
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 
-/-- The family a role's text reads: the custom property the page's text in
-that role reads too, whatever stylesheet mode declared it. -/
+/-- The custom property a role's text reads its family from. -/
 @[expose] public def roleFamily : Nat → String
   | 0 => "var(--font-body)"
   | 1 => "var(--font-sans)"
@@ -47,15 +29,12 @@ same position. -/
 @[expose] public def penList (s : Shaped) : String :=
   " ".intercalate (s.glyphs.toList.map (·.2.2.2.toPtString))
 
-/-- The run's font as CSS: its role's family, and the resolved face's weight
-and style stated outright, so nothing the page inherits selects another
-face. -/
+/-- The run's font as CSS: its role's family and the resolved face's weight and style. -/
 @[expose] public def fontCss (s : Shaped) : String :=
   s!"font-family: {roleFamily s.role}; font-weight: {s.weight}; " ++
     s!"font-style: {if s.italic then "italic" else "normal"}; direction: ltr"
 
-/-- The run's paint: its solid fill, translucent where it is. A run with no
-solid fill paints nothing, as on the PDF page (`Pdf.shapedOps`). -/
+/-- The run's paint: its solid fill, translucent where it is; a run with no solid fill paints nothing. -/
 @[expose] public def paintAttrs (s : Shaped) : Array (String × String) :=
   match s.fill with
   | some { paint := .solid c, alpha, .. } =>
@@ -63,17 +42,12 @@ solid fill paints nothing, as on the PDF page (`Pdf.shapedOps`). -/
       (if alpha = Alpha.opaque then #[] else #[("fill-opacity", GfxSvg.alphaSpell alpha)])
   | _ => #[("fill", "none")]
 
-/-- Whether a run sets a scalar past the Basic Multilingual Plane: one a
-browser may count as two characters of an `x` list (a UTF-16 surrogate
-pair), where SVG 2 counts it as one. -/
+/-- Whether a run sets a scalar past the Basic Multilingual Plane, which a browser may count twice
+in an `x` list. -/
 @[expose] public def astral (s : Shaped) : Bool := s.glyphs.any fun g => 0x10000 ≤ g.2.2.1.toNat
 
-/-- **A shaped run as live SVG text**: the run's frame map, placed by the
-frame it stands in, carries its baseline origin; each glyph sits at its pen
-x on that baseline, every character addressable (`xml:space`), so the `x`
-list and the characters pair one to one. A run with a scalar past the Basic
-Multilingual Plane places each glyph in a `tspan` of its own instead, one
-`x` each, so no count of characters can shift the pens after it. -/
+/-- A shaped run as live SVG text, each glyph at its pen x; a run with an astral scalar places
+each glyph in its own `tspan`. -/
 public def textNode (fr : GfxSvg.SFrame) (s : Shaped) : Html.Node :=
   let lang : Array (String × String) := match s.lang with
     | some t => #[("lang", t)]
@@ -109,29 +83,20 @@ end
 @[expose] public def setsText {L : Type} (fig : Figure L) : Bool :=
   labelsList false fig.nodes.toList || fig.symbols.any (labelsList false ·.toList)
 
-/-- **Which drawn figures ship inline**, read off the figure and whether it
-moves: still, drawn whole, with no raster, and setting text. -/
+/-- Whether a drawn figure ships inline: still, drawn whole, with no raster, and setting text. -/
 @[expose] public def inlines {L : Type} (fig : Figure L) (moving : Bool) : Bool :=
   !moving && fig.losses.isEmpty && fig.rasters.isEmpty && setsText fig
 
-/-- **Which store entries ship inline**: a drawn figure that `inlines`. -/
+/-- Whether a store entry ships inline: a drawn figure that `inlines`. -/
 @[expose] public def inlineable (en : Image.Loaded) : Bool :=
   match en.vector with
   | some v => inlines v en.moving
   | none => false
 
-/-- **Where the engine's drawing of an SVG figure ships**: the PDF always,
-and the HTML too where the figure ships inline (`inlines`) or moves — its
-print and reduced-motion still face is the drawing — while any other still
-figure's HTML face is its authored bytes, which the browser draws in its
-own faces. What a note says of the text the engine's drawing sets — a
-family set in the document's face, a substituted or uncovered glyph — is
-the scope of the artifacts it ships in. -/
+/-- Where the engine's drawing of an SVG figure ships: the PDF always, the HTML too where it inlines or moves. -/
 @[expose] public def drawingShipsIn {L : Type} (fig : Figure L) (moving : Bool) :
     Option Diag.Output :=
-  -- premise: svgOutputScopeChecks — the page of an inlined figure carries the engine's
-  -- <svg> and names its text's notes; the page of a figure kept as authored bytes names
-  -- none of them
+  -- premise: svgOutputScopeChecks — an inlined figure's page names its text's notes
   if moving || inlines fig moving then none else some .pdf
 
 /-- The shaped figure an entry's page ships inline, if it ships one. -/
@@ -139,9 +104,7 @@ public def inlineFigure? (imgs : Image.Store) (k : Nat) : Option (Figure Shaped)
   let en ← imgs.get? k
   if inlineable en then (imgs.shaped[k]?).join else none
 
-/-- **A drawn figure as inline SVG**: the figure's box as the viewBox in
-points, under `attrs` (its name and the size the page gives it), clipping
-exactly where the figure clips to its box. -/
+/-- A drawn figure as inline SVG: its box as the viewBox in points, under `attrs`, clipping where it clips. -/
 public def inlineSvg (fig : Figure Shaped) (attrs : Array (String × String)) : Html.Node :=
   let w := (fig.box.2.1 - fig.box.1.1).toPtString
   let h := (fig.box.2.2 - fig.box.1.2).toPtString
@@ -149,9 +112,6 @@ public def inlineSvg (fig : Figure Shaped) (attrs : Array (String × String)) : 
     (#[("viewBox", s!"0 0 {w} {h}")] ++ attrs ++
       #[("overflow", if fig.clipToBox then "hidden" else "visible")])
 
-/-- **The inline figure paints the figure's marks** (`_projects`): the typed
-tree the page spells, read with SVG's meaning, is the figure's own ink —
-the reading `Gfx.backend_marks_agree` holds the PDF's operators to. -/
 public theorem inlineSvg_marks_projects (fig : Figure Shaped) :
     GfxSvg.readMarks (GfxSvg.documentIso fig.box) (GfxSvg.tree textNode #[] (GfxSvg.documentIso fig.box) fig) =
       fig.marks :=

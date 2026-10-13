@@ -9,48 +9,12 @@ public import LeanTex.Core.SvgJudge
 import LeanTex.Core.Image
 public import Std.Data.HashMap
 
-/-!
-# SVG as a vector figure
-
-An accepted SVG tree (`Svg.judge`) read into the vector model: the root
-viewport is the figure's box and clips it; every element the importer reads
-becomes the draws, groups, symbol uses, rasters and text runs both backends
-emit (`GfxPdf`, `GfxSvg`). Coordinates are the SVG's own user space, y down,
-in `Sp` at one CSS pixel — 0.75 pt — per user unit, rounded once; matrices
-are exact rationals, and the root group carries the flip into the figure's
-y-up frame together with the viewBox transform (SVG 2 §8.2).
-
-What the importer reads: `svg` (nested viewports, `viewBox`,
-`preserveAspectRatio`, every absolute and relative unit), `g`, `defs`,
-`symbol`, `use`, `switch`, `a` (drawn, its link dropped with a note),
-`path`, `rect` (`rx`/`ry`), `circle`, `ellipse`, `line`, `polyline`,
-`polygon`, `linearGradient` and `radialGradient` (href chains, both unit
-systems, `gradientTransform`, pad), `clipPath` (both unit systems), `image`
-(a `data:` PNG or JPEG), `text` and `tspan`, `title`, `desc`, `metadata`,
-`style`; the fill, stroke and opacity families, `transform`, `clip-path`,
-`display`, `visibility`, `color`, the font properties and `text-anchor`,
-through the CSS cascade (`Css`).
-
-What it meets and cannot give this meaning is a keyed loss (`Gfx.Loss`):
-filters, masks, patterns, markers, a translucent gradient stop, a reflected
-or repeated spread, blend modes, text on a path, `vector-effect`,
-`paint-order`, CSS outside the subset. A figure with no loss is exact;
-that an exact figure also *looks* the same is the oracles' claim
-(`scripts/svg-diff.lean`), not a theorem.
-
-`use` is expanded without recursion through the reference: the walk records
-each reference as a request and paints a symbol use; the requests are read
-one by one, each a walk of its own, under a request budget; and the symbols
-are then ordered so that a body uses only symbols before it, as the model
-requires (`Figure.wf`). A reference cycle is a loss, and so is a request
-past the budget.
--/
+/-! SVG read into the vector figure model: an accepted tree's viewports, shapes, paints, text and
+symbol uses, with every meaning it cannot give a keyed loss. -/
 
 namespace LeanTex.Core.Svg
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
-
-/-! ## Units and numbers -/
 
 /-- One user unit, the CSS pixel, in `Sp`: 0.75 pt. -/
 @[expose] public def pxSp : Int := 49152
@@ -69,8 +33,7 @@ public inductive LenUnit where
   | pct
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- How many CSS pixels one unit is, exactly (CSS Values 4 §6.2: 96 px to
-the inch); the font- and box-relative units are their caller's. -/
+/-- How many CSS pixels one unit is (CSS Values 4 §6.2); font- and box-relative units are the caller's. -/
 @[expose] public def LenUnit.factor : LenUnit → Rat
   | .user => 1
   | .px => 1
@@ -83,7 +46,6 @@ the inch); the font- and box-relative units are their caller's. -/
   | .ex => 1
   | .pct => 1
 
-/-- The suffix a unit is spelled with. -/
 @[expose] public def LenUnit.suffix : LenUnit → String
   | .user => ""
   | .px => "px"
@@ -121,7 +83,7 @@ public def num? (s : String) : Option Rat :=
   (PathData.number (PathData.skipWs s.toList)).bind fun (d, rest) =>
     if (PathData.skipWs rest).isEmpty then some d.toRat else none
 
-/-- **A length**: a decimal, then a unit suffix, white space around it. -/
+/-- A length: a decimal, then a unit suffix, white space around it. -/
 @[expose] public def length? (s : String) : Option Length :=
   (PathData.number (PathData.skipWs s.toList)).bind fun (d, rest) =>
     let suffix := String.ofList (rest.takeWhile (!PathData.isWsp ·))
@@ -129,9 +91,7 @@ public def num? (s : String) : Option Rat :=
       (LenUnit.ofSuffix suffix).map fun u => { value := d.toRat, unit := u }
     else none
 
-/-- A length in CSS pixels, against the font size `em` and the percentage
-basis `base` (both in pixels): `1ex` is half an em, as CSS's fallback
-reads it when no font is consulted. -/
+/-- A length in CSS pixels against the font size `em` and the percentage basis `base`; `1ex` is half an em. -/
 @[expose] public def Length.toPx (l : Length) (em base : Rat) : Rat :=
   match l.unit with
   | .em => l.value * em
@@ -164,10 +124,7 @@ public def lengthList? (s : String) : Option (Array Length) :=
   let parts := (s.replace "," " ").splitOn " " |>.filter (!·.trimAscii.isEmpty)
   parts.toArray.mapM length?
 
-/-! ## Transforms -/
-
-/-- A rotation by `deg` degrees: CORDIC's cosine and sine at 2⁻³⁰, exact on
-every multiple of a right angle (`Trig.cosSin`). -/
+/-- A rotation by `deg` degrees, exact on every multiple of a right angle. -/
 public def rotation (deg : Rat) : Affine :=
   let θ := Trig.divRound (deg.num * Trig.pi) (180 * (deg.den : Int))
   let (c, s) := Trig.cosSin θ
@@ -183,8 +140,7 @@ public def tangentOf (deg : Rat) : Rat :=
 /-- A translation by user units. -/
 @[expose] public def shift (x y : Rat) : Affine := ⟨1, 0, 0, 1, x * (pxSp : Rat), y * (pxSp : Rat)⟩
 
-/-- One transform function (SVG 2 §8.5 / SVG 1.1 §7.6), its arguments in
-user units. -/
+/-- One transform function (SVG 2 §8.5), its arguments in user units. -/
 public def transformFn (name : String) (args : Array Rat) : Option Affine :=
   match name, args.toList with
   | "matrix", [a, b, c, d, e, f] => some ⟨a, b, c, d, e * (pxSp : Rat), f * (pxSp : Rat)⟩
@@ -198,10 +154,7 @@ public def transformFn (name : String) (args : Array Rat) : Option Affine :=
   | "skewY", [a] => some ⟨1, tangentOf a, 0, 1, 0, 0⟩
   | _, _ => none
 
-/-- **A transform list**, composed left to right: the first function is the
-outermost. An unreadable list is no transform. Read in one pass over the
-text, each function a name, `(`, its numbers and `)`, separated by white
-space and commas. -/
+/-- A transform list composed left to right, the first function outermost; an unreadable list is none. -/
 public def transform? (s : String) : Option Affine := Id.run do
   let cs := s.toList.toArray
   let n := cs.size
@@ -239,8 +192,6 @@ public def Affine.inverse? (m : Affine) : Option Affine :=
   let d := m.a / det
   some ⟨a, b, c, d, -(a * m.e + c * m.f), -(b * m.e + d * m.f)⟩
 
-/-! ## Viewports -/
-
 /-- A `viewBox`: its origin and extents in user units. -/
 public structure ViewBox where
   x : Rat
@@ -254,7 +205,6 @@ public def viewBox? (s : String) : Option ViewBox :=
   | some [x, y, w, h] => if 0 < w && 0 < h then some { x := x, y := y, w := w, h := h } else none
   | _ => none
 
-/-- An alignment along one axis. -/
 public inductive Align where
   | min
   | mid
@@ -292,9 +242,7 @@ public def par? (s : String) : Par :=
   | .mid => (avail - used) / 2
   | .max => avail - used
 
-/-- **The viewBox transform** (SVG 2 §8.2), in pixels: the scale on each
-axis — equal unless `none` — and the translation that puts the viewBox's
-origin at the aligned corner of the viewport `(vx, vy, vw, vh)`. -/
+/-- The viewBox transform's scale on each axis (SVG 2 §8.2), equal unless the alignment is `none`. -/
 @[expose] public def viewScale (vb : ViewBox) (p : Par) (vw vh : Rat) : Rat × Rat :=
   let sx := vw / vb.w
   let sy := vh / vb.h
@@ -323,8 +271,6 @@ public def Viewport.diag (vp : Viewport) : Rat :=
   let q := (vp.w * vp.w + vp.h * vp.h) / 2
   let scaled := (q * 1000000).floor.toNat
   ((Nat.sqrt scaled : Nat) : Rat) / 1000
-
-/-! ## Paints and styles -/
 
 /-- A paint as the cascade leaves it (SVG 2 §13.2): none, a colour with its
 alpha, the `color` property's, or a paint server with its fallback. -/
@@ -372,27 +318,18 @@ one-pixel butt-capped miter-joined stroke at limit 4, a 16 px serif face. -/
     families := #["serif"], fontSize := 16, weight := 400, italic := false, anchor := .start
     clipRule := .nonzero, smooth := true, preserve := false, lang := none }
 
-/-- An element's declarations, every source of the cascade: property,
-key, value. -/
+/-- An element's declarations from every source of the cascade: property, key, value. -/
 public abbrev Decls := Array (String × Css.Key × String)
 
-/-- How the importer treats a property it meets: read with its meaning
-(`honoured`); `inert` where nothing the figure paints reads it — a
-rendering hint, a filter primitive's input when filters are a loss, a
-property only a lost feature reads, interaction; or a loss unless the
-value is one of those that change nothing (`lossUnless`, lower case; the
-CSS-wide keywords change nothing a parent did not already say). -/
+/-- How the importer treats a property: read with its meaning, inert, or a loss unless its value
+changes nothing. -/
 public inductive Treatment where
   | honoured
   | inert
   | lossUnless (harmless : List String)
   deriving Repr, BEq, Inhabited
 
-/-- **Every property the importer reads or reports, and how** (SVG 2 §6.6
-and the CSS modules it names): the one table the presentation attributes,
-the loss census and the treatment check (`propertyTreatmentChecks`) read.
-A property missing here is one SVG does not apply to these elements, or
-one a sheet may set only as `cssLost` names. -/
+/-- Every property the importer reads or reports, with its treatment (SVG 2 §6.6). -/
 @[expose] public def propertyTable : List (String × Treatment) :=
   [("fill", .honoured), ("fill-opacity", .honoured), ("fill-rule", .honoured),
    ("stroke", .honoured), ("stroke-width", .honoured), ("stroke-linecap", .honoured),
@@ -439,13 +376,8 @@ one a sheet may set only as `cssLost` names. -/
 importer reads or reports. -/
 @[expose] public def properties : List String := propertyTable.map (·.1)
 
-/-- The properties a style sheet or `style` attribute may set that the
-importer reads only as attributes, or not at all — the geometry properties
-(SVG 2 §10.1.1, §9.2), the CSS transform with its individual and motion
-properties, a mask's longhands, and what CSS alone sets on text and on the
-root's box — each with the values that change nothing.
-A declaration of one from CSS with another value is a loss: a geometry
-property's initial value still overrides the attribute it shadows. -/
+/-- The properties CSS may set that the importer reads only as attributes or not at all, each with
+the values that change nothing. -/
 @[expose] public def cssLost : List (String × List String) :=
   (["x", "y", "width", "height", "cx", "cy", "r", "rx", "ry", "d"].map (·, [])) ++
   (["transform", "translate", "rotate", "scale", "offset-path", "mask-image",
@@ -453,9 +385,6 @@ property's initial value still overrides the attribute it shadows. -/
   (["offset", "offset-distance", "offset-rotate", "offset-anchor", "offset-position",
     "mask-mode", "mask-position", "mask-size", "mask-repeat", "mask-origin", "mask-clip",
     "mask-composite"].map (·, [])) ++
-  -- What a browser applies to a figure's text or its root box from CSS
-  -- alone, read nowhere here: each with its initial value, which changes
-  -- nothing — the spellings exporters write for every run.
   [("text-transform", ["none"]), ("text-decoration-line", ["none"]),
    ("text-shadow", ["none"]), ("font-variant-caps", ["normal"]),
    ("font-variant-ligatures", ["normal"]), ("font-variant-numeric", ["normal"]),
@@ -470,11 +399,8 @@ property's initial value still overrides the attribute it shadows. -/
 @[expose] public def systemFonts : List String :=
   ["caption", "icon", "menu", "message-box", "small-caption", "status-bar"]
 
-/-- **The longhands a `font` shorthand sets** (CSS Fonts 4 §2.7), each one
-it leaves unsaid reset to its initial value — style, variant, weight and
-width before the size, an optional line height after it, the family list
-last; `none` where the value is no shorthand this reader reads, a system
-font keyword among them. -/
+/-- The longhands a `font` shorthand sets (CSS Fonts 4 §2.7), unsaid ones reset; `none` for a value
+this reader does not read. -/
 public def fontShorthand? (v : String) : Option (Array (String × String)) := Id.run do
   let t := v.trimAscii.toString
   let lower := t.toLower
@@ -502,7 +428,6 @@ public def fontShorthand? (v : String) : Option (Array (String × String)) := Id
     let tok := (r.takeWhile (!PathData.isWsp ·)).toString
     if tok.isEmpty then return none
     let after := (r.drop tok.length).toString
-    -- A size, or a size and a line height after a slash.
     let (sizeTok, lh) := match tok.splitOn "/" with
       | [a, b] => (a, some b)
       | _ => (tok, none)
@@ -540,10 +465,8 @@ public def subjectOf (name : String) (attrs : Array Xml.Attr) : Css.Subject :=
       ((c.split Css.isWs).toList.map (·.toString)).filter (!·.isEmpty) |>.toArray).getD #[]
     id := Xml.Attr.get? attrs "" "id" }
 
-/-- What an element declares, from all three sources: its presentation
-attributes (level 0), the sheet rules whose selectors match it in its own
-place (level 1), its `style` attribute (level 2). A sheet rule's order is
-its rule's, then its declaration's, place in the sheets. -/
+/-- What an element declares: its presentation attributes, the sheet rules matching it, and its
+`style` attribute, by level. -/
 public def declsOf (ix : Css.RuleIndex) (subject : Css.Subject) (up : List Css.Subject)
     (attrs : Array Xml.Attr) : Decls × Array String := Id.run do
   let mut out : Decls := #[]
@@ -553,9 +476,6 @@ public def declsOf (ix : Css.RuleIndex) (subject : Css.Subject) (up : List Css.S
     if a.ns == "" && properties.contains a.name then
       out := out.push (a.name, { important := false, level := 0, spec := (0, 0, 0), order := i },
         a.value.trimAscii.toString)
-  -- Only the selectors the element can match are tried (`Css.RuleIndex`):
-  -- each matching rule at its most specific matching selector, in rule
-  -- order, each declaration at its place among the sheets'.
   let mut best : Std.HashMap Nat (Nat × Nat × Nat) := {}
   for (i, j) in ix.candidates subject up do
     let some s := (ix.rules[i]?.bind (·.selectors[j]?)) | continue
@@ -583,8 +503,6 @@ public def declsOf (ix : Css.RuleIndex) (subject : Css.Subject) (up : List Css.S
           d.value)
     | .error (.unsupported why) => problems := problems.push why
     | .error (.refused why) => problems := problems.push why
-  -- A `font` shorthand is its longhands, under its own key; one this reader
-  -- cannot read stays, and is the loss `propertyTable` names.
   let expanded := out.foldl (fun acc (p, k, v) =>
     if p == "font" then
       match fontShorthand? v with
@@ -598,10 +516,8 @@ public def candidates (d : Decls) (prop : String) : Array (Css.Key × String) :=
   (d.filterMap fun (p, k, v) => if p == prop then some (k, v) else none).qsort
     fun a b => Css.Key.lt b.1 a.1
 
-/-- A property's value through the cascade: the winner among the
-declarations whose value reads (an unreadable one is dropped, as CSS drops
-it), `inherit`, `initial` and `unset` as CSS Cascading 4 §7.3 reads them,
-and the parent's or the initial value where nothing is declared. -/
+/-- A property's value through the cascade, reading `inherit`, `initial` and `unset` (CSS Cascading 4
+§7.3), else the parent's or the initial value. -/
 public def pick {α : Type} (d : Decls) (prop : String) (inherited : Bool) (parent initial : α)
     (parse : String → Option α) : α :=
   let keyword (v : String) : Option α :=
@@ -611,14 +527,12 @@ public def pick {α : Type} (d : Decls) (prop : String) (inherited : Bool) (pare
     | "unset" => some (if inherited then parent else initial)
     | _ => none
   let read (v : String) : Option α := (keyword v).orElse fun _ => parse v
-  -- The cascade runs over the declarations whose value reads: an
-  -- unreadable one is dropped before it can win (`Css.cascade_exact`).
+  -- An unreadable value is dropped before it can win, as CSS drops it.
   let valid := (d.filterMap fun (p, k, v) => if p == prop && (read v).isSome then some (k, v) else none)
   match (Css.cascade valid).bind read with
   | some v => v
   | none => if inherited then parent else initial
 
-/-- Whether any declaration names the property at all. -/
 @[expose] public def declares (d : Decls) (prop : String) : Bool := d.any (·.1 == prop)
 
 /-- A colour value with its alpha, `currentColor` the caller's. -/
@@ -721,15 +635,10 @@ public structure Read where
   losses : Array Gfx.Loss
   deriving Inhabited
 
-/-- A `transform-origin` (CSS Transforms 1 §6.1) in user units: one to
-three values — keywords, lengths, percentages of the reference box `(w, h)`,
-the nearest viewport's, as `transform-box: view-box` reads it — the third, a
-z offset, moving nothing in a plane. -/
+/-- A `transform-origin` (CSS Transforms 1 §6.1) in user units, against the reference box `(w, h)`. -/
 public def origin? (em w h : Rat) (s : String) : Option (Rat × Rat) :=
   let toks := ((s.trimAscii.toString.split PathData.isWsp).toList.map (·.toString)).filter
     (!·.isEmpty)
-  -- A keyword's axis (`some true` horizontal, `some false` vertical,
-  -- `none` either) and its percentage.
   let kw (t : String) : Option (Option Bool × Rat) := match t.toLower with
     | "left" => some (some true, 0)
     | "right" => some (some true, 100)
@@ -770,8 +679,7 @@ back (CSS Transforms 1 §6.1); the identity stays the identity. -/
   if m == Affine.unit || (o.1 == 0 && o.2 == 0) then m
   else (shift o.1 o.2).compose (m.compose (shift (-o.1) (-o.2)))
 
-/-- **One element's computed style**: its declarations over its parent's
-style, in the viewport `vp`. -/
+/-- One element's computed style: its declarations over its parent's style, in the viewport `vp`. -/
 public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Array Xml.Attr) : Read :=
   let fontSize := pick d "font-size" true parent.fontSize Style.initial.fontSize (fontSize? parent.fontSize)
   let len (base : Rat) (s : String) : Option Sp :=
@@ -832,8 +740,6 @@ public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Ar
     | "hidden" | "scroll" | "clip" => some (some false)
     | _ => none
   let origin := pick d "transform-origin" false (0, 0) (0, 0) (origin? fontSize vp.w vp.h)
-  -- The properties the importer does not give their meaning: a loss each,
-  -- once declared with a value other than one that changes nothing.
   let unless_ (prop : String) (harmless : List String) : Bool :=
     match (candidates d prop)[0]? with
     | some (_, v) =>
@@ -852,23 +758,17 @@ public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Ar
   { style := style, opacity := opacity, clipPath := clipPath, display := display
     overflowVisible := overflowVisible, origin := origin, losses := losses }
 
-/-! ## Geometry -/
-
 /-- A point of user space, in `Sp`. -/
 @[expose] public def pt (x y : Rat) : Pt := (spOf x, spOf y)
 
-/-- Path commands as subpaths of user space: relative commands made
-absolute, smooth curves' reflected controls, quadratics elevated, arcs as
-cubics (`Kit.arcEndpoint`), each subpath closed where the data closes it. -/
+/-- Path commands as absolute subpaths of user space, quadratics elevated and arcs as cubics. -/
 public def subpathsOf (cmds : Array PathData.Cmd) : Array Subpath := Id.run do
   let mut done : Array Subpath := #[]
   let mut cur : Option Subpath := none
-  -- The current point and the subpath's start, in pixels, exactly.
   let mut px : Rat := 0
   let mut py : Rat := 0
   let mut sx : Rat := 0
   let mut sy : Rat := 0
-  -- The last control point, for S and T, with what kind of segment set it.
   let mut lastCubic : Option (Rat × Rat) := none
   let mut lastQuad : Option (Rat × Rat) := none
   for c in cmds do
@@ -958,8 +858,7 @@ where
 public def lenAttr (attrs : Array Xml.Attr) (name : String) (em base : Rat) (dflt : Rat) : Rat :=
   ((Xml.Attr.get? attrs "" name).bind length?).map (·.toPx em base) |>.getD dflt
 
-/-- The loss a path is where a number past the reader's range cut it
-short (`PathData.Stop.range`), which a browser's double reads on past. -/
+/-- The loss of a path cut short by a number past the reader's range. -/
 @[expose] public def pathRangeLoss : Gfx.Loss := .budget "a path number's range"
 
 /-- A basic shape other than a path (SVG 2 §10), in user space. -/
@@ -1002,9 +901,8 @@ public def basicGeom (name : String) (attrs : Array Xml.Attr) (em : Rat) (vp : V
                     closed := name == "polygon" }])
   | _ => none
 
-/-- A basic shape's geometry (SVG 2 §10), in user space; `none` where the
-shape draws nothing (a zero or negative extent, too few points). The flag
-is false where a number past the reader's range cut a path short. -/
+/-- A basic shape's geometry (SVG 2 §10): `none` where it draws nothing, flagged false where a
+number past the reader's range cut a path short. -/
 public def shapeGeom (name : String) (attrs : Array Xml.Attr) (em : Rat) (vp : Viewport) :
     Option Geom × Bool :=
   if name == "path" then
@@ -1013,19 +911,14 @@ public def shapeGeom (name : String) (attrs : Array Xml.Attr) (em : Rat) (vp : V
     (if subs.isEmpty then none else some (.path subs), stop != .range)
   else (basicGeom name attrs em vp, true)
 
-/-- A geometry's box in its own frame, the fill box (SVG 2 §8.10's
-object bounding box, by its control points). -/
+/-- A geometry's object bounding box, by its control points (SVG 2 §8.10). -/
 public def bboxOf (g : Geom) : Option Box := g.hull
 
-/-! ## The walk -/
-
-/-- An element the walk can reach by its id: the element, and its
-ancestors in the tree, innermost first, for selector matching. -/
+/-- An element the walk reaches by id, with its ancestors innermost first. -/
 public structure Entry where
   item : Xml.Item
   up : List Css.Subject
-  /-- The ancestors themselves, innermost first, beside `up`: what an
-  inherited property is computed down. -/
+  /-- The ancestors' items, innermost first, for inherited properties. -/
   upItems : List (String × Array Xml.Attr)
   deriving Inhabited
 
@@ -1036,9 +929,8 @@ public structure Env where
   rules : Css.RuleIndex
   lang : String
 
-/-- A `use` the walk met, to be read later: the element it names, the
-style its clone inherits, and whether it reads the element's children (a
-symbol's, whose viewport the use site placed) or the element itself. -/
+/-- A `use` the walk met: the element it names, the style its clone inherits, and whether it reads
+the element's children. -/
 public structure Request where
   id : String
   style : Style
@@ -1052,28 +944,26 @@ public structure St where
   notes : Array String
   rasters : Array Raster
   requests : Array Request
-  /-- The requests by the id each names: where an equal one is looked for. -/
+  /-- The requests by the id each names, to share an equal one. -/
   requestIds : Std.HashMap String (Array Nat)
   nodes : Nat
   animated : Bool
   text : Bool
   deriving Inhabited
 
-/-- The most nodes one import emits, and the most references it reads:
-past either the drawing stops, and the budget is named. -/
+/-- The most nodes one import emits and references it reads; past either, drawing stops and the
+budget is named. -/
 public structure Budget where
   nodes : Nat
   requests : Nat
-  /-- The nodes a figure may paint once its uses are expanded: a use
-  nested in a use multiplies, so a few dozen symbols can name millions. -/
+  /-- The nodes a figure may paint once its uses are expanded. -/
   expanded : Nat
   deriving Repr, Inhabited
 
 @[expose] public def Budget.standard : Budget :=
   { nodes := 2000000, requests := 100000, expanded := 200000 }
 
-/-- The request a `use` makes, shared with an equal one already made: one
-symbol per element, inherited style and viewport. -/
+/-- The request a `use` makes, shared with an equal one already made. -/
 public def St.request (s : St) (r : Request) : St × Nat :=
   let same := s.requestIds.getD r.id #[]
   match same.find? (fun k => s.requests[k]? == some r) with
@@ -1110,7 +1000,6 @@ public def unbase64 (s : String) : Option ByteArray := Id.run do
     else if c == '/' || c == '_' then some 63
     else none
   let mut out := ByteArray.emptyWithCapacity (s.length * 3 / 4)
-  -- Bits in a machine word: four characters' 24 bits at most wait here.
   let mut acc : UInt32 := 0
   let mut bits : UInt32 := 0
   for c in s.toList do
@@ -1156,9 +1045,7 @@ public def rasterOf (href : String) (smooth : Bool) : Option Raster := do
   | .jpeg => some { bytes, jpeg := true, pxW := src.pxW, pxH := src.pxH, smooth }
   | _ => none
 
-/-- A gradient element's own attribute, or the one its `href` chain
-supplies first (SVG 2 §14.2.3): at most one step per element the file
-defines, so a cycle ends. -/
+/-- A gradient's own attribute, or the first its `href` chain supplies (SVG 2 §14.2.3), a cycle cut. -/
 public def gradientAttr (env : Env) (start : Xml.Item) (name : String) : Option String := Id.run do
   let mut cur := start
   for _ in [0:env.ids.size + 1] do
@@ -1175,9 +1062,7 @@ public def gradientAttr (env : Env) (start : Xml.Item) (name : String) : Option 
     | .text _ => return none
   return none
 
-/-- A gradient's stops: its own, or the first in its `href` chain that has
-any, with the gradient element that holds them — whose place in the tree
-the stops' cascade and inheritance read. -/
+/-- A gradient's stops, its own or the first in its `href` chain, with the element that holds them. -/
 public def gradientStops (env : Env) (start : Entry) : Array Xml.Item × Entry := Id.run do
   let mut cur := start
   for _ in [0:env.ids.size + 1] do
@@ -1197,10 +1082,8 @@ public def gradientStops (env : Env) (start : Entry) : Array Xml.Item × Entry :
     | .text _ => return (#[], cur)
   return (#[], cur)
 
-/-- The `color` an element computes, down its ancestors from the root —
-`items` the element and its ancestors, innermost first, `up` their
-subjects beside them: the property inherits, so each takes its own
-declaration over its parent's. -/
+/-- The `color` an element computes down its ancestors; the lists hold the element and its
+ancestors, innermost first. -/
 public def colorDown (ix : Css.RuleIndex) : List (String × Array Xml.Attr) → List Css.Subject →
     Ir.Color × Nat
   | (_, attrs) :: items, s :: up =>
@@ -1216,9 +1099,7 @@ public def stopOffset (s : String) : Nat :=
   let q := if q < 0 then 0 else if q > 1 then 1 else q
   (q * 65536 + 1 / 2).floor.toNat
 
-/-- A paint server, resolved for a shape whose fill box is `bbox`: a
-gradient, a solid colour (one stop), nothing (no stop, an empty box under
-`objectBoundingBox`), or the loss it meets. -/
+/-- A paint server resolved for a fill box `bbox`: a gradient, a solid colour, nothing, or the loss it meets. -/
 public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (alpha : Nat) :
     Except Gfx.Loss (Option (Paint × Nat)) := do
   let some e := env.ids.get? id | return none
@@ -1229,10 +1110,6 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
   let attr (n : String) := gradientAttr env e.item n
   let spread := (attr "spreadMethod").getD "pad"
   unless spread.trimAscii.toString == "pad" do throw (.attribute "spreadMethod")
-  -- Stops: offsets non-decreasing, colours opaque. A stop stands in the
-  -- tree under its gradient, which inherits from its own ancestors, never
-  -- from the shape that references it: its rules match there, and its
-  -- currentColor is its own `color`.
   let mut stops : Array Stop := #[]
   let mut last := 0
   let (stopItems, owner) := gradientStops env e
@@ -1255,8 +1132,6 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
   if let #[only] := stops then return some (.solid only.color, alpha)
   let bboxUnits := ((attr "gradientUnits").getD "objectBoundingBox").trimAscii.toString != "userSpaceOnUse"
   let gxf := ((attr "gradientTransform").bind transform?).getD Affine.unit
-  -- The gradient's frame: user space, or the box's unit square at 65536
-  -- per side, which `xf` maps onto the box.
   let frameOpt : Option (Affine × Rat × Rat × Rat) :=
     if bboxUnits then
       bbox.bind fun ((x0, y0), (x1, y1)) =>
@@ -1265,8 +1140,6 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
           (x0 : Rat), (y0 : Rat)⟩, (65536 : Rat), (1 : Rat), (1 : Rat))
     else some (Affine.unit, (pxSp : Rat), cx.vp.w, cx.vp.h)
   let some (frame, scale, bw, bh) := frameOpt | return none
-  -- In box units a length is a fraction of the box; in user units a
-  -- percentage reads the viewport.
   let coord (n : String) (dflt : Rat) (base : Rat) : Sp :=
     let v : Rat := match (attr n).bind length? with
       | some l => if bboxUnits then (if l.unit == .pct then l.value / 100 else l.value)
@@ -1274,7 +1147,6 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
       | none => dflt * (if bboxUnits then 1 else base)
     let s := v * scale
     (s + 1 / 2).floor
-  -- A box-unit gradient's own transform reads its translation in box units.
   let gxf := if bboxUnits then { gxf with e := gxf.e / (pxSp : Rat) * 65536, f := gxf.f / (pxSp : Rat) * 65536 }
     else gxf
   let xf := frame.compose gxf
@@ -1294,15 +1166,13 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
       | none => c1.2
     let r0 := coord "fr" 0 diag
     if r1 ≤ 0 then return some (.solid ((stops.back?.map (·.color)).getD black), alpha)
-    -- The focal circle must lie inside the end circle, the one geometry
-    -- both formats draw alike.
+    -- The focal circle must lie inside the end circle, the one geometry both formats draw alike.
     let dx := fx - c1.1
     let dy := fy - c1.2
     if (Nat.sqrt (dx * dx + dy * dy).toNat : Int) + r0 ≥ r1 then throw (.attribute "fx")
     return some (.gradient (.radial (fx, fy) r0 c1 r1 stops xf), alpha)
 
-/-- A paint spec as a model paint and its alpha, for a shape with fill box
-`bbox`; a server's failure falls back as SVG 2 §13.2.3 says. -/
+/-- A paint spec as a model paint and its alpha; a failing server falls back as SVG 2 §13.2.3 says. -/
 public def resolvePaint (env : Env) (cx : Ctx) (st : St) (color : Ir.Color × Nat)
     (spec : PaintSpec) (bbox : Option Box) : Option (Paint × Nat) × St :=
   match spec with
@@ -1335,13 +1205,8 @@ public def paintsOf (env : Env) (cx : Ctx) (st : St) (s : Style) (bbox : Option 
            dash := s.dash, phase := s.dashOffset, alpha := mulAlpha a s.strokeOpacity }
   ({ fill := fill, stroke := stroke }, st)
 
-/-- A `clip-path` reference resolved for an element whose box `bbox` gives
-— asked only under `objectBoundingBox`, and answering the box, no box (an
-empty one), or the loss of an element whose box is not known before the
-figure is set — the clip, and the frame it stands in relative to the
-element's — the clip child's transform, the clipPath's own, and under
-`objectBoundingBox` the box's — or what stops it. `none` inside means the
-clip region is empty: nothing paints. -/
+/-- A `clip-path` reference resolved for an element: the clip and its frame relative to the
+element's, or what stops it; `none` inside is an empty clip. -/
 public def clipOf (env : Env) (cx : Ctx) (id : String) (bbox : Unit → Except Gfx.Loss (Option Box)) :
     Except Gfx.Loss (Option (Affine × Clip)) := do
   let some e := env.ids.get? id | throw (.resource "clip-path")
@@ -1383,8 +1248,6 @@ public def clipOf (env : Env) (cx : Ctx) (id : String) (bbox : Unit → Except G
 /-- The figure-wide budget check before a node is emitted. -/
 @[expose] public def St.room (s : St) (bud : Budget) : Bool := s.nodes < bud.nodes
 
-/-! ### Text -/
-
 /-- One character of a text element after white-space processing, with
 the style it is set in and the positions its elements give it. -/
 public structure TChar where
@@ -1396,10 +1259,7 @@ public structure TChar where
   dy : Rat
   deriving Inhabited
 
-/-- One piece of a text element's content as the walk meets it: its text,
-the style it is set in, and for each enclosing positioning element — the
-innermost last — its x, y, dx and dy lists and how many characters it had
-already given out. -/
+/-- One piece of a text element's content: its text, its style, and its enclosing positioning lists. -/
 public structure Piece where
   text : String
   style : Style
@@ -1417,11 +1277,9 @@ public structure PosLists where
 
 mutual
 
--- conserves: none — a flattening of a text element's content into pieces;
--- its text census is the pieces' (`text_pieces` reads them in order).
-/-- A text element's content flattened: each character-data piece with its
-style and the position-list stack in force, in order; a `tspan` opens its
-own lists; any other element is a loss. -/
+-- conserves: none — a flattening of a text element's content into pieces.
+/-- A text element's content flattened into pieces with their style and position lists; a `tspan`
+opens its own lists. -/
 public def piecesOne (env : Env) (cx : Ctx) (lists : Array PosLists)
     (acc : Array (Piece × Array PosLists) × Array Gfx.Loss × Nat) : Xml.Item →
     Array (Piece × Array PosLists) × Array Gfx.Loss × Nat
@@ -1456,16 +1314,10 @@ public def piecesList (env : Env) (cx : Ctx) (lists : Array PosLists)
 
 end
 
-/-- The characters a text element sets, after the white-space rules SVG 2
-§11.11 takes from CSS Text 3 §4 — under `xml:space="default"` a line feed
-is a space, as a tab is, the element's ends are trimmed and runs of spaces
-collapse, as browsers set it (SVG 1.1 dropped the line feed); `preserve`
-makes each a space — each with the position its innermost positioning
-element gives it by index. -/
+/-- The characters a text element sets after SVG 2 §11.11's white-space rules, each positioned by
+its innermost positioning element. -/
 public def textChars (pieces : Array (Piece × Array PosLists)) : Array TChar := Id.run do
   let mut out : Array TChar := #[]
-  -- How many addressable characters each positioning element has given
-  -- out, by its id.
   let mut counts : Std.HashMap Nat Nat := {}
   let mut prevSpace := true
   for (p, lists) in pieces do
@@ -1478,8 +1330,6 @@ public def textChars (pieces : Array (Piece × Array PosLists)) : Array TChar :=
         else some c
       let some ch := keep | continue
       prevSpace := ch == ' '
-      -- The innermost element whose list reaches this character's index in
-      -- it gives the position.
       let mut x : Option Rat := none
       let mut y : Option Rat := none
       let mut dx : Option Rat := none
@@ -1492,14 +1342,12 @@ public def textChars (pieces : Array (Piece × Array PosLists)) : Array TChar :=
         if let some v := l.dx[n]? then dx := some v
         if let some v := l.dy[n]? then dy := some v
       out := out.push { c := ch, style := p.style, x, y, dx := dx.getD 0, dy := dy.getD 0 }
-  -- The element's trailing spaces go, under the default rule.
   let mut n := out.size
   for _ in [0:out.size] do
     if n > 0 && (out[n - 1]?.any fun t => t.c == ' ' && !t.style.preserve) then n := n - 1 else break
   return out.extract 0 n
 
-/-- Two paints alike, field by field — a colour's PDF rider included, which
-the colour's own `==` leaves out. -/
+/-- Two paints alike field by field, a colour's PDF rider included. -/
 public def PaintSpec.same : PaintSpec → PaintSpec → Bool
   | .none, .none => true
   | .color c a, .color c' a' => decide (c = c') && a == a'
@@ -1516,26 +1364,18 @@ public def sameText (a b : Style) : Bool :=
     a.fill.same b.fill && a.stroke.same b.stroke &&
     a.anchor == b.anchor && decide (a.color.1 = b.color.1) && a.color.2 == b.color.2
 
-/-- Whether a character is of a script set right to left or joined by
-contextual shaping — Hebrew, Arabic, Syriac, Thaana, N'Ko and their
-neighbours, the Indic scripts, Tibetan, Myanmar, Khmer, Mongolian, their
-presentation forms, and the right-to-left historic planes — which a figure's
-text, set character by character left to right, does not shape. -/
+/-- Whether a character's script is set right to left or joined by contextual shaping. -/
 @[expose] public def needsShaping (c : Char) : Bool :=
   let n := c.toNat
   (0x0590 ≤ n && n ≤ 0x08FF) || (0x0900 ≤ n && n ≤ 0x0DFF) || (0x0F00 ≤ n && n ≤ 0x109F) ||
     (0x1780 ≤ n && n ≤ 0x18AF) || (0xFB1D ≤ n && n ≤ 0xFDFF) || (0xFE70 ≤ n && n ≤ 0xFEFE) ||
     (0x10800 ≤ n && n ≤ 0x10FFF) || (0x1E800 ≤ n && n ≤ 0x1EFFF)
 
-/-- The loss of text the engine sets in logical order, unjoined, where the
-script asks for bidirectional ordering or contextual joining. -/
+/-- The loss of text set in logical order, unjoined, where its script needs shaping. -/
 @[expose] public def shapingLoss : Gfx.Loss := .value "text in a right-to-left or joined script"
 
-/-- A text element's runs: a new run wherever a character is positioned or
-its style changes, a new chunk wherever one has an absolute x. The
-current y is known exactly, since horizontal text never moves it by an
-advance; the current x is the pen's, which only shaping knows, so a run
-without an absolute x `follows`. -/
+/-- A text element's runs: a new run where a character is positioned or its style changes, a new
+chunk at each absolute x. -/
 public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array TChar) :
     Array (Node Run) × St := Id.run do
   let mut out : Array (Node Run) := #[]
@@ -1549,8 +1389,6 @@ public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array T
     let absX := if first then some (c.x.getD x0) else c.x
     let yy := (c.y.getD y) + c.dy
     y := yy
-    -- The run extends over the following characters that set alike and
-    -- carry no position of their own.
     let mut j := i + 1
     for _ in [0:cs.size] do
       if j ≥ cs.size then break
@@ -1565,17 +1403,14 @@ public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array T
     let xf : Affine := match absX with
       | some ax => ⟨1, 0, 0, -1, (ax + c.dx) * (pxSp : Rat), yy * (pxSp : Rat)⟩
       | none => ⟨1, 0, 0, -1, c.dx * (pxSp : Rat), yy * (pxSp : Rat)⟩
-    -- A wholly transparent fill paints nothing: the run keeps its place in
-    -- its chunk, its advance moving what follows, and paints no fill.
+    -- A transparent fill paints nothing; the run still advances what follows.
     let fill := p.fill.filter (·.alpha.val != 0)
     if text.any needsShaping then st := st.lose shapingLoss
     if s.visible && !text.isEmpty then
       out := out.push (.label { xf, follows, size := spOf s.fontSize, text
                                 face := { families := s.families, weight := s.weight, italic := s.italic }
                                 anchor := s.anchor, fill, stroke := p.stroke, lang := s.lang })
-      -- Engine-set text paints a solid fill only: a paint server's colours
-      -- and an outline stroke are features of the run the page would not
-      -- show, however they resolve.
+      -- Engine-set text paints a solid fill only.
       match s.fill with
       | .url _ _ => st := st.lose (.value "gradient on text")
       | .none | .color _ _ | .current => pure ()
@@ -1587,11 +1422,7 @@ public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array T
     i := j
   return (out, { st with text := true })
 
-/-! ### Elements -/
-
-/-- Do the element's conditional attributes hold (SVG 2 §5.8.4)? No
-extension is supported; a language list holds when one of its tags starts
-the document's. -/
+/-- Whether an element's conditional attributes hold (SVG 2 §5.8.4); no extension is supported. -/
 public def conditionsHold (env : Env) (attrs : Array Xml.Attr) : Bool :=
   let ext := match Xml.Attr.get? attrs "" "requiredExtensions" with
     | some _ => false
@@ -1603,19 +1434,14 @@ public def conditionsHold (env : Env) (attrs : Array Xml.Attr) : Bool :=
     | none => true
   ext && lang
 
-/-- An element's own transform. -/
 @[expose] public def ownTransform (attrs : Array Xml.Attr) : Affine :=
   ((Xml.Attr.get? attrs "" "transform").bind transform?).getD Affine.unit
 
-/-- Wrap what an element paints in the group its transform, clip and
-opacity make, if any. The clip stands in the element's frame after its
-transform, through its own frame map, inverted back for the content. -/
+/-- Wraps what an element paints in the group its transform, clip and opacity make, if any. -/
 public def wrap (xf : Affine) (clip : Option (Affine × Clip)) (alpha : Nat) (kids : Array (Node Run)) :
     Array (Node Run) :=
   let a := mulAlpha alpha 1000
-  -- A wholly transparent group paints nothing, and its text is none of the
-  -- figure's words: a reader extracting the page's text would read words
-  -- no viewer shows.
+  -- A transparent group paints nothing, and its text is none of the figure's words.
   if a.val == 0 then #[] else
   let inner : Array (Node Run) := match clip with
     | none => kids
@@ -1640,20 +1466,15 @@ public def wrap (xf : Affine) (clip : Option (Affine × Clip)) (alpha : Nat) (ki
 @[expose] public def animations : List String :=
   ["animate", "set", "animateTransform", "animateMotion", "animateColor", "discard", "mpath"]
 
-/-- Whether a tree moves: whether it holds an animation element. Read off
-the authored tree — a pose projected to its end holds none, and the figure
-still moves. -/
+/-- Whether a tree holds an animation element, read off the authored tree. -/
 @[expose] public def moves (t : Xml.Item) : Bool := (elemsOne #[] t).any (animations.contains ·.1)
 
-/-- The loss of a clip in object units on an element whose box the importer
-does not know before the figure is set: text, whose box only shaping
-measures, or a use whose content holds such an element. -/
+/-- The loss of a clip in object units on an element whose box is known only once the figure is set. -/
 @[expose] public def unmeasuredClip (what : String) : Gfx.Loss :=
   .value s!"clip-path in object units on {what}"
 
-/-- The geometry box of what a container painted, in its own frame: its
-marks' hull — or, where it sets text or uses a symbol, which only the
-finished figure measures, the loss of a clip in object units on it. -/
+/-- The geometry box of what a container painted, or the loss of an object-unit clip where it sets
+text or uses a symbol. -/
 public def bodyBox (body : Array (Node Run)) : Except Gfx.Loss (Option Box) :=
   let fig : Figure Run := { box := ((0, 0), (0, 0)), clipToBox := false, nodes := body, outlines := #[]
                             symbols := #[], rasters := #[], title := none, losses := #[] }
@@ -1663,13 +1484,9 @@ public def bodyBox (body : Array (Node Run)) : Except Gfx.Loss (Option Box) :=
 
 mutual
 
--- conserves: none — a measure: the geometry box of an element and its
--- descendants, which a clip in object units reads.
-/-- The geometry box an element adds to `acc`, in its parent's frame (SVG 2
-§8.10, without stroke, clip or filter): a shape's geometry and a container's
-children through its own transform, an image's viewport; what only the
-finished figure measures — text, a use, a nested viewport — is the loss of
-a clip in object units on it. -/
+-- conserves: none — a measure of an element's geometry box.
+/-- The geometry box an element adds to `acc` in its parent's frame (SVG 2 §8.10, without stroke,
+clip or filter). -/
 public def itemBoxOne (env : Env) (cx : Ctx) (acc : Except Gfx.Loss (Option Box)) :
     Xml.Item → Except Gfx.Loss (Option Box)
   | .text _ => acc
@@ -1712,9 +1529,7 @@ end
 
 mutual
 
--- conserves: none — an importer: what it keeps is the figure's marks, held
--- against an independent renderer by the oracles (`scripts/svg-diff.lean`).
-/-- One node of the tree onto `acc`, under `cx`. -/
+-- conserves: none — an importer.
 public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Node Run)) :
     Xml.Item → St × Array (Node Run)
   | .text _ => acc
@@ -1773,8 +1588,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
       let clip : Option Clip := if r.overflowVisible == some true then none
         else some { geom := .rect (spOf x) (spOf y) (spOf w) (spOf h), rule := .nonzero }
       let viewport := #[Node.group Affine.unit (clip.toArray) Alpha.opaque #[.group m #[] Alpha.opaque body]]
-      -- A nested viewport is transformable and clippable (SVG 2 §8.5): its
-      -- own transform and clip-path stand around it, its box the viewport's.
+      -- A nested viewport takes its own transform and clip-path (SVG 2 §8.5).
       let (clipR, st) := clipFor st fun _ => .ok (some ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))
       match clipR with
       | none => (st, out)
@@ -1867,8 +1681,6 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         if w ≤ 0 || h ≤ 0 || ras.pxW == 0 || ras.pxH == 0 || !s.visible then (st, out) else
         let par := ((Xml.Attr.get? attrs "" "preserveAspectRatio").map par?).getD Par.default
         let m := viewMap { x := 0, y := 0, w := ras.pxW, h := ras.pxH } par x y w h
-        -- The raster's unit square, bottom-left at its origin, onto the
-        -- image's pixel grid: y flips, one frame unit per pixel.
         let unitToPx : Affine := ⟨(pxSp : Rat) * ras.pxW / 65536, 0, 0, -(pxSp : Rat) * ras.pxH / 65536,
           0, (pxSp : Rat) * ras.pxH⟩
         let k := st.rasters.size
@@ -1903,8 +1715,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
           if p.fill.isNone && p.stroke.isNone then (st, out)
           else (st, out.append (wrap xf c r.opacity #[.draw g p.fill p.stroke]))
 
-/-- Each node of a list onto `acc`; under a `switch`, only the first
-whose conditions hold (SVG 2 §5.8.2). -/
+/-- Each node of a list onto `acc`; under a `switch`, only the first whose conditions hold (SVG 2 §5.8.2). -/
 public def walkList (env : Env) (bud : Budget) (cx : Ctx) (switch : Bool)
     (acc : St × Array (Node Run)) : List Xml.Item → St × Array (Node Run)
   | [] => acc
@@ -1919,13 +1730,10 @@ public def walkList (env : Env) (bud : Budget) (cx : Ctx) (switch : Bool)
 
 end
 
-/-! ## The figure -/
-
 mutual
 
 -- conserves: none — an index of a tree's ids, which the walk reads.
-/-- Every element with an id onto `m`, the first in document order winning
-(`getElementById`), with its ancestors. -/
+/-- Every element with an id onto `m`, with its ancestors; the first in document order wins. -/
 public def idsOne (m : Std.HashMap String Entry) (up : List Css.Subject)
     (upItems : List (String × Array Xml.Attr)) : Xml.Item → Std.HashMap String Entry
   | .text _ => m
@@ -1942,7 +1750,6 @@ public def idsList (m : Std.HashMap String Entry) (up : List Css.Subject)
 
 end
 
-/-- Every element of a tree with an id, with its ancestors. -/
 public def indexIds (t : Xml.Item) : Std.HashMap String Entry := idsOne {} [] [] t
 
 /-- Every `style` element's sheet, in document order, with what each said
@@ -1957,7 +1764,6 @@ public def sheetsOf (t : Xml.Item) : Array Css.Rule × Array String :=
 mutual
 
 -- conserves: none — a census of a tree's symbol uses.
-/-- The symbols a node uses, onto `acc`. -/
 public def usesOne (acc : Array Nat) : Node Run → Array Nat
   | .use k _ => acc.push k
   | .group _ _ _ kids => usesList acc kids.toList
@@ -1973,16 +1779,11 @@ public def usesList (acc : Array Nat) : List (Node Run) → Array Nat
 
 end
 
-/-- The symbols the requests painted, ordered so that each body uses only
-symbols before it (`Figure.wf`): a request is placed once every request its
-body uses is (Kahn's order, each use counted once, so a chain of nested uses
-costs its length and no more). A request left over stands in a reference
-cycle; its uses are dropped and the cycle named. Returns the order, old
-index to new. -/
+/-- The requests ordered so each body uses only symbols before it (Kahn's order), old index to new,
+and whether a cycle's uses were dropped. -/
 public def orderRequests (bodies : Array (Array (Node Run))) : Array (Option Nat) × Bool := Id.run do
   let n := bodies.size
   let deps := bodies.map fun b => (usesList #[] b.toList).filter (· < n)
-  -- How many uses of each body wait, and who waits on each body.
   let mut waiting : Array Nat := deps.map (·.size)
   let mut users : Array (Array Nat) := Array.replicate n #[]
   for h : k in [0:deps.size] do
@@ -2026,10 +1827,7 @@ public def renumberList (order : Array (Option Nat)) (acc : Array (Node Run)) :
 
 end
 
-/-- The root's size in pixels (SVG 2 §8.2's intrinsic size): its width and
-height in any absolute unit, `em`/`ex` against its font size; a percentage
-reads the viewBox (100% is the viewBox's own extent); without them, the
-viewBox at one pixel per user unit; without that, CSS's 300 × 150. -/
+/-- The root's intrinsic size in pixels (SVG 2 §8.2): its width and height, else its viewBox, else 300 × 150. -/
 public def rootSize (attrs : Array Xml.Attr) (em : Rat) : Rat × Rat :=
   let vb := (Xml.Attr.get? attrs "" "viewBox").bind viewBox?
   let dim (name : String) (fromVb : ViewBox → Rat) (dflt : Rat) : Rat :=
@@ -2052,18 +1850,15 @@ public def rootSize (attrs : Array Xml.Attr) (em : Rat) : Rat × Rat :=
   | some v, none, some _ => (h * v.w / v.h, h)
   | _, _, _ => (w, h)
 
-/-- Whether a title reads as words a person wrote to describe the figure:
-two words at least, no identifier's underscore, and not an exporter's own
-boilerplate — a tool's name, `Produced by …`, an artboard's name — which
-names no figure and must not silence the missing alternative. -/
+/-- Whether a title reads as words a person wrote: two words at least, no underscore, and no
+exporter boilerplate. -/
 @[expose] public def describes (t : String) : Bool :=
   let l := t.toLower
   ((t.splitOn " ").filter (!·.isEmpty)).length ≥ 2 && !t.contains '_' &&
     !(["produced by", "created with", "created by", "generated by", "made with", "gnuplot"].any
       fun (p : String) => l.startsWith p)
 
-/-- The words a figure's title gives it: the root's first `title` child's
-text, trimmed, where it describes the figure (`describes`). -/
+/-- The root's first `title` child's trimmed text, where it describes the figure. -/
 public def titleOf (t : Xml.Item) : Option String :=
   match t with
   | .elem _ _ _ kids =>
@@ -2084,7 +1879,6 @@ public structure Import where
   text : Bool
   deriving Inhabited
 
-/-- The root's attributes and children. -/
 @[expose] public def rootParts : Xml.Item → Array Xml.Attr × Array Xml.Item
   | .elem _ _ attrs kids => (attrs, kids)
   | .text _ => (#[], #[])
@@ -2095,18 +1889,15 @@ cascade. -/
   let (d, _) := declsOf rules (subjectOf "svg" attrs) [] attrs
   rootSize attrs (computeStyle d Style.initial { w := 300, h := 150 } attrs).style.fontSize
 
-/-- **The figure box an SVG tree reserves**: its root viewport, from the
-origin, in `Sp` (`rootSize`). -/
+/-- The figure box an SVG tree reserves: its root viewport from the origin, in `Sp`. -/
 @[expose] public def rootBox (t : Xml.Item) : Box :=
   let px := rootPx (Css.RuleIndex.ofRules (sheetsOf t).1) (rootParts t).1
   ((0, 0), (spOf px.1, spOf px.2))
 
 mutual
 
--- conserves: none — a measure: the nodes a list paints once its uses are
--- expanded, saturating at `cap`.
-/-- The nodes one node paints expanded onto `acc`, a use counting its
-symbol's expanded size (`sizes`), every sum held at `cap` at most. -/
+-- conserves: none — a measure of the nodes a list paints expanded.
+/-- The nodes one node paints expanded onto `acc`, each sum capped at `cap`. -/
 @[expose] public def expandedOne (sizes : Array Nat) (cap : Nat) (acc : Nat) : Node Run → Nat
   | .use k _ => min cap (acc + 1 + (sizes[k]?.getD 0))
   | .group _ _ _ kids => expandedList sizes cap (min cap (acc + 1)) kids.toList
@@ -2120,9 +1911,7 @@ end
 
 mutual
 
--- conserves: none — a rewriting that drops every use, which a figure over
--- its expansion budget cannot carry.
-/-- One node onto `acc`, its uses dropped. -/
+-- conserves: none — a rewriting that drops every use.
 @[expose] public def unuseOne (acc : Array (Node Run)) : Node Run → Array (Node Run)
   | .use _ _ => acc
   | .group xf clips alpha kids => acc.push (.group xf clips alpha (unuseList #[] kids.toList))
@@ -2138,22 +1927,19 @@ mutual
 
 end
 
-/-- The expanded size of a body, its symbols' sizes read in order — a use
-in symbol `j` names a lower symbol, so one pass sizes them all. -/
+/-- The expanded size of a body, its symbols sized in order in one pass. -/
 @[expose] public def expandedSize (symbols : Array (Array (Node Run))) (cap : Nat) (body : Array (Node Run)) : Nat :=
   let sizes := symbols.foldl (fun acc b => acc.push (expandedList acc cap 0 b.toList)) #[]
   expandedList sizes cap 0 body.toList
 
-/-- **A drawing's uses held to the expansion budget**: within it, the
-symbols and body as they stand; past it, the body with every use dropped and
-no symbol — what the drawing paints itself — and whether it was past. -/
+/-- A drawing's uses held to the expansion budget: past it, every use and symbol dropped, and
+whether it was past. -/
 @[expose] public def boundUses (bud : Budget) (symbols : Array (Array (Node Run)))
     (body : Array (Node Run)) : Array (Array (Node Run)) × Array (Node Run) × Bool :=
   if expandedSize symbols (bud.expanded + 1) body > bud.expanded then (#[], unuseList #[] body.toList, true)
   else (symbols, body, false)
 
-/-- **An accepted SVG tree as a figure** (`Svg.import_box_exact`: its box
-is the root viewport). -/
+/-- An accepted SVG tree as a figure whose box is its root viewport. -/
 public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Budget.standard) : Import :=
   let ids := indexIds t
   let (sheet, dropped) := sheetsOf t
@@ -2175,7 +1961,6 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
   let st0 := r.losses.foldl St.lose st0
   let cx : Ctx := { up := [rootSubject], parent := r.style, vp }
   let (st, body) := walkList env bud cx false (st0, #[]) rootKids.toList
-  -- The requests, read one by one; each may make more, under the budget.
   let (st, bodies) := Id.run do
     let mut st := st
     let mut bodies : Array (Array (Node Run)) := #[]
@@ -2187,10 +1972,7 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
       let (st', b) := if req.children then
           match e.item with
           | .elem _ name tattrs kids =>
-            -- The symbol or viewport a use instantiates stands in the use's
-            -- shadow tree (SVG 2 §5.6.3): its own declarations stand over the
-            -- use's style, its children inherit them, and its opacity holds
-            -- them. `display` does not apply to a symbol (§5.5).
+            -- The instantiated element stands in the use's shadow tree (SVG 2 §5.6.3).
             let subject := subjectOf name tattrs
             let (d, problems) := declsOf env.rules subject e.up tattrs
             let st := problems.foldl (fun s p => s.lose (.property s!"style: {p}")) st
@@ -2218,8 +2000,6 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
   let placed := (order.filterMap id).size
   let symbols := symbolsByNew.extract 0 placed
   let body := renumberList order #[] body.toList
-  -- Uses nested in uses multiply: past the budget the drawing keeps what
-  -- it paints itself and drops its uses, the drop named (`expand_between`).
   let bounded := boundUses bud symbols body
   let st := if bounded.2.2 then st.lose (.budget "expanded uses") else st
   let m := match vb with
@@ -2236,18 +2016,12 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
              symbols := bounded.1, rasters := st.rasters, title := titleOf t, losses := st.losses }
     notes := st.notes, animated := moves t, text := st.text }
 
-/-- The import's figure is a root group over the body its uses were held
-to, with the symbols held with them: what `expand_between` reads. -/
 public theorem importTree_shape (t : Xml.Item) (lang : String) (bud : Budget) :
     ∃ (symbols : Array (Array (Node Run))) (body : Array (Node Run)) (xf : Affine) (a : Alpha),
       (importTree t lang bud).fig.symbols = (boundUses bud symbols body).1 ∧
         (importTree t lang bud).fig.nodes = #[Node.group xf #[] a (boundUses bud symbols body).2.1] :=
   ⟨_, _, _, _, rfl, rfl⟩
 
-/-- **The import's box is the root viewport** (`_exact`): what layout
-reserves for an SVG is the size its root declares — its width and height,
-else its viewBox at one pixel per unit, else 300 × 150 — in `Sp`, from the
-origin, whatever the figure paints. -/
 public theorem import_box_exact (t : Xml.Item) (lang : String) (bud : Budget) :
     (importTree t lang bud).fig.box = rootBox t := by
   simp only [importTree, rootBox]
@@ -2260,7 +2034,7 @@ public inductive Verdict where
   | refused (r : Refused)
   deriving Inhabited
 
-/-- **SVG bytes as a figure**: judged (`judge`), then imported. -/
+/-- SVG bytes as a figure: judged, then imported. -/
 public def importBytes (bytes : ByteArray) (lang : String := "en") : Verdict :=
   match judge bytes with
   | .error r => .refused r

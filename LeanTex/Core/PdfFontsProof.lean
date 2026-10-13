@@ -9,11 +9,7 @@ import all LeanTex.Core.PdfCensus
 namespace LeanTex.Core.Pdf
 open PdfRead PdfCensus
 
-/-! Font embedding in the actual serialized artifact. These contracts
-follow the production reader from the file header through xref decoding,
-object recovery, font dictionaries, and descriptor references. They
-certify the structural embedding census, not the validity of an external
-font program or the semantics of a viewer. -/
+/-! Font embedding in the serialized artifact, read from the file header to descriptor references. -/
 
 private theorem byte_get (b : ByteArray) (n : Nat) : b[n]? = b.data[n]? := rfl
 
@@ -23,8 +19,6 @@ private theorem WritePlan.head_suffix (p : WritePlan) :
   rw [serialize, serializeList_bytes] at ht
   exact ⟨_, ht.trans (ByteArray.append_assoc ..)⟩
 
-/-- Both supported PDF versions retain their header in the complete
-emitted byte array, irrespective of the following object payloads. -/
 public theorem prepare_header_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
@@ -44,15 +38,6 @@ public theorem prepare_header_exact (geom : Layout.Geom) (fs : Font.FontSet)
   split <;> simp only [byte_get, ByteArray.data_append, Array.getElem?_append,
     String.toUTF8_eq_toByteArray] <;> rfl
 
-/-- The bounded replacement for the unrestricted font-embedding claim:
-the actual writer's bytes pass the actual reader's font census.
-
-The decidable premise checks source grammar, field widths, serialized
-offsets, and decoded payload sizes. Parser correctness, compression,
-allocation, object enumeration, and descriptor recovery are proved,
-not premises. As in the original obligation, the image store is empty:
-foreign PDF resource graphs have a separate acceptance boundary.
-Page streams, structure trees, and cached font programs remain arbitrary. -/
 public theorem write_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta)
     (outline : Array Layout.OutlineEntry)
@@ -81,9 +66,6 @@ public theorem write_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSe
   simp only [hh, ↓reduceIte, pure, bind, Except.bind, Except.pure,
     p.readback_exact h.1, he, Except.map, hcensus]
 
-/-- Successful checked production establishes the complete font census
-contract on the returned bytes. The publisher needs no separate storage
-or grammar premise; the API that produced the artifact checked both. -/
 public theorem writeChecked_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta)
     (outline : Array Layout.OutlineEntry)

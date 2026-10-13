@@ -5,36 +5,12 @@ public import LeanTex.Core.GfxAffine
 public import LeanTex.Core.GfxSteps
 public import LeanTex.Core.PdfOps
 
-/-!
-# A figure as PDF operators
-
-`emit` lowers a figure onto typed content operators under a page
-placement, and `readMarks` reads them back with PDF's own meaning — its
-initial graphics state (ISO 32000-2 §8.4.1: butt caps, miter joins, miter
-limit 10, solid lines, opaque), its `cm` composition, its clipping and its
-transparency groups (§11.6.6). `marks_projects` is the statement that the
-two meet at the figure's marks: what the PDF says is what the figure
-paints, so a state the writer elides because PDF starts there is a state
-the figure asked for.
-
-The placement is an isometry, applied to coordinates exactly; a group's
-transform is a `cm` whose matrix composes the placement in once, at the
-first transformed group, and the identity group is no operator at all — so
-a TikZ picture's operators are today's, byte for byte. A shading pattern's
-matrix maps into the default space of the stream that paints (§8.7.2), so
-it composes the placement and every `cm` since that stream began; the
-reader reads it against that space (`RState.base`), which is what
-`marks_projects` holds it to. A stamp's form is its outline and operator
-alone, painted with the state its instance sets, as a Type 3 `d1` glyph is.
--/
+/-! A figure as PDF content operators, and their reading back with PDF's meaning (ISO 32000-2 §8, §11.6.6). -/
 
 namespace LeanTex.Core.GfxPdf
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx LeanTex.Core.Pdf
 
-/-! ## Geometry as path operators -/
-
-/-- A segment's operator. -/
 @[expose] public def segOp : Seg → PathOp
   | .line p => .lineTo p.1 p.2
   | .cubic c1 c2 p => .curveTo c1.1 c1.2 c2.1 c2.2 p.1 p.2
@@ -82,8 +58,6 @@ else its subpaths. -/
   | [] => .path #[]
   | o :: rest => .path (subsOf #[] none (o :: rest))
 
-/-! ## Emission -/
-
 /-- What the writer interns for a figure, keyed by content. -/
 public inductive Request where
   | extG (fill stroke : Alpha)
@@ -92,10 +66,8 @@ public inductive Request where
   | raster (k : Nat)
   deriving Repr, BEq, Inhabited
 
-/-- Where emission stands: whether the coordinates it writes are still
-carried by the placement exactly (`iso`, at the root and under identity
-groups), and the map from the current frame's user space to the stream's
-default space, which a pattern's matrix composes (§8.7.2). -/
+/-- Where emission stands: whether coordinates are still placed exactly, and the map from user
+space to the stream's default space (§8.7.2). -/
 public structure Frame where
   iso : Option Iso
   stream : Affine
@@ -113,11 +85,8 @@ in where the coordinates were still carried by it. -/
   | none => fr
   | some m => { iso := none, stream := fr.stream.compose m }
 
-/-- A geometry's operators in the frame, carried by the placement when it
-still applies: a rectangle stays one `re` wherever the placement keeps its
-corner order — in a frame of its own, or translated — and a placement that
-flips carries the outline its stroke paints (`Geom.drawn`) point by point,
-so a dash pattern starts where the figure's does. -/
+/-- A geometry's operators in the frame: a rectangle stays one `re` where the placement keeps its
+corner order, else its drawn outline is placed point by point. -/
 @[expose] public def Frame.geomOps (fr : Frame) (g : Geom) (dashed : Bool) : List PathOp :=
   match fr.iso with
   | some t =>
@@ -127,10 +96,8 @@ so a dash pattern starts where the figure's does. -/
       | .ellipse _ _ _ _ | .path _ => GfxPdf.geomOps (g.normal.mapIso t)
   | none => GfxPdf.geomOps g
 
-/-- A paint as PDF paints it: a device colour, or a shading pattern whose
-matrix maps the gradient's frame to the stream's default space — the
-gradient's own frame map carried through the frame and composed onto the
-stream's (§8.7.2). -/
+/-- A paint as PDF paints it: a device colour, or a shading pattern whose matrix maps the
+gradient's frame to the stream's default space (§8.7.2). -/
 @[expose] public def pdfPaint (ix : Request → Nat) (fr : Frame) : Paint → PdfPaint
   | .solid c => .solid c
   | .gradient g =>
@@ -150,9 +117,7 @@ stream's (§8.7.2). -/
 /-- PDF's initial miter limit (§8.4.1, Table 51): never spelled. -/
 @[expose] public def pdfMiter : Rat := 10
 
-/-- The colour and line state in force (§8.4.1, Table 51), in the figure
-frame: what an operator that states none of its own — a stamp form's
-outline — paints with, and what a stroke leaves unstated reads as. -/
+/-- The colour and line state in force (§8.4.1, Table 51), in the figure frame. -/
 public structure Pen where
   fill : Paint
   stroke : Paint
@@ -170,9 +135,8 @@ joins at limit 10, solid. -/
   { fill := .solid { r := 0, g := 0, b := 0 }, stroke := .solid { r := 0, g := 0, b := 0 }
     width := 65536, cap := .butt, join := .miter, miter := pdfMiter, dash := #[], phase := 0 }
 
-/-- How far a stamp instance's stroke reaches past the outline, in the
-form's space — the margin the form's box needs — read as PDF reads the
-instance's stroke, its unstated parameters the initial ones. -/
+/-- How far a stamp instance's stroke reaches past the outline in the form's space, its unstated
+parameters the initial ones. -/
 @[expose] public def stampReach : Option PaintStroke → Sp
   | some s =>
     let k : Stroke :=
@@ -208,15 +172,13 @@ instance's stroke, its unstated parameters the initial ones. -/
   if fa = Alpha.opaque ∧ sa = Alpha.opaque then none
   else some { res := ix (.extG fa sa), fill := fa, stroke := sa }
 
-/-- A draw's one operator. -/
 @[expose] public def drawOp (ix : Request → Nat) (fr : Frame) (g : Geom) (fl : Option Fill)
     (st : Option Stroke) : ContentOp :=
   .paint (fl.map (paintFill ix fr)) (st.map (paintStroke ix fr))
     (extOf ix ((fl.map (·.alpha)).getD Alpha.opaque) ((st.map (·.alpha)).getD Alpha.opaque))
     (fr.geomOps g (st.any Stroke.dashed)).toArray
 
-/-- Whether a group changes nothing: identity frame, no clip, opaque. Its
-kids are written inline. -/
+/-- Whether a group changes nothing: identity frame, no clip, opaque. -/
 @[expose] public def plainGroup (xf : Affine) (clips : Array Clip) (alpha : Alpha) : Prop :=
   xf = Affine.unit ∧ clips = #[] ∧ alpha = Alpha.opaque
 
@@ -233,15 +195,11 @@ public instance (xf : Affine) (clips : Array Clip) (alpha : Alpha) :
 @[expose] public def clipOpsOf (fr : Frame) (clips : Array Clip) : Array (Array PathOp × Rule) :=
   clips.map fun c => ((fr.geomOps c.geom false).toArray, c.rule)
 
-/-- A form's frame: its own coordinates, its default space — where a
-symbol's body stands. -/
+/-- A form's frame: its own coordinates and default space. -/
 @[expose] public def symFrame : Frame := { iso := none, stream := Affine.unit }
 
-/-- Whether a stamp's paint can cross into its form as the state its
-instance sets: a device colour only. A pattern never crosses a form
-boundary — viewers read an inherited pattern's matrix against different
-streams' default spaces (MuPDF the one that set it, Poppler the one that
-paints) — so a stamp painted with a gradient paints inline instead. -/
+/-- Whether a stamp's paint can cross into its form as its instance's state: a device colour only,
+since viewers disagree on an inherited pattern's space. -/
 @[expose] public def inheritable : Paint → Bool
   | .solid _ => true
   | .gradient _ => false
@@ -255,8 +213,7 @@ no state of its own. -/
 mutual
 
 -- conserves: none — an emitter: what it keeps is `marks_projects`.
-/-- One node's operators. A `use` paints its symbol's form, whose body
-`bodyOps` already holds; a label is set by `labelOps`. -/
+/-- One node's operators; a `use` paints its symbol's form, a label is set by `labelOps`. -/
 @[expose] public def emitOne {L : Type} (ix : Request → Nat)
     (labelOps : Frame → L → Array ContentOp) (outlines : Array (Array Subpath))
     (bodyOps : Array (Array ContentOp)) (fr : Frame) (acc : Array ContentOp) :
@@ -307,27 +264,19 @@ mutual
 end
 
 
-/-- The forms' bodies, one per symbol: each expanded body (`Figure.bodies`)
-written in its own frame. -/
+/-- The forms' bodies, one per symbol, each written in its own frame. -/
 @[expose] public def bodyOpsOf {L : Type} (ix : Request → Nat)
     (labelOps : Frame → L → Array ContentOp) (fig : Figure L) : Array (Array ContentOp) :=
   fig.bodies.map fun b => emitList ix labelOps fig.outlines #[] symFrame #[] b.toList
 
-/-- **A figure as PDF operators** under the placement `place` (figure
-coordinates to the page's PDF space). -/
+/-- A figure as PDF operators under the placement `place` into the page's PDF space. -/
 @[expose] public def emit {L : Type} (ix : Request → Nat) (labelOps : Frame → L → Array ContentOp)
     (place : Iso) (fig : Figure L) : Array ContentOp :=
   emitList ix labelOps fig.outlines (bodyOpsOf ix labelOps fig)
     { iso := some place, stream := Affine.unit } #[] fig.nodes.toList
 
-/-! ## Reading back -/
-
-/-- What a reader of the operators carries: the placement to undo while the
-coordinates are still placed (`placed`), the figure-frame matrix of the
-current user space once a `cm` was read, the figure-frame matrix of the
-current stream's default space (`base`, what a pattern's matrix maps
-into), the clips and group alphas in force, the constant alphas an
-ExtGState set, and the colour and line state in force. -/
+/-- What a reader of the operators carries: the placement to undo, the current and base matrices,
+the clips and alphas in force, and the pen. -/
 public structure RState where
   place : Iso
   placed : Bool
@@ -349,9 +298,7 @@ undone while the coordinates are placed, else the `cm`s read. -/
 @[expose] public def RState.userCtm (rs : RState) : Affine :=
   if rs.placed then rs.place.inv.toAffine else rs.ctm
 
-/-- A path's geometry in the figure frame, as a stroke dashed or not paints
-it (`Geom.drawn`): read where it stands, then carried back from the
-placement — point by point, a rectangle that encloses area as one. -/
+/-- A path's geometry in the figure frame as a stroke dashed or not paints it, carried back from the placement. -/
 @[expose] public def RState.geom (rs : RState) (segs : Array PathOp) (dashed : Bool) : Geom :=
   let g := (geomOf segs.toList).drawn dashed
   if rs.placed then g.mapIso rs.place.inv else g
@@ -393,15 +340,12 @@ frame, the alphas its ExtGState sets. -/
 its default space the user space at its `Do`. -/
 @[expose] public def RState.enterForm (rs : RState) : RState := { rs with base := rs.userCtm }
 
-/-- The state a transparency group's form is read in (§11.6.6): a form's,
-and the alpha in force composites the group as a whole, so inside it alpha
-starts opaque. -/
+/-- The state a transparency group's form is read in (§11.6.6): its alpha composites the group, so
+inside it alpha starts opaque. -/
 @[expose] public def RState.enterTransparency (rs : RState) : RState :=
   { rs.enterForm with alphas := rs.alphas.push rs.ca, ca := Alpha.opaque, cA := Alpha.opaque }
 
-/-- The state a stamp's instance sets before its `Do`: its fill colour, its
-stroke's colour and the parameters it states, its alphas — each paint read
-where the instance sets it. -/
+/-- The state a stamp's instance sets before its `Do`: its paints, stated stroke parameters and alphas. -/
 @[expose] public def RState.setPen (rs : RState) (fp : Option PdfPaint) (sp : Option PaintStroke)
     (gs : Option ExtG) : RState :=
   { rs with
@@ -431,9 +375,7 @@ where the instance sets it. -/
 mutual
 
 -- conserves: none — a reader: `marks_projects` states what it reads.
-/-- One operator's marks, read with PDF's meaning. A page fill reads as the
-rectangle it fills; text, page images and placeholders are no figure ink;
-marked content reads through. -/
+/-- One operator's marks read with PDF's meaning; text, page images and placeholders are not figure ink. -/
 @[expose] public def readOne (rs : RState) (acc : Array Mark) : ContentOp → Array Mark
   | .paint fl st gs segs =>
     acc.push (.paint rs.frameCtm (rs.geom segs ((st.map (readStroke rs gs)).any Stroke.dashed))
@@ -467,25 +409,16 @@ the placement's image, nothing clipped, opaque, PDF's initial state. -/
   { place := place, placed := true, ctm := Affine.unit, base := place.inv.toAffine, clips := #[]
     alphas := #[], ca := Alpha.opaque, cA := Alpha.opaque, pen := Pen.initial }
 
-/-- **What a figure's operators paint**, read with PDF's meaning. -/
+/-- What a figure's operators paint, read with PDF's meaning. -/
 @[expose] public def readMarks (place : Iso) (ops : Array ContentOp) : Array Mark :=
   readList (RState.root place) #[] ops.toList
 
-/-! ## Where text paints -/
-
-/-- What the faces a stream's text sets tell a reader of where it paints:
-each glyph's `/W` width and the hull of its outline, both in millionths of
-the em and by font resource and glyph id — the advance the viewer's pen
-takes (§9.4.4), and the box the glyph's ink stands in about its origin. -/
+/-- Each glyph's `/W` width and outline hull, in millionths of the em, by font resource and glyph id. -/
 public structure GlyphInk where
   width : Nat → Nat → Int
   hull : Nat → Nat → Option Box
 
-/-- The text state a stream's text is read in (§9.3, §9.4.2): the font
-resource in force and its size as the file spells it, in thousandths of a
-point; the horizontal scale, per mille; and inside a text object the text
-matrix's origin as spelled, thousandths of a point, and the pen's advance
-since it, millionths of the size. -/
+/-- The text state a stream's text is read in (§9.3, §9.4.2), in the file's own units. -/
 public structure TextPen where
   font : Option Nat
   sm : Int
@@ -499,10 +432,7 @@ public structure TextPen where
 @[expose] public def TextPen.initial : TextPen :=
   { font := none, sm := 0, tz := 1000, xm := 0, ym := 0, adv := 0 }
 
-/-- A glyph's ink box in text space, outward to whole `Sp`: its hull about
-the pen, at the size and scale in force — `x = (xm + (adv + μ)·sm·tz/10⁹)`
-thousandths of a point and `y = (ym + μ·sm/10⁶)`, the file's own spellings
-throughout, in integers. -/
+/-- A glyph's ink box in text space at the size and scale in force, outward to whole `Sp`. -/
 @[expose] public def TextPen.glyphBox (p : TextPen) (h : Box) : Box :=
   let xNum (μ : Int) : Int := (p.xm * 1000000000 + (p.adv + μ) * p.sm * p.tz) * 65536
   let yNum (μ : Int) : Int := (p.ym * 1000000 + μ * p.sm) * 65536
@@ -511,10 +441,8 @@ throughout, in integers. -/
   ((lo (xNum h.1.1) (xNum h.2.1) 1000000000000, lo (yNum h.1.2) (yNum h.2.2) 1000000000),
    (hi (xNum h.1.1) (xNum h.2.1) 1000000000000, hi (yNum h.1.2) (yNum h.2.2) 1000000000))
 
-/-- One glyph of a `TJ` array: the number set before it moves the pen back
-`1000 n` millionths, the glyph stands at the pen — its box joins the text
-object's — and advances it by its width. A glyph with no font in force
-paints nothing a reader can place. -/
+/-- One glyph of a `TJ` array: moved back by the number before it, its box joined, the pen
+advanced by its width. -/
 @[expose] public def TextPen.glyphStep (gi : GlyphInk) (st : TextPen × Option Box)
     (n : Int) (g : Nat) : TextPen × Option Box :=
   let p := { st.1 with adv := st.1.adv - 1000 * n }
@@ -536,8 +464,7 @@ paints nothing a reader can place. -/
 
 mutual
 
--- conserves: none — a measurement: where a text object's glyphs paint,
--- which a form's box covers (`formBox_covers`).
+-- conserves: none — a measurement of where a text object's glyphs paint.
 /-- One text operator's glyphs onto the text object's box, in text space. -/
 @[expose] public def TextPen.opOne (gi : GlyphInk) (st : TextPen × Option Box) :
     TextOp → TextPen × Option Box
@@ -555,9 +482,7 @@ mutual
 
 end
 
-/-- A text object's glyphs as one box in the reader's frame: the hull of
-every glyph's box in text space, imaged through the user space it stands
-in — a box's image holds the images of the boxes inside it. -/
+/-- A text object's glyphs as one box in the reader's frame. -/
 @[expose] public def textObjectInk (gi : GlyphInk) (rs : RState) (st : TextPen × Array Box)
     (tops : Array TextOp) : TextPen × Array Box :=
   let r := TextPen.opList gi ({ st.1 with xm := 0, ym := 0, adv := 0 }, none) tops.toList
@@ -567,12 +492,9 @@ in — a box's image holds the images of the boxes inside it. -/
 
 mutual
 
--- conserves: none — a measurement: the boxes a stream's text paints in
--- the reader's frame, which a form's box covers (`formBox_covers`).
-/-- One operator's text ink onto the boxes. A text object starts its text
-matrix at the origin and keeps the text state (§9.3.1); a saved state —
-a group's `q … Q`, a form's implicit pair (§8.10.1) — gives the state back
-when it closes, and a marked sequence keeps it. -/
+-- conserves: none — a measurement of the boxes a stream's text paints.
+/-- One operator's text ink onto the boxes; a saved state gives the text state back when it
+closes (§8.10.1, §9.3.1). -/
 @[expose] public def textInkOne (gi : GlyphInk) (rs : RState) (st : TextPen × Array Box) :
     ContentOp → TextPen × Array Box
   | .text tops => textObjectInk gi rs st tops
@@ -618,27 +540,18 @@ object's glyphs' hull, imaged. -/
 @[expose] public def formText (gi : GlyphInk) (body : Array ContentOp) : Array Box :=
   (textInkList gi RState.form (TextPen.initial, #[]) body.toList).2
 
-/-- **A form's box**, read in its own space: the hull of what its body
-paints — every mark's box (`markBoxOf`) and every glyph its text
-sets (`formText`). -/
+/-- A form's box in its own space: the hull of every mark's box and every glyph its text sets. -/
 @[expose] public def formBox (gi : GlyphInk) (kind : FormKind) (body : Array ContentOp) :
     Option Box :=
   Box.joinOpt (hullOf (markBoxOf kind) (readList RState.form #[] body.toList))
     (hullOf some (formText gi body))
 
-/-- **A form's box holds everything its body paints** (`_covers`): each
-mark, and each glyph its text sets — a form's box clips (§8.10.1), so a
-glyph outside it is a glyph no viewer shows. The invariant whose absence
-let a translucent label and the text a `use` paints vanish from the page
-while the text layer still held them. -/
 public theorem formBox_covers (gi : GlyphInk) (kind : FormKind) (body : Array ContentOp) :
     (∀ mk ∈ readList RState.form #[] body.toList, Box.leOpt (markBoxOf kind mk) (formBox gi kind body)) ∧
     (∀ b ∈ formText gi body, Box.leOpt (some b) (formBox gi kind body)) := by
   refine ⟨fun mk h => ?_, fun b h => ?_⟩
   · exact Box.leOpt_trans (hullOf_mem _ _ mk (by simpa using h)) (Box.leOpt_joinOpt_left _ _)
   · exact Box.leOpt_trans (hullOf_mem some _ b h) (Box.leOpt_joinOpt_right _ _)
-
-/-! ## The reading is the figure's -/
 
 private theorem subsOf_segs (done : Array Subpath) (st : Pt) (acc : Array Seg) (c : Bool)
     (segs : List Seg) (tail : List PathOp) :
@@ -674,7 +587,6 @@ private theorem subsOf_flatMap (subs : List Subpath) (done : Array Subpath)
       rw [ih]
       simp [flush]
 
-/-- A path's operators read back to it (`_id`). -/
 private theorem geomOf_path_id (subs : Array Subpath) :
     geomOf (geomOps (.path subs)) = .path subs := by
   rcases subs with ⟨l⟩
@@ -693,8 +605,6 @@ private theorem geomOf_path_id (subs : Array Subpath) :
     simp only [geomOf]
     rw [← ht, key]
 
-/-- **What the operators of a normalized geometry draw is that geometry**
-(`_id`): one `re` is its rectangle, moves and segments their subpaths. -/
 public theorem geomOf_geomOps_id (g : Geom) : geomOf (geomOps g.normal) = g.normal := by
   cases g with
   | rect x y w h =>
@@ -719,7 +629,6 @@ private theorem normal_rect_neg {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
   · next hn => exact absurd hn hp
   · rfl
 
-/-- A geometry's own operators read back to the outline a stroke paints. -/
 private theorem geomOf_geomOps_drawn (g : Geom) (d : Bool) :
     (geomOf (geomOps g)).drawn d = g.drawn d := by
   cases g with
@@ -731,7 +640,6 @@ private theorem geomOf_geomOps_drawn (g : Geom) (d : Bool) :
     cases d <;> rfl
   | path subs => rw [geomOf_path_id]
 
-/-- The outline a stroke paints is its own outline. -/
 private theorem drawn_drawn (g : Geom) (d : Bool) : (g.drawn d).drawn d = g.drawn d := by
   cases g with
   | rect x y w h =>
@@ -745,8 +653,6 @@ private theorem drawn_drawn (g : Geom) (d : Bool) : (g.drawn d).drawn d = g.draw
   | ellipse cx cy rx ry => cases d <;> rfl
   | path subs => cases d <;> rfl
 
-/-- A placement keeps the outline a stroke paints such: a rectangle that
-encloses area keeps its extents, a path stays a path. -/
 private theorem drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     ((g.drawn d).mapIso t).drawn d = (g.drawn d).mapIso t := by
   cases g with
@@ -763,7 +669,6 @@ private theorem drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
   | ellipse cx cy rx ry => cases d <;> rfl
   | path subs => cases d <;> rfl
 
-/-- A placed outline's operators read back placed. -/
 private theorem geomOf_drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     geomOf (geomOps ((g.drawn d).mapIso t)) = (g.drawn d).mapIso t := by
   cases g with
@@ -778,15 +683,12 @@ private theorem geomOf_drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
   | ellipse cx cy rx ry => cases d <;> exact geomOf_path_id _
   | path subs => cases d <;> exact geomOf_path_id _
 
-/-- A path placed and drawn is the placed path, which the inverse placement
-carries back. -/
 private theorem drawn_mapIso_path (t : Iso) (subs : Array Subpath) (d : Bool) :
     (((Geom.path subs).mapIso t).drawn d).mapIso t.inv = .path subs := by
   have h : ((Geom.path subs).mapIso t).drawn d = (Geom.path subs).mapIso t := by
     cases d <;> rfl
   rw [h, Geom.mapIso_inv_id]
 
-/-- A rectangle's outline translated is the translated rectangle's. -/
 private theorem rectPath_translate (t : Iso) (ht : t.flipY = false) (x y w h : Sp) :
     (Kit.rectPath x y w h).map t.apply = Kit.rectPath (x + t.dx) (y + t.dy) w h := by
   obtain ⟨fl, dx, dy⟩ := t
@@ -796,8 +698,6 @@ private theorem rectPath_translate (t : Iso) (ht : t.flipY = false) (x y w h : S
     List.map_toArray, List.map_cons, List.map_nil, Seg.map, Subpath.mk.injEq, true_and, and_true]
   rw [Int.add_right_comm x w dx, Int.add_right_comm y h dy]
 
-/-- A translated rectangle's operators read back, carried back by the
-translation, as the outline its stroke paints. -/
 private theorem rect_translate_drawn (t : Iso) (ht : t.flipY = false) (x y w h : Sp) (d : Bool) :
     ((geomOf (geomOps ((Geom.rect x y w h).mapIso t))).drawn d).mapIso t.inv =
       (Geom.rect x y w h).drawn d := by
@@ -870,11 +770,6 @@ private theorem emitList_acc {L : Type} (ix : Request → Nat) (labelOps : Frame
 end
 
 
-/-- The model's reading context, the emitter's frame and the PDF reader's
-state, at one point of the tree: the coordinates are placed on both sides
-or on neither, the frames agree, the stream's default space composed with
-the frame's stream map is the user space, the clips and group alphas agree,
-no ExtGState is in force, and the state in force is PDF's initial one. -/
 private structure Agrees (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState) : Prop where
   hplace : rs.place = place
   hiso : fr.iso = if rs.placed then some place else none
@@ -886,8 +781,6 @@ private structure Agrees (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState) : P
   hcA : rs.cA = Alpha.opaque
   hpen : rs.pen = Pen.initial
 
-/-- Where the frames agree on placement, a geometry's operators read back to
-the outline its stroke paints (`Geom.drawn`). -/
 private theorem geom_agree (place : Iso) (fr : Frame) (rs : RState) (hp : rs.place = place)
     (hi : fr.iso = if rs.placed then some place else none) (g : Geom) (d : Bool) :
     rs.geom (fr.geomOps g d).toArray d = g.drawn d := by
@@ -915,15 +808,12 @@ private theorem geom_agree (place : Iso) (fr : Frame) (rs : RState) (hp : rs.pla
         rw [hn, show (Geom.path subs).normal = .path subs from rfl, drawn_mapIso_path,
           show (Geom.path subs).drawn d = .path subs by cases d <;> rfl]
 
-/-- A read `cm` composes onto the user space's frame. -/
 private theorem cm_some_frameCtm (rs : RState) (m : Affine) :
     (rs.cm (some m)).frameCtm = rs.userCtm.compose m := rfl
 
 private theorem cm_some_userCtm (rs : RState) (m : Affine) :
     (rs.cm (some m)).userCtm = rs.userCtm.compose m := rfl
 
-/-- A `cm` lifted from the frame enters the model's frame: the placement it
-composes in is undone by the reader's inverse, exactly. -/
 private theorem cm_lift_frameCtm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) :
     (rs.cm (some (fr.lift xf))).frameCtm = cx.ctm.compose xf := by
@@ -940,9 +830,6 @@ private theorem cm_lift_frameCtm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RSt
     simp only [RState.userCtm, hpl, ↓reduceIte, Frame.lift, hi, h.hplace, ← hc]
     rw [← Affine.compose_assoc_exact, Iso.inv_compose_unit_id, (Affine.compose_unit_id xf).2]
 
-/-- A paint as the emitter spells it reads back as the paint under the
-model's frame: the pattern's matrix, read against the stream's default
-space, carries the gradient's own frame map to the figure's. -/
 private theorem readPaint_pdfPaint (ix : Request → Nat) (place : Iso) (cx : Ctx) (fr : Frame)
     (rs : RState) (h : Agrees place cx fr rs) (p : Paint) :
     readPaint rs (pdfPaint ix fr p) = p.under cx.ctm := by
@@ -975,8 +862,6 @@ private theorem readFill_paintFill (ix : Request → Nat) (place : Iso) (cx : Ct
     extOf_fill ix a sa rs.ca h.hca, Fill.under]
   cases r <;> rfl
 
-/-- What PDF starts with and a stroke leaves unstated: its cap, join, miter
-limit and dash read back as the stroke's. -/
 private theorem stroke_defaults (cap : Cap) (join : Join) (ml : Rat) (dash : Array Sp) (ph : Sp) :
     (capOpt cap).getD Pen.initial.cap = cap ∧ (joinOpt join).getD Pen.initial.join = join ∧
       (miterOpt ml).getD Pen.initial.miter = ml ∧
@@ -998,7 +883,6 @@ private theorem readStroke_paintStroke (ix : Request → Nat) (place : Iso) (cx 
   simp only [readStroke, paintStroke, readPaint_pdfPaint ix place cx fr rs h,
     extOf_stroke ix fa a rs.cA h.hcA, h.hpen, hc, hj, hm, hd, hp, Stroke.under]
 
-/-- A draw reads back as its mark. -/
 private theorem read_draw (ix : Request → Nat) (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (acc : Array Mark) (g : Geom) (fl : Option Fill)
     (st : Option Stroke) :
@@ -1024,7 +908,6 @@ private theorem read_draw (ix : Request → Nat) (place : Iso) (cx : Ctx) (fr : 
     simp only [Option.map_some]
     exact congrArg some (readFill_paintFill ix place cx fr rs h f _)
 
-/-- A group's `cm`, written or not, enters the model's frame. -/
 private theorem cm_group_frameCtm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) :
     (rs.cm (groupCm fr xf)).frameCtm = cx.ctm.compose xf := by
@@ -1052,8 +935,6 @@ private theorem cm_keeps (rs : RState) (m : Option Affine) :
       (rs.cm m).cA = rs.cA ∧ (rs.cm m).base = rs.base ∧ (rs.cm m).pen = rs.pen := by
   cases m <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- A `cm`, written or not, keeps the stream's default space composed with
-the frame's stream map equal to the user space. -/
 private theorem cm_base (fr : Frame) (rs : RState) (hb : rs.base.compose fr.stream = rs.userCtm)
     (m : Option Affine) : (rs.cm m).base.compose (fr.enter m).stream = (rs.cm m).userCtm := by
   cases m with
@@ -1062,13 +943,10 @@ private theorem cm_base (fr : Frame) (rs : RState) (hb : rs.base.compose fr.stre
     show rs.base.compose (fr.stream.compose mm) = rs.userCtm.compose mm
     rw [← Affine.compose_assoc_exact, hb]
 
-/-- A form's stream starts at its own default space. -/
 private theorem enterForm_base (rs : RState) :
     rs.enterForm.base.compose symFrame.stream = rs.enterForm.userCtm :=
   (Affine.compose_unit_id _).1
 
-/-- The clips a group's operators declare read back as the model's: each in
-the child frame, its geometry normalized. -/
 private theorem clips_agree (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) (m : Option Affine)
     (hm : (rs.cm m).frameCtm = cx.ctm.compose xf) (clips : Array Clip) :
@@ -1082,8 +960,6 @@ private theorem clips_agree (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     geom_agree place (fr.enter m) (rs.cm m) (by rw [cm_place, h.hplace]) (cm_iso place fr rs h.hiso _)
       c.geom false, Geom.drawn, Bool.false_eq_true, ↓reduceIte]
 
-/-- After an opaque group's `cm` — written or not, entering the model's
-frame — and its clips, the three sides agree. -/
 private theorem agrees_cm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) (m : Option Affine)
     (hm : (rs.cm m).frameCtm = cx.ctm.compose xf) (clips : Array Clip) :
@@ -1105,9 +981,6 @@ private theorem agrees_cm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
   hcA := by show (rs.cm _).cA = _; rw [(cm_keeps rs _).2.2.2.1, h.hcA]
   hpen := by show (rs.cm _).pen = _; rw [(cm_keeps rs _).2.2.2.2.2, h.hpen]
 
-/-- Inside an alpha group's transparency form, the three sides agree: the
-group alpha is one more isolated group, alpha starts opaque inside, and the
-form's default space is the user space at its `Do`. -/
 private theorem agrees_alphaGroup (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) (clips : Array Clip) (alpha : Alpha) (r : Nat)
     (ha : ¬alpha = Alpha.opaque) :
@@ -1132,7 +1005,6 @@ private theorem agrees_alphaGroup (place : Iso) (cx : Ctx) (fr : Frame) (rs : RS
   hcA := rfl
   hpen := by show (rs.cm _).pen = _; rw [(cm_keeps rs _).2.2.2.2.2, h.hpen]
 
-/-- A plain group changes nothing the three sides read. -/
 private theorem agrees_plain (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) : Agrees place (cx.enter Affine.unit #[] Alpha.opaque) fr rs where
   hplace := h.hplace
@@ -1145,8 +1017,6 @@ private theorem agrees_plain (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
   hcA := h.hcA
   hpen := h.hpen
 
-/-- Inside a symbol's form, painted under a lifted `cm` with no clip and no
-alpha, the three sides agree: the form's frame is its own default space. -/
 private theorem agrees_form (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) :
     Agrees place (cx.enter xf #[] Alpha.opaque) symFrame (rs.cm (some (fr.lift xf))).enterForm where
@@ -1162,8 +1032,6 @@ private theorem agrees_form (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
   hcA := by simp [RState.enterForm, RState.cm, h.hcA]
   hpen := by simp [RState.enterForm, RState.cm, h.hpen]
 
-/-- A solid stamp's form reads back as its mark: its outline under the
-instance's lifted `cm`, painted with the state the instance set. -/
 private theorem read_stamp_form (ix : Request → Nat) (place : Iso) (cx : Ctx) (fr : Frame)
     (rs : RState) (h : Agrees place cx fr rs) (acc : Array Mark) (subs : Array Subpath) (xf : Affine)
     (fl : Option Fill) (st : Option Stroke) (hfl : fl.all (inheritable ·.paint) = true)
@@ -1227,8 +1095,6 @@ private theorem read_stamp_form (ix : Request → Nat) (place : Iso) (cx : Ctx) 
           Option.bind_some, Stroke.under, Paint.under, paintStroke, pdfPaint, readPaint, h.hpen, hc,
           hj, hm, hd, hph, hgS]
 
-/-- A stamp painted inline — a gradient's — reads back as its mark: one
-saved state under its lifted `cm`, the outline drawn in its frame. -/
 private theorem read_stamp_inline (ix : Request → Nat) (place : Iso) (cx : Ctx) (fr : Frame)
     (rs : RState) (h : Agrees place cx fr rs) (acc : Array Mark) (subs : Array Subpath) (xf : Affine)
     (fl : Option Fill) (st : Option Stroke) :
@@ -1244,8 +1110,6 @@ private theorem read_stamp_inline (ix : Request → Nat) (place : Iso) (cx : Ctx
 
 mutual
 
-/-- **A use-free tree's operators read back as its marks** — the induction
-every form body rests on. -/
 private theorem read_emitOne_free {L : Type} (ix : Request → Nat)
     (labelOps : Frame → L → Array ContentOp)
     (hl : ∀ fr l rs acc, readList rs acc (labelOps fr l).toList = acc)
@@ -1407,15 +1271,6 @@ private theorem read_emitList {L : Type} (ix : Request → Nat)
 
 end
 
-/-- **What the PDF says is what the figure paints** (`_projects`): the
-operators `emit` writes, read with PDF's meaning — its initial graphics
-state, its `cm` composition, a pattern's matrix against the default space of
-the stream that paints, its clips, its transparency groups, and a stamp's
-form painting with the state its instance set — are the figure's marks, for
-every figure, placement and resource naming, given a label setter that adds
-no ink. Half of `backend_marks_agree`: the state the writer elides because
-PDF starts there is the state the figure asked for, and a gradient lands in
-the frame the figure placed it in. -/
 public theorem marks_projects {L : Type} (ix : Request → Nat)
     (labelOps : Frame → L → Array ContentOp)
     (hl : ∀ fr l rs acc, readList rs acc (labelOps fr l).toList = acc)
@@ -1425,11 +1280,7 @@ public theorem marks_projects {L : Type} (ix : Request → Nat)
   exact read_emitList ix labelOps hl fig place fig.nodes.toList Ctx.root _ (RState.root place) #[]
     (agrees_root place)
 
-/-! ## Labels among the ink -/
-
-/-- A label's text as the operators a figure sets it with: a text object in
-a saved graphics state of its own, so its font, colour and text state end
-with it (ISO 32000-2 §8.4.2, §9.3.1: text state is graphics state). -/
+/-- A label's text object in a saved graphics state of its own (ISO 32000-2 §8.4.2, §9.3.1). -/
 @[expose] public def textGroup (t : Array TextOp) : ContentOp := .group none none #[] #[.text t]
 
 /-- The text a label's operators set, when an operator is one: a saved state
@@ -1442,7 +1293,6 @@ around one text object and nothing else. -/
   | .fill .. | .paint .. | .text _ | .image .. | .imageMissing .. | .marked .. | .shade ..
   | .outline .. | .xobject .. => none
 
-/-- Whether an operator is a text object. -/
 @[expose] public def isTextOp : ContentOp → Bool
   | .text _ => true
   | .fill .. | .paint .. | .group .. | .image .. | .imageMissing .. | .marked .. | .shade ..
@@ -1455,8 +1305,7 @@ other operator the marks it paints, read with PDF's meaning at the page. -/
   | some t => #[.label t]
   | none => (readOne (RState.root place) #[] o).map .mark
 
-/-- **What a figure's operators paint, its labels among its ink**, read
-with PDF's meaning: each top-level operator's steps, in stream order. -/
+/-- What a figure's operators paint, its labels among its ink, in stream order. -/
 @[expose] public def readSteps (place : Iso) (ops : Array ContentOp) :
     Array (Step (Array TextOp)) :=
   ops.foldl (fun acc o => acc ++ readStep place o) #[]
@@ -1513,7 +1362,6 @@ private theorem readList_acc (rs : RState) (acc : Array Mark) :
 
 end
 
-/-- The marks a list of operators reads to, operator by operator. -/
 private theorem readList_flatMap (rs : RState) (l : List ContentOp) :
     readList rs #[] l = (l.flatMap fun o => (readOne rs #[] o).toList).toArray := by
   induction l with
@@ -1556,8 +1404,6 @@ private theorem textGroup?_of_body (m : Option Affine) (gs : Option ExtG)
         simp [isTextOp] at this
       | fill | paint | group | image | imageMissing | marked | shade | outline | xobject => rfl
 
-/-- What a label-free node writes: no text object and no label's text group,
-at the top of what it writes. -/
 private def InkOps (ops : Array ContentOp) : Prop :=
   ∀ o ∈ ops, isTextOp o = false ∧ textGroup? o = none
 
@@ -1634,8 +1480,6 @@ private theorem emitList_inkOps {L : Type} (ix : Request → Nat)
 
 end
 
-/-- A label-free node's operators, read operator by operator at the page,
-are its marks. -/
 private theorem readSteps_ink {L : Type} (ix : Request → Nat)
     (labelOps : Frame → L → Array ContentOp)
     (hl : ∀ fr l rs acc, readList rs acc (labelOps fr l).toList = acc)
@@ -1664,12 +1508,6 @@ private theorem marks_labelsBy {L α : Type} (f : L → Array α) (ms : List Mar
     rw [List.map_cons, List.flatMap_cons, ih]
     rfl
 
-/-- **What the PDF says, its labels among its ink, is what the figure
-paints** (`_projects`): for a figure whose labels stand at its top level,
-the operators `emit` writes — each label set as its text group, or as
-nothing where it has no text — read with PDF's meaning, operator by
-operator, are the figure's steps: its marks as `marks_projects` reads them,
-each label where its node stands. -/
 public theorem steps_projects {L : Type} (ix : Request → Nat) (tx : L → Option (Array TextOp))
     (place : Iso) (fig : Figure L) (h : fig.labelsTop = true) :
     readSteps place (emit ix (fun _ l => (tx l).toArray.map textGroup) place fig) =

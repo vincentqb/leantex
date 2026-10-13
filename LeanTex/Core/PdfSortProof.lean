@@ -6,9 +6,7 @@ import Init.Omega
 
 namespace LeanTex.Core.PdfRead
 
-/-! Sorting the xref keys preserves exactly the keys the reader visits.
-This proves the permutation invariant of the standard library's actual
-quicksort, including its partition loop; no ordering assumption is needed. -/
+/-! Sorting the xref keys preserves exactly the keys the reader visits. -/
 
 private theorem partition_loop_perm {α : Type u} {n : Nat}
     (lt : α → α → Bool) (lo hi : Nat) (hhi : hi < n) (pivot : α)
@@ -54,8 +52,6 @@ private theorem sort_perm {α : Type u} (lt : α → α → Bool) {n : Nat}
   | case3 as lo hi w hlo hhi h =>
     rw [Array.qsort.sort, dite_eq_right h]
 
-/-- The actual sort used by object enumeration neither loses nor invents
-xref keys, for any comparison and any subarray bounds. -/
 public theorem qsort_perm_exact {α : Type u} (as : Array α)
     (lt : α → α → Bool) (lo := 0) (hi := as.size - 1) :
     (as.qsort lt lo hi).Perm as := by

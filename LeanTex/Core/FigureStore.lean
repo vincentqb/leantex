@@ -8,35 +8,19 @@ public import LeanTex.Core.LayoutFigure
 import LeanTex.Core.FigureOutline
 public import LeanTex.Core.FigureLoss
 
-/-!
-# The store a document's drawn figures ride in
-
-The driver's SVG route answers each image request with the figure the
-engine draws, if it draws one, and whether its source moves. Two steps put
-those answers where layout and both backends read them, and every caller —
-the driver, the tiers, the suite — takes these two, never a copy of them:
-`attach` hangs each answer on its store entry, and `settle` sets every
-drawn figure's text in the document's settled faces and gives a moving
-figure its still face.
--/
+/-! Hangs the SVG route's drawn figures on the image store and shapes them in the settled faces. -/
 
 namespace LeanTex.Core.FigureStore
 
 open LeanTex.Core
 
-/-- One request's answer from the SVG route: the figure the engine draws —
-none where the converter drew it, or nothing did — whether the source
-moves, and the figure's rasters planned, one per raster in order. -/
+/-- The SVG route's answer for one request: the engine's figure, whether it moves, and its raster plans. -/
 public structure Drawn where
   vector : Option (Gfx.Figure Gfx.Run)
   moving : Bool
   plans : Array Image.Plan
 
-/-- **A drawn figure's rasters, planned**: each raster's bytes through the
-planner every included PNG and JPEG takes (`Image.probe`, `Image.plan`),
-so the PDF embeds a figure's raster as it embeds a page's. A raster the
-planner refuses leaves the figure without its rasters, the drop one of its
-named losses (`FigureLoss.unrastered`). -/
+/-- Plans every raster of a figure, or drops all its rasters when the planner refuses one. -/
 public def rasterPlans (params : Image.PlanParams) (fig : Gfx.Figure Gfx.Run) :
     Gfx.Figure Gfx.Run × Array Image.Plan :=
   let plans := fig.rasters.map fun r => Image.probe r.bytes >>= Image.plan params
@@ -56,10 +40,6 @@ private theorem filterMap_ok_length {α : Type} (l : List (Except String α))
       show (a :: List.filterMap (fun x => x.toOption) rest).length = (Except.ok a :: rest).length
       simp only [List.length_cons, hr]
 
-/-- **One plan per raster** (`_exact`): whatever the planner answers, the
-plans `rasterPlans` returns number the rasters of the figure it returns —
-every raster planned, or no raster and no plan — so each raster a store
-entry names has its own (`slotRasters`). -/
 public theorem rasterPlans_exact (params : Image.PlanParams) (fig : Gfx.Figure Gfx.Run) :
     (rasterPlans params fig).2.size = (rasterPlans params fig).1.rasters.size := by
   unfold rasterPlans
@@ -71,10 +51,7 @@ public theorem rasterPlans_exact (params : Image.PlanParams) (fig : Gfx.Figure G
       Array.length_toList, Array.size_map]
   · simp only [FigureLoss.unrastered_rasters, Array.size_empty]
 
-/-- A drawn figure's rasters as entries of their own after `entries`: one
-per plan, owned by the figure's entry `k`, each smoothed where its raster
-may be, and the figure's entry naming them. A figure without rasters, or
-one that did not load, adds none. -/
+/-- Appends one entry per raster plan, owned by entry `k`, and records their slots on it. -/
 public def slotRasters (entries : Array Image.Loaded) (k : Nat) (plans : Array Image.Plan) :
     Array Image.Loaded :=
   match entries[k]? with
@@ -88,11 +65,7 @@ public def slotRasters (entries : Array Image.Loaded) (k : Nat) (plans : Array I
     (entries.modify k fun e => { e with rasterSlots := slots }) ++ owned
   | none => entries
 
-/-- **Each request's drawn figure on its entry**: an entry that loaded is
-the figure's, an entry that did not keeps none, so layout sizes a drawn
-figure by its own box and both backends draw the one value. A drawn
-figure's rasters follow every request's entry, each an entry of its own
-(`slotRasters`), so the request entries keep their places. -/
+/-- Attaches each request's drawn figure and its raster entries to the store. -/
 public def attach (store : Image.Store) (drawn : Array (Option Drawn)) : Image.Store :=
   let entries := store.entries.mapIdx fun k en =>
     match (drawn[k]?).join with
@@ -104,11 +77,7 @@ public def attach (store : Image.Store) (drawn : Array (Option Drawn)) : Image.S
       | some d => slotRasters es k d.plans
       | none => es) entries }
 
-/-- **Every drawn figure set in the settled faces** (`Layout.shapeStoreNotes`),
-and a moving figure's still face — print and reduced motion — the engine's
-drawing of the pose the PDF draws, its text the faces' outlines. Each note
-the shaping owes comes with the source of the entry it is about, which is
-where the document names the figure. -/
+/-- Shapes every drawn figure in the settled faces and gives a moving figure its still poster. -/
 public def settle (fs : Font.FontSet) (store : Image.Store) : Image.Store × Array (String × Diag) :=
   let (shaped, notes) := Layout.shapeStoreNotesBy fs store
   let entries := store.entries.mapIdx fun k en =>

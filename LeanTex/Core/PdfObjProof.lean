@@ -9,30 +9,22 @@ namespace LeanTex.Core.PdfRead
 
 open PdfLex
 
-/-- Names are byte strings in the reader. The writer substitutes a name
-for the empty string; neither that substitution nor truncating a Unicode
-scalar to a byte is reversible. -/
+/-- A name the round trip holds for: nonempty, every scalar a byte. -/
 @[expose] public def Obj.NameSpelling (s : String) : Prop :=
   s ≠ "" ∧ ∀ c ∈ s.toList, c.toNat < 256
 
-/-- The reader retains a numeric token containing a decimal point
-verbatim. This is its spelling domain, not a claim of numeric validity:
-the scanner also accepts repeated signs and decimal points. -/
+/-- A numeric token the reader keeps verbatim: one holding a decimal point, every character a number byte. -/
 @[expose] public def Obj.RealSpelling (s : String) : Prop :=
   '.' ∈ s.toList ∧ ∀ c ∈ s.toList, numByte c.toNat = true
 
-/-- Exact string delimiters and a balanced literal body, or a hex body
-which cannot contain a delimiter. The source bytes, including escapes
-and whitespace, remain the object's value. -/
+/-- A string's exact spelling: delimiters around a balanced literal body, or a hex body. -/
 public inductive Obj.StringSpelling : List Nat → Prop
   | literal {cs} : LiteralBody cs → StringSpelling (40 :: cs ++ [41])
   | hex {cs} :
       (∀ c ∈ cs, hexVal c ≠ none ∨ isWs c = true) →
       StringSpelling (60 :: cs ++ [62])
 
-/-- A recursive, syntactic representability domain. In particular,
-dictionary keys obey the same byte-name condition as name objects.
-Nothing in this predicate calls the parser or assumes its result. -/
+/-- The objects the round trip holds for, defined syntactically. -/
 public inductive Obj.Representable : Obj → Prop
   | null : Representable .null
   | bool (v) : Representable (.bool v)
@@ -52,9 +44,6 @@ theorem bytes_append_push (a b : ByteArray) (c : UInt8) :
 
 mutual
 
-/-- Buffer accumulation preserves the complete prefix, for every object,
-including raw strings outside UTF-8. This is the renderer's composition
-law used to place its spelling inside a larger input. -/
 public theorem Obj.renderInto_append (a b : ByteArray) (o : Obj) :
     o.renderInto (a ++ b) = a ++ o.renderInto b := by
   cases o with

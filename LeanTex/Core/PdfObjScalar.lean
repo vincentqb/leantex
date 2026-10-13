@@ -12,9 +12,7 @@ namespace LeanTex.Core.PdfRead.ObjReader
 
 open PdfLex
 
-/-- The compositional contract for one rendered object. `run` follows
-the actual stack transitions; its count is bounded by consumed bytes.
-The syntax induction discharges both lexical and execution fields. -/
+/-- The compositional contract for one rendered object, its transition count bounded by the bytes it consumes. -/
 structure Reads (o : Obj) : Prop where
   size_pos : 0 < o.render.size
   start : ∀ {b : ByteArray} {i : Nat}, Span b i (octets o.render) →

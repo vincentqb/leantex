@@ -10,8 +10,7 @@ import Init.Data.String.Lemmas.Basic
 
 namespace LeanTex.Core.PdfLex
 
-/-- Byte lists are used only to state source spans; the scanner and writer
-continue to operate on `ByteArray`. -/
+/-- A byte array's bytes as a list, for stating source spans. -/
 @[expose] public def octets (b : ByteArray) : List Nat := b.data.toList.map UInt8.toNat
 
 @[simp] public theorem octets_length (b : ByteArray) : (octets b).length = b.size := by
@@ -67,8 +66,7 @@ public theorem octets_ascii (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
   change c.toNat % 256 = c.toNat
   exact Nat.mod_eq_of_lt (by have := h c hc; omega)
 
-/-- A source span describes its bytes and bounds, independently of any
-scanner or parsed result. -/
+/-- A source span: its bytes and bounds, independent of any scanner. -/
 public structure Span (b : ByteArray) (i : Nat) (cs : List Nat) : Prop where
   bound : i + cs.length ≤ b.size
   byte : ∀ j, (h : j < cs.length) → at? b (i + j) = cs[j]
@@ -108,7 +106,6 @@ public theorem Span.of_bytes (pre raw post : ByteArray) :
   rw [at?_append_left _ _ _ (by simp; omega), at?_append_right, at?_lt _ _ hj']
   simp [ByteArray.getElem_eq_getElem_data]
 
-/-- Extracting a bounded span preserves every source byte. -/
 public theorem Span.extract_exact {b raw : ByteArray} {i : Nat}
     (h : Span b i (raw.data.toList.map UInt8.toNat)) :
     b.extract i (i+raw.size) = raw := by
@@ -191,8 +188,6 @@ public theorem skipWs_one_exact {b : ByteArray} {i : Nat}
     (hc : at? b (i+1) ≠ 37) (hi : i < b.size) : skipWs b i = i+1 :=
   skipWs_whitespace_exact (by rw [h]; rfl) hw hc hi
 
-/-- The stream writer's two-space dictionary prefix is consumed exactly.
-Its caller supplies byte facts, without access to the scanner's step. -/
 public theorem skipWs_two_exact {b : ByteArray} {i : Nat}
     (h : at? b i = 32) (h' : at? b (i+1) = 32)
     (hw : isWs (at? b (i+2)) = false) (hc : at? b (i+2) ≠ 37)
@@ -251,8 +246,6 @@ public theorem parseUInt_none {b : ByteArray} {i : Nat}
   rw [Loop.forIn_range_stops_exact hs (b.size+1) (by omega)]
   rfl
 
-/-- Every step compares the stated byte. With an exact source span the
-loop cannot take its mismatch exit, and its Boolean remains true. -/
 public theorem keywordAt_exact {b : ByteArray} {i : Nat} {kw : String}
     (h : Span b i (octets kw.toUTF8))
     (he : at? b (i+kw.toUTF8.size) = 256 ∨

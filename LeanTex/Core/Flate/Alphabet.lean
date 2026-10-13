@@ -5,9 +5,7 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.Frequencies
 
-/-- The declared alphabet ends after its last live symbol, retaining the
-format's mandatory prefix. This runs before package-merge, so the wire length
-vector is exactly the vector the writer and decoder use. -/
+/-- The declared alphabet's size: through its last live symbol, and at least the format's minimum. -/
 def usedCount (minimum : Nat) (freqs : Array Nat) : Nat := Id.run do
   let mut n := min minimum freqs.size
   for s in [0:freqs.size] do
@@ -53,8 +51,6 @@ theorem usedCount_contract (minimum : Nat) (freqs : Array Nat) :
 public def trim (minimum : Nat) (freqs : Array Nat) : Array Nat :=
   freqs.extract 0 (usedCount minimum freqs)
 
-/-- Trimming removes only zero frequencies. Every symbol's frequency,
-including a live symbol at the final retained index, is preserved exactly. -/
 public theorem trim_contract (minimum : Nat) (freqs : Array Nat) :
     min minimum freqs.size ≤ (trim minimum freqs).size ∧
       (trim minimum freqs).size ≤ freqs.size ∧

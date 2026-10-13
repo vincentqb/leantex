@@ -15,14 +15,10 @@ import all LeanTex.Core.PdfXrefSpelling
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
 
-/-! Recovery of every object of an allocated native plan. The source
-premises describe allocation, spelling, and numeric storage; none names
-a parser result. -/
+/-! Recovery of every object of an allocated native plan. -/
 
-/-- The source transcripts partition the consecutive allocation: the
-compressed objects, the direct rows, one id per object stream the plan
-fills, and the xref. The compressed transcript is never empty — the
-catalog is always in it — so the plan fills at least one object stream. -/
+/-- The source transcripts partition the consecutive allocation: compressed objects, direct rows,
+object streams, and the xref. -/
 public structure WritePlan.Allocated (p : WritePlan) : Prop where
   ids : p.table.ids.toList = List.range' 1 (p.table.size - 1)
   chunks : p.chunks.length = p.table.nStm
@@ -191,8 +187,6 @@ private theorem serializeList_eol (rows : List Row) (out : ByteArray) (locs : Ar
       exact rowInto_eol out r.id r.body
     · exact ih _ _ hr
 
-/-- A plan with anything to compress writes at least one object stream, so
-its body ends with the line feed that closes that stream's `endobj`. -/
 private theorem WritePlan.body_eol (p : WritePlan) (hne : p.compressed ≠ []) :
     ∃ pre, p.measure.body = pre ++ "\n".toUTF8 := by
   rw [p.measure_body_exact]
@@ -349,10 +343,6 @@ private theorem WritePlan.compressed_unique (p : WritePlan) (ha : p.Allocated)
   have he : (id,u) = (id,v) := Option.some.inj (by rw [← hi, hij, hj])
   exact congrArg Prod.snd he
 
-/-- Every font dictionary read from an allocated native plan is one of its
-compressed source objects, and every compressed source reference resolves
-to its original value. This composes the actual xref parser, both stream
-codecs, object-stream lookup, key enumeration, and object reader. -/
 public theorem WritePlan.objects_recovered_exact (p : WritePlan)
     (hb : p.WithinBounds) (ha : p.Allocated)
     (hc : ∀ e ∈ p.compressed, e.2.Representable)

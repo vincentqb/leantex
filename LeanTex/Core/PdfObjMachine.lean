@@ -29,9 +29,7 @@ theorem accept_value (stack : Array Frame) (es : Array (String × Obj))
       .yield (.scan (stack.push (.dct (es.push (k,v)) none)) i) := by
   simp only [accept, Array.back?_push, set_last_push]
 
-/-- A finite execution of the actual transition function, retaining its
-last `yield` or `done`. Its index counts transitions, so container proofs
-also supply the byte-bounded loop with an adequate iteration budget. -/
+/-- A finite execution of the transition function, counted in transitions, ending in its last `yield` or `done`. -/
 inductive Runs (b : ByteArray) : State → Nat → ForInStep State → Prop
   | last {s r} : step b s = r → Runs b s 1 r
   | cons {s t n r} : step b s = .yield t → Runs b t n r → Runs b s (n+1) r
@@ -65,8 +63,6 @@ theorem Runs.trans {b : ByteArray} {s t : State} {r : ForInStep State} {m n : Na
     (h : Runs b s m (.yield t)) (g : Runs b t n r) : Runs b s (m+n) r :=
   g.prepend h.yields
 
-/-- A successful trace is a theorem about the public reader, including
-its actual bounded `forIn` loop and its early return. -/
 theorem parseVal_of_runs {b : ByteArray} {i j n : Nat} {o : Obj}
     (h : Runs b (.scan #[] i) n (.done (.result (.ok (o,j)))))
     (hn : n ≤ b.size+2) : parseVal b i = .ok (o,j) := by

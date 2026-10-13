@@ -17,10 +17,7 @@ namespace LeanTex.Core.Pdf
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Layout
 
-/-- A rectangle in PDF user space: lower-left and upper-right corners.
-Fields are spelled `Int` (the same type `Sp` names) because `omega`
-reads the bare spelling only: the nesting proof below is the point of
-the type. -/
+/-- A rectangle in PDF user space: lower-left and upper-right corners. -/
 public structure Rect where
   x0 : Int
   y0 : Int
@@ -33,48 +30,25 @@ public def Rect.within (inner outer : Rect) : Prop :=
   outer.x0 ≤ inner.x0 ∧ outer.y0 ≤ inner.y0 ∧
   inner.x1 ≤ outer.x1 ∧ inner.y1 ≤ outer.y1
 
-/-- The point-coordinate spelling used to compare declared page boxes
-with the artifact. Callers can format a rectangle without depending on
-the producer's object conversion or allocation. -/
+/-- The rectangle's corners in points, spelled as a PDF array. -/
 public def Rect.render (r : Rect) : String :=
   s!"[{Sp.toPtString r.x0} {Sp.toPtString r.y0} {Sp.toPtString r.x1} {Sp.toPtString r.y1}]"
 
-/-- A length in points as an object: an integer when its rounded spelling
-is one, a real otherwise. The distinction is the reader's — `parseVal`
-answers `.int` for a dotless number — so a writer that spelled every
-length `.real` would build a value its own reader never returns, and
-`parseVal_render_id` would be false of it. -/
 private def ptObj (x : Sp) : PdfRead.Obj :=
   let milli := (x.natAbs * 1000 + 32768) / 65536
   if milli % 1000 == 0 then
     .int (if x < 0 then -(milli / 1000 : Int) else (milli / 1000 : Int))
   else .real x.toPtString
 
-/-- The page box as an object — the four corners, each `ptObj`. -/
 private def Rect.obj (r : Rect) : PdfRead.Obj :=
   .arr #[ptObj r.x0, ptObj r.y0, ptObj r.x1, ptObj r.y1]
 
-/-- The page boxes, as consequences of the declared trim size and bleed —
-never hand-rolled numbers. ISO 32000-2 §14.11.2 (Table 361) gives each its
-meaning: **TrimBox** is "the intended dimensions of the finished page
-after trimming" — the card at its trim size, offset by the bleed from the
-medium's corner; **BleedBox** is "the region to which the contents of the
-page shall be clipped when output in a production environment", trim plus
-the declared bleed on every side, which is exactly the whole medium here;
-**ArtBox** is "the extent of the page's meaningful content … as intended
-by the page's creator" — for a finished artefact like a card, the trim;
-**MediaBox** (§7.7.3.3) is "the boundaries of the physical medium",
-containing them all. -/
+/-- The MediaBox, BleedBox and TrimBox the declared trim size and bleed imply (ISO 32000-2 §14.11.2). -/
 public def pageBoxes (pageW pageH bleed : Int) : Rect × Rect × Rect :=
   (⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
    ⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
    ⟨bleed, bleed, pageW + bleed, pageH + bleed⟩)
 
-/-- The print guarantee a prepress proof checks: the boxes nest —
-TrimBox ⊆ BleedBox ⊆ MediaBox — and the trim is exactly the declared page
-size, whatever the bleed. The same shape as the `text.in_area` assertion:
-what the file tells the finishing knife matches what the document
-declared. -/
 public theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
     (pageBoxes W H b).2.2.within (pageBoxes W H b).2.1 ∧
     (pageBoxes W H b).2.1.within (pageBoxes W H b).1 ∧
@@ -83,12 +57,7 @@ public theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
   dsimp only [pageBoxes, Rect.within]
   omega
 
-/-- The PDF 1.7 standard structure type a 2.0-only type is role-mapped
-onto, in a file declared PDF 1.7 (ISO 32000-1 §14.8.4 is 1.7's standard
-set; ISO 32000-2 §14.8.6 adds the others): a document title stands as a
-paragraph, a footnote as a `Note`, an aside as a `Div`, and a heading past
-the sixth level as `H6`. Every other type the engine writes is standard
-in both. -/
+/-- The PDF 1.7 standard type a 2.0-only structure type is role-mapped onto in a PDF 1.7 file. -/
 public def pdf17Role (s : String) : Option String :=
   if s == "Title" then some "P"
   else if s == "FENote" then some "Note"
@@ -116,14 +85,8 @@ private def pdfName (s : String) : String := Id.run do
       out := out ++ "#" ++ String.ofList [hexDigit (c.toNat / 16), hexDigit c.toNat]
   return if out == "" then "Embedded" else out
 
-/-- A PDF string object from a spelling that already carries its
-delimiters (`(text)` or `<hex>`) — what `pdfTextString` and `pdfString`
-produce, kept verbatim as `Obj.str` does. -/
 private def litObj (s : String) : PdfRead.Obj := .str s.toUTF8
 
-/-- Copied-graph chunks rendered against the writer's numbering: each hole
-is `base + local`, and `resources_closed` is what makes every hole point
-at an object this file writes. -/
 private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := Id.run do
   let mut out := ByteArray.empty
   for c in cs do
@@ -132,10 +95,6 @@ private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := 
     | .ref l => out := out ++ (s!"{base + l} 0 R").toUTF8
   return out
 
-/-- Every face's used glyphs in one walk over the pages: per face, a mark
-per glyph id holding the first char witness — the glyph stream is large
-(every glyph on every page), so marks, never a sort, and one walk for all
-the faces, never one walk a face. -/
 private def markUsed (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) : Array (Array (Option Char)) :=
   Id.run do
@@ -152,12 +111,10 @@ private def markUsed (fs : FontSet) (pages : Array PageOut)
                 if marks[g].isNone then
                   marks := marks.set g (some c)
             return marks
-        -- A drawn figure's text sets in the document's faces: its glyphs
-        -- are the file's as much as a line's are.
+        -- A drawn figure's text sets in the document's faces, so its glyphs are the file's.
         if let .image (some k) _ _ := s then
           if let some fig := (shaped[k]?).join then
-            -- A symbol's text is the same glyphs however many uses paint it:
-            -- its bodies are read as written, never expanded.
+            -- A symbol's glyphs are the same however many uses paint it: bodies are read unexpanded.
             let runs := fig.symbols.foldl (fun acc b => Gfx.Node.labelsList Gfx.Affine.unit acc b.toList)
               (Gfx.Node.labelsList Gfx.Affine.unit #[] fig.nodes.toList)
             for (_, r) in runs do
@@ -168,11 +125,7 @@ private def markUsed (fs : FontSet) (pages : Array PageOut)
                   else marks
   return seen
 
-/-- Used glyphs per face, one char witness per gid, ascending gid: the
-census a PDF build's embedding decisions read — the faces the file keeps
-(`keepFaces`, its `keepOf`), their subset programs (`facePrograms`), and
-the writer's own tables. The driver takes it once for the programs, their
-cache keys and the page operators; `write` takes its own. -/
+/-- Used glyphs per face, one char witness per gid in ascending order: the census embedding reads. -/
 public def usedAll (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]) : Array (Array (Nat × Char)) :=
   let seen := markUsed fs pages shaped
@@ -184,34 +137,23 @@ private theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut)
     (usedAll fs pages shaped).size = fs.fonts.size := by
   simp [usedAll]
 
-/-- The keep set over a per-face used-glyph census: the faces the file
-embeds. Only faces that actually contribute glyphs are kept — a declared
-but unused face would otherwise cost a megabyte of font file — and face 0
-stands in when nothing set text: a PDF's page resources still name a font. -/
+/-- The faces the file embeds: those that contribute glyphs, or face 0 when nothing sets text. -/
 public def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
   let keep := (Array.range used.size).filter fun k => !((used[k]?.getD #[]).isEmpty)
   if keep.isEmpty then #[0] else keep
 
-/-- The faces `write` embeds for these pages, named so the cross-backend
-contract below can quantify over the writer's own decision, not a copy. -/
+/-- The faces `write` embeds for these pages. -/
 public def keepFaces (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]) : Array Nat :=
   keepOf (usedAll fs pages shaped)
 
-/-- The font program `write` embeds for each face the census `used`
-(`usedAll`) keeps, in `keepOf` order: the face's own file minus every glyph
-its pages do not paint (`FontSubset.program`), and whether it is a subset.
-The driver builds it once, deflates it through its cache (`FontSet.zdata`),
-and hands it to `write`. -/
+/-- The font program embedded for each kept face, subset to the glyphs its pages paint, and whether
+it is a subset. -/
 public def facePrograms (fs : FontSet) (used : Array (Array (Nat × Char))) : Array (ByteArray × Bool) :=
   (keepOf used).map fun k =>
     let f := fs.get k
     FontSubset.program f ((used[k]?.getD #[]).map (·.1))
 
-/-- A subset's tag (ISO 32000-2 §9.6.4): six capitals, the first two the
-face's slot in the file, so no two subsets in one file share a tag, and the
-rest a digest of the glyphs it keeps, so one subset is always spelled the
-same. -/
 private def subsetTag (k : Nat) (used : Array Nat) : String :=
   let h := used.foldl (fun h g => (h * 31 + g + 1) % 456976) 7
   let v := k % 676 * 456976 + h
@@ -229,12 +171,7 @@ public theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
   · have := (Array.mem_filter.mp hk).1
     simpa using this
 
-/-- What this writer realizes of the output contract, as values the driver
-holds against the document's declaration (`Ir.OutputContract.unmet`): no
-alternative channel until the file is tagged, device colour with no output
-intent, faces embedded (`keepFaces`), no script, mathematics as placed
-glyphs. Nothing in `write` reads this record; it describes the bytes, it
-does not shape them. -/
+/-- What this writer realizes of the output contract, describing the bytes without shaping them. -/
 public def profile : Ir.Realization :=
   { alternatives := .none
     color := .device
@@ -242,9 +179,6 @@ public def profile : Ir.Realization :=
     scripting := .never
     math := .layout }
 
-/-- Link rectangles for one page, in PDF user space. Block links arrive
-as one placed rectangle over their whole page segment; adjacent inline runs
-with the same destination still merge per line. -/
 private def linkRects (geom : Geom) (page : PageOut) :
     Array (Sp × Sp × Sp × Sp × String) := Id.run do
   let mut out : Array (Sp × Sp × Sp × Sp × String) := page.links.map fun r =>
@@ -252,8 +186,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
       geom.bleed + r.x + r.w, geom.bleed + geom.pageH - r.y, r.target)
   for l in page.lines do
     let mut x := geom.bleed + l.x
-    -- Merge tolerance of one em: a run separated only by an interword space
-    -- joins the previous rectangle, so a multi-word link is one annotation.
+    -- One em of tolerance: runs split by an interword space join one link rectangle.
     let pad := l.size
     for seg in l.segs do
       match seg with
@@ -303,21 +236,15 @@ end
 end"
   return s
 
-/-- A `/W` width in millionths of the em as the number the file spells:
-thousandths, with up to three decimals — an integer when it is one. -/
 private def widthObj (μ : Int) : PdfRead.Obj :=
   if μ % 1000 == 0 then .int (μ / 1000) else
     let frs := toString (μ.natAbs % 1000)
     let frs := (("".pushn '0' (3 - frs.length)) ++ frs).dropEndWhile (· == '0')
     .real s!"{μ / 1000}.{frs}"
 
-/-- The `/W` array: each used glyph's advance (§9.7.4.3), `pdfWidthμ` as
-`widthObj` spells it — the width the pen model advances by — as a typed
-object; `Obj.render` decides its bytes. -/
 private def wArray (font : Font) (used : Array (Nat × Char)) : PdfRead.Obj :=
   .arr (used.flatMap fun (g, _) => #[PdfRead.Obj.int g, .arr #[widthObj (pdfWidthμ font g)]])
 
-/-- Escape a PDF literal string: balance-sensitive characters only. -/
 private def pdfString (s : String) : String := Id.run do
   let mut out := ""
   for c in s.toList do
@@ -326,17 +253,10 @@ private def pdfString (s : String) : String := Id.run do
     out := out.push c
   return out
 
-/-- A PDF *text string*, delimiters included (ISO 32000-2 §7.9.2.2): ASCII
-rides as a literal string; anything beyond it is written as a UTF-16BE
-hex string opening with the byte-order mark (§7.9.2.2.1). Raw UTF-8 bytes
-in an unmarked string read as PDFDocEncoding — 'é' displays as 'Ã©' in a
-viewer's document panel — so the spelling is the spec's, never the
-source's bytes. Byte strings (URIs) stay `pdfString`. -/
 private def pdfTextString (s : String) : String :=
   if s.toList.all (fun c => c.toNat < 0x80) then s!"({pdfString s})"
   else s.toList.foldl (· ++ utf16Hex ·) "<FEFF" ++ ">"
 
-/-- XMP packet mirroring the Info dictionary; PDF 2.0 expects metadata here. -/
 private def xmpPacket (info : Ir.Meta) : String :=
   let elem (tag : String) (v : Option String) : String :=
     match v with
@@ -357,9 +277,7 @@ private def xmpPacket (info : Ir.Meta) : String :=
   elem "dc:title" info.title ++
   seqElem "dc:creator" info.author ++
   elem "dc:description" info.subject ++
-  -- The canonical URL: dc:identifier, "an unambiguous reference to the
-  -- resource within a given context" (XMP Specification Part 1 §8.3,
-  -- ISO 16684-1, Dublin Core namespace; simple Text, not Alt/Seq).
+  -- The canonical URL as dc:identifier (XMP Specification Part 1 §8.3), simple Text.
   (match info.url with
    | some u => s!"        <dc:identifier>{Html.escapeText u}</dc:identifier>\n"
    | none => "") ++
@@ -372,34 +290,20 @@ private def xmpPacket (info : Ir.Meta) : String :=
   "</x:xmpmeta>\n" ++
   "<?xpacket end=\"w\"?>"
 
-/-- The catalog's language entry: `/Lang` from the declared tag — the
-document's main language over every text run that carries no finer mark
-(ISO 32000-2 §14.9.2.2; BCP 47) — and nothing when the document declares
-none. The same `Ir.Meta` field the HTML root's `lang` attribute reads
-(`HtmlDoc.emit_lang_declared`). -/
+/-- The catalog's `/Lang` from the declared language tag (ISO 32000-2 §14.9.2.2), none when undeclared. -/
 public def langEntry : Option String → Array (String × PdfRead.Obj)
   | some tag => #[("Lang", .str s!"({pdfString tag})".toUTF8)]
   | none => #[]
 
-/-- The catalog's tagging entries: `/MarkInfo << /Marked true >>` (§14.7.1
-— the file's content is marked) and the structure tree root. Present
-unconditionally: every PDF this writer ships is tagged, whatever the
-document declares — tagging is a fact of the artifact, the profile claim
-(`pdfuaid`) is a separate, withheld statement. -/
+/-- The catalog's tagging entries, `/MarkInfo << /Marked true >>` and the structure tree root,
+present unconditionally. -/
 public def markedEntry (structTreeRoot : Nat) : Array (String × PdfRead.Obj) :=
   #[("MarkInfo", .dict #[("Marked", .bool true)]), ("StructTreeRoot", .ref structTreeRoot 0)]
 
-/-- `/ViewerPreferences /DisplayDocTitle`: the reader's window titles from
-the document's own metadata title rather than its file name (§12.2;
-PDF/UA requires it). -/
 private def viewerEntry : Array (String × PdfRead.Obj) :=
   #[("ViewerPreferences", .dict #[("DisplayDocTitle", .bool true)])]
 
-/-- The document catalog (ISO 32000-2 §7.7.2): the page tree, an outline
-when the layout carried one, the XMP metadata stream, the declared
-language, the mark information and structure tree root, and the viewer
-preference. A typed object, not a spelling: `Obj.render` is the only place
-its bytes are decided. -/
+/-- The document catalog (ISO 32000-2 §7.7.2) as a typed object. -/
 public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) : PdfRead.Obj :=
   .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
@@ -409,14 +313,6 @@ public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option S
     ++ #[("Metadata", .ref xmpId 0)]
     ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry)
 
-/-- The PDF twin of `emit_lang_declared`: the catalog's entries carry the
-language entry of the document's declared tag between two fixed runs, by
-construction — so `/Lang` appears exactly when the document declares a
-language, reading the same `Ir.Meta` field as the HTML root's `lang`. A
-statement over the typed entries rather than a substring of a spelling:
-the value is what both the writer and a reader see. The webMetaChecks
-census in Tests/Backends is the wiring witness that `write` ships this
-dictionary. -/
 public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) :
     ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
@@ -429,12 +325,6 @@ public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang 
    markedEntry structTreeRoot ++ viewerEntry, by
     simp only [catalogDict, Array.append_assoc]⟩
 
-/-- **`pdf_marked_declared`** (the `pdf_lang_declared` shape): the catalog
-carries `/MarkInfo << /Marked true >>` and `/StructTreeRoot` between two
-fixed runs, whatever the language, the outline, or the document declares
-— tagging is unconditional. The structTreeChecks round trip in
-Tests/Backends is the wiring witness that `write` ships this dictionary
-with a tree behind the reference. -/
 public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) :
     ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
@@ -447,18 +337,12 @@ public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lan
    viewerEntry, by
     simp only [catalogDict, Array.append_assoc]⟩
 
-/-- Face index → resource number, over the faces `keepFaces` embeds. -/
 private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
   let mut r : Array Nat := Array.replicate fs.fonts.size 0
   for (old, new) in keep.zipIdx do
     r := r.set! old new
   return r
 
-/-- Images actually placed and loaded become XObjects, one per file however
-often it is placed; a placeholder is drawn inline and needs no object. A
-drawn figure is no image XObject — its form is the figure's own — but each
-of its rasters is: the store entry holding it (`Image.Loaded.rasterSlots`)
-becomes one where the figure is placed. -/
 private def usedImagesOf (imgs : Image.Store) (pages : Array PageOut) : Array Nat := Id.run do
   let mut out : Array Nat := #[]
   for p in pages do
@@ -473,63 +357,43 @@ private def usedImagesOf (imgs : Image.Store) (pages : Array PageOut) : Array Na
               out := out.push r
   return out
 
-/-- Image index → XObject number, over `usedImagesOf`. -/
 private def imgMapOf (imgs : Image.Store) (used : Array Nat) : Array (Option Nat) := Id.run do
   let mut m : Array (Option Nat) := Array.replicate imgs.entries.size none
   for (k, n) in used.zipIdx do
     m := m.set! k (some n)
   return m
 
-/-- The structure type each leaf's marked content is tagged with, read off
-the tree's skeleton (`leafTags`): the one answer both the content streams
-and the structure elements are built from. -/
+/-- The structure type each leaf's marked content is tagged with, read off the tree's skeleton. -/
 public def tagsOf (tree : Struct.Tree) : Array (Option String) :=
   leafTags (skeleton tree) tree.leaves.size
 
-/-- The resource names figure operators are first written with: every
-request named 0, then renamed onto the document's figure table
-(`figureTable`, `namedPageOps`) before anything is spelled. A raster has
-no table entry: no page's ink paints one (`Gfx.ofPictureKeyed_imageFree_exact`),
-the checked writer refuses an ink that would (`inkRasterPage?`), and a
-drawn figure's rasters are named by the store entries that hold them
-(`rasterNames`). -/
+/-- The resource names figure operators are first written with: every request 0, renamed onto the
+figure table before spelling. -/
 @[expose] public def figureNames : GfxPdf.Request → Nat := fun _ => 0
 
-/-- A drawn figure's resource names, the figure at store entry `k`: each
-raster the store entry holding it (`/Ri` and that entry's index, one past
-it, in the resources every form names), every other request 0, as
-`figureNames` names it. -/
+/-- A drawn figure's resource names: each raster by the store entry holding it, every other request 0. -/
 @[expose] public def rasterNames (imgs : Image.Store) (k : Nat) : GfxPdf.Request → Nat
   | .raster r => ((imgs.get? k).bind fun en => en.rasterSlots[r]?).getD 0
   | .extG _ _ => 0
   | .pattern _ => 0
   | .form _ _ => 0
 
-/-- Whether every raster of the figure at store entry `k` has an entry of
-its own to be named by — what `FigureStore.attach` gives every figure it
-plans (`FigureStore.rasterPlans_exact`). -/
+/-- Whether every raster of the figure at store entry `k` has an entry of its own. -/
 @[expose] public def rastersSlotted (imgs : Image.Store) (k : Nat) (fig : Gfx.Figure Gfx.Shaped) : Bool :=
   ((imgs.get? k).map fun en => en.rasterSlots.size == fig.rasters.size &&
     en.rasterSlots.all fun r => ((imgs.get? r).bind (·.info)).isSome).getD fig.rasters.isEmpty
 
-/-- The first page whose ink would paint a raster: the writer names a
-figure's raster only from the image store, so an ink carrying one is
-refused, never written with a name no resource answers. -/
+/-- The first page whose ink would paint a raster, which the writer refuses. -/
 public def inkRasterPage? (pages : Array PageOut) : Option Nat :=
   pages.findIdx? fun p => p.inks.any fun k => !k.fig.imageFree
 
-/-- The drawn figures the store holds, as their forms: each entry's shaped
-figure (`Image.Store.shaped`) emitted in the faces the file keeps —
-`keep`, the writer's `keepFaces` — every resource named 0 until the page
-operators are renamed onto the table (`namedPageOps`). -/
+/-- The drawn figures the store holds as forms in the kept faces, every resource named 0. -/
 public def docFigsWith (fs : FontSet) (keep : Array Nat) (imgs : Image.Store) : Array (Option FigForm) :=
   let remap := remapOf fs keep
   let wt := widthTable fs.fonts keep
   imgs.shaped.mapIdx fun k s => s.map fun fig =>
-    -- A raster with no entry of its own has no name a resource answers: the
-    -- form then draws none rather than name an image the file does not hold.
-    -- premise: Tests.svgRasterFigureChecks — the store gives each raster of a
-    -- drawn figure an entry of its own (`FigureStore.rasterPlans_exact`)
+    -- A raster with no entry of its own is dropped rather than named with no resource.
+    -- premise: Tests.svgRasterFigureChecks — the store slots each raster of a drawn figure
     let fig := if rastersSlotted imgs k fig then fig else FigureLoss.unrastered fig
     { body := figureBody remap wt (rasterNames imgs k) fig, box := fig.box }
 
@@ -545,11 +409,7 @@ public def pageFigureForms (figs : Array (Option FigForm)) (p : PageOut) : Array
       | none => out
     | _ => out) out) #[]
 
-/-- **The figure resources a document's pages name**: every ink's requests,
-then every drawn figure's form and its requests, in page and paint order,
-interned by content (`collectList`) — the table `namedPageOps` names into
-and the writer spells one object per entry of. A label's text group
-requests none, so an ink is read without its labels. -/
+/-- The figure resources a document's pages name, interned by content in page and paint order. -/
 public def figureTable (geom : Geom) (pages : Array PageOut) (figs : Array (Option FigForm)) :
     Array FigRes :=
   pages.foldl (fun t p =>
@@ -582,8 +442,6 @@ public def figDictCount (t : Array FigRes) : Nat := (t.filter fun r => !r.isForm
 
 public def figFormCount (t : Array FigRes) : Nat := (t.filter FigRes.isForm).size
 
-/-- A rational at the nine-decimal spelling as a number object the object
-stream accepts: an integer where it has no fraction. -/
 private def ratObj (p q : Int) : PdfRead.Obj :=
   let s := ratString p q
   if s.toList.contains '.' then .real s else .int (s.toInt?.getD 0)
@@ -591,14 +449,11 @@ private def ratObj (p q : Int) : PdfRead.Obj :=
 private def rgbObj (c : Ir.Color) : PdfRead.Obj :=
   .arr #[ratObj c.r.toNat 255, ratObj c.g.toNat 255, ratObj c.b.toNat 255]
 
-/-- One exponential segment between two colours over [0, 1] (§7.10.3). -/
 private def interpObj (c0 c1 : Ir.Color) : PdfRead.Obj :=
   .dict #[("FunctionType", .int 2), ("Domain", .arr #[.int 0, .int 1]), ("C0", rgbObj c0),
     ("C1", rgbObj c1), ("N", .int 1)]
 
-/-- A stop list as a PDF function over [0, 1]: the first colour before the
-first stop and the last after the last, as SVG pads; one segment between
-consecutive distinct offsets, stitched (§7.10.4). -/
+/-- A stop list as a stitched PDF function over [0, 1] (§7.10.4), padded at both ends. -/
 public def stopsFunctionObj (stops : Array Gfx.Stop) : PdfRead.Obj :=
   let black : Ir.Color := { r := 0, g := 0, b := 0 }
   match stops.toList with
@@ -639,8 +494,7 @@ public def matrixObj (m : Gfx.Affine) : PdfRead.Obj :=
     ratObj m.d.num m.d.den, ratObj m.e.num ((m.e.den : Int) * spPerPt),
     ratObj m.f.num ((m.f.den : Int) * spPerPt)]
 
-/-- A table entry spelled as a dictionary: the alphas an ExtGState sets,
-a shading pattern with its matrix, a shading. A form is a stream. -/
+/-- A table entry spelled as a dictionary; a form is a stream and has none. -/
 public def figDictObj : FigRes → Option PdfRead.Obj
   | .extG a b =>
     some (.dict #[("Type", .name "ExtGState"), ("ca", ratObj a.val 1000), ("CA", ratObj b.val 1000)])
@@ -650,11 +504,7 @@ public def figDictObj : FigRes → Option PdfRead.Obj
   | .shading g => some (shadingObj g)
   | .form _ _ => none
 
-/-- What the kept faces tell a reader of a figure's text (`GfxPdf.GlyphInk`):
-each glyph's `/W` width (`pdfWidthμ`, what the file states) and its
-outline's hull (`Font.bounds`), in millionths of the em by font resource;
-a glyph whose outline does not decode stands in its advance and the face's
-ascent and descent. -/
+/-- Each kept glyph's `/W` width and outline hull in millionths of the em, by font resource. -/
 public def glyphInkOf (fs : FontSet) (keep : Array Nat) : GfxPdf.GlyphInk :=
   { width := fun res g => match keep[res]? with
       | some f => pdfWidthμ (fs.get f) g
@@ -674,25 +524,13 @@ public def glyphInkOf (fs : FontSet) (keep : Array Nat) : GfxPdf.GlyphInk :=
 @[expose] public def floorPt (x : Int) : Int :=
   if x ≥ 0 then x / spPerPt else -((-x + spPerPt - 1) / spPerPt)
 
-/-- A form's bounding box in whole points outward, read in its own space
-(`GfxPdf.formBox`): the hull of what its body paints — each mark's control
-hull through its frame dilated by its stroke's reach, a stamp's outline by
-the reach its key carries, and every glyph its text sets, at the pen the
-file's own arithmetic puts it. The control hull bounds a path
-(`Gfx.cubicAt_between`), the reach a stroke's paint past it
-(`Gfx.Stroke.reach`), a box's image through a matrix its points' images
-(`Gfx.Affine.boxImage_covers`), and the whole-point box the hull
-(`formBBox_covers`). -/
+/-- A form's bounding box in whole points outward, the hull of everything its body paints. -/
 public def formBBox (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array ContentOp) :
     Int × Int × Int × Int :=
   match GfxPdf.formBox gi kind body with
   | some ((x0, y0), (x1, y1)) => (floorPt x0, floorPt y0, -(floorPt (-x1)), -(floorPt (-y1)))
   | none => (0, 0, 0, 0)
 
-/-- **The whole-point box holds the form's box** (`_covers`): rounding
-outward to whole points loses nothing a form paints, so with
-`GfxPdf.formBox_covers` every mark and every glyph of the body stands
-inside the `/BBox` the writer spells. -/
 public theorem formBBox_covers (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array ContentOp)
     (b : Gfx.Box) (h : GfxPdf.formBox gi kind body = some b) :
     let r := formBBox gi kind body
@@ -709,15 +547,11 @@ public theorem formBBox_covers (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : 
     omega
   exact ⟨lo x0, lo y0, hi x1, hi y1⟩
 
-/-- A group of named resources as a resources dictionary entry, absent
-when the group is empty. -/
 private def resourceGroup (key : String) (es : Array (String × PdfRead.Obj)) :
     Array (String × PdfRead.Obj) :=
   if es.isEmpty then #[] else #[(key, .dict es)]
 
-/-- The one resources dictionary every page and figure form names
-(ISO 32000-2 §7.8.3): the kept faces, then each group of named resources
-the document has — XObjects, ExtGStates, patterns, shadings. -/
+/-- The one resources dictionary every page and figure form names (ISO 32000-2 §7.8.3). -/
 public def resourcesDict (fonts : PdfRead.Obj)
     (xobjects extg patterns shadings : Array (String × PdfRead.Obj)) : PdfRead.Obj :=
   .dict (#[("Font", fonts)] ++ resourceGroup "XObject" xobjects ++ resourceGroup "ExtGState" extg ++
@@ -728,8 +562,6 @@ private theorem resourceGroup_find_none (key k : String) (es : Array (String × 
   unfold resourceGroup
   split <;> simp [h]
 
-/-- The resources dictionary names no type and no subtype (`_exact`): no
-census counts it a font, an image or a form. -/
 public theorem resourcesDict_untyped_exact (fonts : PdfRead.Obj)
     (xobjects extg patterns shadings : Array (String × PdfRead.Obj)) :
     (resourcesDict fonts xobjects extg patterns shadings).get? "Type" = none ∧
@@ -744,8 +576,6 @@ public theorem resourcesDict_untyped_exact (fonts : PdfRead.Obj)
     resourceGroup_find_none _ _ _ (by decide : "Pattern" ≠ "Subtype"),
     resourceGroup_find_none _ _ _ (by decide : "Shading" ≠ "Subtype")]
 
-/-- A figure-resource dictionary names no subtype and is no font
-(`_exact`): an ExtGState, a pattern or a shading, or nothing. -/
 public theorem figDictObj_untyped_exact (r : FigRes) :
     ((figDictObj r).getD .null).get? "Type" ≠ some (.name "Font") ∧
       ((figDictObj r).getD .null).get? "Subtype" = none := by
@@ -762,10 +592,7 @@ public theorem figDictObj_untyped_exact (r : FigRes) :
   | .shading _ => "Sh"
   | .form _ _ => "Fm"
 
-/-- Each page's typed operators, resolved against the faces and images the
-document actually uses and the structure tree's leaf tags: what
-`pageStreams` renders, before spelling. `keep` is `keepFaces` over these
-pages, read by the driver off the census it took once. -/
+/-- Each page's typed operators, resolved against the used faces, images and leaf tags. -/
 public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩)
     (keep : Array Nat := keepFaces fs pages imgs.shaped) : Array (Array ContentOp) :=
@@ -776,45 +603,30 @@ public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let figs := docFigsWith fs keep imgs
   namedPageOps geom pages figs (pages.map (contentOps geom remap wt imgMap tags figureNames figs))
 
-/-- The per-page content streams `write` embeds, uncompressed: the same
-bytes `write` computes for itself, exposed so the driver can deflate them
-through its content-hash cache (the font files' shape — a page whose
-content is unchanged since the last build reads its stream instead of
-compressing it) and hand them back as `write`'s `streams`. -/
+/-- The per-page content streams `write` embeds, uncompressed. -/
 public def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩) : Array ByteArray :=
   (pageOps geom fs pages imgs tree).map fun ops => (render ops).toUTF8
 
--- ## The object table
-
-/-- What the cross-reference row of one object id says (ISO 32000-2
-§7.5.8.3, Table 18): the object is written at a byte offset (type 1), sits
-at a position of the compressed list, hence an index inside one object
-stream (type 2), or is the cross-reference stream itself — type 1 too, at
-the offset the trailer's `startxref` names. -/
+/-- What one id's cross-reference row says (ISO 32000-2 §7.5.8.3): direct, compressed, or the
+cross-reference stream itself. -/
 public inductive ObjKind where
   | direct
   | inStream (idx : Nat)
   | xref
   deriving Repr, BEq
 
-/-- What a placed image brings beyond its own XObject: nothing, an alpha
-plane's SMask, or a copied page's resource graph — one id per object. -/
 private inductive ImgExtra where
   | plain
   | alpha
   | form (objects : Nat)
   deriving Repr
 
-/-- How many ids an image's block spans: its XObject plus what it brings. -/
 private def ImgExtra.span : ImgExtra → Nat
   | .plain => 1
   | .alpha => 2
   | .form n => n + 1
 
-/-- What image `k` of the store brings: a decoded page is a form, a raster
-with an alpha plane brings its SMask, anything else (a placeholder too)
-nothing. -/
 private def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
   match (imgs.get? k).bind (·.info) with
   | some inf =>
@@ -827,40 +639,21 @@ private def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
       | .colorKey _ => .plain
   | none => .plain
 
-/-- Where each of a run of consecutive blocks starts: `base`, then each
-start plus its own block's span. -/
 private def blockStarts (base : Nat) : List Nat → List Nat
   | [] => []
   | n :: ns => base :: blockStarts (base + n) ns
 
-/-- The most objects one object stream holds: as many as a one-byte
-stream-index field addresses, so reading one compressed object inflates at
-most this many and a cross-reference row never needs a second index byte.
-pdfTeX and LuaTeX stop at 100 (pdftex.web's object-stream limit); at 256 a
-stream of small dictionaries fills about one deflate window, and what the
-split costs over a single unbounded stream falls from about 5% of the
-file to under 2%. -/
+/-- The most objects one object stream holds, as many as a one-byte stream index addresses. -/
 @[expose] public def objStmCapacity : Nat := 256
 
 /-- How many object streams `n` compressed objects take. -/
 @[expose] public def objStmCount (n : Nat) : Nat := (n + objStmCapacity - 1) / objStmCapacity
 
-/-- How many objects the writer compresses for these counts: the catalog
-and page tree, three dictionaries per face, Info, the outline root and
-items, one dictionary per page, the structure root, parent tree and
-namespace, one dictionary per structure element, the shared resources
-dictionary, and one dictionary per figure resource that is no form
-(`prepare`'s list, `prepare_compressed_ids_exact`). -/
+/-- How many objects the writer compresses for these counts. -/
 @[expose] public def compressedCount (nf np nOut nElems nFigDict : Nat) : Nat :=
   3 * nf + np + (if nOut == 0 then 0 else nOut + 1) + nElems + 7 + nFigDict
 
-/-- Every object id one file allocates, computed once from the counts that
-decide it, in id order: 1 the catalog, 2 the page tree, four ids per kept
-face and then one file per face, per placed image its XObject followed by
-what it brings (`ImgExtra`), two per page, Info, the outline — root then
-items — when the layout carried one, XMP, the object streams, and the
-cross-reference stream last. `write` reads its ids here and nowhere else;
-the conditional families are slots no document fills yet. -/
+/-- Every object id one file allocates, in id order, computed once from the counts that decide it. -/
 public structure ObjTable where
   nf : Nat
   ni : Nat
@@ -877,28 +670,19 @@ public structure ObjTable where
   infoId : Nat
   outlineRootId : Nat
   xmpId : Nat
-  /-- The object streams, `nStm` consecutive ids from here: one per
-  `objStmCapacity` compressed objects (`objStmChunks`). -/
+  /-- The first of the `nStm` consecutive object-stream ids. -/
   objStmBase : Nat
   nStm : Nat
   xrefId : Nat
   size : Nat
-  /-- OutputIntent and its ICC stream: filled by the colour plan. -/
   outputIntent : Option Nat := none
   icc : Option Nat := none
-  /-- The structure block, after the outline: the structure tree root, its
-  parent tree, the one PDF 2.0 namespace dictionary, then one object per
-  structure element from `structBase` — every PDF is tagged, so the block
-  is unconditional (empty of elements only for a tree with no root, which
-  `skeleton` never yields). -/
   nElems : Nat
   structTreeRoot : Nat
   parentTree : Nat
   namespaceId : Nat
   structBase : Nat
-  /-- The one resources dictionary every page and every figure form names,
-  after the structure block; then the figure table's dictionaries, then its
-  forms (`figureTable`), one object each. -/
+  /-- The resources dictionary's id, followed by the figure table's dictionaries and forms. -/
   resId : Nat
   nFigDict : Nat
   nFigForm : Nat
@@ -919,9 +703,7 @@ public def figDictId (t : ObjTable) (k : Nat) : Nat := t.resId + 1 + k
 public def figFormId (t : ObjTable) (k : Nat) : Nat := t.resId + 1 + t.nFigDict + k
 public def objStmId (t : ObjTable) (k : Nat) : Nat := t.objStmBase + k
 
-/-- Every allocated id, in emission order — each block spelled from its
-own slot function, so `objTable_inj` and `objTable_covers` are facts about
-the allocation and not about a range. -/
+/-- Every allocated id, in emission order. -/
 public def ids (t : ObjTable) : Array Nat :=
   #[1, 2]
   ++ (Array.range t.nf).flatMap (fun k => #[type0Id k, cidId k, fdId k, toUniId k])
@@ -938,10 +720,7 @@ public def ids (t : ObjTable) : Array Nat :=
   ++ (Array.range t.nFigForm).map t.figFormId
   ++ (#[t.xmpId] ++ (Array.range t.nStm).map t.objStmId ++ #[t.xrefId])
 
-/-- The cross-reference row kind of an id, given its position in the
-compressed list (`compressedIdx`): a function of the table, so an id the table
-never allocated is `none` — and `objTable_kindOf_some` says that never
-happens on `ids`. -/
+/-- The cross-reference row kind of an id, `none` for an id the table never allocated. -/
 public def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Option ObjKind :=
   if id == 0 || t.size ≤ id then none
   else if id == t.xrefId then some .xref
@@ -951,9 +730,8 @@ public def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat)
 
 end ObjTable
 
-/-- The table for `keep` faces, the placed images `usedImgs` of `imgs`,
-`np` pages, `nOut` outline entries, `nElems` structure elements, and the
-figure table's `nFigDict` dictionaries and `nFigForm` forms. -/
+/-- The object table for these faces, placed images, pages, outline entries, structure elements and
+figure resources. -/
 public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) : ObjTable :=
   let nf := keep.size
@@ -984,18 +762,13 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
     nElems, structTreeRoot, parentTree := structTreeRoot + 1, namespaceId := structTreeRoot + 2
     structBase := structTreeRoot + 3, resId, nFigDict, nFigForm }
 
-/-- The table `write` reads for these inputs: the faces it embeds
-(`keepFaces`), the images it places (`usedImagesOf`), the page and outline
-counts, the structure tree's element count, and the figure table's two
-spelling kinds (`figureTable`). -/
+/-- The table `write` reads for these inputs. -/
 public def tableOf (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree := ⟨#[]⟩) : ObjTable :=
   let figs := figureTable geom pages (docFigs fs pages imgs)
   objTable (keepFaces fs pages imgs.shaped) imgs (usedImagesOf imgs pages) pages.size outline.size
     (skeleton tree).size (figDictCount figs) (figFormCount figs)
 
-/-- **`blockIds_exact`**: consecutive blocks laid out by `blockStarts` tile
-the range from `base` of the spans' total, exactly. -/
 private theorem blockIds_exact (base : Nat) (spans : List Nat) :
     ((blockStarts base spans).zip spans).flatMap (fun p => List.range' p.1 p.2)
       = List.range' base spans.sum := by
@@ -1007,7 +780,6 @@ private theorem blockIds_exact (base : Nat) (spans : List Nat) :
     simp only [Nat.one_mul] at this
     rw [this]
 
-/-- Constant-size blocks over `range n` tile `range' a (c * n)`. -/
 private theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
     (hf : ∀ k, f k = List.range' (a + c * k) c) :
     (List.range n).flatMap f = List.range' a (c * n) := by
@@ -1019,10 +791,6 @@ private theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
     simp only [Nat.one_mul] at this
     rw [this, Nat.mul_succ]
 
-/-- **`ObjTable.ids_exact`**: a table whose fields stand in the relations
-`objTable` writes has ids that tile `[1, size)` — each block, spelled from
-its slot function, is a range, and the ranges abut. Stated over the fields
-so the proof never sees the structure literal. -/
 private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (himg : t.imgIds.toList = blockStarts (3 + 5 * t.nf) spans)
     (hsp : t.imgSpans.toList = spans)
@@ -1095,9 +863,6 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     congr 1
     omega
 
-/-- **`objTable_ids_exact`** (the `_exact` statement the two theorems below
-project): the table's ids, block by block from its slot functions, are the
-range `[1, size)` — the allocation is a tiling. -/
 public theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) :
     (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids.toList
@@ -1105,16 +870,11 @@ public theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedI
   ObjTable.ids_exact _ ((usedImgs.map (imgExtraOf imgs)).map ImgExtra.span).toList
     (List.toList_toArray) rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
 
-/-- **`objTable_inj`** (the `_inj` statement): no two slots of the table
-share an id — the allocation is injective. -/
 public theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) : (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids.toList.Nodup := by
   rw [objTable_ids_exact]
   exact List.nodup_range' 1
 
-/-- **`objTable_covers`** (the `_covers` statement): every id below the
-trailer's `/Size`, other than the free-list head 0, is allocated — no row
-of the cross-reference is left to a default. -/
 public theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) :
     ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size →
@@ -1123,9 +883,6 @@ public theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs
   rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1]
   omega
 
-/-- **`objTable_between`** (the `_between` statement): every allocated id
-lies in `[1, size)` — the converse of `objTable_covers`, and what makes
-`kindOf` answer on every id `write` iterates. -/
 public theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) :
     ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids,
@@ -1137,8 +894,6 @@ public theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImg
     omega
   omega
 
-/-- `kindOf` is defined on every id the table allocates: the `none` arm of
-the match in `write` is dead by this theorem, not by a default. -/
 public theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) (compressedIdx : Nat → Option Nat) :
     ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids,
@@ -1151,11 +906,7 @@ public theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (use
   · rfl
   · split <;> rfl
 
-/-- A row of the writer's cross-reference. A compressed object at
-position `idx` of the compressed list sits in object stream
-`idx / objStmCapacity` at index `idx % objStmCapacity` (`objStmChunks`).
-A missing direct object is declared free; it is never redirected to an
-unrelated compressed object. -/
+/-- A row of the writer's cross-reference; a missing direct object is declared free, never redirected. -/
 public def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff id : Nat) : Xref.Entry :=
   if id == t.xrefId then .direct xrefOff 0 else
@@ -1165,20 +916,14 @@ public def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
       | some off => .direct off 0
       | none => .free 0 0
 
-/-- Row zero, the head of the free list (§7.5.4): no next free object, and
-the largest generation a one-byte field holds — the stream spelling of
-the table's 65535, as pdfTeX and LuaTeX write it, so the head never widens
-the index field the object streams need. -/
+/-- Row zero, the free list's head (§7.5.4), with generation 255 so the index field stays one byte. -/
 public def freeHead : Xref.Entry := .free 0 255
 
-/-- The free-list head and one row per allocated id, in allocation order.
-`write` encodes this array itself; it is not a reconstructed certificate. -/
+/-- The free-list head and one row per allocated id, in allocation order. -/
 public def xrefEntries (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff : Nat) : Array Xref.Entry :=
   #[freeHead] ++ t.ids.map (xrefEntry t compressedIdx offset xrefOff)
 
-/-- The row selection is the allocation table's kind decision on every
-allocated id, including its explicit missing-direct-object case. -/
 public theorem xrefEntry_kind_exact (t : ObjTable)
     (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
     (hlo : 0 < id) (hhi : id < t.size) :
@@ -1199,8 +944,6 @@ public theorem xrefEntry_kind_exact (t : ObjTable)
   · rfl
   · cases compressedIdx id <;> rfl
 
-/-- The actual xref payload has exactly the number of rows declared by
-`/Size` and `/Index`, including row zero, at any row layout. -/
 public theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems nFigDict nFigForm : Nat)
     (compressedIdx offset : Nat → Option Nat) (xrefOff : Nat) (w : Xref.Widths) :
@@ -1221,9 +964,6 @@ public theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
     omega
   exact ⟨hsize, by rw [Xref.encode_size_exact, hsize]⟩
 
-/-- The row index is the object id, including the free-list head at zero.
-This derives from the actual allocation's tiling, without an ordering
-premise on the table. -/
 public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems nFigDict nFigForm : Nat)
     (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
@@ -1245,10 +985,6 @@ public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
     simp [show id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size - 1 by omega,
       Nat.add_comm]
 
-/-- No row of the writer's cross-reference has a third field above 255:
-generations are zero, the free-list head is 255, and a stream index is
-below `objStmCapacity`. So the index field is one byte wide whatever the
-object count — the width the object-stream layout was chosen to keep. -/
 public theorem xrefEntries_second_between (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff : Nat) : ∀ e ∈ xrefEntries t compressedIdx offset xrefOff, e.fields.2.2 < 256 := by
   intro e he
@@ -1264,21 +1000,7 @@ public theorem xrefEntries_second_between (t : ObjTable) (compressedIdx offset :
         omega
       · split <;> simp [Xref.Entry.fields]
 
--- ## The feature census
-
-/-- What a written file asks of a reader, one constructor per thing a
-reader must implement to show the file right: the rows of the reader
-matrix (`testdata/oracles/reader-matrix.txt`, spelled by `name`), whose
-cells are what the readers on the `target:` line made of each. Every
-constructor is parameter-free, so `all` is derived from the type and
-`all_complete`/`all_nodup` close the census: a feature the writer starts
-emitting is a row the matrix must carry, red until the readers pass it.
-`copiedGraph` stands where a placed PDF page's own resource streams ride
-verbatim: their filters are theirs, not this writer's, and the census
-does not read them — the graph census will name them; until then the
-whole graph is one feature the readers must pass. `objStmMulti` is a file
-whose compressed objects fill more than one object stream: a reader must
-find each one in the stream its cross-reference row names. -/
+/-- What a written file asks of a reader, one parameter-free constructor per row of the reader matrix. -/
 public inductive Feature where
   | xrefStream
   | objStm
@@ -1304,13 +1026,10 @@ public inductive Feature where
   | jpx
   deriving DecidableEq, Repr, Inhabited
 
-/-- How many features the census names: the one number a new constructor
-bumps (`all_complete` fails on an undercount, `all_nodup` on an overcount,
-`ofNat` clamping the excess onto the last constructor). -/
+/-- How many features the census names. -/
 public def Feature.count : Nat := 22
 
-/-- Every feature, in declaration order — derived from the type through
-the `ofNat` that `deriving DecidableEq` synthesises, never hand-kept. -/
+/-- Every feature in declaration order, derived from the type. -/
 public def Feature.all : List Feature := (List.range Feature.count).map Feature.ofNat
 
 public theorem Feature.all_complete (f : Feature) : f ∈ Feature.all := by
@@ -1343,24 +1062,11 @@ public def Feature.name : Feature → String
   | .brotli => "brotli"
   | .jpx => "jpx"
 
-/-- **`Feature.name_inj`** (the `_inj` statement): no two features share a
-row name, so a matrix row names one feature. -/
 public theorem Feature.name_inj (a b : Feature) (h : a.name = b.name) : a = b := by
   cases a <;> cases b <;> first | rfl | (simp [Feature.name] at h)
 
 public def Feature.ofName? (s : String) : Option Feature := Feature.all.find? (·.name == s)
 
-/-- Whether one run of `write` on these inputs reaches a feature: the
-table's slots say what was allocated (a soft mask, a form — a copied
-page's or a figure's — a copied graph, an outline, the colour and
-structure families); the kept faces say which CID
-subtype; each placed image its declared filter; the pages their link
-annotations and the outline its URI targets; the content operators whether
-a marked sequence opens; the table with the structure tree's elements,
-how many object streams it fills; the figure table whether a transparency
-group's form ships. The three the writer cannot emit yet (`tabs`,
-`brotli`, `jpx`) are `false` here and rows the matrix already carries, so
-the day one is emitted the census says so. -/
 private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree) : Feature → Bool
   | .xrefStream => true
@@ -1386,7 +1092,6 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .iccBased => (tableOf geom fs pages imgs outline).icc.isSome
   | .tabs => false
   | .markedContent => (pageOps geom fs pages imgs).any fun ops => (lines ops).any Line.isOpen
-  -- every PDF is tagged: the structure block is unconditional (pdf-tag-skeleton)
   | .structTree => true
   | .transparencyGroup => (figureTable geom pages (docFigs fs pages imgs)).any fun r => match r with
     | .form .group _ => true
@@ -1398,22 +1103,16 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .brotli => false
   | .jpx => false
 where
-  /-- The decoded images the pages place, in placement order: what `write`
-  writes an XObject dictionary for. -/
+  /-- The decoded images the pages place, in placement order. -/
   placedImages (imgs : Image.Store) (pages : Array PageOut) : Array Image.Plan :=
     (usedImagesOf imgs pages).filterMap fun k => (imgs.get? k).bind (·.info)
 
-/-- The features `write` reaches on these inputs, in `Feature.all`'s order:
-the closed census the reader matrix's rows are checked against, computed
-by the test and the oracle script from the same inputs `write` reads,
-never from the bytes. -/
+/-- The features `write` reaches on these inputs, in `Feature.all`'s order, computed from its
+inputs rather than its bytes. -/
 public def features (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[]) (tree : Struct.Tree := ⟨#[]⟩) : Array Feature :=
   (Feature.all.filter (reaches geom fs pages imgs outline tree)).toArray
 
-/-- **`features_mem`** (the `_mem` statement): every feature the census
-reports is drawn from `Feature.all` — the row set is closed, so a matrix
-carrying a row per `Feature.all` has a row for whatever a fixture emits. -/
 public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree) (f : Feature)
     (h : f ∈ features geom fs pages imgs outline tree) :
@@ -1421,9 +1120,6 @@ public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   unfold features at h
   exact (List.mem_filter.1 (List.mem_toArray.1 h)).1
 
-/-- **`features_smask_iff`** (the `_exact` statement): the census says
-`smask` exactly when the table allocated a soft-mask id — the same slot
-`write` reads to emit `/SMask`. -/
 public theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store) (outline : Array OutlineEntry) (tree : Struct.Tree) :
     .smask ∈ features geom fs pages imgs outline tree ↔
@@ -1433,11 +1129,6 @@ public theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array Pa
   rw [List.mem_toArray, List.mem_filter]
   simp only [Feature.all_complete, true_and, reaches, Array.any_eq_true]
 
-/-- **`features_formXObject_exact`**: the census says `formXObject`
-exactly when the table allocates a form — a copied page's base or a figure
-form's slot, the rows `write` spells as a `/Subtype /Form` stream. A figure
-that paints through a symbol, a stamp or a transparency group ships one,
-and the census names it. -/
 public theorem features_formXObject_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store) (outline : Array OutlineEntry) (tree : Struct.Tree) :
     .formXObject ∈ features geom fs pages imgs outline tree ↔
@@ -1471,26 +1162,16 @@ public def StreamPrefix.text : StreamPrefix → String
 public def StreamPrefix.fragment (p : StreamPrefix) (filtered : Bool) : String :=
   p.text ++ if filtered then " /Filter /FlateDecode" else ""
 
-/-- One physical object as the bytes `serialize` writes for it: a
-dictionary fragment and a stream payload whose filter is already chosen, a
-form XObject whose `/Resources` is a copied graph's renumbered bytes, or a
-copied object's own value bytes with its own stream. No offset rides here —
-`serialize` decides where an object lands, and it decides it by having
-written everything before it. -/
+/-- One physical object as `serialize` writes it: a stream, a form over a copied graph's
+renumbered resources, or a copied object. -/
 public inductive Body where
   | stream (dict : String) (data : ByteArray)
-  /-- The dictionary up to `/Resources`, the renumbered resource bytes, and
-  the form's content. The resources are bytes with reference holes
-  (`PdfRead.Chunk`), not an object, so this arm stays raw until a copied
-  graph's dictionary is itself typed. -/
+  /-- The dictionary up to `/Resources`, the renumbered resource bytes, and the form's content. -/
   | form (head : String) (resources : ByteArray) (content : ByteArray)
-  /-- A copied object: its value verbatim and its stream when it has one.
-  The filters are the source file's, never this writer's. -/
+  /-- A copied object's value and stream, verbatim under the source file's filters. -/
   | copied (value : ByteArray) (stream : Option ByteArray)
 
-/-- Native streams have a writer-owned dictionary prefix and retained
-payload. This syntax condition makes no claim about the font program or
-the validity of a caller's compressed cache entry. -/
+/-- A native stream: a writer-owned dictionary prefix and its retained payload. -/
 public def Body.Native (body : Body) : Prop :=
   ∃ p : StreamPrefix, ∃ filtered : Bool, ∃ raw : ByteArray,
     body = .stream (p.fragment filtered) raw
@@ -1500,9 +1181,7 @@ public structure Row where
   id : Nat
   body : Body
 
-/-- The bytes one object is written as, appended to the buffer it lands in:
-the accumulator form, so a 60 MB font program is appended in place rather
-than built beside the file and copied into it. -/
+/-- The bytes one object is written as, appended in place to the buffer it lands in. -/
 public def rowInto (out : ByteArray) (id : Nat) : Body → ByteArray
   | .stream dict data =>
     ((out ++ (s!"{id} 0 obj\n<< {dict} /Length {data.size} >>\nstream\n").toUTF8) ++ data)
@@ -1517,8 +1196,6 @@ public def rowInto (out : ByteArray) (id : Nat) : Body → ByteArray
   | .copied value none =>
     ((out ++ (s!"{id} 0 obj\n").toUTF8) ++ value) ++ "\nendobj\n".toUTF8
 
-/-- The `List` companion: the offset is bound before the append so the
-buffer stays uniquely owned and the append is in place. -/
 private def serializeList (out : ByteArray) (locs : Array (Nat × Nat)) :
     List Row → ByteArray × Array (Nat × Nat)
   | [] => (out, locs)
@@ -1526,15 +1203,10 @@ private def serializeList (out : ByteArray) (locs : Array (Nat × Nat)) :
     let off := out.size
     serializeList (rowInto out r.id r.body) (locs.push (r.id, off)) rest
 
-/-- The file's objects and where each one landed. The offsets are this
-fold's own — the size the buffer had when the object's bytes began — so
-nothing can disagree with them: the cross-reference is built from this
-result, not from a table filled beside the writing. `write_readXref_exact`
-is the statement this shape exists for. -/
+/-- The file's objects and the offset each landed at, as this fold wrote them. -/
 public def serialize (head : ByteArray) (rows : Array Row) : ByteArray × Array (Nat × Nat) :=
   serializeList head #[] rows.toList
 
-/-- A row appends its bytes independently of the preceding file. -/
 public theorem rowInto_bytes (pre : ByteArray) (id : Nat) (body : Body) :
     rowInto pre id body = pre ++ rowInto ByteArray.empty id body := by
   cases body with
@@ -1587,9 +1259,6 @@ private theorem serializeList_append (before after : List Row) (out : ByteArray)
     simpa only [List.cons_append, serializeList] using
       (ih (rowInto out r.id r.body) (locs.push (r.id, out.size)))
 
-/-- Every recorded offset selects exactly that row's bytes in the
-serialized file. This artifact-specific law quantifies over all preceding
-and following rows, including binary streams and copied objects. -/
 public theorem serialize_row_exact (head : ByteArray) (before after : Array Row) (r : Row) :
     let pre := (serialize head before).1
     let out := serialize head (before ++ #[r] ++ after)
@@ -1616,9 +1285,6 @@ public theorem serialize_row_exact (head : ByteArray) (before after : Array Row)
         (i := 0) (j := (rowInto ByteArray.empty r.id r.body).size)).trans
         (ByteArray.extract_append_eq_left rfl)
 
-/-- **`serialize_locs_covers`** (the `_covers` statement): `serialize`
-reports one offset per row, in the rows' own order — so a cross-reference
-built from `locs` names every object the writer wrote and no other. -/
 private theorem serializeList_ids (l : List Row) (out : ByteArray) (locs : Array (Nat × Nat)) :
     (serializeList out locs l).2.toList.map (·.1) = locs.toList.map (·.1) ++ l.map (·.id) := by
   induction l generalizing out locs with
@@ -1629,15 +1295,10 @@ public theorem serialize_locs_covers (head : ByteArray) (rows : Array Row) :
     (serialize head rows).2.toList.map (·.1) = rows.toList.map (·.id) := by
   simp [serialize, serializeList_ids]
 
-/-- **`serialize_locs_id`** (the `_id` statement): the first object lands at
-the head's own size — the offset a reader following `startxref` arrives at,
-and the base case of the induction over the rows. -/
 public theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
     (serialize head (#[r] ++ rest)).2[0]? = some (r.id, head.size) := by
   simpa [serialize, serializeList] using (serialize_row_exact head #[] rest r).1
 
-/-- A dense lookup of the positions recorded by the writer. Out-of-range
-ids are ignored; when an id repeats, the last source row wins. -/
 private def indexObjectsList {α : Type} (out : Array (Option α)) :
     List (Nat × α) → Array (Option α)
   | [] => out
@@ -1689,7 +1350,6 @@ private theorem indexObjectsList_source {α : Type} (rows : List (Nat × α))
       · exact Or.inl (by simpa [hi] using h)
     · exact Or.inr (List.mem_cons_of_mem _ h)
 
-/-- Every answer is one of the writer's recorded positions. -/
 public theorem indexObjects_mem {α : Type} (size : Nat) (rows : List (Nat × α))
     (id : Nat) (value : α)
     (h : ((indexObjects size rows)[id]?).join = some value) :
@@ -1699,9 +1359,6 @@ public theorem indexObjects_mem {α : Type} (size : Nat) (rows : List (Nat × α
     split at h <;> simp_all
   · exact h
 
-/-- A recorded position is recovered exactly when its id fits and no
-later row replaces it. Neither a unique-id assumption nor an initial
-table is needed for the preceding rows. -/
 public theorem indexObjects_entry_exact {α : Type} (size : Nat)
     (before after : List (Nat × α)) (id : Nat) (value : α)
     (hid : id < size) (hlast : ∀ r ∈ after, r.1 ≠ id) :
@@ -1713,14 +1370,11 @@ public theorem indexObjects_entry_exact {α : Type} (size : Nat)
   · rfl
   · simpa using hid
 
-/-- Each compressed id's position in the same list the object streams
-pack, in order (`objStmChunks` cuts it; `xrefEntry` reads the stream and
-index off the position). -/
+/-- Each compressed id's position in the list the object streams pack. -/
 public def compressedIndex (size : Nat) (objects : List (Nat × PdfRead.Obj)) :
     Array (Option Nat) :=
   indexObjects size (objects.zipIdx.map (fun (row, i) => (row.1, i)))
 
-/-- Each compressed lookup selects a source object with that same id. -/
 public theorem compressedIndex_mem (size : Nat) (objects : List (Nat × PdfRead.Obj))
     (id i : Nat) (h : ((compressedIndex size objects)[id]?).join = some i) :
     ∃ value, objects[i]? = some (id, value) := by
@@ -1732,8 +1386,6 @@ public theorem compressedIndex_mem (size : Nat) (objects : List (Nat × PdfRead.
   have := List.mem_zipIdx_iff_getElem?.mp hj
   simpa [hi, ← hr] using this
 
-/-- Even when source ids repeat, every returned index points inside the
-actual packed list. -/
 public theorem compressedIndex_between (size : Nat) (objects : List (Nat × PdfRead.Obj))
     (id i : Nat) (h : ((compressedIndex size objects)[id]?).join = some i) :
     i < objects.length := by
@@ -1759,14 +1411,12 @@ private theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
     · exact Nat.le_trans (h r hr) hsize
     · simpa [hr] using hsize
 
-/-- Recorded offsets cannot exceed the actual serialized body size. -/
 public theorem serialize_offsets_between (head : ByteArray) (rows : Array Row)
     (id off : Nat) (h : (id, off) ∈ (serialize head rows).2) :
     off ≤ (serialize head rows).1.size :=
   serializeList_offsetBound rows.toList head #[] (by simp) (id, off) h
 
-/-- The xref payload is formed from the actual serializer's locations and
-the actual object-stream position list. -/
+/-- The xref payload from the serializer's locations and the object-stream position list. -/
 public def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) : Array Xref.Entry :=
   let offsets := indexObjects t.size locs.toList
@@ -1774,21 +1424,12 @@ public def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
   xrefEntries t (fun id => (compressed[id]?).join)
     (fun id => (offsets[id]?).join) xrefOff
 
-/-- Every row of the actual xref payload fits the `/W` the writer declares
-for it, for every table, serialization and object list, unconditionally —
-the widths are read off the rows (`Xref.widthsOf`), so the bounds the old
-fixed `/W [1 4 2]` needed — a body below 4 GiB, object numbers below 2³²,
-at most 65536 compressed objects — no longer stand between a document and
-its file. -/
 public theorem writerXrefEntries_fits (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) :
     ∀ e ∈ writerXrefEntries t locs objects xrefOff,
       e.Fits (Xref.widthsOf (writerXrefEntries t locs objects xrefOff)) :=
   Xref.widthsOf_fits _
 
-/-- The index field the writer declares is one byte wide for every
-document: no row's third field exceeds 255 (`xrefEntries_second_between`),
-and a field is never narrower than one byte. -/
 public theorem writerXrefWidths_second_exact (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) :
     (Xref.widthsOf (writerXrefEntries t locs objects xrefOff)).second = 1 := by
@@ -1799,10 +1440,6 @@ public theorem writerXrefWidths_second_exact (t : ObjTable) (locs : Array (Nat �
   change _ ≤ 1 at hhi
   omega
 
-/-- Every field in the actual xref payload reads back at its row's offset,
-`w.row` bytes per object id, in the widths the writer declares. The table
-is constructed from source counts; there is no numeric premise left.
-Decompression and the reader's row walk remain separate contracts. -/
 public theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems nFigDict nFigForm : Nat) (head : ByteArray)
     (rows : Array Row) (objects : List (Nat × PdfRead.Obj)) (id : Nat)
@@ -1829,8 +1466,7 @@ public theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
     ByteArray.size_empty, Nat.zero_add] using
     Xref.encode_index_fields_exact _ _ id _ hi he ByteArray.empty ByteArray.empty
 
-/-- The two buffers of an object stream (§7.5.7). Header offsets are
-relative to `payload`, whose bytes are appended by the same step. -/
+/-- The two buffers of an object stream (§7.5.7); header offsets are relative to `payload`. -/
 public structure ObjectStream where
   header : String := ""
   payload : ByteArray := ByteArray.empty
@@ -1839,8 +1475,6 @@ private def ObjectStream.push (s : ObjectStream) (id : Nat) (value : PdfRead.Obj
   { header := s.header ++ s!"{id} {s.payload.size} "
     payload := (s.payload ++ PdfRead.Obj.render value).push 10 }
 
-/-- The actual writer's accumulator, shared by the emission and its
-offset laws. No object offsets are supplied by a caller. -/
 private def objectStreamList (s : ObjectStream) : List (Nat × PdfRead.Obj) → ObjectStream
   | [] => s
   | (id, value) :: rest => objectStreamList (s.push id value) rest
@@ -1883,10 +1517,6 @@ private theorem objectStreamList_payload (objects : List (Nat × PdfRead.Obj)) (
     simp only [ByteArray.data_push, ByteArray.data_append, Array.push_eq_append,
       Array.append_assoc]
 
-/-- Every object's header entry spells the size of its actual preceding
-payload, and that offset after `/First` selects exactly its rendered
-bytes. This holds for arbitrary objects and surrounding objects; parser
-grammar and xref field bounds are separate obligations. -/
 public theorem objectStream_entry_exact (before after : List (Nat × PdfRead.Obj))
     (id : Nat) (value : PdfRead.Obj) :
     let pre := objectStream before
@@ -1919,8 +1549,7 @@ public theorem objectStream_entry_exact (before after : List (Nat × PdfRead.Obj
           (objectStream after).payload)) (i := 0) (j := (PdfRead.Obj.render value).size)).trans
         (ByteArray.extract_append_eq_left rfl)
 
-/-- The three dictionaries of one embedded face (ISO 32000-2 §§9.7, 9.8).
-The stream rows hold its program and ToUnicode separately. -/
+/-- The three dictionaries of one embedded face (ISO 32000-2 §9.7, §9.8). -/
 public structure FontObjects where
   type0 : PdfRead.Obj
   cid : PdfRead.Obj
@@ -1930,17 +1559,11 @@ public def FontObjects.rows (o : FontObjects) (k : Nat) : List (Nat × PdfRead.O
   [(ObjTable.type0Id k, o.type0), (ObjTable.cidId k, o.cid),
     (ObjTable.fdId k, o.descriptor)]
 
-/-- Font dictionaries from the face metrics and the allocated ids.
-The name and widths have already been resolved for the selected glyphs. -/
+/-- Font dictionaries from the face metrics and the allocated ids. -/
 public def fontObjects (t : ObjTable) (k : Nat) (font : Font)
     (baseFont : String) (widths : PdfRead.Obj) : FontObjects :=
   let ascent1000 := font.ascent * 1000 / font.unitsPerEm
   let descent1000 := font.descent * 1000 / font.unitsPerEm
-  -- The descriptor states the parsed metrics, not stand-ins: CapHeight is
-  -- the face's own (OS/2 sCapHeight through `Font.capHeight` — `ascent`
-  -- once stood in for it), and ItalicAngle is the slant the face declares
-  -- (post.italicAngle); only a face flagged italic that declares none
-  -- keeps the conventional -12°.
   let capHeight1000 := font.capHeight * 1000 / font.unitsPerEm
   let cidSubtype := if font.isCff then "CIDFontType0" else "CIDFontType2"
   let cidToGid : Array (String × PdfRead.Obj) :=
@@ -1950,10 +1573,7 @@ public def fontObjects (t : ObjTable) (k : Nat) (font : Font)
     else font.italicAngle
   -- Flags: bit 1 fixed pitch, bit 3 symbolic, bit 7 italic (1-based).
   let flags := 4 + (if font.isFixedPitch then 1 else 0) + (if font.isItalic then 64 else 0)
-  -- StemV and the FontBBox x-bounds are conventional stand-ins, said so:
-  -- an unhinted OpenType face declares neither (a stem width lives in
-  -- hinting data the parser does not keep), so these are the trade's
-  -- usual values, not measurements.
+  -- StemV and the FontBBox x-bounds are conventional stand-ins: an unhinted face declares neither.
   let stemV := if font.isBold then 140 else 80
   {
     type0 := .dict
@@ -1976,9 +1596,6 @@ public def fontObjects (t : ObjTable) (k : Nat) (font : Font)
         ("StemV", .int stemV), (fontFileKey, .ref (t.fileId k) 0)]
   }
 
-/-- The composite font, its descendant, and its descriptor point to the
-table's own slots, for every face and glyph-width table. This is a PDF
-dictionary contract; it does not assume a reader or certify a font file. -/
 public theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
     (baseFont : String) (widths : PdfRead.Obj) :
     let o := fontObjects t k font baseFont widths
@@ -1990,8 +1607,7 @@ public theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
   cases hcff : font.isCff <;>
     simp [fontObjects, hcff, PdfRead.Obj.get?]
 
-/-- Select the smaller of a stream's original and deflated spellings.
-The cached spelling is supplied by the same codec as `flateRow`. -/
+/-- A stream row in the smaller of its original and deflated spellings. -/
 public def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
   if z.size < data.size then ⟨id, .stream (dict ++ " /Filter /FlateDecode") z⟩
   else ⟨id, .stream dict data⟩
@@ -1999,18 +1615,15 @@ public def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
 public def flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
   zRow id dict data (Flate.deflate data)
 
-/-- A figure form's stream prefix: its box, the shared resources, and
-whether it is an isolated transparency group (§11.6.6) — a group form is,
-a symbol's or a stamp's is not. -/
+/-- A figure form's stream prefix: its box, the shared resources, and whether it is an isolated
+transparency group (§11.6.6). -/
 public def formPrefix (b : Int × Int × Int × Int) (resId : Nat) (kind : FormKind) : StreamPrefix :=
   .figForm b.1 b.2.1 b.2.2.1 b.2.2.2 resId (match kind with
     | .group => true
     | .symbol => false
     | .stamp _ => false)
 
-/-- A figure form's row: its body's operators under `formPrefix`. An entry
-that is no form, which the writer's form block never holds, writes an
-empty content stream, so its slot is still an object. -/
+/-- A figure form's row; an entry that is no form writes an empty content stream. -/
 public def formRow (gi : GfxPdf.GlyphInk) (id resId : Nat) : FigRes → Row
   | .form kind body =>
     flateRow id (formPrefix (formBBox gi kind body) resId kind).text (render body).toUTF8
@@ -2018,19 +1631,14 @@ public def formRow (gi : GfxPdf.GlyphInk) (id resId : Nat) : FigRes → Row
   | .pattern _ => flateRow id StreamPrefix.content.text ByteArray.empty
   | .shading _ => flateRow id StreamPrefix.content.text ByteArray.empty
 
-/-- A copied page's content as the writer stores it: deflated, with the
-filter declared, when that is smaller, else as the source page carried it
-(`copiedForm_inflate_id`). The deflate is the driver's when it took one
-through its content-hash cache (`Image.Store.formZ`), else computed here.
-The page's resources and the objects they reach keep the source's own
-filters. -/
+/-- A copied page's content as stored: deflated with the filter declared when smaller, else as
+the source carried it. -/
 @[expose] public def copiedFormStream (content : ByteArray) (z? : Option ByteArray) :
     ByteArray × Bool :=
   let z := z?.getD (Flate.deflate content)
   if z.size < content.size then (z, true) else (content, false)
 
-/-- The content of each copied page the pages place, by store entry: what
-the driver deflates through its content-hash cache (`Image.Store.formZ`). -/
+/-- The content of each copied page the pages place, by store entry. -/
 public def copiedFormContents (imgs : Image.Store) (pages : Array PageOut) :
     Array (Option ByteArray) :=
   let used := usedImagesOf imgs pages
@@ -2054,8 +1662,7 @@ public theorem formRow_native_exact (gi : GfxPdf.GlyphInk) (id resId : Nat) (r :
     (formRow gi id resId r).body.Native := by
   cases r <;> exact flateRow_native_exact _ _ _
 
-/-- `n` consecutive slices of at most `objStmCapacity` items each, in
-order: the structural fold `objStmChunks` runs. -/
+/-- `n` consecutive slices of at most `objStmCapacity` items each, in order. -/
 public def chunksN {α : Type} : Nat → List α → List (List α)
   | 0, _ => []
   | n + 1, xs => xs.take objStmCapacity :: chunksN n (xs.drop objStmCapacity)
@@ -2065,8 +1672,6 @@ public def chunksN {α : Type} : Nat → List α → List (List α)
 public def objStmChunks {α : Type} (xs : List α) : List (List α) :=
   chunksN (objStmCount xs.length) xs
 
-/-- Slice `k` is the objects from position `k * objStmCapacity` on, at
-most `objStmCapacity` of them. -/
 public theorem chunksN_getElem?_exact {α : Type} (n : Nat) (xs : List α) (k : Nat) :
     (chunksN n xs)[k]? =
       if k < n then some ((xs.drop (k * objStmCapacity)).take objStmCapacity) else none := by
@@ -2097,8 +1702,6 @@ private theorem lt_of_lt_objStmCount (n k : Nat) (hk : k < objStmCount n) :
   simp only [objStmCount, objStmCapacity] at hk ⊢
   omega
 
-/-- **`objStmChunks_flatten_id`**: the streams hold every compressed object
-once, in order — nothing dropped, nothing repeated. -/
 public theorem objStmChunks_flatten_id {α : Type} (xs : List α) :
     (objStmChunks xs).flatten = xs := by
   have h (n : Nat) (ys : List α) : (chunksN n ys).flatten = ys.take (n * objStmCapacity) := by
@@ -2108,9 +1711,6 @@ public theorem objStmChunks_flatten_id {α : Type} (xs : List α) :
       rw [chunksN, List.flatten_cons, ih, Nat.succ_mul, Nat.add_comm, List.take_add]
   rw [objStmChunks, h, List.take_of_length_le (objStmCount_mul_le _)]
 
-/-- **`objStmChunks_between`**: every object stream holds at least one and
-at most `objStmCapacity` objects — reading any one compressed object
-inflates at most that many. -/
 public theorem objStmChunks_between {α : Type} (xs : List α) :
     ∀ c ∈ objStmChunks xs, 0 < c.length ∧ c.length ≤ objStmCapacity := by
   intro c hc
@@ -2125,9 +1725,6 @@ public theorem objStmChunks_between {α : Type} (xs : List α) :
     omega
   · cases hk
 
-/-- The object at position `before.length` sits in stream
-`before.length / objStmCapacity` at index `before.length % objStmCapacity`,
-and what follows it in that stream follows it in the source. -/
 public theorem objStmChunks_entry_exact {α : Type} (before after : List α) (x : α) :
     ∃ cb ca, (objStmChunks (before ++ x :: after))[before.length / objStmCapacity]? =
         some (cb ++ x :: ca) ∧
@@ -2151,9 +1748,7 @@ public theorem objStmChunks_entry_exact {α : Type} (before after : List α) (x 
   · intro y hy
     exact List.mem_of_mem_take hy
 
-/-- The writer's actual allocation and emissions, before serialization.
-The object streams and xref are derived from these rows and values; their
-offsets are never supplied separately. This is artifact bookkeeping. -/
+/-- The writer's allocation and emissions before serialization. -/
 public structure WritePlan where
   table : ObjTable
   head : ByteArray
@@ -2164,13 +1759,11 @@ public structure WritePlan where
 public def WritePlan.chunks (p : WritePlan) : List (List (Nat × PdfRead.Obj)) :=
   objStmChunks p.compressed
 
-/-- One object stream: its count, its header and payload, deflated when
-that is smaller (`flateRow`). -/
+/-- One object stream's row, deflated when that is smaller. -/
 public def objStmRow (id count : Nat) (packed : ObjectStream) : Row :=
   flateRow id s!"/Type /ObjStm /N {count} /First {packed.header.utf8ByteSize}" packed.bytes
 
-/-- Each chunk packed once, with its object count: what the rows and the
-size check share. -/
+/-- Each chunk packed once with its object count. -/
 public def WritePlan.packed (p : WritePlan) : List (Nat × ObjectStream) :=
   p.chunks.map fun c => (c.length, objectStream c)
 
@@ -2197,9 +1790,7 @@ public def WritePlan.widths (p : WritePlan) : Xref.Widths :=
 public def packedMax (packed : List (Nat × ObjectStream)) : Nat :=
   packed.foldl (fun m x => max m (x.2.header.utf8ByteSize + x.2.payload.size)) 0
 
-/-- The measured bytes retained for final emission. Numeric validation
-reads these values, then publishes the same body and xref payload.
-The object streams are assembled and compressed only during measurement. -/
+/-- The measured bytes retained for final emission. -/
 public structure WriteMeasurement where
   body : ByteArray
   offsets : Array (Nat × Nat)
@@ -2221,8 +1812,7 @@ public def WriteMeasurement.xrefDictText (m : WriteMeasurement) (t : ObjTable) :
   let idB := Flate.hex16 (Flate.fnv64 1099511628211 m.body)
   s!"/Type /XRef /Size {t.size} /W [1 {m.widths.first} {m.widths.second}] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
 
-/-- Finish a measurement: its xref describes this serialization, and
-`startxref` names the byte immediately after its retained body. -/
+/-- Finishes a measurement: its xref, and `startxref` naming the byte after its body. -/
 public def WriteMeasurement.bytes (m : WriteMeasurement) (t : ObjTable) : ByteArray :=
   let (out, _) := serialize m.body #[flateRow t.xrefId (m.xrefDictText t) m.xrefPayload]
   out ++ (s!"startxref\n{m.body.size}\n%%EOF\n").toUTF8
@@ -2250,8 +1840,6 @@ private theorem foldl_packedMax_le (B : Nat) (xs : List (Nat × ObjectStream)) (
   | cons x xs ih =>
     simp only [List.foldl_cons, ih, List.mem_cons, forall_eq_or_imp, Nat.max_le, and_assoc]
 
-/-- The measured stream size is within a bound exactly when every object
-stream's decoded bytes are. -/
 public theorem WritePlan.measure_object_size_exact (p : WritePlan) (B : Nat) :
     p.measure.objectPayloadSize ≤ B ↔ ∀ c ∈ p.chunks, (objectStream c).bytes.size ≤ B := by
   change packedMax p.packed ≤ B ↔ _
@@ -2260,9 +1848,6 @@ public theorem WritePlan.measure_object_size_exact (p : WritePlan) (B : Nat) :
     and_imp, forall_apply_eq_imp_iff₂, ObjectStream.bytes, ByteArray.size_append,
     String.toUTF8_eq_toByteArray, String.size_toByteArray]
 
-/-- Retaining the measurement preserves the existing writer's complete
-byte spelling, including its hash identifiers, compression choices,
-offsets, and footer. This equality is independent of input bounds. -/
 public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
     p.bytes =
       let (body, locs) := p.serialized
@@ -2275,15 +1860,8 @@ public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
       let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
       out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := by rfl
 
-/-- Prepare positioned pages for a PDF 2.0 file: cross-reference stream,
-object streams, one Identity-H CID font per face actually used (its program
-the subset of the glyphs the pages paint, `FontSubset.program`, with its
-own ToUnicode), image XObjects for every image actually
-placed, the structure tree projected from `tree`, and the document
-information the source declared (Info dictionary plus XMP). `streams`,
-`ops` and `programs` are the driver's cache path: the page operators it
-built through `pageOps` (one walk, not two), their rendered and deflated
-bytes, and the face programs it built through `facePrograms`. -/
+/-- Prepares positioned pages for a PDF 2.0 file; `streams`, `ops` and `programs` are the driver's
+cached page operators, streams and face programs. -/
 public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
@@ -2292,20 +1870,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (programs : Array (ByteArray × Bool) := #[]) : WritePlan := Id.run do
   let np := pages.size
   let v17 := info.pdfVersion == some "1.7"
-  -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
-  -- the very function `html_fonts_cover_pdf` quantifies over (`keepOf` of
-  -- this census is `keepFaces fs pages` by definition), so the contract
-  -- holds of the writer's own decision, not a copy. `allUsed` stays for the
-  -- per-face glyph census the kept faces subset.
   let allUsed : Array (Array (Nat × Char)) := usedAll fs pages imgs.shaped
   let keep : Array Nat := keepOf allUsed
   let remap := remapOf fs keep
   let gi := glyphInkOf fs keep
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!
   let nf := keep.size
-  -- The program each kept face embeds: its own file minus every glyph no
-  -- page paints (`FontSubset.program`), named with a subset tag when it is
-  -- one — the caller's when it built them (`facePrograms`), else built here.
   let programs : Array (ByteArray × Bool) := if programs.size == nf then programs
     else (keep.zip usedPerFont).map fun (fk, used) =>
       let font := fs.get fk
@@ -2313,15 +1883,9 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let usedImgs := usedImagesOf imgs pages
   let imgMap := imgMapOf imgs usedImgs
   let nOut := outline.size
-  -- The structure tree: the skeleton once, its leaf tags into every page's
-  -- operators, the pages' marks back into the skeleton (`fill`), and the
-  -- parent tree as the same map read from the page side. One walk decides
-  -- the tag a sequence carries and the element that lists it.
   let sk := skeleton tree
   let nLeaves := tree.leaves.size
   let tags := leafTags sk nLeaves
-  -- The typed operators: the caller's when it built them (`pageOps`, the
-  -- same walk — `streams` are their render), else built here.
   let docFigs := docFigsWith fs keep imgs
   let ops := if ops.size == np then ops
     else let wt := widthTable fs.fonts keep
@@ -2330,23 +1894,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let marks := ops.map pageMarks
   let es := fill sk (leafPagesOf nLeaves marks)
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)
-  -- Every object id, from the one table: `objTable_ids_exact` says its
-  -- ids tile `[1, size)`, so the cross-reference can be built without a
-  -- second pass and no row is left to a default.
-  -- The figure table the pages' operators name into (`namedPageOps`),
-  -- split by how each entry is spelled: dictionaries in the object stream,
-  -- forms as streams.
   let figs := figureTable geom pages docFigs
   let figDicts := figs.filter fun r => !r.isForm
   let figForms := figs.filter FigRes.isForm
   let t := objTable keep imgs usedImgs np nOut es.size (figDictCount figs) (figFormCount figs)
 
-  -- compressed (non-stream) objects, as typed values: `Obj.render` is the
-  -- only place their bytes are decided, so what the census reads back is
-  -- the value this writer built (`parseVal_render_id`).
   let outlineRoot := if nOut == 0 then none else some t.outlineRootId
-  -- The catalog: `catalogDict`, whose `/Lang` is `pdf_lang_declared`'s
-  -- statement — present exactly when the document declares a language.
   let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
   let pagesObj : PdfRead.Obj := .dict
     #[("Type", .name "Pages"),
@@ -2360,10 +1913,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let baseFont := if (programs[k]?.map (·.2)).getD false
       then s!"{subsetTag k (used.map (·.1))}+{font.psName}" else font.psName
     (fontObjects t k font baseFont (wArray font used)).rows k
-  -- Internal fragments name PDF destinations, never URI actions. Resolve
-  -- from the final lines so columns, spills, and vertical glue cannot leave
-  -- an annotation pointing at the page where collection first saw its name
-  -- (ISO 32000-2 §§12.3.2, 12.6.4.2).
+  -- Internal fragments are destinations resolved from the final lines, never URI actions (§12.3.2).
   let linkTarget (url : String) : String × PdfRead.Obj :=
     if url.startsWith "#" then
       let name := (url.drop 1).toString
@@ -2385,18 +1935,13 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           ("Rect", .arr #[ptObj x0, ptObj y0, ptObj x1, ptObj y1]),
           ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4),
           linkTarget url]))]
-  -- The one resources dictionary every page and figure form names: the
-  -- kept faces; the placed images and the figure table's forms; the
-  -- table's ExtGStates, patterns and shadings — each name its entry's place
-  -- in the table, each reference its slot in the table's block.
   let figId (k : Nat) : Nat :=
     if (figs[k]?.map FigRes.isForm).getD false then t.figFormId (figRank figs k)
     else t.figDictId (figRank figs k)
   let figEntries (pick : FigRes → Bool) : Array (String × PdfRead.Obj) :=
     figs.zipIdx.filterMap fun (r, k) =>
       if pick r then some (s!"{r.namePrefix}{k + 1}", PdfRead.Obj.ref (figId k) 0) else none
-  -- A drawn figure's raster is also named by its store entry (`rasterNames`),
-  -- the name its figure's form paints it with.
+  -- A drawn figure's raster is also named by the store entry its form paints it with.
   let imgEntries : Array (String × PdfRead.Obj) :=
     t.imgIds.zipIdx.map (fun (id, n) => (s!"Im{n + 1}", PdfRead.Obj.ref id 0)) ++
     (usedImgs.zip t.imgIds).filterMap fun (k, id) =>
@@ -2407,35 +1952,22 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let figDictObjs : List (Nat × PdfRead.Obj) := figDicts.toList.zipIdx.map fun (r, j) =>
     (t.figDictId j, (figDictObj (nameRes figs r)).getD .null)
   let pageDict (i : Nat) : PdfRead.Obj :=
-    -- With bleed the medium is larger than the finished page, and the
-    -- boxes follow from the declared trim size and bleed (`pageBoxes`,
-    -- nesting proved by `pageBoxes_nest`) — the file itself tells
-    -- prepress where to cut, no hand-rolled \pdfvariable pageattr needed.
-    -- With zero bleed nothing is written: CropBox defaults to MediaBox
-    -- and BleedBox/TrimBox/ArtBox default to CropBox (ISO 32000-2
-    -- §14.11.2), so an empty dictionary already declares all boxes equal
-    -- — and the zero-bleed output stays byte-identical.
     let b := geom.bleed
-    -- A trim the document's own drawn marks cut (`Geom.trimInset`) is the
-    -- same arithmetic from the other side: the medium is the page, the trim
-    -- lies the inset inside it.
+    -- A trim the document's own marks cut lies the inset inside the page.
     let inset := if b == 0 then geom.trimInset else 0
     let (media, bleedBox, trim) :=
       if 0 < inset then pageBoxes (geom.pageW - 2 * inset) (geom.pageH - 2 * inset) inset
       else pageBoxes geom.pageW geom.pageH b
     let boxes : Array (String × PdfRead.Obj) := if b == 0 && !(0 < inset) then #[] else
       #[("TrimBox", trim.obj), ("BleedBox", bleedBox.obj), ("ArtBox", trim.obj)]
-    -- `/StructParents` (§14.7.5.4): the page's key in the parent tree,
-    -- under which its marked-content identifiers map back to elements.
+    -- `/StructParents` (§14.7.5.4): the page's key in the parent tree.
     let ann := annots i
     .dict (#[("Type", PdfRead.Obj.name "Page"), ("Parent", .ref 2 0), ("MediaBox", media.obj)]
       ++ boxes
       ++ #[("Resources", .ref t.resId 0)]
       ++ ann
       ++ #[("Contents", .ref (t.contentId i) 0), ("StructParents", .int i)])
-  -- Metadata is a *text string* (§7.9.2.2): ASCII literal, or UTF-16BE
-  -- with the BOM past ASCII — never raw UTF-8 bytes, which a reader
-  -- decodes as PDFDocEncoding.
+  -- Metadata is a text string (§7.9.2.2), never raw UTF-8, which a reader decodes as PDFDocEncoding.
   let infoEntry (key : String) (v : Option String) : Array (String × PdfRead.Obj) :=
     match v with
     | some s => #[(key, litObj (pdfTextString s))]
@@ -2445,10 +1977,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
       #[("Producer", litObj "(leantex)")])
 
-  -- Outline items: /Title and /Parent always; a resolved in-document
-  -- target is a /Dest to its page (/XYZ null null null keeps the reader's
-  -- view), an external target a URI action, and a target that resolved to
-  -- neither is a bare item — an outline item need carry no destination.
+  -- A resolved outline target is a /Dest to its page; /XYZ null null null keeps the reader's view.
   let outlineObjs : List (Nat × PdfRead.Obj) :=
     if nOut == 0 then [] else
       (t.outlineRootId, PdfRead.Obj.dict
@@ -2467,17 +1996,8 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         (t.outlineItemId k, PdfRead.Obj.dict
           (#[("Title", litObj (pdfTextString e.title)),
              ("Parent", PdfRead.Obj.ref t.outlineRootId 0)] ++ prev ++ next ++ target))
-  -- The structure tree (§14.7): the root over the `Document` element, the
-  -- parent tree as one number-tree node keyed by page (`/StructParents`),
-  -- the PDF 2.0 namespace the elements name (§14.7.4 — `Title`, `FENote`,
-  -- `Hn` past 6 are 2.0 types; a type 2.0 dropped stays in the default
-  -- 1.7 namespace by naming none), and one dictionary per element:
-  -- its type, parent, kids as marked-content references (`/MCR`, §14.7.5.3
-  -- — the page travels with the identifier, so an element may span
-  -- pages), and the alternative or language it carries.
   let elemRef (i : Nat) : PdfRead.Obj := .ref (t.structElemId i) 0
-  -- A file declared PDF 1.7 has one standard namespace and no namespace
-  -- objects: its 2.0-only types are role-mapped onto 1.7's (`pdf17Role`).
+  -- A PDF 1.7 file role-maps its 2.0-only types onto 1.7's and has no namespace objects.
   let roleMap : Array (String × PdfRead.Obj) := es.foldl (fun acc e =>
     match pdf17Role e.s with
     | some r => if acc.any (·.1 == e.s) then acc else acc.push (e.s, .name r)
@@ -2494,8 +2014,6 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let parentTreeObj : PdfRead.Obj := .dict #[("Nums", .arr parentEntries)]
   let namespaceObj : PdfRead.Obj := if v17 then .dict #[] else .dict
     #[("Type", .name "Namespace"), ("NS", litObj "(http://iso.org/pdf2/ssn)")]
-  -- a placeholder `fill` did not replace: none remain after `fill`, and
-  -- one would be a leaf with no marked content, which lists nothing
   let kidObj (k : StructKid) : Array PdfRead.Obj := match k with
     | .elem i => #[elemRef i]
     | .mcid p m => #[.dict #[("Type", .name "MCR"), ("Pg", .ref (t.pageId p) 0), ("MCID", .int m)]]
@@ -2526,22 +2044,11 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs ++
     [(t.resId, resources)] ++ figDictObjs
 
-  -- assemble the file: every object as a row first, then one `serialize`
-  -- fold whose offsets are its own (`serialize_locs_covers`). Nothing
-  -- records a position beside the writing any more.
   let fileHead : ByteArray := (if v17 then "%PDF-1.7\n%" else "%PDF-2.0\n%").toUTF8 ++
     ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8
 
-  -- direct stream objects
-  -- Every stream this writer owns (content, ToUnicode, font files, XMP, the
-  -- object and cross-reference streams) rides as a real deflate whenever
-  -- that is smaller, filter declared. Image payloads and copied form graphs
-  -- carry their own filters and stay uncompressed here.
   let mut rows : Array Row := #[]
 
-  -- A page's stream, and its deflate when the driver already holds one
-  -- (`pageStreams`): the choice of spelling is `zRow`'s either way, so a
-  -- cache hit and a recomputation write the same bytes.
   for i in [0:np] do
     let (data, z?) := match streams[i]?, ops[i]? with
       | some s, _ => s
@@ -2551,22 +2058,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       | some z => zRow (t.contentId i) "" data z
       | none => flateRow (t.contentId i) "" data)
 
-  -- Image XObjects. A PNG's raw IDAT stream passes through as
-  -- `/FlateDecode` with the PNG predictor declared (ISO 32000-2 §7.4.4.4:
-  -- Predictor 15, with Colors/BitsPerComponent/Columns describing the
-  -- scanlines); a decoded-and-re-encoded plane needs no predictor; a JPEG
-  -- embeds whole as `/DCTDecode`. An alpha plane rides as its own gray
-  -- XObject named by `/SMask`.
+  -- A PNG's IDAT passes through as /FlateDecode with its predictor declared (§7.4.4.4).
   for ((k, imgId), n) in (usedImgs.zip t.imgIds).zipIdx do
     if let some inf := (imgs.get? k).bind (·.info) then
       match inf.form, (t.formBases[n]?).join with
       | some f, some base =>
-        -- A PDF page: a form XObject (ISO 32000-2 §8.10) whose /Matrix
-        -- normalizes the page box to the unit square, so the same
-        -- `cm w 0 0 h x y … Do` the raster path writes places it —
-        -- `form_bbox_exact` is the statement. The copied resource graph
-        -- follows, renumbered from `base`; `resources_closed` says no
-        -- hole dangles.
+        -- A PDF page is a form XObject (§8.10) whose /Matrix normalizes its box to the unit square.
         let fv := f.val
         let bw := fv.w
         let bh := fv.h
@@ -2581,10 +2078,6 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         for (o, l) in fv.objects.zipIdx do
           rows := rows.push ⟨base + l, .copied (renderChunks base o.chunks) o.stream⟩
       | _, _ =>
-        -- The plan's three sums, spelled (ISO 32000-2 §8.9.5 Table 87).
-        -- `iccBased` writes its alternate device space until the
-        -- emission slice allocates the profile stream; the default
-        -- parameters never plan it (`Image.plan_losses_accounts`).
         let deviceOf (n : Nat) : String :=
           if n == 1 then "/DeviceGray" else if n == 4 then "/DeviceCMYK" else "/DeviceRGB"
         let colorSpace := match inf.color with
@@ -2605,9 +2098,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let smaskRef := match (t.smaskIds[n]?).join with
           | some mid => s!" /SMask {mid} 0 R"
           | none => ""
-        -- Colour-key masking (ISO 32000-2 §8.9.6.4): the ranges in sample
-        -- units, a PNG tRNS carried exactly (`Image.colorKeyRanges_between`
-        -- keeps every value inside the bit depth).
+        -- Colour-key masking (ISO 32000-2 §8.9.6.4), its ranges in sample units.
         let maskRef := match inf.alpha with
           | .colorKey ranges => s!" /Mask [{" ".intercalate (ranges.toList.map toString)}]"
           | .opaque => ""
@@ -2620,17 +2111,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         rows := rows.push ⟨imgId, .stream dict inf.data⟩
         if let some mid := (t.smaskIds[n]?).join then
           if let .soft plane bpc := inf.alpha then
-            -- The alpha plane is the source's own filtered rows, deinterleaved
-            -- (`Image.splitPredictedAlpha`), so the mask declares the same PNG
-            -- predictor its colour plane does (ISO 32000-2 §7.4.4.4).
+            -- The alpha plane is the source's filtered rows, so the mask declares its colour plane's predictor.
             let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent {bpc} /Filter /FlateDecode \
 /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent {bpc} /Columns {inf.pxW} >>"
             rows := rows.push ⟨mid, .stream mdict plane⟩
 
-  -- Figure forms: one stream per form the table holds, its body renamed
-  -- onto the table, under the shared resources; a transparency group's
-  -- form isolated (§11.6.6).
   for (r, j) in figForms.zipIdx do
     rows := rows.push (formRow gi (t.figFormId j) t.resId (nameRes figs r))
 
@@ -2640,8 +2126,6 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let tuData := (toUnicode usedPerFont[k]!).toUTF8
     rows := rows.push (flateRow (ObjTable.toUniId k) "" tuData)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {prog.size}"
-    -- The driver may have deflated this program already, through its
-    -- content-hash cache; the writer then only picks the smaller spelling.
     rows := rows.push (match fs.zdata[keep[k]!]?.getD none with
       | some z => zRow (t.fileId k) ffDict prog z
       | none => flateRow (t.fileId k) ffDict prog)
@@ -2649,8 +2133,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   rows := rows.push (flateRow t.xmpId "/Type /Metadata /Subtype /XML" (xmpPacket info).toUTF8)
   return ⟨t, fileHead, rows, compressed⟩
 
-/-- Serialize the prepared emissions. The plan is also the input to the
-numeric representability check in `PdfWriteContract`. -/
+/-- Serializes the prepared emissions. -/
 public def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
@@ -2659,8 +2142,6 @@ public def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (programs : Array (ByteArray × Bool) := #[]) : ByteArray :=
   (prepare geom fs pages info imgs outline streams tree ops programs).bytes
 
-/-- The plan checked by the PDF contracts is exactly the one serialized
-by `write`, for every source and every supplied cache value. -/
 public theorem write_plan_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2687,7 +2168,6 @@ private theorem usedImagesOf_loaded (imgs : Image.Store) (pages : Array PageOut)
       · exact h
       · intro s _ out h
         dsimp only [Id.run, bind, pure]
-        -- A placed figure's raster entries: each joins only once it loaded.
         have slots (init : Array Nat) (hi : P init) (xs : Array Nat) :
             P (forIn xs init (fun r (acc : Array Nat) =>
               if (((imgs.get? r).bind fun x => x.info).isSome && !acc.contains r) = true then
@@ -2721,9 +2201,6 @@ private theorem usedImagesOf_empty (pages : Array PageOut) :
   have h := usedImagesOf_loaded {} pages k hk
   simp [Image.Store.get?] at h
 
-/-- Without imported image resources, every direct row emitted by the
-actual preparation loops uses a native dictionary prefix. The invariant
-allows every page, font-program, and compressed-cache input. -/
 public theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2781,7 +2258,6 @@ private theorem map_zipIdx_snd {α β : Type} (l : List α) (f : Nat → β) :
     l.zipIdx.map (fun p => f p.2) = (List.range l.length).map f := by
   have h := congrArg (List.map f) (List.zipIdx_map_snd 0 l)
   simpa only [List.map_map, List.range_eq_range', Function.comp_def] using h
-/-- The producer uses the public allocation table, for every cache value. -/
 public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
     (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2791,7 +2267,6 @@ public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array P
   unfold prepare tableOf
   simp only [Id.run, pure, bind, keepFaces, docFigs, fill_size_exact]
 
-/-- The exact IDs of the producer's object-stream values. -/
 public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
     (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2906,8 +2381,6 @@ private theorem image_transcript (used ids : Array Nat) (imgs : Image.Store) :
     (fun k id => List.range' id (imgExtraOf imgs k).span)
 
 
-/-- The direct-stream loops emit the complete image, page, font, and metadata families.
-This is a progress proof of the production loops. -/
 public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2985,14 +2458,12 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     map_zipIdx_snd, Array.length_toList]
   rfl
 
-/-- The object-stream rows carry the table's stream ids, in order. -/
 public theorem stmRowsOf_ids_exact (t : ObjTable) (packed : List (Nat × ObjectStream)) :
     (stmRowsOf t packed).toList.map Row.id = (List.range packed.length).map t.objStmId := by
   simp only [stmRowsOf, List.toList_toArray, List.map_map, Function.comp_def,
     objStmRow, flateRow_id]
   exact map_zipIdx_snd packed t.objStmId
 
-/-- The plan's rows are its direct rows and then one row per object stream. -/
 public theorem WritePlan.rows_ids_exact (p : WritePlan) :
     p.rows.toList.map Row.id =
       p.direct.toList.map Row.id ++ (List.range p.chunks.length).map p.table.objStmId := by
@@ -3056,9 +2527,6 @@ private theorem chunks_count_exact (p : WritePlan)
     compressedCount]
   cases p.table.nOut == 0 <;> simp <;> omega
 
-/-- The table allocates exactly one id per object stream the plan fills:
-its stream count is computed from the same counts that decide the
-compressed list (`compressedCount`). -/
 public theorem prepare_chunks_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -3069,9 +2537,6 @@ public theorem prepare_chunks_exact (geom : Geom) (fs : FontSet) (pages : Array 
     (prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs)
     (by rw [prepare_table_exact]; rfl)
 
-/-- **`features_objStmMulti_exact`**: the census says `objStmMulti` exactly
-when the writer fills more than one object stream — the streams `prepare`
-writes, for every input and cache argument. -/
 public theorem features_objStmMulti_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -3083,9 +2548,6 @@ public theorem features_objStmMulti_exact (geom : Geom) (fs : FontSet) (pages : 
   rw [List.mem_toArray, List.mem_filter]
   simp only [Feature.all_complete, true_and, reaches, decide_eq_true_eq]
 
-/-- Every allocated object is emitted by the production writer: as the
-xref itself, a direct row, an object stream, or a value in one. This
-includes the resource graphs and soft masks of all loaded images. -/
 public theorem prepare_emission_covers (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -3115,14 +2577,11 @@ private theorem indexObjectsList_live {α : Type} (rows : List (Nat × α))
       · right
         simpa only [List.map_cons, List.mem_cons, Ne.symm hr, false_or] using h
 
-/-- Every recorded, in-range id has a position in the actual dense
-index, including when later records replace its value. -/
 public theorem indexObjects_covers {α : Type} (size : Nat) (rows : List (Nat × α))
     (id : Nat) (hid : id < size) (hm : id ∈ rows.map Prod.fst) :
     (((indexObjects size rows)[id]?).join).isSome = true :=
   indexObjectsList_live rows _ id (by simpa using hid) (Or.inr hm)
 
-/-- The compressed index covers every in-range id of its source list. -/
 public theorem compressedIndex_covers (size : Nat) (objects : List (Nat × PdfRead.Obj))
     (id : Nat) (hid : id < size) (hm : id ∈ objects.map Prod.fst) :
     (((compressedIndex size objects)[id]?).join).isSome = true := by
@@ -3205,9 +2664,6 @@ private theorem plan_entries_contract (p : WritePlan)
       simpa only [WritePlan.serialized, serialize_locs_covers] using hd
     · exact Or.inr (Or.inr hcomp)
 
-/-- The actual producer emits one live xref entry per allocated nonzero
-object. Row zero is free and `/Size` counts it exactly once. The proof
-uses the production emission loops and their recorded byte offsets. -/
 public theorem prepare_entries_contract (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)

@@ -6,24 +6,7 @@ namespace LeanTex.Core.PdfCensus
 
 open LeanTex.Core.PdfRead
 
-/-! # The read-side census of a PDF
-
-What a PDF file *carries*, read from its bytes by the engine's own reader
-(`PdfRead.objects`) — never from the writer's intent. The distinction is
-the reason this module exists: a copied foreign page can bring a font the
-writer never saw, so "every font is embedded" is a fact of the file, and
-a census computed from the writer's inputs would say "embedded" for the
-very file that was not. `Check.Shipped.fontsEmbedded` reads this census;
-so will every profile violation (`pdf/a-4`, `pdf/ua-2`) once its contract
-lands.
-
-The module imports the reader and nothing else — not the writer, whose
-spellings it must never be allowed to assume (the pre-commit hook holds
-that line). Copied graphs are classified like any dictionary and never
-certified: a form XObject's resources are counted, not vouched for.
-
-The font-embedding contract is proved here; other classifications remain
-data for downstream conformance checks. -/
+/-! What a PDF file carries, read from its bytes by the engine's own reader, never from the writer's intent. -/
 
 /-- What a dictionary is, by its `/Type` and `/Subtype`. -/
 public inductive Kind where
@@ -50,7 +33,6 @@ private def nameOf (o : Obj) (k : String) : Option String :=
   | some (.name n) => some n
   | _ => none
 
-/-- The font subtypes ISO 32000-2 §9.5–9.7 name. -/
 private def fontSubtypes : List String :=
   ["Type0", "Type1", "MMType1", "TrueType", "Type3", "CIDFontType0", "CIDFontType2"]
 
@@ -77,9 +59,6 @@ public def kindOf (o : Obj) : Kind :=
     if (o.get? "Title").isSome && (o.get? "Parent").isSome then .outlineItem else .other
   | _, _ => .other
 
-/-- Without a subtype, only an explicit `/Type /Font` can enter the
-font census. This states the classifier's own rule, independently of a
-producer's dictionary layout. -/
 public theorem kindOf_no_subtype_not_font (o : Obj)
     (ht : o.get? "Type" ≠ some (.name "Font"))
     (hs : o.get? "Subtype" = none) :
@@ -117,12 +96,8 @@ public def deref (es : Array Entry) (o : Obj) : Obj :=
 public def fontEntries (es : Array Entry) : Array Entry :=
   es.filter fun e => kindOf e.val == .font
 
-/-- Is this font dictionary's program in the file? A composite font
-delegates to its descendant, which is a font dictionary of its own and
-judged on its own row; a Type 3 font's glyphs are content streams in the
-file by definition (§9.6.4); every other subtype needs a descriptor
-carrying `FontFile`, `FontFile2`, or `FontFile3` (§9.9) — the standard
-fourteen without one are exactly what a viewer substitutes. -/
+/-- Whether a font dictionary's program is in the file: a composite font's by its descendant, a
+Type 3's by definition, any other's by its descriptor's font file (§9.9). -/
 public def fontEmbedded (es : Array Entry) (e : Entry) : Bool :=
   match nameOf e.val "Subtype" with
   | some "Type0" => true
@@ -158,16 +133,13 @@ private def sortedUnique (xs : Array String) : Array String :=
 private def strOf (o : Obj) : Option String :=
   match o with
   | .str raw =>
-    -- A literal string's bytes between its parentheses; hex strings and
-    -- escapes are left as spelled — a language tag has neither.
+    -- A literal string's bytes between its parentheses; a language tag has no escapes.
     if raw.size ≥ 2 && raw[0]? == some 40 then
       some (String.fromUTF8! (raw.extract 1 (raw.size - 1)))
     else some (String.fromUTF8! raw)
   | _ => none
 
-/-- The census of one file. Counts are of dictionaries the cross-reference
-lists, whatever wrote them; `fontsEmbedded` is the one field an assertion
-reads today. -/
+/-- The census of one file, over every dictionary the cross-reference lists, whatever wrote it. -/
 public structure Census where
   /-- The trailer's `/Size`, when declared. -/
   size : Option Nat
@@ -203,8 +175,7 @@ public def catalogOf (es : Array Entry) (trailer : Obj) : Obj :=
 public def ofEntries (trailer : Obj) (es : Array Entry) : Census :=
   let kinds := es.map fun e => kindOf e.val
   let count (k : Kind) : Nat := (kinds.filter (· == k)).size
-  -- Annotations are counted through each page's `/Annots` (§12.5.1),
-  -- where a writer may inline them as direct dictionaries.
+  -- Annotations count through each page's `/Annots` (§12.5.1), where they may be direct.
   let catalog := catalogOf es trailer
   let images := es.filter fun e => kindOf e.val == .image
   let pages := es.filter fun e => kindOf e.val == .page
@@ -240,29 +211,19 @@ public def ofEntries (trailer : Obj) (es : Array Entry) : Census :=
         if (e.val.get? k).isSome then acc.push k else acc) acc) #[])
   }
 
-/-- **`census_fontsEmbedded_exact`** (the `_exact` statement): the census
-says every font is embedded exactly when every font dictionary the file
-carries — the writer's and any copied graph's alike — has its program in
-the file by `fontEmbedded`'s rule. Nothing about the writer's inputs
-enters: the judge is the file. -/
 public theorem census_fontsEmbedded_exact (trailer : Obj) (es : Array Entry) :
     (ofEntries trailer es).fontsEmbedded = true ↔
       ∀ e ∈ fontEntries es, fontEmbedded es e = true := by
   simp only [ofEntries, Array.all_eq_true_iff_forall_mem]
 
-/-- Every object the file lists lies below the trailer's `/Size`: the
-cross-reference covers its own declared range (§7.5.8.2). `objectsOf`
-refuses a file where it does not, so this is `true` of every census the
-engine hands back; stated as a function for the fixture sweep to read. -/
+/-- Whether every listed object lies below the trailer's `/Size` (§7.5.8.2). -/
 public def xrefCovers (c : Census) (es : Array Entry) : Bool :=
   match c.size with
   | some n => es.all (·.num < n)
   | none => true
 
-/-- The census of a file's bytes: the cross-reference followed, every
-object fetched and checked (`objects_num_covers`), the dictionaries
-classified. A file the reader cannot follow is a named refusal — which an
-assertion over the census then reports, never swallows. -/
+/-- The census of a file's bytes, every object fetched, checked and classified; an unreadable file
+is a named refusal. -/
 public def census (b : ByteArray) : Except String Census := do
   unless b[0]? == some 37 && b[1]? == some 80 && b[2]? == some 68 && b[3]? == some 70 do
     throw "not a PDF file (no %PDF header)"

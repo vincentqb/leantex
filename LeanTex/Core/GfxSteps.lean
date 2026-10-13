@@ -3,19 +3,10 @@ module
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.GfxAffine
 
-/-!
-# Labels among a figure's ink
-
-The facts about a figure's steps — its marks with its labels in their
-places (`Figure.steps`) — both artifacts' readers and the picture lowering
-rest on: a figure's steps are its nodes', and relabelling a figure moves no
-mark and no label's place.
--/
+/-! The facts about a figure's steps that both artifacts' readers and the picture lowering rest on. -/
 
 namespace LeanTex.Core.Gfx
 
-/-- A list's flattening reads each element through the function it is given,
-so two functions that agree on the list's elements flatten it alike. -/
 public theorem flatMap_congr_mem {α β : Type} {l : List α} {f g : α → List β}
     (h : ∀ a ∈ l, f a = g a) : l.flatMap f = l.flatMap g := by
   induction l with
@@ -23,8 +14,6 @@ public theorem flatMap_congr_mem {α β : Type} {l : List α} {f g : α → List
   | cons a rest ih =>
     rw [List.flatMap_cons, List.flatMap_cons, h a (List.mem_cons_self ..),
       ih fun a' h' => h a' (List.mem_cons_of_mem _ h')]
-
-/-! ## Relabelling moves no mark and no label's place -/
 
 public theorem Node.mapLabelsList_map {L L' : Type} (f : L → L') (acc : Array (Node L'))
     (xs : List (Node L)) :
@@ -35,7 +24,6 @@ public theorem Node.mapLabelsList_map {L L' : Type} (f : L → L') (acc : Array 
 
 mutual
 
-/-- Relabelling commutes with expansion against no symbols. -/
 public theorem Node.expandOne_mapLabels {L L' : Type} (f : L → L') :
     ∀ n : Node L,
       Node.expandOne (#[] : Array (Array (Node L'))) 0 #[] (n.mapLabelsOne f) =
@@ -70,7 +58,6 @@ end
 
 mutual
 
-/-- Relabelling paints the same marks. -/
 public theorem Node.marksOne_mapLabels {L L' : Type} (f : L → L')
     (outlines : Array (Array Subpath)) :
     ∀ (n : Node L) (cx : Ctx) (acc : Array Mark),
@@ -99,8 +86,6 @@ public theorem Node.marksList_mapLabels {L L' : Type} (f : L → L')
 
 end
 
-/-- A top-level node that is no label, where labels stand at the top level,
-holds none. -/
 public theorem Node.labelFree_of_topOk {L : Type} (n : Node L) (h : n.topOk = true)
     (hn : ∀ l, n ≠ .label l) : n.labelFree = true := by
   cases n with
@@ -108,7 +93,6 @@ public theorem Node.labelFree_of_topOk {L : Type} (n : Node L) (h : n.topOk = tr
   | group _ _ _ kids => simpa [Node.topOk, Node.labelFree] using h
   | draw | use | stamp | image | words => rfl
 
-/-- A figure's steps, as the flattening of its nodes'. -/
 public theorem Figure.steps_eq {L : Type} (fig : Figure L) :
     fig.steps = (fig.nodes.toList.flatMap fun n => (fig.nodeSteps n).toList).toArray := by
   unfold Figure.steps
@@ -127,9 +111,6 @@ public theorem Figure.steps_eq {L : Type} (fig : Figure L) :
     apply Array.toList_inj.mp
     simp
 
-/-- **Relabelling a node moves no step** (`_exact`): in a figure with no
-symbols, a top-level node read through `f` steps as the node does, each
-label read through `f` — the same marks, each label in its place. -/
 public theorem Figure.nodeSteps_mapLabels_exact {L L' : Type} (f : L → L') (fig : Figure L)
     (fig' : Figure L') (ho : fig'.outlines = fig.outlines) (hs : fig.symbols = #[])
     (hs' : fig'.symbols = #[]) (n : Node L) :

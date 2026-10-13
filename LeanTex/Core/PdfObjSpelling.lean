@@ -13,11 +13,11 @@ open PdfLex
 public theorem utf8_append (s t : String) : (s++t).toUTF8 = s.toUTF8 ++ t.toUTF8 := by
   simp only [String.toUTF8_eq_toByteArray, String.toByteArray_append]
 
-/-- The actual array renderer's remaining bytes, including its closer. -/
+/-- The array renderer's remaining bytes, its closer included. -/
 def Obj.arrayBody (xs : List Obj) : List Nat :=
   octets (Obj.renderList ByteArray.empty xs) ++ [93]
 
-/-- The actual dictionary renderer's remaining bytes, including its closer. -/
+/-- The dictionary renderer's remaining bytes, its closer included. -/
 def Obj.dictBody (es : List (String × Obj)) : List Nat :=
   octets (Obj.renderEntries ByteArray.empty es) ++ [62,62]
 
@@ -120,10 +120,7 @@ public theorem parse_nat {b : ByteArray} {i n : Nat}
 
 namespace ObjReader
 
-/-- A token start cannot be whitespace, a comment, or the reference
-marker. Unsigned lookahead at this start also cannot consume a reference.
-These facts will be derived from rendered syntax, never assumed at the
-public round-trip boundary. -/
+/-- A token start: no whitespace, comment or reference marker, and no reference reachable by unsigned lookahead. -/
 public structure Start (b : ByteArray) (i : Nat) : Prop where
   whitespace : isWs (at? b i) = false
   comment : at? b i ≠ 37
@@ -133,7 +130,7 @@ public structure Start (b : ByteArray) (i : Nat) : Prop where
 public theorem Start.skip {b i} (h : Start b i) : skipWs b i = i :=
   skipWs_fixed_point h.whitespace h.comment
 
-/-- Suffix facts for one object, including the reader's integer lookahead. -/
+/-- Suffix facts for one object, the reader's integer lookahead included. -/
 public structure Stop (b : ByteArray) (i : Nat) : Prop where
   boundary : EndByte (at? b i)
   marker : at? b (skipWs b i) ≠ 82

@@ -42,8 +42,7 @@ def readStep (table : Huff) (count : Nat) (state : Array Nat × Br) :
   else
     return .inr (← readEntry table state)
 
-/-- The production dynamic table reader. Every entry adds at least one length;
-one further iteration observes the completed table. -/
+/-- Reads the `count` code lengths of a dynamic table prelude. -/
 public def read (table : Huff) (count : Nat) (r : Br) : Except String (Array Nat × Br) :=
   DecodeLoop.run (count + 1) (readStep table count) (#[], r)
     "deflate: code lengths overrun their table"
@@ -88,8 +87,6 @@ theorem Prefix.back {seq out : Array Nat} {p value : Nat}
   simp only [Option.getD_some] at hv
   exact congrArg some hv
 
-/-- One actual RLE reader step reconstructs exactly the run certified by
-`CodeLengths.Step`. The premises are the reader's concrete byte equations. -/
 theorem readEntry_exact {seq out : Array Nat} {p q : Nat} {entry : Entry}
     (table : Huff) (r afterCode afterExtra : Br)
     (hp : Prefix seq p out) (hs : Step seq p entry q)

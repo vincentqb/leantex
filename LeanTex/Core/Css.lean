@@ -3,79 +3,50 @@ module
 public import Std.Data.HashMap
 import Std.Data.HashSet
 
-/-!
-# The CSS an SVG file states
-
-What an SVG says in CSS (SVG 2 §6): `style` attributes, `style` elements,
-and presentation attributes. The subset read here is the one exporters
-write — declarations, and rules whose selectors are type, class, id and
-universal selectors in compounds, joined by descendant and child
-combinators, in comma lists — with the cascade CSS Cascading 4 §6
-defines over it: `!important` first, then the declaration's origin (a
-presentation attribute counts as a rule of specificity zero, SVG 2 §6.8; a
-`style` attribute outranks every rule), then specificity, then source
-order.
-
-Three spellings can name a resource or change what the rest of the text
-means, and they are refused, never read: a function other than a
-fragment `url(#id)` or a wholly numeric `rgb()`/`rgba()`, an escape, an
-at-rule. Anything else outside the subset — an attribute selector, a
-pseudo-class, a sibling combinator — is not refused but reported as
-unsupported, so the importer can name what it did not read.
--/
+/-! The CSS an SVG file states (SVG 2 §6): declarations, a selector subset, and the cascade
+of CSS Cascading 4 §6 over them. -/
 
 namespace LeanTex.Core.Css
 
-/-- One declaration: its property, lower case; its value, trimmed, its
-comments gone; whether it is `!important`. -/
+/-- One declaration: its lower-case property, its trimmed value without comments, and its importance. -/
 public structure Decl where
   prop : String
   value : String
   important : Bool
   deriving Repr, BEq, Inhabited
 
-/-- What a text says that this reader does not read: a spelling it refuses
-(it could name a resource or change the meaning of the rest), or one
-outside the subset. -/
+/-- What a text says that this reader does not read: a refused spelling, or one outside the subset. -/
 public inductive Problem where
   | refused (what : String)
   | unsupported (what : String)
   deriving Repr, BEq, Inhabited
 
-/-- How a selector's compound relates to the one after it. -/
 public inductive Combinator where
   | descendant
   | child
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A compound selector: an optional type (`none` is `*` or no type),
-classes and ids, all of which an element must have. -/
+/-- A compound selector: an optional type (`none` for `*`), classes and ids, all required. -/
 public structure Compound where
   type : Option String
   classes : Array String
   ids : Array String
   deriving Repr, BEq, Inhabited
 
-/-- A complex selector, left to right: its first compound, then each
-combinator with the compound it leads to. The last compound is the subject. -/
+/-- A complex selector, left to right; its last compound is the subject. -/
 public structure Selector where
   head : Compound
   rest : Array (Combinator × Compound)
   deriving Repr, BEq, Inhabited
 
-/-- One rule of a style sheet: its selectors, its declarations. -/
 public structure Rule where
   selectors : Array Selector
   decls : Array Decl
   deriving Repr, BEq, Inhabited
 
-/-! ## Reading text -/
-
 @[expose] public def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c'
 
-/-- A line end (CSS Syntax 3 §3.3: a carriage return and a form feed read
-as a line feed). A string meets one only by breaking: it ends there, a bad
-string, and what follows is CSS again (§4.3.5). -/
+/-- A line end (CSS Syntax 3 §3.3): line feed, carriage return or form feed. -/
 @[expose] public def isLineEnd (c : Char) : Bool := c == '\n' || c == '\r' || c == '\x0c'
 
 /-- `s` with its comments removed: `/* … */`, an unterminated one to the end. -/
@@ -111,8 +82,7 @@ public def stripComments (s : String) : String := Id.run do
         i := i + 1
   return out
 
-/-- A character a fragment identifier may hold: the alphabet the resource
-boundary admits in `url(#…)`. -/
+/-- A character a fragment identifier in `url(#…)` may hold. -/
 @[expose] public def idChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.' || c == ':' || c == '-'
 
@@ -121,8 +91,7 @@ boundary admits in `url(#…)`. -/
   c.isDigit || c == '.' || c == '%' || c == 'e' || c == 'E' || c == '+' || c == '-' ||
     c == ',' || c == '/' || c == ' '
 
-/-- Is a function's name and its argument text one this reader admits: a
-fragment `url(#id)` — bare or quoted — or a numeric `rgb()`/`rgba()`? -/
+/-- Whether a call is one this reader admits: a fragment `url(#id)` or a numeric `rgb()`/`rgba()`. -/
 public def admitsCall (name arg : String) : Bool :=
   let n := name.toLower
   if n == "url" then
@@ -134,10 +103,7 @@ public def admitsCall (name arg : String) : Bool :=
     !arg.isEmpty && arg.all channelChar
   else false
 
-/-- The first spelling in a value or declaration text that this reader
-refuses: an escape, an at-sign, or a function other than those
-`admitsCall` reads. Quoted strings are skipped, each to its closing quote or
-the line end that breaks it, as CSS reads one (`isLineEnd`). -/
+/-- The first refused spelling outside strings: an escape, an at-sign, or a function not admitted. -/
 public def refusedIn (s : String) : Option String := Id.run do
   let cs := s.toList.toArray
   let mut i := 0
@@ -179,8 +145,7 @@ public def refusedIn (s : String) : Option String := Id.run do
   if quote.isSome then return some "an unterminated string"
   return none
 
-/-- Whether a string in `s` is broken by a line end — a bad string (CSS
-Syntax 3 §4.3.5), which makes the declaration holding it invalid. -/
+/-- Whether a string in `s` is broken by a line end (CSS Syntax 3 §4.3.5). -/
 @[expose] public def brokenString (s : String) : Bool := Id.run do
   let mut quote : Option Char := none
   for c in s.toList do
@@ -191,9 +156,7 @@ Syntax 3 §4.3.5), which makes the declaration holding it invalid. -/
     | none => if c == '"' || c == '\'' then quote := some c
   return false
 
-/-- The end of the run from `i` that holds no `stop` outside a string: the
-offset of the first `stop` there, or `cs.size`. A string runs to its quote
-or to the line end that breaks it (`isLineEnd`). -/
+/-- The offset of the first `stop` from `i` outside a string, or `cs.size`. -/
 public def scanTo (cs : Array Char) (stop : Char) (i : Nat) : Nat := Id.run do
   let mut j := i
   let mut quote : Option Char := none
@@ -209,10 +172,7 @@ public def scanTo (cs : Array Char) (stop : Char) (i : Nat) : Nat := Id.run do
     j := j + 1
   return j
 
-/-- A declaration block's text as declarations, in order. An empty
-declaration is skipped; one with no colon, or holding a string a line end
-breaks, is unsupported; one that spells what `refusedIn` refuses is
-refused. -/
+/-- A declaration block's declarations in order; a malformed one is unsupported, a refused spelling refused. -/
 public def parseDecls (text : String) : Except Problem (Array Decl) := do
   let text := stripComments text
   if let some what := refusedIn text then throw (.refused what)
@@ -264,10 +224,7 @@ where
         else cur := cur.push c
     return parts.push cur
 
-/-! ## Selectors -/
-
-/-- A CSS identifier: letters, digits, `-`, `_`, and non-ASCII, not
-starting with a digit. -/
+/-- A character of a CSS identifier: a letter, digit, `-`, `_` or non-ASCII. -/
 @[expose] public def identChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c.toNat ≥ 128
 
 /-- One compound selector's text, or what in it is outside the subset. -/
@@ -323,11 +280,8 @@ public def parseSelector (s : String) : Except String Selector := do
   (all.foldl (fun n c => n + c.ids.size) 0, all.foldl (fun n c => n + c.classes.size) 0,
     all.foldl (fun n c => n + (if c.type.isSome then 1 else 0)) 0)
 
-/-- A style sheet's text as rules, in order, with what it said outside the
-subset: a rule whose selector list is outside it is dropped and named. An
-escape, an at-rule or a refused function anywhere refuses the sheet. One
-pass over the text: each rule its selectors up to the next `{` and its
-declarations up to the next `}`, neither inside a string (`scanTo`). -/
+/-- A style sheet's rules in order, those outside the subset dropped and named; a refused
+spelling refuses the sheet. -/
 public def parseSheet (text : String) : Except String (Array Rule × Array String) := do
   let text := stripComments text
   if let some what := refusedIn text then throw what
@@ -359,8 +313,6 @@ public def parseSheet (text : String) : Except String (Array Rule × Array Strin
     i := c + 1
   return (rules, dropped)
 
-/-! ## Matching -/
-
 /-- What a selector reads of an element: its type, classes and id. -/
 public structure Subject where
   type : String
@@ -372,9 +324,7 @@ public structure Subject where
   c.type.all (· == e.type) && c.classes.all (e.classes.contains ·) &&
     c.ids.all (some · == e.id)
 
-/-- Does the selector's prefix ending at compound `k` (counted from the
-right, the subject 0) match an element whose ancestors, innermost first,
-are `up`? A descendant combinator tries each ancestor in turn. -/
+/-- Whether the remaining compounds match the ancestors `up`, innermost first. -/
 public def matchUp (parts : List (Combinator × Compound)) (up : List Subject) : Bool :=
   match parts with
   | [] => true
@@ -393,8 +343,6 @@ where
 /-- Does `sel` match the element `e` whose ancestors, innermost first, are
 `up`? -/
 public def Selector.matches (sel : Selector) (e : Subject) (up : List Subject) : Bool :=
-  -- Read right to left: the subject, then each combinator with the
-  -- compound before it.
   let comps := #[sel.head] ++ sel.rest.map (·.2)
   let combs := sel.rest.map (·.1)
   match comps.back? with
@@ -403,11 +351,7 @@ public def Selector.matches (sel : Selector) (e : Subject) (up : List Subject) :
     let pairs := (combs.zip comps.pop).toList.reverse
     subject.matches e && matchUp pairs up
 
-/-! ## Rules by what their subject needs -/
-
-/-- What a compound requires of an element first: an id, else a class,
-else a type (0, 1, 2 with the name); `none` for a universal compound. An
-element can match the compound only if it has it. -/
+/-- What a compound requires of an element first: an id, else a class, else a type; `none` when universal. -/
 @[expose] public def Compound.key (c : Compound) : Option (Nat × String) :=
   match c.ids[0]? with
   | some i => some (0, i)
@@ -420,9 +364,7 @@ element can match the compound only if it has it. -/
 @[expose] public def Selector.key (sel : Selector) : Option (Nat × String) :=
   ((sel.rest.back?.map (·.2)).getD sel.head).key
 
-/-- The key the compound nearest the subject requires of an ancestor, for a
-selector with one: `.c rect` can match an element only below one of class
-`c`. -/
+/-- The key the compound nearest the subject requires of an ancestor, if the selector has one. -/
 @[expose] public def Selector.upKey (sel : Selector) : Option (Nat × String) :=
   if sel.rest.isEmpty then none
   else ((sel.rest.pop.back?.map (·.2)).getD sel.head).key
@@ -431,27 +373,19 @@ selector with one: `.c rect` can match an element only below one of class
 @[expose] public def Subject.keys (e : Subject) : Array (Nat × String) :=
   (e.id.map ((0 : Nat), ·)).toArray ++ e.classes.map ((1 : Nat), ·) ++ #[(2, e.type)]
 
-/-- A sheet's rules, each selector filed under the key its subject needs
-(`Selector.key`), so an element is tried only against the selectors it can
-match: the cascade's cost follows the matches, not rules times elements. -/
+/-- A sheet's rules with each selector filed under the keys it requires, so an element meets only
+the selectors it can match. -/
 public structure RuleIndex where
   rules : Array Rule
-  /-- Each rule's first declaration's place among all the sheets'
-  declarations, the cascade's source order. -/
+  /-- Each rule's first declaration's index in source order. -/
   offsets : Array Nat
-  /-- The selectors with no keyed ancestor compound, by their subject's key,
-  as (rule, selector) places. -/
+  /-- Selectors with no keyed ancestor compound, by their subject's key. -/
   byKey : Std.HashMap (Nat × String) (Array (Nat × Nat))
-  /-- The selectors with a keyed subject and a keyed compound nearest it,
-  by both keys: an element tries one only below an ancestor with its key,
-  so a sheet of rules each naming its own ancestor class costs what the
-  matches cost (as a browser's ancestor filter keeps it). -/
+  /-- Selectors by their subject's key and the key of the compound nearest it. -/
   byPair : Std.HashMap ((Nat × String) × (Nat × String)) (Array (Nat × Nat))
-  /-- The selectors whose subject is universal. -/
   universal : Array (Nat × Nat)
   deriving Inhabited
 
-/-- The index of a sheet's rules. -/
 public def RuleIndex.ofRules (rules : Array Rule) : RuleIndex := Id.run do
   let mut offsets : Array Nat := #[]
   let mut total := 0
@@ -470,10 +404,8 @@ public def RuleIndex.ofRules (rules : Array Rule) : RuleIndex := Id.run do
       | none, _ => universal := universal.push (i, j)
   return { rules, offsets, byKey, byPair, universal }
 
-/-- The selectors an element whose ancestors are `up` can match: those
-filed under one of its keys, those filed under one of its keys and one its
-ancestors offer, and the universal ones. A selector filed elsewhere cannot
-match it (`Compound.key`). -/
+/-- The selectors an element below `up` can match: under its keys, under its keys and an
+ancestor's, and the universal ones. -/
 public def RuleIndex.candidates (ix : RuleIndex) (e : Subject) (up : List Subject) :
     Array (Nat × Nat) := Id.run do
   let keys := e.keys
@@ -488,12 +420,8 @@ public def RuleIndex.candidates (ix : RuleIndex) (e : Subject) (up : List Subjec
         out := out ++ ix.byPair.getD (k, u) #[]
   return out ++ ix.universal
 
-/-! ## The cascade -/
-
-/-- Where a declaration stands in the cascade (CSS Cascading 4 §6.1): its
-importance, then its level — 0 a presentation attribute, 1 a style-sheet
-rule, 2 a `style` attribute — then its selector's specificity, then its
-place in the source. A greater key wins. -/
+/-- A declaration's place in the cascade (CSS Cascading 4 §6.1): importance, level, specificity,
+source order; the greater key wins. -/
 public structure Key where
   important : Bool
   level : Nat
@@ -516,9 +444,7 @@ decides, and a proper prefix is below. -/
 /-- The cascade's order on keys: lexicographic, importance first. -/
 @[expose] public def Key.lt (a b : Key) : Bool := lexLt a.toList b.toList
 
-/-- The winner of a list of candidates for one property onto the best so
-far: a candidate replaces it exactly when the best's key is below the
-candidate's. -/
+/-- The best of the candidates onto the best so far; a candidate wins only with a greater key. -/
 public def winnerList (best : Option (Key × String)) : List (Key × String) → Option (Key × String)
   | [] => best
   | c :: rest =>
@@ -526,8 +452,7 @@ public def winnerList (best : Option (Key × String)) : List (Key × String) →
       | none => some c
       | some b => if Key.lt b.1 c.1 then some c else some b) rest
 
-/-- **The cascaded value**: of the declarations an element receives for one
-property, the one whose key is greatest (`cascade_exact`). -/
+/-- The cascaded value: the declaration whose key is greatest. -/
 @[expose] public def cascade (cands : Array (Key × String)) : Option String :=
   (winnerList none cands.toList).map (·.2)
 
@@ -550,8 +475,6 @@ public theorem lexLt_trans : ∀ a b c : List Nat,
     · exact Or.inl h2
     · exact Or.inr ⟨rfl, lexLt_trans xs ys zs h1 h2⟩
 
-/-- Not-below is transitive among lists of one length: the order is total
-there, so what stands at or above a key stands at or above all it does. -/
 public theorem lexLt_not_trans : ∀ a b c : List Nat, a.length = b.length → b.length = c.length →
     lexLt a b = false → lexLt b c = false → lexLt a c = false
   | [], [], [], _, _, _, _ => rfl
@@ -570,7 +493,6 @@ public theorem lexLt_not_trans : ∀ a b c : List Nat, a.length = b.length → b
 
 @[simp] public theorem Key.toList_length (k : Key) : k.toList.length = 6 := rfl
 
-/-- The best after one more candidate. -/
 private def winnerStep (best : Option (Key × String)) (c : Key × String) : Option (Key × String) :=
   match best with
   | none => some c
@@ -634,10 +556,6 @@ private theorem winnerList_max (best : Option (Key × String)) (cs : List (Key �
           · exact hrest x hx
         · cases hb; exact hwb
 
-/-- **The cascade picks the greatest declaration** (`_exact`): the value it
-returns is a candidate's, and no candidate's key stands above that
-candidate's — CSS Cascading 4 §6's order, importance first, over every
-declaration an element receives. -/
 public theorem cascade_exact (cands : Array (Key × String)) (v : String) (h : cascade cands = some v) :
     ∃ k, (k, v) ∈ cands ∧ ∀ c ∈ cands, Key.lt k c.1 = false := by
   unfold cascade at h

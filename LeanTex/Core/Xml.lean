@@ -3,50 +3,19 @@ module
 import LeanTex.Core.WhatwgEncoding
 import Std.Data.HashSet
 
-/-!
-# XML, read and written
-
-A total reader of the XML 1.0 an SVG file is written in, over the bytes the
-driver captured. It reads elements, attributes, character data, CDATA
-sections, comments, the XML declaration, the five predefined entities and
-numeric character references (ISO/IEC XML 1.0 §2–§4). What can bring meaning
-from outside the file is refused, never followed: a DTD declaration, a
-parameter-entity reference, a named entity no DTD here declares, a
-processing instruction. A document type declaration that only *names* an
-external DTD — an exporter's `<!DOCTYPE svg PUBLIC …>` — is an identifier,
-not a request to load it, and is dropped.
-
-The reader is syntactic: a name is read as spelled, prefix included, and the
-namespace declarations stay among the attributes (`resolve` reads them).
-Character data is end-of-line normalized (§2.11) and an attribute value
-whitespace-normalized (§3.3.3), as every conforming reader reports them;
-adjacent character data and CDATA are one text node, and comments are gone.
-`render` writes a tree back canonically — no declaration, no comments,
-printable ASCII as itself and every other character of text and attribute
-values as a reference, which no reader normalizes — so the reader reads a
-rendered tree back as it stands (`parse_render_id`).
-
-Budgets bound the work a hostile file can ask for: its size, its depth, its
-node count, a name's and a text's length. Exceeding one is a refusal that
-names the budget, never a crash and never a truncation, and an accepted
-document lies within them (`XmlContract`'s `parseWith_between`): no element
-deeper than the depth budget, no more elements and runs of text than the
-node budget, no text longer than the text budget however it is spelled.
--/
+/-! A total reader and canonical writer of the XML 1.0 an SVG file is written in; what could
+bring meaning from outside the file is refused. -/
 
 namespace LeanTex.Core.Xml
 
-/-- A parsed node: an element — its name as spelled, its attributes in
-source order (namespace declarations among them), its children — or
-character data. -/
+/-- A parsed node: an element with its name as spelled, its attributes in source order and its
+children, or character data. -/
 public inductive Node where
   | elem (name : String) (attrs : Array (String × String)) (kids : Array Node)
   | text (s : String)
   deriving Repr, Inhabited, BEq
 
-/-- Why bytes are no document this reader accepts. `syntax` is a
-well-formedness error at a byte offset; the others are a construct the
-reader refuses by name. -/
+/-- Why bytes are no document this reader accepts: a syntax error at a byte offset, or a refused construct. -/
 public inductive Refusal where
   | syntax (pos : Nat) (what : String)
   | declaration (what : String)
@@ -56,10 +25,7 @@ public inductive Refusal where
   | budget (what : String)
   deriving Repr, BEq, Inhabited
 
-/-- The work one document may ask of the reader. The depth is libxml2's
-default bound (`xmlParserMaxDepth`), so a file one reader refuses for depth
-the other refuses too; the name and text lengths are its default
-`XML_MAX_NAME_LENGTH` and `XML_MAX_TEXT_LENGTH`. -/
+/-- The work one document may ask of the reader; the depth, name and text limits are libxml2's defaults. -/
 public structure Budget where
   bytes : Nat
   depth : Nat
@@ -71,8 +37,6 @@ public structure Budget where
 @[expose] public def Budget.standard : Budget :=
   { bytes := 256 * 1024 * 1024, depth := 256, nodes := 16000000, name := 50000,
     text := 10000000 }
-
-/-! ## Bytes -/
 
 /-- The byte at `i`, or 256 past the end: one sentinel no byte equals. -/
 @[expose] public def at? (b : ByteArray) (i : Nat) : Nat :=
@@ -101,8 +65,7 @@ public def bytesAt (b : ByteArray) (i : Nat) (s : String) : Bool :=
         break
     return ok)
 
-/-- The UTF-8 text of `b[i:j]`; empty when that is no UTF-8 (the reader
-validates the whole input first, and cuts only at ASCII bytes). -/
+/-- The UTF-8 text of `b[i:j]`, empty when that is no UTF-8. -/
 public def slice (b : ByteArray) (i j : Nat) : String :=
   (String.fromUTF8? (b.extract i j)).getD ""
 
@@ -111,9 +74,7 @@ public def slice (b : ByteArray) (i j : Nat) : String :=
   n == 9 || n == 10 || n == 13 || (32 ≤ n && n ≤ 0xD7FF) || (0xE000 ≤ n && n ≤ 0xFFFD) ||
     (0x10000 ≤ n && n ≤ 0x10FFFF)
 
-/-- The first byte offset holding a character XML does not admit — a C0
-control other than tab, newline and carriage return, or U+FFFE/U+FFFF — or
-`none`. Valid UTF-8 holds no surrogate, so these are the only ones. -/
+/-- The first byte offset holding a character XML does not admit, or `none`. -/
 public def badCharAt (b : ByteArray) : Option Nat := Id.run do
   for h : i in [0:b.size] do
     let c := b[i].toNat
@@ -131,8 +92,7 @@ public def scanWhile (b : ByteArray) (pred : Nat → Bool) (i : Nat) : Nat := Id
 
 @[expose] public def skipSpace (b : ByteArray) (i : Nat) : Nat := scanWhile b isSpace i
 
-/-- The first offset at or after `i` where the ASCII string `s` stands, if
-any. -/
+/-- The first offset at or after `i` where the ASCII string `s` stands, if any. -/
 public def find (b : ByteArray) (i : Nat) (s : String) : Option Nat := Id.run do
   let first := at? s.toUTF8 0
   let mut j := i
@@ -142,9 +102,6 @@ public def find (b : ByteArray) (i : Nat) (s : String) : Option Nat := Id.run do
     j := j + 1
   return none
 
-/-! ## Encodings -/
-
-/-- The value of the pseudo-attribute `key` in an XML declaration's text. -/
 private def declValue (decl : String) (key : String) : Option String :=
   match decl.splitOn key with
   | [_] | [] => none
@@ -155,35 +112,18 @@ private def declValue (decl : String) (key : String) : Option String :=
       if q == '"' || q == '\'' then some (String.ofList (more.takeWhile (· != q))) else none
     | [] => none
 
-/-- UTF-8 text and where its content begins: after its XML declaration, if
-it opens with one. -/
 private def afterDeclaration (u : ByteArray) (start : Nat) : Except Refusal (ByteArray × Nat) := do
   if !(bytesAt u start "<?xml" && isSpace (at? u (start + 5))) then return (u, start)
   let some close := find u start "?>" | throw (.syntax start "unterminated XML declaration")
   return (u, close + 2)
 
-/-- UTF-16 from `start` in the order `be` says, as UTF-8 from its
-declaration on: the encoding the bytes themselves name wins over any label
-the declaration spells. -/
 private def fromUtf16 (be : Bool) (b : ByteArray) (start : Nat) : Except Refusal (ByteArray × Nat) := do
   match WhatwgEncoding.decodeUtf16 be b start with
   | .ok u => afterDeclaration u 0
   | .error i => throw (.syntax i "a UTF-16 code unit that is no character")
 
-/-- **The input as UTF-8 and where the content begins** (XML 1.0 §4.3.3 and
-Appendix F, read through the WHATWG Encoding Standard). A byte-order mark
-names the encoding outright and wins over any label (§6, "BOM sniff"); a
-UTF-16 document with none is known by the `<?` it opens with; otherwise the
-XML declaration's `encoding` label is looked up (§4.2), and no label is
-UTF-8. A legacy single-byte encoding and `x-user-defined` are recoded, the
-labels `iso-8859-1`, `latin1` and `us-ascii` reading as `windows-1252`, as
-the standard and every browser read them; a label naming UTF-16 on bytes no
-UTF-16 document opens with reads as UTF-8, as the standard reads such a
-label in HTML. A byte the declared encoding does not map is an error at its
-offset. What is refused by name: UTF-32, which the standard does not read;
-an encoding it names whose decoder this reader lacks — the multi-byte
-Chinese, Japanese and Korean ones, and `replacement`; and a label it does
-not name. -/
+/-- The input as UTF-8 and where its content begins (XML 1.0 §4.3.3 and Appendix F, read through
+the WHATWG Encoding Standard). -/
 public def decode (b : ByteArray) : Except Refusal (ByteArray × Nat) := do
   let b0 := at? b 0
   let b1 := at? b 1
@@ -215,8 +155,6 @@ public def decode (b : ByteArray) : Except Refusal (ByteArray × Nat) := do
         | .ok body => return (b.extract 0 after ++ body, after)
         | .error i => throw (.syntax i s!"a byte {name} does not map")
 
-/-! ## Tokens -/
-
 /-- A name at `i`: its text and where it ends. -/
 public def readName (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal (String × Nat) := do
   unless nameStart (at? b i) do throw (.syntax i "a name was expected")
@@ -224,16 +162,13 @@ public def readName (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal (S
   if j - i > bud.name then throw (.budget "name length")
   return (slice b i j, j)
 
-/-- A hexadecimal digit's value. -/
 @[expose] public def hexVal (c : Nat) : Option Nat :=
   if 48 ≤ c && c ≤ 57 then some (c - 48)
   else if 97 ≤ c && c ≤ 102 then some (c - 87)
   else if 65 ≤ c && c ≤ 70 then some (c - 55)
   else none
 
-/-- A character or entity reference at `i` (on its `&`): the character it
-names and where it ends. Only the predefined entities have meaning here;
-any other name is a refusal that names it (§4.6, §4.1). -/
+/-- A character or entity reference at `i`, with its end; only the predefined entities are read (§4.6). -/
 public def readReference (b : ByteArray) (i : Nat) : Except Refusal (Char × Nat) := do
   if at? b (i + 1) == 35 then
     let hex := at? b (i + 2) == 120
@@ -260,8 +195,7 @@ public def readReference (b : ByteArray) (i : Nat) : Except Refusal (Char × Nat
       | other => throw (.entity other)
     return (c, j + 1)
 
-/-- An attribute value at `i` (on its quote): the value with references
-replaced and white space normalized (§3.3.3) and where it ends. -/
+/-- An attribute value at `i` with references replaced and white space normalized (§3.3.3), and its end. -/
 public def readValue (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal (String × Nat) := do
   let q := at? b i
   unless q == 34 || q == 39 do throw (.syntax i "an attribute value must be quoted")
@@ -291,8 +225,7 @@ public def readValue (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal (
   if at? b j != q then throw (.syntax i "an unterminated attribute value")
   return (out, j + 1)
 
-/-- Bytes as text with every line end — CR LF or a lone CR — read as one
-line feed (§2.11). -/
+/-- Bytes as text with each CR LF or lone CR read as one line feed (§2.11). -/
 public def normalizeEol (raw : ByteArray) : String :=
     if (raw.data.contains 13) then
       let out := Id.run do
@@ -311,30 +244,25 @@ public def normalizeEol (raw : ByteArray) : String :=
       (String.fromUTF8? out).getD ""
     else (String.fromUTF8? raw).getD ""
 
-/-- Character data from `i` to the next markup or reference, end-of-line
-normalized (§2.11). `]]>` may not stand in it (§2.4). -/
+/-- Character data from `i` to the next markup or reference, end-of-line normalized (§2.11). -/
 public def readChars (b : ByteArray) (i : Nat) : Except Refusal (String × Nat) := do
   let j := scanWhile b (fun c => c != 60 && c != 38 && c != 256) i
   let raw := b.extract i j
   if (find raw 0 "]]>").isSome then throw (.syntax i "']]>' in character data")
   return (normalizeEol raw, j)
 
-/-- A comment at `i` (on `<!--`): where it ends. `--` may stand only in its
-closing `-->` (§2.5). -/
+/-- The end of a comment at `i`; `--` may stand only in its closing `-->` (§2.5). -/
 public def skipComment (b : ByteArray) (i : Nat) : Except Refusal Nat := do
   let some j := find b (i + 4) "--" | throw (.syntax i "an unterminated comment")
   if at? b (j + 2) != 62 then throw (.syntax j "'--' inside a comment")
   return j + 3
 
-/-- A start tag at `i` (on `<`): its name, its attributes, whether it closes
-itself, and where it ends. An attribute named twice is a well-formedness
-error (§3.1). -/
+/-- A start tag at `i`: its name, its attributes, whether it closes itself, and its end. -/
 public def readStartTag (bud : Budget) (b : ByteArray) (i : Nat) :
     Except Refusal (String × Array (String × String) × Bool × Nat) := do
   let (name, j0) ← readName bud b (i + 1)
   let mut attrs : Array (String × String) := #[]
-  -- The names already read, so a tag of many attributes is read in time
-  -- linear in them.
+  -- A set, so a tag of many attributes reads in linear time.
   let mut seen : Std.HashSet String := {}
   let mut j := j0
   for _ in [0:b.size + 1] do
@@ -355,8 +283,6 @@ public def readStartTag (bud : Budget) (b : ByteArray) (i : Nat) :
     j := k3
   throw (.syntax i "an unterminated tag")
 
-/-- A quoted literal at `i`, as a document type declaration's external
-identifier spells one: where it ends. -/
 private def skipLiteral (b : ByteArray) (i : Nat) : Except Refusal Nat := do
   let q := at? b i
   unless q == 34 || q == 39 do throw (.syntax i "a quoted literal was expected")
@@ -364,10 +290,7 @@ private def skipLiteral (b : ByteArray) (i : Nat) : Except Refusal Nat := do
   if at? b j != q then throw (.syntax i "an unterminated literal")
   return j + 1
 
-/-- A document type declaration at `i` (on `<!DOCTYPE`): where it ends. An
-external identifier is inert and passes; an internal subset may hold white
-space and comments, and any declaration, parameter-entity reference or
-processing instruction in it is refused (§2.8). -/
+/-- The end of a document type declaration at `i`; a declaration in an internal subset is refused (§2.8). -/
 public def skipDoctype (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal Nat := do
   let j0 := i + 9
   unless isSpace (at? b j0) do throw (.syntax j0 "white space after <!DOCTYPE was expected")
@@ -400,8 +323,6 @@ public def skipDoctype (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal
   if at? b j != 62 then throw (.syntax j "an unterminated document type declaration")
   return j + 1
 
-/-! ## The reader -/
-
 /-- An element still open: its name, attributes, finished children, and the
 character data read since the last child. -/
 public structure Frame where
@@ -418,7 +339,6 @@ public structure Frame where
   let f := f.flush
   .elem f.name f.attrs f.kids
 
-/-- The reader's state between tokens. -/
 public structure State where
   pos : Nat
   stack : Array Frame
@@ -447,10 +367,8 @@ public abbrev Step := ForInStep (Except Refusal State)
 @[expose] public def State.tick (bud : Budget) (s : State) : Except Refusal State :=
   if s.nodes + 1 > bud.nodes then throw (.budget "node count") else pure { s with nodes := s.nodes + 1 }
 
-/-- The state read on to `p`. -/
 @[expose] public def State.at (s : State) (p : Nat) : State := { s with pos := p }
 
-/-- The state with its open element taken off. -/
 @[expose] public def State.popped (s : State) : State := { s with stack := s.stack.pop }
 
 /-- An end tag read: the open element `f` closed onto its parent, or made
@@ -474,9 +392,7 @@ the root, the reader at `p`. -/
         if f.name != name then .error (.syntax s.pos s!"the end tag '{name}' closes '{f.name}'")
         else .ok (s.closeAt f (k + 1))
 
-/-- A `<!` construct at `s.pos`: a comment, a CDATA section — within the
-text budget as literal text is, one more node — or a document type
-declaration. -/
+/-- A `<!` construct at `s.pos`: a comment, a CDATA section, or a document type declaration. -/
 @[expose] public def markup (bud : Budget) (b : ByteArray) (s : State) : Except Refusal State :=
   let i := s.pos
   if bytesAt b i "<!--" then (skipComment b i).map s.at
@@ -495,8 +411,7 @@ declaration. -/
     else (skipDoctype bud b i).map fun p => { s with pos := p, doctype := true }
   else .error (.syntax i "an unreadable '<!' construct")
 
-/-- A start tag at `s.pos`: one more node, an element within the depth
-budget — empty, given to its parent or made the root, or opened. -/
+/-- A start tag at `s.pos`: an element within the depth budget, empty or opened. -/
 @[expose] public def startTag (bud : Budget) (b : ByteArray) (s : State) : Except Refusal State :=
   if s.stack.isEmpty && s.root.isSome then .error (.syntax s.pos "content after the root element")
   else match s.tick bud with
@@ -509,8 +424,7 @@ budget — empty, given to its parent or made the root, or opened. -/
         else if empty then .ok ((s'.give (.elem name attrs #[])).at j)
         else .ok (s'.openAt { name, attrs, kids := #[], text := "" } j)
 
-/-- A reference at `s.pos` (on `&`): its character, within the text budget
-as literal text is, one more node. -/
+/-- A reference at `s.pos`, within the text budget. -/
 @[expose] public def reference (bud : Budget) (b : ByteArray) (s : State) : Except Refusal State :=
   if s.stack.isEmpty then .error (.syntax s.pos "a reference outside the root element")
   else match readReference b s.pos with
@@ -534,7 +448,7 @@ it, white space alone. -/
       .error (.budget "text length")
     else ((s.chars t).tick bud).map (·.at j)
 
-/-- One token from `s.pos`. Every step that yields moves forward. -/
+/-- One token from `s.pos`; every step that continues moves forward. -/
 @[expose] public def step (bud : Budget) (b : ByteArray) (s : State) : Except Refusal State :=
   let c := at? b s.pos
   if c == 60 then
@@ -563,8 +477,7 @@ it, white space alone. -/
           if s'.pos ≤ s.pos then ForInStep.done (.error (.syntax s.pos "no progress"))
           else ForInStep.yield (.ok s')) : Id (Except Refusal State)).run
 
-/-- **Bytes as a document**, or the reason they are none: the encoding, then
-every token, under the budget (`parseWith_between`). -/
+/-- Bytes as a document under the budget, or the reason they are none. -/
 @[expose] public def parseWith (bud : Budget) (input : ByteArray) : Except Refusal Node :=
   if input.size > bud.bytes then .error (.budget "file size") else
   match decode input with
@@ -585,8 +498,6 @@ every token, under the budget (`parseWith_between`). -/
 
 @[expose] public def parse (input : ByteArray) : Except Refusal Node := parseWith Budget.standard input
 
-/-! ## Writing -/
-
 /-- A character as a decimal character reference (§4.1). -/
 @[expose] public def charRef (c : Char) : String := "&#" ++ toString c.toNat ++ ";"
 
@@ -595,19 +506,14 @@ the four markup reads, `"`, `&`, `<` and `>`. -/
 @[expose] public def literal (c : Char) : Bool :=
   32 ≤ c.toNat && c.toNat ≤ 126 && c != '"' && c != '&' && c != '<' && c != '>'
 
-/-- **Text or an attribute value, canonically spelled**: a `literal`
-character as itself, every other one as a reference, which no reader
-normalizes — end-of-line handling (§2.11) and attribute-value normalization
-(§3.3.3) read only literal characters — so every conforming reader, this one
-and the one behind the converter alike, reads exactly these characters back,
-and the spelling is ASCII (`parse_render_id`). -/
+/-- Text or an attribute value canonically spelled: `literal` characters as themselves, every
+other one as a reference. -/
 @[expose] public def escapeChars (s : String) : String :=
   s.foldl (fun acc c => if literal c then acc.push c else acc ++ charRef c) ""
 
 mutual
 
--- conserves: none — a spelling; what it keeps is the reader's reading of it.
-/-- One node written onto `out`. -/
+-- conserves: none — a spelling.
 public def renderOne (out : String) : Node → String
   | .elem name attrs kids =>
     let out := attrs.foldl (fun o (k, v) => o ++ " " ++ k ++ "=\"" ++ escapeChars v ++ "\"")
@@ -624,11 +530,8 @@ public def renderList (out : String) : List Node → String
 
 end
 
-/-- **A tree written as XML**: canonical, UTF-8, no declaration, no comment,
-nothing outside the root. -/
+/-- A tree written as canonical UTF-8 XML, with no declaration and no comment. -/
 public def render (n : Node) : ByteArray := (renderOne "" n).toUTF8
-
-/-! ## Names in their namespaces -/
 
 /-- An attribute in its namespace. -/
 public structure Attr where
@@ -637,9 +540,8 @@ public structure Attr where
   value : String
   deriving Repr, Inhabited, BEq
 
-/-- A node with every name resolved against the namespace declarations in
-scope (Namespaces in XML 1.0 §5–§6): an element's namespace and local name,
-its attributes the declarations left out, its children. -/
+/-- A node with every name resolved against the namespace declarations in scope (Namespaces in
+XML 1.0 §5–§6). -/
 public inductive Item where
   | elem (ns : String) (name : String) (attrs : Array Attr) (kids : Array Item)
   | text (s : String)
@@ -659,8 +561,7 @@ public def splitName (s : String) : Option (Option String × String) :=
 public def lookup (scope : Array (String × String)) (p : String) : Option String :=
   if p == "xml" then some xmlNs else (scope.findRev? (·.1 == p)).map (·.2)
 
-/-- The scope an element opens: its declarations over the enclosing one. A
-prefix may not be undeclared (§5); `xml` and `xmlns` keep their bindings. -/
+/-- The scope an element opens: its declarations over the enclosing ones; a prefix may not be undeclared (§5). -/
 public def declare (scope : Array (String × String)) (attrs : Array (String × String)) :
     Except String (Array (String × String)) := do
   let mut scope := scope
@@ -676,8 +577,7 @@ public def declare (scope : Array (String × String)) (attrs : Array (String × 
 
 mutual
 
--- conserves: none — a renaming of a tree's names; its text stays (`resolve` is total over
--- the parse's output, and every element keeps its children in order).
+-- conserves: none — a renaming of a tree's names.
 /-- One node with its names resolved, or the first name no declaration in
 scope binds. -/
 public def resolveOne (scope : Array (String × String)) : Node → Except String Item
@@ -726,7 +626,7 @@ public def resolve (n : Node) : Except String Item := resolveOne #[] n
 
 mutual
 
--- conserves: none — the XPath string-value of a node (XPath 1.0 §5): its text, concatenated.
+-- conserves: none — the XPath string-value of a node.
 /-- A node's text, all its descendants', in document order. -/
 public def Item.textOne (acc : String) : Item → String
   | .text s => acc ++ s
@@ -737,8 +637,6 @@ public def Item.textList (acc : String) : List Item → String
   | n :: rest => Item.textList (Item.textOne acc n) rest
 
 end
-
-/-! ## A resolved tree written back -/
 
 /-- The prefix a namespace is written with: SVG's the default, `xml` its
 reserved one, XLink `xlink`, any other `n` and its place. -/
@@ -769,11 +667,8 @@ end
 
 mutual
 
--- conserves: none — a respelling of a resolved tree's names; its text
--- stays, character for character.
-/-- A resolved node as a syntactic one: each name under the prefix its
-namespace is written with; an element in no namespace undeclares the
-default for itself. -/
+-- conserves: none — a respelling of a resolved tree's names.
+/-- A resolved node as a syntactic one, each name under the prefix its namespace is written with. -/
 public def toNodeOne (others : Array String) : Item → Node
   | .text s => .text s
   | .elem ns name attrs kids =>
@@ -794,9 +689,7 @@ public def toNodeList (others : Array String) (acc : Array Node) : List Item →
 
 end
 
-/-- **A resolved tree written as XML**: the canonical spelling (`render`)
-of the tree with its namespaces declared on the root — what a converter
-receives in place of the authored bytes. -/
+/-- A resolved tree written as canonical XML, its namespaces declared on the root. -/
 public def renderItem (t : Item) : ByteArray :=
   let others := nsOne #[] t
   let decls : Array (String × String) :=

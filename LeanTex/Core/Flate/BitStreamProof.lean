@@ -5,8 +5,6 @@ import all LeanTex.Core.Flate.BitWriterProof
 
 namespace LeanTex.Core.Flate
 
-/-- An emitted field reads back at its actual writer position after arbitrary
-later writes. The realization premise is supplied by the final flush. -/
 theorem push_bits_exact (w : Bw) (data : ByteArray) (v n : Nat)
     (hw : w.Valid) (hn : n ≤ 16) (hv : v < 2 ^ n)
     (hr : (w.push v n).Realizes data) :
@@ -16,7 +14,6 @@ theorem push_bits_exact (w : Bw) (data : ByteArray) (v n : Nat)
   exact bitField_bits_exact _ n v (by omega) hv
     (hr.field (push_field_exact w v n hw hn hv))
 
-/-- A zero-width field is the identity for the reader, including at end of input. -/
 theorem Br.bits_zero_id (r : Br) : r.bits 0 = some (0, r) := by
   simp [Br.bits, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size]
 
@@ -43,7 +40,6 @@ theorem pushExtra_bits_exact (w : Bw) (data : ByteArray) (value width : Nat)
 
 namespace BitStream
 
-/-- Array emission preserves every preceding bit and the pending-byte bound. -/
 theorem write_contract {α : Type} (emit : Bw → α → Bw) (entries : Array α) (w : Bw)
     (hw : w.Valid)
     (hstep : ∀ entry ∈ entries.toList, ∀ w, w.Valid →
@@ -62,7 +58,6 @@ theorem write_contract {α : Type} (emit : Bw → α → Bw) (entries : Array α
   exact ⟨he.1, he.2.trans hs.2⟩
 
 end BitStream
-/-- The one-bit header reader recovers a certified bit field. -/
 theorem bitField_bit_exact (r : Br) (v : Nat) (hv : v < 2)
     (hf : BitField r.data r.bitPos 1 v) :
     r.bit = some (v, {r with bitPos := r.bitPos + 1}) := by

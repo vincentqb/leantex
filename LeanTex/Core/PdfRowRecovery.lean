@@ -62,9 +62,6 @@ public theorem WritePlan.direct_location_exact (p : WritePlan)
     compressedIndex_absent_exact _ _ _ hc,
     p.direct_offset_exact before after r hs hi.2.1 hn, xrefEntryLocation]
 
-/-- A native source row is read from the complete file at the offset
-recorded by its actual serializer. The retained stream bytes are exact;
-neither an external decoder nor a supplied reader result is assumed. -/
 public theorem WritePlan.native_readback_exact (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (before after : List Row) (r : Row)

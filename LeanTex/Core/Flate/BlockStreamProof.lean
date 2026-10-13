@@ -6,8 +6,6 @@ import all LeanTex.Core.Flate.DynamicHeaderProof
 
 namespace LeanTex.Core.Flate.BlockStream
 
-/-- The actual frequency-derived alphabets fit the dynamic header's RFC
-counts and all their transmitted lengths fit a four-bit value. -/
 theorem lengths_contract (tokens : Array UInt32) :
     (257 ≤ (lengths tokens).1.size ∧ (lengths tokens).1.size ≤ 286) ∧
       (1 ≤ (lengths tokens).2.size ∧ (lengths tokens).2.size ≤ 30) ∧
@@ -24,7 +22,6 @@ theorem lengths_contract (tokens : Array UInt32) :
     fun s => Nat.lt_of_le_of_lt (hl.1.width_le s) (by decide),
     fun s => Nat.lt_of_le_of_lt (hd.1.width_le s) (by decide)⟩
 
-/-- Writing a complete dynamic block preserves every bit before the block. -/
 theorem write_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UInt32}
     (ht : TokensFor raw start tokens finish) (w : Bw) (hw : w.Valid) :
     (write tokens w).Valid ∧ (write tokens w).Extends w := by
@@ -42,8 +39,6 @@ theorem write_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UI
   exact ⟨hp.1, hp.2.trans (hh.2.trans ((push_extends_exact w1 2 2 h1 (by decide)).trans
     (push_extends_exact w 1 1 hw (by decide))))⟩
 
-/-- The final dynamic block is read by the actual outer decoder as a complete
-stream, after reading its transmitted tables and every payload symbol. -/
 theorem readStep_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
@@ -82,8 +77,6 @@ theorem readStep_write_exact (raw : ByteArray) (tokens : Array UInt32)
       .ok (.inl raw) :=
   readStep_write_bounded_exact raw raw.size (Nat.le_refl _) tokens ht w data hw hr
 
-/-- A complete production dynamic block decodes to its input through the
-bounded outer loop. Realization allows subsequent padding and zlib trailer. -/
 theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)

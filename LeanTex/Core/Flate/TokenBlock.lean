@@ -15,8 +15,7 @@ def copy (out : ByteArray) (len dist : Nat) : ByteArray := Id.run do
     result := result.push (result[result.size - dist]?.getD 0)
   return result
 
-/-- One production symbol step. Completion is distinct from continuation:
-the bounded driver consumes the actual token count, including end-of-block. -/
+/-- Decodes one symbol, telling the end of block apart from a continuing state. -/
 def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
     Except String (Sum (ByteArray × Br) (ByteArray × Br)) := do
   let (out, r) := state
@@ -40,14 +39,13 @@ def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
     else if out.size + len > maxOut then .error "deflate: output exceeds the declared size"
     else return .inr (copy out len d, r)
 
-/-- The symbol loop remains bounded by the caller's declared output size. -/
+/-- Decodes the block's symbols, bounded by the declared output size. -/
 public def read (lit dist : Huff) (r : Br) (out : ByteArray) (maxOut : Nat) :
     Except String (ByteArray × Br) :=
   DecodeLoop.run (maxOut + 2) (readStep lit dist maxOut) (out, r)
     "deflate: block did not end"
 
-/-- A match has four consecutive fields: length code, length extra bits,
-distance code, and distance extra bits. -/
+/-- Writes a match's length code, length extra bits, distance code and distance extra bits. -/
 def writeMatch (litLens litCodes distLens distCodes : Array Nat)
     (w : Bw) (len dist di : Nat) : Bw :=
   let li := lenSymTab[len]?.getD 0
@@ -56,8 +54,7 @@ def writeMatch (litLens litCodes distLens distCodes : Array Nat)
   let w := w.push (distCodes[di]?.getD 0) (distLens[di]?.getD 0)
   w.pushExtra (dist - distBase[di]?.getD 0) (distExtra[di]?.getD 0)
 
-/-- Emit one packed token with the production canonical codes and RFC extra
-fields. The scalar token representation is shared with frequency counting. -/
+/-- Writes one packed token with its canonical code and RFC extra fields. -/
 def writeEntry (litLens litCodes distLens distCodes : Array Nat)
     (w : Bw) (t : UInt32) : Bw :=
   if t < 256 then
@@ -71,7 +68,7 @@ def write (litLens litCodes distLens distCodes : Array Nat)
     (tokens : Array UInt32) (w : Bw) : Bw :=
   BitStream.write (writeEntry litLens litCodes distLens distCodes) tokens w
 
-/-- The token payload includes its terminating symbol. -/
+/-- Writes the token payload and its terminating symbol. -/
 public def writePayload (litLens distLens : Array Nat) (tokens : Array UInt32) (w : Bw) : Bw :=
   let litCodes := canonCodes litLens
   let distCodes := canonCodes distLens

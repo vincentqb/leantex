@@ -17,8 +17,6 @@ theorem pairWeights_size_exact (weights : Array Nat) :
   · intro out h
     exact h
 
-/-- The actual merge consumes every leaf and package exactly once. It
-needs no assumption about weights or their ordering. -/
 theorem merge_counts_exact (items pairs : Array Nat) :
     (merge items pairs).1.size = items.size + pairs.size ∧
     (merge items pairs).2.size = items.size + pairs.size ∧
@@ -78,8 +76,6 @@ private theorem gap_le_iff (n k d : Nat) : gap n k ≤ d ↔ n ≤ d * 2 ^ k := 
     have h : (gap n k + 1) / 2 ≤ d ↔ gap n k ≤ 2 * d := by omega
     simp only [gap, h, ih, Nat.pow_succ, Nat.mul_assoc, Nat.mul_comm]
 
-/-- The largest package list contains the complete solution prefix
-whenever the alphabet fits the declared bit limit. -/
 theorem capacity_solution_between (n limit : Nat) (hl : 0 < limit)
     (hn : n ≤ 2 ^ limit) :
     2 * n - 2 ≤ capacity n (limit - 1) := by
@@ -106,8 +102,6 @@ private theorem level_push (n i : Nat) (out : Array (Array Bool)) (flags : Array
   · have hki : k < i := by omega
     simpa only [Array.getElem?_push, hs, he, ite_false] using ho k hki
 
-/-- Every recorded level has the exact leaf/package counts produced by
-the merge, including the final level appended after the loop. -/
 theorem levels_exact (items : Array Nat) (limit : Nat) (hl : 0 < limit) :
     (levels items limit).size = limit ∧
       ∀ k < limit, LevelFor items.size k ((levels items limit)[k]?.getD #[]) := by
@@ -148,7 +142,6 @@ theorem levels_exact (items : Array Nat) (limit : Nat) (hl : 0 < limit) :
   have := level_push items.size (limit - 1) result.2.2 result.2.1 ho hall hf
   simpa only [Nat.sub_add_cancel hl] using this
 
-/-- The two selection counters read exactly the consumed flag prefix. -/
 theorem selected_exact (flags : Array Bool) (take : Nat) (ht : take ≤ flags.size) :
     (selected flags take).1 = (flags.toList.take take).count true ∧
     (selected flags take).2 = (flags.toList.take take).count false := by

@@ -4,23 +4,13 @@ public import LeanTex.Core.Ir
 public import LeanTex.Core.GfxAffine
 public import LeanTex.Core.GfxSteps
 
-/-!
-# A TikZ picture as a figure
-
-The elaborator evaluates a picture into `Ir.Pic.Shape`s: labels, and ink —
-nodes of the vector model already (`Ir.Pic.Shape.ink`). This is their
-lowering onto a figure both backends then emit. A shape is one top-level
-node, so a label's node index is its shape index: ink is its own node, a
-label an engine-set label.
--/
+/-! A TikZ picture's evaluated shapes lowered onto a figure, one top-level node per shape. -/
 
 namespace LeanTex.Core.Gfx
 
 open LeanTex.Core LeanTex.Core.Dim
 
-/-- A picture label as the shape carried it: its anchor, content, colour,
-per-mille size and alignment. Engine-set: the backends' label emitters set
-it, the model only places it. -/
+/-- A picture label as its shape carries it: anchor, content, colour, per-mille size and alignment. -/
 public structure LabelSpec where
   x : Sp
   y : Sp
@@ -32,9 +22,8 @@ public structure LabelSpec where
 
 mutual
 
--- conserves: none — a relabelling of the empty label type, node for node.
-/-- A label-free node at any label type: the ink a picture's shape carries,
-as a node of the figure that also holds labels. -/
+-- conserves: none — a relabelling of the empty label type.
+/-- A label-free node at any label type. -/
 @[expose] public def Node.lift {L : Type} : Node Empty → Node L
   | .draw g fl st => .draw g fl st
   | .group xf clips alpha kids => .group xf clips alpha (Node.liftList #[] kids.toList)
@@ -51,23 +40,17 @@ as a node of the figure that also holds labels. -/
 
 end
 
-/-- The lifting walk as a map over its list. -/
 public theorem Node.liftList_map {L : Type} (acc : Array (Node L)) (xs : List (Node Empty)) :
     Node.liftList acc xs = acc ++ (xs.map Node.lift).toArray := by
   induction xs generalizing acc with
   | nil => simp [Node.liftList]
   | cons x rest ih => simp [Node.liftList, ih]
 
-/-- One shape as one node. -/
 @[expose] public def ofShape : Ir.Pic.Shape → Node LabelSpec
   | .label x y content color scale align =>
     .label { x := x, y := y, content := content, color := color, scale := scale, align := align }
   | .ink n => n.lift
 
-/-- **Today's shapes lower as they always did** (`_id`): each of the four
-the subset drew before ink was general — a fill, a circle, a frame, an
-edge with its tip — is the node the lowering wrote for it, so no picture
-drawn before moves a mark. -/
 public theorem ofPicture_ink_id (x y w h r : Sp) (c : Ir.Color) (st : Option Ir.Pic.Stroke)
     (fl : Option Ir.Color) (segs : Array Ir.Pic.PathSeg) (k : Ir.Pic.Stroke)
     (tip : Option Ir.Pic.Tip) :
@@ -94,26 +77,19 @@ public theorem ofPicture_ink_id (x y w h r : Sp) (c : Ir.Color) (st : Option Ir.
   { box := box, clipToBox := false, nodes := pic.shapes.map ofShape
     outlines := #[], symbols := #[], rasters := #[], title := none, losses := #[] }
 
-/-- **A picture as a figure**: its shapes as nodes in source order, its box
-the IR's one box under the measurement (`Ir.Pic.Picture.box`) — so no
-picture moves — never clipping (pgf §15.8). -/
+/-- A picture as a figure: its shapes as nodes in source order in the IR's one box, never clipping. -/
 @[expose] public def ofPicture (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture) : Figure LabelSpec :=
   ofPictureIn (pic.box m) pic
 
-/-- The figure reserves exactly the picture's box (`_exact`). -/
 public theorem ofPicture_box_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture) :
     (ofPicture m pic).box = pic.box m := rfl
 
-/-- **A shape is a node** (`_exact`): node `i` of the figure is shape `i`
-lowered, so a label's node index is its shape index. -/
 public theorem ofPicture_nodes_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture) (i : Nat) :
     (ofPicture m pic).nodes[i]? = pic.shapes[i]?.map ofShape := by
   simp [ofPicture, ofPictureIn]
 
-/-- Whether a shape lowers to exactly one element of a picture's tree: a
-label, or ink that draws, groups, stamps or maps a raster — the ink a
-picture's evaluator builds. Recovered words and a symbol use paint no
-element of their own there. -/
+/-- Whether a shape lowers to exactly one element of a picture's tree: a label, or ink that draws,
+groups, stamps or maps a raster. -/
 @[expose] public def shapeOneEl : Ir.Pic.Shape → Bool
   | .label .. => true
   | .ink (.draw ..) => true
@@ -140,8 +116,6 @@ element of their own there. -/
   | .image _ _ => none
   | .words _ => none
 
-/-- **The figure carries exactly the picture's labels** (`_exact`): every
-node's label is its shape's, in shape order, and only labels are labels. -/
 public theorem ofPicture_labels_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture) :
     (ofPicture m pic).nodes.map Node.label? = pic.shapes.map labelOf? := by
   simp only [ofPicture, ofPictureIn, Array.map_map]
@@ -238,11 +212,6 @@ private theorem imageFreeList_map (xs : List Ir.Pic.Shape) (h : ∀ s ∈ xs, sh
     simp [Node.imageFreeList, ofShape_imageFree s (h s (List.mem_cons_self ..)),
       ih fun s' hs' => h s' (List.mem_cons_of_mem _ hs')]
 
-/-- **A picture's ink paints no raster** (`_exact`) where its shapes'
-ink holds none: every node the lowering makes, its labels taken out, is
-the shapes' own ink — so a page's ink asks the PDF writer for an image only
-where a shape's node held one, which no evaluator door builds; the writer
-refuses that case (`Pdf.inkRasterPage?`). -/
 public theorem ofPictureIn_imageFree_exact (box : Box) (pic : Ir.Pic.Picture)
     (h : ∀ s ∈ pic.shapes, shapeImageFree s = true) :
     (ofPictureIn box pic).dropLabels.imageFree = true := by
@@ -250,7 +219,6 @@ public theorem ofPictureIn_imageFree_exact (box : Box) (pic : Ir.Pic.Picture)
     (imageFreeList_map pic.shapes.toList fun s hs => h s (Array.mem_toList_iff.mp hs))
   simp [Figure.imageFree, Figure.dropLabels, ofPictureIn, h']
 
-/-- A label repainted. -/
 @[expose] public def LabelSpec.recolor (f : Ir.Color → Ir.Color) (l : LabelSpec) : LabelSpec :=
   { l with color := f l.color }
 
@@ -294,9 +262,6 @@ private theorem ofShape_recolor (f : Ir.Color → Ir.Color) (s : Ir.Pic.Shape) :
   | label x y content color scale align => rfl
   | ink n => exact lift_recolor f (LabelSpec.recolor f) n
 
-/-- **Lowering commutes with repainting** (`_exact`): dimming a picture
-under an overlay cover and lowering it is lowering it and dimming the
-figure, labels included. -/
 public theorem ofPicture_recolor_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture)
     (f : Ir.Color → Ir.Color) :
     ofPicture m (pic.recolor f) = (ofPicture m pic).recolor f (LabelSpec.recolor f) := by
@@ -317,13 +282,7 @@ public theorem ofPicture_recolor_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Pi
     outlines := fig.outlines, symbols := fig.symbols.map (·.map Node.lift)
     rasters := fig.rasters, title := fig.title, losses := fig.losses }
 
-/-! ## A picture as the page's ink, its labels in their places -/
-
-/-- **A picture as the page's ink**: the lowered picture (`ofPictureIn`),
-each label the key the page finds its line by — the picture `id` and the
-label's shape index, the origin layout stamps the line with
-(`Layout.LabelAudit.Stamp.origin`) — so the PDF sets a label's line where
-its node stands among the ink (`Pdf.contentOps`). -/
+/-- A picture as the page's ink, each label keyed by the picture `id` and its shape index. -/
 @[expose] public def ofPictureKeyed (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
     Figure (Nat × Nat) :=
   { box := box, clipToBox := false
@@ -398,8 +357,6 @@ private theorem ofShape_topOk (s : Ir.Pic.Shape) : (ofShape s).topOk = true := b
     | label l => exact nomatch l
     | draw | use | stamp | image | words => rfl
 
-/-- **A lowered picture's labels stand at its top level** (`_exact`): each
-shape is one node, a label or ink holding none. -/
 public theorem ofPictureIn_labelsTop_exact (box : Box) (pic : Ir.Pic.Picture) :
     (ofPictureIn box pic).labelsTop = true := by
   have hn : (ofPictureIn box pic).nodes.all Node.topOk = true := by
@@ -410,10 +367,6 @@ public theorem ofPictureIn_labelsTop_exact (box : Box) (pic : Ir.Pic.Picture) :
   simp only [Figure.labelsTop, hn, Bool.true_and]
   simp [ofPictureIn]
 
-/-- **A picture's labels stand at its top level** (`_exact`): every node of
-the page's ink is a label or ink holding none, and it has no symbols — so
-each label line sets in the ink's own frame, between the ink written before
-it and after it. -/
 public theorem ofPictureKeyed_labelsTop_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
     (ofPictureKeyed id box pic).labelsTop = true := by
   have hn : (ofPictureKeyed id box pic).nodes.all Node.topOk = true := by
@@ -461,10 +414,6 @@ private theorem imageFreeList_mapIdx {L L' : Type} (f : Nat → L → L') :
     simp only [Node.imageFreeList, mapLabels_imageFree]
     rw [ih (fun i => f (i + 1))]
 
-/-- **The page's ink paints no raster** (`_exact`) where the picture's
-shapes hold none: its nodes are the lowered picture's, relabelled — so the
-PDF writer, which names a raster only from the image store, is asked for
-none (`Pdf.inkRasterPage?`). -/
 public theorem ofPictureKeyed_imageFree_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture)
     (h : ∀ s ∈ pic.shapes, shapeImageFree s = true) :
     (ofPictureKeyed id box pic).imageFree = true := by
@@ -493,8 +442,6 @@ private theorem marks_mapIdx {L L' : Type} (outlines : Array (Array Subpath)) (c
       Node.expandOne_mapLabels, Array.toList_map, Node.marksList_mapLabels,
       ih (fun i => f (i + 1))]
 
-/-- **Keying a picture's labels moves no mark** (`_exact`): the page's ink
-paints exactly what the lowered picture paints. -/
 public theorem ofPictureKeyed_marks_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
     (ofPictureKeyed id box pic).marks = (ofPictureIn box pic).marks := by
   have hb : (ofPictureKeyed id box pic).bodies = #[] := by simp [ofPictureKeyed, Figure.bodies]
@@ -518,11 +465,6 @@ private theorem flatMap_mapIdx {α β γ : Type} (g : Nat → α → β) (h₁ :
     rw [List.mapIdx_cons, List.flatMap_cons, List.flatMap_cons, h 0 a,
       ih (fun i => g (i + 1)) (fun i a => h (i + 1) a)]
 
-/-- **The page's ink paints what the picture paints, each label where its
-node stands** (`_exact`): the keyed figure's steps are the lowered
-picture's, each label read as its key — the marks unmoved, every label in
-its place among them. What lets the PDF's label order be the HTML's
-(`picture_labelOrder_agree`). -/
 public theorem ofPictureKeyed_steps_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
     (ofPictureKeyed id box pic).steps.map (Step.mapLabel fun _ => ()) =
       (ofPictureIn box pic).steps.map (Step.mapLabel fun _ => ()) := by

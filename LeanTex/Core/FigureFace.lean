@@ -4,26 +4,14 @@ public import LeanTex.Core.Gfx
 public import LeanTex.Core.Binary
 public import LeanTex.Core.Flate
 
-/-!
-# A figure's web face, as the face cache keeps it
-
-What deciding a PDF figure's web face reads of its import: the losses the
-import named, the engine's drawing and the words it says, or why the import
-refused the page. The import is a pure function of the page's bytes, so its
-answer is kept under them — a refusal as much as a drawing — beside the key
-it answers (the bytes' content key, the page, the stretch and the engine
-that read them), and read back as itself under that key and as nothing
-under any other (`lookup_exact`); bytes that do not check against their own
-checksum are a miss, never another face.
--/
+/-! The face cache's record of a PDF figure's import, its drawing or its refusal, kept under the
+key it answers. -/
 
 namespace LeanTex.Core.FigureFace
 
 open LeanTex.Core
 
-/-- An import's drawing as a face's decision reads it: the losses it named,
-the engine's SVG of it, and the words it says (`Gfx.Figure.said`) — the text
-its PDF form carries. -/
+/-- An import's drawing as a face's decision reads it: its losses, the engine's SVG, and its words. -/
 public structure Drawing where
   losses : Array Gfx.Loss
   face : ByteArray
@@ -118,8 +106,7 @@ public def readBody : Binary.Reader (Array String × Answer) := do
 /-- A body's checksum (FNV-64, `Flate.fnv64`). -/
 @[expose] public def checksum (b : ByteArray) : Nat := (Flate.fnv64 14695981039346656037 b).toNat
 
-/-- **An answer as the cache stores it**, under the key it answers: the
-magic, the body's checksum and size, the body. -/
+/-- An answer as the cache stores it under its key: the magic, the body's checksum and size, the body. -/
 @[expose] public def encode (key : Array String) (a : Answer) : ByteArray :=
   let b := body key a
   magic ++ Binary.natBE 8 (checksum b) ++ Binary.natBE 4 b.size ++ b
@@ -135,13 +122,10 @@ public def readAll : Binary.Reader (Array String × Answer) := do
   let b ← Binary.Reader.bytes n
   Binary.Reader.lift (checked ck b)
 
-/-- A stored answer read back with its key; `none` for anything else — a
-truncated, corrupted or foreign file is a miss. -/
+/-- A stored answer read back with its key; a truncated, corrupted or foreign file is `none`. -/
 public def decode (bytes : ByteArray) : Option (Array String × Answer) := readAll.run bytes
 
-/-- **A slot read for a key**: the answer it holds where it was stored
-under that very key, else a miss — a slot another engine, page, stretch or
-file wrote answers nothing here, whatever its name. -/
+/-- A slot read for a key: the answer stored under that very key, else a miss. -/
 public def lookup (key : Array String) (bytes : ByteArray) : Option Answer :=
   (decode bytes).bind fun (k, a) => if k == key then some a else none
 
@@ -252,9 +236,6 @@ private theorem reads_body (key : Array String) (a : Answer) (h : Bounded key a)
     key.size (key, a) (Binary.natBE 4 key.size) _ (Binary.Reads.nat 4 _ hk) hkey
   simpa only [ByteArray.append_assoc] using this
 
-/-- **A stored answer reads back as itself, with its key** (`_id`): every
-answer the format holds — a refusal's words, a drawing's losses, bytes and
-words, empty ones included — under every key it holds. -/
 public theorem decode_encode_id (key : Array String) (a : Answer) (h : Bounded key a) :
     decode (encode key a) = some (key, a) := by
   unfold decode
@@ -284,11 +265,6 @@ public theorem decode_encode_id (key : Array String) (a : Answer) (h : Bounded k
     () (key, a) magic _ (Binary.Reads.expect magic) hck
   simpa only [ByteArray.append_assoc] using this
 
-/-- **A slot answers its own key and no other** (`_exact`): an answer
-stored under a key reads back as itself for that key, and as a miss for
-every other — the key, not the slot's file name, is what a hit rests on, so
-a slot written by another engine, for another page or stretch, or for other
-bytes whose name collides, is read afresh and never served. -/
 public theorem lookup_exact (key : Array String) (a : Answer) (h : Bounded key a) :
     lookup key (encode key a) = some a ∧ ∀ key', key' ≠ key → lookup key' (encode key a) = none := by
   have hd := decode_encode_id key a h

@@ -20,8 +20,6 @@ private theorem sum_filter (xs : List Nat) (p : Nat → Bool) (f : Nat → Nat) 
   | cons s xs ih =>
     by_cases hp : p s = true <;> simp [hp, ih]
 
-/-- The actual package-merge length vector obeys the canonical decoder's
-Kraft budget, including unused and singleton alphabets. -/
 theorem packageMerge_kraft_between (freqs : Array Nat) (limit : Nat)
     (hl : 0 < limit) (hfit : freqs.size ≤ 2 ^ limit) :
     Canonical.kraft (PackageMerge.lengths freqs limit).toList limit ≤ 2 ^ limit := by
@@ -49,10 +47,6 @@ theorem packageMerge_kraft_between (freqs : Array Nat) (limit : Nat)
   simp only [Function.comp_def, he, hsize]
   exact hk
 
-/-- Every live symbol of the production package-merge encoder is decoded
-by the table built from those same lengths. All table validity and
-code-space facts are derived; the remaining stream premise names the
-actual emitted bits. -/
 theorem packageMerge_decode_exact (freqs : Array Nat) (limit : Nat) (r : Br) (s : Nat)
     (hl : 0 < limit ∧ limit ≤ 15) (hfit : freqs.size ≤ 2 ^ limit)
     (hs : 0 < freqs[s]?.getD 0)

@@ -8,25 +8,10 @@ import LeanTex.Core.Flate.TokenSymbols
 
 namespace LeanTex.Core.Flate
 
-/-! # Flate: bounded zlib compression and decompression
+/-! Bounded zlib compression and decompression (RFC 1950 wrapping RFC 1951), with the
+checksums, content keys and PNG scanline unfiltering built on them. -/
 
-`inflate` decodes a zlib stream (RFC 1950 wrapping RFC 1951 deflate): what a
-PNG's IDAT holds. It exists for the PNG forms whose samples cannot pass
-through to a PDF `/FlateDecode` stream untouched — an alpha channel must be
-split into a colour plane and an SMask, which means really decoding. It is a
-total function: every read is bounds-checked, every loop bounded by the
-input's bit count or the declared output size, and a malformed stream is an
-error value, never a hang or a crash.
-
-`deflate` writes a dynamic-Huffman block from the hash-chain LZ77 tokenizer,
-followed by its Adler-32 checksum. `deflateStored` is the uncompressed option
-for callers that do not need compression. Both emit the standard zlib
-wrapper that a PDF viewer's `/FlateDecode` reader accepts. -/
-
-/-- Inflate a zlib stream into at most `maxOut` bytes (the caller knows the
-size a PNG's samples must have; anything else is malformed). The Adler-32
-trailer is not verified: the sample data is judged by its shape, as chunk
-CRCs are. -/
+/-- Inflates a zlib stream into at most `maxOut` bytes; the Adler-32 trailer is not verified. -/
 public def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do
   let some cmf := data[0]? | .error "zlib: empty stream"
   let some flg := data[1]? | .error "zlib: truncated header"
@@ -34,10 +19,7 @@ public def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray :
   else if flg.toNat / 32 % 2 == 1 then .error "zlib: preset dictionary is not supported"
   else BlockStream.read {data, bitPos := 16} ByteArray.empty maxOut
 
-/-- Adler-32 (RFC 1950 §8.2). Both sums ride in one `UInt64` — `s2` in
-the high word, `s1` in the low — and reduce modulo 65521 once per 5552
-bytes, zlib's `NMAX`: the longest run after which both still fit their
-words. The byte loop then divides nothing and carries one scalar. -/
+/-- Adler-32 (RFC 1950 §8.2). -/
 public def adler32 (data : ByteArray) : Nat := Id.run do
   let mut s : UInt64 := 1
   let mut i := 0
@@ -50,20 +32,13 @@ public def adler32 (data : ByteArray) : Nat := Id.run do
     i := stop
   return ((s >>> 32) * 65536 + (s &&& 0xFFFFFFFF)).toNat
 
-/-- Four bytes of `v`'s low 32 bits, most significant first, pushed onto
-`b`. One site for the spelling: RFC 1950's Adler trailer, the image cache's
-fixed-width header fields and a synthetic sfnt's offsets are the same four
-divisions, and a copy that drops a `% 256` is a byte wrong on the boundary
-rather than obviously broken. Here beside `fnv64` and `contentKey`, the
-byte-level answers the modules above this one share.
--/
+/-- Pushes the low 32 bits of `v` onto `b`, most significant byte first. -/
 def pushBe32 (b : ByteArray) (v : Nat) : ByteArray :=
   (((b.push (UInt8.ofNat (v / 16777216 % 256))).push
     (UInt8.ofNat (v / 65536 % 256))).push
     (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256))
 
-/-- A zlib stream of stored blocks: bytes back into a shape `/FlateDecode`
-accepts, without owning a compressor. -/
+/-- A zlib stream of stored, uncompressed blocks. -/
 public def deflateStored (raw : ByteArray) : ByteArray := Id.run do
   let mut out := ByteArray.empty
   out := out.push 0x78
@@ -84,33 +59,12 @@ public def deflateStored (raw : ByteArray) : ByteArray := Id.run do
       break
   return pushBe32 out (adler32 raw)
 
-/-! ## Deflate: a real compressor (RFC 1951)
-
-LZ77 over a hash chain in the 32 KiB window (§2, "distances up to 32K
-bytes and lengths up to 258 bytes"), then one dynamic-Huffman block
-(§3.2.7) whose two code sets are optimal length-limited Huffman codes
-built by boundary package-merge. The engine owns both halves of the round
-trip — `deflate` emits only symbols `inflate`'s tables decode — and the
-statement is `inflate_deflate_id` in `Flate/RoundtripProof.lean`. The
-executable oracle `scripts/flate-fuzz.lean` also cross-checks every stream
-against a foreign inflater. Pure and total: every loop is
-bounded by the input size or a table's length. -/
-
-/-- The three-byte rolling hash: Knuth's multiplicative constant over the
-window the next match must open with. `UInt64` arithmetic — the product
-stays under 2⁵⁶ — for the same reason as `Bw`; one bounds check covers
-the three reads. Callers only ask where the window is whole. -/
 private def hash3 (raw : ByteArray) (mask i : Nat) : Nat :=
   if h : i + 2 < raw.size then
     (((((raw[i]'(by omega)).toUInt64 <<< 16) ^^^ ((raw[i + 1]'(by omega)).toUInt64 <<< 8) ^^^
       raw[i + 2].toUInt64) * 2654435761) >>> 17 &&& mask.toUInt64).toNat
   else 0
 
-/-- Longest common run at `c`/`i`, `fuel` the caller's bound (`limit ≤
-258`, in range by the caller's `c < i` and `limit ≤ raw.size - i`). Tail
-recursion: the byte loop carries no boxed loop state — this is the
-innermost loop of the compressor — and `c < i` makes one bounds check
-serve both reads. -/
 private def matchLen (raw : ByteArray) (c i : Nat) (hci : c < i) : Nat → Nat → Nat
   | 0, l => l
   | fuel + 1, l =>
@@ -153,12 +107,9 @@ theorem matchLen_agree (raw : ByteArray) (c i : Nat) (hci : c < i)
       · omega
     · omega
 
-/-- The hash tables as one array: `head` in the first `mask + 1` slots,
-the `prev` ring in the next — one value threads the walk, no pair to
-allocate per step. -/
+/-- The `prev` ring's slot for position `c`; `head` holds the table's first `mask + 1` slots. -/
 private def prevSlot (mask c : Nat) : Nat := mask + 1 + (c &&& mask)
 
-/-- A match packed for return: `len <<< 16 ||| dist`, a scalar. -/
 private def packMatch (len dist : Nat) : UInt64 :=
   (len.toUInt64 <<< 16) ||| dist.toUInt64
 
@@ -167,10 +118,6 @@ theorem packMatch_exact (len dist : Nat) (hl : len < 2 ^ 48) (hd : dist < 65536)
       (packMatch len dist &&& 65535).toNat = dist := by
   exact BitPacking.unpackBits_exact len dist 16 (by decide) hd hl
 
-/-- Walk the hash chain for the best match at `i`: candidates verified
-byte-wise (a stale ring entry can only cost a candidate, never
-correctness), the walk cut short by a match of 64+ (zlib's `good_length`
-shape). -/
 private def bestMatch (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat) :
     Nat → Nat → Nat → Nat → UInt64
   | 0, _, best, bestDist => packMatch best bestDist
@@ -189,8 +136,7 @@ private def bestMatch (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat) :
         else bestMatch raw tab mask i limit fuel next best bestDist
     else packMatch best bestDist
 
-/-- A verified source match. Zero length is the initial search result; every
-positive result stays within the input and the RFC 1951 distance window. -/
+/-- A verified source match: zero length, or a run within the input and the 32 KiB window. -/
 def Backref (raw : ByteArray) (i len dist : Nat) : Prop :=
   dist ≤ 32768 ∧
     (len = 0 ∨
@@ -234,8 +180,6 @@ private theorem bestMatch_run (raw : ByteArray) (tab : Array Nat) (mask i limit 
         · exact ih _ _ _ hbest hmatch
     · exact ⟨best, dist, rfl, Nat.le_refl _, hbest, hmatch⟩
 
-/-- Hash contents only choose candidates; each returned byte has been compared
-to the input. The field-width premise prevents scalar result truncation. -/
 theorem bestMatch_covers (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat)
     (hlimit : limit < 2 ^ 48) (fuel c best dist : Nat) (hbest : best ≤ limit)
     (hmatch : Backref raw i best dist) :
@@ -251,7 +195,6 @@ theorem bestMatch_covers (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat
   exact ⟨hlo, hhi, hd⟩
 
 
-/-- Enter positions `j, j+1, …` (`fuel` many) into the hash tables. -/
 private def insertHashes (raw : ByteArray) (mask : Nat) : Nat → Nat → Array Nat → Array Nat
   | 0, _, tab => tab
   | fuel + 1, j, tab =>
@@ -262,10 +205,6 @@ private def insertHashes (raw : ByteArray) (mask : Nat) : Nat → Nat → Array 
     else
       tab
 
-/-- One LZ77 step per call, `fuel` bounding the walk (every step advances
-`i` by at least one): greedy longest-match, and the interior positions of
-a long match left out of the table (zlib's fast strategy) so runs cost
-O(1) per match, not per byte. -/
 private def tokGo (raw : ByteArray) (mask : Nat) :
     Nat → Nat → Array Nat → Array UInt32 → Array UInt32
   | 0, _, _, tokens => tokens
@@ -287,18 +226,13 @@ private def tokGo (raw : ByteArray) (mask : Nat) :
         tokGo raw mask fuel (i + 1) ((tab.set! h i).set! (prevSlot mask i) old)
           (tokens.push (raw[i]?.getD 0).toUInt32)
 
-/-- LZ77 over a hash chain, chain bounded at 32 candidates. The table
-scales with the input — allocating and zeroing 64K entries is the whole
-cost of deflating a 2 KiB content stream — and a smaller ring only ever
-loses candidates, never correctness. `raw.size` is the sentinel: no
-position yet under this hash. -/
+/-- LZ77 tokens over a hash chain bounded at 32 candidates. -/
 def tokenize (raw : ByteArray) : Array UInt32 :=
   let n := raw.size
   let mask := if n ≥ 65536 then 32767 else 4095
   tokGo raw mask n 0 (Array.replicate (2 * (mask + 1)) n) #[]
 
-/-- The tokens spell exactly the indicated input interval. A match may overlap
-its own destination: the byte equality quantifies over every copied position. -/
+/-- The tokens spell exactly the input between the two positions; a match may overlap its destination. -/
 inductive TokensFor (raw : ByteArray) : Nat → Array UInt32 → Nat → Prop
   | empty (i : Nat) (hi : i ≤ raw.size) : TokensFor raw i #[] i
   | literal {start i : Nat} {tokens : Array UInt32}
@@ -338,31 +272,24 @@ private theorem tokGo_tokens (raw : ByteArray) (mask fuel start i : Nat)
             (.backref hp ⟨by omega, by have := hm.2.1; omega⟩ href)
         · exact ih _ _ _ (by omega) (by omega) (.literal hp (by omega))
 
-/-- The hash-chain tokenizer spells every input byte, for any input size. -/
 theorem tokenize_covers (raw : ByteArray) : TokensFor raw 0 (tokenize raw) raw.size := by
   exact tokGo_tokens raw _ raw.size 0 0 _ #[] (Nat.zero_le _) (by omega)
     (.empty 0 (Nat.zero_le _))
 
-/-- 0x78 0x9C declares deflate, a 32 KiB window, and no preset dictionary;
-CMF·256 + FLG is divisible by 31 (RFC 1950 §2.2). -/
+/-- A writer holding the zlib header 0x78 0x9C: deflate, a 32 KiB window, no preset dictionary
+(RFC 1950 §2.2). -/
 def zlibWriter : Bw :=
   {out := (ByteArray.empty.push 0x78).push 0x9C, bits := 0, nbits := 0}
 
-/-- The production writer before its final byte flush and checksum. -/
+/-- The compressor's writer before its final flush and checksum. -/
 def deflateWriter (raw : ByteArray) : Bw :=
   BlockStream.write (tokenize raw) zlibWriter
 
-/-- Compress to a zlib stream (RFC 1950 wrapping RFC 1951): LZ77 tokens in
-one dynamic-Huffman block, both code sets optimal for this data. The
-engine's own `inflate` inverts it by `inflate_deflate_id` in
-`Flate/RoundtripProof.lean`; `scripts/flate-fuzz.lean` also checks foreign zlib.
-`deflateStored` stays for callers that must never pay compression time. -/
+/-- Compresses to a zlib stream: LZ77 tokens in one dynamic-Huffman block, then the Adler-32 checksum. -/
 public def deflate (raw : ByteArray) : ByteArray :=
   pushBe32 (deflateWriter raw).flush (adler32 raw)
 
-/-- FNV-1a over bytes: the content hash the PDF trailer ID and the
-driver's content-keyed caches share. Not cryptographic — a fingerprint
-for change detection, as ISO 32000-2 §14.4 asks of the file ID. -/
+/-- FNV-1a over bytes, a non-cryptographic fingerprint for change detection. -/
 public def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
   let mut h := seed
   for byte in b do
@@ -379,19 +306,11 @@ public def hex16 (x : UInt64) : String := Id.run do
     v := v / 16
   return s
 
-/-- A 128-bit content key: two independent FNV-64 passes, hex. The key a
-content-addressed cache files a value under — 32 filename-safe chars. -/
+/-- A 128-bit content key: two independent FNV-64 passes as 32 hex digits. -/
 public def contentKey (b : ByteArray) : String :=
   hex16 (fnv64 14695981039346656037 b) ++ hex16 (fnv64 1099511628211 b)
 
-/-! ## A byte array as one equation
-
-`build n f` is the `n`-byte array whose byte `j` is `f` of the `j` bytes
-before it. Every derived plane below is spelled this way so that it *is*
-a statement — `getElem?_build` reads byte `j` off the definition, no loop
-to unroll — while the run stays one tail-recursive push per byte into a
-uniquely owned, pre-sized array. -/
-
+/-- The `n`-byte array whose byte `j` is `f` of the `j` bytes before it. -/
 @[specialize] public def build (n : Nat) (f : ByteArray → UInt8) : ByteArray :=
   go (ByteArray.emptyWithCapacity n)
 where
@@ -432,8 +351,6 @@ public theorem size_build (n : Nat) (f : ByteArray → UInt8) : (build n f).size
   | zero => rw [build_zero]; rfl
   | succ n ih => rw [build_succ, ByteArray.size_push, ih]
 
-/-- Byte `j` of `build n f` is `f` of the `j` bytes before it: the equation
-the whole array is. -/
 public theorem getElem?_build (n : Nat) (f : ByteArray → UInt8) (j : Nat) (hj : j < n) :
     (build n f)[j]? = some (f (build j f)) := by
   induction n with
@@ -446,25 +363,19 @@ public theorem getElem?_build (n : Nat) (f : ByteArray → UInt8) (j : Nat) (hj 
       subst this
       simp
 
-/-- One reconstructed byte (ISO/IEC 15948 §9.2, the five filter types): the
-raw byte plus its prediction from the left, upper, and upper-left
-neighbours, modulo 256. Types above 4 predict as Paeth here and are
-refused before this is reached (`pngUnfilter`). -/
+/-- One PNG-reconstructed byte (ISO/IEC 15948 §9.2): the raw byte plus its filter's prediction,
+modulo 256. -/
 public def predict (f x left up upLeft : Nat) : Nat :=
   (x + (if f == 0 then 0 else if f == 1 then left else if f == 2 then up
     else if f == 3 then (left + up) / 2
     else
-      -- Paeth: the neighbour closest to the linear estimate.
       let p : Int := (left : Int) + up - upLeft
       let pa := (p - left).natAbs
       let pb := (p - up).natAbs
       let pc := (p - upLeft).natAbs
       if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft)) % 256
 
-/-- Byte `out.size` of the plane whose first `out.size` bytes are `out`:
-row `j / rowBytes`, column `j % rowBytes`, predicted from the plane's own
-earlier bytes `bpp` to the left and `rowBytes` above (ISO/IEC 15948 §9).
-Total over any bytes — a missing input byte reads as 0. -/
+/-- The next byte of a PNG-unfiltered plane from the bytes before it; a missing input byte reads as 0. -/
 @[expose] public def unfilterByte (raw : ByteArray) (rowBytes bpp : Nat) (out : ByteArray) : UInt8 :=
   let j := out.size
   let r := j / rowBytes
@@ -477,12 +388,10 @@ Total over any bytes — a missing input byte reads as 0. -/
     else 0
   UInt8.ofNat (predict f x left up upLeft)
 
-/-- Every reconstructed sample of a predicted stream, as one equation
-(`unfilterByte`); `pngUnfilter` is the checked door in front of it. -/
+/-- Every unfiltered byte of a `pxH`-row plane, without the geometry check. -/
 @[expose] public def unfilterAll (raw : ByteArray) (pxH rowBytes bpp : Nat) : ByteArray :=
   build (pxH * rowBytes) (unfilterByte raw rowBytes bpp)
 
-/-- Two byte arrays agreeing at every index are one. -/
 public theorem ext_of_getElem? (a b : ByteArray) (hs : a.size = b.size)
     (h : ∀ i, i < a.size → a[i]? = b[i]?) : a = b := by
   apply ByteArray.ext_getElem hs
@@ -491,13 +400,7 @@ public theorem ext_of_getElem? (a b : ByteArray) (hs : a.size = b.size)
   rw [getElem?_pos a i hi, getElem?_pos b i hi'] at this
   exact Option.some.inj this
 
-/-- Reverse the per-scanline PNG filters (ISO/IEC 15948 §9): each row opens
-with its filter type, predicting from the left, above, and above-left bytes
-at `bpp` distance. Total: the geometry is checked against the input once,
-then `unfilterAll` is the plane. Two consumers share it: the image tests'
-semantic route, and PDF streams whose `/DecodeParms` declare a PNG
-predictor — cross-reference streams routinely do (ISO 32000-2 §7.4.4.4,
-Predictor 10–15). -/
+/-- Reverses the per-scanline PNG filters (ISO/IEC 15948 §9) after checking the geometry against the input. -/
 @[expose] public def pngUnfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
     Except String ByteArray :=
   if raw.size < pxH * (1 + rowBytes) then
@@ -525,8 +428,6 @@ theorem BytePrefix.push {raw out : ByteArray} {n : Nat} {b : UInt8}
     rw [ite_eq_right (Nat.lt_irrefl _), ite_eq_left rfl]
     exact hb
 
-/-- The inflater's actual overlapping-copy loop extends a verified prefix.
-The invariant advances with the loop index, so completion states its length. -/
 theorem backref_copy_exact (raw out : ByteArray) (i len dist : Nat)
     (hp : BytePrefix raw i out) (href : Backref raw i len dist) :
     let copied := Id.run do

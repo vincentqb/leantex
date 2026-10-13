@@ -4,27 +4,8 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.Color
 public import LeanTex.Core.Trig
 
-/-!
-# One vector model for pictures, SVG images and PDF figures
-
-A figure is a painter's-algorithm tree of draws, groups, symbol uses,
-outline stamps, rasters, engine-set labels and ink-free words, in one frame
-of `Sp` coordinates with y growing upward. The meaning is the fragment PDF
-(ISO 32000-2 §8, §11) and SVG 2 (§13, CSS Masking 1, Compositing 1) share:
-nodes paint in array order; a group's kids live in its child frame, painting
-is restricted to the intersection of its clips, and a group alpha below 1000
-composites the kids as one isolated group; a stroke is centred on its path,
-its width and dash live in the node's frame, and width 0 is the thinnest
-visible line (PDF's meaning, and TikZ's `line width=0pt`). Cap, join and
-miter limit are always explicit, because the two formats start from
-different defaults: PDF's miter limit is 10 and SVG's is 4.
-
-Matrices are exact rationals and compose exactly; no point is ever
-transformed by a matrix (`Affine.apply` exists for the algebra and for box
-images). A page placement is an integer isometry (`Iso`), applied to
-coordinates exactly. The algebra's proofs live in `GfxAffine`, off the
-import chain to the elaborator.
--/
+/-! The vector model pictures, SVG images and PDF figures share: a painter's-algorithm tree in a
+y-up `Sp` frame, with exact rational matrices. -/
 
 namespace LeanTex.Core.Gfx
 
@@ -33,7 +14,7 @@ open LeanTex.Core LeanTex.Core.Dim
 /-- A point in a figure frame: `Sp` at 2⁻¹⁶ of the frame unit, y up. -/
 public abbrev Pt := Sp × Sp
 
-/-- A box: min corner, then max corner. `Ir.Pic.Box` is this type. -/
+/-- A box: min corner, then max corner. -/
 public abbrev Box := Pt × Pt
 
 /-- The join of two boxes: the smallest box holding both. -/
@@ -48,8 +29,7 @@ public instance (a b : Box) : Decidable (Box.le a b) := by
   unfold Box.le
   infer_instance
 
--- The Box proofs state their arithmetic over bare `Int` binders because
--- `omega` does not see through the `Sp` abbreviation.
+-- These proofs bind `Int`, not `Sp`: omega does not see through the abbreviation.
 
 public theorem Box.le_refl (a : Box) : Box.le a a := by
   have h : ∀ x : Int, x ≤ x := fun _ => Int.le_refl _
@@ -70,7 +50,6 @@ public theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : 
   exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
          h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
 
-/-- Joining with a box inside both sides' join stays inside it. -/
 public theorem Box.join_le {a b c : Box} (ha : Box.le a c) (hb : Box.le b c) :
     Box.le (Box.join a b) c := by
   have hmin : ∀ x y z : Int, z ≤ x → z ≤ y → z ≤ min x y := by intro x y z; omega
@@ -78,15 +57,12 @@ public theorem Box.join_le {a b c : Box} (ha : Box.le a c) (hb : Box.le b c) :
   exact ⟨hmin _ _ _ ha.1 hb.1, hmin _ _ _ ha.2.1 hb.2.1,
     hmax _ _ _ ha.2.2.1 hb.2.2.1, hmax _ _ _ ha.2.2.2 hb.2.2.2⟩
 
-/-- The hull fold over a list of boxes, `List` companion first. Polymorphic
-in what it reads a box from, so one walk and one set of containment lemmas
-serve every hull. -/
+/-- The hull fold over a list of boxes, polymorphic in what it reads a box from. -/
 public def boxFoldList {α : Type} (f : α → Box) (acc : Box) : List α → Box
   | [] => acc
   | s :: rest => boxFoldList f (Box.join acc (f s)) rest
 
-/-- The smallest box holding every box in an array. Empty is the empty box
-at the origin. -/
+/-- The smallest box holding every box in an array; empty is the empty box at the origin. -/
 @[expose] public def Box.hull (bs : Array Box) : Box :=
   match bs.toList with
   | [] => ((0, 0), (0, 0))
@@ -109,8 +85,6 @@ public theorem boxFoldList_mem {α : Type} (f : α → Box) (acc : Box) (xs : Li
       exact Box.le_trans (Box.le_join_right acc (f s)) (boxFoldList_le _ _ rest)
     | tail _ hmem => exact ih (Box.join acc (f t)) hmem
 
-/-- **The hull covers what it folds**: every box of the array lies inside
-the hull. -/
 public theorem Box.hull_covers (bs : Array Box) (b : Box) (h : b ∈ bs) :
     Box.le b (Box.hull bs) := by
   have h' : b ∈ bs.toList := by simpa using h
@@ -134,7 +108,6 @@ geometry folds. -/
 @[expose] public def Box.dilate (b : Box) (d : Sp) : Box :=
   ((b.1.1 - d, b.1.2 - d), (b.2.1 + d, b.2.2 + d))
 
-/-- The box of one point. -/
 @[expose] public def Box.point (p : Pt) : Box := (p, p)
 
 /-- `a` inside `b` where either may be absent: nothing is inside anything,
@@ -144,11 +117,8 @@ and something is never inside nothing. -/
   | some _, none => False
   | some a, some b => Box.le a b
 
-/-! ## Transforms -/
-
-/-- An affine map, `(x, y) ↦ (a·x + c·y + e, b·x + d·y + f)`: the entry
-order of ISO 32000-2 §8.3.3 and SVG's `matrix()`. Exact rationals; the
-translation is in the frame's `Sp`. -/
+/-- An affine map `(x, y) ↦ (a·x + c·y + e, b·x + d·y + f)` (ISO 32000-2 §8.3.3), exact, its
+translation in `Sp`. -/
 public structure Affine where
   a : Rat
   b : Rat
@@ -158,12 +128,9 @@ public structure Affine where
   f : Rat
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The identity map. -/
 @[expose] public def Affine.unit : Affine := ⟨1, 0, 0, 1, 0, 0⟩
 
-/-- `m` after `n`: the map `p ↦ m (n p)`. A PDF `cm` inside a frame `n`
-leaves the frame `n.compose cm`; SVG's nested `transform` composes the same
-way. -/
+/-- `m` after `n`: the map `p ↦ m (n p)`. -/
 @[expose] public def Affine.compose (m n : Affine) : Affine :=
   { a := m.a * n.a + m.c * n.b, b := m.b * n.a + m.d * n.b
     c := m.a * n.c + m.c * n.d, d := m.b * n.c + m.d * n.d
@@ -179,17 +146,12 @@ way. -/
 /-- A scaling about the origin. -/
 @[expose] public def Affine.scale (sx sy : Rat) : Affine := ⟨sx, 0, 0, sy, 0, 0⟩
 
-/-- The six operands both artifacts spell a matrix with — PDF's `cm` and
-`/Matrix`, SVG's `matrix()`: the linear entries as they stand, the
-translation from `Sp` to points, each through the one nine-decimal printer
-(`Dim.ratString`). -/
+/-- The six matrix operands both formats spell, the translation from `Sp` to points. -/
 public def Affine.operands (m : Affine) : String :=
   s!"{ratDecimal m.a} {ratDecimal m.b} {ratDecimal m.c} {ratDecimal m.d} \
 {ratString m.e.num ((m.e.den : Int) * spPerPt)} {ratString m.f.num ((m.f.den : Int) * spPerPt)}"
 
-/-- An integer isometry: `(x, y) ↦ (x + dx, dy − y)` when it flips, else
-`(x + dx, y + dy)`. A page placement is one, so it is applied to coordinates
-exactly and never spelled as a matrix. -/
+/-- An integer isometry: `(x, y) ↦ (x + dx, dy − y)` when it flips, else `(x + dx, y + dy)`. -/
 public structure Iso where
   flipY : Bool
   dx : Sp
@@ -199,7 +161,6 @@ public structure Iso where
 @[expose] public def Iso.apply (t : Iso) (p : Pt) : Pt :=
   (p.1 + t.dx, if t.flipY then t.dy - p.2 else p.2 + t.dy)
 
-/-- The inverse isometry. -/
 @[expose] public def Iso.inv (t : Iso) : Iso :=
   if t.flipY then { flipY := true, dx := -t.dx, dy := t.dy }
   else { flipY := false, dx := -t.dx, dy := -t.dy }
@@ -213,7 +174,6 @@ public structure Iso where
 @[expose] public def Iso.toAffine (t : Iso) : Affine :=
   ⟨1, 0, 0, if t.flipY then -1 else 1, t.dx, t.dy⟩
 
-/-- The inverse undoes the isometry on every point. -/
 public theorem Iso.inv_apply_id (t : Iso) (p : Pt) : t.inv.apply (t.apply p) = p := by
   obtain ⟨fl, dx, dy⟩ := t
   obtain ⟨x, y⟩ := p
@@ -224,7 +184,6 @@ public theorem Iso.inv_apply_id (t : Iso) (p : Pt) : t.inv.apply (t.apply p) = p
       exact ⟨hx x dx, hx y dy⟩
   · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq] <;> exact ⟨hx x dx, hy y dy⟩
 
-/-- The isometry undoes its inverse. -/
 public theorem Iso.apply_inv_id (t : Iso) (p : Pt) : t.apply (t.inv.apply p) = p := by
   obtain ⟨fl, dx, dy⟩ := t
   obtain ⟨x, y⟩ := p
@@ -235,8 +194,7 @@ public theorem Iso.apply_inv_id (t : Iso) (p : Pt) : t.apply (t.inv.apply p) = p
       exact ⟨hx x dx, hx y dy⟩
   · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq] <;> exact ⟨hx x dx, hy y dy⟩
 
-/-- An axis-aligned rectangle (min corner, extents) carried by the isometry:
-the image's min corner, extents unchanged. -/
+/-- An axis-aligned rectangle (min corner, extents) carried by the isometry. -/
 @[expose] public def Iso.rect (t : Iso) (x y w h : Sp) : Sp × Sp × Sp × Sp :=
   (x + t.dx, if t.flipY then t.dy - (y + h) else y + t.dy, w, h)
 
@@ -244,8 +202,6 @@ the image's min corner, extents unchanged. -/
 @[expose] public def Iso.box (t : Iso) (b : Box) : Box :=
   if t.flipY then ((b.1.1 + t.dx, t.dy - b.2.2), (b.2.1 + t.dx, t.dy - b.1.2))
   else ((b.1.1 + t.dx, b.1.2 + t.dy), (b.2.1 + t.dx, b.2.2 + t.dy))
-
-/-! ## Geometry -/
 
 /-- One segment, from the current point: a line, or a cubic Bézier with
 its two control points. -/
@@ -305,15 +261,12 @@ public structure Stop where
   color : Ir.Color
   deriving Repr, Inhabited, DecidableEq
 
-/-- Exact stop equality: the colour's PDF rider included. -/
 public instance : BEq Stop where
   beq a b := a.offset == b.offset && a.color.r == b.color.r && a.color.g == b.color.g &&
     a.color.b == b.color.b && a.color.cmyk == b.color.cmyk
 
-/-- A gradient with pad spread, interpolated in sRGB-encoded components
-(SVG's default `color-interpolation`, PDF Type 2 functions over DeviceRGB).
-`xf` maps the gradient's own frame into the node's. A radial gradient's
-start circle lies inside its end circle. -/
+/-- A pad-spread gradient interpolated in sRGB-encoded components, `xf` mapping its own frame into
+the node's. -/
 public inductive Gradient where
   | linear (p0 p1 : Pt) (stops : Array Stop) (xf : Affine)
   | radial (c0 : Pt) (r0 : Sp) (c1 : Pt) (r1 : Sp) (stops : Array Stop) (xf : Affine)
@@ -348,8 +301,7 @@ public structure Fill where
   alpha : Alpha
   deriving Repr, BEq, Inhabited
 
-/-- How a draw strokes. Every field is stated: PDF starts at miter limit 10
-and SVG at 4, so a producer says which it means. -/
+/-- How a draw strokes, every field stated, since PDF's and SVG's defaults differ. -/
 public structure Stroke where
   paint : Paint
   width : Sp
@@ -361,7 +313,6 @@ public structure Stroke where
   alpha : Alpha
   deriving Repr, BEq, Inhabited
 
-/-- Whether a stroke is dashed: a dash array to run along its path. -/
 @[expose] public def Stroke.dashed (s : Stroke) : Bool := !s.dash.isEmpty
 
 /-- A paint as seen from a frame that `m` maps into the one it was stated
@@ -394,13 +345,8 @@ public inductive Anchor where
   | «end»
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- SVG text, shaped by the engine. `xf` maps the run's own space — its
-baseline origin at (0, 0), y up, one unit an `Sp` at the run's size — into
-the frame it stands in. A run that `follows` continues the text chunk of
-the run before it (SVG 2 §11.10.2): its pen starts where that run's ended,
-moved by `xf`'s translation along x, and the chunk's anchor applies to the
-chunk as a whole, once its advance is known. A run that does not follow
-starts a chunk at `xf`'s origin. -/
+/-- SVG text the engine shapes: `xf` maps the run's baseline space into its frame, and a run that
+`follows` continues the chunk before it (SVG 2 §11.10.2). -/
 public structure Run where
   xf : Affine
   follows : Bool
@@ -413,15 +359,8 @@ public structure Run where
   lang : Option String
   deriving Repr, Inhabited
 
-/-- A run after shaping: each glyph's face of the document's `FontSet`, its
-glyph id, the scalar it sets and its pen x from the run's start, in the
-run's own space; the resolved start already folded into `xf`. A run whose
-scalar a face lacks takes a glyph of the face the per-scalar fallback
-names, so one run may set in several faces. `role` is the document's font
-role the run's family list resolved to (0 the body, 1 the sans, 2 the
-mono), `weight` and `italic` the resolved face's own descriptors: what a
-backend that sets the text itself names, so it selects the face the
-shaping did. -/
+/-- A run after shaping: each glyph's face, glyph id, scalar and pen x, with the role, weight and
+slant the shaping resolved. -/
 public structure Shaped where
   size : Sp
   xf : Affine
@@ -435,11 +374,7 @@ public structure Shaped where
   italic : Bool
   deriving Repr, Inhabited
 
-/-- A raster's encoded bytes (PNG, or JPEG when `jpeg`), its pixel size,
-and whether a reader may smooth its samples when it scales them — SVG's
-`image-rendering: auto` and PDF's `/Interpolate true`; otherwise each
-sample paints its own square, the two formats' other default, and the
-only reading two renderers agree on pixel for pixel. -/
+/-- A raster's encoded bytes (PNG, or JPEG when `jpeg`), its pixel size, and whether a reader may smooth it. -/
 public structure Raster where
   bytes : ByteArray
   jpeg : Bool
@@ -451,11 +386,8 @@ public structure Raster where
 public instance : Repr Raster where
   reprPrec r _ := s!"Raster({r.bytes.size} bytes, {r.pxW}x{r.pxH})"
 
-/-- One node of a figure. `use` paints a symbol under a transform; `stamp`
-paints a paint-less outline with the instance's paints (a glyph, a Type 3
-procedure, an unpainted SVG definition); `image` maps a raster's unit
-square into the parent frame, its (0,0) the image's bottom-left; `label` is
-engine-set text; `words` paints nothing and carries recovered text. -/
+/-- One node of a figure: a draw, group, symbol use, outline stamp, raster, engine-set label, or
+ink-free words. -/
 public inductive Node (L : Type) where
   | draw (g : Geom) (fill : Option Fill) (stroke : Option Stroke)
   | group (xf : Affine) (clips : Array Clip) (alpha : Alpha) (kids : Array (Node L))
@@ -478,10 +410,7 @@ public inductive Loss where
   | budget (what : String)
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A figure. `box` is the extent layout reserves; `clipToBox` says whether
-the box clips (an SVG viewport, a PDF BBox — never a TikZ picture, pgf
-§15.8). A `use` inside symbol `j` names some `k < j`. An empty `losses`
-is what native means. -/
+/-- A figure: the box layout reserves and whether it clips, its nodes and symbols, and its losses. -/
 public structure Figure (L : Type) where
   box : Box
   clipToBox : Bool
@@ -493,18 +422,13 @@ public structure Figure (L : Type) where
   losses : Array Loss
   deriving Repr, Inhabited
 
-/-! ## The kit every producer shares -/
-
 namespace Kit
 
-/-- The quarter-arc control distance, as a fraction of the radius: the
-standard 4(√2 − 1)/3 ≈ 0.5523 that pgf and today's PDF circle spell
-(`k = r·5523/10000`). -/
+/-- The quarter-arc control distance as a fraction of the radius, 4(√2 − 1)/3 ≈ 0.5523. -/
 public def kappaNum : Int := 5523
 public def kappaDen : Int := 10000
 
-/-- An axis-aligned ellipse as four cubic quarter arcs, counter-clockwise
-in a y-up frame from angle 0, closed: today's PDF circle, point for point. -/
+/-- An axis-aligned ellipse as four cubic quarter arcs, counter-clockwise from angle 0, closed. -/
 @[expose] public def ellipse (cx cy rx ry : Sp) : Array Subpath :=
   let kx := rx * kappaNum / kappaDen
   let ky := ry * kappaNum / kappaDen
@@ -515,19 +439,16 @@ in a y-up frame from angle 0, closed: today's PDF circle, point for point. -/
                 .cubic (cx + kx, cy - ry) (cx + rx, cy - ky) (cx + rx, cy)]
       closed := true }]
 
-/-- A rectangle's outline, ISO 32000-2 §8.5.2.1's `re`: from its min
-corner along the bottom edge, counter-clockwise in a y-up frame. -/
+/-- A rectangle's outline as ISO 32000-2 §8.5.2.1's `re` draws it. -/
 @[expose] public def rectPath (x y w h : Sp) : Subpath :=
   { start := (x, y), segs := #[.line (x + w, y), .line (x + w, y + h), .line (x, y + h)]
     closed := true }
 
-/-- `p · num / den`, rounded to the nearest `Sp`, half away from zero. -/
 private def mulRound (p num den : Int) : Int :=
   let n := p * num
   if n < 0 then -((-n + den / 2) / den) else (n + den / 2) / den
 
-/-- A rounded rectangle, SVG 2 §10.2's `rect` with its radii clamped to half
-the extents; quarter corners use the ellipse's control distance. -/
+/-- A rounded rectangle (SVG 2 §10.2), its radii clamped to half the extents. -/
 public def roundedRect (x y w h rx ry : Sp) : Subpath :=
   let rx := max 0 (min rx (w / 2))
   let ry := max 0 (min ry (h / 2))
@@ -547,9 +468,7 @@ public def roundedRect (x y w h rx ry : Sp) : Subpath :=
       .cubic (x, y + ry - ky) (x + rx - kx, y) (x + rx, y)]
     closed := true }
 
-/-- A quadratic Bézier elevated to the cubic that draws it: controls two
-thirds of the way from each end to the quadratic's control, rounded to the
-grid (within one unit of the exact elevation). -/
+/-- A quadratic Bézier elevated to the cubic that draws it, within one unit of the exact elevation. -/
 public def quadToCubic (p0 q p1 : Pt) : Seg :=
   .cubic (p0.1 + mulRound (q.1 - p0.1) 2 3, p0.2 + mulRound (q.2 - p0.2) 2 3)
     (p1.1 + mulRound (q.1 - p1.1) 2 3, p1.2 + mulRound (q.2 - p1.2) 2 3) p1
@@ -560,9 +479,6 @@ list with no positive entry or a negative one draws solid. -/
   if d.any (· < 0) || !d.any (0 < ·) then #[]
   else if d.size % 2 == 1 then d ++ (d) else d
 
-/-- A point at angle θ (2⁻³⁰ rad) on the axis-aligned ellipse of radii
-`(rx, ry)` about `(cx, cy)`, the ellipse turned by `(cφ, sφ)` — centre and
-radii at `1/sc` of an `Sp`, the point rounded once, to the `Sp`. -/
 private def onEllipse (cx cy sc rx ry cφ sφ θ : Int) : Pt :=
   let (c, s) := Trig.cosSin θ
   let u := rx * c
@@ -571,9 +487,6 @@ private def onEllipse (cx cy sc rx ry cφ sφ θ : Int) : Pt :=
   (Trig.divRound (cx * uu + (u * cφ - v * sφ)) (uu * sc),
    Trig.divRound (cy * uu + (u * sφ + v * cφ)) (uu * sc))
 
-/-- The tangent direction at θ, scaled by `k` (2⁻³⁰): what a piece's
-control point stands off its end by — radii at `1/sc` of an `Sp`, the
-offset rounded once, to the `Sp`. -/
 private def tangent (sc rx ry cφ sφ θ k : Int) : Int × Int :=
   let (c, s) := Trig.cosSin θ
   let u := -(rx * s)
@@ -581,14 +494,10 @@ private def tangent (sc rx ry cφ sφ θ k : Int) : Int × Int :=
   let u3 := Trig.unit * Trig.unit * Trig.unit * sc
   (Trig.divRound ((u * cφ - v * sφ) * k) u3, Trig.divRound ((u * sφ + v * cφ) * k) u3)
 
-/-- The control distance of a piece through `δ` (2⁻³⁰ rad): 4/3·tan(δ/4),
-at 2⁻³⁰. -/
 private def pieceK (δ : Int) : Int :=
   let cs := Trig.cosSin (δ / 4)
   if cs.1 ≤ 0 then 0 else Trig.divRound (4 * cs.2 * Trig.unit) (3 * cs.1)
 
-/-- The pieces of an arc before its last, `n − 1` of them through `δ` each
-from `θ0`, and the angle the last starts at. -/
 private def arcHead (cx cy sc rx ry cφ sφ θ0 δ k : Int) (n : Nat) : Array Seg × Int := Id.run do
   let mut out : Array Seg := #[]
   let mut θ := θ0
@@ -601,7 +510,6 @@ private def arcHead (cx cy sc rx ry cφ sφ θ0 δ k : Int) (n : Nat) : Array Se
     θ := θ + δ
   return (out, θ)
 
-/-- An arc's last piece, from `θ` to `θ0 + Δ`, ending on `last`. -/
 private def arcLast (cx cy sc rx ry cφ sφ θ0 Δ θ : Int) (last : Pt) : Seg :=
   let p0 := onEllipse cx cy sc rx ry cφ sφ θ
   let kl := pieceK (θ0 + Δ - θ)
@@ -609,9 +517,6 @@ private def arcLast (cx cy sc rx ry cφ sφ θ0 Δ θ : Int) (last : Pt) : Seg :
   let t1 := tangent sc rx ry cφ sφ (θ0 + Δ) kl
   .cubic (p0.1 + t0.1, p0.2 + t0.2) (last.1 - t1.1, last.2 - t1.2) last
 
-/-- `arcCubics` with the centre and radii at `1/sc` of an `Sp`: what the
-endpoint conversion hands it, so its centre is not rounded before the
-pieces are. -/
 private def arcCubicsAt (cx cy sc rx ry φ θ0 Δ : Int) (last : Pt) : Array Seg :=
   let quarter := Trig.pi / 2
   let n : Nat := max 1 ((Δ.natAbs + quarter.natAbs - 1) / quarter.natAbs)
@@ -620,34 +525,18 @@ private def arcCubicsAt (cx cy sc rx ry φ θ0 Δ : Int) (last : Pt) : Array Seg
   let head := arcHead cx cy sc rx ry csφ.1 csφ.2 θ0 δ (pieceK δ) n
   head.1.push (arcLast cx cy sc rx ry csφ.1 csφ.2 θ0 Δ head.2 last)
 
-/-- The cubic pieces of an elliptic arc from angle `θ0` through `Δ` (2⁻³⁰
-rad), in at most quarter turns, each with the control distance
-4/3·tan(δ/4); the ellipse turned by `φ`. The last piece ends exactly on
-`last` — the declared endpoint — whatever the trigonometry rounds, so a
-path continuing from it never opens a gap (`arcCubics_exact`). -/
+/-- The cubic pieces of an elliptic arc from `θ0` through `Δ` (2⁻³⁰ rad), the last ending exactly on `last`. -/
 public def arcCubics (cx cy rx ry φ θ0 Δ : Int) (last : Pt) : Array Seg :=
   arcCubicsAt cx cy 1 rx ry φ θ0 Δ last
 
-/-- **An arc ends exactly where it was declared to** (`_exact`): its last
-piece's end is `last`, whatever the trigonometry rounded on the way, so the
-path continuing from it opens no gap. -/
 public theorem arcCubics_exact (cx cy rx ry φ θ0 Δ : Int) (last : Pt) :
     (arcCubics cx cy rx ry φ θ0 Δ last).back?.map Seg.endPt = some last := by
   simp only [arcCubics, arcCubicsAt, Array.back?_push, Option.map_some]
   rfl
 
-/-- The resolution the endpoint conversion works at: 2⁻¹⁶ of an `Sp`, so
-the half-chord, the centre and the scaled radii are not rounded to the
-`Sp` before the centre is — near a half-ellipse the centre moves far for a
-small change of the half-chord (`scripts/trig-oracle.lean` measures it). -/
 private def arcScale : Int := 65536
 
-/-- An arc in SVG's endpoint parameterization (SVG 2 §9.5, Appendix B.2.4:
-`p1` to `p2`, radii, x-axis rotation φ in 2⁻³⁰ rad, the two flags),
-converted to the centre form and drawn by `arcCubics`. Radii too small to
-reach are scaled up as B.2.5 says, which puts the centre at the chord's
-midpoint — set there, not recomputed from rounded radii; a zero radius is a
-line; coincident ends draw nothing. -/
+/-- An arc in SVG's endpoint parameterization (SVG 2 §9.5, Appendix B.2.4) as cubic pieces. -/
 public def arcEndpoint (p1 : Pt) (rx ry φ : Int) (large sweep : Bool) (p2 : Pt) : Array Seg :=
   if p1 == p2 then #[] else
   if rx == 0 || ry == 0 then #[.line p2] else
@@ -696,34 +585,23 @@ public def regularPolygon (cx cy r : Sp) (n : Nat) (θ0 : Int) : Subpath :=
 
 end Kit
 
-/-! ## Reading a figure: its marks -/
-
-/-- A geometry as both artifacts' readers meet it: an ellipse is the four
-arcs both formats paint (`Kit.ellipse`); a rectangle that encloses area is
-itself, and one of zero or negative extent the path PDF's `re` traces
-(ISO 32000-2 §8.5.2.1), which PDF strokes and SVG draws no `rect` for; a
-path is itself. -/
+/-- A geometry as both formats' readers meet it: an ellipse as its four arcs, a degenerate
+rectangle as the path `re` traces. -/
 @[expose] public def Geom.normal : Geom → Geom
   | .rect x y w h => if 0 < w ∧ 0 < h then .rect x y w h else .path #[Kit.rectPath x y w h]
   | .ellipse cx cy rx ry => .path (Kit.ellipse cx cy rx ry)
   | .path subs => .path subs
 
-/-- A geometry as the path it traces from its start — a rectangle from its
-min corner counter-clockwise (`re`), an ellipse from angle 0 — what a dash
-pattern runs along, from where it starts. -/
+/-- A geometry as the path it traces from its start, which a dash pattern runs along. -/
 @[expose] public def Geom.traced : Geom → Geom
   | .rect x y w h => .path #[Kit.rectPath x y w h]
   | .ellipse cx cy rx ry => .path (Kit.ellipse cx cy rx ry)
   | .path subs => .path subs
 
-/-- **The outline a draw paints**: under a dashed stroke, the path its
-dashes run along (`traced`), whose start and direction they show; else the
-outline of what it covers (`normal`), whose start no fill or solid stroke
-shows. -/
+/-- The outline a draw paints: the traced path under a dashed stroke, else the normal outline. -/
 @[expose] public def Geom.drawn (g : Geom) (dashed : Bool) : Geom :=
   if dashed then g.traced else g.normal
 
-/-- A segment's points mapped. -/
 @[expose] public def Seg.map (f : Pt → Pt) : Seg → Seg
   | .line p => .line (f p)
   | .cubic c1 c2 p => .cubic (f c1) (f c2) (f p)
@@ -731,8 +609,6 @@ shows. -/
 @[expose] public def Subpath.map (f : Pt → Pt) (s : Subpath) : Subpath :=
   { s with start := f s.start, segs := s.segs.map (Seg.map f) }
 
-/-- A geometry carried by an isometry: a rectangle's min corner by
-`Iso.rect`, an ellipse's centre, a path's every point. -/
 @[expose] public def Geom.mapIso (t : Iso) : Geom → Geom
   | .rect x y w h =>
     let (x', y', w', h') := t.rect x y w h
@@ -742,18 +618,8 @@ shows. -/
     .ellipse cx' cy' rx ry
   | .path subs => .path (subs.map (Subpath.map t.apply))
 
-/-- One ink mark as a reader of either artifact meets it, in the figure's
-frame: the frame it paints in (`ctm`, child to figure), its geometry in that
-frame (`Geom.drawn`: the path a dash pattern runs along under a dashed
-stroke, else the outline of what it covers), its paints — widths and dashes in that frame, every
-gradient's own frame composed through to the figure's (`Paint.under`), the
-one frame a reader recovers it in from either artifact: PDF states a
-pattern's matrix against its stream's default space (ISO 32000-2 §8.7.2),
-SVG a gradient's against the user space of the element it paints (SVG 2
-§14.2.2) — the clips in force, each with the frame it was declared in, and
-the alphas of the isolated groups around it, outermost first. A shading
-paints its gradient, its frame the figure's, over the clips in force.
-Labels and words are not ink. -/
+/-- One ink mark as a reader of either artifact meets it, in the figure's frame: its frame, drawn
+geometry, paints, clips and group alphas, or a shading. -/
 public inductive Mark where
   | paint (ctm : Affine) (geom : Geom) (fill : Option Fill) (stroke : Option Stroke)
       (clips : Array (Affine × Clip)) (alphas : Array Alpha)
@@ -782,11 +648,8 @@ frame, an alpha below 1000 is one more isolated group. -/
 
 mutual
 
--- conserves: none — a reading, not a rewrite: what it owes is each
--- artifact's reading of it (`GfxPdf.marks_projects`, `GfxSvg.marks_projects`).
-/-- One node's marks onto `acc`, under `cx`, over an expanded tree
-(`Figure.expanded`): its uses are already the groups they paint, so the walk
-stays structural and a `use` left in it paints nothing. -/
+-- conserves: none — a reading, not a rewrite.
+/-- One node's marks onto `acc` under `cx`, over an expanded tree. -/
 @[expose] public def Node.marksOne {L : Type} (outlines : Array (Array Subpath)) (cx : Ctx)
     (acc : Array Mark) : Node L → Array Mark
   | .draw g fl st =>
@@ -811,11 +674,8 @@ end
 
 mutual
 
--- conserves: none — expansion keeps what a use paints and says; the marks
--- and words read from it are its census (`Figure.marks`, `Figure.said_text`).
-/-- A node with every `use k` whose `k < bound` replaced by its expanded
-body under the use's frame, and every other use dropped (`wf` refuses
-them). Used to read symbol bodies in order. -/
+-- conserves: none — expansion keeps what a use paints and says.
+/-- A node with each `use k` for `k < bound` replaced by its expanded body, and every other use dropped. -/
 @[expose] public def Node.expandOne {L : Type} (done : Array (Array (Node L))) (bound : Nat)
     (acc : Array (Node L)) : Node L → Array (Node L)
   | .draw g fl st => acc.push (.draw g fl st)
@@ -842,7 +702,6 @@ end
 mutual
 
 -- conserves: none — a predicate.
-/-- Whether a tree holds no `use`: what an expanded body is. -/
 @[expose] public def Node.useFree {L : Type} : Node L → Bool
   | .draw _ _ _ => true
   | .group _ _ _ kids => Node.useFreeList kids.toList
@@ -858,8 +717,7 @@ mutual
 
 end
 
-/-- The symbol bodies with their uses expanded, in symbol order: body `j`
-reads only bodies `k < j`, so the expansion is a fold and needs no fuel. -/
+/-- The symbol bodies with their uses expanded, in symbol order. -/
 @[expose] public def Figure.bodies {L : Type} (fig : Figure L) : Array (Array (Node L)) :=
   fig.symbols.foldl (fun done sym => done.push (Node.expandList done done.size #[] sym.toList))
     #[]
@@ -868,17 +726,11 @@ reads only bodies `k < j`, so the expansion is a fold and needs no fuel. -/
 @[expose] public def Figure.expanded {L : Type} (fig : Figure L) : Array (Node L) :=
   Node.expandList fig.bodies fig.bodies.size #[] fig.nodes.toList
 
-/-- **What a figure paints**, in painter's order: the reading both
-artifacts' readers must reproduce (`GfxPdf.marks_projects`,
-`GfxSvg.marks_projects`). -/
+/-- What a figure paints, in painter's order. -/
 @[expose] public def Figure.marks {L : Type} (fig : Figure L) : Array Mark :=
   Node.marksList fig.outlines Ctx.root #[] fig.expanded.toList
 
-/-! ## Boxes -/
-
-/-- The least box of whole `Sp` holding an affine image of a box: the
-image's extremes are at the corners' images (the map is linear in each axis),
-rounded outward (`Affine.boxImage_covers`). -/
+/-- The least whole-`Sp` box holding an affine image of a box, rounded outward. -/
 @[expose] public def Box.image (m : Affine) (b : Box) : Box :=
   let x0 : Rat := b.1.1
   let y0 : Rat := b.1.2
@@ -905,9 +757,7 @@ rounded outward (`Affine.boxImage_covers`). -/
 @[expose] public def Subpath.points (s : Subpath) : List Pt :=
   s.start :: s.segs.toList.flatMap Seg.points
 
-/-- A geometry's control hull in its own frame: a cubic lies in the convex
-hull of its control points, so this bounds what it draws. `none` for a
-path with no points. -/
+/-- A geometry's control hull in its own frame, which bounds what it draws; `none` for a path with no points. -/
 @[expose] public def Geom.hull : Geom → Option Box
   | .rect x y w h => some ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
   | .ellipse cx cy rx ry =>
@@ -915,9 +765,7 @@ path with no points. -/
       (max (cx - rx) (cx + rx), max (cy - ry) (cy + ry)))
   | .path subs => ptsHull none (subs.toList.flatMap Subpath.points)
 
-/-- The point at `t` of the cubic Bézier from `p0` through controls `c1`
-and `c2` to `p1`, exactly, in Bernstein form: what `Geom.hull` bounds
-(`cubicAt_between`). -/
+/-- The exact point at `t` of the cubic Bézier from `p0` through `c1` and `c2` to `p1`. -/
 @[expose] public def cubicAt (p0 c1 c2 p1 : Pt) (t : Rat) : Rat × Rat :=
   let s := 1 - t
   let w0 := s * s * s
@@ -926,9 +774,8 @@ and `c2` to `p1`, exactly, in Bernstein form: what `Geom.hull` bounds
   let w3 := t * t * t
   (w0 * p0.1 + w1 * c1.1 + w2 * c2.1 + w3 * p1.1, w0 * p0.2 + w1 * c1.2 + w2 * c2.2 + w3 * p1.2)
 
-/-- How far a stroke's paint reaches past its path, in the path's frame:
-half the width, times the miter limit for miter joins and 3/2 for square
-caps. -/
+/-- How far a stroke's paint reaches past its path: half the width, times the miter limit for miter
+joins and 3/2 for square caps. -/
 @[expose] public def Stroke.reach (s : Stroke) : Sp :=
   let half := s.width / 2
   let byJoin : Sp := match s.join with
@@ -956,26 +803,21 @@ stroke's reach in the mark's frame, then imaged. -/
   | .raster ctm _ _ _ => some (Box.image ctm rasterBox)
   | .shading _ _ _ => none
 
-/-- The unit square a raster's image maps: one frame unit on a side, 2¹⁶
-`Sp` — both formats' image space (a PDF image XObject paints the unit
-square of its user space, an SVG `image` of width and height 1 in the
-viewBox's unit). -/
+/-- The unit square a raster's image maps, 2¹⁶ `Sp` on a side in both formats. -/
 @[expose] public def rasterUnit : Box := ((0, 0), (65536, 65536))
 
 /-- The hull of a box-valued reading over an array. -/
 @[expose] public def hullOf {α : Type} (f : α → Option Box) (xs : Array α) : Option Box :=
   xs.foldl (fun acc x => Box.joinOpt acc (f x)) none
 
-/-- **The geometry box**: the hull of every mark's control points through
-its frame — pgf's rule, and the box layout reserves for a picture. -/
+/-- The geometry box: the hull of every mark's control points through its frame, the box layout reserves. -/
 @[expose] public def Figure.geomBox {L : Type} (fig : Figure L) : Option Box :=
   hullOf (Mark.geomBox rasterUnit) fig.marks
 
 mutual
 
 -- conserves: none — a census of labels, which `Figure.inkBox` reads.
-/-- The labels a node holds onto `acc`, each with the frame it stands in,
-over an expanded tree. -/
+/-- The labels a node holds onto `acc`, each with its frame, over an expanded tree. -/
 @[expose] public def Node.labelsOne {L : Type} (ctm : Affine) (acc : Array (Affine × L)) :
     Node L → Array (Affine × L)
   | .draw _ _ _ => acc
@@ -997,16 +839,11 @@ end
 @[expose] public def Figure.labels {L : Type} (fig : Figure L) : Array (Affine × L) :=
   Node.labelsList Affine.unit #[] fig.expanded.toList
 
-/-- **The ink box**: every mark's geometry dilated by its stroke's reach,
-and every label's measured box, through their frames — the box ink claims
-and overrun checks read. Quantified over the label measurement, which the
-model cannot make. -/
+/-- The ink box: every mark's stroke-dilated geometry and every label's measured box, through their frames. -/
 @[expose] public def Figure.inkBox {L : Type} (fig : Figure L) (labelBox : L → Option Box) :
     Option Box :=
   Box.joinOpt (hullOf (Mark.inkBox rasterUnit) fig.marks)
     (hullOf (fun (p : Affine × L) => (labelBox p.2).map (Box.image p.1)) fig.labels)
-
-/-! ## Rewrites -/
 
 /-- A gradient recoloured stop by stop. -/
 @[expose] public def Gradient.recolor (f : Ir.Color → Ir.Color) : Gradient → Gradient
@@ -1024,15 +861,13 @@ model cannot make. -/
 @[expose] public def Stroke.recolor (f : Ir.Color → Ir.Color) (st : Stroke) : Stroke :=
   { st with paint := st.paint.recolor f }
 
-/-- A repaint keeps a stroke's dash, so the path the PDF strokes. -/
 private theorem Stroke.recolor_dashed (f : Ir.Color → Ir.Color) (st : Option Stroke) :
     (st.map (Stroke.recolor f)).any Stroke.dashed = st.any Stroke.dashed := by
   cases st <;> rfl
 
 mutual
 
--- conserves: none — a repaint keeps the figure's words; that census is
--- `Figure.said_text`, stated over the figure.
+-- conserves: none — a repaint keeps the figure's words.
 /-- A node repainted, keeping its geometry and text; labels by `fl`. -/
 @[expose] public def Node.recolorOne {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L) :
     Node L → Node L
@@ -1053,10 +888,8 @@ end
 
 mutual
 
--- conserves: none — taking labels out keeps every mark (`dropLabels_marks_id`
--- in `GfxContract`); the words census changes by exactly the labels.
-/-- A node with its labels taken out at every depth: what a backend that
-sets labels elsewhere paints. -/
+-- conserves: none — taking labels out keeps every mark.
+/-- A node with its labels taken out at every depth. -/
 @[expose] public def Node.dropLabelsOne {L : Type} (acc : Array (Node Empty)) :
     Node L → Array (Node Empty)
   | .draw g fl st => acc.push (.draw g fl st)
@@ -1074,7 +907,6 @@ sets labels elsewhere paints. -/
 
 end
 
-/-- The recolouring walk as a map over its list, from an empty start. -/
 public theorem Node.recolorList_map {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
     (acc : Array (Node L)) (xs : List (Node L)) :
     Node.recolorList f fl acc xs = acc ++ (xs.map (Node.recolorOne f fl)).toArray := by
@@ -1082,7 +914,6 @@ public theorem Node.recolorList_map {L : Type} (f : Ir.Color → Ir.Color) (fl :
   | nil => simp [Node.recolorList]
   | cons x rest ih => simp [Node.recolorList, ih]
 
-/-- Two arrays a reading maps alike fold to one hull. -/
 private theorem hullOf_map_eq {α β : Type} (r : α → Option Box) (q : β → Option Box)
     (xs : Array α) (ys : Array β) (h : xs.map r = ys.map q) : hullOf r xs = hullOf q ys := by
   unfold hullOf
@@ -1126,30 +957,24 @@ private theorem marksList_recolor_geom {L : Type} (f : Ir.Color → Ir.Color) (f
 
 end
 
-/-- **Repainting moves no mark's geometry** (`_id`): a node's marks, read
-for their geometry boxes, are the recoloured node's — so the box a picture
-reserves for its ink is the box it reserves dimmed. -/
 public theorem Node.recolor_geomBox_id {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
     (n : Node L) :
     hullOf (Mark.geomBox rasterUnit) (Node.marksOne #[] Ctx.root #[] (Node.recolorOne f fl n)) =
       hullOf (Mark.geomBox rasterUnit) (Node.marksOne #[] Ctx.root #[] n) :=
   hullOf_map_eq _ _ _ _ (marksOne_recolor_geom f fl #[] Ctx.root #[] #[] rfl n)
 
-/-- A figure with its labels taken out: a picture's ink, whose labels the
-page sets as lines. -/
+/-- A figure with its labels taken out, for a page that sets them as lines. -/
 @[expose] public def Figure.dropLabels {L : Type} (fig : Figure L) : Figure Empty :=
   { box := fig.box, clipToBox := fig.clipToBox, nodes := Node.dropLabelsList #[] fig.nodes.toList
     outlines := fig.outlines, symbols := fig.symbols.map fun s => Node.dropLabelsList #[] s.toList
     rasters := fig.rasters, title := fig.title, losses := fig.losses }
 
-/-- A figure repainted: how a picture dims under an overlay cover. -/
 @[expose] public def Figure.recolor {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
     (fig : Figure L) : Figure L :=
   { fig with nodes := Node.recolorList f fl #[] fig.nodes.toList
              symbols := fig.symbols.map fun s => Node.recolorList f fl #[] s.toList }
 
-/-- A length on the milli-point grid both emitters print through
-(`Sp.toPtString`): what a reader of the spelling gets back. -/
+/-- A length on the milli-point grid both emitters print to. -/
 @[expose] public def qSp (x : Sp) : Sp :=
   let m := x.toPtMilli
   if m < 0 then -(((-m) * 65536 + 500) / 1000) else (m * 65536 + 500) / 1000
@@ -1189,8 +1014,7 @@ page sets as lines. -/
 
 mutual
 
--- conserves: none — quantizing moves coordinates and keeps words; that
--- census is `Figure.said_text`, stated over the figure.
+-- conserves: none — quantizing moves coordinates and keeps words.
 /-- A node on the emitters' print grid; labels by `ql`. -/
 @[expose] public def Node.quantizeOne {L : Type} (ql : L → L) : Node L → Node L
   | .draw g fill st => .draw g.quantize (fill.map Fill.quantize) (st.map Stroke.quantize)
@@ -1209,8 +1033,7 @@ mutual
 
 end
 
-/-- A figure on the grid both emitters print to: read-back identities are
-stated over quantized figures. -/
+/-- A figure on the grid both emitters print to. -/
 @[expose] public def Figure.quantize {L : Type} (ql : L → L) (fig : Figure L) : Figure L :=
   { fig with
     box := (qPt fig.box.1, qPt fig.box.2)
@@ -1220,8 +1043,7 @@ stated over quantized figures. -/
 
 mutual
 
--- conserves: none — the census `Figure.said` reads; `Figure.said_text` is
--- its statement.
+-- conserves: none — the census `Figure.said` reads.
 /-- The words a node sets onto `acc`: labels through `text`, `words` as
 they are. -/
 @[expose] public def Node.wordsOne {L : Type} (text : L → String) (acc : Array String) :
@@ -1241,14 +1063,10 @@ they are. -/
 
 end
 
-/-- **What a figure says**: its labels' and words' text — a symbol's read
-through each use that paints it (`Figure.expanded`) — blank ones out,
-trimmed and joined as a picture's own words are (`Ir.Pic.Picture.said`). -/
+/-- What a figure says: its labels' and words' text, symbols read through their uses, blanks out, joined. -/
 @[expose] public def Figure.said {L : Type} (text : L → String) (fig : Figure L) : String :=
   String.intercalate ", " ((Node.wordsList text #[] fig.expanded.toList).toList.filterMap fun s =>
     if s.toList.any (!·.isWhitespace) then some s.trimAscii.toString else none)
-
-/-! ## Well-formedness -/
 
 @[expose] public def Geom.wf : Geom → Bool
   | .rect _ _ w h => 0 ≤ w && 0 ≤ h
@@ -1271,9 +1089,7 @@ trimmed and joined as a picture's own words are (`Ir.Pic.Picture.said`). -/
 mutual
 
 -- conserves: none — a predicate.
-/-- A node's indices in range — a `use` inside symbol `j` names some
-`k < j` (`bound`), an outline and a raster exist — and its extents, widths,
-radii and dash arrays sound. -/
+/-- A node's indices in range and its extents, widths, radii and dash arrays sound. -/
 @[expose] public def Node.wfOne {L : Type} (nOutlines nRasters bound : Nat) : Node L → Bool
   | .draw g fill st => g.wf && (fill.all (·.paint.wf)) && (st.all Stroke.wf)
   | .group _ clips _ kids =>
@@ -1294,7 +1110,6 @@ end
 mutual
 
 -- conserves: none — a predicate.
-/-- Whether a tree paints no raster. -/
 @[expose] public def Node.imageFree {L : Type} : Node L → Bool
   | .draw _ _ _ => true
   | .group _ _ _ kids => Node.imageFreeList kids.toList
@@ -1310,9 +1125,7 @@ mutual
 
 end
 
-/-- A figure that paints no raster, its symbols' bodies included — what a
-page's ink is (`ofPictureIn_imageFree_exact`): the PDF writer names a raster only
-from the image store, so it refuses an ink that would paint one. -/
+/-- A figure that paints no raster, its symbols included. -/
 @[expose] public def Figure.imageFree {L : Type} (fig : Figure L) : Bool :=
   Node.imageFreeList fig.nodes.toList && fig.symbols.all fun s => Node.imageFreeList s.toList
 
@@ -1324,12 +1137,9 @@ with a positive entry, the box's corners ordered. -/
     Node.wfList fig.outlines.size fig.rasters.size fig.symbols.size fig.nodes.toList &&
     (fig.symbols.zipIdx.all fun (s, j) => Node.wfList fig.outlines.size fig.rasters.size j s.toList)
 
-/-! ## Labels among the ink -/
-
 mutual
 
 -- conserves: none — a predicate.
-/-- Whether a tree holds no label at any depth. -/
 @[expose] public def Node.labelFree {L : Type} : Node L → Bool
   | .draw _ _ _ => true
   | .group _ _ _ kids => Node.labelFreeList kids.toList
@@ -1347,8 +1157,7 @@ end
 
 mutual
 
--- conserves: none — a relabelling: every mark and every label's place
--- stays (`Figure.nodeSteps_mapLabels_exact`).
+-- conserves: none — a relabelling that keeps every mark.
 /-- A node with each label read through `f`, at every depth; its ink stays. -/
 @[expose] public def Node.mapLabelsOne {L L' : Type} (f : L → L') : Node L → Node L'
   | .draw g fl st => .draw g fl st
@@ -1377,11 +1186,8 @@ label, or ink holding none. -/
   | .image _ _ => true
   | .words _ => true
 
-/-- **A figure whose labels stand at its top level**: every node a label or
-ink holding none, every symbol label-free — so each label paints in the
-figure's own frame, where the placement still carries coordinates, between
-the ink written before it and the ink written after. A picture's figure is
-one (`ofPictureKeyed_labelsTop_exact`). -/
+/-- A figure whose labels stand at its top level: every node a label or label-free ink, every
+symbol label-free. -/
 @[expose] public def Figure.labelsTop {L : Type} (fig : Figure L) : Bool :=
   fig.nodes.all Node.topOk && fig.symbols.all fun s => s.all Node.labelFree
 
@@ -1392,7 +1198,6 @@ public inductive Step (L : Type) where
   | label (l : L)
   deriving Repr, BEq, Inhabited
 
-/-- A step with its label read through `f`. -/
 @[expose] public def Step.mapLabel {L L' : Type} (f : L → L') : Step L → Step L'
   | .mark m => .mark m
   | .label l => .label (f l)
@@ -1403,8 +1208,7 @@ several labels of another type; a mark stays. -/
   | .mark m => #[.mark m]
   | .label l => (f l).map .label
 
-/-- One top-level node's steps: a label is itself; any other node the marks
-it paints, its uses expanded, read as `Figure.marks` reads them. -/
+/-- One top-level node's steps: a label itself, any other node the marks it paints. -/
 @[expose] public def Figure.nodeSteps {L : Type} (fig : Figure L) (n : Node L) : Array (Step L) :=
   match n with
   | .label l => #[.label l]
@@ -1412,12 +1216,7 @@ it paints, its uses expanded, read as `Figure.marks` reads them. -/
     (Node.marksList fig.outlines Ctx.root #[]
       (Node.expandOne fig.bodies fig.bodies.size #[] n).toList).map .mark
 
-/-- **What a figure paints, its labels among its ink**, in painter's order:
-each top-level node's steps. For a figure whose labels stand at its top
-level, the sequence both artifacts' readers reproduce
-(`GfxPdf.steps_projects`, `GfxSvg.steps_projects`) — so a label paints over
-the ink written before it and under the ink written after, in both
-(`labelOrder_agree`). -/
+/-- What a figure paints, its labels among its ink, in painter's order. -/
 @[expose] public def Figure.steps {L : Type} (fig : Figure L) : Array (Step L) :=
   fig.nodes.foldl (fun acc n => acc ++ fig.nodeSteps n) #[]
 

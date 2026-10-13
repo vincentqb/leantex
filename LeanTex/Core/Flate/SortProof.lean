@@ -71,9 +71,6 @@ private theorem sort_perm {α : Type} {n : Nat}
     simp only [dite_eq_right h]
     exact Vector.Perm.refl _
 
-/-- The encoder's existing in-place quicksort only permutes symbols.
-The proof follows the actual partition swaps and recursive calls; it
-requires no comparator law and changes no runtime sorting algorithm. -/
 public theorem qsort_perm_exact {α : Type} (as : Array α) (lt : α → α → Bool)
     (lo := 0) (hi := as.size - 1) : (as.qsort lt lo hi).Perm as := by
   unfold Array.qsort

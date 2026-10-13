@@ -12,9 +12,7 @@ import all LeanTex.Core.PdfStreamSpelling
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
 
-/-! Source syntax of the streams emitted without an imported image graph.
-The descriptions below cover the writer's literal prefixes; they contain
-no parser result or assumption about the validity of a font program. -/
+/-! The source syntax of the streams the writer emits without an imported image graph. -/
 
 private def StreamPrefix.fields : StreamPrefix → Array (String × Obj)
   | .content => #[]
@@ -131,8 +129,6 @@ private theorem StreamPrefix.spelling_rendered (p : StreamPrefix) (filtered : Bo
     ↓reduceIte, Int.toNat_natCast]
   all_goals rfl
 
-/-- The four production prefixes spell the very dictionary they describe,
-including the extra space emitted for an empty prefix. -/
 public theorem StreamPrefix.spelling_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
     (p.dict filtered length).Spelling (p.spelling filtered length) := by
   rw [p.spelling_rendered]
@@ -150,9 +146,6 @@ public theorem StreamPrefix.length_exact (p : StreamPrefix) (filtered : Bool) (l
     cases filtered <;> cases group <;> simp [StreamPrefix.dict, StreamPrefix.fields, Obj.get?]
   all_goals cases filtered <;> simp [StreamPrefix.dict, StreamPrefix.fields, Obj.get?]
 
-/-- These stream dictionaries never enter the font-dictionary census.
-A font program's stream is distinct from the font and descriptor objects
-that reference it. -/
 public theorem StreamPrefix.kind_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
     PdfCensus.kindOf (p.dict filtered length) ≠ .font := by
   cases p
@@ -164,8 +157,6 @@ public theorem StreamPrefix.kind_exact (p : StreamPrefix) (filtered : Bool) (len
     | change PdfCensus.Kind.other ≠ .font; decide
     | change PdfCensus.Kind.metadata ≠ .font; decide
 
-/-- The row serializer emits the certified dictionary spelling followed
-by precisely the retained bytes and the real closing markers. -/
 public theorem native_row_bytes_exact (id : Nat) (p : StreamPrefix) (filtered : Bool)
     (raw : ByteArray) :
     rowInto ByteArray.empty id (.stream (p.fragment filtered) raw) =

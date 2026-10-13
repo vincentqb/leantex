@@ -2,37 +2,17 @@ module
 
 public import LeanTex.Core.GfxPdf
 
-/-!
-# The figure resources a document's pages name
-
-A figure's operators name what they paint with — an ExtGState, a shading
-pattern, a shading, a form — by number. The writer emits every page's
-figures with every such name 0, interns what the operators ask for, by
-content and in first-occurrence order (`collectList`), and renames each
-operator to its request's place in that table (`nameOps`); a figure
-raster is named by its place in the document's raster table from the
-start. Renaming changes no mark a reader meets (`nameOps_marks_id`); every
-name the renamed operators spell is a place in the table
-(`nameOps_names_covers`); and every occurrence of one name names one
-resource (`nameOps_occ_agree`), so the object the writer spells from a
-name's first occurrence answers every other.
-
-Requests compare field by field (`ContentOp.same`, `FigRes`'s decidable
-equality): the operators' own `==` reads colours by their screen value,
-which would merge two resources whose PDF colours differ.
--/
+/-! The figure resources a document's pages name: requests interned by content and operators renamed
+onto the table, moving no mark. -/
 
 namespace LeanTex.Core.Pdf
 
 open LeanTex.Core LeanTex.Core.Gfx
 
 
-/-! ## Structural equality of operators -/
-
 mutual
 
-/-- Text operators equal field by field — the colour's PDF rider
-included, which the colour's own `==` leaves out. -/
+/-- Text operators equal field by field, a colour's PDF rider included. -/
 @[expose] public def TextOp.same : TextOp → TextOp → Bool
   | .scale a, .scale b => decide (a = b)
   | .move x y, .move x' y' => decide (x = x') && decide (y = y')
@@ -51,8 +31,7 @@ end
 
 mutual
 
-/-- Page operators equal field by field: what two requests for one
-resource must be to share it. -/
+/-- Page operators equal field by field, as two requests for one resource must be. -/
 @[expose] public def ContentOp.same : ContentOp → ContentOp → Bool
   | .fill c x y w h, .fill c' x' y' w' h' =>
     decide (c = c') && decide (x = x') && decide (y = y') && decide (w = w') && decide (h = h')
@@ -186,10 +165,7 @@ private theorem ContentOp.sameList_refl : ∀ a : List ContentOp, ContentOp.same
 
 end
 
-/-! ## Figure resources -/
-
-/-- What a name in a content stream stands for, keyed by content: two
-requests share a resource exactly when they are equal, field by field. -/
+/-- What a name in a content stream stands for, keyed by content. -/
 public inductive FigRes where
   | extG (fill stroke : Alpha)
   | pattern (g : Gradient)
@@ -251,8 +227,7 @@ public instance : DecidableEq FigRes := fun a b =>
 
 mutual
 
--- conserves: none — a request table, not a rewrite; what it guarantees is
--- `nameOps_names_covers`.
+-- conserves: none — a request table, not a rewrite.
 /-- The requests an operator makes onto `t`, its bodies' first. -/
 @[expose] public def collectOne (t : Array FigRes) : ContentOp → Array FigRes
   | .fill _ _ _ _ _ => t
@@ -300,10 +275,8 @@ end
 
 mutual
 
--- conserves: none — renaming keeps every mark (`nameOps_marks_id`).
-/-- An operator with every name its request's place in `t`. A form is
-looked up by the body the requests were collected from, then its body
-renamed. -/
+-- conserves: none — renaming keeps every mark.
+/-- An operator with every name its request's place in `t`, a form looked up by its body. -/
 @[expose] public def nameOne (t : Array FigRes) : ContentOp → ContentOp
   | .fill c x y w h => .fill c x y w h
   | .paint fl st gs segs => .paint (fl.map (nameFill t)) (st.map (nameStroke t)) (gs.map (nameExtG t)) segs
@@ -334,8 +307,6 @@ end
 /-- A page's operators renamed onto the table. -/
 @[expose] public def nameOps (t : Array FigRes) (ops : Array ContentOp) : Array ContentOp :=
   nameList t #[] ops.toList
-
-/-! ## Renaming moves no mark -/
 
 private theorem nameList_acc (t : Array FigRes) (acc : Array ContentOp) (xs : List ContentOp) :
     nameList t acc xs = acc ++ nameList t #[] xs := by
@@ -443,14 +414,9 @@ private theorem readList_name (t : Array FigRes) :
 
 end
 
-/-- **Renaming moves no mark** (`_id`): an operator's names choose which
-resource object a viewer opens, never what the figure paints there — the
-reading `GfxPdf.marks_projects` states is unchanged by the table's names. -/
 public theorem nameOps_marks_id (t : Array FigRes) (place : Iso) (ops : Array ContentOp) :
     GfxPdf.readMarks place (nameOps t ops) = GfxPdf.readMarks place ops :=
   readList_name t ops.toList _ #[]
-
-/-! ## No name dangles -/
 
 @[expose] public def paintNames : PdfPaint → List Nat
   | .solid _ => []
@@ -474,7 +440,7 @@ public theorem nameOps_marks_id (t : Array FigRes) (place : Iso) (ops : Array Co
 
 mutual
 
--- conserves: none — a census of names, which `nameOps_names_covers` bounds.
+-- conserves: none — a census of names.
 /-- Every figure resource name an operator spells, its bodies' included. -/
 @[expose] public def namesOne : ContentOp → List Nat
   | .fill _ _ _ _ _ => []
@@ -514,8 +480,6 @@ private theorem intern_sub {t : Array FigRes} {x : FigRes} (r : FigRes) (h : x �
   · exact h
   · exact Array.mem_push_of_mem _ h
 
-/-- A request in the table is named by its place there (`_exact`): the
-entry at its name is the request. -/
 public theorem nameOf_exact {t : Array FigRes} {r : FigRes} (h : r ∈ t) :
     ∃ hi : nameOf t r < t.size, t[nameOf t r] = r := by
   unfold nameOf
@@ -547,7 +511,7 @@ public theorem nameOf_exact {t : Array FigRes} {r : FigRes} (h : r ∈ t) :
 
 mutual
 
--- conserves: none — the requests an operator makes, which `collect` interns.
+-- conserves: none — the requests an operator makes.
 /-- Every request an operator makes, its bodies' first, as `collectOne` meets them. -/
 @[expose] public def reqsOne : ContentOp → List FigRes
   | .fill _ _ _ _ _ => []
@@ -860,20 +824,13 @@ private theorem namesList_lt (T : Array FigRes) :
 
 end
 
-/-- **No name dangles** (`_covers`): every resource name the renamed
-operators spell is a place in the table collected from those same
-operators, so the resources dictionary the writer builds from the table
-answers every name a page or form asks for. -/
 public theorem nameOps_names_covers (ops : Array ContentOp) :
     ∀ n ∈ namesList (nameOps (collectList #[] ops.toList) ops).toList,
       n < (collectList #[] ops.toList).size :=
   namesList_lt _ ops.toList (collectList_covers ops.toList #[])
 
 
-/-! ## One name, one resource -/
-
-/-- A table entry as the writer spells it: a form's body renamed onto the
-same table. -/
+/-- A table entry as the writer spells it, a form's body renamed onto the same table. -/
 @[expose] public def nameRes (t : Array FigRes) : FigRes → FigRes
   | .extG a b => .extG a b
   | .pattern g => .pattern g
@@ -902,10 +859,8 @@ same table. -/
 
 mutual
 
--- conserves: none — the names an operator spells with what each names,
--- which `nameOps_occ_agree` holds to one resource per name.
-/-- Every resource an operator names, with its name, its bodies' first —
-what the writer spells one object per name from. -/
+-- conserves: none — the names an operator spells with what each names.
+/-- Every resource an operator names, with its name, its bodies' first. -/
 @[expose] public def occOne : ContentOp → List (Nat × FigRes)
   | .fill _ _ _ _ _ => []
   | .paint fl st gs _ => fillOcc fl ++ strokeOcc st ++ (extGOcc gs)
@@ -972,7 +927,6 @@ private theorem extGOcc_name (T : Array FigRes) (g : Option ExtG) :
     simp only [Option.map_some, extGOcc, nameExtG, List.mem_singleton] at hq
     exact ⟨.extG g.fill g.stroke, by simp [extGReqs], by rw [hq]; rfl⟩
 
-/-- Renaming a stroke's paint moves no reach. -/
 private theorem stampReach_name (T : Array FigRes) (sp : Option PaintStroke) :
     GfxPdf.stampReach (sp.map (nameStroke T)) = GfxPdf.stampReach sp := by
   cases sp <;> rfl
@@ -1056,11 +1010,6 @@ private theorem occList_name (T : Array FigRes) :
 
 end
 
-/-- **One name, one resource** (`_agree`): every occurrence of a name in the
-renamed operators names the same resource, so the object the writer spells
-from a name's first occurrence is what every other occurrence asks for — a
-name is a request's place in the table, and the table holds each request
-once. -/
 public theorem nameOps_occ_agree (ops : Array ContentOp) :
     ∀ p ∈ occList (nameOps (collectList #[] ops.toList) ops).toList,
     ∀ q ∈ occList (nameOps (collectList #[] ops.toList) ops).toList,
@@ -1081,8 +1030,7 @@ public theorem nameOps_occ_agree (ops : Array ContentOp) :
 
 mutual
 
--- conserves: none — `occList` accumulated, the walk the writer runs
--- (`occInto_exact`).
+-- conserves: none — `occList` accumulated.
 /-- `occOne` onto an accumulator. -/
 @[expose] public def occOneInto (acc : Array (Nat × FigRes)) : ContentOp → Array (Nat × FigRes)
   | .fill _ _ _ _ _ => acc
@@ -1155,8 +1103,6 @@ private theorem occInto_exact :
 
 end
 
-/-- The writer's walk is the occurrence list (`_exact`): accumulated onto
-an array, in the same order. -/
 public theorem occInto_occList_exact (xs : List ContentOp) : occInto #[] xs = (occList xs).toArray := by
   simpa using occInto_exact xs #[]
 

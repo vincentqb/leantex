@@ -6,8 +6,7 @@ import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.PdfLex
 
-/-- Balanced literal-string bytes (§7.3.4.2). An escape consumes its next
-byte; unescaped parentheses delimit a nested body. -/
+/-- Balanced literal-string bytes (§7.3.4.2): an escape consumes its next byte, unescaped parentheses nest. -/
 public inductive LiteralBody : List Nat → Prop
   | nil : LiteralBody []
   | byte {c cs} : c < 256 → c ≠ 40 → c ≠ 41 → c ≠ 92 →
@@ -62,8 +61,6 @@ private theorem literalBody_yields {cs : List Nat} (hc : LiteralBody cs)
     have hh := Loop.Yields.cons (step := fun s => pure (literalStep b s)) hopen (ht.trans (Loop.Yields.cons (step := fun s => pure (literalStep b s)) hclose hu))
     simpa [List.length_append, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using hh
 
-/-- A balanced body followed by its closing parenthesis is consumed
-exactly, including nested bodies and escaped bytes. -/
 public theorem scanLitString_exact {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b (i+1) (cs ++ [41])) (hc : LiteralBody cs) :
     scanLitString b i = some (i+cs.length+2) := by
@@ -79,8 +76,6 @@ public theorem scanLitString_exact {b : ByteArray} {i : Nat} {cs : List Nat}
   unfold scanLitString
   rw [hr]
 
-/-- The hex-string scanner stops at the first closing delimiter.
-This is a delimiter contract; it does not claim to validate hex digits. -/
 public theorem scanHexEnd_exact {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b i (cs ++ [62])) (hc : ∀ c ∈ cs, c ≠ 62 ∧ c ≠ 256) :
     scanHexEnd b i = i+cs.length := by

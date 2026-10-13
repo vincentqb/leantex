@@ -140,8 +140,6 @@ theorem write_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UI
       ih.1 (hl _) (hd _) (by have := hls.2.2.1; omega) (by have := hds.2.2.1; omega)
     exact ⟨h.1, h.2.trans ih.2⟩
 
-/-- The four match fields read back through the production Huffman tables and
-extra-bit readers, including zero-width extra fields. -/
 theorem writeMatch_read_exact (litFreq distFreq : Array Nat) (w : Bw) (data out : ByteArray)
     (len dist maxOut : Nat) (hw : w.Valid)
     (hlf : litFreq.size ≤ 2 ^ 15) (hdf : distFreq.size ≤ 2 ^ 15)
@@ -222,7 +220,6 @@ theorem writeMatch_read_exact (litFreq distFreq : Array Nat) (w : Bw) (data out 
     show ¬ out.size + len > maxOut by omega,
     ↓reduceIte, Bool.or_eq_true, decide_eq_true_eq, false_or, pure, Except.pure]
 
-/-- A decoded literal advances the actual output by exactly that byte. -/
 theorem readStep_literal_exact (lit dist : Huff) (out : ByteArray) (r r' : Br)
     (b : UInt8) (maxOut : Nat) (hr : lit.decode r = some (b.toNat, r'))
     (hm : out.size < maxOut) :
@@ -236,8 +233,6 @@ theorem readStep_end_exact (lit dist : Huff) (out : ByteArray) (r r' : Br)
     readStep lit dist maxOut (out, r) = .ok (.inl (out, r')) := by
   simp only [readStep, hr, beq_iff_eq, ↓reduceIte, pure, Except.pure]
 
-/-- Every actual packed token advances the reader and extends the verified
-byte prefix. The trace counts tokens, while the prefix counts output bytes. -/
 theorem write_steps_bounded_exact {raw out : ByteArray} {start finish : Nat}
     {tokens : Array UInt32} (maxOut : Nat) (hmax : raw.size ≤ maxOut)
     (litFreq distFreq : Array Nat) (w : Bw) (data : ByteArray)
@@ -362,9 +357,6 @@ theorem writePayload_contract {raw : ByteArray} {start finish : Nat} {tokens : A
   exact ⟨push_valid _ _ _ hv.1 (hl 256),
     (push_extends_exact _ _ _ hv.1 (hl 256)).trans hv.2⟩
 
-/-- A complete compressed payload, with its actual frequency counts, generated
-Huffman tables and end marker, reads back to the input. Final-byte realization
-allows later fields and the zlib trailer to follow the payload. -/
 theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)

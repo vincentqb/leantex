@@ -3,29 +3,8 @@ module
 public import LeanTex.Core.Xml
 public import LeanTex.Core.Css
 
-/-!
-# What an SVG may say: the resource boundary
-
-The judge every SVG passes before anything reads it, a converter included,
-evaluated over the parsed tree. A file is accepted when its root is an
-`svg` element in the SVG namespace and nothing in it can reach outside the
-file or run: no script, no foreign object, no event-handler or base-URI
-attribute; every `href` or `src` a fragment reference — or, on an `image`
-element, a `data:` URI declared PNG or JPEG or of no declared type, its
-payload in any encoding, which carries its bytes and names nothing outside
-the file; a function in an attribute only a fragment
-`url(#id)` or, on a colour attribute, a wholly numeric `rgb()`/`rgba()`;
-CSS within the subset `Css` reads; no animation that assigns a reference,
-a style or an event. The XML reader has already refused DTD declarations,
-external entities and processing instructions.
-
-This is the boundary libxml's SAX events and an XPath over its tree used
-to state, read the same way — names by their local part, values
-whitespace-normalized as XPath's `normalize-space` normalizes them — with
-two widenings: a `data:` image beyond the base64 PNG or JPEG reference the
-XPath admitted, and CSS that spells a fragment `url(#id)` or a numeric
-colour function, which only the attribute spelling admitted.
--/
+/-! The resource boundary every SVG passes before anything reads it: nothing an accepted file says
+reaches outside it or runs. -/
 
 namespace LeanTex.Core.Svg
 
@@ -40,10 +19,7 @@ public def normalizeSpace (s : String) : String :=
   " ".intercalate ((s.split fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r').toList.map
     (·.toString) |>.filter (!·.isEmpty))
 
-/-- A character a local reference's id may hold: `Css.idChar`'s alphabet,
-and `~` — the separator the engine's own figure ids hold (`GfxSvg.idSep`),
-which closes no function and quotes nothing, so it can name nothing but a
-fragment. -/
+/-- A character a local reference's id may hold: `Css.idChar`'s, and the `~` the engine's figure ids hold. -/
 @[expose] public def refIdChar (c : Char) : Bool := Css.idChar c || c == '~'
 
 /-- Exactly `url(#id)`, its id nonempty and drawn from `refIdChar`'s
@@ -133,7 +109,7 @@ public abbrev Site := String × Xml.Attr
 
 mutual
 
--- conserves: none — a census of a tree's attributes, which the judge reads.
+-- conserves: none — a census of a tree's attributes.
 /-- Every attribute of a node and its descendants, with its element's local
 name, in document order. -/
 public def sitesOne (acc : Array Site) : Xml.Item → Array Site
@@ -148,10 +124,8 @@ end
 
 mutual
 
--- conserves: none — a census of a tree's elements, which the judge reads.
-/-- Every element of a node and its descendants, in document order: its
-local name, and a `style` element's text (what its sheet says; no other
-element's text is read). -/
+-- conserves: none — a census of a tree's elements.
+/-- Every element of a node and its descendants in document order, with a `style` element's text. -/
 public def elemsOne (acc : Array (String × String)) : Xml.Item → Array (String × String)
   | .text _ => acc
   | n@(.elem _ name _ kids) =>
@@ -193,15 +167,14 @@ public def elemRefusal (e : String × String) : Option Refused :=
   | .elem ns name _ _ => ns == svgNs && name == "svg"
   | .text _ => false
 
-/-- **The boundary's verdict on a parsed tree**: the first thing it refuses,
-or nothing. -/
+/-- The boundary's verdict on a parsed tree: the first thing it refuses, or nothing. -/
 public def judgeTree (t : Xml.Item) : Option Refused :=
   if !svgRoot t then some .root
   else match (elemsOne #[] t).findSome? elemRefusal with
     | some r => some r
     | none => (sitesOne #[] t).findSome? attrRefusal
 
-/-- **The boundary's verdict on bytes**: the tree, or what refused it. -/
+/-- The boundary's verdict on bytes: the tree, or what refused it. -/
 public def judge (bytes : ByteArray) : Except Refused Xml.Item := do
   let node ← match Xml.parse bytes with
     | .ok n => pure n
@@ -213,7 +186,6 @@ public def judge (bytes : ByteArray) : Except Refused Xml.Item := do
   | some r => throw r
   | none => return t
 
-/-- An admitted source's tree is the one its judge passed. -/
 private theorem judge_tree (bytes : ByteArray) (t : Xml.Item) (h : judge bytes = .ok t) :
     judgeTree t = none := by
   unfold judge at h
@@ -230,8 +202,6 @@ private theorem judge_tree (bytes : ByteArray) (t : Xml.Item) (h : judge bytes =
         cases h
         exact hj
 
-/-- A passed tree: an SVG root, no element the boundary refuses, no
-attribute it refuses. -/
 private theorem judgeTree_none (t : Xml.Item) (h : judgeTree t = none) :
     svgRoot t = true ∧ (∀ e ∈ elemsOne #[] t, elemRefusal e = none) ∧
       (∀ s ∈ sitesOne #[] t, attrRefusal s = none) := by
@@ -245,8 +215,6 @@ private theorem judgeTree_none (t : Xml.Item) (h : judgeTree t = none) :
       exact ⟨hr, Array.findSome?_eq_none_iff.mp he, Array.findSome?_eq_none_iff.mp h⟩
   · simp [hr] at h
 
-/-- What an admitted attribute is: no base, no event handler, and a
-reference that is a fragment or an image's data raster. -/
 private theorem attrRefusal_none (s : Site) (h : attrRefusal s = none) :
     s.2.name ≠ "base" ∧ s.2.name.startsWith "on" = false ∧
       ((s.2.name = "href" ∨ s.2.name = "src") → refOk s.1 s.2.value = true) := by
@@ -264,8 +232,6 @@ private theorem attrRefusal_none (s : Site) (h : attrRefusal s = none) :
         not_and, Bool.not_eq_false] at h2
       exact h2 hn
 
-/-- What an admitted `style` attribute is: one the CSS reader does not
-refuse. -/
 private theorem attrRefusal_style (s : Site) (h : attrRefusal s = none) (hs : s.2.name = "style") :
     ∀ why, Css.parseDecls s.2.value ≠ .error (.refused why) := by
   obtain ⟨el, a⟩ := s
@@ -280,9 +246,6 @@ private theorem attrRefusal_style (s : Site) (h : attrRefusal s = none) (hs : s.
     · simp only [↓reduceIte, hs, beq_self_eq_true, hw] at h
       cases h
 
-/-- What any other admitted attribute is: a value that spells a call, an
-escape or an at-sign is a local `url(#id)` or a colour attribute's numeric
-`rgb()`/`rgba()`, unless the attribute's syntax is transform or timing. -/
 private theorem attrRefusal_css (s : Site) (h : attrRefusal s = none) (hs : s.2.name ≠ "style")
     (hc : callAttrs.contains s.2.name = false) (hx : cssSyntax s.2.value = true) :
     localUrl s.2.value = true ∨ numericColor s.2.name s.2.value = true := by
@@ -302,16 +265,6 @@ private theorem attrRefusal_css (s : Site) (h : attrRefusal s = none) (hs : s.2.
       · simp only [h4, Bool.not_false, ↓reduceIte] at h
         simp at h
 
-/-- **Every reference an admitted SVG makes stays inside it** (`_covers`):
-the source the native judge admits has an SVG root, no script and no
-foreign object, no base URI and no event handler on any element, and every
-`href` or `src` it carries is a fragment of its own tree or an image's
-`data:` PNG or JPEG. A value that spells a call is a local `url(#id)` or a
-colour's numeric `rgb()`/`rgba()`, unless it is transform or timing
-syntax, and every `style` attribute and sheet passes the CSS reader's
-refusals (`Css.refusedIn`: any function but those two, an escape, an
-at-rule) — the judge's own checks, so a browser drawing it, or the
-converter, is handed no reference the boundary did not read. -/
 public theorem closure_covers (bytes : ByteArray) (t : Xml.Item) (h : judge bytes = .ok t) :
     svgRoot t = true ∧
     (∀ e ∈ elemsOne #[] t, e.1 ≠ "script" ∧ e.1 ≠ "foreignObject") ∧
@@ -346,8 +299,6 @@ public theorem closure_covers (bytes : ByteArray) (t : Xml.Item) (h : judge byte
     cases hp : Css.parseSheet e.2 with
     | error w => simp [hp] at this
     | ok _ => rfl
-
-/-! ## The census reads the whole tree -/
 
 /-- `e` is the tree `t` or an element below it: what the tree holds. -/
 public inductive Holds : Xml.Item → Xml.Item → Prop
@@ -422,8 +373,6 @@ private theorem elemsList_mem (l : List Xml.Item) (k : Xml.Item) (hk : k ∈ l)
     · exact Array.mem_append_left _ hx
     · exact Array.mem_append_right _ (ih hr)
 
-/-- **The judge's attribute census holds every attribute of every element
-the tree holds** (`_covers`), with its element's local name. -/
 public theorem sites_covers {t e : Xml.Item} (h : Holds e t) :
     ∀ {ns name : String} {attrs : Array Xml.Attr} {kids : Array Xml.Item},
       e = .elem ns name attrs kids → ∀ a ∈ attrs, (name, a) ∈ sitesOne #[] t := by
@@ -440,8 +389,6 @@ public theorem sites_covers {t e : Xml.Item} (h : Holds e t) :
     rw [sitesList_acc]
     exact Array.mem_append_right _ (sitesList_mem _ _ (Array.mem_toList_iff.mpr hk) _ (ih he a ha))
 
-/-- **The judge's element census holds every element the tree holds**
-(`_covers`): its local name, and a `style` element's text. -/
 public theorem elems_covers {t e : Xml.Item} (h : Holds e t) :
     ∀ {ns name : String} {attrs : Array Xml.Attr} {kids : Array Xml.Item},
       e = .elem ns name attrs kids →
@@ -459,14 +406,6 @@ public theorem elems_covers {t e : Xml.Item} (h : Holds e t) :
     rw [elemsList_acc]
     exact Array.mem_append_right _ (elemsList_mem _ _ (Array.mem_toList_iff.mpr hk) _ (ih he))
 
-/-- **No element or attribute of an admitted SVG escapes the judge**
-(`_covers`): every element the tree holds, wherever it stands, is no script
-and no foreign object, a `style` element's sheet passes the CSS reader, and
-every attribute it carries is no base or event handler, references a
-fragment or an image's `data:` raster, and a `style` attribute passes the
-CSS reader's refusals — `closure_covers`, carried from the judge's census
-to the tree itself, which the census reads whole (`sites_covers`,
-`elems_covers`). -/
 public theorem closure_holds (bytes : ByteArray) (t : Xml.Item) (h : judge bytes = .ok t)
     (e : Xml.Item) (he : Holds e t) (ns name : String) (attrs : Array Xml.Attr)
     (kids : Array Xml.Item) (hel : e = .elem ns name attrs kids) :
@@ -487,8 +426,7 @@ public theorem closure_holds (bytes : ByteArray) (t : Xml.Item) (h : judge bytes
     obtain ⟨hb, ho⟩ := hat _ hsite
     exact ⟨hb, ho, href _ hsite, hsty _ hsite⟩
 
-/-- The words a refusal is reported in: the boundary's own, the construct
-named. -/
+/-- The words a refusal is reported in, the construct named. -/
 public def Refused.message : Refused → String
   | .xml (.declaration what) =>
     s!"SVG resource boundary refuses DTD declarations and external entities ({what})"
@@ -515,16 +453,12 @@ rgb()/rgba(), with no escapes or at-rules"
     s!"SVG resource boundary refuses an animation of '{target}': animated resource, style, \
 timing and event assignments are unsupported"
 
-/-! ## Font independence -/
-
 /-- The element names that set text or name a font. -/
 @[expose] public def textElems : List String :=
   ["text", "tspan", "textPath", "tref", "glyphRef"]
 
-/-- Whether a converter's drawing of the tree can depend on host fonts: any
-text, any font-naming element or attribute, any style, any font-relative
-unit. Deliberately conservative: a `false` costs a cache slot, never a
-conversion. -/
+/-- Whether a converter's drawing of the tree can depend on host fonts: any text, font-naming
+element or attribute, style, or font-relative unit. -/
 public def fontDependent (t : Xml.Item) : Bool :=
   let units := ["em", "ex", "ch", "ic", "lh", "cap"]
   (elemsOne #[] t).any (fun (n, txt) =>

@@ -9,13 +9,9 @@ import all LeanTex.Core.PdfRead
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
 
-/-! The object stream's decimal header records positions in its own
-payload. The invariant below follows the reader's actual `forIn`, with
-one pair consumed at every iteration. It does not assume a successful
-reader result. -/
+/-! The object stream's decimal header, read back as the producer's payload positions. -/
 
-/-- The producer's payload positions, before any fixed-width encoding.
-The increment is the exact rendered value size and its terminating LF. -/
+/-- The producer's payload positions, each advanced by the rendered value's size and its LF. -/
 public def objectStreamPositions (offset : Nat) : List (Nat × Obj) → List (Nat × Nat)
   | [] => []
   | (id,v)::xs => (id,offset) :: objectStreamPositions (offset+v.render.size+1) xs
@@ -139,10 +135,6 @@ private theorem header_loop_exact (xs : List (Nat × Nat)) (counters : List Nat)
       simp only [headerStep, hw, hnumRead, hoffSkip, hoffRead, bind, Except.bind]
       simpa only [ObjReader.push_append_toArray, Except.bind] using hnext
 
-/-- Actual header parsing recovers the producer's complete ordered
-position transcript, including the empty stream. Every offset is the
-size of the preceding rendered values; this is an arbitrary-input proof,
-not a collection of sample headers. -/
 public theorem objectStream_header_exact (xs : List (Nat × Obj)) :
     readObjectStreamHeader (objectStream xs).bytes xs.length =
       .ok (objectStreamPositions 0 xs).toArray := by

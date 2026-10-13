@@ -4,10 +4,8 @@ public import LeanTex.Core.PdfLex
 
 namespace LeanTex.Core.PdfRead
 
-/-- A parsed PDF object. Strings keep their verbatim bytes, delimiters
-included, so copying one back out cannot change it; reals keep their raw
-spelling for the same reason, read numerically only where a box needs a
-value. -/
+/-- A parsed PDF object; strings keep their verbatim bytes and reals their raw spelling, so copying
+one out cannot change it. -/
 public inductive Obj where
   | null
   | bool (v : Bool)
@@ -32,19 +30,7 @@ public inductive Obj where
   | .int n => some n
   | _ => none
 
--- ## Rendering an object back to bytes (§7.3)
-
 public abbrev escapeName := PdfLex.escapeName
-
-/-! ### `render`, the writer's one spelling
-
-The bytes one object is written as. Bytes rather than a `String` because
-`.str` keeps its verbatim payload, delimiters included, and a literal
-string's bytes need not be valid UTF-8. Arrays separate their elements
-with one space; a dictionary pads its delimiters and follows every entry
-with a space — the canonical spelling `<< /Type /Catalog >>` reads as.
-The walk threads the buffer it appends to, so a nested dictionary costs no
-copy of the bytes already written. -/
 
 mutual
 
@@ -60,14 +46,13 @@ public def Obj.renderInto (acc : ByteArray) : Obj → ByteArray
   | .dict es => Obj.renderEntries (acc ++ "<< ".toUTF8) es.toList ++ ">>".toUTF8
   | .ref num gen => acc ++ (s!"{num} {gen} R").toUTF8
 
-/-- The `List` companion for an array's elements, one space between. -/
+/-- An array's elements rendered onto `acc`, one space between. -/
 public def Obj.renderList (acc : ByteArray) : List Obj → ByteArray
   | [] => acc
   | [x] => Obj.renderInto acc x
   | x :: rest => Obj.renderList ((Obj.renderInto acc x).push 32) rest
 
-/-- The `List` companion for a dictionary's entries: `/Key value`, each
-followed by a space. -/
+/-- A dictionary's entries rendered onto `acc` as `/Key value`, each followed by a space. -/
 public def Obj.renderEntries (acc : ByteArray) : List (String × Obj) → ByteArray
   | [] => acc
   | (k, v) :: rest =>
@@ -75,14 +60,9 @@ public def Obj.renderEntries (acc : ByteArray) : List (String × Obj) → ByteAr
 
 end
 
-/-- The bytes one object is written as — the writer's single spelling, so
-what a dictionary *is* and how it reads are one value and one function
-(`parseVal_render_id`). -/
+/-- The bytes one object is written as, the writer's single spelling. -/
 public def Obj.render (o : Obj) : ByteArray := Obj.renderInto ByteArray.empty o
 
-/-- An object shows as the bytes it is written as: the one spelling, so a
-diagnostic and a file never disagree. A payload outside UTF-8 (a hex
-string's raw bytes) shows its size instead. -/
 public instance : Repr Obj where
   reprPrec o _ :=
     match String.fromUTF8? (Obj.render o) with
@@ -91,8 +71,7 @@ public instance : Repr Obj where
 
 namespace ObjReader
 
-/-- An unfinished container. A dictionary alternates between its key and
-value, and retains the original order (including duplicate keys). -/
+/-- An unfinished container; a dictionary keeps its entries in order, duplicates included. -/
 inductive Frame where
   | arr (xs : Array Obj)
   | dct (es : Array (String × Obj)) (key : Option String)
@@ -104,8 +83,7 @@ inductive Token where
   | dictOpen
   | dictClose
 
-/-- Scan one token from its first byte. Whitespace belongs to the caller;
-container balancing belongs to the frame machine. -/
+/-- Scans one token from its first byte. -/
 def readToken (b : ByteArray) (i : Nat) : Except String (Token × Nat) := do
   let c := PdfLex.at? b i
   if c == 256 then throw "truncated PDF: an object ends mid-file"
@@ -144,8 +122,7 @@ inductive State where
   | scan (stack : Array Frame) (pos : Nat)
   | result (r : Except String (Obj × Nat))
 
-/-- Deliver a completed value to the surrounding container, or return it
-when no frame remains. All container accumulation goes through this site. -/
+/-- Delivers a completed value to the enclosing container, or returns it when no frame remains. -/
 def accept (stack : Array Frame) (v : Obj) (i : Nat) : ForInStep State :=
   match stack.back? with
   | none => .done (.result (.ok (v,i)))
@@ -158,9 +135,7 @@ def accept (stack : Array Frame) (v : Obj) (i : Nat) : ForInStep State :=
   | some (.dct es (some k)) =>
     .yield (.scan (stack.set! (stack.size-1) (.dct (es.push (k,v)) none)) i)
 
-/-- One byte-consuming transition of the actual reader. The progress
-proof composes these transitions, including the final `done` transition;
-it does not restate the loop as a different parser. -/
+/-- One byte-consuming transition of the reader. -/
 def step (b : ByteArray) : State → ForInStep State
   | .result r => .done (.result r)
   | .scan stack pos =>
@@ -183,8 +158,7 @@ def step (b : ByteArray) : State → ForInStep State
 
 end ObjReader
 
-/-- Parse one object at `i0` (§7.3). The frame stack avoids recursive calls
-on input bytes, and the file's byte count bounds the transition loop. -/
+/-- Parses one object at `i0` (§7.3) with an explicit frame stack, bounded by the file's byte count. -/
 public def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) :=
   let state := (forIn [0:b.size+2] (ObjReader.State.scan #[] i0)
     (fun _ s => pure (ObjReader.step b s)) : Id ObjReader.State).run

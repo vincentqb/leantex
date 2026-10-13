@@ -4,8 +4,7 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.Frequencies
 
-/-- Increment a symbol in a bounded alphabet. Out-of-alphabet symbols leave the
-table unchanged, as `Array.set!` does in the encoder. -/
+/-- Increments a symbol's frequency; an out-of-alphabet symbol leaves the table unchanged. -/
 public def bump (freqs : Array Nat) (symbol : Nat) : Array Nat :=
   freqs.set! symbol (freqs[symbol]?.getD 0 + 1)
 
@@ -27,8 +26,7 @@ public theorem bump_monotone (freqs : Array Nat) (symbol index : Nat) :
     · simp [bump, Array.set!_eq_setIfInBounds, hi]
   · simp [bump, Array.set!_eq_setIfInBounds, Ne.symm h]
 
-/-- Count the selected alphabet symbol of each entry. `none` is an entry that
-does not use this alphabet, such as a literal in the distance table. -/
+/-- Counts each entry's symbol in the alphabet `key` selects; `none` skips the entry. -/
 @[specialize] public def count {α : Type} (key : α → Option Nat)
     (entries : Array α) (initial : Array Nat) : Array Nat := Id.run do
   let mut freqs := initial
@@ -38,8 +36,6 @@ does not use this alphabet, such as a literal in the distance table. -/
       | none => freqs
   return freqs
 
-/-- The actual counter keeps its alphabet size, preserves the initial
-frequencies, and gives every in-range emitted symbol positive frequency. -/
 public theorem count_contract {α : Type} (key : α → Option Nat)
     (entries : Array α) (initial : Array Nat) :
     (count key entries initial).size = initial.size ∧

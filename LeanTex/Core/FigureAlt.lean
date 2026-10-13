@@ -3,25 +3,13 @@ module
 public import LeanTex.Core.Ir
 public import LeanTex.Core.Diag
 
-/-!
-# A figure's own title as its alternative
-
-An SVG may name itself: its root's `<title>` is the figure's accessible
-name in every viewer that reads the file (SVG 2 §5.9). Where the document
-declares no alternative for the image — no `alt=`, no `artifact`, no
-caption — that title is the alternative both artifacts ship: one IR value
-(`Ir.Alt.described`), so the PDF's structure element and the page's name
-read the same words. A declared alternative, a decorative mark and a
-caption all stand; and a logo is decorative furniture by role, whatever its
-file says (`Ir.logoImageSrcs`).
--/
+/-! An SVG figure's own `<title>` as the alternative of an image whose document declares none (SVG 2 §5.9). -/
 
 namespace LeanTex.Core.FigureAlt
 
 open LeanTex.Core LeanTex.Core.Ir
 
-/-- One leaf: an image whose alternative is undeclared takes its source's
-title, where the source has one; every other node is itself. -/
+/-- An image whose alternative is undeclared takes its source's title, where it has one. -/
 @[expose] public def titleLeaf (titles : Array (String × String)) (x : Inline) : Inline :=
   match x with
   | .image src size alt =>
@@ -33,11 +21,7 @@ title, where the source has one; every other node is itself. -/
   | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
   | .onSteps _ _ | .altSteps _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => x
 
-/-- **Every image of the document whose alternative is undeclared and whose
-source names a title takes it**: the body, the running head and foot. A
-picture's labels are not this map's leaves (`Ir.mapBlocks`): an image a
-picture label sets is the picture's ink, named by the picture's own
-alternative. Logos keep their decorative role. -/
+/-- Every image whose alternative is undeclared and whose source names a title takes it; logos stay decorative. -/
 public def titled (titles : Array (String × String)) (doc : Doc) : Doc :=
   let logos := logoImageSrcs doc
   let titles := titles.filter fun (src, t) => !logos.contains src && !t.trimAscii.isEmpty
@@ -46,26 +30,16 @@ public def titled (titles : Array (String × String)) (doc : Doc) : Doc :=
              head := doc.head.map (mapInlines (titleLeaf titles))
              foot := doc.foot.map (mapInlines (titleLeaf titles)) }
 
-/-- The document's diagnostics with each N0376 a figure's title answered
-taken out: an image its source's title names ships an alternative, so the
-judge's census of the shipped document (`Ir.imagesSansAlt`) no longer
-holds it. Every other diagnostic stands, an N0376 for a titled source the
-shipped document still lacks an alternative for included. -/
+/-- The diagnostics without each N0376 a figure's title answered. -/
 public def unanswered (titles : Array (String × String)) (shipped : Doc) (diags : Array Diag) :
     Array Diag :=
   let still := imagesSansAlt shipped
   diags.filter fun d => !(d.kind == .N0376 && d.subject.any fun s =>
     titles.any (·.1 == s) && !still.contains s)
 
-/-- **No title, no change** (`_id`): a document whose figures name no title
-is the document itself. -/
 public theorem titled_id (doc : Doc) : titled #[] doc = doc := by
   simp [titled]
 
-/-- **A dropped diagnostic is paid for** (`_accounts`): `unanswered` keeps
-every diagnostic but an N0376 whose source a title names and whose shipped
-image holds an alternative — what drops it is the alternative the shipped
-document carries, never the title alone. -/
 public theorem unanswered_accounts (titles : Array (String × String)) (shipped : Doc)
     (diags : Array Diag) (d : Diag) (hd : d ∈ diags) (hn : d ∉ unanswered titles shipped diags) :
     (d.kind == .N0376) = true ∧ ∃ s, d.subject = some s ∧ (∃ t, (s, t) ∈ titles) ∧

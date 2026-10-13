@@ -15,8 +15,7 @@ public def Br.bit (r : Br) : Option (Nat × Br) :=
   | none => Option.none
   | some b => some ((b.toNat >>> (r.bitPos % 8)) &&& 1, { r with bitPos := r.bitPos + 1 })
 
-/-- Read `n ≤ 16` bits, LSB-first. The accumulator is a `UInt64`: a `Nat`
-shift has no scalar fast path in the runtime. -/
+/-- Reads `n ≤ 16` bits, LSB-first. -/
 public def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) := Id.run do
   let mut r := r
   let mut v : UInt64 := 0
@@ -35,8 +34,6 @@ def BitField (data : ByteArray) (start width value : Nat) : Prop :=
       ((data[(start + k) / 8]?.getD 0).toNat >>> ((start + k) % 8)) &&& 1 =
         (value >>> k) &&& 1
 
-/-- Reading a present field recovers its entire value and advances exactly its width.
-This invariant follows the existing early-return loop and its `UInt64` accumulator. -/
 theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
     (hv : v < 2 ^ n) (hf : BitField r.data r.bitPos n v) :
     r.bits n = some (v, { r with bitPos := r.bitPos + n }) := by
@@ -79,21 +76,17 @@ theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
     (Nat.pow_le_pow_right (by decide) (Nat.le_of_lt hn)))]
 
 
-/-- A canonical Huffman table: `counts[len]` codes of each length, and the
-symbols in canonical order. The construction never fails; an over-subscribed
-set of lengths simply fails to decode, which the caller reports. -/
+/-- A canonical Huffman table: code counts per length and symbols in canonical order;
+over-subscribed lengths fail at decode. -/
 public structure Huff where
   counts : Array Nat
   symbols : Array Nat
 
-/-- Exact width buckets: zero and widths above the RFC's 15-bit limit do
-not contribute to the table, including its unused zero-width bucket. -/
+/-- The width counts of `lengths`, ignoring zero and widths above fifteen. -/
 def CountsFor (lengths : List Nat) (counts : Array Nat) : Prop :=
   counts.size = 16 ∧ ∀ k, counts[k]?.getD 0 =
     if 0 < k ∧ k < 16 then lengths.count k else 0
 
-/-- The shared counting loop in both Huffman table builders counts precisely
-the widths it has consumed. -/
 theorem huffCounts_loop_exact (lengths : Array Nat) :
     CountsFor lengths.toList (Id.run do
       let mut counts := Array.replicate 16 0
@@ -153,7 +146,6 @@ def huffSymbols (lengths : Array Nat) : Array Nat := Id.run do
 public def mkHuff (lengths : Array Nat) : Huff :=
   { counts := huffCounts lengths, symbols := huffSymbols lengths }
 
-/-- The decoder's actual table contains exactly the declared width counts. -/
 theorem mkHuff_counts_exact (lengths : Array Nat) :
     CountsFor lengths.toList (mkHuff lengths).counts := by
   exact huffCounts_loop_exact lengths
@@ -184,8 +176,6 @@ def CodeField (data : ByteArray) (start width code : Nat) : Prop :=
       ((data[(start + k) / 8]?.getD 0).toNat >>> ((start + k) % 8)) &&& 1 =
         code / 2 ^ (width - 1 - k) % 2
 
-/-- Reversing the encoder's value turns the writer's little-endian field into
-the decoder's most-significant-first codeword. -/
 theorem BitField.codeField {data : ByteArray} {start width code : Nat}
     (hf : BitField data start width (Canonical.reverseBits code width)) :
     CodeField data start width code := by
@@ -195,8 +185,6 @@ theorem BitField.codeField {data : ByteArray} {start width code : Nat}
   have hb := congrArg Bool.toNat (Canonical.reverseBits_bit_exact code width k hk)
   simpa only [Nat.toNat_testBit, Nat.shiftRight_eq_div_pow, Nat.and_one_is_mod] using hb
 
-/-- The actual bounded Huffman decoder recognizes every code in its canonical
-interval. Earlier lengths cannot consume a prefix of that code. -/
 theorem huff_decode_exact (h : Huff) (r : Br) (width code : Nat)
     (hw : 1 ≤ width ∧ width ≤ 15) (hcode : code < 2 ^ width)
     (hf : CodeField r.data r.bitPos width code)
@@ -299,9 +287,7 @@ def reverseCode (code width : Nat) : Nat := Id.run do
     v := v / 2
   return rev
 
-/-- Canonical codes from lengths — the same assignment `mkHuff` decodes
-(RFC 1951 §3.2.2), each code's bits reversed so the LSB-first writer
-emits them most-significant first as §3.1.1 requires. -/
+/-- Canonical codes from lengths (RFC 1951 §3.2.2), bit-reversed for the LSB-first writer. -/
 public def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
   let mut nextCode := codeStarts (huffCounts lengths)
   let mut codes := Array.replicate lengths.size 0
@@ -313,8 +299,6 @@ public def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
       codes := codes.set! s (reverseCode c l)
   return codes
 
-/-- The bit-reversal loop used by `canonCodes` has exactly the declared bit order.
-The invariant records both the reversed prefix and the unconsumed code suffix. -/
 theorem canonCodes_reverseBits_exact (code width : Nat) :
     reverseCode code width = Canonical.reverseBits code width := by
   let P (k : Nat) (s : Nat × Nat) : Prop :=

@@ -12,8 +12,7 @@ namespace LeanTex.Core.PdfRead
 
 open PdfLex ObjReader
 
-/-- The native stream writer leaves a second space when its dictionary
-prefix is empty. This spelling preserves those emitted bytes. -/
+/-- A dictionary spelled as the native stream writer spells it, a second space after `<<` when empty. -/
 public def Obj.paddedDict (es : Array (String × Obj)) : ByteArray :=
   Obj.renderEntries "<<  ".toUTF8 es.toList ++ ">>".toUTF8
 
@@ -67,8 +66,7 @@ private theorem parseVal_paddedDict_span_exact {b : ByteArray} {i p : Nat}
   simp only [List.length_cons] at hb
   omega
 
-/-- Concrete encoder spellings accepted by the stream composition proof.
-The constructors describe source syntax, never a parser result. -/
+/-- The concrete encoder spellings the stream composition proof accepts. -/
 public inductive Obj.Spelling : Obj → ByteArray → Prop where
   | render {o : Obj} (h : o.Representable) : Spelling o o.render
   | paddedDict {es : Array (String × Obj)} (h : (Obj.dict es).Representable) :
@@ -81,8 +79,6 @@ public theorem Obj.Spelling.start {o : Obj} {raw b : ByteArray} {i : Nat}
   | render h => exact h.reads.start hs he.boundary he.marker
   | paddedDict _ => exact paddedDict_start hs
 
-/-- Both concrete stream-dictionary spellings execute through the actual
-object reader, with their own byte lengths and lexical context. -/
 public theorem parseVal_spelling_span_exact {b raw : ByteArray} {i p : Nat}
     (o : Obj) (h : o.Spelling raw) (hs : Span b i (octets raw))
     (he : Stop b (i+raw.size)) (hw : skipWs b p = i) :

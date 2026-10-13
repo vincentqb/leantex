@@ -15,40 +15,13 @@ import all LeanTex.Core.Gfx
 import all LeanTex.Core.GfxPdf
 import LeanTex.Core.LoopProgress
 
-/-!
-# The importer reads back what the PDF writer paints
-
-`readback_id`: a figure of plain opaque paths and groups, written by
-`GfxPdf.emit` and `Pdf.render` and read by the figure importer
-(`readStream`), paints the figure's own marks. `readback_exact` is the
-statement it rests on, over any stream of the covered operations (`opsPlain`):
-the importer's figure paints what PDF's own reading of the operations paints
-(`GfxPdf.readMarks`), every printed number read back (`opBack`).
-
-The proof follows the bytes the importer actually meets. The writer's
-stream is its tokens joined by spaces and line feeds (`render_bytes`), which
-the tokenizer reads back whole (`scan_render`, from
-`PdfContentLex.scan_renderSep_exact`); each printed number reads back as its
-rounding (`spOf_lenObj`, `ratOf_ratObj`, `deviceColor_milli`); the
-interpreter, step by step from PDF's initial state, builds exactly
-`opsRead`'s nodes (`readStream_render`); and those nodes' marks are PDF's
-reading of the operations (`marks_ops`), a colour compared as screens do
-(`markScreen`), since the importer keeps the PDF's spelling of each
-component beside its byte.
-
-Patterns, ExtGState alphas, forms, stamps, images and text name resources a
-stream alone does not hold, so they stand outside this statement; the
-suite's re-import of the synthetic figure matrix (`pdfReadbackChecks`)
-holds them executably.
--/
+/-! The figure importer reads back what the PDF writer paints, for plain opaque paths and groups. -/
 
 namespace LeanTex.Core.PdfGfx
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 open LeanTex.Core.PdfRead (Obj)
 open LeanTex.Core.PdfContentLex (Tok)
-
-/-! ## Reading a printed number back -/
 
 theorem digitsVal_cons (c : Char) (cs : List Char) :
     digitsVal (c :: cs) = (c.toNat - 48) * 10 ^ cs.length + digitsVal cs := by
@@ -104,8 +77,7 @@ theorem posSpell (k : Nat) : (toString ((k : Nat) : Int)).toList = Nat.toDigits 
   have hn : (0 ≤ ((k : Nat) : Int)) := by omega
   simp only [hn, ↓reduceIte, Int.toNat_natCast, Nat.toList_repr]
 
-/-- A length's operand as the writer spells it (`Sp.toPtString`): a whole
-number of points an integer, any other length a real with its spelling. -/
+/-- A length's operand as the writer spells it: an integer for whole points, else a real. -/
 def lenObj (x : Sp) : Obj :=
   if x.toPtMilli.natAbs % 1000 = 0 then
     .int (if x.toPtMilli < 0 then -((x.toPtMilli.natAbs / 1000 : Nat) : Int)
@@ -133,8 +105,6 @@ theorem numByte_digit {c : Char} (h : c.isDigit = true) : PdfLex.numByte c.toNat
   simp only [PdfLex.numByte, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
   omega
 
-/-- A real's spelling, an optional sign, its digits, a point and more digits,
-read as its parts. -/
 theorem numParts_decimal (s : String) (neg : Bool) (ds fd : List Char)
     (hs : s.toList = (if neg then ['-'] else []) ++ ds ++ '.' :: fd)
     (hd : ∀ c ∈ ds, c.isDigit = true) (hne : ds ≠ []) (hf : ∀ c ∈ fd, c.isDigit = true) :
@@ -194,9 +164,6 @@ theorem lenObj_spelled (x : Sp) : PdfContentLex.ValSpelled (lenObj x) := by
       · subst hc; decide
       · exact numByte_digit (fracDigits_digits 3 _ c hc)
 
-/-- **A printed length reads back as its quantization** (`_exact`): the
-importer's reading of `Sp.toPtString`'s spelling is the length on the
-milli-point grid (`Gfx.qSp`). -/
 theorem spOf_lenObj (x : Sp) : spOf (lenObj x) = some (qSp x) := by
   unfold lenObj spOf
   split
@@ -260,8 +227,7 @@ theorem spOf_lenObj (x : Sp) : spOf (lenObj x) = some (qSp x) := by
 magnitude in billionths, rounded half away from zero. -/
 @[expose] public def ratV (p q : Int) : Nat := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
 
-/-- A ratio's operand as the writer spells it (`Dim.ratString`): an integer
-where it has no fraction, else a real with its spelling. -/
+/-- A ratio's operand as the writer spells it: an integer without fraction, else a real. -/
 def ratObj (p q : Int) : Obj :=
   if ratV p q % 1000000000 = 0 then
     .int (if p < 0 ∧ ratV p q ≠ 0 then -((ratV p q / 1000000000 : Nat) : Int)
@@ -416,9 +382,6 @@ theorem ratOf_real (p q : Int) (hf : ¬ ratV p q % 1000000000 = 0) :
   · have hd : decide (p < 0) = false := decide_eq_false hneg
     rw [hd, ite_eq_right (by decide), ite_eq_right hneg, hm]
 
-/-- **A printed ratio reads back as its rounding** (`_exact`): the
-importer's reading of `Dim.ratString`'s spelling is `p / q` at nine
-decimals (`ratRead`). -/
 theorem ratOf_ratObj (p q : Int) : ratOf (ratObj p q) = some (ratRead p q) := by
   by_cases hf : ratV p q % 1000000000 = 0
   · have e : ratObj p q = .int (if p < 0 ∧ ratV p q ≠ 0 then -((ratV p q / 1000000000 : Nat) : Int)
@@ -431,10 +394,7 @@ theorem ratOf_ratObj (p q : Int) : ratOf (ratObj p q) = some (ratRead p q) := by
     rw [e]
     exact ratOf_real p q hf
 
-/-! ## Colours -/
-
-/-- A channel's operand as the writer spells it (`Ir.Color.pdfMilli` of
-its thousandth): the ends integers, anything between a real. -/
+/-- A channel's operand as the writer spells it: the ends integers, anything between a real. -/
 def milliObj (v : Nat) : Obj :=
   if v = 0 then .int 0 else if v = 1000 then .int 1 else .real (Ir.Color.pdfMilli v)
 
@@ -542,8 +502,6 @@ theorem mkRat_milli_bounds (v : Nat) (hv : v ≤ 1000) :
       exact Rat.natCast_le_natCast.mpr hv
     exact absurd h (Rat.not_lt.mpr this)
 
-/-- **A printed channel reads back as its byte** (`_exact`): `byteOf` of
-the thousandth `Ir.Color.milli` prints is the channel. -/
 theorem byteOf_milli (c : UInt8) :
     byteOf (unit01 ((ratOf (milliObj (Ir.Color.milli c))).getD 0)) = c := by
   have hc := c.toNat_lt
@@ -597,10 +555,6 @@ theorem milli_le (c : UInt8) : Ir.Color.milli c ≤ 1000 := by
   rw [Ir.Color.milli_eq]
   omega
 
-/-- **A written colour reads back as its bytes** (`_exact`): the three
-operands the writer prints for a plain colour's `rg`, read by the importer
-as device RGB, are the colour's bytes, the PDF's spelling kept beside
-them. -/
 theorem deviceColor_milli (c : Ir.Color) :
     deviceColor .rgb #[milliObj (Ir.Color.milli c.r), milliObj (Ir.Color.milli c.g),
       milliObj (Ir.Color.milli c.b)] = colorRead c := by
@@ -610,8 +564,6 @@ theorem deviceColor_milli (c : Ir.Color) :
   rw [byteOf_milli, byteOf_milli, byteOf_milli, spelling_milliObj _ (milli_le _),
     spelling_milliObj _ (milli_le _), spelling_milliObj _ (milli_le _)]
 
-/-! ## The writer's spelling, token by token -/
-
 /-- One token as the writer spells it: the token the reader meets, its
 characters, and the byte the writer puts after it. -/
 structure Word where
@@ -619,10 +571,8 @@ structure Word where
   str : String
   sep : UInt8
 
-/-- A word's characters and its separator. -/
 def Word.chars (w : Word) : List Char := w.str.toList ++ [Char.ofNat w.sep.toNat]
 
-/-- Words spelled one after another, each followed by its separator. -/
 def wordsChars (ws : List Word) : List Char := (ws.map Word.chars).flatten
 
 @[simp] theorem wordsChars_nil : wordsChars [] = [] := rfl
@@ -639,16 +589,13 @@ def wordsChars (ws : List Word) : List Char := (ws.map Word.chars).flatten
 
 @[simp] theorem sep_nl : Char.ofNat (10 : UInt8).toNat = '\n' := rfl
 
-/-- An operator. -/
 def opW (n : String) : Word := ⟨.op n, n, 32⟩
 
-/-- A length (`Sp.toPtString`). -/
 def lenW (x : Sp) : Word := ⟨.val (lenObj x), x.toPtString, 32⟩
 
 /-- A colour channel's thousandth (`Ir.Color.pdfMilli`). -/
 def milliW (v : Nat) : Word := ⟨.val (milliObj v), Ir.Color.pdfMilli v, 32⟩
 
-/-- A ratio at nine decimals (`Dim.ratString`). -/
 def ratW (p q : Int) : Word := ⟨.val (ratObj p q), ratString p q, 32⟩
 
 /-- A whole number: a cap's or a join's code. -/
@@ -667,7 +614,6 @@ def endLine : List Word → List Word
   | [w] => [w.nl]
   | w :: rest => w :: endLine rest
 
-/-- A path operator's words. -/
 def pathWords : Pdf.PathOp → List Word
   | .moveTo x y => [lenW x, lenW y, opW "m"]
   | .lineTo x y => [lenW x, lenW y, opW "l"]
@@ -919,9 +865,6 @@ theorem operands_eq (m : Affine) : m.operands =
       ratString m.e.num ((m.e.den : Int) * spPerPt) ++ " " ++ ratString m.f.num ((m.f.den : Int) * spPerPt) := by
   rfl
 
-/-- The matrix operands' characters, over any six spellings: proved once
-over variables, so the kernel never re-checks the normalization against the
-printer's own terms. -/
 theorem cm_chars (a b c d e f : String) :
     (" " ++ (a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ " " ++ e ++ " " ++ f) ++ " cm").toList =
       lead [⟨.op "", a, 32⟩, ⟨.op "", b, 32⟩, ⟨.op "", c, 32⟩, ⟨.op "", d, 32⟩, ⟨.op "", e, 32⟩,
@@ -1015,11 +958,7 @@ theorem groupHeader_chars (m : Option Affine) (clips : Array (Array Pdf.PathOp �
   simp only [String.toList_append, cmStr_chars, clips_chars, lead_append, opW]
   simp
 
-/-! ## The operations the read-back covers -/
-
-/-- What a matrix's six printed operands read back as (`Gfx.Affine.operands`,
-`PdfGfx.affineOf`): each linear entry at nine decimals, each translation at
-nine decimals of a point. -/
+/-- What a matrix's six printed operands read back as, each at nine decimals. -/
 @[expose] public def readAffine (m : Affine) : Affine :=
   ⟨ratRead m.a.num m.a.den, ratRead m.b.num m.b.den, ratRead m.c.num m.c.den, ratRead m.d.num m.d.den,
    ratRead m.e.num ((m.e.den : Int) * spPerPt) * 65536, ratRead m.f.num ((m.f.den : Int) * spPerPt) * 65536⟩
@@ -1027,11 +966,7 @@ nine decimals of a point. -/
 mutual
 
 -- conserves: none — a predicate.
-/-- **The operations the read-back covers**: a path painted in plain
-device colours, opaque, with a fill or a stroke and a path to paint; a
-saved state with no ExtGState, whose matrix reads back as no identity and
-whose clips each have a path, around such operations. Patterns, alphas,
-forms, images and text name resources the stream alone does not hold. -/
+/-- The operations the read-back covers: plain opaque paths, and saved states around them with no ExtGState. -/
 @[expose] public def opPlain : Pdf.ContentOp → Bool
   | .paint fl st gs segs =>
     gs.isNone && fl.all (plainPaint ·.paint) && st.all (plainPaint ·.paint) &&
@@ -1050,21 +985,18 @@ end
 
 mutual
 
-/-- An operation's words. -/
 def opWords : Pdf.ContentOp → List Word
   | .paint fl st _ segs => paintWords fl st segs
   | .group m _ clips body => endLine (headerWords m clips) ++ opWordsInto [] body.toList ++ [(opW "Q").nl]
   | .fill _ _ _ _ _ | .text _ | .image _ _ _ _ _ | .imageMissing _ _ _ _ | .marked _ _ | .shade _ _
   | .outline _ _ _ | .xobject _ _ _ _ => []
 
-/-- Operations' words onto `acc`. -/
 def opWordsInto (acc : List Word) : List Pdf.ContentOp → List Word
   | [] => acc
   | o :: rest => opWordsInto (acc ++ opWords o) rest
 
 end
 
-/-- Operations' words. -/
 def opWordsList (l : List Pdf.ContentOp) : List Word := opWordsInto [] l
 
 theorem opWordsInto_acc (acc : List Word) (l : List Pdf.ContentOp) :
@@ -1127,14 +1059,11 @@ theorem ops_chars : ∀ (l : List Pdf.ContentOp), opsPlain l = true →
 
 end
 
-/-! ## From characters to the bytes the tokenizer reads -/
-
 /-- Tokens each followed by its byte. -/
 def joinInto (acc : ByteArray) : List (Tok × UInt8) → ByteArray
   | [] => acc
   | (t, w) :: rest => joinInto (acc ++ PdfContentLex.spell t ++ ⟨#[w]⟩) rest
 
-/-- Tokens each followed by its byte, from nothing. -/
 def joinFull (ts : List (Tok × UInt8)) : ByteArray := joinInto .empty ts
 
 theorem joinInto_acc (acc : ByteArray) (ts : List (Tok × UInt8)) :
@@ -1212,8 +1141,6 @@ theorem render_nl_chars (ops : Array Pdf.ContentOp) (h : ops.toList ≠ []) :
   unfold Pdf.render
   rw [← Array.foldl_toList, hl, List.foldl_cons, Pdf.renderStep, foldl_renderStep, Option.getD_some,
     shift_nl, List.map_cons, String.join_cons]
-
-/-! ## Every word is one the tokenizer reads back -/
 
 theorem renderInto_eq (acc : ByteArray) (o : Obj) : Obj.renderInto acc o = acc ++ o.render := by
   have := PdfRead.Obj.renderInto_append acc ByteArray.empty o
@@ -1293,8 +1220,6 @@ theorem endLine_ok : ∀ (ws : List Word), (∀ w ∈ ws, WordOk w) → ∀ w �
     rcases hw with rfl | hw
     · exact h w (by simp)
     · exact endLine_ok (u :: rest) (fun x hx => h x (by simp_all)) w (by simpa [endLine] using hw)
-
-/-! ### The words of a covered operation -/
 
 theorem paintOp_cases (fl : Option Pdf.PaintFill) (st : Option Pdf.PaintStroke) :
     Pdf.paintOp fl st = "f" ∨ Pdf.paintOp fl st = "f*" ∨ Pdf.paintOp fl st = "S" ∨
@@ -1423,8 +1348,6 @@ theorem opWordsList_ok : ∀ (l : List Pdf.ContentOp), ∀ w ∈ opWordsList l, 
 
 end
 
-/-! ### No array before an `R` -/
-
 theorem spelled_append : ∀ (A B : List Tok), PdfContentLex.Spelled A → PdfContentLex.Spelled B →
     (∀ o, A.getLast? = some (.val o) → PdfContentLex.readByObj o = true →
       ∀ u ∈ B.head?, PdfContentLex.leadR u = false) →
@@ -1458,7 +1381,6 @@ theorem good_append (A B : List Word) (hA : Good A) (hB : Good B) : Good (A ++ B
     | none => simp [hb] at hw; exact hA.2 w hw
     | some v => simp [hb] at hw; subst hw; exact hB.2 v hb
 
-/-- A run of number operands and operators, ending with an operator. -/
 theorem good_free (ws : List Word) (ht : ∀ w ∈ ws, PdfContentLex.TokSpelled w.tok)
     (hf : ∀ w ∈ ws, ∀ o, w.tok = .val o → PdfContentLex.readByObj o = false)
     (hl : ∀ w, ws.getLast? = some w → ∃ n, w.tok = .op n) : Good ws := by
@@ -1656,8 +1578,6 @@ theorem good_opWordsList : ∀ (l : List Pdf.ContentOp), Good (opWordsList l)
 
 end
 
-/-! ### The stream reads back as its words' tokens -/
-
 theorem opWords_last (o : Pdf.ContentOp) (h : opPlain o = true) :
     ∃ w, (opWords o).getLast? = some w ∧ w.sep = 10 := by
   cases o with
@@ -1693,9 +1613,6 @@ theorem bytes_cancel (A B : ByteArray) (w : UInt8) (h : A ++ ⟨#[w]⟩ = B ++ �
   apply ByteArray.ext
   exact Array.toList_inj.mp h2
 
-/-- **The writer's stream is its words' bytes** (`_exact`): a stream of
-covered operations, as `Pdf.render` spells it, is the words' tokens joined
-by their separators — the spelling the tokenizer reads back. -/
 theorem render_bytes (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true) :
     (Pdf.render ops).toUTF8 = PdfContentLex.renderSep ((opWordsList ops.toList).map fun w => (w.tok, w.sep)) := by
   by_cases he : ops.toList = []
@@ -1727,7 +1644,6 @@ theorem render_bytes (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true
     rw [hnl, ← String.toUTF8_eq_toByteArray] at hb
     exact bytes_cancel _ _ _ hb
 
-/-- **The tokenizer reads the writer's stream back as its words' tokens**. -/
 theorem scan_render (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true) :
     PdfContentLex.scan (Pdf.render ops).toUTF8 = ((opWordsList ops.toList).map (·.tok)).toArray := by
   rw [render_bytes ops h, PdfContentLex.scan_renderSep_exact]
@@ -1738,8 +1654,6 @@ theorem scan_render (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true)
   · intro t ht
     obtain ⟨w, hw, rfl⟩ := List.mem_map.mp ht
     rcases (opWordsList_ok ops.toList w hw).sep with h | h <;> simp [h] <;> decide
-
-/-! ## The importer's steps -/
 
 theorem tokStep_val (cx : Ctx) (e : Entered cx.doc) (st : St) (o : Obj) :
     tokStep cx e st (.val o) = { st with ops := st.ops.push o } := rfl
@@ -1863,8 +1777,7 @@ theorem stepRest_cm (cx : Ctx) (e : Entered cx.doc) (st : St) (m : Affine)
   rw [stepRest]
   simp only [St.nums, h]
 
-/-- A path operator as the importer reads it back: its lengths on the
-milli-point grid (`spOf_lenObj`). -/
+/-- A path operator as the importer reads it back, its lengths on the milli-point grid. -/
 @[expose] public def pathRead : Pdf.PathOp → Pdf.PathOp
   | .moveTo x y => .moveTo (qSp x) (qSp y)
   | .lineTo x y => .lineTo (qSp x) (qSp y)
@@ -2037,8 +1950,6 @@ theorem run_strokeWords (cx : Ctx) (e : Entered cx.doc) (st : St) (k : Pdf.Paint
     run_miterWords _ _ _ _ (by simp), run_dashWords _ _ _ _ (by simp)]
   simp [strokeGs, hops]
 
-/-! ### Painting -/
-
 /-- The geometry the importer gives a path (`St.geom`). -/
 def stGeom (path : Array Pdf.PathOp) : Geom :=
   match GfxPdf.geomOf path.toList with
@@ -2110,8 +2021,6 @@ theorem paintPath_plain (cx : Ctx) (st : St) (fill : Option Rule) (stroke : Bool
     rw [emit_plain _ _ hh hm]
     simp [st_geom, strokeOf, inkColor, hcf, hcs, fillOf, hclip]
 
-/-! ### Closing groups -/
-
 theorem closeTo_noop (fs : Array Open) (n : Nat) (h : fs.size ≤ max n 1) : closeTo fs n = fs := by
   unfold closeTo
   cases hk : fs.size with
@@ -2137,8 +2046,6 @@ theorem closeTo_one (F : Array Open) (T G : Open) :
     have h : (F.push (closeInto T G)).size ≤ max (F.size + 1) 1 := by simp
     rw [ite_eq_left h]
     rfl
-
-/-! ### A painted path, through the importer -/
 
 /-- The importer's state between covered operations: PDF's initial
 graphics state under the current matrix, no path, no pending clip, no
@@ -2347,8 +2254,6 @@ theorem run_paint (cx : Ctx) (e : Entered cx.doc) (st : St) (hc : Calm st) (T : 
     rfl
   · obtain ⟨k, rfl⟩ := Option.isSome_iff_exists.mp hs
     exact ⟨_, gsAfter_stroke gs fl k⟩
-
-/-! ### A saved state's header, through the importer -/
 
 theorem run_endLine (cx : Ctx) (e : Entered cx.doc) (st : St) (ws : List Word) :
     run cx e st (endLine ws) = run cx e st ws := by
@@ -2576,8 +2481,6 @@ theorem run_header_frame (cx : Ctx) (e : Entered cx.doc) (st : St) (hc : Calm st
     rw [hh]
     rfl
 
-/-! ### A covered operation, through the importer -/
-
 /-- The nodes a covered saved state with a frame adds where it closes:
 none when it painted nothing, else the group of what it painted. -/
 def groupRead (m : Option Affine) (clips : Array (Array Pdf.PathOp × Rule))
@@ -2587,11 +2490,8 @@ def groupRead (m : Option Affine) (clips : Array (Array Pdf.PathOp × Rule))
 
 mutual
 
--- conserves: none — the importer's nodes for a covered stream, which
--- `readback_exact` reads back.
-/-- **The nodes the importer builds for a covered operation**: a painted
-path's draw; a saved state's nodes in its own group when it has a matrix
-or a clip, else in place. -/
+-- conserves: none — the importer's nodes for a covered stream.
+/-- The nodes the importer builds for a covered operation. -/
 def opRead : Pdf.ContentOp → Array (Node Run)
   | .paint fl sk _ segs => #[drawRead fl sk segs]
   | .group m _ clips body =>
@@ -2600,14 +2500,12 @@ def opRead : Pdf.ContentOp → Array (Node Run)
   | .fill _ _ _ _ _ | .text _ | .image _ _ _ _ _ | .imageMissing _ _ _ _ | .marked _ _ | .shade _ _
   | .outline _ _ _ | .xobject _ _ _ _ => #[]
 
-/-- Covered operations' nodes onto `acc`. -/
 def opsReadInto (acc : Array (Node Run)) : List Pdf.ContentOp → Array (Node Run)
   | [] => acc
   | o :: rest => opsReadInto (acc ++ opRead o) rest
 
 end
 
-/-- Covered operations' nodes, in order. -/
 def opsRead (l : List Pdf.ContentOp) : Array (Node Run) := opsReadInto #[] l
 
 theorem opsReadInto_acc (acc : Array (Node Run)) (l : List Pdf.ContentOp) :
@@ -2772,14 +2670,9 @@ theorem sim_list (cx : Ctx) (e : Entered cx.doc) : ∀ (l : List Pdf.ContentOp) 
 
 end
 
-/-! ### The stream, through the importer -/
-
 theorem calm_initial : Calm (St.initial (GState.initial Affine.unit) Store.empty) :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- **The importer reads a covered stream as the covered nodes**: the
-figure of a stream of covered operations, as `Pdf.render` spells it, holds
-exactly `opsRead`'s nodes, nothing in its store, and no loss. -/
 theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true) :
     let fig := readStream cx (Pdf.render ops).toUTF8
     fig.nodes = opsRead ops.toList ∧ fig.losses = #[] ∧ fig.outlines = #[] ∧ fig.symbols = #[] := by
@@ -2816,13 +2709,10 @@ theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain o
     rw [hst]
     rfl
 
-/-! ## What the importer's figure paints -/
-
 /-- The identity placement: a figure read where it was written. -/
 @[expose] public def isoId : Iso := { flipY := false, dx := 0, dy := 0 }
 
-/-- A colour as a screen compares it (`Ir.Color.beq_screen_exact`): its
-device spelling forgotten, its bytes and its CMYK rider kept. -/
+/-- A colour as a screen compares it: its device spelling forgotten. -/
 @[expose] public def colorScreen (c : Ir.Color) : Ir.Color := { c with pdfModel := none }
 
 @[expose] public def stopScreen (s : Stop) : Stop := { s with color := colorScreen s.color }
@@ -2839,15 +2729,13 @@ device spelling forgotten, its bytes and its CMYK rider kept. -/
 
 @[expose] public def strokeScreen (s : Stroke) : Stroke := { s with paint := paintScreen s.paint }
 
-/-- **A mark as a screen compares it**: every colour's device spelling
-forgotten — what `Mark`'s own `==` compares, as a function. -/
+/-- A mark as a screen compares it, every colour's device spelling forgotten. -/
 @[expose] public def markScreen : Mark → Mark
   | .paint ctm g fl sk clips alphas => .paint ctm g (fl.map fillScreen) (sk.map strokeScreen) clips alphas
   | .raster ctm k clips alphas => .raster ctm k clips alphas
   | .shading g clips alphas => .shading (gradScreen g) clips alphas
 
-/-- A stroke with every number the writer prints read back (`spOf_lenObj`,
-`ratOf_ratObj`), its dash as both readers draw it (`Kit.normDash`). -/
+/-- A stroke with every number the writer prints read back, its dash as both readers draw it. -/
 @[expose] public def strokeBack (k : Pdf.PaintStroke) : Pdf.PaintStroke :=
   { k with
     width := qSp k.width
@@ -2857,9 +2745,7 @@ forgotten — what `Mark`'s own `==` compares, as a function. -/
 mutual
 
 -- conserves: none — a read-back of the numbers an operation prints.
-/-- **An operation with every number it prints read back**: lengths on the
-milli-point grid, ratios at nine decimals, a matrix as its operands read —
-what reading the written stream gives back, by `opRead`'s reading. -/
+/-- An operation with every number it prints read back. -/
 @[expose] public def opBack : Pdf.ContentOp → Pdf.ContentOp
   | .paint fl sk gs segs => .paint fl (sk.map strokeBack) gs (segs.map pathRead)
   | .group m gs clips body =>
@@ -3129,8 +3015,6 @@ theorem marks_ops : ∀ (l : List Pdf.ContentOp) (cx : Gfx.Ctx) (rs : GfxPdf.RSt
 
 end
 
-/-! ## The read-back -/
-
 mutual
 
 theorem expandOne_free {L : Type} (done : Array (Array (Node L))) (bound : Nat) :
@@ -3184,16 +3068,6 @@ theorem opsRead_free : ∀ (l : List Pdf.ContentOp), Node.useFreeList (opsRead l
 
 end
 
-/-- **The importer reads a covered stream as PDF means it** (`_exact`): a
-content stream of covered operations (`opsPlain`) — paths painted in
-plain device colours, opaque, inside saved states with matrices and clips —
-written as the PDF writer spells it (`Pdf.render`) and read by the
-importer (`readStream`, whatever resources `cx` holds, since the stream
-names none), is a figure with no loss whose marks are PDF's own reading of
-the operations (`GfxPdf.readMarks`) once every printed number is read back
-(`opBack`: lengths on the milli-point grid, ratios at nine decimals), each
-colour compared on screen (`markScreen`: the importer keeps the PDF's
-spelling of a component beside its byte). -/
 public theorem readback_exact (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true) :
     (readStream cx (Pdf.render ops).toUTF8).losses = #[] ∧
       (readStream cx (Pdf.render ops).toUTF8).marks.map markScreen =
@@ -3205,8 +3079,6 @@ public theorem readback_exact (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPla
   simp only [Array.size_empty]
   rw [expandList_free _ _ _ _ (opsRead_free ops.toList), Array.empty_append, List.toList_toArray]
   exact marks_ops ops.toList Gfx.Ctx.root _ #[] #[] h agree_root rfl
-
-/-! ## A figure the read-back covers -/
 
 /-- A fill the read-back covers: a plain device colour, opaque. -/
 @[expose] public def fillPlain (f : Fill) : Bool :=
@@ -3229,9 +3101,8 @@ public theorem readback_exact (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPla
 mutual
 
 -- conserves: none — a predicate.
-/-- **A figure node the read-back covers**: a fill or a stroke in plain
-opaque colours on a path to paint; an opaque group of such nodes, its clips
-each a path; words. -/
+/-- A figure node the read-back covers: a plain opaque fill or stroke on a path, an opaque group of
+such nodes, or words. -/
 @[expose] public def nodePlain : Node Empty → Bool
   | .draw g fl sk => geomInked g && fl.all fillPlain && sk.all strokePlain && (fl.isSome || sk.isSome)
   | .group _ clips alpha kids =>
@@ -3372,8 +3243,7 @@ theorem draw_plain (ix : GfxPdf.Request → Nat) (fr : GfxPdf.Frame) (hfr : fr.i
   · intro he
     exact frameOps_ne fr hfr g hg _ (by simpa using he)
 
-/-- A figure with no labels sets none: the label setter of a `Figure
-Empty`, which the PDF writer's own (`Pdf.figureOps`) equals as a function. -/
+/-- The label setter of a `Figure Empty`, which sets none. -/
 @[expose] public def noLabels : GfxPdf.Frame → Empty → Array Pdf.ContentOp := fun _ e => nomatch e
 
 theorem noLabels_unique (f : GfxPdf.Frame → Empty → Array Pdf.ContentOp) : f = noLabels := by
@@ -3455,18 +3325,6 @@ theorem plain_emitList (ix : GfxPdf.Request → Nat) (outlines : Array (Array Su
 
 end
 
-/-- **The importer reads back what the PDF writer paints** (`_id`): a
-figure the read-back covers (`nodesPlain`: fills and strokes in plain
-opaque colours, opaque groups with any matrix and clips, words), its
-operators as `GfxPdf.emit` writes them where the page places them
-(`isoId`) and on the print grid (every number they print reads back as
-itself, `opsBack`), written by the PDF writer (`Pdf.render`) and imported
-(`readStream`) whatever resources `cx` holds, is a figure with no loss that
-paints the figure's own marks (`Figure.marks`), each colour compared on
-screen (`markScreen`). Patterns, alpha groups, forms, stamps, images and
-text name resources outside the stream; they stand outside this statement,
-and the suite's re-import of the synthetic matrix (`pdfReadbackChecks`)
-holds them executably. -/
 public theorem readback_id (cx : Ctx) (ix : GfxPdf.Request → Nat) (fig : Figure Empty)
     (hp : nodesPlain fig.nodes.toList = true)
     (hg : (opsBack (GfxPdf.emit ix noLabels isoId fig).toList).toArray = GfxPdf.emit ix noLabels isoId fig) :

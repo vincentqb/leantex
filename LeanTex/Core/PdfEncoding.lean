@@ -6,12 +6,8 @@ import LeanTex.Core.PdfReadProof
 namespace LeanTex.Core.PdfRead
 open PdfLex
 
-/-! Executable spelling checks for source objects, before serialization.
-These inspect the encoder's input grammar; they never run the PDF reader
-or compare a recovered object with its source. -/
+/-! Executable checks of the object encoder's source grammar, before serialization. -/
 
-/-- The native literal encoder escapes every parenthesis and backslash.
-Accept that flat spelling, ending at exactly one closing parenthesis. -/
 private def literalTail : List Nat → Bool
   | [] => false
   | 41 :: [] => true
@@ -49,9 +45,7 @@ private theorem hexTail_sound (cs : List Nat) (h : hexTail cs = true) :
     obtain ⟨body, rfl, hb⟩ := ih h.2
     exact ⟨c :: body, rfl, by simpa using And.intro h.1 hb⟩
 
-/-- Exact delimiters around a native escaped literal or a hexadecimal
-string. Balanced nested literals are valid PDF but outside this encoder's
-checked source domain. -/
+/-- Exact delimiters around a native escaped literal or a hexadecimal string. -/
 def Obj.stringEncodable : List Nat → Bool
   | 40 :: cs => literalTail cs
   | 60 :: cs => hexTail cs
@@ -75,8 +69,7 @@ instance (s : String) : Decidable (Obj.RealSpelling s) :=
 
 mutual
 
-/-- Check every raw spelling the object encoder accepts. The recursive
-container checks share the same source tree as `Obj.renderInto`. -/
+/-- Whether every raw spelling in an object is one the object encoder accepts. -/
 public def Obj.encodable : Obj → Bool
   | .null | .bool _ | .int _ | .ref _ _ => true
   | .name s => decide (NameSpelling s)
@@ -97,8 +90,6 @@ end
 
 mutual
 
-/-- The executable source check establishes the syntactic domain of the
-proved production parser/renderer round trip. -/
 private theorem Obj.encodable_sound (v : Obj) (h : v.encodable = true) :
     v.Representable := by
   cases v with
@@ -144,13 +135,9 @@ private theorem Obj.encodableEntries_contract (es : List (String × Obj))
 
 end
 
-/-- The source checker establishes the encoder's complete representable domain. -/
 public theorem Obj.encodable_contract (v : Obj) (h : v.encodable = true) :
     v.Representable := encodable_sound v h
 
-/-- The executable grammar check supplies the complete parser/renderer
-round trip. This is quantified over arbitrary source trees and bytes,
-including nested containers and raw string spellings. -/
 public theorem Obj.encodable_render_exact (o : Obj) (h : o.encodable = true) :
     parseVal o.render 0 = .ok (o, o.render.size) :=
   parseVal_render_id o (o.encodable_contract h)

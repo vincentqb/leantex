@@ -8,9 +8,7 @@ import all LeanTex.Core.PdfRead
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex PdfRead.ObjReader
 
-/-! Object recovery in the payload the PDF writer actually builds. These
-proofs preserve the writer's accumulator and derive lexical boundaries
-from subsequent rendered entries. -/
+/-! Object recovery from the payload the PDF writer builds. -/
 
 private theorem payload_cons (id : Nat) (v : Obj) (xs : List (Nat × Obj)) :
     (objectStream ((id,v)::xs)).payload =
@@ -51,16 +49,6 @@ private theorem payload_append (before after : List (Nat × Obj)) :
   rw [objectStream, objectStreamList_append, objectStreamList_payload]
   rfl
 
-/-- The actual object-stream payload and actual value parser compose.
-The offset is the header's `/First` plus the preceding payload's measured
-size, and the parser consumes exactly this entry's rendered bytes. The
-following objects need only the renderer's structural representability
-predicate: their syntax supplies the integer-reference lookahead boundary.
-No parser result or decompressor result occurs among the premises.
-
-This artifact theorem closes payload recovery; reading the object-stream
-header, selecting its xref index, and inflating its bytes remain separate
-composition steps. -/
 public theorem objectStream_parse_entry_exact (before after : List (Nat × Obj))
     (id : Nat) (v : Obj) (hv : v.Representable)
     (ha : ∀ e ∈ after, e.2.Representable) :
