@@ -500,10 +500,10 @@ def reports : List Report := [
     state := .guarded "09e4aa72" .before .author },
   { id := "R57", date := "2026-09-30"
     what := "an exporter doctype identifier caused a self-contained vector drawing to become a placeholder in both artifacts"
-    pins := [check% svgAssetChecks, check% svgNativeBoundaryChecks]
+    pins := [check% svgNativeBoundaryChecks]
     accept := ["synthetic exporter-doctype inputs through the installed converters, with original browser bytes and painted native PDF pixels",
       "the private reference figure rendered from its original vector source"]
-    state := .guarded "1c668735" .before .author },
+    state := .guarded "4ead28ae" .revert .author },
   { id := "R58", date := "2026-09-30"
     what := "a rebuilt browser figure retained the address of its cached blank response, so replaced image bytes did not reach the page"
     pins := [check% imageContentUrlChecks, check% htmlAssetChecks,

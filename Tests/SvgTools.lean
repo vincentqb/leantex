@@ -15,7 +15,7 @@ namespace Tests
 insists on receiving the canonical spelling of a parse (never an authored
 comment), writes a PDF drawing, and answers with the failure set for it. -/
 private def svgToolRunner (calls : IO.Ref (Array String))
-    (failure : IO.Ref (Option (Except IO.Error IO.Process.Output)))
+    (failure : IO.Ref (Option (Except IO.Error IO.Process.Output))) (writes : IO.Ref Bool)
     (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
   calls.modify (·.push args.cmd)
   let some input := args.args.back? | throw <| IO.userError "missing captured input"
@@ -23,7 +23,7 @@ private def svgToolRunner (calls : IO.Ref (Array String))
   unless (Xml.parse canonical).toBool && !bytesContain canonical "<!--" do
     throw <| IO.userError "the converter received bytes that are not a canonical parse"
   -- Even a failing converter may leave bytes; its exit still decides.
-  if args.cmd == "rsvg-convert" then
+  if args.cmd == "rsvg-convert" && (← writes.get) then
     let some output := args.args[2]? | throw <| IO.userError "missing output argument"
     IO.FS.writeBinFile (System.FilePath.mk output) svgCanvasPdf
   if let some result ← failure.get then return ← EIO.ofExcept result
@@ -58,8 +58,10 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         | _ => none
   let calls ← IO.mkRef (#[] : Array String)
   let failure ← IO.mkRef (none : Option (Except IO.Error IO.Process.Output))
+  let writes ← IO.mkRef true
   let converter : Driver.Converter := Driver.Converter.always fun canonical independent =>
-    ImageAssets.canonicalPlan {} canonical independent (runTool := some (svgToolRunner calls failure))
+    ImageAssets.canonicalPlan {} canonical independent
+      (runTool := some (svgToolRunner calls failure writes))
   let exact ← Driver.svgFetch req.src still .first "en" (some converter)
   check ref "SVG tools: an exact figure asks no tool and ships the engine's drawing"
     ((← calls.get).isEmpty && exact.vector.isSome && exact.diags.isEmpty &&
@@ -130,5 +132,20 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       hasStr (diagWords d) "open files" && !hasStr (diagWords d) "brew install")
   check ref "SVG process resource failure is a run that did not finish, its repair named conditionally"
     (exhausted.diags.all fun d => (d.help.map (hasStr · "if the reason says it cannot start")).getD false)
+  -- A bounded run's own error already names the tool it ran.
+  failure.set (some (.error (IO.userError "rsvg-convert: incomplete output within the run's budget")))
+  let overrun ← Driver.svgFetch req.src lossy .first "en" (some converter)
+  check ref "SVG converter overrun names its tool once"
+    (!overrun.diags.isEmpty && overrun.diags.all fun d =>
+      hasStr (diagWords d) "rsvg-convert: incomplete output" &&
+        !hasStr (diagWords d) "rsvg-convert: rsvg-convert:")
+  -- A run that exits 0 and writes nothing says so, never a reader's error.
+  failure.set none
+  writes.set false
+  let silent ← Driver.svgFetch req.src lossy .first "en" (some converter)
+  writes.set true
+  check ref "SVG converter run that wrote nothing says so"
+    (!silent.diags.isEmpty && silent.diags.all fun d =>
+      hasStr (diagWords d) "rsvg-convert wrote no output" && !hasStr (diagWords d) "no such file")
 
 end Tests

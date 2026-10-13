@@ -124,13 +124,14 @@ moves: still, drawn whole, with no raster, and setting text. -/
 and the HTML too where the figure ships inline (`inlines`) or moves — its
 print and reduced-motion still face is the drawing — while any other still
 figure's HTML face is its authored bytes, which the browser draws in its
-own faces. What a note says of the engine's drawing — a family set in the
-document's face, a substituted or uncovered glyph, a link the drawing does
-not carry — is the scope of the artifacts it ships in. -/
+own faces. What a note says of the text the engine's drawing sets — a
+family set in the document's face, a substituted or uncovered glyph — is
+the scope of the artifacts it ships in. -/
 @[expose] public def drawingShipsIn {L : Type} (fig : Figure L) (moving : Bool) :
     Option Diag.Output :=
   -- premise: svgOutputScopeChecks — the page of an inlined figure carries the engine's
-  -- <svg> and names its notes; the page of a figure kept as authored bytes names none
+  -- <svg> and names its text's notes; the page of a figure kept as authored bytes names
+  -- none of them
   if moving || inlines fig moving then none else some .pdf
 
 /-- The shaped figure an entry's page ships inline, if it ships one. -/

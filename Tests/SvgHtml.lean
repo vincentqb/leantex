@@ -318,12 +318,14 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "output scope: the moving figure's still face is the engine's drawing, unfiltered"
     ((imgs.entries[0]?.bind (·.posterSvg)).any fun p =>
       !hasStr (String.fromUTF8! p) "filter" && hasStr (String.fromUTF8! p) "<circle")
-  -- A note says what the engine's drawing does, so it is named where that
-  -- drawing ships: an inline figure's page is the drawing, and a figure kept
-  -- as its authored bytes leaves the browser to draw it in its own faces.
+  -- A note on the text the engine's drawing sets is named where that drawing
+  -- ships: an inline figure's page is the drawing, and a figure kept as its
+  -- authored bytes leaves the browser to set its text in its own faces. A
+  -- link is carried by neither: an SVG a page shows as an image is drawn
+  -- and never followed.
   let linked (extra : String) : ByteArray := svgDocument
     ("<rect id=\"x\" width=\"1\" height=\"1\"/>" ++ extra ++
-      "<a href=\"#x\"><text x=\"2\" y=\"15\" font-family=\"Example Grotesk\">Label</text></a>")
+      "<a href=\"#x\"><text x=\"2\" y=\"15\" font-family=\"Example Grotesk\">Label 漢</text></a>")
   let blur := "<filter id=\"soft\"><feGaussianBlur stdDeviation=\"2\"/></filter>" ++
     "<rect width=\"4\" height=\"4\" filter=\"url(#soft)\"/>"
   for (name, bytes, inline) in [("inline", linked "", true), ("authored", linked blur, false)] do
@@ -333,14 +335,17 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (imgs, shaped) := FigureStore.settle fs (FigureStore.attach { entries := #[en] } #[some f.drawn])
     let notes := f.diags ++ shaped.map (·.2)
     let html := page imgs s!"{name}.svg"
-    let named (code : String) := (Diag.forOutputs #[.html] notes).any (·.code == code)
+    let namedIn (o : Diag.Output) (code : String) := (Diag.forOutputs #[o] notes).any (·.code == code)
+    let glyphIn (o : Diag.Output) := (Diag.forOutputs #[o] notes).any fun d =>
+      d.code == "W0609" && d.subject == some "figure:svg:font:U+6F22"
     check ref s!"output scope: the {name} figure ships {if inline then "inline" else "as its authored bytes"} ({hasStr html "<svg"})"
       (hasStr html "<svg" == inline)
-    check ref s!"output scope: the {name} figure's link and family notes are {if inline then "" else "not "}named for the HTML"
-      (named "N0027" == inline && named "N0026" == inline)
-    check ref s!"output scope: the {name} figure's link and family notes are named for the PDF"
-      ((Diag.forOutputs #[.pdf] notes).any (·.code == "N0027") &&
-        (Diag.forOutputs #[.pdf] notes).any (·.code == "N0026"))
+    check ref s!"output scope: the {name} figure's family and uncovered-glyph notes are {if inline then "" else "not "}named for the HTML"
+      (namedIn .html "N0026" == inline && glyphIn .html == inline)
+    check ref s!"output scope: the {name} figure's link note is named for the HTML and the PDF"
+      (namedIn .html "N0027" && namedIn .pdf "N0027")
+    check ref s!"output scope: the {name} figure's family and uncovered-glyph notes are named for the PDF"
+      (namedIn .pdf "N0026" && glyphIn .pdf)
 
 
 /-- **The corpus's figures ship as the page's own SVG where they can**: in

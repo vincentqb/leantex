@@ -3967,24 +3967,24 @@ public def undecodableIndices (imgs : Image.Store) (uses : Array String) : Array
       (imgs.get? k).any pdfPageImg
 
 /-- W0605: this image has no browser face. A failed conversion retains its
-reason; an unconverted PDF retains its format explanation. An emitted use
-carries its store index in the subject so distinct requests sharing one
-filename remain distinct losses under site accounting. -/
+reason, as the line's detail; an unconverted PDF retains its format
+explanation. An emitted use carries its store index in the subject so
+distinct requests sharing one filename remain distinct losses under site
+accounting. -/
 public def undecodableDiag (src : String) (reason : Option String := none)
     (index : Option Nat := none) : Diag :=
   Diag.of .W0605
     (match reason with
-      | some err => s!"image '{src}' could not produce its browser face: {err}; \
-the web page shows a labelled placeholder instead"
+      | some _ => s!"image '{src}' could not produce its browser face; the web page shows a \
+labelled placeholder instead"
       | none => s!"image '{src}' is a PDF page no browser decodes; the web page shows a \
 placeholder box instead")
+    (detail := reason)
     (subject := some (match index with
       | some k => s!"img:{k}:{src}"
       | none => s!"img:{src}"))
-    (help := some (match reason with
-      | some _ => "fix the conversion error, or include a PNG export for the web page"
-      | none => "for the web page, \\includegraphics a PNG export inside \
-\\begin{ifbackend}{html}, and move this include inside \\begin{ifbackend}{pdf}"))
+    (help := some "for the web page, \\includegraphics a PNG export inside \
+\\begin{ifbackend}{html}, and move this include inside \\begin{ifbackend}{pdf}")
 
 /-- No decimal digit is the separator the asset name is split on. -/
 private theorem arabicN_no_dash (k : Nat) : ∀ c ∈ (ListMark.arabicN k).toList, c ≠ '-' := by

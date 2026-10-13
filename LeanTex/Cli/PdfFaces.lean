@@ -119,12 +119,13 @@ public def answerOf (convert : IO (Option (Except PicCache.Outcome ByteArray)))
 converter, and none is the answer of a host without it (`Answer.absent`). -/
 public abbrev Door := IO (Except PicCache.Outcome ByteArray) → IO (Option (Except PicCache.Outcome ByteArray))
 
-/-- **A converter door that asks the host once** (`converterChecks`):
+/-- **A converter door that asks the host once** (`converterDoorChecks`):
 `probe` is asked the first time a face needs the converter, and once only,
-however many faces ask at once — the answer is kept under a lock — as
-`Driver.svgConverterWith` asks for librsvg's. A build whose figures all
-import exactly never probes, and a machine without the tool reads as
-having none, never as a run that failed. -/
+however many faces ask at once — the answer is kept under a lock — where
+`Driver.svgConverterWith` asks for librsvg's from a fetch that runs one
+figure at a time. A build whose figures all import exactly never probes,
+and a machine without the tool reads as having none, never as a run that
+failed. -/
 public def doorWith (probe : IO Bool) : BaseIO Door := do
   let found ← Std.Mutex.new (none : Option Bool)
   return fun convert => do
@@ -180,9 +181,10 @@ public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
     { bytes := .ok bytes, route := .tool, diags := #[], native := false, checked }
   | r, .error _, .rejected bytes _ =>
     { bytes := .ok bytes, route := r, diags := #[], native := false, checked := false }
+  -- Why the import gave no face, then why the converter gave none.
   | r, .error iw, a =>
     { bytes := .error (match a.said? with
-        | some w => if w.isEmpty then iw else w
+        | some w => if w.isEmpty then iw else if iw.isEmpty then w else s!"{iw}; {w}"
         | none => iw), route := r, diags := #[], native := false, checked := false }
   | r, .ok _, _ => { bytes := .error "no web face", route := r, diags := #[], native := false, checked := false }
 

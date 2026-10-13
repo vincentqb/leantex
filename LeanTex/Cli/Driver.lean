@@ -421,7 +421,7 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let losses := fig.losses
   -- What the import dropped with no ink of its own — a link — is named
   -- once, whichever route draws the figure.
-  let notes := i.notes.map (FigureLoss.svgNoteDiag (FigureSvg.drawingShipsIn fig moving) src)
+  let notes := i.notes.map (FigureLoss.svgNoteDiag src)
   let native : SvgFetch :=
     { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title, diags := notes }
   let verdict : Boundary.Verdict := if losses.isEmpty then .exact else .lossy losses

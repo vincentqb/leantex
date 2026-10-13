@@ -189,12 +189,13 @@ text sets in the document's face `face` wherever the engine's drawing ships
     (subject := some ("svg:font:" ++ family)) (output := output)
 
 /-- **N0027**: an SVG figure holds what its drawing does not carry and no
-ink of the figure needs — a link — named once per figure, wherever the
-engine's drawing ships (`output`, `FigureSvg.drawingShipsIn`); the figure
-draws the link's content. -/
-@[expose] public def svgNoteDiag (output : Option Diag.Output) (src note : String) : Diag :=
+ink of the figure needs — a link — named once per figure, for every
+artifact: the engine's drawing carries no link, and neither does an SVG a
+page shows as an image, which a browser draws but never follows. The
+figure draws the link's content. -/
+@[expose] public def svgNoteDiag (src note : String) : Diag :=
   Diag.of .N0027 s!"figure '{src}' holds {note}, which its drawing does not carry; its content is drawn"
-    (subject := some ("figure:svg:note:" ++ note)) (output := output)
+    (subject := some ("figure:svg:note:" ++ note))
 
 /-- A figure's losses, each named once, as `diag` says it. -/
 @[expose] public def diags (diag : Gfx.Loss → Diag) (losses : Array Gfx.Loss) : Array Diag :=
@@ -250,7 +251,7 @@ end
 
 /-- The loss a figure's rasters are, where the drawing that ships cannot
 carry them: a raster the image planner refuses (`FigureStore.rasterPlans`). -/
-@[expose] public def rasterLoss : Gfx.Loss := .resource "unplaceable raster"
+@[expose] public def rasterLoss : Gfx.Loss := .resource "embedded raster"
 
 /-- **A figure with its rasters dropped and the drop named**: what the
 engine's drawing is where a figure's raster cannot be placed — every other

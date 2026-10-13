@@ -642,7 +642,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- The HTML page's own image face: a decoded PDF page, which the PDF
   -- artifact embeds as vectors and no browser decodes in an <img>. The
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
-  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
+  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf",
+      HtmlDoc.undecodableDiag "figures/locked.pdf"
+        (some "the PDF is encrypted; its content cannot be read; pdftocairo is not on PATH")]
   -- A figure's feature the engine does not draw — a PDF figure's text in a
   -- Type 1 program the importer does not read, an SVG figure's filter, a
   -- character of its text no face of the document covers: with no converter
@@ -663,7 +665,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- A font family the document does not declare, set in its sans face.
   | .N0026 => #[FigureLoss.svgFontDiag none "figures/chart.svg" "Example Grotesk" "Open Sans"]
   -- A link inside a figure, whose content the figure draws.
-  | .N0027 => #[FigureLoss.svgNoteDiag (some .pdf) "figures/chart.svg" "a link"]
+  | .N0027 => #[FigureLoss.svgNoteDiag "figures/chart.svg" "a link"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395

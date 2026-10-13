@@ -966,6 +966,10 @@
 ⚠ [W0605]
   image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows a placeholder box instead
   suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
+⚠ [W0605]
+  image 'figures/locked.pdf' could not produce its browser face; the web page shows a labelled placeholder instead
+  the PDF is encrypted; its content cannot be read; pdftocairo is not on PATH
+  suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
 ── W0609 (degraded) a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn
 ⚠ [W0609]
   figure 'plot.pdf' is drawn without its 'type1' font, which the engine does not draw

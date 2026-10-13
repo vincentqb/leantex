@@ -165,7 +165,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (facts.imgs == 1 && facts.imgsUnnamed == 0)
     let losses := ds.filter (·.code == "W0605")
     t s!"failed browser conversion {src}: its reason is accounted once"
-      (losses.size == 1 && losses.any (fun d => hasStr d.message reason))
+      (losses.size == 1 && losses.any (fun d => hasStr (diagWords d) reason))
     let pdfOnly := (elabStr (dvDoc ""
       ("\\begin{ifbackend}{pdf}" ++ source ++ "\\end{ifbackend}"))).1
     let (_, _, hiddenDs) := HtmlDoc.emitTree { imgs := failed } pdfOnly
@@ -214,7 +214,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (losses.size == unique.size && (unique.zip losses).all fun (k, d) =>
         d.subject == some s!"img:{k}:sequence.pdf" &&
         match selected.entries[k]!.webError with
-        | some err => hasStr d.message err
+        | some err => hasStr (diagWords d) err
         | none => hasStr d.message "PDF page no browser decodes")
     t s!"image failure identity {name}: distinct losses survive site accounting"
       (losses.size == unique.size && (Diag.tallySites losses).all (·.sites == 1))

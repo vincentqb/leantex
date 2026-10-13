@@ -248,7 +248,10 @@ def converterDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let probes ← IO.mkRef 0
   let runs ← IO.mkRef 0
+  -- A probe slow enough that faces asking at once all reach it before the
+  -- first answers, as a door with no lock would let them.
   let probe (present : Bool) : IO Bool := do
+    IO.sleep 20
     probes.modify (· + 1)
     return present
   let convert : IO (Except PicCache.Outcome ByteArray) := do
@@ -262,7 +265,7 @@ def converterDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "converter door: faces imported exactly never probe the host"
     ((← probes.get) == 0 && (← runs.get) == 0)
   let asked ← (List.range 8).mapM fun _ =>
-    IO.asTask (PdfFaces.face "lossy.pdf" type1FigurePdf .first (door convert) keeps)
+    IO.asTask (prio := .dedicated) (PdfFaces.face "lossy.pdf" type1FigurePdf .first (door convert) keeps)
   let faces ← asked.mapM fun task => IO.ofExcept task.get
   t s!"converter door: eight lossy faces asking at once probe the host once ({← probes.get})"
     ((← probes.get) == 1 && faces.all (·.route == .tool))
