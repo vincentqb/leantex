@@ -9,7 +9,7 @@ open LeanTex.Core
 namespace Tests
 
 /-- One titled deck stage of an emitted tree: its frame's anchor, its accessible name, the words its
-title shows at step 1, and its track's snap anchors. -/
+title shows with no snap state (`shownTextList`), and its track's snap anchors. -/
 private structure Stage where
   anchor : Option String
   name : Option String
@@ -26,7 +26,7 @@ private def stageOf (anchor : Option String) (attrs : Array (String × String))
   | #[] => none
   | hs => match hs[0]! with
     | .elem _ _ hk => some { anchor, name := HtmlDoc.attrOf? attrs "aria-label"
-                             shown := snapTextList 1 "" hk.toList, snaps }
+                             shown := shownTextList "" hk.toList, snaps }
     | _ => none
 
 mutual

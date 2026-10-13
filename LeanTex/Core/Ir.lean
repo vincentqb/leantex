@@ -7902,12 +7902,16 @@ end
 
 mutual
 
-/-- The text the first page of an overlay sequence shows, onto `acc`;
-hand-rolled because the generic fold visits both alternation groups. -/
+/-- The text an overlay sequence shows with no snap state, onto `acc`, an alternation giving the
+floor's group (`HtmlDoc.altPairNodes`), where the generic fold visits both. -/
 -- conserves: none — one page's reading.
 public def firstPageTextOne (acc : String) (x : Inline) : String :=
   match x with
-  | .altSteps _ firstPage _ => firstPageTextList acc firstPage.toList
+  | .altSteps spec firstPage otherPage =>
+    let blank (xs : Array Inline) : Bool := !(plainText xs).toList.any (!·.isWhitespace)
+    if spec.maxStep == 0 || (blank firstPage && !blank otherPage) then
+      firstPageTextList acc otherPage.toList
+    else firstPageTextList acc firstPage.toList
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
   | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body =>
     firstPageTextList acc body.toList
@@ -8708,9 +8712,22 @@ public theorem slug_no_whitespace (title : Array Inline) :
   simp only [slug, String.toList_ofList] at hc
   exact slugGo_no_whitespace _ _ _ (by simp) c hc
 
-public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline) :
+public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline)
+    (hs : spec.maxStep ≠ 0) (hw : (plainText firstPage).toList.any (!·.isWhitespace) = true) :
     slug #[.altSteps spec firstPage otherPage] = slug firstPage := by
-  simp [slug, firstPageText, firstPageTextList, firstPageTextOne]
+  have hs' : (spec.maxStep == 0) = false := by simpa using hs
+  simp only [slug, firstPageText, firstPageTextList, firstPageTextOne, hs', hw, Bool.false_or,
+    Bool.not_true, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+
+/-- **A title whose first page shows nothing of an alternation anchors by
+the other group** (`_exact`): an `\only` the title's first step leaves out
+names the frame by the words the floor shows. -/
+public theorem slug_altSteps_floor_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline)
+    (hb : (plainText firstPage).toList.any (!·.isWhitespace) = false)
+    (hw : (plainText otherPage).toList.any (!·.isWhitespace) = true) :
+    slug #[.altSteps spec firstPage otherPage] = slug otherPage := by
+  simp only [slug, firstPageText, firstPageTextList, firstPageTextOne, hb, hw, Bool.not_false,
+    Bool.not_true, Bool.true_and, Bool.or_true, ↓reduceIte]
 
 mutual
 
@@ -10951,15 +10968,18 @@ public theorem frameSteps_body_exact (title : Array Inline) (standout : Bool)
   simp [frameSteps, Nat.max_eq_right h]
 
 /-- Alternation groups no step of their own frame inks, counted over the
-document's frames; zero is the contract. -/
+document's frames, the handout's under a selector selecting no step aside; zero is the
+contract. -/
 public def altUnreachable (doc : Doc) : Nat :=
   doc.body.foldl (init := 0) fun n b =>
     match b with
     | .frame _ _ _ _ body =>
       let steps := frameSteps b
+      let reached (spec : OverlaySpec) (o : Bool) : Bool :=
+        spec.reachesOther steps || o || (spec.selectedSteps steps).isEmpty
       n + foldBlocks
         (fun k blk => match blk with
-          | .altSteps spec _ o => if spec.reachesOther steps || o.isEmpty then k else k + 1
+          | .altSteps spec _ o => if reached spec o.isEmpty then k else k + 1
           | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
           | .spaced _ _ | .role _ _ | .link _ _ | .quote _ | .abstract _
           | .titled _ _ _ | .disclosure _ _ _ | .equation _ _ | .verbatim _ _ _ | .algorithm _ _ _
@@ -10968,7 +10988,7 @@ public def altUnreachable (doc : Doc) : Nat :=
           | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
           | .bibliography _ _ _ => k)
         (fun k x => match x with
-          | .altSteps spec _ o => if spec.reachesOther steps || o.isEmpty then k else k + 1
+          | .altSteps spec _ o => if reached spec o.isEmpty then k else k + 1
           | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
           | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _
           | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _

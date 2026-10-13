@@ -1223,6 +1223,14 @@ private def altEndsAlike (first other : Array Node) : Bool :=
   | some a, some b => a == b
   | _, _ => false
 
+/-- Do an alternation's groups that hold anything all end on one element,
+read through each? -/
+private def groupsEndAlike (groups : Array Node) : Bool :=
+  let ends := (groups.filter fun g => classHas (classOfNode g) "alt").filterMap carrierEndKey
+  match ends[0]? with
+  | some e => ends.all (· == e)
+  | none => false
+
 mutual
 
 /-- The carrier depths at which the chains of first children `n` opens end on an element. -/
@@ -3485,6 +3493,11 @@ private def frameOpeningCss (doc : Doc) : String :=
     let item := s!"{pre}:is(ul, ol:not(.algorithm)){cls} > li:first-child"
     let triv := s!"{pre}.{roleClass Ir.trivlistRole}{cls}"
     let float := s!"{pre}figure.float{cls}"
+    -- The first paragraph, and the one an overlay carrier standing first
+    -- opens each group on, as a snap shows that group in its place.
+    let firstPara (box : String) : String :=
+      s!"{box} > p:first-child::before, {box} > .alt-pair > .alt > p:first-child::before, " ++
+        s!"{box} > :is(.step, .step-set, .step-end) > p:first-child::before"
     (match Ir.listSkips l size 1 with
      | some sk =>
        let opened := sk.topsep.width.sp + (Ir.partopsepFor l size 1 doc.tokens).width.sp
@@ -3494,10 +3507,10 @@ private def frameOpeningCss (doc : Doc) : String :=
     s!"{triv} \{ --frame-body-open: {stageVh doc.page ((Ir.trivlistSkipFor l doc.tokens size 0).width.resolve size 0)}; }\n" ++
     s!"{float} \{ --frame-body-open: {stageVh doc.page ((Ir.floatSpaceFor l doc.tokens size 0).1.width.resolve size 0)}; }\n" ++
     s!"{pre}p{cls}::before,\n" ++
-    s!"{triv} > p:first-child::before, {float} > :is(p, figcaption):first-child::before,\n" ++
+    s!"{firstPara triv}, {float} > :is(p, figcaption):first-child::before,\n" ++
     s!"{pre}dl{cls} > dt:first-child::before,\n" ++
     s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
-    s!"{item} > p:first-child::before \{ content: \"\"; display: inline-block;\n" ++
+    s!"{firstPara item} \{ content: \"\"; display: inline-block;\n" ++
     s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
   rules "section.slide > " ".frame-body-start" ++ rules "section.slide " ".frame-flow-start" ++
   "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
@@ -4922,21 +4935,49 @@ step selects (`overlay_set_alternation_agree`). Otherwise the group stored
 first is the floor's (`overlayAltNode`). -/
 public def altPairNodes (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (first other : Array Node) : Array Node :=
-  if nodesBlank first != nodesBlank other then
+  -- An alternation no snap selects (`<0>`) is a reading for no snap at all:
+  -- the handout, which only a rendering with no snap state shows.
+  if (spec.selectedSteps steps).isEmpty && !nodesBlank other then
+    #[overlayAltSetNode tag steps spec true true first,
+      overlayAltSetNode tag steps spec false false other]
+  else if nodesBlank first != nodesBlank other then
     #[overlayAltSetNode tag steps spec true (nodesBlank first) first,
       overlayAltSetNode tag steps spec false (nodesBlank other) other]
   else #[overlayAltNode tag steps spec true first, overlayAltNode tag steps spec false other]
 
-/-- **No floor shows a blank alternative over one with content**
-(`_contract`): where exactly one group is blank, the pair is its two
-membership-set nodes, the blank one alone `hidden`. -/
+/-- The groups a node array holds where it shows with no snap state. -/
+public def floorShown (xs : Array Node) : Array Node :=
+  xs.filter fun n => match n with
+    | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
+    | .text _ | .style _ | .script .. => true
+
+/-- The children of an element; nothing for any other node. -/
+public def nodeKids : Node → Array Node
+  | .elem _ _ kids => kids
+  | .text _ | .style _ | .script .. => #[]
+
+/-- **No floor shows nothing where an alternation says something**
+(`_contract`): a rendering with no snap state — scripting off, the print,
+the reduced page — shows exactly one of the pair's groups, and a group with
+content wherever either has some. -/
 public theorem altPairNodes_floor_contract (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
-    (first other : Array Node) (h : nodesBlank first != nodesBlank other) :
-    altPairNodes tag steps spec first other =
-      #[overlayAltSetNode tag steps spec true (nodesBlank first) first,
-        overlayAltSetNode tag steps spec false (!nodesBlank first) other] := by
+    (first other : Array Node) (h : nodesBlank first = false ∨ nodesBlank other = false) :
+    (floorShown (altPairNodes tag steps spec first other)).size = 1 ∧
+      ((floorShown (altPairNodes tag steps spec first other)).all
+        fun n => !nodesBlank (nodeKids n)) = true := by
   unfold altPairNodes
-  cases hf : nodesBlank first <;> cases ho : nodesBlank other <;> simp_all
+  split
+  · next hn =>
+    simp_all [floorShown, overlayAltSetNode, Html.elem, nodeKids]
+  · split
+    · next hb =>
+      cases hf : nodesBlank first <;> cases ho : nodesBlank other <;>
+        simp_all [floorShown, overlayAltSetNode, Html.elem, nodeKids]
+    · next hb =>
+      have hf : nodesBlank first = false := by
+        cases hf : nodesBlank first <;> cases ho : nodesBlank other <;> simp_all
+      unfold overlayAltNode altGroupNode
+      cases hl : spec.last <;> split <;> simp_all [floorShown, Html.elem, nodeKids]
 
 mutual
 
@@ -4980,6 +5021,87 @@ public def overlayAlternatives (tag : String) (steps : Nat) (spec : Ir.OverlaySp
     Html.elem "span" #[] #[("id", id), ("data-alt-anchor", "")]
   anchors ++ altPairNodes tag steps spec (unanchorList shared #[] first.toList)
     (unanchorList shared #[] other.toList)
+
+/-- A relocated anchor `overlayAlternatives` stands outside its groups. -/
+private def isAltAnchor : Node → Bool
+  | .elem _ attrs _ => attrs.any (·.1 == "data-alt-anchor")
+  | .text _ | .style _ | .script .. => false
+
+/-- A side of an alternation that is itself one alternation's output — a
+block side its one pair, an inline side its group spans — as those nodes. -/
+private def nestedGroups? (block : Bool) (xs : Array Node) : Option (Array Node) :=
+  let pairKids (n : Node) : Option (Array Node) := match n with
+    | .elem "div" attrs kids => if classHas (attrsClass attrs) "alt-pair" then some kids else none
+    | .elem .. | .text _ | .style _ | .script .. => none
+  let inner : Option (Array Node) :=
+    if !block then some xs else if xs.size != 1 then none else (xs[0]?).bind pairKids
+  inner.bind fun kids =>
+    if kids.any (fun n => classHas (classOfNode n) "alt") &&
+      kids.all (fun n => classHas (classOfNode n) "alt" || isAltAnchor n) then some kids else none
+
+/-- The snaps a group shows on, read off its own attributes: its membership
+set, or its range and the side it stands on. -/
+private def groupSnaps (steps : Nat) (attrs : Array (String × String)) : List Nat :=
+  match (attrs.find? (·.1 == "data-steps")).map (·.2) with
+  | some v => (v.splitOn " ").filterMap String.toNat?
+  | none =>
+    let lo := (((attrs.find? (·.1 == "data-step")).map (·.2)).bind String.toNat?).getD 1
+    let hi := ((attrs.find? (·.1 == "data-step-last")).map (·.2)).bind String.toNat?
+    let pending := classHas (attrsClass attrs) "alt-pending"
+    ((List.range steps).map (· + 1)).filter fun k =>
+      let active := lo ≤ k && hi.all (k ≤ ·)
+      if pending then !active else active
+
+/-- An alternation one of whose sides is itself an alternation — a chain, as
+a paragraph's readings stand — as its groups side by side: each inner group
+shown where it shows inside its side, every group in its membership set,
+and one group alone without `hidden`, the floor's: the outer's active group
+where no snap selects it (the handout), else the group step 1 shows, or the
+first with content where that one shows nothing. Nested group in group, a
+chain would stand its carriers as deep as it has readings, and the sheet's
+boundaries read every depth. None where neither side is an alternation. -/
+private def flatChain (block : Bool) (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (first other : Array Node) : Option (Array Node) :=
+  let sideOf (xs : Array Node) (side : Bool) : Array Node × Array (Array Node × List Nat) :=
+    let ss := spec.pageSteps steps side
+    match nestedGroups? block xs with
+    | some kids =>
+      (kids.filter isAltAnchor,
+        (kids.filter (!isAltAnchor ·)).map fun g => match g with
+          | .elem _ attrs gk => (gk, (groupSnaps steps attrs).filter ss.contains)
+          | .text t => (#[.text t], [])
+          | .style c => (#[.style c], [])
+          | .script a c => (#[.script a c], []))
+    | none => (#[], #[(xs, ss)])
+  if (nestedGroups? block first).isNone && (nestedGroups? block other).isNone then none
+  else
+    let (fa, fg) := sideOf first true
+    let (oa, og) := sideOf other false
+    let groups := fg ++ og
+    let floor :=
+      if (spec.selectedSteps steps).isEmpty then fg.size
+      else
+        let one := (groups.findIdx? fun (_, ks) => ks.contains 1).getD 0
+        if (groups[one]?.map fun (g, _) => nodesBlank g).getD false then
+          (groups.findIdx? fun (g, _) => !nodesBlank g).getD one
+        else one
+    -- A group no snap shows and the floor hides stands for no rendering.
+    some (fa ++ oa ++ (groups.zipIdx.filter fun ((_, ks), i) => i == floor || !ks.isEmpty).map
+      fun ((g, ks), i) =>
+        Html.elem tag g (#[("class", "alt alt-set"),
+          ("data-steps", String.intercalate " " (ks.map toString))] ++
+          if i == floor then #[] else #[("hidden", "hidden")]))
+
+/-- `overlayAlternatives`, a chain's groups side by side (`flatChain`). -/
+public def overlayChainAlternatives (block : Bool) (tag : String) (steps : Nat)
+    (spec : Ir.OverlaySpec) (first other : Array Node) : Array Node :=
+  let otherIds := anchorIdsList #[] other.toList
+  let shared := ((anchorIdsList #[] first.toList).filter otherIds.contains).toList.eraseDups.toArray
+  let anchors := shared.map fun id =>
+    Html.elem "span" #[] #[("id", id), ("data-alt-anchor", "")]
+  let f := unanchorList shared #[] first.toList
+  let o := unanchorList shared #[] other.toList
+  anchors ++ (flatChain block tag steps spec f o).getD (altPairNodes tag steps spec f o)
 
 /-- Artifact-specific. -/
 public theorem overlay_membership_agree (spec : Ir.OverlaySpec) (steps k : Nat)
@@ -5339,7 +5461,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .onSteps spec body =>
     acc.push (overlayNode "span" cfg.overlaySteps spec (inlineNodesInto cfg #[] body.toList))
   | .altSteps spec firstPage otherPage =>
-    acc ++ overlayAlternatives "span" cfg.overlaySteps spec
+    acc ++ overlayChainAlternatives false "span" cfg.overlaySteps spec
       (inlineNodesInto cfg #[] firstPage.toList) (inlineNodesInto cfg #[] otherPage.toList)
   | .icon c label =>
     -- the PUA glyph is hidden from assistive technology; the `img` wrapper carries its name
@@ -7421,8 +7543,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- a group's fills grow nothing: the stage's flex column is shared by every step
     let first := blockNodesInto { cfg.into with fillsInert := true } #[] firstPage.toList
     let other := blockNodesInto { cfg.into with fillsInert := true } #[] otherPage.toList
-    Html.elem "div" (overlayAlternatives "div" cfg.overlaySteps spec first other)
-      #[("class", if altEndsAlike first other then "alt-pair alt-alike" else "alt-pair")]
+    let groups := overlayChainAlternatives true "div" cfg.overlaySteps spec first other
+    Html.elem "div" groups
+      #[("class", if groupsEndAlike groups then "alt-pair alt-alike" else "alt-pair")]
   | .note body =>
     -- hidden: for a speaker view, invisible in the deck and in print
     Html.elem "aside" (blockNodesInto cfg.into #[] body.toList)

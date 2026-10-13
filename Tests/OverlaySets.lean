@@ -49,6 +49,40 @@ end
 private def overlayCount (text needle : String) : Nat :=
   (text.splitOn needle).length - 1
 
+mutual
+
+/-- Does an alternation's pair stand inside another's group (`inGroup`)? -/
+private def nestedPairsOne (inGroup : Bool) : Html.Node → Bool
+  | .elem _ attrs kids =>
+    let cls := (snapAttr attrs "class").splitOn " "
+    (inGroup && cls.contains "alt-pair") || nestedPairs (inGroup || cls.contains "alt") kids.toList
+  | .text _ | .style _ | .script _ _ => false
+
+private def nestedPairs (inGroup : Bool) : List Html.Node → Bool
+  | [] => false
+  | n :: rest => nestedPairsOne inGroup n || nestedPairs inGroup rest
+
+end
+
+mutual
+
+/-- Every element carrying class `c`. -/
+private def elemsWithClassOne (c : String) (acc : Array Html.Node) : Html.Node → Array Html.Node
+  | .elem tag attrs kids =>
+    let acc := if ((snapAttr attrs "class").splitOn " ").contains c
+      then acc.push (.elem tag attrs kids) else acc
+    elemsWithClassList c acc kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+private def elemsWithClassList (c : String) (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | n :: rest => elemsWithClassList c (elemsWithClassOne c acc n) rest
+
+end
+
+private def elemsWithClass (nodes : Array Html.Node) (c : String) : Array Html.Node :=
+  elemsWithClassList c #[] nodes.toList
+
 /-- The elements whose box breaks the line, as a browser's default styles
 set them. -/
 private def renderedBlockTags : List String :=
@@ -324,7 +358,31 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
      ("swapped blocks", "\\only<1>{" ++ lines "First" 10 ++ "}\\only<2>{" ++ lines "Second" 10 ++ "}",
        2, fun k => lines (if k == 1 then "First" else "Second") 10),
      ("beside a document's own alt", "\\def\\alt#1#2#3{Lost}\nLead \\only<2>{Probe} trail.", 2,
-       fun k => "\\def\\alt#1#2#3{Lost}\nLead " ++ (if k == 2 then "Probe" else "{}") ++ " trail.")]
+       fun k => "\\def\\alt#1#2#3{Lost}\nLead " ++ (if k == 2 then "Probe" else "{}") ++ " trail."),
+     ("a selector inside reaching past the outer one",
+       "Top.\n\n\\only<2>{Middle.\n\n\\only<3>{Inner.}}\n\nBottom.", 3,
+       fun k => "Top.\n\n" ++ pick (k == 2) "Middle.\n\n" ++ "Bottom."),
+     ("a formula's selector reaching past the outer one",
+       "Before.\n\\[ a \\only<2-3>{+ b \\only<4>{+ c}} \\]\nAfter.", 4,
+       fun k => "Before.\n\\[ a " ++ pick (k == 2 || k == 3) "+ b" ++ " \\]\nAfter."),
+     ("after a switch opening its paragraph",
+       "\\centering\nAlpha words \\only<2>{\\[ x + y \\]} more words.\n\nNext paragraph here.", 2,
+       fun k => "\\centering\nAlpha words " ++ (if k == 2 then "\\[ x + y \\]" else "{}") ++
+         " more words.\n\nNext paragraph here."),
+     ("in a centred scope",
+       "\\begin{center}Lead words \\only<2>{\\[ x \\]} tail words.\\end{center}", 2,
+       fun k => "\\begin{center}Lead words " ++ (if k == 2 then "\\[ x \\]" else "{}") ++
+         " tail words.\\end{center}"),
+     ("after a frame title", "\\frametitle{Probe Title}\n\\only<2>{Head line.}\n\nBody line.", 2,
+       fun k => "\\frametitle{Probe Title}\n" ++ pick (k == 2) "Head line.\n\n" ++ "Body line."),
+     ("in a block",
+       "\\begin{block}{Claim}Claim words \\only<2>{\\[ x \\]} more words.\\end{block}", 2,
+       fun k => "\\begin{block}{Claim}Claim words " ++ (if k == 2 then "\\[ x \\]" else "{}") ++
+         " more words.\\end{block}"),
+     ("beside a document's alternation of paragraphs",
+       "\\alt<2->{After one.\n\nAfter two.}{Before.}\n\nBody \\only<2>{more }line.", 2,
+       fun k => (if k == 2 then "After one.\n\nAfter two." else "Before.") ++ "\n\nBody " ++
+         pick (k == 2) "more " ++ "line.")]
   for (label, body, steps, reading) in cases do
     let label := "only, " ++ label
     let (doc, ds) := elabStr (deck169Frame body)
@@ -355,8 +413,35 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (hasStr (floor "Lead words \\only<2>{Middle} trail words.") "Middle" &&
       hasStr (floor "Lead \\only<2-3>{Later} words.\n\n\\uncover<3>{Third.}") "Later")
   let swap := "\\only<1>{First reading.\n\nFirst more.}\\only<2>{Second reading.\n\nSecond more.}"
-  t "only, with no snap state: blocks read per step show step 1's reading"
-    (hasStr (floor swap) "First reading." && !hasStr (floor swap) "Second reading.")
+  t "only, with no snap state: blocks read per step show the handout, every argument"
+    (hasStr (floor swap) "First reading." && hasStr (floor swap) "Second reading." &&
+      hasStr (floor "Before.\n\\only<2>{\\[ y \\]}\nAfter words.") "𝑦")
+  -- The handout's alternation selects no step: the floor shows its group and
+  -- no step page does, which loses no increment; a group neither a step nor
+  -- the floor reaches still does.
+  t "only, a handout: no alternation group goes unreached"
+    (Ir.altUnreachable (elabStr (deck169Frame swap)).1 == 0)
+  t "only, beside a handout: a group no step reaches still counts"
+    (Ir.altUnreachable (elabStr (deck169Frame
+      "\\alt<1->{First words.}{Lost words.}\\only<2>{Later words.}")).1 == 1)
+  -- A chain of readings stands its groups side by side, so the sheet's
+  -- boundaries read one carrier deep however many readings a frame has.
+  let rows := String.join ((List.range 16).map fun i =>
+    s!"\\only<{i + 1}->" ++ "{R" ++ toString i ++ " & v \\\\}\n")
+  let (_, many, _) := HtmlDoc.emitTree {} (elabStr (deck169Frame
+    ("\\begin{tabular}{ll}\n" ++ rows ++ "\\end{tabular}"))).1
+  t "only, sixteen readings: no alternation stands inside another's group"
+    (!nestedPairs false many.toList && (elemsWithClass many "alt").size ≥ 16)
+  -- A theorem's body is a flow of paragraphs, read per step as a frame's is
+  -- (the class names the environment it does not define, W0302, and keeps
+  -- its body).
+  let thm (body : String) : String := deck169Frame ("\\begin{theorem}" ++ body ++ "\\end{theorem}")
+  let tout := layoutOf fonts (elabStr (thm "Claim words \\only<2>{\\[ x \\]} more words.")).1
+  for k in [1:3] do
+    let rout := layoutOf fonts (elabStr (thm ("Claim words " ++
+      (if k == 2 then "\\[ x \\]" else "{}") ++ " more words."))).1
+    t s!"only, in a theorem: step {k}'s page is its reading's page"
+      (tout.pages.size == 2 && (tout.pages[k - 1]?.map pageMarks) == (rout.pages[0]?.map pageMarks))
   -- A document that defines `\only` keeps its meaning.
   let (udoc, _) := elabStr (deck169Frame "\\def\\only#1{[#1]}Lead \\only<2>{later} end.")
   t "only, defined by the document: its own macro, no step"

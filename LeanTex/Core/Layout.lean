@@ -12274,6 +12274,17 @@ private def collectCentered (r : Rd) (a : Acc)
     (body : List Block) (indent : Sp) (prevRule : Bool) : Acc :=
   match body with
   | [] => a
+  -- An overlay carrier is grouping, as `collectBlock` reads it: what it
+  -- shows on this step centres as the scope's own blocks do.
+  | .onSteps spec inner :: rest =>
+    let a := collectCentered (if spec.pending r.step then { r with covering := r.cover } else r)
+      a inner.toList indent false
+    collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
+  | .altSteps spec firstPage otherPage :: rest =>
+    let a := if spec.showsFirst r.step then
+        (collectCentered r a firstPage.toList indent false).leafRange (blockLeafCount otherPage) |>.1
+      else collectCentered r (a.leafRange (blockLeafCount firstPage)).1 otherPage.toList indent false
+    collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
   | blk :: rest =>
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := match blk with

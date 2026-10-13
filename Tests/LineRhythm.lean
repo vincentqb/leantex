@@ -1105,6 +1105,20 @@ private def frameEdges (nodes : Array Html.Node) : Array (String × Bool × Bool
       c.contains "frame-body-start" || c.contains "frame-flow-start",
       c.contains "frame-body-end" || c.contains "frame-flow-end")
 
+/-- Each paragraph a tree's frames show, in order: its text and whether the
+sheet gives it an opening strut, a `::before` rule over it. -/
+private def frameStruts (nodes : Array Html.Node) (css : String) : Array (String × Bool) :=
+  let t := CTree.of nodes
+  let rules := (cssRules css).filter fun (_, d) => (declOf d "content").isSome
+  let shown (i : Nat) : Bool := (i :: t.ancestors i).all fun j =>
+    (t.attr? j "hidden").isNone && !["header", "footer", "aside"].contains (t.el j).tag
+  let inSlide (i : Nat) : Bool := (t.ancestors i).any fun j =>
+    (t.el j).tag == "section" && (((t.attr? j "class").getD "").splitOn " ").contains "slide"
+  ((List.range t.els.size).filter fun i => (t.el i).tag == "p" && inSlide i && shown i).toArray.map
+    fun i => ((t.el i).text.trimAscii.toString, rules.any fun (sel, _) =>
+      (cssSplit ',' sel).any fun m =>
+        m.endsWith "::before" && cssMatchChain 64 t none (cssChain (m.replace "::before" "")) i)
+
 /-- Frames whose steps swap content by `\only`, with the frame each step's
 reading writes. -/
 private def onlyGapCases : List (String × String × Nat × (Nat → String)) :=
@@ -1127,6 +1141,20 @@ private def onlyGapCases : List (String × String × Nat × (Nat → String)) :=
      "\\begin{enumerate}\n\\item Alpha one\n\\only<2>{\\item Beta two}\n\\item Gamma three\n\\end{enumerate}", 2,
      fun k => "\\begin{enumerate}\n\\item Alpha one\n" ++ (if k == 2 then "\\item Beta two\n" else "") ++
        "\\item Gamma three\n\\end{enumerate}"),
+   ("a paragraph opening the frame after its title",
+     "\\frametitle{Probe Title}\n\\only<2>{Head line.}\n\nBody line.", 2,
+     fun k => "\\frametitle{Probe Title}\n" ++ (if k == 2 then "Head line.\n\n" else "") ++
+       "Body line."),
+   ("a paragraph opening the frame after a blank line", "\n\n\\only<2>{Head line.}\n\nBody line.\n\n", 2,
+     fun k => if k == 2 then "Head line.\n\nBody line." else "Body line."),
+   ("a document's alternation of paragraphs opening the frame",
+     "\\alt<2>{Second words.\n\nSecond again.}{First words.}\n\nBody line.", 2,
+     fun k => (if k == 2 then "Second words.\n\nSecond again." else "First words.") ++
+       "\n\nBody line."),
+   ("a paragraph read per step in a centred scope opening the frame",
+     "\\begin{center}Lead words \\only<2>{\\[ x \\]} tail words.\\end{center}", 2,
+     fun k => "\\begin{center}Lead words " ++ (if k == 2 then "\\[ x \\]" else "{}") ++
+       " tail words.\\end{center}"),
    ("two lists swapped",
      "\\only<1>{\\begin{itemize}\\item One a\\item One b\\end{itemize}}\\only<2>{\\begin{itemize}\\item Two a\\item Two b\\item Two c\\end{itemize}}", 2,
      fun k => if k == 1 then "\\begin{itemize}\\item One a\\item One b\\end{itemize}" else
@@ -1139,7 +1167,9 @@ block for block, and opens and closes the frame on the same blocks: where an
 alternation opens the frame, the block each group opens on takes the
 frame's opening (`frame-flow-start`), never the carrier around it — before,
 the carrier took it and the first paragraph lost its opening strut, so the
-frame's content stood off its reading's. -/
+frame's content stood off its reading's — and every paragraph takes the
+opening strut its reading's takes, an alternation in a centred scope
+opening the frame included. -/
 def onlyGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (label, body, steps, reading) in onlyGapCases do
@@ -1152,6 +1182,8 @@ def onlyGapChecks (ref : IO.Ref (List String)) : IO Unit := do
         (agree3 (frameFlow rn (treeCssList "" rh.toList)) (frameFlow snap css))
       t s!"{label}: snap {k} opens and closes on its reading's blocks"
         (frameEdges rn == frameEdges snap && !(frameEdges rn).isEmpty)
+      t s!"{label}: snap {k} sets its reading's opening struts"
+        (frameStruts snap css == frameStruts rn (treeCssList "" rh.toList))
 
 /-- Invented words a centred block of the article's measure sets in three
 lines when each line takes every word that fits, the last word alone. -/
