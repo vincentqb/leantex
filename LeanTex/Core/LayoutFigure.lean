@@ -8,28 +8,8 @@ public import LeanTex.Core.Layout
 import LeanTex.Core.FigureLoss
 import LeanTex.Core.FigureSvg
 
-/-!
-# Text in an imported figure, set by the engine
-
-An SVG's text runs (`Gfx.Run`) set in the document's own faces, with the
-body text's arithmetic: each scalar's glyph from its face's cmap, its
-advance from `hmtx` at the run's size, the face's pair kerns as body text
-applies them (`pairKern`, under the one `Ir.features` record), and a scalar
-the face lacks from the per-scalar fallback chain the font environment
-precomputed (`FontSet.fallbackFor`, W0009 as in text). Once every run of a
-text chunk is shaped, the chunk's anchor resolves from its advance (SVG 2
-§11.10.2): `middle` centres the chunk on its start, `end` ends it there.
-
-Which face a run asks for is the SVG's font list, read against the
-document's roles, never against the host: a generic family is a role —
-`serif` the body, `sans-serif` the sans (the body where the document names
-none, as the font assembly resolves it), `monospace` the mono, and the
-display generics the sans — and a named family is the role whose face has
-that family name. The first family in the list that has a role decides;
-a list that names none sets in the sans, and each family it named is
-reported once. A weight of 600 or more takes the role's bold, an italic or
-oblique style its italic. A host face is never loaded (`fontMatch_mem`).
--/
+/-! Text in an imported figure, set by the engine: an SVG's runs shaped in the document's
+role faces as body text is, each chunk anchored by its advance (SVG 2 §11.10.2). -/
 
 namespace LeanTex.Core.Layout
 
@@ -50,28 +30,20 @@ public def roleOf (fs : FontSet) (family : String) : Option Nat :=
   (roleOfGeneric family).orElse fun _ =>
     [0, 1, 2].find? fun r => (fs.get (fs.lookup r 400 false)).family.toLower == family.toLower
 
-/-- The series a weight resolves to among the faces a role loads. -/
 @[expose] public def seriesOf (weight : Nat) : Nat := if weight ≥ 600 then 700 else 400
 
-/-- The role a run's family list resolves to: the first family with one,
-else the sans — the role `fontMatch` looks its face up in. -/
+/-- The role a run's family list resolves to: the first family with one, else the sans. -/
 @[expose] public def roleFor (fs : FontSet) (req : FaceReq) : Nat :=
   (req.families.findSome? (roleOf fs)).getD 1
 
-/-- **A run's face**: the first family with a role, else the sans; and, when
-the list named no role, its families, for the report. -/
+/-- A run's face: the first family with a role, else the
+sans, with the families for the report when none had one. -/
 public def fontMatch (fs : FontSet) (req : FaceReq) : Nat × Option (Array String) :=
   match req.families.findSome? (roleOf fs) with
   | some r => (fs.lookup r (seriesOf req.weight) req.italic, none)
-  -- premise: svgFontMatchChecks — two builds differing only by the family a
-  -- figure names: an unanswered family sets the face a generic sets, and only
-  -- it is reported
+  -- premise: svgFontMatchChecks — an unanswered family sets the generic's face and is reported.
   | none => (fs.lookup 1 (seriesOf req.weight) req.italic, some req.families)
 
-/-- **A figure's text sets in one of the document's own role faces**
-(`_mem`): whatever the SVG names, the face is the body's, the sans's or the
-mono's at the requested series and style — never a face from outside the
-document's font environment. -/
 public theorem fontMatch_mem (fs : FontSet) (req : FaceReq) :
     (fontMatch fs req).1 ∈ [fs.lookup 0 (seriesOf req.weight) req.italic,
       fs.lookup 1 (seriesOf req.weight) req.italic, fs.lookup 2 (seriesOf req.weight) req.italic] := by
@@ -96,14 +68,12 @@ public theorem fontMatch_mem (fs : FontSet) (req : FaceReq) :
     rcases hr with rfl | rfl | rfl <;> simp
   · simp
 
-/-- A glyph's advance at `size`: its `hmtx` units scaled, as body text
-scales them. -/
+/-- A glyph's advance at `size`: its `hmtx` units scaled as body text scales them. -/
 @[expose] public def advanceAt (size : Sp) (font : Font) (g : Nat) : Sp :=
   ((font.widths[g]?.getD 0) * size.toNat) / font.unitsPerEm
 
-/-- What shaping one run gave: its glyphs — face, glyph, pen x from the
-run's start — its advance, the substitutions the fallback chain made and
-the scalars no face covers. -/
+/-- One run's shaping: its glyphs (face, glyph, pen x), its advance,
+the fallback substitutions and the scalars no face covers. -/
 public structure RunShape where
   glyphs : Array (Nat × Nat × Char × Sp)
   advance : Sp
@@ -111,7 +81,6 @@ public structure RunShape where
   missing : Array Char
   deriving Inhabited
 
-/-- **One run shaped** in face `face` at `size`. -/
 public def shapeRun (fs : FontSet) (face : Nat) (size : Sp) (text : String) : RunShape := Id.run do
   let font := fs.get face
   let mut out : Array (Nat × Nat × Char × Sp) := #[]
@@ -148,20 +117,16 @@ public structure ShapeNotes where
   missing : Array Char
   deriving Inhabited
 
-/-- A run as shaped, at its resolved start: the run's frame map with its
-translation along x the chunk's pen at the run, shifted by the chunk's
-anchor; its role, and the descriptors of the face its family list resolved
-to (`fontMatch`). -/
+/-- A shaped run at its resolved start, shifted by its chunk's
+anchor, with its role and face descriptors (`fontMatch`). -/
 @[expose] public def placeRun (fs : FontSet) (r : Run) (start : Sp) (sh : RunShape) : Shaped :=
   let face := fs.get (fontMatch fs r.face).1
   { size := r.size, xf := { r.xf with e := ((start : Int) : Rat) }, glyphs := sh.glyphs, text := r.text
     fill := r.fill, stroke := r.stroke, lang := r.lang, role := roleFor fs r.face
     weight := face.weight, italic := face.isItalic }
 
-/-- The starts of a list's runs, chunk by chunk: a run that does not
-follow starts a chunk at its own x, a following run continues the pen by
-its offset, and once a chunk ends — at the next chunk, at any other node,
-at the list's end — every run in it moves by the chunk's anchor shift. -/
+/-- The starts of a list's runs: each chunk's runs from its first
+run's x, the whole chunk shifted by its anchor once it ends. -/
 public def chunkStarts (shapes : Array (Option (Run × RunShape))) : Array Sp := Id.run do
   let mut starts : Array Sp := Array.replicate shapes.size 0
   let mut chunk : Array Nat := #[]
@@ -194,8 +159,7 @@ public def chunkStarts (shapes : Array (Option (Run × RunShape))) : Array Sp :=
       chunk := #[]
   return close starts chunk x0 pen anchor
 
-/-- A list's runs shaped, each at its own face, in list order; a node
-that is no run stands as `none`. -/
+/-- A list's runs shaped in list order; a node that is no run stands as `none`. -/
 public def shapesOf (fs : FontSet) (ns : List (Node Run)) : Array (Option (Run × RunShape)) :=
   ns.toArray.map fun n => match n with
     | .label r => some (r, shapeRun fs (fontMatch fs r.face).1 r.size r.text)
@@ -203,10 +167,8 @@ public def shapesOf (fs : FontSet) (ns : List (Node Run)) : Array (Option (Run �
 
 mutual
 
--- conserves: none — a shaping: each run maps to one shaped run carrying its
--- text, every other node to itself; `shapeFigure_text` states the census.
-/-- One node shaped onto `acc`, a run at the start `pos` gives it; a
-group's list shaped as `shapeList` shapes one. -/
+-- conserves: none — a shaping, run for run; `shapeFigure_text` states the census.
+/-- One node shaped onto `acc`, a run at the start `pos` gives it. -/
 public def shapeOne (fs : FontSet) (pos : Option (Sp × RunShape)) (acc : Array (Node Shaped)) :
     Node Run → Array (Node Shaped)
   | .draw g f s => acc.push (.draw g f s)
@@ -222,8 +184,7 @@ public def shapeOne (fs : FontSet) (pos : Option (Sp × RunShape)) (acc : Array 
     | none => acc.push (.label (placeRun fs r 0 (shapeRun fs (fontMatch fs r.face).1 r.size r.text)))
   | .words w => acc.push (.words w)
 
-/-- Each node of a list from index `i`, its run at the start its chunk
-resolved. -/
+/-- Each node of a list from index `i`, its run at its chunk's resolved start. -/
 public def shapeFrom (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Sp)
     (i : Nat) (acc : Array (Node Shaped)) : List (Node Run) → Array (Node Shaped)
   | [] => acc
@@ -254,8 +215,7 @@ public def runsList (acc : Array Run) : List (Node Run) → Array Run
 
 end
 
-/-- **A figure's text set** in the document's faces: every node and symbol
-body shaped, and what the shaping reports. -/
+/-- A figure's text set in the document's faces, and what the shaping reports. -/
 public def shapeFigure (fs : FontSet) (fig : Figure Run) : Figure Shaped × ShapeNotes :=
   let nodes := shapeList fs fig.nodes.toList
   let symbols := fig.symbols.map fun s => shapeList fs s.toList
@@ -273,8 +233,7 @@ public def shapeFigure (fs : FontSet) (fig : Figure Run) : Figure Shaped × Shap
 
 mutual
 
--- conserves: none — a census of a shaped tree's run texts, which
--- `shapeFigure_text` reads.
+-- conserves: none — a census of a shaped tree's run texts.
 /-- Every shaped run's text in a tree, onto `acc`, in order. -/
 public def shapedTextsOne (acc : Array String) : Node Shaped → Array String
   | .label s => acc.push s.text
@@ -371,14 +330,6 @@ private theorem texts_shapeFrom (fs : FontSet) (shapes : Array (Option (Run × R
       runsList_acc (runsOne #[] n) rest, Array.map_append]
 end
 
-/-- **Shaping keeps every word a figure's runs carry, in order** (`_text`):
-the texts the shaped figure's runs carry — its nodes', and each symbol
-body's — are its runs' texts, one for one; shaping adds no run and drops
-none. It is a statement about the words a shaped run says, not about the
-glyphs that set them: which characters a face draws is shaping's choice,
-and a character no face covers is named (`ShapeNotes.missing`, W0609)
-rather than set — that the glyphs spell the text less those is pending
-work, held meanwhile by the artifact tier's reading of every corpus form. -/
 public theorem shapeFigure_text (fs : FontSet) (fig : Figure Run) :
     shapedTextsList #[] (shapeFigure fs fig).1.nodes.toList = (runsList #[] fig.nodes.toList).map (·.text) ∧
     (shapeFigure fs fig).1.symbols.map (fun b => shapedTextsList #[] b.toList) =
@@ -392,13 +343,11 @@ public theorem shapeFigure_text (fs : FontSet) (fig : Figure Run) :
     simp only [Function.comp_apply, shapeList]
     exact texts_shapeFrom fs _ _ 0 b.toList
 
-/-- Every store entry's vector figure shaped in the document's faces: the
-one value both backends read (`Image.Store.shaped`). -/
+/-- Every store entry's vector figure shaped in the document's faces (`Image.Store.shaped`). -/
 public def shapeStore (fs : FontSet) (imgs : Image.Store) : Array (Option (Figure Shaped)) :=
   imgs.entries.map fun en => en.vector.map fun fig => (shapeFigure fs fig).1
 
-/-- Every scalar the store's drawn figures set: what joins the per-scalar
-fallback the font assembly precomputes, beside the body's. -/
+/-- Every scalar the store's drawn figures set, joining the per-scalar fallback precompute. -/
 public def storeScalars (imgs : Image.Store) : Array Char :=
   imgs.entries.foldl (fun acc en => match en.vector with
     | some fig =>
@@ -406,18 +355,13 @@ public def storeScalars (imgs : Image.Store) : Array Char :=
       runs.foldl (fun acc r => r.text.toList.foldl (fun a c => if a.contains c then a else a.push c) acc) acc
     | none => acc) #[]
 
-/-- Four hex digits at least, upper case: the code point spelling the
-glyph diagnostics use. -/
+/-- A code point in at least four upper-case hex digits, as the glyph diagnostics spell it. -/
 private def hex4 (n : Nat) : String :=
   let s := String.ofList ((Nat.toDigits 16 n).map Char.toUpper)
   (if s.length < 4 then "".pushn '0' (4 - s.length) else "") ++ s
 
-/-- Every store entry's figure shaped, with what the shaping reports, one
-diagnostic per family the document's roles do not answer (N0026), per
-substitution (W0009) and per scalar no face covers — a figure loss
-(W0609), the engine's drawing shipping without it — each with the figure as
-its subject's anchor and beside the source the document names the figure
-by — where its span is found. -/
+/-- Every store entry's figure shaped, with one diagnostic per unanswered
+family (N0026), substitution (W0009) and uncovered scalar (W0609). -/
 public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
     Array (Option (Figure Shaped)) × Array (String × Diag) :=
   imgs.entries.foldl (fun (out, diags) en =>

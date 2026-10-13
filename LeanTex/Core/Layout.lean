@@ -24,18 +24,10 @@ namespace LeanTex.Core.Layout
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Ir
 
-/-- Per-level list indent as a function of the base size: 1.5 em — the
-15 pt the engine shipped at the 10 pt base where it was picked, now
-following the type, as classes.dtx derives its own leftmargin stack in
-ems of the class base. Frozen at 15 pt, an enumerate marker plus its
-`\labelsep` (together about 1.45 em) hung left past the print margin at
-any base over about 21 pt — the poster's 31 pt body put its "1." 30 pt
-into the trim. -/
+/-- The per-level list indent: 1.5 em of the base size,
+as classes.dtx sets its leftmargin stack in ems. -/
 public def listIndentFor (base : Sp) : Sp := base * 3 / 2
 
-/-- The frame's fixed opening skip, projected from its shared IR length
-at the body size. Painted extents and flexible space are accounted for
-by the page builder after this boundary. -/
 public def frameBodySkip (hasTitle : Bool) (valign : VAlign) (size : Sp) : Sp :=
   (Ir.frameBodySkip hasTitle valign).resolve size 0
 
@@ -49,219 +41,99 @@ public structure Geom where
   hmargin : Sp := inch 1
   vmargin : Sp := inch 1
   fontSize : Sp := Ir.baseFontSize
-  /-- TeX's `\topskip`, where the page is TeX's: the first line of a fresh
-  page stands this far below the text area's top unless its own box is
-  taller — the page builder puts `\topskip` less the first box's height
-  above it, floored at zero (TeXbook, ch. 15). The standard classes set it
-  to the body size (size10/11/12.clo:97, `\setlength\topskip{10\p@}`).
-  `none` on a frame page: beamer sets a frame as one box, whose content
-  opens on its `\vbox{}` (`Spacing.Page.openBody`), and the engine's metric rule
-  stands there. -/
+  /-- TeX's `\topskip` (TeXbook ch. 15); `none` on a frame page, which beamer sets as one box. -/
   topskip : Option Sp := none
-  /-- The gap between peer paragraphs. The default is the declared token
-  (`Ir.parskipDefault`, one rhythm quantum); a document declares its own
-  through `\page{ parskip = ... }`. -/
   parskip : SymGlue := Ir.parskipDefault Ir.baseFontSize
-  /-- The `\parskip` TeX adds when the paragraph after a trivlist's
-  `\topsep` starts (ltlists.dtx, `\@trivlist`: `\advance\@topsep\parskip`):
-  the declared parskip where a document or class declares one, else the
-  standard classes' own `0pt plus 1pt` (classes.dtx). It differs from
-  `parskip` only where nothing is declared: there `parskip` is the engine's
-  paragraph mark, a skip standing in for the `\parindent` the engine does
-  not set, and TeX spends no indent at a list's edge. -/
+  /-- The `\parskip` TeX adds after a trivlist's `\topsep`: the
+  declared parskip, else the standard classes' `0pt plus 1pt`. -/
   texParskip : SymGlue := Ir.texParskipDefault
-  /-- The list indent of a lineage whose class declares no `\leftmargin`
-  stack — the web's (`Ir.leftMargin` answers the standard classes' and
-  beamer's, per level): `listIndentFor`'s 1.5 em, the engine's own choice,
-  which a document owns through `\style{itemize}{ indent = ... }`. -/
+  /-- The list indent of a lineage whose class declares no `\leftmargin` stack. -/
   listIndent : Sp := listIndentFor Ir.baseFontSize
   leading : Nat := 1000
-  /-- Whether paragraphs may hyphenate; the class default resolved. Layout
-  owns the gate so every caller — build, tests, oracles — obeys it. -/
   hyphenate : Bool := true
-  /-- Whether paragraphs justify. Off means ragged right: word spaces stay
-  natural, an underfull line costs nothing, and only real overfull is bad. -/
   justify : Bool := true
-  /-- Whether a paragraph's lines hang from the *right* edge of the measure:
-  LaTeX's `\raggedleft` setting, and what `align = right` on an element asks
-  for. Off is the engine's left origin, which every path had before a right
-  one existed — line placement knew only "centred" and "left", so a declared
-  `right` silently centred while the HTML backend passed it through to CSS
-  and the two artifacts disagreed. Lines set ragged, as a centred line does:
-  a flush-right line that justified would fill the measure and land back at
-  the left. -/
+  /-- Whether lines hang ragged from the right edge of the measure, as `\raggedleft` sets them. -/
   flushRight : Bool := false
-  /-- Whether boundary glyphs protrude into the margin (microtype's
-  character protrusion). Layout owns the gate, as it owns `hyphenate`'s. -/
+  /-- Whether boundary glyphs protrude into the margin (microtype's character protrusion). -/
   protrude : Bool := true
-  /-- Whether font boxes may expand within ±`expandLimit` (microtype's
-  font expansion). Layout owns the gate, as it owns `protrude`'s. -/
+  /-- Whether font boxes may expand within ±`expandLimit` (microtype's font expansion). -/
   expand : Bool := true
-  /-- LaTeX's `\flushbottom`: a page the page builder broke stretches its
-  glue so its last baseline stands on the text area's floor
-  (`Spacing.Page.finishPage`); off is `\raggedbottom`, the article class's own
-  (article.cls, `\if@twoside\else\raggedbottom\fi`), where the glue
-  keeps its natural size. -/
   flushBottom : Bool := false
-  /-- Bleed past the trim edge, for the PDF writer: layout works in trim
-  coordinates and never sees it. -/
+  /-- Bleed past the trim edge, for the PDF writer; layout works in trim coordinates. -/
   bleed : Sp := 0
-  /-- Whether the pages ship printer's cut marks (`cutMarks`): derived
-  from the trim and bleed, drawn on every face. Off by default. -/
+  /-- Whether the pages ship printer's cut marks (`cutMarks`). -/
   marks : Bool := false
-  /-- The cut marks' declared trim clearance (`Ir.cutMarkGap` holds the
-  default and its source). -/
   markGap : Sp := Ir.cutMarkGap
-  /-- The cut marks' declared thickness (`Ir.cutMarkThickness` holds the
-  default and its source). -/
   markThick : Sp := Ir.cutMarkThickness
-  /-- How far inside the medium a trim the document's own drawn marks cut
-  lies (`drawnTrim`), on a page that declares no bleed: the medium stays
-  the page, and only the file's boxes name the trim. -/
+  /-- How far inside the medium the trim cut by the
+  document's own drawn marks lies (`drawnTrim`). -/
   trimInset : Sp := 0
-  /-- The band a page footer reserves above the bottom margin: what its ink
-  and body-side gap need beyond the margin. Zero when there is no footer or
-  the margin already holds it, so an undeclared page is unchanged.
-  `Layout.run` computes it (`furnitureBand`); everything else reads it only
-  through `bodyBottom`. -/
+  /-- The band a page footer reserves above the bottom margin
+  (`furnitureBand`); zero when the margin holds it. -/
   footBand : Sp := 0
-  /-- The band a running head reserves below the top margin: what its ink
-  and body-side gap need beyond the margin. Zero when there is no head or
-  the margin already holds it, so an undeclared page is unchanged.
-  `Layout.run` computes it (`furnitureBand`); everything else reads it only
-  through `bodyTop`. -/
+  /-- The band a running head reserves below the top margin
+  (`furnitureBand`); zero when the margin holds it. -/
   headBand : Sp := 0
-  /-- The size ladder in force (`Ir.PageSpec.scale`): what a named size
-  run (`.styled (.size n)`) resolves through, so a venue's read-out ladder
-  reaches the set text — a footnote's body too, which LaTeX sets in the
-  document's own `\footnotesize`. Engine-derived default sizes
-  (`sectionSize`, the footnote mark, chrome) stay steps of the engine's own scale:
-  they are the engine's design, not the document's declarations, and the
-  HTML backend keeps the same split. -/
+  /-- The size ladder in force (`Ir.PageSpec.scale`), through which named size runs resolve. -/
   scale : List (String × Nat) := Ir.sizeScale
-  /-- The skip column in force (`Ir.PageSpec.skipScale`): every named
-  step's `\baselineskip` row, which its lines lead from (`Ir.stepLead`). -/
+  /-- The skip column in force (`Ir.PageSpec.skipScale`): each named step's `\baselineskip`. -/
   skips : List (String × Nat) := Ir.sizeSkipScale
-  /-- The ragged setting in force, where `justify` is off, is LaTeX's
-  `\@flushglue` (`Ir.PageSpec.raggedFil`; a `\raggedright` scope): lines
-  fill first (`Spacing.Paragraph.rightFil`), not the engine's balanced
-  ragged (`raggedItems`). -/
+  /-- Whether ragged lines fill first, as LaTeX's `\@flushglue` sets a `\raggedright` scope. -/
   raggedFil : Bool := false
-  /-- beamer's `\textheight` on the frame being walked, where its pages
-  carry the footline: the paper less `\footheight` and `\headheight`
-  (beamerbaseframecomponents.sty:178-180; moloch's headline is empty) —
-  `footFloor` of the band's box, the floor the page builder stands the
-  frame's body on (`Spacing.Page.bottom`). `none` elsewhere. -/
+  /-- beamer's `\textheight` on a frame whose pages carry the footline; `none` elsewhere. -/
   frameTextHeight : Option Sp := none
   deriving Repr
 
 public def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
 
-/-- The furniture ink-clearance floor: the least gap between a band's ink
-and the body's, and between the body's ink and a picture block. The value
-is TeX's own collision floor (`\lineskip=1pt`, TeXbook p.78), surviving
-here as clearance — the interline rule is metric (`Spacing.Page.placeLine`) — and as
-TeX's `\lineskip` on either side of display math, where TeX's own interline
-rule stands (`texBaselineGap`). -/
+/-- The least gap between a band's ink and the body's, TeX's `\lineskip` (TeXbook p.78). -/
 @[expose] public def inkClearance : Sp := Ir.inkClearance
 
-/-- The lowest y a body line's ink may reach: the bottom margin, less the
-band a footer reserves. Every placement decision reads the page bottom from
-here and nowhere else — a footer that draws over the last line of body text
-is a worse bug than no footer. -/
 public def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.vmargin - g.footBand
 
-/-- The highest y a body line's ink may reach: the top margin, plus the
-band a running head reserves. Every placement decision reads the page top
-from here and nowhere else — a head that draws over the first line of body
-text is the same bug as the footer's, at the other edge. -/
 public def Geom.bodyTop (g : Geom) : Sp := g.vmargin + g.headBand
 
-/-- Where one side's running furniture stands: `edge` is the distance from
-the page edge to the furniture's nearest ink — the head's ink top, the
-foot's ink *bottom* — and `band` is what the furniture's ink and its
-body-side gap need beyond the margin. Both sides resolve through the one
-`furnitureBand`, so the two edges are equal by definition
-(`furniture_symmetric`): that is the native model, of the `furnituregap`
-key and of an undeclared page. LaTeX's own spellings keep LaTeX's reading:
-`\headsep` runs from the header's baseline to the body, `\footskip`
-baseline to baseline (ltpage.dtx, `\@outputpage`; the geometry manual §5.3
-diagram), so equal declared values leave the gap above the body larger
-than the gap below by the footer's strut height — the correction users of
-symmetric furniture strike by hand (tex.sx/375264), and which then means
-here what it means in LaTeX (`furnGapOfSep`, `latexFootY`). -/
+/-- One side's running furniture: `edge` runs from the page edge to its nearest
+ink, and `band` is what its ink and body-side gap need beyond the margin. -/
 public structure FurnBand where
   edge : Sp
   band : Sp
   deriving Repr
 
-/-- One side's edge gap. Declared gap: whatever of the margin the ink and
-the gap leave, floored at zero — `top = g₁ + ink + g₂` read backwards, the
-recovery `geometry_roundtrip` states. Default: the furniture hangs from
-half the margin, the engine's own convention (no external authority names
-the split; the head's ink top sat at `vmargin / 2` before the gap was
-declarable, and an undeclared page must not move). -/
+/-- One side's edge gap: what the margin leaves after the ink
+and a declared gap, floored at zero, else half the margin. -/
 public def furnEdge (vmargin ink : Sp) (gap : Option Sp) : Sp :=
   match gap with
   | some g => max 0 (vmargin - ink - g)
   | none => vmargin / 2
 
-/-- Resolve one side's furniture band from the geometry, the furniture
-line's ink extent, and the declared body-side gap (`none` requires only
-`inkClearance` clearance, and the body keeps its margin unless the ink needs
-more). A declared gap is exact (`furniture_gap_exact`): the edge gives
-first, down to zero, then the band takes the rest from the body. -/
 public def furnitureBand (vmargin ink : Sp) (gap : Option Sp) : FurnBand :=
   { edge := furnEdge vmargin ink gap
     band := max 0 (furnEdge vmargin ink gap + ink + gap.getD inkClearance - vmargin) }
 
-/-- The head line's baseline: its ink top stands exactly `edge` below the
-page's top edge. -/
 public def furnHeadY (b : FurnBand) (ascent : Sp) : Sp := b.edge + ascent
 
-/-- The foot line's baseline: its ink *bottom* stands exactly `edge` above
-the page's bottom edge. Anchoring the ink rather than the baseline is what
-makes the two edge gaps one number in the native model; a declared
-`\footskip` is LaTeX's instead (`latexFootY`). -/
 public def furnFootY (b : FurnBand) (pageH descent : Sp) : Sp := pageH - b.edge - descent
 
-/-- The foot line's baseline under a declared `\footskip`, as LaTeX reads
-it: `\footskip` below the text area's floor, baseline to baseline —
-`\@outputpage` appends the foot under `\box\@outputbox` with
-`\baselineskip\footskip`, and `\@makecol` cancels the box's depth
-(`\vskip -\dimen@`), so the floor is a full page's last baseline and the
-foot's place is a function of the geometry alone, whatever its face
-(ltpage.dtx, ltoutput.dtx). -/
+/-- The foot line's baseline under a declared `\footskip`, baseline to
+baseline below the text area's floor (ltpage.dtx, ltoutput.dtx). -/
 public def latexFootY (g : Geom) (footskip : Sp) : Sp := g.bodyBottom + footskip
 
-/-- The band arithmetic's one core inequality: the reservation always holds
-the edge gap, the ink, and the required body-side gap, and it needs no sign
-hypothesis — `\page{ vmargin = -5mm }` parses and flows into `Geom.ofPage`,
-and the reservation still suffices there. Bare `Int` binders because
-`omega` does not see through the `Sp` abbreviation. -/
 private theorem furn_reserves (vm ink req edge : Int) :
     edge + ink + req ≤ vm + max 0 (edge + ink + req - vm) := by
   omega
 
-/-- `furn_reserves` reflected through the page height: what
-`bodyBottom_clears_footer` reads. -/
 private theorem furn_reserves_below (pageH vm ink req edge band : Int)
     (h : edge + ink + req ≤ vm + band) :
     pageH - vm - band + ink + req ≤ pageH - edge := by
   omega
 
-/-- The reservation is sufficient, for every geometry: the furniture's ink
-plus its required body-side gap fit between the edge and the reserved body
-boundary. -/
 public theorem furniture_band_reserves (vmargin ink : Sp) (gap : Option Sp) :
     (furnitureBand vmargin ink gap).edge + ink + gap.getD inkClearance
       ≤ vmargin + (furnitureBand vmargin ink gap).band := by
   simp only [furnitureBand]
   exact furn_reserves vmargin ink (gap.getD inkClearance) (furnEdge vmargin ink gap)
 
-/-- With the band from `furnitureBand`, body ink starts at least the
-required gap below the head's ink bottom (`furnHeadY + descent`, which is
-`edge + ink`). -/
 public theorem bodyTop_clears_head (g : Geom) (ink : Sp) (gap : Option Sp)
     (h : g.headBand = (furnitureBand g.vmargin ink gap).band) :
     (furnitureBand g.vmargin ink gap).edge + ink + gap.getD inkClearance ≤ g.bodyTop := by
@@ -269,9 +141,6 @@ public theorem bodyTop_clears_head (g : Geom) (ink : Sp) (gap : Option Sp)
   rw [h]
   exact furniture_band_reserves g.vmargin ink gap
 
-/-- The mirror of `bodyTop_clears_head`: body ink stops at least the
-required gap above the foot's ink top (`furnFootY - ascent`, which is
-`pageH - edge - ink`). -/
 public theorem bodyBottom_clears_footer (g : Geom) (ink : Sp) (gap : Option Sp)
     (h : g.footBand = (furnitureBand g.vmargin ink gap).band) :
     g.bodyBottom + ink + gap.getD inkClearance
@@ -288,15 +157,6 @@ private theorem furn_symmetric (pageH vm a d edge band : Int) :
       ((pageH - edge - d) - a) - (pageH - vm - band) := by
   omega
 
-/-- The user's rule, by the algebra of the definition: on every page the
-head's ink top stands the same distance below the top edge as the foot's
-ink bottom stands above the bottom edge, and on a full page the two
-body-side gaps — head ink bottom to the body area's top, the body area's
-bottom to foot ink top — agree. Over the placed baselines
-(`furnHeadY`/`furnFootY`) and the reserved body area
-(`Geom.bodyTop`/`bodyBottom`), for one `FurnBand` placing both sides —
-which is what the running head and foot are: both set in the body face at
-the page's font size, from the same declared gap. -/
 public theorem furniture_symmetric (g : Geom) (a d : Sp) (b : FurnBand)
     (hh : g.headBand = b.band) (hf : g.footBand = b.band) :
     furnHeadY b a - a = g.pageH - (furnFootY b g.pageH d + d) ∧
@@ -310,38 +170,22 @@ private theorem furn_gap_exact (vm ink g : Int) :
       - (max 0 (vm - ink - g) + ink) = g := by
   omega
 
-/-- A declared body-side gap is honoured exactly, for every geometry: the
-distance from the furniture's body-side ink edge to the reserved body
-boundary is the declared value — the edge gives first, then the band takes
-the rest from the body. -/
 public theorem furniture_gap_exact (vmargin ink gap : Sp) :
     (vmargin + (furnitureBand vmargin ink (some gap)).band)
       - ((furnitureBand vmargin ink (some gap)).edge + ink) = gap := by
   simp only [furnitureBand, furnEdge, Option.getD]
   exact furn_gap_exact vmargin ink gap
 
-/-- The baseline-to-ink correction, applied exactly once, where the LaTeX
-spellings are read: `\headsep` positions the header's *baseline* against
-the body while the visual gap runs from the ink, and the difference is
-what the line hangs below its baseline — the face's descent — so the head
-read through it stands its baseline `\headsep` above the text area, as in
-LaTeX. `\footskip` is not read through it: it runs baseline to baseline
-(`latexFootY`). The two declared values read through it differ by exactly
-their declared difference, which N0021 names. -/
+/-- The ink gap of a declared `\headsep`, which LaTeX measures from the header's baseline. -/
 public def furnGapOfSep (sep descent : Sp) : Sp := sep - descent
 
-/-- The inverse reading, for `geometry_roundtrip`: what a gap would be
-declared as. -/
+/-- The inverse of `furnGapOfSep`. -/
 public def furnSepOfGap (gap descent : Sp) : Sp := gap + descent
 
 private theorem furn_roundtrip (sep d vm ink : Int) (h : ink + (sep - d) ≤ vm) :
     (sep - d) + d = sep ∧ max 0 (vm - ink - (sep - d)) + ink + (sep - d) = vm := by
   omega
 
-/-- The reader loses nothing: reading a declared sep into the ink gap and
-back yields the declared value — the correction is applied and un-applied
-consistently — and the recovered edge restores the declared margin
-(`top = g₁ + ink + g₂`) whenever the declaration fits it. -/
 public theorem geometry_roundtrip (sep descent vmargin ink : Sp)
     (h : ink + furnGapOfSep sep descent ≤ vmargin) :
     furnSepOfGap (furnGapOfSep sep descent) descent = sep ∧
@@ -350,50 +194,25 @@ public theorem geometry_roundtrip (sep descent vmargin ink : Sp)
   simp only [furnGapOfSep, furnSepOfGap, furnitureBand, furnEdge] at h ⊢
   exact furn_roundtrip sep descent vmargin ink h
 
-/-- The height a `\textheight` fraction sizes against: on a frame whose
-pages carry the footline, beamer's own (`Geom.frameTextHeight`); elsewhere
-the height between the margins. -/
 public def Geom.textHeight (g : Geom) : Sp := g.frameTextHeight.getD (g.pageH - 2 * g.vmargin)
 
-/-- A band slot's horizontal position: the declared side and the paper's
-edge, inset as moloch's footline insets its slots (`Ir.footline`), plus the
-slot's own set width — no other slot is an argument, so nothing a slot
-contains can move another slot's box. The right slot's box ends its inset
-from the paper's right edge whatever it holds (`bandSlotX_right_pinned`):
-the folio has a fixed position, and an empty or overlong neighbour is not a
-case. -/
 public def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Sp) : Sp :=
   match side with
   | .left => Ir.footline.left
   | .right => g.pageW - Ir.footline.right - w
 
-/-- The right slot's right edge is a constant of the geometry: `x + w` is
-the paper's right edge less the footline's inset for every width, so no
-content — its own included — moves the folio's anchor. -/
 public theorem bandSlotX_right_pinned (g : Geom) (w : Sp) :
     bandSlotX g .right w + w = g.pageW - Ir.footline.right := by
   have key : ∀ a b c : Int, a - b - c + c = a - b := by intro a b c; omega
   simp only [bandSlotX]
   exact key g.pageW Ir.footline.right w
 
-/-- The footline band's baseline on a page `pageH` tall, for a band whose
-box hangs `d` below its baseline: the template's closing `\vskip4pt`
-stands between the box and the paper's bottom edge (`Ir.footline`). -/
 public def footBaseline (pageH d : Sp) : Sp := pageH - Ir.footline.raise - d
 
-/-- The floor of a frame's text area above a footline band whose box stands
-`h` above and `d` below its baseline: `gap` above the band's top — beamer's
-`\footheight` is the box plus 4 pt (`Ir.footline.sep`), unless the document
-declared its own furniture gap. -/
+/-- The floor of a frame's text area, `gap` above a footline
+band whose box stands `h` above and `d` below its baseline. -/
 public def footFloor (pageH gap h d : Sp) : Sp := footBaseline pageH d - h - gap
 
-/-- **A frame's text area and its footline tile the page** (`_exact`):
-the floor the body stands on, plus the footline's gap, box and closing
-skip, is the paper's height — beamer's `\textheight + \footheight =
-\paperheight` (beamerbaseframecomponents.sty:178-180), whatever the band
-holds. The floor and the number's baseline are one function of the band's
-box (`footFloor` is `footBaseline` less the box's height and the gap), so
-the two can only move together. -/
 public theorem footFloor_exact (pageH gap h d : Sp) :
     footFloor pageH gap h d + gap + h + d + Ir.footline.raise = pageH ∧
       footBaseline pageH d - h - footFloor pageH gap h d = gap := by
@@ -401,22 +220,12 @@ public theorem footFloor_exact (pageH gap h d : Sp) :
       H - r - d - h - (H - r - d - h - g) = g := by intros; omega
   exact key pageH gap h d Ir.footline.raise
 
-/-- The floor of a frame's text area, footline or none: beamer's
-`\textheight` is the paper less `\footheight` (moloch's headline is empty),
-and `\footheight` is the footline box's height and depth plus 4 pt
-(beamerbaseframecomponents.sty:164-180) — so a page whose footline is empty
-(a standout frame's, beamer's default theme's, a deck that declares no
-chrome) still ends its text area `gap` above the paper's edge, the box being
-empty, never at the slides margin. `box` is the band's (`bandBox`) where the
-page carries one. -/
+/-- The floor of a frame's text area: `gap` above the footline box
+where the page carries one, else `gap` above the paper's edge. -/
 public def frameFloor (pageH gap : Sp) : Option (Sp × Sp) → Sp
   | some (h, d) => footFloor pageH gap h d
   | none => pageH - gap
 
-/-- **The text area and the footline tile every frame page** (`_exact`):
-the floor plus `\footheight` is the paper — the band's box with its closing
-skip and the gap where a band stands (`footFloor_exact`), the gap alone where
-the footline is empty. -/
 public theorem frameFloor_exact (pageH gap : Sp) (box : Option (Sp × Sp)) :
     frameFloor pageH gap box + gap +
       (match box with
@@ -432,28 +241,15 @@ public theorem frameFloor_exact (pageH gap : Sp) (box : Option (Sp × Sp)) :
     exact key pageH gap h d Ir.footline.raise
 
 
-/-- Does a box of width `w` whose left edge stands at `x` lie on the medium
-the page declares? Layout space is the trim's, so the medium runs
-`-bleed … pageW + bleed` — `cutMarks`' own reading of it.
-
-Ink outside it is ink no reader can see. `/MediaBox` is "the boundaries of
-the physical medium" (ISO 32000-2 §7.7.3.3) and a viewer clips to it: an
-independent reader of a page that shipped a band slot past the right edge
-returned 24 fewer characters than the file spells and reported the box's
-far edge at the page edge. So a box that fails this is a loss to report,
-not a placement to keep quiet about. -/
+/-- Whether a box `w` wide whose left edge stands at `x` lies on the
+medium, which runs from `-bleed` to `pageW + bleed` in trim space. -/
 public def Geom.onMedium (g : Geom) (x w : Sp) : Bool :=
   -g.bleed ≤ x && x + w ≤ g.pageW + g.bleed
 
-/-- How far off the medium a box reaches, on whichever side it leaves —
-zero when it is inside. What the loss report states, so the number a reader
-is told is the number `onMedium` judged. -/
+/-- How far off the medium a box reaches; zero when it lies on it. -/
 public def Geom.offMedium (g : Geom) (x w : Sp) : Sp :=
   max 0 (max (x + w - (g.pageW + g.bleed)) (-g.bleed - x))
 
-/-- The two agree: a box reaches nothing off the medium exactly when it is
-on it, so the number a loss reports and the judgement that fired it cannot
-disagree. -/
 public theorem offMedium_agree (g : Geom) (x w : Sp) :
     g.offMedium x w = 0 ↔ g.onMedium x w = true := by
   have key : ∀ b pw x w : Int,
@@ -464,34 +260,12 @@ public theorem offMedium_agree (g : Geom) (x w : Sp) :
     omega
   exact key g.bleed g.pageW x w
 
-/-- The slides stage carries a readable number of text lines. Tantau's rule
-for presentations is lines, not points: "between 10 and 20 lines should fit
-on each slide; the less lines, the more readable" (beamer user guide
-§5.6.1). Every stage in `Ir.slidesStages` at the default margins and the
-11 pt base sits inside that band — 16 full lines at 4:3, 15 at 16:9, up to
-18 at √2:1 — so a stage cannot enter the table without entering this
-contract, and the slides defaults cannot drift apart without failing the
-build. -/
 public theorem slides_lines_in_band :
     ∀ r ∈ Ir.slidesStages,
       10 ≤ (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
       (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
   decide
 
-/-- The bands never eat the measure: any slides-stage geometry whose head
-and foot bands come from `furnitureBand` keeps a positive body height, and
-Tantau's 10–20 lines (beamer user guide §5.6.1, the band
-`slides_lines_in_band` states for the bare stages) still holds between
-`bodyTop` and `bodyBottom` — for every stage in `Ir.slidesStages`, so a
-stage entering the table enters this contract too. The ink hypotheses
-allow each running line two em of the base size. That bound has no
-external authority to cite: the OpenType spec bounds no line metric — OS/2
-`sTypoAscender`: "It is not a general requirement that sTypoAscender −
-sTypoDescender be equal to unitsPerEm", and the hhea ascender/descender
-the engine reads are the font's own — so two em is this engine's coverage
-choice, chosen generous against real faces (typical line metrics sit at
-1.0–1.3 em; the shipped test faces are pinned under the bound in
-`Tests.lean`). -/
 public theorem slides_lines_survive_bands (a d f : Sp)
     (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
     (g : Geom)
@@ -506,16 +280,10 @@ public theorem slides_lines_survive_bands (a d f : Sp)
   have hfs : Ir.slidesFontSize = 720896 := by decide
   have hld : leadingFor Ir.slidesFontSize = 865075 := by decide
   have hls : inkClearance = 65536 := by decide
-  -- Every table height sits between the 16:9 row's 90 mm and the √2:1
-  -- row's 105 mm; the band arithmetic below needs only the interval, and
-  -- the interval is decided over the whole table — a taller or shorter
-  -- stage fails here, not silently.
   have hrange : ∀ r ∈ Ir.slidesStages,
       16719420 ≤ r.2.2 ∧ r.2.2 ≤ 19505990 := by decide
   have ⟨r, hr, heq⟩ := Array.mem_map.mp hg
   have hH : 16719420 ≤ g.pageH ∧ g.pageH ≤ 19505990 := heq ▸ hrange r hr
-  -- The key inequality over bare `Int` binders, as `bodyTop_clears_head`
-  -- does it: `omega` does not see through the `Sp` abbreviation.
   have key : ∀ a d f hb fb H : Int,
       a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
       16719420 ≤ H → H ≤ 19505990 →
@@ -533,18 +301,8 @@ public theorem slides_lines_survive_bands (a d f : Sp)
   rw [hv, hvm]
   exact key a d f g.headBand g.footBand g.pageH hh hf hH.1 hH.2 hhb hfb
 
-/-- How a page distributes its leftover vertical space: declared shares of
-the stretch above and below the content, in thousandths of one fil unit —
-the ratio form of beamer's `\vfil`-glue model — and whether that glue is of
-a body `\vfill`'s order (`joins`), so a `\vfill` on the page shares the
-leftover with it rather than taking it all. Centring is 1000:1000, top-flush
-0:1000 (all leftover below), bottom-flush 1000:0, and the moloch title page
-3618:2000 — the frame's own centring unit on each side composed with the
-template's `0pt plus 1.618fil` and `\vfil` above against its `plus 1fil`
-below (`Ir.golden_composes_center`; beamerinnerthememoloch.dtx, the "golden
-ratio spacing" of its `title page` template). None of the four joins: a page
-the builder opens keeps its leftover below an order the body's `\vfill`
-outranks, and a frame's own glue is `VDist.of`'s. -/
+/-- How a page distributes its leftover vertical space: thousandths of a fil
+above and below the content, and whether a body `\vfill` joins them (`joins`). -/
 public structure VDist where
   above : Nat
   below : Nat
@@ -556,23 +314,13 @@ public def VDist.center : VDist := ⟨1000, 1000, false⟩
 public def VDist.bottom : VDist := ⟨1000, 0, false⟩
 public def VDist.golden : VDist := ⟨3618, 2000, false⟩
 
-/-- The shift of a line with `k` of its page's `n` fil units above it:
-TeX's first-order infinite glue, as a share of the page's leftover.
-`\vspace{\fill}` above and below the content is k=0 for nothing and k=1
-of n=2 for every line — the centring sandwich; a leading fil alone pushes
-everything down by the whole leftover (bottom-flush), a trailing fil
-alone moves nothing. Content taller than the area (leftover ≤ 0) stays
-put: it stays top-flush and spills below, never rides off the top of the
-page. -/
+/-- The shift of a line with `k` of its page's `n` fil units above it,
+as a share of the leftover; content taller than the area stays put. -/
 public def filShare (leftover : Sp) (k n : Nat) : Sp :=
   if leftover ≤ 0 then 0
   else if n = 0 then 0
   else leftover * k / n
 
-/-- The fil split loses and invents nothing: a line's shift never leaves
-`[0, leftover]` while its fil count stays within the page's, and a line
-below another (more fils above it) never moves less — content order is
-preserved. -/
 public theorem filShare_sound (l : Sp) (k k' n : Nat) (hk : k ≤ k') (hk' : k' ≤ n) :
     0 ≤ filShare l k n ∧ (0 ≤ l → filShare l k' n ≤ l) ∧
     filShare l k n ≤ filShare l k' n := by
@@ -594,17 +342,9 @@ public theorem filShare_sound (l : Sp) (k k' n : Nat) (hk : k ≤ k') (hk' : k' 
       · exact Int.ediv_le_ediv hnn
           (Int.mul_le_mul_of_nonneg_left (by exact_mod_cast hk) (by omega))
 
-/-- The share of a page's leftover placed above the content: the ratio
-distribution IS the fil distribution — a ratio a:b is a of (a+b) fil
-units above the content, division-by-zero convention included. -/
 public def VDist.aboveShare (d : VDist) (leftover : Sp) : Sp :=
   filShare leftover d.above (d.above + d.below)
 
-/-- The split loses and invents nothing: the above share never leaves
-`[0, leftover]` (`filShare_sound` at a of a+b fils), and the below share
-is the exact difference — so both shares are non-negative and sum to
-exactly the leftover, whatever the ratio and whatever rounding the
-division did. -/
 public theorem VDist.split_exact (d : VDist) (l : Int) :
     0 ≤ d.aboveShare l ∧ (0 ≤ l → d.aboveShare l ≤ l) ∧
     d.aboveShare l + (l - d.aboveShare l) = l := by
@@ -613,8 +353,6 @@ public theorem VDist.split_exact (d : VDist) (l : Int) :
   have hcancel : ∀ x y : Int, x + (y - x) = y := by omega
   exact ⟨h.1, h.2.1, hcancel _ _⟩
 
-/-- Ratio 1:1 is the old vertical centring, division and guard included:
-the generalisation moves no standout frame and no section page. -/
 public theorem VDist.center_is_halving (l : Sp) :
     VDist.center.aboveShare l = if l ≤ 0 then 0 else l / 2 := by
   unfold aboveShare filShare center
@@ -627,32 +365,17 @@ public theorem VDist.center_is_halving (l : Sp) :
     simp only [hn, ite_false, h1, h2]
     exact key l
 
-/-- One fil unit of two is the centred share: the page builder's split of a
-leftover between two fills of one order is its centring's. -/
 public theorem filShare_half_exact (l : Sp) : filShare l 1 2 = VDist.center.aboveShare l := by
   rw [VDist.center_is_halving]
   unfold filShare
   split <;> simp
 
-/-- "All leftover below" is the old top-flush behaviour: the article page
-and every other undeclared page keep their lines exactly where they were. -/
 public theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
   unfold aboveShare filShare top
   split
   · rfl
   · simp
 
-/-- **In a centred frame the leftover splits evenly above and below the
-content, to within one sp** (`_exact`): the share above and the share below
-differ by the single scaled point the halving assigns below. The source is
-moloch's `[c]` key — `\beamer@frametopskip` and `\beamer@framebottomskip`
-both `0pt plus 1fil` (beamerinnerthememoloch.sty:455-456), measured under
-lualatex as a split of exactly one half; plain beamer's own key is
-`1fill` against `1.5fill` (beamerbaseframe.sty:257-258), every other
-bundle's (`Ir.FrameKeys.beamer`). The content's top is the
-title box's bottom (`Spacing.Page.openBody`), as the fil above stands there in beamer,
-and its bottom is `Spacing.Page.contentEnd` — the last box with its depth and the
-closing space the box keeps — so the two shares are the content's gaps. -/
 public theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
     VDist.center.aboveShare l ≤ l - VDist.center.aboveShare l ∧
       l - VDist.center.aboveShare l ≤ VDist.center.aboveShare l + 1 := by
@@ -662,110 +385,65 @@ public theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
     split at hs <;> omega
   exact key l _ h (VDist.center_is_halving l)
 
-/-- The distribution a frame's declaration names under the deck's keys: a
-projection of the one IR table (`Ir.frameGlue`), so the PDF page cannot
-drift from the HTML deck's spacers. `golden` is the title page's composed
-3618:2000. -/
+/-- The distribution a frame's declaration names under
+the deck's keys, projected from `Ir.frameGlue`. -/
 @[expose] public def VDist.of (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool := false) :
     VDist :=
   let g := Ir.frameGlue keys breakable v
   ⟨g.above, g.below, g.joins⟩
 
-/-- The standalone `golden` is the table's own: the literal and the
-projection are one value, so a change to the sourced ratio cannot leave a
-second copy behind (the shape `VDist.golden` was, and which let the two
-drift). -/
 public theorem VDist.golden_projects (keys : Ir.FrameKeys) :
     VDist.golden = VDist.of keys .golden := by
   cases keys <;> rfl
 
-/-- moloch's `[c]` is the builder's centring: the same value, so the
-centred-page statements below read a moloch frame's page as written. -/
 public theorem VDist.center_projects : VDist.center = VDist.of .moloch .center := by rfl
 
-/-- The fil units the leftover is shared in, above a line and on the whole
-page (`filShare`'s `k` of `n`), from the `\vfill` units on the page: one unit
-each, TeX's split between fills of one order and stretch, where the page's
-own glue yields to them; where it joins (`VDist.joins`), each `\vfill` is
-the thousand thousandths of its `0pt plus 1fill` beside the page's own
-shares, the share above standing above every line and the share below
-below them all. -/
+/-- The fil units above a line (`filShare`'s `k`), counted from the
+`\vfill` units on the page and the page's own shares where they join. -/
 @[expose] public def VDist.filAbove (d : VDist) (k : Nat) : Nat :=
   if d.joins then d.above + Ir.fillUnit * k else k
 
 @[expose] public def VDist.filTotal (d : VDist) (n : Nat) : Nat :=
   if d.joins then d.above + Ir.fillUnit * n + d.below else n
 
-/-- Where the page's glue yields, its units are the `\vfill`s alone. -/
 public theorem VDist.filUnits_id (d : VDist) (h : d.joins = false) (k n : Nat) :
     d.filAbove k = k ∧ d.filTotal n = n := by
   simp [VDist.filAbove, VDist.filTotal, h]
 
-/-- **The ground a frame declares for its own page.** Only the title page
-has one — `.golden` is the distribution `\maketitle` alone declares — and it
-is the design's resolved `titlepage` pair, read through the one resolving
-site (`Ir.Design.ofPalette`) over the palette epoch in force where the frame
-stands, exactly as the frame-title bar is read. Every other frame answers
-`none` and takes the document's own ground, which is the behaviour before
-this existed.
-
-The palette is the argument rather than the document because a `\palette`
-mid-deck must reach the frames after it; the `Ir.VAlign` is, because the
-title page is identified by its declared distribution and not by a flag a
-second construct could set. -/
+/-- The ground a title page declares, the design's resolved `titlepage`
+pair under the palette in force; `none` for every other frame. -/
 public def titleGround (pal : Ir.Palette) (valign : Ir.VAlign) : Option Ir.Color :=
   Ir.titleGroundOf pal valign
 
-/-- The ink that stands on a declared title-page ground, for the same page:
-the pair's own `fg`, which `ofPalette` defaults by inversion. `none` where
-no ground is declared — the page keeps the ink in force. -/
+/-- The ink on a declared title-page ground; `none` where no ground is declared. -/
 public def titleInk (pal : Ir.Palette) (valign : Ir.VAlign) : Option Ir.Color :=
   if valign matches .golden then (Ir.Design.ofPalette pal).titlepage.map (·.fg)
   else none
 
-/-- **The ground the page is painted is the ground the document declared.**
-A projection of one IR value (`Ir.Design.titleGround_exact`, which says the
-pair's ground is the palette role itself), so the colour the PDF page
-carries cannot be a second resolution of the role — and a frame that is not
-the title page is untouched. The HTML side reads the same role through
-`paletteVars`; `artGroundParityChecks` holds the two artifacts to it. -/
 public theorem titleGround_projects (pal : Ir.Palette) (valign : Ir.VAlign) :
     titleGround pal valign =
       if valign matches .golden then Ir.Design.declared? pal .titlePageGround else none := by
   unfold titleGround Ir.titleGroundOf
   cases valign <;> simp [Ir.Design.titleGround_exact]
 
-/-- Where a run's ink comes from, for the backends' marked content. No
-default: a construction must say. The tagger keys a run by the structure
-leaf it names (`Struct.leaves (Struct.ofDoc (pdfView doc))`, 18a's array);
-the other constructors name the generated ink apart, so a census over
-`.leaf` runs can be exact. -/
+/-- Where a run's ink comes from, for the backends' marked content. -/
 public inductive Attribution where
-  /-- Paints Struct leaf `k`: one inline atom's text — a `.text` run, an
-  icon's glyph (its leaf is the alternative), a reference's number, a
-  formula's rendering (its leaf is the source), a citation's marks. -/
+  /-- Ink of Struct leaf `k`: one inline atom's text. -/
   | leaf (k : Nat)
-  /-- Generated ink of the block whose first leaf is `k`, owned by no one
-  leaf: a section number, a caption prefix, an algorithm keyword, a
-  picture's label, a block the tree flattened to one leaf (a listing, a
-  bibliography entry), a placeholder set outside running content. -/
+  /-- Generated ink of the block whose first leaf is `k`, owned by no single leaf. -/
   | block (k : Nat)
   /-- The discretionary hyphen the breaker set at a line end. -/
   | hyphen
-  /-- Generated marker ink: a list bullet or number, an algorithm line
-  number — the marker line's runs. -/
+  /-- Generated marker ink: a list bullet or number, an algorithm line number. -/
   | label
   /-- The footnote mark's digits, in the text and leading the note block. -/
   | noteMark (num : Nat)
-  /-- Ink the projection does not census: furniture, a measuring pass that
-  never ships, the abstract heading and the headline band (18a's `none`
-  lines). Every construction site says which. -/
+  /-- Ink the projection does not census: furniture, measuring
+  passes, the abstract heading and the headline band. -/
   | unattributed
   deriving Repr, BEq, Inhabited
 
-/-- The face, size and colour in force where a through-line starts. Nested
-styles change their own glyphs without changing this source, matching ulem's
-entry-scoped `\ULdepth` and colour. -/
+/-- The face, size and colour in force where a through-line starts. -/
 public structure DecorationSource where
   slot : Nat := 0
   weight : Ir.Weight := .m
@@ -775,34 +453,28 @@ public structure DecorationSource where
   fontSize : Option (Affine Measure) := none
   deriving Repr, BEq, Inhabited
 
-/-- Decorations active while flattening. Underline keeps its established
-per-run font band; line-through retains the command-entry source. -/
 public structure ActiveDecorations where
   underline : Bool := false
   lineThrough : Option DecorationSource := none
   deriving Repr, BEq, Inhabited
 
-/-- One resolved decoration band. `raise` is the band's bottom relative to
-the baseline; `thickness` grows upward from it. -/
+/-- One resolved decoration band: `raise` is its bottom
+above the baseline, and `thickness` grows upward from it. -/
 public structure DecorationRule where
   color : Ir.Color := Ir.Color.black
   thickness : Sp := 0
   raise : Sp := 0
   deriving Repr, BEq, Inhabited
 
-/-- The two decoration slots shared by runs and spaces. Runs defer underline
-resolution until their actual fallback face is known (`Bool`); spaces carry
-the band of the face and size in force at the space (`Option DecorationRule`).
-Line-through always retains its command-entry band. -/
+/-- The decoration slots of runs and spaces: runs defer underline resolution
+to their fallback face (`Bool`), spaces carry a resolved band. -/
 public structure Decorations (U : Type := Bool) [Inhabited U] where
   underline : U := default
   lineThrough : Option DecorationRule := none
   deriving Repr, BEq, Inhabited
 
-/-- An inline formula shares the surrounding text's rhythm, but reserves
-its own measured reach. The ambient metrics are already scaled to `size`;
-`top` and `bottom` are signed outline bounds before the run's raise.
-They are carried separately from glyphs so a phantom keeps its geometry. -/
+/-- An inline formula's ambient text metrics at `size`
+and its signed outline bounds before the run's raise. -/
 public structure MathLineMetrics where
   size : Sp
   ascent : Sp
@@ -811,9 +483,8 @@ public structure MathLineMetrics where
   bottom : Sp
   deriving Repr, BEq, Inhabited
 
-/-- Text uses its face's leaded box. Math uses the ambient text box and
-its measured construction bounds, never a second text box derived from
-the math face's ascender/descender or its optically matched em. -/
+/-- A run's line metrics: its face's leaded box, or for math
+the ambient text box with the formula's measured bounds. -/
 public structure RunMetrics where
   leading : Option Sp := none
   math : Option MathLineMetrics := none
@@ -825,22 +496,18 @@ public inductive Item where
       (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
       (attr : Attribution)
   | glue (g : Glue)
-  /-- Breakable authored glue with resolved decoration bands. Kept separate
-  so ordinary glue carries no decoration payload in the hot path. -/
+  /-- Breakable authored glue with resolved decoration bands. -/
   | decoratedGlue (g : Glue) (decorations : Decorations (Option DecorationRule))
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
-  /-- An image: an unbreakable box `w` wide standing `h` above the baseline
-  with no depth. `store` indexes the `Image.Store`; `none` (or an entry that
-  did not load) is placed as a placeholder box of the same size. -/
+  /-- An unbreakable image box `w` wide standing `h` above the baseline;
+  `store` indexes the `Image.Store`, and `none` places a placeholder. -/
   | img (store : Option Nat) (w : Sp) (h : Sp)
-  /-- A horizontal rule in the stream — a fraction bar, a radical's
-  overbar: `w` wide, `thickness` tall, its bottom at the baseline plus
-  `raise`. Never a breakpoint, like any box. -/
+  /-- A horizontal rule `w` wide and `thickness` tall, its
+  bottom at the baseline plus `raise`; never a breakpoint. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
-  /-- A filled polygon in the stream — a cancel strike, an arrowhead: its
-  points from where it stands and the baseline, y up. It takes no width
-  and is never a breakpoint; the kerns around it place what it marks. -/
+  /-- A filled polygon taking no width, its points from where
+  it stands and the baseline, y up; never a breakpoint. -/
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
 
@@ -850,87 +517,55 @@ private def Item.boxChars : Item → List Char
 
 public def forcedCost : Int := -10000
 
-/-- plain TeX's `\hyphenpenalty=50` (TeXbook p.96): the cost of ending a
-line at a hyphen, against the badness scale the breaker shares with TeX. -/
+/-- plain TeX's `\hyphenpenalty=50` (TeXbook p.96). -/
 public def hyphenPenalty : Int := 50
 
-/-- Where a run may end a line after a character it sets, unhyphenated,
-and at what penalty — TeX's rule for prose: after an explicit hyphen, at
-`hyphenPenalty`. -/
+/-- Where prose may end a line after a character it
+sets: after an explicit hyphen, at `hyphenPenalty`. -/
 public def proseBreak (c : Char) : Option Nat :=
   if c == '-' then some hyphenPenalty.toNat else none
 
-/-- latex.ltx's `\binoppenalty` and `\relpenalty`, 700 and 500: what a break
-after a binary operator or a relation costs, and what url.sty prices its
-breaks at (`urlBreak`). -/
+/-- latex.ltx's `\binoppenalty` and `\relpenalty`. -/
 public def binopPenalty : Nat := 700
 public def relPenalty : Nat := 500
 
-/-- url.sty's break table, the way `\path` sets text no hyphenation can
-break: after `. @ \ / ! _ | ; > ] ) , ? & ' + = #` (`\UrlBreaks`) at
-`\binoppenalty`, and after `:` (`\UrlBigBreaks`) at `\relpenalty` — 700
-and 500, latex.ltx's values — and after a hyphen, which the package's
-`hyphens` option adds to `\UrlBreaks` and every browser breaks after too
-(UAX #14's class BA): a long kebab-case flag or package name otherwise
-holds no break, and a justified paragraph around it none either. Never
-inside a run of letters or digits, and never drawing a hyphen. -/
+/-- url.sty's break table: `\UrlBreaks` at `\binoppenalty`, `\UrlBigBreaks`
+at `\relpenalty`, and after a hyphen as its `hyphens` option adds. -/
 public def urlBreak (c : Char) : Option Nat :=
   if ".@\\/!_|;>]),?&'+=#-".contains c then some binopPenalty
   else if c == ':' then some relPenalty
   else none
 
-/-- Where a browser breaks a table cell's code: after any hyphen that no
-hyphen follows — never before a hyphen (UAX #14, LB21) — so `-q` breaks
-after its hyphen, `--sort` and `a--b` after their second, `café-x` and
-`x-1` after theirs, as Chromium sets each in a cell at its min-content
-width; and after no other character an identifier holds. A cell is as
-wide as its widest unbreakable run, so its code needs no break the page
-could choose and the browser could not. -/
+/-- Where a browser breaks a table cell's code: after a hyphen
+that no hyphen follows (UAX #14, LB21), and nowhere else. -/
 public def cellCodeBreak (_prev : Option Char) (c : Char) (next : Option Char) : Option Nat :=
   if c == '-' && next.any (· != '-') then some hyphenPenalty.toNat
   else none
 
 public inductive Seg where
-  /-- A glyph run. `width` is carried so link rectangles and alignment can be
-  computed without re-measuring against the font. Each glyph carries its
-  laid-out advance — its width plus the pair kern applied after it, before
-  the line's expansion — which is where the next glyph starts, and what
-  the PDF writer places it by. `raise` lifts the run's
-  baseline above the line's (negative sinks it): a superscript is a raised
-  run at script size. `attr` names the structure leaf (or the generated
-  kind) the ink stands for. -/
+  /-- A glyph run: each glyph carries its laid-out advance, `raise` lifts the
+  run's baseline, and `attr` names the structure leaf its ink stands for. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
       (glyphs : Array (Nat × Char × Sp)) (size : Sp) (metrics : RunMetrics)
       (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
       (attr : Attribution)
-  /-- Horizontal space. `word` is true exactly for glue that came from
-  `interword` — the space between two words of one leaf's text, what the
-  tagger's interword policy reads; an indent, an alignment gap, a kern, the
-  marker column and a rule's clearance are `false`. Decorations ride only
-  where authored text supplied the gap. -/
+  /-- Horizontal space; `word` marks glue from `interword`,
+  a space between two words of one leaf's text. -/
   | gap (w : Sp) (word : Bool)
   /-- A set interword or authored gap retaining both decoration bands. -/
   | decoratedGap (w : Sp) (word : Bool) (decorations : Decorations (Option DecorationRule))
-  /-- A text-decoration rule retained as a typed artifact fact. PDF lowers it
-  to the same filled geometry as a generic rule; census and tests can still
-  distinguish underline from line-through. -/
+  /-- A text-decoration rule, painted as a generic rule and kept apart by its kind. -/
   | decoration (kind : Ir.Decoration) (w : Sp) (thickness : Sp) (raise : Sp)
       (color : Ir.Color)
-  /-- A horizontal rule, `w` wide and `thickness` thick, on the baseline plus
-  `raise`. The heading rule of a designed section, filling its line. -/
+  /-- A horizontal rule `w` wide and `thickness` thick, on the baseline plus `raise`. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
-  /-- An image box: its bottom on the baseline, `h` up from there. `store`
-  indexes the `Image.Store` the backends were given; an entry that did not
-  load renders as an outlined placeholder of the same size. -/
+  /-- An image box standing `h` up from the baseline; `store` indexes the backends'
+  `Image.Store`, and an entry that did not load renders as a placeholder. -/
   | image (store : Option Nat) (w : Sp) (h : Sp)
-  /-- A filled polygon — a formula's cancel strike or arrowhead — its
-  points from the pen position where it stands and the baseline, y up. No
-  width: the runs around it place what it marks. -/
+  /-- A filled polygon with no width, its points from the pen position and the baseline, y up. -/
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
 
-/-- Scalars actually carried by glyph runs, in paint order. Spacing and
-nontext geometry contribute no scalars. -/
 public def Seg.glyphChars : Seg → List Char
   | .run _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
   | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => []
@@ -941,70 +576,33 @@ public structure LineOut where
   size : Sp
   segs : Array Seg
   setWidth : Sp
-  /-- Baseline-relative extent measured by the placer. A surrounding surface
-  uses the same rise and depth as fitting, including an empty box's zero
-  extent; the bounds ride any later baseline shift. -/
+  /-- Baseline-relative extent measured by the placer. -/
   regionExtent : Option (Sp × Sp) := none
-  /-- How far the line's first glyph deliberately hangs left of the
-  measure — character protrusion's left overhang. `x` is the ink truth
-  the backends paint at; `x + hang` is the measure edge, where the text
-  block logically starts. -/
+  /-- How far the line's first glyph hangs left of the measure
+  (character protrusion); `x + hang` is the measure edge. -/
   hang : Sp := 0
-  /-- The line's font-expansion factor in per-mille (`expandFactor`,
-  within ±`expandLimit`): every run's width is already rescaled by it,
-  and the PDF writer paints the line's glyphs under the same horizontal
-  scale so ink and metrics agree. -/
+  /-- The line's font-expansion factor in per-mille, already applied to every run's width. -/
   expand : Int := 0
-  /-- Engine-placed running furniture — head, foot, chrome slots, the
-  logo — laid into its reserved margin band by the furniture pass. Marked
-  so a judge of the document's own ink (`Check.Shipped.ofOut`'s area
-  walk) can tell the band's ink from the flow's: furniture stands in the
-  margin by design, exactly where LaTeX's own page styles put it. -/
+  /-- Whether the line is engine-placed running furniture in a margin band. -/
   furniture : Bool := false
-  /-- A footnote line (or the footnote rule): body ink laid by the
-  bottom-anchored flush in `finishPage`, above `Geom.bodyBottom`, never in
-  the furniture band — marked so the census can tell the note apparatus
-  from the flow structurally. -/
+  /-- Whether the line is a footnote line or the footnote rule. -/
   note : Bool := false
-  /-- A counted body line: a text line the paragraph pipeline laid in the
-  galley, outside any float — what `\page{ linenumbers = on }`'s margin
-  numbers attach to. The scope is lineno's own (lineno.sty, the
-  introduction: "line numbers on paragraphs", attached by the output
-  routine to the lines of every paragraph of the main text): paragraphs,
-  headings, list items and display math are all galley paragraph lines
-  here — display math is numbered like every line, where lineno's default
-  linenomath does not (the recorded divergence,
-  testdata/compat-index/lineno.txt) — while a float's caption and body (a
-  floated box, not galley lines), footnotes (insertions), bare rule ink,
-  picture labels and furniture are not counted. -/
+  /-- Whether the line is a counted galley line, which `\page{ linenumbers = on }` numbers. -/
   counted : Bool := false
-  /-- Zero-ink destinations carried by this line through fitting, page
-  reordering and final vertical placement. -/
+  /-- Zero-ink destinations the line carries. -/
   anchors : Array String := #[]
-  /-- The preorder index of the `Struct.leaves (Struct.ofDoc (pdfView doc))`
-  entry whose text this line paints — the first leaf of the block the line
-  sets (a footnote's lines name the note's first leaf; a picture's label
-  lines its picture leaf). `none` on furniture, rules-only lines, and
-  generated ink the structure tree does not census (the abstract heading,
-  the headline band). Decoration the walk adds to a block — a section
-  number, a list marker, a caption prefix — rides the block's leaf here;
-  the run channel (`Seg.run`'s `Attribution`) names it apart, atom by
-  atom. -/
+  /-- The preorder index of the structure leaf whose text the line paints;
+  `none` on furniture and on generated ink the tree does not census. -/
   leaf : Option Nat := none
-  /-- A collected picture label's occurrence and glyph reserve, carried
-  with its baseline through fitting, page movement and furniture. -/
+  /-- A collected picture label's occurrence and glyph reserve. -/
   pictureLabel : Option LabelAudit.Stamp := none
-  /-- How far below its own baseline the line's last baseline stands: a
-  display alignment's rows are one line here, where TeX sets each row as a
-  line of its own and the list after the display stands on the last
-  (`alignRowMark`). Zero for every other line. -/
+  /-- How far below its own baseline the line's last baseline
+  stands; nonzero only for a display alignment's rows. -/
   lastBase : Sp := 0
   deriving Repr, Inhabited
 
-/-- A filled rectangle behind a page's text: the page background, a frame
-title's colour bar, a progress bar. `x`/`y` are the top-left corner in
-layout coordinates (y grows downward); the PDF writer paints fills before
-the text, in order. -/
+/-- A filled rectangle behind a page's text, its top-left
+corner at `x`, `y` in layout coordinates (y down). -/
 public structure Fill where
   x : Sp
   y : Sp
@@ -1013,18 +611,12 @@ public structure Fill where
   color : Ir.Color
   deriving Repr, Inhabited
 
-/-- The page's ground: one fill over the whole medium, the bleed strip
-included, as `\pagecolor` paints the page's whole box — a bleed exists for
-exactly this, ink that runs past the trim so a drifting cut shows no white
-edge. Layout space is the trim's, so the medium runs `-bleed … pageW +
-bleed` (`Geom.onMedium`'s reading); with no bleed it is the page. -/
+/-- The page's ground: one fill over the whole medium, bleed included. -/
 public def Geom.ground (g : Geom) (c : Ir.Color) : Fill :=
   { x := -g.bleed, y := -g.bleed, w := g.pageW + 2 * g.bleed,
     h := g.pageH + 2 * g.bleed, color := c }
 
-/-- The ground a page ships: its own frame/title style, else the current
-palette epoch. An epoch replaces the persistent ground, including `none`;
-there is no fallback to a superseded opening palette. -/
+/-- The ground a page ships: its own frame or title style, else the palette epoch in force. -/
 public def effectivePageGround (page epoch : Option Ir.Color) : Option Ir.Color :=
   page.orElse fun _ => epoch
 
@@ -1037,48 +629,26 @@ public theorem effectivePageGround_epoch_exact (epoch : Option Ir.Color) :
 public theorem effectivePageGround_clear_exact :
     effectivePageGround none none = none := by rfl
 
-/-- The eight printer's cut marks a page ships under `\page{ marks = cut }`,
-computed from the trim size (`W × H`), the bleed, the gap and the
-thickness alone: the marks and the TrimBox the file declares read the same
-numbers, so neither moves without the other. Two marks extend each trim
-line into the bleed, one past each end of it; a mark begins at the
-medium's edge and ends `gap` before the trimmed page, so all of its ink
-lies on paper the trim removes. Coordinates are layout (trim) space, y
-down — the medium spans `−bleed … W+bleed` — and the painted thickness is
-`2·(thick/2)`: the odd sp (1/65536 pt, far below any press's resolution)
-is dropped so a mark's centre line is its trim line itself
-(`cutmarks_on_trim_exact`) and mirroring a face for its reverse side sends
-the marks to marks (`cutmarks_symmetric_mem`). -/
+/-- The eight printer's cut marks of a `trimW × trimH` trim, each
+extending a trim line into the bleed and ending `gap` before the trim. -/
 public def cutMarks (trimW trimH bleed gap thick : Sp) (color : Ir.Color) : Array Fill :=
   let hw := thick / 2
   let len := bleed - gap
-  #[-- vertical, along the left and right trim lines, from the top and
-    -- bottom medium edges
+  #[
     ⟨-hw, -bleed, 2 * hw, len, color⟩,
     ⟨-hw, trimH + gap, 2 * hw, len, color⟩,
     ⟨trimW - hw, -bleed, 2 * hw, len, color⟩,
     ⟨trimW - hw, trimH + gap, 2 * hw, len, color⟩,
-    -- horizontal, along the top and bottom trim lines, from the left and
-    -- right medium edges
     ⟨-bleed, -hw, len, 2 * hw, color⟩,
     ⟨trimW + gap, -hw, len, 2 * hw, color⟩,
     ⟨-bleed, trimH - hw, len, 2 * hw, color⟩,
     ⟨trimW + gap, trimH - hw, len, 2 * hw, color⟩]
 
-/-- The centre-line arithmetic behind `cutmarks_on_trim_exact`, over bare
-`Int` binders: omega reads the bare spelling only, and the `Sp`-typed
-mark components are silently invisible to it (the `furn_reserves`
-pattern). -/
 private theorem cutmarks_trim_arith (W H t : Int) :
     2 * -(t / 2) + 2 * (t / 2) = 0 ∧
     2 * (W - t / 2) + 2 * (t / 2) = 2 * W ∧
     2 * (H - t / 2) + 2 * (t / 2) = 2 * H := by omega
 
-/-- Each mark's centre line lies exactly on a trim line: the marks are
-computed from the lengths the page boxes are, so where they stand and the
-TrimBox the file declares agree by construction. Spelled doubled
-(`2x + w = 2·trim`) so the statement needs no division and no parity
-hypothesis. -/
 public theorem cutmarks_on_trim_exact (W H b g t : Int) (c : Ir.Color) :
     ∀ f ∈ cutMarks W H b g t c,
       2 * f.x + f.w = 0 ∨ 2 * f.x + f.w = 2 * W ∨
@@ -1097,9 +667,6 @@ public theorem cutmarks_on_trim_exact (W H b g t : Int) (c : Ir.Color) :
   · exact Or.inr (Or.inr (Or.inr h.2.2))
   · exact Or.inr (Or.inr (Or.inr h.2.2))
 
-/-- The bounds behind `cutmarks_in_bleed_covers`, over bare `Int`
-binders, one pack per mark: its four medium bounds and its trim
-disjointness fact. -/
 private theorem cutmarks_bleed_arith (W H b g t : Int)
     (hW : 0 ≤ W) (hH : 0 ≤ H) (hg : 0 ≤ g) (hgb : g ≤ b) (htg : t ≤ 2 * g) :
     ((-b ≤ -(t / 2) ∧ -(t / 2) + 2 * (t / 2) ≤ W + b ∧
@@ -1120,11 +687,6 @@ private theorem cutmarks_bleed_arith (W H b g t : Int)
       -b ≤ H - t / 2 ∧ H - t / 2 + 2 * (t / 2) ≤ H + b) ∧ W ≤ W + g) := by
   omega
 
-/-- The bleed strip covers every mark: no mark ink inside the TrimBox and
-none outside the MediaBox — the marks live entirely in the strip the
-cutter discards. The hypotheses are the geometry that makes marks
-drawable at all: a gap inside the bleed, and a hairline no wider than
-twice the gap (so a mark cannot reach the trim corner either). -/
 public theorem cutmarks_in_bleed_covers (W H b g t : Int) (c : Ir.Color)
     (hW : 0 ≤ W) (hH : 0 ≤ H) (hg : 0 ≤ g) (hgb : g ≤ b) (htg : t ≤ 2 * g) :
     ∀ f ∈ cutMarks W H b g t c,
@@ -1144,18 +706,11 @@ public theorem cutmarks_in_bleed_covers (W H b g t : Int) (c : Ir.Color)
   · exact ⟨h.2.2.2.2.2.2.1.1, Or.inl h.2.2.2.2.2.2.1.2⟩
   · exact ⟨h.2.2.2.2.2.2.2.1, Or.inr (Or.inl h.2.2.2.2.2.2.2.2)⟩
 
-/-- The flip arithmetic behind `cutmarks_symmetric_mem`, over bare `Int`
-binders with the half-thickness as one atom: omega reads the bare
-spelling only (the `furn_reserves` pattern). -/
 private theorem cutmarks_flip_arith (W b g d : Int) :
     W - d = W - -d - 2 * d ∧ -d = W - (W - d) - 2 * d ∧
     W + g = W - -b - (b - g) ∧ -b = W - (W + g) - (b - g) := by
   omega
 
-/-- The duplex fact: under the horizontal flip `x ↦ W − x` the mark set
-maps onto itself — for every mark, some mark stands exactly at its
-flipped rectangle — so the sheet turned for its back face lands marks on
-marks and the two faces cut as one. -/
 public theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
     ∀ f ∈ cutMarks W H b g t c,
       ∃ f' ∈ cutMarks W H b g t c,
@@ -1185,18 +740,8 @@ public theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
       (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _))))))),
       h.2.2.2, rfl, rfl, rfl⟩
 
-/-- **The trim a page's drawn rules declare.** A document that draws its own
-printer's marks from a shipout hook (`Ir.PageSpec.drawn`) and declares its
-page boxes in a spelling the engine cannot evaluate (`trimMarked`: a page
-attribute assigned at shipout) has its boxes stand for the trim the marks
-cut. When the rules are exactly `cutMarks` of one trim — the inset read off
-the leftmost top mark's centre line, the thickness off its width, the gap
-off its length, both inside the geometry `cutmarks_in_bleed_covers` needs,
-so the drawn set is one those theorems hold of — the medium's trim lies
-that far in (`Geom.trimInset`). Any other drawing declares no trim, a page
-with a declared bleed already names its own, and marks drawn on a page
-that declares no box declare none: LaTeX's file then has no box but the
-medium, and so has this one. -/
+/-- The trim a page's own drawn cut marks declare, when the rules are
+exactly `cutMarks` of one trim on a page with no declared bleed. -/
 public def drawnTrim (spec : Ir.PageSpec) : Option (Sp × Sp × Sp) := do
   guard (spec.bleed == 0 && spec.trimMarked && spec.drawn.size == 8)
   let lead ← spec.drawn.foldl (fun m r =>
@@ -1212,11 +757,8 @@ public def drawnTrim (spec : Ir.PageSpec) : Option (Sp × Sp × Sp) := do
   guard (marks.all fun f => spec.drawn.any (same · f))
   return (b, g, t)
 
-/-- Resolve a document's `\page` declaration into layout geometry. One source
-of truth: layout reads geometry only from here. A page whose drawn rules are
-a trim's cut marks (`drawnTrim`) keeps its medium as the page — the rules
-stand where the document drew them — and records the trim's inset, the one
-thing the file must add (`Pdf.pageBoxes`). -/
+/-- Resolve a document's `\page` declaration into layout
+geometry, the one source layout reads geometry from. -/
 public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
   { base with
     pageW := spec.width
@@ -1242,52 +784,33 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     skips := spec.skipScale
     raggedFil := spec.raggedFil }
 
-/-- A picture's ink on the page: its figure, each label the key of the page
-line that sets it (`Gfx.ofPictureKeyed`: the picture and the label's shape,
-the origin `emitLabel`'s line is stamped with) — so the PDF writer sets each
-label's line inside the picture's sequence, where its node stands among the
-ink — the isometry placing picture coordinates (y up) in layout coordinates
-(y down), and the picture leaf it paints (`LineOut.leaf`'s contract, on
-ink), so the PDF writer groups it under its figure. One per picture, its
-marks in source order, a rectangle fill among them where the source put
-it. -/
+/-- A picture's ink on the page: its figure, its label keys, the isometry from
+picture coordinates (y up) to layout coordinates (y down), and the leaf it paints. -/
 public structure InkOut where
   fig : Gfx.Figure (Nat × Nat)
   place : Gfx.Iso
   leaf : Option Nat := none
   deriving Repr, Inhabited
 
-/-- A placed ink moved down the page by `d`: page shrink, vertical
-distribution, row alignment and a title slot use this one translation, which
-moves the placement and nothing the figure says. -/
 @[expose] public def InkOut.shiftY (d : Sp) (k : InkOut) : InkOut :=
   { k with place := { k.place with dy := k.place.dy + d } }
 
-/-- A placed ink moved right by `d`. -/
 @[expose] public def InkOut.shiftX (d : Sp) (k : InkOut) : InkOut :=
   { k with place := { k.place with dx := k.place.dx + d } }
 
-/-- No displacement keeps the ink where it stands (`_id`). -/
 public theorem InkOut.shiftY_zero_id (k : InkOut) : k.shiftY 0 = k := by
   simp [InkOut.shiftY]
 
-/-- Translations compose by addition (`_exact`): shrink followed by
-distribution or alignment is one rigid translation of every mark, never a
-deformation. -/
 public theorem InkOut.shiftY_add_exact (k : InkOut) (a b : Sp) :
     (k.shiftY a).shiftY b = k.shiftY (a + b) := by
   simp [InkOut.shiftY, Int.add_assoc]
 
-/-- Reversing a translation recovers the placed ink (`_id`), so applying
-page shrink loses no geometry. -/
 public theorem InkOut.shiftY_cancel_id (k : InkOut) (d : Sp) :
     (k.shiftY d).shiftY (-d) = k := by
   rw [shiftY_add_exact, Int.add_right_neg, shiftY_zero_id]
 
-/-- The page boxes an ink's marks claim, mark by mark: each geometry's
-control hull through its frame and the placement, half its stroke's width
-out — a centred stroke's reach past a straight edge, the claim a surface and
-a link read. Miter excess at corners is not claimed. -/
+/-- The page boxes an ink's marks claim: each geometry's control hull
+through its frame and placement, padded by half its stroke width. -/
 public def InkOut.claims (k : InkOut) : Array Gfx.Box :=
   k.fig.marks.filterMap fun mk => match mk with
     | .paint ctm g _ st _ _ =>
@@ -1305,55 +828,31 @@ public structure LinkRect where
   target : String
   deriving Repr, BEq, Inhabited
 
-/-- A frame's identity in the physical layout input: its zero-based block
-index in `pdfView doc` and its one-based overlay step. The displayed frame
-counter may restart, and a step may spill onto several physical pages;
-neither event changes this identity. -/
+/-- A frame's identity in the layout input: its zero-based
+block index in `pdfView doc` and its one-based overlay step. -/
 public structure FrameOrigin where
   source : Nat
   step : Nat
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- Which text area a frame's pages stand their body in. `margins` is the
-slides margins (`Geom.bodyTop` to `Geom.bodyBottom`), outside beamer's
-model: the title page, whose template places its own furniture, and a deck
-whose `\runningfoot` owns the foot. `text` is beamer's `\textheight`: the
-paper's top edge (moloch's headline is empty) to `\footheight` above its
-bottom edge (`frameFloor`), footline or none. `paper` is a plain frame's:
-beamer omits its footline and its exit code takes `\footheight` back
-(`\vspace*{-\footheight}`, beamerbaseframe.sty:781-783), so its content
-centres on the whole paper, and the content's first box stands flush on its
-`\vbox{}` (`\nointerlineskip`, :116). moloch's section page is the one
-plain frame the engine sets (`\frame[plain,c,noframenumbering]`,
-beamerinnerthememoloch.sty): a document's own `[plain]` option is not
-modelled — named (N0102), its frame keeps `text` and its footline. -/
+/-- Which text area a frame's pages use: the slides margins,
+beamer's `\textheight`, or the whole paper of a plain frame. -/
 public inductive FrameArea where
   | margins
   | text
   | paper
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A frame's text area on the PDF page: the IR's one decision
-(`Ir.frameInTextArea`), wherever the chrome may stand (`footAllowed`). -/
 public def frameAreaFor (footAllowed : Bool) (valign : VAlign) : FrameArea :=
   if Ir.frameInTextArea footAllowed valign then .text else .margins
 
-/-- The page's text area is the IR's decision, read back through the area it
-selects. -/
 public theorem frameAreaFor_projects (footAllowed : Bool) (valign : VAlign) :
     (frameAreaFor footAllowed valign == .text) = Ir.frameInTextArea footAllowed valign := by
   unfold frameAreaFor
   cases Ir.frameInTextArea footAllowed valign <;> rfl
 
-/-- What the page does with a frame not declared breakable whose content
-stands past its text area beyond its glue's shrink: continue it on the next
-page and name it there (`spill`, a frame no ladder decided: a plain `run`'s);
-or, for the overflow ladder (`runFitted`), which names the frame itself from
-what the page records (`Shipped.overruns`, `Shipped.spilled`), stand it
-overfull whatever its overrun, to measure it (`measure`, the first setting),
-stand it overfull within the gap above its footline (`overhang`, where the
-ladder decided it fits there), or continue it (`continues`, where it does
-not). -/
+/-- What the page does with a frame whose content stands past its text area beyond its glue's
+shrink: continue it, or stand it overfull to measure it or within its footline gap. -/
 public inductive FrameFitMode where
   | spill
   | measure
@@ -1361,16 +860,11 @@ public inductive FrameFitMode where
   | continues
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The inputs in force when the collector opens a frame. The footer is
-computed by the shared IR decision, including plain standout frames and
-an authored running footer. Source ownership and the displayed counter
-travel with that decision through placement. -/
+/-- The inputs in force when the collector opens a frame. -/
 public structure FrameOpening where
   origin : Option FrameOrigin
   number : Option Nat
-  /-- The frame's label (`Ir.Doc.frameLabels`): what a diagnostic about the
-  frame names it by, its number or, unnumbered, its standout or title-page
-  ordinal. -/
+  /-- The frame's label (`Ir.Doc.frameLabels`), by which diagnostics name it. -/
   label : Option String := none
   chrome : Ir.Chrome
   note : Option (Array Ir.Inline)
@@ -1379,10 +873,7 @@ public structure FrameOpening where
   standout : Bool
   allowed : Bool
   palette : Ir.Palette
-  /-- The text area the frame's pages take (`FrameArea`). -/
   area : FrameArea := .margins
-  /-- What the page does with the frame's content past its text area beyond
-  its glue's shrink (`FrameFitMode`, decided by `runFitted`). -/
   fit : FrameFitMode := .spill
   deriving Repr, Inhabited
 
@@ -1394,35 +885,28 @@ public def FrameOpening.footer (f : FrameOpening) : Option (Array Ir.BandSlot) :
 public def FrameOpening.look (f : FrameOpening) : Ir.TitledLook :=
   (Ir.Design.ofPalette f.palette).frameFootLook (f.standout && f.footer.isSome)
 
-/-- The joint observation a physical page owes its collected opening.
-A counter restart and a missing footer do not change its source identity. -/
+/-- The joint observation a physical page owes its collected opening. -/
 public abbrev FrameStamp :=
   Option FrameOrigin × Option Nat × Option (Array Ir.BandSlot)
 
 public def FrameOpening.stamp (f : FrameOpening) : FrameStamp :=
   (f.origin, f.number, f.footer)
 
-/-- Unowned flow pages have no frame furniture. Every owned page must
-match a real collected opening, including the footer selected there. -/
+/-- Unowned flow pages carry no frame furniture, and every
+owned page matches a collected opening, its footer included. -/
 public def SelectedFrame (openings : Array FrameOpening) (stamp : FrameStamp) : Prop :=
   stamp = (none, none, none) ∨ ∃ f ∈ openings, stamp = f.stamp
 
-/-- A line of a re-flowed declared line that runs past the measure: its
-rank among the lines the declared line ships as, where it opens (its first
-located item, where W0005 would name it), and how far past. -/
+/-- A line of a re-flowed declared line that runs past the
+measure: its rank, where it opens, and how far past. -/
 public structure Overrun where
   rank : Nat := 0
   site : Option Span := none
   excess : Sp := 0
   deriving Repr, Inhabited
 
-/-- One declared line that re-flowed, as its paragraph's record holds it:
-which declared line of the paragraph it is (the rank of the end that
-closes it, the same in every overlay step that sets the paragraph again),
-where the author finds it (its first located item), how many lines it
-ships as, and each of those that runs past the measure, in rank order. The
-overrun is the declared line's, which its paragraph's re-flow names
-(W0386), never a second diagnostic (W0005). -/
+/-- One declared line that re-flowed: its rank among the paragraph's declared
+lines, its first located item, how many lines it ships as, and its overruns. -/
 public structure ReflowedLine where
   ordinal : Nat := 0
   site : Option Span := none
@@ -1430,10 +914,7 @@ public structure ReflowedLine where
   over : Array Overrun := #[]
   deriving Repr, Inhabited
 
-/-- The break decisions committed by one paragraph placement. Positions
-index its actual item array. The final forced end closes the paragraph;
-the preceding forced ends are the segments the author explicitly ended.
-An end-fill immediately before a forced end is the same source boundary. -/
+/-- The break decisions committed by one paragraph placement, as positions in its item array. -/
 public structure ParagraphBreaks where
   site : Nat
   leaf : Option Nat
@@ -1441,21 +922,15 @@ public structure ParagraphBreaks where
   forced : Array Nat
   chosen : Array Nat
   endFills : Array Nat
-  /-- Where its first declared line that re-flowed stands in the source,
-  when its items say: the census key of a paragraph no structure leaf
-  names. -/
+  /-- The source of its first re-flowed declared line: the
+  census key of a paragraph no structure leaf names. -/
   key : Option Span := none
-  /-- Each declared line of it that re-flowed (`ReflowedLine`), in order:
-  what its one re-flow diagnostic names, each with its own overrun. -/
+  /-- Each declared line of it that re-flowed, in order. -/
   lines : Array ReflowedLine := #[]
-  /-- The frame number its page shows, which its re-flow's detail names. -/
   frameNumber : Option Nat := none
   deriving Repr, Inhabited
 
-/-- A paragraph's re-flow census key: its structure leaf, the one identity
-every overlay step that sets the paragraph again shares (each step is
-collected from its frame's first leaf, `collectDocBlock`), so the one
-paragraph is one loss and two paragraphs are two; where no leaf names it,
+/-- A paragraph's re-flow census key: its structure leaf, else
 where its first re-flowed declared line stands, else its index. -/
 public def ParagraphBreaks.subject (p : ParagraphBreaks) : String :=
   match p.leaf, p.key with
@@ -1464,24 +939,19 @@ public def ParagraphBreaks.subject (p : ParagraphBreaks) : String :=
   | none, none => s!"paragraph:{p.site}"
 
 /-- A chosen break splits an authored segment if it occurs before an
-interior forced end and is neither a forced end nor its preceding fill.
-Wrapping the paragraph's final segment does not lose an authored shape. -/
+interior forced end and is neither a forced end nor its preceding fill. -/
 public def ParagraphBreaks.Splits (p : ParagraphBreaks) (k : Nat) : Prop :=
   k ∈ p.chosen ∧ (∃ stop ∈ p.forced.pop, k < stop) ∧
     k ∉ p.forced ∧ k ∉ p.endFills
 
-/-- Whether a break splits an authored segment, as `Splits` reads a chosen
-one: before the last interior forced end, and neither a forced end nor its
-preceding fill. The last interior end and the set of ends are read once,
-however many breaks it is asked of: searching both for every break made a
-listing's lines quadratic. -/
+/-- Whether a break splits an authored segment, as `Splits`
+reads a chosen one, reading the forced ends once. -/
 public def ParagraphBreaks.splitAt (p : ParagraphBreaks) : Nat → Bool :=
   let top := p.forced.pop.foldl max 0
   let ends : Std.HashSet Nat := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList)
   fun k => decide (k < top) && !ends.contains k
 
-/-- The actual warning census, over the breaker choices and authored ends
-recorded where the paragraph is placed. -/
+/-- The chosen breaks that split an authored segment. -/
 public def ParagraphBreaks.reflows (p : ParagraphBreaks) : Array Nat :=
   p.chosen.filter p.splitAt
 
@@ -1516,86 +986,57 @@ public theorem ParagraphBreaks.reflows_mem (p : ParagraphBreaks) (k : Nat) :
     Std.HashSet.contains_ofList, List.contains_append, Bool.or_eq_false_iff,
     Array.contains_toList, Array.contains_eq_mem, decide_eq_false_iff_not]
 
-/-- Every actually split authored segment has its paragraph's structured
-diagnostic key. Repeated breaks within a paragraph share one report, and so
-do the overlay steps that set the paragraph again. -/
 public def ReflowsNamed (paragraphs : Array ParagraphBreaks) (diags : Array Diag) : Prop :=
   ∀ p ∈ paragraphs, ∀ k, p.Splits k →
     ∃ d ∈ diags, d.code = "W0386" ∧ d.subject = some p.subject
 
 public structure PageOut where
-  /-- The shared logical folio and running style at shipment. Physical
-  page indices and `from` gates keep their separate meaning. -/
+  /-- The shared logical folio and running style at shipment. -/
   pageState : Ir.PageState := {}
   lines : Array LineOut := #[]
   fills : Array Fill := #[]
   /-- One placed rectangle per page segment of a block link. -/
   links : Array LinkRect := #[]
-  /-- Picture ink, one per picture, painted after the fills and before the
-  text, so a node's own fill sits under its label. -/
+  /-- Picture ink, one per picture, painted after the fills and before the text. -/
   inks : Array InkOut := #[]
-  /-- The chrome footer this page carries, resolved at collection time (the
-  frame's own number, the section in force): the band of slots the final
-  pass lays into the margin once the page count is known. `none` on section
-  pages, plain standout frames, and every page without declared furniture. -/
+  /-- The chrome footer's slots this page carries, resolved at
+  collection; `none` where the page carries no declared furniture. -/
   foot : Option (Array Ir.BandSlot) := none
-  /-- The chrome footer's box on this page — its glyphs' height above and
-  depth below the baseline (`segsInk`) — measured where the page was built,
-  so the band's baseline (`footBaseline`) is set from the same value the
-  page's text-area floor was (`Spacing.Page.bottom`). `none` where `foot` is. -/
+  /-- The chrome footer's box, its height above and depth below the
+  baseline, measured where the page was built; `none` where `foot` is. -/
   footBox : Option (Sp × Sp) := none
-  /-- The text area the page was built in (`FrameOpening.area`): in
-  beamer's, its `\textheight` is `frameFloor` of `footBox`, band or none. -/
+  /-- The text area the page was built in (`FrameOpening.area`). -/
   frameArea : FrameArea := .margins
   /-- The footer's resolved colour pair from the frame's palette epoch. -/
   footLook : Option Ir.TitledLook := none
-  /-- The displayed frame counter, read from `Ir.frameNumbers` when a
-  frame opens. It is independent of the selected furniture and is not a
-  source identity: a restart can give several frames the same number. -/
+  /-- The displayed frame counter (`Ir.frameNumbers`), which is no source identity. -/
   frame : Option Nat := none
-  /-- Source frame and overlay owning this physical page. Continuation
-  pages retain the identity of the step that spilled. -/
+  /-- The source frame and overlay step owning this physical
+  page; continuation pages keep the step that spilled. -/
   frameOrigin : Option FrameOrigin := none
-  /-- The fill glue the page's close shared its leftover among
-  (`Spacing.Page.finishPage`): one unit per run of fill glue between two
-  boxes, so two `\vfill`s with no box between them are one unit here where
-  TeX, and the fill census's page reading (`Ir.frameFills`), count two. -/
+  /-- The fill glue units the page's close shared its leftover
+  among, one per run of fill glue between two boxes. -/
   fils : Nat := 0
-  /-- The bottom edge of this page's page-top chrome bar (`.titleBar`),
-  when one painted: the extent the furniture pass lays the headline
-  band's corner logos into. -/
+  /-- The bottom edge of the page-top chrome bar, when one painted. -/
   band : Option Sp := none
   deriving Repr, Inhabited
 
-/-- A page that shows nothing: no line, no fill and no placed picture ink.
-A page that is not blank ships at a boundary and as the last page
-(`brk_ships_exact`, `closeLast_ships_exact`), and the next box stands below
-what it holds (`gfxContentPageChecks`): a picture that paints fills or
-strokes alone is content as a line is. Every test of whether a page holds
-anything reads this — the boundary, the float replay, the last page, the
-fresh-page test, the commit-or-break door — so a new kind of output a page
-holds takes its place here, and in `finishPage`'s distribution gates beside
-lines and inks when it moves with the content; `openBody` alone reads title
-lines, since it asks whether a title's depth stands above the body. -/
+/-- A page that shows nothing: no line, no fill and no
+placed picture ink; every emptiness test reads this. -/
 @[expose] public def PageOut.blank (p : PageOut) : Bool :=
   p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty
 
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
 
-/-- Resolve a destination from finalized lines, after page fitting,
-column assembly, and vertical distribution. This is an artifact fact:
-the first shipped declaration owns the target, and its line supplies
-both its page and its final coordinates. -/
+/-- Resolve a destination from the finalized lines: the first shipped
+declaration owns the target and supplies its page and coordinates. -/
 public def destination? (pages : Array PageOut) (name : String) : Option (Nat × LineOut) :=
   (pages.zipIdx).findSome? fun (page, i) =>
     (page.lines.find? (fun line => line.anchors.contains name)).map (i, ·)
 
-/-- One entry of the PDF document outline (ISO 32000-2 §12.3.3): a link of
-an unpinned navigation landmark. An in-document target that resolved
-carries the 0-based index of the page holding its section heading; an
-external target carries its URL; a target that resolved to neither is a
-bare entry (legal: an outline item need carry no destination). -/
+/-- One entry of the PDF document outline (ISO 32000-2 §12.3.3), with
+an in-document page index, an external URL, or no destination. -/
 public structure OutlineEntry where
   title : String
   page : Option Nat := none
@@ -1605,87 +1046,57 @@ public structure OutlineEntry where
 public structure Out where
   pages : Array PageOut
   diags : Array Diag
-  /-- Actual committed paragraph decisions, retained through furniture. -/
+  /-- The committed paragraph break decisions, retained through furniture. -/
   paragraphBreaks : Array ParagraphBreaks := #[]
-  /-- Per overlay step of a frame the overflow ladder marked
-  (`FrameFitMode`) whose content reached past its text area beyond what its
-  glue shrinks: how far, and the least gap above its footline its pages left
-  (`runFitted` reads it). -/
+  /-- Per overlay step of a frame the overflow ladder marked: how far its content
+  reached past its text area, and the least gap above its footline its pages left. -/
   overruns : Array (FrameOrigin × Sp × Sp) := #[]
-  /-- Per overlay step of a frame the ladder marked whose page could not set
-  it at its glue's natural size: how far its content stood past the floor
-  there, the largest over its pages. -/
+  /-- Per marked overlay step whose page could not set it at its glue's
+  natural size: the largest distance its content stood past the floor. -/
   needs : Array (FrameOrigin × Sp) := #[]
-  /-- The overlay steps of frames the ladder marked that continued on a next
-  page, each once. -/
+  /-- The marked overlay steps that continued on a next page, each once. -/
   spilled : Array FrameOrigin := #[]
-  /-- The document outline: one entry per unpinned-nav link, in document
-  order; empty when the document declares no unpinned nav. -/
+  /-- The document outline, one entry per unpinned-nav link in document order. -/
   outline : Array OutlineEntry := #[]
 
--- Flattening: inlines → word/space/break tokens ------------------------------
-
-/-- A resolved text style: which family slot, and the bold/italic bits. -/
 public structure TextStyle where
   slot : Nat := 0
-  /-- The weight axis in force (`Ir.Weight`): `\fontseries`'s series, with
-  `\textbf` selecting `.b` and `\textmd` `.m` — `bold : Bool` grown into
-  the axis. The face a run sets in is
-  `FontSet.lookup (slot, weight.css, italic)`. -/
+  /-- The weight axis in force (`Ir.Weight`), `\fontseries`'s series. -/
   weight : Ir.Weight := .m
   italic : Bool := false
   color : Ir.Color := Ir.Color.black
   /-- Destination of the enclosing `\href`, if any. -/
   link : Option String := none
-  /-- Size relative to the surrounding text, per mille. Absolute rather than
-  compounding, as in LaTeX: `\large\Large` is Large, not the product. -/
+  /-- Size relative to the surrounding text, per mille,
+  absolute rather than compounding as in LaTeX. -/
   scale : Nat := 1000
-  /-- An arbitrary `\fontsize` size, unresolved until the local measure and
-  current font metrics are available. Named size commands clear it. -/
+  /-- An arbitrary `\fontsize` size, resolved against the local
+  measure and font metrics; named size commands clear it. -/
   fontSize : Option (Affine Measure) := none
-  /-- The matching baseline skip from `\fontsize`, resolved with the size at
-  the same site. `none` uses the document's ordinary leading; `some 0`
-  preserves an explicitly zero skip. -/
+  /-- The baseline skip from `\fontsize`; `none` uses the ordinary
+  leading, and `some 0` keeps an explicitly zero skip. -/
   leading : Option (Affine Measure) := none
-  /-- The named size step in force (`\small`, `\Large`): the leading it
-  sets with its size (`TextStyle.stepLead`). `none` under no size command,
-  or after an explicit `\fontsize`, whose own skip governs. -/
+  /-- The named size step in force (`\small`, `\Large`); `none`
+  under no size command or after an explicit `\fontsize`. -/
   step : Option String := none
-  /-- Set as small caps. Applies to the word, not the face: see
-  `smallCapSynth`. -/
+  /-- Set as small caps, applied to the word rather than the face (`smallCapSynth`). -/
   smallcaps : Bool := false
-  /-- Drawn decorations in force. A line-through stores the face, size and
-  colour at its command boundary; underline keeps the established per-run
-  metric behavior. -/
   decorations : ActiveDecorations := {}
-  /-- A language switch in force (`Style.lang`), a BCP 47 tag; `none` is
-  the document's main language. Hyphenation patterns select through it
-  (`patsOf`), the one reader today. -/
+  /-- A language switch in force (`Style.lang`), a BCP
+  47 tag; `none` is the document's main language. -/
   lang : Option String := none
-  /-- The surface this run's ink stands on, declared where the walk
-  resolves it — the palette epoch's `bg`, the frame-title bar, a titled
-  block's bar, the standout inversion; `none` is the undeclared page,
-  paper the engine paints no fill for. Carried through `Item.box` onto
-  `Seg.run`, so the pair the contrast judge owes completeness over is
-  declared, never recovered geometrically. -/
+  /-- The surface this run's ink stands on, as the
+  walk declares it; `none` is the undeclared page. -/
   ground : Option Ir.Color := none
-  /-- A typewriter run breaks as url.sty sets a path (`urlBreak`) rather
-  than as prose (`proseBreak`): a markdown document's paragraph code, which
-  no declaration can make breakable (`collectPara` sets it from its
-  `urlBreaks`, the surface's by default, `Spacing.Context.surface`; a table
-  cell's never). Read by `explicitBreak`. -/
+  /-- Whether a typewriter run breaks as url.sty sets a path (`urlBreak`) rather than as prose. -/
   urlBreaks : Bool := false
-  /-- A typewriter run in a narrowing table's cell (`Ir.ColSpec.narrows`)
-  breaks as a browser breaks a table cell's code (`cellCodeBreak`), so the
-  page and the HTML narrow the same column. Read by `explicitBreak`. -/
+  /-- Whether a typewriter run in a narrowing table cell breaks
+  as a browser breaks a cell's code (`cellCodeBreak`). -/
   cellCode : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- Where a run of this style may end a line after a character, unhyphenated,
-from the character, the one before it and the one after it in its word: a
-typewriter run (slot 2) under `urlBreaks` where url.sty's `\path` breaks,
-one under `cellCode` where a browser breaks a cell's code, every other run
-after an explicit hyphen. -/
+/-- Where a run of this style may end a line after a
+character, unhyphenated, given its neighbours in the word. -/
 private def TextStyle.explicitBreak (sty : TextStyle) :
     Option Char → Char → Option Char → Option Nat :=
   if sty.slot == 2 && sty.urlBreaks then fun _ c _ => urlBreak c
@@ -1711,29 +1122,18 @@ private inductive Tk where
   | brk (extra : SymGlue)
   /-- An image reference, resolved against the store when items are built. -/
   | img (src : String) (spec : Image.Spec)
-  /-- An elaborated formula, measured against the math face by
-  `itemsOfInlines`: one unbreakable run of boxes and kerns, every box
-  attributed `attr` (the formula's one leaf is its source). -/
+  /-- An elaborated formula, set by `itemsOfInlines` as one unbreakable run attributed `attr`. -/
   | formula (display : Bool) (style : TextStyle) (body : Math.MList) (attr : Attribution)
-  /-- An icon: one scalar whose face is whichever the per-scalar fallback
-  chain covers it with — an icon face is chosen by coverage, so landing on
-  a fallback face is the declared path, not a degradation, and earns no
-  W0009. A scalar no face covers is the ordinary coverage loss (E0405). -/
+  /-- An icon: one scalar set in whichever face the per-scalar fallback chain covers it with. -/
   | icon (style : TextStyle) (c : Char) (attr : Attribution)
-  /-- A footnote mark with the note body it owes: the mark sets as a raised
-  run at the scriptsize step (`Ir.markRaise` holds the raise); the body is
-  staged as its own pre-broken note block whose page is the mark's.
-  `bodyLeaf` is the note node's first leaf — the counter's value where the
-  mark stands, since `Struct` numbers the note's leaves there — or `none`
-  when the context owns no leaf. -/
+  /-- A footnote mark with its note body: the mark sets raised at scriptsize,
+  the body as its own note block; `bodyLeaf` is the note's first leaf. -/
   | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
-  /-- TeX's italic correction (`Ir.Inline.italicCorr`), under the style in
-  force where it stands. -/
+  /-- TeX's italic correction (`Ir.Inline.italicCorr`) under the style in force. -/
   | corr (maybe : Bool) (style : TextStyle)
   deriving Repr
 
-/-- The attribution a token's ink carries, `none` for a token that ships no
-run of its own (a space, a fill, a strut, a break, an image). -/
+/-- The attribution a token's ink carries; `none` for a token that ships no run of its own. -/
 private def Tk.attr? : Tk → Option Attribution
   | .word _ _ a => some a
   | .icon _ _ a => some a
@@ -1741,41 +1141,23 @@ private def Tk.attr? : Tk → Option Attribution
   | .note num _ _ _ => some (.noteMark num)
   | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
 
-/-- The Layout-private marker a decorating site wraps its declared content
-in: `.role leafRole content`. A role is transparent to layout
-(`role_transparent_layout`), so wrapping moves no ink; the flatten counter
-reads it as "the tree's leaves resume here". A NUL cannot come from source
-text, so no document role can collide. -/
+/-- The Layout-private role a decorating site wraps its
+declared content in; a NUL cannot come from source text. -/
 private def leafRole : String := "\u0000content"
 
-/-- A decorating site's declared content, marked for the counter. Empty
-content stays empty: there is no leaf to count, and no empty body for a
-template hole to mistake. -/
+/-- A decorating site's declared content, marked for the counter; empty content stays empty. -/
 private def markContent (xs : Array Inline) : Array Inline :=
   if xs.isEmpty then xs else #[.role leafRole xs]
 
-/-- The inline counter: which leaf the next atom takes. Set by
-`itemsOfInlines` from the block's `(leaf, span)` and the inlines it was
-handed, and advanced by `flatten` at exactly the arms `Struct.inlineRaw`
-gives a leaf — the same order contract as 18a's `Spacing.Pending.leafRange`, stated
-here once: `.text`, `.math`, `.formula`, `.ref`, `.icon`, `.cite`,
-`.image`, `.linebreak` each take one id; `.link`, `.styled`, `.colored`,
-`.role`, `.underline`, `.step` recurse; `.footnote`'s body is numbered
-where the mark stands; `.label`, `.fill`, `.strut`, `.pageNumber`,
-`.pageCount` take none. -/
+/-- The inline counter: which leaf the next atom takes, advanced by
+`flatten` at exactly the arms `Struct.inlineRaw` gives a leaf. -/
 private inductive LeafCtr where
-  /-- Every atom takes `a`: generated ink with no leaf behind it
-  (`.unattributed` for furniture and measuring passes, `.label` for the
-  marker line). -/
+  /-- Every atom takes `a`: generated ink with no leaf behind it. -/
   | fixed (a : Attribution)
-  /-- The block opening at `k` sets exactly its declared content
-  (`leafCount inlines = span`): each atom takes `next`, a placeholder set
-  outside running content is the block's. -/
+  /-- The block opening at `k` sets exactly its declared content, and each atom takes `next`. -/
   | counting (k next : Nat)
-  /-- The block opening at `k` sets decorated content (`leafCount inlines ≠
-  span`): every atom is `.block k` until a `leafRole` marker, whose body
-  counts from `next`; a block the tree flattened to one leaf never carries
-  a marker and is `.block k` throughout. -/
+  /-- The block opening at `k` sets decorated content: every atom is
+  `.block k` until a `leafRole` marker, whose body counts from `next`. -/
   | riding (k next : Nat)
   deriving Repr, BEq, Inhabited
 
@@ -1792,15 +1174,13 @@ private def LeafCtr.generated : LeafCtr → Attribution
   | .counting k _ => .block k
   | .riding k _ => .block k
 
-/-- The leaf the counter stands at, when it counts: where a footnote's
-body numbering begins. -/
+/-- The leaf the counter stands at, when it counts. -/
 private def LeafCtr.next? : LeafCtr → Option Nat
   | .fixed _ => none
   | .counting _ next => some next
   | .riding _ _ => none
 
-/-- Step over `n` leaves that ship no run of their own (an image, a line
-break, an inlined note's body already counted). -/
+/-- Step over `n` leaves that ship no run of their own. -/
 private def LeafCtr.skip (n : Nat) : LeafCtr → LeafCtr
   | .fixed a => .fixed a
   | .counting k next => .counting k (next + n)
@@ -1812,9 +1192,8 @@ private def LeafCtr.enter : LeafCtr → LeafCtr
   | .counting k next => .counting k next
   | .riding k next => .counting k next
 
-/-- Leaving the content marker: `inner` is the counter the body left, `outer`
-the one that entered. A counter that was riding rides again, past the
-leaves the body took. -/
+/-- Leaving the content marker: `inner` is the counter
+the body left and `outer` the one that entered. -/
 private def LeafCtr.leave (inner outer : LeafCtr) : LeafCtr :=
   match inner, outer with
   | .counting k next, .riding _ _ => .riding k next
@@ -1822,15 +1201,10 @@ private def LeafCtr.leave (inner outer : LeafCtr) : LeafCtr :=
   | .fixed a, _ => .fixed a
   | .riding k next, _ => .riding k next
 
-/-- The leaves `Struct` gives an inline sequence: the count the walk claims
-for one block of set text. Counted by the projection's own walk, never a
-second enumeration of the inline arms. -/
 private def leafCount (xs : Array Inline) : Nat := Struct.leafCountInlines xs
 
-/-- The counter a block's inlines start from: no leaf, no attribution;
-otherwise counting when the inlines are exactly the declared content
-(`Struct`'s own count of them is the block's `span`), riding when the
-walk decorated them. -/
+/-- The counter a block's inlines start from: none without a leaf, counting
+when the inlines are exactly the declared content, else riding. -/
 private def LeafCtr.of (leaf : Option Nat) (span : Nat) (xs : Array Inline) : LeafCtr :=
   match leaf with
   | none => .fixed .unattributed
@@ -1842,50 +1216,30 @@ private structure FlattenSt where
   diags : Array Diag := #[]
   /-- The size ladder named runs resolve through (`Geom.scale`). -/
   ladder : List (String × Nat) := Ir.sizeScale
-  /-- Internal title-part roles whose exact size and optional baseline skip
-  have been resolved at the slot boundary. Other roles remain transparent. -/
+  /-- Internal title-part roles whose size and optional
+  baseline skip are resolved at the slot boundary. -/
   roleMetrics : List (String × (Sp × Option Sp)) := []
-  /-- The inline leaf counter (`LeafCtr`). -/
   ctr : LeafCtr := .fixed .unattributed
-  /-- The overlay step this page sets, the number `Ir.altShowsFirst` reads to
-  say which group of an alternation the page inks. A path with no step page
-  behind it sets 1, the step every unstepped page is. -/
+  /-- The overlay step this page sets, which `Ir.altShowsFirst` reads; 1 on unstepped pages. -/
   step : Nat := 1
 
 private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
     (help : Option String := none) : FlattenSt :=
   { st with diags := st.diags.push (Diag.of code msg (help := help)) }
 
-/-- Small caps at synthesis size, relative to the surrounding text. The
-fallback for a face that ships no `smcp`+`c2sc` (`Font.smallCaps`): letters
-take their capital form set smaller. Real small caps are drawn, not scaled,
-so this is a stand-in ratio until the face itself can answer. The 800‰ is
-the fontinst fake-caps tradition — it also covers the stroke-weight loss a
-bare x-height match would worsen. -/
+/-- Small caps at synthesis size relative to the surrounding
+text: 800‰, the fontinst fake-caps tradition. -/
 public def smallCapScale : Nat := 800
 
-/-- The scalar core of the per-face synthesis scale, over (x-height, cap
-height) in font units: the tradition's 800‰, lifted exactly where it would
-drop small caps *below* the lowercase x — Bringhurst, Elements §3.2.2:
-small caps sit at the x-height or slightly taller — and never above full
-capitals. `smallcap_height_between` is its band. -/
+/-- The per-face synthesis scale over (x-height, cap height) in font
+units: 800‰, raised to reach the x-height and capped at full capitals. -/
 public def smallCapScaleCore (x c : Nat) : Nat :=
   min 1000 (max smallCapScale (x * 1000 / c))
 
-/-- The per-face synthesis scale: `smallCapScaleCore` over the face's
-measured x-height (`Font.xHeightOptical` — OS/2 sxHeight lies in some
-fonts, the trust order the math size match already uses) and its declared
-cap height. -/
+/-- The per-face synthesis scale from the face's optical x-height and its cap height. -/
 public def smallCapScaleFor (f : Font) : Nat :=
   smallCapScaleCore f.xHeightOptical f.capHeight.toNat
 
-/-- `smallcap_height_between`, in scale space: the synthesis scale is at
-least the face's x/cap ratio in mille (floored — so the synthesized cap
-height reaches the lowercase x within one division quantum), at least the
-800‰ tradition, and at most full capitals. Multiplying through by the cap
-height reads: x-height ≲ synthesized cap height ≤ cap height, the honest
-band — equality with the x-height only when x/cap ≥ 0.8, so the band is
-the statement, not an `_eq`. -/
 public theorem smallcap_height_between (x c : Nat) (hc : 0 < c) (hx : x ≤ c) :
     x * 1000 / c ≤ smallCapScaleCore x c ∧
       smallCapScale ≤ smallCapScaleCore x c ∧ smallCapScaleCore x c ≤ 1000 := by
@@ -1896,15 +1250,8 @@ public theorem smallcap_height_between (x c : Nat) (hc : 0 < c) (hx : x ≤ c) :
   unfold smallCapScaleCore smallCapScale
   omega
 
-/-- The synthesised uniform small-caps form of one word: every letter its
-capital form, the whole word at the face's own scale
-(`smallCapScaleFor`) — one style, one size, so mixed case cannot come out
-at two heights. The invariant whose absence was the defect: the old
-synthesis kept capitals full-size beside their scaled neighbours, and
-`{\scshape NaCl}` set a full N and C against a small a and l.
-Chosen only when the face carries no real small caps (`Font.smallCaps`);
-`\scshape` means uniform small capitals in both mechanisms (the PLAN
-2026-09-18 entry carries the decision). -/
+/-- The synthesised uniform small-caps form of one word: every
+letter in its capital form, the whole word at the face's scale. -/
 public def smallCapSynth (scale : Nat) (sty : TextStyle) (chars : Array Char) :
     TextStyle × Array Char :=
   let sty := match sty.fontSize with
@@ -1916,10 +1263,7 @@ private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
     (attr : Attribution) : FlattenSt :=
   { st with toks := st.toks.push (.word sty cur attr) }
 
-/-- One text atom's characters into words and spaces, `cur` the word under
-construction: a space flushes the word and sets a space token, the end
-flushes. Every word carries `attr`; the counter is untouched. Structural
-over the character list so `pushChars_toks` can induct on it. -/
+/-- One text atom's characters into words and spaces, every word carrying `attr`. -/
 private def pushChars (sty : TextStyle) (attr : Attribution) (st : FlattenSt)
     (cur : Array Char) : List Char → FlattenSt
   | [] => if cur.isEmpty then st else pushWord st sty cur attr
@@ -1939,8 +1283,7 @@ private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt
   let (attr, ctr) := st.ctr.take
   pushTextAttr { st with ctr := ctr } sty s attr
 
-/-- Apply one markup style to the active text style. Size-only styles do not
-change the face; `\normalfont` resets to the body face. -/
+/-- Apply one markup style to the active text style; `\normalfont` resets to the body face. -/
 private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
     Ir.Style → TextStyle
   | .bold => { sty with weight := .b }
@@ -1963,20 +1306,11 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
   | .fontSize size leading =>
     { sty with fontSize := some size, leading := some leading, step := none }
 
-/-- The leading the style's named size step sets on a base (`Ir.stepLead`):
-the base is the size the step's own ratio scales — the body, or a display
-size a heading or a title sets its content on — so the leading stands in
-the size file's proportion to the type it leads. `none` under no step. -/
+/-- The leading the style's named size step sets on `base` (`Ir.stepLead`); `none` under no step. -/
 private def TextStyle.stepLead (sty : TextStyle) (skips : List (String × Nat)) (base : Sp) :
     Option Sp :=
   sty.step.bind (Ir.stepLead skips · base)
 
-/-- `weight_agree`: the weight a style leaves in force is exactly
-`Ir.Style.weight?` — the one projection the HTML emission also reads —
-so the face a run selects is one function of `(slot, weight, italic)`
-in both backends: the PDF resolves it through `FontSet.lookup`, the
-HTML emits `weight.css` and ships each face under its own
-`font-weight` (`html_fonts_cover_pdf` carries the coverage half). -/
 private theorem weight_agree (ladder : List (String × Nat)) (sty : TextStyle)
     (s : Ir.Style) :
     (applyStyle ladder sty s).weight = (s.weight?).getD sty.weight := by
@@ -1999,29 +1333,19 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
-  -- an anchor ships no ink; a resolved reference ships its number
   | .label name => { st with toks := st.toks.push (.anchor name) }
   | .ref _ _ text _ => pushText st sty text
-  -- An unresolved citation sets its marks as plain text: something stands
-  -- here, and the diagnostic that let it through has already said why.
+  -- An unresolved citation sets as plain text; the elaborator has named it.
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
-  -- The mark rides as its own token when the context has a note apparatus
-  -- (a paragraph of a paged flow); where none exists — furniture, markers,
-  -- captions, a card face — the body stays inline, the declared refusal.
+  -- Without a note apparatus (furniture, markers, captions, a card face) the body stays inline.
   | .footnote num body =>
     if noteOk then
-      -- The body's leaves are numbered where the mark stands
-      -- (`Struct.inlineRaw`'s `.note` node sits in the sequence): the
-      -- counter steps over them here, and the note block counts them from
-      -- `bodyLeaf` when it is set.
       { st with toks := st.toks.push (.note (num.getD 0) sty body st.ctr.next?)
                 ctr := st.ctr.skip (leafCount body) }
     else flatten mathOk noteOk st sty body
   | .icon c _ =>
     let (attr, ctr) := st.ctr.take
     { st with toks := st.toks.push (.icon sty c attr), ctr := ctr }
-  -- an image and a line break are leaves that ship no run: the counter
-  -- steps over them
   | .image src spec _ => { st with toks := st.toks.push (.img src spec), ctr := st.ctr.skip 1 }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
@@ -2030,12 +1354,6 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     { st with toks := st.toks.push (.rule sty width height raise) }
   | .strut h => { st with toks := st.toks.push (.strut h) }
   | .italicCorr maybe => { st with toks := st.toks.push (.corr maybe sty) }
-  -- Math the engine cannot model (the constructs M6 still owes): the
-  -- elaborator warned by name, and here the floor sets as plain text — the
-  -- formula's content, never its markup. Setting the source instead put
-  -- control sequences on the page where an equation belonged; `mathFloor`
-  -- is the one policy both backends read, and `Ir.floorInk_mem` states
-  -- what it guarantees.
   | .math _ src => pushText st sty (Ir.mathFloor src)
   | .formula display _ body =>
     if mathOk then
@@ -2046,17 +1364,12 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
         else { warn st .W0003 "no math font is available; math is set as plain text"
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
 OpenType math face; `leantex fonts` lists families") with warnedMath := true }
-      -- The parse succeeded, so the floor here is the formula's own glyph
-      -- text, not its spelling: the mathematics survives a missing face.
       pushText st sty (Ir.formulaFloor body)
   | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
   | .located source body =>
     let inner := flatten mathOk noteOk { st with toks := st.toks.push (.origin (some source)) } sty body
     { inner with toks := inner.toks.push (.origin none) }
-  -- Authored roles are names, pure grouping. The engine's title-part
-  -- roles additionally carry the absolute size resolved at their slot;
-  -- the role remains the same typed-tree hook in both artifacts.
   | .role n body =>
     if n == leafRole then
       let inner := flatten mathOk noteOk { st with ctr := st.ctr.enter } sty body
@@ -2070,9 +1383,7 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
             leading := leading.map fun l => .lit { width := Dim.Length.ofSp l } }
           body
       | none => flatten mathOk noteOk st sty body
-  -- The underline is the link's affordance in both backends (the HTML
-  -- anchor keeps the browser's): never colour alone, and never nothing
-  -- (WCAG 2.2 SC 1.4.1, use of colour).
+  -- The underline is the link's affordance, never colour alone (WCAG 2.2 SC 1.4.1).
   | .link url body =>
     flatten mathOk noteOk st
       { sty with link := some url
@@ -2086,32 +1397,22 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       flatten mathOk noteOk st
         { sty with decorations :=
             { sty.decorations with lineThrough := some sty.decorationSource } } body
-  -- A step is pure grouping here: the PDF path dims pending content by
-  -- recolouring copies before layout (`run`'s step driver), never by metrics.
+  -- The PDF dims pending content by recolouring copies before layout; a step is pure grouping.
   | .onSteps _ body => flatten mathOk noteOk st sty body
   | .altSteps spec firstPage otherPage =>
-    -- One group per step page, and the leaf id is the tree's, not this
-    -- walk's: the counter steps over the group the page does not ink, so the
-    -- inked one lands on the id `Struct` numbered it (`alt_leaf_projects`).
-    -- Page-order storage decides which side the skip stands on.
+    -- The counter steps over the group the page does not ink, so the inked one keeps `Struct`'s id.
     if spec.showsFirst st.step then
       let inner := flatten mathOk noteOk st sty firstPage
       { inner with ctr := inner.ctr.skip (leafCount otherPage) }
     else
       flatten mathOk noteOk { st with ctr := st.ctr.skip (leafCount firstPage) }
         sty otherPage
-  -- Placeholders are substituted before layout; reaching here means the
-  -- document used one outside running content: generated ink of the block,
-  -- no leaf of its own (`Struct.inlineRaw` gives it none).
+  -- Placeholders are substituted before layout; one reaching here is generated ink of the block.
   | .pageNumber => pushTextAttr st sty "?" st.ctr.generated
   | .pageCount => pushTextAttr st sty "?" st.ctr.generated
 
 end
 
-/-- An unstyled role is transparent to layout: absent an internal
-role-scale entry, the flatten walk recurses with state and style unchanged.
-The block half is `role_transparent_collect`, beside the block walk. The
-Layout-private `leafRole` marker changes attribution only and is excluded. -/
 private theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
     (hs : st.roleMetrics.lookup n = none) :
@@ -2119,16 +1420,6 @@ private theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
       = flatten mathOk noteOk st sty body := by
   simp [flattenOne, h, hs]
 
-/-- **The PDF projection of `Ir.Styles.linkLeafAfford_afford`.** A
-text-bearing link-body leaf lowers through `flattenOne` exactly as the leaf
-set in the kind's ink and underlined: the `.colored`/`.decorated` wrappers the
-afford fact builds recurse to the same run style the inline `.link` arm itself
-sets — the kind's ink on `color`, `underline := true` on `decorations` (the
-annotation url is the only part the inline arm adds beyond these). So the
-afforded body's runs carry the kind's ink colour and `Decorations.underline`
-in `Layout.Out`, which `Pdf` lowers to coloured glyphs and an underline fill —
-the PDF half of the one IR value both backends read (`Ir.Styles.linkBodyAfford`;
-HtmlDoc's `linkLeafAfford_projects` is the other). -/
 private theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (s : Styles) (kind : String) (x : Inline)
     (h : x.bearsLinkText = true) :
@@ -2146,15 +1437,8 @@ private theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
   | none => simp [flattenOne, flatten, flattenList]
   | some p => obtain ⟨c, _⟩ := p; simp [flattenOne, flatten, flattenList]
 
--- The attribution covers the walk: a counter standing in a block hands out
--- nothing but that block's leaves, the block itself, and note marks. The
--- statement is over the tokens `flatten` decides attribution for;
--- `itemsOfToks` carries each word token's attribution beside its scalars
--- while adjacent compatible words shape together; `wordItems` splits the
--- shaped boxes by those owners, and `setLine` copies a box's onto its run.
-
-/-- A token's ink names a leaf, a block or a note mark — never
-`.unattributed`; a token with no run of its own passes. -/
+/-- Whether a token's ink names a leaf, a block or a
+note mark; a token with no run of its own passes. -/
 private def Attribution.named (a : Attribution) : Bool :=
   a matches .leaf _ | .block _ | .noteMark _
 
@@ -2213,7 +1497,7 @@ private theorem pushChars_toks (sty : TextStyle) (attr : Attribution) (h : attr.
     intro st cur
     simp only [pushChars]
     split
-    · -- a space: flush, then the space token, then the rest
+    ·
       have hflush := show ∀ st', st' = (if cur.isEmpty then st else pushWord st sty cur attr) →
           st'.ctr = st.ctr ∧ ∀ tk ∈ st'.toks, tk ∈ st.toks ∨ tk.attributed = true from
         fun st' he => by
@@ -2254,11 +1538,6 @@ private theorem warn_toks (st : FlattenSt) (code : DiagCode) (msg : String) (hel
 
 mutual
 
-/-- `flatten_attr_covers` (`_covers`): a walk whose counter stands in a
-block emits no `.unattributed` token — every new token names a leaf, the
-block, or a note mark — and leaves the counter standing in a block. The
-arms that own a leaf take it (`LeafCtr.take`); the generated placeholders
-take the block; the marker enters and leaves without losing the block. -/
 private theorem flatten_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (xs : Array Inline) (h : st.ctr.attributes = true) :
     (flatten mathOk noteOk st sty xs).ctr.attributes = true ∧
@@ -2353,7 +1632,7 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
       · exact Or.inl hm
       · subst hm
         exact Or.inr (by simpa [Tk.attributed, Tk.attr?] using hn)
-    · -- the W0003 warning changes diagnostics only; the floor then sets as text
+    ·
       split
       · exact pushText_toks st sty (Ir.formulaFloor body) h
       · exact pushText_toks _ sty (Ir.formulaFloor body) h
@@ -2405,8 +1684,6 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
 
 end
 
--- Items -----------------------------------------------------------------------
-
 private def scaledAt (size : Sp) (font : Font) (units : Nat) : Sp :=
   (units * size.toNat) / font.unitsPerEm
 
@@ -2415,10 +1692,8 @@ private def glyphOf (size : Sp) (font : Font) (c : Char) : Option (Nat × Char �
   | some g => some (g, c, scaledAt size font (font.widths[g]?.getD 0))
   | none => none
 
-/-- `glyphOf`, through the face's own small-caps substitution when the run
-is small caps: the substituted glyph carries its own advance, and the char
-stays as typed — the artifact's text is the author's casing, only the drawn
-form changes. A face that maps a gid nowhere keeps it (digits, punctuation). -/
+/-- `glyphOf` through the face's small-caps substitution
+when the run is small caps; the char stays as typed. -/
 private def glyphOfSc (smallcaps : Bool) (size : Sp) (font : Font) (c : Char) :
     Option (Nat × Char × Sp) :=
   (font.gid c).map fun g0 =>
@@ -2430,7 +1705,6 @@ public def hyphenGlyph (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
   | some g => #[g]
   | none => #[]
 
-/-- The width a box's glyphs carry: what the KP breaker measures. -/
 public def boxWidth (box : Array (Nat × Char × Sp)) : Sp :=
   box.foldl (fun w g => w + g.2.2) 0
 
@@ -2439,42 +1713,29 @@ public theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char �
   unfold boxWidth
   rw [Array.foldl_push]
 
-/-- The PDF/layout projection of the shared OpenType feature record. The
-shaping helpers take the record, not a detached Bool, so their live callers
-cannot silently select another value. -/
 @[expose] public def kernEnabled (features : Ir.Features) : Bool := features.kern
 
-/-- A face's pair kern between two glyphs, scaled to `size`: 0 when
-kerning is off, and 0 for every pair of a face with no kern data. -/
+/-- A face's pair kern between two glyphs at `size`; 0
+when kerning is off or the face has no kern data. -/
 public def pairKern (features : Ir.Features) (size : Sp) (font : Font) (g1 g2 : Nat) : Sp :=
   (if kernEnabled features then font.kernAdv g1 g2 else 0) * size /
     (font.unitsPerEm : Int)
 
-/-- A glyph's pair kern with its own face's space glyph, scaled to `size`:
-`(g, space)` when `after` (the space follows `g`), `(space, g)` otherwise —
-`pairKern`'s value for that pair, read from the face's demand-lazy memo
-(`Font.spaceKernAdv`), so a space beside a word asks the kern data once
-per glyph and face, never once per space; 0 when kerning is off. -/
+/-- A glyph's pair kern with its face's space glyph at
+`size`: `(g, space)` when `after`, else `(space, g)`. -/
 public def spacePairKern (features : Ir.Features) (size : Sp) (font : Font)
     (after : Bool) (g : Nat) : Sp :=
   (if kernEnabled features then font.spaceKernAdv after g else 0) * size /
     (font.unitsPerEm : Int)
 
-/-- The scaled pair kern the next glyph owes against the box's last: 0
-at a box head, and 0 for every pair of a face with no kern data (Open
-Sans ships none). Both backends read one `Ir.Features` value for whether
-kerning applies at all — `features_agree` (stated in Pdf.lean, where both
-backends are in scope), `font-kerning` in CSS and this application being
-two projections of it. -/
+/-- The scaled pair kern the next glyph owes against the box's last; 0 at a box head. -/
 public def kernVal (features : Ir.Features) (size : Sp) (font : Font)
     (box : Array (Nat × Char × Sp)) (g1 : Nat) : Sp :=
   match box.back? with
   | some (pg, _, _) => pairKern features size font pg g1
   | none => 0
 
-/-- Apply a pair kern to the box's last glyph's advance: the pen position
-of everything after it — the next glyph first — moves by exactly the
-declared value, which is what kerning is. -/
+/-- Apply a pair kern to the box's last glyph's advance. -/
 public def kernApply (box : Array (Nat × Char × Sp)) (ks : Sp) : Array (Nat × Char × Sp) :=
   match box.back? with
   | some (pg, pc, padv) => box.pop.push (pg, pc, padv + ks)
@@ -2507,11 +1768,6 @@ private theorem kernApply_sourceChars (box : Array (Nat × Char × Sp)) (ks : Sp
     rw [hc]
     simp [kernApply, hb]
 
-/-- Setting the next glyph after a kern moves the box width by exactly the
-glyph's advance plus the applied pair value, and nothing else — the KP
-breaker's widths stay the exact sum of what the box carries, GPOS
-application included; and since the run carries these advances
-(`Seg.run`), the PDF writer places each glyph by the same sum. -/
 public theorem kern_measure_exact (box : Array (Nat × Char × Sp))
     (ks : Sp) (g : Nat × Char × Sp) (h : box.back?.isSome) :
     boxWidth ((kernApply box ks).push g) = boxWidth box + ks + g.2.2 := by
@@ -2531,18 +1787,13 @@ public theorem kern_measure_exact (box : Array (Nat × Char × Sp))
       = boxWidth box.pop + padv + ks + g.2.2
     rw [Int.add_assoc (boxWidth box.pop) padv ks]
 
-/-- At a box head there is nothing to kern against: the applied value is
-0 by definition, so the width moves by the glyph's advance alone. -/
 public theorem kernVal_head (features : Ir.Features) (size : Sp) (font : Font) (g1 : Nat)
     (box : Array (Nat × Char × Sp)) (h : box.back? = none) :
     kernVal features size font box g1 = 0 := by
   unfold kernVal
   rw [h]
 
-/-- Fixed-width spaces, as a fraction of the em. These are kerns, not
-characters: a Type 1-derived face has no glyph at U+2009, so looking one up
-drops the space that `\,` asked for. `\!`-style negative kerns are not here
-because there is no Unicode character for them. -/
+/-- Fixed-width spaces as a fraction of the em, set as kerns rather than looked up as glyphs. -/
 public def fixedSpace (c : Char) : Option (Nat × Nat) :=
   if c == '\u2009' then some (1, 6)        -- thin space, TeX's \,
   else if c == '\u202F' then some (1, 6)   -- narrow no-break: siunitx's \, between number and unit
@@ -2553,8 +1804,7 @@ public def fixedSpace (c : Char) : Option (Nat × Nat) :=
   else if c == '\u2003' then some (1, 1)   -- em quad: \paragraph's run-in gap
   else none
 
-/-- First actual loss sites, keyed by the diagnostic and its glyph request.
-A covered earlier occurrence can never supply a later loss's location. -/
+/-- First loss sites, keyed by the diagnostic and its glyph request. -/
 private abbrev GlyphOrigins := Array (DiagCode × Nat × Char × Span)
 
 private def rememberGlyph (sites : GlyphOrigins) (code : DiagCode)
@@ -2567,8 +1817,6 @@ private def glyphOrigin (sites : GlyphOrigins) (code : DiagCode)
     (idx : Nat) (c : Char) : Option Span :=
   (sites.find? fun site => site.1 == code && site.2.1 == idx && site.2.2.1 == c).map (·.2.2.2)
 
-/-- Progress is the appended scalar list: one yielded step accounts for the
-one element it consumed, and induction composes the actual loop. -/
 private theorem scalarLoop_census {α β γ : Type} (read : β → List γ)
     (emit : α → List γ) (f : α → β → Id (ForInStep β)) :
     ∀ (xs : List α) (init : β),
@@ -2606,8 +1854,7 @@ private theorem scalarLoop_range_census {β γ : Type} (read : β → List γ)
       simp only [List.mem_range'] at hk
       exact step k (by omega) (by omega) b)
 
-/-- Flush the actual shaped buffer, retaining each ownership fragment and its
-original expansion origin. The loop only splits the glyph sequence. -/
+/-- Flush the shaped buffer, keeping each ownership fragment and its expansion origin. -/
 private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     (size : Sp) (leading : Option Sp) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
@@ -2617,9 +1864,7 @@ private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
   if box.isEmpty then return (items, offsets, sources)
   let first := boxOwners[0]?.getD attr
   if boxOwners.all (· == first) then
-    -- The sources read the item count before the box is pushed, so the
-    -- push writes the items in place: read beside it, they were copied at
-    -- every box, quadratic in a line of many boxes.
+    -- The item count is read before the push, so the push writes in place.
     let sources := sources ++ boxSources.map (·, items.size)
     return (items.push (.box w fontIdx color link box size {leading} decorations 0 ground first),
       offsets, sources)
@@ -2746,8 +1991,7 @@ private theorem glyphOfSc_char (sc : Bool) (size : Sp) (font : Font)
   · cases h
     rfl
 
-/-- The scanner used by `wordItems` to select its next contiguous letter run.
-Its source interval is retained by the actual cursor, including early exit. -/
+/-- The next contiguous letter run from `start`, for `wordItems`. -/
 private def letterRun (chars : Array Char) (start : Nat) : Nat × Array Char := Id.run do
   let mut j := start
   let mut run : Array Char := #[]
@@ -2865,8 +2109,8 @@ private theorem cleanLoop_array_census {α β γ : Type} (Clean : β → Prop) (
   exact cleanLoop_census Clean read emit f xs.toList init
     (fun x hx => step x (by simpa using hx))
 
-/-- Word shaping state: emitted fragments and the current buffered glyphs.
-Loss ledgers survive every flush and glyph operation. -/
+/-- Word shaping state: emitted fragments and the
+buffered glyphs; loss ledgers survive every flush. -/
 private structure WordAcc where
   items : Array Item := #[]
   offsets : Std.HashMap Nat Sp := {}
@@ -2906,8 +2150,7 @@ private theorem WordAcc.flush_clean (fontIdx : Nat) (color : Ir.Color) (link : O
     (st.flush fontIdx color link size leading decorations ground attr).Clean ↔ st.Clean := by
   rfl
 
-/-- Both branches of the source scanner append glyphs through this one
-operation. Missing and substituted glyphs retain the original loss ledgers. -/
+/-- Append a glyph, keeping missing and substituted glyphs in the loss ledgers. -/
 private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     (size : Sp) (leading : Option Sp) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
@@ -2923,7 +2166,7 @@ private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option Stri
         (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
     | some (fb, g) =>
       let st := st.flush fontIdx color link size leading decorations ground attr
-      -- The count is read before the update, which writes `items` first.
+      -- Read before the update, so the update writes `items` in place.
       let n := st.items.size
       let st := { st with sources := st.sources.push (sourceId, n),
                            items := st.items.push (.box g.2.2 fb color link #[g] size {leading}
@@ -3028,24 +2271,8 @@ private theorem wordItemChars_letters (xs : List Char)
     have hcs := ih (fun x hx => h x (by simp [hx]))
     simp [wordItemChars, hc, hcs]
 
-/-- One word → items: boxes split by hyphenation points (flagged penalties
-carrying the hyphen glyph) and after each character `explicitBreak` prices
-(unflagged, no glyph: `proseBreak`'s explicit hyphen, or `urlBreak`'s table
-in a run that breaks as url.sty sets a path). A scalar the styled face
-lacks is set from the precomputed fallback face (`FontSet.fallback`) at the
-same size — its own one-glyph box, since a box carries one face — or
-dropped when no face covers it. `missing` and `substs`
-carry `(styled font, scalar)` so the diagnostic can name the family.
-`smallcaps` routes every glyph lookup — styled face and fallback alike —
-through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
-only when the styled face has one, synthesis having already rewritten the
-word otherwise. `owners` carries the original leaf of each scalar when a
-word crosses transparent inline boundaries: shape and hyphenate first,
-then split boxes by owner without losing the kern at a leaf boundary.
-The last result maps each owner fragment to its natural offset in the
-original box: expansion must round from that same origin. Hyphenation,
-fallback faces and fixed spaces still start fresh boxes. The final array maps
-source scalars to the items that carry them, for zero-ink destinations. -/
+/-- One word into items: boxes split at hyphenation points and at the breaks `explicitBreak`
+prices, a scalar the styled face lacks set from the fallback face or dropped. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
@@ -3066,10 +2293,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
       if Nfc.isLetter c then
         let (j, run) := letterRun chars i
         let word := String.ofList run.toList
-        -- The cache key carries the language: one paragraph can mix
-        -- tagged runs, and a French word's breaks must never answer for
-        -- the same spelling under English (a letter run never contains
-        -- ':', so the key is unambiguous).
+        -- The key carries the language: a word's breaks never answer for another language.
         let key := langKey ++ ":" ++ word
         let mut breaks : Array Nat := #[]
         match pats with
@@ -3087,11 +2311,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
       else
         match fixedSpace c with
         | some (num, den) =>
-          -- A kern: width but no glyph, and never a breakpoint, so `\,` cannot
-          -- become a place to end a line.
+          -- A fixed space is a kern, never a breakpoint.
           st := st.flush fontIdx color link size leading decorations ground attr
-          -- The count is read before the update, which writes `items` first:
-          -- read inside it, the items were copied at every space.
+          -- Read before the update, so the update writes `items` in place.
           let n := st.items.size
           st := { st with
             sources := st.sources.push (i, n)
@@ -3126,9 +2348,6 @@ private def WordAcc.Prefix (chars : Array Char) (missing : Array (Nat × Char))
   i ≤ chars.size ∧ (st.Clean → missing = #[] ∧ substs = #[] ∧
     st.chars = (chars.toList.take i).flatMap wordItemChars)
 
-/-- Without automatic hyphenation, a clean word producer preserves its
-source scalars, except the explicitly nonpainting fixed spaces. The cursor
-invariant proves that the actual loop consumed the entire input. -/
 private theorem wordItems_none_chars (langKey : String)
     (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
@@ -3249,44 +2468,17 @@ private theorem wordItems_none_chars (langKey : String)
       (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans
         hprefix.2.2
 
-/-- Interword glue: the face's space advance, stretching by half and
-shrinking by a third. The proportions are TeX's plain-font fontdimens
-(TeXbook Ch. 12) and exactly what LuaTeX synthesizes for an OpenType
-face, which declares no fontdimens: `space_stretch = spaceunits/2`,
-`space_shrink = spaceunits/3` under the default `syncspace`
-(luatex-fonts-merged.lua, `constructors.scale`) — so a document set here
-gets the same space rubber lualatex gives it. The advance itself comes
-from `Font.spaceAdvance`, never zero even for a face with no space
-glyph. -/
+/-- Interword glue: the face's space advance, stretching by half and shrinking
+by a third, as TeX's plain fonts and LuaTeX's OpenType faces set it. -/
 private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font font.spaceAdvance
   { width := w, stretch := w / 2, shrink := w / 3, word := true }
 
-/-- `interword_word_exact`: interword glue is the word gap, and the glue
-transforms below keep the flag — so `Seg.gap _ true` on a set line stands
-exactly where the token walk met a space between words. No other `Glue`
-construction in this module writes `word`; the structure's default is
-`false`. -/
 private theorem interword_word_exact (size : Sp) (font : Font) :
     (interword size font).word = true := rfl
 
-/-- The engine's own ragged setting (a `card`'s page) as an item transform,
-leaving the breaker untouched: interword glue keeps its natural width,
-never shrinks, and gains *finite* stretch — six times its own width,
-`displayItems`' em-relative pricing, so the two ragged tiers share one
-scale. Finite is the point: fil hides all looseness from the badness
-function (TeXbook ch. 14), so every same-line-count break sequence ties at
-demerits and the tie-break decides the paragraph's shape — TeX's keeps the
-latest, which fills each line first. That is LaTeX's own `\raggedright`
-(`\@flushglue`), which a document declaring it gets exactly, from the
-breaker's `fil` (`Spacing.Paragraph.rightFil`); plain TeX's prices
-looseness finitely instead (TeXbook App. B, p. 356: `\rightskip 0pt
-plus2em`, fixed `\spaceskip`), as ragged2e's `\RaggedRight` does (its
-manual §1), and so does this, where no document declared LaTeX's. The
-paragraph's closing parfill and an author's own `\hfill` keep their fil: a
-body paragraph's last line is free (`\parfillskip 0pt plus 1fil`), and a
-declared fill means the margin. The lines are then set unjustified, so the
-stretch never widens a rendered space — it only prices the break. -/
+/-- The engine's ragged setting as an item transform: interword glue keeps its
+natural width, never shrinks, and gains finite stretch of six times its width. -/
 public def raggedItems (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
@@ -3300,20 +2492,8 @@ public def raggedItems (items : Array Item) : Array Item :=
         .decoratedGlue g' r
     | .box .. | .pen .. | .img .. | .rule .. | .poly .. => it
 
-/-- Ragged setting for display lines — titles and headings: interword glue
-keeps its natural width and gains *finite* stretch (six times its own
-width, ≈1.5 em per space at TeX's quarter-em space, so it scales with the
-styled size the glue was built at), and the closing parfill stretches by
-half the measure — TeX's minimum-last-line idiom (`\parfillskip 0pt plus
-.5\hsize`: a last line shorter than half the measure runs past the
-parfill's stretch and its badness rises cubically) — so the breaker
-balances the lines instead of packing every line but the last. A display
-break never strands one word on a line: a title is not a paragraph. Fil
-hides all looseness from the badness function; a finite stretch prices it
-(TeXbook ch. 14 on ragged setting). An author's own `\hfill` keeps its
-fil. Body ragged setting (`raggedItems`) shares the interword pricing but
-keeps the parfill free: paragraphs are reading, not display, and a body
-paragraph's last line owes no minimum. -/
+/-- Ragged setting for display lines: interword glue gains finite stretch and
+the closing parfill stretches by half the measure, balancing the lines. -/
 public def displayItems (target : Sp) (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
@@ -3333,17 +2513,8 @@ public def displayItems (target : Sp) (items : Array Item) : Array Item :=
         .decoratedGlue g' r
     | .box .. | .pen .. | .img .. | .rule .. | .poly .. => it
 
--- The document's scalars, for the driver's per-glyph fallback ------------------
-
-/-- The scalars a run's leaves ask a face for beyond its plain text: the
-Mathematical Alphanumeric code points elaboration mapped formula variables
-to, and each icon's glyph (its plain text is its text alternative) — neither
-lives in the plain text, so the census must walk the bodies themselves. One
-`Ir.foldInlines` projection, both leaf kinds: `.icon` glyphs join `icons`,
-formula scalars join `math`, so the two censuses cannot drift apart arm by
-arm. An anchor ships no glyphs; a reference's number is plain text, which
-`textAndMath` already carries through `plainText`; a note's body ships
-glyphs like any inline content — the fold walks every wrapper. -/
+/-- The scalars a run's leaves ask a face for beyond its plain
+text: formula scalars into `math`, icon glyphs into `icons`. -/
 private def leafScalars (icons math : Array Char) (xs : Array Ir.Inline) :
     Array Char × Array Char :=
   Ir.foldInlines (fun acc x =>
@@ -3352,20 +2523,15 @@ private def leafScalars (icons math : Array Char) (xs : Array Ir.Inline) :
     | .icon c _ => (acc.1.push c, acc.2)
     | _ => acc) (icons, math) xs
 
-/-- The census accumulator: the plain texts a document's faces will be
-asked for, and — separately — the scalars its formulas ask the math face
-for, so the driver can both cover them (one fallback precompute) and know
-whether the document reaches math at all. -/
+/-- The census accumulator: the plain texts a document's faces
+are asked for and, separately, its formulas' scalars. -/
 private structure ScalarAcc where
   texts : Array String := #[]
   math : Array Char := #[]
-  /-- The locale whose furniture words (the abstract heading) the census
-  counts as shipped text. -/
+  /-- The locale whose furniture words the census counts as shipped text. -/
   locale : Locale := Locale.en
 
-/-- The plain text of a run and, when it carries formulas or icons, their
-scalars: what keeps the per-scalar fallback one mechanism — a math or icon
-scalar enters the same precompute a text scalar does. -/
+/-- The plain text of a run and its formula and icon scalars. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
   let (icons, math) := leafScalars #[] out.math xs
   { out with
@@ -3383,32 +2549,20 @@ private def scalarTextList (out : ScalarAcc) (itemD enumD : Nat) :
 private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     Block → ScalarAcc
   | .para xs => textAndMath out xs
-  -- the equation's number is set in the body face beside the formula
   | .equation num xs => textAndMath (textAndMath out num) xs
-  -- A heading's number is set beside its title, so its digits are asked
-  -- of the bold face like the title's own text.
   | .section _ _ num title =>
     textAndMath { out with texts := out.texts.push (num.getD "") } title
-  -- Each entry's formatted content is shipped text: its scalars enter the
-  -- same fallback precompute a paragraph's do.
   | .bibliography _ _ items =>
     items.foldl (fun out item => textAndMath out item.content) out
   | .list ordered items =>
-    -- The level's default marker rides along, so the fallback face is
-    -- found before layout asks for the glyph. Per-kind depth, as LaTeX
-    -- counts it (`\@itemdepth`/`\@enumdepth`).
     let (itemD, enumD) := if ordered then (itemD, enumD + 1) else (itemD + 1, enumD)
     let level := min (if ordered then enumD else itemD) 4
     scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
   | .ragged _ body => scalarTextList out itemD enumD body.toList
   | .quote body => scalarTextList out itemD enumD body.toList
-  -- The abstract's heading word is class furniture set in the bold face;
-  -- its glyphs are asked for like any other text.
   | .abstract body =>
     scalarTextList { out with texts := out.texts.push out.locale.abstract } itemD enumD body.toList
-  -- The block's title is set in the bold face at the body size; its
-  -- glyphs are asked for like a heading's.
   | .titled _ title body => scalarTextList (textAndMath out title) itemD enumD body.toList
   | .disclosure summary _ body =>
     scalarTextList (textAndMath out (Ir.disclosureSummary summary)) itemD enumD body.toList
@@ -3422,14 +2576,9 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
       otherwise.toList
   | .only _ body => scalarTextList out itemD enumD body.toList
   | .nav _ body => scalarTextList out itemD enumD body.toList
-  -- A note is never set in either backend's pages; its glyphs are not asked
-  -- for.
+  -- A note is set in neither backend's pages.
   | .note _ => out
   | .logo content => textAndMath out content
-  -- The listing word and the caption's digits are furniture set in the
-  -- body face beside the declared caption text; line-number digits are
-  -- furniture in the mono face. Each is asked of the faces here, before
-  -- layout asks for the glyph.
   | .verbatim _ s spec =>
     let out := { out with texts := out.texts.push s }
     let out := if spec.numbers then
@@ -3438,26 +2587,15 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     | some (n, cap) =>
       textAndMath { out with texts := out.texts.push s!"{out.locale.listing} {n}: " } cap
     | none => out
-  -- A rule has no glyphs.
   | .rule _ _ _ => out
-  -- A page boundary ships no ink.
   | .pagebreak => out
-  -- A stateful design declaration ships no glyphs.
   | .setPalette _ => out
   | .setTokens _ => out
-  -- A picture's labels are set as inline runs: their text and math
-  -- scalars are asked of the faces like any other content.
   | .picture pic => pic.labelContents.foldl textAndMath out
   | .frame title _ _ _ body =>
     scalarTextList (textAndMath out title) itemD enumD body.toList
-  -- A framefoot note is set on the page as footer text.
   | .framefoot content => textAndMath out content
-  -- Every cell's text, and a caption's, reaches the scalar census: the
-  -- fallback scan must see a glyph before layout asks a face for it.
   | .table _ _ _ rows _ _ => scalarTextTableRows out rows.toList
-  -- The generated keyword words, the io/comment punctuation, and — when
-  -- lines are numbered — the digits, plus each line's own content and
-  -- comment: generated text must be covered exactly as caption prefixes.
   | .algorithm numbered _ lines =>
     let words := Ir.algWords out.locale.tag
     let texts := (out.texts ++ (Ir.AlgWords.all words).toArray).push ":; /**/"
@@ -3497,15 +2635,8 @@ private def scalarTextItems (out : ScalarAcc) (itemD enumD : Nat) :
 
 end
 
-/-- Every scalar the document's text can ask a face for, sorted: body text,
-titles, verbatim, running content (with the digits page numbers become),
-style templates and markers, and each list level's default marker — plus
-each cased scalar's uppercase, because
-small caps set lowercase as its uppercase. Whitespace and the fixed-space
-kerns are excluded; they never look a glyph up. The driver checks these
-against the loaded faces to precompute `FontSet.fallback` before layout
-begins, which is what keeps layout pure: finding a covering face on disk is
-the driver's effect, and by layout time it has already happened. -/
+/-- Every scalar the document's text can ask a face for, sorted,
+so the driver can precompute `FontSet.fallback` before layout. -/
 private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
   let mut acc : ScalarAcc :=
     scalarTextList { locale := doc.info.locale } 0 0 doc.body.toList
@@ -3514,17 +2645,12 @@ private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
   if let some f := doc.foot then
     acc := textAndMath acc f |> fun a => { a with texts := a.texts.push "0123456789" }
   else if doc.pageNumbersOn then
-    -- The class-default plain foot ships digits nobody declared: the
-    -- precompute must cover them exactly as it covers a declared
-    -- `\pagenumber`'s.
+    -- The class-default foot ships undeclared digits.
     acc := { acc with texts := acc.texts.push "0123456789" }
   if doc.lineNumbersOn then
-    -- Margin line numbers ship digits the same way: engine-generated
-    -- text the fallback scan must cover before layout asks a face.
+    -- Margin line numbers ship undeclared digits too.
     acc := { acc with texts := acc.texts.push "0123456789" }
   if let some hl := doc.headline then
-    -- The headline band is furniture from the `\title` family: its text
-    -- must be covered exactly as the head's and foot's is.
     acc := textAndMath acc hl.title
     acc := textAndMath acc hl.author
     acc := textAndMath acc hl.institute
@@ -3538,15 +2664,11 @@ private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
       acc := { acc with texts := acc.texts.push (Ir.plainText m) }
   return acc
 
-/-- The scalars the document's formulas ask the math face for: nonempty
-exactly when resolving a math face is worth the driver's while, and what
-the note that names an engine-picked face is gated on. -/
+/-- The scalars the document's formulas ask the math face
+for; nonempty exactly when a math face is needed. -/
 public def docMathScalars (doc : Doc) : Array Char :=
   (docScalarAcc doc).math
 
-/-- The PDF layout's fallback census projects the same resolved math list
-the shared pass produced: the exact formula-leaf fold used by `docScalars`
-adds that list's scalars and no backend-local alphabet mapping. -/
 public theorem resolveMathAlphas_layout_agree (coverage : Math.MathAlphabetCoverage)
     (body : Math.MList) :
     docMathScalars { body := #[.para
@@ -3557,10 +2679,7 @@ public theorem resolveMathAlphas_layout_agree (coverage : Math.MathAlphabetCover
 public def docScalars (doc : Doc) : Array Char := Id.run do
   let acc := docScalarAcc doc
   let texts := acc.texts.push (String.ofList acc.math.toList)
-  -- ASCII in a bitmap, the rest gathered and deduplicated after: a hash
-  -- insert per character of the document costs ~15 ms on the 30-page bench,
-  -- a bitmap update costs nothing. Two folds, so each accumulator threads
-  -- linearly and updates in place.
+  -- ASCII in a bitmap and the rest deduplicated after, cheaper than a hash insert per character.
   let skip (c : Char) : Bool :=
     c == ' ' || c == '\n' || c == '\t' || c == '\u00a0' || (fixedSpace c).isSome
   let mut ascii : Array Bool := Array.replicate 128 false
@@ -3582,11 +2701,8 @@ public def docScalars (doc : Doc) : Array Char := Id.run do
       out := out.push (Char.ofNat n)
   return out ++ set.toArray.qsort (· < ·)
 
--- Weight keys ------------------------------------------------------------------
-
-/-- Push the face key a styled context resolves to: every key in the full
-census (`corners`), else only one whose weight is off the standard corners
-the driver always loads (regular 400 and bold 700). -/
+/-- Push the face key a styled context resolves to: every key when
+`corners`, else only one off the regular and bold corners. -/
 private def pushWeightKey (corners : Bool) (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
     Array (Nat × Nat × Bool) :=
   let w := sty.weight.css
@@ -3599,17 +2715,11 @@ private def pushWeightKey (corners : Bool) (acc : Array (Nat × Nat × Bool)) (s
 private def setsText (s : String) : Bool := s.any fun c => !c.isWhitespace
 
 mutual
--- conserves: none — a key census, not a tree rewrite: the walk reads and
--- collects, ships no ink, and returns no tree. Hand-rolled rather than a
--- `foldInlines` leaf because the key is a function of the styled
--- *ancestry* (`applyStyle` folded down the spine), which a context-free
--- leaf fold cannot see.
+-- conserves: none — a key census, no ink; hand-rolled, as the key reads the styled ancestry.
 private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
     Ir.Inline → Array (Nat × Nat × Bool)
   | .styled st body =>
-    -- the ladder never moves a weight (`weight_agree`), so the census may
-    -- pass the engine scale; the full census counts a face where text sets
-    -- in it, so a style over nothing asks none
+    -- The ladder never moves a weight (`weight_agree`), so the engine scale serves.
     let sty := applyStyle Ir.sizeScale sty st
     weightKeysInlineList corners (if corners then acc else pushWeightKey corners acc sty) sty
       body.toList
@@ -3623,8 +2733,6 @@ private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool))
     weightKeysInlineList corners (weightKeysInlineList corners acc sty active.toList) sty otherwise.toList
   -- A note body sets at the page foot in the base style, not the mark's.
   | .footnote _ body => weightKeysInlineList corners acc {} body.toList
-  -- Text, and the numbers and marks a reference, a citation and the page
-  -- counters set as text, ask the face of the style around them.
   | .text s => if corners && setsText s then pushWeightKey true acc sty else acc
   | .ref _ _ _ _ => if corners then pushWeightKey true acc sty else acc
   | .cite _ _ => if corners then pushWeightKey true acc sty else acc
@@ -3647,18 +2755,12 @@ private def templated (tpl : Option (Array Ir.Inline)) (content : Array Ir.Inlin
   | some t => Ir.fillTemplate t content
   | none => content
 
-/-- A heading's base style where no template sets it: bold, as layout sets
-an untemplated heading (`collectSection`, `collectTitle`). -/
+/-- A heading's base style where no template sets it: bold. -/
 private def headingBase (tpl : Option (Array Ir.Inline)) : TextStyle :=
   if tpl.isSome then {} else { weight := .b }
 
 mutual
--- conserves: none — the key census over blocks, as above: it reads and
--- collects, ships no ink and returns no tree. The full census (`corners`)
--- reads each element in the template layout fills it with, where the
--- element stands (`styles`; a deck's section pages and frame titles by
--- `slides`), so a template counts where its element is set and nowhere
--- else.
+-- conserves: none — the key census over blocks, no ink.
 private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool)
     (acc : Array (Nat × Nat × Bool)) : Ir.Block → Array (Nat × Nat × Bool)
   | .para content => weightKeysInlineList corners acc {} content.toList
@@ -3668,8 +2770,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
     if corners then
       let own := (styles.find? level.element).bind (·.font)
       let acc := weightKeysInlineList corners acc (headingBase own) (templated own title).toList
-      -- A deck's top-level section may stand on a section page, in that
-      -- page's template (`collectSection`'s divider); both are read.
+      -- A deck's top-level section may also stand on a section page, so both templates are read.
       if slides && level == 1 then
         let page := (styles.find? "sectionpage").bind (·.font)
         weightKeysInlineList corners acc (headingBase page) (templated page title).toList
@@ -3680,8 +2781,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
   | .ragged _ body => weightKeysBlockList corners styles slides acc body.toList
   | .quote body => weightKeysBlockList corners styles slides acc body.toList
   | .abstract body =>
-    -- Its heading is the locale's word, in the heading's template
-    -- (`Ir.abstractHeadingStyle`); any word stands for it.
+    -- The abstract heading is the locale's word, and any word stands for its face key.
     let acc := if corners then
         match (Ir.abstractHeadingStyle styles).font with
         | some tpl => weightKeysInlineList corners acc {} (Ir.fillTemplate tpl #[.text "Abstract"]).toList
@@ -3708,10 +2808,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
   | .note body => weightKeysBlockList corners styles slides acc body.toList
   | .frame title standout _ _ body =>
     if corners then
-      -- A frame title sets in its template under a themed bar and bold
-      -- without one (`collectFrameTitle`), the palette being the page's:
-      -- both are read. A standout frame sets its paragraphs in its template
-      -- (`collectStandout`).
+      -- A frame title sets in its template under a themed bar, bold without one: both are read.
       let tpl := (styles.find? "frametitle").bind (·.font)
       let acc := weightKeysInlineList corners acc { weight := .b } title.toList
       let acc := match tpl with
@@ -3729,8 +2826,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
     weightKeysBlockList corners styles slides (weightKeysInlineList corners acc {} caption.toList)
       body.toList
   | .table _ _ _ rows _ _ => weightKeysTableRows corners acc rows.toList
-  -- A line's content and comment set at the base style; the generated
-  -- keyword bold is a corner face, not an off-corner key.
+  -- The generated keyword bold is a corner face, not an off-corner key.
   | .algorithm _ _ lines =>
     lines.foldl (fun a l =>
       let a := weightKeysInlineList corners a {} l.content.toList
@@ -3740,13 +2836,9 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
   | .logo content => weightKeysInlineList corners acc {} content.toList
   | .picture pic =>
     pic.labelContents.foldl (fun a c => weightKeysInlineList corners a {} c.toList) acc
-  -- A field is body text, set at the base style: its `\fontseries` asks
-  -- the faces the body's would.
   | .bibliography _ _ items =>
     items.foldl (fun a it => weightKeysInlineList corners a {} it.content.toList) acc
-  -- A listing sets in the mono slot, each token in its role's weights
-  -- (`Listing.paintRun` over `Role.weights`): corners all, so only the full
-  -- census lexes it. Its caption is body text.
+  -- A listing's token weights are all corners, so only the full census lexes it.
   | .verbatim _ s spec =>
     let acc := match spec.caption with
       | some (_, caption) => weightKeysInlineList corners acc {} caption.toList
@@ -3767,8 +2859,7 @@ private def weightKeysBlockList (corners : Bool) (styles : Ir.Styles) (slides : 
   | b :: rest =>
     weightKeysBlockList corners styles slides (weightKeysBlock corners styles slides acc b) rest
 
-/-- A standout frame's body: each paragraph in the frame's template, as
-layout sets it, any other block as anywhere. -/
+/-- A standout frame's body: each paragraph in the frame's template, any other block as anywhere. -/
 private def weightKeysStandout (corners : Bool) (styles : Ir.Styles) (slides : Bool)
     (tpl : Option (Array Ir.Inline)) (acc : Array (Nat × Nat × Bool)) :
     List Ir.Block → Array (Nat × Nat × Bool)
@@ -3803,8 +2894,8 @@ private def weightKeysTableRows (corners : Bool) (acc : Array (Nat × Nat × Boo
       (fun a cell => weightKeysInlineList corners a {} cell.toList) acc) rest
 end
 
-/-- The face keys the document's runs ask, every key or only the off-corner
-ones (`pushWeightKey`). -/
+/-- The face keys the document's runs ask: every key,
+or only the off-corner ones (`pushWeightKey`). -/
 private def docKeys (corners : Bool) (doc : Doc) : Array (Nat × Nat × Bool) := Id.run do
   let slides := doc.docClass.record.model == .frame
   let mut acc := weightKeysBlockList corners doc.styles slides #[] doc.body.toList
@@ -3813,8 +2904,6 @@ private def docKeys (corners : Bool) (doc : Doc) : Array (Nat × Nat × Bool) :=
   if let some f := doc.foot then
     acc := weightKeysInlineList corners acc {} f.toList
   if corners then
-    -- The headline band: its title in the title page's template, as
-    -- layout sets it, its author and institute at the base style.
     if let some hl := doc.headline then
       let tpl := (doc.styles.find? "titlepage").bind (·.font)
       acc := weightKeysInlineList corners acc (headingBase tpl) (templated tpl hl.title).toList
@@ -3829,40 +2918,18 @@ private def docKeys (corners : Bool) (doc : Doc) : Array (Nat × Nat × Bool) :=
   return acc
 
 /-- Every off-corner face key the document's styles can ask
-`FontSet.lookup` for: `(slot, weight, italic)` with the styled ancestry
-applied exactly as layout will apply it (`applyStyle` folds the spine
-here and there alike, so the two cannot drift). The driver resolves an
-index entry per key before layout begins — the same precompute contract
-as `docScalars` — which is what keeps a `\fontseries{l}` run from
-silently falling back to the regular face, and keeps the never-silent
-substitution warning (W0366) firing only for weights the document
-really uses. Style templates (`\style{...}{ font = ... }`) join at the
-base style, as their elaboration does. -/
+`FontSet.lookup` for, so the driver resolves each before layout. -/
 public def docWeightKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys false doc
 
-/-- Every face key the document's text asks `FontSet.lookup` for, the
-corners among them, by the same walk as `docWeightKeys`: a listing's tokens
-in their roles' weights too, each key counted where text sets in it, and
-each element in the template layout fills it with where the element stands
-(a heading's, a block title's, a frame title's, a standout frame's, the
-headline's), never a template no element uses. Where layout's choice turns
-on the palette in force — a frame title in its template under a themed bar,
-bold without one; a deck's section page — both readings are counted. The
-slot and italic of a key are layout's — no layout base style sets italic or
-a family — while a heading's weight is read at the base style its walk
-passes. The face keys shipped runs ask hold it to that
-(`Tests.MonoDefault.faceKeyAgreementChecks`). -/
+/-- Every face key the document's text asks `FontSet.lookup` for, corners included. -/
 public def docFaceKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys true doc
-
--- Math -------------------------------------------------------------------------
 
 /-- One mu: 1/18 of an em at the given size (TeXbook p. 168). -/
 private def muAt (size : Sp) (mu : Int) : Sp :=
   size * mu / 18
 
 /-- Everything measuring a formula needs: the math face and its constants,
-the font set whose per-scalar fallback serves a glyph the math face lacks,
-and the run properties the formula inherits from its surroundings. -/
+the font set for per-scalar fallback, and the inherited run properties. -/
 private structure MathEnv where
   idx : Nat
   font : Font
@@ -3875,23 +2942,17 @@ private structure MathEnv where
   base : Sp
   /-- Ambient text size, before matching the math face's x-height. -/
   textBase : Sp
-  /-- The surrounding text's scaled vertical metrics. Formula runs keep
-  this common strut even when their individual glyphs are scripts. -/
+  /-- The surrounding text's scaled vertical metrics, kept as the common strut even for scripts. -/
   textAscent : Sp
   textDescent : Sp
   ground : Option Ir.Color := none
-  /-- The formula's attribution: its one `Struct` leaf (the source), on
-  every box the assembly builds. No default: the one construction site
-  says. -/
+  /-- The formula's attribution, its one `Struct` leaf, on every box the assembly builds. -/
   attr : Attribution
-  /-- How many grids' cells hold what is laid: a grid at none is the
-  formula's own, whose rows a display alignment sets as lines
-  (`alignRowMark`). -/
+  /-- How many grids' cells hold what is laid; at 0 a display alignment sets its rows as lines. -/
   gridDepth : Nat := 0
 
-/-- The common font environment for measuring and placing a math run.
-Its em matches the surrounding face's measured x-height. Placement adds
-paint and attribution; measurements need neither. -/
+/-- The font environment for measuring and placing a math
+run, its em matching the surrounding face's x-height. -/
 private def MathEnv.forRun (fs : FontSet) (idx : Nat) (font : Font)
     (consts : MathConsts) (around : Font) (runSize : Sp) : MathEnv :=
   { idx, font, consts, fs, color := Ir.Color.black, link := none
@@ -3902,42 +2963,35 @@ private def MathEnv.forRun (fs : FontSet) (idx : Nat) (font : Font)
     base := (Math.mathSize runSize.toNat around.xHeightOptical
       around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
 
-/-- Font size at a style: base for display and text, the face's declared
-percentages for the script styles (`Math.sizeFor`, clamped on parse). -/
+/-- Font size at a style: the base for display and text,
+the face's declared percentages for script styles. -/
 private def MathEnv.sizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
   Math.sizeFor e.consts.scales e.base st
 
-/-- A text-sourced math alphabet keeps the surrounding text em, with the
-same MATH script ladder as its neighbouring math glyphs. -/
+/-- A text-sourced math alphabet's size: the surrounding text em on the same script ladder. -/
 private def MathEnv.textSizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
   Math.sizeFor e.consts.scales e.textBase st
 
-/-- A MATH constant (font design units) scaled at a size. Constants are read
-from the font of the base and scale with the base's size (OpenType MATH
-spec, MathConstants). -/
+/-- A MATH constant in font design units, scaled at a size. -/
 private def MathEnv.constAt (e : MathEnv) (size : Sp) (v : Int) : Sp :=
   v * size / (e.font.unitsPerEm : Int)
 
-/-- A glyph's vertical ink extent `(top, bottom)` scaled at a size, from
-its own outline; a face the decoder cannot answer for falls back to the
-cap height and the baseline. -/
+/-- A glyph's vertical ink extent `(top, bottom)` at a size,
+from its outline, else the cap height and baseline. -/
 private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :=
   match e.font.yExtent g with
   | some (lo, hi) =>
     (hi * size / (e.font.unitsPerEm : Int), lo * size / (e.font.unitsPerEm : Int))
   | none => (e.font.capHeight * size / (e.font.unitsPerEm : Int), 0)
 
-/-- Reserve a formula's reach against its ambient font-relative strut.
-The signed bounds are independent of the run's subsequent raise. -/
+/-- Reserve a formula's reach against its ambient strut, independent of the run's raise. -/
 private def MathEnv.metrics (e : MathEnv) (top bottom : Sp) : RunMetrics :=
   { leading := e.leading, math := some {
       size := e.textBase, ascent := e.textAscent, descent := e.textDescent,
       top, bottom } }
 
-/-- A math run's vertical hull is measured in its actual face, including
-text alphabets and per-scalar fallbacks. An undecodable outline retains
-the face's ascent/descent, as `segsInk` does; that fallback is not a proof
-of painted containment. -/
+/-- A math run's vertical hull, measured in its actual face;
+an undecodable outline keeps the face's ascent and descent. -/
 private def mathBox (e : MathEnv) (idx : Nat) (w : Sp)
     (glyphs : Array (Nat × Char × Sp)) (size raise : Sp) : Item :=
   let font := e.fs.get idx
@@ -3955,9 +3009,8 @@ private def mathBox (e : MathEnv) (idx : Nat) (w : Sp)
 private def mathKern (e : MathEnv) (size w : Sp) : Item :=
   .box w e.idx e.color e.link #[] size (e.metrics 0 0) e.decorations 0 e.ground e.attr
 
-/-- Width of assembled math items: glyph boxes, kerns and rules advance
-the pen. Include a nested construction's rule before its rewind kern,
-just as line placement does, so its enclosing bar spans the whole body. -/
+/-- Width of assembled math items, counting a nested construction's
+rule before its rewind kern as line placement does. -/
 public def mathItemsWidth (items : Array Item) : Sp :=
   items.foldl (fun w it => match it with
     | .box bw _ _ _ _ _ _ _ _ _ _ => w + bw
@@ -3966,15 +3019,8 @@ public def mathItemsWidth (items : Array Item) : Sp :=
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
 
-/-- Ink bounds relative to the stream's origin and surrounding baseline.
-Each glyph uses its own face's outline hull, scaled at its box's size and
-shifted by its pen position and raise; an undecodable outline keeps the
-nominal fallback. `paintOnly` orders each signed rectangle before union
-and excludes zero-area hulls, rules and collinear filled polygons:
-they contribute spacing, but no filled ink to an attachment's anchor.
-The ordinary line extent keeps those contributions, as before.
-Absence stays separate from baseline zero, so wholly raised ink can anchor
-an attachment without the empty space below it moving the centre. -/
+/-- Ink bounds relative to the stream's origin and baseline, each glyph
+by its own face's outline hull; `paintOnly` keeps only filled ink. -/
 private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Bool) :
     Option Ink.Bounds := Id.run do
   let mut bounds : Option Ink.Bounds := none
@@ -4010,8 +3056,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
         bounds := add bounds ⟨min pen (pen + w), r, max pen (pen + w), r + t⟩
       pen := pen + w
     | .poly pts _ =>
-      -- Math bands/heads are filled, not stroked. A clipped polygon may
-      -- repeat its first vertex; choose a distinct one to judge its area.
+      -- A clipped polygon may repeat its first vertex, so a distinct one judges its area.
       let paints := pts[0]?.any fun a =>
         (pts.find? (· != a)).any fun b =>
           pts.any fun p =>
@@ -4022,13 +3067,11 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
     | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ => pure ()
   return bounds
 
-/-- Measured attachment ink, without baseline zero or nonpainting spacing
-items. Glyph bounds are outline hulls, not exact raster extrema. -/
+/-- Measured attachment ink, without the baseline or nonpainting spacing items. -/
 private def mathItemsInk (fs : FontSet) (items : Array Item) : Option Ink.Bounds :=
   mathItemsBounds fs items (paintOnly := true)
 
-/-- The surrounding math line includes its baseline and spacing items.
-Attachments instead read `mathItemsInk`, whose empty value is explicit. -/
+/-- The math line's extent, its baseline and spacing items included. -/
 private def mathItemsExtent (fs : FontSet) (items : Array Item) : Sp × Sp :=
   match mathItemsBounds fs items (paintOnly := false) with
   | some b => (max 0 b.top, min 0 b.bottom)
@@ -4046,20 +3089,16 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
     | .pen w c f i col g => .pen w c f i col g
     | .img s w h => .img s w h
 
-/-- The mark a display alignment leaves at its last row's baseline, `raise`
-from the line's: a rule of no width and no thickness, which paints nothing
-and reaches no further than the row's own ink. The line reads it
-(`LineOut.lastBase`) and drops it, as it drops every rule of no width. -/
+/-- The zero-size rule a display alignment leaves at its
+last row's baseline, which `LineOut.lastBase` reads. -/
 private def alignRowMark (raise : Sp) (color : Ir.Color) : Item := .rule 0 0 raise color
 
-/-- An invisible construction box reserves the declared reach directly.
-No one-sp font run or inherited leading is added to those bounds. -/
+/-- An invisible box reserving the declared reach exactly. -/
 private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
   #[.box 0 e.idx e.color e.link #[] 1 (e.metrics (max 0 top) (min 0 bot))
     {} 0 e.ground e.attr]
 
-/-- The size ladder a glyph grows through: its vertical variants, or just
-itself when the face grows it no further. -/
+/-- The size ladder a glyph grows through: its vertical variants, or itself. -/
 private def variantLadder (e : MathEnv) (g : Nat) : List (Nat × Int) :=
   let vs := e.font.vertVariants g
   if vs.isEmpty then
@@ -4068,10 +3107,8 @@ private def variantLadder (e : MathEnv) (g : Nat) : List (Nat × Int) :=
     | none => [(g, 0)]
   else vs.toList
 
-/-- Assemble a laid body between delimiters grown to `target`, the least
-extent a delimiter's variant may have: the chosen glyph centres its ink on
-the axis, and an empty (`.`) side is a `\nulldelimiterspace` kern when
-`nullKern`, nothing otherwise (`\genfrac` sets that space to zero). -/
+/-- Assemble a laid body between delimiters grown to `target`, each centring its
+ink on the axis; an empty side is a `\nulldelimiterspace` kern when `nullKern`. -/
 private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
     (target : Sp) (nullKern : Bool) (bItems : Array Item)
     (missing0 : Array (Nat × Char)) : Array Item × Array (Nat × Char) := Id.run do
@@ -4116,10 +3153,8 @@ private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
   items := items ++ struts e (raise + top) (raise + bot)
   return (items, missing)
 
-/-- Assemble a laid `\left…\right` body between its grown delimiters
-(TeXbook Appendix G rule 19 with plain TeX's `\delimiterfactor` 901 and
-`\delimitershortfall` 5 pt at the 10 pt base): the delimiter grows through
-the face's variants until it covers the body's reach from the axis. -/
+/-- Assemble a laid `\left…\right` body between delimiters grown
+to cover its reach from the axis (TeXbook Appendix G rule 19). -/
 private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
     (bItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) :=
@@ -4129,12 +3164,8 @@ private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
   delimAssembleTo e size raise l r (max (2 * δ * 901 / 1000) (2 * δ - size / 2)) true
     bItems missing0
 
-/-- Assemble laid grid cells (TeXbook ch. 22's `\halign` rule: each column
-as wide as its widest cell): cells padded into their columns per the grid
-kind at offsets every row shares (`Math.colOffset`), rows a baselineskip
-plus `\jot` apart (plain TeX's 12 pt and 3 pt at the 10 pt base; amsmath
-opens display alignments by `\jot`) or further when ink would collide, and
-the whole grid centred on the axis, as `\vcenter` centres a matrix. -/
+/-- Assemble laid grid cells as `\halign` does: each column as wide as its widest
+cell, rows a baselineskip plus `\jot` apart, the grid centred on the axis. -/
 private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
     (cells : Array (Array (Array Item))) : Array Item := Id.run do
   let axis := e.constAt size e.consts.axisHeight
@@ -4148,27 +3179,16 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   let cols : List (Sp × Sp) := (List.range n).map fun k =>
     (colW[k]!, muAt size (kind.gapAfter k n : Int) + kind.pairSep k n)
   let total := Math.colOffset cols n
-  -- The grid's baseline distance is the text leading, one source
-  -- (`leadingFor`): a maths grid is lines of maths, and its rhythm is the
-  -- page's. The old `size * 12 / 10` was the same 6/5 re-spelled.
   let bl := leadingFor size
-  -- The least clearance when a row's ink outruns the leading: plain.tex's
-  -- `\lineskip` (1.0 pt) made size-relative — 1 pt at the 10 pt base. Its
-  -- own name: the page-level `inkClearance` is a different, absolute
-  -- quantity, and one name for two values is how a future reader fuses them.
-  -- A `smallmatrix` declares its own: `\lineskip` and `\lineskiplimit`
-  -- `1.5\ex@`, and rows `6\ex@` apart (`GridKind.small`).
+  -- plain.tex's `\lineskip`, size-relative; a `smallmatrix` declares its own (`GridKind.small`).
   let gridSkip := match kind with
     | .small => size * 15 / 100
     | .array _ _ | .align | .aligned _ | .gather => size / 10
-  -- LaTeX's `\jot` (latex.ltx: 3pt), the extra opening between display
-  -- alignment rows, size-relative — 3 pt at the 10 pt base. An `array` is
-  -- inline math's grid and takes none, as LaTeX's array does not.
+  -- LaTeX's `\jot` (latex.ltx), size-relative; an `array` takes none.
   let jot := match kind with
     | .array _ _ | .small => 0
     | .align | .aligned _ | .gather => size * 3 / 10
-  -- An array's rows stand `\arraystretch` baselines apart: the stretch
-  -- scales the strut every row carries (latex.ltx, `\@arstrutbox`).
+  -- An array's rows stand `\arraystretch` baselines apart (latex.ltx, `\@arstrutbox`).
   let pitch := match kind with
     | .array _ s => bl * (s : Int) / 1000
     | .small => size * 6 / 10
@@ -4208,23 +3228,13 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
     let thin := mathKern e size (muAt size 3)
     return (#[thin] ++ items).push thin
   | .align | .gather =>
-    -- A display alignment's last row is the list's last line, as TeX sets
-    -- each row as a line of its own: its baseline rides the line
-    -- (`alignRowMark`, `LineOut.lastBase`). A grid inside another's cell
-    -- is a box of that row's.
+    -- A display alignment's last row rides the line (`alignRowMark`), as TeX sets rows as lines.
     if e.gridDepth == 0 then return items.push (alignRowMark (Δ + ys[cells.size - 1]!) e.color)
     return items
   | .array _ _ | .aligned _ => return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
-constants): numerator shifted up, denominator shifted down, and plain TeX's
-`\nulldelimiterspace` (1.2 pt at the 10 pt base) on each side that carries
-no delimiter (`ndLeft`/`ndRight`; `\genfrac@choice` kerns it away beside
-one). Under a rule — the face's `fractionRuleThickness`, or `rule` sp — the
-bar's middle is on the axis and the shifts open until the fraction gaps
-clear the ink; under none (`rule` 0, `\atop`'s case, rule 15c) the stack
-constants place the parts and a shortfall of the stack gap opens both
-shifts by half of it. Both parts centre over the width the bar would take. -/
+constants), with `\nulldelimiterspace` on each side that carries no delimiter. -/
 private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
     (rule : Option Int) (ndLeft ndRight : Bool)
     (numItems denItems : Array Item) : Array Item :=
@@ -4268,13 +3278,7 @@ private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
     ++ #[mathKern e size (ruleW - denPad - denW), mathKern e size (if ndRight then nd else 0)]
     ++ struts e (raise + u + numTop) (raise - v + denBot)
 
-/-- Assemble a laid radical (MATH spec radical constants): the radicand
-under an overbar `radicalRuleThickness` thick and `radicalVerticalGap`
-above its ink (`radicalDisplayStyleVerticalGap` in display), the surd
-grown through the face's variants until it spans bar and body, its ink top
-at the bar's top; the degree kerned by `radicalKernBeforeDegree` /
-`radicalKernAfterDegree` and raised `radicalDegreeBottomRaisePercent` of
-the surd's height. -/
+/-- Assemble a laid radical from the MATH radical constants. -/
 private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
     (bItems degItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) :=
@@ -4297,8 +3301,7 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
       ++ struts e (raise + ruleTop + extraAsc) (raise + bBot)
     (items, missing)
   | some (g, _, _) =>
-    -- Compare scaled ink heights: a variant's advertised advance can
-    -- exceed its outline, and rounding the target down can lose depth.
+    -- Compare scaled ink heights: a variant's advance can exceed its outline.
     let ladder := (variantLadder e g).map fun (gid, _) =>
       let (top, bot) := e.glyphExtent size gid
       (gid, top - bot)
@@ -4323,17 +3326,8 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
       ++ struts e (raise + ruleTop + extraAsc) (min (raise + bBot) (surdRaise + vBot))
     (items, missing0)
 
-/-- Assemble a laid accent (TeXbook Appendix G rule 12 over the MATH
-constants): the mark placed so its own attachment x (MathTopAccentAttachment,
-unclamped — `Font.markAttachX`) lands on the base's (`Font.topAccentX`,
-clamped into the advance, half the advance where the face lacks the point;
-half the assembled width when the base is more than one glyph), and raised
-by the base ink's excess over `accentBaseHeight` — rule 12's `h − min(h, χ)`.
-A stretching mark takes the widest horizontal variant that does not overhang
-the base (`Math.pickWidest`); the U+0305 mark is `\overline`, drawn as a
-rule from the overbar constants — exact at any width, the stated fallback
-needing no variant. A mark glyph the face lacks is recorded missing (the
-E0405 path); the base still renders. -/
+/-- Assemble a laid accent (TeXbook Appendix G rule 12 over
+the MATH constants), its attachment point on the base's. -/
 private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
     (stretch : Bool) (bItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) := Id.run do
@@ -4355,8 +3349,6 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
       else missing0.push (e.idx, mark)
     return (raisedBody ++ struts e (raise + bTop) (raise + bBot), missing)
   | some (g, _, _) =>
-    -- The base's attachment point: its one glyph's, when the base is one
-    -- glyph of the math face; else the assembled width's centre.
     let baseTA :=
       match bItems.filter (fun it => match it with
         | .box _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
@@ -4383,9 +3375,7 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
         (min (raise + bBot) (accRaise + mBot))
     return (items, missing0)
 
-/-- The one measured input to cancellation geometry in both backends.
-Nonpainting spaces contribute advance, but never target attachment ink;
-the operand's vertical extent includes its baseline, as its native box does. -/
+/-- The one measured input to cancellation geometry in both backends. -/
 private def cancelInput (e : MathEnv) (st : Math.MathStyle)
     (spec : Math.CancelSpec) (body value : Array Item) : Math.CancelIn :=
   let size := e.sizeAt st
@@ -4398,17 +3388,7 @@ private def cancelInput (e : MathEnv) (st : Math.MathStyle)
     vtop := ink.top, vbot := ink.bottom, vleft := ink.left, vright := ink.right
     space := e.constAt size e.consts.spaceAfterScript }
 
-/-- Assemble a laid cancel mark — cancel.sty's four commands — by the
-stated conventions (`Math.cancelGeom`; PLAN, 2026-09-29 cancellation entry): the
-marks from the math font's overbar rule, doubled under `thicklines`, and
-its overbar clearance, both at the style's size; the value's measured ink
-centre along the forward arrow ray (`Math.inkRayOrigin`), with a font gap
-to its nearest horizontal or vertical ink edge, independent of the
-baseline from which that ink was measured; room for all of it only when
-the document asks for cancel.sty's
-`makeroom`. The polygons stand at the construct's origin, the struck
-subformula after them, and struts give the line the marks' and the
-value's reach for interline clearance. -/
+/-- Assemble a laid cancel mark, cancel.sty's four commands, by `Math.cancelGeom`. -/
 private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
     (bItems vItems : Array Item) : Array Item :=
@@ -4421,8 +3401,7 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   let (mTop, mBot) := mathItemsExtent e.fs marks
   let raised := raiseItems raise bItems
   let body := #[mathKern e size g.shift] ++ raised
-  -- Only measured target ink follows the arrow's ray. Raising a glyphless
-  -- kern would enlarge the line box, even though it paints nothing.
+  -- Only measured target ink follows the arrow's ray; a glyphless kern is not raised.
   let vRaise := raise + if input.hasValueInk then g.valueY else 0
   let value := if vItems.isEmpty then #[] else
     let placed := raiseItems vRaise vItems
@@ -4433,8 +3412,7 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   let reach := struts e top bot
   let assembled := ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
   if !spec.room then assembled else
-  -- A wide target on a steep ray can reach left of the construct. Reserve
-  -- both sides by translating the entire assembly, never its target alone.
+  -- Reserve both sides by translating the whole assembly, never its target alone.
   let bounds := (mathItemsInk e.fs assembled).getD {}
   let left := min bounds.left (min g.shift (g.shift + w))
   let right := max bounds.right (max g.shift (g.shift + w))
@@ -4447,18 +3425,13 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
 
 mutual
 
-/-- Lay one math list: spacing between adjacent atoms from the degraded
-classes (`cls`, precomputed per level), atoms measured by `layMathItem`.
-`prev` is the previous atom's degraded class; an explicit space resets it,
-so spacing is inserted only between directly adjacent atoms. -/
+/-- Lay one math list, spacing directly adjacent atoms by their degraded classes. -/
 private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (cls : List Math.MathClass) (prev : Option Math.MathClass) (acc : MAcc) :
     Math.MList → MAcc
   | .nil => acc
   | .cons (.ink c _) rest =>
-    -- A colour switch: the rest of this list inks in `c`. It is no atom and
-    -- carries no class (`MItem.classOf`), so the spacing walk keeps the
-    -- atom before it — TeX's colour whatsit, invisible to the spacing table.
+    -- A colour switch is no atom, so the spacing walk keeps the atom before it.
     layMathTail { e with color := c } st raise cls prev acc rest
   | .cons x rest =>
     match x.classOf with
@@ -4483,30 +3456,19 @@ private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       let acc := layMathItem e st raise x acc
       layMathTail e st raise cs (some c) acc rest
 
-/-- Lay one atom: its nucleus at the current style — an Op nucleus in
-display style grown to the face's display-size variant and centred on the
-axis (MATH spec `displayOperatorMinHeight`; TeXbook Appendix G rule 13) —
-then its scripts. A limit-taking operator in display style sets its scripts
-as limits above and below, centred (rule 13a, gaps and rises from the MATH
-constants); everything else takes the script styles at the base's shift
-constants (`superscriptShiftUp` / `superscriptShiftUpCramped` /
-`subscriptShiftDown`), with `spaceAfterScript` after. When both scripts are
-present they stack at one horizontal position: the subscript rewinds by the
-superscript's width through a negative kern, and the atom advances by the
-wider of the two. -/
+/-- Lay one atom: its nucleus at the current style, then
+its scripts, as limits for a display limit operator. -/
 private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (x : Math.MItem) (acc : MAcc) : MAcc :=
   match x with
   | .space mu =>
     let size := e.sizeAt st
     ((acc.1.push (mathKern e size (muAt size mu))), acc.2)
-  -- `layMathTail` reads a switch before it reaches here; one met alone
-  -- inks nothing.
+  -- `layMathTail` reads a switch first; one met alone inks nothing.
   | .ink _ _ => acc
   | .atom cls nuc sup sub lim =>
     let size := e.sizeAt st
     let display := st.rank == 3
-    -- The nucleus, laid into its own run so the limit path can measure it.
     let (nucItems, m0) :=
       match nuc, cls, display with
       | .sym c, .op, true =>
@@ -4525,7 +3487,6 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           else (#[], acc.2.push (e.idx, c))
       | _, _, _ => layMathNucleus e st raise nuc (#[], acc.2)
     if lim && display && !(sup == .nil && sub == .nil) then
-      -- Limits: scripts above and below the operator, centred on it.
       let (supItems, m1) := layMathTail e st.sup 0
         (Math.degrade sup.classes) none (#[], m0) sup
       let (subItems, m2) := layMathTail e st.sub 0
@@ -4551,7 +3512,6 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       let placedSup := place supItems supW rise
       let placedSub := place subItems subW low
       let items := placedNuc ++ placedSup ++ placedSub
-      -- The last placed run rewound to the start; advance by the width.
       let items := items.push (mathKern e size w)
       let items := items ++ struts e
         (if supItems.isEmpty then opTop else rise + supTop)
@@ -4590,19 +3550,12 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     | some g =>
       (acc.1.push (mathBox e e.idx g.2.2 #[g] size raise), acc.2)
     | none =>
-      -- A scalar the math face lacks goes through the per-scalar chain the
-      -- driver precomputed for text (`FontSet.fallback`) — one mechanism,
-      -- at the math size, its own box since a box carries one face.
       match e.fs.fallbackFor c |>.bind fun fb =>
           (glyphOf size (e.fs.get fb) c).map (fb, ·) with
       | some (fb, g) =>
         (acc.1.push (mathBox e fb g.2.2 #[g] size raise), acc.2)
       | none =>
-        -- A math alphabet's scalar uncovered everywhere: the base letter
-        -- stands in — bold/italic from the text face where that is the
-        -- alphabet's styling, the plain letter otherwise — and the
-        -- per-formula post-walk names the loss (W0016). Only when even
-        -- the stand-in is uncovered does the scalar go missing (E0405).
+        -- An uncovered alphabet scalar sets its base letter (W0016), else goes missing (E0405).
         let synth : Option (Nat × (Nat × Char × Sp)) := do
           let (a, base) ← Math.MathAlphabet.unapply c
           let (bold, italic) := a.synthStyle
@@ -4616,12 +3569,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           if acc.2.contains (e.idx, c) then acc
           else (acc.1, acc.2.push (e.idx, c))
   | .styled style c =>
-    -- A resolved text-sourced alphabet scalar: the plain base letter set in
-    -- the projected text family slot (body/sans/mono) with the weight and
-    -- italic axes, through the same `FontSet.lookup` the text path uses.
-    -- No host per-scalar fallback — the projected family carries the base
-    -- letter, or the scalar is the never-silent coverage loss (E0405).
-    -- Text faces retain the ambient size, with the same script ladder.
+    -- A text-sourced alphabet scalar sets its base letter in the projected text family.
     let size := e.textSizeAt st
     let fi := e.fs.lookup style.slot.toNat style.weight style.italic
     match glyphOf size (e.fs.get fi) c with
@@ -4631,8 +3579,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       if acc.2.contains (fi, c) then acc
       else (acc.1, acc.2.push (fi, c))
   | .word s => Id.run do
-    -- An upright word (a function name, `\text`): boxes in the math face,
-    -- split only where the chain substitutes — a box carries one face.
+    -- An upright word's boxes split only where the chain substitutes, as a box carries one face.
     let size := e.sizeAt st
     let mut items := acc.1
     let mut missing := acc.2
@@ -4662,13 +3609,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .alpha _ _ body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac spec num den =>
-    -- `\genfrac`'s style argument sets the whole construct in its style
-    -- (amsmath.sty `\@mathstyle`), the parts in that style's fraction
-    -- styles; its delimiters are grown to LuaTeX's `\Umathfractiondelsize`
-    -- (luaotfload's FractionDelimiterDisplayStyleSize 2.40 and
-    -- FractionDelimiterSize 1.01 of the style's size, measured under
-    -- unicode-math) and abut the fraction, whose null space beside each
-    -- is kerned away (`\genfrac@choice`).
+    -- `\genfrac`'s style sets the construct; delimiters grow to `\Umathfractiondelsize`.
     let fst := spec.style.getD st
     let size := e.sizeAt fst
     let display := fst.rank == 3
@@ -4698,9 +3639,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let (items, missing) := delimAssemble e (e.sizeAt st) raise l r bItems m1
     (acc.1 ++ items, missing)
   | .big d step =>
-    -- amsmath's `\bBigg@`: `\left d \vcenter{…}\right.` with
-    -- `\nulldelimiterspace` zero, the `\vcenter` the box's least reach; set
-    -- at the text size in every style, as lualatex sets it in a script.
+    -- amsmath's `\bBigg@`, set at the text size in every style as lualatex sets it.
     let size := e.base
     let paren : Sp := match glyphOf size e.font '(' with
       | some (g, _, _) => let (t, b) := e.glyphExtent size g; t - b
@@ -4711,17 +3650,14 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       (Math.bigTarget paren size step) false (struts e (axis + half) (axis - half)) acc.2
     (acc.1 ++ items, missing)
   | .accent mark stretch body =>
-    -- The base sets in the cramped current style (TeXbook Appendix G
-    -- rule 12), which keeps its size: cramping preserves rank.
+    -- The base sets in the cramped current style (TeXbook Appendix G rule 12).
     let (bItems, m1) := layMathTail e st.cramp 0
       (Math.degrade body.classes) none (#[], acc.2) body
     let (items, missing) := accentAssemble e (e.sizeAt st) raise mark stretch
       bItems m1
     (acc.1 ++ items, missing)
   | .grid kind rows =>
-    -- An `array` sets its cells in text style; amsmath's alignments set
-    -- theirs in display style wherever they stand (`\start@aligned` and
-    -- `gathered` in amsmath.sty: `$\m@th\displaystyle{##}$`).
+    -- An `array` sets its cells in text style, amsmath's alignments in display style (amsmath.sty).
     let cellSt : Math.MathStyle := match kind with
       | .array _ _ => if st.rank > 2 then .text st.cramped else st
       | .small => .script false
@@ -4729,10 +3665,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let (cells, missing) := layGridRows { e with gridDepth := e.gridDepth + 1 } cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
   | .cancel mark spec value body =>
-    -- The package boxes its argument in the current style (`\mathpalette`),
-    -- so the struck subformula is a list of its own; the value sets in the
-    -- style the package option names, in the marks' colour (cancel.sty
-    -- colours the value with the arrow).
+    -- cancel.sty boxes its argument in the current style (`\mathpalette`).
     let (bItems, m1) := layMathTail e st 0 (Math.degrade body.classes) none (#[], acc.2) body
     let ink := (spec.color.map (·.1)).getD e.color
     let (vItems, m2) := layMathTail { e with color := ink } (spec.size.style st) 0
@@ -4759,30 +3692,21 @@ private def layGridRows (e : MathEnv) (st : Math.MathStyle)
 
 end
 
-/-- A formula's items: one unbreakable run of boxes and kerns — no glue, so
-the line breaker never breaks inside it, and no stretch, so a math box has
-one width. Inline math starts in text style, display math in display style
-(TeXbook ch. 17). -/
+/-- A formula's items: one unbreakable run of boxes and kerns, inline
+math in text style and display math in display style (TeXbook ch. 17). -/
 private def mathItems (e : MathEnv) (display : Bool) (body : Math.MList)
     (missing : Array (Nat × Char)) : Array Item × Array (Nat × Char) :=
   let st : Math.MathStyle := if display then .display false else .text false
   layMathTail e st 0 (Math.degrade body.classes) none (#[], missing) body
 
-/-- The one pattern-selection site: which hyphenation table a run's text
-consults. An untagged run takes the document's (the main language's)
-table; a run tagged `Style.lang` takes its own language's — never the
-main table, so a French word under an English main is broken as French
-or not at all. `main = none` is hyphenation off (a card, `\page{
-hyphenate = off }`) and wins over any tag. -/
+/-- The one pattern-selection site: an untagged run takes the main language's
+table, a tagged run its own language's, and `main = none` turns hyphenation off. -/
 public def patsOf (main : Option Hyphen.Patterns) (lang : Option String) :
     Option Hyphen.Patterns :=
   match lang with
   | none => main
   | some tag => if main.isNone then none else Hyphen.forTag tag
 
-/-- `hyphenation_follows_language`: the breaks consulted for a run tagged
-ℓ are exactly its own language's patterns' — the wiring statement, held
-at the selection site. -/
 public theorem hyphenation_follows_language (main : Option Hyphen.Patterns)
     (tag : String) (h : main.isSome) :
     patsOf main (some tag) = Hyphen.forTag tag := by
@@ -4790,16 +3714,11 @@ public theorem hyphenation_follows_language (main : Option Hyphen.Patterns)
   | none => simp at h
   | some _ => rfl
 
-/-- Hyphenation off is off for every language: no tag re-enables it. -/
 public theorem patsOf_off (lang : Option String) : patsOf none lang = none := by
   cases lang <;> rfl
 
-/-- A footnote mark's box: the number's digits as one raised run at the
-scriptsize step of `around`, lifted by `Ir.markRaise` (the OS/2
-`ySuperscript*` stand-in; parsing the table is owed) — the shape the
-in-text mark and the note's own leading mark share. A box, so no break can
-part the mark from the word it follows. Digits the face lacks return
-beside the box for the caller's E0405. -/
+/-- A footnote mark's box: its digits as one raised run at the
+scriptsize step of `around`; digits the face lacks return beside it. -/
 private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
     (decorations : Decorations) (num : Nat) :
     Item × Array (Nat × Char) := Id.run do
@@ -4819,55 +3738,33 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
     | none => miss := miss.push (idx, c)
   return (.box w idx sty.color sty.link gs markSize {} decorations raise sty.ground attr, miss)
 
-/-- The token fold's state: what the walk has built, and what it has
-lost beside it. `dropped` is the never-silent ledger — a (face, char)
-pair no face covers lands here and nowhere else, and `itemsOfInlines`
-renders every entry as its E0405, so dropped ink is always named to the
-user. `substs` (W0009) and `unstyled` (W0016) are the reported
-substitutions: set from another face, never lost. -/
+/-- The token fold's state: what the walk has built and, in
+`dropped`, `substs` and `unstyled`, what it lost or substituted. -/
 private structure ItemsAcc where
   items : Array Item := #[]
-  /-- Destinations indexed by the items their source position becomes.
-  Metadata never becomes a breakable item or a shaping boundary. -/
+  /-- Destinations indexed by the items their source position becomes. -/
   anchors : Array (String × Nat) := #[]
-  /-- First source scalar carried by each located item. The same shaping
-  map used by anchors supplies these sites without splitting a word. -/
+  /-- First source scalar carried by each located item. -/
   itemSources : Array (Nat × Span) := #[]
-  /-- Each footnote met: the index of its mark item, its number, its body,
-  and the body's first leaf (`Tk.note`'s `bodyLeaf`). -/
+  /-- Each footnote met: its mark item's index, its number, its body and the body's first leaf. -/
   notes : Array (Nat × Nat × Array Inline × Option Nat) := #[]
   dropped : Array (Nat × Char) := #[]
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
   origins : GlyphOrigins := #[]
   extras : Std.HashMap Nat Sp := {}
-  /-- Natural offsets of owner fragments within their original shaped
-  boxes, keyed by item index. Only semantic splits carry these offsets;
-  authored style changes and every other box keep their own origin. -/
+  /-- Natural offsets of owner fragments within their original shaped boxes, keyed by item index. -/
   wordOffsets : Std.HashMap Nat Sp := {}
   cache : Std.HashMap String (Array Nat) := {}
   /-- The item count just after the last word's items: a space kerns
-  against the glyph before it only while nothing has been set since, so a
-  formula's, an icon's or a mark's box never counts as a word's glyph. An
-  italic correction's kern is set since, even at no width: it writes 0,
-  which ends no word (`italicKern`). -/
+  against the glyph before it only while nothing has been set since. -/
   wordEnd : Nat := 0
-  /-- The item count before the token being folded in, set by the fold's
-  caller: a count read after the fold kept the items shared through it,
-  and the fold then copied them at every token. -/
+  /-- The item count before the token being folded in,
+  set by the caller so the fold writes in place. -/
   before : Nat := 0
 
-/-- The pair kern a set glyph declares with its own face's space glyph —
-the box's last glyph when `after` (the space follows it), its first
-otherwise — scaled at the box's size; 0 for anything but a box of glyphs.
-This is luaotfload's space kerning (the fontloader's `injectspaces`,
-triggered by the `kern` feature): each face's `(g, space)` and `(space, g)`
-pairs move the interword glue beside `g` by that face's own value, and the
-glue's stretch and shrink stay. Where the two faces on either side differ in
-size, luaotfload scales both values by the left face's factor; here each
-value keeps its own face's, the one departure — it differs only where both
-sides kern and their scales differ, and it is the face's own pair at the
-face's own size. -/
+/-- The pair kern a set glyph declares with its own face's space glyph (luaotfload's
+space kerning), at the box's size; 0 for anything but a box of glyphs. -/
 private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
   | some (.box _ fontIdx _ _ glyphs size _ _ _ _ _) =>
     match (if after then glyphs.back? else glyphs[0]?) with
@@ -4880,8 +3777,8 @@ private def glyphBox : Option Item → Bool
   | some (.box _ _ _ _ glyphs _ _ _ _ _ _) => !glyphs.isEmpty
   | _ => false
 
-/-- The items with the glue they end in `w` wider: a space taking the pair
-kern of the word that follows it. -/
+/-- The items with their final glue `w` wider: a space
+taking the pair kern of the word that follows. -/
 private def widenLast (items : Array Item) (w : Sp) : Array Item :=
   if w == 0 then items else
   match items.back? with
@@ -4890,25 +3787,14 @@ private def widenLast (items : Array Item) (w : Sp) : Array Item :=
     items.set! (items.size - 1) (.decoratedGlue { g with width := g.width + w } r)
   | _ => items
 
-/-- TeX's `\/` at the end of the items: a kern after a word's last glyph,
-as wide as that glyph's italic correction, and nothing when the items end
-in anything else — a formula, a mark, a space, the list's head — since `\/`
-corrects only a character. Either way the glyph no longer ends the items,
-so a space that follows pairs with nothing on that side (`spaceKern`): a
-kern of no width is set as that fact alone (`wordEnd` names no item). -/
+/-- TeX's `\/` at the end of the items: a kern as wide as the last glyph's
+italic correction, nothing when the items end in anything but a glyph. -/
 private def italicKern (acc : ItemsAcc) : ItemsAcc :=
   if acc.wordEnd == acc.items.size && glyphBox acc.items.back? then { acc with wordEnd := 0 }
   else acc
 
-/-- An italic correction under the style in force (`Tk.corr`). TeX's `\/`
-is `italicKern`. ltfntcmd's `\maybe@ic` makes it only where the face in
-force is upright — `\fontdimen1`, the slant, zero: the face declares no
-forward-leaning angle — and through `\sw@slant`, which lifts a space with
-width the items end in, sets the kern before it, and puts the space back.
-The space then no longer touches the glyph, so it gives back the pair kern
-it took against it (`spaceKern`, the `.space` arm's own term), once: the
-glyph no longer ends the word (`wordEnd`), so a second edge at the same
-space, whose `\/` before a kern adds nothing, gives back nothing. -/
+/-- An italic correction under the style in force
+(`Tk.corr`), made where ltfntcmd's `\maybe@ic` makes it. -/
 private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
     (acc : ItemsAcc) : ItemsAcc :=
   if !maybe then italicKern acc
@@ -4929,10 +3815,8 @@ private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
         { acc with items := acc.items.set! n bare, wordEnd := 0 }
     | _ => italicKern acc
 
-/-- Resolve the size and baseline skip in force at one token. Named size
-steps select `scale`; `\fontsize` then evaluates against that current size
-and the actual local measure. `none` uses the document's ordinary
-line-height rule; `some 0` keeps an explicitly zero baseline skip. -/
+/-- Resolve the size and baseline skip in force at one token; `none`
+uses the ordinary line-height rule, and `some 0` keeps a zero skip. -/
 private def TextStyle.metricsIn (sty : TextStyle) (base xHeight : Sp)
     (values : MeasureValues) : Sp × Option Sp :=
   let basis := base * sty.scale / 1000
@@ -4943,15 +3827,14 @@ private def TextStyle.metricsIn (sty : TextStyle) (base xHeight : Sp)
   let leading := sty.leading.map fun e => e.resolveWidth values basis xBasis
   (size, leading)
 
-/-- Native paragraphs supply one horizontal measure and their text height
-at the consuming site; providers can carry the same resolved vocabulary. -/
+/-- Resolve a style's size and baseline skip against
+the consuming paragraph's measure and text height. -/
 private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) :
     Sp × Option Sp :=
   sty.metricsIn base xHeight (MeasureValues.horizontal textW textH)
 
-/-- Resolve one surrounding text style through the native run resolver.
-Math lengths, text alphabets and attachments share this environment. An
-omitted local context retains the page's ordinary text area. -/
+/-- Resolve one surrounding text style through the native run
+resolver; an omitted local context keeps the page's text area. -/
 private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (measures : Option MeasureValues) : Option MathEnv := do
   let (idx, font, consts) ← fs.mathFont?
@@ -4962,25 +3845,20 @@ private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
   let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
   pure (MathEnv.forRun fs idx font consts around runSize)
 
-/-- A physical math length's current em, from the same font environment as
-native glyphs. No MATH face means no measured unit. -/
+/-- A physical math length's current em, from the same font environment as native glyphs. -/
 public def mathEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
   let e ← MathEnv.forStyles geom fs styles measures
   if e.sizeAt st ≤ 0 then none else some (e.sizeAt st)
 
-/-- The em used by native text-sourced math alphabets. Both em providers
-resolve the same ambient declarations and local measures; only the math
-face's x-height matching distinguishes their base sizes. -/
+/-- The em of native text-sourced math alphabets. -/
 public def mathTextEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
   let e ← MathEnv.forStyles geom fs styles measures
   if e.textSizeAt st ≤ 0 then none else some (e.textSizeAt st)
 
-/-- Font-measured cancellation for another backend, resolved through the
-same text-style and math walks as native placement. Style history is outermost
-first; named sizes, explicit sizes and face changes reach the existing resolver.
-The operand's horizontal ink travels separately from its logical advance. -/
+/-- Font-measured cancellation for another backend, resolved through the same
+text-style and math walks as native placement, style history outermost first. -/
 public def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
   (st : Math.MathStyle) (spec : Math.CancelSpec) (body value : Math.MList)
   (measures : Option MeasureValues := none) : Option Math.CancelMetric := do
@@ -4994,8 +3872,6 @@ public def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     some { em := e.sizeAt st, input := cancelInput e st spec bs vs
            bodyLeft := bounds.left, bodyRight := bounds.right }
 
-/-- Without a MATH face there is no measured cancellation geometry to
-project; a consumer cannot mistake a guessed rectangle for glyph ink. -/
 public theorem cancelMetric_fontless_exact (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (h : fs.mathFont? = none)
@@ -5003,9 +3879,6 @@ public theorem cancelMetric_fontless_exact (geom : Geom) (fs : FontSet)
     cancelMetric geom fs styles st spec body value measures = none := by
   simp [cancelMetric, MathEnv.forStyles, h]
 
-/-- A measured answer has a positive em, so converting its coordinates to
-relative font units never divides by zero. The attachment contracts belong
-to `Math.CancelIn`; this is the measured-font boundary's contract. -/
 public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (metric : Math.CancelMetric)
@@ -5021,9 +3894,6 @@ public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     · cases h
       exact Int.not_le.mp (by assumption)
 
-/-- The HTML unit and the native attachment's unit are the same measured
-font value, for every surrounding style and operands. This is a font-boundary
-projection, not a new rule about the IR's attachment geometry. -/
 public theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (metric : Math.CancelMetric)
@@ -5043,8 +3913,6 @@ public def lineThroughRaise (xHeight : Sp) : Sp := max 0 xHeight * 55 / 100
 
 public def lineThroughThickness : Sp := Ir.lineThroughThickness
 
-/-- The through-line bottom is exactly ulem's `0.55ex` for every
-nonnegative resolved x-height. -/
 public theorem lineThroughRaise_exact (xHeight : Int) (h : 0 ≤ xHeight) :
     lineThroughRaise xHeight = xHeight * 55 / 100 := by
   unfold lineThroughRaise
@@ -5057,8 +3925,7 @@ public theorem lineThroughRaise_exact (xHeight : Int) (h : 0 ≤ xHeight) :
 @[simp] public theorem lineThroughThickness_agree :
     lineThroughThickness = Ir.lineThroughThickness := by rfl
 
-/-- Resolve a command-entry source against the actual selected face and local
-measure. Inner style and colour changes cannot alter this rule. -/
+/-- Resolve a command-entry source against the selected face and local measure. -/
 private def DecorationSource.rule (src : DecorationSource) (base xHeight textW textH : Sp)
     (fs : FontSet) : DecorationRule :=
   let basis := base * src.scale / 1000
@@ -5078,8 +3945,8 @@ private def TextStyle.resolvedDecorations (sty : TextStyle)
     lineThrough := sty.decorations.lineThrough.map
       (·.rule base xHeight textW textH fs) }
 
-/-- The same per-face underline band for a glyph run or an authored space.
-Its bottom is measured upward from the baseline, as in `Seg.decoration`. -/
+/-- The per-face underline band for a glyph run or an
+authored space, its bottom measured up from the baseline. -/
 private def underlineRule (font : Font) (size : Sp) (color : Ir.Color) : DecorationRule :=
   let upem : Int := font.unitsPerEm
   let (pos, thick) := font.band
@@ -5096,10 +3963,8 @@ private def Item.ofDecoratedGlue (g : Glue) (d : Decorations) (font : Font)
   if d.underline || d.lineThrough.isSome then .decoratedGlue g (d.resolve font size color)
   else .glue g
 
-/-- One flatten token into the accumulator — the fold step of
-`itemsOfInlines`, named so a conservation statement can induct over it:
-every token's ink becomes items, an entry in `dropped`, or a note body
-carried whole, and nothing else. -/
+/-- One flatten token into the accumulator: its ink becomes
+items, an entry in `dropped`, or a note body carried whole. -/
 private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
@@ -5110,9 +3975,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   | .word sty chars attr =>
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let font := fs.get idx
-    -- Small caps: the face's own `smcp`+`c2sc` when it carries them — the
-    -- word stays as typed and the gids substitute in `wordItems` — and
-    -- uniform synthesis otherwise. One meaning, two mechanisms.
+    -- Small caps: the face's own `smcp`+`c2sc` where it has them, uniform synthesis otherwise.
     let useGsub := sty.smallcaps && !font.smallCaps.isEmpty
     let (sty, chars) :=
       if sty.smallcaps && !useGsub then
@@ -5120,19 +3983,13 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       else (sty, chars)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
-    -- A typewriter run (slot 2, `applyStyle`'s `.mono`) is never
-    -- hyphenated: LaTeX's typewriter families set `\hyphenchar` to −1
-    -- (t1cmtt.fd; tulmtt.fd, Latin Modern Mono under fontspec), so a hyphen
-    -- never appears inside an identifier; where it may end a line instead
-    -- is its style's (`TextStyle.explicitBreak`).
+    -- A typewriter run never hyphenates: LaTeX's typewriter `\hyphenchar` is −1 (t1cmtt.fd).
     let wordPats := if sty.slot == 2 then none else patsOf pats sty.lang
     let (ws, m, s, c', offsets, sources, sites) :=
       wordItems wordPats (sty.lang.getD "") sty.explicitBreak sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners origins acc.origins
-    -- The space before the word pairs with its first glyph. Read first,
-    -- written inside the one update, so the items array is written in
-    -- place: a copy of it per word made a paragraph's items quadratic.
+    -- Read first and written inside the one update, so the items array is written in place.
     let rk := match acc.items.back? with
       | some (.glue g) | some (.decoratedGlue g _) =>
         if g.word then spaceKern fs false ws[0]? else 0
@@ -5152,10 +4009,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
                wordEnd := if ws.isEmpty then acc.wordEnd else n + ws.size }
   | .anchor name => { acc with anchors := acc.anchors.push (name, acc.items.size) }
   | .icon sty c attr =>
-    -- The styled face first (an icon font declared as the body face is
-    -- legal), then the fallback chain; either hit is the icon's own face
-    -- by design. Only total absence is a loss (E0405, rendered by the
-    -- caller from `dropped`).
+    -- The styled face first, then the fallback chain; only total absence is a loss (E0405).
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
@@ -5186,13 +4040,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     { acc with notes := acc.notes.push (at_, num, body, bodyLeaf)
                items := acc.items.push mk }
   | .formula display sty body attr =>
-    -- The flatten pass pushes a formula token only when a math face with
-    -- constants is present.
+    -- `flatten` pushes a formula only when a math face with constants is present.
     match fs.mathFont? with
     | some (idx, font, consts) =>
-      -- The math face sets at the size that makes its x-height the
-      -- surrounding face's — fontspec's `Scale=MatchLowercase`, the rule
-      -- `Math.mathSize` states and its agreement theorems bound to the sp.
+      -- The math face sets at the size matching the text's x-height (fontspec's MatchLowercase).
       let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
       let (runSize, leading) := sty.metrics size xHeight textW textH
       let e := { MathEnv.forRun fs idx font consts around runSize with
@@ -5207,12 +4058,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         if acc.dropped.contains (idx, c) then sites
         else rememberGlyph sites .E0405 idx c source) acc.origins
       let acc := { acc with origins := sites }
-      -- The substitutions the chain made, named like text's (W0009):
-      -- a scalar the math face lacks that a fallback face set. One the
-      -- assembly inks recorded missing was never substituted — a grown
-      -- construction is one face — so `m` excludes it here. A math
-      -- alphabet's scalar no face covers rendered as its stand-in base
-      -- letter (`layMathNucleus`): W0016 names the styling difference.
+      -- Substitutions are named as text's (W0009), less scalars the assembly recorded missing.
       let acc := (Math.MList.mathScalarsList #[] body).foldl (fun acc c =>
         if (font.gid c).isNone && !m.contains (idx, c) then
           match fs.fallbackFor c with
@@ -5268,28 +4114,17 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     { acc with items := acc.items.push item }
   | .corr maybe sty => correctItalic fs maybe sty acc
   | .strut g =>
-    -- Zero width, declared height: raises the line box, ships no ink.
     let strut : Item := .rule 0 (max 0 (g.width.resolve size xHeight)) 0
       Ir.Color.black
     { acc with items := acc.items.push strut }
   | .img src spec =>
-    -- The request resolves against the store the driver filled. An entry
-    -- that did not load (the driver has said why) keeps the requested
-    -- size around a default 1 in square, so the document still compiles
-    -- and the placeholder shows where the figure would stand.
+    -- An entry that did not load keeps a placeholder square; the driver has named the failure.
     let idx? := imgs.findRequest? (spec.request src)
     let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.size?) with
       | some wh => wh
-      | none => (Dim.inch 1, Dim.inch 1) -- the placeholder square: a stated default (comment above), not a design token — the driver already named the load failure
+      | none => (Dim.inch 1, Dim.inch 1) -- the placeholder square, a stated default
     let (w, h) := Image.resolveSize spec.toSizeSpec iW iH textW textH
-    -- A boundary picture wider than the measure fits it: the box is the
-    -- engine's to measure and place (N0023's claim), it is vector — the
-    -- form's `/Matrix` scales losslessly — and the document declared no
-    -- size to honour, so the only alternatives are an overrun off the
-    -- page or a warning about a route the engine chose by default. A
-    -- declared `\includegraphics` size is the author's and is never
-    -- touched, nor is any ordinary image (LaTeX's overfull, W0005, stays
-    -- honest there).
+    -- A boundary picture with no declared size fits the measure; nothing else is resized.
     let (w, h) :=
       if src.startsWith Ir.picSrcPrefix && spec.width.isNone &&
           spec.height.isNone && w > textW && w > 0 then
@@ -5304,10 +4139,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     { acc with items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
                extras := extras }
 
-/-- Adjacent word tokens with the same complete style are one shaping and
-hyphenation input. Semantic leaf boundaries are carried per scalar, never
-turned into font boundaries. Anchors ride at source-scalar positions without
-interrupting shaping; spaces and other non-word tokens flush the word. -/
+/-- Adjacent word tokens of one complete style shape and hyphenate
+as one input; spaces and other tokens flush the word. -/
 private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (toks : Array Tk) : ItemsAcc := Id.run do
@@ -5367,18 +4200,8 @@ private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     acc := step acc (.word sty word attr) owners anchors origins none
   return acc
 
-/-- Inlines to breakable items: `itemsOfToks` over the flatten
-tokens, then every loss the fold ledgered rendered as its diagnostic —
-the never-silent contract: no character leaves this function silently,
-it is in the items, in a note body, or named by an E0405 (with W0009 and
-W0016 naming the substitutions that kept ink at the cost of its face).
-The fourth returned component maps the index of a forced-break penalty
-to extra vertical space the document asked for there (`\\[1ex]`); it
-rides beside the items because the line breaker has no use for it, and
-putting it in `Item` would make every pattern carry a field only the
-page builder reads. The final components carry original shaping offsets
-for ownership fragments, zero-ink destinations, and source sites indexed
-by item. A warning about a broken line reads only sites in that line. -/
+/-- Inlines to breakable items, with every loss the fold ledgered rendered as
+its diagnostic and the extra space each forced break asks for (`\\[1ex]`). -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
@@ -5392,9 +4215,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
   let acc := itemsOfToks pats size xHeight fs imgs textW textH { cache := cache } st.toks
   let mut items := acc.items
-  -- A paragraph that already ends in a forced break needs no second one: an
-  -- empty final line has no feasible predecessor, and the breaker would
-  -- return no lines at all -- the whole paragraph, silently gone.
+  -- A paragraph ending in a forced break takes no second one, or the breaker sets no lines.
   let endsInBreak := match items.back? with
     | some (.pen _ cost _ _ _ _) => cost ≤ forcedCost
     | _ => false
@@ -5402,8 +4223,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     items := items.push (.glue { fil := true, parfill := true })
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
-  -- Native shaping describes PDF ink. HTML and Markdown retain Unicode;
-  -- a browser's glyph fallback is not this font set's decision.
+  -- Native shaping describes PDF ink; HTML and Markdown keep Unicode.
   for (idx, c) in acc.dropped do
     let source := glyphOrigin acc.origins .E0405 idx c
     diags := diags.push (Diag.of .E0405
@@ -5786,8 +4606,6 @@ private theorem tokenLoop_census (toks : Array Tk) (acc : ItemsAcc)
       (read := fun st : TokenState => st.1.chars ++ pendingItemChars st.2.1)
       (emit := Tk.itemChars) f toks (acc, none, #[], #[], [], #[]) trivial step
 
-/-- `itemsOfTok_none_chars` for the accumulator the fold hands it, whose
-item count before the token is set: the count is no item and no loss. -/
 private theorem itemsOfTok_none_chars_before (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (n : Nat) (tk : Tk) (owners : Array Attribution)
@@ -5885,7 +4703,6 @@ private theorem itemsOfToks_none_chars (size xHeight : Sp)
 public def inkScalar (c : Char) : Bool :=
   !(c.isWhitespace || (fixedSpace c).isSome || c == '\u00a0' || c == '\u00ad')
 
-/-- The ordered source/body census omits scalars represented only by spacing. -/
 public def inkCensus (cs : List Char) : List Char := cs.filter inkScalar
 
 private theorem pushWord_textSource (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
@@ -6102,8 +4919,6 @@ private theorem itemsOfInlines_none_chars (size xHeight : Sp)
     (itemsOfInlines_noLoss_clean size xHeight fs baseStyle xs cache ctr imgs
       textW textH noteOk ladder step roleMetrics hd)
 
--- Knuth–Plass ------------------------------------------------------------------
-
 public def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) | some (.decoratedGlue _ _) =>
@@ -6120,28 +4935,15 @@ public structure Measure where
   stretch : Sp := 0
   shrink : Sp := 0
   fil : Bool := false
-  /-- Total width of the line's font boxes (and the hyphen broken at):
-  what font expansion may rescale. Images and rules never scale. -/
+  /-- Total width of the line's font boxes and its hyphen, which font expansion may rescale. -/
   boxW : Sp := 0
 
-/-- Font expansion bound, per-mille of a glyph's width, symmetric:
-microtype's own defaults `stretch = 20`, `shrink = 20` (microtype.sty
-v3.1, the `\DeclareMicrotypeSet` defaults at lines 229–230), with step 1
-as on the modern engines (microtype-luatex.def; the pdfTeX `stretch/5`
-step is the legacy fallback). Expansion is a third degree of freedom the
-breaker consumes as stretchability (Thành, "Margin kerning and font
-expansion with pdfTeX", TUGboat 22(3)). -/
+/-- Font expansion bound, per mille of a glyph's width: microtype's
+default `stretch = 20`, `shrink = 20` (microtype.sty). -/
 public def expandLimit : Nat := 20
 
-/-- Character protrusion factors `(left, right)` in per-mille of the
-glyph's own width: how far a line-boundary glyph may hang into the margin
-so the optical edge reads straight (Thành, "Margin kerning and font
-expansion with pdfTeX", TUGboat 22(3); microtype manual §2). The values
-are microtype's `cmr-default` list, mt-cmr.cfg v2.2 (R. Schlicht) — the
-generic set microtype itself applies to families without their own
-config, which is how one table serves any face here. Curly and double
-quotes are the config's `\textquoteleft`-family rows; the dashes its
-`\textendash`/`\textemdash`. -/
+/-- Character protrusion factors `(left, right)` in per mille of
+the glyph's width: microtype's `cmr-default` list (mt-cmr.cfg). -/
 public def protrusionLR (c : Char) : Nat × Nat :=
   match c with
   | 'A' => (50, 50)
@@ -6194,21 +4996,13 @@ public def protrusionLR (c : Char) : Nat × Nat :=
   | '”' => (200, 600)
   | _ => (0, 0)
 
-/-- The table never grants a glyph more overhang than its own width: every
-entry is under 1000‰ — the source's own largest is the period's 700 right
-(mt-cmr.cfg `cmr-default`) — so a protruded boundary glyph always keeps ink
-inside the measure and the hang stays within one glyph advance. -/
 public theorem protrusionLR_covers (c : Char) :
     (protrusionLR c).1 ≤ 1000 ∧ (protrusionLR c).2 ≤ 1000 := by
   unfold protrusionLR
   split <;> decide
 
-/-- How far the line `[a:j)` may hang left of the measure: the left
-protrusion of its first glyph, in sp. Kerns (glyphless boxes) and
-penalties are passed over; an image or rule at the edge protrudes
-nothing. `canBreakAt` puts a box directly before a glue break and a
-hyphen pen carries its own glyph, so both boundary scans are O(1) at
-every candidate the breaker evaluates. -/
+/-- How far the line `[a:j)` may hang left of the
+measure: its first glyph's left protrusion, in sp. -/
 public def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
   for k in [a:j] do
     match items[k]? with
@@ -6219,10 +5013,8 @@ public def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
     | _ => pure ()
   return 0
 
-/-- How far the line breaking at `j` may hang right of the measure: the
-right protrusion of its last glyph — the break penalty's own hyphen when
-it carries one (the single biggest win: the hyphen protrudes 500‰), else
-the last boxed glyph before the break. -/
+/-- How far the line breaking at `j` may hang right of the measure:
+its last glyph's right protrusion, the break's own hyphen first. -/
 public def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
   if let some (.pen _ _ _ _ _ glyphs) := items[j]? then
     if let some (_, c, adv) := glyphs.back? then
@@ -6236,10 +5028,8 @@ public def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
     | _ => pure ()
   return 0
 
-/-- The largest right overhang any break in `items` can grant: what
-`kp`'s deactivation slackens by under protrusion, so a node judged
-hopeless at one break cannot become feasible again at a later break
-whose boundary glyph protrudes more. -/
+/-- The largest right overhang any break in `items` can grant,
+by which `kp`'s deactivation slackens under protrusion. -/
 public def maxProtrudeRight (items : Array Item) : Sp := Id.run do
   let mut best : Sp := 0
   for it in items do
@@ -6254,8 +5044,7 @@ public def maxProtrudeRight (items : Array Item) : Sp := Id.run do
   return best
 
 /-- Where a line's content starts: past the glue and penalties a break
-leaves, which TeX discards after a line break. A paragraph's first line
-follows no break, so authored glue at index zero remains. -/
+leaves, which TeX discards; a first line keeps its authored glue. -/
 public def lineStart (items : Array Item) (start : Nat) : Nat := Id.run do
   let mut a := start
   for _ in [a:items.size] do
@@ -6284,41 +5073,25 @@ public def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
     | .pen _ _ _ _ _ _ => pure ()
   if let some (.pen w _ _ _ _ _) := items[j]? then
     m := { m with natural := m.natural + w, boxW := m.boxW + w }
-  -- Protrusion, stage 2: the breaker measures a line as it will be set —
-  -- boundary glyphs hanging into the margin do not count against the
-  -- measure. Fil lines never protrude (`setLine`'s own gate), so the
-  -- term drops with fil, and ragged item shapes (all glue fil) are
-  -- untouched by construction.
+  -- The breaker measures a line as set, protrusion included; fil lines never protrude.
   if protrude && !m.fil then
     m := { m with natural := m.natural - protrudeLeft items a j - protrudeRight items a j }
   return m
 
-/-- What a `Measure`'s font boxes may stretch or shrink beyond the glue,
-in sp: the symmetric `expandLimit` fraction of the expandable width, zero
-on a fil line (which never expands, as it never protrudes). -/
+/-- What a `Measure`'s font boxes may stretch or
+shrink beyond the glue, in sp; zero on a fil line. -/
 public def Measure.ex (m : Measure) (expand : Bool) : Sp :=
   if expand && !m.fil then m.boxW * expandLimit / 1000 else 0
 
 public def overfullDemerits : Int := 100000000
 
-/-- What an overfull line costs: `overfullDemerits` for being overfull and
-as much again for every whole point it overhangs. An overhang priced in sp
-was cheaper than one line too loose to be feasible (TeX's inf_bad, the
-same 10⁸), so a paragraph with two long unbreakable runs packed the text
-between them onto one overfull line, past the paper, to save the loose
-one. Priced per point, a word packed onto an overfull line always costs
-more than the line it saves, and an overfull line ends at its first break
-past its unbreakable run, as TeX's final pass ends one (tex.web §854). -/
+/-- What an overfull line costs: `overfullDemerits` and as much again per whole point
+it overhangs, so it ends at its first break past its unbreakable run (tex.web §854). -/
 public def overfullCost (overhang : Sp) : Int :=
   overfullDemerits * (1 + overhang / Dim.pt 1) -- per point: TeX reports an overfull box in pt (tex.web §663)
 
-/-- Demerits of one candidate line. Under font expansion the badness
-denominators grow by the boxes' own flexibility (`Measure.ex`): the form
-of the cost is unchanged, expansion is only more room (Thành tb71 —
-expansion gives a font "stretchability and shrinkability … used by the
-line-breaking engine"). Under `fil` every line ends in LaTeX's
-`\rightskip 0pt plus 1fil` (`\@flushglue`, `\raggedright`'s), so no line
-is loose: its slack costs nothing, and only its shrink is priced. -/
+/-- Demerits of one candidate line, the badness denominators grown by
+font expansion (`Measure.ex`); under `fil` only shrink is priced. -/
 public def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat)
     (expand : Bool := false) (fil : Bool := false) : Int :=
   let ex := m.ex expand
@@ -6354,44 +5127,31 @@ public def isFlagged (items : Array Item) (k : Nat) : Bool :=
 
 public def doubleHyphenDemerits : Int := 10000
 
-/-- Demerits added when the second-last line of a paragraph ends in a
-hyphen (TeXbook ch. 14, `\finalhyphendemerits`; the plain/LaTeX default
-5000): a hyphen carrying into the paragraph's last line reads worst. -/
+/-- TeX's `\finalhyphendemerits`, plain and LaTeX's 5000 (TeXbook ch. 14). -/
 public def finalHyphenDemerits : Int := 5000
 
-/-- Demerits a centred paragraph's last line adds when it holds one word
-(`oneWordLine`): one, below the least demerits any line carries, so it
-decides only among the break sequences TeX's `\centering` ties at — every
-line of badness zero under its fil, the same number of lines — and keeps a
-word alone under a centred block only where every sequence of that many
-lines does. TeX fills each line first and leaves the runt; the page keeps
-TeX's line count and its fill-first choice among the rest. -/
+/-- Demerits a centred paragraph's one-word last line adds: one, so
+it decides only among break sequences TeX's `\centering` ties. -/
 public def runtDemerits : Int := 1
 
-/-- Whether the line from `a` to the break at `j` holds one word: no
-interword glue stands inside it. -/
+/-- Whether the line from `a` to the break at `j` holds no interword glue. -/
 public def oneWordLine (items : Array Item) (a j : Nat) : Bool :=
   !((List.range (j - a)).any fun i => match items[a + i]? with
     | some (.glue g) | some (.decoratedGlue g _) => g.word
     | some (.box ..) | some (.pen ..) | some (.img ..) | some (.rule ..) | some (.poly ..)
     | none => false)
 
-/-- Prefix sums over item width/stretch/shrink/fil/forced counts, one slot
-past the end, so `kp` measures any line by differencing. -/
+/-- Prefix sums over item width, stretch, shrink, fil and forced counts, one slot past the end. -/
 public structure KpSums where
   w : Array Sp
   s : Array Sp
   k : Array Sp
   f : Array Nat
   forced : Array Nat
-  /-- Prefix sums of font-box widths: the expandable width of any line by
-  differencing, scaled once at the read so it cannot drift from
-  `measure`'s own accumulation. -/
+  /-- Prefix sums of font-box widths, scaled once at the read. -/
   b : Array Sp
-  /-- The stretch every line carries besides its own glue: TeX's
-  background (tex.web §827, `\leftskip` plus `\rightskip`), which prices a
-  line that holds no glue of its own — a single word — as finitely as any
-  other. Zero but in a narrowed table cell (`Spacing.Paragraph.background`). -/
+  /-- The stretch every line carries besides its own glue, TeX's
+  background (tex.web §827); zero but in a narrowed table cell. -/
   bg : Sp := 0
 
 public def kpSums (items : Array Item) : KpSums := Id.run do
@@ -6427,10 +5187,8 @@ public def kpSums (items : Array Item) : KpSums := Id.run do
     pb := pb.push btot
   return { w := pw, s := ps, k := pk, f := pf, forced := pforced, b := pb }
 
-/-- The line measure `kp` uses: prefix-sum differences over [a:j) plus the
-width of the penalty broken at, less the protrusion boundary term when the
-breaker is protruding. Must agree with `measure` wherever `kp` evaluates
-it; `scripts/kp-fuzz.lean` holds it to that. -/
+/-- The line measure `kp` uses: prefix-sum differences over `[a:j)`
+plus the broken penalty's width, less the protrusion term. -/
 public def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat)
     (protrude : Bool := false) : Measure :=
   let penW : Sp := match items[j]? with
@@ -6458,16 +5216,13 @@ private theorem arrayGetD_set_ne {α : Type} (xs : Array α) (i j : Nat) (x : α
 
 private abbrev KpEntry := Int × Nat
 
-/-- Whether break `p` stands after break `q` in a paragraph of `n` items,
-whose start node is `n` itself (`kpInit`), before every break. -/
+/-- Whether break `p` stands after break `q` in a
+paragraph of `n` items, whose start node is `n`. -/
 private def kpLater (n p q : Nat) : Bool :=
   if q == n then p != n else p != n && q < p
 
-/-- One candidate keeps the original strict demerit comparison and tie order;
-under `latest` (the paragraph's item count) a tie goes to the later
-predecessor, as TeX's line breaker keeps the last of equal demerits over an
-active list in break order (tex.web §855, `d<=minimal_demerits`) — which,
-when no line is loose, fills each line first. -/
+/-- Choose between candidates by strict demerits, a tie going to the later
+predecessor under `latest`, as TeX's breaker keeps the last (tex.web §855). -/
 private def kpChoose (old : Option KpEntry) (candidate : KpEntry) (latest : Option Nat := none) :
     Option KpEntry :=
   match old with
@@ -6997,8 +5752,7 @@ private theorem kpForward_last (items : Array Item) (sums : KpSums)
   rw [← kpForward_succ] at h
   simpa only [Nat.sub_add_cancel hn] using h
 
-/-- The actual predecessor chain, in forward line order. Each break is legal
-and its next line starts no later than its endpoint. -/
+/-- The predecessor chain, in forward line order. -/
 private inductive KpChain (items : Array Item) : Nat → List Nat → Prop
   | first {j} : j < items.size → canBreakAt items j = true →
       kpStart items items.size ≤ j → KpChain items j [j]
@@ -7227,7 +5981,7 @@ private theorem kpSums_forced_zero (items : Array Item)
     exact ⟨hst.1, fun j hj => hst.2 j (by rw [hst.1]; omega) hj⟩
 
 
-/-- Ordered glyph intervals as consumed by paragraph placement. -/
+/-- Ordered glyph intervals as paragraph placement consumes them. -/
 private def breakSpans (items : Array Item) (breaks : List Nat) : List Char × Nat :=
   breaks.foldl (fun st j => (st.1 ++ itemSpan items (kpStart items st.2) j, j))
     ([], items.size)
@@ -7257,12 +6011,8 @@ private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List N
     simp [kpStart, Nat.ne_of_lt hp]
 
 
-/-- Optimal breakpoints by dynamic programming over break positions, with
-prefix-sum line measures and an active list: a node whose line to the
-current position is already overfull beyond shrink can only get worse, so
-it is considered one last time and then deactivated (one node is always
-retained so a solution exists even for unbreakable content). `bg` is the
-background stretch every line carries (`KpSums.bg`). -/
+/-- Optimal breakpoints by dynamic programming over break
+positions, with prefix-sum line measures and an active list. -/
 public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
     (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :
     Array Nat :=
@@ -7273,10 +6023,6 @@ public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
   | none => #[]
   | some _ => kpBack items.size st.best (items.size-1)
 
-/-- The actual breaker retains all box glyphs in source order. The domain
-allows arbitrary widths, costs, overflow and background; it excludes
-internal forced ends, whose independently authored segments need their own
-chain. -/
 private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand : Bool)
     (bg : Sp) (fil : Bool) {runt : Bool}
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
@@ -7317,21 +6063,11 @@ private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand 
     rw [chain.spans]
     simpa only [Nat.sub_add_cancel hn] using itemSpan_all items
 
-/-- TeX's `\pretolerance` (plain.tex sets 100): the badness bound the
-hyphenless first pass must meet, per line, for its breaks to stand. -/
+/-- TeX's `\pretolerance` (plain.tex sets 100). -/
 public def pretolerance : Nat := 100
 
-/-- Two-pass breaking, TeX's own shape (TeXbook ch. 14: with a
-non-negative `\pretolerance` the paragraph is first broken without
-hyphenation, and the hyphenating pass runs only when that attempt fails):
-hyphenation points are sealed (a 10000 cost is never a legal break,
-`canBreakAt`), the optimal hyphenless breaks stand when every line's
-badness stays within `pretolerance` and nothing is overfull, and only a
-paragraph that fails gets the hyphenating pass. This is what keeps
-hyphens rare — a paragraph that sets cleanly without them never
-hyphenates, whatever small demerit gain a hyphen could buy. Explicit
-hyphens (unflagged pens) and forced breaks keep their pens. Both passes
-price every line with the background stretch `bg` (`KpSums.bg`). -/
+/-- Two-pass breaking as TeX's: a hyphenless pass whose breaks stand
+when every line is within `pretolerance`, else the hyphenating pass. -/
 public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
     (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :
     Array Nat := Id.run do
@@ -7362,23 +6098,13 @@ public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := fals
     prev := j
   return breaks
 
--- Line setting ----------------------------------------------------------------
-
-/-- The uniform expansion factor a set line applies to its font boxes, in
-per-mille: expansion-first, the fonts absorb what they can of the line's
-delta up to `expandLimit` in either direction, and glue takes the
-remainder — Thành's design, where expansion is chosen to bring the glue
-setting closest to natural (TUGboat 22(3)). One factor per line, never
-per glyph, so glyphs are only rescaled, never re-ordered. -/
+/-- The uniform expansion factor a set line applies to its font boxes, in per
+mille: fonts absorb the line's delta up to `expandLimit`, glue the rest. -/
 public def expandFactor (delta boxW : Int) : Int :=
   if boxW > 0 && delta != 0 then
     min (max (delta * 1000 / boxW) (-(expandLimit : Int))) (expandLimit : Int)
   else 0
 
-/-- Every set line's expansion factor stays inside microtype's bounds:
-±`expandLimit` per-mille, whatever the line's delta and expandable width.
-Uniformity per line is by construction — `setLine` computes one factor
-and applies it to every box. -/
 public theorem expandFactor_bounded (delta boxW : Int) :
     -(expandLimit : Int) ≤ expandFactor delta boxW ∧
       expandFactor delta boxW ≤ (expandLimit : Int) := by
@@ -7388,15 +6114,10 @@ public theorem expandFactor_bounded (delta boxW : Int) :
 /-- A font box's coordinate under the line's per-mille expansion. -/
 private def expandCoord (f x : Int) : Int := x + x * f / 1000
 
-/-- Expansion of a fragment measured from its original shaping origin.
-Rounding each fragment's width independently would lose fractional sp at
-semantic boundaries. -/
+/-- Expansion of a fragment measured from its original shaping origin. -/
 public def expandSpan (f offset width : Int) : Int :=
   expandCoord f (offset + width) - expandCoord f offset
 
-/-- Dividing a shaped box into adjacent ownership fragments preserves its
-expanded width exactly. This is the integer arithmetic contract; the
-shipped-glyph guards also check the offsets carried through line setting. -/
 public theorem expandSpan_add_exact (f offset a b : Int) :
     expandSpan f offset a + expandSpan f (offset + a) b =
       expandSpan f offset (a + b) := by
@@ -7404,9 +6125,8 @@ public theorem expandSpan_add_exact (f offset a b : Int) :
   simp only [Int.add_assoc]
   omega
 
-/-- A run's glyph coordinates start at zero in both consumers. Split only
-where that local rounding would differ from the original shaping origin;
-each piece retains its glyph advances, paint and structure owner. -/
+/-- Set a word's box, split only where local rounding
+would differ from the original shaping origin. -/
 private def setWordBox (segs : Array Seg) (f offset w : Sp)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
@@ -7465,14 +6185,8 @@ private theorem setWordBox_glyphChars (segs : Array Seg) (f offset w : Sp)
     · intro st hst
       simpa [Seg.glyphChars] using hst
 
-/-- Does a paragraph line set to its measure? Justified text does. So does
-any line carrying an author's fill, however the paragraph is set: TeX's
-glue orders give a line's slack to its highest-order stretch, and
-`\hfill` is 0pt plus 1fill, an order above the 0pt plus 1fil that
-`\centering`, `\raggedright` and `\raggedleft` put in `\leftskip` and
-`\rightskip` (`\@flushglue`, latex.ltx) — so the fill takes all of it and
-the line spans the measure (TeXbook ch. 12). The paragraph's closing
-parfill is no author's fill. -/
+/-- Whether a paragraph line sets to its measure: justified
+text does, and so does any line carrying an author's fill. -/
 private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bool := Id.run do
   if justify then return true
   for k in [a:j] do
@@ -7493,8 +6207,6 @@ private def trimLineGaps (segs : Array Seg) (width : Sp) : Array Seg × Sp := Id
     | _ => break
   return (segs, width)
 
-/-- The actual trailing-gap loop removes segments; it never invents one.
-The recursive proof follows the loop's strictly shrinking array. -/
 private theorem trimLineGaps_mem (segs : Array Seg) (width : Sp) :
     ∀ s ∈ (trimLineGaps segs width).1, s ∈ segs := by
   unfold trimLineGaps
@@ -7568,11 +6280,7 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
   for k in [a:j] do
     match items[k]! with
     | .box w fontIdx color link glyphs size leading decorations raise ground attr =>
-      -- The declared width is authoritative, as it already is in `measure`: a
-      -- kern is a box with a width and no glyphs, and recomputing from the
-      -- advances would silently set it to zero. Expansion rescales the box
-      -- by the line's one factor; the PDF writer paints the run's glyphs
-      -- under the same horizontal scale.
+      -- The declared width is authoritative: a kern is a box with a width and no glyphs.
       let offset := wordOffsets[k]?.getD 0
       segs := setWordBox segs f offset w fontIdx color link glyphs size leading
         decorations raise ground attr
@@ -7584,8 +6292,6 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
       segs := segs.push (.rule w thickness raise color)
       width := width + w
     | .poly pts color =>
-      -- The line's expansion rescales what the polygon marks, so its
-      -- points scale with it about where it stands.
       segs := segs.push (.poly (pts.map fun (x, y) => (x + x * f / 1000, y)) color)
     | .glue g =>
       let setW : Sp :=
@@ -7606,8 +6312,7 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
             g.width + d * g.shrink / m.shrink
           else
             g.width
-      -- Authored glue can pull as well as push; interword glue cannot go
-      -- negative because its declared shrink bounds it above.
+      -- Authored glue can pull as well as push; interword glue's shrink keeps it nonnegative.
       segs := segs.push (.gap setW g.word)
       width := width + setW
     | .decoratedGlue g rule =>
@@ -7632,13 +6337,8 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
       segs := segs.push (.decoratedGap setW g.word rule)
       width := width + setW
     | .pen _ _ _ _ _ _ => pure ()
-  -- breaking at a penalty appends its glyphs (the hyphen)
   if let some (.pen w _ _ fontIdx color glyphs) := items[j]? then
     if !glyphs.isEmpty then
-      -- A hyphenation point sits inside a word, so the hyphen is set at the
-      -- size (and under the underline) of the run it interrupts — and under
-      -- the line's expansion factor, like any glyph. Its attribution is
-      -- `.hyphen`: the breaker's ink, not the leaf's text.
       let w := w + w * f / 1000
       let inherited := segs.foldl (fun acc s => match s with
         | .run _ _ _ _ _ sz ld decorations _ gr _ =>
@@ -7649,7 +6349,6 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
         (.run fontIdx color none w glyphs inherited.1 inherited.2.1
           inherited.2.2.1 0 inherited.2.2.2 .hyphen)
       width := width + w
-  -- drop trailing gaps (paragraph-final fill)
   return trimLineGaps segs width
 
 private theorem setLineSegments_glyphChars (items : Array Item) (a j : Nat) (m : Measure)
@@ -7724,9 +6423,6 @@ private theorem setWordBox_noGlyph (segs : Array Seg) (f offset w : Sp)
   · exact hs s h
   · rfl
 
-/-- Setting and trimming a glyph-free stream cannot manufacture text.
-This includes out-of-range item reads, whose default box has no glyphs,
-and the terminal penalty, whose glyphs are checked before appending. -/
 private theorem setLineSegments_noGlyph (items : Array Item) (a j : Nat) (m : Measure)
     (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp)
     (h : ∀ it ∈ items, it.NoGlyph) :
@@ -7773,20 +6469,11 @@ private def lineSetting (items : Array Item) (a j : Nat) (target : Sp)
     (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp) :
     LineSetting := Id.run do
   let m := measure items a j
-  -- Protrusion (stage 1): boundary glyphs hang into the margin by the
-  -- table's fraction of their own width, so the optical edge is straight.
-  -- The line is set against the enlarged target and the caller shifts its
-  -- x left by the returned hang, so interior glue absorbs exactly the
-  -- overhang. Lines with fil keep their exact margins: a last line or
-  -- an `\hfill` row never reaches the edge, so nothing is gained there
-  -- and a dates row set flush stays flush.
+  -- Protrusion: the line sets against the enlarged target; the caller shifts it by the hang.
   let doProt := protrude && justify && !m.fil
   let leftHang := if doProt then protrudeLeft items a j else 0
   let target := target + leftHang + (if doProt then protrudeRight items a j else 0)
   let delta := target - m.natural
-  -- Font expansion: one bounded factor per line takes its share of the
-  -- delta first; the glue arms below distribute what remains. Fil lines
-  -- never expand, as they never protrude.
   let f : Int := if expand && justify && !m.fil then expandFactor delta m.boxW else 0
   let mut boxTaken : Sp := 0
   if f != 0 then
@@ -7796,15 +6483,9 @@ private def lineSetting (items : Array Item) (a j : Nat) (target : Sp)
     if let some (.pen w _ _ _ _ _) := items[j]? then
       boxTaken := boxTaken + w * f / 1000
   let delta := delta - boxTaken
-  -- Feasibility belongs to the whole line, including a forced line made
-  -- of one unbreakable box with no glue. Ragged text uses none of the
-  -- available shrink, so its natural width must fit without it.
+  -- Ragged text uses none of the available shrink, so its natural width must fit without it.
   let overfull := decide ((if justify then m.shrink else 0) < -delta)
-  -- Fill glue shares the leftover, but a line-running fill does not count as a
-  -- sharer when the author wrote their own `\hfill`: otherwise
-  -- `name \hfill dates` on a paragraph's last line puts the dates halfway to
-  -- the margin instead of at it, which is what LaTeX does and what nobody
-  -- setting a row of dates wants.
+  -- Beside an author's `\hfill`, a line-running fill takes no share of the slack.
   let mut explicitFils := 0
   let mut allFils := 0
   for k in [a:j] do
@@ -7833,76 +6514,49 @@ private theorem setLine_noGlyph (items : Array Item) (a j : Nat) (target : Sp)
       s.NoGlyph := by
   exact setLineSegments_noGlyph _ _ _ _ _ _ _ _ _ h
 
--- Page assembly ----------------------------------------------------------------
-
-/-- One footnote, set and ready to ship: its lines with `y` measured from
-the note block's own top (the first line's `\footnotesep` strut top), and
-the block's total height — strut top to last ink bottom. Built where the
-paragraph is collected (`collectPara`), attached to the open page when the
-mark's line commits (`Spacing.Page.attachNotes`), shipped whole by the
-bottom-anchored flush in `finishPage`. -/
+/-- One set footnote: its lines with `y` from the note block's top, and the block's total height. -/
 private structure NoteBlock where
   lines : Array LineOut
   height : Sp
-  /-- The last line's ink below its baseline: what a frame's note box hangs
-  below the text area's floor (`Spacing.Page.noteHang`). -/
+  /-- The last line's ink below its baseline, which a frame's note box hangs below the floor. -/
   depth : Sp := 0
   deriving Repr, Inhabited
 
-/-- A rule's reach about its box's lines (`Ir.BlockReach.lines`), its
-metrics resolved in the title's font: `height` past the box's lines above
-the box's baseline, its last line's, and `depth` below it. A `continued`
-rule is the body's part of a rule beside the whole block: from `height`
-below the line above it, the title's last, to `depth` below its own last
-baseline (`edgeLinesFrom`). -/
+/-- A rule's reach about its box's lines, resolved in the title's
+font: `height` above the box's last baseline and `depth` below it. -/
 private structure EdgeReach where
   height : Sp
   depth : Sp
   continued : Bool := false
 
-/-- A block link, or a painted colour box: beamer's `beamercolorbox`, whose
-paint reaches `pad` beyond its lines (`Ir.titledPadding`) above, below and
-beside the measure `x`..`x + w` names. An `anchored` box opens on its own
-`\vbox{}` (`Op.boxAnchor`): its first fragment's paint starts there, with
-no inset above. -/
+/-- A block link, or a painted colour box whose paint reaches
+`pad` beyond its lines (beamer's `beamercolorbox`). -/
 private inductive RegionKind where
   | link (target : String)
   | surface (color : Ir.Color) (pad x w : Sp) (anchored : Bool)
-  /-- A rule a block template sets beside a box (`Ir.BlockEdge`): painted
-  `x`..`x + w` from the box's top — its first line's TeX box top, and
-  `inset` above it the `\parskip` the box's list opens on — to its last
-  line's TeX box bottom and the glue the box ends on; reaching by the
-  title's lines (`reach`), from `above` past the first line's baseline to
-  `below` past the last's. It spaces nothing: TeX sets the rule in the line
-  beside the box, and the box's own paragraph keeps the room a rule reaches
-  past it (`TexBox.reach`). -/
+  /-- A rule a block template sets beside a box (`Ir.BlockEdge`), painted `x`..`x
+  + w` from the box's top to its last line's bottom; it spaces nothing. -/
   | edge (color : Ir.Color) (x w inset : Sp) (reach : Option EdgeReach)
 
 private structure RegionStart where
   kind : RegionKind
   depth : Nat
   begun : Bool := false
-  /-- The fragment holds the region's opening: no page or column split
-  stands between them. -/
+  /-- Whether the fragment holds the region's opening. -/
   first : Bool := true
   lines : Nat
   fills : Nat
   inks : Nat
 
-/-- The baseline a list ends on, as TeX's `\prevdepth` reads it — the
-cursor where the list closes — tied to the element beside which it was
-read, the page's last line or its last picture where that stands lower, so
-the page's shrink and distribution, which move each element rigidly, carry
-it: the element's index and the baseline's offset from its line, or from
-its picture's origin. -/
+/-- The baseline a list ends on, as TeX's `\prevdepth` reads it, tied to the
+element beside which it was read so shrink and distribution carry it. -/
 private inductive BaseAnchor where
   | line (i : Nat) (offset : Sp)
   | ink (i : Nat) (offset : Sp)
 
 private def BaseAnchor.read (p : PageOut) (y : Sp) : Option BaseAnchor :=
   let inkBottom (k : InkOut) : Sp := k.claims.foldl (fun m b => max m b.2.2) k.place.dy
-  -- The cursor on a line's baseline stands on the line's last: a display
-  -- alignment's last row (`LineOut.lastBase`).
+  -- The cursor on a line's baseline stands on its last row (`LineOut.lastBase`).
   let onLine (l : LineOut) : Sp := y - l.y + (if l.y == y then l.lastBase else 0)
   match p.lines.back?, p.inks.back? with
   | some l, some k =>
@@ -7927,8 +6581,7 @@ private structure RegionSpan where
   kind : RegionKind
   depth : Nat
   first : Bool
-  /-- Glue standing inside the box after its last line: a TeX box keeps
-  the glue that ends its list. -/
+  /-- Glue inside the box after its last line, which a TeX box keeps. -/
   tail : Sp := 0
   lineStart : Nat
   lineEnd : Nat
@@ -7980,9 +6633,7 @@ private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option Region
       out := addRegionBox out x (l.y - h) (x + w) l.y
       x := x + w
     | .poly pts _ =>
-      -- A filled polygon (cancel strike, arrowhead) marks what the runs
-      -- around it place and advances no pen; its points sit at the pen x
-      -- and `py` up from the baseline (PDF's y-up), so bound each vertex.
+      -- A polygon advances no pen; its vertices stand at the pen x, `py` up from the baseline.
       for (px, py) in pts do
         out := addRegionBox out (x + px) (l.y - py) (x + px) (l.y - py)
   return out
@@ -8012,25 +6663,14 @@ private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
         target := target }
   | .surface _ _ _ _ _ | .edge .. => none
 
-/-- Where a rule reaching by its box's lines stands (`Ir.BlockReach.lines`),
-its top and bottom: TeX's rule on the box's baseline, its last line's, from
-the box's lines — its first line's TeX box top, `firstAbove` over its
-baseline `firstY`, to its last line's bottom, `lastBelow` under `lastY`
-(`LineOut.regionExtent`) — and `height` more above that baseline, to `depth`
-below it; nothing where that leaves no room. -/
+/-- Where a rule reaching by its box's lines stands, its
+top and bottom; nothing where that leaves no room. -/
 public def edgeLinesSpan (firstY firstAbove lastY lastBelow height depth : Int) :
     Option (Int × Int) :=
   let top := firstY - firstAbove - lastBelow - height
   let bottom := lastY + depth
   if bottom ≤ top then none else some (top, bottom)
 
-/-- **A rule its lines' half leading past them stands centred on the
-capitals** (`_exact`): beside lines whose TeX boxes reach a leading and `e`
-more from the first line's top to the last line's bottom — lines struts
-bound — a rule whose depth less its height is the leading less the cap
-height (`Ir.BlockMetric.halfLeading_centred_exact`) has its top and bottom
-summing to the first line's cap height and the last line's baseline, less
-`e`: its midpoint is the capitals' span's, in scaled points. -/
 public theorem edgeLinesSpan_centred_exact (firstY firstAbove lastY lastBelow height depth
     lead cap e : Int) (hs : firstAbove + lastBelow = lead + e) (hr : depth - height = lead - cap)
     (top bottom : Int)
@@ -8043,21 +6683,13 @@ public theorem edgeLinesSpan_centred_exact (firstY firstAbove lastY lastBelow he
   · simp only [Option.some.injEq, Prod.mk.injEq] at hf
     omega
 
-/-- Where the body's part of a rule beside the whole block stands
-(`Ir.BlockSpan.whole`, `EdgeReach.continued`), its top and bottom: from
-`height` below the baseline above it, the title's last, `aboveY`, to `depth`
-below the block's last baseline, `lastY`, as the template stands it on that
-baseline; nothing where that leaves no room. -/
+/-- Where the body's part of a rule beside the whole block stands, from `height` below the
+title's last baseline to `depth` below the block's; nothing where that leaves no room. -/
 public def edgeLinesFrom (aboveY lastY height depth : Int) : Option (Int × Int) :=
   let top := aboveY + height
   let bottom := lastY + depth
   if bottom ≤ top then none else some (top, bottom)
 
-/-- **A rule beside the whole block is one rule** (`_exact`): its title's
-part, standing `depth` below the title's last baseline (`edgeLinesSpan`),
-ends where its body's part, from `depth` below that baseline, begins
-(`edgeLinesFrom`), so the two run from the title's part's top to `depth`
-below the block's last baseline with nothing between them. -/
 public theorem edgeLinesFrom_abuts_exact (firstY firstAbove titleY titleBelow lastY height depth
     t1 b1 t2 b2 : Int)
     (h1 : edgeLinesSpan firstY firstAbove titleY titleBelow height depth = some (t1, b1))
@@ -8073,15 +6705,14 @@ public theorem edgeLinesFrom_abuts_exact (firstY firstAbove titleY titleBelow la
     · simp only [Option.some.injEq, Prod.mk.injEq] at h1 h2
       omega
 
-/-- The body's part of a rule beside the whole block
-(`EdgeReach.continued`). -/
+/-- Whether the span is the body's part of a rule beside the whole block (`EdgeReach.continued`). -/
 private def RegionSpan.continuesRule (s : RegionSpan) : Bool :=
   match s.kind with
   | .edge _ _ _ _ (some r) => r.continued
   | _ => false
 
-/-- The baseline a region's list ends on: where it closed in the flow
-(`BaseAnchor`), or, on a page it continues past, its lowest line's. -/
+/-- The baseline a region's list ends on: where it closed in
+the flow, or its lowest line's on a page it continues past. -/
 private def RegionSpan.lastBaseline (s : RegionSpan) (lines : Array LineOut)
     (inks : Array InkOut) : Option Sp :=
   match s.base with
@@ -8089,18 +6720,15 @@ private def RegionSpan.lastBaseline (s : RegionSpan) (lines : Array LineOut)
   | none => (lines.extract s.lineStart s.lineEnd).foldl
       (fun m (l : LineOut) => some (max (m.getD l.y) l.y)) none
 
-/-- Surface extents are read after placement, including page/column breaks
-and vertical distribution: the box's lines (`LineOut.regionExtent`, TeX's
-box of each), its children's paint and the glue it ends on, `pad` beyond
-them — above only where the fragment does not open on its anchor. -/
+/-- The region's fill, read after placement: the box's lines,
+its children's paint and its closing glue, `pad` beyond them. -/
 private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     (fills : Array Fill) (inks : Array InkOut)
     (children : Array (RegionSpan × Fill) := #[]) : Option Fill :=
   match s.kind with
   | .link _ => none
   | .surface color pad x w anchored =>
-    -- The body's part of a rule beside a whole block inside the box stands
-    -- in a box of no size, as TeX's does, and grows it nowhere.
+    -- The body's part of a rule inside the box stands in a box of no size and grows it nowhere.
     let box := children.foldl (fun box (child, f) =>
       if s.depth < child.depth && !child.continuesRule &&
           s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
@@ -8113,9 +6741,6 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
   | .edge color x w _ (some r) =>
     if r.continued then
-      -- The body's part: from below the line above it, the title's last,
-      -- where the fragment holds the region's opening; else from its own
-      -- first line's top.
       let start : Option (Sp × Sp) :=
         if s.first && 0 < s.lineStart then (lines[s.lineStart - 1]?).map fun l => (l.y, r.height)
         else (lines.extract s.lineStart s.lineEnd)[0]?.map fun l =>
@@ -8134,9 +6759,7 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
         { x := x, y := top, w := w, h := bottom - top, color := color }
     | _, _ => none
   | .edge color x w inset none =>
-    -- The box's own reach: its lines and what paints inside it. Another
-    -- rule beside the same box stands beside it, not in it, and its fill
-    -- already reaches its own inset above the box.
+    -- Another rule beside the same box stands beside it, not in it.
     let box := children.foldl (fun box (child, f) =>
       if !(child.kind matches .edge ..) && s.depth < child.depth &&
           s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
@@ -8144,19 +6767,14 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
           s.inkStart ≤ child.inkStart && child.inkEnd ≤ s.inkEnd then
         addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
       else box) (s.box lines fills inks)
-    -- A box of no height draws its rule nowhere, as TeX's rule of no
-    -- height and depth paints nothing.
+    -- A box of no height draws its rule nowhere, as TeX's rule of no height paints nothing.
     box.bind fun b =>
       let y := if s.first then b.y0 - inset else b.y0
       let h := b.y1 + s.tail - y
       if h ≤ 0 then none else some { x := x, y := y, w := w, h := h, color := color }
 
-/-- Measure children before their parents, so every enclosing surface owns
-its inset outside its children's paint. The caller paints the reverse order:
-parents first, and boxes of one depth in the order they close, which is the
-order they stand — TeX ships a later box over an earlier one, so a block's
-body box covers the half point of its title box it overlaps
-(`Ir.blockSeam`). -/
+/-- Measure children before their parents so every surface owns its
+inset outside its children's paint; the caller paints parents first. -/
 private def regionFills (spans : Array RegionSpan) (lines : Array LineOut)
     (fills : Array Fill) (inks : Array InkOut) : Array (RegionSpan × Fill) :=
   let order := spans.zipIdx.qsort fun (a, i) (b, j) =>
@@ -8166,18 +6784,14 @@ private def regionFills (spans : Array RegionSpan) (lines : Array LineOut)
     | some fill => out.push (span, fill)
     | none => out) #[]
 
-/-- `s` is the body's part of the rule whose title's part is `t`: a rule of
-one colour and column, opened where `t` closed, beside the same list. -/
+/-- Whether `s` is the body's part of the rule whose title's part is `t`. -/
 private def RegionSpan.continues (s t : RegionSpan) : Bool :=
   s.depth == t.depth && t.lineEnd == s.lineStart && match s.kind, t.kind with
   | .edge c x w _ (some r), .edge c' x' w' _ (some r') =>
     r.continued && !r'.continued && c == c' && x == x' && w == w'
   | _, _ => false
 
-/-- **A rule beside the whole block ships as one rule**: its body's part
-joins the title's part it continues, whose bottom is its top
-(`edgeLinesFrom_abuts_exact`), so the page paints one rectangle from the
-title's capitals to the block's last baseline, never two that meet. -/
+/-- Join a rule's body part to the title part it continues, so the page paints one rectangle. -/
 private def joinRuleParts (fills : Array (RegionSpan × Fill)) : Array (RegionSpan × Fill) :=
   fills.filterMap fun (s, f) =>
     if s.continuesRule && fills.any (fun (t, g) => s.continues t && g.y + g.h == f.y) then none
@@ -8185,22 +6799,14 @@ private def joinRuleParts (fills : Array (RegionSpan × Fill)) : Array (RegionSp
       | some (_, g) => some (s, { f with h := g.y + g.h - f.y })
       | none => some (s, f)
 
-/-- The lowest y body ink may reach on a page carrying `h` of note ink:
-the note block and the `\skip\footins` gap above it come out of the text
-block's bottom, less what the block hangs below that bottom (`hang`, a
-frame's notes' depth: `Spacing.Page.noteHang`); with no notes the floor is
-`bodyBottom` itself. Every placement fit test on a noted page reads the
-bottom from here. -/
+/-- The lowest y body ink may reach on a page carrying `h` of note ink: the
+note block and the `\skip\footins` gap, less `hang`, come out of `bottom`. -/
 private def noteFloor (bottom footins h : Sp) (hang : Sp := 0) : Sp :=
   if h == 0 then bottom else bottom + hang - h - footins
 
 
-/-- A display's placement, read where the page builder sets its first line:
-TeX's two skips above it (tex.web §1203 chooses between them by
-`\predisplaysize`), whether TeX first sets the empty line amsmath's `$$`
-opens in vertical mode, how many of the line's leading segments stand
-outside the formula's box (the numbered shape's mirror box and its fil), and
-where the display stands. -/
+/-- A display's placement where its first line is set: TeX's two skips above it (tex.web
+§1203), whether amsmath's `$$` sets an empty line first, and where it stands. -/
 private structure DisplayJob where
   ctx : Ir.DisplayCtx
   above : Glue
@@ -8209,20 +6815,16 @@ private structure DisplayJob where
   lead : Nat := 0
   deriving Inhabited
 
-/-- The preceding band's spacing reference. Text relates to a lower rule
-by its baseline; a rule relates to following text by its ink edge; a box
-reserves its complete painted extent while retaining text leading. -/
+/-- The preceding band's spacing reference: a text
+baseline, a rule's ink edge, or a box's painted extent. -/
 public inductive Spacing.Band where
   | text
   | rule
   | box
   deriving Inhabited, Repr, DecidableEq
 
-/-- A column's final baseline and the lower bounds read by spacing:
-clearance, leading and measured box depth. Joining columns preserves each
-absolute bound independently; the column with the lowest baseline need
-not have the lowest edge. Measured depth remains distinct from clearance
-because TeX's vertical fill centers the actual box. -/
+/-- A column's final baseline and the lower bounds spacing
+reads: clearance, leading and measured box depth. -/
 public structure Spacing.Tail where
   y : Sp
   depth : Sp
@@ -8230,8 +6832,8 @@ public structure Spacing.Tail where
   boxDepth : Sp
   band : Spacing.Band
 
-/-- The common tail of neighbouring columns. A mixed row is a box:
-unlike a text-only row, its next rule must clear the full painted depth. -/
+/-- The common tail of neighbouring columns; a mixed row is
+a box, whose next rule clears its full painted depth. -/
 public def Spacing.Tail.join (a b : Spacing.Tail) : Spacing.Tail :=
   let y := max a.y b.y
   { y := y
@@ -8240,8 +6842,6 @@ public def Spacing.Tail.join (a b : Spacing.Tail) : Spacing.Tail :=
     boxDepth := max (a.y + a.boxDepth) (b.y + b.boxDepth) - y
     band := if a.band = b.band then a.band else .box }
 
-/-- Both columns' clearance, leading and measured bottoms survive the
-production join. -/
 public theorem Spacing.Tail.join_covers (a b : Spacing.Tail) :
     a.y + a.depth ≤ (a.join b).y + (a.join b).depth ∧
     b.y + b.depth ≤ (a.join b).y + (a.join b).depth ∧
@@ -8252,15 +6852,12 @@ public theorem Spacing.Tail.join_covers (a b : Spacing.Tail) :
   simp only [Spacing.Tail.join, Sp]
   omega
 
-/-- Joining columns neither drops measured ink nor substitutes nominal
-font descent: the joined box ends exactly at its lowest measured edge. -/
 public theorem Spacing.Tail.join_boxDepth_exact (a b : Spacing.Tail) :
     (a.join b).y + (a.join b).boxDepth =
       max (a.y + a.boxDepth) (b.y + b.boxDepth) := by
   simp only [Spacing.Tail.join, Sp]
   omega
 
-/-- A boxed column keeps the row's rule-clearance convention. -/
 public theorem Spacing.Tail.join_box_exact (a b : Spacing.Tail)
     (h : a.band = .box ∨ b.band = .box) :
     (a.join b).band = .box := by
@@ -8272,7 +6869,6 @@ public theorem Spacing.Tail.join_box_exact (a b : Spacing.Tail)
       exact he.trans h
   · rfl
 
-/-- Column order cannot change the row's geometric tail. -/
 public theorem Spacing.Tail.join_comm (a b : Spacing.Tail) :
     a.join b = b.join a := by
   simp only [Spacing.Tail.join]
@@ -8283,13 +6879,11 @@ public theorem Spacing.Tail.join_comm (a b : Spacing.Tail) :
   · simp only [Sp]; omega
   · split <;> split <;> simp_all
 
-/-- Rejoining a saved tail does not add padding or leading. -/
 public theorem Spacing.Tail.join_id (a : Spacing.Tail) : a.join a = a := by
   cases a
   simp only [Spacing.Tail.join, ↓reduceIte]
   congr 1 <;> simp only [Sp] <;> omega
 
-/-- Grouping a row into nested column flows cannot change its tail. -/
 public theorem Spacing.Tail.join_assoc (a b c : Spacing.Tail) :
     (a.join b).join c = a.join (b.join c) := by
   rcases a with ⟨ay, ad, al, ai, ab⟩
@@ -8303,9 +6897,7 @@ public theorem Spacing.Tail.join_assoc (a b c : Spacing.Tail) :
   · simp only [Sp]; omega
   · cases ab <;> cases bb <;> cases cb <;> decide
 
-/-- Repeated furniture and the resolved spacing reference below it. A
-frame's body opening updates this reference after the title is pinned;
-headline-only furniture keeps its ink-edge reference. -/
+/-- Repeated furniture and the spacing reference below it. -/
 private structure Spacing.Chrome where
   lines : Array LineOut
   fills : Array Fill
@@ -8315,61 +6907,41 @@ private structure Spacing.Chrome where
   band : Spacing.Band
   header : Option Sp
 
-/-- Page assembly state. A page is set the way a line is: its lines are
-boxes, the vertical skips between them are glue, and `y` is the baseline of
-the last line at the glue's natural size. Shrink is applied to the whole
-page when it closes, so `shrinkAbove` remembers, per line, how much glue
-above it can give. -/
+/-- Page assembly state, set as a line is: lines are boxes,
+skips are glue, and `y` is the last baseline at natural glue. -/
 public structure Spacing.Page where
   private mk ::
   private geom : Geom
   private ascent : Sp
   private descent : Sp
-  /-- Body cap height in sp: the height of a line as TeX would measure it
-  from its glyphs. `ascent` reserves room for accents and would push every
-  line apart. -/
+  /-- Body cap height in sp, a line's height as TeX measures it from its glyphs. -/
   private capHeight : Sp
   /-- Body x-height in sp, so `ex` tokens resolve against the real font. -/
   private xHeight : Sp := 0
-  /-- Authored picture openings keyed by the PDF structure leaf. Repeated
-  overlay placement reads the same source, independently of page order. -/
+  /-- Authored picture openings keyed by the PDF structure leaf. -/
   private pictureSpans : Array (Nat × Span) := #[]
   private pages : Array PageOut := #[]
   private cur : PageOut := {}
-  /-- Page-local lifecycle declarations survive boundaries that ship no
-  content. `finishPage` records this state and advances it exactly once. -/
+  /-- Page-local lifecycle declarations, recorded and advanced once by `finishPage`. -/
   private pageState : Ir.PageState := {}
   /-- Baseline of the last line placed, at natural glue. -/
   private y : Sp := 0
-  /-- Ink depth of the last line placed (metric descent per run): what
-  furniture, pictures, and the page bottom clear against. -/
+  /-- Ink depth of the last line placed (metric descent per run). -/
   private prevDepth : Sp := 0
-  /-- The last set line's depth as TeX's box has it — its deepest glyph
-  (`segsInk`) — keyed by the baseline and `prevDepth` it was committed
-  with, so any later writer of either leaves the key behind and the band at
-  `y` answers its own `prevDepth` (`Spacing.Page.boxDepth`). -/
+  /-- The last set line's depth as TeX's box has it, keyed by the baseline
+  and `prevDepth` it was committed with (`Spacing.Page.boxDepth`). -/
   private lastInk : Option (Sp × Sp × Sp) := none
-  /-- Leaded below of the last line placed (`LineBox.below`): the upper
-  term of the metric interline rule. -/
+  /-- Leaded below of the last line placed (`LineBox.below`). -/
   private prevBelow : Sp := 0
-  /-- The preceding band's spacing reference survives column and slot
-  restoration. Closing a painted box replaces the last text reference. -/
+  /-- The preceding band's spacing reference, surviving column and slot restoration. -/
   private prevBand : Spacing.Band := .text
-  /-- Where the last text line set ends, from the left margin: the right
-  edge of its content, what TeX's `\predisplaysize` measures (tex.web
-  §1146) for a display the paragraph runs into. `none` after anything
-  else. -/
+  /-- Where the last text line's content ends, from the left margin:
+  TeX's `\predisplaysize` (tex.web §1146); `none` after anything else. -/
   private lineEnd : Option Sp := none
-  /-- The band at `y` is display math: the next line's interline glue is
-  TeX's (`texBaselineGap`), from the display's box depth — TeX's
-  `\prevdepth` after a display (tex.web §1205). -/
+  /-- The band at `y` is display math, so the next interline glue is TeX's (`texBaselineGap`). -/
   private texAfter : Bool := false
-  /-- The band at `y` is a frame content's opening `\vbox{}` (`openBody`):
-  the next text line's interline glue is TeX's from that box of depth zero —
-  its own `\baselineskip`, or `\lineskip` past a line taller than that
-  (`texBaselineGap`) — as beamer's first paragraph takes it below
-  `\vskip-\parskip\vbox{}` (beamerbaseframe.sty:115), whatever its size. A
-  painted line keeps the metric rule its paint was fitted to. -/
+  /-- The band at `y` is a frame content's opening `\vbox{}`, so the
+  next text line's interline glue is TeX's from a box of depth zero. -/
   private opening : Bool := false
   /-- The last display set took TeX's short skips (`Op.skipAlt`). -/
   private dispShort : Bool := false
@@ -8377,9 +6949,7 @@ public structure Spacing.Page where
   private skip : Glue := {}
   /-- Per line of the current page: total shrink in the glue above it. -/
   private shrinkAbove : Array Sp := #[]
-  /-- Per rectangle fill and path: the preceding glue, recorded beside
-  the content each rider belongs to. A title bar follows its title line,
-  even when later lines consume different shares of the page's glue. -/
+  /-- Per fill and path: the shrink of the glue preceding it. -/
   private fillShrinkAbove : Array Sp := #[]
   private inkShrinkAbove : Array Sp := #[]
   private fillStretchAbove : Array Sp := #[]
@@ -8388,160 +6958,110 @@ public structure Spacing.Page where
   private inkFilsAbove : Array Nat := #[]
   /-- Total shrink in the glue laid on the current page. -/
   private pageShrink : Sp := 0
-  /-- Per line of the current page: total finite stretch in the glue above
-  it, parallel to `shrinkAbove` — what a `\flushbottom` page spends. -/
+  /-- Per line of the current page: total finite stretch in
+  the glue above it, which a `\flushbottom` page spends. -/
   private stretchAbove : Array Sp := #[]
   /-- Total finite stretch in the glue laid on the current page. -/
   private pageStretch : Sp := 0
-  /-- How far the current page overflows at natural glue: what closing it
-  must take out of the shrink. -/
+  /-- How far the current page overflows at natural glue. -/
   private needed : Sp := 0
-  /-- The box that last strictly increased `needed`, not the last box
-  visited. A column may subsequently rewind the cursor. -/
+  /-- The box that last strictly increased `needed`. -/
   private neededSource : Option Span := none
-  /-- Source of the line awaiting the fit/commit door. It survives a spill
-  of the preceding page and is consumed by that line's commit. -/
+  /-- Source of the line awaiting the fit and commit door. -/
   private pendingSource : Option Span := none
   /-- Source at the current cursor, saved and restored with column boxes. -/
   private lastSource : Option Span := none
-  /-- The next line opens at the page top, even though lines already stand
-  on the page: a later column rewound to a fresh page's start must place
-  its first line where the first column placed its. A fact of the page
-  being built: every page boundary clears it, so a title page's slots,
-  each set as from the page's top, leave the next page's opening alone. -/
+  /-- The next line opens at the page top though lines already
+  stand there: a later column rewound to a fresh page's start. -/
   private freshStart : Bool := false
-  /-- `\vspace*`'s zero rule stands on the page being built with no box
-  below it yet (`.anchorRule` on a page that held nothing): TeX's page
-  builder discards glue at a page's top only up to the first box or rule,
-  so the glue after the rule stays, and `\topskip` stands above the rule
-  (`Spacing.Page.topKept`, `Spacing.Page.firstRise`). A fil in the pending skip reads the same
-  way: `\vspace*{\fill}` is how a fil reaches a page's top. -/
+  /-- `\vspace*`'s zero rule stands on the page with no box below it
+  yet, so the glue after it stays and `\topskip` stands above it. -/
   private anchored : Bool := false
-  /-- `\nointerlineskip` stands before the next box: TeX's `\prevdepth` is
-  −1000 pt, so the box takes no interline glue — its top stands on the
-  previous box's bottom plus the glue between, or on an anchor's glue
-  (`anchorRise`). -/
+  /-- `\nointerlineskip` stands before the next box, which takes no interline glue. -/
   private ignoreDepth : Bool := false
-  /-- The first box below an anchor is a row of columns — a minipage, boxes
-  side by side: TeX's box, taller than the leading as a column of lines is,
-  takes `\lineskip` below the anchor's glue, or nothing after
-  `\nointerlineskip`, and its lines stand from its top; this is that
-  extra space, for every column of the row (`colOpen` to `colClose`). -/
+  /-- The extra space the first box below an anchor takes when it is a
+  row of columns: `\lineskip`, or nothing after `\nointerlineskip`. -/
   private colAnchor : Option Sp := none
   /-- A float group is being replayed on the page that holds it whole
-  (`runFloat`): a line that would not fit commits anyway instead of
-  breaking, because the group's one legal position has already been
-  decided — the page bottom may be honestly overrun (W0358), never a
-  silent split. -/
+  (`runFloat`): a line that does not fit commits instead of breaking. -/
   private noBreak : Bool := false
-  /-- Background of the page being built, from `.pageStyle`; reset when it
-  closes. -/
+  /-- Background of the page being built, from `.pageStyle`. -/
   private pageBg : Option Ir.Color := none
-  /-- Persistent background from the current palette, initially the
-  document's opening palette. `.pageGround` replaces it even with `none`. -/
+  /-- Persistent background from the current palette; `.pageGround` replaces it even with `none`. -/
   private docBg : Option Ir.Color := none
-  /-- How the page being built distributes its leftover vertical space;
-  reset when it closes. `.top` (all leftover below) is the undeclared
-  default; a standout frame or section page sets `.center`. -/
+  /-- How the page being built distributes its leftover vertical space. -/
   private vdist : VDist := .top
-  /-- Fil units seen on this page so far: each consumed vertical skip
-  carrying TeX's first-order infinite stretch counts one. When any exist,
-  they own the leftover (`filShare`) and the ratio distribution stands
-  aside. -/
+  /-- Fil units seen on this page so far, which own the leftover when any exist (`filShare`). -/
   private pageFils : Nat := 0
   /-- Per placed line, the fil units above it — parallel to `shrinkAbove`. -/
   private filsAbove : Array Nat := #[]
   /-- The chrome footer for pages closed from this frame opening. -/
   private curFoot : Option (Array Ir.BandSlot) := none
   private curFootLook : Option Ir.TitledLook := none
-  /-- The bottom edge of the open page's `.titleBar` fill, for
-  `PageOut.band`: written where the bar paints, cleared with the page. -/
+  /-- The bottom edge of the open page's `.titleBar` fill, for `PageOut.band`. -/
   private curBand : Option Sp := none
-  /-- The displayed counter of the frame opened by `.frameOpen`.
-  Furniture changes never assign this counter. -/
+  /-- The displayed counter of the frame opened by `.frameOpen`. -/
   private curFrame : Option Nat := none
   /-- The label of the frame opened by `.frameOpen` (`FrameOpening.label`). -/
   private curFrameLabel : Option String := none
   /-- The source frame and overlay opened by `.frameOpen`. -/
   private curFrameOrigin : Option FrameOrigin := none
-  /-- The footline band's box — its glyphs' height above and depth below
-  the baseline (`segsInk`) — for pages closed from here on, written with
-  `curFoot` from the same frame opening: the one value the page's text-area
-  floor (`Spacing.Page.bottom`) and the band's baseline (`footBaseline`) both read. -/
+  /-- The footline band's box for pages closed from here on, the one
+  value the text-area floor and the band's baseline both read. -/
   private footBox : Option (Sp × Sp) := none
-  /-- The text area of the open frame (`FrameOpening.area`), from its
-  `.frameOpen` to its `.frameClose`: the floor the page builder stands the
-  body on (`Spacing.Page.bottom`); the frame's content opens at the area's
-  top through its own `.bodyOpen` (`openFrameBody`). -/
+  /-- The text area of the open frame (`FrameOpening.area`),
+  from its `.frameOpen` to its `.frameClose`. -/
   private frameArea : FrameArea := .margins
-  /-- The declared gap between the footline's ink and the text area:
-  the document's furniture gap, else beamer's 4 pt (`Ir.footline.sep`). -/
+  /-- The declared gap between the footline's ink and the
+  text area, else beamer's 4 pt (`Ir.footline.sep`). -/
   private footGap : Sp := Ir.footline.sep
-  /-- A frame opened its body on this page (`openBody`): the next band is
-  spaced below `y` as below a box of depth zero even though no line
-  stands on the page yet — beamer's `\vbox{}` at the top of an untitled
-  frame. -/
+  /-- A frame opened its body on this page (`openBody`), so
+  the next band is spaced as below a box of depth zero. -/
   private opened : Bool := false
-  /-- Inside a frame (`.frameOpen` to its `.brk`): whether the author
-  declared `[allowframebreaks]`. `none` outside a frame — an article page
-  close is flow, never a spill to report. -/
+  /-- Inside a frame, whether the author declared `[allowframebreaks]`; `none` outside a frame. -/
   private frameBreak : Option Bool := none
-  /-- Opening environment of the current logical frame. It stays with the
-  frame across overlay collection and every continuation page. -/
+  /-- Opening environment of the current logical frame. -/
   private frameSource : Option Span := none
-  /-- The open frame has already been reported once (W0384): a frame three
-  pages tall is one loss, named once, not one per page close. -/
+  /-- The open frame has already been reported once (W0384). -/
   private spillWarned : Bool := false
-  /-- The overflow ladder's records (`Out.overruns`, `Out.needs`,
-  `Out.spilled`), per overlay step of a frame it marked (`noteOverrun`,
-  `neededOverrun`, `warnSpill`). -/
+  /-- The overflow ladder's records (`Out.overruns`), per overlay step of a frame it marked. -/
   private overruns : Array (FrameOrigin × Sp × Sp) := #[]
   private needs : Array (FrameOrigin × Sp) := #[]
   private spilled : Array FrameOrigin := #[]
   /-- The open frame's overflow policy (`FrameOpening.fit`). -/
   private curFit : FrameFitMode := .spill
-  /-- Lines and fills already on the page when `.pin` arrived: page-top
-  chrome (the frame title and its bar) the distribution never moves. -/
+  /-- Lines and fills on the page when `.pin` arrived:
+  page-top chrome the distribution never moves. -/
   private pinnedLines : Nat := 0
   private pinnedFills : Nat := 0
   private pinnedInks : Nat := 0
-  /-- The frame's page-top chrome, snapshotted at `.pin`: the title lines
-  and bar fills with the baseline and depth content resumes below —
-  repeated on every continuation page the frame spills onto (`spillPage`),
-  as beamer repeats the frametitle on every page of a broken frame
-  (`allowframebreaks`, user guide §8.1: the title is per-frame furniture,
-  not first-page content). Cleared at the deliberate frame boundary
-  (`.brk`), so only mid-frame overflow repeats it. -/
+  /-- The frame's page-top chrome, snapshotted at `.pin` and repeated on every
+  continuation page (`spillPage`), as beamer repeats a broken frame's title. -/
   private chrome : Option Spacing.Chrome := none
-  /-- Block links open on the current page; closed spans wait for the page's
-  final vertical placement before their rectangles are measured. -/
+  /-- Block links open on the current page. -/
   private openRegions : Array RegionStart := #[]
   private closedRegions : Array RegionSpan := #[]
-  /-- Anchors owed to the next committed line. Its final page, after columns
-  rejoin, supplies their destination. -/
+  /-- Anchors owed to the next committed line. -/
   private pendingAnchors : Array String := #[]
-  /-- The resolved `\skip\footins` gap for this run — `Ir.footinsDefault`
-  or the document's `\tokens{ footins = ... }` — fixed at `Layout.run`. -/
+  /-- The resolved `\skip\footins` gap for this run. -/
   private footins : Sp := 0
   /-- The footnote rule's ink colour: the design's `fg`. -/
   private noteInk : Ir.Color := Ir.Color.black
   /-- The last pending note's ink below its last baseline (`NoteBlock.depth`). -/
   private notesDepth : Sp := 0
-  /-- Footnote lines committed to the open page, y relative to the note
-  block's top: the bottom-anchored flush in `finishPage` ships them. A
-  note enters only through `attachNotes`, in the same step as its mark's
-  committed line — `placeLine_note_with_mark`'s statement. -/
+  /-- Footnote lines committed to the open page, y relative to the
+  note block's top; a note enters only through `attachNotes`. -/
   private pendingNotes : Array LineOut := #[]
-  /-- Total height of the pending note block (strut tops to ink bottoms):
-  what the fit test in `placeLine` reserves above `bodyBottom`. -/
+  /-- Total height of the pending note block, which the
+  fit test in `placeLine` reserves above `bodyBottom`. -/
   private notesH : Sp := 0
   private diags : Array Diag := #[]
   private paragraphBreaks : Array ParagraphBreaks := #[]
 
 private abbrev B := Spacing.Page
 
-/-- Insets belong to the enclosing regions, not to a line's font. A fresh
-fragment owes its top inset once, and every fit owes all open bottom insets. -/
+/-- Insets belong to the enclosing regions, not to a
+line's font; a fresh fragment owes its top inset once. -/
 private def Spacing.Page.surfaceTop (b : B) : Sp :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + if s.begun then 0 else pad
@@ -8552,11 +7072,8 @@ private def Spacing.Page.surfaceBottom (b : B) : Sp :=
     | .surface _ pad _ _ _ => total + pad
     | .link _ | .edge .. => total) 0
 
-/-- The floor of the text area on the page being built — what every fit
-test, the note block and the page close read: `Geom.bodyBottom`, except on
-a frame page in beamer's text area, which ends `\footheight` above the
-paper's bottom edge (`frameFloor`, from the band's own box, or the gap alone
-under an empty footline), and on any page carrying the footline. -/
+/-- The floor of the text area on the page being built: `Geom.bodyBottom`,
+or `\footheight` above the paper on a frame page in beamer's text area. -/
 private def Spacing.Page.bottom (b : B) : Sp :=
   match b.frameArea with
   | .text => frameFloor b.geom.pageH b.footGap b.footBox
@@ -8565,33 +7082,21 @@ private def Spacing.Page.bottom (b : B) : Sp :=
     | some (h, d) => footFloor b.geom.pageH b.footGap h d
     | none => b.geom.bodyBottom
 
-/-- The gap above a page's note block: LaTeX's `\skip\footins`, except in
-beamer's text area, where a frame sets its footnotes directly under its
-content — `\beamer@framefootnotetext` fills `\beamer@footins`, which the frame
-unboxes after its bottom skip with no skip above it
-(beamerbaseframesize.sty:229-241). -/
+/-- The gap above a page's note block: LaTeX's `\skip\footins`,
+none in beamer's text area (beamerbaseframesize.sty). -/
 private def Spacing.Page.noteGap (b : B) : Sp :=
   if b.frameArea == .margins then b.footins else 0
 
-/-- How far a page's note block hangs below its floor: nothing on LaTeX's
-page, whose insertion stands its ink on the floor, and in beamer's text area
-the notes' last depth — the frame's `\vbox to\textheight` stands their last
-baseline on the floor and takes the depth outside. `depth` is the last
-note's where notes are about to join, the pending ones' otherwise. -/
+/-- How far a page's note block hangs below its floor: nothing
+on LaTeX's page, the notes' last depth in beamer's text area. -/
 private def Spacing.Page.noteHang (b : B) (depth : Option Sp := none) : Sp :=
   if b.frameArea == .margins then 0 else depth.getD b.notesDepth
 
-/-- Nothing stands on the page being built that the next band must be
-spaced below: a blank page (`PageOut.blank`) with no opened frame body, or a
-column rewound to the page's start. -/
+/-- Nothing stands on the page that the next band must be spaced below. -/
 private def Spacing.Page.fresh (b : B) : Bool :=
   (b.cur.blank && !b.opened) || b.freshStart
 
-/-- Attach a committed line's notes to the open page: each note's lines
-join `pendingNotes` shifted below what already stands, whole — no branch
-anywhere splits a `NoteBlock`. Called only beside `Spacing.Page.commit`, so a note
-and its mark's line enter the builder in one step
-(`placeLine_note_with_mark`). -/
+/-- Attach a committed line's notes to the open page, each note whole. -/
 private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
   if notes.isEmpty then b
   else notes.foldl (fun b nb =>
@@ -8600,9 +7105,8 @@ private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
              notesH := b.notesH + nb.height
              notesDepth := nb.depth }) b
 
-/-- W0372: the note block plus its mark's line reach below the text
-block's floor even on a fresh page — the note ships whole and the page is
-honestly overrun (the W0358 shape), never silently truncated or split. -/
+/-- W0372: the note block and its mark's line reach below the floor even
+on a fresh page, so the note ships whole and the page is overrun. -/
 private def Spacing.Page.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
   if b.notesH > 0 && over > 0 then
@@ -8636,9 +7140,6 @@ private def Spacing.Page.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
   · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.cur = b.cur)
       rfl (fun _ _ h => h)
 
-/-- Attaching keeps every note line: whatever already pends survives the
-append, and each attached note's lines land whole (segs intact, y
-restacked). -/
 private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
     (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
     ∃ l' ∈ (b.attachNotes ns).pendingNotes, l'.segs = l.segs := by
@@ -8683,15 +7184,8 @@ private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
   simp only [Spacing.Page.warnNoteOverrun]
   split <;> rfl
 
-/-- The note block as it ships: the footnote rule, then every pending note
-line, bottom-anchored — the block's bottom at `bodyBottom`, the rule in
-the `footins` gap above the block. The rule follows the source and the
-type: `\footnoterule` is a 0.4pt rule over 0.4\columnwidth whose
-net-zero kerns place it 2.6pt clear of the notes (ltmiscen.dtx), read
-here as 0.04 em and 0.26 em of the body size — the heading rule's
-precedent of a sourced absolute following the type. Empty when no note is
-pending, so an unnoted page ships exactly what it always shipped. One
-`++` per page close, bounded, never a walk's accumulator. -/
+/-- The note block as it ships: the footnote rule, then every pending note line, bottom-anchored
+at `bodyBottom`; the rule is `\footnoterule` (ltmiscen.dtx) scaled with the body size. -/
 private def Spacing.Page.noteLines (b : B) : Array LineOut :=
   if b.pendingNotes.isEmpty then #[] else
     let top := b.bottom + b.noteHang - b.notesH
@@ -8705,13 +7199,6 @@ private def Spacing.Page.noteLines (b : B) : Array LineOut :=
                             note := true }
     #[rule] ++ b.pendingNotes.map (fun l => { l with y := top + l.y, note := true })
 
-/-- `note_whole`: every pending note line ships in the one closing page's
-note block — `noteLines` carries each with only its y moved (and the rule
-beside them), so no note is ever split across pages. TeX's split
-insertions (TeXbook ch. 15) are refused by design: whole-or-move,
-`runFloat`'s rule; a note that cannot fit moved with its mark's line
-(`placeLine`'s spill path), and one taller than the text block shipped
-whole with W0372 naming the overrun. -/
 private theorem note_whole (b : B) :
     ∀ l ∈ b.pendingNotes, ∃ l' ∈ b.noteLines, l'.segs = l.segs ∧ l'.note = true := by
   intro l hl
@@ -8725,10 +7212,7 @@ private theorem note_whole (b : B) :
       rfl, rfl⟩
 
 /-- The depth of the band at `y` as TeX's box has it: the last set line's
-deepest glyph while that line is still the band there (`lastInk`'s key
-holds), else the band's own depth — a picture's box, a rule, a bar. TeX's
-line is an hbox of its glyphs (TeXbook ch. 12); the interline rule keeps
-the face's descent (`prevDepth`). -/
+deepest glyph while that line is the band, else the band's own depth. -/
 private def Spacing.Page.boxDepth (b : B) : Sp :=
   match b.lastInk with
   | some (y, d, ink) => if y == b.y && d == b.prevDepth then ink else b.prevDepth
@@ -8745,9 +7229,7 @@ private def Spacing.Page.keepInk (b : B) (ink : Sp) : B :=
 @[simp] private theorem keepInk_pendingNotes (b : B) (d : Sp) :
     (b.keepInk d).pendingNotes = b.pendingNotes := rfl
 
-/-- Record what the line just set leaves the next one: whether it is display
-math (`texAfter`), which skips the display took (`dispShort`), and where a
-text line's content ends (`lineEnd`). -/
+/-- Record what the line just set leaves the next one: `texAfter`, `dispShort` and `lineEnd`. -/
 private def Spacing.Page.displayState (b : B) (tex : Bool) (lineEnd : Option Sp) : B :=
   { b with texAfter := tex, lineEnd := lineEnd }
 
@@ -8762,14 +7244,8 @@ private def Spacing.Page.displayState (b : B) (tex : Bool) (lineEnd : Option Sp)
 @[simp] private theorem displayState_boxDepth (b : B) (t : Bool) (e : Option Sp) :
     (b.displayState t e).boxDepth = b.boxDepth := rfl
 
-/-- TeX's choice of skip above a display (tex.web §1203), joined to the
-pending glue so the page's shrink ledger reads it as any skip: the long one
-when the line before reaches the formula's left edge `left` (its
-`\predisplaysize`, §1146: that line's content plus two quads of the text
-face) or the display is an alignment (§1206), the short one otherwise — and
-always after a heading or an environment's end, whose empty paragraph
-opening measures `-\maxdimen` (§1145). The choice is remembered for the
-skip below (`Op.skipAlt`). -/
+/-- TeX's choice of skip above a display (tex.web §1203), joined
+to the pending glue and remembered for the skip below. -/
 private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Sp) : B :=
   let long := dj.ctx.align ||
     (if dj.ctx.inPar then (b.lineEnd.map fun e => decide (left ≤ e + 2 * size)).getD true
@@ -8795,52 +7271,22 @@ private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Sp) 
 @[simp] private theorem displaySkip_diags (b : B) (dj : DisplayJob) (l s : Sp) :
     (b.displaySkip dj l s).diags = b.diags := rfl
 
-/-- **A band just set as a line answers its glyph box's depth** (`_exact`):
-`keepInk`'s key is the band's own baseline and depth, so the page's
-distribution reads the recorded depth until something else stands at `y`. -/
 private theorem keepInk_boxDepth_exact (b : B) (d : Sp) : (b.keepInk d).boxDepth = d := by
   simp [Spacing.Page.keepInk, Spacing.Page.boxDepth]
 
-/-- **Where the page's content ends**, the one site the vertical
-distribution reads: the last placed box's bottom — `b.y` is the last
-line's baseline or the lower edge of a picture's box, declared or natural
-(`placePicture`) — plus its depth and the space the content still owes
-below it (`owed`), less the shrink the page gave, which moved the last box
-up by all of `needed` (its shrink ledger entry is the page's whole shrink).
-Where the page is TeX's (`Geom.topskip`) the depth is TeX's box's
-(`Spacing.Page.boxDepth`: a set line's deepest glyph, not its face's descent), as the
-first line's rise is (`Spacing.Page.firstRise`), and so is a frame's whose
-content opened at the paper's top with no title box above it (`openBody`: an
-untitled frame, a standout, a section page) — beamer counts the glyph: a last
-line with descenders lifts a `[c]` frame by half their depth, 1.00 bp
-measured. A titled frame page keeps the face's descent: its window above the
-content — the title box's bottom and the leading under it — stands low by
-more than the descent it would give back, so the two move together or not
-at all. TeX sets a frame's content as one box: beamer centres the
-`\vbox` whole, a declared `\useasboundingbox` is its picture's extent
-however far the ink stands from it, and `\addvspace` leaves a trivlist's
-closing `\topsep` inside the box. Never the lowest line: a label can stand
-below a declared box, and a picture's box reaches below its labels. -/
+/-- Where the page's content ends, the one site the vertical distribution reads:
+the last box's bottom, its depth and `owed`, less the shrink the page gave. -/
 private def Spacing.Page.contentEnd (b : B) (owed : Sp) : Sp :=
   b.y + (if b.geom.topskip.isSome || (b.opened && b.pinnedLines == 0) then b.boxDepth
     else b.prevDepth) + owed -
     (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0)
 
-/-- What the content keeps below its last box when the page closes at a
-boundary the document declared (`\newpage`, `\pagebreak`, its end): the
-glue pending there — or, on a TeX page with none, TeX's own
-`\vskip -\@outputbox@depth`. The output routine takes one final infinite
-skip off the page (`\@outputbox@removebskip`, latex.ltx:20688) and cancels
-the depth of the box then ending it (`\@make@normalcolbox`,
-latex.ltx:20658-20665), so a line closing a bottom-flushed page stands on
-the floor with its depth below it. -/
+/-- What the content keeps below its last box at a declared page boundary: the pending
+glue, or on a TeX page with none, the last box's cancelled depth (latex.ltx). -/
 private def Spacing.Page.closingOwed (b : B) : Sp :=
   if b.geom.topskip.isSome && b.skip.width == 0 && b.skip.stretch == 0 && !b.skip.fil
   then -b.boxDepth else b.skip.width
 
-/-- **A box that ends a TeX page leaves its baseline as the content's end**
-(`_exact`): with nothing pending at a declared boundary, the depth the
-distribution reads is cancelled whole, as the output routine cancels it. -/
 private theorem closingOwed_cancel_exact (b : B) (ht : b.geom.topskip.isSome = true)
     (hw : b.skip.width = 0) (hs : b.skip.stretch = 0) (hf : b.skip.fil = false) :
     b.contentEnd b.closingOwed =
@@ -8849,10 +7295,8 @@ private theorem closingOwed_cancel_exact (b : B) (ht : b.geom.topskip.isSome = t
   simp
   omega
 
-/-- The end a PDF page's distribution must clear: its ordinary box end
-and any painted surface end. This is artifact geometry, not an IR
-statement. In particular, TeX's cancelled final depth cannot cancel the
-bottom inset of a surface that has already closed. -/
+/-- The end a PDF page's distribution must clear:
+its ordinary box end and any painted surface end. -/
 public def regionContentEnd (ordinary : Sp) (painted : Option Sp) : Sp :=
   max ordinary (painted.getD ordinary)
 
@@ -8860,34 +7304,28 @@ public theorem regionContentEnd_none_exact (ordinary : Sp) :
     regionContentEnd ordinary none = ordinary := by
   simp [regionContentEnd]
 
-/-- Both contributors remain in the page-close budget. This local bound
-does not claim that every region can fit an arbitrarily small page. -/
 public theorem regionContentEnd_covers (ordinary painted : Sp) :
     ordinary ≤ regionContentEnd ordinary (some painted) ∧
       painted ≤ regionContentEnd ordinary (some painted) :=
   ⟨Int.le_max_left .., Int.le_max_right ..⟩
 
-/-- Measure the same open and closed fragments that page close will
-paint, after shrink and before distributing the remaining space. -/
+/-- The painted surface end of the page's open and closed
+fragments, measured after shrink and before distribution. -/
 private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
     (fills : Array Fill) (inks : Array InkOut) : Option Sp :=
   let spans := b.closedRegions ++ b.openRegions.map (fun start => start.close b.cur)
-  -- The body's part of a rule beside the whole block stands where TeX's
-  -- box of no size holds it, and holds no room of the page's.
+  -- The body's part of a rule beside the whole block holds no room of the page's.
   (regionFills spans lines fills inks).foldl (fun edge (s, f) =>
     if s.continuesRule then edge else some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
 
-/-- How a frame names itself in a diagnostic: by its label
-(`Ir.Doc.frameLabels`), else as a frame. -/
+/-- How a frame names itself in a diagnostic: by its label, else as a frame. -/
 private def frameWho (label : Option String) : String :=
   match label with
   | some l => s!"frame {l}"
   | none => "a frame"
 
-/-- W0384: the frame labelled `label`, declared at `span`, is `o` taller
-than its page and continues on the next page; `also`, where another of its
-overlay steps stood `p` past its text area instead, the one account of the
-frame says so too. -/
+/-- W0384: the frame is `o` taller than its page and continues
+on the next; `also` adds another step's overhang. -/
 public def continuedDiag (label : Option String) (span : Option Span) (o : Sp)
     (also : Option Sp := none) : Diag :=
   Diag.of .W0384
@@ -8911,10 +7349,8 @@ public def overfullDiag (label : Option String) (span : Option Span) (o : Sp) : 
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept a break")
     (detail := some s!"{frameWho label}: {o.toPtString}pt past")
 
-/-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where it
-stood overfull, W0384 where it continued, with `also` an overfull step's
-overhang beside a continuing one; nothing where it fit, its glue shrunk or
-not. -/
+/-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
+it stood overfull, W0384 where it continued, nothing where it fit. -/
 public def fitDiag (fit : Ir.FrameFit) (label : Option String) (span : Option Span)
     (also : Option Sp := none) : Option Diag :=
   match fit with
@@ -8922,10 +7358,6 @@ public def fitDiag (fit : Ir.FrameFit) (label : Option String) (span : Option Sp
   | .continued o => some (continuedDiag label span o also)
   | .natural | .shrunk => none
 
-/-- **A frame the ladder moved is named, by what it did; one it left is
-not** (`_accounts`): `fitDiag` names exactly the overfull and the continued
-decisions, each by its own code — the one spelling the builder's W0384
-(`warnSpill`) and the ladder's account (`runFitted`) share. -/
 public theorem frameFit_accounts (fit : Ir.FrameFit) (label : Option String)
     (span : Option Span) (also : Option Sp) :
     (fitDiag fit label span also).map (·.kind) =
@@ -8935,15 +7367,12 @@ public theorem frameFit_accounts (fit : Ir.FrameFit) (label : Option String)
       | .natural | .shrunk => none := by
   cases fit <;> rfl
 
-/-- Whether the open page's frame is one the overflow ladder marked
-(`FrameFitMode`): it records the frame and names it, not the page. -/
+/-- Whether the open page's frame is one the overflow ladder marked (`FrameFitMode`). -/
 private def Spacing.Page.ladder (b : B) : Bool :=
   b.frameBreak == some false && b.curFit != .spill
 
-/-- The ladder's record of the open page's shrink as it closes: a marked
-frame step whose page could not set it at its glue's natural size records
-how far its content stood past the floor there (`needed`), the largest over
-its pages. -/
+/-- The ladder's record of a marked frame step whose page could not
+set it at natural glue: how far its content stood past the floor. -/
 private def Spacing.Page.neededOverrun (b : B) : Array (FrameOrigin × Sp) :=
   match b.ladder, b.curFrameOrigin with
   | true, some origin =>
@@ -8954,17 +7383,8 @@ private def Spacing.Page.neededOverrun (b : B) : Array (FrameOrigin × Sp) :=
     else b.needs
   | _, _ => b.needs
 
-/-- Close the current page. A page that overflowed at natural size within
-its shrink is set to fit: every line moves up by its share of the shrink
-above it, the glue set at one ratio like a justified line's. `owed` is the
-pending glue the content keeps: at a boundary the content declared (a
-frame's end, `\newpage`, the document's end) the caller passes
-`Spacing.Page.closingOwed` — the pending skip's width, since TeX keeps that glue
-inside the frame's box or before `\newpage`'s `\vfil`, or the last box's
-cancelled depth where nothing is pending on a TeX page; at a break (a
-spill, a float moved on) nothing, since TeX discards glue at a page
-break. `flush` is a break under `\flushbottom` (`Spacing.Page.flushes`): the page's
-finite stretch then takes the leftover, as TeX's output box does. -/
+/-- Close the current page: an overflow within shrink is set to fit, the leftover is distributed,
+`owed` is the pending glue the content keeps, and `flush` sets a `\flushbottom` break. -/
 private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
   let lines := if b.needed > 0 && b.pageShrink > 0 then
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
@@ -8984,33 +7404,14 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       (detail := some (s!"page {b.pages.size + 1}: {b.needed / 65536}pt short, its skips gave " ++
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")))
     else b.diags
-  -- The leftover between the content's bottom and the bottom margin. Fil
-  -- glue owns it when any stands on the page: each line moves by its
-  -- share (`filShare`) — the \vspace{\fill} sandwich centres, a leading
-  -- \vfill bottom-flushes where the page's own glue yields, exactly TeX's
-  -- infinite-glue model. A trailing
-  -- pending fil (a \vfill nothing follows) joins the denominator, and so
-  -- does a frame's own glue of the fills' order (`VDist.filAbove`,
-  -- `VDist.filTotal`): beamer's keys share with a `\vfill`. With no
-  -- fil, the page's declared ratio (`VDist`) splits it as before. Only
-  -- what follows the `.pin` mark moves. Lines, fills and inks read
-  -- their own glue shares, so a bar and its title stay attached.
+  -- Fil glue owns the leftover where any stands (`filShare`); else the ratio (`VDist`) splits it.
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
   let paintedEnd := b.surfaceEnd lines fills inks
   let leftover := if lines.size > b.pinnedLines || inks.size > b.pinnedInks then
-      -- the vertical distribution fills down to the note block's top, so
-      -- flush or centred bottoms never move a note (they are appended
-      -- after the shift, anchored at bodyBottom)
+      -- The distribution fills down to the note block's top, so it never moves a note.
       noteFloor b.bottom b.noteGap b.notesH b.noteHang - regionContentEnd (b.contentEnd owed) paintedEnd
     else 0
-  -- `\flushbottom` on a page the builder broke (`flush`): with no fil and
-  -- no shrink given, the page's finite stretch takes the leftover between
-  -- its last baseline and the floor — TeX's output box is `\vbox to
-  -- \@colht` with the last box's depth cancelled and no `\@textbottom`
-  -- fil (latex.ltx `\@make@normalcolbox`, `\flushbottom`) — each line
-  -- moving by its share of the stretch above it, at one glue-set ratio.
-  -- A surface's metric depth and insets remain painted even when its
-  -- source region has closed. Ordinary text keeps TeX's baseline floor.
+  -- `\flushbottom`: with no fil and no shrink, finite stretch takes the leftover (latex.ltx).
   let lo := noteFloor b.bottom b.noteGap b.notesH b.noteHang - regionContentEnd b.y paintedEnd
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
@@ -9038,16 +7439,13 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
     if i < b.pinnedFills then f
     else { f with
       y := f.y + riderShift (b.fillStretchAbove.getD i 0) (b.fillFilsAbove.getD i 0) }
-  -- The footer background occupies its measured band, including the
-  -- template's closing skip, below the body floor. It is page furniture
-  -- and therefore never participates in the body's vertical distribution.
+  -- The footer background is page furniture and never joins the body's distribution.
   let footerFills := match b.curFoot, b.footBox, b.curFootLook.bind (·.bar) with
     | some _, some (h, d), some c =>
       let y := footBaseline b.geom.pageH d - h
       #[{ x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c : Fill }]
     | _, _, _ => #[]
-  -- Picture ink carries the picture's shares, including pictures with
-  -- no labels; ink placed in a title slot is pinned with the slot's lines.
+  -- Picture ink carries the picture's shares; title-slot ink is pinned with its lines.
   let inks := inks.mapIdx fun i k =>
     if i < b.pinnedInks then k
     else k.shiftY (riderShift (b.inkStretchAbove.getD i 0) (b.inkFilsAbove.getD i 0))
@@ -9060,9 +7458,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   let fills := match effectivePageGround b.pageBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
     | none => fills
-  -- The bottom-anchored flush: the pending notes (and their rule) join
-  -- the page after the vertical distribution moved the body lines, so
-  -- the distribution can never move a note.
+  -- The notes join after the distribution moved the body lines, so it can never move a note.
   { b with pages := b.pages.push { pageState := b.pageState,
                                    lines := lines ++ b.noteLines, fills := fills,
                                    links := links, inks := inks, foot := b.curFoot,
@@ -9083,9 +7479,6 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
            pendingNotes := #[], notesH := 0, notesDepth := 0, opened := false, freshStart := false,
            diags := diags, needs := b.neededOverrun }
 
-/-- The shipped page records the IR lifecycle before shipment, and the
-builder advances by the shared `PageState.ship` transition. The geometry
-and distribution that close the page cannot change either projection. -/
 private theorem finishPage_lifecycle_projects (b : B) (owed : Sp) (flush : Bool) :
     ((b.finishPage owed flush).pages.back?.map (·.pageState)) = some b.pageState ∧
       (b.finishPage owed flush).pageState = b.pageState.ship := by
@@ -9093,9 +7486,6 @@ private theorem finishPage_lifecycle_projects (b : B) (owed : Sp) (flush : Bool)
   · simp [Spacing.Page.finishPage]
   · rfl
 
-/-- The physical shipment door records ownership independently of furniture.
-Closing geometry changes neither the source frame nor its displayed counter
-and leaves the same assignment active for a continuation. -/
 private theorem finishPage_frame_projects (b : B) (owed : Sp) (flush : Bool) :
     ((b.finishPage owed flush).pages.back?.map
       (fun p => (p.frameOrigin, p.frame, p.foot))) =
@@ -9105,8 +7495,6 @@ private theorem finishPage_frame_projects (b : B) (owed : Sp) (flush : Bool) :
     (b.finishPage owed flush).curFoot = b.curFoot := by
   exact ⟨by simp [Spacing.Page.finishPage], rfl, rfl, rfl⟩
 
-/-- A y-only rewrite keeps every line's segs: the projection both closing
-transformations (the shrink zip and the distribution `mapIdx`) satisfy. -/
 private theorem map_segs_mapIdx (xs : Array LineOut) (f : Nat → LineOut → LineOut)
     (hf : ∀ i l, (f i l).segs = l.segs) :
     (xs.mapIdx f).map (·.segs) = xs.map (·.segs) := by
@@ -9124,18 +7512,6 @@ private theorem map_segs_zip (xs : Array LineOut) (sh : Array Sp)
   · intro i h1 h2
     simp [hf]
 
-/-- `footnote_with_mark`, the ship half: the one page `finishPage` pushes
-carries every committed line — the mark's among them — and then the whole
-note block, segs intact: the close's transformations (shrink, the vertical
-distribution, fil glue) move only y, and the notes join after them,
-bottom-anchored. With `placeLine`'s attach (a mark's line and its notes
-enter `cur`/`pendingNotes` in one step, both spilling together when the
-line does) and `stepStaged_extends` (a shipped page never changes), a
-committed line carrying mark k has note k's first line on its own page
-index. The census tests over `Layout.Out` are the realisation check, as
-`runFloat_whole`'s are. Sourced as the behaviour is: a LaTeX footnote is an
-insertion on the page of its mark (TeXbook ch. 15; ltmiscen.dtx's
-`\@makecol` builds the page as body then rule then notes). -/
 private theorem footnote_with_mark (b : B) (owed : Sp) (flush : Bool)
     (hs : b.shrinkAbove.size = b.cur.lines.size) :
     ((b.finishPage owed flush).pages.back?.map fun p => p.lines.map (·.segs)) =
@@ -9156,8 +7532,7 @@ private theorem footnote_with_mark (b : B) (owed : Sp) (flush : Bool)
        intro i l
        split <;> rfl)
 
-/-- The source assignment and the actual emitted segments travel together
-when vertical distribution moves a line. -/
+/-- A line's source assignment and its emitted segments, which move together. -/
 private def LineOut.sourceSegs (l : LineOut) : Option Nat × Array Seg :=
   (l.leaf, l.segs)
 
@@ -9212,8 +7587,8 @@ private theorem finishPage_sourceSegs (b : B) (owed : Sp) (flush : Bool)
        intro i l
        split <;> rfl)
 
-/-- Plain paragraphs have no note or repeated-chrome producer. The ledger
-length is part of the invariant: the closing zip cannot discard a line. -/
+/-- Plain paragraphs have no note or repeated-chrome
+producer; the ledger length is part of the invariant. -/
 private structure Spacing.Page.SourceBound (n : Nat) (b : B) : Prop where
   current : ∀ l ∈ b.cur.lines, l.SourceBound n
   pages : ∀ p ∈ b.pages, ∀ l ∈ p.lines, l.SourceBound n
@@ -9247,10 +7622,8 @@ private theorem sourceBound_finishPage {n : Nat} (b : B) (owed : Sp) (flush : Bo
     obtain ⟨l', hl', hk⟩ := Array.mem_map.mp hm
     exact sourceBound_of_sourceSegs hk.symm (hb.current l' hl')
 
-/-- Reopen the frame's page-top chrome on a fresh page: the pinned title
-lines and bar fills repeat, and content resumes below the chrome's own
-baseline and depth. The repeated lines never move (they are the new
-page's pin) and carry no shrink or fil share. -/
+/-- Reopen the frame's page-top chrome on a fresh page: the pinned
+title lines and bar fills repeat, and content resumes below them. -/
 private def Spacing.Page.reopenChrome (b : B) : B :=
   match b.chrome with
   | some c =>
@@ -9276,47 +7649,26 @@ private def Spacing.Page.reopenChrome (b : B) : B :=
              curBand := c.header }
   | none => b
 
-/-- moloch's frametitle box, closed: the last title baseline plus the
-padding below it, or the title's own depth where that is deeper
-(beamerouterthememoloch.dtx, `\moloch@frametitlestrut@end`: a rule of
-`margin@bottom` hung from the baseline, so the box's depth is
-`max(margin@bottom, depth of the title)`). The first baseline stands at
-`pad + strut` (`@start`: a strut of `margin@top + \ht\strutbox`), which is
-where `.titleBar` moves it. A fact of the paged artifact — where the bar's
-edge falls — not of the IR: the IR's statement is the values
-(`Ir.frameTitleStrut`, `Ir.frameTitlePadding_exact`). Spelled `Int`, as
-`omega` reads it. -/
+/-- moloch's frametitle box height: the last title baseline plus the padding
+below it, or the title's own depth where deeper (beamerouterthememoloch.dtx). -/
 public def frameBarHeight (pad lastBaseline depth : Int) : Int :=
   lastBaseline + max pad depth
 
-/-- `frameBar_exact`: a one-line title whose depth stays inside the padding
-paints a bar exactly `2·pad + strut` tall — moloch's `2·\ht\strutbox +
-\ht\strutbox` (29.4 pt at beamer's `\large` on the 11 pt body), and with
-the token's value (`Ir.frameTitlePadding_exact`) three struts of the title's
-leading. -/
 public theorem frameBar_exact (pad strut depth : Int) (h : depth ≤ pad) :
     frameBarHeight pad (pad + strut) depth = 2 * pad + strut := by
   simp only [frameBarHeight]
   omega
 
-/-- How far below its text area a frame's ink may reach before the
-footline's: the gap beamer's `\footheight` keeps above the footline
-(beamerbaseframecomponents.sty:167, `Ir.footline`'s `sep`) where the page is
-beamer's text area (`FrameArea.text`); nothing on the slides margins, whose
-bottom margin a running foot may own, nothing where the area is the paper,
-and nothing on a page whose footnotes stand at the floor, which the overhang
-would reach. -/
+/-- How far below its text area a frame's ink may reach before the footline's:
+beamer's `\footheight` gap in its text area, nothing elsewhere. -/
 private def Spacing.Page.clearance (b : B) : Sp :=
   if b.notesH > 0 || !b.pendingNotes.isEmpty then 0 else
   match b.frameArea with
   | .text => b.footGap
   | .margins | .paper => 0
 
-/-- Whether the open frame stands a line `beyond` past its text area, beyond
-its glue's shrink, overfull on its page: everywhere while the ladder
-measures the frame (`measure`), within the clearance where it decided the
-frame fits there (`overhang`), never where the frame continues (`continues`,
-`spill`). -/
+/-- Whether the open frame stands a line `beyond` past its text
+area overfull on its page, as the ladder's fit mode allows. -/
 private def Spacing.Page.overhangs (b : B) (beyond : Sp) : Bool :=
   b.frameBreak == some false &&
     match b.curFit with
@@ -9324,10 +7676,8 @@ private def Spacing.Page.overhangs (b : B) (beyond : Sp) : Bool :=
     | .overhang => decide (beyond ≤ b.clearance)
     | .continues | .spill => false
 
-/-- The ladder's record of how far a marked frame step's content reached past
-its text area beyond what its glue shrinks, the largest over its lines, and
-the least clearance its pages left: nothing where it stays inside, and
-nothing for a frame no ladder marked. -/
+/-- The ladder's record of how far a marked frame step's content
+reached past its text area, and the least clearance its pages left. -/
 private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
   if over ≤ 0 then b else
   match b.ladder, b.curFrameOrigin with
@@ -9338,15 +7688,8 @@ private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
     | none => { b with overruns := b.overruns.push (origin, over, b.clearance) }
   | _, _ => b
 
-/-- W0384, the spill's account: a frame whose author did not declare
-`[allowframebreaks]` has content `over` taller than its page, and it
-continues on the next page — beamer sets it overfull on its one page ("the
-text just extends unpleasantly over the bottom", user guide §8.1); this
-engine ships it and says so. A frame the overflow ladder marked
-(`Spacing.Page.ladder`) records its step instead (`spilled`), and the ladder
-names it with the whole overrun it measured (`runFitted`). Inside a
-declared-breakable frame, and outside any frame (an article's page close is
-flow), silent. -/
+/-- W0384: a frame not declared `[allowframebreaks]` is `over` taller than its page
+and continues; a marked frame records its step instead, and flow is silent. -/
 private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
   match b.frameBreak, b.spillWarned with
   | some false, false =>
@@ -9354,8 +7697,7 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
     | .spill, _ | _, none =>
       { b with diags := b.diags.push (continuedDiag b.curFrameLabel b.frameSource over)
                spillWarned := true }
-    -- premise: runFitted_accounts — a marked frame's spill is recorded, not
-    -- named here: the ladder names every frame whose step it recorded.
+    -- premise: runFitted_accounts — the ladder names every recorded frame step.
     | _, some o => { b with spilled := b.spilled.push o, spillWarned := true }
   | _, _ => b
 
@@ -9455,15 +7797,6 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
   repeat' split
   all_goals rfl
 
-/-- `warnSpill_accounts`: the one mid-frame page close, and its account in
-the same step — the first spill of an overlay step of a frame that declared
-no break adds exactly one record to the builder: a W0384, or for a frame the overflow
-ladder marked, its step in `spilled`, which the ladder names (`runFitted`);
-a spill anywhere else (a declared break, an article's flow, the same frame
-step's later pages) adds none. The `_accounts` shape
-(`rewriteCtrl_accounts`): the continuation page is paid for by the warning,
-decided on the same `frameBreak` the builder reads, never by inspecting the
-shipped pages afterwards. -/
 private theorem warnSpill_accounts (b : B) (o : Sp) :
     (b.warnSpill o).diags.size + (b.warnSpill o).spilled.size =
       b.diags.size + b.spilled.size +
@@ -9474,20 +7807,13 @@ private theorem warnSpill_accounts (b : B) (o : Sp) :
     | (simp; done)
     | (simp only [and_self, ite_true]; split <;> simp only [Array.size_push] <;> omega)
 
-/-- A page the builder breaks is set flush (`Spacing.Page.finishPage`'s `flush`) where
-the document declared `\flushbottom` and the page is TeX's, outside a
-frame. -/
+/-- Whether a page the builder breaks is set flush:
+`\flushbottom` declared on a TeX page outside a frame. -/
 private def Spacing.Page.flushes (b : B) : Bool :=
   b.geom.flushBottom && b.geom.topskip.isSome && b.frameBreak.isNone
 
-/-- Close an overfull page mid-frame and repeat the frame's chrome on the
-next, and its ground: a continuation page is the frame's page as much as
-the first, so it stands on the ground the frame declared (`.pageStyle`) and
-not on the document's. Where no chrome is set — an article page, a plain or
-standout frame — the page ships exactly as `finishPage` ships it, set flush
-where the document declared `\flushbottom` (`Spacing.Page.flushes`). `over` is
-how far the band that did not fit reached past the page bottom, for the
-account (`warnSpill`). -/
+/-- Close an overfull page mid-frame and repeat the frame's chrome and
+ground on the next; `over` is how far the band that did not fit reached. -/
 private def Spacing.Page.spillPage (b : B) (over : Sp := 0) : B :=
   { (b.finishPage (flush := b.flushes)).reopenChrome.warnSpill over with pageBg := b.pageBg }
 
@@ -9496,17 +7822,11 @@ private def Spacing.Page.spillPage (b : B) (over : Sp := 0) : B :=
   unfold Spacing.Page.reopenChrome
   split <;> rfl
 
-/-- A spill ships exactly the page `finishPage` ships: the chrome reopen
-only seeds the next page's `cur`, so every pages-extension fact about
-`finishPage` transports. -/
 @[simp] private theorem spillPage_pages (b : B) (o : Sp) :
     (b.spillPage o).pages = (b.finishPage 0 b.flushes).pages := by
   unfold Spacing.Page.spillPage
   simp
 
-/-- Repeated title chrome and the overflow warning retain the source and
-footer selected by the actual frame opening. A spill adds a physical page,
-without inventing another source frame or overlay step. -/
 private theorem spillPage_frame_projects (b : B) (over : Sp) :
     ((b.spillPage over).pages.back?.map
       (fun p => (p.frameOrigin, p.frame, p.foot))) =
@@ -9520,26 +7840,13 @@ private theorem spillPage_frame_projects (b : B) (over : Sp) :
     repeat' split
     all_goals exact ⟨rfl, rfl, rfl⟩
 
-/-- The rider door: content that joins the open page with no vertical
-negotiation — no skip, no depth, no page close. A sibling `line` shares
-its baseline with the last committed one (an underline row, a picture's
-label) and rides with it when the page is set short: its shares of the
-page's shrink and fils are the last line's unless the rider declares its
-own (`shrink`, `fils` — a picture's label rides the picture's), so every
-line holds one entry of each, which is how `finishPage` reads them.
-`fills` and `inks` paint behind what already stands (a title or block
-bar, a progress track, a picture's shapes). With `commit` and
-`finishPage` this is the third and last writer of the page being built:
-`cur.lines`, `cur.fills`, and `cur.inks` grow nowhere else
-(`reopenChrome` seeds a fresh page's repeated chrome whole; it appends
-to nothing). -/
+/-- The rider door: content joining the open page with no vertical negotiation,
+a line sharing the last baseline, and fills and inks painting behind. -/
 private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
     (fills : Array Fill := #[]) (inks : Array InkOut := #[])
     (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
   let b := match line with
     | some l =>
-      -- A rider joins the band at `y` unmeasured: the band answers its
-      -- metric depth again (`Spacing.Page.boxDepth`). It rides the last band's stretch.
       { b with cur := { b.cur with lines := b.cur.lines.push l },
                shrinkAbove := b.shrinkAbove.push
                  (shrink.getD (b.shrinkAbove.back?.getD 0))
@@ -9559,22 +7866,16 @@ private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
                 fillFilsAbove := b.fillFilsAbove ++ .replicate fills.size (fils.getD b.pageFils)
                 inkFilsAbove := b.inkFilsAbove ++ .replicate inks.size (fils.getD b.pageFils) }
 
-/-- Push a picture's label lines: each a rider on the picture's own
-shrink and fil count, through the one rider door. -/
+/-- Push a picture's label lines as riders on the picture's own shrink and fils. -/
 private def Spacing.Page.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) (fils : Nat) : B :=
   ls.foldl (fun b l => b.pushSibling (some l) (shrink := some shrink) (fils := some fils)) b
 
 private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
     (ruleLine : Bool) (consume : Bool) (overflow : Sp) : B :=
-  -- The page's shrink ledger is maintained here and nowhere else: a line
-  -- that consumed the pending skip banks its shrink (the fit test in
-  -- `fitCommit` read the same sum); a line opening a page owes none.
+  -- The page's shrink ledger is kept here alone; a line opening a page owes none.
   let above := if consume then b.pageShrink + b.skip.shrink else 0
   let stretch := if consume then b.pageStretch + b.skip.stretch else 0
-  -- The consumed skip's fil counts here, page top included: an author's
-  -- \vspace*{\fill} above the first line is what the star means (the
-  -- space survives the break), and fil width is zero, so counting it
-  -- costs nothing when unused.
+  -- A consumed skip's fil counts at the page top too: `\vspace*{\fill}` survives the break.
   let fils := b.pageFils + (if b.skip.fil then 1 else 0)
   let line := { line with anchors := b.pendingAnchors ++ line.anchors }
   { b with cur := { b.cur with lines := b.cur.lines.push line }
@@ -9602,21 +7903,12 @@ private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
            opening := false
            skip := {} }
 
-/-- `doc_geometry_uniform`, the honest whole-document statement for the
-preamble-only declarations (`\page` among the eight W0340 fences from the
-body): every page of a run is laid out under the one declared geometry,
-because the placement steps never write `geom` — the identity holds
-through page close, line commit, and sibling rules, so a second geometry
-is unrepresentable on the way to `Out`. The body door for geometry does
-not exist, and this is the statement that keeps it that way: a step that
-started writing `geom` would fail here at build time. -/
 private theorem doc_geometry_uniform (b : B) (l line : LineOut)
     (depth below : Sp) (ruleLine consume : Bool) (overflow : Sp) :
     b.finishPage.geom = b.geom ∧ (b.pushSibling (some l)).geom = b.geom ∧
       (b.commit line depth below ruleLine consume overflow).geom = b.geom :=
   ⟨rfl, rfl, rfl⟩
 
-/-- How far a segment advances the pen: its width on the line. -/
 public def Seg.advance : Seg → Sp
   | .run _ _ _ w .. => w
   | .gap w _ => w
@@ -9626,8 +7918,7 @@ public def Seg.advance : Seg → Sp
   | .image _ w _ => w
   | .poly _ _ => 0
 
-/-- A run emptied of its glyph payload, every metric field kept: the
-transformation `line_box_glyph_free` quantifies over. -/
+/-- A run emptied of its glyph payload, every metric field kept. -/
 public def Seg.stripGlyphs : Seg → Seg
   | .run idx color link w _ size leading decorations raise ground attr =>
     .run idx color link w #[] size leading decorations raise ground attr
@@ -9648,79 +7939,46 @@ public def Seg.hasLeading : Seg → Bool
   | .run _ _ _ _ _ _ metrics _ _ _ _ => metrics.leading.isSome
   | _ => false
 
-/-- Math geometry is retained even on glyph-free construction struts. -/
+/-- Whether a segment carries math geometry, kept even on glyph-free construction struts. -/
 public def Seg.isMath : Seg → Bool
   | .run _ _ _ _ _ _ metrics _ _ _ _ => metrics.math.isSome
   | _ => false
 
-/-- A line's font-relative extent above and below the baseline (CSS 2.1
-§10.8.1), enlarged by math construction bounds. The clearing extent uses
-text ink-ascent/descent and the math construction's measured reach.
-Actual neighbouring outlines are read separately by `segsInk`. -/
+/-- A line's font-relative extent above and below the baseline
+(CSS 2.1 §10.8.1), enlarged by math construction bounds. -/
 public structure LineBox where
-  /-- Box top above the baseline: leaded metric ascent, the interline
-  term a line contributes when it is the lower neighbour. -/
+  /-- Box top above the baseline: leaded metric ascent. -/
   above : Sp
-  /-- Box bottom below the baseline: leaded metric descent, the interline
-  term a line contributes when it is the upper neighbour. -/
+  /-- Box bottom below the baseline: leaded metric descent. -/
   below : Sp
-  /-- Ink above the baseline (cap height per run): what stacks flush
-  under a table rule, TeX's `\prevdepth`-ignored convention. -/
+  /-- Ink above the baseline (cap height per run). -/
   inkAbove : Sp
-  /-- Ink below the baseline (descent per run): what the page bottom and
-  the furniture bands must clear. -/
+  /-- Ink below the baseline (descent per run). -/
   inkBelow : Sp
   deriving Repr
 
-/-- A line's glyph box raised to a table row's strut: the strut or the
-glyphs, whichever reaches further above and below. -/
+/-- A line's glyph box raised to a table row's strut, whichever reaches further above and below. -/
 public def strutInk (ink : Sp × Sp) (s : Sp × Sp) : Sp × Sp :=
   (max ink.1 s.1, max ink.2 s.2)
 
-/-- TeX's box of a table row. Every row of an array carries latex.ltx's
-`\@arstrut` (`\@arstrutbox`: 0.7 and 0.3 of the `\baselineskip` in force
-where the table opens, `tableStrut`), and `\@array` zeroes `\baselineskip`
-and `\lineskip`, so a row stacks flush on its neighbours by its own height
-and depth — the strut's or its glyphs', whichever reaches further — and no
-leading enters. Every term the interline rule reads is that box: a row under
-a rule stands the strut's height below the rule's sep (`interlineFor`'s
-`.rule` arm reads `inkAbove`), a rule under a row stands the strut's depth
-below its baseline, and two plain rows stand the strut's full height apart.
-Read as a line of prose, a row stood on its glyphs beside a rule, and a
-booktabs rule's padding came out a point and a half short of lualatex's.
-Off a table the line keeps its own box. -/
+/-- TeX's box of a table row: latex.ltx's `\@arstrut` or
+the glyphs, whichever reaches further, with no leading. -/
 public def strutBox (ink : Sp × Sp) (s : Sp × Sp) : LineBox :=
   let k := strutInk ink s
   { above := k.1, below := k.2, inkAbove := k.1, inkBelow := k.2 }
 
-/-- **A row its strut covers is its strut** (`_exact`): when no glyph of a
-table row reaches past the strut, every term of the row's box is the
-strut's — the height above the baseline, the depth below it, whatever the
-face's leading would have made of the line. -/
 public theorem strutBox_exact (ink : Sp × Sp) (h d : Sp)
     (hh : ink.1 ≤ h) (hd : ink.2 ≤ d) :
     strutBox ink (h, d) = { above := h, below := d, inkAbove := h, inkBelow := d } := by
   simp only [strutBox, strutInk]
   rw [Int.max_eq_right hh, Int.max_eq_right hd]
 
-/-- CSS 2.1 §10.8.1's half-leading over one (ascent, descent, leading)
-triple: the leading less the metric extent, split into integer halves
-that sum back exactly, half above the ascent and half below the descent.
-Negative half-leading is legal and real — ascent plus descent exceeds
-the 6⁄5 leading for three of the four shipped families. Font metrics
-therefore cannot stand in for actual ink in a collision test. -/
+/-- CSS 2.1 §10.8.1's half-leading over one (ascent, descent, leading): the leading
+less the metric extent, split into integer halves that sum back exactly. -/
 public def leadedBox (ascent descent leading : Sp) : Sp × Sp :=
   (ascent + (leading - (ascent + descent)) / 2,
    leading - ascent - (leading - (ascent + descent)) / 2)
 
-/-- The half-leading cancellation, `baselines_on_grid`: a leaded box's
-extent is exactly the leading — A + D + L(eftover) = leading — whatever
-the rounding, because `leadedBox` assigns the odd unit below. So in a
-paragraph of one (font, size) the interline rule (below of the previous
-line plus above of this one) realizes exactly `Ir.leadingFor`,
-unconditionally: uniform text sits on the rhythm's grid by algebra, not
-by a per-font accident. The mid-paragraph size change is the documented
-displacement, pinned executably in Tests/Layout.lean (spacingChecks). -/
 public theorem baselines_on_grid (ascent descent leading : Int) :
     (leadedBox ascent descent leading).1 + (leadedBox ascent descent leading).2
       = leading := by
@@ -9762,32 +8020,8 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat) (lead :
     mergeLineBox acc ⟨above, below, above, below⟩
   | .gap _ _ | .decoratedGap _ _ _ => acc
 
-/-- A line's vertical extent, measured seg by seg, each run its own
-leaded metric box (`leadedBox` of the font's ascent and descent at the
-run's size, plus `raise`) at its paragraph's leading in its own size's
-proportion (`Ir.runLead`), never at a leading of its own: LaTeX reads one
-`\baselineskip` for a paragraph, at its `\par`, and a run adds only its
-ink, so a run smaller than the paragraph stays inside the strut under any
-skip column (`Ir.runLead_between`). Math uses its ambient text strut and its
-premeasured construction bounds. The glyph payload is not read again
-(`line_box_glyph_free`), so phantoms retain those bounds. An image stands `h` above the
-baseline with no depth and no half-leading (CSS 2.1 §10.8.1's
-replaced-element rule): it raises the box, and the leading after it is
-the text's own. A math rule (a fraction bar) reaches from `raise` to
-`raise + thickness`: it can add height above the baseline or depth below
-it, never both. A polygon contributes its vertex bounds above and below
-the baseline. `fontSize`, `bodyAscent`, and `bodyDescent` are the
-page's body metrics — the strut of every line of text, so an empty line
-still holds one leading. The strut belongs to lines carrying a glyph
-run; a line of rules, gaps, or images has exactly the box its segments
-make — TeX's `\hrule` is a rule box with no strut (TeXbook ch. 21), and
-the title-bars convention (`interlineFor`) measures to a rule's edges,
-which a phantom body ascent above a 1 pt rule would falsify. The strut
-is the paragraph's own: `size` is its nominal size and `lead` the leading
-of the named size it is set in (`Ir.paraStep?`, at the paragraph's base:
-`Ir.stepLead`), which the strut takes (`Ir.stepSkip`) — a paragraph set
-wholly in `\footnotesize` stands its lines at `\footnotesize`'s
-`\baselineskip`, never the body's. -/
+/-- A line's vertical extent: each run's leaded metric box at its paragraph's leading in
+its size's proportion (`Ir.runLead`), plus the paragraph's strut on a line of text. -/
 public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
     (leadFactor : Nat) (size : Sp) (segs : Array Seg) (lead : Option Sp := none) :
     LineBox :=
@@ -9804,12 +8038,6 @@ public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : 
   let measured := segs.foldl (lineBoxStep fs nominal leadFactor lead) init
   measured.getD ⟨0, 0, 0, 0⟩
 
-/-- Emptying a line's glyph payload while retaining its font metrics and
-premeasured math bounds changes no component of its box. This is also the
-phantom contract. It does not claim that all placement is glyph-free:
-`inlineMathGap` separately reads neighbouring outlines to avoid collisions
-at tight leading. Ordinary text still retains its full metric depth,
-including a descender-less title. -/
 public theorem line_box_glyph_free (fs : FontSet)
     (fontSize bodyAscent bodyCap bodyDescent : Sp) (leadFactor : Nat)
     (size : Sp) (segs : Array Seg) (lead : Option Sp := none) :
@@ -9842,17 +8070,8 @@ public theorem line_box_glyph_free (fs : FontSet)
   · rfl
   · rfl
 
-/-- The box TeX builds around a set line, read from the glyphs' own
-outlines: the tallest glyph above the baseline and the deepest below it,
-each run at its own size and raise; an image stands on the baseline, a
-rule or polygon spans its extent, and a glyph whose outline does not decode
-answers its face's metric ascent and descent. This is read by the math
-collision guard, and where TeX's box is what the page places or clears — the first line of a
-TeX page and the one below an anchor (`Spacing.Page.firstRise`, `anchorRise`), a line
-after `\nointerlineskip` (`Spacing.Page.ignoreDepth`), the content's end a TeX page's
-distribution measures (`placeLine_boxDepth_exact`), and the footline band a
-frame's text area stops above, as beamer's `\footheight` is the band's
-`\ht` plus `\dp`. -/
+/-- The box TeX builds around a set line, read from the glyphs' outlines:
+the tallest glyph above the baseline and the deepest below it. -/
 public def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (fun (acc : Sp × Sp) s => match s with
     | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
@@ -9869,37 +8088,13 @@ public def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
         (max above y, max below (-y))) acc
     | .gap .. | .decoratedGap .. => acc) (0, 0)
 
-/-- A line that is bare rule ink: at least one segment, every segment a
-rule. The interline convention measures to its edges (`interlineFor`),
-and the body strut never applies to it (`lineExtent`). -/
+/-- A line of bare rule ink: at least one segment, every segment a rule. -/
 public def ruleOnly (segs : Array Seg) : Bool :=
   !segs.isEmpty && segs.all fun s =>
     s matches .rule .. | .decoration ..
 
-/-- The metric interline rule with the rule-line convention: the baseline
-distance placement adds beyond the pending skip. Between lines of text it
-is the previous line's leaded below plus this line's leaded above
-(CSS 2.1 §10.8.1). A full-measure rule stands its declared gap from the
-type's *body* — the cap-height line above the text, the baseline below
-it — never from the metric box, never from glyph ink (Hochuli, *Detail in
-Typography*, "Rules": a rule relates to the type it cuts — the sourcing
-at `headingRuleWeight`; Bringhurst §2.2.2 for the unit the default gap is
-spelled in). So against a rule-only neighbour the terms are
-ink-referenced: an upper rule contributes its ink depth and the lower
-line its cap line (`inkAbove`); an upper line of text contributes its
-baseline (zero) and a lower rule its top edge. A table rule commits with
-zero depth and its baseline at the band's bottom, so the line under it
-stacks flush by this same rule — its ink height plus pending skips, no
-leading — as TeX marks `\prevdepth` ignored after an `\hrule`; booktabs'
-rule padding depends on it. Cap height and baseline
-are font metrics, so the artifact stays content-free; the accepted cost,
-written once here: a descender-free last line's gap below is not larger —
-that is the point — and an accented capital's accent rises into the upper
-gap. Equal declared gaps are equal visible gaps by definition
-(`title_bars_symmetric`), and under the default gap a descender can never
-reach the bottom bar (`bars_clear_descenders`). A completed box instead
-reserves its painted depth before a rule and its leaded depth before text;
-the last text baseline inside a box is not the box's bottom edge. -/
+/-- The metric interline rule: the previous line's leaded below plus this line's
+leaded above (CSS 2.1 §10.8.1), measured to a rule-only neighbour's ink edges. -/
 public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Sp)
     (ruleLine : Bool) (box : LineBox) : Sp :=
   match prev, ruleLine with
@@ -9907,21 +8102,16 @@ public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Sp)
   | .text, true => box.inkAbove
   | .rule, _ | .box, true => prevDepth + box.inkAbove
 
-/-- Inline math keeps the font-relative leading whenever the two measured
-outline intervals fit. Otherwise it reserves their combined reach, as
-TeX's interline collision test does (tex.web §679). Unlike TeX's separate
-`\lineskip` glue this adds only the needed room: zero is the exact
-non-overlap boundary in scaled points. No arbitrary font strut or clipping
-is imposed. The decoder's bounds and the page's unshrunk coordinates are
-the measurement boundary. -/
+/-- Inline math keeps the leading while the measured outlines fit, else
+reserves their combined reach as TeX's interline test does (tex.web §679). -/
 public def inlineMathGap (math : Bool) (normal depth height : Sp) : Sp :=
   if math then max normal (depth + height) else normal
 
 private def Spacing.Page.previousMath (b : B) : Bool :=
   b.cur.lines.back?.any fun l => l.segs.any Seg.isMath
 
-/-- Ordinary text retains its metric rhythm. At a text boundary touching
-inline math, the actual neighbouring ink also has to clear. -/
+/-- Ordinary text keeps its metric rhythm; at a boundary
+touching inline math, the neighbouring ink also clears. -/
 private def Spacing.Page.textGap (b : B) (box : LineBox)
     (math : Bool) (height : Sp) : Sp :=
   inlineMathGap (math || b.previousMath) (b.prevBelow + box.above) b.boxDepth height
@@ -9932,13 +8122,10 @@ private def Spacing.Page.peerGap (b : B) (box : LineBox)
   | .text, false => b.textGap box math height
   | _, _ => interlineFor b.prevBand b.prevDepth b.prevBelow ruleLine box
 
-/-- Reserve painted reach below a baseline in both the ink and leaded
-depths. Existing space is kept; paint is not an additional gap. -/
+/-- Reserve painted reach below a baseline in both the ink and leaded depths. -/
 public def reserveBelow (depth below reach : Sp) : Sp × Sp :=
   (max depth reach, max below reach)
 
-/-- A placement-coordinate fact: neither depth shrinks, and both cover
-the painted reach, including when a font has negative half-leading. -/
 public theorem reserveBelow_covers (depth below reach : Sp) :
     depth ≤ (reserveBelow depth below reach).1 ∧
     below ≤ (reserveBelow depth below reach).2 ∧
@@ -9946,9 +8133,6 @@ public theorem reserveBelow_covers (depth below reach : Sp) :
     reach ≤ (reserveBelow depth below reach).2 :=
   ⟨Int.le_max_left .., Int.le_max_left .., Int.le_max_right .., Int.le_max_right ..⟩
 
-/-- A placement-coordinate contract: a rule after a completed box clears
-the whole painted reach, for any font extents and any nonnegative skip.
-The same reserved depths are carried by the page and column state. -/
 public theorem closed_box_rule_covers (y depth below reach skip : Int)
     (box : LineBox) (hskip : 0 ≤ skip) :
     y + reach ≤ y + skip +
@@ -9957,20 +8141,11 @@ public theorem closed_box_rule_covers (y depth below reach skip : Int)
   simp only [interlineFor, reserveBelow]
   omega
 
-/-- TeX's baseline distance between two boxes (tex.web §679, where a box
-joins a vertical list): `\baselineskip` whenever that leaves the boxes at
-least `\lineskiplimit` apart, else their extents with `\lineskip` between —
-LaTeX's `\lineskip` is 1 pt and `\lineskiplimit` 0 pt (latex.ltx:
-`\normallineskip`, `\normallineskiplimit`). `pd` is the upper box's depth,
-`h` the lower's height. What display math is spaced by, on both sides
-(`Spacing.Page.placeLine`). -/
+/-- TeX's baseline distance between two boxes (tex.web §679): `\baselineskip` when the
+boxes stay `\lineskiplimit` apart, else their extents with `\lineskip` between. -/
 public def texBaselineGap (bs pd h : Sp) : Sp :=
   if pd + h ≤ bs then bs else pd + inkClearance + h
 
-/-- **Baselines stand at least `\baselineskip` apart, and their boxes never
-overlap** (`_between`): a formula's subscripts reach into the leading
-until nothing is left of it, and only then push the next line down —
-measured from the baselines, never from the boxes' edges. -/
 public theorem texBaselineGap_between (bs pd h : Int) :
     bs ≤ texBaselineGap bs pd h ∧ pd + h ≤ texBaselineGap bs pd h := by
   unfold texBaselineGap
@@ -9981,30 +8156,16 @@ public theorem texBaselineGap_between (bs pd h : Int) :
     show bs ≤ pd + 65536 + h ∧ pd + h ≤ pd + 65536 + h
     omega
 
-/-- TeX's interline rule for a box `h` tall joining the list below a box of
-depth `pd`, as the distance from the upper baseline to the lower box's top:
-the upper depth and the interline glue between them (`texBaselineGap`).
-Where a beamer colour box stands: a painted title
-(`Spacing.Page.placeLine`), an empty title box and a body's `\vbox{}`
-(`Op.boxAnchor`). -/
+/-- TeX's interline rule for a box `h` tall below a box of depth `pd`,
+as the distance from the upper baseline to the lower box's top. -/
 public def texBoxTop (bs pd h : Sp) : Sp := texBaselineGap bs pd h - h
 
-/-- **A box joins below the upper box's bottom, and its baseline stands at
-least `\baselineskip` below the upper one** (`_between`). -/
 public theorem texBoxTop_between (bs pd h : Int) :
     pd ≤ texBoxTop bs pd h ∧ bs - h ≤ texBoxTop bs pd h := by
   have := texBaselineGap_between bs pd h
   unfold texBoxTop
   omega
 
-/-- A placement-coordinate bound for a titled, ordinary frame whose first
-band is a colour box: the box's top stands where TeX's interline rule puts
-it below the opening (`texBoxTop`), never above the band it joins, so
-distributing any remaining frame space cannot consume the shared opening
-skip. The origin must already clear the header and the band above it must
-have nonnegative depth.
-This covers the additive placement and distribution steps, not a frame that
-retries on another page, shrinks glue, or overrides the first baseline. -/
 public theorem frame_opening_paint_covers (header origin pd bs h size leftover : Int)
     (keys : Ir.FrameKeys) (valign : VAlign) (hheader : header ≤ origin) (hpd : 0 ≤ pd) :
     header + frameBodySkip true valign size ≤
@@ -10015,12 +8176,6 @@ public theorem frame_opening_paint_covers (header origin pd bs h size leftover :
     (VDist.split_exact (VDist.of keys valign) leftover).1
   omega
 
-/-- The furniture-symmetry argument, applied to bars: the realized gap
-from an upper rule's bottom edge (`prevDepth` below its baseline) to the
-next line's cap line equals the pending skip, and from a line's baseline
-to a lower rule's top edge (`inkAbove` above its baseline) equals the
-pending skip — so equal declared gaps are equal visible gaps by
-definition, whatever the type's metrics or the rule weights. -/
 public theorem title_bars_symmetric (skip prevDepth prevBelow : Int)
     (above below inkAbove inkBelow : Int) :
     skip + interlineFor .rule prevDepth prevBelow false
@@ -10030,15 +8185,8 @@ public theorem title_bars_symmetric (skip prevDepth prevBelow : Int)
   simp only [interlineFor]
   constructor <;> omega
 
-/-- Under the default bar gap the bottom bar clears every descender: the
-gap below the title runs from the baseline (`interlineFor`), a descender
-hangs its face's descent below that, and three rhythm quanta of the body
-(1.8 × body with the engine's 6⁄5 leading, `Ir.titleBarGap`) exceed even
-a full-em descender at the scale's LARGE title step (1.728 × body) —
-stated as the inequality it needs, `descMilli ≤ 1000`: no shipped face's
-descent approaches its em (OpenType descents sit near a third of it). -/
 public theorem bars_clear_descenders (body descMilli : Int)
-    (hb : Dim.pt 1 ≤ body) -- 1 pt: the rhythm family's floor hypothesis (Ir.default_rhythm_multiples), not a design value
+    (hb : Dim.pt 1 ≤ body) -- 1 pt: the rhythm family's floor hypothesis, not a design value
     (hm : descMilli ≤ 1000) :
     Ir.scaleStep body "LARGE" * descMilli / 1000
       < 3 * Ir.rhythmQuantum body := by
@@ -10063,38 +8211,19 @@ public theorem bars_clear_descenders (body descMilli : Int)
         simp only [Ir.rhythmQuantum, Ir.leadingFor, Ir.leadingMilli]
         omega
 
-/-- The body strut's leaded depth: what stands below a line of body text at
-the body size (`lineExtent` of an empty line is the strut). A box that sits
-on a baseline — a picture, the frame content's opening `\vbox{}` — leaves
-this pending, so the next body line stands one leading below it: TeX's
-`\baselineskip` from a box of depth zero, which the leaded halves realize
-exactly (`baselines_on_grid`). -/
+/-- The body strut's leaded depth at the body size, which a box on a baseline leaves pending. -/
 private def Spacing.Page.strutBelow (fs : FontSet) (b : B) : Sp :=
   (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading
     b.geom.fontSize #[]).below
 
-/-- An empty box at `y`, TeX's `\vbox{}`: the next band is spaced below it
-as below a box of depth zero, one body leading for body text
-(`strutBelow`), as a frame's content opens (`openBody`). Where a block's
-colour boxes open and close (`Op.boxAnchor`, `closeRegion`). -/
+/-- An empty box at `y`, TeX's `\vbox{}`: the next band
+is spaced below it as below a box of depth zero. -/
 private def Spacing.Page.anchorAt (fs : FontSet) (b : B) (y : Sp) : B :=
   { b with y := y, prevDepth := 0, prevBelow := b.strutBelow fs, prevBand := .text,
            lastInk := some (y, 0, 0) }
 
-/-- **A titled frame's content opens on a baseline below the title box.**
-beamer builds a frame as the title box — the `frametitle` template, then
-`\vskip0.25em` (beamerbaseframe.sty:126) — the frame's top skip (`[t]`:
-`.2cm`, :263; moloch's `[c]`: a bare fil, beamerinnerthememoloch.sty:455),
-and the content, which opens with `\vskip-\parskip\vbox{}` (:115): an empty
-box, so the first line's interline glue is `\baselineskip` from the title
-box's bottom and no `\parskip` is spent. The box's bottom is the bar's
-bottom edge (the last pinned fill, as the spill page's resume reads it) or
-the title's own depth, whichever is lower; `g` is the declared skip. Before,
-the first line was spaced off the title's baseline, so on a `[t]` frame its
-ascent reached into the bar. An untitled frame on a footline page opens the
-same way on an empty page, at the top of beamer's text area (moloch's
-headline is empty, so `\headheight` is zero): its `\vbox{}` is the paper's
-top edge, or the bottom of a band already painted there. -/
+/-- A titled frame's content opens one `\baselineskip` below the title box,
+as beamer's `\vskip-\parskip\vbox{}` opens it (beamerbaseframe.sty). -/
 private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Option Sp) : B :=
   let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
   let opened := { b with y := if b.cur.lines.isEmpty then barBottom
@@ -10106,8 +8235,7 @@ private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Optio
                          opening := true
                          skip := b.skip.add g
                          opened := true }
-  -- A spill discards pending inter-block glue, but repeats the frame's
-  -- own opening. Store that opening's natural skip in its resume origin.
+  -- A spill discards pending glue, so the frame's opening skip is kept in the resume origin.
   { opened with chrome := b.chrome.map fun c =>
       { c with y := opened.y + opened.skip.width
                depth := opened.prevDepth
@@ -10115,9 +8243,6 @@ private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Optio
                band := opened.prevBand
                header := opened.curBand } }
 
-/-- Reopening pinned furniture uses the same resolved body reference as
-the first page, including its fixed opening skip and header census.
-The spill's cleared pending glue cannot change that reference. -/
 private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : Glue)
     (box : Option Sp) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Sp) (flush : Bool) :
     let opened := b.openBody fs g box
@@ -10129,28 +8254,12 @@ private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : G
     resumed.curBand = opened.curBand := by
   simp [Spacing.Page.openBody, Spacing.Page.reopenChrome, Spacing.Page.finishPage, hc]
 
-/-- The pending skip a fresh page keeps. TeX discards glue at the top of a
-page up to its first box or rule, and `\vspace*`'s zero rule is one
-(`\@vspacer`, latex.ltx:9374-9390): what follows it stays, the `\topsep`
-of a `{center}` or a list after `\vspace*{\fill}` included. The rule
-reaches here as `.anchorRule` (`Spacing.Page.anchored`); a fil in the pending skip
-reads the same way — `Spacing.Page.commit` counts it, since `\vspace*{\fill}` is how
-a fil reaches a page's top — so its natural width stays with it; with
-neither the skip is discarded, as TeX discards it. A spill clears the skip
-(`finishPage`), so glue after a break is never kept. -/
+/-- The pending skip a fresh page keeps: all of it after `\vspace*`'s
+zero rule or a fil, else none, as TeX discards glue at a page top. -/
 private def Spacing.Page.topKept (b : B) : Sp := if b.anchored || b.skip.fil then b.skip.width else 0
 
-/-- The fit-or-spill skeleton every committed band takes — the one
-spelling of `overflow ≤ shrink ∨ noBreak → commit | close and retry`:
-commit at `stepY b` when the band's ink past `bottom` is within the
-page's shrink (or a replayed float forbids breaking, `noBreak`), else
-close the page and retry — at `firstY b` when the new page is empty,
-else at `retryY b` under the reopened frame chrome. The y's are
-functions of the builder because a spill moves it, and the retry's
-pending glue died with the break, as TeX discards glue at the top of a
-page. Notes attach beside every commit (mark and note enter in one
-step), and every unchecked commit reports a note overrun (W0372) — the
-checked one proved it fits. -/
+/-- The fit-or-spill skeleton every committed band takes: commit when the
+band's overflow is within the page's shrink, else close the page and retry. -/
 private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
     (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
     (notes : Array NoteBlock := #[]) : B :=
@@ -10161,13 +8270,10 @@ private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY r
     let y := stepY b + b.surfaceTop
     let overflow := y + inkBelow + b.surfaceBottom - bottom
     let above := b.pageShrink + b.skip.shrink
-    -- An opened page with nothing on it yet commits: a break would ship an
-    -- empty frame page and gain the band nothing.
+    -- An opened page with nothing on it commits: a break would ship an empty frame page.
     if overflow ≤ above ∨ b.noBreak ∨ b.cur.blank then
       (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
-    -- A frame the overflow ladder stands overfull (`overhangs`): measured,
-    -- or decided to fit the gap above its footline, as beamer sets it on
-    -- its one page rather than spill a sliver onto a page of its own.
+    -- A frame the ladder stands overfull, as beamer sets it on its one page.
     else if b.overhangs (overflow - above) then
       ((b.commit (mk y) depth below rl true above).attachNotes notes).noteOverrun
         (overflow - above)
@@ -10181,34 +8287,13 @@ private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY r
           notes).warnNoteOverrun (retryY s + s.surfaceTop) (inkBelow + s.surfaceBottom)).noteOverrun
         (overflow - above)
 
-/-- TeX's interline rule for the first box below `\vspace*`'s zero rule,
-as the distance from the glue the rule keeps to the box's baseline:
-`\@vspacer` restores the `\prevdepth` it saved before the rule, so a box
-`h` tall takes `\baselineskip` less that depth and its own height as glue
-above it, or `\lineskip` where that falls below `\lineskiplimit` (plain's
-0 pt), and none after `\nointerlineskip`, which leaves `\prevdepth` at
-−1000 pt (TeXbook ch. 12; latex.ltx:9374-9390). At a document's start the
-saved depth is 0 pt: lualatex sets the first line after `\vspace*{20pt}`
-one `\baselineskip` below the space, not on its own box. -/
+/-- TeX's interline rule for the first box below `\vspace*`'s zero
+rule, from the depth saved before the rule (latex.ltx `\@vspacer`). -/
 public def anchorRise (ignore : Bool) (lead depth h : Sp) : Sp :=
   if ignore then h else if 0 ≤ lead - depth - h then lead - depth else h + inkClearance
 
-/-- How far the first line of a fresh page stands below the text area's
-top. Where the page is TeX's (`Geom.topskip`), TeX's rule: the page builder
-puts `\topskip` less the first box's height above the first box or rule
-(TeXbook ch. 15). On a page that opens on an anchor — `\vspace*`'s zero
-rule (`Spacing.Page.anchored`), or a fil standing in the pending skip, which is how
-`\vspace*{\fill}` reaches a page's top (`Spacing.Page.topKept`) — that rule is the
-first item, so `\topskip` stands above it whole and the line stands below
-the glue the anchor keeps by TeX's interline rule (`anchorRise`, from the
-depth of the box before the rule and the line's `lead`), or, where the
-first box is a row of columns, `\lineskip` below that glue
-(`Spacing.Page.colAnchor`); otherwise the
-line is the first box, at `\topskip` or on its own box where that is
-taller. The box is read from its glyphs, as TeX's box is (`segsInk`,
-`ink`), so body text starts on one line of the page grid in every face and
-only display type or a tall box stands on its ink. On a frame page, the
-engine's metric rule: the body's ascent or the line's own leaded above. -/
+/-- How far the first line of a fresh page stands below the text area's top:
+TeX's `\topskip` rule on a TeX page, the engine's metric rule on a frame page. -/
 private def Spacing.Page.firstRise (b : B) (ink : Sp) (box : LineBox) (lead : Sp) : Sp :=
   match b.geom.topskip with
   | some t => if b.anchored || b.skip.fil then
@@ -10218,33 +8303,14 @@ private def Spacing.Page.firstRise (b : B) (ink : Sp) (box : LineBox) (lead : Sp
     else max t ink
   | none => max b.ascent box.above
 
-/-- A line's TeX box: its glyphs' (`ink`), and at least the strut it
-carries, `\strutbox` of `\baselineskip` `s` — 0.7 and 0.3 of it. -/
+/-- A line's TeX box: its glyphs', and at least its `\strutbox` of `\baselineskip` `s`. -/
 private def lineStrutInk (strut : Option Sp) (ink : Sp × Sp) : Sp × Sp :=
   match strut with
   | some s => strutInk ink (s * 7 / 10, s * 3 / 10)
   | none => ink
 
-/-- Place one line. Its box follows the tallest run on it (`lineExtent`),
-not the paragraph's nominal size: a line carrying `\Huge` needs room above
-its baseline and below it.
-
-The baseline distance starts with the metric interline rule (CSS 2.1
-§10.8.1): the previous line's leaded below plus this line's leaded above.
-Uniform ordinary text keeps exactly the leading (`baselines_on_grid`).
-Inline math keeps that ambient rhythm while its construction fits; taller
-math expands the box, and `inlineMathGap` also checks the actual neighbouring
-ink. HTML's `line-height` supplies the same ordinary rhythm; its math
-layout is the browser's boundary. Against a rule-only line the terms are ink-referenced
-(`interlineFor`): a full-measure rule stands its gap from the type's
-body — the cap line above the text, the baseline below it.
-
-A page fills at natural glue until a line's ink will not fit even with
-every skip above it fully shrunk; then the page closes (shrunk to fit if
-it overflowed) and the line opens the next (`fitCommit`), its pending glue
-discarded as TeX discards glue at the top of a page. Glue stretches only
-where a `\flushbottom` page is broken (`finishPage`'s `flush`); otherwise
-the bottom is ragged. -/
+/-- Place one line: its box follows the tallest run on it, its baseline distance the
+interline rule, and a line that does not fit opens the next page (`fitCommit`). -/
 private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
@@ -10254,8 +8320,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     (stepLead : Option Sp := none) (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs stepLead
-  -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
-  -- it does in TeX's hbox, so it is read before the filter below.
+  -- A zero-width strut counts in TeX's box, so the ink is read before the filter below.
   let ink := segsInk fs segs
   -- A table row is TeX's row box, strut and glyphs, with no leading.
   let box := match rowStrut with
@@ -10265,19 +8330,13 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     | some s => strutInk ink s
     | none => ink
   let peer (b : B) := b.peerGap box (ruleOnly segs) (segs.any Seg.isMath) ink.1
-  -- A display's box is TeX's too (tex.web §1199), and a display
-  -- alignment's row stands on amsmath's strut (`\strut@`: latex.ltx's
-  -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`), as a line its package
-  -- struts stands on one of its own `\baselineskip` (`strut`: fancyvrb's
-  -- lines): the box the band below and a colour box around the line read.
+  -- A display's box is TeX's (tex.web §1199), an alignment row standing on amsmath's `\strut@`.
   let bs := Ir.stepSkip stepLead size b.geom.leading
   let strut := match display with
     | some dj => if dj.ctx.align then some bs else strut
     | none => strut
   let tex := lineStrutInk strut ink
   let rl := ruleOnly segs
-  -- A display alignment's last row's baseline, from the mark its grid
-  -- leaves there (`alignRowMark`).
   let lastBase : Sp := match display with
     | some dj =>
       if !dj.ctx.align then 0 else
@@ -10285,14 +8344,11 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
         | .rule 0 0 raise _ => max m (-raise)
         | _ => m) 0
     | none => 0
-  -- A zero-width rule is a strut: it shaped the extent above and ships no
-  -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
+  -- A zero-width rule is dropped: some viewers rasterize a degenerate rectangle as a hairline.
   let segs := segs.filter fun s => match s with
     | .rule w _ _ _ => w != 0
     | _ => true
-  -- The fit test reads the note floor: what already stands reserved plus
-  -- what THIS line's notes need — decided at commit, so a line that does
-  -- not fit spills WITH its notes and the reservation follows the mark.
+  -- The fit test reserves this line's notes too, so a line that does not fit spills with its notes.
   let need := if notes.isEmpty then 0
     else notes.foldl (fun s nb => s + nb.height) 0
   let bottom := noteFloor b.bottom b.noteGap (b.notesH + need) (b.noteHang (notes.back?.map (·.depth)))
@@ -10303,13 +8359,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
       lastBase := lastBase }
   let lead := Ir.stepSkip stepLead (if size == 0 then b.geom.fontSize else size)
     b.geom.leading
-  -- The distance from the band above: TeX's interline glue on either side
-  -- of display math (`texBaselineGap`), over the empty line amsmath's `$$`
-  -- sets first where it opens a paragraph; the metric rule everywhere else.
-  -- A line opening a painted colour box `pad` inside it stands below the
-  -- box's top, which TeX's interline rule puts below the band above
-  -- (`texBoxTop`, from the box's whole reach); the box's own inset above
-  -- the line is its region's (`Spacing.Page.surfaceTop`).
+  -- TeX's interline glue around display math and below a colour box's top; else the metric rule.
   let gap (b : B) : Sp := match paintPadding, display, opens with
     | some pad, _, _ =>
       texBoxTop (Ir.leadingFor b.geom.fontSize b.geom.leading) b.boxDepth
@@ -10319,30 +8369,17 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
       else texBaselineGap bs b.boxDepth tex.1
     | none, _, _ =>
       if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth tex.1
-      -- Below a frame's opening box the line takes TeX's interline glue
-      -- at its `\baselineskip`: a line of type the leaded box its runs set
-      -- at — a standout frame's at its template's size, a listing's at its
-      -- own leading — and a line of boxes alone, an image, its paragraph's,
-      -- so a box taller than the skip stands `\lineskip` below the opening.
+      -- Below a frame's opening box the line takes TeX's interline glue at its `\baselineskip`.
       else if b.opening then
         texBaselineGap (if segs.any (· matches .run ..) then box.above + box.below else lead)
           b.boxDepth tex.1
       else peer b
-  -- The first baseline is the body top plus the first line's rise
-  -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
-  -- and the pending skip an anchor keeps (`Spacing.Page.topKept`). The line's box
-  -- depth stays with it for the page's distribution (`Spacing.Page.boxDepth`). After
-  -- `\nointerlineskip` the line takes no interline glue: its box stands on
-  -- the last box's (`Spacing.Page.ignoreDepth`). The peer gap is the display-aware
-  -- one (`gap`), which reduces to the metric interline off a display.
   ((b.fitCommit mk
     (fun b => b.geom.bodyTop + b.firstRise ink.1 box lead + b.topKept)
     (fun b => b.y + b.skip.width
       + firstBaseline.getD
         (if b.ignoreDepth then b.boxDepth + ink.1
          else gap b))
-    -- Below the reopened frame chrome: interline from the chrome's own
-    -- baseline.
     (fun b => b.y + peer b)
     box.inkBelow box.below rl box.inkBelow bottom notes).keepInk tex.2).displayState
       display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
@@ -10431,24 +8468,6 @@ private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size :
     · exact Or.inl hl
     · exact Or.inr fun s hs => hl s (Array.mem_of_mem_filter hs)
 
-/-- The realization theorem's placement step: a line placed on the same
-page (the fit condition holds), under interline spacing (neither neighbour
-bare rule ink — a rule's realized gap is
-`title_bars_symmetric`'s statement), lands exactly the pending skip's
-natural width plus the
-metric interline — the previous line's leaded below plus this line's
-leaded above — below the previous baseline, enlarged by `inlineMathGap`
-when measured neighbouring math ink requires it. Uniform ordinary text
-keeps the leading plus the declared skip (`baselines_on_grid`). The
-declared gap reaches the page 1:1 — no scaling, no second emission;
-`finishPage_shift_uniform` says page close keeps these deltas, so together
-they carry the declared gap into `Layout.Out`. Rubber is the one
-negotiation and it is never silent: a page that consumes shrink reports it
-(N0200, `finishPage`), and vertical glue stretches only on a page a
-`\flushbottom` document's builder broke. At a default
-peer boundary the pending skip is the resolved parskip
-(`flushGap_default_exact`), so the realized baseline delta is the leading
-plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
 private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (firstBaseline : Option Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
@@ -10483,14 +8502,6 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     Array.isEmpty_empty, ite_true]
   simp [Array.back?_push]
 
-/-- The first baseline, declared: on a fresh page the line lands at the
-body top plus its rise (`Spacing.Page.firstRise`) — TeX's `\topskip` against the
-line's own glyph box where the page is TeX's, above an anchor or floored by
-the box, the metric rule on a frame page — and below whatever pending skip
-an anchor keeps (`Spacing.Page.topKept`: none unless `\vspace*`'s rule or a fil
-stands there). Constant for a document unless a taller first line honestly
-needs more, or the page opens on an anchor; what furniture symmetry
-measures to. -/
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
@@ -10507,11 +8518,6 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   simp only [displayState_cur, keepInk_cur]
   simp [hf, Spacing.Page.commit, Spacing.Page.attachNotes, Array.back?_push]
 
-/-- **The line names the leaf it was given** (`_exact`): the `LineOut`
-`placeLine` commits carries `leaf` unchanged — the `mk` closure copies it,
-so a later edit cannot drop the attribution channel between the paragraph
-job and the page silently. Stated on the fresh-page branch, as
-`first_baseline_declared` is; every branch commits the same `mk`. -/
 private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (lf : Option Nat) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w (leaf := lf)).cur.lines.back?.map (·.leaf) = some lf := by
@@ -10523,13 +8529,6 @@ private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
   simp only [displayState_cur, keepInk_cur]
   simp [hf, Spacing.Page.commit, Spacing.Page.attachNotes, Array.back?_push]
 
-/-- **A set line's box, for the page's distribution, is its glyphs'**
-(`_exact`): whatever branch placement takes, the band a line leaves at
-`y` answers the depth of its deepest glyph (`segsInk`, struts included),
-so on a TeX page `Spacing.Page.contentEnd` reads the bottom of TeX's hbox, not the
-face's descent — lualatex lifts a centred block whose last line has
-descenders by half their depth, and so does the page close
-(`faceCentreChecks`). -/
 private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (step : Option Sp := none) :
@@ -10538,17 +8537,6 @@ private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
   simp only [Spacing.Page.placeLine]
   exact keepInk_boxDepth_exact ..
 
-/-- The other half of the PDF realization: what page close does to the gaps
-placement realized — nothing, on a page that shipped without consuming
-shrink and carries no fil glue. The page's vertical distribution (`VDist`)
-moves the unpinned block as one: a single delta `d` moves every unpinned
-line, so consecutive baseline deltas — the realized gaps — reach `Out`
-exactly as placed. A uniform translation rather than a per-gap equality
-because that is the exact statement: the gaps are the invariant; the
-block's position belongs to the declared distribution. The two excluded
-negotiations are declared, never silent: a consumed-shrink page reports
-itself (N0200, below), and fil glue exists only where the document asked
-for it. -/
 private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
@@ -10570,17 +8558,6 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
       Nat.not_lt.mpr hi]
 
-/-- **A centred page's leftover splits evenly above and below its content's
-box, to within one sp** (`_exact`), stated at the page close that ships it.
-With no fil glue, no shrink given and no note block, every line below the
-pinned chrome moves by one shift, and that shift — the space above the
-content — and the space left between the complete content end (`regionContentEnd`,
-including closed surface paint) and the floor differ by at most the scaled point the halving assigns below.
-The bottom is the box's, as beamer centres its frame's `\vbox`: the last
-line's depth (`Spacing.Page.contentEnd`: TeX's glyph box on a TeX page, the face's
-descent on a frame) or a picture's declared box, and the closing space the
-content keeps (a trivlist's `\topsep`). `VDist.center_split_exact` is the halving's
-arithmetic; this is the page it realizes. -/
 private theorem finishPage_center_exact (b : B) (owed : Sp)
     (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
@@ -10616,20 +8593,6 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
       Nat.not_lt.mpr hi]
 
-/-- **Two fills of equal order and stretch split the slack exactly, so a
-block framed by them stands centred** (`_exact`), stated at the page close
-that ships it. The engine counts each fil as one unit of TeX's infinite
-stretch, which is TeX's split exactly where the fills are of one order and
-one stretch — `\vspace*{\fill}` above and below, the card's idiom. On a page
-whose two fil units stand one above every line past the pin and one below
-them, whose own glue yields to them (`VDist.joins`: a page the builder opens,
-a moloch `[c]` frame), with no shrink given and no note block, page close moves every such
-line by the one share `filShare l 1 2` of the leftover `l` between the
-complete content end (`regionContentEnd`: the ordinary box and any painted
-surface below it) and the floor, and the share left below differs from it by
-at most the scaled point the halving assigns below. `VDist.center_split_exact`
-is the arithmetic; on a TeX page the box it is measured on is
-`placeLine_boxDepth_exact`'s at the bottom and `Spacing.Page.firstRise`'s at the top. -/
 private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
     (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0) (hj : b.vdist.joins = false)
     (h2 : b.pageFils + (if b.skip.fil then 1 else 0) = 2)
@@ -10663,14 +8626,7 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
   simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
     Nat.not_lt.mpr hi]
 
-/-- The census key of an overfull line: the source position its first
-located item stands at, so the census counts each overfull line W0005 names
-as TeX logs each overfull box — a line of a declared line that re-flowed is
-its re-flow's (W0386) — and only the same site set again (an overlay's repeated
-page) is a repeat; the log prints the wording once, its sites under `-v`
-(`Diag.sameLine`). A line no source item reaches shares one key, the one
-`uniqueDiags` collapses into a count. An overfull line is a place, not a
-construct, so it names no written token. -/
+/-- The census key of an overfull line: the source position of its first located item. -/
 def overfullSubject : Option Span → String
   | some s => s!"overfull:{s.file}:{s.pos.line}:{s.pos.col}"
   | none => "overfull:unlocated"
@@ -10681,11 +8637,7 @@ private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
       (Diag.of .W0005 "overfull line; no feasible break" (span := source)
         (subject := some (overfullSubject source)) (output := some .pdf)) }
 
-/-- First located item of the line actually set, never a neighbouring line's
-site. Callers shift this map alongside inserted marks and hanging kerns.
-Sites are pushed in item order as items are made, so the first at or after
-the line's first item is found by halving: a scan from the start, once per
-line, made a long paragraph's lines quadratic. -/
+/-- First located item of the line actually set, found by halving over the sites in item order. -/
 private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Option Span := Id.run do
   let mut lo := 0
   let mut hi := sources.size
@@ -10696,44 +8648,29 @@ private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Opti
     else break
   return sources[lo]?.bind fun (i, span) => if i ≤ last then some span else none
 
-/-- A heading's declared rule as the line builder reads it: weight,
-position against the baseline, and colour — the print reading of
-`Ir.ElementStyle`'s `rule`, `ruleThickness`, `rulePosition`. -/
+/-- A heading's declared rule as the line builder reads
+it: weight, position against the baseline, and colour. -/
 public structure HeadingRule where
   thickness : Sp
   position : Ir.RulePosition
   color : Ir.Color
   deriving Repr, Inhabited
 
-/-- A paragraph that opens a TeX box (a block's title box, or the box holding
-title and body, `Ir.BlockShape`): its first line stands `inset` below the
-box's top — what the box's list opens on before it, the `\parskip` there —
-and TeX's interline rule places the box from its height, or past any
-`\baselineskip` when `more` stands in the box after the paragraph. Its lines
-stand `leading` apart by TeX's rule, the `\baselineskip` of the font the box
-sets them in, and the band after the box is spaced from its depth by TeX's
-rule too. A paragraph of the block's own list, no box's (`boxed` false: a
-template's title set without a box), stands its first line by that rule
-too, from the line above, at the `\baselineskip` TeX reads where the
-paragraph ends: its font's. -/
+/-- A paragraph that opens a TeX box: its first line stands `inset` below
+the box's top, and TeX's interline rule places the box and its lines. -/
 public structure TexBox where
   inset : Sp
   more : Bool
   leading : Sp
   boxed : Bool := true
-  /-- A rule beside the box reaching by its lines (`Ir.BlockReach.lines`):
-  how far past the box's lines it reaches above the box's baseline, and how
-  far below that baseline. TeX's line holding the box and the rule is as tall
-  and as deep as the taller and the deeper of the two. -/
+  /-- A rule beside the box reaching by its lines: how far past the
+  box's lines it reaches above and below the box's baseline. -/
   reach : Option (Sp × Sp) := none
-  /-- The box's last line's depth, its strut's or its ink's (`placedJob`):
-  what a rule's reach past the box's top is measured with. -/
+  /-- The box's last line's depth, its strut's or its ink's. -/
   lastDepth : Sp := 0
   deriving Repr, Inhabited, DecidableEq
 
-/-- One paragraph, measured and ready to break: everything `kp` and line
-placement need, gathered during the block walk so the breaking runs can
-happen in parallel between the walk and placement. -/
+/-- One paragraph, measured and ready to break: everything `kp` and line placement need. -/
 public structure Spacing.Paragraph where
   private mk ::
   private items : Array Item
@@ -10746,23 +8683,17 @@ public structure Spacing.Paragraph where
   private indent : Sp
   private center : Bool
   private size : Sp
-  /-- The leading of the named size step the paragraph is set in
-  (`Ir.paraStep?`) at its base (`Ir.stepLead`), `size` then that step's
-  size: its lines stand on the step's strut and leading. -/
+  /-- The leading of the named size step the paragraph is set
+  in (`Ir.paraStep?`), `size` then being that step's size. -/
   private lead : Option Sp := none
-  /-- A title part that opens a new line takes TeX's baseline skip in force
-  on that lower line, rather than combining two CSS half-leading boxes. -/
+  /-- TeX's baseline skip for a title part that opens a new line. -/
   private firstBaseline : Option Sp := none
-  /-- The line hangs from the right edge of the measure (`Geom.flushRight`):
-  the third horizontal origin, beside centred and left. -/
+  /-- The line hangs from the right edge of the measure (`Geom.flushRight`). -/
   private flushRight : Bool := false
-  /-- Justified or ragged, from the page: ragged lines break free of
-  stretch badness and are set at their natural width. -/
+  /-- Justified or ragged, from the page. -/
   private justify : Bool := true
-  /-- The ragged edge is LaTeX's `\@flushglue` (`\raggedright`,
-  `\raggedleft`, `\centering`): every line ends in `0pt plus 1fil`, so the
-  breaker prices no line's slack and fills each line first (`kp`'s `fil`),
-  and a line wider than the measure takes its glue's shrink. -/
+  /-- The ragged edge is LaTeX's `\@flushglue`: every
+  line ends in `0pt plus 1fil` and fills first. -/
   private rightFil : Bool := false
   /-- Whether boundary glyphs protrude into the margin, from the page. -/
   private protrude : Bool := true
@@ -10770,73 +8701,43 @@ public structure Spacing.Paragraph where
   private expand : Bool := true
   /-- Marker content set as its own items and placed before the first line. -/
   private markerSegs : Option (Array Seg × Sp) := none
-  /-- Where the marker's column stands: right-aligned against this offset
-  from the margin instead of the line's own indent — an algorithm's line
-  numbers keep one column whatever each line's depth. `none` hangs the
-  marker off the indent, the list-bullet shape. -/
+  /-- Where the marker's column stands, right-aligned against
+  this offset from the margin; `none` hangs it off the indent. -/
   private markerIndent : Option Sp := none
-  /-- Where a flush-left marker starts, as an offset from the margin: the
-  marker sets there and the gap after it reaches the line's own start — a
-  bibliography label a style writes (`Ir.BibItem.labelFlush`). Read
-  before `markerIndent`. -/
+  /-- Where a flush-left marker starts, as an offset from the
+  margin (`Ir.BibItem.labelFlush`); read before `markerIndent`. -/
   private markerLeft : Option Sp := none
-  /-- TeX's `\hangindent`, the list's `\itemindent` negated: every line but
-  the first stands this far in from `indent`, which already includes it.
-  The items then open with a `-hangIndent` kern, so the breaker prices the
-  first line as that much longer; placement sets the first line past the
-  kern, on the widened measure (`paraLineGeom`), so no glyph box stands
-  in for the offset and the expansion factor never scales it. -/
+  /-- TeX's `\hangindent`, the list's `\itemindent` negated:
+  every line but the first stands this far in from `indent`. -/
   private hangIndent : Sp := 0
   /-- A rule filling the first line after the content. -/
   private rule : Option HeadingRule := none
-  /-- The paragraph's footnotes, pre-broken: each with the item index of
-  its mark's box, so placement can hand a line exactly the notes whose
-  marks it carries. -/
+  /-- The paragraph's pre-broken footnotes, each with its mark's item index. -/
   private notes : Array (Nat × NoteBlock) := #[]
-  /-- The paragraph stands inside a float: its lines are box content, not
-  galley lines, and the line-number census must not count them
-  (`LineOut.counted`). -/
+  /-- The paragraph stands inside a float, so its lines are not counted galley lines. -/
   private inFloat : Bool := false
-  /-- The breaks ending a line of a declared line that re-flowed
-  (`carriedBreaks`): their overrun is that declared line's, named by its
-  re-flow (W0386), so no W0005 names the line again. -/
+  /-- The breaks ending a line of a declared line that re-flowed, whose overrun its W0386 names. -/
   private carried : Array Bool := #[]
-  /-- The first `Struct` leaf of the block this paragraph sets — what every
-  line placed from it names (`LineOut.leaf`). `none` for generated ink. -/
+  /-- The first `Struct` leaf of the block this paragraph sets; `none` for generated ink. -/
   private leaf : Option Nat := none
   /-- The space the text after this paragraph needs on its page: nonzero
-  for a heading, which TeX never lets end a page (`\@xsect` puts `\nobreak`
-  before the after-skip, and `\@afterheading` sets `\clubpenalty` to
-  10000, so the heading keeps the next paragraph's first two lines). -/
+  for a heading, which TeX never lets end a page (`\@xsect`). -/
   private keepNext : Sp := 0
-  /-- The paragraph is display math, set as TeX sets a display
-  (`Spacing.Page.placeLine`'s `display`). -/
+  /-- The paragraph is display math, set as TeX sets a display. -/
   private display : Option DisplayJob := none
-  /-- The paragraph opens a painted colour box with this inset (a block's
-  title, `Ir.titledPadding`): its first line stands where TeX's interline
-  rule puts the box (`Spacing.Page.placeLine`). -/
+  /-- The paragraph opens a painted colour box with this inset (`Ir.titledPadding`). -/
   private paintPadding : Option Sp := none
-  /-- A table row's strut, height and depth (`tableStrut`): every line placed
-  from the job is TeX's row box (`strutBox`). `none` off a table. -/
+  /-- A table row's strut, height and depth (`tableStrut`); `none` off a table. -/
   private rowStrut : Option (Sp × Sp) := none
-  /-- Every line carries a strut of this `\baselineskip` (fancyvrb's
-  `\strut` in each code line): its box is the strut's at least
-  (`Spacing.Page.placeLine`'s `strut`). -/
+  /-- Every line carries a strut of this `\baselineskip`, as fancyvrb's code lines do. -/
   private strut : Option Sp := none
-  /-- The paragraph's forced line ends declare its lines (W0386 names one
-  that did not hold, `ParagraphBreaks.Splits`): a tex `\\` does. A
-  markdown hard break is HTML's `<br>`: it ends a line and declares nothing
-  about the line it ends, so a markdown paragraph records only its own end. -/
+  /-- Whether the paragraph's forced line ends declare its lines,
+  as a tex `\\` does and a markdown hard break does not. -/
   private declaresLines : Bool := true
-  /-- The stretch every line carries besides its own glue (`KpSums.bg`):
-  plain TeX's `\raggedright` `\rightskip 0pt plus 2em` in a narrowed table
-  cell (`Ir.ColSpec.narrows`), where a line may hold one word and no glue.
-  Priced so, a word stands alone on its line where the breaker once packed
-  the cell's words onto one overfull line across the next column. Zero
-  elsewhere. -/
+  /-- The stretch every line carries besides its own glue (`KpSums.bg`): plain
+  TeX's `\rightskip 0pt plus 2em` in a narrowed table cell, else zero. -/
   private background : Sp := 0
-  /-- The paragraph opens a TeX box (`TexBox`): its first line stands where
-  TeX's interline rule puts that box (`placeParaLine`). -/
+  /-- The paragraph opens a TeX box (`TexBox`). -/
   private texBox : Option TexBox := none
 
 private abbrev ParaJob := Spacing.Paragraph
@@ -10847,11 +8748,8 @@ private structure Spacing.Paragraph.SourceBound (n : Nat) (j : ParaJob) : Prop w
   marker : j.markerSegs = none
   rule : j.rule = none
 
-/-- A title slot's placement resolved to the page: which point of its box
-(`anchor`) stands at which point of the page (`pagePoint`), the shifts in
-page coordinates (`dy` down-positive, TikZ's `yshift` negated), the inner
-sep around the text, pgf's outer anchor clearance, and — when the slot
-declares its width — the box's left edge and width as collected. -/
+/-- A title slot's placement resolved to the page: which point of its box stands at
+which point of the page, the shifts, the inner and outer seps, and a declared width. -/
 public structure SlotSpec where
   anchor : Ir.BoxPoint
   pagePoint : Ir.BoxPoint
@@ -10862,11 +8760,8 @@ public structure SlotSpec where
   box : Option (Int × Int)
   deriving Repr, Inhabited
 
-/-- **Where a slot's box goes.** The border box is the text's extent plus
-inner sep; pgf's outer sep expands only the rectangle's anchor extent
-(pgf manual §17.2.2–3). The shift moves that expanded `anchor` point onto
-the page's `pagePoint`, plus the declared shifts. `left`/`w` and `top`/`h`
-are the shipped text extent. -/
+/-- Where a slot's box goes: its expanded anchor point onto the
+page point, plus the declared shifts (pgf manual §17.2). -/
 public def slotShift (spec : SlotSpec) (pageW pageH left w top h : Int) : Int × Int :=
   let inset := spec.sep + spec.outerSep
   let bw := w + 2 * inset
@@ -10876,9 +8771,6 @@ public def slotShift (spec : SlotSpec) (pageW pageH left w top h : Int) : Int ×
   (px - (left - inset + Ir.shareOf spec.anchor.hshares bw),
    py - (top - inset + Ir.shareOf spec.anchor.vshares bh))
 
-/-- **The expanded anchor point lands where it is declared** (`_exact`):
-after the shift, the rectangle's anchor including inner and outer sep is
-the page point plus the declared shifts, for every compass point. -/
 public theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Int) :
     left + (slotShift spec pageW pageH left w top h).1 - spec.sep - spec.outerSep
         + Ir.shareOf spec.anchor.hshares (w + 2 * (spec.sep + spec.outerSep))
@@ -10896,29 +8788,19 @@ private inductive AnchorRule where
   | tex (h : Sp)
   /-- `\nointerlineskip`: on the band's bottom. -/
   | flush
-  /-- tcolorbox's balanced skip `s` (tcolorbox.sty, `before skip balanced`):
-  `\addvspace{s + .3\baselineskip - \prevdepth - \parskip}`, where the band
-  above is no deeper than `.3\baselineskip`, else `\addvspace{s - \parskip}`,
-  then `\nointerlineskip` and the box's own paragraph's `\parskip` — the box
-  `max(depth, .3\baselineskip) + s` below the band's baseline, a pending
-  skip taken in as `\addvspace` takes one, by the larger. -/
+  /-- tcolorbox's balanced skip `s` (tcolorbox.sty, `before skip balanced`). -/
   | balanced (s : Sp)
   deriving Inhabited
 
-/-- The block walk emits vertical skips and paragraph jobs; placement replays
-them in document order, so the page builder stays sequential and the output
-does not depend on task scheduling. -/
+/-- Block-walk output replayed in document order by
+placement, so the page builder stays sequential. -/
 private inductive Op where
   | skip (g : Glue)
-  /-- Glue owed after a display, under TeX's two choices of skip below it:
-  the long and the short. The page builder ships the one the display's line
-  chose (`Spacing.Page.dispShort`). -/
+  /-- Glue owed after a display: the long and the short
+  skip, of which the display's line chose one. -/
   | skipAlt (long short : Glue)
-  /-- A titled frame's content opens here (`Spacing.Page.openBody`): below the title
-  box, on a baseline, with the frame's own top skip pending. `box` is where
-  a title template's box ends below its last baseline, where the template
-  fixes it (`Ir.defaultFrameTitleBelow`); without one the title line's own
-  depth stands. -/
+  /-- A titled frame's content opens here, below the title box, with the
+  frame's own top skip pending; `box` is where a title template's box ends. -/
   | bodyOpen (g : Glue) (box : Option Sp)
   | para (job : ParaJob)
   /-- The placed extent of a block link or painted surface. -/
@@ -10926,132 +8808,78 @@ private inductive Op where
   | regionClose
   /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
   | brk
-  /-- The folio and running style declared at a boundary. Geometry remains
-  the preceding boundary's explicit distribution and ground. -/
+  /-- The folio and running style declared at a boundary. -/
   | pageOpening (opening : Ir.PageOpening)
-  /-- Column markers, kept flat so staging stays a map: `colOpen` saves the
-  vertical position, `colNext` rewinds to it for the next column, `colClose`
-  resumes below the tallest column. Nesting works through a stack. `pos` is
-  each column's declared position (`Ir.BoxPos`); a table row carries none. -/
+  /-- Column markers: `colOpen` saves the vertical position, `colNext`
+  rewinds to it, `colClose` resumes below the tallest column. -/
   | colOpen (pos : Array Ir.BoxPos)
   | colNext
   | colClose
-  /-- Style for the page being opened: a background fill, and how its
-  content distributes the leftover vertical space (a standout frame and a
-  section page centre; a title page takes the golden split). Applies when
-  the page closes and resets with it. -/
+  /-- Style for the page being opened: a background fill and
+  its vertical distribution, reset when the page closes. -/
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
-  /-- Persistent page ground from a palette epoch. Unlike `pageStyle`, it
-  survives a page close; a frame's own page style still wins for that page. -/
+  /-- Persistent page ground from a palette epoch, surviving a page close. -/
   | pageGround (bg : Option Ir.Color)
-  /-- A colour bar behind the line just placed — the frame title. Full page
-  width, from the page top to `pad` below the line's depth. With a `strut`
-  the bar is moloch's frametitle box instead (`Ir.frameTitleStrut`): the
-  title's first baseline moves to `pad + strut` below the page top and the
-  bar closes `pad` under the last baseline — `frameBar_exact`. -/
+  /-- A colour bar behind the line just placed, the frame title;
+  with a `strut`, moloch's frametitle box (`frameBar_exact`). -/
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
-  /-- A frame opens: whether its author declared `[allowframebreaks]`, so
-  the builder knows which mid-frame page close is a declared continuation
-  and which is an overflow to report (`warnSpill_accounts`). Cleared at the
-  frame's `.brk`. -/
+  /-- A frame opens, with whether its author declared `[allowframebreaks]`. -/
   | frameOpen (breakable : Bool) (source : Option Span) (opening : FrameOpening)
-  /-- Close source ownership after the frame's final page boundary. A
-  `.brk` inside its body only closes a physical page. -/
+  /-- Close source ownership after the frame's final page boundary. -/
   | frameClose
-  /-- beamer's `\vbox{}` opening a block body's colour box, or an untitled
-  block's empty title (beamerinnerthemedefault.sty, `block begin`), or a
-  tcolorbox's edge: an empty box the next band is spaced below
-  (`Spacing.Page.anchorAt`). It stands where its rule puts it below the
-  band above (`AnchorRule`), then `shift`. Inside paint (`paints`) it ships
-  as an empty line, the painted box's own edge (`RegionKind.surface`), as
-  a strut does. -/
+  /-- beamer's `\vbox{}` opening a block's colour box, or a
+  tcolorbox's edge: an empty box the next band is spaced below. -/
   | boxAnchor (rule : AnchorRule) (shift : Sp) (paints : Bool)
-  /-- A full-measure horizontal rule as its own line: the title page's
-  separator. Placed through `placeLine`, so it spaces, breaks pages, and
-  distributes exactly as a line of text does. -/
+  /-- A full-measure horizontal rule as its own line, placed through `placeLine`. -/
   | hrule (color : Ir.Color) (thickness : Sp)
-  /-- A table rule row, already set: rule (and gap) segs starting at `x`,
-  covering `w`. Placed at exactly the pending skip below the previous ink —
-  booktabs' padding is the declared seps and nothing else — and it commits
-  with zero depth as a rule line, so the row below stacks flush too
-  (`interlineFor`). -/
+  /-- A table rule row, already set: placed at the pending skip
+  below the previous ink and committed with zero depth. -/
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
-  /-- Content placed so far on the open page is chrome pinned to the page
-  top — the frame title and its bar: the page's vertical distribution
-  moves only the lines and fills that follow, as beamer distributes the
-  body below the frametitle, never the frametitle itself. -/
+  /-- Content placed so far on the open page is chrome pinned
+  to the page top, which the distribution never moves. -/
   | pin
-  /-- A progress bar under the line just placed: `bg` across `w` from `x`,
-  `fg` over the leading `num/den` of it, `thick` tall. -/
+  /-- A progress bar under the line just placed: `bg`
+  across `w` from `x`, `fg` over `num/den` of it. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  /-- The logo state changes here: pages from this point carry `content`
-  (empty clears). Applied by the furniture pass, keyed to page indexes. -/
+  /-- The logo the pages from here carry; empty clears it. -/
   | setLogo (content : Array Ir.Inline)
-  /-- An elaborated picture placed with its left edge at page x — fills and
-  label lines through one `Pic.Place` transform, fitted vertically the way
-  a line of the picture's height is. `leaf` is its `.picture` leaf, what
-  the label lines name. -/
+  /-- An elaborated picture placed with its left edge at page x; `leaf` is its `.picture` leaf. -/
   | picture (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat)
-  /-- A float's extent: everything between `floatOpen` and its matching
-  `floatClose` — caption, gap, and object — is one unbreakable box, as
-  LaTeX floats are (a float is a `\vbox`: placed whole or deferred, never
-  split). Placement fits the group where it stands, else moves it whole
-  to the next page; a group taller than the text block is placed alone
-  and overruns, reported (W0358), never split. -/
+  /-- A float's extent up to its `floatClose`: one
+  unbreakable box, placed whole or moved to the next page. -/
   | floatOpen
   | floatClose
-  /-- An in-document anchor (a level-1 section heading's slug) stands
-  here: the builder attaches it to the page the next committed line lands
-  on, which is where the outline's destinations resolve. -/
+  /-- An in-document anchor, attached to the page the next committed line lands on. -/
   | anchor (slug : String)
-  /-- A title slot opens (`Ir.TitleSlot`): placement saves where the slot
-  starts, as a column does, so every slot of the page is set from the same
-  place and none spills its neighbour off the page. -/
+  /-- A title slot opens (`Ir.TitleSlot`), saving where it starts. -/
   | slotOpen
-  /-- The slot closes: the lines and fills it placed move as one box to the
-  point of the page it is pinned to (`slotShift`), and stay pinned there. -/
+  /-- The slot closes: its lines and fills move as one
+  box to the page point it is pinned to (`slotShift`). -/
   | slotClose (spec : SlotSpec)
-  /-- `\vspace*`'s zero rule (`Ir.pageAnchorRole`): on a page that holds
-  nothing yet it is the page's first item, so the glue after it stays
-  (`Spacing.Page.anchored`), TeX's own `\parskip` below it first
-  (`Spacing.Pending.flushAnchored`). -/
+  /-- `\vspace*`'s zero rule (`Ir.pageAnchorRole`), which keeps the glue after it at a page top. -/
   | anchorRule (parskip : Glue)
-  /-- `\nointerlineskip` (`Ir.noInterlineRole`): the next box takes no
-  interline glue (`Spacing.Page.ignoreDepth`). -/
+  /-- `\nointerlineskip` (`Ir.noInterlineRole`). -/
   | noInterline
-  /-- A display a picture stands for opens here (`Ir.displayPicture?`): the
-  skip above is TeX's choice against the line before, as a display line's
-  is (`Spacing.Page.openDisplayAt`), `left` the picture's left edge on the
-  measure and `size` the face two quads of which the choice reads. -/
+  /-- A display a picture stands for opens here (`Ir.displayPicture?`),
+  its skip above chosen as a display line's. -/
   | displayOpen (dj : DisplayJob) (left size : Sp)
 
-/-- The block walk owes a gap before the next line rather than emitting one
-as it goes, because what the gap is depends on everything declared between
-two lines. The rules are LaTeX's. `\vspace` is a `\vskip`: it adds. An
-element's own space — a heading's `before`, a list's `topsep` — is an
-`\addvspace`: against glue already owed it takes the larger, so a list's
-bottom space and the heading after it do not stack; after a `\vspace` it
-adds (`addvspace_after_vspace_exact`). `parskip`, the default
-between peers, is paid only when nothing was declared. `wantDefault` marks a
-peer boundary, `owed` is the glue sequence, `flushGap` pays it when the next
-line comes. -/
+/-- The block walk's read-only context: geometry, faces,
+styles, and the class and deck settings in force. -/
 public structure Spacing.Context where
   private mk ::
   private geom : Geom
   private xHeight : Sp
-  /-- The font the class's preamble set, where a package's em and ex were
-  fixed as it loaded (`Ir.PreambleFace`): what a table's undeclared rule
-  weights and seps resolve in (`tableLength`). -/
+  /-- The font the class's preamble set, in which a table's
+  undeclared rule weights and seps resolve (`Ir.PreambleFace`). -/
   private preamble : Ir.PreambleFace
-  /-- Hyphenation patterns; a path that must never hyphenate (display
-  type, verbatim) passes the sub-walk a reader with `none`. -/
+  /-- Hyphenation patterns; display type and verbatim walk with `none`. -/
   private pats : Option Hyphen.Patterns := none
   private fs : FontSet
   private styles : Ir.Styles := {}
   /-- The caption positions the document declares (`Ir.captionPosOf`). -/
   private captionPos : Array (String × Ir.CaptionPos) := #[]
-  /-- The document's resolved main locale: what the class furniture the
-  walk generates (the abstract heading, caption prefixes) is worded in. -/
+  /-- The document's main locale, in which generated class furniture is worded. -/
   private locale : Locale := Locale.en
   /-- The `slides` class: frames and out-of-frame sections open fresh pages. -/
   private slides : Bool := false
@@ -11060,117 +8888,77 @@ public structure Spacing.Context where
   private inFrame : Bool := false
   /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
   private lists : Ir.ListLineage := .sizeFile
-  /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`): the glue a
-  frame's declared alignment spends (`VDist.of`). -/
+  /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`). -/
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
-  /-- The walk is inside a frame whose lists set with beamer's squeezed
-  spacing (`Ir.frameSqueeze`): `\itemsep0pt`, and `\topsep0.5pt` for a
-  trivlist inside an item. -/
+  /-- The walk is inside a frame whose lists set with
+  beamer's squeezed spacing (`Ir.frameSqueeze`). -/
   private squeeze : Bool := false
-  /-- The walk is inside a frame declared `[allowframebreaks]`: a block's
-  title keeps its body's first lines (`collectTitledTitle`). -/
+  /-- The walk is inside a frame declared `[allowframebreaks]`. -/
   private breakableFrame : Bool := false
-  /-- The walk is inside a box (`Ir.Block.listScope`), where TeX sets
-  content at its natural height, so a fill there stretches nothing the
-  page's leftover reaches (`Ir.frameFillsOne` stops at the same boxes). -/
+  /-- The walk is inside a box (`Ir.Block.listScope`), where
+  a fill stretches nothing the page's leftover reaches. -/
   private boxed : Bool := false
   /-- The list or quote being collected opened inside an open paragraph
-  (`Ir.inParagraphRole`): its `\topsep` takes no `\partopsep`. Read by the
-  environment's own arm and cleared for what it contains. -/
+  (`Ir.inParagraphRole`), so its `\topsep` takes no `\partopsep`. -/
   private inPar : Bool := false
-  /-- The document's loaded images, from the driver: layout only measures
-  and places them; the bytes ride to the backends. -/
+  /-- The document's loaded images, which layout measures and places. -/
   private imgs : Image.Store := {}
-  /-- Native-picture source openings, on the same structure leaves the
-  collector allocates before overlay replay. -/
+  /-- Native-picture source openings, on the structure leaves the collector allocates. -/
   private pictureSpans : Array (Nat × Span) := #[]
-  /-- The walk is inside a float: every paragraph collected here is box
-  content, marked uncounted for the line-number census (`Spacing.Paragraph.inFloat`,
-  `LineOut.counted`). -/
+  /-- The walk is inside a float, whose paragraphs are uncounted box content. -/
   private inFloat : Bool := false
-  /-- The headline band a headline class draws on each frame page
-  (`Doc.headline`, the poster record's furniture): title, authors,
-  institute in the `frametitle` roles at the page top, the body below. -/
+  /-- The headline band a headline class draws on each frame page (`Doc.headline`). -/
   private headline : Option Ir.Headline := none
-  /-- The overlay step the page being collected is: which group of an
-  alternation it inks (`Ir.altShowsFirst`), the one predicate both artifacts
-  read. `run`'s step driver sets it per step page; a page with no overlay
-  behind it is step 1. -/
+  /-- The overlay step the page being collected is (`Ir.altShowsFirst`); 1 with no overlay. -/
   private step : Nat := 1
-  /-- Inside a declared title slot (`Ir.TitleSlot`): its own part templates
-  already wrap what they set, so a document title there takes the body size
-  before the part's role applies any declared absolute size. -/
+  /-- Inside a declared title slot (`Ir.TitleSlot`),
+  whose part templates already wrap what they set. -/
   private slotTitle : Bool := false
   /-- Exact title-part size and optional baseline skip, resolved at the
   slot boundary and scoped to that slot. -/
   private roleMetrics : List (String × (Sp × Option Sp)) := []
-  /-- For each part that opens a later line, TeX's baseline skip in force
-  on that line. The explicit part gap stays ordinary pending glue. -/
+  /-- For each part that opens a later line, TeX's baseline skip in force on that line. -/
   private roleBaselines : List (String × Sp) := []
-  /-- The gap above the footline band: the document's furniture gap, else
-  beamer's 4 pt (`Ir.footline.sep`) — the page builder's own (`Spacing.Page.footGap`),
-  from one binding in `run`. -/
+  /-- The gap above the footline band: the document's
+  furniture gap, else beamer's 4 pt (`Ir.footline.sep`). -/
   private footGap : Sp := Ir.footline.sep
-  /-- A centred scope is setting this block as one box of its line
-  (`collectCentered`): a lone box row takes the centre's share of its
-  slack (`Ir.HAlign.boxOffset`). Cleared for what the box contains. -/
+  /-- A centred scope sets this block as one box of its line (`collectCentered`),
+  so a lone box row takes the centre's share of its slack. -/
   private centreBoxes : Bool := false
-  /-- Where the display being collected stands in its paragraph
-  (`Ir.DisplayCtx`), from the role elaboration wrapped it in; outside one
-  the default, a display inside a paragraph that runs on after it. -/
+  /-- Where the display being collected stands in its paragraph (`Ir.DisplayCtx`). -/
   private display : Ir.DisplayCtx := {}
   /-- The document's cover (`Ir.Design.cover`), from `run`. -/
   private cover : Option Ir.Cover := none
-  /-- Inside an overlay step this page does not show (`Ir.OverlaySpec.pending`
-  at `step`): the cover a colour resolved here takes. The dim walk covers
-  every coloured run before layout (`Ir.dimBlocks`); a titled block's boxes
-  and heading ink resolve here, from the palette in force, and take their
-  cover here, as beamer's `\opaqueness` covers every colour a covered step
-  uses. -/
+  /-- Inside an overlay step this page does not show, the cover a colour resolved
+  here takes, as beamer's `\opaqueness` covers a covered step's colours. -/
   private covering : Option Ir.Cover := none
-  /-- The surface the document was written in (`Ir.Doc.surface`): a
-  markdown document's code breaks as url.sty sets a path
-  (`TextStyle.urlBreaks`), and a remedy the walk names is one that surface
-  can write. -/
+  /-- The surface the document was written in (`Ir.Doc.surface`). -/
   private surface : Ir.Surface := .tex
 
 private abbrev Rd := Spacing.Context
 
-/-- The threaded state of the block walk, now only what the walk actually
-writes; everything it merely reads rides in `Rd`, passed to every
-`collect*` once. A scoped override — display type turning justification
-off, a verbatim block refusing hyphenation, the abstract's `\small` —
-is a modified reader handed to the sub-walk, so no restore code exists
-to forget. -/
+/-- The threaded state of the block walk: only what
+it writes, everything it reads riding in `Rd`. -/
 public structure Spacing.Pending where
   private mk ::
-  /-- The right edge paragraphs break against, from the page's left margin:
-  the text width, unless a column narrows it. -/
+  /-- The right edge paragraphs break against, from the page's
+  left margin: the text width unless a column narrows it. -/
   private measure : Option Sp := none
-  /-- The document's palette: the semantic keys (`fg`, `standoutbg`, …)
-  drive the themed furniture, and their absence turns it off. -/
+  /-- The document's palette, whose semantic keys drive the themed furniture. -/
   private pal : Ir.Palette := {}
   private paletteEpoch : Nat := 0
-  /-- The document's tokens: `progressheight` sizes the progress bar. -/
   private tokens : Ir.Tokens := {}
   /-- Default text colour: the palette's `fg` when declared, else black. -/
   private fg : Ir.Color := Ir.Color.black
-  /-- The surface content collected here stands on: the palette epoch's
-  declared `bg` (`none` is the undeclared page), overridden where a bar or
-  an inversion resolves — the frame-title bar, a titled block's bar, the
-  standout pair. Written into every `TextStyle` the walk builds, the
-  resolving-site half of the declared ground on `Seg.run`. -/
+  /-- The surface content collected here stands on: the palette
+  epoch's `bg`, overridden where a bar or an inversion resolves. -/
   private ground : Option Ir.Color := none
-  /-- The enclosing painted body survives a palette declaration. Its ink
-  keeps the source declaration separately from any ground-specific correction. -/
+  /-- The enclosing painted body's ground, surviving a palette declaration. -/
   private bodyGround : Option Ir.Color := none
   private bodyInk : Option (Ir.ColorRef × Ir.Color) := none
-  /-- The number of the frame being collected, from `Ir.frameNumbers`:
-  `some k` for the k-th countable frame, `none` for a title
-  frame. Threaded by `run`'s driver off the one numbering — nothing in the
-  walk counts. -/
+  /-- The number of the frame being collected, from `Ir.frameNumbers`; `none` for a title frame. -/
   private frameNum : Option Nat := none
   /-- The frame's label, from `Ir.Doc.frameLabels` by the same driver. -/
   private frameLabel : Option String := none
@@ -11180,111 +8968,74 @@ public structure Spacing.Pending where
   private frameOrigin : Option FrameOrigin := none
   /-- Source declaration, before an overlay makes several collected frames. -/
   private frameSource : Option Span := none
-  /-- Countable frames elapsed at this point, read off the same numbering
-  (the last `some` the driver threaded): a section page's progress bar is
-  the deck position. -/
+  /-- Countable frames elapsed at this point, the deck
+  position a section page's progress bar shows. -/
   private framesDone : Nat := 0
   /-- The numbering's denominator, `Ir.frameCount`. -/
   private frameCount : Nat := 0
-  /-- Nesting depth of the list being walked, one counter per list kind, as
-  LaTeX counts them (`\@itemdepth`/`\@enumdepth`): an itemize inside an
-  enumerate inside an itemize is itemize level 2. -/
+  /-- Nesting depth of the list being walked, one counter per list
+  kind as LaTeX counts them (`\@itemdepth`, `\@enumdepth`). -/
   private itemDepth : Nat := 0
   private enumDepth : Nat := 0
-  /-- The marker of the list item a disclosure opens, until its summary line
-  takes it (`collectItem`), as the item's first paragraph does. -/
+  /-- The marker of the list item a disclosure opens, until its summary line takes it. -/
   private itemMarker : Option (Array Ir.Inline) := none
-  /-- Quotations open around the walk (`quote`, `quotation`, `verse`, the
-  abstract's quotation): each is a `\list`, so LaTeX's `\@listdepth`, which
-  picks a list level's spaces and margin, counts it beside the lists,
-  though no marker reads it. -/
+  /-- Quotations open around the walk, which LaTeX's `\@listdepth` counts beside the lists. -/
   private quoteDepth : Nat := 0
-  /-- Diagnostics the block walk itself raises (list depth past the class's
-  four levels); joined into the placement diagnostics by `run`. -/
+  /-- Diagnostics the block walk itself raises, joined into the placement diagnostics by `run`. -/
   private diags : Array Diag := #[]
-  /-- The chrome footer's slots, when a themed deck draws one (`\chrome`
-  declared, no `\runningfoot` overriding it). Both `none` turns the whole
-  footer off. -/
+  /-- The chrome footer's slots when a themed deck draws one; both `none` turns the footer off. -/
   private chromeL : Option Ir.ChromeSlot := none
   private chromeR : Option Ir.ChromeSlot := none
   private standoutNote : Option Bool := none
-  /-- Slides without a `\runningfoot`: the classes of documents whose pages
-  may carry a chrome footer at all. -/
+  /-- Whether the document's pages may carry a chrome footer: slides without a `\runningfoot`. -/
   private footAllowed : Bool := false
-  /-- The `\framefoot` note in force: it takes the footer's left slot for
-  the frames that follow, until an empty one clears it. -/
+  /-- The `\framefoot` note in force, which takes the
+  footer's left slot until an empty one clears it. -/
   private frameFoot : Option (Array Inline) := none
   /-- Title of the section in force: what a `\sectiontitle` slot shows. -/
   private curSection : Array Inline := #[]
   private wantDefault : Bool := false
-  /-- A document `\vskip` stands in the owed glue: a `\vspace`, a skip macro,
-  a `\block[before]`. TeX puts it on the vertical list where it stands and
-  contributes `\parskip` when the *following* paragraph starts, after it, so
-  it adds to the peer gap rather than replacing it (`Spacing.Pending.gapGlue`,
-  `skip_monotone`). An element's own `\addvspace` — a heading's `before`, a
-  list's `topsep`, the furniture gaps — keeps the older replace-the-default
-  shape; once a skip is present the boundary pays both. -/
+  /-- A document `\vskip` stands in the owed glue, so it adds to the
+  peer gap rather than replacing it (`Spacing.Pending.gapGlue`). -/
   private declaredSkip : Bool := false
-  /-- A list's `\topsep` or `\itemsep` stands in the owed glue
-  (`Spacing.Pending.listSpace`): the paragraph after it adds TeX's `\parskip`
-  (`Geom.texParskip`) on top, which is what `\@trivlist` spends, rather
-  than the engine's peer gap. -/
+  /-- A list's `\topsep` or `\itemsep` stands in the owed glue,
+  so the paragraph after it adds TeX's `\parskip` on top. -/
   private trivOwed : Bool := false
-  /-- A display heading was the last thing set, with no line after it yet:
-  LaTeX's `\@afterheading` sets `\@nobreak` until the next paragraph
-  starts, and a list's first `\item` meeting it spends `\@nbitem`
-  (latex.ltx:16044-16047) — no `\topsep`, the item standing where a
-  paragraph after the heading stands. Cleared by the next line's gap. -/
+  /-- A display heading was the last thing set, so a list's first `\item`
+  spends `\@nbitem` (latex.ltx); cleared by the next line's gap. -/
   private afterHeading : Bool := false
-  /-- A frame's body just opened (`Op.bodyOpen`): beamer's `\vskip-\parskip`
-  stands before its `\vbox{}`, which the first paragraph's own `\parskip`
-  cancels (no peer gap is paid) and a block, spending none, still pays
-  (its `\medskipamount`). A skip before the first element leaves it
-  standing: the skip goes on the list after the `\vbox{}`, and the element's
-  `\parskip` still meets the frame's. Cleared by the next line's gap. -/
+  /-- A frame's body just opened (`Op.bodyOpen`), so beamer's `\vskip-\parskip`
+  cancels the first paragraph's peer gap; cleared by the next line's gap. -/
   private frameTop : Bool := false
-  /-- `\vspace*`'s rule stands in the owed glue, before `owed[k]`
-  (`Ir.pageAnchorRole`): the boundary ships around it
-  (`Spacing.Pending.flushAnchored`). -/
+  /-- Where `\vspace*`'s rule stands in the owed glue, before `owed[k]` (`Ir.pageAnchorRole`). -/
   private anchorAt : Option Nat := none
   private owed : Array Glue := #[]
-  /-- The glue owed after a display under TeX's short skip below it: `owed`
-  holds it under the long skip, this under the short, every owed-glue step
-  applied to both, and the page builder ships the one the display's line
-  chose (`Op.skipAlt`). `none` while no display's skip is owed. -/
+  /-- The glue owed after a display under TeX's short skip below it,
+  beside `owed`'s long one; `none` while no display's skip is owed. -/
   private dispAlt : Option (Array Glue) := none
   private ops : Array Op := #[]
   private hyphCache : Std.HashMap String (Array Nat) := {}
-  /-- Links of the unpinned navigation landmarks met so far, in document
-  order, as (text, target): the entries the document outline resolves. -/
+  /-- Links of the unpinned navigation landmarks met
+  so far, as (text, target), in document order. -/
   private navEntries : Array (String × String) := #[]
-  /-- The next structure leaf the walk will attribute: the preorder index
-  into `Struct.leaves (Struct.ofDoc (pdfView doc))`, advanced through
-  `leafRange` at exactly the sites `Struct.blockRaw` enumerates leaves, in
-  its order. The counts come from `Struct`'s own walk (`leafCount`), so the
-  channel indexes the array the tagger reads by construction; the walk
-  decides only where a block's range starts. -/
+  /-- The next structure leaf the walk attributes, advanced through
+  `leafRange` at exactly the sites `Struct.blockRaw` enumerates leaves. -/
   private leafNext : Nat := 0
-  /-- The next paragraph opens a TeX box (`TexBox`): an untitled block's body
-  is the first content of the box its template sets around title and body
-  (`Ir.BlockShape.whole`). Consumed by that paragraph; the block's close
-  clears it. -/
+  /-- The next paragraph opens a TeX box (`TexBox`), an
+  untitled block's body opening its template's box. -/
   private boxOpener : Option TexBox := none
 
 private abbrev Acc := Spacing.Pending
 
-/-- The leaves `Struct` gives a block sequence the page ships no ink for (a
-speaker note, an unpinned nav), so the counter steps over them. -/
+/-- The leaves `Struct` gives a block sequence the page ships no ink for. -/
 private def blockLeafCount (bs : Array Block) : Nat := Struct.leafCountBlocks bs
 
-/-- Claim the next `n` leaves for one block of set text: the block's first
-leaf (what its lines name) — `none` when it owns no leaf: generated ink the
-tree does not census — and the counter past them. -/
+/-- Claim the next `n` leaves for one block of set text: its first
+leaf, `none` when it owns none, and the counter past them. -/
 private def Spacing.Pending.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
   ({ a with leafNext := a.leafNext + n }, if n == 0 then none else some a.leafNext)
 
-/-- A declared length with its rubber: `2ex plus 0.5ex minus 0.25ex` keeps
-all three parts, so a page can take up the slack the author allowed. -/
+/-- A declared length with its rubber, all three parts kept. -/
 private def Spacing.Context.resolve (r : Rd) (g : SymGlue) : Glue :=
   g.resolve r.geom.fontSize r.xHeight
 
@@ -11296,10 +9047,8 @@ private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
   | some cover => cover.of c
   | none => c
 
-/-- A list level's `\leftmargin` at `\@listdepth` `lv`: the document's own
-(`Ir.leftMarginName`, a token in `tokens`), else the class's
-(`Ir.leftMargin`), else the engine's own indent where the lineage declares
-none. -/
+/-- A list level's `\leftmargin` at `\@listdepth` `lv`: the
+document's own, else the class's, else the engine's indent. -/
 private def Spacing.Context.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) : Sp :=
   match tokens.find? (Ir.leftMarginName lv) with
   | some g => (r.resolve g).width
@@ -11313,17 +9062,13 @@ private def Spacing.Pending.wantGap (a : Acc) : Acc := { a with wantDefault := t
 private def Spacing.Pending.vskip (a : Acc) (g : Glue) : Acc :=
   { a with owed := a.owed.push g, declaredSkip := true, dispAlt := a.dispAlt.map (·.push g) }
 
-/-- `\vspace`: LaTeX's `\@vspace` (latex.ltx:9362-9390) is `\vskip #1` then
-`\vskip\z@skip`, so the last skip it leaves reads zero and the next
-`\addvspace` adds to it rather than comparing with it
-(`addvspace_after_vspace_exact`). A primitive `\vskip` — a heading's
-after-skip — leaves its own width as the last skip. -/
+/-- `\vspace`: latex.ltx's `\@vspace`, `\vskip #1` then
+`\vskip\z@skip`, so the next `\addvspace` adds to it. -/
 private def Spacing.Pending.vspace (a : Acc) (g : Glue) : Acc :=
   { a with owed := (a.owed.push g).push {}, declaredSkip := true
            dispAlt := a.dispAlt.map fun o => (o.push g).push {} }
 
-/-- `Spacing.Pending.addvspace` on owed glue alone: the larger by natural width against
-the last owed, appended after a zero one. -/
+/-- `Spacing.Pending.addvspace` on owed glue alone. -/
 private def addvOwed (owed : Array Glue) (g : Glue) : Array Glue :=
   match owed.back? with
   | some last =>
@@ -11331,16 +9076,8 @@ private def addvOwed (owed : Array Glue) (g : Glue) : Array Glue :=
     else if last.width < g.width then owed.pop.push g else owed
   | none => #[g]
 
-/-- `\addvspace`: an element's own space. Against glue already owed it takes
-the larger (by natural width, as LaTeX compares them), so two elements
-meeting do not pay both their spaces — unless the owed glue's natural width
-is zero, where it adds: ltspace.dtx tests `\ifdim\lastskip=\z@` first, so
-a `\vspace{\fill}` standing before a list or a `center` keeps its fil, and
-a `\vspace` (`Spacing.Pending.vspace`) is never absorbed. Appended so, the element's
-own convention governs the boundary it now opens: the peer default a
-document skip stacks for a following paragraph (`declaredSkip`) is not
-the element's, which stands its space in place of the default as it does
-after a paragraph — a trivlist and a list re-declare theirs. -/
+/-- `\addvspace`: an element's own space, the larger by natural width
+against glue already owed, or added where that is zero (ltspace.dtx). -/
 private def Spacing.Pending.addvspace (a : Acc) (g : Glue) : Acc :=
   let a := { a with dispAlt := a.dispAlt.map (addvOwed · g) }
   match a.owed.back? with
@@ -11349,63 +9086,32 @@ private def Spacing.Pending.addvspace (a : Acc) (g : Glue) : Acc :=
     else if last.width < g.width then { a with owed := a.owed.pop.push g } else a
   | none => { a with owed := #[g] }
 
-/-- **A fill owed before an element's space survives it** (`_exact`): against
-a last skip of zero natural width `\addvspace` appends, exactly as LaTeX's
-`\ifdim\lastskip=\z@` arm does, so the fil a centring sandwich stands on is
-never displaced by the `\topsep` of what it centres. -/
 private theorem addvspace_zero_adds_exact (a : Acc) (g last : Glue)
     (hl : a.owed.back? = some last) (h0 : last.width = 0) :
     (a.addvspace g).owed = a.owed.push g := by
   simp [Spacing.Pending.addvspace, hl, h0]
 
-/-- A trivlist's own space (`\topsep`, `Ir.trivlistSkip`): an `\addvspace`,
-so two trivlists meeting pay the larger of their spaces once — and paid on
-top of the peer gap, not in place of it, because TeX contributes `\parskip`
-when the following paragraph starts, after the trivlist's space already
-stands (ltlists.dtx `\@trivlist`, `\@endparenv`;
-measured under lualatex: baseline to baseline across `\end{center}` is
-`\topsep + \parskip + \baselineskip`). At a frame's or page's first block no peer gap is open, so the space stands
-alone, as beamer's frame start cancels its `\parskip`. -/
+/-- A trivlist's own space (`\topsep`): an `\addvspace`,
+paid on top of the peer gap (ltlists.dtx `\@trivlist`). -/
 private def Spacing.Pending.trivSpace (a : Acc) (g : Glue) : Acc :=
   { a.addvspace g with declaredSkip := true }
 
-/-- A list's own space (`\topsep`, `\itemsep`, `Ir.listSkips`): the
-trivlist's `\addvspace`, with TeX's own `\parskip` (`Geom.texParskip`) on
-top — what `\@trivlist` and `\@item` spend — rather than the engine's
-paragraph mark, which stands in for an indent TeX sets nowhere at a list's
-edge. The `\trivlist` role (`{center}`, `{flush…}`) keeps the peer gap, and
-its quantized `\topsep`, until its HTML half moves with it. -/
+/-- A list's own space (`\topsep`, `\itemsep`): the
+trivlist's `\addvspace` with TeX's own `\parskip` on top. -/
 private def Spacing.Pending.listSpace (a : Acc) (g : Glue) : Acc :=
   { a.addvspace g with declaredSkip := true, trivOwed := true }
 
-/-- A list's opening space: the trivlist's `\addvspace` (`listSpace`),
-except under beamer, whose `itemize`, `enumerate` and `description` set their
-body colour (`\usebeamercolor[fg]`) before `\list` opens. The colour stack's
-push then stands last on the vertical list, `\lastskip` reads zero there,
-and `\addvspace` adds the `\topsep` to the space above instead of taking the
-larger (`listOpen_beamer_adds_exact`). Measured under lualatex, a beamer list
-stands its `\topsep` further below a block, a list, a centred block or a
-display than a paragraph there stands; the list's closing space is the
-trivlist's under both, beamer's colour popped before it. -/
+/-- A list's opening space: the trivlist's `\addvspace`, except under
+beamer, whose colour push makes `\addvspace` add the `\topsep`. -/
 private def Spacing.Pending.listOpen (a : Acc) (r : Rd) (g : Glue) : Acc :=
   match r.lists with
   | .beamer => { a.vskip g with trivOwed := true }
   | .sizeFile | .web => a.listSpace g
 
-/-- **A beamer list's `\topsep` adds to the glue owed above it** (`_exact`):
-whatever stands owed, the list's opening appends its space, as TeX's
-`\vskip` does after the colour's whatsit. -/
 private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
     (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
   simp [Spacing.Pending.listOpen, Spacing.Pending.vskip, h]
 
-/-- **An explicit `\vspace` is never absorbed by an element's space**
-(`_exact`): after a `\vspace`, each element door — `\addvspace`, a
-trivlist's `\topsep`, a list's — appends its glue, so the document's skip
-stands whole beside it. LaTeX's `\@vspace` closes with `\vskip\z@skip`, so
-`\addvspace` takes its `\ifdim\lastskip=\z@` arm (latex.ltx:9321); measured
-under lualatex, `\vspace{12pt}` before a list, a `{center}` or a heading
-moves it by exactly 12 pt (`vspaceKeptChecks`). -/
 private theorem addvspace_after_vspace_exact (a : Acc) (v g : Glue) :
     ((a.vspace v).addvspace g).owed = (a.vspace v).owed.push g ∧
     ((a.vspace v).trivSpace g).owed = (a.vspace v).owed.push g ∧
@@ -11413,51 +9119,27 @@ private theorem addvspace_after_vspace_exact (a : Acc) (v g : Glue) :
   have h := addvspace_zero_adds_exact (a.vspace v) g {} (by simp [Spacing.Pending.vspace]) rfl
   exact ⟨h, h, h⟩
 
-/-- After a primitive `\vskip` (`Ir.primitiveSkipRole`, the mark just after
-its skip): the zero `\vspace` closes on (`Spacing.Pending.vspace`) is not on
-the list, so the skip is the last glue an `\addvspace` compares with, and
-the larger of the two stands (`addvspace_after_vskip_exact`), as
-latex.ltx's `\@xaddvskip` takes it. -/
+/-- After a primitive `\vskip`, an `\addvspace` compares with
+the skip itself, as latex.ltx's `\@xaddvskip` takes it. -/
 private def Spacing.Pending.primitiveSkip (a : Acc) : Acc :=
   let drop (o : Array Glue) : Array Glue := if o.back? = some {} then o.pop else o
   { a with owed := drop a.owed, dispAlt := a.dispAlt.map drop }
 
-/-- **An element's space after a primitive `\vskip` takes the larger**
-(`_exact`): where the skip is not zero and no narrower than the element's
-own space, the owed glue is the skip alone — measured under lualatex, a
-centred block after `\vskip 12pt` moves by 12 pt less its own `\topsep`, not
-by 12 pt. -/
 private theorem addvspace_after_vskip_exact (a : Acc) (v g : Glue) (hv : v.width ≠ 0)
     (hg : ¬ v.width < g.width) :
     (((a.vspace v).primitiveSkip).addvspace g).owed = a.owed.push v := by
   simp [Spacing.Pending.primitiveSkip, Spacing.Pending.vspace, Spacing.Pending.addvspace,
     hv, hg]
 
-/-- The glue one boundary pays: the declared glue owed, and — when a
-document skip stands in it at a peer boundary — the page's parskip *on top
-of* it. A paragraph break has two independent contributors and TeX pays
-both: declared glue goes on the vertical list where it stands, and
-`\parskip` is contributed when the *following* paragraph starts, after it.
-So no declared skip can displace the parskip, and none can narrow the gap
-(`skip_monotone`). Even `\addvspace` adds at a paragraph boundary, where
-its maximum is taken against a `\lastskip` of zero — measured against
-LaTeX, `\addvspace{3pt}` between two paragraphs widens the gap by 3 pt,
-exactly as `\vspace{3pt}` does. The engine pays that only where a skip is
-present: an element's own space (a heading's `before`, a list's `topsep`,
-the furniture gaps) still stands in place of the default, a remainder
-carried as `elementSpace_monotone`. -/
+/-- The glue one boundary pays: the declared glue owed, with the page's
+parskip on top where a document skip stands at a peer boundary. -/
 private def Spacing.Pending.gapGlue (a : Acc) (r : Rd) : Glue :=
   let declared := a.owed.foldl Glue.add {}
   let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
   if a.wantDefault && a.declaredSkip then par.add declared else declared
 
-/-- The boundary around `\vspace*`'s rule, which stands before `owed[k]`
-(`Spacing.Pending.anchorAt`): the peer mark and the glue owed before the rule ship
-first, where a page's top discards them as TeX's page builder does; then
-the rule, carrying TeX's own `\parskip` (`Geom.texParskip`), which the
-paragraph after it spends below the rule and a page's top therefore keeps;
-then the glue after the rule. Mid-page the rule holds nothing, so the
-boundary pays exactly what it pays without the star. -/
+/-- The boundary around `\vspace*`'s rule: the peer mark and the glue before
+the rule, then the rule with TeX's `\parskip`, then the glue after it. -/
 private def Spacing.Pending.flushAnchored (a : Acc) (r : Rd) (k : Nat) : Acc :=
   let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
   let lead := if a.wantDefault && a.declaredSkip then #[Op.skip par] else #[]
@@ -11466,22 +9148,15 @@ private def Spacing.Pending.flushAnchored (a : Acc) (r : Rd) (k : Nat) : Acc :=
         .anchorRule (r.resolve r.geom.texParskip),
         .skip ((a.owed.extract k a.owed.size).foldl Glue.add {})] }
 
-/-- The op the owed glue ships as: `g`, or — while a display's skip below is
-owed — `g` beside the same boundary under the short skip, for the page
-builder to pick (`Spacing.Pending.dispAlt`). Called only where `g` is the owed sum. -/
+/-- The op the owed glue `g` ships as, beside its
+short-skip twin while a display's skip below is owed. -/
 private def Spacing.Pending.owedOp (a : Acc) (g : Glue) : Op :=
   match a.dispAlt with
   | none => .skip g
   | some alt => .skipAlt g (alt.foldl Glue.add {})
 
-/-- Emit the gap owed, just before a line is placed. A stacked boundary
-ships as two items, the peer mark first and the declared glue after it,
-whose sum is the boundary's glue (`flushGap_items_exact`): on a page that
-holds nothing yet, glue is discarded until an anchor keeps what follows it
-(`Spacing.Page.topKept`), and the peer mark — the engine's separator between two
-paragraphs, standing where TeX would indent — has nothing above it there
-to separate from. Where `\vspace*`'s rule stands in the owed glue, the
-boundary ships around it (`flushAnchored`). -/
+/-- Emit the gap owed, just before a line is placed; a stacked
+boundary ships the peer mark first and the declared glue after it. -/
 private def Spacing.Pending.flushGap (a : Acc) (r : Rd) : Acc :=
   let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
   let a := match a.anchorAt with
@@ -11495,10 +9170,6 @@ private def Spacing.Pending.flushGap (a : Acc) (r : Rd) : Acc :=
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
            afterHeading := false, frameTop := false, anchorAt := none, dispAlt := none }
 
-/-- **A stacked boundary's two items are its glue** (`_exact`): the peer mark
-and the declared glue `flushGap` ships at a peer boundary with a document
-skip owed add up to `gapGlue`, which the placement sums (`Glue.add_assoc`),
-so splitting the boundary moves nothing a page does not open on. -/
 private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
     (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none)
     (hd : a.dispAlt = none) :
@@ -11508,25 +9179,14 @@ private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = f
   intro par
   exact ⟨by simp [Spacing.Pending.flushGap, Spacing.Pending.owedOp, ho, hs, hk, hd, par], by simp [Spacing.Pending.gapGlue, hs, par]⟩
 
-/-- Glue's width grows by a non-negative addend on the right. -/
 private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
     x.width ≤ (x.add y).width := by
   simpa [Glue.add] using Int.add_le_add_left hy x.width
 
-/-- And by a non-negative addend on the left. -/
 private theorem glue_width_le_add_left (x y : Glue) (hx : (0 : Int) ≤ x.width) :
     y.width ≤ (x.add y).width := by
   simpa [Glue.add] using Int.add_le_add_right hx y.width
 
-/-- **A positive skip never narrows a gap.** Inserting glue of non-negative
-width at a boundary pays at least what the boundary paid without it. This is
-the property `\smallskip` between two paragraphs broke: its 3 pt stood *in
-place of* the 6 pt parskip it displaced, so inserting 3 pt of glue made the
-two paragraphs 3 pt *closer*. Positive glue cannot do that under any
-convention. The two parskips' non-negativity — the engine's peer gap and
-TeX's (`Geom.texParskip`) — are the hypotheses: a page declaring negative
-parskip could narrow a gap by opening one, as it could in TeX. Stated over
-`Spacing.Pending.vspace`, the door `\vspace` and `\smallskip` ship through. -/
 private theorem skip_monotone (a : Acc) (r : Rd) (g : Glue)
     (hg : (0 : Int) ≤ g.width) (hp : (0 : Int) ≤ r.parskip.width)
     (hq : (0 : Int) ≤ (r.resolve r.geom.texParskip).width) :
@@ -11548,34 +9208,17 @@ private theorem skip_monotone (a : Acc) (r : Rd) (g : Glue)
     · simpa [hwd, hds, Glue.add] using
         Int.add_le_add_left (glue_width_le_add (a.owed.foldl Glue.add {}) g hg) par.width
 
-/-- The gap the walk pays at an undeclared peer boundary is the declared
-default and only it: one `.skip` of the page's parskip — the resolved
-`Ir.parskipDefault`, one rhythm quantum, unless the document declared its
-own — never two emissions on one boundary. With anything declared (`owed`
-non-empty) the default stands aside entirely. -/
 private theorem flushGap_default_exact (a : Acc) (r : Rd)
     (howed : a.owed.isEmpty = true) (hw : a.wantDefault = true) (hk : a.anchorAt = none) :
     (a.flushGap r).ops = a.ops.push (.skip r.parskip) := by
   simp [Spacing.Pending.flushGap, howed, hw, hk]
 
-/-- The parskip-growth arm of the heading's undeclared space above
-(`parskip.add parskip`, taken when the declared parskip exceeds the
-heading token's half): exactly twice the peer gap — one full rhythm unit,
-two quanta, by `Ir.default_rhythm_multiples`; the token arm is
-`Ir.heading_space_above_ge_below`'s. -/
 private theorem heading_default_before_exact (r : Rd) :
     ((r.parskip).add (r.parskip)).width = 2 * r.parskip.width := by
   simp [Glue.add, Int.two_mul]
 
-/-- A page boundary. The gap owed stands before the break, so it is the old
-page's own, fil or not: TeX keeps glue that precedes `\newpage`'s penalty,
-and a frame's box keeps its closing `\addvspace` — beamer centres the box
-with that `\topsep` inside it. What TeX discards is glue after a break,
-the new page's opening, and the reset below starts that page clean. The
-placement's page close counts the emitted glue as content
-(`Spacing.Page.contentEnd`), where a flush-top page never reads it, and a fil among
-it stretches on the page it ends — dropping it would turn a centring
-sandwich into a bottom-flush page. -/
+/-- A page boundary: the gap owed stands before the break
+and is the old page's own, and the new page starts clean. -/
 private def Spacing.Pending.pageBreak (a : Acc) : Acc :=
   let a := if a.owed.isEmpty then a
     else { a with ops := a.ops.push (a.owedOp (a.owed.foldl Glue.add {})) }
@@ -11589,29 +9232,20 @@ private def Spacing.Pending.pushOp (a : Acc) (op : Op) : Acc :=
 private def Spacing.Context.style (r : Rd) (element : String) : Ir.ElementStyle :=
   (r.styles.find? element).getD {}
 
-/-- The default ink a palette implies: its `fg` when declared, else black —
-`Design.ofDoc`'s own rule, applied here per epoch so the ink always follows
-the palette in force. -/
+/-- The default ink a palette implies: its `fg` when declared, else black. -/
 private def fgOf (pal : Ir.Palette) : Ir.Color :=
   (Ir.Design.at pal .print .ink).getD Ir.Color.black
 
-/-- `.setPalette` on the accumulator: the palette, default ink, and
-surface change together. The page ground rides as a state op so placement
-can apply the epoch to the current and following pages; no content op or gap
-is introduced. -/
+/-- `.setPalette` on the accumulator: the palette, default ink and
+surface change together, and the page ground rides as a state op. -/
 private def Spacing.Pending.setPalette (a : Acc) (p : Ir.Palette) : Acc :=
   { a with pal := p, paletteEpoch := a.paletteEpoch + 1
            fg := fgOf p, bodyInk := none, ground := a.bodyGround.or (Ir.Design.declared? p .page)
            ops := a.ops.push (.pageGround (Ir.Design.declared? p .page)) }
 
-/-- `.setTokens`, same door. -/
 private def Spacing.Pending.setTokens (a : Acc) (tk : Ir.Tokens) : Acc :=
   { a with tokens := tk }
 
-/-- A palette epoch emits exactly its page-ground transition and no content,
-glue, or diagnostic. This is the confinement core: earlier placed material
-is untouched while the current page's eventual shipout reads the last ground
-state. -/
 private theorem Spacing.Pending.setPalette_emits_no_content (a : Acc) (p : Ir.Palette) :
     (a.setPalette p).ops = a.ops.push (.pageGround (Ir.Design.declared? p .page)) ∧
       (a.setPalette p).owed = a.owed ∧
@@ -11625,8 +9259,7 @@ private theorem Spacing.Pending.setTokens_emits_nothing (a : Acc) (tk : Ir.Token
       (a.setTokens tk).diags = a.diags :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- Capture the frame's actual source and policy inputs together. Later
-palette, section and counter changes cannot rewrite this opening. -/
+/-- Capture the frame's source and policy inputs together. -/
 private def Spacing.Pending.frameOpening (a : Acc) (standout : Bool)
     (area : FrameArea := .margins) :
     FrameOpening :=
@@ -11636,15 +9269,14 @@ private def Spacing.Pending.frameOpening (a : Acc) (standout : Bool)
     note := a.frameFoot, sectionTitle := a.curSection, count := a.frameCount
     standout := standout, allowed := a.footAllowed, palette := a.pal, area }
 
-/-- The one footer decision read by both collection and body measurement.
-An authored running footer suppresses chrome without suppressing ownership. -/
+/-- The one footer decision collection and body measurement
+read; an authored running footer suppresses chrome. -/
 private def Spacing.Pending.selectedFoot (a : Acc) (standout : Bool) :
     Option (Array Ir.BandSlot) :=
   (a.frameOpening standout).footer
 
-/-- Zero-ink targets follow the line carrying their next item. A target
-at the selected break rides the next line; trailing targets stay on the
-last line rather than creating a blank one. -/
+/-- Zero-ink targets follow the line carrying their
+next item; trailing targets stay on the last line. -/
 private def lineAnchors (anchors : Array (String × Nat)) (prev brk : Nat)
     (first last : Bool) : Array String :=
   (anchors.filter fun (_, i) => (first || prev ≤ i) && (i < brk || last)).map (·.1)
@@ -11667,19 +9299,12 @@ private def collectPara (r : Rd) (a : Acc)
   let texBox := texBox.orElse fun _ => a.boxOpener
   let a := { a.flushGap r with boxOpener := none }
   let indent := indent + hangIndent
-  -- The measure the paragraph sets against — and what a fraction-of-
-  -- `\textwidth` image size resolves against: inside a `column` the
-  -- current measure, not the page's. A column is a minipage of its
-  -- declared width, and a minipage sets `\textwidth` and `\columnwidth`
-  -- to its own `\hsize` (latex.ltx, `\@iiiminipage`), so `.95\textwidth`
-  -- inside a column names 95% of the column.
+  -- Inside a column the measure is the column's, as a minipage's `\textwidth` is (latex.ltx).
   let measure := (a.measure.getD r.geom.textWidth) - indent
   let firstBaseline := match inlines[0]? with
     | some (.role n _) => r.roleBaselines.lookup n
     | _ => none
-  -- The page's text colour is the default: content that declared its own
-  -- keeps it, so a themed page colours everything or nothing silently dies
-  -- on a dark standout background.
+  -- The page's text colour is the default; content that declared its own keeps it.
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
   let baseStyle := { baseStyle with ground := a.ground, urlBreaks := urlBreaks }
@@ -11687,41 +9312,26 @@ private def collectPara (r : Rd) (a : Acc)
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
       (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
-  -- Listings break only at declared whitespace, never at an identifier's
-  -- literal hyphen. Keep item indices (including forced source newlines)
-  -- stable for the line-extra map.
+  -- Listings break only at declared whitespace, never at an identifier's hyphen.
   let items := if literalLines then items.map (fun item => match item with
     | .pen w cost flag f c gs =>
       .pen w (if cost ≤ forcedCost then cost else 10000) flag f c gs
     | item => item) else items
-  -- LaTeX's ragged settings (`\@flushglue`: `\raggedright`, `\raggedleft`,
-  -- `\centering`) leave every line's slack free: the items keep TeX's own
-  -- interword glue and the breaker reads the fil (`kp`'s `fil`). A display
-  -- keeps its balanced ragged, and the engine's own ragged page its
-  -- finite pricing (`raggedItems`).
+  -- LaTeX's ragged settings leave every line's slack free (`kp`'s `fil`); displays stay balanced.
   let rightFil := !display && !literalLines && ((!r.geom.justify && r.geom.raggedFil) || center)
   let items :=
     if r.geom.justify || rightFil then items
     else if display then
       displayItems measure items
     else raggedItems items
-  -- Each footnote as its own pre-broken block: footnotesize on the FULL
-  -- measure (a note belongs to the page, not to the paragraph's column or
-  -- indent), the note's own mark leading its first line with no space
-  -- after it (\@makefntext's box abuts the text, ltmiscen.dtx), a
-  -- \footnotesep strut on the first line (classes.dtx: 6.65pt at the
-  -- 10pt option, following the type as 0.665 of the body size).
+  -- Each footnote is a pre-broken block on the full measure, its mark abutting the text.
   let (noteBlocks, ds, cache) : Array (Nat × NoteBlock) × Array Diag ×
       Std.HashMap String (Array Nat) := Id.run do
     if rawNotes.isEmpty then return (#[], ds, cache)
     let mut out : Array (Nat × NoteBlock) := #[]
     let mut ds := ds
     let mut cache := cache
-    -- The note sets in `\footnotesize` of the body, as `\@footnotetext`
-    -- declares it: the step's size and leading, both read from the
-    -- document's ladder and skip column, so a venue that declares its own
-    -- `\footnotesize` sets its notes at that size and skip as LaTeX does,
-    -- and a size command inside the note names its own step of the body.
+    -- The note sets in the body's `\footnotesize`, as `\@footnotetext` declares.
     let noteStyle := applyStyle r.geom.scale { color := a.fg, ground := a.ground }
       (.size "footnotesize")
     let noteSize := Ir.scaleStepIn r.geom.scale r.geom.fontSize "footnotesize"
@@ -11730,8 +9340,6 @@ private def collectPara (r : Rd) (a : Acc)
     let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
     let scaleB (v : Int) : Sp := v * r.geom.fontSize / bodyFont.unitsPerEm
     let target := r.geom.textWidth
-    -- the note's leaves count from the note node's first leaf, read off the
-    -- counter where the mark stood (`Tk.note`'s `bodyLeaf`)
     for (markIdx, num, body, noteLeaf) in rawNotes do
       let (nitems0, nds, cache2, _, _, _, nanchors, nsources) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs noteStyle body
@@ -11781,10 +9389,7 @@ private def collectPara (r : Rd) (a : Acc)
         first := false
       out := out.push (markIdx, { lines := lines, height := hgt, depth := depth })
     return (out, ds, cache)
-  -- A marker is content: set as a line of its own, unjustified, so it can
-  -- carry any style the document gave it. Its diagnostics ride with the
-  -- paragraph's — a marker glyph no face covers must warn, not vanish.
-  -- Its runs are `.label`: generated marker ink, the tree's `.label` node.
+  -- A marker is content set as its own unjustified line; its diagnostics ride with the paragraph's.
   let (markerSegs, ds, cache) := match marker with
     | some m =>
       let (mi, mds, cache, _, _) :=
@@ -11794,9 +9399,7 @@ private def collectPara (r : Rd) (a : Acc)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
-  -- A hanging indent opens the items with its kern; what is indexed by
-  -- item position (a forced break's extra space, a footnote mark) moves
-  -- with them.
+  -- A hanging indent opens the items with its kern; item-indexed data moves with them.
   let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
     if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
     else (#[Item.box (-hangIndent) 0 a.fg none #[] size {} {} 0 a.ground .unattributed] ++ items,
@@ -11805,12 +9408,7 @@ private def collectPara (r : Rd) (a : Acc)
       wordOffsets.fold (fun m k v => m.insert (k + 1) v) {},
       anchors.map (fun (n, i) => (n, i + 1)),
       itemSources.map (fun (i, span) => (i + 1, span)))
-  -- A paragraph set wholly in one named size stands on that step's strut
-  -- and leading (`Ir.paraStep?`), both of the base the step scales — the
-  -- body's, or a heading's or title's display size; its runs keep the
-  -- base they were built at. Text a template inserts (`inserted`) is
-  -- grouped, so a smaller step ends before the template's `\par` and the
-  -- lines keep the template's leading (`Ir.insertedStep?`).
+  -- A paragraph set wholly in one named size stands on that step's strut (`Ir.paraStep?`).
   let step := if inserted then Ir.insertedStep? r.geom.scale inlines else Ir.paraStep? inlines
   let strutSize := match step with
     | some n => Ir.scaleStepIn r.geom.scale size n
@@ -11842,35 +9440,19 @@ private def collectPara (r : Rd) (a : Acc)
       display := dispJob
       rowStrut := rowStrut
       background := background
-      -- premise: markdownWarningChecks — a markdown paragraph whose long line ends in a hard break sets the page its tex twin sets, breaking there and wrapping the line before it, and only the tex twin names W0386, as LaTeX names nothing
+      -- premise: markdownWarningChecks — a markdown hard break declares no line (no W0386).
       declaresLines := r.surface != .markdown }) }
 
-/-- The weight of a heading's declared rule: 0.06 em of the base — the
-0.6 pt the engine shipped at the 10 pt base where it was picked, now
-following the type. A rule's weight relates to the stroke weight of the
-text it cuts (Hochuli, Detail in Typography, on rules and type), as the
-booktabs weights already do em-relative; an absolute point value froze it
-against the document's declared size. One spelling — it was once written
-twice. -/
+/-- The weight of a heading's declared rule: 0.06 em of the base,
+relating to the stroke weight of the text it cuts (Hochuli). -/
 private def headingRuleWeight (base : Sp) : Sp := base * 6 / 100
 
-/-- Heading display sizes at the page's body size: the type scale's steps
-(`Ir.headingSize`) — the old 14/12-point constants made a 12 pt subsection
-equal its body and a >14 pt body outgrow its own sections. -/
+/-- Heading display sizes at the page's body size, the type scale's steps (`Ir.headingSize`). -/
 @[expose] public def sectionSize (geom : Geom) : Ir.HeadingLevel → Sp :=
   Ir.headingSize geom.fontSize
 
-/-- The applied scale is strictly monotone at every base size of at least
-one point: between each named step of `Ir.sizeScale` and the next, the
-set size strictly grows — `Ir.sizeScale_monotone` (the bare factors)
-carried through `Ir.scaleStep`'s integer division, quantified over the
-table's own ladder so a new step enters the contract by being added. The
-1 pt floor is what strictness costs under integer division — below 9 sp
-(~0.00014 pt) adjacent steps round together, so the bound is the coarsest
-honest one. (Each case is `Int` arithmetic with literal factors, which
-`omega` reads directly.) -/
 public theorem scaleStep_monotone (base : Int)
-    (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division (docstring), not a design value
+    (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division
     ∀ q ∈ Ir.sizeScale.zip Ir.sizeScale.tail,
       Ir.scaleStep base q.1.1 < Ir.scaleStep base q.2.1 := by
   have hb' : (65536 : Int) ≤ base := hb
@@ -11889,25 +9471,11 @@ public theorem scaleStep_monotone (base : Int)
     | (show base * 1728 / 1000 < base * 2074 / 1000; omega)
     | (show base * 2074 / 1000 < base * 2488 / 1000; omega)
 
-/-- A deck's title sets strictly smaller than a flow page's, an instance of
-`scaleStep_monotone` at the one adjacent pair the two page models name
-(`Large` for the deck, beamerfontthemedefault.sty; `LARGE` for the flow
-page, classes.dtx's `\@maketitle`). The invariant whose absence let the
-deck read the larger of the two: at `LARGE` a deck title is 20% large, and
-a title line whose breaks the author declared re-flows — the remainder
-returning to the flush-left margin, which reads as a broken indent, and
-silently, since the breaker found a legal break and no line was
-overfull. -/
 public theorem titleSize_monotone (base : Int)
     (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
     Ir.titleSize base true < Ir.titleSize base false :=
   scaleStep_monotone base hb (("Large", 1440), ("LARGE", 1728)) (by decide)
 
-/-- Heading hierarchy (arch-design I3), an instance of `scaleStep_monotone`
-at the ladder's normalsize–large–Large run: at every base size of at least
-one point, a section sets strictly larger than a subsection, and no
-heading sets smaller than its body. The scale (`Ir.sizeScale`,
-size10.clo's own values) carries the ordering. -/
 public theorem heading_hierarchy (g : Geom)
     (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
     sectionSize g 1 > sectionSize g 2 ∧ sectionSize g 2 ≥ g.fontSize := by
@@ -11921,17 +9489,8 @@ public theorem heading_hierarchy (g : Geom)
   rw [e0] at h01
   exact ⟨h12, Int.le_of_lt h01⟩
 
-/-- Display type: headings, frame titles, section-page and standout text.
-Display is not body text: it is never hyphenated (Butterick, Practical
-Typography, "Hyphenation": suppress automatic hyphenation where lines are
-short — headings foremost — because a break there costs more than it
-saves), and therefore never justified either (Butterick, "Justified
-text": justification without hyphenation leaves the breaker only word
-spaces, and a two-word display line stretches across the whole measure;
-moloch's own title and title-page templates are `\raggedright`). The
-door hands the sub-walk a reader with no patterns and ragged setting, so
-no heading path can do either by construction — the invariant is the
-signature. -/
+/-- Display type: headings, frame titles, section-page and standout
+text, walked with no hyphenation patterns and ragged setting. -/
 private def collectDisplay (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
@@ -11945,9 +9504,7 @@ private def collectDisplay (r : Rd) (a : Acc)
     (paintPadding := paintPadding) (inserted := inserted) (strut := strut)
     (texBox := texBox)
 
-/-- The natural (unstretched, unshrunk) width of a set of items: what the
-cell takes when nothing bends. Penalties add nothing — a pen's width is
-paid only at a break, and a natural cell never breaks. -/
+/-- The natural width of a set of items, penalties adding nothing. -/
 private def itemsNaturalWidth (items : Array Item) : Sp :=
   items.foldl (fun w it => match it with
     | .box bw .. => w + bw
@@ -11957,19 +9514,14 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .rule bw .. => w + bw
     | .poly .. => w) 0
 
-/-- Does a forced break stand among the items before their last — a `\\`,
-or a markdown `<br>`? Then a natural cell is lines, not one line. The last
-item is the forced break every paragraph's items end on (`itemsOfInlines`),
-which splits no line. -/
+/-- Whether a forced break stands among the items before their
+last, making a natural cell lines rather than one line. -/
 private def itemsBreak (items : Array Item) : Bool :=
   items.pop.any fun it => match it with
     | .pen _ cost .. => cost ≤ forcedCost
     | _ => false
 
-/-- A natural cell's width as lines: each run between two forced breaks at
-its natural width, the widest of them — a cell's max-content width, as a
-browser measures one (CSS Sizing 3, §5.1). Without a forced break it is
-`itemsNaturalWidth`. -/
+/-- A natural cell's width as lines: the widest run between forced breaks (CSS Sizing 3, §5.1). -/
 private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
   let mut widest : Sp := 0
   let mut run : Sp := 0
@@ -11984,21 +9536,8 @@ private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
     | .poly .. => pure ()
   return max widest run
 
-/-- The one door the document title renders through, centred or not: a
-declared `titlepage` font template wraps it — the same template the HTML
-backend applies to its <h1>, so the two surfaces cannot diverge — and
-undeclared it takes display type in the bold face at the step its own page
-model names. A flow page's is `\LARGE` (classes.dtx's `\@maketitle` sets
-`{\LARGE \@title \par}`); a deck's is one step below, `\Large`
-(beamerfontthemedefault.sty, `\setbeamerfont{title}{size=\Large,
-parent=structure}` — the step moloch's own lineage re-declares,
-beamerfontthememoloch.sty). Reading the flow step on a deck set its title
-20% large, which re-flowed a title line whose breaks the author had
-declared and returned the remainder to the flush-left margin: a broken
-indent on the shipped page, and silent, because the breaker found a legal
-break and no line was overfull. The step belongs here rather than in a
-bundle's `titlepage` font: that template nests inside the HTML backend's
-own `h1` step, so a bundle carrying the size would multiply the two. -/
+/-- The one door the document title renders through: a declared `titlepage`
+template wraps it, else it takes display type in bold at its page model's step. -/
 private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     (indent : Sp) (center : Bool) : Acc :=
   let (a, leaf) := a.leafRange (leafCount title)
@@ -12015,15 +9554,12 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
       (Ir.titleSize r.geom.fontSize r.slides)
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
 
-/-- Is cell `(i, j)` inside a `\multicolumn`, its head or a cell it covers?
-Such a cell enters no single column's maximum: what it needs is judged
-against every column it spans (`widenAt`). -/
+/-- Whether cell `(i, j)` lies inside a `\multicolumn`, which enters no single column's maximum. -/
 public def inSpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
   spans.any fun s => s.row == i && s.col ≤ j && j < s.col + s.n
 
-/-- A column's width before spans: an `l`/`c`/`r` column's widest cell
-outside every span, a `p{f\linewidth}` its fraction of the measure, a
-`p{len}` its length. -/
+/-- A column's width before spans: an `l`/`c`/`r` column's widest unspanned
+cell, a `p{f\linewidth}` its fraction of the measure, a `p{len}` its length. -/
 public def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array Sp))
     (j : Nat) (spec : Ir.ColSpec) : Sp :=
   match spec.width with
@@ -12032,8 +9568,7 @@ public def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array 
   | .sized e => e.resolveWidth (MeasureValues.horizontal total 0)
   | .flex _ => 0
 
-/-- What a span needs across the columns it covers: its text's natural
-width, or the width its own `p{…}` spec declares. -/
+/-- What a span needs across its columns: its text's natural width, or its own `p{…}` width. -/
 public def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp :=
   match s.spec.width with
   | .natural => ((nats[s.row]?).bind (·[s.col]?)).getD 0
@@ -12046,9 +9581,8 @@ public def spanBox (colsep : Sp) (widths : Array Sp) (s : Ir.ColSpan) : Sp :=
   let last := min (s.col + s.n) widths.size
   (widths.extract s.col last).foldl (· + ·) 0 + 2 * colsep * ((last : Int) - (s.col : Int) - 1)
 
-/-- Column `j` widened by every span that ends at it: TeX's rule for a
-spanned entry (tex.web §801), the span's need less the columns before `j`
-it covers and all its gaps, whenever that exceeds the width `j` has. -/
+/-- Column `j` widened by every span ending at it,
+by TeX's rule for a spanned entry (tex.web §801). -/
 public def widenAt (colsep total : Sp) (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
     (widths : Array Sp) (j : Nat) : Array Sp :=
   spans.foldl (init := widths) fun ws s =>
@@ -12066,10 +9600,8 @@ public def tablePadding (colsep : Sp) (count : Nat) (padL padR : Bool) : Sp :=
   (if padL then colsep else 0) + (if padR then colsep else 0) +
     2 * colsep * ((count : Int) - 1)
 
-/-- Give every flexible column an equal share of its target after natural
-and fixed columns, inner gaps, and outer pads. This is tabularx's trial
-arithmetic as a value: X defaults to `p{width}`, and the final trial divides
-the remaining target among the X columns (`tabularx.sty`, `TX@arith`). -/
+/-- Give every flexible column an equal share of what the
+target leaves, as tabularx's trial arithmetic (`TX@arith`). -/
 public def tableFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (bases : Array Sp) (padL padR : Bool) : Array Sp :=
   let count := cols.foldl (fun n c => if c.width matches .flex _ then n + 1 else n) 0
@@ -12080,16 +9612,12 @@ public def tableFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec
       | .flex _ => sum
       | .natural | .sized _ => sum + bases[j]?.getD 0) 0
     let remaining := target.resolve total - fixed - tablePadding colsep cols.size padL padR
-    -- tabularx.sty: TX@error@width is 1em when the fixed columns exceed
-    -- the target. The font in force supplies that em, not a fixed minimum.
+    -- tabularx.sty: TX@error@width is 1em when the fixed columns exceed the target.
     let share := if remaining < 0 then max 0 fontSize else remaining / max count 1
     cols.mapIdx fun j c => match c.width with
       | .flex _ => share
       | .natural | .sized _ => bases[j]?.getD 0
 
-/-- Initial flexible widths agree before spanning cells impose their
-constraints. Unlike relative CSS hints, this calculation subtracts measured
-natural widths and padding from the physical target. -/
 public theorem tableFlexWidths_flex_contract (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (bases : Array Sp) (padL padR : Bool) (i j : Nat) (ci cj : Ir.ColSpec)
     (ti tj : Ir.TableTarget) (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
@@ -12098,14 +9626,13 @@ public theorem tableFlexWidths_flex_contract (colsep total fontSize : Sp) (cols 
       (tableFlexWidths colsep total fontSize cols bases padL padR)[j]? := by
   unfold tableFlexWidths tableFlexTarget
   split
-  · -- No flex target found: impossible, since column `i` is flexible.
+  ·
     rename_i hnone
     exact absurd ((Array.findSome?_eq_none_iff.mp hnone) ci (Array.mem_of_getElem? hi))
       (by rw [hwi]; simp)
   · simp [hi, hj, hwi, hwj]
 
-/-- Bisect a trial interval, retaining a fitting lower endpoint. The
-measure is the remaining interval in sp, not an iteration limit. -/
+/-- Bisect a trial interval, keeping a fitting lower endpoint. -/
 public def fitTableShare (fits : Nat → Bool) (lo hi : Nat) : Nat :=
   if lo < hi then
     let mid := (lo + hi + 1) / 2
@@ -12128,9 +9655,7 @@ public theorem fitTableShare_contract (fits : Nat → Bool) (lo hi : Nat)
     rw [fitTableShare, ite_eq_right hlt]
     exact h
 
-/-- One tabularx trial: equal X widths followed by TeX's span constraints.
-A span ending in either a fixed or a flexible column participates before
-the trial is judged against the target. -/
+/-- One tabularx trial: equal X widths followed by TeX's span constraints. -/
 public def tableFlexTrial (colsep total : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (share : Nat) : Array Sp :=
   let bases := cols.mapIdx fun j c => match c.width with
@@ -12138,10 +9663,8 @@ public def tableFlexTrial (colsep total : Sp) (cols : Array Ir.ColSpec)
     | .natural | .sized _ => colBase total spans nats j c
   (List.range cols.size).foldl (widenAt colsep total nats spans) bases
 
-/-- Fit the final span-expanded widths. When the minimum span widths
-already exceed the target, each X column retains the one-em fallback. Prefix sums in a trial are maxima of
-earlier prefixes plus a fixed need or an X share, hence monotone in the
-share. The unspanned allocation bounds that share from above. -/
+/-- Fit the final span-expanded widths, each X column keeping
+the one-em fallback when the span minimums exceed the target. -/
 public def tableSpanFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (allocated : Array Sp)
     (budget : Sp) : Array Sp :=
@@ -12151,8 +9674,8 @@ public def tableSpanFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.Col
     if c.width matches .flex _ then max m (allocated[j]?.getD 0) else m) 0
   trial (if fits 0 then fitTableShare fits 0 upper.toNat else fontSize.toNat)
 
-/-- A table's column widths. Natural tables enforce the span minimums;
-flexible tables fit those same constraints inside the declared target. -/
+/-- A table's column widths: natural tables enforce the
+span minimums, flexible ones fit them inside the target. -/
 public def tableColWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
     (padL : Bool := true) (padR : Bool := true) : Array Sp :=
@@ -12164,9 +9687,6 @@ public def tableColWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     | some target => tableSpanFlexWidths colsep total fontSize cols nats spans bases
         (target.resolve total - tablePadding colsep cols.size padL padR)
 
-/-- Artifact geometry: arbitrary nonempty spans stay inside the table's
-declared target whenever their minimum widths fit. Pads and inner gaps
-are charged to that same budget, rather than to the enclosing measure. -/
 public theorem table_flex_span_width_contract (colsep total fontSize : Int) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (padL padR : Bool)
     (target : Ir.TableTarget) (hs : spans.isEmpty = false)
@@ -12189,13 +9709,9 @@ public theorem widenAt_nil (colsep total : Sp) (nats : Array (Array Sp)) (ws : A
     (j : Nat) : widenAt colsep total nats #[] ws j = ws := by
   simp [widenAt]
 
-/-- Outside every span when there is none. -/
 public theorem inSpan_nil (i j : Nat) : inSpan #[] i j = false := by
   simp [inSpan]
 
-/-- With no span, a table is exactly its finalized bases: natural columns
-at their widest cell, fixed columns at their declaration, and flexible
-columns at an equal share of their target remainder. -/
 public theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (padL padR : Bool) :
     tableColWidths colsep total fontSize cols nats #[] padL padR =
@@ -12203,63 +9719,40 @@ public theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Ar
         (cols.mapIdx fun j spec => colBase total #[] nats j spec) padL padR := by
   simp [tableColWidths]
 
-/-- The side a cell's lines set on in its column box: its spec's
-(`Ir.cellSpec`), whatever scope the table stands in. The HTML states the
-same value as the cell's side class (`HtmlDoc.cellSideClassOf`;
-`Pdf.table_cell_side_agree`). -/
+/-- The side a cell's lines set on in its column box, from its
+spec (`Ir.cellSpec`) whatever scope the table stands in. -/
 @[expose] public def cellSide (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan) (i j : Nat) :
     Ir.HAlign :=
   (Ir.cellSpec cols spans i j).align
 
-/-- How a wrapping cell's paragraph sets in its column box, from its spec
-alone (`Ir.cellSpec`): `(justify, flushRight, center)`. A bare `p` (or `X`)
-justifies, as `\@arrayparboxrestore` leaves it; a `>{\raggedright}`,
-`>{\raggedleft}` or `>{\centering}` modifier (`Ir.ColSpec.ragged`) sets its
-lines ragged on the side the spec names — the same side the HTML cell
-states (`HtmlDoc.cellSideClassOf`). -/
+/-- How a wrapping cell's paragraph sets, `(justify, flushRight, center)`,
+from its spec alone: a bare `p` justifies, a ragged modifier sets its side. -/
 @[expose] public def cellParagraph (spec : Ir.ColSpec) : Bool × Bool × Bool :=
   (!spec.ragged, spec.ragged && spec.align == .right, spec.ragged && spec.align == .center)
 
-/-- How a natural cell sets when its narrowed column (`Ir.ColSpec.narrows`)
-cannot hold it on one line: a ragged paragraph on the cell's side, as a
-browser wraps a table cell, `(flushRight, center)` — hung from the right
-edge where the side is right, centred where it is centre. -/
+/-- How a natural cell sets when its narrowed column cannot hold it
+on one line, `(flushRight, center)`: ragged on the cell's side. -/
 @[expose] public def narrowedCell (side : Ir.HAlign) : Bool × Bool :=
   (side == .right, side == .center)
 
-/-- The stretch a narrowed cell's every line carries (`KpSums.bg`): plain
-TeX's `\raggedright`, `\rightskip 0pt plus 2em` (plain.tex; ragged2e's
-`\RaggedRightRightskip` is the same), at the cell's size. A ragged line's
-own stretch is its word spaces' (`raggedItems`), so a line holding one word,
-or one run of code, holds none: with this skip it is priced as finitely as
-any other, and the breaker sets a word per line rather than pack a narrow
-cell's words onto one overfull line across the next column. -/
+/-- The stretch every line of a narrowed cell carries: plain TeX's
+`\raggedright` `\rightskip 0pt plus 2em` at the cell's size. -/
 @[expose] public def narrowedSkip (size : Sp) : Sp := 2 * size
 
-/-- The strut every row of a table stands on: latex.ltx's `\@arstrutbox`,
-0.7 of the `\baselineskip` in force where the table opens above the
-baseline and the rest below it (`\strutbox`'s 0.3, so the two make the
-whole skip), at the table's size and the page's `\linespread`. -/
+/-- The strut every table row stands on: latex.ltx's `\@arstrutbox`,
+0.7 and 0.3 of the `\baselineskip` in force where the table opens. -/
 @[expose] public def tableStrut (size : Sp) (leading : Nat) : Sp × Sp :=
   let bs := Ir.leadingFor size leading
   (bs * 7 / 10, bs - bs * 7 / 10)
 
-/-- **Two plain rows stand one baseline skip apart** (`_exact`): the strut's
-height and depth make exactly the `\baselineskip` it was cut from, so rows
-the strut covers keep the print leading `HtmlDoc.printLeadingMilli` states
-for the stylesheet's rows. -/
 public theorem tableStrut_exact (size : Int) (leading : Nat) :
     (tableStrut size leading).1 + (tableStrut size leading).2 = Ir.leadingFor size leading := by
   simp only [tableStrut]
-  -- `Sp`-typed arithmetic is invisible to omega; the identity is over `Int`.
   have h : ∀ a b : Int, a + (b - a) = b := by intro a b; omega
   exact h _ _
 
-/-- The strut a table row's cell stands on: `tableStrut` cut from the
-`\baselineskip` in force where the table opened — the step of the size
-declaration standing over the cell (`Ir.paraStep?`, the table's own: a size
-command inside a cell is a scope there, `Ir.paraAt`), at the leading the
-page sets that step at, else the table's size's. -/
+/-- The strut a table cell stands on: `tableStrut` cut from the
+`\baselineskip` of the size step over the cell (`Ir.paraStep?`). -/
 private def cellStrut (skips ladder : List (String × Nat)) (size : Sp) (leading : Nat)
     (cell : Array Inline) : Sp × Sp :=
   match Ir.paraStep? cell with
@@ -12268,23 +9761,14 @@ private def cellStrut (skips ladder : List (String × Nat)) (size : Sp) (leading
     (bs * 7 / 10, bs - bs * 7 / 10)
   | none => tableStrut size leading
 
-/-- A table length as the page sets it: the declared token, resolved where
-the table stands, else the name's default as LaTeX fixed it when the package
-loaded — in the preamble's font (`Ir.PreambleFace.resolve`, `Ir.tableLengths`),
-never the table's own face or size. The stylesheet states the same default
-(`HtmlDoc.tableLengthFallback`; `Pdf.table_length_agree`). -/
+/-- A table length as the page sets it: the declared token, else the name's
+default fixed in the preamble's font (`Ir.PreambleFace.resolve`). -/
 @[expose] public def tableLength (declared : Option Sp) (face : Ir.PreambleFace)
     (name : String) : Sp :=
   declared.getD (face.resolve (Ir.tableLengthDefault name))
 
-/-- A cell's min-content width: the widest run of its items no break may
-split — boxes, images and rules summed between two legal breaks, interword
-glue or an unflagged penalty (an explicit hyphen, in code too, or a forced
-break). A hyphenation point reads as no break: a fitted cell sets ragged
-and unhyphenated. Nor does a break priced at `binopPenalty` or `relPenalty`,
-a formula's: a browser breaks no formula, and a cell's code breaks only at
-a space or a hyphen there and on the page, as a table cell sets it
-(`collectTable` sets cells without url.sty's breaks). -/
+/-- A cell's min-content width: the widest run of its items between two
+legal breaks, a hyphenation point or a formula's break reading as none. -/
 private def itemsMinWidth (items : Array Item) : Sp := Id.run do
   let mut widest : Sp := 0
   let mut run : Sp := 0
@@ -12303,14 +9787,11 @@ private def itemsMinWidth (items : Array Item) : Sp := Id.run do
     | .poly .. => pure ()
   return max widest run
 
-/-- One narrowed column: its widest unbreakable run `mn`, and its share of the
-room left over beyond every column's run, `k` of `d`, in proportion to how
-much wider its widest line `w` is than that run. -/
+/-- One narrowed column: its widest unbreakable run `mn` and its `k`-of-`d` share
+of the leftover room, in proportion to how much wider its widest line `w` is. -/
 public def fitWidth (mn w k d : Int) : Int :=
   if d ≤ 0 then w else mn + (w - mn) * k / d
 
-/-- A narrowed column stands between its widest unbreakable run and its
-natural width whenever the room shared is no more than the room wanted. -/
 public theorem fitWidth_between (mn w k d : Int) (hmw : mn ≤ w) (hk : 0 ≤ k)
     (hkd : k ≤ d) : mn ≤ fitWidth mn w k d ∧ fitWidth mn w k d ≤ w := by
   unfold fitWidth
@@ -12324,15 +9805,8 @@ public theorem fitWidth_between (mn w k d : Int) (hmw : mn ≤ w) (hk : 0 ≤ k)
       exact Int.mul_le_mul_of_nonneg_left hkd (by omega)
     omega
 
-/-- **A markdown table is a web table** (`collectTable`): its narrowing
-columns (`Ir.ColSpec.narrows`) share a measure too narrow for them as a
-browser's automatic table layout shares it (HTML 4.01 §B.5.2, the
-autolayout algorithm). Every such column keeps at least its widest
-unbreakable run (`mins`), and what the measure leaves beyond them all is
-shared in proportion to how much wider each column's widest line is than
-its run (`fitWidth`). A table that fits keeps its natural widths; one whose
-runs alone pass the measure takes them, and passes it by the rest. Any
-other column keeps its width, out of the room. -/
+/-- Share a measure too narrow for a table's narrowing columns as
+a browser's automatic table layout does (HTML 4.01 §B.5.2). -/
 public def fitColumns (cols : Array Ir.ColSpec) (avail : Sp) (natural mins : Array Sp) :
     Array Sp :=
   let isNat (j : Nat) : Bool :=
@@ -12348,33 +9822,22 @@ public def fitColumns (cols : Array Ir.ColSpec) (avail : Sp) (natural mins : Arr
     else if room ≤ minSum then lo j w
     else fitWidth (lo j w) w (room - minSum) (maxSum - minSum)
 
-/-- The sizes a markdown table steps down through when its words alone are
-wider than the text block, largest first: LaTeX's own steps below
-`\normalsize`, `\small` and `\footnotesize`, then the floor, `\scriptsize` —
-the size LaTeX sets a first-level script at, the smallest it sets a
-reading text by (size10.clo: 9, 8 and 7 pt at 10). An author's own remedy
-for a wide table is one of these declarations; a markdown source can
-write none. -/
+/-- The sizes a markdown table too wide for the text
+block steps down through, largest first (size10.clo). -/
 public def tableSteps : List String := ["small", "footnotesize", "scriptsize"]
 
-/-- The step a markdown table takes only when, at the floor, it is wider
-than the paper: LaTeX's `\tiny`, 5 pt at 10 — type hard to read beats
-columns the sheet never shows. -/
+/-- The step a markdown table takes only when it is wider than the paper at the floor: `\tiny`. -/
 public def tableLastStep : String := "tiny"
 
-/-- How a narrowing table (`Ir.ColSpec.narrows`) fits its text block: the
-size step it sets at (`none`: its body size) and how far its widest
-unbreakable runs, with the column gaps and outer pads, still pass the
-block at that size — zero once they fit. -/
+/-- How a narrowing table fits its text block: the size step it sets at
+(`none`: its body size) and how far it still passes the block there. -/
 public structure TableFit where
   step : Option String := none
   overhang : Sp := 0
   deriving Repr, BEq, Inhabited
 
-/-- What a table's narrowing columns need at a size: each column's widest
-unbreakable run (`itemsMinWidth`) over its cells but a span's, set as the
-table's measuring pass sets them — unhyphenated, as a narrowed cell sets —
-with the gaps and pads; any other column counts its widest cell. -/
+/-- What a table's narrowing columns need at a size: each column's
+widest unbreakable run, unhyphenated, with the gaps and pads. -/
 private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.Store)
     (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
     (spans : Array Ir.ColSpan) (colsep size : Sp) : Sp := Id.run do
@@ -12392,19 +9855,8 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.
         widths := widths.modify j (max · w)
   return widths.foldl (· + ·) 0 + tablePadding colsep cols.size padL padR
 
-/-- **The size a markdown table sets at**: its body size when its narrowing
-columns' widest runs fit the measure it stands in, `avail` (`tableNeed`),
-else the largest of `tableSteps` at which they do, else the floor with what
-still overhangs — or, when that overhang, centred, would pass the side
-margins and so the paper, the last step (`tableLastStep`). One decision,
-both artifacts: the page sets the table's
-cells at its step against its own measure and centres the overhang across
-both margins (`collectTable`), and the driver hands this same function to
-the HTML (`HtmlDoc.Config.tableFit`), which reads the same measure — the
-text block less the list and quotation levels around the table
-(`HtmlDoc.Config.deeper`) — states the step as the table's font size and
-centres the overhang on paper. A table with no narrowing column fits as
-declared. -/
+/-- The size a markdown table sets at: its body size when its narrowing columns fit
+`avail`, else the largest of `tableSteps` that fits, else the floor or `tableLastStep`. -/
 public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep avail : Sp)
     (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
     (spans : Array Ir.ColSpan) : TableFit := Id.run do
@@ -12419,21 +9871,13 @@ public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep av
   for s in tableSteps do
     if need (some s) ≤ avail then return { step := some s }
   let floor := tableSteps.getLast?
-  -- What still overhangs at the floor stands in the margins while the table
-  -- is no wider than the paper (`collectTable` keeps it on); wider, the
-  -- last step is the one that keeps its columns on the sheet.
+  -- At the floor, an overhang stands in the margins while the table fits the paper.
   if need floor ≤ geom.pageW then return { step := floor, overhang := need floor - avail }
   let last := some tableLastStep
   return { step := last, overhang := max 0 (need last - avail) }
 
-/-- Lay out a `.table`: booktabs' formal table. Columns take their declared
-fraction of the measure (or their widest cell), separated by `2·tabcolsep`
-(classes.dtx) with the outer pads under `@{}`'s control; each row places
-its cells through the column machinery (`colOpen`/`colNext`/`colClose`), so
-a row advances by its tallest cell; rules are set rows of rule segments at
-booktabs' weights, padded by exactly their declared seps — `tableRule`
-placement stacks flush, no leading. `center` centres the whole table box in
-the measure (a table under `\centering` or inside a float). -/
+/-- Lay out a `.table`, booktabs' formal table: columns at their declared fraction
+or widest cell, `2·tabcolsep` apart, rules padded by their declared seps. -/
 private def collectTable (r : Rd) (a0 : Acc)
     (cols : Array Ir.ColSpec) (padL padR : Bool)
     (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
@@ -12445,19 +9889,14 @@ private def collectTable (r : Rd) (a0 : Acc)
     tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
   let colsep := tok "tabcolsep"
   let total := (a.measure.getD r.geom.textWidth) - indent
-  -- A markdown table whose words alone pass its measure sets a step
-  -- smaller (`tableFit`, the decision the HTML states too). Its cells take
-  -- no hyphen, on every pass: the decision measures them unhyphenated, and
-  -- a hyphenation point splits a word's box, its kerns with it.
+  -- A markdown table too wide for its measure steps down (`tableFit`), cells unhyphenated.
   let web := cols.any (·.narrows)
   let cellPats := if web then none else r.pats
   let fit := tableFit r.geom r.fs r.imgs colsep total cols padL padR rows spans
   let size := match fit.step with
     | some s => Ir.scaleStepIn r.geom.scale r.geom.fontSize s
     | none => r.geom.fontSize
-  -- Natural widths, measured per cell (needed for `l`/`c`/`r` column
-  -- widths and for right-aligned placement). The measuring pass drops its
-  -- diagnostics: the setting pass below emits them once.
+  -- The measuring pass drops its diagnostics; the setting pass emits them once.
   let mut nats : Array (Array Sp) := #[]
   let mut breaks : Array (Array Bool) := #[]
   let mut mins : Array Sp := cols.map fun _ => 0
@@ -12466,7 +9905,6 @@ private def collectTable (r : Rd) (a0 : Acc)
     let mut rowNats : Array Sp := #[]
     let mut rowBreaks : Array Bool := #[]
     for (cell, j) in row.zipIdx do
-      -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
         itemsOfInlines cellPats size r.xHeight r.fs
           { color := a.fg, ground := a.ground, cellCode := web } cell cache
@@ -12481,9 +9919,6 @@ private def collectTable (r : Rd) (a0 : Acc)
     breaks := breaks.push rowBreaks
   a := { a with hyphCache := cache }
   let natural := tableColWidths colsep total size cols nats spans padL padR
-  -- A markdown table is a web table: too wide for the measure, it narrows
-  -- its narrowing columns as a browser does (`fitColumns`), and the cells
-  -- of a narrowed column wrap below.
   let widths := if web then
       fitColumns cols (total - tablePadding colsep cols.size padL padR) natural mins
     else natural
@@ -12491,21 +9926,7 @@ private def collectTable (r : Rd) (a0 : Acc)
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
   let tableW : Sp := lead + widths.foldl (· + ·) 0 + innerGaps + trail
-  -- A tex table wider than the measure stays its declared width and is
-  -- named, never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx
-  -- sets it as a dimen, no rubber), so TeX itself sets the same source
-  -- overfull and says so: a table whose `p{}` widths and gaps sum past the
-  -- measure is overfull under lualatex too. Shrinking the gaps would fit a
-  -- box TeX does not fit and silently change every gap to hide an error in
-  -- the declared column widths; the honest fix is the author's, and the
-  -- help names it. (The KP breaker's own rule is the same: shrink is spent
-  -- only where the glue declared some.) A markdown table declares no width:
-  -- its columns narrowed above, and its type stepped down (`tableFit`).
-  -- Named at its first located cell, with a remedy its source can write.
-  -- What a markdown table still overhangs stands centred on its measure,
-  -- moved along the line only as far as keeps it on the paper — a table in
-  -- a list item has its indent's room on the left and the margin alone on
-  -- the right — and it leaves the paper only when it is wider than it.
+  -- A tex table wider than the measure keeps its width and is named, as TeX sets it overfull.
   let offPaper := tableW > r.geom.pageW
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
@@ -12524,14 +9945,9 @@ private def collectTable (r : Rd) (a0 : Acc)
       else max (-r.geom.hmargin)
         (min (indent - (tableW - total) / 2) (r.geom.pageW - r.geom.hmargin - tableW))
     else indent + side.boxOffset (max 0 (total - tableW))
-  -- The scope's side places the table box and stops there: a cell sets by
-  -- its own spec (`cellSide`), from none of the scope's side, justification
-  -- or box centring — `\@arrayparboxrestore` (latex.ltx) zeroes `\leftskip`
-  -- and `\rightskip` in every `p` cell, so a `\raggedright` around the
-  -- table leaves a wrapped cell justified.
+  -- A cell sets by its own spec: `\@arrayparboxrestore` zeroes the scope's skips (latex.ltx).
   let rc := { r with centreBoxes := false, pats := cellPats
                      geom := { r.geom with flushRight := false, justify := true } }
-  -- The left edge of column j's cell box.
   let colX (j : Nat) : Sp := Id.run do
     let mut x := x0 + lead
     for i in [0:j] do
@@ -12547,8 +9963,7 @@ private def collectTable (r : Rd) (a0 : Acc)
   let belowBottom := tok "belowbottomsep"
   let kern := tok "cmidrulekern"
   let dbl := tok "doublerulesep"
-  -- The extent of a `\cmidrule{a-b}`: the cells' span pads included, as
-  -- LaTeX's `\multispan` draws it, each end kerned in when trimmed.
+  -- A `\cmidrule{a-b}` spans the cells' pads, as LaTeX's `\multispan` draws it.
   let cmidSeg (ca cb : Nat) (tl tr : Bool) : Sp × Sp :=
     let ca := min (max ca 1) cols.size
     let cb := min (max cb ca) cols.size
@@ -12557,12 +9972,7 @@ private def collectTable (r : Rd) (a0 : Acc)
     let right := colX (cb - 1) + widths[cb - 1]!
       + (if cb == cols.size then trail else colsep) - (if tr then kern else 0)
     (left, max 0 (right - left))
-  -- Emission: elements in document order. The seps are booktabs' rule
-  -- classes: a rule after content takes its own sep above; a rule directly
-  -- after another rule takes `doublerulesep` in place of both seps (drawn,
-  -- since booktabs draws it); an `\addlinespace` (class 2) replaces the
-  -- neighbouring rule seps by exactly its space. `pendBelow` is the sep
-  -- the last rule owes below itself, paid before the next content row.
+  -- booktabs' seps: `doublerulesep` between two rules; `\addlinespace` replaces the seps.
   let mut pendBelow : Option Sp := none
   -- 0 = content (or table start), 1 = a drawn rule, 2 = an \addlinespace
   let mut prev : Nat := 0
@@ -12575,7 +9985,6 @@ private def collectTable (r : Rd) (a0 : Acc)
       if h : hi < here.size then
         match here[hi] with
         | .gap g =>
-          -- exactly this space: it replaces a neighbouring rule's sep
           pendBelow := none
           a := { a with ops := a.ops.push (.skip { width := (r.resolve g).width }) }
           prev := 2
@@ -12631,15 +10040,9 @@ private def collectTable (r : Rd) (a0 : Acc)
         pendBelow := none
       prev := 0
       let row := rows[i]
-      -- Every cell stands on the row's baseline by its first line, as an
-      -- `\halign` row stands its entries (a `p` entry is a `\vtop`, whose
-      -- reference point is its first baseline): a cell whose first line
-      -- is taller moves the row's baseline down for every cell, never its
-      -- own text alone.
+      -- Every cell stands on the row's baseline by its first line, as an `\halign` entry does.
       a := { a with ops := a.ops.push (.colOpen (Array.replicate row.size .first)) }
       for j in [0:row.size] do
-        -- a `\multicolumn` head sets across the columns it covers, gaps
-        -- included, by its own spec: a `p{…}` one wraps at its own width
         let sp := Ir.cellSpan? spans i j
         let spec := Ir.cellSpec cols spans i j
         let wj := match sp with
@@ -12650,7 +10053,6 @@ private def collectTable (r : Rd) (a0 : Acc)
           | _, _ => wj
         let x := colX j
         let cell := row[j]!
-        -- Every row stands on the table's strut (`cellStrut`, `strutBox`).
         let strut := some (cellStrut r.geom.skips r.geom.scale size r.geom.leading cell)
         unless cell.isEmpty do
           let sub := { a with
@@ -12662,14 +10064,7 @@ private def collectTable (r : Rd) (a0 : Acc)
             dispAlt := none }
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
-          -- A wrapping cell is a paragraph its spec sets (`cellParagraph`);
-          -- a natural one is a single line its side places in the box. A
-          -- natural cell its narrowed column cannot hold on one line
-          -- (`Ir.ColSpec.narrows`, a markdown table's) wraps as a browser
-          -- wraps a table cell: ragged on its side and unhyphenated
-          -- (`narrowedCell`). One holding a forced break is its lines,
-          -- each on the column's side, the column as wide as the widest
-          -- (`itemsLinesWidth`), as a browser sets a cell's `<br>`.
+          -- A natural cell its narrowed column cannot hold wraps as a browser's does.
           let nat := ((nats[i]?).bind (·[j]?)).getD 0
           let broken := ((breaks[i]?).bind (·[j]?)).getD false
           let sub := if !(spec.width matches .natural) then
@@ -12715,21 +10110,8 @@ private def collectTable (r : Rd) (a0 : Acc)
       a := a.vskip { width := pb }
   return a
 
--- Block walk. Mutual recursion through `List` so the nested calls are
--- structural: no `partial`, and the shape mirrors the IR.
-
-/-- How many pairs of a picture's node labels have overlapping ink: the
-label boxes, compared pairwise, counting a pair whose boxes intersect on
-both axes. Reads the boxes the hull already measured, so naming the
-collision costs no second measurement.
-
-**The loss the engine cannot prevent, measured so it can be named.** A
-relative placement (`right =of`) parts node *centres* by one node distance,
-because the extent a node registers is its declared minimum and the walk
-that registers it has no face (`nodeExtent_covers`, owed). So a label wider
-than its minimum collides with its neighbour, and nothing in the picture's
-own box says so — the box contains both, correctly. Only a pairwise
-comparison at the face can see it, and this is where the face is. -/
+/-- How many pairs of a picture's node labels have overlapping
+ink boxes, the loss relative placement cannot prevent. -/
 private def labelCollisions (pic : Ir.Pic.Picture) (boxes : Array Ir.Pic.Box) :
     Nat := Id.run do
   -- A label's own box; a fill, an outline and an edge overlap by design.
@@ -12746,24 +10128,8 @@ private def labelCollisions (pic : Ir.Pic.Picture) (boxes : Array Ir.Pic.Box) :
           n := n + 1
   return n
 
-/-- One run's contribution to a label line's vertical extent, as a step over
-the accumulator. Factored out of `labelInk` so the two facts the label
-guarantee rests on can be stated about it rather than about a closure
-(`label_centre_glyph_free`, `vphantom_absorbed`).
-
-What it reads is the point: the run's font index, its size and its raise —
-and from the face, the `capHeight` and `descent` it declares and its
-x-height as the engine trusts it (`Font.xHeightOptical`, the ink top of the
-face's own 'x', since OS/2 sxHeight lies in some fonts: the height TeX's box
-gives a word of x-height letters). The run's glyphs are not consulted, so
-the band a label sets in is a function of (face, size, raise) alone. The band is the face's
-capitals-to-descent box, held so its middle stands half an x-height above
-the baseline: pgf's `mid` anchor, the manual's own remedy for the wobble
-(pgfmoduleshapes.code.tex, `mid` at `.5ex` over the baseline), is the point
-a centred label hangs from. The box's height is what a node's border and a
-relative placement measure; the split is where the letters stand in it.
-Split at the face's own baseline instead, the band seated every label half
-the face's descent above where lualatex sets a word of capitals. -/
+/-- One run's contribution to a label line's vertical extent: the face's capitals-to-descent
+band, its middle half an x-height above the baseline (pgf's `mid` anchor). -/
 public def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
   match seg with
   | .run idx _ _ _ _ sz _ _ raise _ _ =>
@@ -12775,16 +10141,12 @@ public def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : 
      max acc.2 (scaledAt sz font (span - up) + max 0 (-raise)))
   | _ => acc
 
-/-- How far a label line's ink reaches above and below its baseline: the
-componentwise maximum of its runs' declared bands. `Ir.Pic.labelInkBox`
-turns this into the box the label hangs in and `Ir.Pic.labelBaseline` into
-the baseline the line is set on. -/
+/-- How far a label line's ink reaches above and below its
+baseline: the componentwise maximum of its runs' bands. -/
 public def labelVExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (labelVStep fs size) (0, 0)
 
-/-- A glyph's vertical reach in the run that actually paints it. Outline
-coordinates and the declared fallback both use that run's face, size and
-raise; the paragraph's face cannot measure a mixed-font label. -/
+/-- A glyph's vertical reach in the run that paints it, from its face, size and raise. -/
 public def glyphVExtent (font : Font) (size raise : Sp) (g : Nat) : Sp × Sp :=
   match font.yExtent g with
   | some (lo, hi) =>
@@ -12831,8 +10193,7 @@ private theorem foldExtent_covers {α : Type} (f : (Sp × Sp) → α → Sp × S
         simpa [hij, hget] using he b
   exact h hj
 
-/-- One segment's measured contribution. The accumulator can only grow,
-including for negative raises, images, rules and polygonal math marks. -/
+/-- One segment's measured contribution, which only grows the accumulator. -/
 public def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
   match seg with
     | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
@@ -12845,9 +10206,8 @@ public def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg
     | .poly pts _ => pts.foldl (fun acc (_, y) => growExtent acc (y, -y)) acc
     | .gap _ _ | .decoratedGap _ _ _ => acc
 
-/-- How far a label line's glyphs themselves reach above and below its
-baseline. This measured box reserves space; `labelVExtent` independently
-places the baseline using the face's stable alignment band. -/
+/-- How far a label line's glyphs reach above and
+below its baseline, the box that reserves its ink. -/
 public def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (labelGlyphStep fs size) (0, 0)
 
@@ -12861,9 +10221,6 @@ private theorem labelGlyphStep_grows (fs : FontSet) (size : Sp)
   | poly => exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
   | gap | decoratedGap => exact ⟨Int.le_refl _, Int.le_refl _⟩
 
-/-- Every painted glyph is covered on both sides of the baseline, in its
-own face and resolved size. This is a measurement theorem, not a claim
-that a font's cap-height bounds arbitrary outlines. -/
 public theorem labelGlyphExtent_covers (fs : FontSet) (size : Sp) (segs : Array Seg)
     (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
     (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
@@ -12880,15 +10237,10 @@ public theorem labelGlyphExtent_covers (fs : FontSet) (size : Sp) (segs : Array 
   exact foldExtent_covers _ (fun _ _ => growExtent_left _ _) glyphs a _
     g hg (fun _ => growExtent_right _ _)
 
-/-- A run emptied of its glyphs contributes exactly what it contributed
-full: no arm of the step reads the payload. -/
 public theorem labelVStep_glyph_id (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
     labelVStep fs size acc (Seg.stripGlyphs seg) = labelVStep fs size acc seg := by
   cases seg <;> rfl
 
-/-- Taking a run's contribution twice is taking it once: the step is a
-componentwise `max` against a value the run determines, and `max` is
-idempotent. -/
 public theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
     labelVStep fs size (labelVStep fs size acc seg) seg = labelVStep fs size acc seg := by
   cases seg with
@@ -12903,29 +10255,6 @@ public theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg 
   | image => rfl
   | poly => rfl
 
-/-- **A label's vertical placement does not depend on which glyphs it
-contains.** Emptying every run's glyph array changes neither reach, so a
-label's band — and through `Ir.Pic.labelBaseline`, the baseline its line is
-set on — is a function of the faces, sizes and raises present and nothing
-else. `candle` and `misty` place identically; so do `WAX` and `gjpqy`.
-
-This is the guarantee the report asked for, and the sibling of
-`line_box_glyph_free` one layer down: same fold congruence, same reason (no
-arm reads the payload). Under TeX's node centring the reference is the
-*measured* box instead, which is why depth enters at slope one half there
-and a descender lifts the word (pgf manual §17.5.1's "wobbles"; the manual's
-own remedy, `anchor=mid`, is half an x-height — font-derived for exactly
-this reason, x-height being the only vertical shape metric TFM carries at
-all). The band hangs from that very anchor, so a word of x-height letters
-sits where TeX sets it, and any other departs from TeX by exactly the
-wobble.
-
-The design that behaviour serves is kept, not discarded: an extent-derived
-box is what stops diacritics and descenders clipping or colliding
-(CSS 2.1 §10.6.1, css-inline-3 §5.2), so the band here is still the face's
-declared cap band rather than a magic fraction, and ink that leaves it is
-reserved separately by `labelGlyphExtent_covers`, without moving the
-baseline. -/
 public theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array Seg) :
     labelVExtent fs size (segs.map Seg.stripGlyphs) = labelVExtent fs size segs := by
   unfold labelVExtent
@@ -12934,36 +10263,18 @@ public theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array 
   funext acc s
   exact labelVStep_glyph_id fs size acc s
 
-/-- **A hand-written vertical correction is inert.** A metric-only copy of a
-run already on the line — which is what `\vphantom{y}` beside a
-descender-less word *is*, the argument set in the running face at the
-running size, box only and no ink — changes neither reach, so it moves
-neither the letters nor the box around them.
-
-Note what the statement does not mention: no command, no special case. It is
-`labelVStep_idem` and `labelVStep_glyph_id` composed, so the legacy fix is
-absorbed by construction. `Ir.Pic.phantom_extent_between` is the same fact
-one layer up, over an arbitrary dominated measurement rather than a copy;
-and the engine is stricter still, a picture label's `\vphantom` group being
-dropped before it reaches the IR (`Picture.phantomCtrl`), so in practice not
-even a dominated box arrives. Three independent reasons the correction
-cannot double-correct, of which this is the one that holds whatever the
-surface decides. -/
 public theorem vphantom_absorbed (fs : FontSet) (size : Sp) (segs : Array Seg) (r : Seg) :
     labelVExtent fs size ((segs.push r).push (Seg.stripGlyphs r))
       = labelVExtent fs size (segs.push r) := by
   unfold labelVExtent
   rw [Array.foldl_push, labelVStep_glyph_id, Array.foldl_push, labelVStep_idem]
 
-/-- Resolve a set label line once: the font band places its baseline and
-the measured glyph extent reserves its ink. Both picture consumers read
-this record, so increasing the reserved reach cannot move the baseline. -/
+/-- Resolve a set label line once: the font band places its
+baseline and the measured glyph extent reserves its ink. -/
 public def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
     Ir.Pic.LabelInk :=
   let band := labelVExtent fs size segs
   let ink := labelGlyphExtent fs size segs
-  -- The math face at the size a label's formula sets at (`MathEnv.forRun`'s
-  -- base: the body's x-height matched).
   let (axis, rule, script) : Sp × Sp × Nat := match fs.mathFont? with
     | some (_, f, c) =>
       let base : Int := (Math.mathSize size.toNat fs.body.xHeightOptical fs.body.unitsPerEm
@@ -12974,9 +10285,6 @@ public def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Se
   { w := width, height := band.1, depth := band.2
     boxHeight := ink.1, boxDepth := ink.2, ex := ex, axis, rule, script }
 
-/-- The label metric carries the measured bounds without rounding or a
-font-metric substitution. This is the backend projection of the two
-separate extent fields in `Ir.Pic.LabelInk`. -/
 public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
     (segs : Array Seg) :
     let m := measureLabelLine fs size width ex segs
@@ -12984,18 +10292,14 @@ public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
       (m.boxHeight, m.boxDepth) = labelGlyphExtent fs size segs :=
   ⟨rfl, rfl⟩
 
-/-- The actual inline producer and line break result for one picture label.
-The optional line preserves the established first-line layout, while its
-diagnostics and the number of chosen lines remain available to emission. -/
+/-- The inline producer's and line breaker's result for one picture label. -/
 public structure LabelResult where
   line? : Option (Array Seg × Sp × Ir.Pic.LabelInk)
   diags : Array Diag
   lineCount : Nat
   source : Option Span
 
-/-- Shape, break and measure a picture label once. A nominal extent may
-place a glyph with missing outline data, but emission must name that loss
-of geometry evidence separately. -/
+/-- Shape, break and measure a picture label once. -/
 public def labelResult (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
     (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
     LabelResult :=
@@ -13015,23 +10319,18 @@ public def labelResult (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeigh
     | none => lineSource sources 0 items.size
   { line? := line, diags := produced.2.1, lineCount := breaks.size, source := source }
 
-/-- Compatibility projection used by the metric consumer. Emission reads
-`labelResult` directly so a failed producer or a second line cannot vanish
-from diagnostic accounting. -/
+/-- The metric projection of `labelResult`. -/
 public def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
     (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
     Option (Array Seg × Sp × Ir.Pic.LabelInk) :=
   (labelResult fs imgs geom xHeight leaf content color scale).line?
 
-/-- The metric path is the exact line projection of the actual producer. -/
 public theorem labelResult_projects (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) :
     (labelResult fs imgs geom xHeight leaf content color scale).line? =
       labelInk fs imgs geom xHeight leaf content color scale := by rfl
 
-/-- The label producer returns the metric measured from the very segments
-it sets. Both placement and reservation consume this result. -/
 public theorem labelInk_projects (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
@@ -13043,25 +10342,18 @@ public theorem labelInk_projects (fs : FontSet) (imgs : Image.Store) (geom : Geo
   cases heq
   rfl
 
-/-- Place a measured label by the IR's baseline and horizontal anchor.
-The font band chooses the baseline; the separate glyph box reserves ink. -/
+/-- Place a measured label by the IR's baseline and horizontal anchor. -/
 public def labelLine (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
     (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Sp) (leaf : Option Nat) : LineOut :=
   { x := (place.toPage (Ir.Pic.labelInkBox x y align ink).1).1
     y := (place.toPage (x, Ir.Pic.labelBaseline y align ink)).2
     size := size, segs := segs, setWidth := ink.w, leaf := leaf }
 
-/-- Placement reads the same baseline as the IR's reserved glyph box,
-for every anchor and page transform. -/
 public theorem labelLine_projects (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
     (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Sp) (leaf : Option Nat) :
     (labelLine place x y align ink segs size leaf).y =
       (place.toPage (x, Ir.Pic.labelBaseline y align ink)).2 := by rfl
 
-/-- Every glyph returned by the actual label producer fits vertically in
-the reserved glyph box after page placement. This projects the IR extent
-contract through the glyph's own face, size and raise; cap height is never
-used as a bound on an arbitrary outline. -/
 public theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
@@ -13103,14 +10395,8 @@ public theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom
     omega
   exact reflect place.yTop place.ymax _ _ _ _ _ hb.1 hb.2
 
-/-- The measurement a picture's box is computed with: `labelInk` read as an
-`Ir.Pic.LabelMetric`, the seam the IR states its containment over. A label
-whose line breaks to nothing measures as nothing, which is what it inks.
-The content is set as the backends paint it, alphabets resolved against the
-set's own coverage: elaboration places a picture by this measure before the
-driver resolves the picture's alphabets, so measuring the source glyphs
-would stand outlines, anchors and edges around glyphs the page never sets
-(`labelMetric_resolve_id`). -/
+/-- The measurement a picture's box is computed with: `labelInk`
+as an `Ir.Pic.LabelMetric` over alphabet-resolved content. -/
 private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp) :
     Ir.Pic.LabelMetric := fun content scale =>
   match labelInk fs imgs geom xHeight none
@@ -13119,16 +10405,13 @@ private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight
   | some (_, _, ink) => ink
   | none => {}
 
-/-- The canonical glyph reserve used by the actual picture layout. The
-producer uses the same font environment, image store, page geometry and
-resolved x-height as the enclosing picture. -/
+/-- The glyph reserve the picture layout uses. -/
 public def pictureLabelBox (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight x y : Sp) (content : Array Ir.Inline) (scale : Nat)
     (align : Ir.Pic.LabelAlign) : Ir.Pic.Box :=
   Ir.Pic.labelGlyphBox x y align (picMetric fs imgs geom xHeight content scale)
 
-/-- Whether an actual painted run lacks outline evidence. Known empty
-outlines are measured: only the font reader's `none` is unresolved. -/
+/-- Whether a painted run lacks outline evidence; only the font reader's `none` is unresolved. -/
 public def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Bool :=
   segs.any fun seg => match seg with
   | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
@@ -13137,8 +10420,7 @@ public def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Boo
   | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false
 
-/-- Read each painted run in its own face, size and raise against the
-producer's reserve. Missing outline answers are checked independently. -/
+/-- Read each painted run in its own face, size and raise against the producer's reserve. -/
 public def observeLabel (fs : FontSet) (line : LineOut) (stamp : LabelAudit.Stamp) :
     LabelAudit.Observation :=
   { stamp := stamp
@@ -13155,21 +10437,18 @@ public def observeLabel (fs : FontSet) (line : LineOut) (stamp : LabelAudit.Stam
       | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
         | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => true }
 
-/-- This census reads the final page lines, after placement and furniture;
-it cannot count a producer result which failed to reach a page. -/
+/-- The label census over the final page lines, after placement and furniture. -/
 public def labelObservations (fs : FontSet) (pages : Array PageOut) :
     Array LabelAudit.Observation :=
   pages.flatMap fun page =>
     page.lines.filterMap fun line => line.pictureLabel.map (observeLabel fs line)
 
-/-- Reconcile the independent pre-placement request census with the actual
-page lines. Geometry and text are untouched; every failed check retains
-the complete diagnostic source. -/
+/-- Reconcile the pre-placement label request census
+with the page lines, adding diagnostics only. -/
 public def auditLabelInk (fs : FontSet) (requests : Array LabelAudit.Request) (out : Out) : Out :=
   { out with diags := LabelAudit.finish requests (labelObservations fs out.pages) out.diags }
 
-/-- The first line actually emitted for a label and its complete diagnostic
-account. The box argument is the canonical metric read by reservation. -/
+/-- The first line emitted for a label and its diagnostic account. -/
 public structure LabelEmission where
   line? : Option LineOut := none
   diags : Array Diag := #[]
@@ -13177,8 +10456,7 @@ public structure LabelEmission where
   lineCount : Nat := 0
   reserved : Ir.Pic.Box := ((0, 0), (0, 0))
 
-/-- Only add the label key when the producer has not already identified its
-own subject. Its code, trigger, recovery and message remain unchanged. -/
+/-- Add the label key as the diagnostic's subject unless the producer named one. -/
 public def nameLabelDiag (key : String) (d : Diag) : Diag :=
   { d with subject := d.subject.orElse (fun _ => some key) }
 
@@ -13192,9 +10470,7 @@ public def labelFailureNamed (content : Array Ir.Inline) (diags : Array Diag) : 
     d.subject == some (Ir.plainText content) &&
       (d.kind.loss == .dropped || d.kind.loss == .pending)
 
-/-- Compare the measured glyph box with the canonical reserved glyph box.
-This checks the actual outputs of both producer calls; colour and source
-attribution are never assumed to preserve shaping or line breaking. -/
+/-- The measured glyph box lies inside the reserved glyph box. -/
 @[expose] public def labelReserveCovers (actual reserved : Ir.Pic.Box) : Prop :=
   reserved.1.2 ≤ actual.1.2 ∧ actual.2.2 ≤ reserved.2.2
 
@@ -13203,12 +10479,7 @@ public instance (a r : Ir.Pic.Box) :
   unfold labelReserveCovers
   infer_instance
 
-/-- Check and place the producer's measured line against the picture's
-reserved glyph box. This is the production decision, exposed separately
-so a check can falsify each guard by changing its own input.
-
-The comparison is against the reserved label glyph box; an author's
-explicit picture bounding box intentionally may be smaller than its ink. -/
+/-- Check and place the producer's measured line against the picture's reserved glyph box. -/
 public def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (align : Ir.Pic.LabelAlign)
     (result : LabelResult) (reserved : Ir.Pic.Box) : LabelEmission :=
@@ -13247,9 +10518,7 @@ public def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
     { line? := some (labelLine place x y align ink segs size leaf), diags := ds
       source := result.source, lineCount := result.lineCount, reserved := reserved }
 
-/-- Emit the line selected by the actual producer, checking it against the
-actual canonical reservation. No correctness premise is supplied by the
-caller: `finishLabel` checks both measurements and all painted glyphs. -/
+/-- Emit the line the producer selected, checked against the canonical reservation. -/
 public def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
@@ -13258,34 +10527,19 @@ public def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (labelResult fs imgs geom xHeight leaf content color scale)
     (pictureLabelBox fs imgs geom xHeight x y content scale align)
 
-/-- **The label measurement, for a caller that needs it before layout.**
-A node's extent is a font question and the picture walk has no face, so the
-driver resolves one and hands it to the elaborator as a parameter.
-That measurement must be *this* measurement — a second implementation would
-place nodes against one face and set them against another with nothing
-stating the two agree — so the one function both sides read is exported
-here rather than copied there. The x-height is the body face's at the
-document's own size, as `runCore` resolves it. -/
+/-- The label measurement for a caller that needs it before
+layout: the one function placement and elaboration both read. -/
 public def labelMetric (geom : Geom) (fs : FontSet) (imgs : Image.Store := {}) :
     Ir.Pic.LabelMetric :=
   let font := fs.body
   picMetric fs imgs geom (font.xHeight * geom.fontSize / font.unitsPerEm)
 
-/-- **The box a picture occupies on the page**: the IR's one box
-(`Ir.Pic.Picture.box` — the declared box, else the natural one) under the
-measurement layout sets the picture's labels with. Both placement sites
-read it — the reservation and centring in `collectPicture`, the transform in
-`placePicture` — and the HTML backend's `viewBox` is the same IR value
-under the metric the driver hands it (`Pdf.picture_box_agree`). -/
+/-- The box a picture occupies on the page:
+`Ir.Pic.Picture.box` under layout's label measurement. -/
 public def pictureBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Sp)
     (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
   pic.box (picMetric fs imgs geom xHeight)
 
-/-- **A label measures as it paints** (`_id`): the label measure reads a
-label's formulas as alphabet resolution leaves them, so a measure taken
-before resolution — elaboration places node outlines, anchors and edges
-then — and one taken after it agree, for every font set, image store,
-geometry, content and size. -/
 public theorem labelMetric_resolve_id (geom : Geom) (fs : FontSet) (imgs : Image.Store)
     (content : Array Ir.Inline) (scale : Nat) :
     labelMetric geom fs imgs
@@ -13293,37 +10547,20 @@ public theorem labelMetric_resolve_id (geom : Geom) (fs : FontSet) (imgs : Image
       labelMetric geom fs imgs content scale := by
   simp only [labelMetric, picMetric, Ir.mapMathInlines_fixed_point]
 
-/-- **Resolving a picture's labels moves no box** (`_id`): under the
-driver's label measure, the picture elaboration placed and the picture both
-backends paint after alphabet resolution occupy one box. -/
 public theorem resolveMathAlphaPicture_box_id (geom : Geom) (fs : FontSet)
     (imgs : Image.Store) (pic : Ir.Pic.Picture) :
     (Ir.resolveMathAlphaPicture fs.mathAlphabets pic).box (labelMetric geom fs imgs) =
       pic.box (labelMetric geom fs imgs) :=
   Ir.Pic.Picture.mapLabels_box_id _ _ (labelMetric_resolve_id geom fs imgs) pic
 
-/-- At the document's resolved body x-height, picture placement reads the
-same IR box as a caller using the public label measurement. -/
 public theorem pictureBox_projects (geom : Geom) (fs : FontSet)
     (imgs : Image.Store) (pic : Ir.Pic.Picture) :
     pictureBox geom fs imgs (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
       pic.box (labelMetric geom fs imgs) := by
   rfl
 
-/-- Stage one picture. The theorem side of the stays-in-its-box contract
-bounds every shape's *ink* by the picture's measured box
-(`Ir.Pic.Picture.box_covers`); this is the diagnostic side, bounding
-the box by the text area — a picture that cannot fit is still placed (best
-effort, never a blank), and W0335 says the page may be overrun. `center`
-sets the box's left edge the way a centred paragraph sets its lines.
-
-The box is `pictureBox` — TikZ's: a declared `\useasboundingbox` exactly
-(`box_declared_exact`), else every mark's ink and every node's border. Not
-`bbox`: a label's declared box is its anchor point, so a diagram of node
-labels reserved the hull of their *centres* — narrower than the text by
-half a label at each edge — and both halves of that were silent. The
-reserved box fitted while glyphs left the page, and the centring it drives
-put the leftmost label's ink at negative page x. -/
+/-- Stage one picture at its `pictureBox`, placed even
+when it cannot fit, with W0335 naming the overrun. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
     (indent : Sp) (center : Bool) (display : Option DisplayJob := none) : Acc :=
   let metric := picMetric r.fs r.imgs r.geom r.xHeight
@@ -13343,9 +10580,7 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
-  -- The collision the box cannot show: two labels inside one correct box.
-  -- Named, not fixed — the extent a node places against is its declared
-  -- minimum, and measuring it needs a face the elaborator does not have.
+  -- Two labels colliding inside one box are named, not fixed: node extents are declared minimums.
   let a := match labelCollisions pic boxes with
     | 0 => a
     | n =>
@@ -13360,27 +10595,17 @@ separation ([node distance = ...])")
   let a := match display with
     | some dj => { a with ops := a.ops.push (.displayOpen dj x r.geom.fontSize) }
     | none => a
-  -- The picture's one `.picture` leaf: its label lines name it.
   let (a, leaf) := a.leafRange 1
   { a with ops := a.ops.push (.picture (r.geom.hmargin + x) pic leaf) }
 
-/-- What a captioned float stacks, top to bottom. Position decides where
-the caption and the object stand, never which gaps are paid — that is what
-`floatPlan_gaps_exact` states. -/
+/-- What a captioned float stacks, top to bottom. -/
 private inductive FloatSlot where
   | gap (g : Glue)
   | caption
   | object
 
-/-- The float's vertical plan, in physical top-to-bottom order: a
-text-side gap (`floatsep`), the caption and its object in source order
-with the object-side skip between them, a text-side gap. The caption's
-other skip stands on its text side, inside the float, beside the float
-separation — LaTeX's float box holds both caption skips and `\intextsep`
-stands outside it. Which skip faces the object is `Ir.captionSides`'
-choice; undeclared it is `captionsep` whichever side the caption stands,
-the other 0pt. A bare float pays no caption skip. The float arm folds over
-this plan, so the theorems below range over what runs. -/
+/-- The float's vertical plan top to bottom: a text-side gap, the caption
+and its object with the object-side skip between, a text-side gap. -/
 private def floatPlan (capAbove hasCaption : Bool) (floatSep capSep farSep : Glue) :
     List FloatSlot :=
   if !hasCaption then [.gap floatSep, .object, .gap floatSep]
@@ -13395,55 +10620,32 @@ private def FloatSlot.gaps (plan : List FloatSlot) : List Glue :=
     | .gap g => some g
     | _ => none
 
-/-- **A caption above its object pays the mirror image of one below it**:
-the float separation on both text sides, the object-side skip between the
-caption and its object, and the caption's text-side skip beside the float
-separation on the caption's own side — `capAbove` reorders the caption
-and the object, never which gaps are paid. With the text-side skip at its
-undeclared 0pt, the float's extent is caption-position-independent. -/
 private theorem floatPlan_gaps_exact (capAbove : Bool) (floatSep capSep farSep : Glue) :
     FloatSlot.gaps (floatPlan capAbove true floatSep capSep farSep)
       = if capAbove then [floatSep.add farSep, capSep, floatSep]
         else [floatSep, capSep, floatSep.add farSep] := by
   cases capAbove <;> rfl
 
-/-- A bare float pays the text-side gaps and nothing else. -/
 private theorem floatPlan_bare_gaps (capAbove : Bool) (floatSep capSep farSep : Glue) :
     FloatSlot.gaps (floatPlan capAbove false floatSep capSep farSep)
       = [floatSep, floatSep] := by
   cases capAbove <;> rfl
 
-/-- Blocks that are pure state changes: they stand between siblings without
-being content — no line, no ink, no gap — so the walks neither pay a peer
-gap before them nor count them as a scope's first content. Without this, a
-declaration opening a scope would make the first paragraph pay a parskip
-nothing else asked for. -/
+/-- Blocks that are pure state changes, which pay no
+peer gap and count as no scope's first content. -/
 private def statefulBlock : Block → Bool
   | .setPalette _ | .setTokens _ => true
   | b => Ir.pageMarkerBlock b
 
-/-- What a display's line needs from the walk (`DisplayJob`): its two skips
-above, resolved at the walk's governing size from the one resolving site
-(`Ir.displaySkipsFor`), and whether TeX sets an empty line first —
-amsmath's `$$` opening a paragraph whose indent box stands (tex.web §1145:
-the paragraph so far is that box), which is neither right after a heading
-(`\@afterheading` takes the box) nor right after an environment end whose
-`\@endpe` takes it (`Ir.DisplayCtx.afterEnv`, read from the source by
-elaboration — not inferred from the walk's owed glue, which a `\vspace`
-fills too). `lead` counts the line's segments outside the formula's box. -/
+/-- What a display's line needs from the walk: its two skips above
+(`Ir.displaySkipsFor`) and whether TeX sets an empty line first (tex.web §1145). -/
 private def Spacing.Pending.displayJob (a : Acc) (r : Rd) (lead : Nat := 0) : DisplayJob :=
   let s := Ir.displaySkipsFor a.tokens r.geom.fontSize
   { ctx := r.display, above := r.resolve s.above, aboveShort := r.resolve s.aboveShort
     emptyLine := !r.display.inPar && !a.afterHeading && !r.display.afterEnv, lead := lead }
 
-/-- Opening a display: its skip above is TeX's choice, made where the line
-is set (`Spacing.Page.placeLine`), so the walk pays only what the boundary owes before
-it — inside a paragraph nothing of its own, as TeX spends no `\parskip`
-there; where the display opens a paragraph (the empty line is set,
-`dj.emptyLine`), TeX's own `\parskip` (`Geom.texParskip`) before that empty
-line, never the engine's paragraph mark, which stands where TeX indents
-text and an empty line holds none. The gate is the display's own fact, not
-the owed glue a `\vspace` would fill. -/
+/-- Opening a display: the walk pays only what the boundary
+owes, TeX's `\parskip` where the display opens a paragraph. -/
 private def Spacing.Pending.openDisplay (a : Acc) (r : Rd) (dj : DisplayJob) : Acc :=
   if r.display.inPar then { a with wantDefault := false }.flushGap r
   else if dj.emptyLine && a.wantDefault then
@@ -13451,13 +10653,7 @@ private def Spacing.Pending.openDisplay (a : Acc) (r : Rd) (dj : DisplayJob) : A
              ops := a.ops.push (.skip (r.resolve r.geom.texParskip)) }.flushGap r
   else a.flushGap r
 
-/-- Closing a display: the skip below is owed to what follows, as TeX's
-`\belowdisplayskip` is glue on the vertical list — an element's space meets
-it by `\addvspace`, a `\vspace` adds to it — under both of TeX's choices at
-once (`Spacing.Pending.dispAlt`), the page builder shipping the one the line took. A
-paragraph break after it stacks TeX's `\parskip` on top, which the next
-paragraph opens with (`trivOwed`, as a list's space stacks it); text running
-on after it continues the paragraph and pays nothing more. -/
+/-- Closing a display: the skip below is owed to what follows under both of TeX's choices. -/
 private def Spacing.Pending.closeDisplay (a : Acc) (r : Rd) : Acc :=
   let s := Ir.displaySkipsFor a.tokens r.geom.fontSize
   let short := a.addvspace (r.resolve s.belowShort)
@@ -13465,8 +10661,8 @@ private def Spacing.Pending.closeDisplay (a : Acc) (r : Rd) : Acc :=
   { a with dispAlt := some short.owed, declaredSkip := a.declaredSkip || r.display.parEnd
            trivOwed := a.trivOwed || r.display.parEnd }
 
-/-- The unnumbered display: the formula's paragraph centred on the
-measure, placed as TeX places a display (`DisplayJob`). -/
+/-- The unnumbered display: the formula's paragraph
+centred on the measure, placed as TeX places a display. -/
 private def collectDisplayFormula (r : Rd) (a : Acc)
     (content : Array Inline) (indent : Sp) : Acc :=
   let dj := a.displayJob r
@@ -13476,11 +10672,7 @@ private def collectDisplayFormula (r : Rd) (a : Acc)
     (leaf := leaf) (span := leafCount content) (dispJob := some dj)
   a.closeDisplay r
 
-/-- A display a picture stands for (`Ir.displayPicture?`): TeX's display of
-an `\hbox`, placed as a display formula's line is (`collectDisplayFormula`)
-— the boundary's own skips, TeX's choice of the one above, the picture
-centred on the measure, its labels' anchors where the formula's would stand,
-and the skip below owed to what follows. -/
+/-- A display a picture stands for (`Ir.displayPicture?`), placed as a display formula's line. -/
 private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
     (pic : Ir.Pic.Picture) (indent : Sp) : Acc :=
   let dj := a.displayJob r
@@ -13490,19 +10682,13 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
     | _ => none }
   (collectPicture r a pic indent true (display := some dj)).closeDisplay r
 
-/-- **A display inside a paragraph opens no gap of the walk's own**
-(`_exact`): with nothing owed and no `\vspace*` anchor pending, the ops
-stand as they were — the peer gap stands aside, as TeX spends no `\parskip`
-inside a paragraph, and the skip above is the page builder's to choose
-where the line is set. -/
 private theorem openDisplay_inPar_exact (a : Acc) (r : Rd) (dj : DisplayJob) (howed : a.owed = #[])
     (hk : a.anchorAt = none) (hin : r.display.inPar = true) :
     (a.openDisplay r dj).ops = a.ops := by
   simp [Spacing.Pending.openDisplay, Spacing.Pending.flushGap, hin, howed, hk]
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
-  -- A paragraph holding only label anchors ships no ink: no line and no
-  -- gap, or a \label on its own source line would open a blank line.
+  -- A paragraph of label anchors alone ships no line and no gap.
   if !content.isEmpty && content.all (fun x => x matches .label _) then
     { a with ops := a.ops ++ content.filterMap (fun x => match x with
         | .label name => some (.anchor name)
@@ -13513,37 +10699,22 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
       (leaf := leaf) (span := leafCount content)
 
 private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Sp) : Acc := Id.run do
-  -- A numbered display: the formula centred on the measure, the tag
-  -- right-aligned on its baseline (amsmath's equation shape). The line
-  -- is [mirror box, fil, formula, fil, tag]: a glyphless box as wide as
-  -- the tag on the left makes the two fils centre the formula on the
-  -- full measure exactly, and when formula and tag cannot share the
-  -- line the fil between them is the legal break, so the tag drops to
-  -- its own right-aligned line rather than overprinting (TeX moves the
-  -- number down in the same overlap). Justified whatever the page
-  -- declares: the fils are the alignment. The display skips stand
-  -- above and below, TeX's (`DisplayJob`): the mirror box and its fil stand
-  -- outside the formula's box.
+  -- A numbered display sets [mirror box, fil, formula, fil, tag], amsmath's equation shape.
   let dj := a.displayJob r (lead := 2)
   let a := a.openDisplay r dj
-  -- The formula's leaves, then the number's (`Struct`'s shape: the number
-  -- is its `.label` node).
   let (a, leaf) := a.leafRange (leafCount content + leafCount num)
   let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
-  -- Image fractions resolve against the current measure, as collectPara's.
   let target := (a.measure.getD r.geom.textWidth) - indent
   let (citems, ds1, cache1, extras, _, cOffsets, cAnchors, cSources) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
       a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
       r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
-  -- the number's leaves follow the content's
   let numLeaf := leaf.map (· + leafCount content)
   let (nitems, ds2, cache2, _, _, nOffsets, nAnchors, nSources) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle num
       cache1 (LeafCtr.of numLeaf (leafCount num) num) r.imgs target r.geom.textHeight
       (ladder := r.geom.scale)
-  -- both walks close with parfill glue and a forced pen; the assembled
-  -- line supplies its own ending
+  -- Both walks close with parfill glue and a forced pen, which the assembled line replaces.
   let strip (xs : Array Item) : Array Item :=
     if xs.size ≥ 2 then xs.extract 0 (xs.size - 2) else xs
   let citems := strip citems
@@ -13556,7 +10727,6 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   let itemSources := (cSources.filter (·.1 < citems.size)).map (fun (i, s) => (i + 2, s)) ++
     (nSources.filter (·.1 < nitems.size)).map (fun (i, s) => (i + citems.size + 3, s))
   let numW := (measure nitems 0 nitems.size).natural
-  -- the mirror box is a glyphless kern: generated, the equation's
   let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
   let mut items : Array Item :=
     #[.box numW 0 a.fg none #[] r.geom.fontSize {} {} 0 a.ground mirrorAttr,
@@ -13577,14 +10747,8 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
       markerSegs := none, rule := none
       leaf := leaf, display := some dj }) } : Acc).closeDisplay r
 
-/-- A frame in beamer's text area opens its body where beamer's content box
-opens, `\vskip-\parskip\vbox{}` (beamerbaseframe.sty:115) at the area's top —
-below the title box on a titled frame, the paper's top edge on an untitled
-one or a standout (moloch's headline is empty) — past the frame's fixed top
-skip (`Ir.frameBodySkip`); no peer gap is paid there. A plain frame's
-content stands flush on that box (`\nointerlineskip`, beamerbaseframe.sty:116),
-so its first box takes no interline glue. Outside the area the page builder's
-own top rule stands. -/
+/-- A frame in beamer's text area opens its body where beamer's content
+box opens (beamerbaseframe.sty), past the frame's fixed top skip. -/
 private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
     (area : FrameArea) : Acc :=
   let g : Glue := { width := frameBodySkip hasTitle valign r.geom.fontSize }
@@ -13596,44 +10760,29 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
   if level == 0 then
-    -- The document title, a heading at level 0, through the one title
-    -- door (`collectTitle`). Never a divider: it stands inside the
-    -- furniture \maketitle built (the title frame, the centred block),
-    -- so it opens no page of its own even in slides.
+    -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
   else
-  -- The top-level section in force, for the footer's \sectiontitle slot.
-  -- A local heading remains addressable (`Ir.slug`, the id the HTML page
-  -- assigns), but cannot change the section of a subsequent frame.
+  -- The top-level section in force, for the footer's `\sectiontitle` slot.
   let a := if level == 1 then
       { a with curSection := if r.inFrame then a.curSection else title
                ops := a.ops.push (.anchor (Ir.slug title)) }
     else a
-  -- The heading's leaves are the title's alone: the number the walk sets
-  -- before it is generated ink (`Struct`'s `.section` arm reads no number).
+  -- The number the walk sets before the title is generated ink.
   let span := leafCount title
   let (a, leaf) := a.leafRange span
   let design := Ir.Design.ofPalette a.pal
   let divider := r.slides && !r.inFrame
   if divider && level == 1 && design.sectionProgress.isSome then
-    -- The themed section page: its own page, vertically centred, the
-    -- title ragged-left in a centred measure with the deck position
-    -- drawn under it as a progress bar.
     let a := a.pageBreak
-    -- A divider carries no footer; the break above closed the previous
-    -- page with its own. It is moloch's `\frame[plain,c,noframenumbering]`:
-    -- a plain frame's text area (`FrameArea.paper`) where the chrome may
-    -- stand, its content box opening flush at the paper's top.
+    -- A divider is moloch's `\frame[plain,c,noframenumbering]`: a plain frame's text area.
     let area : FrameArea := if a.footAllowed then .paper else .margins
     let opening := { a.frameOpening false area with
       origin := none, number := none, label := none, allowed := false }
     let a := { a with ops := (a.ops.push .frameClose).push (.frameOpen false none opening) }
-    -- One page of the deck like any frame, on the palette's own ground.
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
     let a := openFrameBody r a false .center area
-    -- The centred measure the title and the bar share: moloch's own
-    -- 0.7875 of the line width (`Ir.sectionPageMeasure`).
     let mp : Sp := Ir.sectionPageMeasure r.geom.textWidth
     let indent : Sp := (r.geom.textWidth - mp) / 2
     let st := r.style "sectionpage"
@@ -13647,61 +10796,37 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
         collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
           (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
     let a := { a with fg := saved.1, ground := saved.2 }
-    -- The fallback is moloch's own default, `progressbar linewidth=1pt`
-    -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults) — the same
-    -- value the bundles declare through the token.
     let thick := ((a.tokens.find? "progressheight").map
-      fun g => (r.resolve g).width).getD (pt 1) -- moloch's own default: progressbar linewidth=1pt (beamerouterthememoloch.dtx, \moloch@outer@setdefaults)
-    -- No clamp: every threaded position is a some of `Ir.frameNumbers`,
-    -- ≤ the denominator by theorem (`frameNumbers_le_count`) — moloch
-    -- clamps (beamerouterthememoloch.dtx:290) only because its total
-    -- comes from a lagging aux file, and this engine has no aux file to
-    -- lag. A deck with no countable frame has no position to show, so
-    -- it draws no bar at all rather than a fraction over a fake 1.
+      fun g => (r.resolve g).width).getD (pt 1) -- moloch's default progressbar linewidth=1pt
+    -- No clamp: every threaded position is at most the denominator (`frameNumbers_le_count`).
     let a := match design.sectionProgress with
       | some bar => if a.frameCount == 0 then a else
         { a with ops := a.ops.push (.progress
           a.framesDone a.frameCount bar.fg bar.bg thick
           (r.geom.hmargin + indent) mp) }
       | none => a
-    -- The template's last line: the subsection title's strut, set below the
-    -- bar whether or not a subsection is in force — the content box beamer
-    -- centres ends there (`Ir.sectionPageStrut`).
+    -- The subsection title's strut ends the content box beamer centres (`Ir.sectionPageStrut`).
     let a := if area == .paper then
         { a with ops := a.ops.push (.skip
           { width := Ir.sectionPageStrut r.geom.fontSize r.geom.leading - thick }) }
       else a
     (a.pageBreak).pushOp .frameClose
   else
-  -- Only a section outside a frame opens a divider. A frame's headings
-  -- keep its page style, distribution and footline (`frameHeadingScopeChecks`).
+  -- Only a section outside a frame opens a divider.
   let a := if divider then a.pageBreak else a
   let a := if !r.inFrame && a.footAllowed then
       { a with ops := a.ops.push .frameClose } else a
   let st := r.style level.element
-  -- The resolved number stands before the title with a \quad between
-  -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
-  -- carried as the em-quad kern so no face is asked for a glyph.
-  -- The number is generated: the heading's `.block`; the title's atoms
-  -- keep their leaves behind the marker.
+  -- The number stands before the title with a `\quad` kern (classes.dtx `\@seccntformat`).
   let marked := markContent title
   let title := match num with
     | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ marked
     | none => title
-  -- Undeclared, a heading stands one full rhythm unit above its body
-  -- and half below (`Ir.heading_space_above_ge_below` holds the shape:
-  -- more above than below) — its own tokens, so a class that zeroes
-  -- \parskip keeps its heading space; a document with a larger parskip
-  -- keeps the walk's 2-quanta growth.
+  -- Undeclared, a heading stands a rhythm unit above its body and half below.
   let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
   let two := r.parskip.add r.parskip
   let a := a.addvspace ((st.before.map r.resolve).getD
     (if two.width > hb.width then two else hb))
-  -- A declared font template wraps the title; without one, headings set in
-  -- the bold face of the body family at the level's size.
-  -- The rule's weight is the declared thickness, else the engine's
-  -- em-relative default; its position is the declared one, else the
-  -- x-height raise — both facts travel to the line as one record.
   let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option Ir.ColorRef) =>
     { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
         (headingRuleWeight r.geom.fontSize)
@@ -13710,8 +10835,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
   let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
   let after := (st.after.map r.resolve).getD
     (if r.parskip.width > ha.width then r.parskip else ha)
-  -- The heading keeps its text (`Spacing.Paragraph.keepNext`): the after-skip and
-  -- two lines of the body must fit below it, or it opens the next page.
+  -- A heading keeps its after-skip and two body lines with it, or opens the next page.
   let keep := after.width + 2 * Ir.leadingFor r.geom.fontSize r.geom.leading
   let savedFg := a.fg
   let a := if r.slides && level == 1 then { a with fg := design.sectionTitle } else a
@@ -13727,21 +10851,11 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
   if divider then a.pageBreak else a
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
-  -- The reference list is natbib's `thebibliography` list (`\NAT@bibsetnum`,
-  -- `\NAT@bibsetup`, natbib.sty:627–644). Labelled entries set their
-  -- `[label]` right-aligned in a column as wide as the widest label the list
-  -- sets — what `\settowidth\labelwidth` measures of the label the style
-  -- names widest (`longest.label`) and biblatex's `\labelnumberwidth` of
-  -- every label, measured here in the face that sets them, so no label
-  -- reaches into the margin — `\labelsep` before the text, a label the
-  -- style writes flush left in the column (`Ir.BibItem.labelFlush`); author-year
-  -- entries hang their continuation lines `\bibhang` in; `\bibsep` stands
-  -- between entries, `\parsep` being zero. An unfilled marker ships
-  -- nothing; the diagnostic that left it empty already said why.
+  -- natbib's `thebibliography`: labels right-aligned in a column as wide as the widest.
   let size := r.geom.fontSize
   let numbered := items.any (·.marker.isSome)
   let (labelW, a) : Sp × Acc := if !numbered then (0, a) else
-    -- measured only (how wide is each label?), never shipped
+    -- Measured only, never shipped.
     items.foldl (init := ((0 : Sp), a)) fun (w, a) item =>
       match item.marker with
       | none => (w, a)
@@ -13756,8 +10870,7 @@ private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (i
   let sep := r.resolve (Ir.bibSep a.tokens size)
   items.zipIdx.foldl (init := a) fun a (item, i) =>
     let marker := item.marker.map fun m => #[Ir.Inline.text s!"[{m}]"]
-    -- the entry's leaves are its inline content's, as a paragraph's are
-    -- (`Struct.bibRaw`); the label is generated marker ink
+    -- The entry's leaves are its inline content's; the label is generated marker ink.
     let (a, leaf) := a.leafRange (leafCount item.content)
     let a := collectPara r a item.content textIndent false size (marker := marker)
       (markerLeft := if item.labelFlush then some indent else none)
@@ -13765,39 +10878,22 @@ private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (i
     if i + 1 == items.size then a.wantGap else a.addvspace sep
 
 private def collectNav (a : Acc) (spec : Ir.NavSpec) (body : Array Block) : Acc :=
-  -- A nav is furniture, and each medium has its own answer. The paged
-  -- surface renders an unpinned nav as the document outline — print's
-  -- own navigation (ISO 32000-2 §12.3.3): its links become entries and
-  -- its body ships no ink. A pinned nav is viewport furniture with no
-  -- page analogue, dropped exactly as `.note` is not handout content.
-  -- HTML keeps the `<nav>` landmark element.
-  -- Its leaves are numbered whether or not the page sets them: the
-  -- counter steps over them so what follows keeps its index.
+  -- An unpinned nav ships no ink; its links become the outline and its leaves are skipped.
   let a := (a.leafRange (blockLeafCount body)).1
   if spec.pin.isSome then a
   else { a with navEntries := a.navEntries ++ Ir.navLinks body }
 
 private def collectNote (a : Acc) (body : Array Block) : Acc :=
-  -- A speaker note is not handout content: no lines, no gap. Its leaves
-  -- (an `.aside` in the tree) are stepped over, never attributed.
+  -- A speaker note is not handout content; its leaves are stepped over.
   (a.leafRange (blockLeafCount body)).1
 
 private def collectLogo (a : Acc) (content : Array Inline) : Acc :=
-  -- A stateful declaration: the pages from here on carry this content at
-  -- their corner. No lines, no gap; placement reads the spans. Its
-  -- `.artifact` leaves are stepped over: the furniture pass lays them
-  -- flagged, never attributed.
+  -- A stateful logo declaration: no lines, no gap; its leaves are stepped over.
   let a := (a.leafRange (leafCount content)).1
   { a with ops := a.ops.push (.setLogo content) }
 
-/-- One display column of a listing line as the layout sets it: the
-character (`ListingSpec.layoutText`'s spelling, tab stops expanded), the
-highlighting token it came from, its run (`lex`: one of listings' output
-units, or under whitespace first one of the highlighter's type runs —
-adjacent tokens of one type are one run — or a fallback token of text it
-left untyped), the fallback token it stands in (`fb`, read across the
-highlighter's tokens), its authored source column, and whether the source
-is white space there. -/
+/-- One display column of a listing line as the layout sets it: the character, its
+token, its run, its fallback token, its source column and whether it is white space. -/
 private structure CodeUnit where
   c : Char
   token : Nat
@@ -13807,10 +10903,8 @@ private structure CodeUnit where
   space : Bool
   deriving Inhabited
 
-/-- A source line as display units, each character spelled as `layoutText`
-spells the whole line, the column threaded through the tokens, each read as
-both backends' wraps read it (`Listing.codeMarks`): its fallback token, its
-run under the listing's wrap, and whether it is white space. -/
+/-- A source line as display units, each read as both
+backends' wraps read it (`Listing.codeMarks`). -/
 private def codeUnits (spec : Ir.ListingSpec) (line : Array ListingHighlight.Token) :
     Array CodeUnit := Id.run do
   let mut out : Array CodeUnit := #[]
@@ -13825,12 +10919,8 @@ private def codeUnits (spec : Ir.ListingSpec) (line : Array ListingHighlight.Tok
     src := src + 1
   return out
 
-/-- How a wrap before unit `b` ranks, read off the units on either side:
-none after a space. Under listings' rule every wrap between two of its units
-— before a space or between two runs (`lex`) — ranks alike. Under whitespace
-first a wrap before a space ranks first; any other stands only between two
-fallback tokens (`fb`), and there only between two runs or inside a run
-`wide` reads as wider than a line. -/
+/-- How a wrap before unit `b` ranks, read off the
+units on either side under the listing's wrap rule. -/
 private def CodeUnit.rank (wrap : Ir.ListingWrap) (wide : Nat → Bool) (us : Array CodeUnit)
     (b : Nat) : Nat :=
   match us[b - 1]?, us[b]? with
@@ -13844,10 +10934,6 @@ private def CodeUnit.rank (wrap : Ir.ListingWrap) (wide : Nat → Bool) (us : Ar
         else 0
   | _, _ => 0
 
-/-- **Where a wrap may fall.** A wrap ranks only after a unit that is no
-space: under listings' rule before a space or between two runs; under
-whitespace first before a space, or between two fallback tokens that are two
-runs or inside a run wider than a line. -/
 private theorem CodeUnit.rank_mem (wrap : Ir.ListingWrap) (wide : Nat → Bool)
     (us : Array CodeUnit) (b : Nat) (h : CodeUnit.rank wrap wide us b ≠ 0) :
     ∃ p q, us[b - 1]? = some p ∧ us[b]? = some q ∧ p.space = false ∧
@@ -13880,9 +10966,8 @@ private theorem CodeUnit.rank_mem (wrap : Ir.ListingWrap) (wide : Nat → Bool)
     · simp [hs] at h
   · simp at h
 
-/-- A segment's scan from `b`, `fit` reading whether the segment reaches a
-unit inside its width: while it does, the last wrap of the first rank and
-the last wrap of any rank, and the unit the scan stopped at. -/
+/-- A segment's scan from `b` while `fit` holds: the last first-rank
+wrap, the last wrap of any rank, and where it stopped. -/
 private def codeScan (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat) :
     Option Nat × Option Nat × Nat :=
   if b < n then
@@ -13972,8 +11057,6 @@ private theorem codeScan_stop_between (rank : Nat → Nat) (fit : Nat → Bool) 
     simp only [hb, ↓reduceIte]
     omega
 
-/-- Once the scan holds a wrap, the wrap it ends holding stands at or past
-it, inside the line. -/
 private theorem codeScan_any_monotone (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat)
     (top any : Option Nat) (a : Nat) (h : any = some a) (ha : a ≤ b) (han : a < n) :
     ∃ t, (codeScan rank fit n b top any).2.1 = some t ∧ a ≤ t ∧ t < n := by
@@ -14029,9 +11112,6 @@ private theorem codeScan_top_monotone (rank : Nat → Nat) (fit : Nat → Bool) 
     exact ⟨a, h, Nat.le_refl _, han⟩
 
 
-/-- **The scan keeps the last wrap it reaches.** A wrap of any rank whose
-every unit up to it fits leaves the scan holding one at or past it, inside
-the line. -/
 private theorem codeScan_any_between (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat)
     (top any : Option Nat) (c : Nat) (hbc : b ≤ c) (hc : c < n) (hr : rank c ≠ 0)
     (hfit : ∀ k, b ≤ k → k ≤ c → fit k = true) :
@@ -14057,8 +11137,6 @@ private theorem codeScan_any_between (rank : Nat → Nat) (fit : Nat → Bool) (
     omega
 
 
-/-- The same of the first rank: a first-rank wrap whose every unit up to it
-fits leaves the scan holding a first-rank wrap at or past it. -/
 private theorem codeScan_top_between (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat)
     (top any : Option Nat) (c : Nat) (hbc : b ≤ c) (hc : c < n) (hr : rank c = 2)
     (hfit : ∀ k, b ≤ k → k ≤ c → fit k = true) :
@@ -14115,15 +11193,12 @@ private def codeChoose (rank : Nat → Nat) (n : Nat) : Option Nat × Option Nat
   | (none, some b, _) => b
   | (none, none, stop) => codeNext rank n stop
 
-/-- Where a segment from `s` ends: the whole rest where it fits; else,
-scanning only while the segment fits, its last first-rank wrap, else its
-last wrap of any rank; else — no wrap inside the width — the first wrap
-past it, the run set overfull as TeX sets it, or the rest. -/
+/-- Where a segment from `s` ends: the whole rest where it fits, else its last first-rank
+wrap that fits, else its last wrap of any rank, else the first wrap past it. -/
 private def codeCut (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat) : Nat :=
   if width s n ≤ limit then n
   else codeChoose rank n (codeScan rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none)
 
-/-- A cut stands past the segment's start, at a wrap or at the line's end. -/
 private theorem codeCut_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
     (s n : Nat) (h : s < n) :
     (s < codeCut rank width limit s n ∧ codeCut rank width limit s n ≤ n) ∧
@@ -14160,9 +11235,6 @@ private theorem codeCut_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (l
         exact ⟨⟨by omega, this.1.2⟩, this.2⟩
 
 
-/-- **Whitespace first.** Where a first-rank wrap — a space, under whitespace
-first — stands with every unit up to it inside the width, the cut is a
-first-rank wrap: a lower rank serves only a segment that reaches none. -/
 private theorem codeCut_space_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
     (s n c : Nat) (hc : s < c) (hcn : c < n) (hr : rank c = 2)
     (hfit : ∀ k, s < k → k ≤ c → width s k ≤ limit) (hwide : ¬ width s n ≤ limit) :
@@ -14182,11 +11254,6 @@ private theorem codeCut_space_mem (rank : Nat → Nat) (width : Nat → Nat → 
   · simpa only [codeChoose] using h3
 
 
-/-- **A line is filled.** Every wrap of the cut's rank that the segment
-reaches inside its width stands at or before the cut: the cut is the last
-first-rank wrap that fits, and where it is of no first rank the last wrap of
-any rank — so listings' rule, with one rank, fills each line to its last
-unit that fits. -/
 private theorem codeCut_between (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
     (s n c : Nat) (hc : s < c) (hcn : c < n) (hr : rank c ≠ 0)
     (hfit : ∀ k, s < k → k ≤ c → width s k ≤ limit) (hwide : ¬ width s n ≤ limit)
@@ -14256,9 +11323,8 @@ private theorem skipSpaces_between (us : Array CodeUnit) (n b : Nat) (h : b ≤ 
     simp only [hb, ↓reduceIte]
     omega
 
-/-- The segments a source line wraps into, from `s`: each cut by
-`codeCut`, `first` wide for the line's first and `cont` for every
-continuation, the spaces at each wrap dropped. -/
+/-- The segments a source line wraps into from `s`, each cut by
+`codeCut` against `first` or `cont`, the spaces at each wrap dropped. -/
 private def codeSegments (rank : Nat → Nat) (width : Nat → Nat → Sp) (us : Array CodeUnit)
     (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) : Array (Nat × Nat) :=
   if h : s < n then
@@ -14271,7 +11337,6 @@ private def codeSegments (rank : Nat → Nat) (width : Nat → Nat → Sp) (us :
   else out
 termination_by n - s
 
-/-- Every segment a line wraps into ends at the line's end or at a wrap. -/
 private theorem codeSegments_breaks_mem (rank : Nat → Nat) (width : Nat → Nat → Sp)
     (us : Array CodeUnit) (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) :
     ∀ seg ∈ codeSegments rank width us first cont n s out,
@@ -14297,8 +11362,7 @@ private theorem codeSegments_breaks_mem (rank : Nat → Nat) (width : Nat → Na
     simp only [h, ↓reduceDIte] at hseg
     exact Or.inl hseg
 
-/-- Which units stand in a run wider than a continuation line, `cont` wide:
-the runs whose own fallback tokens a wrap may part under whitespace first. -/
+/-- Which units stand in a run wider than a continuation line `cont` wide. -/
 private def codeWide (us : Array CodeUnit) (widths : Array Sp) (cont : Sp) : Array Bool := Id.run do
   let mut flags : Array Bool := Array.replicate us.size false
   let mut start := 0
@@ -14314,15 +11378,8 @@ private def codeWide (us : Array CodeUnit) (widths : Array Sp) (cont : Sp) : Arr
     w := w + widths.getD i 0
   return flags
 
-/-- Where a source line wraps (`Ir.ListingWrap`): listings' units, each
-segment filled to its last unit that fits (`codeCut_between`), or whitespace
-first — the last space that fits (`codeCut_space_mem`), else the last
-fallback-token boundary that fits between two runs or inside a run wider
-than a line. A segment no wrap brings inside its width runs on to its first
-wrap, as TeX sets the overfull line. Each segment is its unit range;
-`widths` is each unit's advance. The scan stops where a segment leaves its
-width; a wrap past the width is reached only by a segment no wrap inside it
-ends. -/
+/-- Where a source line wraps (`Ir.ListingWrap`): each segment filled to its last
+unit that fits under listings' rule, or to its last space under whitespace first. -/
 private def codeWraps (wrap : Ir.ListingWrap) (us : Array CodeUnit) (widths : Array Sp)
     (first cont : Sp) : Array (Nat × Nat) :=
   let pre : Array Sp := widths.foldl (fun acc w => acc.push ((acc.back?.getD 0) + w)) #[0]
@@ -14330,14 +11387,6 @@ private def codeWraps (wrap : Ir.ListingWrap) (us : Array CodeUnit) (widths : Ar
   codeSegments (CodeUnit.rank wrap (fun i => wide.getD i false) us)
     (fun a b => (pre[b]?.getD 0) - (pre[a]?.getD 0)) us first cont us.size 0 #[]
 
-/-- **Where a code line wraps.** Every segment ends at the line's end or
-after a unit that is no space: under listings' rule before a space or
-between two of its units (`lex`); under whitespace first before a space, or
-between two fallback tokens (`fb`) that are two runs or inside a run wider
-than a continuation line (`codeWide`) — so a fallback token, a name, an
-operator such as `:=` or a number, is never parted. Which runs and tokens
-`codeUnits` assigns is its definition; `codeTokenWrapChecks` holds the
-shipped page to them. -/
 private theorem codeWraps_breaks_mem (wrap : Ir.ListingWrap) (us : Array CodeUnit)
     (widths : Array Sp) (first cont : Sp) :
     ∀ seg ∈ codeWraps wrap us widths first cont, seg.2 = us.size ∨
@@ -14354,20 +11403,12 @@ private theorem codeWraps_breaks_mem (wrap : Ir.ListingWrap) (us : Array CodeUni
 
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   let a0 := a
-  -- Code lines use the declared size through the ordinary style resolver.
-  -- No hyphenation patterns: the engine must never invent a hyphen inside
-  -- an identifier. A pending overlay's shade rides in `covered`: code
-  -- must read as covered like any other text.
-  -- A declared caption sets above the code (listings.sty:
-  -- `\lst@Key{captionpos}{t}` — above is the default), in the
-  -- figure-caption shape: numbered from the one site both backends read
-  -- (`Ir.listingCaption`), centred when it fits one line
-  -- (classes.dtx §\@makecaption), bound `captionsep` from the code.
+  -- Code never hyphenates; a declared caption sets above it (listings.sty `captionpos`).
   let a := match spec.caption with
     | some (n, cap) =>
       let caption := Ir.listingCaption r.locale n cap
       let avail := (a.measure.getD r.geom.textWidth) - indent
-      -- measured only (does it fit one line?), never shipped: no attribution
+      -- Measured only, never shipped.
       let (items, _, cache, _) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
           { color := a.fg, ground := a.ground } caption
@@ -14375,40 +11416,22 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
           (ladder := r.geom.scale) (step := r.step)
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
-      -- one flat caption leaf (`Struct`'s listing shape), the prefix generated
       let (a, leaf) := a.leafRange 1
       let a := collectPara r a caption indent fits r.geom.fontSize (leaf := leaf) (span := 1)
       a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
         (Ir.captionSepDefault r.geom.fontSize)))
     | none => a
-  -- A source line's end takes the package's own space after it
-  -- (`Ir.ListingSpec.lineOverlap`), never a wrapped line's; an explicit
-  -- `\fontsize` skip is the document's own and stands as declared. The
-  -- first source line takes it twice: measured under lualatex, an fvextra
-  -- listing's first two lines stand 0.5 pt under the step's skip and every
-  -- later pair 0.25 pt, the gaps around the listing a bare `verbatim`'s.
-  -- minted's `bgcolor` is the code's own ground: fvextra's colour box
-  -- behind each line, across the line width, the lines' struts deep; a
-  -- class that paints verbatim (the web's) stands it on its code ground the
-  -- same way (`Ir.ListingSpec.groundIn`, the one reading).
+  -- A listing's own ground and its package's space after each line (`Ir.ListingSpec.lineOverlap`).
   let own := spec.groundIn a.pal .print
   let ground := (own.map (·.1)).or a.ground
   let sty := applyStyle r.geom.scale {} spec.fontSize
   let overlap := if sty.leading.isSome then 0 else spec.lineOverlap
-  -- A listing owns its line box, not the enclosing body's strut.
-  -- Resolve once against the body/local measure, then give collectPara
-  -- that size and an explicit skip: its ordinary mixed-size paragraph
-  -- strut would otherwise hold 8pt code on 12pt body baselines.
+  -- A listing owns its line box, given an explicit size and skip rather than the body's strut.
   let avail := (a.measure.getD r.geom.textWidth) - indent
   let (size, leading) := sty.metrics r.geom.fontSize r.xHeight avail r.geom.textHeight
   let leading := leading.getD
     (Ir.stepSkip (sty.stepLead r.geom.skips r.geom.fontSize) size r.geom.leading)
-  -- A listing with listings' continuation indent (`breakIndent`) is broken
-  -- here, line by line, where its wrap allows (`codeWraps`), each
-  -- continuation standing in its line's own indentation and the break
-  -- indent: the paragraph then sets the lines as declared and none
-  -- re-flows. Advances are the mono slot's at the listing's size, a missing
-  -- glyph's its fallback face's.
+  -- A `breakIndent` listing breaks here where its wrap allows (`codeWraps`), so none re-flows.
   let wrap := if spec.breakLines then spec.breakIndent else none
   let mono := r.fs.get (r.fs.lookup 2 400 false)
   let advance (c : Char) : Sp :=
@@ -14418,17 +11441,14 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
       match (r.fs.fallbackFor c).bind fun fb => glyphOf size (r.fs.get fb) c with
       | some g => g.2.2
       | none => 0
-  -- A code line's site is where it stands: code is no markup, so it names
-  -- no written construct (`Diag.Spelling`).
+  -- Code is no markup, so a code line's site names no written construct (`Diag.Spelling`).
   let codeSource (i sourceColumn : Nat) : Option Span :=
     spec.source.map fun source =>
       let line := source.pos.line + i - 1 +
         (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
       let col := (if line == source.pos.line then source.pos.col else 1) + sourceColumn
       { source with pos := { source.pos with line := line, col := col, command := none } }
-  -- Declared line numbers are furniture beside each line — generated
-  -- ink, like a list's markers: right-aligned digits in the mono face,
-  -- held to their line by no-break spaces.
+  -- Line numbers are generated furniture: right-aligned mono digits held by no-break spaces.
   let inner : Array Ir.Inline := Id.run do
       let lines := spec.tokenLines s
       let brushes := Listing.brushes a.pal ground covered spec.style lines
@@ -14449,11 +11469,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
         if (ListingHighlight.lineText line).isEmpty then
           out := out.push (.text "\u00a0")
         else
-          -- Each physical line the source line sets as: its token pieces
-          -- in display spelling, each with its authored source column and
-          -- the token's source text. Source columns count authored
-          -- scalars; display columns expand tabs and exclude the generated
-          -- line-number prefix.
+          -- Source columns count authored scalars; display columns expand tabs.
           let (physical, hang) : Array (Array (ListingHighlight.Token × Nat)) × Sp :=
             match wrap with
             | none => Id.run do
@@ -14510,8 +11526,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               for piece in run.tokens do
                 let sourceColumn := (pieces[k]?.map (·.2)).getD 0
                 k := k + 1
-                -- A line's site is a scalar that lays down ink: blank text
-                -- names no token a reader could find.
+                -- A line's site is a scalar that lays down ink.
                 let source := if piece.text.all Listing.blank then none
                   else codeSource i sourceColumn
                 body := body.push
@@ -14522,10 +11537,8 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   let inner := match covered with
     | some c => #[.colored c none inner]
     | none => inner
-  -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
-  -- The plain text on a ground the listing stands on of its own is fitted
-  -- to it (`Listing.groundInk`), as the HTML's listing colour is.
+  -- Plain text on the listing's own ground is fitted to it (`Listing.groundInk`), as the HTML's is.
   let a := match own with
     | some (g, _) =>
       { a.pushOp (.regionOpen (.surface (r.shown g) 0 (r.geom.hmargin + indent) avail false))
@@ -14540,12 +11553,8 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   | some _ => { done.pushOp .regionClose with ground := a0.ground, fg := a0.fg }
   | none => done
 
-/-- A listing with the space its environment sets around it, where the class
-spaces that frame as TeX does (`Ir.ListingFrame.onPage`): a trivlist's
-`\topsep` at its depth, as a `center`'s, on top of the paragraph gap — or
-fancyvrb's `\list` one level down, its `\topsep` by `\addvspace` on both
-sides under TeX's `\parskip`, as a list's. A listing in no frame keeps its
-paragraph spacing. -/
+/-- A listing with the space its environment sets around it where
+the class frames it as TeX does (`Ir.ListingFrame.onPage`). -/
 private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String)
     (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   let trivlist (a : Acc) : Glue := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
@@ -14565,39 +11574,12 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
   | .none => collectVerbatim r a covered s spec indent
 
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
-  -- Pseudocode: each line one display-type paragraph at the body size —
-  -- never hyphenated (the engine must not invent a hyphen inside an
-  -- identifier), never justified (a short pseudocode line stretched
-  -- across the measure is the two-word display line) — indented one
-  -- `algindent` step per depth. The step's default is algorithm2e's own
-  -- indent, `\SetInd{0.5em}{1em}` plus its 0.4pt rule allowance
-  -- (algorithm2e.sty:1604,1622), ≈1.5em, following the type; the token
-  -- overrides it. Keywords, io labels, semicolons and the muted comment
-  -- come generated from `Ir.AlgLine.rendered` — the one site both
-  -- backends read (`algorithm_lines_agree`). A line number is a marker
-  -- in the muted role: the list-marker furniture shape, right-aligned
-  -- against the algorithm's own left edge — the reserved number column
-  -- below, one column whatever each line's depth.
+  -- Pseudocode: unhyphenated, unjustified display lines, one `algindent` per depth (algorithm2e).
   let words := Ir.algWords r.locale.tag
   let muted := Ir.mutedOf a.pal
   let stepInd := (r.resolve ((a.tokens.find? "algindent").getD
     { width := { em := 1500 } })).width
-  -- The number column, reserved inside the algorithm's own box.
-  -- algorithm2e sets its line numbers there and not in the page margin:
-  -- the body `\vtop` opens after an `\hbox to \algomargin{\hfill}` and its
-  -- `\hsize` is reduced by the same `\algomargin`, so the body starts one
-  -- inset in (algorithm2e.sty:2621-2624); the number is then `\llap`ped
-  -- back into that inset by `\skiptotal`, 0.5em (algorithm2e.sty:1645-1647
-  -- with `\@defaultskiptotal`, :1561). The engine's HTML path already
-  -- reserves the column — `ol.algorithm.numbered` takes 2em of padding and
-  -- sets the counter in it — so this is the print side of one column, and
-  -- the token is what both read.
-  --
-  -- The reserve is at least what the widest number needs. algorithm2e does
-  -- not guarantee that: `\llap` hangs a three-digit number straight out of
-  -- a 1.5em inset and into the page margin, which is the defect this
-  -- column exists to close, so reproducing it would be reproducing the
-  -- bug at a larger line count.
+  -- The number column stands inside the algorithm's box, at least as wide as its widest number.
   let numCol :=
     if numbered then
       let face := r.fs.get 0
@@ -14609,20 +11591,13 @@ private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines :
     else 0
   let indent := indent + numCol
   let rAlg := { r with pats := none, geom := { r.geom with justify := false } }
-  -- One `.code` node holds every line's leaves (`Struct.algRaw`): a line
-  -- names its own first leaf; a keyword-only line (`end`, `else`) is
-  -- generated ink that rides the block's first leaf.
+  -- One `.code` node holds every line's leaves; a keyword-only line rides the first leaf.
   let codeLeaf : Option Nat :=
     if lines.any (fun l => leafCount l.content + leafCount (l.comment.getD #[]) > 0)
     then some a.leafNext else none
   (lines.foldl (fun (ai : Acc × Nat) l =>
     let (a, i) := ai
-    -- The line's content and comment are marked as its leaves; the
-    -- keywords, io labels and semicolons around them are the line's
-    -- `.block`. The content is wrapped only when it holds a non-anchor:
-    -- `rendered` asks `content.all (· matches .label _)` for the
-    -- semicolon and `content.isEmpty` for the space, and both must read
-    -- the same answer through the marker.
+    -- The content is wrapped only around a non-anchor, so `rendered` reads it the same.
     let l := { l with
       content := if l.content.all (· matches Inline.label _) then l.content
         else markContent l.content
@@ -14631,7 +11606,6 @@ private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines :
     let marker : Option (Array Ir.Inline) := if numbered then
         some #[Ir.Inline.colored muted (some (.role .muted)) #[.text s!"{i}"]]
       else none
-    -- the line's leaves: its content's, then its comment's (`Struct.algRaw`)
     let span := leafCount l.content + leafCount (l.comment.getD #[])
     let (a, leaf) := a.leafRange span
     (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
@@ -14640,20 +11614,16 @@ private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines :
       i + 1)) (a, 1)).1
 
 private def collectFramefoot (a : Acc) (content : Array Inline) : Acc :=
-  -- Not a line, a state change: the note the following frames' footers
-  -- carry. Empty clears back to the chrome default. Its `.artifact`
-  -- leaves are stepped over, as the logo's are.
+  -- A `\framefoot` state change: no line; empty clears back to the chrome default.
   let a := (a.leafRange (leafCount content)).1
   { a with frameFoot := if content.isEmpty then none else some content }
 
 private def collectRuleBlock (r : Rd) (a : Acc) (color : Ir.Color) (thickness : SymGlue) : Acc :=
-  -- The title page's separator: colour and thickness were declared
-  -- (palette `separator`, token `separatorheight`); the measure is the
-  -- text width, as moloch draws it.
+  -- The title page's separator: palette `separator`, token `separatorheight`, the text width.
   let a := a.flushGap r
   { a with ops := a.ops.push (.hrule color (r.resolve thickness).width) }
 
-/-- PDF body paint is a projection of the shared design at the block's epoch. -/
+/-- PDF body paint, projected from the shared design at the block's epoch. -/
 @[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
     (parent : Ir.ColorPair) : Ir.ColorPair :=
   (Ir.Design.ofPalette pal).titledBodyPaint kind parent
@@ -14671,24 +11641,18 @@ public theorem titledPadding_projects (fontSize xHeight : Sp) :
     titledPadding fontSize xHeight = 3 * xHeight / 4 :=
   Ir.titledPadding_contract fontSize xHeight
 
-/-- The inset a font set's body face resolves at the page's body size, as
-the block walk resolves it (`Spacing.Context.xHeight`). -/
+/-- The inset a font set's body face resolves at the page's body size. -/
 public def titledPaddingOf (fs : FontSet) (geom : Geom) : Sp :=
   titledPadding geom.fontSize (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm)
 
 /-- A block title's `\baselineskip` under its font template
-(`Ir.blockTitleLeading`), resolved in the body's font: what its box's lines
-stand apart by and its `\strut` reads. The template's size wrapper sets the
-title's runs at that size itself. -/
+(`Ir.blockTitleLeading`), resolved in the body's font. -/
 private def titleLeading (r : Rd) (font : Option (Array Inline)) : Sp :=
   (Ir.blockTitleLeading r.geom.scale r.geom.fontSize r.geom.leading
     (MeasureValues.horizontal r.geom.textWidth r.geom.textHeight) font).resolve
     r.geom.fontSize r.xHeight
 
-/-- The face and size a block title's template sets its content in, as its
-runs resolve them: the template's axes (`Ir.fontAxesOf`) over the bold style
-the title is set in (`collectShapedOpen`); a template beyond the four axes
-sets the base. -/
+/-- The face and size a block title's template sets its content in. -/
 private def titleFaceIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
     (font : Option (Array Inline)) : Font × Sp :=
   let axes := (font.bind Ir.fontAxesOf).getD {}
@@ -14697,9 +11661,8 @@ private def titleFaceIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
   let size := (sty.metrics geom.fontSize xHeight geom.textWidth geom.textHeight).1
   (fs.get (fs.lookup sty.slot sty.weight.css sty.italic), size)
 
-/-- A block title's `\baselineskip` and its cap height, `\fontcharht\font`H`
-in its face at its size: what a rule reaching by the title's lines reads
-(`Ir.BlockMetric.resolve`). -/
+/-- A block title's `\baselineskip` and its cap height,
+which a rule reaching by the title's lines reads. -/
 private def titleMetricsIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
     (font : Option (Array Inline)) : Sp × Sp :=
   let lead := (Ir.blockTitleLeading geom.scale geom.fontSize geom.leading
@@ -14707,24 +11670,8 @@ private def titleMetricsIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
   let (face, size) := titleFaceIn geom fs xHeight font
   (lead, scaledAt size face (face.charHeight 'H').toNat)
 
-/-- **Where the web page stands a rule reaching by a block title's lines**
-(`Ir.BlockReach.lines`, `Ir.BlockTitlePlace`). Each line box is CSS 2.1
-§10.8.1's: the header's own strut, its bold body face at the body's size,
-and the title's runs in their face at their size, each leaded at its size's
-share of the page's leading — the stylesheet's unitless line height — over
-its ascent and descent (`leadedBox`), one baseline `b` below the box's top.
-The rule reads the title's lines as TeX's box of them, which struts bound at
-both ends (`7/10` and `3/10` of the title's `\baselineskip` past its first
-and last baselines), so it stands `b` less its strut and its height below
-the first box's top, and its depth above the last box's bottom. Past the
-box's top — its first strut's, and the `\parskip` it opens on — the rule
-reaches its height and the last strut's depth, and TeX's line holding both
-stands that much taller: a title of several lines that much lower, and one
-of one line as much lower as the interline rule then places it
-(`texBaselineGap`), under a line of the body's face holding a descender.
-Below a rule deeper than the box TeX spaces the next line the same way from
-the rule's depth, which the header's room keeps, reading the next line as
-the body's face holding an ascender. -/
+/-- Where the web page stands a rule reaching by a block title's lines,
+from CSS 2.1 §10.8.1 line boxes read as TeX's strut-bounded box. -/
 public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kind : TitledKind)
     (reach : Ir.BlockReach) : Option Ir.BlockTitlePlace :=
   match reach with
@@ -14762,13 +11709,8 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
            room := room, depth := d
            bodyBelow := (leaded body geom.fontSize).2 }
 
-/-- **Where a web page's block ends its last line, where it ends on no
-paragraph** (`HtmlDoc.Config.blockLastBelow`): the part below its baseline
-of the line box a block's last line stands in, CSS 2.1 §10.8.1's — a
-listing's, its mono face at its step's size leaded at the line height the
-stylesheet declares for it, its pitch over that size to the thousandth. A
-block ending on anything else ends as a body paragraph does
-(`Ir.BlockTitlePlace.bodyBelow`): nothing here. -/
+/-- The part below its baseline of a web block's last line box when
+that line is a listing's (CSS 2.1 §10.8.1); `none` otherwise. -/
 public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : Option Sp :=
   match b with
   | some (.verbatim _ _ spec) =>
@@ -14783,13 +11725,8 @@ public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : O
     | _ => none
   | _ => none
 
-/-- A titled block's title colour box (beamerinnerthemedefault.sty, `block
-begin`), read at the block's epoch: a painted title is a colour box around
-its lines (`RegionKind.surface`), which stand on the measure; an unpainted
-one is its lines in the box TeX's interline rule places from its height
-under the page's `\baselineskip`, its lines its font's `\baselineskip`
-apart (`TexBox`, `titleLeading`); and an untitled block keeps the empty box,
-`1.5ex` of paint or an empty line. `x` and `w` are the paint's reach. -/
+/-- A titled block's title colour box (beamerinnerthemedefault.sty `block begin`) at
+the block's epoch: painted around its lines, or the box TeX's interline rule places. -/
 private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
     (title : Array Inline) (indent pad x w : Sp) : Acc :=
   let look := Ir.titledLook a.pal kind
@@ -14810,10 +11747,7 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
     let shown := match font with
       | some tpl => Ir.fillTemplate tpl title
       | none => title
-    -- In a breakable frame a block's title keeps its body's first lines
-    -- (`Spacing.Paragraph.keepNext`): beamer's block is one box, which no
-    -- frame break splits. Flow keeps LaTeX's own break (beamerarticle's block
-    -- sets its title with no `\nobreak`).
+    -- In a breakable frame a block's title keeps its body's first lines: beamer's block is one box.
     let a := collectDisplay r a shown indent false r.geom.fontSize
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
       (keepNext := if r.breakableFrame then 2 * Ir.leadingFor r.geom.fontSize r.geom.leading
@@ -14824,20 +11758,8 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
     let a := if bar.isSome then a.pushOp .regionClose else a
     { a with fg := saved.1, ground := saved.2 }
 
-/-- tcolorbox's box opening (tcolorbox.sty's `size=normal`, under its reset
-style's `beforeafter skip balanced=0.5\baselineskip plus 2pt`): the box
-`\linewidth` wide on the measure, its top the balanced skip below the band
-above (`AnchorRule.balanced`). A titled box opens its title segment there —
-the frame's rule and `boxsep` above the title's lines, which stand on
-their own height (`\nointerlineskip`), set regular as `fonttitle` leaves
-them — and closes it `boxsep` and the title rule below them; the upper
-segment then opens on that edge, an untitled one on the box's top below
-the frame's rule. Its `boxsep` and `top` stand above the body's first line,
-which stands on its own height too. Text is inset the rule, `boxsep` and
-`left`/`right` from the box's edges (`Ir.tcbInset`). Paint is the plain
-block's roles, where the lowering declares its colours: the title bar and
-the body fill, each from edge to edge of the box. Returns the opened state
-and the body's indent; the measure narrows with it. -/
+/-- tcolorbox's box opening (`size=normal`): the box `\linewidth` wide, its top the
+balanced skip below the band above, its title segment and body inset by `Ir.tcbInset`. -/
 private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : Sp)
     (bodyBg : Option Ir.Color) : Acc × Sp :=
   let look := Ir.titledLook a.pal .box
@@ -14867,8 +11789,6 @@ private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : S
       let a := collectDisplay r a title (indent + Ir.tcbInset) false r.geom.fontSize
         (leaf := leaf) (span := leafCount title)
       let a := { a with fg := saved.1, ground := saved.2, measure := some measure }
-      -- The title rule and `boxsep` close the bar's region; unpainted, the
-      -- upper segment's edge stands that far below the title's last line.
       let a := if look.bar.isSome then a.pushOp .regionClose else a
       bodyOpen a .flush (if look.bar.isSome then 0 else Ir.tcbBoxsep + Ir.tcbRule)
         (Ir.tcbBoxsep + Ir.tcbTop)
@@ -14879,28 +11799,8 @@ shows, or an empty one its box or struts hold. -/
 private def shapedSetsTitle (shape : Ir.BlockShape) (titled : Bool) : Bool :=
   shape.showsTitle titled && (titled || shape.title.boxed || shape.title.strut)
 
-/-- A block in its kind's template (`Ir.BlockShape`, beamer's `block begin`
-and `block end` as `BlockTemplate.read` read them), opened: the skips above
-in the arm the block takes (`Ir.BlockShape.skipsAbove`); the rules beside
-the box holding title and body, which open first and span the body too; the
-title where the arm sets its box — its paragraph spends `\parskip` as the
-line `\noindent` opens does (at a frame's top the frame's `\vskip-\parskip`
-cancels it), its first line stands where TeX's interline rule puts its box
-(`TexBox`) and its lines its font's `\baselineskip` apart, `\strut` at its
-ends reading that `\baselineskip` when the template struts it, in the kind's
-title font (`Ir.blockTitleFont`) and ink on the page's ground — with the
-rules beside its own box around it; a title with no box is a paragraph of
-the block's own list, its first line too where TeX's interline rule puts it
-under its font's `\baselineskip`. An empty title is the struts' line, or an
-empty line where nothing struts it, whose box then holds no paragraph and
-spends no `\parskip` — with no box, no line at all. Then the arm's skips
-between, and the body's opening:
-an untitled body opening the box around it stands those skips inside that
-box. A rule stands `sep` beside its box and `width` wide; one inside the
-line moves its box in by both. A rule beside the whole block reaching by its
-lines stands its title's part beside the title's box, as a rule beside the
-title does, and opens its body's part where that closes (`EdgeReach.continued`).
-Returns the opened state, the body's indent and its measure. -/
+/-- A block in its kind's template (`Ir.BlockShape`), opened: the skips above,
+the rules beside the box, the title in its box, and the body's opening. -/
 private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir.BlockShape)
     (title : Array Inline) (body : Array Block) (indent : Sp) : Acc × Sp × Sp :=
   let measure := a.measure.getD r.geom.textWidth
@@ -14911,32 +11811,25 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let titleL := len (shape.inset .title .left)
   let titleR := len (shape.inset .title .right)
   let titled := !title.isEmpty
-  -- An empty title with no box of its own sets a paragraph only where
-  -- struts stand in it.
   let setsTitle := shapedSetsTitle shape titled
   let font := Ir.blockTitleFont r.styles kind
   let titleLeading := titleLeading r font
   let titleCap := (titleMetricsIn r.geom r.fs r.xHeight font).2
-  -- A rule reaching by the title's lines, in the title's font.
   let reachOf (e : Ir.BlockEdge) : Option EdgeReach := match e.reach with
     | .lines height depth =>
       some { height := height.resolve titleLeading titleCap
              depth := depth.resolve titleLeading titleCap }
     | .box => none
-  -- The room the rules beside the title's box reach past it.
   let titleReach : Option (Sp × Sp) :=
     (shape.edges.filter (·.besideTitle)).foldl (fun acc e =>
       match reachOf e, acc with
       | some q, some (u, d) => some (max u q.height, max d q.depth)
       | some q, none => some (q.height, q.depth)
       | none, acc => acc) none
-  -- An empty title starts a paragraph in its box only where a strut does.
   let titleInset := if shape.title.parskip && (titled || shape.title.strut) then parskip else 0
   let between := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsBetween titled))
   let wholeInset := if setsTitle then titleInset
     else between.width + (if shape.whole == some true then parskip else 0)
-  -- The boxes' edges, from the page's left: the whole box's, then the
-  -- title box's inside it.
   let wx0 := r.geom.hmargin + indent + wholeL
   let wx1 := r.geom.hmargin + measure - wholeR
   let tx0 := wx0 + titleL
@@ -14964,7 +11857,6 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
     let (ti, tm) := if shape.title.boxed then (tx0, tx1) else (wx0, wx1)
     let a := { a with fg := r.shown titleInk, measure := some (tm - r.geom.hmargin) }
     let (a, leaf) := a.leafRange (leafCount title)
-    -- The empty title's line is its struts', a box of nothing else.
     let shown := if !titled then #[Inline.strut {}] else match font with
       | some tpl => Ir.fillTemplate tpl title
       | none => title
@@ -14979,21 +11871,14 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
       (strut := strut) (texBox := texBox)
     let a := if shape.title.boxed then closes a (·.besideTitle) else a
-    -- A rule beside the whole block runs on beside the body, from `depth`
-    -- below the title's last baseline (`edgeLinesFrom`).
     let a := shape.edges.foldl (fun a e => match e.span, reachOf e with
       | .whole, some q =>
         a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e tx0 tx1) (len e.width) 0
           (some { height := q.depth, depth := q.depth, continued := true })))
       | _, _ => a) a
     ({ a with fg := saved, measure := some measure } : Acc).wantGap
-  -- An untitled body opens the box the template sets around it: the line
-  -- holding the box spent the page's `\parskip` where the box opened, and
-  -- the body's first paragraph stands below the arm's skips and the box's
-  -- own `\parskip` inside it.
+  -- An untitled body opens its template's box below the arm's skips and the box's `\parskip`.
   let a := if shape.whole.isSome && !setsTitle then
-      -- The box holds more than the body's first paragraph unless the
-      -- body is that one paragraph.
       let more := !(body.size == 1 && body[0]? matches some (Ir.Block.para _))
       { a with boxOpener := some { inset := wholeInset, more := more
                                    leading := Ir.leadingFor r.geom.fontSize r.geom.leading } }
@@ -15001,11 +11886,8 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
     else (a.vskip between).wantGap
   (a, wx0 - r.geom.hmargin, wx1 - r.geom.hmargin)
 
-/-- The template's close: the body's part of a rule beside the whole block
-closes on the body's last baseline, before the glue the body ends on, which
-the template sets back after it; the rules beside the box holding title and
-body close after that glue, which the box keeps, and the skips below follow;
-a paragraph after them spends its own `\parskip`. -/
+/-- The template's close: the body's part of a whole-block rule closes on the
+body's last baseline, the box's rules after its glue, then the skips below. -/
 private def collectShapedClose (r : Rd) (done : Acc) (shape : Ir.BlockShape) (titled : Bool) :
     Acc :=
   let done := { done with boxOpener := none }
@@ -15017,12 +11899,8 @@ private def collectShapedClose (r : Rd) (done : Acc) (shape : Ir.BlockShape) (ti
       ({ done with wantDefault := false }.flushGap r)
   done.vskip (r.resolve (Ir.blockSkipSum done.tokens shape.after))
 
-/-- tcolorbox's box closing: the upper segment's `bottom`, `boxsep` and the
-frame's rule below the body's last line (the body region's pad, or the
-same distance unpainted), then its `after skip balanced`:
-`\prevdepth=.3\baselineskip` and `\addvspace{s - \parskip}` — the band's
-reference `.3\baselineskip` above the box's bottom, the skip owed below
-it, and the next paragraph's own `\parskip` after that. -/
+/-- tcolorbox's box closing: the frame below the
+body's last line, then its `after skip balanced`. -/
 private def collectBoxClose (r : Rd) (done : Acc) (bodyBg : Option Ir.Color) : Acc :=
   let bs := Ir.leadingFor r.geom.fontSize r.geom.leading
   let done := { done with wantDefault := false }.flushGap r
@@ -15032,12 +11910,8 @@ private def collectBoxClose (r : Rd) (done : Acc) (bodyBg : Option Ir.Color) : A
         (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule - bs * 3 / 10) false)
   { done.vskip { width := bs / 2 - r.parskip.width } with wantDefault := true }
 
-/-- The abstract's heading word: class furniture, generated here exactly as
-the HTML backend generates its `<h2>`, and its style is the section
-heading's, centred (`Ir.abstractHeadingStyle`) — restyle sections and the
-abstract follows; undeclared, the class's own small bold line. The heading
-takes its own origin, and only the heading's: the abstract body keeps the
-page's setting, as the style names the heading. -/
+/-- The abstract's heading word, generated as the HTML's `<h2>` is, in
+the section heading's style centred (`Ir.abstractHeadingStyle`). -/
 private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
   let small := Ir.scaleStep r.geom.fontSize "small"
   let hst := Ir.abstractHeadingStyle r.styles
@@ -15053,20 +11927,15 @@ private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
         (baseStyle := { weight := .b })
   a.wantGap
 
-/-- A float's caption, set where the plan puts it: classes.dtx
-`\@makecaption` — a caption that fits one line centres, a longer one sets as
-an ordinary paragraph. A declared caption margin (caption manual §2.4,
-`\captionsetup{margin = ...}`) moves both edges in, the abstract's
-narrower-measure shape; undeclared, the full measure. `rf` is the in-float
-reader the caller marked, so no line of the caption is counted by the
-line-number census. -/
+/-- A float's caption as classes.dtx's `\@makecaption` sets it: centred when
+it fits one line, else a paragraph, within a declared caption margin. -/
 private def collectFloatCaption (r rf : Rd) (a : Acc) (kind : Ir.FloatKind) (caption : Array Inline)
     (capLeaf : Option Nat) (capSpan : Nat) (indent : Sp) : Acc :=
   if caption.isEmpty then a else
   let cmargin := ((Ir.captionTokenOf a.tokens kind "captionmargin").map
     (fun g => (r.resolve g).width)).getD 0
   let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
-  -- measured only (does it fit one line?), never shipped: no attribution
+  -- Measured only, never shipped.
   let (items, _, cache, _) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
       a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
@@ -15079,16 +11948,8 @@ private def collectFloatCaption (r rf : Rd) (a : Acc) (kind : Ir.FloatKind) (cap
     (leaf := capLeaf) (span := capSpan)
   { a with measure := saved }
 
-/-- The headline band: a headline class's `\title` family as page-top
-furniture (the gemini lineage's headline template), in the `frametitle`
-roles the deck bar resolves — the one resolving site — with the sizes the
-lineage's own font templates declare (beamerthemegemini.sty: headline title
-\Huge bold, author \Large, institute \normalsize — scale steps, never point
-literals). The alignment is the `titlepage` style's declared token (gemini
-declares centred; undeclared centres, `\@maketitle`'s own rule), and a
-declared `titlepage` font template wraps the title as it wraps
-`\maketitle`'s. The `.pin` makes the band page-top chrome: the frame's
-distribution moves the body below it, never the band. -/
+/-- The headline band: a headline class's `\title` family as page-top furniture
+in the `frametitle` roles (beamerthemegemini.sty), pinned above the body. -/
 private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
   match r.headline with
   | some hl =>
@@ -15099,10 +11960,7 @@ private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
       | some pair => { a with fg := pair.fg, ground := some pair.bg }
       | none => a
     let tps := r.style "titlepage"
-    -- Three-way, as the declaration's own vocabulary is: `left`, `right`,
-    -- or centred where nothing is declared. Read two-way, a declared
-    -- `right` fell into the centred arm and the page silently centred
-    -- while the HTML backend passed `right` through to CSS.
+    -- Three-way, as the declaration's vocabulary: `left`, `right`, else centred.
     let center := tps.align != some .left && tps.align != some .right
     let rt := if tps.align == some .right
       then { r with geom := { r.geom with flushRight := true } } else r
@@ -15121,16 +11979,12 @@ private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
         { a with fg := saved.1, ground := saved.2
                  ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2) none) }
       | none => a
-    -- The band-to-body gap is the frame title's own (`wantDefault`):
-    -- without it the first block's title bar pad reaches into the
-    -- band's fill.
+    -- The band-to-body gap is the frame title's own (`wantDefault`).
     { a with ops := a.ops.push .pin, wantDefault := true }
   | none => a
 
-/-- A frame title's lines, on the measure its box gives them: with an
-inset, the paper's width less the inset on either side, the first line
-starting the inset from the paper's left edge (an indent before the text
-margin); without one, the text block's. -/
+/-- A frame title's lines on the measure its box gives them: the
+paper less the inset on either side, else the text block. -/
 private def frameTitleLine (r : Rd) (a : Acc) (inset : Option Sp)
     (set : Acc → Sp → Acc) : Acc :=
   match inset with
@@ -15140,14 +11994,8 @@ private def frameTitleLine (r : Rd) (a : Acc) (inset : Option Sp)
     let a := set { a with measure := some (r.geom.pageW - i - r.geom.hmargin) } (i - r.geom.hmargin)
     { a with measure := saved }
 
-/-- A frame's title line. Themed (the palette declares `frametitlebg`) it is
-a colour bar across the whole page with its text in `frametitlefg` on it;
-undeclared it is the section-size bold line. The bar's box: a bundle that
-declares `frametitlepadding` (moloch, through its lineage table) gets the
-dtx box — the token resolved at the title's size, as `\ht\strutbox` is
-measured after `\usebeamerfont{frametitle}`, around a strut of the same size
-(`Ir.frameTitleStrut`); a bar with no token keeps the generic half-body pad
-below the title's depth. -/
+/-- A frame's title line: a themed colour bar across the page (`frametitlebg`),
+moloch's box where `frametitlepadding` is declared, else the section-size bold line. -/
 private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     (titleLeaf : Option Nat) (titleSpan : Nat) : Acc :=
   if title.isEmpty then a else
@@ -15160,9 +12008,7 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     let titleSize := match st.font with
       | some tpl => Ir.templateSize r.geom.fontSize tpl
       | none => sectionSize r.geom 1
-    -- moloch's bar is the paper's width with the title inset from either
-    -- edge (`Ir.frameTitleInset`); a bar without its token keeps the text
-    -- margin.
+    -- moloch's bar spans the paper, the title inset from either edge (`Ir.frameTitleInset`).
     let inset := if (a.tokens.find? "frametitlepadding").isSome then
         some (Ir.frameTitleInset titleSize) else none
     let a := frameTitleLine r a inset fun a indent =>
@@ -15178,8 +12024,7 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
       | some g => (g.width.resolve titleSize r.xHeight,
                    some (Ir.frameTitleStrut titleSize))
       | none => (r.geom.fontSize / 2, none)
-    -- The title itself is inline content: no `.setPalette` can stand
-    -- in it, so the saved ink is the epoch's own.
+    -- The title is inline content with no `.setPalette`, so the saved ink is the epoch's own.
     let a := { a with fg := saved.1
                       ground := saved.2
                       ops := a.ops.push (.titleBar barBg pad strut) }
@@ -15192,10 +12037,8 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
       (inserted := true)
     { a with wantDefault := true, fg := savedFg }
 
-/-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
-become literal text. Running content is laid out after the body, so both
-numbers are known by then — no second pass over the document and no aux
-file. -/
+/-- The one rewrite of the physical pass: `\pagenumber` and `\pagecount`
+become literal text, both known once the body is laid out. -/
 private def substPageLeaf (n total : Nat)
     (x : Ir.Inline) : Ir.Inline :=
   match x with
@@ -15203,25 +12046,17 @@ private def substPageLeaf (n total : Nat)
   | .pageCount => .text (toString total)
   | _ => x
 
-/-- Replace `\pagenumber` / `\pagecount` with literal text, over the
-generic map — the descent is `Ir.mapInline`'s, declared once.
-`substPage_id` below is its census statement. -/
+/-- Replace `\pagenumber` and `\pagecount` with literal text over `Ir.mapInline`. -/
 public def substPage (n total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
   Ir.mapInlines (substPageLeaf n total) xs
 
-/-- A chrome band slot set as one line at its natural width, at the
-footline's step (`Ir.footline`): the one setting both the page's text-area
-floor (`bandBox`, where the page is built) and the furniture pass
-(`runPost`, where the slot ships) read, so the box the floor clears is the
-ink the pass paints. The band holds one line; the flag says the content
-wrapped, which the pass names (W0328). -/
+/-- A chrome band slot set as one line at its natural width at the footline's
+step, the setting both the page's floor and the furniture pass read. -/
 private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
     (imgs : Image.Store) (geom : Geom) (xHeight : Sp) (style : TextStyle)
     (content : Array Inline) (cache : Std.HashMap String (Array Nat)) :
     Option (Array Seg × Sp) × Bool × Array Diag × Std.HashMap String (Array Nat) :=
-  -- The step is the band's own scale over the body size, so a named size
-  -- inside a slot (`\scriptsize` in a frame footer) is the body's step, as
-  -- TeX's size commands are absolute, never a step of the band's.
+  -- A named size inside a slot is the body's step, as TeX's size commands are absolute.
   let (items, ds, cache, _) :=
     itemsOfInlines pats geom.fontSize xHeight fs
       { style with scale := (Ir.scaleStep 1000 Ir.footline.step).toNat }
@@ -15234,9 +12069,8 @@ private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
     let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
     (some (segs, w), breaks.size > 1, ds, cache)
 
-/-- The footline band's box on page `n`: the tallest and deepest ink of its
-slots (`segsInk`), each set as the furniture pass will set it — beamer's
-`\ht` and `\dp` of the footline, which its `\footheight` sums. -/
+/-- The footline band's box on page `n`: the tallest and deepest
+ink of its slots, beamer's `\ht` and `\dp` of the footline. -/
 private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
     (n : Nat) (band : Array Ir.BandSlot) : Sp × Sp :=
   band.foldl (fun (acc : Sp × Sp) slot =>
@@ -15246,30 +12080,19 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
       (max acc.1 h, max acc.2 d)
     | none => acc) (0, 0)
 
-/-- The footline band's box on page `n` at the document's resolved body
-x-height: `bandBox`, the box the page's text-area floor and the band's
-baseline read, for the web deck the driver hands it to
-(`HtmlDoc.Config.footBox`), so the deck's footline is as tall as the page's
-and stands its slots' baseline where the page does. -/
+/-- `bandBox` at the document's resolved body x-height,
+for the web deck (`HtmlDoc.Config.footBox`). -/
 public def footBandBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (n : Nat)
     (band : Array Ir.BandSlot) : Sp × Sp :=
   bandBox fs imgs geom (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) n band
 
-/-- A frame opens a page: the boundary, the `frameOpen` marker, and the
-footer that belongs to the frame — its pages, spill pages included, carry
-the frame's own number. Title and standout pages normally carry no footer:
-moloch renders both plain (beamerinnerthememoloch.dtx:314-320, 777-778).
-The shared band rule keeps that furniture choice separate from counting
-the standout, and selects an explicitly restored standout note. `area`
-says the frame's pages take beamer's text area (`FrameOpening.area`). -/
+/-- A frame opens a page: the boundary, the `frameOpen` marker, and the frame's
+footer; title and standout pages carry none (beamerinnerthememoloch.dtx). -/
 private def collectFrameOpen (a : Acc) (standout breakable : Bool) (area : FrameArea) : Acc :=
   let a := a.pageBreak
   let opening := a.frameOpening standout area
   { a with ops := a.ops.push (.frameOpen breakable a.frameSource opening) }
 
-/-- The real collector emits ownership even when the shared IR rule
-selects no footer. The boundary can pay pending glue, but cannot change
-either decision. -/
 private theorem collectFrameOpen_frame_exact (a : Acc) (standout breakable : Bool)
     (area : FrameArea) :
     (collectFrameOpen a standout breakable area).ops =
@@ -15278,12 +12101,8 @@ private theorem collectFrameOpen_frame_exact (a : Acc) (standout breakable : Boo
   unfold collectFrameOpen Spacing.Pending.pageBreak
   split <;> rfl
 
-/-- The reader a frame's body is walked with: headings belong to the frame,
-including a frame without a footer. Where the frame takes beamer's text area
-— `area`, the opening `collectFrameOpen` emits — `\textheight` is beamer's
-there: the paper less `\footheight`, `frameFloor` of the band's box or of no
-band at all, the floor the page builder stands the body on
-(`Spacing.Page.bottom`). -/
+/-- The reader a frame's body is walked with: headings belong to
+the frame, and in beamer's text area `\textheight` is beamer's. -/
 private def frameReader (r : Rd) (a : Acc) (standout : Bool) (area : FrameArea) : Rd :=
   let r := { r with inFrame := true }
   if area == .margins then r
@@ -15292,9 +12111,6 @@ private def frameReader (r : Rd) (a : Acc) (standout : Bool) (area : FrameArea) 
         frameTextHeight := some (frameFloor r.geom.pageH r.footGap
           ((a.selectedFoot standout).map (bandBox r.fs r.imgs r.geom r.xHeight 1))) } }
 
-/-- The body reader reserves precisely the footer the collector selected,
-and the empty footline's gap where it selected none; outside beamer's text
-area it retains the caller's text-height interpretation. -/
 private theorem frameReader_foot_agree (r : Rd) (a : Acc) (standout : Bool) (area : FrameArea) :
     (frameReader r a standout area).geom.frameTextHeight =
       if area == .margins then r.geom.frameTextHeight
@@ -15304,11 +12120,7 @@ private theorem frameReader_foot_agree (r : Rd) (a : Acc) (standout : Bool) (are
   unfold frameReader
   split <;> rfl
 
-/-- The reader inside `blk`: boxed where the block is a box
-(`Ir.Block.listScope`, the one classification the web deck and the fill
-census read too), so a fill inside it stretches nothing the page's leftover
-reaches. The arms of the blocks the classification can name a box read it;
-every other arm keeps its reader. -/
+/-- The reader inside `blk`: boxed where the block is a box (`Ir.Block.listScope`). -/
 private def Spacing.Context.within (r : Rd) (blk : Block) : Rd :=
   match blk.listScope r.lists r.styles with
   | .box => { r with boxed := true }
@@ -15316,20 +12128,15 @@ private def Spacing.Context.within (r : Rd) (blk : Block) : Rd :=
 
 mutual
 
-/-- The declared title slot a block shows, if it is one: a slot's content
-rides in the role `Ir.titleSlotRole` names, found by the one lookup both
-backends make (`Ir.titleSlotOf`). -/
+-- The block walk recurses through `List` companions, so every call is structural.
+/-- The declared title slot a block shows, if it is one (`Ir.titleSlotOf`). -/
 private def slotOfBlock (slots : Array Ir.TitleSlot) :
     Block → Option (Ir.TitleSlot × Nat)
   | .role n _ => slots.zipIdx.find? fun (_, i) => Ir.titleSlotRole i == n
   | _ => none
 
-/-- A rule standing on its own is furniture, not a paragraph. TeX
-contributes `\parskip` when a paragraph *starts*, and an `\hrule` with its
-declared skips beside it starts none — so a gap declared next to a rule is
-the whole gap, and the engine's title bars keep standing their declared
-distance from the type (`Ir.titleBarGap`, `title_bars_symmetric`) rather
-than gaining a peer skip under them. -/
+/-- A rule standing on its own is furniture, not a
+paragraph, so a gap declared beside it is the whole gap. -/
 private def ruleBlock : Block → Bool
   | .rule .. => true
   | _ => false
@@ -15347,24 +12154,15 @@ private def collectBlockList (r : Rd) (a : Acc)
     if statefulBlock blk then
       collectBlockList r (collectBlock r a blk indent) rest indent first prevRule
     else
-    -- Until a frame's body sets its first line no peer gap is owed: the
-    -- frame's `\vskip-\parskip` stands for the first element's `\parskip`,
-    -- a skip before that element included (`Spacing.Pending.frameTop`).
+    -- Until a frame's body sets its first line no peer gap is owed (`Spacing.Pending.frameTop`).
     let a := if first || a.frameTop then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectBlockList r a rest indent false (ruleBlock blk)
 
-/-- The title frame's body when the title page declares slots: a block that
-shows a slot (`Ir.titleSlotOf`, the lookup HTML makes too) sets the slot's
-content at the body size under its own template, and a placed slot is set
-as one box — from where every slot starts, its measure the declared width —
-then pinned where it is declared (`Spacing.Page.placeSlot`). Anything else collects as
-it would. A walk of its own, one level over the frame's children, because a
-slot is a child of the title frame by construction (the title page's
-elaboration emits each slot there), and peers of an overlay owe each other
-no gap. -/
+/-- The title frame's body when the title page declares slots: each
+slot set as one box from the shared start and pinned where declared. -/
 private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
     (blocks : List Block) (indent : Sp) : Acc :=
   match blocks with
@@ -15413,9 +12211,8 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
       | none => collectBlock r a blk indent
     collectSlots r a slots rest indent
 
-/-- One list item: its leading paragraph carries the marker — or, in a
-description list, runs its label in (`Ir.descLabel?`). `hang` is the list's
-indent step, what a description item's first line stands out by. -/
+/-- One list item: its leading paragraph carries the marker, or a
+description list's label runs in; `hang` is the list's indent step. -/
 private def collectItem (r : Rd) (a : Acc)
     (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline)
     (hang : Sp) : Acc :=
@@ -15429,27 +12226,19 @@ private def collectItem (r : Rd) (a : Acc)
     let a := match blk, first with
       | .para content, true =>
         if (Ir.descLabel? content).isSome then
-          -- latex.ltx `description`: `\labelwidth\z@`, `\itemindent
-          -- -\leftmargin` — the label runs in at the list's outer margin,
-          -- `\labelsep` after it, every further line at the item's indent,
-          -- and no marker column at all.
+          -- latex.ltx `description`: the label runs in at the outer margin.
           let (a, leaf) := a.leafRange (leafCount content)
           collectPara r a content (indent - hang) false r.geom.fontSize
             (leaf := leaf) (span := leafCount content) (hangIndent := hang)
         else
-        -- A covered item (dim-not-hide, PLAN M5) is one anonymous colour
-        -- wrapper around the whole paragraph, painted by the shade walk;
-        -- the marker dims with its item, as beamer's transparent cover
-        -- dims the bullet.
+        -- A covered item is one colour wrapper; its marker dims with it, as beamer's cover.
         let marker := match content with
           | #[.colored c none _] => #[Ir.Inline.colored c none marker]
           | _ => marker
         let (a, leaf) := a.leafRange (leafCount content)
         collectPara r a content indent false r.geom.fontSize
           (marker := some marker) (leaf := leaf) (span := leafCount content)
-      -- A disclosure opening its item sets its summary as the item's first
-      -- paragraph, the marker beside it (`itemMarker`), and its body after
-      -- it: the page of the bold-summary spelling, as at the top level.
+      -- A disclosure opening its item sets its summary as the first paragraph, by the marker.
       | .disclosure .., true => collectBlock r { a with itemMarker := some marker } blk indent
       | _, _ => collectBlock r a blk indent
     collectItem r a rest indent false marker hang
@@ -15460,19 +12249,13 @@ private def collectItems (r : Rd) (a : Acc)
   match items with
   | [] => a
   | item :: rest =>
-    -- Items are peers: LaTeX's `\@item` spends `\addvspace\itemsep`, and
-    -- the item's paragraph its `\parskip`, which is `\parsep` inside the
-    -- list — the reader's peer gap here. A declared gap is the whole gap;
-    -- the web's lineage (`none`) spaces items by their leading alone.
+    -- Items are peers: `\@item` spends `\addvspace\itemsep` and the paragraph its `\parskip`.
     let a := match idx == 1, st.gap, itemsep with
       | true, _, _ => a
       | false, some g, _ => a.addvspace (r.resolve g)
       | false, none, some i => a.wantGap.listSpace i
       | false, none, none => a
-    -- The item's marker: the declared style, or the class default for the
-    -- level and, for enumerate, this item's number. The class glyph is
-    -- checked against the loaded faces so it degrades to its stand-in
-    -- rather than to nothing.
+    -- The class glyph is checked against the loaded faces, so it degrades to its stand-in.
     let covered := fun c =>
       (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
     let marker := st.marker.getD (ListMark.marker ordered level idx covered)
@@ -15491,28 +12274,19 @@ private def collectCentered (r : Rd) (a : Acc)
         let (a, leaf) := a.leafRange (leafCount content)
         collectPara r a content indent true r.geom.fontSize
           (leaf := leaf) (span := leafCount content)
-      -- The centred title block: the level-0 heading centres with the
-      -- furniture around it, through the same title door as the uncentred
-      -- path.
       | .section 0 _ _ title => collectTitle r a title indent true
-      -- A centred picture: its box centres in the measure, as the lines of
-      -- a centred paragraph do.
       | .picture pic => collectPicture r a pic indent true
-      -- A table under \centering (or in a float's centred body) centres
-      -- as one box in the measure; its cells keep their own alignment.
+      -- A table under `\centering` centres as one box; its cells keep their own alignment.
       | .table cols pl pr rows rules spans =>
         collectTable r a cols pl pr rows rules spans indent true
-      -- A lone minipage or \parbox is one box in the centred line too.
       | .columns _ => collectBlock { r with centreBoxes := true } a blk indent
       | _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectCentered r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
       rest indent (ruleBlock blk)
 
-/-- One column after another: each collects against its own measure at its
-own offset, a `colNext` marker between two so placement rewinds the
-vertical position. The hyphenation cache threads through; the outer
-measure and gap state are restored per column. -/
+/-- One column after another, each against its own measure
+at its own offset, a `colNext` marker between two. -/
 private def collectColumns (r : Rd) (a : Acc)
     (cols : List (BoxWidth × Array Block)) (x0 shareW gutter total : Sp) : Acc :=
   match cols with
@@ -15533,9 +12307,8 @@ private def collectColumns (r : Rd) (a : Acc)
       leafNext := sub.leafNext }
     collectColumns r a rest (x0 + wi + gutter) shareW gutter total
 
-/-- A standout frame's content: paragraphs centre and set Large bold, in
-the page's (inverted) text colour; anything else nests through the normal
-walk and still inherits the colour. -/
+/-- A standout frame's content: paragraphs centre and
+set Large bold in the page's inverted text colour. -/
 private def collectStandout (r : Rd) (a : Acc)
     (body : List Block) (indent : Sp) : Acc :=
   match body with
@@ -15562,9 +12335,7 @@ private def collectBlock (r : Rd) (a : Acc)
   | .equation num content => collectEquation r a num content indent
   | .section level _ num title => collectSection r a level num title indent
   | .list ordered items =>
-    -- Depth is per list kind, as LaTeX counts it. The class defines four
-    -- levels; where LaTeX errors ("Too deeply nested"), leantex warns and
-    -- reuses the fourth level's marking — best effort, never a blank page.
+    -- Past the class's four levels, where LaTeX errors, the fourth level is reused and named.
     let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
     let level := min depth 4
     let a := if depth > 4 then { a with diags := a.diags.push (
@@ -15573,32 +12344,20 @@ private def collectBlock (r : Rd) (a : Acc)
           (help := "LaTeX errors here ('Too deeply nested'); flatten the nesting")
           (detail := some s!"level {depth}")) }
       else a
-    -- The level's own style, falling back to the kind's base style — so a
-    -- bare `\style{itemize}{...}` keeps styling every level, as it did.
     let element := if ordered then "enumerate" else "itemize"
     let st := if level == 1 then r.style element
       else (r.styles.find? s!"{element}{level}").getD (r.style element)
-    -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the
-    -- nesting depth over every list and quotation, as `\@listdepth` counts it.
+    -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the depth `\@listdepth` counts.
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     let sk := Ir.listSkips r.lists r.geom.fontSize lv
-    -- `\@trivlist`'s `\@topsepadd`: the level's `\topsep`, with `\partopsep`
-    -- on top where the list opens a paragraph (`Ir.partopsepFor`) — anywhere
-    -- but inside an open one (`Spacing.Context.inPar`) — the same space above and below.
+    -- `\@trivlist`'s `\@topsepadd`: `\topsep`, plus `\partopsep` where the list opens a paragraph.
     let top := sk.map fun s => if r.inPar then r.resolve s.topsep
       else (r.resolve s.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
-    -- The list's `\topsep` stands above it with TeX's `\parskip` on top,
-    -- paid before the reader switches to the list's own `\parskip`; a
-    -- declared `before` is the whole space, as it was, and the web's
-    -- lineage opens only the peer gap a paragraph would. Right after a
-    -- heading the first item spends `\@nbitem`: it stands where a paragraph
-    -- after the heading stands (`Spacing.Pending.afterHeading`).
+    -- `\topsep` with TeX's `\parskip` on top; after a heading the first item spends `\@nbitem`.
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)
       | none, some t => if a.afterHeading then a.flushGap r else (a.listOpen r t).flushGap r
       | none, none => a
-    -- The level's `\leftmargin` (`Spacing.Context.leftMargin`), unless the list's style
-    -- declares its own indent.
     let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
     let indent := indent + step
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
@@ -15616,56 +12375,31 @@ private def collectBlock (r : Rd) (a : Acc)
     | none, some t => a.listSpace t
     | none, none => a
   | .center body =>
-    -- A display formula's block reads through the shared shape
-    -- (`Ir.displayContent?`) and opens the display skips; any other
-    -- centred content is the scope's.
     match Ir.displayContent? body with
     | some content => collectDisplayFormula r a content indent
     | none => collectCentered r a body.toList indent false
-  -- Ragged setting for the scope: the sub-walk reads the same geometry with
-  -- justification off (raggedItems' free-fil line ends, TeXbook ch. 14), the
-  -- reader flip the ragged title door already uses. The declared side picks
-  -- the origin `paraLineGeom` sets from — the left margin, or the measure's
-  -- right edge through `Geom.flushRight`, the arithmetic the title page's
-  -- `align = right` already goes through. One reader flip per side, so a
-  -- picture or a table standing in a right-set scope reaches the same
-  -- geometry its paragraphs do.
+  -- A ragged scope reads justification off; its side picks the origin (`Geom.flushRight`).
   | .ragged flush body =>
     let g := { r.geom with justify := false, flushRight := flush.flushRight, raggedFil := true }
     collectBlocks { r with geom := g } a body indent
-  -- A role is a name for the class hook; undeclared, the body collects
-  -- exactly as it would unwrapped (roleLayoutChecks pins the zero-byte
-  -- claim). A declared `\style{<role>}` gives the role its own rhythm —
-  -- the space stands above and below where the role stands, as a list's
-  -- topsep does, so the value lives once, upstream, never at use sites.
+  -- An undeclared role collects as unwrapped; a declared `\style{<role>}` spaces around it.
   | .role n body =>
     if let some opening := Ir.pageOpeningOfRole? n then
       { a with ops := a.ops.push (.pageOpening opening) }
     else
-    -- A display's context (`Ir.DisplayCtx`): where TeX's placement reads it.
     if let some c := Ir.DisplayCtx.ofRole? n then collectBlocks { r with display := c } a body indent
     else
-    -- A display a picture stands for: the display arm's.
     if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
       collectDisplayPicture r a anchors pic indent
     else
-    -- A trivlist environment's scope (`Ir.trivlistRole`): its `\topsep`
-    -- stands above and below it, on top of the peer gap (`Spacing.Pending.trivSpace`).
     if n == Ir.trivlistRole then
-      -- Inside a squeezed frame's list item a trivlist takes the
-      -- `\topsep0.5pt` beamer's squeeze leaves in force (`\trivlist` resets
-      -- no list level of its own).
+      -- Inside a squeezed frame's list item a trivlist takes beamer's `\topsep0.5pt`.
       let depth := a.itemDepth + a.enumDepth + a.quoteDepth
       let g := if r.squeeze && depth > 0 then r.resolve Ir.squeezedTopsep
         else r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize depth)
       (collectBlocks r (a.trivSpace g) body indent).trivSpace g
-    -- A list or quote opened inside an open paragraph: its arm reads the
-    -- mode (`Spacing.Context.inPar`) and spends no `\partopsep`.
     else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
-    -- A theorem-like block (`Ir.thmSkips`): its spelling's space above, on
-    -- TeX's `\parskip` where its `\@topsep` carries one, and below, from the
-    -- `\topsep` in force where it stands; right after a heading its head
-    -- spends `\@nbitem`, as a list's first item does.
+    -- A theorem-like block (`Ir.thmSkips`): its own space above, the `\topsep` in force below.
     else if let some k := Ir.thmSpaceOf? n then
       match Ir.thmSkips r.lists r.geom.fontSize (max 1 (a.itemDepth + a.enumDepth)) a.tokens k
           (!r.inPar) with
@@ -15678,8 +12412,6 @@ private def collectBlock (r : Rd) (a : Acc)
         let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
             (a.itemDepth + a.enumDepth + a.quoteDepth))
         (collectBlocks r (a.trivSpace g) body indent).trivSpace g
-    -- The page-model marks: `\vspace*`'s rule stands before the glue owed
-    -- next (`Spacing.Pending.flushAnchored`), and `\nointerlineskip` is the next box's.
     else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size }
     else if n == Ir.noInterlineRole then { a with ops := a.ops.push .noInterline }
     else if n == Ir.primitiveSkipRole then a.primitiveSkip
@@ -15697,16 +12429,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectBlocks r a body indent
     { a with ops := a.ops.push .regionClose }
   | .quote body =>
-    -- A quotation is set off by indenting both margins by its level's
-    -- `\leftmargin` (`Spacing.Context.leftMargin`): classes.dtx defines quote and
-    -- quotation as `\list{}{\rightmargin\leftmargin}`, and a list is one
-    -- level of `\@listdepth`, so what it holds reads the next level
-    -- (`Spacing.Pending.quoteDepth`). The right edge moves in by
-    -- narrowing the measure the body collects against; the outer measure
-    -- is restored after, exactly as a column restores it. Being a list, it
-    -- spends its level's `\topsep` (`Ir.listSkips`) above and below — so a
-    -- declared `\topsep` does not reach it, as `\@listi` resets the length
-    -- on entry — and sets its paragraphs `\parsep` apart.
+    -- A quotation is classes.dtx's `\list{}{\rightmargin\leftmargin}`, one `\@listdepth` level.
     let saved := a.measure
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     let lm := r.leftMargin lv a.tokens
@@ -15722,16 +12445,12 @@ private def collectBlock (r : Rd) (a : Acc)
       let sub := collectBlocks ri sub body (indent + lm)
       { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
-      -- The web's lineage: the quote is the trivlist block the HTML sheet
-      -- sets, its `\topsep` over the peer gap.
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
           (a.itemDepth + a.enumDepth + a.quoteDepth))
       let sub := collectBlocks { r with inPar := false }
         { a.trivSpace g with measure := narrow, quoteDepth := a.quoteDepth + 1 } body (indent + lm)
       { sub.trivSpace g with measure := saved, quoteDepth := a.quoteDepth }
-  -- Paper has no collapse: a disclosure sets its summary as a paragraph
-  -- (`Ir.disclosureSummary`) and its body after it, every word it holds on
-  -- the page, open or not.
+  -- Paper has no collapse: a disclosure sets its summary and its whole body, open or not.
   | .disclosure summary _ body =>
     let content := Ir.disclosureSummary summary
     let a := match a.itemMarker with
@@ -15767,8 +12486,6 @@ private def collectBlock (r : Rd) (a : Acc)
     else
     match Ir.blockShapeOf r.styles kind with
     | some shape =>
-      -- The kind's own template: no colour box, so the body keeps the
-      -- page's `\parskip` and its ink stands on the page's ground.
       let (opened, bodyIndent, bodyMeasure) := collectShapedOpen r a kind shape title body indent
       let ink := look.fg.getD inherited.2
       let inner := { opened with
@@ -15777,24 +12494,19 @@ private def collectBlock (r : Rd) (a : Acc)
       let done := collectBlocks r inner body bodyIndent
       (restore (collectShapedClose r done shape !title.isEmpty))
     | none =>
-    -- beamerinnerthemedefault.sty's `block begin`/`block end`: two colour
-    -- boxes, the text on the measure and the paint `pad` beyond it.
+    -- beamer's `block begin`/`block end`: two colour boxes, painted `pad` beyond the text.
     let pad := titledPadding r.geom.fontSize r.xHeight
     let x := r.geom.hmargin + indent - pad
     let w := (a.measure.getD r.geom.textWidth) - indent + 2 * pad
     let bs := Ir.leadingFor r.geom.fontSize r.geom.leading
-    -- `\par\vskip\medskipamount`, the register in force: a box spends no
-    -- `\parskip`, so at a frame's opening the frame's `\vskip-\parskip`
-    -- stands too.
+    -- `\par\vskip\medskipamount`: a box spends no `\parskip`.
     let above := r.resolve (Ir.skipAmount a.tokens "medskipamount")
     let above := if a.frameTop then
         { above with width := above.width - (r.resolve r.geom.texParskip).width }
       else above
     let opened := collectTitledTitle r { a.vskip above with wantDefault := false }
       kind title indent pad x w
-    -- The body box opens on its `\vbox{}`: below a painted title through
-    -- `\nointerlineskip\vskip-0.5pt`, else by TeX's interline rule; an
-    -- unpainted box opens `\vskip-.25ex` above its own top.
+    -- The body box opens on its `\vbox{}`, by `\nointerlineskip\vskip-0.5pt` below a painted title.
     let raise := Ir.blockBodyRaise.resolve r.geom.fontSize r.xHeight
     let opened := match look.bg with
       | some bg =>
@@ -15815,13 +12527,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `\vskip\smallskipamount`; a paragraph after it spends its own `\parskip`.
     (restore done).vskip (r.resolve (Ir.skipAmount done.tokens "smallskipamount"))
   | .abstract body =>
-    -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
-    -- heading (`collectAbstractHead`), then the body on quotation margins.
-    -- The body takes the document's own step of the declared size
-    -- (`Ir.abstractBodySize`, `\small` undeclared), the quotation margins
-    -- are the quote arm's — its level's `\leftmargin`, fixed when the class
-    -- loaded, so `\small` does not narrow it — and the outer state is
-    -- restored the way a quote restores its measure.
+    -- article.cls's abstract: `\small`, a centred bold heading, then the body on quotation margins.
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
     let saved := a.measure
@@ -15832,11 +12538,7 @@ private def collectBlock (r : Rd) (a : Acc)
       sub body (indent + lm)
     { sub with measure := saved, quoteDepth := a.quoteDepth }
   | .columns cols =>
-    -- Each declared width resolves against the measure the boxes stand in
-    -- (`Ir.BoxWidth.resolve`, the one resolving site) — a fraction of it, or
-    -- an absolute length clamped to it. The leftover goes to the widthless
-    -- boxes in equal shares when there are any, and into equal gutters
-    -- between the boxes otherwise.
+    -- Declared widths resolve against the measure; the rest goes to widthless boxes or gutters.
     let a := a.flushGap r
     let total := (a.measure.getD r.geom.textWidth) - indent
     let declared := cols.foldl (fun s (c : BoxWidth × Array Block) =>
@@ -15846,49 +12548,30 @@ private def collectBlock (r : Rd) (a : Acc)
     let rem := max 0 (total - declared)
     let shareW := if unspecified > 0 then rem / unspecified else 0
     let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
-    -- A lone declared box leaves its slack to its scope's side, as a
-    -- tabular or a picture does; a row of several spends it on gutters.
+    -- A lone declared box leaves its slack to its scope's side; several spend it on gutters.
     let side : Ir.HAlign := if r.centreBoxes then .center
       else if r.geom.flushRight then .right else .left
     let off := if cols.size == 1 && unspecified == 0 then side.boxOffset rem else 0
     let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
-    -- The box's own content starts from no side: `\@parboxrestore`
-    -- (latex.ltx) zeroes `\leftskip` and `\rightskip` inside every
-    -- minipage and `\parbox`.
+    -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage and `\parbox`.
     let inner := { (r.within blk) with
       centreBoxes := false, geom := { r.geom with flushRight := false } }
     let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
   | .spaced before body =>
-    -- Declared space above the block, resolved against the body font.
-    -- Standing on its own — `\vspace`, a skip macro, `Ir.gapBlock` — it is
-    -- LaTeX's `\vspace` (`Spacing.Pending.vspace`): it adds to any other declared glue,
-    -- and at a peer boundary to the page's parskip, which TeX contributes
-    -- when the *following* paragraph starts and which no declared skip can
-    -- displace (`skip_monotone`); and an element's space after it adds too
-    -- (`addvspace_after_vspace_exact`). Carrying a body it is instead that
-    -- element's own space — an `\addvspace`, like a role's or a list's
-    -- `before` — and stands in place of the peer default as those do, so
-    -- one rhythm spelled upstream and at the use site ships the same
-    -- positions.
-    -- Inside a box a fill sets at its natural width (`Rd.boxed`).
+    -- Alone, the space is a `\vspace`; carrying a body, it is the element's `\addvspace`.
     let g := r.resolve before.value
     let g := if r.boxed then { g with fil := false } else g
     let a := if body.isEmpty then a.vspace g
       else { a.vskip g with declaredSkip := false }
     collectBlocks r a body indent
   | .onSteps spec body =>
-    -- Grouping: the dimming was painted into the content's colours before
-    -- layout; what resolves here takes the step's cover from the reader.
+    -- Dimming was painted into the colours before layout; what resolves here takes the cover.
     collectBlocks (if spec.pending r.step then { r with covering := r.cover } else r)
       a body indent
   | .altSteps spec firstPage otherPage =>
-    -- One group per step page. The leaf ids are the tree's: it declares both
-    -- groups, in page order, so the counter steps over the group this page
-    -- does not ink and the inked one lands on its own id
-    -- (`alt_leaf_projects`). Outside a stepped frame the step is 1, which
-    -- `Ir.altShowsFirst_id` sends to the group stored first.
+    -- The counter steps over the group this page does not ink, so the inked one keeps its tree id.
     if spec.showsFirst r.step then
       let a := collectBlocks r a firstPage indent
       (a.leafRange (blockLeafCount otherPage)).1
@@ -15896,76 +12579,47 @@ private def collectBlock (r : Rd) (a : Acc)
       let a := (a.leafRange (blockLeafCount firstPage)).1
       collectBlocks r a otherPage indent
   | .only _ body =>
-    -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
-    -- here it is pure grouping, exactly as a resolved step is.
+    -- `run` already kept this node for the PDF (`Ir.keepFor`), so it is pure grouping here.
     collectBlocks r a body indent
   | .nav spec body => collectNav a spec body
   | .note body => collectNote a body
   | .pagebreak =>
-    -- The declared boundary: the builder closes only pages holding
-    -- something, so adjacent breaks never make a blank page.
+    -- The builder closes only pages holding something, so adjacent breaks never make a blank page.
     a.pageBreak
   | .logo content => collectLogo a content
   | .verbatim covered s spec => collectListing r a covered s spec indent
   | .algorithm numbered semis lines => collectAlgorithm r a numbered semis lines indent
   | .framefoot content => collectFramefoot a content
   | .setPalette p =>
-    -- A stateful declaration, like `.logo`: the palette in force from here
-    -- on, in flow order — the accumulator threads it past the enclosing
-    -- block's end (flow scope, no brace revert). The default ink follows
-    -- the palette it derives from; one state op carries the page-ground
-    -- epoch and no content or gap (`Spacing.Pending.setPalette_emits_no_content`).
+    -- The palette in force from here on, in flow order past the enclosing block's end.
     a.setPalette p
 
   | .setTokens tk =>
-    -- Same door for the token state: `tabcolsep`, `floatsep`,
-    -- `progressheight` and friends resolve against the tokens in force
-    -- where the element stands, not the document's final state.
+    -- Tokens resolve against the state in force where the element stands.
     a.setTokens tk
   | .rule color _ thickness => collectRuleBlock r a color thickness.value
   | .picture pic =>
-    -- Left on the current indent, as LaTeX places the box where it stands;
-    -- a `{center}` around it goes through `collectCentered`'s arm.
+    -- Left on the current indent, as LaTeX places the box where it stands.
     collectPicture r a pic indent false
   | .table cols padL padR rows rules spans =>
     collectTable r a cols padL padR rows rules spans indent false
   | .float kind num capAbove body caption =>
-    -- Set off from the text by `floatsep` on both sides, the caption bound
-    -- to the content by the skip `Ir.captionSides` puts on its object side
-    -- (`floatPlan`); the body centres, the
-    -- figure convention the old center-wrapping gave. Both gaps are
-    -- `\addvspace`-style: an element's own space, never stacked onto a
-    -- neighbour's. The caption sets with its number in front —
-    -- `Ir.numberedCaption`, the one site both backends spell a float's
-    -- number from. Everything between `floatOpen` and `floatClose` ships
-    -- on one page (`runFloat`): a float is unbreakable, as LaTeX's are.
-    -- The tree numbers the caption's leaves first whatever `capAbove` says
-    -- (`Struct.blockRaw`'s float arm: census order is `blocksText`'s); the
-    -- page places it where `capAbove` says. So the caption's range is
-    -- claimed here, before the plan runs, and the body's begins past it.
-    -- Counted on the declared caption: the number prefix is generated.
+    -- A float is one unbreakable box (`runFloat`); its caption's leaves come first.
     let capSpan := leafCount caption
     let (a, capLeaf) := a.leafRange capSpan
-    -- The declared caption is marked as the block's content so its atoms
-    -- take their leaves and the prefix is the caption's `.block`.
+    -- The declared caption is marked as content, so the number prefix is the caption's `.block`.
     let caption := Ir.numberedCaption r.locale kind num (markContent caption)
     let (floatSep, floatTriv) := Ir.floatSpaceFor r.lists a.tokens r.geom.fontSize
       (a.itemDepth + a.enumDepth + a.quoteDepth)
     let floatSep := r.resolve floatSep
-    -- The caption's two skips: the one facing the object and the one on
-    -- its text side, as its side and declared position place them.
     let skip (s : Ir.CaptionSkip) : Glue :=
       r.resolve ((s.find? a.tokens kind).getD (s.defaultFor r.lists r.geom.fontSize))
     let (objSkip, farSkip) := Ir.captionSides (Ir.captionPosFor r.lists r.captionPos kind) capAbove
     let capSep := skip objSkip
     let farSep := skip farSkip
     let a := a.pushOp .floatOpen
-    -- The float's caption and body are box content, not galley lines: the
-    -- sub-walk runs under a marked reader so no line of them is counted
-    -- by the line-number census (`Spacing.Context.inFloat`).
     let rf := { (r.within blk) with inFloat := true }
-    -- The text-side gaps stand first and last; in beamer's lineage they are
-    -- the trivlist's, the paragraph gap on top (`Ir.floatSpaceFor`).
+    -- In beamer's lineage the text-side gaps are the trivlist's (`Ir.floatSpaceFor`).
     let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
     let a := plan.zipIdx.foldl
       (fun a (slot, i) => match slot with
@@ -15975,15 +12629,10 @@ private def collectBlock (r : Rd) (a : Acc)
         | .object => collectCentered rf a body.toList indent false) a
     a.pushOp .floatClose
   | .frame title standout valign breakable body =>
-    -- The frame's marks stay in its body, empty marks the walk passes
-    -- (`Ir.pageMarkerRole`).
     let marks := Ir.frameMarks body
     let squeeze := Ir.frameSqueeze body
-    -- Only a declared squeeze changes the page; the ladder's is the web
-    -- deck's stand-in for the shrink the page's glue takes (`runFitted`).
+    -- Only a declared squeeze changes the page; the ladder's stands in for the web deck's shrink.
     let r := { r with squeeze := squeeze == .declared, breakableFrame := breakable }
-    -- The overflow ladder's marks (`runFitted`): measure the frame, or set
-    -- this overlay step as the ladder decided.
     let step := (a.frameOrigin.map (·.step)).getD 1
     let fit : FrameFitMode := if breakable then .spill
       else if marks.contains Ir.fitMeasureRole then .measure
@@ -15991,51 +12640,25 @@ private def collectBlock (r : Rd) (a : Acc)
       else if marks.contains (Ir.fitContinuesRole step) then .continues
       else .spill
     let a := { a with frameFit := fit }
-    -- A frame is a page boundary, not an article paragraph. Content past
-    -- the page bottom spills to a continuation page — best effort, never
-    -- clipped. The frame's number rides in from `run`'s top-level driver,
-    -- read off `Ir.frameNumbers`, once per logical frame, so a stepped
-    -- frame's pages share it. The boundary, the marker and the frame's own
-    -- footer travel together through `frameOpen`. Wherever the chrome may
-    -- stand — slides without a `\runningfoot` — every frame but the title
-    -- page, whose own template places its furniture, takes beamer's text
-    -- area (`frameAreaFor`, the IR's one decision): the paper's top to
-    -- `\footheight` above its bottom edge, footline or none.
+    -- Every frame but the title page takes beamer's text area (`frameAreaFor`).
     let area := frameAreaFor a.footAllowed valign
     let a := collectFrameOpen a standout breakable area
     let r := frameReader r a standout area
-    -- Every frame declares its distribution (beamer's default is centring,
-    -- user guide §8.1); only the article page and a continuation page keep
-    -- the builder's top-flush default.
-    -- The frame's `.title` node stands first in the tree whether or not the
-    -- page sets it: a standout frame shows its body alone, so its title's
-    -- leaves are stepped over.
+    -- A standout frame shows its body alone, so its title's leaves are stepped over.
     let titleSpan := leafCount title
     let (a, titleLeaf) := a.leafRange titleSpan
     if standout then
-      -- Inverted, centred, Large bold: the design's standout pair
-      -- (`Ir.Design.ofPalette`, the one resolving site), painted as the
-      -- frame's ground (`Ir.frameGroundOf`).
       let so := (Ir.Design.ofPalette a.pal).standout
       let ground := Ir.frameGroundOf a.pal true valign
       let dist := VDist.of (Ir.frameKeysOf r.frameKeys true) valign breakable
       let a := { a with ops := a.ops.push (.pageStyle ground dist) }
-      -- No title box stands on a standout page: its content box opens at
-      -- the text area's top, as an untitled frame's does.
       let a := openFrameBody r a false valign area
       let a := collectStandout r { a with fg := so.fg, ground := some so.bg } body.toList indent
-      -- Restore by recomputing from the palette in force: a `.setPalette`
-      -- inside the frame must reach what follows it (flow scope), so a
-      -- saved copy would restore a stale epoch's ink.
+      -- Recompute from the palette in force: a `.setPalette` in the frame must reach what follows.
       let a := { a with fg := fgOf a.pal, ground := Ir.Design.declared? a.pal .page }
       a.pageBreak.pushOp .frameClose
     else
-    -- The frame's own ground (`Ir.frameGroundOf`): the title page's
-    -- declared one, else the `bg` of the palette in force where the frame
-    -- stands, through the same `.pageStyle` door the standout frame paints
-    -- through — so a body `\palette` declares the background of the frames
-    -- after it, and a page never stands on the document's ground where
-    -- its epoch declared its own. `none` is the undeclared page.
+    -- The frame's own ground (`Ir.frameGroundOf`), through the standout's `.pageStyle` door.
     let pageGround := Ir.frameGroundOf a.pal false valign
     let dist := VDist.of (Ir.frameKeysOf r.frameKeys false) valign breakable
     let a := { a with ops := a.ops.push (.pageStyle pageGround dist) }
@@ -16044,40 +12667,26 @@ private def collectBlock (r : Rd) (a : Acc)
       | none => a
     let a := collectHeadlineBand r a
     let a := collectFrameTitle r a title titleLeaf titleSpan
-    -- The title just placed is page-top chrome: the frame's distribution
-    -- moves the body below it, never the title (beamer's frametitle).
-    -- Its content opens on a baseline below the title box (`Spacing.Page.openBody`),
-    -- with no peer gap: beamer's `\vskip-\parskip` cancels the first one.
-    -- `Ir.frameBodySkip` declares the fixed title/top skip; the frame's
-    -- distribution spends the remaining flexible space.
+    -- The title is pinned chrome; the content opens below its box with no peer gap.
     let a := if title.isEmpty then
-        -- An untitled frame opens the same way, at the top of beamer's text
-        -- area: its content's `\vbox{}` stands at the paper's top edge
-        -- (moloch's headline is empty), with no title box and so no
-        -- `\vskip0.25em` (`openFrameBody`).
         openFrameBody r a false valign area
       else
       let g : Glue := { width := frameBodySkip true valign r.geom.fontSize }
-      -- A title with no bar stands in beamer's default frametitle box, which
-      -- ends `1ex` above its strut's depth (`Ir.defaultFrameTitleBelow`).
+      -- A title with no bar stands in beamer's default frametitle box.
       let box := if (Ir.Design.ofPalette a.pal).frametitle.isSome then none
         else
           let size := Ir.scaleStep r.geom.fontSize Ir.plainFrameTitleStep
           some (Ir.defaultFrameTitleBelow size r.geom.leading (r.xHeight * size / r.geom.fontSize))
       { a with ops := (a.ops.push .pin).push (.bodyOpen g box), wantDefault := false,
                frameTop := true }
-    -- A golden frame is the title page (only \maketitle declares golden),
-    -- and everything on it is display furniture: titles never hyphenate
-    -- and never justify (collectDisplay's rule, through the declaration).
+    -- A golden frame is the title page, all display furniture: never hyphenated or justified.
     let a := if valign matches .golden then
         let rd := { r with pats := none, geom := { r.geom with justify := false } }
         let slots := (r.style "titlepage").slots
         if slots.isEmpty then collectBlocks rd a body indent
         else collectSlots rd a slots body.toList indent
       else collectBlocks r a body indent
-    -- Restore by recomputing from the palette in force, the same reason the
-    -- standout arm does: a `.setPalette` inside the frame must reach what
-    -- follows it, so a saved copy would restore a stale epoch's ink.
+    -- Recompute from the palette in force, as the standout arm does.
     let a := if pageGround.isSome then
         { a with fg := fgOf a.pal, ground := Ir.Design.declared? a.pal .page }
       else a
@@ -16085,19 +12694,6 @@ private def collectBlock (r : Rd) (a : Acc)
 
 end
 
-/-- The block half of `role_transparent_layout`: a role is a name, and with
-no declared style the block collector delegates to `collectBlocks` on the
-body unchanged — the wrapper contributes no op, no glue and no leaf. It
-takes that theorem's name rather than a fresh shape suffix because it is the
-same property over the other walk. Was an oracle over the shipped pages
-(roleLayoutChecks in Tests.lean) while `collectBlock` was one giant match
-whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
-cheap. The engine's own trivlist, in-paragraph, theorem and display roles
-are the names that are not transparent — an environment opens space, one
-opened inside a paragraph opens less, and a display is placed by where it
-stands in its paragraph — and so are the page-model marks
-(`Ir.pageMarkerRole`), which carry a fact of the page; a document can spell
-none of them. -/
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
     (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
@@ -16114,8 +12710,6 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
     hdc, hop, hpic, Bool.false_eq_true, ite_false]
 
-/-- Collection carries the shared opening value to placement verbatim:
-the backend has no second reading of the titlepage's boundary spelling. -/
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
     (opening : Ir.PageOpening) (indent : Sp)
     (h : Ir.pageOpeningOfRole? n = some opening) :
@@ -16123,24 +12717,18 @@ private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
       { a with ops := a.ops.push (.pageOpening opening) } := by
   simp only [collectBlock, h]
 
-/-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
-be provably correct: intervals sorted, pairwise disjoint (half-open
-reading), each nonempty. -/
+/-- Sorted, pairwise disjoint, nonempty half-open intervals. -/
 public def Chained : List (Int × Int) → Prop
   | [] => True
   | (lo, hi) :: rest => lo ≤ hi ∧ (∀ o ∈ rest, hi ≤ o.1) ∧ Chained rest
 
-/-- The sub-intervals of `[cur, hi)` not covered by the chained
-obstruction list: pass 2's interval walk, pure — closed-form geometry the
-underline theorems range over. The clearance is already dilated into the
-obstructions (pass 1). -/
+/-- The sub-intervals of `[cur, hi)` not covered by a chained obstruction list. -/
 public def subtract (cur hi : Int) : List (Int × Int) → List (Int × Int)
   | [] => if cur < hi then [(cur, hi)] else []
   | (olo, ohi) :: rest =>
     if cur < min olo hi then (cur, min olo hi) :: subtract (max cur ohi) hi rest
     else subtract (max cur ohi) hi rest
 
-/-- Every emitted interval is nonempty and inside `[cur, hi)`. -/
 public theorem subtract_bounds (obs : List (Int × Int)) (cur hi : Int) :
     ∀ s ∈ subtract cur hi obs, cur ≤ s.1 ∧ s.1 < s.2 ∧ s.2 ≤ hi := by
   induction obs generalizing cur with
@@ -16160,10 +12748,6 @@ public theorem subtract_bounds (obs : List (Int × Int)) (cur hi : Int) :
     · have := ih (max cur o.2) s hs
       omega
 
-/-- `underline_skips_ink`, the geometric core of the skip-ink underline
-(CSS Text Decoration 4 §2.10.5): no emitted rule interval meets any
-obstruction — the drawn rule crosses no glyph ink dilated by its
-clearance. -/
 public theorem underline_skips_ink (obs : List (Int × Int)) (cur hi : Int)
     (hch : Chained obs) :
     ∀ s ∈ subtract cur hi obs, ∀ o ∈ obs, s.2 ≤ o.1 ∨ o.2 ≤ s.1 := by
@@ -16194,9 +12778,6 @@ public theorem underline_skips_ink (obs : List (Int × Int)) (cur hi : Int)
         omega
       · exact ih (max cur a.2) hrest s hs o ho'
 
-/-- `underline_covers_gaps`, the other half: every uncovered x in
-`[cur, hi)` lies under an emitted rule interval — the underline is
-interrupted only at ink, never silently dropped. -/
 public theorem underline_covers_gaps (obs : List (Int × Int)) (cur hi x : Int)
     (hch : Chained obs) (hx : cur ≤ x ∧ x < hi)
     (hout : ∀ o ∈ obs, x < o.1 ∨ o.2 ≤ x) :
@@ -16225,18 +12806,14 @@ public theorem underline_covers_gaps (obs : List (Int × Int)) (cur hi x : Int)
       · exact List.mem_cons_of_mem _ hs
       · exact hs
 
-/-- Merge a sorted run of intervals into a chained list: `cur` is the
-interval being grown; an input that reaches back into it fuses (the fold
-never needs `min` — sorted input keeps `cur.1` least), and one that
-stands clear emits `cur` and starts the next. Pass 1's merge, pure. -/
+/-- Merge a sorted run of intervals into a chained list, fusing
+an input that reaches back into the growing interval `cur`. -/
 public def mergeChained (cur : Int × Int) : List (Int × Int) → List (Int × Int)
   | [] => [cur]
   | (lo, hi) :: rest =>
     if lo ≤ cur.2 then mergeChained (cur.1, max cur.2 hi) rest
     else cur :: mergeChained (lo, hi) rest
 
-/-- Every merged interval starts at or after the growing interval's own
-start, given sorted input at or after it. -/
 public theorem mergeChained_lb (cur : Int × Int) (l : List (Int × Int))
     (hs : l.Pairwise (fun a b => a.1 ≤ b.1)) (hcl : ∀ o ∈ l, cur.1 ≤ o.1) :
     ∀ s ∈ mergeChained cur l, cur.1 ≤ s.1 := by
@@ -16259,8 +12836,6 @@ public theorem mergeChained_lb (cur : Int × Int) (l : List (Int × Int))
         have := ih a hrest (fun o ho => hhd o ho) s hmem'
         omega
 
-/-- The merge postcondition, proved: sorted nonempty input in, `Chained`
-out — what `underline_skips_ink` and `underline_covers_gaps` consume. -/
 public theorem mergeChained_chained (cur : Int × Int) (l : List (Int × Int))
     (hc : cur.1 ≤ cur.2) (hne : ∀ o ∈ l, o.1 ≤ o.2)
     (hs : l.Pairwise (fun a b => a.1 ≤ b.1)) (hcl : ∀ o ∈ l, cur.1 ≤ o.1) :
@@ -16282,16 +12857,13 @@ public theorem mergeChained_chained (cur : Int × Int) (l : List (Int × Int))
           (fun o ho => hne o (List.mem_cons_of_mem _ ho)) hrest
           (fun o ho => hhd o ho)
 
-/-- Pass 1's merge over the collected obstructions: sort by the low
-bound, then fuse overlapping and touching intervals. The result is
-`Chained` (`mergeIntervals_chained`), which is exactly what makes the
-subtraction's skip and cover theorems apply to the drawn rules. -/
+/-- Sort obstructions by their low bound and fuse
+overlapping and touching intervals into a chained list. -/
 public def mergeIntervals (obs : Array (Int × Int)) : List (Int × Int) :=
   match (obs.mergeSort fun a b => decide (a.1 ≤ b.1)).toList with
   | [] => []
   | x :: rest => mergeChained x rest
 
-/-- Obstructions with nonempty extents merge into a chained list. -/
 public theorem mergeIntervals_chained (obs : Array (Int × Int))
     (hne : ∀ o ∈ obs, o.1 ≤ o.2) : Chained (mergeIntervals obs) := by
   unfold mergeIntervals
@@ -16315,9 +12887,8 @@ public theorem mergeIntervals_chained (obs : Array (Int × Int))
       (fun o ho => hmem o (List.mem_cons_of_mem _ ho)) hrest
       (fun o ho => hhd o ho)
 
-/-- Horizontal placement and resolved bands of actual decoration segments.
-This is artifact geometry: the pen advances by the set segment widths, and
-only typed decoration segments contribute painted spans. -/
+/-- Horizontal placement and resolved bands of a line's
+decoration segments, the pen advancing by the set widths. -/
 public def decorationSpans (x : Int) : List Seg → List (Int × Int × Ir.Decoration × DecorationRule)
   | [] => []
   | .decoration k w t r c :: rest =>
@@ -16364,17 +12935,14 @@ private theorem underlinePieces_placement (paint : DecorationRule) (hi x cur : I
       simp [next, decorationSpans_append, decorationSpans, Seg.advance]
       constructor <;> omega
 
-/-- Read underline from the one decoration carrier: runs resolve their actual
-face here; authored spaces already carry their resolved band. -/
+/-- A segment's underline band: a run resolves its face here, an authored space carries its band. -/
 public def Seg.underlineRule (fs : FontSet) (lineSize : Sp) : Seg → Option DecorationRule
   | .run fontIdx color _ _ _ size _ decorations _ _ _ =>
     (decorations.resolve (fs.get fontIdx) (if size == 0 then lineSize else size) color).underline
   | .decoratedGap _ _ decorations => decorations.underline
   | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ | .poly _ _ => none
 
-/-- Append the skip-ink paint of any set segment, keeping its full advance
-as gaps between the surviving spans. In particular a zero or negative
-space still advances the pen exactly, even though it paints no span. -/
+/-- Append a segment's skip-ink paint, its full advance kept as gaps between the surviving spans. -/
 public def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
     (x : Sp) (seg : Seg) (out : Array Seg) : Array Seg :=
   match seg.underlineRule fs size with
@@ -16382,11 +12950,6 @@ public def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
   | some paint => underlinePieces paint (x + seg.advance)
       (subtract x (x + seg.advance) obs) x out
 
-/-- The shared run/space painter's placement contract. It emits exactly the
-complement intervals with the selected band, and preserves the pen at the
-segment's right edge, for every segment, width and obstruction list. This is
-native artifact geometry, not a second interpretation of IR decoration.
-Together with `underline_skips_ink` it holds skip-ink of the actual paint. -/
 public theorem appendUnderline_exact (fs : FontSet) (size : Sp) (obs : List (Int × Int))
     (origin x : Int) (seg : Seg) (out : Array Seg)
     (hx : origin + (out.toList.map Seg.advance).sum = x) :
@@ -16405,10 +12968,6 @@ public theorem appendUnderline_exact (fs : FontSet) (size : Sp) (obs : List (Int
     simpa [appendUnderline, hp] using underlinePieces_placement paint
       (x + seg.advance) origin x (subtract x (x + seg.advance) obs) out hx
 
-/-- Every point in an underlined segment outside the line's ink clearances
-is covered by an actual emitted underline with that segment's resolved band.
-The quantifier includes `decoratedGap`, so word spaces and authored spacing
-obey the same coverage and placement contract as glyph runs. -/
 public theorem appendUnderline_covers (fs : FontSet) (size : Sp) (obs : List (Int × Int))
     (origin x point : Int) (seg : Seg) (out : Array Seg) (paint : DecorationRule)
     (hpen : origin + (out.toList.map Seg.advance).sum = x)
@@ -16426,27 +12985,8 @@ public theorem appendUnderline_covers (fs : FontSet) (size : Sp) (obs : List (In
     List.append_nil, List.mem_map]
   exact ⟨span, hs, rfl⟩
 
-/-- Underline rules for one set line: a second walk over its segs, aligned by
-gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
-writer's x-tracking stays linear and link rectangles see no extra runs. Each
-rule sits at its run's own normalized `post` metrics (`Font.band`) and is
-interrupted where glyph ink crosses the band — `Font.inkAt`, from the
-outline — with a gap of twice the owning run's rule thickness on each side:
-CSS Text Decoration 4 §2.10.5 requires skipping "a small distance to either
-side of the glyph outline" and leaves the distance UA-defined, so twice the
-thickness is this engine's stated choice — it scales with the rule (Hochuli,
-Detail in Typography: a rule's weight relates to the stroke it meets) and
-absorbs the small band differences between adjacent faces.
-Obstructions are collected in line coordinates across the whole line first,
-every glyph run contributing whether or not it is underlined, so ink that
-reaches over a run boundary — a negative-sidebearing italic descender, or a
-descender's clearance spilling past its own advance — clears the
-neighbouring rule too. An obstruction is judged against the band of the run
-that owns the glyph. The merged obstructions are `Chained`
-(`mergeIntervals_chained`). Runs and authored spaces use `appendUnderline`:
-its placement and coverage contracts connect the actual paint to `subtract`,
-so the skip-ink and coverage facts also hold across word spaces.
-Empty when the line has no underline, so the common case allocates nothing. -/
+/-- Underline rules for one set line, interrupted where glyph ink crosses the band
+with a gap of twice the run's rule thickness (CSS Text Decoration 4 §2.10.5). -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
@@ -16454,8 +12994,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       | .decoratedGap _ _ decorations => decorations.underline.isSome
       | _ => false) do
     return #[]
-  -- Pass 1: obstruction intervals in line coordinates, each glyph's
-  -- ink-in-band intervals scaled to its run's size plus the clearance.
+  -- Pass 1: obstruction intervals in line coordinates, each glyph's in-band ink plus clearance.
   let mut obs : Array (Sp × Sp) := #[]
   let mut x : Sp := 0
   for seg in segs do
@@ -16476,9 +13015,8 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
             gx + ihi * sz / upem + 2 * thick)
         gx := gx + adv
       x := x + w
-  -- Merge into the chained obstruction list the theorems consume.
   let merged := mergeIntervals obs
-  -- Pass 2: the same span painter for words and spaces, after line setting.
+  -- Pass 2: the span painter for words and spaces.
   let mut out : Array Seg := #[]
   x := 0
   for seg in segs do
@@ -16511,37 +13049,14 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
     | .poly _ _ => pure ()
   return out
 
-/-- The drawn-decoration riders of a placed line: one overlay line per
-active decoration kind — underline first, then line-through — each sharing
-the line's origin (`x`, `y`, `size`) and carrying only `.decoration`/`.gap`
-segs at the line's own x positions, so it paints over the text without
-advancing any pen of its own. Empty unless the line's segs carry a
-decoration, so an undecorated line — the common case, and every line a path
-that cannot carry decoration emits — allocates nothing.
-
-This is the one owner that turns a line's decoration source into paint:
-`underlineSegs`/`lineThroughSegs` build the only `.decoration` segs the PDF
-backend lowers (`PdfContent.stepSeg`), and this is the only site that calls
-them, applied once per finalized line in `furnishPage`. So every
-line-emitting path — body paragraphs, footnotes, picture labels, running
-head/foot, band and chrome slots, the logo — rides its riders exactly once,
-and PDF paints the decoration on every path, matching the HTML backend and
-the IR, which paint it from the tree independently.
-
-A rider inherits its base line's `note`/`furniture` banding so the census
-classifies the decoration ink with the line it decorates (a note's strike is
-note ink, a slot's underline is furniture); it keeps the neutral `counted`,
-`leaf`, `hang`, and `expand` of a run-less overlay — `counted := false` so a
-rider is never a numbered line, `expand := 0` because the segment widths are
-read off already-expanded runs and must not scale a second time. -/
+/-- The drawn-decoration riders of a placed line, underline then line-through, each an
+overlay at the line's origin; the one site turning a line's decorations into paint. -/
 public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
   #[underlineSegs fs l.size l.segs, lineThroughSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
                 note := l.note, furniture := l.furniture }
 
-/-- A rider is never a counted line: decoration overlays do not attract
-margin line numbers, whatever the line they ride. -/
 @[simp] public theorem decorationRiders_uncounted (fs : FontSet) (l : LineOut) :
     ∀ r ∈ decorationRiders fs l, r.counted = false := by
   intro r hr
@@ -16551,9 +13066,6 @@ margin line numbers, whatever the line they ride. -/
   · exact absurd hr (by simp)
   · simp only [Option.some.injEq] at hr; simp [← hr]
 
-/-- A rider stays in its base line's band: it is furniture exactly when the
-line it rides is, and a note exactly when that line is, so the census reads
-a strike or underline as the same kind of ink as the text under it. -/
 @[simp] public theorem decorationRiders_band (fs : FontSet) (l : LineOut) :
     ∀ r ∈ decorationRiders fs l, r.furniture = l.furniture ∧ r.note = l.note := by
   intro r hr
@@ -16563,8 +13075,6 @@ a strike or underline as the same kind of ink as the text under it. -/
   · exact absurd hr (by simp)
   · simp only [Option.some.injEq] at hr; simp [← hr]
 
-/-- Decoration introduces no second source leaf: the attributed text stays
-on the base line, and its run-less riders carry only the drawn marks. -/
 @[simp] public theorem decorationRiders_unattributed (fs : FontSet) (l : LineOut) :
     ∀ r ∈ decorationRiders fs l, r.leaf = none := by
   intro r hr
@@ -16581,8 +13091,6 @@ private def appendRiders (fs : FontSet) (l : LineOut) (lines : Array LineOut) :
     out := out.push r
   return out
 
-/-- The inner production loop preserves any selection that excludes riders.
-This is a state invariant over its actual `forIn`, including its exit. -/
 private theorem appendRiders_selected (fs : FontSet) (l : LineOut) (lines : Array LineOut)
     (select : LineOut → Bool) (hselect : ∀ r ∈ decorationRiders fs l, select r = false) :
     (appendRiders fs l lines).filter select = lines.filter select := by
@@ -16595,8 +13103,7 @@ private theorem appendRiders_selected (fs : FontSet) (l : LineOut) (lines : Arra
     simpa only [Id.run, pure, ForInStep.value, Array.filter_push, hselect r hr, Bool.false_eq_true,
       reduceIte] using hout
 
-/-- The final decoration pass, shared by every body and furniture line.
-Each original line is followed immediately by its drawn riders. -/
+/-- The final decoration pass: each line followed by its drawn riders. -/
 public def paintLines (fs : FontSet) (lines : Array LineOut) : Array LineOut := Id.run do
   let mut out : Array LineOut := Array.mkEmpty lines.size
   for l in lines do
@@ -16604,9 +13111,6 @@ public def paintLines (fs : FontSet) (lines : Array LineOut) : Array LineOut := 
     out := appendRiders fs l out
   return out
 
-/-- The outer production loop's value invariant names its consumed prefix.
-The stdlib's break-free bridge reads this very `forIn`; no second runtime
-fold or independently computed census replaces the decoration pass. -/
 private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
     (select : LineOut → Bool) (hselect : ∀ l r, r ∈ decorationRiders fs l → select r = false) :
     (paintLines fs lines).filter select = lines.filter select := by
@@ -16631,8 +13135,6 @@ private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
   simp only [Array.length_toList] at ht
   simpa [ht] using h
 
-/-- Decoration preserves every attributed line, in order and with its
-geometry and segments unchanged. -/
 public theorem paintLines_attributed_projects (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).filter (fun l => l.leaf.isSome) =
       lines.filter (fun l => l.leaf.isSome) := by
@@ -16640,7 +13142,6 @@ public theorem paintLines_attributed_projects (fs : FontSet) (lines : Array Line
   intro l r hr
   simp [decorationRiders_unattributed fs l r hr]
 
-/-- Drawn riders never change the counted-line ledger. -/
 public theorem paintLines_counted_projects (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).filter (·.counted) = lines.filter (·.counted) := by
   apply paintLines_selected
@@ -16760,37 +13261,25 @@ private def Spacing.Paragraph.lineStart (j : ParaJob) (first : Bool) (prev : Nat
   if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
   else Layout.lineStart j.items (prev + 1)
 
-/-- The geometry of one paragraph line: its segs, x, set width, whether
-the break was overfull, the protrusion hang its x was shifted left by,
-and its expansion factor. Pure in the builder — it reads only the page
-geometry — so the placement pipeline below is the only part of a
-paragraph line that touches pages. -/
+/-- The geometry of one paragraph line: its segs, x, set
+width, overfull flag, protrusion hang and expansion factor. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp × Int :=
-  -- A hanging first line starts past its kern, a hang wider and a hang
-  -- further out: the breaker priced exactly that line (`Spacing.Paragraph.hangIndent`).
+  -- A hanging first line starts past its kern, as the breaker priced it.
   let lead := if first then j.hangIndent else 0
   let width := j.target + lead
   let a := j.lineStart first prev
-  -- A line LaTeX's `\@flushglue` ends that stands wider than the measure
-  -- takes its interword glue's shrink, as TeX sets it under a fil
-  -- `\rightskip`; every other ragged line keeps its natural width.
+  -- A `\@flushglue` line wider than the measure takes its glue's shrink, as TeX's does.
   let shrinks := j.rightFil && width < (measure j.items a brk).natural
   let (segs0, w0, overfull, hang, exf) :=
     setLine j.items a brk width
       (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk || shrinks)
       (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets
-  -- Three horizontal origins, and the right one is the line's own natural
-  -- width measured back from the far edge — the same arithmetic centring
-  -- halves. It cannot be a justified line: filling the measure would put the
-  -- line back at the left, which is why `setLine` is told ragged here too —
-  -- unless an author's fill takes the slack (`setsToMeasure`), which in TeX
-  -- too spans the measure, whatever the alignment.
+  -- A flush-right line is never justified unless an author's fill spans it.
   let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
     else if j.flushRight then b.geom.hmargin + j.indent + (width - w0)
     else b.geom.hmargin + j.indent - lead - hang
-  -- The marker stands `\labelsep` left of the item: half an em, LaTeX's
-  -- own separation (classes.dtx: \setlength\labelsep{.5em}).
+  -- `\labelsep`: half an em (classes.dtx `\setlength\labelsep{.5em}`).
   let sep := b.geom.fontSize / 2
   let (segs1, x1, w1) :=
     if first then
@@ -16798,27 +13287,16 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
       | some (ms, mw) =>
         match j.markerLeft, j.markerIndent with
         | some ml, _ =>
-          -- Flush left in its column: the gap after the marker absorbs
-          -- what the column's widest label leaves of it.
           let x1 := b.geom.hmargin + ml
           (ms ++ #[Seg.gap (x0 - x1 - mw) false] ++ segs0, x1, w0 + (x0 - x1))
         | none, some mi =>
-          -- One marker column for the whole block: the gap absorbs the
-          -- line's own depth indent on top of `\labelsep`.
           let base := b.geom.hmargin + mi
           let x1 := base - mw - sep
           (ms ++ #[Seg.gap (x0 - base + sep) false] ++ segs0, x1, w0 + (x0 - x1))
         | none, none => (ms ++ #[Seg.gap sep false] ++ segs0, x0 - mw - sep, w0 + mw + sep)
       | none => (segs0, x0, w0)
     else (segs0, x0, w0)
-  -- The rule fills what the heading left of its line, a word-space away
-  -- from the text, where its declared position puts it against the
-  -- heading's own face at its own size (`Ir.RulePosition.raise`): half
-  -- the x-height up, like a dash — Hochuli, Detail in Typography: a rule
-  -- relates to the type it cuts — or on the baseline, as TeX's `\hrule`.
-  -- The x-height is the measured ink 'x' (`xHeightOptical`) because OS/2
-  -- sxHeight lies in some fonts — the trust order the math size match
-  -- already uses.
+  -- The rule fills the heading's line a word space from the text (`Ir.RulePosition.raise`).
   let (segs2, w2) :=
     if first then
       match j.rule with
@@ -16841,9 +13319,8 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     else (segs1, w1)
   (segs2, x1, w2, overfull, hang, exf)
 
-/-- A paragraph line's builder, before the line is placed: a display's first
-line takes TeX's skip above (`Spacing.Page.displaySkip`), measured to the formula's
-box — the line's own origin past the segments standing outside it. -/
+/-- A display's first line takes TeX's skip above
+(`Spacing.Page.displaySkip`), measured to the formula's box. -/
 private def Spacing.Page.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x : Sp) (segs : Array Seg) :
     B :=
   match j.display, first with
@@ -16866,25 +13343,16 @@ private def Spacing.Page.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x :
     (segs : Array Seg) : (b.openDisplayAt j f x segs).docBg = b.docBg := by
   unfold Spacing.Page.openDisplayAt; split <;> rfl
 
-/-- A rule reaching past a TeX box's last line (`TexBox.reach`) makes the
-line holding the box and the rule as deep as the rule: what follows the
-box's last line is spaced from that depth. -/
+/-- A rule reaching past a TeX box's last line makes the line holding them as deep as the rule. -/
 private def reachDepth (j : ParaJob) (brk : Nat) (b : B) : B :=
   match j.texBox.bind (·.reach) with
   | some (_, below) => if brk + 1 == j.items.size then b.keepInk (max b.boxDepth below) else b
   | none => b
 
-/-- What follows a placed paragraph line: the extra skip a forced break
-owes, and the depth a rule beside a TeX box's last line leaves
-(`reachDepth`). Drawn decoration is no longer emitted here — every page
-line, body and furniture alike, takes its `.decoration` riders in one place
-at the furniture pass (`decorationRiders`, applied in `furnishPage`), so
-this trailer only carries the forced-break skip forward and a decoration
-paints exactly once. -/
+/-- What follows a placed paragraph line: a forced break's
+extra skip and the depth a box's rule leaves (`reachDepth`). -/
 private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
     (_segs : Array Seg) (b : B) : B :=
-  -- A line in a TeX box (`TexBox`): what follows is spaced from the box's
-  -- depth by TeX's interline rule.
   let tex := j.texBox.isSome || b.texAfter
   let b := reachDepth j brk b
   match j.extras[brk]? with
@@ -16905,12 +13373,6 @@ private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
   repeat' split
   all_goals first | rfl | simp
 
-/-- The trailer only carries the forced-break skip, which touches
-`skip.width` alone, and a TeX box's mark on the band, which spaces only the
-next line, so it preserves the complete vertical state exactly:
-the drawn decoration that once rode here as a sibling now paints at the
-page furniture pass (`decorationRiders`) and never feeds back into
-placement. -/
 private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
     (placeParaTrailer fs j brk segs b).y = b.y ∧
@@ -16924,22 +13386,14 @@ private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
 private def Spacing.Page.withPendingSource (b : B) (source : Option Span) : B :=
   { b with pendingSource := source }
 
-/-- Where a box-opening paragraph's first baseline stands below the band
-above, past the pending skip: TeX's interline rule for the box (`texBoxTop`
-from its height: the inset, the first line's TeX box above its baseline,
-and a second line's baseline skip when the paragraph runs on — the height
-past which a box only ever takes `\lineskip`, which it also takes where more
-of the box follows), then the inset and the first line's height inside the
-box. The band's baseline skip is the page's own, the one the line holding
-the box is set under. -/
+/-- Where a box-opening paragraph's first baseline stands below the band above:
+TeX's interline rule for the box, then its inset and first line's height. -/
 private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (segs : Array Seg)
     (last : Bool) : Sp :=
   let h1 := (lineStrutInk j.strut (segsInk fs segs)).1
   let bsIn := tb.leading
   let bsOut := Ir.leadingFor b.geom.fontSize b.geom.leading
-  -- A rule reaching past the box's top makes the line holding both that
-  -- much taller, above the box: the box stands its lines and its inset above
-  -- its last line's depth, the rule its lines and its height.
+  -- A rule reaching past the box's top makes the line holding both that much taller.
   let rise := match tb.reach with
     | some (height, _) => max 0 (height + tb.lastDepth - tb.inset)
     | none => 0
@@ -16947,26 +13401,19 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
   let top := if tb.more then b.boxDepth + inkClearance else texBoxTop bsOut b.boxDepth height
   top + rise + tb.inset + h1
 
-/-- One break of a paragraph placed: the fold step `placePara` runs over
-`breaks`. The threaded state is (builder, previous break, first line).
-A named step so `runFloat_whole` can state page preservation by fold
-induction — the pipeline's shape is the proof's. -/
+/-- One break of a paragraph placed, the fold step `placePara` runs over its breaks. -/
 private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
-  -- premise: reflowAccountChecks — every line the page shows past its margin is named once, by a W0005 at its site or by its paragraph's re-flow carrying it, and a carried line draws no W0005
+  -- premise: reflowAccountChecks — every overrun line is named once, by W0005 or its re-flow.
   let b1 := if g.2.2.2.1 && !(j.carried[brk]?.getD false) then
       b0.warnOverfull (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
     else b0
-  -- The notes whose marks this line carries: mark boxes strictly between
-  -- the previous break and this one ride with the line, so the note
-  -- follows its mark through fit and spill alike.
+  -- The notes whose marks this line carries ride with it through fit and spill.
   let ns := if j.notes.isEmpty then #[] else
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
-  -- A TeX box's later lines stand its own `\baselineskip` apart, by TeX's
-  -- interline rule from the line above, and so does a boxless paragraph's
-  -- first.
+  -- A TeX box's later lines, and a boxless paragraph's first, stand by TeX's interline rule.
   let firstBaseline := match j.texBox with
     | some tb =>
       if st.2.2 && tb.boxed then some (texBoxBaseline fs b0 j tb g.1 (brk + 1 == j.items.size))
@@ -16983,21 +13430,16 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
       (stepLead := j.lead) (rowStrut := j.rowStrut) (strut := j.strut)),
     brk, false)
 
-/-- The breaker may choose the end-fill immediately before a forced
-newline. Both choices end the same source segment (`lineStart` skips the
-penalty after the fill).
-premise: mintedSettingsChecks — kept boundaries and indentation
-ship unchanged; a genuinely split declared line still raises W0386. -/
+/-- Whether item `k` is the end-fill before a forced
+newline, a break that ends the same source segment. -/
+-- premise: mintedSettingsChecks — a split declared line still raises W0386.
 public def isEndFill (items : Array Item) (k : Nat) : Bool :=
   match items[k]? with
   | some (.glue g) => g.parfill && isForced items (k + 1)
   | _ => false
 
-/-- Read the actual item boundaries and the actual breaking task's result
-once, at paragraph placement. No page text or displayed frame counter is
-used to infer the authored segmentation afterwards. A paragraph whose
-forced ends declare no lines (`declares` false, a markdown paragraph's)
-records its own end alone: it declared one line shape, the paragraph's. -/
+/-- Read the item boundaries and the breaking task's result once, at
+paragraph placement; an undeclaring paragraph records its own end alone. -/
 public def paragraphBreaksOf (site : Nat) (leaf : Option Nat) (frame : Option FrameOrigin)
     (declares : Bool) (items : Array Item) (breaks : Array Nat) : ParagraphBreaks :=
   let forced := (Array.range items.size).filter (isForced items)
@@ -17019,9 +13461,6 @@ public theorem paragraphBreaksOf_endFills_mem (site : Nat) (leaf : Option Nat)
       k ∈ breaks ∧ isEndFill items k = true := by
   simp [paragraphBreaksOf]
 
-/-- A paragraph that declares no lines records no re-flow, whatever the
-breaker chose: the one end it records closes it, and only a declared end
-before the last can be split (`ParagraphBreaks.Splits`). -/
 public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Nat)
     (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) :
     (paragraphBreaksOf site leaf frame false items breaks).reflows = #[] := by
@@ -17033,9 +13472,8 @@ public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Na
     omega
   simp [ParagraphBreaks.splitAt, hpop]
 
-/-- Places a re-flow's detail names beside the record's own location: line
-and column in the record's file, else the file too; the first three, and
-how many more. -/
+/-- The places a re-flow's detail names: line and column, the
+file where it differs, the first three and how many more. -/
 private def placesSaid (file : Option String) (sites : Array Span) : String :=
   let said := (sites.extract 0 3).toList.map fun s =>
     if file == some s.file then s!"{s.pos.line}:{s.pos.col}"
@@ -17047,14 +13485,8 @@ private def placesSaid (file : Option String) (sites : Array Span) : String :=
     if sites.size > 3 then String.intercalate ", " said ++ s!" and {sites.size - 3} more"
     else String.intercalate ", " rest.reverse ++ " and " ++ last
 
-/-- A paragraph's re-flow diagnostic (W0386), made from its re-flowed
-declared lines: at the first of them, in the paragraph's census key, saying
-in its words whether a line of them still runs past the measure — an
-overrun it carries for W0005 (`Diag.carries`) — and in its detail how many
-lines they ship as, how many of those run past the measure, by how much the
-widest does, and where they open. Placement makes it for one setting of the
-paragraph (`warnReflow`), and the postlude again for the overlay steps that
-set it more than once (`reflowsMerged`): one maker, one wording. -/
+/-- A paragraph's re-flow diagnostic (W0386) from its re-flowed
+declared lines, the one maker placement and the postlude share. -/
 private def reflowRecord (subject : String) (frame : Option Nat) (lines : Array ReflowedLine) :
     Diag :=
   let site := lines.findSome? (·.site)
@@ -17079,17 +13511,8 @@ to widen the measure, or declare a narrower face")
     (detail := some (loc ++ shape ++ past)) (output := some .pdf)
     (carries := if over.isEmpty then [] else [.W0005])
 
-/-- W0386, the declared shape's account: the author ended a line where they
-meant it to end, the segment did not fit the measure, and the breaker found
-a legal break inside it — so the remainder returns to the flush-left margin
-and the page shows one shape where another was declared (`ParagraphBreaks.Splits`).
-Named, not refused: the degraded state at full strength, since refusing the
-break would run ink off the measure instead (display type is ragged and
-unhyphenated, so the breaker has nowhere to put it). Silent where nothing
-was declared — a paragraph of continuous prose declares one line and may
-set as many as it needs — where every declared break held, and where only
-the paragraph's last line, which its own end closes, sets more lines than
-one: that is the shape LaTeX sets, and it declared nothing to lose. -/
+/-- W0386: a declared line ended where the author meant it and re-flowed,
+named rather than refused; silent where nothing was declared. -/
 private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bool) : B :=
   if reflowed then
     { b with diags := b.diags.push (reflowRecord p.subject p.frameNumber p.lines) }
@@ -17120,23 +13543,13 @@ private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bo
   simp only [Spacing.Page.warnReflow]
   split <;> rfl
 
-/-- `warnReflow_accounts`: the declared shape and the diagnostic in the same
-step — a paragraph one of whose declared lines re-flowed adds exactly one
-W0386, and one that declared none, whose breaks all held, or whose last
-line alone set more than one line, adds none. The `_accounts` shape
-(`rewriteCtrl_accounts`, `warnSpill_accounts`): the re-flow is paid for by
-the warning, decided on what the builder already holds — the forced breaks
-in the items it is about to place and the breaks the breaker returned
-(`ParagraphBreaks.reflows`) — never by reading the shipped pages back afterwards. -/
 private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bool) :
     (b.warnReflow q reflowed).diags.size =
       b.diags.size + (if reflowed then 1 else 0) := by
   unfold Spacing.Page.warnReflow
   split <;> simp_all
 
-/-- How far a paragraph's line sets past its measure, where it does: the
-excess of the width `setLine` gives it over the measure, when its overrun
-flag, the one `paraLineGeom` reads, is set (`paraLineGeom_overruns`). -/
+/-- How far a paragraph's line sets past its measure, where its overrun flag is set. -/
 private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Sp :=
   let lead := if first then j.hangIndent else 0
   let width := j.target + lead
@@ -17155,14 +13568,8 @@ private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (firs
   repeat' split
   all_goals simp_all
 
-/-- The one walk a re-flowed paragraph's account comes from, over the
-breaks its record holds and by the one predicate its census reads
-(`ParagraphBreaks.splitAt`, `reflows_mem`): which breaks end a line of a
-declared line that re-flowed — a line its split ends, or the one after a
-split — and each such declared line, with its rank among the paragraph's
-declared lines, its first located item, the lines it ships as, and where
-and how far each of those runs past the measure. The marks keep W0005 off
-those lines (`placeParaLine`); the lines are what the re-flow names. -/
+/-- Which breaks end a line of a re-flowed declared line, and
+each such line with its rank, first item, lines and overruns. -/
 private def reflowWalk (j : ParaJob) (p : ParagraphBreaks) : Array Bool × Array ReflowedLine :=
   Id.run do
   let split := p.splitAt
@@ -17198,29 +13605,21 @@ private def reflowWalk (j : ParaJob) (p : ParagraphBreaks) : Array Bool × Array
   if let some line := cur then out := out.push line
   return (marks, out)
 
-/-- The breaks ending a line of a declared line that re-flowed, marked by
-item index (`reflowWalk`, over the forced ends and fills `paragraphBreaksOf`
-records, which no builder field enters). A paragraph that declares no
-lines, or whose declared lines all held, marks none. -/
+/-- The breaks ending a line of a re-flowed declared line, by item index. -/
 private def carriedBreaks (j : ParaJob) (breaks : Array Nat) : Array Bool :=
   let p := paragraphBreaksOf 0 none none j.declaresLines j.items breaks
   if p.reflows.isEmpty then #[] else (reflowWalk j p).1
 
-/-- The paragraph's record of its breaks, with each declared line that
-re-flowed (`reflowWalk`) and the frame its page shows. -/
+/-- The paragraph's record of its breaks, with its
+re-flowed declared lines and the frame its page shows. -/
 private def paragraphRecord (b : B) (j : ParaJob) (breaks : Array Nat) : ParagraphBreaks :=
   let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   if p.reflows.isEmpty then p else
     let lines := (reflowWalk j p).2
     { p with key := lines.findSome? (·.site), lines := lines, frameNumber := b.curFrame }
 
-/-- The job as its lines are placed. A TeX box whose rule reaches by its
-lines (`TexBox.reach`) learns its last line's depth, its strut's or its
-ink's, before its first line stands: TeX builds the box before the line
-holding it, so how far the rule reaches past the box's top is known where
-that line is placed (`texBoxBaseline`). And the lines of a declared line
-that re-flowed are marked (`carriedBreaks`): their overrun is the re-flow's
-to name. -/
+/-- The job as its lines are placed: a reaching TeX box learns
+its last line's depth first, and re-flowed lines are marked. -/
 private def placedJob (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : ParaJob :=
   { j with carried := carriedBreaks j breaks, texBox := j.texBox.map fun tb =>
       if tb.reach.isNone then tb else
@@ -17297,8 +13696,7 @@ private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
   · intro i st h
     exact sourceBound_placeParaLine fs _ st breaks[i] (sourceBound_placedJob hj) h
 
-/-- Plain text can introduce discretionary spacing penalties, but no
-authored break or hyphen glyph. The final forced penalty is added separately. -/
+/-- Plain-text items: discretionary spacing penalties, but no authored break or hyphen glyph. -/
 private def Item.Prose : Item → Prop
   | .pen _ cost flagged _ _ glyphs =>
     forcedCost < cost ∧ flagged = false ∧ glyphs = #[]
@@ -17659,8 +14057,7 @@ private theorem setLine_unflagged_chars (items : Array Item) (a j : Nat) (target
     simp [hg, itemSpan]
   next => simp [itemSpan]
 
-/-- The same placement invariant serves paragraph ownership and the body
-census. Furniture is selected only when the caller explicitly asks for it. -/
+/-- A line's census scalars, furniture included only when `pick` asks. -/
 private def lineCensus (pick : Option Nat → Bool → Bool) (l : LineOut) : List Char :=
   if pick l.leaf l.counted then l.segs.toList.flatMap Seg.glyphChars else []
 
@@ -17965,9 +14362,6 @@ private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
   · exact fun k hm => hk k (Array.mem_toList_iff.mp hm)
   · exact Or.inl rfl
 
-/-- Actual KP breaks, the paragraph cursor, line setting, and page spills
-compose without losing or adding glyphs. Collection establishes the job's
-plain-item shape; no alternate paragraph interpreter is used. -/
 private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand fil : Bool) {runt : Bool}
     (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : Spacing.Paragraph.hangIndent j = 0)
@@ -17985,26 +14379,17 @@ private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool →
     exact kp_members_lt _ _ _ _ _ _ (by simp [paraItems_size])
 
 
-/-- Content with no physical placeholder survives the physical pass whole:
-the substitution half of "the two sequences stay distinct" —
-`Ir.frame_sequence_carries_no_physical` is the rendering half. One
-instance of the map's conditional-identity schema, with
-`Ir.hasPhysicalPage` as the trigger census. -/
 public theorem substPage_id (n total : Nat) (xs : Array Ir.Inline)
     (h : Ir.hasPhysicalPage xs = false) : substPage n total xs = xs :=
   Ir.mapInlines_id (substPageLeaf n total) Ir.isPhysicalPage
     (fun x hx => by cases x <;> simp_all [Ir.isPhysicalPage, substPageLeaf]) xs h
 
-/-- The two sequences cannot quietly fuse: the physical pass leaves a frame
-slot's rendering exactly as the frame numbering rendered it, on every page —
-so the frame number in a footer can never be rewritten by, or derived from,
-the physical page counter. -/
 public theorem substPage_leaves_frame_slot (n total k tot : Nat) (s : Ir.ChromeSlot)
     (sec : Array Inline) (hs : s.isFrameSequence = true) :
     substPage n total (s.render sec k tot) = s.render sec k tot :=
   substPage_id n total _ (Ir.frame_sequence_carries_no_physical s sec k tot hs)
 
-/-- One op staged for placement: paragraphs carry their breaking task. -/
+/-- One op staged for placement, paragraphs carrying their breaking task. -/
 private inductive StagedOp where
   | skip (g : Glue)
   | skipAlt (long short : Glue)
@@ -18038,9 +14423,8 @@ private inductive StagedOp where
   | noInterline
   | displayOpen (dj : DisplayJob) (left size : Sp)
 
-/-- The operations emitted by a plain source paragraph and its boundary.
-The source bound belongs to the paragraph job; boundary operations carry
-no text and cannot manufacture a source label. -/
+/-- The ops a plain source paragraph and its boundary
+emit, the source bound belonging to the paragraph job. -/
 private def Op.SourceBound (n : Nat) : Op → Prop
   | .para j => j.SourceBound n
   | .skip _ | .skipAlt _ _ | .anchorRule _ | .anchor _ => True
@@ -18051,9 +14435,7 @@ private def StagedOp.SourceBound (n : Nat) : StagedOp → Prop
   | .skip _ | .skipAlt _ _ | .anchorRule _ | .anchor _ => True
   | _ => False
 
-/-- Occurrences in a selected picture, indexed before placement. Matching
-uses this identity as well as the label key, so equal text at another
-source site cannot stand in for a missing line. -/
+/-- A selected picture's label occurrences, indexed before placement. -/
 public def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
     Array LabelAudit.Request :=
   (pic.shapes.mapIdx fun i shape => match shape with
@@ -18075,16 +14457,13 @@ private def stagedLabelRequests (ops : Array StagedOp) : Array LabelAudit.Reques
       | .floatOpen | .floatClose | .anchor _ | .slotOpen | .slotClose _
       | .anchorRule _ | .noInterline | .displayOpen _ _ _ => #[]
 
-/-- One column of a row as placed: where its ink starts in the page's
-arrays, its first baseline when a picture opened it (a label line is no
-baseline of the column's), and where the builder stood when it ended —
-the column's last baseline, a picture's own included. -/
+/-- One column of a row as placed: where its ink starts, its first baseline
+when a picture opened it, and where the builder stood at its end. -/
 private structure ColMark where
   lines : Nat
   fills : Nat
   inks : Nat
-  /-- The column produced a box or moved the cursor; inherited spacing
-  alone contributes neither an alignment reference nor a lower bound. -/
+  /-- Whether the column produced a box or moved the cursor. -/
   contributes : Bool := false
   first : Option Sp := none
   y : Sp := 0
@@ -18094,8 +14473,8 @@ private structure ColMark where
   band : Spacing.Band := .text
   source : Option Span := none
 
-/-- Diagnostic provenance follows the column supplying the painted lower
-bound; geometric joins remain independent of source order. -/
+/-- A column's end, its diagnostic provenance following
+the column that supplies the painted lower bound. -/
 private structure ColEnd where
   tail : Spacing.Tail
   source : Option Span
@@ -18110,8 +14489,6 @@ private def ColEnd.remember (acc : Option ColEnd) (last : ColEnd)
     (contributes : Bool) : Option ColEnd :=
   if contributes then some ((acc.map (·.join last)).getD last) else acc
 
-/-- An empty column cannot change any bound or provenance in either row
-join, regardless of the preceding column's measurements. -/
 private theorem ColEnd.remember_empty_id (acc : Option ColEnd) (last : ColEnd) :
     ColEnd.remember acc last false = acc := rfl
 
@@ -18120,10 +14497,8 @@ private def Spacing.Page.colEnd (b : B) : ColEnd :=
               boxDepth := b.boxDepth, band := b.prevBand }
     source := b.lastSource }
 
-/-- Placement state saved at a `colOpen`, restored per column: where the
-columns start, and the lowest bottom any column reached so far. `pos`,
-`page` and `marks` are the row's alignment (`Spacing.Page.alignRow`): the declared
-positions, the page it opened on, and each column as placed. -/
+/-- Placement state saved at a `colOpen`: where the columns
+start, the lowest bottom so far, and the row's alignment. -/
 private structure ColSave where
   y : Sp
   prevDepth : Sp
@@ -18132,8 +14507,7 @@ private structure ColSave where
   prevBand : Spacing.Band
   skip : Glue
   fresh : Bool
-  /-- Only completed columns enter the join. The preceding page band is
-  the opening cursor, not a member of this row. -/
+  /-- The completed columns' joined end. -/
   bottom : Option ColEnd := none
   source : Option Span := none
   pos : Array Ir.BoxPos := #[]
@@ -18145,30 +14519,18 @@ private def ColSave.opening (save : ColSave) : ColEnd :=
               boxDepth := save.boxDepth, band := save.prevBand }
     source := save.source }
 
-/-- The placement walk's whole state: the page builder, the column-save
-stack, the logo spans keyed to page indexes, and the running prose-line
-count the measure band reads. One structure so a float group can be
-replayed whole (`runFloat`) through the same step every other op takes. -/
+/-- The placement walk's whole state, one structure so
+a float group can be replayed through the same step. -/
 private structure StepSt where
   b : B
   colSaves : Array ColSave := #[]
-  /-- An open title slot: where it started (the column save its neighbours
-  restart from) and the first line, fill and ink it placed. -/
+  /-- Open title slots: where each started and the first line, fill and ink it placed. -/
   slotSaves : Array (ColSave × Nat × Nat × Nat) := #[]
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
-/-- **A heading never ends a page** (`Spacing.Paragraph.keepNext`): when a heading's
-own lines and what it keeps — the next block's first box, as placement
-reads it (`keepExt`): a paragraph's first two lines as their boxes stand,
-a picture's whole box, a second heading and its own reserve — cannot
-stand on the page within its shrink,
-the page closes before the heading, as TeX's page builder finds no legal
-break between a heading and the box after it and breaks above it. In flow
-and in a frame declared breakable (`[allowframebreaks]`, whose block keeps
-its title with its body as beamer's one box does), outside a float replay:
-a frame that does not break and a float decide their own page. `n` is the
-heading's line count. -/
+/-- A heading never ends a page: when its lines and what it keeps
+cannot stand within the page's shrink, the page closes before it. -/
 private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
   if 0 < j.keepNext && b.frameBreak != some false && !b.noBreak &&
       !b.fresh &&
@@ -18179,15 +14541,13 @@ private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
     b.spillPage
   else b
 
-/-- The label lines and diagnostics of the actual picture shape fold. A
-picture's ink is not per shape: it is one `InkOut` (`pictureInk`). -/
+/-- The label lines and diagnostics of a picture's shape fold. -/
 public structure PictureEmission where
   lines : Array LineOut := #[]
   diags : Array Diag := #[]
 
-/-- One production shape step. A label sets its line through `emitLabel`,
-whose diagnostics travel with it; every other shape is ink, which the
-picture's one `InkOut` carries. -/
+/-- One shape step: a label sets its line through `emitLabel`;
+every other shape is ink in the picture's one `InkOut`. -/
 public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape)
@@ -18211,20 +14571,14 @@ public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
         out.lines.push line
     { out with lines := lines, diags := out.diags ++ label.diags }
 
-/-- **A picture's ink is its lowered figure** (`Gfx.ofPicture`), each label
-keyed by the line that sets it (`Gfx.ofPictureKeyed`, the picture's
-`origin` and the label's shape), placed by the picture's isometry
-(`Ir.Pic.Place.toIso`) and stamped with its leaf: one ink, its marks in
-source order, a rectangle fill among them where the source put it, its
-labels where they stand among the marks. `none` when the picture is labels
-only. `box` is the box placement already measured. -/
+/-- A picture's ink: its lowered figure (`Gfx.ofPictureKeyed`) placed by the
+picture's isometry and stamped with its leaf; `none` for labels only. -/
 public def pictureInk (box : Gfx.Box) (pic : Ir.Pic.Picture) (place : Ir.Pic.Place)
     (leaf : Option Nat) (origin : Nat) : Option InkOut :=
   if pic.shapes.all (· matches .label ..) then none
   else some { fig := Gfx.ofPictureKeyed origin box pic, place := place.toIso, leaf := leaf }
 
-/-- The actual picture emitter in source-shape order. Its fold state keeps
-label lines and their diagnostic account together. -/
+/-- The picture emitter in source-shape order. -/
 public def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (pic : Ir.Pic.Picture) (origin : Option Nat := none) : PictureEmission :=
@@ -18236,36 +14590,21 @@ public def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
       (state.1 + 1, emitPictureShape fs imgs geom xHeight leaf place state.2 shape
         (some (id, state.1)))) (0, {})).2
 
-/-- Fit and place one picture: `placeLine`'s fit-or-spill for a box of
-the picture's height, then every shape through one affine transform —
-fills and inks as riders, label lines riding the picture's own shrink
-(`pushSibling`, `pushLabels`). Its own definition so the placement-step
-case analysis stays inside the elaboration budget and the page facts
-(`placePicture_extends`, `bgStep_placePicture`) cost one unfold each. -/
+/-- Fit and place one picture as a box of its height,
+then every shape through one affine transform. -/
 private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) : B := Id.run do
-  -- The picture's bottom edge is a baseline (TikZ's default: the lower end
-  -- of the picture on the baseline), so the next line stands a leading
-  -- below it, as TeX's `\baselineskip` from a box of depth zero does.
+  -- The picture's bottom is a baseline (TikZ's default): the next line stands a leading below.
   let strut := b0.strutBelow fs
   let source := leaf.bind fun id => (b0.pictureSpans.find? (·.1 == id)).map (·.2)
   let mut b := b0
-  -- Fit the picture's box the way `placeLine` fits a line of height
-  -- `h` and no depth: at the top of a fresh page, else below the last
-  -- line's depth, breaking to a new page when even the shrink above
-  -- cannot absorb the overflow.
   let box := pictureBox b.geom fs imgs b.xHeight pic
   let ((px0, py0), (_px1, py1)) := box
   let h := py1 - py0
-  -- A declared baseline (`Ir.Pic.Picture.rise`) is where the line stands:
-  -- the part of the picture below it is the line's depth, as a box's is.
+  -- A declared baseline (`Ir.Pic.Picture.rise`) makes the part below it the line's depth.
   let rise := pic.rise (picMetric fs imgs b.geom b.xHeight)
   let bottom := b.bottom - b.surfaceBottom
-  -- On a fresh page the picture is the page's first box. Where the page is
-  -- TeX's, it stands by the rule a first line stands by (`Spacing.Page.firstRise`):
-  -- `\topskip` less its height above the baseline, or below an anchor the
-  -- glue the anchor keeps (`Spacing.Page.topKept`) and TeX's interline rule; on a
-  -- frame page, at the text area's top.
+  -- On a fresh TeX page the picture stands by the first line's rule (`Spacing.Page.firstRise`).
   let lead := Ir.leadingFor b.geom.fontSize b.geom.leading
   let firstTop (b : B) : Sp :=
     match b.geom.topskip with
@@ -18276,8 +14615,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   let mut yTop := firstTop b + b.surfaceTop
   let mut above : Sp := 0
   let mut overflow : Sp := 0
-  -- The fil the box consumes with the pending skip, counted as `Spacing.Page.commit`
-  -- counts a line's: the page's distribution moves the picture by it.
+  -- The consumed skip's fil counts as for a line, so the distribution moves the picture by it.
   let mut fils := b.pageFils + (if b.skip.fil then 1 else 0)
   let mut stretch : Sp := 0
   if !b.fresh then
@@ -18288,8 +14626,6 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     if overflow ≤ above ∨ b.noBreak then
       yTop := y
       overflow := min overflow above
-    -- A frame the overflow ladder stands overfull (`overhangs`), as
-    -- `fitCommit` stands a line.
     else if b.overhangs (overflow - above) then
       yTop := y
       b := b.noteOverrun (overflow - above)
@@ -18302,14 +14638,10 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       overflow := 0
       above := 0
       stretch := 0
-  -- One transform for everything the picture ships: `Pic.Place` is the
-  -- affine map the invertibility and containment theorems range over.
   let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
   let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic (some origin)
   let ink := pictureInk box pic place leaf origin
-  -- The anchors pending above the picture — the labels of a display it
-  -- stands for — land on its first line, where a link to them lands; a
-  -- picture with no line leaves them to the next.
+  -- Anchors pending above the picture land on its first line.
   let labelLines := emitted.lines.modify 0 fun l => { l with anchors := b.pendingAnchors ++ l.anchors }
   let pending := if emitted.lines.isEmpty then b.pendingAnchors else #[]
   b := ({ b with pageStretch := stretch
@@ -18335,12 +14667,8 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     ignoreDepth := false }
   return b
 
-/-- Close a title slot: the lines and fills it placed since `save` move by
-`slotShift` as one box, stay pinned where they land (the page's vertical
-distribution moves nothing placed), and the next slot starts where this one
-did — a slot is an overlay node, never a neighbour's spill. The text extent
-is the shipped lines' glyph ink (`segsInk`), not the face's nominal ascent
-and descent: TikZ anchors the TeX box that the node body actually built. -/
+/-- Close a title slot: its lines and fills move by `slotShift` as one
+box measured by glyph ink, and the next slot starts where it did. -/
 private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) : B :=
   let (col, l0, f0, k0) := save
@@ -18370,9 +14698,6 @@ private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat
     { restored with cur := { b.cur with lines := lines, fills := fills, inks := inks }
                     pinnedLines := lines.size, pinnedFills := fills.size, pinnedInks := inks.size }
 
-/-- A slot moves ink inside the page being built and nothing else: the
-shipped pages, the geometry, the document's ground and the break flag
-stand — what the page-step facts below read. -/
 private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) :
     (b.placeSlot fs save spec).pages = b.pages ∧
@@ -18387,9 +14712,7 @@ private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat ×
 private def Spacing.Page.colMark (b : B) : ColMark :=
   { lines := b.cur.lines.size, fills := b.cur.fills.size, inks := b.cur.inks.size }
 
-/-- A column ends where the builder stands. Count boxes before asking
-whether they paint: a zero-width strut still owns its measured height.
-Cursor changes also retain reservations with no emitted marks. -/
+/-- A column ends where the builder stands; a zero-width strut still owns its height. -/
 private def ColMark.finish (m : ColMark) (save : ColSave) (b : B) : ColMark :=
   { m with y := b.y, depth := b.prevDepth, below := b.prevBelow, band := b.prevBand
            boxDepth := b.boxDepth
@@ -18400,8 +14723,6 @@ private def ColMark.finish (m : ColMark) (save : ColSave) (b : B) : ColMark :=
              b.boxDepth != save.boxDepth
            source := b.lastSource }
 
-/-- With unchanged page, marks and cursor, the column owns no geometry.
-This is the premise consumed by both joins' empty-column identity. -/
 private theorem ColMark.finish_unchanged (m : ColMark) (save : ColSave) (b : B)
     (hp : b.pages.size = save.page)
     (hl : m.lines = b.cur.lines.size) (hf : m.fills = b.cur.fills.size)
@@ -18417,14 +14738,8 @@ private def ColSave.finish (save : ColSave) (b : B) : ColSave :=
               bottom := ColEnd.remember save.bottom b.colEnd
                 (marks.back?.any (·.contributes)) }
 
-/-- **A row stands its boxes on one baseline** — TeX's line of boxes
-(TeXbook ch. 12), each box's reference point the one its `[pos]` names
-(latex.ltx `\@iiiparbox`: `t` its first baseline, `b` its last, `c` its
-middle; `Ir.BoxPos`). Every column was set from the row's start; the one
-whose point stands lowest stays, and each other moves down by the
-difference, its lines, fills and inks together. A `top` box's point is the
-row's start, so a row of undeclared boxes moves nothing. The row then ends
-at the joined baseline, clearance, leading and measured box bottom. -/
+/-- A row stands its boxes on one baseline, each by the
+reference point its `[pos]` names (latex.ltx `\@iiiparbox`). -/
 private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
   let refOf (k : Nat) (m : ColMark) : Sp :=
     if !m.contributes then save.y else
@@ -18438,8 +14753,6 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
     | .center => (save.y + m.y + m.depth) / 2
   let refs := save.marks.mapIdx refOf
   let target := refs.foldl max save.y
-  -- The column an index of one of the page's arrays belongs to, and its shift;
-  -- ink placed before the row stays.
   let dyAt (start : ColMark → Nat) (i : Nat) : Sp := Id.run do
     let mut d : Sp := 0
     for k in [0:save.marks.size] do
@@ -18468,20 +14781,12 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
            neededSource := if b.needed < tail.y + tail.depth - b.geom.bodyBottom then ending.source
              else b.neededSource }
 
-/-- An aligned row moves ink inside the page being built and nothing else:
-the shipped pages, the geometry, the document's ground and the break flag
-stand — what the page-step facts read, as `placeSlot_keeps` says of a slot. -/
 private theorem alignRow_shipped_id (b : B) (save : ColSave) :
     (b.alignRow save).pages = b.pages ∧ (b.alignRow save).geom = b.geom ∧
     (b.alignRow save).docBg = b.docBg ∧ (b.alignRow save).noBreak = b.noBreak := by
   simp [Spacing.Page.alignRow]
 
-/-- Place `Op.boxAnchor` where its rule puts it below the band above
-(`AnchorRule`), then the shift: inside paint an empty line commits there,
-else the band's reference moves there with the pending glue still owed
-below it — the balanced rule's rise already counts what of that glue the
-skip absorbs. What follows is spaced below it either way (`anchorAt`'s
-state). -/
+/-- Place `Op.boxAnchor` where its rule puts it below the band above, then the shift. -/
 private def Spacing.Page.placeAnchor (fs : FontSet) (b : B) (rule : AnchorRule)
     (shift : Sp) (paints : Bool) : B :=
   let bs (b : B) : Sp := Ir.leadingFor b.geom.fontSize b.geom.leading
@@ -18498,11 +14803,7 @@ private def Spacing.Page.placeAnchor (fs : FontSet) (b : B) (rule : AnchorRule)
       0 (b.strutBelow fs) false 0 b.bottom).keepInk 0
   else b.anchorAt fs (b.y + rise b + shift)
 
-/-- Close a region. A painted box is TeX's box of depth zero: it keeps the
-glue its list ends on, and what follows is spaced below its bottom edge as
-below an empty box there (`Spacing.Page.anchorAt`). Only the region stack
-and cursor depend on measuring the surface; page, census and frame
-projections can read the remaining fields directly. -/
+/-- Close a region; a painted box is TeX's box of depth zero, keeping the glue its list ends on. -/
 private def Spacing.Page.closeRegion (fs : FontSet) (b : B) : B :=
   let closing := b.openRegions.back?.map fun start =>
     let span := start.close b.cur b.skip.width b.y
@@ -18521,10 +14822,8 @@ private def Spacing.Page.closeRegion (fs : FontSet) (b : B) : B :=
   | some edge => { closed.anchorAt fs edge with skip := {} }
   | none => closed
 
-/-- Place one staged op. `floatOpen`/`floatClose` are inert here: the
-driver loop consumes the outermost pair (`runFloat`), and an inner pair —
-a subfigure inside its parent — is already kept whole by the enclosing
-group. -/
+/-- Place one staged op; `floatOpen` and `floatClose` are inert
+here, the driver consuming the outermost pair (`runFloat`). -/
 private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (s : StagedOp) : StepSt := Id.run do
   let mut b := st.b
@@ -18544,27 +14843,18 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     b := { b with openRegions := b.openRegions.push start }
   | .regionClose => b := b.closeRegion fs
   | .setLogo c =>
-    -- The page being built (index `pages.size`) and everything after
-    -- carry this content; a later span overrides.
+    -- The page being built and everything after carry this content; a later span overrides.
     logoSpans := logoSpans.push (b.pages.size, c)
   | .skip g =>
-    -- Glue reaching a page that holds nothing yet is discarded, as TeX's
-    -- page builder discards it, until an anchor stands — `\vspace*`'s rule
-    -- or a fil (`Spacing.Page.topKept`): only then does the page keep its pending skip.
+    -- An empty page discards glue, as TeX's page builder does, until an anchor stands.
     unless b.fresh && !(b.anchored || b.skip.fil || g.fil) do
       b := { b with skip := b.skip.add g }
   | .anchorRule g =>
-    -- `\vspace*`'s zero rule: the first item of a page that holds nothing
-    -- yet, below `\topskip`, where the glue before it is gone and TeX's
-    -- `\parskip` stands after it; mid-page it is invisible and holds nothing.
+    -- `\vspace*`'s zero rule is a page's first item, below `\topskip`; mid-page it holds nothing.
     if b.fresh then b := { b with anchored := true, skip := g }
   | .noInterline => b := { b with ignoreDepth := true }
   | .displayOpen dj left size =>
-    -- TeX's skip above, over the empty line amsmath's `$$` sets first where
-    -- the display opens a paragraph (a box of no height or depth the
-    -- picture stands below as any box does); the line after the picture
-    -- then stands by TeX's interline rule from its depth (`texAfter`), and
-    -- no text line ends before what follows.
+    -- TeX's skip above, over the empty line `$$` sets where the display opens a paragraph.
     let b1 := b.displaySkip dj left size
     let empty := if dj.emptyLine then
         texBaselineGap (Ir.leadingFor size b1.geom.leading) b1.boxDepth 0 - b1.prevDepth
@@ -18578,11 +14868,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .bodyOpen g box => b := b.openBody fs g box
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
-    -- A boundary closes a page only when the page holds something: two
-    -- adjacent frames share one boundary, not an empty page. Frame ground
-    -- and distribution clear at an empty boundary; running style waits
-    -- for shipment (`emptyBreak_pageState`). A page that is not blank
-    -- ships: a picture of fills or of strokes alone is a page.
+    -- A boundary closes only a page that holds something, so adjacent frames share one.
     if !b.cur.blank then
       b := { b.finishPage b.closingOwed with
                chrome := none, frameBreak := none, frameSource := none, spillWarned := false,
@@ -18611,11 +14897,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
   | .pin =>
-    -- The resume depth clears the chrome's ink: the title bar (the last
-    -- pinned fill) reaches `pad` below the title's depth, and a spill
-    -- page's first line spaces off the bar's bottom, not the bare
-    -- baseline — without this the resumed line's ascent clipped into the
-    -- repeated bar.
+    -- The resume depth clears the chrome: a spill page's first line spaces off the bar.
     let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
     let (depth, below) := reserveBelow b.prevDepth b.prevBelow (barBottom - b.y)
     b := { b with
@@ -18631,9 +14913,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         band := .rule
         header := b.curBand } }
   | .colOpen pos =>
-    -- On a fresh page nothing stands above the columns: their bottom starts
-    -- at the body top, never at the last page's last line, which
-    -- `Spacing.Page.contentEnd` would otherwise read as this page's content end.
+    -- On a fresh page the columns' bottom starts at the body top, not the last page's line.
     let fresh := b.fresh
     -- Below an anchor the row is TeX's first box (`Spacing.Page.colAnchor`).
     if fresh && (b.anchored || b.skip.fil) && b.colAnchor.isNone then
@@ -18673,14 +14953,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                       skip := if save.bottom.isSome then {} else save.skip
                       freshStart := if save.bottom.isSome then false else save.fresh }
   | .titleBar color pad strut =>
-    -- The bar sits behind the line just placed: full page width, page
-    -- top to `pad` below the line's depth. Its bottom edge rides onto
-    -- the page (`PageOut.band`) for the corner-logo furniture. With a
-    -- strut the box is moloch's: the title lines (everything on this
-    -- fresh frame page) move so the first baseline sits `pad + strut`
-    -- below the page top, and the bar closes `pad` under the last
-    -- baseline or under the title's own depth, whichever is deeper
-    -- (`frameBarHeight`).
+    -- The bar behind the title, page top to `pad` below its depth; with a strut, moloch's box.
     b := match b.cur.lines.back?, b.cur.lines[0]? with
       | some l, some first =>
         match strut with
@@ -18701,18 +14974,11 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       | _, _ => b
   | .boxAnchor rule shift paints => b := b.placeAnchor fs rule shift paints
   | .hrule color th =>
-    -- A line whose only seg is the rule: the full line machinery decides
-    -- its place, so skips, page breaks, and the vertical distribution
-    -- treat it as they treat text.
+    -- A rule line takes the full line machinery, so it spaces, breaks and distributes as text does.
     b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color]
       b.geom.textWidth
   | .tableRule th x w segs =>
-    -- Exactly the pending sep below the previous ink, never a text
-    -- leading: the rule's padding is booktabs' declared seps and nothing
-    -- else. The seg's ink stands `th` above its baseline, so the
-    -- baseline is the band's bottom; `commit` then owes zero depth, and
-    -- the interline convention makes the next line stack flush, as TeX
-    -- ignores `\prevdepth` after an `\hrule`.
+    -- Exactly the pending sep below the previous ink, with zero depth, as after TeX's `\hrule`.
     let mk (y : Sp) : LineOut :=
       { x := x, y := y, size := 0, segs := segs, setWidth := w, regionExtent := some (th, 0) }
     b := b.fitCommit mk
@@ -18721,9 +14987,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       (fun b => b.y + b.prevDepth + th)
       0 0 true 0 b.bottom
   | .progress num den fg bg thick x w =>
-    -- Half a line under the last baseline: the track, then the elapsed
-    -- share over it. The bar joins the page's depth so following content
-    -- spaces below it.
+    -- Half a line under the last baseline: the track, then the elapsed share over it.
     let gap := b.geom.fontSize / 2
     let y := b.y + b.prevDepth + gap
     let track : Fill := { x := x, y := y, w := w, h := thick, color := bg }
@@ -18736,8 +15000,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                   prevBand := .box }
   | .para j t =>
     let breaks := t.get
-    -- A plain full-measure text paragraph is the continuous reading the
-    -- measure band is about; headings, items, code, and columns are not.
+    -- A plain full-measure text paragraph is the continuous reading the measure band judges.
     if j.target == b.geom.textWidth && !j.center && j.size == b.geom.fontSize &&
         j.markerSegs.isNone && j.rule.isNone then
       prose := max prose breaks.size
@@ -18745,8 +15008,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .picture x pic leaf origin =>
     let before := b.cur.lines.size
     b := placePicture fs imgs b x pic leaf origin
-    -- A picture that opens a column is the column's first baseline; its
-    -- label lines are not.
+    -- A picture that opens a column is the column's first baseline; its label lines are not.
     if let some save := colSaves.back? then
       if let some m := save.marks.back? then
         if m.first.isNone && m.lines == before then
@@ -18766,9 +15028,6 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   return { b := b, colSaves := colSaves, slotSaves := slotSaves, logoSpans := logoSpans,
            prose := prose }
 
-/-- Read the placement result through one equation per emitting arm. The
-page invariants use these equations without reducing the measured surface
-state, paragraph bookkeeping or column bookkeeping again. -/
 private theorem stepStaged_hrule_b (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (color : Ir.Color) (th : Sp) :
     (stepStaged fs imgs st (.hrule color th)).b =
@@ -18783,8 +15042,6 @@ private theorem stepStaged_boxAnchor_b (fs : FontSet) (imgs : Image.Store) (st :
     (stepStaged fs imgs st (.boxAnchor h shift paints)).b = st.b.placeAnchor fs h shift paints :=
   rfl
 
-/-- Closing a region moves the cursor only: the shipped pages, the ground,
-the frame and the ledgers stand. -/
 private theorem closeRegion_shipped_id (fs : FontSet) (b : B) :
     (b.closeRegion fs).pages = b.pages ∧ (b.closeRegion fs).noBreak = b.noBreak ∧
       (b.closeRegion fs).geom = b.geom ∧ (b.closeRegion fs).docBg = b.docBg ∧
@@ -18821,8 +15078,6 @@ private theorem stepStaged_picture_b (fs : FontSet) (imgs : Image.Store)
   repeat' split
   all_goals rfl
 
-/-- Page openings apply the shared IR transition without shipping a page.
-Only `finishPage` consumes the one-shipment empty style. -/
 private theorem pageOpening_step_projects (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (opening : Ir.PageOpening) :
     (stepStaged fs imgs st (.pageOpening opening)).b.pageState =
@@ -18830,8 +15085,6 @@ private theorem pageOpening_step_projects (fs : FontSet) (imgs : Image.Store)
     (stepStaged fs imgs st (.pageOpening opening)).b.pages = st.b.pages := by
   exact ⟨rfl, rfl⟩
 
-/-- Placement reads the collector's source and displayed number directly,
-without conditioning either on the selected footer. -/
 private theorem frameOpen_step_projects (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (br : Bool) (source : Option Span)
     (opening : FrameOpening) :
@@ -18840,8 +15093,6 @@ private theorem frameOpen_step_projects (fs : FontSet) (imgs : Image.Store)
       next.frameSource = source ∧ next.pages = st.b.pages :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- The same opening selects and measures the footer, alongside its
-ownership and counter. No independent footer op can detach these choices. -/
 private theorem frameOpen_footer_projects (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (br : Bool) (source : Option Span) (opening : FrameOpening) :
     let next := (stepStaged fs imgs st (.frameOpen br source opening)).b
@@ -18851,8 +15102,6 @@ private theorem frameOpen_footer_projects (fs : FontSet) (imgs : Image.Store)
         (bandBox fs imgs st.b.geom st.b.xHeight (st.b.pages.size + 1)) :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- Authored physical breaks within a frame keep its ownership and selected
-band; only the explicit frame-close marker ends them. -/
 private theorem break_frame_projects (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
     let next := (stepStaged fs imgs st .brk).b
     next.curFrameOrigin = st.b.curFrameOrigin ∧
@@ -18860,8 +15109,6 @@ private theorem break_frame_projects (fs : FontSet) (imgs : Image.Store) (st : S
   simp only [stepStaged, Id.run, pure]
   split <;> exact ⟨rfl, rfl, rfl⟩
 
-/-- Ending a frame clears the assignment before any following flow content
-is placed. The pages already shipped remain unchanged. -/
 private theorem frameClose_step_projects (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
     let next := (stepStaged fs imgs st .frameClose).b
     next.curFrameOrigin = none ∧ next.curFrame = none ∧ next.curFoot = none ∧
@@ -18873,10 +15120,6 @@ private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
     (stepStaged fs imgs st .brk).b.pageState = st.b.pageState := by
   simp [stepStaged, hb]
 
-/-- **A boundary ships the page it closes whenever that page is not blank**
-(`_exact`): a line, a fill or a placed picture's ink makes it one shipped
-page, and that page carries every ink the page being built held, so a
-picture that paints alone is never dropped nor merged into what follows. -/
 private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (hb : st.b.cur.blank = false) :
     (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 ∧
@@ -18886,21 +15129,14 @@ private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
   · simp [stepStaged, hb, Spacing.Page.finishPage]
     split <;> simp
 
-/-- Place a float group whole: a float is unbreakable, as LaTeX's floats
-are (a float body is a `\vbox` — placed on one page or deferred, never
-split across two). The group is tried where it stands; if placing it
-broke a page, the try is discarded and the whole group replays on a
-fresh page under `noBreak`, so no line of it can split off. A group
-taller than the text block itself still ships whole — placed alone, its
-overrun named (W0358), never split. -/
+/-- Place a float group whole: tried where it stands, else replayed on a fresh page
+under `noBreak`; a group taller than the text block ships alone, named (W0358). -/
 private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array StagedOp) : StepSt :=
   let attempt := group.foldl (stepStaged fs imgs) st
   if attempt.b.pages.size == st.b.pages.size then attempt
   else
-    -- The float and the page bottom met: close the page and give the
-    -- group the next one whole. The glue pending before the float dies
-    -- with the boundary, as TeX discards glue at the top of a page.
+    -- Close the page and give the group the next one whole; the pending glue dies with it.
     let b := if st.b.cur.blank then st.b
       else st.b.finishPage
     let st2 := group.foldl (stepStaged fs imgs)
@@ -18916,22 +15152,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       else b2
     { st2 with b := { b2 with noBreak := false } }
 
-/-! ## `runFloat_whole` — the float placed whole, over the builder
-
-STEER3's statement ("a float is placed whole"): every glyph of a float's
-body and caption in `Out` shares a page index. The four census tests over
-`Layout.Out` are the
-realisation check; the theorems here are about `runFloat`, the function
-that ships the pages. Two facts per placement step carry the result: a
-step only ever *extends* the shipped pages (page close appends; nothing
-edits or removes a shipped page), and under `noBreak` — a float group
-replaying on its own page — a step that is not a page boundary ships
-nothing at all. Sourced as the behaviour is: LaTeX's float body is a box
-(`ltfloat.dtx`; TeXbook ch. 15's insertions), placed whole or deferred
-whole, never split. -/
-
-/-- The shipped pages only grow from `b` to `b'`: nothing edits or
-removes a page once it shipped. -/
+/-- The shipped pages only grow from `b` to `b'`. -/
 private def PagesExtend (b b' : B) : Prop := ∃ s, b'.pages = b.pages ++ s
 
 private theorem pagesExtend_refl (b : B) : PagesExtend b b :=
@@ -18944,8 +15165,6 @@ private theorem pagesExtend_trans {a b c : B} :
     PagesExtend a b → PagesExtend b c → PagesExtend a c
   | ⟨s1, h1⟩, ⟨s2, h2⟩ => ⟨s1 ++ s2, by rw [h2, h1, Array.append_assoc]⟩
 
-/-- Transport along "same shipped pages": page-preserving wrappers
-(diagnostics, `cur`, skips) around a page-extending step. -/
 private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
     (he : PagesExtend b b') : PagesExtend b c :=
   he.imp fun _ hs => h ▸ hs
@@ -19080,8 +15299,6 @@ private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shi
     exact fitCommit_extends ..
   · exact pagesExtend_of_eq rfl
 
-/-- Under `noBreak` a committed band never closes a page and never clears
-the flag: the group's one legal position has already been decided. -/
 private theorem fitCommit_pages_noBreak (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) (h : b.noBreak = true) :
@@ -19104,12 +15321,6 @@ private theorem fitCommit_keeps_noBreak (b : B) (mk : Sp → LineOut)
     | (simp [h]; done)
     | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
 
-/-- Whatever branch `fitCommit` takes, every line of every note handed in
-stands in `pendingNotes` of the SAME builder that holds the committed
-band — mark and notes enter together, and spill together (the spill
-closes the page before the retry commit, so an earlier line's notes ship
-with the earlier page and this line's follow their mark onto the fresh
-one). -/
 private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock)
@@ -19164,8 +15375,6 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
   simp only [Spacing.Page.placeLine, PagesExtend, displayState_pages, keepInk_pages]
   exact fitCommit_extends ..
 
-/-- Under `noBreak` a placed line never closes a page and never clears
-the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
@@ -19186,8 +15395,6 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
   simp only [Spacing.Page.placeLine, displayState_noBreak, keepInk_noBreak]
   exact fitCommit_keeps_noBreak (h := h) ..
 
-/-- `footnote_with_mark`'s attach half: `fitCommit_note_with_mark` at
-`placeLine`'s band. -/
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
@@ -19199,8 +15406,6 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
   simp only [Spacing.Page.placeLine, displayState_pendingNotes, keepInk_pendingNotes]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
 
-/-- `placeLine` from a pages-preserving wrapper of `b0` still only
-extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
@@ -19263,10 +15468,6 @@ private theorem keepHeading_noBreak (b : B) (j : ParaJob) (n : Nat) (h : b.noBre
   unfold Spacing.Page.keepHeading
   simp [h]
 
-/-- Every placement step extends the shipped pages: nothing pops,
-reorders, or rewrites a page that already shipped. With the size check
-in `runFloat`, this is what makes "no page was closed" mean "the shipped
-pages are exactly what they were". -/
 private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) : PagesExtend st.b (stepStaged fs imgs st s).b := by
   cases s
@@ -19304,8 +15505,6 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | (refine pagesExtend_congr ?_
         (pagesExtend_trans (finishPage_extends _ (o := st.b.closingOwed) (f := false)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
 
-/-- `fitCommit` keeps both the shipped pages and the `noBreak` flag — the two
-`fitCommit` facts bundled so the step proof applies one lemma, not two. -/
 private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) (h : b.noBreak = true) :
@@ -19324,7 +15523,6 @@ private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (sh
     exact fitCommit_noBreak (h := h) ..
   · exact ⟨rfl, h⟩
 
-/-- `placeLine` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
@@ -19339,24 +15537,17 @@ private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
    placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors
       paintPadding step rs strut h⟩
 
-/-- `alignRow` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
     (b.alignRow save).pages = b.pages ∧ (b.alignRow save).noBreak = true :=
   let p := alignRow_shipped_id b save
   ⟨p.1, p.2.2.2.trans h⟩
 
-/-- `placeSlot` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem placeSlot_noBreak (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) (h : b.noBreak = true) :
     (b.placeSlot fs save spec).pages = b.pages ∧ (b.placeSlot fs save spec).noBreak = true :=
   let p := placeSlot_keeps fs b save spec
   ⟨p.1, p.2.2.2.trans h⟩
 
-/-- Under `noBreak`, a step that is not a page boundary ships nothing
-and keeps the flag: the whole group lands on the page being built. The
-placement lemmas are applied once each (via the bundled `_noBreak` forms),
-which keeps the whole-constructor reduction within the default budget, as
-`stepStaged_extends` is. -/
 private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) (h : st.b.noBreak = true) (hs : s ≠ .brk) :
     (stepStaged fs imgs st s).b.pages = st.b.pages ∧
@@ -19416,18 +15607,13 @@ private theorem foldSteps_noBreak (fs : FontSet) (imgs : Image.Store)
         (hg group[i] (Array.getElem_mem i.2))
       ⟨step.1.trans hacc.1, step.2⟩)
 
-/-- The full-page background fill `page_background_survives` looks for:
-what `finishPage` prepends when the page (or the document) declared a
-background. -/
+/-- The full-page background fill `finishPage` prepends when a background is declared. -/
 private def bgFilled (g : Geom) (p : PageOut) : Prop :=
   ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
     f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed
 
-/-- One placement step that keeps a background declared: geometry is
-unchanged, the persistent ground remains declared when it was declared
-before, and every new page then carries its full-page fill. The colour
-may change between epochs; an epoch removing `bg` does not satisfy this
-premise. -/
+/-- One placement step keeping a declared background: geometry
+unchanged, the ground still declared, and every new page filled. -/
 private def BgStep (b b' : B) : Prop :=
   b'.geom = b.geom ∧ (b.docBg.isSome = true → b'.docBg.isSome = true) ∧
     (b.docBg.isSome = true → ∀ p ∈ b'.pages, p ∈ b.pages ∨ bgFilled b.geom p)
@@ -19456,9 +15642,6 @@ private theorem BgStep.displayState {a b : B} (h : BgStep a b)
     (tex : Bool) (e : Option Sp) : BgStep a (b.displayState tex e) :=
   h.trans (BgStep.of_eq rfl rfl rfl)
 
-/-- The shipping door prepends the current ground whole before anything
-can shift it. A declared persistent ground suffices even when a page's
-own style chooses another colour. -/
 private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
     b.docBg.isSome = true → ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilled b.geom p := by
@@ -19481,24 +15664,12 @@ private theorem bgStep_finishPage (b : B) {o : Sp} {f : Bool} :
     BgStep b (b.finishPage o f) :=
   ⟨rfl, id, finishPage_bg b⟩
 
-/-- The full-page fill, *with its colour*: what `bgFilled` deliberately
-leaves out, and the half a declared per-page ground needs. A page whose
-ground the walk declared must ship that ground and not merely some fill —
-the defect this forbids is a page painted the document's colour while the
-frame declared its own. -/
+/-- The full-page fill in colour `c`. -/
 private def bgFilledWith (g : Geom) (c : Ir.Color) (p : PageOut) : Prop :=
   ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
     f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed ∧
     f.color = c
 
-/-- **A page's own declared ground is painted, in the colour that declared
-it.** The shipping door prepends the page's `pageBg` whole, ahead of the
-document's — so a title page carrying a `.pageStyle` ground of its own
-(`titleGround`, the projection of the declared palette role) leaves
-`finishPage` with that exact colour under it. `finishPage_bg` says a fill
-covers the page; this says whose colour it is, which is the claim a
-per-page ground rests on and the one the document-level statement cannot
-make. -/
 private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp} {f : Bool}
     (h : b.pageBg = some c) : ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilledWith b.geom c p := by
@@ -19584,9 +15755,8 @@ private theorem bgStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
   · exact bgStep_spillPage b 0
   · exact BgStep.refl b
 
-/-- Whether an op leaves a declared persistent ground declared. This is
-a proof premise, not an emission gate: `.pageGround none` still executes
-and removes the page fill. -/
+/-- Whether an op leaves a declared persistent ground
+declared, a proof premise and no emission gate. -/
 private def StagedOp.preservesGround : StagedOp → Bool
   | .pageGround bg => bg.isSome
   | _ => true
@@ -19657,11 +15827,8 @@ private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
     all_goals repeat' split
     all_goals simp
 
-/-- The index just past the ops of the float group opening before `j`:
-the position of the close that returns the nesting `depth` to zero, or
-`staged.size` when no close stands (the group then runs to the end).
-Never below `j`, which is the driver's termination measure
-(`matchingClose_ge`). -/
+/-- The index just past the float group opening before `j`,
+or `staged.size` when no close stands; never below `j`. -/
 private def matchingClose (staged : Array StagedOp) (j : Nat) (depth : Nat) : Nat :=
   if h : j < staged.size then
     match staged[j] with
@@ -19681,15 +15848,8 @@ private theorem matchingClose_ge (staged : Array StagedOp) (j depth : Nat) :
     try split
     all_goals omega
 
-/-- What a heading keeps of the paragraph after it (`keepExt`): its first
-two lines as placement sets them, or its one. `\@afterheading` sets
-`\clubpenalty` to 10000 (latex.ltx:17317-17322), so the page's first
-legal break inside the paragraph follows its second line. Each line's box
-is its own — `lineExtent` over the segs `paraLineGeom` sets, the pair
-`placeLine` reads — stacked by the interline rule (the upper line's below,
-the lower line's above) down to the last kept line's ink: a first line as
-tall as the image or the display it carries reserves that height, which
-two leadings did not. -/
+/-- What a heading keeps of the paragraph after it: its first two
+lines as placement sets them (latex.ltx `\@afterheading`). -/
 private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Sp :=
   let box (first : Bool) (prev brk : Nat) : LineBox :=
     lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading j.size
@@ -19704,15 +15864,8 @@ private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) :
     l0.above + l0.inkBelow
   | none, _ => 0
 
-/-- **A heading keeps with the next block's first box** (`Spacing.Page.keepHeading`):
-TeX's `\nobreak` after a display heading (`\@xsect`, latex.ltx:17279-17285)
-leaves no legal break before the box that follows it, so a heading's
-reserve is that box and the glue before it — a picture's whole box, a
-paragraph's kept lines as their boxes stand (`keptHead`), or a second
-heading's own lines and its reserve (`\@startsection` adds no break while
-`\@nobreak` stands, latex.ltx:17239-17243). `keepExt` reads the ops after
-the heading at `k` with the glue met so far, in the builder `b` the heading
-stands in; a run of headings keeps as one chain. -/
+/-- A heading's reserve: the next block's first box and the glue before
+it, a run of headings keeping as one chain (latex.ltx `\@xsect`). -/
 private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (k : Nat) (glue : Sp) : Sp :=
   if h : k < staged.size then
@@ -19732,8 +15885,8 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
   else 0
 termination_by staged.size - k
 
-/-- The op placement steps: a heading's reserve reaching the box after it
-(`keepExt`), every other op as staged. -/
+/-- The op placement steps: a heading's reserve
+reaching the box after it, every other op as staged. -/
 private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array StagedOp)
     (si : Nat) (s : StagedOp) : StagedOp :=
   match s with
@@ -19749,9 +15902,7 @@ private theorem keepAt_preservesGround (b : B) (fs : FontSet) (imgs : Image.Stor
     (keepAt b fs imgs staged si s).preservesGround = s.preservesGround := by
   cases s <;> simp only [keepAt] <;> first | rfl | (split <;> rfl)
 
-/-- A column row's opening cursor and its completed flows. A row that fits
-on one page keeps using `alignRow`; only an overflow needs a separate
-cursor, because its next column must revisit an earlier physical page. -/
+/-- A column row's opening cursor and its completed flows, for a row that overflows its page. -/
 private structure ColumnFlow where
   start : B
   completed : Option B := none
@@ -19760,8 +15911,7 @@ private structure FlowSt where
   placed : StepSt
   columns : List ColumnFlow := []
 
-/-- The next column owns new ink, starting at the row's original cursor.
-The first flow already owns the page prefix and its pending notes. -/
+/-- The next column owns new ink, starting at the row's original cursor. -/
 private def restartColumn (start latest : B) : B :=
   { start with cur := {}, shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[]
                fillStretchAbove := #[], inkStretchAbove := #[]
@@ -19774,8 +15924,7 @@ private def restartColumn (start latest : B) : B :=
                paragraphBreaks := latest.paragraphBreaks
                pendingAnchors := latest.pendingAnchors }
 
-/-- Join ink on a physical page. A second flow's page ground precedes
-both flows' ink, so it cannot paint over the first flow's fills. -/
+/-- Join ink on a physical page, a second flow's ground preceding both flows' ink. -/
 private def mergeColumnPage (g : Geom) (a b : PageOut) : PageOut :=
   let ground := match b.fills[0]? with
     | some f => if f.x == -g.bleed && f.y == -g.bleed &&
@@ -19800,9 +15949,7 @@ private def RegionSpan.afterPage (s : RegionSpan) (p : PageOut) : RegionSpan :=
            inkStart := p.inks.size + s.inkStart, inkEnd := p.inks.size + s.inkEnd
            base := s.base.map (·.afterPage p) }
 
-/-- Two unfinished columns on the same page retain their line ledgers
-and link ranges. Clearance, leading and measured lower bounds survive
-the join. -/
+/-- Join two unfinished columns on one page, keeping their line ledgers, link ranges and bounds. -/
 private def joinColumnCurrent (a b : B) : B :=
   let endCursor := if a.y + a.prevDepth > b.y + b.prevDepth then a else b
   let ending := a.colEnd.join b.colEnd
@@ -19836,9 +15983,7 @@ private def joinColumnCurrent (a b : B) : B :=
       { s with lines := cur.lines.size, fills := cur.fills.size, inks := cur.inks.size,
                first := false }) }
 
-/-- Completed pages join by physical index; a shorter flow's last page
-closes before it joins. The last page remains open, so following content
-uses the furthest column's ordinary page builder and final distribution. -/
+/-- Join completed pages by physical index, the last page left open for the furthest column. -/
 private def joinColumn (first : Nat) (a b : B) : B :=
   let left := if a.pages.size < b.pages.size then a.finishPage else a
   let right := if b.pages.size < a.pages.size then b.finishPage else b
@@ -19862,8 +16007,7 @@ private def ColumnFlow.add (save : ColumnFlow) (b : B) : B :=
   | none => b
   | some previous => joinColumn save.start.pages.size previous b
 
-/-- Once a row spans pages, an earlier page's larger y is not its bottom.
-The joined cursor already names the furthest physical page and box. -/
+/-- End a row that spans pages at the joined cursor's page and box. -/
 private def columnEnd (save : ColumnFlow) (st : StepSt) : StepSt :=
   let b := save.add st.b
   let colSaves := if b.pages.size == save.start.pages.size then st.colSaves
@@ -19871,8 +16015,8 @@ private def columnEnd (save : ColumnFlow) (st : StepSt) : StepSt :=
       { s with bottom := some b.colEnd }
   { st with b := b, colSaves := colSaves }
 
-/-- Page switching belongs to the flow driver. `stepStaged` continues to
-place a single cursor, also used by an unbreakable float replay. -/
+/-- One flow step: page switching belongs to the flow
+driver, `stepStaged` placing a single cursor. -/
 private def stepFlow (fs : FontSet) (imgs : Image.Store) (st : FlowSt)
     (op : StagedOp) : FlowSt :=
   match op, st.columns with
@@ -19890,8 +16034,8 @@ private def stepFlow (fs : FontSet) (imgs : Image.Store) (st : FlowSt)
     { placed := stepStaged fs imgs (columnEnd save st.placed) .colClose, columns := rest }
   | _, _ => { st with placed := stepStaged fs imgs st.placed op }
 
-/-- Rewinding a column revisits pages, so the append-only step fact is not
-enough: both the active cursor and every saved flow carry this page fact. -/
+/-- The page fact both the active cursor and every
+saved flow carry, as column rewind revisits pages. -/
 private def Grounded (g : Geom) (declared : Bool) (b : B) : Prop :=
   b.geom = g ∧ (declared = true →
     b.docBg.isSome = true ∧ ∀ p ∈ b.pages, bgFilled g p)
@@ -20010,11 +16154,8 @@ private theorem stepFlow_ground (fs : FontSet) (imgs : Image.Store)
       exact fun s hm => h.2 s (hc ▸ List.mem_cons_of_mem _ hm)
   | _ => exact ⟨h.1.step (bgStep_stepStaged fs imgs st.placed _ hg), h.2⟩
 
-/-- Placement, one op at a time (`stepStaged`) — except a float's ops,
-which travel as one unbreakable group between `floatOpen` and its
-matching close (`runFloat`). Explicit index recursion (the elabBlocks
-knot), so page invariants fold over three named calls: `runFloat`,
-`stepStaged`, and the recursion itself. -/
+/-- Placement one op at a time (`stepStaged`), a
+float's ops as one unbreakable group (`runFloat`). -/
 private def placeFlowFrom (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (st : FlowSt) (si : Nat) : FlowSt :=
   if h : si < staged.size then
@@ -20101,11 +16242,6 @@ private theorem sourceBound_placeFrom {n : Nat} (fs : FontSet)
     (ho : ∀ op ∈ staged, op.SourceBound n) (hb : st.b.SourceBound n) :
     (placeFrom fs imgs staged st si).b.SourceBound n :=
   sourceBound_placeFlowFrom fs imgs staged { placed := st } si ho hb
-
-/-! A page's frame identity, displayed counter and footer travel together.
-Only an actual frame-opening op selects a stamp; closing a frame clears it.
-Ordinary placement retains it, and the shipping door copies it unchanged.
-The invariant also covers saved column cursors, which can revisit pages. -/
 
 private def Spacing.Page.frameStamp (b : B) : FrameStamp :=
   (b.curFrameOrigin, b.curFrame, b.curFoot)
@@ -20577,12 +16713,6 @@ private theorem placeFrom_frames (fs : FontSet) (imgs : Image.Store)
     ⟨hs, by simp⟩).1
 
 
-/-! The reflow account crosses the actual placement state. Non-paragraph
-steps retain the recorded breaks and every existing diagnostic. A paragraph
-records the task's chosen breaks before its line fold, naming each split
-there. Float replay discards both the tentative record and its diagnostics;
-column rewind carries both from the latest cursor. -/
-
 private def ReflowStep (a b : B) : Prop :=
   b.paragraphBreaks = a.paragraphBreaks ∧ ∀ d ∈ a.diags, d ∈ b.diags
 
@@ -20790,8 +16920,6 @@ private theorem reflowStep_paraLines (fs : FontSet) (j : ParaJob)
     (motive := fun _ (acc : B × Nat × Bool) => ReflowStep st.1 acc.1)
     (ReflowStep.refl _) (fun _ _ h => h.trans (reflowStep_placeParaLine ..))
 
-/-- The actual paragraph producer records exactly this task result once;
-the line fold, including its spills and notes, preserves the record. -/
 private theorem placePara_breaks_exact (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     (placePara fs b j breaks).paragraphBreaks =
@@ -21027,8 +17155,7 @@ private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (runFloat fs imgs st group).b.pages = st.b.finishPage.pages := by
   simp only [runFloat]
   split
-  · -- The group fit where it stood: no page closed, and a step only
-    -- extends, so the shipped pages are exactly the input's.
+  ·
     next hsize =>
     left
     obtain ⟨s, hs⟩ := foldSteps_extends fs imgs group st
@@ -21039,8 +17166,7 @@ private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     have hz : s = #[] := by
       rw [← Array.size_eq_zero_iff]; omega
     simp [hz]
-  · -- Replay on a fresh page: the only page that can ship is the
-    -- pre-float flush; under `noBreak` the group closes nothing.
+  ·
     have hfold := foldSteps_noBreak fs imgs group
       { st with b :=
         { (if st.b.cur.blank then st.b
@@ -21053,10 +17179,7 @@ private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       repeat' split
       all_goals simp_all
 
-/-- The actual placement result before running furniture, with the context
-that pass still reads. `ship` obtains these pages from `placeFrom` and the
-final page close; no builder state or duplicate placement walk is exposed.
-The public projections of `runPost` carry page invariants across this seam. -/
+/-- The placement result before the furniture pass, with the context that pass reads. -/
 public structure Shipped where
   pages : Array PageOut
   footGap : Sp
@@ -21065,8 +17188,7 @@ public structure Shipped where
   overruns : Array (FrameOrigin × Sp × Sp) := #[]
   needs : Array (FrameOrigin × Sp) := #[]
   spilled : Array FrameOrigin := #[]
-  /-- The diagnostics as of shipping — the builder's own plus the
-  measure-band check's. -/
+  /-- The diagnostics as of shipping, the builder's own and the measure band's. -/
   diags : Array Diag
   paragraphBreaks : Array ParagraphBreaks := #[]
   labelRequests : Array LabelAudit.Request := #[]
@@ -21085,12 +17207,8 @@ public structure Shipped where
   footY : Sp
   muted : Ir.Color
 
-/-- The furniture pass's spine: page `i` gains the running lines its
-step computes — and only lines. Everything else on the page (fills,
-inks, the foot band, the frame attribution) rides through untouched,
-which is what lets a page fact proved at `finishPage` survive to `Out`
-(`furnishFrom_keeps`). Explicit index recursion, the elabBlocks knot;
-`σ` threads the diagnostics and the hyphenation cache. -/
+/-- The furniture pass's spine: page `i` gains the
+running lines its step computes, and only lines. -/
 private def furnishFrom {σ : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (pages : Array PageOut) (s : σ) (i : Nat) : Array PageOut × σ :=
@@ -21101,8 +17219,6 @@ private def furnishFrom {σ : Type}
 termination_by pages.size - i
 decreasing_by simp only [Array.size_set]; omega
 
-/-- An observation preserved by the actual furniture step survives the
-whole index recursion, page for page and in physical order. -/
 private theorem furnishFrom_preserves {σ α : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (read : PageOut → α)
@@ -21125,8 +17241,6 @@ private theorem furnishFrom_preserves {σ α : Type}
     rw [furnishFrom]
     simp only [h, reduceDIte]
 
-/-- In particular, the furniture pass preserves every observation
-independent of lines, without any premise on the setter's output. -/
 private theorem furnishFrom_projects {σ α : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (read : PageOut → α)
@@ -21135,8 +17249,6 @@ private theorem furnishFrom_projects {σ α : Type}
     (furnishFrom f pages s i).1.map read = pages.map read :=
   furnishFrom_preserves f read (fun _ p _ => hread p _) pages s i
 
-/-- A state invariant crosses the actual page recursion independently of
-the line setter. The step premise concerns only the state it returns. -/
 private theorem furnishFrom_inv {σ : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (P : σ → Prop) (hstep : ∀ i p s, P s → P (f i p s).2)
@@ -21152,7 +17264,6 @@ private theorem furnishFrom_inv {σ : Type}
     rw [furnishFrom]
     simpa only [h, reduceDIte] using hs
 
-/-- Every output page retains the non-line data of its input page. -/
 private theorem furnishFrom_keeps {σ : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (pages : Array PageOut) (s : σ) (i : Nat) :
@@ -21166,13 +17277,11 @@ private theorem furnishFrom_keeps {σ : Type}
   obtain ⟨q, hq, heq⟩ := Array.mem_map.mp hm
   exact ⟨q, hq, by simpa only [read, Prod.mk.injEq] using heq.symm⟩
 
-/-- Generated page furniture has no body leaf or counted-line identity.
-Only the newly set running lines pass through this constructor. -/
+/-- A generated furniture line, with no body leaf or counted-line identity. -/
 private def furnitureLine (l : LineOut) : LineOut :=
   { l with furniture := true, leaf := none, counted := false }
 
-/-- The body keeps its lines and order; running head precedes it, and the
-numbers, footers and logos follow it. Decoration sees each line once. -/
+/-- A page's lines: the running head, the body in order, then numbers, footers and logos. -/
 private def furnishLines (fs : FontSet) (before body after : Array LineOut) : Array LineOut :=
   paintLines fs (before.map furnitureLine ++ body ++ after.map furnitureLine)
 
@@ -21195,9 +17304,7 @@ private theorem furnishLines_counted_projects (fs : FontSet)
   have hempty (ls : List LineOut) : ls.filter (fun _ => false) = [] := by simp
   simp [List.filter_map, Function.comp_def, furnitureLine, hempty]
 
-/-- The setter returns generated furniture and new diagnostics separately
-from the page and diagnostics it annotates. Joining each to the existing
-value is the one shared, checkable operation. -/
+/-- One furniture step, joining the setter's lines and diagnostics to the page's. -/
 private def furnishStep {σ : Type} (fs : FontSet)
     (f : Nat → PageOut → σ → (Array LineOut × Array LineOut) × Array Diag × σ)
     (i : Nat) (page : PageOut) (s : Array Diag × σ) : Array LineOut × Array Diag × σ :=
@@ -21250,20 +17357,16 @@ private def diagKey (d : Diag) : DiagKey :=
     (s.file, s.pos.line, s.pos.col, s.pos.origins.map (fun o => (o.id, o.name)), s.pos.command)),
     d.detail)
 
-/-- The one record the unlocated overfull lines collapse into
-(`uniqueDiags`) stands for all of them, so it says so in words of its own:
-in the located lines' words it would fold onto their line as one site, and
-the log would count fewer overfull lines than the page holds. How many is
-its detail. -/
+/-- The one record the unlocated overfull lines collapse into,
+worded as their summary with the count in its detail. -/
 private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
   if d.code == "W0005" && d.span.isNone && overfull > 1 then
     { d with message := "overfull lines that no source site names; no feasible break"
              detail := some s!"{overfull} overfull lines" }
   else d
 
-/-- Repeated overlay pages can report one source site several times.
-Distinct declarations, including expansions at the same coordinates,
-keep their own report and their complete provenance. -/
+/-- Drop repeated reports of one source site, keeping
+distinct declarations with their provenance. -/
 private def uniqueDiags (diags : Array Diag) : Array Diag := Id.run do
   let overfull := diags.foldl (fun n d =>
     if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
@@ -21288,10 +17391,6 @@ private theorem summarizeOverfull_names (overfull : Nat) (d : Diag) :
   unfold summarizeOverfull
   split <;> exact ⟨rfl, rfl⟩
 
-/-- The actual deduplication loop retains a representative of every code
-and subject it consumes. Its value invariant names both the consumed
-prefix and the representatives of the seen keys. The break-free bridge
-reads this `forIn`; there is no second runtime diagnostic fold. -/
 private theorem uniqueDiags_covers (diags : Array Diag) :
     ∀ d ∈ diags, diagReported (uniqueDiags diags) d.code d.subject := by
   unfold uniqueDiags
@@ -21341,10 +17440,8 @@ private theorem uniqueDiags_covers (diags : Array Diag) :
     simpa only [Array.length_toList] using (List.take_length (l := diags.toList))
   simpa only [ht, Array.mem_toList_iff, overfull, Id.run, bind, pure, Id] using h.2
 
-/-- Two settings' overruns of one declared line, merged by rank, in rank
-order: a line of it runs past the measure where some setting runs it past,
-by the most any does, opening where the setting that runs it furthest
-says. -/
+/-- Two settings' overruns of one declared line, merged
+by rank: the furthest each runs past the measure. -/
 private def mergeOverruns (a b : Array Overrun) : Array Overrun := Id.run do
   let mut out : Array Overrun := #[]
   let mut i := 0
@@ -21373,15 +17470,13 @@ private def mergeOverruns (a b : Array Overrun) : Array Overrun := Id.run do
     | none, none => break
   return out
 
-/-- One declared line's account across the settings of its paragraph that
-re-flowed it: as many lines as the most any setting ships, and its
-overruns merged by rank (`mergeOverruns`). -/
+/-- One declared line's account across its paragraph's
+settings: the most lines any ships, its overruns merged. -/
 private def ReflowedLine.mergeWith (a b : ReflowedLine) : ReflowedLine :=
   { a with site := a.site.orElse fun _ => b.site, ships := max a.ships b.ships,
            over := mergeOverruns a.over b.over }
 
-/-- A paragraph's re-flowed declared lines across its settings, merged by
-rank (`ReflowedLine.ordinal`), in rank order. -/
+/-- A paragraph's re-flowed declared lines across its settings, merged by rank. -/
 private def mergeReflowLines (a b : Array ReflowedLine) : Array ReflowedLine := Id.run do
   let mut out := a
   let mut rank : Std.HashMap Nat Nat := {}
@@ -21397,12 +17492,8 @@ private def mergeReflowLines (a b : Array ReflowedLine) : Array ReflowedLine := 
       out := out.push l
   return out.qsort (·.ordinal < ·.ordinal)
 
-/-- The re-flow records the postlude makes again: one per census key that
-overlay steps of one frame each named — the steps that set one paragraph
-again — from their declared lines merged (`mergeReflowLines`), by the maker
-placement uses (`reflowRecord`). A key one placement named keeps its
-record, and so does a key two placements of one step named, which are not
-one paragraph set again. -/
+/-- The re-flow records the postlude remakes, one per
+census key overlay steps of one frame each named. -/
 private def reflowsMerged (ps : Array ParagraphBreaks) : Std.HashMap String Diag := Id.run do
   let mut groups : Std.HashMap String
       (Option Nat × Array ReflowedLine × Array (Option FrameOrigin) × Bool) := {}
@@ -21418,10 +17509,7 @@ private def reflowsMerged (ps : Array ParagraphBreaks) : Std.HashMap String Diag
     if apart && steps.size > 1 then out := out.insert s (reflowRecord s f ls)
   return out
 
-/-- A W0386 record as its census key's merged record says it
-(`reflowsMerged`), its code and key kept: the settings of one paragraph
-report one re-flow, at its first re-flowed declared line in any of them,
-carrying every overrun any of them runs. -/
+/-- A W0386 record as its census key's merged record says it. -/
 private def mergeReflow (merged : Std.HashMap String Diag) (d : Diag) : Diag :=
   if d.kind == .W0386 then
     match d.subject.bind merged.get? with
@@ -21437,8 +17525,8 @@ private theorem mergeReflow_names (merged : Std.HashMap String Diag) (d : Diag) 
   · split <;> exact ⟨rfl, rfl⟩
   · exact ⟨rfl, rfl⟩
 
-/-- One report per problem: the settings of one paragraph its re-flow
-merged (`mergeReflow`), then repeats dropped (`uniqueDiags`). -/
+/-- One report per problem: re-flows merged
+(`mergeReflow`), then repeats dropped (`uniqueDiags`). -/
 private def reportOnce (ps : Array ParagraphBreaks) (diags : Array Diag) : Array Diag :=
   uniqueDiags (diags.map (mergeReflow (reflowsMerged ps)))
 
@@ -21449,13 +17537,8 @@ private theorem reportOnce_covers (ps : Array ParagraphBreaks) (diags : Array Di
     uniqueDiags_covers _ _ (Array.mem_map_of_mem (f := mergeReflow (reflowsMerged ps)) hd)
   exact ⟨e, he, hc.trans (mergeReflow_names _ d).1, hs.trans (mergeReflow_names _ d).2⟩
 
-/-- The postlude: running furniture per page (through `furnishFrom`, so
-it can only add lines — `furnishFrom_keeps`), one report per problem,
-and the resolved outline. Everything it reads arrives in `Shipped`; the
-pages of its result are the builder's pages with furniture lines added
-and nothing else touched (`runPost_pages`). Every run this pass sets is
-`.unattributed`: furniture is a page artifact the tree has no node for,
-and the lines it lands on are flagged `furniture`. -/
+/-- The postlude: running furniture per page (`furnishFrom`),
+one report per problem, and the resolved outline. -/
 public def runPost (sh : Shipped) : Out := Id.run do
   let doc := sh.doc
   let geom := sh.geom
@@ -21470,17 +17553,10 @@ public def runPost (sh : Shipped) : Out := Id.run do
   let footY := sh.footY
   let mutedC := sh.muted
   let pages := sh.pages
-  -- Running content is laid out per page once the count is known, into the
-  -- margin, so it never disturbs the body it annotates.
+  -- Running content is laid out per page once the count is known, into the margin.
   let total := pages.size
   let furnGround := Ir.Design.declared? doc.palette .page
-  -- Margin line numbers (`\page{ linenumbers = on }`): furniture in the
-  -- muted role at the footnotesize step, laid here where the head and
-  -- foot are — engine-placed margin ink, never body flow. The column
-  -- right-aligns left of the measure: a declared `furnituregap` is exact
-  -- — the gap from the number's ink to the measure edge — and the
-  -- undeclared column hangs from half the margin, `furnEdge`'s own
-  -- default convention turned sideways.
+  -- Margin line numbers: muted furniture at the footnotesize step, left of the measure.
   let lineNumbersOn := doc.lineNumbersOn
   let lineModulo := doc.lineModulo
   let numSize := Ir.scaleStep geom.fontSize "footnotesize"
@@ -21496,9 +17572,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
         (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let target := geom.textWidth
     let breaks := kp items target
-    -- A running line is one line by construction — the band reserves one
-    -- line's ink (`furnitureBand`). Content that wraps would silently lose
-    -- every line but its first, so losing it is a named diagnostic instead.
+    -- A running line is one line by construction; content that wraps is named (W0328).
     let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
         "running content wraps at the text width; only its first line is kept"
         (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
@@ -21506,12 +17580,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     match breaks[0]? with
     | none => (none, ds, cache)
     | some brk =>
-      -- A running line is not a broken-off paragraph line: its leading glue
-      -- is content, not break residue. `lineStart` would discard a leading
-      -- fill — `\runningfoot{\hfill right}` says the content stands at the
-      -- right edge — and the line would collapse to the left margin. Only
-      -- leading interword space is skipped; a fill stays and takes the
-      -- line's slack.
+      -- A running line's leading fill is content, so only leading interword space is skipped.
       let start := Id.run do
         let mut k := 0
         for _ in [0:items.size] do
@@ -21522,17 +17591,12 @@ public def runPost (sh : Shipped) : Out := Id.run do
       let (segs, w, _) := setLine items start brk target true
       (some { x := geom.hmargin, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
-  -- A band slot is a line of its own at natural width, positioned by its
-  -- declared side and the paper's edge alone (`bandSlotX`): nothing another
-  -- slot contains enters its box. It is set by `setBandSlot`, the setting
-  -- the page's floor measured.
+  -- A band slot is its own line, placed by its side and the paper's edge alone (`bandSlotX`).
   let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
       (y : Sp) (baseStyle : TextStyle) (cache : _) :
       Option LineOut × Array Diag × _ :=
     let (set?, wraps, ds, cache) := setBandSlot pats fs imgs geom xHeight
       { baseStyle with ground := baseStyle.ground.or furnGround } (substPage n total content) cache
-    -- The band holds one line, as the running bands do: a slot that wraps
-    -- loses every line but its first, named, never silent.
     let ds := if wraps then ds.push (Diag.of .W0328
         "running content wraps at the text width; only its first line is kept"
         (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
@@ -21542,14 +17606,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     | some (segs, w) =>
       (some { x := bandSlotX geom side w, y := y, size := footSize, segs := segs,
               setWidth := w }, ds, cache)
-  -- The logo: the preamble `\logo` is the initial state, and a `\logo`
-  -- block in the body changes it for the pages from that point on — an
-  -- empty one clears it, which is how a deck scopes a logo to one frame
-  -- (`\logo{...}` before it, `\logo{}` after). One line per state, laid
-  -- out once — a logo names no page number — and placed in the furniture
-  -- band at the page bottom, at the declared alignment (`Ir.logoAlign`:
-  -- right, beamer's default corner, unless the document styles it), its
-  -- box standing on the bottom margin line.
+  -- The logo: the preamble `\logo` is the initial state; a body `\logo` changes it onward.
   let mkLogoLine (content : Array Inline) (textH : Sp) (cache0 : Std.HashMap String (Array Nat)) :
       Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
@@ -21576,10 +17633,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     let mut count := st0.2
     let mut head : Array LineOut := #[]
     let mut lines : Array LineOut := #[]
-    -- The margin line numbers, one per counted body line at its own
-    -- baseline, counting consecutively across pages from 1 — the count
-    -- advances on every counted line, and the modulus only filters what
-    -- prints (lineno's \modulolinenumbers, the user-commands section).
+    -- Margin numbers count counted lines across pages; the modulus filters what prints.
     if lineNumbersOn then
       for l in page.lines do
         if l.counted then
@@ -21598,15 +17652,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
                 geom.textWidth false
               lines := lines.push { x := numRight - w, y := l.y, size := numSize
                                     segs := segs, setWidth := w, furniture := true }
-    -- Pages before a declaration's own `from` carry none of it: an opening
-    -- page reads as a title page, not as page one of a run. Each gate is
-    -- the physical-page model's and each declaration's own
-    -- (`\runninghead[from = 2]` gates the head, never its sibling foot), so
-    -- it governs only the physical furniture — head, foot, and the logo,
-    -- which rides the running band and waits for the later of the two. The
-    -- chrome footer is frame furniture on the frame model: whether a page
-    -- carries it is decided by its frame's number, and a physical
-    -- declaration must not silently gate it.
+    -- Pages before a declaration's `from` carry none of it; the chrome footer follows its frame.
     let headOn := page.pageState.furniture && doc.headFrom ≤ i + 1
     let footOn := page.pageState.furniture && doc.footFrom ≤ i + 1
     if headOn then
@@ -21622,22 +17668,13 @@ public def runPost (sh : Shipped) : Out := Id.run do
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
       else if plainFoot then
-        -- plain's foot, by content: the page number between two fills is
-        -- the engine's spelling of `\hfil\thepage\hfil` (ltpage.dtx,
-        -- `\ps@plain`), centred by the same setter every declared foot
-        -- runs through.
+        -- plain's foot: the page number between two fills, as `\ps@plain` sets it.
         let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] page.pageState.folio footY
           geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
-    -- The headline band's corner logos (`\logoleft`/`\logoright`): laid
-    -- once per page carrying a page-top bar (`PageOut.band`), the `\logo`
-    -- machinery's shape — one set line of inline content, x pinned to the
-    -- safe margin on the declared side, the ink centred in the band's
-    -- fill (the lineage's own vertical centring). Content wider than the
-    -- band's corner is the document's to judge; the logo is furniture and
-    -- stands outside the body-ink census.
+    -- The headline band's corner logos, once per page carrying a page-top bar.
     if let some bandB := page.band then
       for (content?, left) in [(doc.logoLeft, true), (doc.logoRight, false)] do
         if let some content := content? then
@@ -21649,9 +17686,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
           let breaks := kp items geom.textWidth
           if let some brk := breaks[0]? then
             let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-            -- Ink above the baseline: an image's declared height; a glyph
-            -- run's size stands in for its ascent (the band centring's
-            -- only consumer of the estimate).
+            -- A glyph run's size stands in for its ascent, the band centring's only estimate.
             let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
               | .image _ _ h => max m h
               | .run _ _ _ _ _ size _ _ raise _ _ => max m (size + raise)
@@ -21660,25 +17695,9 @@ public def runPost (sh : Shipped) : Out := Id.run do
             lines := lines.push { x := x, y := (bandB + inkH) / 2,
                                   size := geom.fontSize, segs := segs,
                                   setWidth := w, furniture := true }
-    -- The chrome footer the page's frame gave it, slot by slot: the muted
-    -- key at the footline's step (`Ir.footline`). Positions are
-    -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
-    -- yields — painted first, so every higher slot paints over it — and the
-    -- yield is reported by name (W0333). No box moves: yielding is by ink,
-    -- never by position.
-    --
-    -- A slot is the one place the engine sets a box at a position it will
-    -- not move and at a width it does not control: the band holds one line,
-    -- so a token with no legal break sets at its natural width wherever
-    -- that reaches. Body ink that overruns is already named where it breaks
-    -- (W0005, or its paragraph's re-flow, W0386); a slot's had no name,
-    -- and a page whose ink leaves the medium
-    -- loses it to every viewer's clip — so `onMedium` is checked here and
-    -- the loss reported with the distance (W0388).
+    -- Colliding slots yield by ink, never position (W0333); ink off the medium is named (W0388).
     if let some band := page.foot then
-      -- One baseline for the band, the box's depth plus the template's
-      -- closing skip above the paper's edge (`footBaseline`), from the box
-      -- the page's floor was set against.
+      -- One baseline for the band, from the box the page's floor was set against (`footBaseline`).
       let footY := footBaseline geom.pageH ((page.footBox.map (·.2)).getD 0)
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
@@ -21715,8 +17734,7 @@ slot yields in place: shorten the content or drop a slot")
     if headOn && footOn then
       if let some content := logoContent then
         unless content.isEmpty do
-          -- Sized by the page's `\textheight`: beamer's in its text area,
-          -- the one floor the page was built on (`frameFloor`).
+          -- Sized by the page's `\textheight`, beamer's in its text area (`frameFloor`).
           let textH := match page.frameArea with
             | .margins => page.footBox.elim geom.textHeight fun (h, d) =>
                 footFloor geom.pageH sh.footGap h d
@@ -21730,9 +17748,7 @@ slot yields in place: shorten the content or drop a slot")
   let out := fout.1
   let diags := fout.2.1
   let unique := reportOnce sh.paragraphBreaks diags
-  -- The document outline, resolved: an in-document target (`#anchor`)
-  -- resolves against finalized lines, just like a PDF link annotation;
-  -- any other target rides as its URL.
+  -- An in-document outline target resolves against finalized lines, as a PDF link annotation does.
   let outline := sh.navEntries.map fun (title, target) =>
     if target.startsWith "#" then
       { title := title
@@ -21742,9 +17758,6 @@ slot yields in place: shorten the content or drop a slot")
            paragraphBreaks := sh.paragraphBreaks, overruns := sh.overruns, needs := sh.needs
            spilled := sh.spilled }
 
-/-- Furniture may add diagnostics and deduplication may merge repeated
-reports, but every shipped code and subject still has a representative
-in the actual postlude output. No premise is imposed on furniture. -/
 public theorem runPost_diags_covers (sh : Shipped) :
     ∀ d ∈ sh.diags, ∃ e ∈ (runPost sh).diags,
       e.code = d.code ∧ e.subject = d.subject := by
@@ -21758,10 +17771,6 @@ public theorem runPost_diags_covers (sh : Shipped) :
     exact Array.mem_append.mpr (Or.inl hs)
   · exact hd
 
-/-- The postlude only adds furniture lines: every page of `runPost`'s
-output carries the fills, inks, foot band, and frame attribution of a
-page the builder shipped — `furnishFrom_keeps` lifted over the whole
-postlude, the seam a builder invariant crosses into `Out` through. -/
 public theorem runPost_pages (sh : Shipped) :
     ∀ p ∈ (runPost sh).pages, ∃ q ∈ sh.pages,
       p.fills = q.fills ∧ p.links = q.links ∧ p.inks = q.inks ∧ p.foot = q.foot ∧
@@ -21771,17 +17780,12 @@ public theorem runPost_pages (sh : Shipped) :
   dsimp only [Id.run, bind, pure, Id] at hp
   exact furnishFrom_keeps _ _ _ _ p hp
 
-/-- The logical page lifecycle carried at shipment reaches `Out` unchanged
-through the running-furniture projection. -/
 public theorem runPost_lifecycle_projects (sh : Shipped) :
     (runPost sh).pages.map (·.pageState) = sh.pages.map (·.pageState) := by
   unfold runPost
   dsimp only [Id.run, bind, pure, Id]
   exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
 
-/-- The frame number and its selected footer survive together, in page
-order. A spill may add pages and a standout may select no footer; neither
-decision is changed or reconstructed by running furniture. -/
 public theorem runPost_frames_projects (sh : Shipped) :
     (runPost sh).pages.map (fun p => (p.frame, p.foot)) =
       sh.pages.map (fun p => (p.frame, p.foot)) := by
@@ -21789,8 +17793,6 @@ public theorem runPost_frames_projects (sh : Shipped) :
   dsimp only [Id.run, bind, pure, Id]
   exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
 
-/-- Physical source identities survive furniture in the same page order as
-displayed counters and selected bands. -/
 public theorem runPost_frameOrigins_projects (sh : Shipped) :
     (runPost sh).pages.map (fun p => (p.frameOrigin, p.frame, p.foot)) =
       sh.pages.map (fun p => (p.frameOrigin, p.frame, p.foot)) := by
@@ -21798,9 +17800,6 @@ public theorem runPost_frameOrigins_projects (sh : Shipped) :
   dsimp only [Id.run, bind, pure, Id]
   exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
 
-/-- Running furniture and drawn decoration retain every attributed line
-from the actual shipment, on the same physical page and in the same
-order. The equality includes its segments, geometry and source leaf. -/
 public theorem runPost_attributed_projects (sh : Shipped) :
     (runPost sh).pages.map (fun p => p.lines.filter (fun l => l.leaf.isSome)) =
       sh.pages.map (fun p => p.lines.filter (fun l => l.leaf.isSome)) := by
@@ -21810,8 +17809,6 @@ public theorem runPost_attributed_projects (sh : Shipped) :
   intro i p s
   exact furnishLines_attributed_projects _ _ _ _
 
-/-- The actual postlude preserves counted lines page by page. Margin
-numbers and decoration cannot become additional body lines. -/
 public theorem runPost_counted_projects (sh : Shipped) :
     (runPost sh).pages.map (fun p => p.lines.filter (·.counted)) =
       sh.pages.map (fun p => p.lines.filter (·.counted)) := by
@@ -21834,32 +17831,19 @@ private theorem sourceBound_runPost {n : Nat} (sh : Shipped)
   · intro p hp l hl _
     exact h p hp l hl
 
-/-- The marks step, the one seam after the furniture pass: every shipped
-page takes the derived cut-mark fills, appended after its own fills so
-the marks paint over any background. -/
+/-- Append the derived cut-mark fills after every shipped
+page's own fills, so the marks paint over any background. -/
 public def addMarks (out : Out) (m : Array Fill) : Out :=
   { out with pages := out.pages.map fun p => { p with fills := p.fills ++ m } }
 
-/-- What the marks step does to a shipped page, read backwards: every
-page of `addMarks` is a pre-marks page with the mark fills appended —
-the seam `page_background_survives` crosses. -/
 public theorem addMarks_mem (out : Out) (m : Array Fill) (p : PageOut)
     (hp : p ∈ (addMarks out m).pages) :
     ∃ q ∈ out.pages, p.fills = q.fills ++ m := by
   obtain ⟨q, hq, rfl⟩ := Array.mem_map.mp hp
   exact ⟨q, hq, rfl⟩
 
-/-- The mark fills a document's pages take: the derived eight when marks
-are declared and the declared gap fits inside the bleed (`cutMarks`),
-nothing otherwise, painted in the registration reading
-(`Ir.Color.registration`): CMYK 1,1,1,1 when the document declares print
-colours, black otherwise. Then the rules the document drew itself
-(`Ir.PageSpec.drawn`), each on every page at the medium point it named, in
-the ink it named — read through the one resolving site every colour
-expression takes (`Ir.Palette.resolve`: a declared entry, xcolor's base
-names, a `!` mix), so `\color{red}` in a shipout picture is xcolor's red.
-A name that resolves to nothing paints black, and `drawnInkDiags` names
-it. -/
+/-- The mark fills a document's pages take: the derived eight when marks are declared
+and fit the bleed, in the registration colour, then the rules the document drew. -/
 private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
   let marks := if geom.marks && geom.markGap < geom.bleed && 0 < geom.markThick then
       cutMarks geom.pageW geom.pageH geom.bleed geom.markGap geom.markThick
@@ -21870,9 +17854,7 @@ private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
        color := (doc.palette.resolve r.color).getD Ir.Color.black }
       : Fill)
 
-/-- W0304 for each colour a drawn rule names that resolves to nothing: the
-rules drawn in it paint black (`markFillsOf`), named once per name, keyed
-as the text colour's miss is (`palette:` and the name). -/
+/-- W0304 for each colour a drawn rule names that resolves to nothing, once per name. -/
 public def drawnInkDiags (doc : Doc) : Array Diag :=
   (doc.page.drawn.map (·.color)).foldl (fun (acc : Array String) c =>
       if (doc.palette.resolve c).isNone && !acc.contains c then acc.push c else acc) #[]
@@ -21881,16 +17863,12 @@ public def drawnInkDiags (doc : Doc) : Array Diag :=
       (help := "declare colours with \\palette{ name = #RRGGBB }")
       (subject := some ("palette:" ++ c))
 
-/-- The document as the paged backend reads it: backend conditionals
-resolved at the entry (`Ir.keepFor_covers` is why dropping here cannot
-lose content). The structure tree the attribution channel indexes is
-`Struct.ofDoc (pdfView doc)` — the tree of exactly the content the pages
-set. -/
+/-- The document as the paged backend reads it, backend
+conditionals resolved (`Ir.keepFor_covers`). -/
 public def pdfView (doc : Doc) : Doc := { doc with body := Ir.keepFor "pdf" doc.body }
 
-/-- Picture ordinals in the elaborator's document order. Hidden backend
-branches still consume an ordinal, but supply no PDF slot. The shared
-context fold descends through nested blocks and inline block bodies. -/
+/-- Picture ordinals in the elaborator's document order; hidden
+backend branches consume an ordinal but supply no PDF slot. -/
 private def pdfPictureOrdinals (doc : Doc) : Array Nat :=
   let walk : Ir.CtxFold Bool (Nat × Array Nat) := {
     openBlock := fun kept (n, out) b =>
@@ -21904,10 +17882,8 @@ private def pdfPictureOrdinals (doc : Doc) : Array Nat :=
   (Ir.foldCtxBlocks walk true (0, #[]) doc.body).2
 
 /-- Translate native-picture request keys into the PDF structure leaves
-placement reads. Pair every picture before looking up its optional source:
-a missing site must not shift the attribution of subsequent pictures.
-Overlay replay keeps its original structure leaf and therefore its source.
-conserves: none — collects supplied source evidence, not document content. -/
+placement reads, pairing every picture before looking up its source. -/
+-- conserves: none — collects source evidence, not document content.
 public def pictureSpansForPdf (doc : Doc) (spans : Array (String × Span)) :
     Array (Nat × Span) :=
   let leaves := (Struct.ofDoc (pdfView doc)).leaves.filterMap fun (id, leaf) =>
@@ -21918,11 +17894,8 @@ public def pictureSpansForPdf (doc : Doc) (spans : Array (String × Span)) :
     (spans.find? (·.1 == Ir.picKeyPrefix ++ toString ordinal)).map fun (_, source) =>
       (id, source)
 
-/-- Translate opening-frame source sites from the final elaborated document's
-body indices to the indices `run` reads after backend filtering. The producer
-must return these sites alongside that same document after normalization and
-re-elaboration. Frame numbers and frame ordinals are never source indices.
-Non-frame and stale out-of-range entries are discarded. -/
+/-- Translate opening-frame source sites from the elaborated document's
+body indices to the indices `run` reads after backend filtering. -/
 public def frameSpansForPdf (doc : Doc) (spans : Array (Nat × Span)) : Array (Nat × Span) :=
   spans.filterMap fun (i, source) =>
     match doc.body[i]? with
@@ -21950,8 +17923,6 @@ private theorem keepForList_frame (bs : List Block) (i : Nat)
       cases hk : keptBy "pdf" b <;>
         simpa [keepForList, hk, List.filter_cons] using hr
 
-/-- Every supplied frame site names the same frame in the actual PDF view.
-The source value is preserved whole, including its expansion origin stack. -/
 public theorem frameSpansForPdf_covers (doc : Doc) (spans : Array (Nat × Span))
     (i : Nat) (source : Span)
     (title : Array Inline) (standout : Bool) (valign : VAlign) (breakable : Bool)
@@ -21968,10 +17939,7 @@ public theorem frameSpansForPdf_covers (doc : Doc) (spans : Array (Nat × Span))
       keepForList_frame doc.body.toList i title standout valign breakable body
         (by simpa using hb)
 
-/-- One top-level source block, including the overlay rewind. The index is
-the source identity; the displayed frame number is read separately. Keeping
-this step named lets the collector's progress invariant refer to the prefix
-it has actually consumed. -/
+/-- One top-level source block, overlay rewind included; the index is the source identity. -/
 private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size)
@@ -22003,8 +17971,7 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
   | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   return (acc, firstBlk)
 
-/-- The actual source loop. Its state records whether a real block has
-appeared, independently of stateful declarations. -/
+/-- The source loop, its state recording whether a real block has appeared. -/
 private def collectDocBody (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc) : Acc := Id.run do
   let nums := doc.frameNumbers
@@ -22013,8 +17980,6 @@ private def collectDocBody (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     st := collectDocBlock rd doc cover frameSpans nums i h.upper st
   return st.1
 
-/- Source ownership through the actual paragraph collector and its source-indexed loop.
-The bound is the structural census of the input, before any job is staged. -/
 private theorem Spacing.Paragraph.SourceBound.mono {n m : Nat} {j : ParaJob}
     (h : j.SourceBound n) (hn : n ≤ m) : j.SourceBound m := by
   refine ⟨?_, h.notes, h.marker, h.rule⟩
@@ -22270,9 +18235,6 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
   · exact hp
   · split <;> simpa only [hb, sourceLeafSum_para, plainInlines_leafCount xs hp, Spacing.Pending.wantGap] using hn
 
-/-- A progress invariant for the source loop: after visiting index `i`,
-the state satisfies the assertion for the prefix ending at `i + 1`.
-The implementation remains the dependent `forIn'` loop. -/
 private theorem sourceRange_progress {β : Type}
     (P : Nat → β → Prop) (lo len : Nat)
     (f : (i : Nat) → i ∈ List.range' lo len → β → Id (ForInStep β))
@@ -22336,9 +18298,6 @@ private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc) (cover : I
     exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
-/- Paragraph text through the actual collector. The invariant tracks the
-source prefix and its structural leaf counter; only actual paragraph
-diagnostics can discharge the glyph-census premise. Gap ops add no ink. -/
 private def GlyphClean (ds : Array Diag) : Prop :=
   ∀ d ∈ ds, d.code ≠ "E0405" ∧ d.code ≠ "W0009"
 
@@ -22645,51 +18604,26 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
-/-- The existing collection/staging seam, with its postlude. The continuation
-lets the background contract inspect the exact ops placement consumes, without
-re-running another IR walk or adding background state to the runtime builder. -/
+/-- The collection and staging seam with its postlude, the
+continuation reading the exact ops placement consumes. -/
 private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (k : Array StagedOp → B → (StepSt → Shipped) → α)
     (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : α := Id.run do
-  -- The PDF's view of the document: backend conditionals resolve here, at
-  -- the backend's entry, so no later pass can see content another backend
-  -- owns.
+  -- Backend conditionals resolve here, at the backend's entry.
   let doc := pdfView doc
-  -- The geometry decides whether patterns apply at all: a card never
-  -- hyphenates, whoever loaded the patterns.
+  -- The geometry decides whether patterns apply: a card never hyphenates.
   let pats := if geom.hyphenate then pats else none
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
-  -- The chrome footer draws when the document (usually through its theme)
-  -- declared one — `\chrome` slots or a `\framefoot` note — and no
-  -- \runningfoot overrides it, and only on slides: chrome is deck
-  -- furniture. The frames decide which pages carry it (`collectFrameOpen`).
+  -- The chrome footer draws only on slides that declare it and no `\runningfoot` overrides.
   let footAllowed := doc.chromeAllowed
-  -- The flow default article carries: plain's centred page number in the
-  -- foot (`ClassRecord.pageNumbers`; article.cls initialises
-  -- `\pagestyle{plain}`, classes.dtx), unless a `\runningfoot` already
-  -- owns the band or the document declared `numbers = off`. The number
-  -- rides the same furniture emitter every declared foot does — `runLine`
-  -- over `substPage` — so it is one more content in an existing path,
-  -- never a second footer model.
+  -- article's default plain foot, unless a `\runningfoot` owns the band.
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
-  -- The chrome footer's size is the footline's step (`Ir.footline`, the one
-  -- value both backends read) and its colour a palette key, never a literal.
+  -- The chrome footer's size is the footline's step (`Ir.footline`) and its colour a palette key.
   let footSize := Ir.scaleStep geom.fontSize Ir.footline.step
-  -- The running line's ink extents: the body face at the page size for a
-  -- declared head or foot and the plain number. One `furnitureBand` per
-  -- side from the same ink and gap is what makes the two edges one number
-  -- (`furniture_symmetric`) where the native ink key or nothing is declared.
-  -- A LaTeX spelling is read as LaTeX reads it: `\headsep` through the one
-  -- baseline-to-ink correction (`furnGapOfSep`), which lands the head's
-  -- baseline `\headsep` above the text area exactly, and `\footskip`
-  -- baseline to baseline from the text area's floor (`latexFootY`). A
-  -- `\setlength` reaches here as the token of its name, as `\topskip`'s
-  -- does below. The chrome footer is moloch's footline instead
-  -- (`Ir.footline`): its box sets each page's floor where the page is built
-  -- (`Spacing.Page.bottom`), so it reserves no band here.
+  -- One `furnitureBand` per side from one ink and gap (`furniture_symmetric`).
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)
   let xHeight := scale font.xHeight
@@ -22702,31 +18636,18 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let latexFoot := if doc.page.furnitureGap.isSome then none else footskip
   let headFurn := furnitureBand geom.vmargin runInk gapTop
   let footFurn := furnitureBand geom.vmargin runInk gapBot
-  -- A footer reserves its band before anything is placed, so no body line
-  -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
-  -- With the default margins the half margin holds the foot line whole and
-  -- the band is zero: an undeclared page is unchanged. Under a declared
-  -- `\footskip` the text area is the declared one, as in LaTeX, whose foot
-  -- stands in the margin below it.
+  -- A footer reserves its band before anything is placed (`bodyBottom_clears_footer`).
   let geom := if doc.foot.isSome || plainFoot then
       { geom with footBand := if latexFoot.isSome then 0 else footFurn.band }
     else geom
-  -- The running head reserves its band the same way, before anything is
-  -- placed (`bodyTop_clears_head` is the sufficiency proof). With the
-  -- default margins the half margin holds the head line whole and the
-  -- band is zero: an undeclared page is unchanged.
+  -- The running head reserves its band the same way (`bodyTop_clears_head`).
   let geom := if doc.head.isSome then
       { geom with headBand := headFurn.band }
     else geom
-  -- TeX's `\topskip` where the page is TeX's: the document's own
-  -- (`\setlength{\topskip}` reaches here as the token of that name), else
-  -- the standard classes' body size (size10/11/12.clo:97); a frame is one
-  -- box, and its first line keeps the engine's metric rule (`Spacing.Page.firstRise`).
+  -- TeX's `\topskip` on a TeX page: the document's own, else the class's body size (size10.clo).
   let geom := if doc.docClass.record.model == .frame then geom
     else { geom with topskip := some ((tokenLen "topskip").getD geom.fontSize) }
-  -- The resolved design is the one resolving site for the document-level
-  -- colours (`Design.ofDoc`): the ink here is the ink `Contrast.docDiags`
-  -- judges (`judged_pair_is_shipped`), never a second `getD` chain.
+  -- `Design.ofDoc` resolves the document colours, the ink `Contrast.docDiags` judges.
   let design := Ir.Design.ofDoc doc
   let cover := design.cover
   let footGap := doc.page.furnitureGap.getD Ir.footline.sep
@@ -22754,24 +18675,13 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                       footAllowed := footAllowed
                       fg := design.fg
                       ground := Ir.Design.declared? doc.palette .page }
-  -- One handout page per overlay step, driven here at the top level: a
-  -- multi-step frame collects once per step with pending content dimmed
-  -- (`Ir.dimBlocks`), under ONE frame number — the furniture belongs to the
-  -- frame, not the step, so a stepped frame's pages share their progress
-  -- position and their frame count. Steps and standout are orthogonal: the
-  -- flag rides onto every step page unchanged. The number itself is read
-  -- off `Ir.frameNumbers`, the one numbering (its T2–T4 are the contract);
-  -- nothing below this loop counts.
+  -- One handout page per overlay step, collected under one frame number read off `Ir.frameNumbers`.
   let acc := collectDocBody rd doc cover frameSpans acc0
-  -- Trailing fil glue stretches on the page it ends (a \vfill nothing
-  -- follows is how a page bottom-flushes its leftover), so it must reach
-  -- placement; trailing finite glue stays invisible and stays dropped.
+  -- Trailing fil glue stretches on the page it ends, so it reaches placement; finite glue drops.
   let accF := if acc.owed.any (·.fil) then
       { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
     else acc
-  -- Break every paragraph in parallel: `kp` is pure and each job independent,
-  -- so the tasks race on nothing; joining in document order below keeps the
-  -- output independent of scheduling.
+  -- Paragraphs break in parallel; joining in document order keeps the output deterministic.
   let staged : Array StagedOp := accF.ops.mapIdx fun origin op =>
     match op with
     | .skip g => .skip g
@@ -22807,9 +18717,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .anchorRule g => .anchorRule g
     | .noInterline => .noInterline
     | .displayOpen dj left size => .displayOpen dj left size
-  -- A declared asymmetry that survives the reading is named: equal gaps
-  -- are the default, and a difference is exactly what the document asked
-  -- for — the hand-struck footskip patch made visible instead of doubled.
+  -- A declared furniture-gap asymmetry that survives the reading is named.
   let preDiags := if let (some gt, some gb) := (gapTop, gapBot) then
       if gt != gb then
         acc.diags.push (Diag.of .N0021
@@ -22818,11 +18726,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
             "equal gaps are the default"))
       else acc.diags
     else acc.diags
-  -- A heading binds to the text it introduces, so its space above must not
-  -- be the smaller of the two (the standard rule; Butterick, "space above
-  -- and below": the space below should be smaller so the heading sits
-  -- visually closer to what follows). Checked only when the document
-  -- declared both sides — the defaults satisfy it by theorem.
+  -- A heading's declared space above must not be the smaller (Butterick); defaults satisfy it.
   let preDiags := ["section", "subsection", "subsubsection"].foldl (fun ds element =>
     match doc.styles.find? element with
     | some st =>
@@ -22857,21 +18761,11 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let post := fun (st : StepSt) => Id.run do
     let logoSpans := st.logoSpans
     let prose := st.prose
-    -- The trailing boundary of a final frame has already closed its page; a
-    -- document is never given an empty page for it.
+    -- A final frame's trailing boundary has already closed its page; no empty page is added.
     let b := if !st.b.cur.blank || st.b.pages.isEmpty then
         st.b.finishPage st.b.closingOwed
       else st.b
-    -- The measure, checked against the readable band once the document has
-    -- shown continuous text (a paragraph of four or more full-measure lines).
-    -- Bringhurst: 45–75 characters is satisfactory for a single column of
-    -- text-size prose and 66 is the ideal (Elements §2.1.2); Butterick allows
-    -- 45–90. The character count comes from the body face's own lowercase
-    -- alphabet length through the copy-fitting table's fitted lines
-    -- (memoir manual eqs. 2.1–2.2: L₆₅ = 2.042α + 33.41 pt,
-    -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
-    -- reading, and are out of the rule's own scope; `\page{ measure = free }`
-    -- declares the document takes responsibility.
+    -- The measure against the readable band (Bringhurst §2.1.2), via memoir's copy-fitting lines.
     let shipDiags :=
       if doc.docClass.record.measureBand && doc.page.measureChecked
           && prose ≥ 4 then
@@ -22919,7 +18813,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       muted := design.muted }
   return k staged b0 post
 
-/-- The one shipment producer: staging, actual placement, and final close. -/
+/-- The one shipment producer: staging, placement, and final close. -/
 private def shipCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Shipped :=
@@ -23298,18 +19192,15 @@ private def labelRequestsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen
     Array LabelAudit.Request :=
   withLayoutOps geom fs pats doc imgs (fun staged _ _ => stagedLabelRequests staged) frameSpans
 
-/-- The pre-marks pipeline consumes the shipment value directly. -/
+/-- The pre-marks pipeline over the shipment. -/
 private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Out :=
   let sh := shipCore geom fs pats doc imgs frameSpans pictureSpans
   auditLabelInk fs sh.labelRequests (runPost sh)
 
-/-- The precondition for an all-pages background claim: no collected palette
-epoch removes `bg`. This observes the same staging seam as `run`, including
-backend projection and overlay selection. It neither gates emission nor
-changes diagnostics; a false result permits the explicitly unpainted pages
-that `nopagecolor` requests. -/
+/-- Whether no collected palette epoch removes `bg`,
+the precondition of the all-pages background claim. -/
 private def pageGroundsDeclaredCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) : Bool :=
   withLayoutOps geom fs pats doc imgs fun staged _ _ =>
@@ -23319,47 +19210,31 @@ private def resolveDocMath (fs : FontSet) (doc : Doc) : Doc × Array Diag :=
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   Ir.resolveMathAlphas fs.mathAlphabets family doc
 
-/-- The pages actually shipped by placement, before the running furniture
-and print marks that `run` adds. This reads the same math-resolved PDF view,
-overlay expansion, float placement and final close as `run`, through its
-one `shipCore` producer. Source indices have the same meaning as in `run`. -/
+/-- The pages placement ships, before the running furniture and print marks `run` adds. -/
 public def ship (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Shipped :=
   shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans pictureSpans
 
-/-- The frame decisions emitted by the actual collector, before placement.
-This observes the same resolved PDF view and overlay expansion as `run`;
-it does not infer decisions from the pages that happened to survive. -/
+/-- The frame decisions the collector emits, before placement. -/
 public def frameOpenings (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) :
     Array FrameOpening :=
   frameOpeningsCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
-/-- Label occurrences selected by the actual collector's resolved PDF view
-and overlay expansion. This census precedes pagination and is independent
-of which label lines survive into the final pages. -/
+/-- Label occurrences the collector selects, before pagination. -/
 public def labelRequests (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) :
     Array LabelAudit.Request :=
   labelRequestsCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
-/-- Inspect the same resolved document that the public layout entry sets. -/
+/-- Whether no palette epoch of the document `run` sets removes `bg`. -/
 public def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) : Bool :=
   pageGroundsDeclaredCore geom fs pats (resolveDocMath fs doc).1 imgs
 
-/-- Typeset a document body into positioned pages. Geometry is resolved by
-the caller via `Geom.ofPage`, so layout has one source of truth. Printer's
-cut marks, when declared, join every shipped face here — the marks seam
-(`addMarks`) after the furniture pass, so spilled, stepped, and chrome
-pages alike carry the same eight, painted over any background.
-`frameSpans` supplies opening-environment provenance keyed by top-level
-indices in `(pdfView doc).body`, before overlay expansion. The caller has
-the source syntax; layout carries each supplied span unchanged through
-every continuation of that frame. `pictureSpans` supplies picture openings
-keyed by `Struct.ofDoc (pdfView doc)` leaf IDs (`pictureSpansForPdf` translates
-the elaborator's request keys); geometry never depends on this evidence. -/
+/-- Typeset a document body into positioned pages: placement, the furniture pass, then printer's
+cut marks (`addMarks`); `frameSpans` and `pictureSpans` carry source provenance only. -/
 public def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Out :=
@@ -23367,24 +19242,21 @@ public def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc
   let out := addMarks (runCore geom fs pats doc imgs frameSpans pictureSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
 
-/-- The body index, in the document, of the `k`-th block the PDF's view
-keeps (`pdfView`): the inverse of `frameSpansForPdf`'s translation. -/
+/-- The body index of the `k`-th block `pdfView` keeps, inverting `frameSpansForPdf`. -/
 public def pdfSourceIndex (doc : Doc) (k : Nat) : Option Nat :=
   ((List.range doc.body.size).filter fun i =>
     (doc.body[i]?.map (keptBy "pdf")).getD false)[k]?
 
-/-- The frames the overflow ladder decides, by their index in `doc.body`:
-its top-level frames not declared breakable. -/
+/-- The frames the overflow ladder decides: top-level
+frames not declared breakable, by body index. -/
 public def ladderFrames (doc : Doc) : Array Nat :=
   (List.range doc.body.size).toArray.filter fun i =>
     match doc.body[i]? with
     | some (.frame _ _ _ breakable _) => !breakable
     | some _ | none => false
 
-/-- **The overflow ladder's decision for each frame step its first setting
-measured** (`Ir.frameFit`), in the PDF's view's order: the step's shortfall
-at its glue's natural size, its overrun beyond what its glue shrinks, and
-the least clearance its pages left. -/
+/-- The overflow ladder's decision for each frame
+step its first setting measured (`Ir.frameFit`). -/
 public def stepDecisions (first : Out) : Array (FrameOrigin × Ir.FrameFit) :=
   let keys := ((first.needs.map (·.1) ++ first.overruns.map (·.1)).toList.eraseDups.toArray.qsort
     fun a b => a.source < b.source || (a.source == b.source && a.step < b.step))
@@ -23394,10 +19266,7 @@ public def stepDecisions (first : Out) : Array (FrameOrigin × Ir.FrameFit) :=
     | some (_, beyond, clearance) => (o, Ir.frameFit needed beyond clearance)
     | none => (o, Ir.frameFit needed 0 0)
 
-/-- The document as the ladder sets it: each decided frame step marked by
-its decision — `Ir.fitOverhangRole` where it stands overfull,
-`Ir.fitContinuesRole` where it continues — which the page reads off the IR
-(`FrameFitMode`). -/
+/-- The document as the ladder sets it, each decided frame step marked by its decision. -/
 public def fittedDoc (doc : Doc) (decisions : Array (FrameOrigin × Ir.FrameFit)) : Doc :=
   let marks := decisions.filterMap fun (o, fit) =>
     match fit with
@@ -23406,10 +19275,8 @@ public def fittedDoc (doc : Doc) (decisions : Array (FrameOrigin × Ir.FrameFit)
     | .natural | .shrunk => none
   { doc with body := Ir.markFramesAt doc.body marks }
 
-/-- What the ladder names of the setting `final`: every marked frame step
-whose content reached past its text area beyond what its glue shrinks, by
-what the page did with it — continued, with the whole overrun the first
-setting measured (`first`), or stood overfull, by its overhang. -/
+/-- What the ladder names of the setting `final`: each marked
+step that reached past its text area, continued or overfull. -/
 public def fitAccount (first final : Out) : Array (FrameOrigin × Ir.FrameFit) :=
   let measured (o : FrameOrigin) (x : Sp) : Sp :=
     ((first.overruns.find? (·.1 == o)).map (·.2.1)).getD x
@@ -23431,9 +19298,8 @@ private def overfullBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : L
     | .overfull v => if p.1.source == k then some v else none
     | .natural | .shrunk | .continued _ => none
 
-/-- Frame `k`'s one account from its steps: continued where any step
-continued, with the largest overrun, and the largest overhang of a step that
-stood overfull beside it; else overfull, with the largest overhang. -/
+/-- Frame `k`'s one account from its steps: continued with
+the largest overrun where any continued, else overfull. -/
 private def frameEntry (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) :
     Option (Nat × Ir.FrameFit × Option Sp) :=
   match (continuedBy steps k).max?, (overfullBy steps k).max? with
@@ -23441,9 +19307,7 @@ private def frameEntry (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) :
   | none, some v => some (k, .overfull v, none)
   | none, none => none
 
-/-- **One account per frame** (one accounting per site): each frame a step
-of `steps` moved, by its index in the PDF's view, named by what its overlay
-steps did (`frameEntry`). -/
+/-- One account per frame each step of `steps` moved, by its index in the PDF's view. -/
 public def frameAccount (steps : List (FrameOrigin × Ir.FrameFit)) :
     List (Nat × Ir.FrameFit × Option Sp) :=
   (steps.map (·.1.source)).eraseDups.filterMap (frameEntry steps)
@@ -23455,16 +19319,11 @@ private theorem frameEntry_moved (steps : List (FrameOrigin × Ir.FrameFit)) (k 
   split at h <;> simp only [Option.some.injEq, reduceCtorEq] at h <;> subst h <;>
     exact ⟨rfl, rfl⟩
 
-/-- Every account a frame takes is a move (`fitDiag` names it). -/
 public theorem frameAccount_moved (steps : List (FrameOrigin × Ir.FrameFit))
     (e : Nat × Ir.FrameFit × Option Sp) (he : e ∈ frameAccount steps) : e.2.1.moved := by
   obtain ⟨k, -, hk⟩ := List.mem_filterMap.mp he
   exact (frameEntry_moved steps k e hk).2
 
-/-- **Every moved step's frame is named, and a continuing step's frame as
-continuing** (`_covers`): a step `steps` stood overfull or continued has its
-frame's one account in `frameAccount`, and where the step continued, the
-account says the frame continues. -/
 public theorem frameAccount_covers (steps : List (FrameOrigin × Ir.FrameFit))
     (o : FrameOrigin) (fit : Ir.FrameFit) (hs : (o, fit) ∈ steps) (hm : fit.moved) :
     ∃ e ∈ frameAccount steps, e.1 = o.source ∧ (fit.continues → e.2.1.continues) := by
@@ -23501,34 +19360,16 @@ public theorem frameAccount_covers (steps : List (FrameOrigin × Ir.FrameFit))
           simp only [frameEntry, hcont, hover]
         exact ⟨_, entry _ he, rfl, fun h => absurd h (by simp [Ir.FrameFit.continues])⟩
 
-/-- The overflow ladder's result (`runFitted`): the pages and their
-diagnostics, the IR document they are one setting of, each measured frame
-step's decision, and the frames, by their index in `doc.body`, whose lists
-the web deck squeezes. -/
+/-- The overflow ladder's result: the pages, the IR document they set,
+each frame step's decision, and the frames the web deck squeezes. -/
 public structure Fitted where
   out : Out
   setting : Doc
   decisions : Array (FrameOrigin × Ir.FrameFit) := #[]
   webSqueeze : Array Nat := #[]
 
-/-- **The overflow ladder** (`Ir.frameFit`), for every frame not declared
-breakable. The document is set with each such frame marked to measure
-(`Ir.fitMeasureRole`): the page stands it overfull whatever its overrun, so
-this first setting finds how far past its text area each overlay step
-reaches beyond what its glue shrinks. Each step is decided as beamer sets
-each step's page (`stepDecisions`): as declared where it did not reach past,
-`shrunk` where its glue shrank to fit (TeX's own setting), `overfull` where
-its overrun fits the gap above its footline — beamer's one overfull page —
-and `continued` past that. Where no frame reached past what its glue
-shrinks, the first setting is the document's; otherwise the document is set
-again with its frame steps marked as decided (`fittedDoc`). The ladder
-names every frame it moved once, by what the page did with its steps
-(`fitAccount`, `frameAccount`, `fitDiag`): W0384 with the whole overrun it
-measured where a step continued, else W0400 with its overhang. A web stage
-has no glue to shrink, so a frame the page could not set at its glue's
-natural size, where it holds a list, sets its lists squeezed there
-(`webSqueeze`, `Ir.squeezeFrames`): beamer's `\itemsep0pt\topsep0.5pt`, the
-floor its list glue shrinks to. -/
+/-- The overflow ladder (`Ir.frameFit`): set every unbreakable frame to measure, decide each
+step as beamer sets it, set the document again where needed, and name every frame moved once. -/
 public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Fitted :=
@@ -23552,11 +19393,6 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
         | some _ | none => none).toList.eraseDups).toArray
   { out := { final with diags := final.diags ++ account }, setting, decisions, webSqueeze }
 
-/-- **What the ladder ships is one setting of an IR document**
-(`_projects`): the fitted pages are `run`'s pages of `setting`, the document
-with the ladder's marks, and its diagnostics are that setting's with the
-ladder's account after them — so every statement about `run`'s output holds
-of what ships. -/
 public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) :
     let f := runFitted geom fs pats doc imgs frameSpans pictureSpans
@@ -23568,11 +19404,6 @@ public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hy
   · exact ⟨rfl, _, rfl⟩
   · exact ⟨rfl, _, rfl⟩
 
-/-- **Every frame the ladder moved is named, once, by what it did**
-(`_accounts`): a step of `fitAccount` — a marked frame step the final
-setting stood overfull or continued — has its frame's one account
-(`frameAccount`) among the fitted output's diagnostics, W0384 where the step
-continued. -/
 public theorem runFitted_accounts (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span))
     (o : FrameOrigin) (fit : Ir.FrameFit)
@@ -23668,8 +19499,7 @@ private theorem resolveMathAlphas_plain_body (coverage : Math.MathAlphabetCovera
 public def LineOut.glyphChars (line : LineOut) : List Char :=
   line.segs.toList.flatMap Seg.glyphChars
 
-/-- The original source class for paragraph attribution: every body block
-is a paragraph whose inlines are literal text. Furniture is unrestricted. -/
+/-- Every body block is a paragraph of literal text. -/
 @[expose] public def PlainParagraphs (body : Array Block) : Prop :=
   ∀ b ∈ body, ∃ xs, b = .para xs ∧ (∀ x ∈ xs, ∃ s, x = .text s)
 
@@ -23705,17 +19535,10 @@ private theorem ship_census (geom : Geom) (fs : FontSet)
     (by rw [hb]; exact hplain) hh hd
   simpa only [ship, hb] using h
 
-/-- The literal text owned by an opening paragraph leaf. The source alone
-chooses ownership: each nonempty paragraph opens at the sum of preceding
-structural leaf counts and owns all of its inlines. Empty paragraphs own no
-leaf. Whitespace and fixed spaces contribute spacing, not glyph scalars. -/
+/-- The literal glyph text a source paragraph owns, at its opening structural leaf. -/
 public def paragraphSourceInk (body : Array Block) (k : Nat) : List Char :=
   sourceInkPrefix (fun leaf _ => leaf == some k) body 0 true body.size
 
-/-- The actual source-to-shipment body census. Plain paragraphs are collected,
-broken, set and placed by the production pipeline; final page closure keeps
-all their glyphs. The source census excludes nonpainting spacing. No bound on
-paragraph length, line count, page count or furniture is required. -/
 public theorem ship_paras_body_exact (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body)
@@ -23731,9 +19554,6 @@ public theorem ship_paras_body_exact (geom : Geom) (fs : FontSet)
   rw [← Array.length_toList, List.take_length] at hs
   simpa only [pageCensus_filter_fun, Ir.blocksText] using h.trans hs
 
-/-- Every source paragraph's own glyph sequence survives actual shipment,
-indexed by its independently computed opening structural leaf. This is an
-ordered equality, so neither duplication nor a lost suffix can satisfy it. -/
 public theorem ship_paras_leaf_exact (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body)
@@ -23781,10 +19601,6 @@ private theorem sourceBound_run (geom : Geom) (fs : FontSet)
     q hq l hline hf
   simpa only [ht] using hs
 
-/-- Every non-furniture line containing a glyph run names a valid leaf of
-its actual source document. The proof crosses math/backend normalization,
-collection, asynchronous line breaking, placement, page closure, decoration,
-running furniture and marks; no producer-validity hypothesis is required. -/
 public theorem lines_attributed_covers (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body) :
@@ -23796,8 +19612,6 @@ public theorem lines_attributed_covers (geom : Geom) (fs : FontSet)
   · exact h
   · exact False.elim (hi (noGlyph_glyphChars l h))
 
-/-- The request census belongs to collection, before any placement step.
-The shipment carries that same value through its final close. -/
 public theorem ship_labelRequests_projects (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -23805,8 +19619,6 @@ public theorem ship_labelRequests_projects (geom : Geom) (fs : FontSet)
       labelRequests geom fs pats doc imgs frameSpans := by
   rfl
 
-/-- Print marks change fills only; the label audit reads exactly the
-lines in the public output after all page and furniture placement. -/
 public theorem run_labelObservations_projects (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -23815,9 +19627,6 @@ public theorem run_labelObservations_projects (geom : Geom) (fs : FontSet)
   simp only [run, runCore, ship, addMarks, auditLabelInk, labelObservations,
     Array.flatMap_map]
 
-/-- Each selected occurrence is reconciled with the actual final pages.
-No producer or placement correctness premise is assumed. The geometry
- adapter in `InkOutput` turns the successful checks into outline bounds. -/
 public theorem run_label_accounts (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (r : LabelAudit.Request)
@@ -23841,8 +19650,6 @@ public theorem run_label_accounts (geom : Geom) (fs : FontSet)
           (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
           (runPost (ship geom fs pats doc imgs frameSpans)).diags)
 
-/-- Every final label line is checked, including a repeated occurrence.
-Checking a different line with the same key never pays for this line. -/
 public theorem run_label_observed_accounts (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (o : LabelAudit.Observation)
@@ -23862,8 +19669,6 @@ public theorem run_label_observed_accounts (geom : Geom) (fs : FontSet)
           (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
           (runPost (ship geom fs pats doc imgs frameSpans)).diags)
 
-/-- Unresolved outlines on any shipped label are named even when another
-loss, including truncation, already names the same label and source. -/
 public theorem run_label_unknown_named (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (o : LabelAudit.Observation)
@@ -23885,9 +19690,6 @@ public theorem run_label_unknown_named (geom : Geom) (fs : FontSet)
           (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
           (runPost (ship geom fs pats doc imgs frameSpans)).diags)
 
-/-- Every code and subject reported by the actual shipment remains named
-after furniture, diagnostic deduplication, math diagnostics and print
-marks. This is the public bridge for a placement diagnostic invariant. -/
 public theorem shipment_diags_covers (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     ∀ d ∈ (ship geom fs pats doc imgs frameSpans).diags,
@@ -23927,10 +19729,6 @@ private theorem shipCore_frames (geom : Geom) (fs : FontSet)
     exact Array.mem_filterMap.mpr ⟨op, hop, hf⟩
   · exact ⟨Or.inl rfl, by simp⟩
 
-/-- Every physical shipment either has no frame stamp or carries the
-joint identity, counter and footer of an actual collector opening.
-The proof includes spills, accepted and retried floats, saved column
-cursors, column page merges, and the final close. -/
 public theorem ship_frames_footed (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -23969,9 +19767,6 @@ private theorem shipCore_reflows (geom : Geom) (fs : FontSet)
   intro p hp
   simp at hp
 
-/-- Every split recorded by actual paragraph placement is named after the
-flow driver's float replay, column joins, and final page close. The record
-uses the actual breaker result and the authored ends of its item array. -/
 public theorem ship_reflows_named (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -23979,18 +19774,12 @@ public theorem ship_reflows_named (geom : Geom) (fs : FontSet)
       (ship geom fs pats doc imgs frameSpans).diags :=
   shipCore_reflows geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
-/-- Furniture and marks do not rewrite the break choices committed by
-placement. The diagnostic contract below crosses their separate account. -/
 public theorem paragraph_breaks_projects (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).paragraphBreaks =
       (ship geom fs pats doc imgs frameSpans).paragraphBreaks := by rfl
 
-/-- A chosen break before an authored segment end is named in the actual
-public result by its paragraph key. Splits of the final paragraph segment
-alone do not satisfy the premise. This composes the producer and placement
-invariant with furniture, diagnostic deduplication, and the public run. -/
 public theorem reflow_named (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -24004,9 +19793,6 @@ public theorem reflow_named (geom : Geom) (fs : FontSet)
     shipment_diags_covers geom fs pats doc imgs frameSpans d hd
   exact ⟨e, he, ec.trans hc, es.trans hs⟩
 
-/-- The public run preserves the placement's frame/footer partition exactly,
-including repeated frame numbers, overlays, spills and intentionally absent
-standout footers. Neither furniture nor print marks change this partition. -/
 public theorem frame_pages_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).pages.map (fun p => (p.frame, p.foot)) =
@@ -24014,10 +19800,6 @@ public theorem frame_pages_projects (geom : Geom) (fs : FontSet) (pats : Option 
   simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_frames_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
-/-- Running furniture and cut marks preserve the source/step partition
-recorded by physical shipment, including every continuation page. This is
-the postlude bridge; source membership still belongs to the collector and
-placement invariants. -/
 public theorem frame_origins_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).pages.map
@@ -24028,9 +19810,6 @@ public theorem frame_origins_projects (geom : Geom) (fs : FontSet) (pats : Optio
     runPost_frameOrigins_projects
       (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
-/-- Every public output page honors one actual collected frame decision,
-or is an unowned flow page. Furniture and print marks preserve the joint
-stamp already proved through collection and physical placement. -/
 public theorem run_frames_footed (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -24045,10 +19824,6 @@ public theorem run_frames_footed (geom : Geom) (fs : FontSet)
   obtain ⟨q, hq, he⟩ := Array.mem_map.mp hm
   exact he ▸ ship_frames_footed geom fs pats doc imgs frameSpans q hq
 
-/-- The corrected frame-footer contract: each actual physical frame page
-uses the shared IR footer decision in force at its actual source opening.
-A plain standout frame may have a displayed number and no band. Counter
-restarts, overlays and spill pages do not detach a band from its opening. -/
 public theorem frame_pages_footed (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (p : PageOut)
@@ -24064,8 +19839,6 @@ public theorem frame_pages_footed (geom : Geom) (fs : FontSet)
     simp only [PageOut.frameStamp, FrameOpening.stamp, Prod.mk.injEq] at he
     exact ⟨f, hf, he.1.symm.trans ho, he.2.1, he.2.2⟩
 
-/-- Physical page order retains the IR folio and furniture decision recorded
-at shipment, through both postlude passes of the actual public run. -/
 public theorem page_lifecycle_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).pages.map (·.pageState) =
@@ -24073,9 +19846,6 @@ public theorem page_lifecycle_projects (geom : Geom) (fs : FontSet) (pats : Opti
   simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_lifecycle_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
-/-- Attribution crosses both postlude passes of the actual public run:
-the attributed lines, with all their ink and geometry, are exactly those
-the production placement shipped, on the same pages and in order. -/
 public theorem lines_attributed_projects (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -24086,8 +19856,6 @@ public theorem lines_attributed_projects (geom : Geom) (fs : FontSet)
   simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_attributed_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
-/-- Counted body lines cross the actual postlude and print-mark passes
-without additions, losses or changes in physical-page order. -/
 public theorem lines_counted_projects (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) :
@@ -24096,7 +19864,6 @@ public theorem lines_counted_projects (geom : Geom) (fs : FontSet)
   simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_counted_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
-/-- Page equality is the projection of the shared IR normalization fixed point. -/
 public theorem run_resolve_pages_agree (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store) :
     (run geom fs pats
@@ -24106,12 +19873,6 @@ public theorem run_resolve_pages_agree (geom : Geom) (fs : FontSet)
   simp only [run, resolveDocMath]
   rw [Ir.resolveMathAlphas_fixed_point]
 
-/-- The background fact over the pre-marks pipeline: every page `runCore`
-ships under a `bg` that stays declared carries the full-page fill. The proof is
-three seams: `finishPage_bg` (the one shipping door prepends the fill
-whole), `bgStep_placeFrom` (every placement step preserves the
-invariant), and `runPost_pages` (the furniture pass cannot touch
-fills). -/
 private theorem runCore_bg
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
@@ -24148,8 +19909,6 @@ private theorem runCore_bg
     · rw [← hB]; exact hy
     · rw [← hW, ← hB]; exact hw
     · rw [← hH, ← hB]; exact hh
-  -- the final close, taken abstractly: splitting the giant term is the
-  -- wall, so the ite is covered by a lemma over an opaque condition
   have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B),
       BgStep b0 X → BgStep b0 (if c then X.finishPage X.closingOwed else X) := by
     intro c inst b0 X h
@@ -24166,13 +19925,6 @@ private theorem runCore_bg
        repeat' split
        all_goals rfl)
 
-/-- Every page of a document whose opening palette declares `bg` and whose
-collected epochs keep it declared ships a fill over its whole medium, the bleed strip included (`Geom.ground`): what
-the walk attaches to a page survives to that page's output, observed at the
-page background. `page_background_survives` covers the fill-vanishing
-counterexample where `Spacing.Page.commit` rebuilt the page with only its lines.
-`runCore_bg` carries the pipeline's three seams; the marks step is the
-fourth and only appends (`addMarks_mem`), so the fill rides through. -/
 public theorem page_background_survives
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
@@ -24203,8 +19955,7 @@ namespace LeanTex.Core.Layout.Spacing
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 
 
-/-- Input values that decide ordinary element glue. Widths are already
-resolved in scaled points; font-relative declarations have no separate rule. -/
+/-- The inputs that decide ordinary element glue, widths in scaled points. -/
 public structure PendingView where
   owed : Array Glue
   wantDefault : Bool
@@ -24214,8 +19965,7 @@ public structure PendingView where
 public def pending (a : Pending) : PendingView :=
   ⟨a.owed, a.wantDefault, a.declaredSkip, a.trivOwed⟩
 
-/-- Starred anchors and short-display alternatives have their own placement
-rules. This contract concerns an ordinary boundary between fixed lines. -/
+/-- An ordinary boundary: no starred anchor and no short-display alternative. -/
 public def Ordinary (a : Pending) : Prop := a.anchorAt = none ∧ a.dispAlt = none
 
 public def peerGap (r : Context) : Glue := Spacing.Context.parskip r
@@ -24257,9 +20007,7 @@ public theorem add_ordinary (a : Pending) (g : Glue) (h : Ordinary a) :
     · simp [hl, h0, ha, hd]
     · by_cases hlt : last.width < g.width <;> simp [hl, h0, hlt, ha, hd]
 
-/-- A read-back of the newly emitted skip operations, not a second glue
-selector. `flush_emits_exact` proves that no other operation is omitted at
-an ordinary boundary. -/
+/-- The skip operations a flush newly emits, read back. -/
 public def flushed (a : Pending) (r : Context) : Array Glue :=
   (((Spacing.Pending.flushGap a r).ops.toList.drop a.ops.size).filterMap fun op =>
     match op with
@@ -24289,9 +20037,7 @@ public theorem flush_emits_exact (a : Pending) (r : Context) (h : Ordinary a) :
       simp_all [← Array.length_toList, List.append_assoc]
     all_goals simp [Array.push_eq_append, -Array.append_singleton, Array.append_assoc]
 
-/-- Measurements read by `placeLine` for one ordinary text line. `origin`
-includes the current line's baseline and this line's metric interline.
-`skip` is the glue already present before the collector's next boundary. -/
+/-- The measurements `placeLine` reads for one ordinary text line. -/
 public structure LineInput where
   origin : Sp
   inkBelow : Sp
@@ -24305,10 +20051,8 @@ public def input (r : Context) (b : Page) (size : Sp) (segs : Array Seg) : LineI
   ⟨b.y + b.textGap box (segs.any Seg.isMath) (segsInk r.fs segs).1 + b.surfaceTop, box.inkBelow,
     Spacing.Page.bottom b - b.surfaceBottom, b.skip, b.pageShrink⟩
 
-/-- Fixed prior layout: an existing non-rule line on the current page,
-without a column restart, pending notes, a depth reset, display interline, or
-a frame's opening box below it.
-The next line is text rather than a bare rule and carries no new notes. -/
+/-- Fixed prior layout: an existing non-rule line on the page,
+with nothing pending that changes the next text line's spacing. -/
 public def Ready (b : Page) (segs : Array Seg) : Prop :=
   b.cur.lines.isEmpty = false ∧ b.freshStart = false ∧
   b.prevBand = .text ∧ ruleOnly segs = false ∧ b.notesH = 0 ∧
@@ -24318,9 +20062,7 @@ public def baselines (b : Page) : Array Sp := b.cur.lines.map (·.y)
 public def shipped (b : Page) : Array PageOut := b.pages
 public def queuedGlue (b : Page) : Glue := b.skip
 
-/-- Compose the real placement steps for the skips `flushGap` emitted, then
-the real `placeLine`. This exposes a boundary of the production operations;
-it does not choose glue, measure a line, or implement a second placer. -/
+/-- The placement steps for the skips `flushGap` emitted, then `placeLine`. -/
 public def place (a : Pending) (r : Context) (b : Page) (x size : Sp)
     (segs : Array Seg) (width : Sp) : Page :=
   let st : StepSt := { b }
@@ -24415,15 +20157,14 @@ namespace LeanTex.Core.Layout.Spacing
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 
-/-- The exact production placement input, after backend projection, math
-resolution, collection and paragraph breaking have been selected. -/
+/-- The production placement input after backend projection,
+math resolution, collection and paragraph breaking. -/
 public structure Program where
   private mk ::
   private ops : Array StagedOp
   private initial : B
 
-/-- Observe the existing preparation continuation; no second collector or
-line breaker is used by the spacing contract. -/
+/-- The preparation continuation's program for a document. -/
 public def program (geom : Geom) (fs : FontSet) (doc : Ir.Doc) : Program :=
   withLayoutOps geom fs none (resolveDocMath fs doc).1 {}
     (fun ops initial _ => ⟨ops, initial⟩)
@@ -24439,8 +20180,6 @@ private theorem program_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
         { b := (program geom fs doc).initial } 0).b).pages := by
   rfl
 
-/-- Natural-size fit and an ordinary top distribution leave every line's
-baseline unchanged at the actual closing door. -/
 private theorem close_natural (b : B)
     (hcur : b.cur.lines.isEmpty = false)
     (hn : b.needed ≤ 0) (hv : b.vdist = .top)
@@ -24451,9 +20190,6 @@ private theorem close_natural (b : B)
   simp [closeLast, PageOut.blank, hcur, Spacing.Page.finishPage, Int.not_lt.mpr hn, hf, hs,
     hv, VDist.aboveShare, VDist.top, filShare, Spacing.Page.noteLines, hp]
 
-/-- **The last page ships whenever it is not blank** (`_exact`), the door
-`ship` closes through (`program_ship`), with every ink the page held: a
-document ending on a picture alone ends on that picture's page. -/
 private theorem closeLast_ships_exact (b : B) (hb : b.cur.blank = false) :
     (closeLast b).pages.size = b.pages.size + 1 ∧
       ((closeLast b).pages.back?.map (·.inks.size)) = some b.cur.inks.size := by
@@ -24491,8 +20227,7 @@ private theorem LinesRise.append {as bs cs ds : List LineOut}
   | nil => exact h'
   | cons hl _ ih => exact .cons hl ih
 
-/-- The fields which determine ordinary paragraph geometry and its cursor.
-Diagnostics, anchors and horizontal paint do not enter the comparison. -/
+/-- The fields that determine ordinary paragraph geometry and its cursor. -/
 private structure PageRise (a b : B) : Prop where
   geom : a.geom = b.geom
   ascent : a.ascent = b.ascent
@@ -24513,7 +20248,7 @@ private def nextBaseline (fs : FontSet) (b : B) (size : Sp)
     (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
       b.geom.leading size segs step) (segs.any Seg.isMath) (segsInk fs segs).1) + b.surfaceTop
 
-/-- Numeric fit at the next call to the real placer, before it branches. -/
+/-- Numeric fit at the next call to the placer. -/
 private def LineFits (fs : FontSet) (b : B) (size : Sp)
     (segs : Array Seg) (first : Option Sp) (step : Option Sp := none) : Prop :=
   nextBaseline fs b size segs first step +
@@ -24588,12 +20323,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit,
       h.regions]
 
-/-- A line the rise certificate (`paragraph_step`) covers: an ordinary line,
-spaced by the metric rule. A paragraph opening a painted colour box or a TeX
-box (`TexBox`, a block template's title box and the box holding title and
-body) stands where TeX's box rule puts it, which the certificate does not
-state yet — pending: `paragraphSafeDecision` answers no for such a paragraph
-rather than certify it. -/
+/-- A line the rise certificate covers: an ordinary line spaced by the metric rule. -/
 private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
   let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
   (j.paintPadding = none ∧ j.texBox = none) ∧ j.rowStrut = none ∧
@@ -24646,8 +20376,7 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
 
-/-- A proof trace of the numeric input conditions at every iteration of the
-production paragraph fold. It runs no second line-setting algorithm. -/
+/-- A trace of the numeric input conditions at every iteration of the paragraph fold. -/
 private inductive ParagraphInputs (fs : FontSet) (j : ParaJob) :
     List Nat → (B × Nat × Bool) → Prop
   | nil (s) : ParagraphInputs fs j [] s
@@ -24707,7 +20436,6 @@ private theorem appendRiders_toList (fs : FontSet) (l : LineOut)
   simp only [Array.forIn_pure_yield_eq_foldl]
   simp [← Array.foldl_toList]
 
-/-- The consumed-prefix invariant of the actual decoration loop. -/
 private theorem paintLines_toList (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).toList =
       lines.toList.flatMap (fun l => l :: (decorationRiders fs l).toList) := by
@@ -24749,8 +20477,7 @@ private theorem paint_rise (fs : FontSet) {as bs : List LineOut}
   | nil => exact .nil
   | cons hl _ ih => exact (LinesRise.cons hl (riders_rise fs hl)).append ih
 
-/-- A text glyph is the same ink measure used by the original spacing
-obligation: white space, NBSP and discretionary soft hyphens are excluded. -/
+/-- A segment's text glyphs, white space, NBSP and soft hyphens excluded. -/
 public def textInk : Seg → List Char
   | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
     (String.ofList (glyphs.toList.map (·.2.1))).toList.filter fun c =>
@@ -24875,8 +20602,7 @@ namespace LeanTex.Core.Layout.Spacing
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 
 
-/-- A proof trace of the actual driver's prefix. Each constructor is one
-production call; the state includes all previous layout, not just its y. -/
+/-- A trace of the driver's prefix, one constructor per production call. -/
 private inductive Prefix (fs : FontSet) (p : Program) : FlowSt → Nat → Prop
   | start : Prefix fs p { placed := { b := p.initial } } 0
   | step {st i} (prior : Prefix fs p st i) (hi : i < p.ops.size)
@@ -24894,9 +20620,7 @@ private theorem prefix_continue (fs : FontSet) (p : Program)
     rw [ih, placeFlowFrom]
     simp only [hi, reduceDIte]
 
-/-- The unconsumed production input is exactly the emitted ordinary skips
-and one fixed prepared paragraph. These are operation identities before
-placement, not assumptions about the output pages. -/
+/-- The unconsumed input: exactly the emitted ordinary skips and one prepared paragraph. -/
 private inductive ParagraphTail (ops : Array StagedOp) (j : ParaJob)
     (t : Task (Array Nat)) : Nat → List Glue → Prop
   | last {i} (hi : i < ops.size) (hop : ops[i] = .para j t)
@@ -24940,10 +20664,8 @@ private theorem paragraph_tail_place (fs : FontSet) (ops : Array StagedOp)
     · simp only [stepFlow, skip_step_fs fs st.placed g hf]
       simpa only [Spacing.Page.fresh] using hf
 
-/-- A document's actual prepared input reaches a fixed prior layout and
-then contains the named skips and prepared paragraph. This premise names
-the input boundary of `run`, including the common prefix; it contains no
-baseline, page-preservation, or monotonicity conclusion. -/
+/-- A document's prepared input reaches a fixed prior
+layout, then holds the named skips and paragraph. -/
 public def AtTail (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
     (b : Page) (j : Paragraph) (breaks : Array Nat) (gs : Array Glue) : Prop :=
   let p := program geom fs doc
@@ -24970,9 +20692,8 @@ namespace LeanTex.Core.Layout.Spacing
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 
-/-- Numeric and mode inputs to the real page-closing door. Natural fit
-requires no shrink; top distribution and absence of fil avoid later
-redistribution. Pending footnotes have their own placement contract. -/
+/-- Inputs to the page-closing door that keep every
+baseline: natural fit, top distribution and no fil. -/
 private def NaturalClose (b : B) : Prop :=
   b.cur.lines.isEmpty = false ∧ b.needed ≤ 0 ∧ b.vdist = .top ∧
     b.pageFils = 0 ∧ b.skip.fil = false ∧ b.pendingNotes.isEmpty = true
@@ -24985,8 +20706,7 @@ private def boundaryEnd (fs : FontSet) (b : B) (j : ParaJob)
   placePara fs (boundaryStart b gs) j breaks
 
 /-- Checkable inputs to the production calls after the fixed prefix:
-ordinary unpainted paragraph modes, numeric fit before every line commit, and
-natural-size fixed-top closing. No output ordering is assumed. -/
+ordinary modes, numeric fit at every commit, natural close. -/
 public def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) : Prop :=
   Spacing.Page.fresh b = false ∧ j.keepNext ≤ 0 ∧ j.display = none ∧ j.notes.isEmpty = true ∧
@@ -25026,10 +20746,6 @@ private theorem tail_baselines (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
     List.flatMap_append, List.flatMap_cons, List.flatMap_nil, List.append_nil] at hm
   exact ho.trans hm
 
-/-- Composition through the actual driver, arbitrary paragraph line count,
-actual page close, decoration, furniture, and print-mark projection.
-The downstream element contract discharges the width premise from
-`addvOwed` and resolved default compensation. -/
 public theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir.Doc)
     (b : Page) (j : Paragraph) (breaks : Array Nat) (gs gs' : Array Glue)
     (ha : AtTail geom fs before b j breaks gs)
@@ -25060,8 +20776,7 @@ namespace LeanTex.Core.Layout.Spacing
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 
--- Exact equality retains colour spellings and source provenance, which
--- the display-oriented BEq instances intentionally omit.
+-- Exact equality keeps colour spellings and provenance, which the BEq instances omit.
 deriving instance DecidableEq for Ir.PdfColor, Ir.Color
 deriving instance DecidableEq for Diag
 deriving instance DecidableEq for Geom, Attribution, DecorationRule, Decorations,
@@ -25078,8 +20793,7 @@ private def bucketEq :
     letI := bucketEq t t'
     decidable_of_iff (a = a' ∧ b = b' ∧ t = t') (by simp)
 
--- Representation equality is deliberately stronger than map equivalence:
--- equal certificates must be substitutable into the actual placement code.
+-- Representation equality, stronger than map equivalence, so certificates substitute exactly.
 private instance : DecidableEq (Std.HashMap Nat Sp) := fun a b =>
   letI := bucketEq
   decidable_of_iff
@@ -25095,9 +20809,8 @@ private instance : DecidableEq (Std.HashMap Nat Sp) := fun a b =>
 
 deriving instance DecidableEq for Paragraph
 
-/-- Inputs supplied to the initial page builder. Every other field starts
-at its constructor default; `program_initial_exact` checks that fact against
-the production preparation continuation. -/
+/-- Inputs to the initial page builder; every other field
+starts at its default (`program_initial_exact`). -/
 private structure InitialInput where
   geom : Geom
   ascent : Sp
@@ -25125,8 +20838,7 @@ private theorem program_initial_exact (geom : Geom) (fs : FontSet) (doc : Ir.Doc
       (program geom fs doc).initial := by
   rfl
 
-/-- Shared inputs, all read before paragraph placement. Equality of this
-value derives equality of the prefix page by applying the same placer. -/
+/-- Shared inputs read before paragraph placement, whose equality yields equal prefix pages. -/
 private structure TailInput where
   initial : InitialInput
   first : ParaJob
@@ -25189,9 +20901,7 @@ private def paragraphInputsDecidable (fs : FontSet) (j : ParaJob) :
       | isTrue hr => isTrue (.cons hf hr)
       | isFalse hn => isFalse fun h => by cases h with | cons _ hr => exact hn hr
 
-/-- The spacing premises can be checked without opening private staging or
-page-builder fields. This decides the existing input predicate, using the
-real paragraph step at each break; it does not compare output baselines. -/
+/-- Decide `ParagraphSafe` with the real paragraph step at each break. -/
 public def paragraphSafeDecision (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) :
     Decidable (ParagraphSafe fs b j breaks gs) := by
@@ -25211,16 +20921,13 @@ public def paragraphSafeDecision (fs : FontSet) (b : Page) (j : Paragraph)
   unfold NaturalClose
   infer_instance
 
-/-- The public instance delegates to the abstract decision procedure, keeping
-the paragraph and page-builder representation private. -/
+/-- Delegates to `paragraphSafeDecision`, keeping the representations private. -/
 public instance paragraphSafeDecidable (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) :
     Decidable (ParagraphSafe fs b j breaks gs) :=
   paragraphSafeDecision fs b j breaks gs
 
-/-- A constructible certificate for the common prefix and safe final
-paragraph of two actual documents. Its proofs describe production inputs;
-the output baseline comparison follows from `run_tail_monotone`. -/
+/-- A certificate for the common prefix and safe final paragraph of two documents. -/
 public structure TailPair (geom : Geom) (fs : FontSet) (before after : Ir.Doc) where
   page : Page
   paragraph : Paragraph
@@ -25232,11 +20939,8 @@ public structure TailPair (geom : Geom) (fs : FontSet) (before after : Ir.Doc) w
   before_safe : ParagraphSafe fs page paragraph breaks beforeSkips
   after_safe : ParagraphSafe fs page paragraph breaks afterSkips
 
-/-- Check arbitrary documents whose prepared input is two paragraphs with
-one intervening skip. Shared preparation inputs establish the common page;
-the numeric fit decider establishes both safety premises. Differing text,
-breaks or setup, heading reservation, and failed fit bounds return `none`.
-No output page equality or baseline ordering is tested or assumed. -/
+/-- Certify two documents whose prepared input is two paragraphs with one
+skip between; `none` where they differ otherwise or a fit bound fails. -/
 public def twoParagraphPair? (geom : Geom) (fs : FontSet) (before after : Ir.Doc) :
     Option (TailPair geom fs before after) := do
   let a ← preparedTail? geom fs before
