@@ -984,8 +984,8 @@ public def Font.advance (f : Font) (c : Char) : Nat :=
   | some g => f.widths[g]?.getD 0
   | none => 0
 
-/-- The interword space in font units: the space glyph's advance, else half the em dash, else
-half the em, as LuaTeX's loader reads it. -/
+/-- The interword space in font units: the space glyph's advance, as LuaTeX's `\fontdimen2`,
+else half the em dash, else half the em (LuaTeX's fallbacks less its `averagewidth` step). -/
 public def Font.spaceAdvance (f : Font) : Nat :=
   let sp := f.advance ' '
   if sp > 0 then sp

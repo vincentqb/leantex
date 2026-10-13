@@ -601,7 +601,8 @@ public def monoCompanions : Array Pairing := #[
     source := "github.com/ArtifexSoftware/urw-base35-fonts", license := "AGPL with font exception"
     xHeights := some (524, 419) }]
 
-/-- Typewriter families whose project ships no italic face. -/
+/-- Typewriter families whose project ships no italic face, per its sources
+(github.com/notofonts/latin-greek-cyrillic holds upright masters only). -/
 public def monoUprightOnly : List String := ["Noto Sans Mono"]
 
 /-- The default text families no project ships a designed typewriter face beside. -/
@@ -744,7 +745,9 @@ public theorem monoFor_contract (faces : Array Face) (text : Option String) (fam
 /-- The family lualatex's typewriter shapes are filed under. -/
 public def latinModernMono : String := "Latin Modern Mono"
 
-/-- lualatex's own typewriter shapes by corner file, as measured under lualatex. -/
+/-- lualatex's own typewriter shapes by corner file, as measured under lualatex; pending work:
+the regular upright is the 10-point design at every size where lualatex takes LMMono8, 9 or 12 by
+size, `\textsl` sets in the italic and `\textsc` in scaled capitals. -/
 public def latinModernMonoFaces : List ((Nat × Bool) × String) :=
   [((400, false), "lmmono10-regular.otf"), ((700, false), "lmmonolt10-bold.otf"),
    ((400, true), "lmmono10-italic.otf"), ((700, true), "lmmonolt10-boldoblique.otf")]
@@ -804,7 +807,8 @@ public theorem latinModernMono_contract (faces : Array Face)
 /-- Latin Modern Mono's x-height in thousandths of an em, measured from lmmono10-regular.otf. -/
 public def latinModernMonoXHeight : Nat := 431
 
-/-- How far, in percent of the text's x-height, a companion's may stand and still lead. -/
+/-- How far, in percent of the text's x-height, a companion's may stand and still lead: the
+measured companions stand within 5.4%, Latin Modern Mono 9 to 21% below. -/
 public def companionXHeightBound : Nat := 6
 
 private def gapOf (a b : Nat) : Nat := if a ≥ b then a - b else b - a

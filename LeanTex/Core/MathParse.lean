@@ -269,7 +269,7 @@ public def fracCmds : List (String × FracSpec) :=
    ("tbinom", { binom with style := some (.text false) })]
 
 /-- amsmath's grid environments inside a formula, each with its grid and its `\left`/`\right`
-delimiters (amsmath.sty). -/
+delimiters (amsmath.sty: `MaxMatrixCols` 10, and `cases` under `\arraystretch` 1.2). -/
 public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
   let matrix : GridKind := .array (Array.replicate 10 .center) 1000
   [("matrix", matrix, none, none), ("pmatrix", matrix, some '(', some ')'),

@@ -149,7 +149,7 @@ private def fillAt (edges : Array (Int × Int × Int × Int)) (y : Int) :
   return out
 
 /-- Merged x-intervals in font units of ink inside `[bandLo, bandHi]`, exact up to the
-eight-chord flattening. -/
+eight-chord flattening and one unit of rounding at each chord vertex and clip. -/
 public def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int) := Id.run do
   if o.minY ≥ bandHi then
     return #[]

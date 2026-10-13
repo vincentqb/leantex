@@ -489,7 +489,8 @@ public theorem inlineCode_source_exact (pal : Palette) (ground : Option Color)
   rw [← Array.foldl_toList, inlineFold_text, paintLine_tokens_exact]
   simp [plainText, plainTextList, lineText, Array.foldl_toList]
 
-/-- Every colour a listing ships on a ground that the palette does not declare is text AA there. -/
+/-- Every colour a listing ships and the palette does not declare is text AA on the listing's
+ground. -/
 public def contract (pal : Palette) (ground : Option Color) (style : Option ListingStyle := none) :
     Bool :=
   let bg := ground.getD (Design.printPage pal)
@@ -550,8 +551,8 @@ public def codeClass (c : Char) : CodeClass :=
   else if "!#$%&*+-./:<=>?@\\^|~".contains c then .op
   else .single
 
-/-- How listings.sty's standard character table reads a character; a scalar past ASCII reads
-as a letter. -/
+/-- How listings.sty's standard character table reads a character; a scalar past ASCII, which
+the table does not name, reads as a letter, the engine's departure. -/
 public inductive LstClass where
   | letter | digit | space | other | apart
   deriving BEq

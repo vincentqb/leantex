@@ -48,8 +48,8 @@ def advanceAttrs (em width : Int) : Array (String × String) :=
     #[("width", "0"), ("style", s!"margin-inline-end: {measuredEm margin em}")]
   else #[("width", measuredEm w em)]
 
-/-- The cell padding that sets a stretched array's rows `\arraystretch` baselines apart; `none`
-at the default. -/
+/-- The cell padding that sets a stretched array's rows `\arraystretch` baselines apart: half the
+stretch past one, of the PDF's 1.2 em baseline, on MathML Core's 0.5ex; `none` at the default. -/
 def stretchPad (stretch : Nat) : Option String :=
   if stretch ≤ 1000 then none else
     let m := (stretch - 1000) * 6 / 10
@@ -151,7 +151,9 @@ def accentNode (mark : Char) (stretch : Bool) (body : Array Html.Node) : Html.No
 /-- What a formula's cancel marks and lengths read beyond the AST, with TeX's stand-ins where no
 face is measured. -/
 public structure Marks where
+  /-- The overbar rule in thousandths of an em; unmeasured, plain TeX's 0.4 pt at 10 pt. -/
   rule : Nat := 40
+  /-- The overbar clearance in thousandths of an em; unmeasured, TeX rule 9's three rules. -/
   gap : Nat := 120
   /-- Resolved font units for physical math lengths. -/
   em : MathStyle → Option Int := fun _ => none
@@ -161,7 +163,7 @@ public structure Marks where
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
     fun _ _ _ _ => none
   style : MathStyle := .text false
-  /-- `\minalignsep` as a CSS length in the page's print unit. -/
+  /-- `\minalignsep` as a CSS length in the page's print unit; `1em` at the 10 pt base. -/
   alignSep : String := "1em"
   /-- Font MATH percentages; unmeasured, plain TeX's 7/5 pt script sizes at 10 pt. -/
   scales : ScriptScales := { script := 70, scriptscript := 50 }
@@ -425,7 +427,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
       | .array _ _ => if mk.style.rank == 3 then .text mk.style.cramped else mk.style
       | .small => .script false
       | .align | .aligned _ | .gather => .display false
-    -- `smallmatrix`: script-style cells, a thin space each side.
+    -- `smallmatrix`: script-style cells, each side a 3 mu thin space in a 70% script em.
     let attrs := relativeStyle mk st
     let attrs := if kind == .small then attrs.map fun (k, v) =>
       (k, if k == "style" then v ++ "; padding-inline: 0.238em" else v)
@@ -437,8 +439,8 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
       (listNodes { mk with style := st } (st.rank == 3) none #[] value)
       (value matches .cons _ _)
 
-/-- The `mtd` cells of one row, each aligned by CSS `text-align`, with its `-webkit-` twin for
-Chromium. -/
+/-- The `mtd` cells of one row: a non-centred column declares CSS `text-align`, a right one
+with its `-webkit-` twin for Chromium. -/
 def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
     (acc : Array Html.Node) : MRow → Array Html.Node
   | .nil => acc
@@ -470,7 +472,7 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
         match [align, stretchPad s].filterMap id with
         | [] => #[]
         | parts => #[("style", "; ".intercalate parts)]
-      -- `\thickspace` before every column but the first, half of `1.5\ex@` around each row.
+      -- `\thickspace` before later columns, half `1.5\ex@` above and below, in a 70% script em.
       | .small, _ =>
         #[("style", if k == 0 then "padding: 0.107em 0" else "padding: 0.107em 0 0.107em 0.397em")]
     rowNodes mk disp kind (k + 1)
@@ -929,7 +931,8 @@ theorem rowsNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
 
 end
 
-/-- A fact of the artifact: the emission's leaf text is the glyph-text fold of its math list. -/
+/-- The MathML projection drops no glyph and invents none: its leaf text is the glyph-text fold of
+the math list, which `mathmlChecks` holds to the PDF census. -/
 public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
@@ -937,7 +940,7 @@ public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × St
   rw [listNodes_chars _ display none body #[] #[]]
   rfl
 
-/-- A fact of the artifact: the in-context row carries the root's glyph text. -/
+/-- The in-context row paints the same glyph text as the root. -/
 public theorem formulaRow_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formulaRow display extra body mk) = listChars #[] body := by

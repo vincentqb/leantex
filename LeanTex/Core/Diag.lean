@@ -121,7 +121,8 @@ public inductive Floor where
   | refuse
   /-- The construct's place may be empty; whatever stands there is its own content. -/
   | absent
-  /-- The construct's text content stands in its place, never its markup and never nothing. -/
+  /-- The construct's text content stands in its place: never its markup, and never nothing
+  where the construct carried content. -/
   | content
   /-- Nothing is owed and nothing appears. -/
   | inert

@@ -6,7 +6,8 @@ public import LeanTex.Core.EncodingOption
 import LeanTex.Core.EncodingData
 
 /-! The decoding door: a file's bytes as text, by its byte-order mark, UTF-8, or the encoding a
-`\usepackage[...]{inputenc}` declares, lines ended at LF and losses named. -/
+`\usepackage[...]{inputenc}` declares (read as pdfLaTeX reads it, where lualatex ignores it),
+lines ended at LF and losses named. -/
 
 namespace LeanTex.Core.Encoding
 
@@ -373,8 +374,8 @@ private def settleIf (dirty : Bool) (t : String) : String :=
     | none => (t.foldl settleStep ("", false)).1
   else t
 
-/-- Lines end at LF, CR LF and a lone CR included, and U+0000 is U+FFFD, as TeX Live and
-CommonMark (§2.1, §2.3) read them. -/
+/-- Lines end at LF, CR LF and a lone CR included, as TeX Live and CommonMark §2.1 end them, and
+U+0000 is U+FFFD, as CommonMark §2.3 reads it. -/
 public def settle (t : String) : String := settleIf (unsettledFrom t 0) t
 
 private theorem unsettledFrom_mem (t : String) (i : Nat) (h : unsettledFrom t i = true) :

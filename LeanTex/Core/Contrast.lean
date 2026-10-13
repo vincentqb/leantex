@@ -402,6 +402,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       usesInlines codeCx acc
         ((Listing.paintLine acc.pal ground covered spec.style brushes
           line).flatMap fun r => Listing.paintRun r #[.text r.text]).toList) acc
+  -- A picture's labels stand on its own fills, not the page; their contract is pending work.
   | .note _ | .rule _ _ _ | .logo _ | .picture _
   | .pagebreak => acc
 
@@ -1004,7 +1005,8 @@ public def coverMonotone (pal : Palette) : Bool :=
 public def usePairs (doc : Doc) : Array (Color × Color) :=
   (docUses doc (docWalk doc)).uses.map fun u => (u.color, u.surface)
 
-/-- The (ink, ground) pairs the document judge enumerates: shipped sites and coloured uses. -/
+/-- The (ink, ground) pairs the document judge enumerates: shipped sites and coloured uses, not
+every placed pair (overlay dimming and picture labels lie outside it). -/
 public def judgedPairs (doc : Doc) : Array (Color × Color) :=
   let uses := usePairs doc
   (shippedSites doc).filterMap (fun x =>

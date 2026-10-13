@@ -248,7 +248,8 @@ public inductive MathAlphabet where
   | bm
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The distinct Unicode alphabets: neither `bfDefault`, a selection of `bf` and `bfit`, nor `bm`. -/
+/-- The distinct Unicode alphabets: neither `bfDefault`, a selection of `bf` and `bfit`, nor
+`bm`. -/
 public def allAlphabets : List MathAlphabet :=
   [.bb, .cal, .frak, .bf, .bfit, .sf, .tt, .rm, .it]
 
@@ -783,7 +784,9 @@ public inductive GridKind where
   `trailing`. -/
   | aligned (trailing : Bool)
   | gather
+  /-- The document's column spec, rows `\arraystretch` apart in permille. -/
   | array (cols : Array ColAlign) (stretch : Nat)
+  /-- amsmath's `smallmatrix`: rows `6\ex@` apart, `\lineskip` `1.5\ex@`, `\ex@` 1 pt at 10 pt. -/
   | small
   deriving Repr, BEq, Inhabited
 
@@ -2048,8 +2051,9 @@ private theorem Resolved.inAlphabet_sym_covers (r : Resolved) (a : MathAlphabet)
   | sym c => exact ⟨c, rfl⟩
   | styled sty c => exact ⟨c, by simp [Resolved.inAlphabet, ha]⟩
 
-/-- Resolve one scalar under a stack of active alphabets, innermost first: the first alphabet
-with a range for it decides. -/
+/-- Resolve one scalar under a stack of active alphabets, innermost first: a text-served range
+styles it, a covered range remaps it, and anything else falls through to the enclosing stack under
+`Resolved.inAlphabet`'s family reset. -/
 public def resolveCharStack (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Resolved
   | [], c => .sym c

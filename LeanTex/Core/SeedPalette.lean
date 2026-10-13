@@ -59,7 +59,8 @@ public structure Targets where
   edge : Nat
   deriving Repr, BEq, Inhabited
 
-/-- How far a generated ink stands above its WCAG 2.2 gate. -/
+/-- How far a generated ink stands above its WCAG 2.2 gate, past `contrastMilli`'s truncation of
+up to 0.007. -/
 public def margin : Nat := 100
 
 /-- A light page: the class's ground depth, text at 4.6:1, edges at 3.1:1. -/
@@ -68,7 +69,7 @@ public def margin : Nat := 100
     pair := d.pair, text := aaText + margin, edge := aaNonText + margin }
 
 /-- A dark page: grounds further apart, and text at 6.5:1, where WCAG 2 understates how faint
-light text on a dark ground reads. -/
+light text on a dark ground reads; the values are calibrated to the screen `Tests.Schemes` holds. -/
 @[expose] public def Targets.dark : Targets :=
   { body := 1190, band := 1400, rule := 1700, wash := 1120, soft := 1300, pair := 1100,
     text := 6500, edge := aaNonText + margin }
