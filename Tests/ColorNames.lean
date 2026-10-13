@@ -271,6 +271,35 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "palette keys: a beamer colour declaration reads both keys"
     ((named beamer "ink").isEmpty && (named beamer "surface").isEmpty)
 
+/-- A colour missing as text and as page ground is two losses, each a warning with its own words,
+help and count. -/
+public def missingBothWaysChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let ink := "\\textcolor{nosuchshade}{Probe words.}\n\n"
+  let ground := "\\pagecolor{nosuchshade}\nProbe ground.\n\n"
+  let misses (pre body : String) : Array Diag :=
+    (elabStr (article pre body)).2.filter (·.code == "W0304")
+  let says (ds : Array Diag) (words : String) : Array Diag :=
+    ds.filter fun d => d.severity == .warning && hasStr d.message "'nosuchshade'" &&
+      hasStr d.message words && d.help.isSome
+  let orders : List (String × String × String) :=
+    [("text first", "", ink ++ ground), ("ground first", "", ground ++ ink),
+     ("a preamble ground first", "\\pagecolor{nosuchshade}\n", ink)]
+  for (order, pre, body) in orders do
+    for (log, ds) in [("elaborated", misses pre body), ("printed", Diag.foldRepeats (misses pre body))] do
+      let inkLoss := says ds "content kept uncoloured"
+      let groundLoss := says ds "the page ground is unchanged"
+      t s!"a colour missing as text and as page ground is named both ways ({order}, {log})"
+        (ds.size == 2 && inkLoss.size == 1 && groundLoss.size == 1)
+      t s!"each loss of a colour missing both ways counts its own site ({order}, {log})"
+        ((inkLoss ++ groundLoss).all (·.sites == 1) &&
+          inkLoss.map (·.subject) != groundLoss.map (·.subject))
+  let again := misses "" (ground ++ ink ++ ground ++ ink)
+  t "a further use of a colour missing both ways is a further site of its own loss"
+    ((says again "content kept uncoloured").map (·.sites) == #[2] &&
+      (says again "the page ground is unchanged").map (·.sites) == #[2] &&
+      (again.filter (·.severity == .note)).size == 2)
+
 /-- The artifact two builds are compared by: the PDF's bytes and the HTML body and stylesheet rules,
 less the author colours declared for a host. -/
 private def flipArtifact (fonts : Font.FontSet) (doc : Ir.Doc) : ByteArray × String × String :=

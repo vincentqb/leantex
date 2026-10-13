@@ -1544,6 +1544,11 @@ def reports : List Report := [
     pins := [thm% Land.parseArgs_run_exact, thm% Land.parseArgs_unknown_exact,
       thm% Land.parseArgs_help_exact]
     accept := ["the landing tool's usage scenario fails against the tool built at b6e1a170 before the fix: the help option and its short form exit 2 having taken the lock and written a refused ledger row, and every unknown option makes a run directory; with the fix every scenario passes"]
+    state := .guarded "b6e1a170" .before .author },
+  { id := "R174", date := "2026-10-13"
+    what := "a colour missing both as text and as the page ground was named once: whichever use came first silenced the other, and its warning counted both uses in its own words"
+    pins := [check% Tests.ColorNames.missingBothWaysChecks]
+    accept := ["the guard's thirteen assertions fail at b6e1a170 before the fix: in every order the second use is a note without its help, and the first warning counts two sites"]
     state := .guarded "b6e1a170" .before .author }
 ]
 

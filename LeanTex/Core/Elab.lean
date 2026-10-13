@@ -6235,7 +6235,7 @@ private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
   | .rejected => return none
 
 private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Unit :=
-  warnOnce ctx ("palette:" ++ source) .W0304
+  warnOnce ctx ("pagecolor:" ++ source) .W0304
     s!"'{source}' is not in the palette; the page ground is unchanged" pos
     (help := "declare the colour before using it as a page ground")
 
