@@ -10,6 +10,7 @@ public import LeanTex.Core.FigureFace
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.Engine
 import LeanTex.Cli.FontDiscovery
+import LeanTex.Cli.ToolProbe
 
 /-! A PDF figure's web face, native first. The PDF backend embeds a figure's
 page verbatim; the browser receives the engine's own drawing of it
@@ -53,49 +54,82 @@ public def verdictOf : FigureFace.Answer → Boundary.Verdict
   | .error why => .refused why
 
 /-- What the external converter answered for a figure's web face, read by
-the check publication runs on every embedded SVG: not asked; a face — the
-check keeps it, or it was not checked here and publication checks it
-(`checked`); a face the check refuses, with its words; or no face, the
-converter having failed. -/
+the check publication runs on every embedded SVG: not asked; none on this
+machine to ask; a face — the check keeps it, or it was not checked here and
+publication checks it (`checked`); a face the check refuses, with its
+words; or no face — the converter's own verdict, in its words, or a run
+that did not finish, in the words it left (`Boundary.undrawn`). -/
 public inductive Answer where
   | notAsked
+  | absent
   | drew (bytes : ByteArray) (checked : Bool)
   | rejected (bytes : ByteArray) (why : String)
   | failed (why : String)
+  | unfinished (why : String)
+
+/-- The words an answer that gave no face says why in. -/
+public def Answer.said? : Answer → Option String
+  | .absent => some s!"{FigureLoss.pdfFigures.tool} is not on PATH"
+  | .failed why | .unfinished why => some why
+  | .notAsked | .drew _ _ | .rejected _ _ => none
 
 /-- An answer as the boundary's route reads it: a face the check refused is
 no drawing the page can carry. -/
 public def Answer.tool : Answer → Boundary.ToolState
   | .notAsked => .notAsked
+  | .absent => .failed s!"{FigureLoss.pdfFigures.tool} is not on PATH"
   | .drew _ _ => .drew
-  | .rejected _ why => .failed why
-  | .failed why => .failed why
+  | .rejected _ why | .failed why | .unfinished why => .failed why
 
-/-- Why an answer leaves the engine's drawing on the page: no face, in the
-converter's words; a face the check refused, in the check's; and, where it
-was not asked or its drawing was not taken, the document's refusal
-(`Boundary.route_tool_exact`). -/
+/-- Why an answer leaves the engine's drawing on the page: no converter on
+the machine; no face, in the converter's words or the run's; a face the
+check refused, in the check's; and, where it was not asked or its drawing
+was not taken, the document's refusal (`Boundary.route_tool_exact`). -/
 public def Answer.unconverted : Answer → FigureLoss.Unconverted
+  | .absent => .absent
   | .failed why => .failed why
+  | .unfinished why => .unfinished why
   | .rejected _ why => .unfit why
   | .notAsked | .drew _ _ => .refused
 
 /-- **The converter's answer, checked** (`ImageAssets.validateSvgResult` in
-the driver) where `check` asks it: its face kept, refused with the check's
-words, or none where the conversion failed or its check did not finish;
-unchecked, its face as it drew it, which publication checks. -/
-public def answerOf (convert : IO (Except String ByteArray))
+the driver) where `check` asks it: none where no converter is on the
+machine (`convert` answers none); its face kept, refused with the check's
+words, or none where the conversion drew nothing — its verdict, or a run
+that did not finish (`Boundary.undrawn`); unchecked, its face as it drew
+it, which publication checks. -/
+public def answerOf (convert : IO (Option (Except PicCache.Outcome ByteArray)))
     (check : Option (ByteArray → IO PicCache.Outcome)) : IO Answer := do
   match ← convert with
-  | .error why => return .failed why
-  | .ok bytes =>
+  | none => return .absent
+  | some (.error (.refused why)) => return .failed why
+  | some (.error o) => return .unfinished (Boundary.undrawnWords o)
+  | some (.ok bytes) =>
     match check with
     | none => return .drew bytes false
     | some check =>
       match ← check bytes with
       | .drawn => return .drew bytes true
       | .refused why => return .rejected bytes why
-      | .inconclusive why => return .failed why
+      | .inconclusive why => return .unfinished why
+
+/-- **poppler's pdftocairo as a figure face's converter, where the host has
+it**: `convert` asked only while the host says pdftocairo is on PATH, and
+the host asked the first time a face needs the converter, once per probe —
+as `Driver.svgConverterWith` asks for librsvg's — so a build whose figures
+all import exactly never probes, and a machine without the tool reads as
+having none (`Answer.absent`), never as a run that failed. -/
+public def converterProbe : IO (IO (Except PicCache.Outcome ByteArray) →
+    IO (Option (Except PicCache.Outcome ByteArray))) := do
+  let found ← IO.mkRef (none : Option Bool)
+  return fun convert => do
+    let present ← match ← found.get with
+      | some p => pure p
+      | none =>
+        let p := (← ToolProbe.onPath FigureLoss.pdfFigures.tool).isSome
+        found.set (some p)
+        pure p
+    if present then some <$> convert else pure none
 
 /-- A web face as decided: its bytes or why it has none, the route that
 chose it, the diagnostics the choice owes, whether the bytes are the
@@ -135,9 +169,10 @@ public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
     { bytes := .ok bytes, route := .tool, diags := #[], native := false, checked }
   | r, .error _, .rejected bytes _ =>
     { bytes := .ok bytes, route := r, diags := #[], native := false, checked := false }
-  | r, .error iw, .failed w =>
-    { bytes := .error (if w.isEmpty then iw else w), route := r, diags := #[], native := false, checked := false }
-  | r, .error iw, _ => { bytes := .error iw, route := r, diags := #[], native := false, checked := false }
+  | r, .error iw, a =>
+    { bytes := .error (match a.said? with
+        | some w => if w.isEmpty then iw else w
+        | none => iw), route := r, diags := #[], native := false, checked := false }
   | r, .ok _, _ => { bytes := .error "no web face", route := r, diags := #[], native := false, checked := false }
 
 /-- Whether an answer fits the face cache's format under a key
@@ -200,7 +235,7 @@ refused, where the caller checks its faces before publication does
 (`checkRefused`: the boundary pictures do, an include's faces wait for
 publication's check). -/
 public def face (src : String) (pdf : ByteArray) (page : PdfRead.PageSelection)
-    (convert : IO (Except String ByteArray)) (check : ByteArray → IO PicCache.Outcome)
+    (convert : IO (Option (Except PicCache.Outcome ByteArray))) (check : ByteArray → IO PicCache.Outcome)
     (decl : Boundary.Refusal := .none) (stretch : Bool := false)
     (cache : Option System.FilePath := none) (checkRefused : Bool := true) : IO Face := do
   let native ← nativeCached cache pdf page stretch
@@ -282,6 +317,8 @@ public theorem import_named (src : String) (losses : Array Gfx.Loss) (svg : Byte
     | notAsked => simp [PdfFaces.Answer.tool] at hd
     | rejected bytes why => simp [PdfFaces.Answer.tool] at hd
     | failed why => simp [PdfFaces.Answer.tool] at hd
+    | unfinished why => simp [PdfFaces.Answer.tool] at hd
+    | absent => simp [PdfFaces.Answer.tool] at hd
   · rw [hr]
     exact FigureLoss.pdfDiags_named src answer.unconverted false losses l h
 

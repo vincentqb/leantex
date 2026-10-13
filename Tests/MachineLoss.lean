@@ -56,6 +56,23 @@ private def refusingRenderer : String :=
   "printf '%s\\n' '! Synthetic refusal of an invented picture.' > pic.log\n" ++
   "exit 1\n"
 
+/-- A figure converter that names its version and refuses every figure,
+saying why on its stderr: a verdict of its own, which no install changes. -/
+private def refusingConverter : String :=
+  "#!/bin/sh\n" ++
+  "if [ \"$1\" = --version ] || [ \"$1\" = -v ]; then printf '%s\\n' 'synthetic converter 1'; exit 0; fi\n" ++
+  "printf '%s\\n' 'synthetic refusal of an invented figure' >&2\n" ++
+  "exit 1\n"
+
+/-- A PDF figure and an SVG figure, each with a feature the engine does not
+draw, by generated files beside the document. Invented content. -/
+private def lossyFiguresSource (fonts : System.FilePath) : String :=
+  "\\documentclass{article}\n" ++
+  "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Source Serif Pro\" }\n" ++
+  "\\begin{document}\nTwo invented figures follow.\n\n" ++
+  "\\includegraphics[width=20pt,alt={An invented chart}]{lossy.pdf}\n\n" ++
+  "\\includegraphics[width=20pt,alt={An invented blur}]{lossy.svg}\n\\end{document}\n"
+
 /-- A picture outside the rendered subset whose failed render the document
 accepts. Invented content. -/
 private def acceptedSource (fonts : System.FilePath) : String :=
@@ -333,6 +350,50 @@ def machineLossChecks (ref : IO.Ref (List String))
           ((placeholderTags html).isEmpty && hasStr html shows)
     t "machine native CLI: no build asks the SVG validator"
       (!(← (loader / "calls").pathExists))
+    -- A figure the engine draws without a feature names why no converter
+    -- drew it whole in one wording for either importer: no converter on the
+    -- machine is the install line, with no words of a run that never was;
+    -- a converter that ran and refused the figure gave its own verdict,
+    -- which no install changes. A PDF figure's loss is the web page's and a
+    -- still SVG figure's the PDF's, so the document builds both artifacts.
+    IO.FS.writeBinFile (dir / "lossy.pdf") type1FigurePdf
+    IO.FS.writeBinFile (dir / "lossy.svg") (svgDocument
+      ("<filter id=\"soft\"><feGaussianBlur stdDeviation=\"2\"/></filter>" ++
+        "<rect width=\"20\" height=\"20\" fill=\"blue\" filter=\"url(#soft)\"/>"))
+    let figures := dir / "figures.tex"
+    IO.FS.writeFile figures (lossyFiguresSource (corpus / "fonts"))
+    let verdict := dir / "verdict"
+    IO.FS.createDirAll verdict
+    for tool in ["pdftocairo", "rsvg-convert"] do
+      IO.FS.writeFile (verdict / tool) refusingConverter
+      IO.setAccessRights (verdict / tool) { user := ⟨true, true, true⟩ }
+    let lossOf (path : System.FilePath) (cache subject : String) : IO (Option Lean.Json) := do
+      let mut found := none
+      for ext in ["html", "pdf"] do
+        let run ← build figures path cache (dir / ("figures-" ++ cache) / ("page." ++ ext))
+        for j in recordsOf run do
+          if (j.getObjValAs? String "code").toOption == some "W0609" &&
+              (j.getObjValAs? String "subject").toOption == some subject then
+            found := some j
+      return found
+    let helpOf (j : Option Lean.Json) : String :=
+      (j.bind fun j => (j.getObjValAs? String "help").toOption).getD ""
+    let lineOf (j : Option Lean.Json) : String := (j.bind wordsOf).getD ""
+    let pdfAbsent ← lossOf bare "figures-absent" "figure:pdf:font:type1"
+    let svgAbsent ← lossOf bare "figures-absent" "figure:svg:property:filter"
+    let anyTool (s : String) : String :=
+      (s.replace "poppler's pdftocairo" "its converter").replace "librsvg's rsvg-convert" "its converter"
+    t s!"figure remedy CLI: with no converter on the machine, a PDF and an SVG figure take one install line ({helpOf pdfAbsent} | {helpOf svgAbsent})"
+      (pdfAbsent.isSome && svgAbsent.isSome && anyTool (helpOf pdfAbsent) == anyTool (helpOf svgAbsent) &&
+        hasStr (helpOf pdfAbsent) "install poppler's pdftocairo")
+    t s!"figure remedy CLI: with no converter on the machine, neither figure carries the words of a run ({lineOf pdfAbsent} | {lineOf svgAbsent})"
+      (pdfAbsent.isSome && svgAbsent.isSome && [pdfAbsent, svgAbsent].all fun j =>
+        (j.bind fun j => (j.getObjValAs? String "detail").toOption).isNone)
+    for subject in ["figure:pdf:font:type1", "figure:svg:property:filter"] do
+      let refused ← lossOf verdict ("figures-verdict-" ++ (subject.splitOn ":")[1]!) subject
+      t s!"figure remedy CLI: a converter's refusal of {subject} is its verdict, in its words, with no install advice ({lineOf refused} | {helpOf refused})"
+        (refused.isSome && hasStr (lineOf refused) "synthetic refusal" &&
+          !hasStr (helpOf refused) "install" && hasStr (helpOf refused) "\\allow{W0609}")
     -- A refused render the document accepts under the code's former
     -- spelling: the faceless picture's loss is W0382, accepted once, and the
     -- page ships its placeholder.

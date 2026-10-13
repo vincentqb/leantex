@@ -476,6 +476,23 @@ public inductive ToolState where
   | failed (why : String)
   deriving Repr
 
+/-- **A converter's attempt that drew nothing, read as the reason the
+engine's drawing ships**: an exit the converter chose and left words for is
+its verdict on the figure (`failed`), which no install changes; anything
+else — it could not start, was stopped, or left nothing — is a run that did
+not finish (`unfinished`). The line is the attempt's own
+(`PicCache.Outcome`), so a figure's remedy follows what the run was, never
+the spelling of its words (`FigureLoss.remedy_tool_exact`). -/
+public def undrawn : PicCache.Outcome → FigureLoss.Unconverted
+  | .refused w => .failed w
+  | .inconclusive w => .unfinished w
+  | .drawn => .unfinished "the converter answered with no drawing"
+
+/-- The words an attempt that drew nothing left. -/
+public def undrawnWords : PicCache.Outcome → String
+  | .refused w | .inconclusive w => w
+  | .drawn => "the converter answered with no drawing"
+
 /-- Whether the document refuses the converter for its figures. -/
 public inductive Refusal where
   | none

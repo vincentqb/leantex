@@ -78,37 +78,69 @@ shipping where `shipsIn` says. -/
 
 /-- Why a figure's drawing is the engine's though the engine lacks a
 feature: the document refused the converter; no converter is on this
-machine; one was asked and gave no drawing, in its own words; or it drew
+machine; one ran and answered with no drawing — its own verdict on the
+figure, in its words; one was asked and did not finish — it could not
+start, was stopped, or left nothing — in the words the run left; or it drew
 one the page cannot carry, in the words of the page's check. -/
 public inductive Unconverted where
   | refused
   | absent
   | failed (why : String)
+  | unfinished (why : String)
   | unfit (why : String)
   deriving Repr, BEq
 
+/-- The remedy a reason offers: lift the document's refusal; install the
+converter; repair it where the run's words say it cannot start, or rebuild
+where it was interrupted; or accept the engine's drawing, which is all a
+converter's own verdict, or a drawing the page cannot carry, leaves. -/
+public inductive Remedy where
+  | lift
+  | install
+  | repair
+  | accept
+  deriving Repr, BEq, DecidableEq
+
+/-- Each reason's remedy. -/
+@[expose] public def Unconverted.remedy : Unconverted → Remedy
+  | .refused => .lift
+  | .absent => .install
+  | .unfinished _ => .repair
+  | .failed _ | .unfit _ => .accept
+
+/-- **Only a converter absent, or a run that did not finish, is offered an
+install or a repair** (`_exact`): a converter that ran and refused the
+figure gave its verdict, which no install changes. -/
+public theorem remedy_tool_exact (why : Unconverted) :
+    (why.remedy = .install ∨ why.remedy = .repair) ↔
+      (why = .absent ∨ ∃ w, why = .unfinished w) := by
+  cases why <;> simp [Unconverted.remedy]
+
+/-- The words a reason carries beside its line: the converter's, the run's,
+or the page's check's, where one was asked. -/
+@[expose] public def Unconverted.said : Unconverted → Option String
+  | .failed w | .unfinished w | .unfit w => some w
+  | .refused | .absent => none
+
 /-- **W0609**: a figure's drawing is the engine's, without the feature — no
-converter drew the figure whole; where one was asked, its own words, or
-the page's check's, say why. The remedy follows the reason: the document's
-refusal is the document's to lift; a converter missing, or one that gave
-no drawing, is one to install or repair; otherwise the drawing is the
-document's to accept. -/
+converter drew the figure whole; where one was asked, its own words, the
+run's, or the page's check's, say why, as the line's detail. The help is
+the reason's remedy (`Unconverted.remedy`), worded alike for either
+importer. -/
 @[expose] public def lostDiag (imp : Importer) (src : String) (why : Unconverted)
     (l : Gfx.Loss) : Diag :=
   Diag.of .W0609
-    (s!"figure '{src}' is drawn without its {words l}, which the engine does not draw" ++
-      (match why with
-       | .failed w | .unfit w => s!" ({w})"
-       | .refused | .absent => ""))
-    (help := some (match why with
-      | .refused => s!"the document's \\figures\{ convert = none } keeps the figure to the \
+    s!"figure '{src}' is drawn without its {words l}, which the engine does not draw"
+    (detail := why.said)
+    (help := some (match why.remedy with
+      | .lift => s!"the document's \\figures\{ convert = none } keeps the figure to the \
 engine's drawing; remove it to let {imp.tool} draw the figure whole, or accept the loss with \
 \\allow\{W0609}"
-      | .absent => s!"install {imp.package}'s {imp.tool} to draw the figure whole, or accept the \
+      | .install => s!"install {imp.package}'s {imp.tool} to draw the figure whole, or accept the \
 loss with \\allow\{W0609}"
-      | .failed _ => s!"install or repair {imp.package}'s {imp.tool} to draw the figure whole, or \
-accept the loss with \\allow\{W0609}"
-      | .unfit _ => "accept the engine's drawing with \\allow{W0609}"))
+      | .repair => s!"install or repair {imp.package}'s {imp.tool} if the reason says it cannot \
+start, rebuild if it was interrupted, or accept the loss with \\allow\{W0609}"
+      | .accept => "accept the engine's drawing with \\allow{W0609}"))
     (subject := some (subject imp.kind l)) (output := imp.output)
 
 /-- **N0024**: a figure's drawing is the external converter's, because the

@@ -968,11 +968,16 @@
   suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
 ── W0609 (degraded) a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn
 ⚠ [W0609]
-  figure 'plot.pdf' is drawn without its 'type1' font, which the engine does not draw (pdftocairo produced an empty image)
-  suggestion: install or repair poppler's pdftocairo to draw the figure whole, or accept the loss with \allow{W0609}
+  figure 'plot.pdf' is drawn without its 'type1' font, which the engine does not draw
+  pdftocairo produced an empty image
+  suggestion: install or repair poppler's pdftocairo if the reason says it cannot start, rebuild if it was interrupted, or accept the loss with \allow{W0609}
 ⚠ [W0609]
   figure 'figures/chart.svg' is drawn without its 'filter' property, which the engine does not draw
   suggestion: install librsvg's rsvg-convert to draw the figure whole, or accept the loss with \allow{W0609}
+⚠ [W0609]
+  figure 'figures/glow.svg' is drawn without its 'filter' property, which the engine does not draw
+  rsvg-convert exited 1: an invented refusal
+  suggestion: accept the engine's drawing with \allow{W0609}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel

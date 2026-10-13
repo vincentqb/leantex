@@ -14,7 +14,7 @@ example : String := ImageAssets.canonicalPdfRecipe
 example : ByteArray → IO PicCache.Outcome := ImageAssets.validateSvgResult
 example : PdfRead.PageSelection → Except String Bool := ImageAssets.svgPosterAtEnd
 example : Image.PlanParams → ByteArray → Bool →
-    Option (IO.Process.SpawnArgs → IO IO.Process.Output) → IO (Except String Image.Plan) :=
+    Option (IO.Process.SpawnArgs → IO IO.Process.Output) → IO (Except PicCache.Outcome Image.Plan) :=
   @ImageAssets.canonicalPlan
 example : ByteArray → PdfRead.PageSelection →
     Option (IO.Process.SpawnArgs → IO IO.Process.Output) → IO (Except String ByteArray) :=
@@ -22,12 +22,16 @@ example : ByteArray → PdfRead.PageSelection →
 example : ByteArray → PdfRead.PageSelection → IO (Except String ByteArray) :=
   ImageAssets.pdfSvg
 example : ByteArray → IO (Except String ByteArray) := ImageAssets.picFace
+example : ByteArray → PdfRead.PageSelection → IO (Except PicCache.Outcome ByteArray) :=
+  ImageAssets.pdfSvgAnswer
+example : ByteArray → IO (Except PicCache.Outcome ByteArray) := ImageAssets.picFaceAnswer
 
 example : True := by
   fail_if_success have := ImageAssets.runChecked
   fail_if_success have := ImageAssets.finishSvg
   fail_if_success have := ImageAssets.convert
   fail_if_success have := ImageAssets.convertResult
+  fail_if_success have := ImageAssets.convertOutcome
   trivial
 
 end Tests.ImageAssetsInterface

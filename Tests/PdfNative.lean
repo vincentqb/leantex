@@ -131,10 +131,10 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     let runs ← IO.mkRef 0
     let present ← PdfFaces.face name pdf .first (do
       runs.modify (· + 1)
-      return .ok (svgDocument "<path d=\"M0 0L20 20\"/>")) keeps
+      return some (.ok (svgDocument "<path d=\"M0 0L20 20\"/>"))) keeps
     let absent ← PdfFaces.face name pdf .first (do
       runs.modify (· + 1)
-      return .error "the converter is missing") keeps
+      return none) keeps
     let bytesOf (f : PdfFaces.Face) : Option ByteArray := f.bytes.toOption
     let subjects (f : PdfFaces.Face) : Array (Option String) := f.diags.map (·.subject)
     if lossless then
@@ -147,12 +147,12 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
           present.route == .tool && absent.route == .nativeWithLoss)
   let asked ← IO.mkRef 0
   let converted := svgDocument "<path d=\"M0 0L20 20\"/>"
-  let drawing : IO (Except String ByteArray) := do
+  let drawing : IO (Option (Except PicCache.Outcome ByteArray)) := do
     asked.modify (· + 1)
-    return .ok converted
-  let failing : IO (Except String ByteArray) := do
+    return some (.ok converted)
+  let failing : IO (Option (Except PicCache.Outcome ByteArray)) := do
     asked.modify (· + 1)
-    return .error "the converter is missing"
+    return some (.error (.inconclusive "the converter was stopped"))
   let chart ← fixture "cairo-chart.pdf"
   let f ← PdfFaces.face "chart.pdf" chart .first failing keeps
   t "face route: an exact import is native, the converter never asked"
@@ -175,25 +175,35 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"face route: a lossy import whose converted face the check {said} ships its lossy drawing, in the check's words"
       (f.route == .nativeWithLoss && f.native && f.bytes.isOk && f.bytes.toOption != some converted &&
         f.diags.size == 1 && f.diags.all fun d => d.kind == .W0609 &&
-          ((d.message.splitOn "external reference").length > 1 || (d.message.splitOn "killed").length > 1))
+          (hasStr (diagWords d) "external reference" || hasStr (diagWords d) "killed"))
   let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing keeps .declared
   t "face route: a document that refuses the converter keeps the lossy drawing, never asking it"
     (f.route == .nativeWithLoss && f.native && (← asked.get) == 4)
-  -- The remedy follows the reason: installing or repairing the converter
-  -- changes a page it gave no face for; lifting the declaration changes one
-  -- the document refused it for; and nothing changes one where it drew a
+  -- The remedy follows the reason: installing the converter changes a page
+  -- on a machine without it, and repairing it one whose run did not finish;
+  -- lifting the declaration changes one the document refused it for; and
+  -- nothing changes one where the converter refused the figure, or drew a
   -- face the page's check refuses.
   let helpOf (f : PdfFaces.Face) : String := String.join (f.diags.filterMap (·.help)).toList
-  let noFace ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
-    (pure (.error "the converter is missing")) keeps
-  t s!"face route: a converter that gave no face is offered as the remedy ({helpOf noFace})"
-    (((helpOf noFace).splitOn "install").length > 1)
-  let unfit ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (.ok converted))
+  let noFace ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure none) keeps
+  t s!"face route: with no converter on the machine, installing it is the remedy ({helpOf noFace})"
+    (hasStr (helpOf noFace) "install poppler's pdftocairo" && noFace.diags.all (·.detail.isNone))
+  let stopped ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
+    (pure (some (.error (.inconclusive "pdftocairo exited 137")))) keeps
+  t s!"face route: a run that did not finish names its repair conditionally, in the run's words ({helpOf stopped})"
+    (hasStr (helpOf stopped) "if the reason says it cannot start" &&
+      stopped.diags.all (·.detail == some "pdftocairo exited 137"))
+  let verdict ← PdfFaces.face "lossy.pdf" type1FigurePdf .first
+    (pure (some (.error (.refused "pdftocairo exited 1: an invented refusal")))) keeps
+  t s!"face route: a converter's own verdict offers accepting the drawing, never an install ({helpOf verdict})"
+    (!verdict.diags.isEmpty && !hasStr (helpOf verdict) "install" &&
+      hasStr (helpOf verdict) "\\allow{W0609}" && verdict.diags.all (·.detail == some "pdftocairo exited 1: an invented refusal"))
+  let unfit ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (some (.ok converted)))
     fun _ => pure (.refused "an external reference")
   t s!"face route: where the page's check refuses the converter's face, its line offers only accepting the drawing ({helpOf unfit})"
     (((helpOf unfit).splitOn "install").length == 1 && ((helpOf unfit).splitOn "convert = none").length == 1 &&
       ((helpOf unfit).splitOn "\\allow{W0609}").length > 1)
-  let declared ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (.ok converted)) keeps .declared
+  let declared ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (pure (some (.ok converted))) keeps .declared
   t s!"face route: where the document refuses the converter, its line names the declaration to lift, or accepting ({helpOf declared})"
     (((helpOf declared).splitOn "install").length == 1 &&
       ((helpOf declared).splitOn "convert = none").length > 1 &&

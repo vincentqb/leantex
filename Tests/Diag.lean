@@ -649,9 +649,11 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- and with one the converter's drawing, the reason named. The emission
   -- paths are the routes' (`figureRouteChecks`, `Tests.svgRouteChecks`).
   | .W0609 => FigureLoss.diags
-      (FigureLoss.pdfLostDiag "plot.pdf" (.failed "pdftocairo produced an empty image"))
+      (FigureLoss.pdfLostDiag "plot.pdf" (.unfinished "pdftocairo produced an empty image"))
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
-    #[FigureLoss.svgLostDiag false "figures/chart.svg" .absent (.property "filter")]
+    #[FigureLoss.svgLostDiag false "figures/chart.svg" .absent (.property "filter"),
+      FigureLoss.svgLostDiag false "figures/glow.svg"
+        (.failed "rsvg-convert exited 1: an invented refusal") (.property "filter")]
   | .N0024 => FigureLoss.diags (FigureLoss.pdfConvertedDiag "figures/plot.pdf")
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
     #[FigureLoss.svgConvertedDiag false "figures/chart.svg" (.property "filter")]

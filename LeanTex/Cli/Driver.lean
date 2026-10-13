@@ -52,7 +52,7 @@ import LeanTex.Cli.Compression
 import LeanTex.Cli.Engine
 import LeanTex.Cli.PlanCache
 import LeanTex.Cli.PictureAssets
-import LeanTex.Cli.PicCache
+public import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
@@ -356,12 +356,14 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
 
 /-- A converter a lossy SVG may ask: given the canonical spelling of the
 native parse and whether the drawing depends on no font, its answer — a
-plan, or the tool's own words for its failure — or none where no tool is
+plan, or the attempt that drew nothing, as the attempt read it: its verdict
+or a run that did not finish (`Boundary.undrawn`) — or none where no tool is
 there to ask. -/
-public abbrev Converter := ByteArray → Bool → IO (Option (Except String Image.Plan))
+public abbrev Converter := ByteArray → Bool → IO (Option (Except PicCache.Outcome Image.Plan))
 
 /-- A tool that is always there, answering as `run` answers. -/
-public def Converter.always (run : ByteArray → Bool → IO (Except String Image.Plan)) : Converter :=
+public def Converter.always (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan)) :
+    Converter :=
   fun b i => some <$> run b i
 
 /-- What the native SVG path decided for one source: the plan layout reads,
@@ -435,7 +437,7 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
     | none => pure none
   let (tool, why) : Boundary.ToolState × FigureLoss.Unconverted := match answer with
     | some (.ok _) => (.drew, .absent)
-    | some (.error w) => (.failed w, .failed w)
+    | some (.error o) => (.failed (Boundary.undrawnWords o), Boundary.undrawn o)
     | none => (.failed "rsvg-convert is not on PATH", .absent)
   -- The route decides what the figure owes (`Boundary.route_losses_exact`,
   -- `svgRouteDiags_named`); the converter's drawing ships exactly when it drew.
@@ -450,7 +452,8 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
 asked only while `probe` says the host has it — and `probe` asked the
 first time a figure needs the converter, once, so a document whose figures
 all draw natively never probes the host. -/
-public def svgConverterWith (probe : IO Bool) (run : ByteArray → Bool → IO (Except String Image.Plan))
+public def svgConverterWith (probe : IO Bool)
+    (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan))
     (allowed : Bool) : IO (Option Converter) := do
   if !allowed then return none
   let found ← IO.mkRef (none : Option Bool)
@@ -626,11 +629,12 @@ def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
   let mut natives : Array ByteArray := #[]
   let mut tally : PdfFaces.Tally := {}
   let cache ← PdfFaces.cacheDir
+  let present ← PdfFaces.converterProbe
   -- Pictures are read four at a time, never two of one content at once,
   -- so the cache slot a picture writes is the one picture's.
   let faces ← Batch.map 4 (fun (r : PicResult) => Flate.contentKey r.bytes) (fun r =>
-    PdfFaces.face r.src r.bytes .first (ImageAssets.picFace r.bytes) ImageAssets.validateSvgResult
-      (decl := decl) (cache := cache)) pics
+    PdfFaces.face r.src r.bytes .first (present (ImageAssets.picFaceAnswer r.bytes))
+      ImageAssets.validateSvgResult (decl := decl) (cache := cache)) pics
   for (r, f) in pics.zip faces do
     -- premise: nativeFigureBuildChecks — a textless answer for a picture the subset draws in
     -- part ships the subset's drawing under W0378, and one the subset cannot draw keeps the

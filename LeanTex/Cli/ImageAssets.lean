@@ -183,6 +183,19 @@ private def convert (op : Op) (bytes : ByteArray)
     IO (Except String ByteArray) :=
   ConvCache.Result.answer <$> convertResult op bytes runner fontIndependent
 
+/-- As `convert`, the failure kept as the attempt read it: a verdict of the
+converter's own (`refused`), or a run that did not finish (`inconclusive`) —
+the line a figure's remedy follows (`Boundary.undrawn`). -/
+private def convertOutcome (op : Op) (bytes : ByteArray)
+    (runner : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none)
+    (fontIndependent : Bool := true) :
+    IO (Except PicCache.Outcome ByteArray) := do
+  let r ← convertResult op bytes runner fontIndependent
+  return match r.outcome with
+    | .drawn => if r.bytes.isEmpty then .error (.inconclusive "no usable output was produced")
+      else .ok r.bytes
+    | o => .error o
+
 /-- **A browser face's check**: the native resource boundary over the bytes
 (`Svg.judge`) — no tool reads them, so the check always finishes. A face the
 boundary accepts is drawn; one it refuses keeps the boundary's own words. -/
@@ -207,20 +220,34 @@ public def pdfSvg (bytes : ByteArray) (page : PdfRead.PageSelection) :
   | .error e => return .error e
   | .ok n => convert (.pdfPage n) bytes
 
+/-- `pdfSvg`'s answer, its failure as the attempt read it (`convertOutcome`);
+a page the selection does not name is the document's, no run's. -/
+public def pdfSvgAnswer (bytes : ByteArray) (page : PdfRead.PageSelection) :
+    IO (Except PicCache.Outcome ByteArray) := do
+  match PdfRead.pageNumber bytes page with
+  | .error e => return .error (.refused e)
+  | .ok n => convertOutcome (.pdfPage n) bytes
+
 public def picFace (bytes : ByteArray) : IO (Except String ByteArray) :=
   convert .picFace bytes
+
+/-- `picFace`'s answer, its failure as the attempt read it (`convertOutcome`). -/
+public def picFaceAnswer (bytes : ByteArray) : IO (Except PicCache.Outcome ByteArray) :=
+  convertOutcome .picFace bytes
 
 /-- **librsvg's drawing of a figure the engine does not draw whole**: the
 canonical spelling of the native parse (`Xml.render`, which no DTD, no
 comment and no authored byte survives), converted to PDF and read as a
 form. The authored bytes never reach the converter. `fontIndependent` is
 the native reader's answer to whether the drawing reads host fonts
-(`Svg.fontDependent`): a font-dependent answer is never cached. -/
+(`Svg.fontDependent`): a font-dependent answer is never cached. A failure
+is the attempt's outcome (`convertOutcome`); a drawing the engine cannot
+place is one the run left nothing usable of. -/
 public def canonicalPlan (params : Image.PlanParams) (canonical : ByteArray) (fontIndependent : Bool)
     (runTool : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
-    IO (Except String Image.Plan) := do
-  let pdf ← convert .canonicalPdf canonical runTool fontIndependent
-  return pdf >>= fun b => Image.probe b >>= Image.plan params
+    IO (Except PicCache.Outcome Image.Plan) := do
+  let pdf ← convertOutcome .canonicalPdf canonical runTool fontIndependent
+  return pdf >>= fun b => (Image.probe b >>= Image.plan params).mapError .inconclusive
 
 /-- **librsvg's still face of a moving figure the engine does not draw
 whole**: the pose the page selection asks for (`SvgPoster.pose`), its

@@ -108,10 +108,24 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (failed.vector.isSome && !failed.diags.isEmpty && failed.diags.all fun d =>
         d.code == "W0609" && hasStr (diagWords d) s!"rsvg-convert exited {code}: {stderr}" &&
           !hasStr (diagWords d) "brew install")
+    -- The remedy follows the answer: an exit the converter chose is its
+    -- verdict on the figure, which no install changes; a high exit may be a
+    -- run that never finished, whose repair the reason would name.
+    let helps := failed.diags.filterMap (·.help)
+    if code < 126 then
+      check ref s!"SVG converter verdict {code}/{stderr} offers accepting the drawing, never an install ({helps})"
+        (!helps.isEmpty && helps.size == failed.diags.size && helps.all fun h =>
+          !hasStr h "install" && hasStr h "\\allow{W0609}")
+    else
+      check ref s!"SVG converter run {code}/{stderr} that may not have finished names its repair conditionally ({helps})"
+        (!helps.isEmpty && helps.size == failed.diags.size && helps.all fun h =>
+          hasStr h "if the reason says it cannot start" && hasStr h "\\allow{W0609}")
   failure.set (some (.error (IO.Error.resourceExhausted none 24 "open files")))
   let exhausted ← Driver.svgFetch req.src lossy .first "en" (some converter)
   check ref "SVG process resource failure keeps its evidence without install advice"
     (exhausted.vector.isSome && !exhausted.diags.isEmpty && exhausted.diags.all fun d =>
       hasStr (diagWords d) "open files" && !hasStr (diagWords d) "brew install")
+  check ref "SVG process resource failure is a run that did not finish, its repair named conditionally"
+    (exhausted.diags.all fun d => (d.help.map (hasStr · "if the reason says it cannot start")).getD false)
 
 end Tests

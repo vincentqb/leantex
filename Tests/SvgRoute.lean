@@ -116,12 +116,13 @@ receives the canonical spelling of the parse, never the authored bytes. A
 refused figure never reaches the converter. -/
 def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let calls ← IO.mkRef (#[] : Array ByteArray)
-  let pdfPlan : Except String Image.Plan := Image.probe svgCanvasPdf >>= Image.plan {}
-  let fake : ByteArray → Bool → IO (Except String Image.Plan) := fun b _ => do
+  let pdfPlan : Except PicCache.Outcome Image.Plan :=
+    (Image.probe svgCanvasPdf >>= Image.plan {}).mapError .inconclusive
+  let fake : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan) := fun b _ => do
     calls.modify (·.push b)
     return pdfPlan
-  let failing : ByteArray → Bool → IO (Except String Image.Plan) := fun _ _ =>
-    return .error "rsvg-convert exited 1: an invented failure"
+  let failing : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan) := fun _ _ =>
+    return .error (.refused "rsvg-convert exited 1: an invented failure")
   -- Lossless: one drawing, no call.
   let withTool ← Driver.svgFetch "a.svg" svgTextFixture .first "en" (some (.always fake))
   let without ← Driver.svgFetch "a.svg" svgTextFixture .first "en" none
@@ -164,7 +165,10 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     (subjects missing.diags == subjects degraded.diags &&
       missing.diags.all fun d => d.code == "W0609" && d.help.any (hasStr · "install librsvg"))
   check ref "figure route: a failed converter's own words say why"
-    (failed.diags.all fun d => hasStr d.message "an invented failure")
+    (failed.diags.all fun d => d.detail == some "rsvg-convert exited 1: an invented failure")
+  check ref "figure route: a converter's own verdict offers accepting the drawing, never an install"
+    (!failed.diags.isEmpty && failed.diags.all fun d =>
+      d.help.any (hasStr · "\\allow{W0609}") && !(d.help.any (hasStr · "install")))
   -- A refusal never reaches the converter.
   calls.set #[]
   let refused ← Driver.svgFetch "c.svg" (svgDocument "<script>alert(1)</script>") .first "en" (some (.always fake))
@@ -225,7 +229,8 @@ def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let probe : IO Bool := do
     probes.modify (· + 1)
     return true
-  let pdfPlan : Except String Image.Plan := Image.probe svgCanvasPdf >>= Image.plan {}
+  let pdfPlan : Except PicCache.Outcome Image.Plan :=
+    (Image.probe svgCanvasPdf >>= Image.plan {}).mapError .inconclusive
   let some convert ← Driver.svgConverterWith probe (fun _ _ => return pdfPlan) true
     | check ref "converter probe: an allowed converter is offered" false
   for _ in [0:3] do

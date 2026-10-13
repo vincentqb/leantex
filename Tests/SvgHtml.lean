@@ -288,7 +288,7 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A converter that draws, answering the figure's own natural size, so the
   -- page cannot tell which drew it by its box.
   let natural ← Driver.svgFetch "f.svg" svgFilterFixture .first "en" none
-  let fake : Driver.Converter := .always fun _ _ => return natural.res
+  let fake : Driver.Converter := .always fun _ _ => return natural.res.mapError .inconclusive
   let page (imgs : Image.Store) (src : String) : String :=
     String.join ((svgPage fs imgs src).toList.map (Html.render · 0))
   let without ← svgStore fs "still.svg" svgFilterFixture
