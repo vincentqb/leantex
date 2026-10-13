@@ -67,8 +67,9 @@ initialization);
 from the generated palette (`CodeExport`), with STYLE's colours where the
 palette leaves a role open, and a `\<Prefix>Pygments` command to name in
 minted's `formatcom`; `--series N` adds N categorical series colours for a
-chart, `\<Prefix>Series1` to `\<Prefix>SeriesN` (`SeedSeries`), the first
-the accent's text tone; `--check FILE` prints nothing and exits 1 when FILE
+chart, the colours `<Prefix>Series1` to `<Prefix>SeriesN` (`SeedSeries`), the
+first the accent's text tone at the depth; `--check FILE` prints nothing and
+exits 1 when FILE
 is not what these seeds generate. Only declarations go to stdout, so the
 caller can save or compare them. The script never rewrites a document or
 changes its permissions. -/

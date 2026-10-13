@@ -441,13 +441,9 @@ role, the eleven names it wrote before among them, and `--check` exits 0 on
 the include it writes and 1 on a stale one. -/
 def scriptChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let (lean, leanPath) ← leanChild "the palette script's checks"
-  let dir ← IO.FS.realPath (← IO.currentDir)
-  let tmp := dir / ".lake" / "seed-script-check"
+  let tmp := (← IO.FS.realPath (← IO.currentDir)) / ".lake" / "seed-script-check"
   IO.FS.createDirAll tmp
-  let run (args : Array String) :=
-    RunBounded.runBounded lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir 120000 100
-      (env := #[("LEAN_PATH", some leanPath)])
+  let run := paletteScript
   let made ← run #["--beamer-blocks", "seed", "2B2440", "FFFFFF", "E85D2A"]
   t s!"palette script: writes an include ({made.err})" (made.complete && made.ran == .exited 0)
   for name in ["Ink", "Paper", "Accent", "Muted", "MutedOnDark", "DiagramMuted", "Surface",

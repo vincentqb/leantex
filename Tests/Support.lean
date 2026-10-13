@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Cli.FontDiscovery
+public import LeanTex.Cli.RunBounded
 public import LeanTex
 public import LeanTex.Core.HtmlDoc
 public import Lean.Data.Json.Parser
@@ -628,6 +629,15 @@ def leanChild (what : String) : IO (System.FilePath × String) := do
     throw <| IO.userError s!"{what} require the Lean interpreter on PATH"
   let libraries ← IO.FS.realPath ".lake/build/lib/lean"
   return (lean, libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD "")
+
+/-- `scripts/palette.lean` run with `args` as a child `lean --run` of this
+build, in the repository's root, bounded to two minutes: how the export's
+script checks run it. -/
+def paletteScript (args : Array String) : IO RunBounded.Ended := do
+  let (lean, leanPath) ← leanChild "the palette script's checks"
+  let dir ← IO.FS.realPath (← IO.currentDir)
+  RunBounded.runBounded lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir 120000 100
+    (env := #[("LEAN_PATH", some leanPath)])
 
 /-- `text` quoted as one word for `/bin/sh`. -/
 def shQuote (text : String) : String :=
