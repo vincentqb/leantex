@@ -256,7 +256,7 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     let ls := linesOf lang code
     longOffences := longOffences ++ judge s!"{lang}: {code.take 12}" code ls
     unless ls.size ≥ 2 do longOffences := longOffences.push s!"{lang}: {code.take 12} did not wrap"
-  t s!"code wraps: long comments, strings and console lines part inside tokens ({longOffences})"
+  t s!"code wraps: long comments, strings and console lines part inside tokens, never past the page ({longOffences})"
     longOffences.isEmpty
   let hex := String.intercalate "," ((List.range 40).map fun i =>
     "0x" ++ String.ofList ["0123456789abcdef".toList[i / 16 % 16]!, "0123456789abcdef".toList[i % 16]!])
@@ -409,7 +409,7 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (doc, _) := elabMd s!"```{lang}\n{line}\n```\n"
       match codeAtomsOf doc with
       | #[(text, held, wbrs)] =>
-        t s!"{label} code holds each stretch, or each token of a wide one, on one line ({repr line}: {held})"
+        t s!"{label} code holds each stretch, or each fallback token of a wide one, on one line ({repr line}: {held})"
           (text == line && wbrs == 0 && held == heldUnitsOf line
             && held.all fun a => !a.any (· == ' '))
       | other => t s!"{label} code is one code element ({other.size})" false

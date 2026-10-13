@@ -107,7 +107,7 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ten := reqOf (dvDoc pre (display cdLossy))
   let eleven := reqOf ("\\documentclass[11pt]{article}\n" ++ pre ++
     "\\begin{document}\n" ++ display cdLossy ++ "\n\\end{document}")
-  t "a ten-point document's standalone opens as it always did"
+  t "a ten-point document's standalone takes no size option"
     (hasStr ten "\\documentclass{standalone}\n\\usepackage{tikz}\n")
   t "an eleven-point document's standalone takes its body size"
     (hasStr eleven "\\documentclass[11pt]{standalone}")

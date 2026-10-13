@@ -112,7 +112,7 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     let bytesOf (f : PdfFaces.Face) : Option ByteArray := f.bytes.toOption
     let subjects (f : PdfFaces.Face) : Array (Option String) := f.diags.map (·.subject)
     if lossless then
-      t s!"face route: {name} ships one face with or without the converter, never run"
+      t s!"face route: {name} ships the same face with or without the converter, never run"
         (bytesOf present == bytesOf absent && (bytesOf present).isSome && (← runs.get) == 0 &&
           present.diags.isEmpty && absent.diags.isEmpty)
     else
@@ -143,7 +143,7 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (said, check) in [("refuses", (fun _ => pure (.refused "an external reference") :
       ByteArray → IO PicCache.Outcome)), ("does not finish", fun _ => pure (.inconclusive "the check was killed"))] do
     let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing check
-    t s!"face route: a converted face the check {said} gives the lossy drawing, in its words"
+    t s!"face route: a converted face the check {said} gives the lossy drawing, in the check's words"
       (f.route == .nativeWithLoss && f.native && f.bytes.isOk && f.bytes.toOption != some converted &&
         f.diags.size == 1 && f.diags.all fun d => d.kind == .W0609 &&
           (hasStr (diagWords d) "external reference" || hasStr (diagWords d) "killed"))
@@ -803,7 +803,7 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
     let (_, _, chartHtml) ← build (dir / "figure.tex") (dir / "figure-words.html")
     let wordsOpen := "<span class=\"" ++ HtmlDoc.figureWordsClass ++ "\" aria-hidden=\"true\">"
     let carried := ((chartHtml.splitOn wordsOpen)[1]?.map fun rest => (rest.splitOn "</span>")[0]?.getD "").getD ""
-    t s!"native faces: an include's hidden words ride beside its face ({carried})"
+    t s!"native faces: an include's words ride beside its face, hidden from sight and assistive technology ({carried})"
       ((carried.splitOn "invented chart").length ≥ 2 && (chartHtml.splitOn "alt=\"An invented chart\"").length ≥ 2 &&
         (chartHtml.splitOn ("." ++ HtmlDoc.figureWordsClass ++ " {")).length == 2)
     IO.FS.writeFile (dir / "nameless.tex") (String.intercalate "\n" [

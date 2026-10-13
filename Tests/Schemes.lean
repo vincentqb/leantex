@@ -35,7 +35,7 @@ def dropChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, said) := elabStr (dvDoc "\\palette{ bg = #767676, fg = #777777 }\n" "x")
   let j := Contrast.schemeJudge doc
-  t s!"mid-grey on mid-grey ships every scheme but more-contrast light ({j.shipped.map (·.name)})"
+  t s!"mid-grey ink on a mid-grey page ships every scheme but the more-contrast light one ({j.shipped.map (·.name)})"
     (j.shipped == [.print, .light, .dark, .darkMore] && j.dropped.map (·.1) == [.lightMore])
   let named := j.diags.filter (·.code == "W0308")
   t "the uncarried colour is named once, under its subject"
@@ -597,7 +597,7 @@ def contractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let barAlert := deck "\\theme{moloch}"
     "\\begin{frame}{Tide \\alert{Table}}Words. \\alert{Low water.}\\end{frame}"
   let barJudge := Contrast.schemeJudge barAlert
-  t s!"scheme contract: an alert on moloch's bar and page drops more contrast, named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subject)}"
+  t s!"scheme contract: an alert on moloch's bar and page drops the more-contrast screen, named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subject)}"
     ((schemeContractOffences barAlert).isEmpty && !barJudge.shipped.contains .lightMore &&
      barJudge.diags.any fun d => d.subject.any (·.startsWith "lightMore:alert@"))
   let conflict := deck

@@ -68,7 +68,7 @@ private def lockedIncludeSource (fonts : System.FilePath) : String :=
   "\\begin{document}\nAn invented figure follows.\n\n" ++
   "\\includegraphics[width=20pt,alt={An invented canvas}]{locked.pdf}\n\\end{document}\n"
 
-/-- A document accepting a failed render by W0382's former spelling, E0382. -/
+/-- A document accepting a failed render by W0382's legacy spelling, E0382. -/
 private def acceptedSource (fonts : System.FilePath) : String :=
   "\\documentclass{article}\n" ++
   "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Source Serif Pro\" }\n" ++
@@ -397,13 +397,13 @@ def machineLossChecks (ref : IO.Ref (List String))
     writeScript (noisy / "lualatex") (noisyRenderer (corpus / "figures" / "box.pdf"))
     let spoke ← build boundary noisy "noisy" (dir / "noisy-out" / "page.html")
     let codes := (recordsOf spoke).filterMap codeOf
-    t s!"machine loss CLI renderer output not UTF-8: drawn, not unfinished (exit {spoke.exitCode}, {codes})"
+    t s!"machine loss CLI renderer writing no UTF-8: drawn, not unfinished (exit {spoke.exitCode}, {codes})"
       (spoke.exitCode == 0 && codes.contains "N0023" && !codes.contains "W0382" && !codes.contains "W0378")
     let splitLog := dir / "split-log"
     writeScript (splitLog / "lualatex") (splitLogRenderer (corpus / "figures" / "box.pdf"))
     let logged ← build boundary splitLog "split-log" (dir / "split-log-out" / "page.html")
     let loggedCodes := (recordsOf logged).filterMap codeOf
-    t s!"machine loss CLI renderer log not UTF-8: drawn, not unfinished (exit {logged.exitCode}, {loggedCodes})"
+    t s!"machine loss CLI renderer whose log is no UTF-8: drawn, not unfinished (exit {logged.exitCode}, {loggedCodes})"
       (logged.exitCode == 0 && loggedCodes.contains "N0023" && !loggedCodes.contains "W0382" &&
         !loggedCodes.contains "W0378")
     let realRoot := dir / "real-root"
@@ -436,7 +436,7 @@ def machineLossChecks (ref : IO.Ref (List String))
     writeScript (unversioned / "lualatex") ("#!/bin/sh\nprintf '%s\\n' 'luatex: error while loading " ++
       "shared libraries: libsynthetic.so.0: cannot open shared object file' >&2\nexit 127\n")
     let unloaded ← build boundary unversioned "unversioned" (dir / "unversioned-out" / "page.html")
-    t s!"machine loss CLI loader-stopped version question: W0379 carries the loader's words (exit {unloaded.exitCode})"
+    t s!"machine loss CLI renderer a loader stops at its version: W0379 carries the loader's words (exit {unloaded.exitCode})"
       (unloaded.exitCode == 0 && (recordsOf unloaded).any fun j => codeOf j == some "W0379" &&
         ((wordsOf j).any (hasStr · "error while loading shared libraries")))
     let hanging := dir / "hanging"

@@ -1392,7 +1392,7 @@ def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "toolchain spawns selftest: a forking extern fires"
         ((toolchainSpawnFaults #[("Std.Zz", "@[extern \"zz_fork\"] opaque zzFork : IO Unit\n")]).any
           (hasStr · "zz_fork"))
-      t "toolchain spawns selftest: opening IO.Process fires, hiding its spawners does not"
+      t "toolchain spawns selftest: opening IO.Process or Process inside IO fires, hiding its spawners does not"
         ((toolchainSpawnFaults #[("Std.ZzOpen", "open IO.Process\n")]).any (hasStr · "Std.ZzOpen:1") &&
           (toolchainSpawnFaults #[("Std.ZzIn", "namespace IO\nopen Process in\ndef zz := 1\nend IO\n")]).any
             (hasStr · "Std.ZzIn:2") &&

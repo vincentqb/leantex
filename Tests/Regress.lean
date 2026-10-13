@@ -4,8 +4,7 @@ public import Tests.Backends
 
 public section
 
-/-! Guards for reported breakages whose fix landed without one, each failing on the reported
-tree. -/
+/-! Guards for reported breakages, each failing on the reported tree. -/
 
 open LeanTex.Core
 
@@ -56,7 +55,7 @@ def nestedStageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (n, nested) := stagesList false (0, 0) tree.toList
     seen := seen + n
     t s!"{a.name}: no stage stands inside a stage ({nested} of {n})" (nested == 0)
-  t s!"the corpus ships stages, so the walk above can see one ({seen})" (seen > 0)
+  t s!"the corpus ships stages, so the nesting check is not vacuous ({seen})" (seen > 0)
   -- Parked on `Elab.flattenFrame`: a titled frame around the title page still nests; the row fails once it does not.
   let (n, nested, pages) := stages "\\begin{frame}{Welcome}\n\\titlepage\n\\end{frame}"
     "\\documentclass[aspectratio=169]{slides}"

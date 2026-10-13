@@ -1820,8 +1820,8 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     ({ bl with natbib := none } == nat &&
       bl.natbib == some #["biblatex", "bbx=numeric", "cbx=numeric", "sorting=nty"])
 
-/-- The decimal printers as spelled with `pushn` and `dropEndWhile`, kept so `Dim.fracDigits` spells
-every value as they did. -/
+/-- Reference decimal printers spelled with `pushn` and `dropEndWhile`; `Dim.fracDigits` spells
+every value as they do. -/
 def legacyPtString (x : Dim.Sp) : String :=
   let m := x.toPtMilli
   let milli := m.natAbs
@@ -1859,16 +1859,16 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "dim negative em is exact"
     (Decl.parseLength "-0.25em" == some { em := -250 })
 
-  -- The digit-list printers spell what the legacy printers did, over every thousandth from -3 to 3 pt and a sweep of ratios.
+  -- The digit-list printers spell as the legacy printers do, over every thousandth from -3 to 3 pt and a sweep of ratios.
   let ptBad := (List.range 6001).filterMap fun (i : Nat) =>
     let milli : Int := Int.ofNat i - 3000
     let x : Int := milli * 65536 / 1000
     [x - 1, x, x + 1, x + 32].find? fun y => Dim.Sp.toPtString y != legacyPtString y
-  t s!"sp pt string spells as the legacy printer did ({ptBad.take 3})" ptBad.isEmpty
+  t s!"sp pt string spells as the legacy printer does ({ptBad.take 3})" ptBad.isEmpty
   let ratBad := (List.range 4001).filterMap fun (i : Nat) =>
     let p : Int := Int.ofNat i * 7919 - 16000000
     [1, 7, 65536, 1000000000, 3 * 65536].find? fun q => Dim.ratString p q != legacyRatString p q
-  t s!"rat string spells as the legacy printer did ({ratBad.take 3})" ratBad.isEmpty
+  t s!"rat string spells as the legacy printer does ({ratBad.take 3})" ratBad.isEmpty
   -- toPtString rounds exact thirds to the nearest thousandth, collapses tiny values to "0" unsigned, and rounds halves away from zero.
   t "sp pt string thirds" ((Dim.pt 1 / 3).toPtString == "0.333")
   t "sp pt string negative thirds" ((-(Dim.pt 1) / 3).toPtString == "-0.333")

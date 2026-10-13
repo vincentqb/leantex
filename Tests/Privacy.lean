@@ -39,7 +39,7 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
       hit "a/Zorblax/b")
   t "a cased term keeps case"
     (hit "KRYX" && hit "the KRYX unit" && !hit "Kryx" && !hit "kryx" && !hit "KRYXS")
-  t "a phrase matches across spaces, separators and case, or run together"
+  t "a phrase matches across white space, separators and case, or run together"
     (hit "Quintel Varn" && hit "quintel  varn" && hit "Quintel\nVarn" &&
       hit "Quintel\t\tVarn" && hit "Quintel\u00A0Varn" && hit "QuintelVarn" &&
       hit "quintelvarn" && hit "Quintel-Varn" && hit "quintel_varn" && hit "quintel.varn" &&

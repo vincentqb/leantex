@@ -21,7 +21,7 @@ def ownBibChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .para xs => Ir.plainText xs
     | _ => ""
   t "thebibliography requests no .bib file" (Ir.bibRefs d0).isEmpty
-  t "thebibliography resolves with no diagnostic but newblock's note"
+  t "thebibliography's citations resolve, with no diagnostic but newblock's note"
     ((ds0 ++ ds).all (·.severity == Severity.note))
   t "kernel numbering: a label cites as written and steps no counter"
     ((d.body[0]?.map paraText) == some "Citing [1] and [X, 2].")

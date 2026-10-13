@@ -56,7 +56,7 @@ def execvpChoice (path : String) (cwd : System.FilePath) (name : String) :
   let some started := (got.out.splitOn "\n")[1]? | return none
   return some (if started.startsWith "/" then started else ToolPath.join cwd.toString started)
 
-/-- A file's identity as every earlier memo and slot spelled it. -/
+/-- A file's identity in the memo and slot spelling: real path, size and modification time. -/
 def legacyStamp (p : System.FilePath) : IO String := do
   let md ← p.metadata
   return String.intercalate "\t" [(← IO.FS.realPath p).toString, toString md.byteSize,

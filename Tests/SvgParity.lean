@@ -7,7 +7,7 @@ public import LeanTex.Core.SvgPoster
 
 public section
 
-/-! The native judge and terminal projection answer as libxml2 and libxslt did over the shared
+/-! The native judge and terminal projection answer as libxml2 and libxslt do over the shared
 matrices, but for the declared widenings (`svgBoundaryWidened`); needs xmllint and xsltproc. -/
 
 namespace Tests

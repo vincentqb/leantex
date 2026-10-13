@@ -124,7 +124,7 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
       && (overfull.toList.filterMap (·.subject)).eraseDups.length == 4)
   let folded := Diag.foldRepeats overfull
   let shown := folded.filter (·.severity == .warning)
-  t "the default log shows four overfull lines as one warning of four sites"
+  t "the default log shows four overfull lines as one warning at the first, with four sites"
     (shown.size == 1 && shown.all (fun d => d.sites == 4 &&
         d.span.map (·.pos.line) == some 1) &&
       (folded.filter (·.severity == .note)).size == 3)

@@ -47,7 +47,7 @@ def mdAccountsChecks (t : String → Bool → IO Unit) : IO Unit := do
         && (d.span.map (·.pos.line)) == some brkLine
     unless lost.isEmpty && named do
       bad := bad.push s!"{src.replace "\n" "⏎"} lost {lost} named {named}"
-  t s!"every block after a list and a break ships or is named ({bad.size} of {fam.size} documents fail; first: {bad.toList.take 3})" bad.isEmpty
+  t s!"every block after a list and a thematic break ships or is named ({bad.size} of {fam.size} documents fail; first: {bad.toList.take 3})" bad.isEmpty
   t "a spaced dash line under a paragraph is a break, not a heading"
     (has1 "Foo\n- - -\n" "<p>Foo</p>" && !has1 "Foo\n- - -\n" "<h")
   t "a spaced equals line under a paragraph is text, not a heading"
@@ -256,7 +256,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let altLost := puncts.filter fun c =>
     let src := "![x\\" ++ String.singleton c ++ "y, z=w](u.png)\n"
     !(has src ("alt=x" ++ String.singleton c ++ "y, z=w>") && noLeak src)
-  t s!"every ASCII punctuation but the quote reaches an alternative (lost: {altLost})" altLost.isEmpty
+  t s!"every ASCII punctuation character but the quote reaches an alternative whole (lost: {altLost})" altLost.isEmpty
   let subjects (src : String) : List String :=
     ((dvMd src).filter (·.kind == .E0390)).toList.filterMap (·.subject) |>.eraseDups
   t "a four-column indent under a quoted paragraph is lazy, not code"

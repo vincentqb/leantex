@@ -4,7 +4,7 @@ public import Tests.Support
 
 public section
 
-/-! The SVG boundary and terminal projection as libxml2 and libxslt stated them, the parity oracle's
+/-! The SVG boundary and terminal projection as libxml2 and libxslt state them, the parity oracle's
 reference (`scripts/svg-check.lean`); no render path imports it. -/
 
 namespace Tests.SvgLegacy
@@ -52,7 +52,7 @@ def supportedSvg : String :=
   "boolean(/*[local-name()='svg' and namespace-uri()='http://www.w3.org/2000/svg']) and " ++
     "not(" ++ unsupported ++ ")"
 
-/-- libxml2's SAX events as the old boundary read them. -/
+/-- libxml2's SAX events as the reference boundary reads them. -/
 def saxBoundary (sax : String) : Except String Bool := do
   let events := (sax.splitOn "\n").map (·.trimAscii.toString)
   let has := fun name => events.any (·.startsWith ("SAX." ++ name ++ "("))
@@ -217,7 +217,7 @@ def stylesheet : String := r#"<xsl:stylesheet version="1.0"
 private def run (cmd : String) (args : Array String) : IO IO.Process.Output :=
   IO.Process.output { cmd, args }
 
-/-- The old boundary's verdict: libxml2's SAX pass, then its XPath over the parse. -/
+/-- The reference boundary's verdict: libxml2's SAX pass, then its XPath over the parse. -/
 def judge (bytes : ByteArray) : IO (Except String Unit) := IO.FS.withTempDir fun dir => do
   let input := dir / "source.svg"
   IO.FS.writeBinFile input bytes
@@ -231,7 +231,7 @@ def judge (bytes : ByteArray) : IO (Except String Unit) := IO.FS.withTempDir fun
     return if xp.stdout.trimAscii.toString == "true" then .ok ()
       else .error "SVG resource boundary refuses the source"
 
-/-- The old projection's terminal pose, as libxslt writes it, or its message. -/
+/-- The reference projection's terminal pose, as libxslt writes it, or its message. -/
 def terminal (bytes : ByteArray) : IO (Except String ByteArray) := IO.FS.withTempDir fun dir => do
   let input := dir / "source.svg"
   let style := dir / "terminal.xsl"

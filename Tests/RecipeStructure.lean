@@ -89,7 +89,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   t "the typed HTML tree carries exactly one matching internal link"
     (ids.contains "panel" && hrefs == #["#panel"])
   let pdf := Pdf.write (Layout.Geom.ofPage doc.page) oneFace out.pages doc.info
-  t "the PDF carries one resolved internal block-link annotation"
+  t "the PDF carries exactly one resolved internal block-link annotation"
     (match pdfLinkTargets pdf with
      | .ok targets => targets.size == 1 && (targets[0]? matches some (Obj.arr _))
      | .error _ => false)
@@ -197,7 +197,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   let sorted := rects.qsort (fun a b => decide (a.x < b.x))
   let covers (r : Layout.LinkRect) (x : Dim.Sp) : Bool :=
     decide (r.x ≤ x) && decide (x ≤ r.x + r.w)
-  t "linked row: three disjoint link rectangles with gutters between"
+  t "linked row: exactly three disjoint link rectangles with gutters between"
     (rects.size == 3 &&
       (match sorted[0]?, sorted[1]?, sorted[2]? with
        | some r0, some r1, some r2 =>

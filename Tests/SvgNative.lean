@@ -414,7 +414,7 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .refused r => check ref s!"SVG readback {name}: refused: {r.message}" false
     | .lossy _ | .refused _ => pure ()
   check ref s!"SVG readback: {read} figures read back" (read ≥ 9)
-  -- The bound bites: a mark moved by twice its bound no longer agrees.
+  -- The bound bites: a mark moved by twice its bound disagrees.
   let moved (m : Mark) : Mark := match m with
     | .paint c g fl st cl al =>
       .paint { c with e := c.e + 2 * ((readbackBound c : Int) : Rat) + 1 } g fl st cl al

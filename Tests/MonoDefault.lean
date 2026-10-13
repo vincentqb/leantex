@@ -405,7 +405,7 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
         (← FontEnv.Cache.mk') .settled with
     | .ok (fsU, docU, diagsU, pathsU) =>
       let notes := diagsU.filter (·.kind == .N0031)
-      t s!"tex: an upright-only leading companion sets italics upright, one note ({notes.size})"
+      t s!"tex: an upright-only leading companion sets italics upright, one note offering a declaration ({notes.size})"
         (pathsU.contains notoMonoAt && !lmIn pathsU && notes.size == 1
           && notes.all (fun d => d.help.any fun h => !hasStr h "install")
           && runFace (layoutOf fsU docU) "slanted" == some (fsU.lookup 2 400 false))

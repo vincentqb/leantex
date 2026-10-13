@@ -427,7 +427,7 @@ def overlayStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (styleAt 3 #[carrier]).isEmpty)
   let marked := Html.elem "span" #[selected]
     #[("class", "alt alt-set author"), ("data-steps", "2"), ("aria-hidden", "true")]
-  t "style projection keeps unrelated class and accessibility attributes"
+  t "overlay style projection keeps unrelated class and accessibility attributes"
     (styleTreeKey (styleAt 2 #[marked]) == styleTreeKey #[Html.elem "span" #[selected]
       #[("class", "author"), ("aria-hidden", "true")]] &&
       styleTreeKey (styleAt 2 #[marked]) != styleTreeKey #[selected])

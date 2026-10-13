@@ -132,7 +132,7 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let degraded ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" none
   check ref "figure route: with no converter the engine's drawing ships, never a placeholder"
     (degraded.vector.isSome && degraded.res.toBool)
-  check ref "figure route: with no converter every loss is named under one subject (W0609)"
+  check ref "figure route: with no converter each loss is W0609 under the converted figure's subjects"
     (degraded.diags.all (·.code == "W0609") && subjects degraded.diags == subjects converted.diags)
   let failed ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" (some (.always failing))
   check ref "figure route: a failed conversion ships the engine's drawing with the loss named"

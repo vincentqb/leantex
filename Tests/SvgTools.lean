@@ -109,7 +109,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         (!helps.isEmpty && helps.size == failed.diags.size && helps.all fun h =>
           !hasStr h "install" && hasStr h "\\allow{W0609}")
     else
-      check ref s!"SVG maybe-unfinished run {code}/{stderr} names its repair conditionally ({helps})"
+      check ref s!"SVG converter run {code}/{stderr} that may not have finished names its repair conditionally ({helps})"
         (!helps.isEmpty && helps.size == failed.diags.size && helps.all fun h =>
           hasStr h "if the reason says it cannot start" && hasStr h "\\allow{W0609}")
   failure.set (some (.error (IO.Error.resourceExhausted none 24 "open files")))

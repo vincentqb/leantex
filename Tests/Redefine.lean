@@ -136,7 +136,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let capTop (c : Array CensusPage) : Option Dim.Sp := lineYOf c 0 "Table words"
   let (kernelGap, _) := gaps venue
   let (pkgGap, _) := gaps packaged
-  t "both placements part caption and table by the swapped 8pt"
+  t "the kernel's caption-table gap exceeds the package's by the swapped 8pt"
     (match kernelGap, pkgGap with
      | some k, some p => k - p == Dim.pt 8
      | _, _ => false)
