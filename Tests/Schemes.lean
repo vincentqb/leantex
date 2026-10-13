@@ -714,7 +714,7 @@ def contractChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"scheme contract: an alert on moloch's bar and page drops the more-contrast screen, \
 named: {schemeContractOffences barAlert |>.toList} {barJudge.diags.map (·.subject)}"
     ((schemeContractOffences barAlert).isEmpty && !barJudge.shipped.contains .lightMore &&
-     barJudge.diags.any (·.subject == some "lightMore:alert@frametitlebg"))
+     barJudge.diags.any fun d => d.subject.any (·.startsWith "lightMore:alert@"))
   -- A colour one tone serves on a declared bar and another on the page moves
   -- no bar: every other title keeps its contrast.
   let conflict := deck

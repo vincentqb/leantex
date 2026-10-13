@@ -8,8 +8,8 @@ lake env lean --run scripts/gen-palette-data.lean
 The palettes the class's default seeds generate at the classes' two ground
 depths in each screen scheme, the palettes a bundle's seeds generate there,
 each beside the seeds as the scheme carries them, and the colours a bundle
-derives from a lineage colour: each the generator's own answer
-(`SeedPalette.generate`, `ContrastSolve.realizeNearest`), kept here so no
+derives: each the generator's own answer (`SeedPalette.generate`,
+`SeedPalette.mutedFor`, `ContrastSolve.realizeNearest`), kept here so no
 build pays to derive a constant again. This module carries only data; the
 lookups over it live in the hand-owned Ir.lean and Theme.lean, and
 `Tests.PaletteData.checks` holds every entry to a fresh derivation.
@@ -406,8 +406,10 @@ the seeds it is generated from there. -/
     exampleText := some { r := 0x68, g := 0xC4, b := 0x98 }
     exampleBand := { r := 0x77, g := 0xD3, b := 0xA6 } })]
 
-/-- Each colour a bundle derives from a lineage colour, by the bundle's name. -/
+/-- Each colour a bundle derives, by the bundle's name. -/
 @[expose] public def bundleDerived : List (String × Role × Color) := [
-  ("moloch", .alert, { r := 0xAF, g := 0x5C, b := 0x00 })]
+  ("moloch", .muted, { r := 0x60, g := 0x76, b := 0x7A }),
+  ("plain", .muted, { r := 0x74, g := 0x74, b := 0x81 }),
+  ("gemini", .muted, { r := 0x75, g := 0x75, b := 0x75 })]
 
 end LeanTex.Core.PaletteData
