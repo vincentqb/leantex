@@ -70,6 +70,7 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   (`DocClass.record`), one needing layout code a kernel question; a theme is only visual (review).
 - A claim about what a page shows comes only from a rendered page or the shipped census, never an IR
   dump or a golden (`irDumpUnmarked`, `censusChecks`).
+- Equivalence is no visual difference at the viewing `scripts/visualdiff.lean` sets, or equal bytes.
 - A run leads at its paragraph's leading scaled to its size, never a leading of its own, and a size
   span states no line height (`runLead_between`, `inlineRunChecks`).
 

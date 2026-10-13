@@ -275,8 +275,9 @@ def registry : List Premise := [
     tools := ["pandoc"]
     owed := some "Read the vendored CommonMark spec's examples through pandoc's reader and HTML writer, and require each to match its expected HTML under the hop's declared normalizations." },
   { name := "playwright", residue := .oracle "node", reach := .oracle
-    statement := "node and the cached Playwright module drive the browsers and report what they computed unaltered, for the HTML, PDF and rhythm oracles."
-    sites := [("scripts/html-oracle.lean", "playwrightCandidates"), ("scripts/rhythm.lean", "main")]
+    statement := "node and the cached Playwright module drive the browsers and report what they computed unaltered, for the HTML, PDF, rhythm and visual-difference oracles."
+    sites := [("scripts/Playwright.lean", "playwrightCandidates"), ("scripts/rhythm.lean", "main"),
+      ("scripts/visualdiff.lean", "main")]
     tools := ["node"]
     unchecked := some "The oracles read each browser only through them, so no check stands outside the harness." },
   { name := "lualatex-reference", residue := .oracle "lualatex", reach := .oracle
@@ -287,7 +288,8 @@ def registry : List Premise := [
     owed := some "Regenerate every parity reference on a second TeX Live installation and require none to move." },
   { name := "pdf-readers", residue := .oracle "PDF readers", reach := .oracle
     statement := "Poppler, Ghostscript, pypdf, PDFium as the host's Chrome runs it and pdf.js as the host Firefox's omni.ja ships it read a written PDF as ISO 32000-2 says, veraPDF judges PDF/A-4 and PDF/UA-2 as those standards say, and ImageMagick measures the distance between rasters as it documents, so where the readers agree with the engine's own reader the page is what the file states."
-    sites := [("scripts/pdf-oracles.lean", "main"), ("scripts/ink-oracle.lean", "main")]
+    sites := [("scripts/pdf-oracles.lean", "main"), ("scripts/ink-oracle.lean", "main"),
+      ("scripts/visualdiff.lean", "main")]
     tools := ["pdftotext", "pdfinfo", "pdffonts", "pdftoppm", "gs", "magick", "verapdf", "chrome"]
     scripts := ["scripts/pdf-oracles.lean"] },
   { name := "zlib", residue := .oracle "zlib", reach := .oracle

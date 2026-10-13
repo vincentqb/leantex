@@ -83,5 +83,9 @@ name = "parity"
 root = "scripts.parity"
 
 [[lean_exe]]
+name = "visualdiff"
+root = "scripts.visualdiff"
+
+[[lean_exe]]
 name = "land"
 root = "scripts.land"
