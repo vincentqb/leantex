@@ -1060,38 +1060,13 @@ theorem ops_chars : ∀ (l : List Pdf.ContentOp), opsPlain l = true →
 
 end
 
-/-- Tokens each followed by its byte. -/
-def joinInto (acc : ByteArray) : List (Tok × UInt8) → ByteArray
-  | [] => acc
-  | (t, w) :: rest => joinInto (acc ++ PdfContentLex.spell t ++ ⟨#[w]⟩) rest
-
-def joinFull (ts : List (Tok × UInt8)) : ByteArray := joinInto .empty ts
-
-theorem joinInto_acc (acc : ByteArray) (ts : List (Tok × UInt8)) :
-    joinInto acc ts = acc ++ joinInto .empty ts := by
-  induction ts generalizing acc with
-  | nil => simp [joinInto]
-  | cons p rest ih =>
-    obtain ⟨t, w⟩ := p
-    rw [joinInto, joinInto, ih, ih (ByteArray.empty ++ PdfContentLex.spell t ++ ⟨#[w]⟩)]
-    simp [ByteArray.append_assoc]
-
-@[simp] theorem joinFull_nil : joinFull [] = .empty := rfl
-
-theorem joinFull_cons (t : Tok) (w : UInt8) (rest : List (Tok × UInt8)) :
-    joinFull ((t, w) :: rest) = PdfContentLex.spell t ++ ⟨#[w]⟩ ++ joinFull rest := by
-  unfold joinFull
-  rw [joinInto, joinInto_acc, ByteArray.empty_append]
-
-theorem joinFull_renderSep : ∀ (ts : List (Tok × UInt8)) (h : ts ≠ []),
-    joinFull ts = PdfContentLex.renderSep ts ++ ⟨#[(ts.getLast h).2]⟩
-  | [(t, w)], _ => by simp [joinFull_cons, PdfContentLex.renderSep]
+theorem renderSep_trail : ∀ (ts : List (Tok × UInt8)) (h : ts ≠ []),
+    PdfContentLex.renderSep true ts = PdfContentLex.renderSep false ts ++ ⟨#[(ts.getLast h).2]⟩
+  | [(t, w)], _ => by simp [PdfContentLex.renderSep_cons, PdfContentLex.renderSep_nil, PdfContentLex.sepOf]
   | (t, w) :: u :: rest, _ => by
-    rw [joinFull_cons, joinFull_renderSep (u :: rest) (by simp)]
-    have e : PdfContentLex.renderSep ((t, w) :: u :: rest) =
-        PdfContentLex.spell t ++ ⟨#[w]⟩ ++ PdfContentLex.renderSep (u :: rest) := rfl
-    rw [e, List.getLast_cons_cons]
-    simp only [ByteArray.append_assoc]
+    rw [PdfContentLex.renderSep_cons true t w, PdfContentLex.renderSep_cons false t w,
+      renderSep_trail (u :: rest) (by simp), List.getLast_cons_cons]
+    simp only [PdfContentLex.sepOf, ByteArray.append_assoc]
 
 theorem toUTF8_chars (s : String) : s.toUTF8 = s.toList.utf8Encode := by
   conv => lhs; rw [← String.ofList_toList (s := s)]
@@ -1108,14 +1083,14 @@ theorem sepBytes (w : UInt8) (h : w = 32 ∨ w = 10) : [Char.ofNat w.toNat].utf8
   rcases h with rfl | rfl <;> rfl
 
 theorem words_bytes (ws : List Word) (hv : ∀ w ∈ ws, WordOk w) :
-    (wordsChars ws).utf8Encode = joinFull (ws.map fun w => (w.tok, w.sep)) := by
+    (wordsChars ws).utf8Encode = PdfContentLex.renderSep true (ws.map fun w => (w.tok, w.sep)) := by
   induction ws with
-  | nil => simp
+  | nil => simp [PdfContentLex.renderSep_nil]
   | cons w rest ih =>
     have hw := hv w (by simp)
-    rw [wordsChars_cons, List.map_cons, joinFull_cons, ← List.singleton_append, List.utf8Encode_append,
-      List.utf8Encode_append, ← toUTF8_chars, ← hw.spell, sepBytes w.sep hw.sep,
-      ih (fun v hv' => hv v (by simp [hv'])), ByteArray.append_assoc]
+    rw [wordsChars_cons, List.map_cons, PdfContentLex.renderSep_cons, PdfContentLex.sepOf_true,
+      ← List.singleton_append, List.utf8Encode_append, List.utf8Encode_append, ← toUTF8_chars,
+      ← hw.spell, sepBytes w.sep hw.sep, ih (fun v hv' => hv v (by simp [hv'])), ByteArray.append_assoc]
 
 theorem foldl_renderStep (s : String) (l : List Pdf.ContentOp) :
     l.foldl Pdf.renderStep (some s) = some (s ++ String.join (l.map fun o => "\n" ++ o.render)) := by
@@ -1615,7 +1590,7 @@ theorem bytes_cancel (A B : ByteArray) (w : UInt8) (h : A ++ ⟨#[w]⟩ = B ++ �
   exact Array.toList_inj.mp h2
 
 theorem render_bytes (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true) :
-    (Pdf.render ops).toUTF8 = PdfContentLex.renderSep ((opWordsList ops.toList).map fun w => (w.tok, w.sep)) := by
+    (Pdf.render ops).toUTF8 = PdfContentLex.renderSep false ((opWordsList ops.toList).map fun w => (w.tok, w.sep)) := by
   by_cases he : ops.toList = []
   · have he' : ops = #[] := Array.toList_inj.mp he
     subst he'
@@ -1639,7 +1614,7 @@ theorem render_bytes (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true
     rw [ops_chars ops.toList h] at hc
     have hb : (Pdf.render ops ++ "\n").toUTF8 = (wordsChars (opWordsList ops.toList)).utf8Encode := by
       rw [toUTF8_chars, hc]
-    rw [words_bytes _ (opWordsList_ok ops.toList), joinFull_renderSep _ hne, hlast] at hb
+    rw [words_bytes _ (opWordsList_ok ops.toList), renderSep_trail _ hne, hlast] at hb
     rw [String.toUTF8_eq_toByteArray, String.toByteArray_append] at hb
     have hnl : "\n".toByteArray = ⟨#[10]⟩ := rfl
     rw [hnl, ← String.toUTF8_eq_toByteArray] at hb
