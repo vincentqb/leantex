@@ -477,13 +477,15 @@ private def ancestry (byKey : Std.HashMap String Entry) (field : String) (start 
     Array Entry × Array String :=
   ancestryGo byKey field (({} : Std.HashSet String).insert start.key) #[] #[] (start.refsBy field)
 
-/-- The shape biblatex's data model gives a field: whether
-it is a list, and of what. -/
+/-- Whether a field is a part of one of the four date types:
+`year`, `endmonth`, `eventday`, … -/
 private def datePart (f : String) : Bool :=
   ["", "event", "orig", "url"].any fun pre =>
     ["year", "month", "day", "hour", "minute", "second", "timezone", "yeardivision"].any fun p =>
       f == pre ++ p || f == pre ++ "end" ++ p
 
+/-- The shape biblatex's data model gives a field: whether it is a list, and
+of what. -/
 public def fieldShape (f : String) : Bool × String :=
   if ["afterword", "annotator", "author", "bookauthor", "commentator", "editor", "editora",
       "editorb", "editorc", "foreword", "holder", "introduction", "namea", "nameb", "namec",

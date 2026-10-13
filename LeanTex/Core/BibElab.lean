@@ -73,7 +73,6 @@ field needs the elaborator. -/
 public structure FieldDoor where
   context : Thunk FieldDoor.Context
 
-/-- The door of a prepared document. -/
 public def FieldDoor.of (file : String) (p : Elab.Prepared) : FieldDoor :=
   { context := Thunk.mk fun _ =>
       let (plan, st0) := Elab.preparedBody file p
@@ -203,7 +202,7 @@ private def runIn (acc : Array Ir.Inline) (b : Ir.Block) : Array Ir.Inline :=
   | _ => acc
 
 /-- What a field's reading reports, settled: the inline reading where none of
-its diagnostics is an error, else the blocks run in. -/
+its diagnostics is an error, else the blocks run in, else the plain reading. -/
 private def settle (inline : Unit → Array Ir.Inline) (ds : Array Diag)
     (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)

@@ -143,7 +143,6 @@ public theorem disclosureRaws_contract (summary body : Array Raw) (expanded : Bo
 
 mutual
 
-/-- One inline node's text. -/
 private def inlText1 : Inl → String
   | .text s _ => s
   | .code s _ => s
@@ -166,7 +165,6 @@ private def inlText (xs : Array Inl) : String := inlTextList "" xs.toList
 
 mutual
 
-/-- One inline node as surface raws. -/
 private def inlRaws (file : String) : Inl → Array Raw × Array Diag
   | .text s p => (textRaws s p, #[])
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
@@ -351,7 +349,6 @@ public theorem tableRaws_contract (file : String) (aligns : Array TableAlign)
 
 mutual
 
-/-- One block as surface raws. -/
 private def blkRaws (file : String) : Blk → Array Raw × Array Diag
   | .para body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList

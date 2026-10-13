@@ -129,7 +129,8 @@ private def expandOnce (ms : Array Macro) (s : String) : String × Bool := Id.ru
     else break
   return (out, changed)
 
-/-- A text with the commands expanded pass by pass until no use is left. -/
+/-- A text with the commands expanded pass by pass until no use is left or the
+text outgrows its cap. -/
 public def expandMacros (ms : Array Macro) (s : String) : String := Id.run do
   if ms.isEmpty || !s.contains '\\' then return s
   let cap := 64 * s.length + 4096

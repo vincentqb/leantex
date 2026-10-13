@@ -20,8 +20,7 @@ open LeanTex.Core LeanTex.Core.Parse
 
 /-! # LaTeX idioms, spelled natively
 
-Rewrites each LaTeX idiom into the native declaration on the parsed tree, before
-elaboration, with a note naming what it became. -/
+Each LaTeX idiom is rewritten into its native declaration before elaboration. -/
 
 /-- Package interfaces the engine handles natively: loading
 one draws a note, never a warning. -/
@@ -255,7 +254,6 @@ styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "put \\smallskip, \\medskip or \\bigskip at a block's body start; \
 \\framefoot sets a frame footer")]
 
-/-- Classes that produce a presentation. -/
 public def presentationClasses : List String := ["beamer", "slides"]
 
 /-- The packages a class loads itself: beamer loads both AMS packages unless its
@@ -1264,7 +1262,6 @@ public inductive GroupPrefix (raws : Array Raw) : Nat → List (Array Raw) → N
       GroupPrefix raws (skipSpaces raws i + 1) args stop →
       GroupPrefix raws i (#[.ctrl name p] :: args) stop
 
-/-- The argument loop's step. -/
 private def takeGroupsStep (raws : Array Raw) (s : Array (Array Raw) × Nat) :
     Id (ForInStep (Array (Array Raw) × Nat)) :=
   let k := skipSpaces raws s.2
@@ -1834,7 +1831,6 @@ public structure BoundaryScan where
 
 mutual
 
-/-- One level of the boundary-declaration walk. -/
 -- conserves: none — the result is the standalone's preamble text
 private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan) :
     List Raw → Nat → Nat → BoundaryScan
@@ -2236,10 +2232,6 @@ public def milliStr (m : Nat) : String :=
     else digits
   s!"{i}.{digits}"
 
-/-! # Decidable TeX conditionals
-
-A TeX conditional the document's own definitions decide is resolved here. -/
-
 /-- The conditional heads TeX defines: TeX82's `\if…`
 primitives and e-TeX's three. -/
 private def condHeads : List String :=
@@ -2629,10 +2621,6 @@ private def condDefiners : List String :=
 private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :=
   (n.endsWith "true" && flags.contains (n.dropEnd 4).toString) ||
     (n.endsWith "false" && flags.contains (n.dropEnd 5).toString)
-
-/-! # Package- and class-loaded tests
-
-`\@ifpackageloaded` and its family, resolved from the loads read so far. -/
 
 /-- The branches a loaded test carries after its name and option list: both, the
 true one only, or the false one only. -/
@@ -6341,7 +6329,6 @@ private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) 
     else #[.ctrl "citetext" pos, .group body pos]
   return some (out, j)
 
-/-- Named arms of the later dispatcher. -/
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
@@ -7321,7 +7308,6 @@ and \\tokens declare the design directly")
       return some (#[], k)
     | none => return none
 
-/-- The later half of `rewriteCtrl`'s dispatch. -/
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if let some result ← styOptionsRequest name pos raws start then return some result
@@ -9938,7 +9924,6 @@ public def RewriteCursor.withDocument (cursor : RewriteCursor) (body : Array Raw
     (pos : Pos) : RewriteCursor :=
   { cursor with raws := #[.env "document" body pos], index := 0 }
 
-/-- Resumes the walk at a checkpoint. -/
 private def rewriteCursor (cursor : RewriteCursor) : Array Raw × St :=
   cursor.complete (rewriteList cursor.inBody cursor.raws cursor.out
     (cursor.raws.toList.drop cursor.index) cursor.index 0 cursor.state)
@@ -10386,7 +10371,6 @@ private theorem finishDeclarations_diags (out : Array Raw) (st : St)
   simp only [h.2.2.2.2.2.2, Array.empty_append]
   rfl
 
-/-- The state returned by the production tail. -/
 private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
   let go : M (Array Raw) := do
     -- After the idiom rewrite, so a `\parbox` is the box it became.
@@ -10595,16 +10579,12 @@ public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List Strin
     Array Raw × Array Diag × Array String :=
   rewriteExecuted (execute file raws provideKeeps warned inherited)
 
-/-! `\usepackage{p}` with `p.sty` beside the document splices the file into the
-preamble, as LaTeX reads it from the input path. -/
-
 /-- Diagnostic codes that carry a refused name. -/
 public def nameRefusalAsk : List (DiagCode × String) :=
   [(.W0103, ""), (.W0319, "beamertheme")]
 
 mutual
 
-/-- One level of the style-file candidate scan. -/
 private def styCandList (raws : Array Raw) (out : Array String) :
     List Raw → Nat → Nat → Array String
   | [], _, _ => out
@@ -10991,7 +10971,6 @@ private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
 
 mutual
 
-/-- One level of the splice. -/
 -- conserves: none — a local file's `\usepackage` becomes its content
 private def applyStyList (stys : Array (String × Array Raw)) (raws : Array Raw)
     (out : Array Raw) (recs : Array (String × Option String × Pos)) :
@@ -11111,11 +11090,6 @@ public def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Dia
     | some nm => s!"'{sty}' overrides the {nm} bundle"
     | none => s!"'{sty}' beside the document is read into the preamble"
   Diag.of .N0020 (lead ++ " — " ++ counts) (some ⟨docFile, pos⟩)
-
-/-! # listings and siunitx
-
-A second rewrite pass after `rewrite`, folding listing defaults into what
-follows and spelling siunitx commands as text. -/
 
 /-- The unit symbols, transcribed from siunitx's own declarations. -/
 private def siUnits : List (String × String) :=
@@ -11419,7 +11393,6 @@ private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat 
 
 mutual
 
-/-- The listings and siunitx pass over one level. -/
 -- conserves: none — spells siunitx constructs as their output text
 private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     (out : Array Raw) : List Raw → Nat → Nat → M (Array Raw × TextSt)

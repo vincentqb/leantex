@@ -115,7 +115,6 @@ public theorem plainField_ships_contract (v : String) :
     Diag.of_severity_full .W0012 _ _ _ _ _ _ _ _, DiagCode.fieldReading_ships.2.1] at he
   exact Bool.false_ne_true he
 
-/-- `plainField` wherever the entry stands. -/
 public def plainReading : FieldReading := fun _ => plainField
 
 /-- The words a refused field's diagnostic opens with until

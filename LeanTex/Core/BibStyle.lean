@@ -1001,7 +1001,6 @@ private def addPeriod (out : Array Ir.Inline) : Array Ir.Inline :=
   | none => out
   | some c => if c == '.' || c == '?' || c == '!' then out else out.push (.text ".")
 
-/-- Adjacent text nodes merged. -/
 private def mergeText (xs : Array Ir.Inline) : Array Ir.Inline :=
   xs.foldl (fun acc x => match x, acc.back? with
     | .text b, some (.text a) => acc.pop.push (.text (a ++ b))
@@ -1033,13 +1032,10 @@ public def renderEntryCached (cv : FieldText) (nf : NameFormat) (steps : Array S
   let (out, ds, cache) := run.run ({}, cache)
   ((out, ds), cache)
 
-/-- `renderEntryCached` with nothing read before. -/
 public def renderEntryWith (cv : FieldText) (nf : NameFormat) (steps : Array Step) (e : Entry)
     (extra : String := "") : Array Ir.Inline × FieldReport :=
   (renderEntryCached cv nf steps e extra {}).1
 
-/-- `renderEntryWith` under the reading that needs no
-elaborator, its reports dropped. -/
 public def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : String := "") :
     Array Ir.Inline :=
   (renderEntryWith plainField nf steps e extra).1
@@ -1115,8 +1111,8 @@ private def citedKeys (doc : Ir.Doc) (keep : Ir.CiteForm → Bool := fun _ => tr
       | .cite f keys => if keep f then keys.foldl addKey acc else acc
       | _ => acc) (#[], {}) doc).1
 
-/-- `\nocite{*}`: every `.bib` entry enters the list where it stands, after the
-keys cited before it. -/
+/-- `\nocite{*}`: every `.bib` entry but an `@xdata` one enters the list where
+it stands, after the keys cited before it. -/
 private def expandStar (entries : Array Entry) (cited : Array String) : Array String :=
   (cited.foldl (fun acc k =>
     if k == "*" then entries.foldl (fun acc e =>
@@ -1637,7 +1633,6 @@ public def bblItems (o : BblOptions) (cvOf : String → FieldText) (p : CitePunc
     let rd := renders[i]?.getD (#[], {}, [])
     (({ key := r.key, marker := itemMarker p r, content := rd.1 }, rd.2.1), rd.2.2)
 
-/-- `bibItemsWith` under the reading that needs no elaborator. -/
 public def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) :
     Array Ir.BibItem :=
   (bibItemsWith (fun _ => plainField) p style resolved).map (·.1)

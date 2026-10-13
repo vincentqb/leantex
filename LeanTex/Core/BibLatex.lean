@@ -1083,7 +1083,6 @@ private def eprintFormats : List (String × String × String) :=
    ("googlebooks", "Google Books", "http://books.google.com/books?id="),
    ("Google Books", "Google Books", "http://books.google.com/books?id=")]
 
-/-- The `eprint` macro. -/
 private def eprintMacro : BM Unit := do
   match ← fld "eprint" with
   | none => nounit
@@ -1458,7 +1457,6 @@ private def translatorOthersStrg : BM Unit := do
   for f in cleared do clear f
   bibstring (base ++ suffix)
 
-/-- `bytypestrg{field}{role}`. -/
 private def bytypestrg (field role : String) : BM Unit := do
   match (← fld (field ++ "type")).map (text ·.trimAscii.toString) with
   | none => bibstring ("by" ++ role)
@@ -1647,7 +1645,6 @@ private def Head.field (h : Head) (o : BblOptions) (e : Entry) : Option String :
   | .editorOthers | .editor => if ed then some "editor" else none
   | .author => if au then some "author" else none
 
-/-- A head, printed. -/
 private def head (h : Head) : BM Unit := do
   let ctx ← read
   let f := h.field ctx.opts ctx.e
@@ -2118,7 +2115,6 @@ private def headOf : String → Head
   | "patent" | "report" | "thesis" | "unpublished" => .author
   | _ => .authorEditorTranslator
 
-/-- Adjacent text nodes as one. -/
 private def mergeTexts (xs : Array Ir.Inline) : Array Ir.Inline :=
   xs.foldl (fun acc x => match x, acc.back? with
     | .text b, some (.text a) => acc.pop.push (.text (a ++ b))
@@ -2142,7 +2138,6 @@ public def renderBblCached (opts : BblOptions) (cv : FieldText) (e : Entry) (ext
   let (_, t) := (run.run ctx).run { cache }
   ((mergeTexts t.out, t.report, t.read), t.cache)
 
-/-- `renderBblCached` with nothing read before. -/
 public def renderBbl (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : String := "")
     (dash : Bool := false) (labelUl : Option (String × Nat) := none)
     (months : Array String := Locale.en.months) :

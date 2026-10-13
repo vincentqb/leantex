@@ -379,7 +379,6 @@ def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMe
     | some '/' => ((endTagAt cs i).map (·.2), m)
     | _ => ((tagAt cs i).map (·.stop), m)
 
-/-- `htmlTagAtM` with nothing remembered. -/
 def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := (htmlTagAtM cs i {}).1
 
 /-- Whether an attribute-free, non-self-closing tag of
@@ -390,8 +389,9 @@ private def bareTagAt (cs : Array Char) (i : Nat) (name : String)
   else (tagAt cs i).bind fun t =>
     if t.name == name && t.attrs.isEmpty && !t.selfClosing then some t.stop else none
 
-/-- The spellings of a disclosure's opening tag the reader accepts: `details`
-with no attribute or one valueless or `open` `open`. -/
+/-- The spellings of a disclosure's opening tag the reader accepts: a
+non-self-closing `details` with no attribute, or one `open` whose value is
+absent, empty or `open` in any case. -/
 private def detailsOpen (t : HtmlTag) : Bool :=
   t.name == "details" && !t.selfClosing &&
     match t.attrs.toList with
@@ -1138,7 +1138,6 @@ def Strict.fixit : Strict → String
   | .indentedCode => "fence the block with ``` instead"
   | .lazyContinuation => "indent the line to its container's content column, or repeat a quote's '>'"
 
-/-- The refusal, as a diagnostic. -/
 def refuse (file : String) (s : Strict) (pos : Pos) : Diag :=
   Diag.of .E0390 s.message (some ⟨file, pos⟩) (some s.fixit) (some s.subject)
 
@@ -1802,8 +1801,8 @@ private def closeRefusedDisclosure (frames : Array Frame) (acc : Array Blk) :
       | none => f.outer
     (frames.pop, outer ++ acc)
 
-/-- Closes the innermost frame where its own closer never came, refusing a
-disclosure there once. -/
+/-- Closes the innermost frame where its own closer never came; a disclosure
+there is refused unless its summary was. -/
 private def closeUnclosed (file : String) (frames : Array Frame) (acc : Array Blk) :
     Array Frame × Array Blk × Option Diag :=
   match frames.back? with

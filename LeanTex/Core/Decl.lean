@@ -137,7 +137,6 @@ public def ColorComponent.unitByte (c : ColorComponent) : UInt8 :=
 public def ColorComponent.rgbByte (c : ColorComponent) : UInt8 :=
   UInt8.ofNat ((c.num + c.scale / 2) / c.scale)
 
-/-- The component in thousandths. -/
 public def ColorComponent.milli (c : ColorComponent) : Nat :=
   (c.num * 1000 + c.scale / 2) / c.scale
 
@@ -520,10 +519,6 @@ private def parseScaled (tokens : Array (String × SymGlue)) (s : String) : Opti
     let (_, g) ← tokens.find? (·.1 == key)
     some (.glue (g.scale mantissa scale))
   | _ => none
-
-/-! # Length expressions
-
-`\dimexpr`'s shape over declared tokens and literals. -/
 
 /-- A parsed length expression whose references are still source names. -/
 public abbrev LenExpr := Affine String
@@ -1002,7 +997,6 @@ public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
     | [] => pure ()
   return (entries, diags)
 
-/-- Split one `key = value` entry. -/
 public def splitEntry (entry : String) : Option (String × String) :=
   match entry.splitOn "=" with
   | key :: rest =>

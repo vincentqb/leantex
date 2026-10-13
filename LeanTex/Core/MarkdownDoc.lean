@@ -358,7 +358,6 @@ public theorem rowLine_contract (cells : List String)
   · decide
   · exact h c hc x hxc
 
-/-- The longest run of `c` in `s`. -/
 private def longestRun (c : Char) (s : String) : Nat :=
   (s.foldl (fun (best, cur) x => if x == c then (max best (cur + 1), cur + 1) else (best, 0))
     (0, 0)).1
@@ -1436,8 +1435,6 @@ private theorem headingLevelColumns_mem (x : Ir.HeadingLevel) :
 
 end
 
-/-- llms.txt: with the title from the metadata, the twin opens `# title`, one
-blank line, then the `> summary` blockquote. -/
 public theorem emit_meta_title_first (doc : Doc) (t s : String)
     (ht : doc.info.title = some t) (hs : doc.info.subject = some s)
     (hbody : ((Ir.headingLevels (twinBody doc)).contains 0) = false) :
@@ -1451,8 +1448,6 @@ public theorem emit_meta_title_first (doc : Doc) (t s : String)
   exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
     (String.append_assoc ..)
 
-/-- With the title from the body's own level-0 heading, the preamble yields and
-the summary follows that heading. -/
 public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)

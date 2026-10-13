@@ -171,7 +171,6 @@ private def backSkip (acc : Array Raw) (j : Nat) : Nat := Id.run do
     | _ => break
   return k
 
-/-- The item just before index `k`, if any. -/
 private def before (acc : Array Raw) (k : Nat) : Option Raw :=
   if k == 0 then none else acc[k - 1]?
 
@@ -477,8 +476,6 @@ public def mintedCode (s : String) (start : Nat) : String := Id.run do
       out := out.push (if c == '\n' || c == '\r' then ' ' else c)
       i := i + 1
   return out
-
-/-! `Raw` back to source text, round-tripping what the lexer accepted. -/
 
 /-- The environment wrapping an `\input` file's content,
 unforgeable because its name holds a space. -/

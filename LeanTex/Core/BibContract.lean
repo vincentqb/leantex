@@ -3,8 +3,7 @@ module
 public import LeanTex.Core.Ir
 import all LeanTex.Core.Ir
 
-/-! Kernel checks of the reference list's shipped values, in a leaf module off
-the elaborator's import chain. -/
+/-! Kernel checks of the reference list's shipped values. -/
 
 namespace LeanTex.Core.Ir
 

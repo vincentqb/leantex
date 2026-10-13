@@ -6,17 +6,14 @@ public import LeanTex.Core.MdDesugar
 
 /-! # One door per surface
 
-Each surface reads into the one surface AST through exactly one door: tex
-through its lexer and parser, markdown through its reader and desugaring. -/
+Each surface reads into the one surface AST through exactly one door. -/
 
 namespace LeanTex.Core
 
 namespace Surface
 
-/-- The tex door's first stage, the lexer. -/
 @[expose] public def texLex (file text : String) : Array Lex.Token × Array Diag := Lex.lex file text
 
-/-- The tex door's second stage, the parser. -/
 @[expose] public def texParse (file : String) (toks : Array Lex.Token) : Array Parse.Raw × Array Diag :=
   Parse.parse file toks
 

@@ -27,7 +27,6 @@ public inductive NamePart where
   | full
   deriving Repr, BEq, Inhabited
 
-/-- The options uniqueness reads. -/
 public structure UniqueOptions where
   uniquename : UniqueName := .off
   uniquelist : Bool := false
