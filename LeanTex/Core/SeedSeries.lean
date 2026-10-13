@@ -1,7 +1,7 @@
 module
 
 public import LeanTex.Core.SeedPalette
-public import LeanTex.Core.CodeColor
+import LeanTex.Core.CodeColor
 public import LeanTex.Core.ContrastSolve
 
 /-!
@@ -33,9 +33,10 @@ namespace LeanTex.Core.SeedSeries
 
 open Ir Oklab Contrast
 
-/-- The candidates' hue step, in millidegrees: 5°. At the chroma floor a
-step moves a colour ΔEOK 2·0.10·sin 2.5° ≈ 0.009, under half a
-just-noticeable difference, so the grid hides no choice a reader would see. -/
+/-- The candidates' hue step, in millidegrees: 5°, a declared bound on the
+search's cost — 72 hues at two tones, 144 candidates. A finer grid buys
+nothing reliable: at 1° the sixteen series' least gap moves either way by
+up to ΔEOK 0.017, the greedy pick's own spread. -/
 public def hueStep : Nat := 5000
 
 /-- The most series a palette generates, a declared bound: the categorical
@@ -49,14 +50,22 @@ public def maxCount : Nat := 16
 marks side by side read as two colours, not a measurement. -/
 public def minGap : Int := 2 * okJnd
 
+/-- `minGap` as the README spells it, in hundredths of a unit of ΔEOK. -/
+private def minGapText : String :=
+  let c := minGap / 10 ^ 16
+  s!"ΔEOK 0.{if c < 10 then "0" else ""}{c}"
+
 /-- The candidates' chroma: the accent's own, never below the code hues'
 (`CodeColor.codeChroma`), so a quiet accent's charts still part their
 series. -/
 public def chroma (accent : Color) : Int := max CodeColor.codeChroma (SeedPalette.chromaOf accent)
 
 /-- How far from the grey's lightness a tone's boundary is looked for first,
-at `labOf`'s scale: 0.06 of the axis, `SeedPalette`'s span. Twenty halvings
-close that bracket to about 10⁻⁷ of the axis, far below an 8-bit step. -/
+at `labOf`'s scale: 0.06 of the axis. An sRGB colour's Oklab lightness
+stands at most about 0.044 from that of the grey of its luminance (magenta,
+over the 8-bit cube), so the bracket holds every boundary, and a miss costs
+only a bisection of the whole axis. Twenty halvings close it to about 10⁻⁷
+of the axis, far below an 8-bit step. -/
 private def guessSpan : Int := 6 * 10 ^ 16
 
 /-- The tone of hue `h` (millidegrees) at chroma `C` nearest the paper that
@@ -172,8 +181,9 @@ public structure Generated (s : SeedPalette.Seeds) (t : SeedPalette.Targets) whe
   valid : contract s.paper s.ink t series = true
 
 /-- **Generate `n` series** from the seeds and the palette they generate
-(`seriesOf`); a count outside 1 to `maxCount`, or series the contract does
-not hold for, are refused with the reason. -/
+(`seriesOf`); a count outside 1 to `maxCount`, fewer candidates than the
+count asks, or series the contract does not hold for, are refused with the
+reason. -/
 public def generate (s : SeedPalette.Seeds) (t : SeedPalette.Targets)
     (p : SeedPalette.Generated s t) (n : Nat) : Except String (Generated s t) :=
   if n = 0 ∨ maxCount < n then
@@ -181,7 +191,7 @@ public def generate (s : SeedPalette.Seeds) (t : SeedPalette.Targets)
   else if (seriesOf s t p n).length ≠ n then
     .error s!"the candidates gave {(seriesOf s t p n).length} of {n} series"
   else if h : contract s.paper s.ink t (seriesOf s t p n) = true then .ok ⟨seriesOf s t p n, h⟩
-  else .error s!"{n} series cannot all stand ΔEOK 0.04 apart and from the ink"
+  else .error s!"{n} series do not all stand {minGapText} apart and from the ink"
 
 private theorem generate_ok {s : SeedPalette.Seeds} {t : SeedPalette.Targets}
     {p : SeedPalette.Generated s t} {n : Nat} {g : Generated s t} (h : generate s t p n = .ok g) :
@@ -206,8 +216,8 @@ public theorem generate_head_exact {s : SeedPalette.Seeds} {t : SeedPalette.Targ
   rw [hs]
   rfl
 
-/-- **Every count takes the most count's first series**: where `n` series
-generate, so do the first `k` of them, for every `k` from 1 to `n`. -/
+/-- **A count's series are the first of any larger count's**: where `n`
+series generate, so do the first `k` of them, for every `k` from 1 to `n`. -/
 public theorem generate_take_exact {s : SeedPalette.Seeds} {t : SeedPalette.Targets}
     {p : SeedPalette.Generated s t} {n k : Nat} {g : Generated s t} (h : generate s t p n = .ok g)
     (hk : 1 ≤ k) (hkn : k ≤ n) :

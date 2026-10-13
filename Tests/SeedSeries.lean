@@ -23,11 +23,10 @@ private def generated (s : SeedPalette.Seeds) (n : Nat) : Except String (List Ir
   let g ← SeedSeries.generate s t p n
   return g.series
 
-/-- Invented seeds in both polarities each generate the most series: the
-first the palette's accent text, every two at least 2.5 JNDs apart — the
-farthest-point sampling's own margin over the contract's two, measured on
-these seeds — and the export naming each in order; a count of none, and one
-past the most, are refused. -/
+/-- Invented seeds in both polarities each generate the most series, in
+farthest-point sampling's order — each pick no farther from what was taken
+before it than the pick before — and the export names each in order; a
+count of none, and one past the most, are refused. -/
 def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let white := Ir.Color.white
@@ -49,11 +48,14 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error e => t s!"series, {label}: the most series generate, not fail: {e}" false
     | .ok most =>
       t s!"series, {label}: the most series generate" (most.length == SeedSeries.maxCount)
-      t s!"series, {label}: the first is the palette's accent text"
-        ((SeedPalette.generate s (s.targets .decks)).toOption.any fun p =>
-          most.head? == some p.colors.accentText)
-      t s!"series, {label}: farthest-point sampling holds the most series 2.5 JNDs apart"
-        (most.Pairwise fun c c' => (5 * Oklab.okJnd / 2 : Int) ^ 2 ≤ ContrastSolve.deltaEOkSq c c')
+      -- Each pick stands nearer what was taken before it than the pick
+      -- before it did, the taken set only growing: farthest-point
+      -- sampling's own order, which no pick out of it keeps.
+      let near (k : Nat) : Int :=
+        ((most.take k).map Oklab.labOf ++ [Oklab.labOf s.ink]).foldl
+          (fun m x => min m (Oklab.distSq (Oklab.labOf (most.getD k Ir.Color.black)) x)) (10 ^ 38)
+      t s!"series, {label}: each pick stands no farther from those before it than the pick before"
+        ((List.range (most.length - 2)).all fun k => near (k + 2) ≤ near (k + 1))
       let decls := SeedSeries.declarations "Probe" most
       t s!"series, {label}: the export names every series in order"
         (most.zipIdx.all fun (c, i) => hasStr decls ("\\definecolor{ProbeSeries" ++ toString (i + 1) ++
@@ -76,6 +78,10 @@ def seriesScriptChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((List.range 10).all (fun i => made.out.contains ("\\definecolor{seedSeries" ++ toString (i + 1) ++ "}")) &&
       !made.out.contains "seedSeries11")
   t "series script: the palette comes first" (made.out.startsWith "\\definecolor{seedPaper}")
+  let hexOf (name : String) : Option String :=
+    ((made.out.splitOn ("\\definecolor{" ++ name ++ "}{HTML}{"))[1]?).map (·.take 6 |>.toString)
+  t "series script: the first series is the accent's text tone, the page's alert"
+    (hexOf "seedSeries1" |>.any fun h => hexOf "seedAccentText" == some h && hexOf "seedAlert" == some h)
   IO.FS.writeFile (tmp / "fresh.tex") made.out
   let fresh ← paletteScript #["--series", "10", "--check", (tmp / "fresh.tex").toString, "seed",
     "2B2440", "FFFFFF", "E85D2A"]
