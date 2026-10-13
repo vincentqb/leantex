@@ -154,8 +154,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 - An index is proved or defaulted, never a new `]!` (`bangBaseline`); constructor fields carry no
   defaults (`ctorDefault`).
 - A docstring or comment: one sentence at most, only where the name does not say it (review); no
-  history, incidents, reviews, report ids, dates or rationale but a one-line why; reasons go in
-  commit messages (`docFindings`, `narrativeMarks`).
+  history, incidents, reviews, report ids, dates or rationale essays in code; reasons go in commit
+  messages (`docFindings`, `narrativeMarks`).
 - Elab's knots are at budget: a name a knot seals is unsealed after it (`sealMismatch`); arm logic
   goes in outside helpers (`tikzArm`, `boxOptsArm`); knot functions gain no parameter or top-level
   state, values in the raws, state in its own record (review; owed (U87): `Elab.classify_exact`).
