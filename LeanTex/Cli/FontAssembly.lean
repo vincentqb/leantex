@@ -53,6 +53,57 @@ public inductive Purpose where
   | provisional (math : Bool)
   deriving Repr, BEq, Inhabited
 
+/-- The family a document's text is set in, as the assembly reads it: a
+deck's sans, else its body, and the engine's default family where it names
+neither (`FontDb.defaultFamily`). -/
+public def textFamilyIn (doc : Ir.Doc) (faces : Array FontDb.Face) : Option String :=
+  let spec := doc.fonts
+  let spec := if spec.body.isNone && spec.sans.isNone then
+      { spec with body := FontDb.defaultFamily faces }
+    else spec
+  if doc.docClass == Ir.DocClass.slides then spec.sans.orElse fun _ => spec.body
+  else spec.body.orElse fun _ => spec.sans
+
+/-- The faces a document ships in its own directories, or the whole scan
+where it ships none. -/
+public def ownFaces (faces : Array FontDb.Face) (docDirs : List String) : Array FontDb.Face :=
+  if docDirs.isEmpty then faces else faces.filter fun f =>
+    docDirs.any fun dir => f.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")
+
+/-- An undeclared typewriter slot the document sets runs in (the census
+`SlotLoss` reports from) takes a typewriter default (`FontDb.monoPick`):
+for a document declaring its text family, that family's designed
+companion where it matches the text's x-height closer than lualatex's
+Latin Modern Mono (`FontDb.companionLeads`), then for a tex document
+lualatex's own shapes, as lualatex sets them beside its `\setmainfont`,
+then another companion or the first platform monospace; for any other
+document the text family's designed companion first, else the first
+platform monospace, a tex document's lualatex shapes after them. Each is
+served at its upright corners in its own fixed-pitch faces, and at its
+italic corners whole or upright
+(`monoPick_contract`, over the pool the resolver reads first, as it
+reads a document's directories before the host's). A document that
+ships its fonts (`\fonts{ dir = ... }`) is answered from its own faces
+first, and a monospace it ships is resolved from them alone, its italic
+corners too, so the host neither displaces it nor lends it a face;
+where it ships none the whole scan answers, so its code is never set
+proportional where the host holds a monospace. Neither answering leaves
+the slot to the body family, the loss W0390 names; a slot no run
+reaches loads no face, so no page ships one it never sets. The
+second answer is whether the default is a family the document ships. -/
+public def monoDefaultOf (doc : Ir.Doc) (faces : Array FontDb.Face) (docDirs : List String) :
+    Option FontDb.MonoPick × Bool :=
+  let textFamily := textFamilyIn doc faces
+  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the monospace it ships whatever the host holds, its italics upright where it ships none, and the host's monospace where it ships none
+  let tex := doc.surface != .markdown
+  let declaredText := doc.fonts.body.isSome || doc.fonts.sans.isSome
+  let own := ownFaces faces docDirs
+  let wantsMono := doc.fonts.mono.isNone && (SlotLoss.slotsUsed doc).contains 2
+  let ownPick := if wantsMono then FontDb.monoPick tex declaredText own textFamily else none
+  let pick := ownPick.orElse fun _ =>
+    if wantsMono then FontDb.monoPick tex declaredText faces textFamily else none
+  (pick, !docDirs.isEmpty && ownPick.isSome)
+
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
 document never uses are still loaded but not embedded — `Pdf.keepFaces` decides
@@ -112,35 +163,11 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     else spec
   -- beamer sets a presentation in its sans family (see `resolveName`).
   let slides := doc.docClass == Ir.DocClass.slides
-  let textFamily := if slides then spec.sans.orElse fun _ => spec.body
-    else spec.body.orElse fun _ => spec.sans
-  -- An undeclared typewriter slot the document sets runs in (the census
-  -- `SlotLoss` reports from) takes a typewriter default (`FontDb.monoPick`):
-  -- for a tex document declaring its text family lualatex's own Latin
-  -- Modern Mono shapes first, as lualatex sets them beside its
-  -- `\setmainfont`; for any other document the text family's designed
-  -- companion first, else the first platform monospace, a tex document's
-  -- lualatex shapes after them. Each is served at its upright corners in its
-  -- own fixed-pitch faces, and at its italic corners whole or upright
-  -- (`monoPick_contract`, over the pool the resolver reads first, as it
-  -- reads a document's directories before the host's). A document that
-  -- ships its fonts (`\fonts{ dir = ... }`) is answered from its own faces
-  -- first, and a monospace it ships is resolved from them alone, its italic
-  -- corners too, so the host neither displaces it nor lends it a face;
-  -- where it ships none the whole scan answers, so its code is never set
-  -- proportional where the host holds a monospace. Neither answering leaves
-  -- the slot to the body family, the loss W0390 names; a slot no run
-  -- reaches loads no face, so no page ships one it never sets.
-  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the monospace it ships whatever the host holds, its italics upright where it ships none, and the host's monospace where it ships none
+  let textFamily := textFamilyIn doc faces
+  -- An undeclared typewriter slot takes its default (`monoDefaultOf`).
   let tex := doc.surface != .markdown
-  let declaredText := doc.fonts.body.isSome || doc.fonts.sans.isSome
-  let own := if docDirs.isEmpty then faces else faces.filter fun f =>
-    docDirs.any fun dir => f.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")
-  let wantsMono := spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2
-  let ownPick := if wantsMono then FontDb.monoPick tex declaredText own textFamily else none
-  let pick := ownPick.orElse fun _ =>
-    if wantsMono then FontDb.monoPick tex declaredText faces textFamily else none
-  let monoOwn := !docDirs.isEmpty && ownPick.isSome
+  let own := ownFaces faces docDirs
+  let (pick, monoOwn) := monoDefaultOf doc faces docDirs
   let spec := match pick with
     | some p =>
       { spec with mono := some p.family
@@ -359,8 +386,11 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
 /-- **A boundary standalone sets in the faces the page sets in.** The
 document's declared roles, and for a role it left undeclared the family the
 engine itself resolved: the text slot's regular face (`FontDb.defaultFamily`
-for a document naming none, a deck's sans) and the math face the companion
-rule chose (`FontEnv.resolveMath`). Without them lualatex sets a picture's
+for a document naming none, a deck's sans), the math face the companion
+rule chose (`FontEnv.resolveMath`), and the typewriter family its default
+chose (`monoDefaultOf`), the one decision the page's assembly reads, where
+that is a family rather than lualatex's own Latin Modern Mono shapes, which
+the tool sets unasked. Without them lualatex sets a picture's
 text and formulas in its Computer Modern defaults — another face than the
 page's, and Type 1 programs a vector import cannot read. Only a family the
 scan found in a root the tool searches too travels — the system's and TeX's
@@ -372,8 +402,9 @@ Computer Modern default would have drawn. -/
 -- directories or in an engine-only root stays home, one found in a shared
 -- root travels; that luaotfload's search reads the shared roots and no
 -- other is the tool's, witnessed by the fixture lualatex made.
-public def boundaryFonts (spec : Ir.FontSpec) (fs : Font.FontSet) (scan : FaceScan) :
+public def boundaryFonts (doc : Ir.Doc) (fs : Font.FontSet) (scan : FaceScan) :
     Ir.FontSpec :=
+  let spec := doc.fonts
   let under (dirs : List String) (path : String) : Bool :=
     dirs.any fun d => path.startsWith (d ++ "/") || path == d
   let travels (fam : String) : Bool :=
@@ -381,9 +412,12 @@ public def boundaryFonts (spec : Ir.FontSpec) (fs : Font.FontSet) (scan : FaceSc
       f.family == fam && !under scan.docDirs f.path && !under scan.privateDirs f.path
   let text := (fs.index.find? (·.1 == (0, 400, false))).bind fun (_, i) => fs.fonts[i]?
   let math := fs.math.bind (fs.fonts[·]?)
+  let code := (monoDefaultOf doc scan.faces scan.docDirs).1.bind fun p =>
+    if p.faces.isEmpty then some p.family else none
   { spec with
     body := if spec.body.isSome || spec.sans.isSome then spec.body
       else (text.map (·.family)).filter travels
+    mono := spec.mono.orElse fun _ => code.filter travels
     math := spec.math.orElse fun _ => (math.map (·.family)).filter travels }
 
 end LeanTex.Cli.FontAssembly

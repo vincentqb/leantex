@@ -47,7 +47,7 @@ def boundaryFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   match ← buildFontSet doc scan cache (.provisional true) with
   | .error _ => t "boundary faces: the vendored scan assembles" false
   | .ok (fs, _, _, _) =>
-    let spec := boundaryFonts doc.fonts fs scan
+    let spec := boundaryFonts doc fs scan
     let req := reqOf doc spec
     let mathFam := (fs.math.bind (fs.fonts[·]?)).map (·.family)
     t "boundary faces: an undeclared text role travels as the face the page sets in"
@@ -55,27 +55,45 @@ def boundaryFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "boundary faces: an undeclared math role travels as the face the engine set formulas in"
       (mathFam.isSome && spec.math == mathFam &&
         hasStr req s!"\\setmathfont\{{mathFam.getD ""}}")
+    -- An undeclared typewriter role travels as the face the page sets its
+    -- code in, a platform monospace here, so a picture's code is the page's.
+    let codeDoc := firstPass (dvDoc "\\usepackage{tikz-cd}\n"
+      ("Words with \\texttt{code} beside them.\n\n\\[" ++ cdLossy ++ "\\]"))
+    let monoFaces := faces ++
+      FontScan.family4 "DejaVu Sans Mono" (testFonts ++ "/SourceCodePro-Regular.otf") true
+    let monoScan : FaceScan := { scan with faces := monoFaces }
+    match ← buildFontSet codeDoc monoScan cache (.provisional true) with
+    | .ok (codeFs, _, _, _) =>
+      let codeSpec := boundaryFonts codeDoc codeFs monoScan
+      t s!"boundary faces: an undeclared typewriter role travels as the family the page sets code \
+in ({codeSpec.mono})"
+        (codeSpec.mono == some "DejaVu Sans Mono" &&
+          (monoDefaultOf codeDoc monoFaces []).1.map (·.family) == some "DejaVu Sans Mono" &&
+          hasStr (reqOf codeDoc codeSpec) "\\setmonofont{DejaVu Sans Mono}")
+      t "boundary faces: a document setting no code sends no typewriter face"
+        (spec.mono.isNone && !hasStr req "\\setmonofont")
+    | .error _ => t "boundary faces: the typewriter scan assembles" false
     t "boundary faces: a document's own request names no face it did not declare"
       (let plain := reqOf doc doc.fonts
        !hasStr plain "\\setmainfont" && !hasStr plain "\\setmathfont" && !plain.isEmpty)
     let shipped : FaceScan := { scan with docDirs := [testFonts] }
-    let kept := boundaryFonts doc.fonts fs shipped
+    let kept := boundaryFonts doc fs shipped
     t "boundary faces: a face the document ships in its own directory travels nowhere"
       (kept.body.isNone && kept.math.isNone)
     -- A root only the engine was told about (`--font-dir`,
     -- `LEANTEX_FONT_PATH`) is no root the tool searches: a family found
     -- there alone would name a face lualatex cannot find, failing a picture
     -- its Computer Modern default draws.
-    let engineOnly := boundaryFonts doc.fonts fs { scan with privateDirs := [testFonts] }
+    let engineOnly := boundaryFonts doc fs { scan with privateDirs := [testFonts] }
     t "boundary faces: a face only the engine was told where to find travels nowhere"
       (engineOnly.body.isNone && engineOnly.math.isNone)
-    let elsewhere := boundaryFonts doc.fonts fs { scan with privateDirs := ["/nonexistent/fonts"] }
+    let elsewhere := boundaryFonts doc fs { scan with privateDirs := ["/nonexistent/fonts"] }
     t "boundary faces: an engine-only root elsewhere keeps the shared faces travelling"
       (elsewhere.body == spec.body && elsewhere.math == spec.math)
     let declared := firstPass (dvDoc "\\usepackage{tikz-cd}\n\\fonts{ math = \"Latin Modern Math\" }\n"
       ("\\[" ++ cdLossy ++ "\\]"))
     t "boundary faces: a declared role stands as written"
-      ((boundaryFonts declared.fonts fs scan).math == some "Latin Modern Math")
+      ((boundaryFonts declared fs scan).math == some "Latin Modern Math")
   -- The committed fixture: the request under a host's resolved faces, and
   -- what lualatex made of it.
   let fixture := reqOf doc boundaryFixtureFaces

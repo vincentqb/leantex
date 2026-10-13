@@ -190,17 +190,22 @@ substitution warning per corner (W0006), which is about a family the
 document named. `declarable` is whether the source can declare a face;
 `own` whether the family is one the document ships, whose italic corners
 are read from its own faces alone, so what it lacks is in its font
-directory, whatever the host holds. -/
+directory, whatever the host holds. A family whose project ships no italic
+at all (`FontDb.monoUprightOnly`) has none to install or put there, so its
+note offers the declaration alone, and none where the source can declare
+nothing. -/
 public def monoUpright (family : String) (declarable : Bool := true) (own : Bool := false) : Diag :=
   let declare := "declare a typewriter family that has them: \\fonts{ mono = \"<family>\" }"
   let remedy := if own then "put the family's italic faces in the document's font directory"
     else "install the family's italic faces"
+  let shipsNone := FontDb.monoUprightOnly.contains family
   Diag.of .N0031
     (if own then s!"'{family}' in the document's font directory has no italic face; italic code \
 sets upright in it"
       else s!"'{family}' has no italic face; italic code sets upright in it")
     (subject := some "slot:mono:italic")
-    (help := if declarable then s!"{remedy}, or {declare}" else remedy)
+    (help := if shipsNone then (if declarable then some declare else none)
+      else if declarable then some s!"{remedy}, or {declare}" else some remedy)
 
 /-- The two substitution codes off one resolution result: a missing
 variant is W0006, a missing weight W0366 — the one door

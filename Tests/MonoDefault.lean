@@ -452,9 +452,15 @@ Latin Modern Mono shapes ({f 400 false}, {f 700 false}, {f 400 true}, {f 700 tru
         ← buildFontSet (declaredIn "Source Serif Pro")
           (scanOf (serif ++ lmFaces ++ family4 "Menlo" menloAt true)) (← FontEnv.Cache.mk') .settled,
         ← buildFontSet (declaredIn "Source Serif Pro")
-          (scanOf (serif ++ family4 "Menlo" menloAt true)) (← FontEnv.Cache.mk') .settled with
+          (scanOf (serif ++ family4 "Menlo" menloAt true)) (← FontEnv.Cache.mk') .settled,
+        ← buildFontSet (declaredIn "SourceSerifPro-Regular.otf")
+          (scanOf (serif ++ family4 "Source Code Pro" code true ++ lmFaces)) (← FontEnv.Cache.mk')
+          .settled,
+        ← buildFontSet (declaredIn "Source Serif Pro Regular")
+          (scanOf (serif ++ family4 "Source Code Pro" code true ++ lmFaces)) (← FontEnv.Cache.mk')
+          .settled with
     | .ok (_, _, _, pathsC), .ok (_, _, _, pathsN), .ok (_, _, _, pathsD), .ok (_, _, _, pathsL),
-        .ok (_, _, _, pathsP) =>
+        .ok (_, _, _, pathsP), .ok (_, _, _, pathsF), .ok (_, _, _, pathsW) =>
       t "tex: beside a declared text face whose companion leads on x-height, the companion \
 before lualatex's shapes"
         (pathsC.contains code && !lmIn pathsC)
@@ -466,7 +472,9 @@ before lualatex's shapes"
         (lmIn pathsL && !pathsL.contains menloAt)
       t "tex: and the platform list after them"
         (pathsP.contains menloAt && !lmIn pathsP)
-    | _, _, _, _, _ => t "the companion-first assemblies succeed" false
+      t "tex: the companion leads however the text face is spelled, by a file or with its weight"
+        (pathsF.contains code && !lmIn pathsF && pathsW.contains code && !lmIn pathsW)
+    | _, _, _, _, _, _, _ => t "the companion-first assemblies succeed" false
   -- The census reaches every typewriter run a document sets, among them a
   -- picture's label and a formula's typewriter alphabet: each alone moves
   -- the slot to the platform monospace, and without the run nothing loads.
@@ -514,6 +522,12 @@ def companionDepartureChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .ok f => return some f
     | .error _ => return none
   let gap (a b : Nat) : Nat := if a ≥ b then a - b else b - a
+  -- Fira's text half ships with the suite too: its row's measure of it.
+  match ← read "FiraSans-Regular.otf", FontDb.companionRow FontDb.monoCompanions "Fira Sans" with
+  | some fira, some row =>
+    t s!"the Fira row's text x-height is the engine's own measure of its face ({thousandths fira})"
+      ((thousandths fira).any fun b => row.xHeights.any (·.1 == b) && row.body == fira.family)
+  | _, _ => t "the suite's Fira Sans parses and its row is sourced" false
   match ← read "SourceSerifPro-Regular.otf", ← read "SourceCodePro-Regular.otf",
       FontDb.companionRow FontDb.monoCompanions "Source Serif Pro" with
   | some serif, some code, some row =>
@@ -530,8 +544,7 @@ inside the bound ({gap c b}, {gap FontDb.latinModernMonoXHeight b})"
   let leads := (FontDb.monoCompanions.filter FontDb.companionLeads).map (·.body)
   t s!"every measured row is decided on the axis ({leads})"
     (leads == #["DejaVu Sans", "DejaVu Serif", "Fira Sans", "Source Sans Pro", "Source Serif Pro",
-      "IBM Plex Sans", "IBM Plex Serif", "Noto Sans"] &&
-      FontDb.monoCompanions.all fun r => r.xHeights.isSome || !FontDb.companionLeads r)
+      "IBM Plex Sans", "IBM Plex Serif", "IBM Plex Sans Condensed", "Noto Sans", "Noto Serif"])
   t "a companion farther from its text than Latin Modern Mono keeps lualatex's order"
     ((FontDb.companionRow FontDb.monoCompanions "Nimbus Sans").any (!FontDb.companionLeads ·))
   let probe (xs : Nat × Nat) : FontDb.Pairing :=
@@ -542,6 +555,14 @@ inside the bound ({gap c b}, {gap FontDb.latinModernMonoXHeight b})"
     (!FontDb.companionLeads (probe (431, 450)))
   t "a companion inside the bound and nearer than Latin Modern Mono leads"
     (FontDb.companionLeads (probe (500, 510)))
+  -- A leading companion whose project ships no italic: its note offers the
+  -- declaration alone, there being no italic face to install.
+  let none_ := DriverDiag.monoUpright "Noto Sans Mono"
+  let some_ := DriverDiag.monoUpright "DejaVu Sans Mono"
+  t "a monospace that ships no italic is offered a declaration, never an install"
+    (none_.help.any (fun h => !hasStr h "install" && hasStr h "\\fonts{ mono")
+      && some_.help.any (hasStr · "install")
+      && (DriverDiag.monoUpright "Noto Sans Mono" (declarable := false)).help.isNone)
 
 /-- **A font collection's faces are fonts the engine can use.** Each face
 read out of a packed collection is the file it was packed from, table for

@@ -729,7 +729,8 @@ def settlement (front : Front) (fs : Font.FontSet) (resolved : Ir.Doc) :
 resolved before any request is wrapped and only where the document states
 one: the text slot and a math face, as the provisional assembly resolves
 them — a formula inside a diagram wants the math face even where the page
-itself sets none. The scan it takes is the one the settled assembly reuses. -/
+itself sets none — and the typewriter default the settled assembly will
+take. The scan it takes is the one the settled assembly reuses. -/
 def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec × Front) := do
   let doc := front.doc
   if (Ir.pictureRefs doc).isEmpty then return (doc.fonts, front)
@@ -738,7 +739,7 @@ def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec ×
     | none => scanFaces ui file doc.fonts
   let front := { front with scan := some scan }
   match ← buildFontSet doc scan front.cache (.provisional true) with
-  | .ok (fs, _, _, _) => return (FontAssembly.boundaryFonts doc.fonts fs scan, front)
+  | .ok (fs, _, _, _) => return (FontAssembly.boundaryFonts doc fs scan, front)
   | .error _ => return (doc.fonts, front)
 
 /-- Every file a build reads, by the path it reads it at: the document; what

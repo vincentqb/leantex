@@ -702,7 +702,8 @@ public def defaultFamily (faces : Array Face) : Option String :=
 `defaultFamilies` entry whose own project or collection ships a monospaced
 family beside it, where that is documented, and one per text family of a
 superfamily whose project ships its monospace beside it (Fira, Adobe's
-Source, IBM Plex, Noto, DejaVu's serif); each with the companion's licence,
+Source, IBM Plex, Noto, DejaVu's serif) under the name the family's files
+declare; each with the companion's licence,
 and the x-heights of the pair where they were measured (`companionLeads`).
 A default family with none is on `monoUnpaired` instead, so every default
 family is a decided row (`markdownMonoChecks`). The engine ships none of
@@ -710,12 +711,14 @@ these faces — a row costs nothing until the host already has the face.
 Sources:
 - github.com/mozilla/Fira — Fira Sans and Fira Mono, one family; SIL OFL.
 - github.com/adobe-fonts/source-code-pro — Source Code Pro, the Source
-  superfamily's monospace, drawn as Source Sans's complement, beside which
-  Source Serif is drawn (github.com/adobe-fonts/source-serif); SIL OFL.
-- github.com/IBM/plex — IBM Plex Sans, Serif and Mono, one superfamily;
+  superfamily's monospace, drawn by Source Sans Pro's designer (Paul D.
+  Hunt, in both families' name tables); Source Serif is drawn to complement
+  Source Sans (github.com/adobe-fonts/source-serif); SIL OFL.
+- github.com/IBM/plex — IBM Plex Sans, Sans Condensed, Serif and Mono, one
+  superfamily;
   SIL OFL.
-- github.com/notofonts/latin-greek-cyrillic — Noto Sans and Noto Sans
-  Mono; SIL OFL.
+- github.com/notofonts/latin-greek-cyrillic — Noto Sans, Noto Serif and Noto
+  Sans Mono, which ships no italic (`monoUprightOnly`); SIL OFL.
 - github.com/dejavu-fonts/dejavu-fonts (README, "Available fonts") — DejaVu
   Sans, DejaVu Serif and DejaVu Sans Mono, one family; the DejaVu fonts
   licence (Bitstream Vera's, with public-domain changes).
@@ -752,7 +755,13 @@ public def monoCompanions : Array Pairing := #[
   { body := "IBM Plex Serif", companion := "IBM Plex Mono"
     source := "github.com/IBM/plex", license := "SIL Open Font License"
     xHeights := some (516, 516) },
+  { body := "IBM Plex Sans Condensed", companion := "IBM Plex Mono"
+    source := "github.com/IBM/plex", license := "SIL Open Font License"
+    xHeights := some (516, 516) },
   { body := "Noto Sans", companion := "Noto Sans Mono"
+    source := "github.com/notofonts/latin-greek-cyrillic", license := "SIL Open Font License"
+    xHeights := some (536, 536) },
+  { body := "Noto Serif", companion := "Noto Sans Mono"
     source := "github.com/notofonts/latin-greek-cyrillic", license := "SIL Open Font License"
     xHeights := some (536, 536) },
   { body := "Helvetica", companion := "Courier"
@@ -764,6 +773,13 @@ public def monoCompanions : Array Pairing := #[
   { body := "Nimbus Sans", companion := "Nimbus Mono PS"
     source := "github.com/ArtifexSoftware/urw-base35-fonts", license := "AGPL with font exception"
     xHeights := some (524, 419) }]
+
+/-- Typewriter families whose project ships no italic face at all: an
+italic code run set in one is upright for want of a face to install, so
+the note naming it offers a declaration alone (`DriverDiag.monoUpright`).
+Sources: github.com/notofonts/latin-greek-cyrillic, whose Noto Sans Mono
+sources hold upright masters only. -/
+public def monoUprightOnly : List String := ["Noto Sans Mono"]
 
 /-- The default text families no project ships a designed typewriter face
 beside: their documents' undeclared slot takes the first platform monospace
@@ -1084,12 +1100,20 @@ declares; a declared text face's designed companion leads it instead
 drawn on, x-height: the companion's stands nearer the text's than Latin
 Modern Mono's (`latinModernMonoXHeight`), and within
 `companionXHeightBound` percent of it. A row with no measurement keeps
-lualatex's order. Measured, text and companion: Fira Sans and Fira Mono at
+lualatex's order. The departure's cost, beside its gain: every companion
+advances 0.600 em a character (DejaVu Sans Mono 0.602 em) against Latin
+Modern Mono's 0.525 em, so a line of code sets 14% wider and a declared line
+lualatex fits may run past the measure; and a companion with no italic face
+(`monoUprightOnly`, or a host that installed none) still leads, its italic
+code upright and named once (N0031), the trade an undeclared slot makes
+with any monospace that lacks its italics. Measured, text and companion:
+Fira Sans and Fira Mono at
 527 and 527, Latin Modern Mono at 82% of the text; Source Sans Pro and
 Source Code Pro at 486 and 486, Latin Modern Mono at 89%; Source Serif Pro
 at 475, its companion at 102%, Latin Modern Mono at 91%; IBM Plex Sans and
-Serif and IBM Plex Mono at 516, Latin Modern Mono at 84%; Noto Sans and Noto
-Sans Mono at 536, Latin Modern Mono at 80%; DejaVu Sans and DejaVu Sans
+Serif, IBM Plex Sans Condensed and IBM Plex Mono at 516, Latin Modern Mono at
+84%; Noto Sans, Noto Serif and Noto Sans Mono at 536, Latin Modern Mono at
+80%; DejaVu Sans and DejaVu Sans
 Mono at 547, Latin Modern Mono at 79%; DejaVu Serif at 519, its companion
 at 105%, Latin Modern Mono at 83%. Nimbus Sans and Nimbus Mono PS stand at
 524 and 419, 80%, where Latin Modern Mono's 82% is nearer: lualatex's order
@@ -1118,6 +1142,14 @@ private def lmPick (tex : Bool) (faces : Array Face) : Option MonoPick :=
 private def listedPick (faces : Array Face) (text : Option String) : Option MonoPick :=
   (monoFor faces text).map fun family => { family }
 
+/-- The family the pool reports for a text face as a document names it — a
+family, a file of it, or a family and its weight (`resolve`) — so a
+companion row is found however the face was spelled. -/
+public def textFamilyOf (faces : Array Face) (text : String) : String :=
+  match resolve faces text {} with
+  | some (f, _) => f.family
+  | none => text
+
 /-- The text family's designed companion as a pick, where it leads
 lualatex's shapes (`companionLeads`) and the pool serves it as a
 typewriter family. -/
@@ -1144,6 +1176,7 @@ sits beside — DejaVu Sans Mono's x-height is DejaVu Sans's own, 0.547 em,
 where Latin Modern Mono's 0.431 em stands at 79% of it. -/
 public def monoPick (tex declared : Bool) (faces : Array Face) (text : Option String) :
     Option MonoPick :=
+  let text := text.map (textFamilyOf faces)
   if declared then
     ((leadPick faces text).orElse fun _ => lmPick tex faces).orElse fun _ => listedPick faces text
   else (listedPick faces text).orElse fun _ => lmPick tex faces
@@ -1172,13 +1205,15 @@ public theorem monoPick_contract (tex declared : Bool) (faces : Array Face)
     · obtain ⟨files, hf, rfl⟩ := Option.map_eq_some_iff.mp hp
       exact ⟨rfl, latinModernMono_contract faces files hf⟩
     · cases hp
-  have listed : listedPick faces text = some p → p.faces = [] ∧ MonoServed faces p.family := by
-    intro hp
+  have listed : ∀ text, listedPick faces text = some p → p.faces = [] ∧
+      MonoServed faces p.family := by
+    intro text hp
     unfold listedPick at hp
     obtain ⟨family, hm, rfl⟩ := Option.map_eq_some_iff.mp hp
     exact ⟨rfl, monoFor_contract faces text family hm⟩
-  have lead : leadPick faces text = some p → p.faces = [] ∧ MonoServed faces p.family := by
-    intro hp
+  have lead : ∀ text, leadPick faces text = some p → p.faces = [] ∧
+      MonoServed faces p.family := by
+    intro text hp
     unfold leadPick at hp
     obtain ⟨t, _, ht⟩ := Option.bind_eq_some_iff.mp hp
     obtain ⟨row, _, hrow⟩ := Option.bind_eq_some_iff.mp ht
@@ -1192,11 +1227,11 @@ public theorem monoPick_contract (tex declared : Bool) (faces : Array Face)
   split at h
   · rcases orElse_some h with hp | hp
     · rcases orElse_some hp with hl | hl
-      · exact Or.inr (lead hl)
+      · exact Or.inr (lead _ hl)
       · exact Or.inl (lm hl)
-    · exact Or.inr (listed hp)
+    · exact Or.inr (listed _ hp)
   · rcases orElse_some h with hp | hp
-    · exact Or.inr (listed hp)
+    · exact Or.inr (listed _ hp)
     · exact Or.inl (lm hp)
 
 end LeanTex.Core.FontDb
