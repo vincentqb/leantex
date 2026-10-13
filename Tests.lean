@@ -280,7 +280,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks pygm
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
-  overlaySetChecks overlayStyleChecks overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks
+  overlaySetChecks overlayOnlyChecks overlayStyleChecks overlayContractChecks overlayInputChecks
+  overlaySingletonHtmlChecks
   diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks diagnosticOriginChecks diagnosticContrastOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
   inputUseChecks mathAlphaEntryChecks mathDiagnosticOriginChecks mathDelimiterTriggerChecks
@@ -814,6 +815,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   xparseProvideChecks ref oneFace
   xparseIgnoredOperandsChecks ref oneFace
   overlaySetChecks ref oneFace
+  overlayOnlyChecks ref oneFace
   overlayStyleChecks ref oneFace
   overlayContractChecks ref oneFace
   overlayInputChecks ref oneFace

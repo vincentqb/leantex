@@ -253,9 +253,12 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let covered (body : String) := "\\uncover<0,0>{" ++ body ++ "}"
   let paint := "\\textcolor{blue}{\\textbf{\\underline{InkProbe}}}"
   for cmd in ["only", "uncover", "visible", "onslide"] do
+    -- `\only` is absent off its steps (beamer's `\alt<s>{x}{}`): an empty
+    -- group stands there, both spaces around it kept, as TeX keeps them.
+    let off := if cmd == "only" then "{}" else covered paint
     witness ("nested cover " ++ cmd)
       (s!"\\{cmd}<2,4>" ++ "{\\uncover<3,4>{" ++ paint ++ "}}")
-      [covered paint, covered paint, covered paint, paint] ["InkProbe"]
+      [off, covered paint, off, paint] ["InkProbe"]
   witness "disjoint nested covers"
     ("\\uncover<1,3>{\\visible<2,4>{" ++ paint ++ "}}")
     [covered paint, covered paint, covered paint, covered paint] ["InkProbe"]

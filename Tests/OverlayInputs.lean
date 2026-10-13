@@ -95,19 +95,20 @@ private def inputNativeFamilies (ref : IO.Ref (List String)) (fonts : Font.FontS
       ("\\begin{description}" ++ item ++ "\\end{description}")
       "\\uncover<1,3>{\\begin{description}\\item[Label]Probe\\end{description}}"
   inputEquivalent ref fonts "onslide star prefix"
-    "\\onslide*<1,3>{Probe}" "\\only<1,3>{Probe}"
+    "\\onslide*<1,3>{Probe}" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "onslide star final"
-    "\\onslide*{Probe}<1,3>" "\\only<1,3>{Probe}"
+    "\\onslide*{Probe}<1,3>" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "onslide plus prefix"
     "\\onslide+<1,3>{Probe}" "\\visible<1,3>{Probe}"
   inputEquivalent ref fonts "native let forwarding"
-    "\\let\\Pick\\only\\Pick< 1 , 3 >{Probe}" "\\only<1,3>{Probe}"
+    "\\let\\Pick\\only\\Pick< 1 , 3 >{Probe}" "\\only<1,3>{Probe}" 2
   for name in ["only", "uncover", "visible", "onslide", "alert", "emph", "textbf"] do
     inputEquivalent ref fonts ("native let freezes " ++ name)
       ("\\let\\Pick\\" ++ name ++ "\\let\\Copy\\Pick\\def\\" ++ name ++
         "#1{Lost}\\Copy<1,3>{Probe}") ("\\" ++ name ++ "<1,3>{Probe}")
+      (if name == "only" then 2 else 3)
   inputEquivalent ref fonts "saved onslide star keeps native dispatch"
-    "\\let\\Pick\\onslide\\def\\only#1{Lost}\\Pick*<1,3>{Probe}" "\\only<1,3>{Probe}"
+    "\\let\\Pick\\onslide\\def\\only#1{Lost}\\Pick*<1,3>{Probe}" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "saved native wrapper keeps block dispatch"
     "\\let\\Pick\\hyperlink\\def\\hyperlink#1{Lost}\\Pick<1,3>{input-link}{Probe\\par Second}\\hypertarget{input-link}{}"
     "\\hyperlink<1,3>{input-link}{Probe\\par Second}\\hypertarget{input-link}{}" 2
@@ -231,7 +232,7 @@ private def inputNativeFragments (ref : IO.Ref (List String)) (fonts : Font.Font
       inputEquivalent ref fonts (kind ++ " " ++ slot ++ " fragment reads use state")
         ("\\def\\Step{1}\\def\\Pick{" ++ call ++ "}\\def\\Step{1,3}\\Pick") want
   inputEquivalent ref fonts "onslide star final fragment"
-    "\\def\\Step{1,3}\\onslide*{Probe}<\\Step>" "\\only<1,3>{Probe}"
+    "\\def\\Step{1,3}\\onslide*{Probe}<\\Step>" "\\only<1,3>{Probe}" 2
   for (label, call, bare) in [
       ("block prefix", "\\begin{block}<\\Bad>{Heading}Probe\\end{block}",
         "\\begin{block}{Heading}Probe\\end{block}"),
@@ -275,12 +276,12 @@ private def inputSelectorWindows (ref : IO.Ref (List String)) (fonts : Font.Font
     inputEquivalent ref fonts (name ++ " final fragment reads use state")
       ("\\def\\Step{1}\\def\\Pick{\\" ++ name ++ "<1>{Probe}<\\Step>}" ++
         "\\def\\Step{2}\\Pick") want
-  for (label, source, want) in [
-      ("only prefix closes its selector window", "\\only<1>{Probe}<2>", "\\only<1>{Probe}{<2>}"),
-      ("only suffix does not skip space", "\\only{Probe} <1,3>", "Probe <1,3>"),
-      ("emph suffix does not skip space", "\\emph{Probe} <1,3>", "\\emph{Probe} {<1,3>}"),
-      ("font wrapper has no final selector", "\\textbf{Probe}<1,3>", "\\textbf{Probe}{<1,3>}")] do
-    inputEquivalent ref fonts label source want
+  for (label, source, want, copies) in [
+      ("only prefix closes its selector window", "\\only<1>{Probe}<2>", "\\only<1>{Probe}{<2>}", 1),
+      ("only suffix does not skip space", "\\only{Probe} <1,3>", "Probe <1,3>", 3),
+      ("emph suffix does not skip space", "\\emph{Probe} <1,3>", "\\emph{Probe} {<1,3>}", 3),
+      ("font wrapper has no final selector", "\\textbf{Probe}<1,3>", "\\textbf{Probe}{<1,3>}", 3)] do
+    inputEquivalent ref fonts label source want copies
 
 /-- A selector reads a finite graph of parameterless text definitions at the
 use. Reusing a dependency is not a cycle. An unread fragment must reach the
@@ -290,9 +291,9 @@ private def inputSelectorFragments (ref : IO.Ref (List String)) (fonts : Font.Fo
   let (defs, first) := names.foldr (fun name (defs, next) =>
     ("\\def\\" ++ name ++ "{" ++ next ++ "}" ++ defs, "\\" ++ name)) ("", "1,3")
   inputEquivalent ref fonts "fragment path follows the binding table"
-    (defs ++ "\\only<" ++ first ++ ">{Probe}") "\\only<1,3>{Probe}"
+    (defs ++ "\\only<" ++ first ++ ">{Probe}") "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "fragment dependency can occur twice"
-    "\\def\\Leaf{2}\\def\\Pair{\\Leaf,\\Leaf}\\only<\\Pair>{Probe}" "\\only<2,2>{Probe}"
+    "\\def\\Leaf{2}\\def\\Pair{\\Leaf,\\Leaf}\\only<\\Pair>{Probe}" "\\only<2,2>{Probe}" 1
   for (label, source, want) in [
       ("self cycle", "\\def\\Step{\\Step}\\only<\\Step>{Probe}", "Probe"),
       ("mutual cycle", "\\def\\Left{\\Right}\\def\\Right{\\Left}\\only<\\Left>{Probe}", "Probe"),
@@ -328,16 +329,16 @@ def overlayInputChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let args := if command == "textcolor{blue}" then "{blue}{Probe}" else "{Probe}"
     inputEquivalent ref fonts ("spaced selector " ++ command)
       ("\\" ++ head ++ "< 1 , 3 >" ++ args)
-      ("\\" ++ head ++ "<1,3>" ++ args)
+      ("\\" ++ head ++ "<1,3>" ++ args) (if command == "only" then 2 else 3)
   inputEquivalent ref fonts "spaced interval endpoints"
-    "\\only< 1 - 2 >{Probe}" "\\only<1-2>{Probe}"
+    "\\only< 1 - 2 >{Probe}" "\\only<1-2>{Probe}" 2
   inputEquivalent ref fonts "parameter selector fragments"
     "\\newcommand{\\Pick}[1]{\\only<#1>{Probe}}\\Pick{1,3}"
-    "\\only<1,3>{Probe}"
+    "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "expanded selector fragments"
-    "\\def\\Steps{1,3}\\only<\\Steps>{Probe}" "\\only<1,3>{Probe}"
+    "\\def\\Steps{1,3}\\only<\\Steps>{Probe}" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "native forwarding boundary"
-    "\\def\\Pick{\\only}\\Pick< 1 , 3 >{Probe}" "\\only<1,3>{Probe}"
+    "\\def\\Pick{\\only}\\Pick< 1 , 3 >{Probe}" "\\only<1,3>{Probe}" 2
   inputEquivalent ref fonts "trailing alert selector"
     "\\alert{Probe}<1,3>" "\\alert<1,3>{Probe}"
   for spec in ["+", "beamer:2", "alert@2"] do

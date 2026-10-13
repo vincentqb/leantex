@@ -1082,7 +1082,8 @@ private def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
    "defineenv", "block", "framefoot", "pagebreak"]
 
-/-- The overlay commands, whose content dims, never hides, off its steps. -/
+/-- The overlay commands, whose content dims off its steps; `\only` only where
+`Compat.onlyAlternations` leaves it unread. -/
 private def overlayCtrls : List String :=
   ["uncover", "visible", "only", "onslide"]
 

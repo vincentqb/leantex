@@ -4607,31 +4607,76 @@ the default context. -/
 public def withDisplayCtx (c : DisplayCtx) (d : Block) : Block :=
   if c == {} then d else .role c.role #[d]
 
-/-- A first block that is a display opening in vertical mode takes the state
-the carrier opened in. -/
-private def carrierOpenDisplay (inPar endPe : Bool) (blocks : Array Block) : Array Block :=
-  match blocks.toList with
-  | b :: rest =>
-    let (c, d) := displayCtxOf b
-    if d.isDisplay && !c.inPar && !c.afterEnv then
-      (withDisplayCtx { c with inPar := inPar, afterEnv := !inPar && endPe } d :: rest).toArray
-    else blocks
-  | [] => blocks
+/-- A display opening a carrier in vertical mode, in the state the carrier
+opened in; any other block as it is. -/
+private def openDisplayAt (inPar endPe : Bool) (b : Block) : Block :=
+  let (c, d) := displayCtxOf b
+  if d.isDisplay && !c.inPar && !c.afterEnv then
+    withDisplayCtx { c with inPar := inPar, afterEnv := !inPar && endPe } d
+  else b
 
-/-- A last block that is a display with no break after it takes the break after the carrier. -/
-private def carrierCloseDisplay (parEnd : Bool) (blocks : Array Block) : Array Block :=
-  match blocks.back? with
-  | some b =>
-    let (c, d) := displayCtxOf b
-    if d.isDisplay && !c.parEnd then
-      blocks.pop.push (withDisplayCtx { c with parEnd := parEnd } d)
-    else blocks
-  | none => blocks
+/-- A display closing a carrier with no break after it inside the carrier,
+before the break after the carrier; any other block as it is. -/
+private def closeDisplayAt (parEnd : Bool) (b : Block) : Block :=
+  let (c, d) := displayCtxOf b
+  if d.isDisplay && !c.parEnd then withDisplayCtx { c with parEnd := parEnd } d else b
+
+mutual
+
+/-- The opening half of `carrierDisplays` on a carrier's first block: a
+display takes the state the carrier opened in (`openDisplayAt`), and a
+carrier opening it — an alternation's two alternatives, an overlay's body —
+opens in that state too, as it stands where the outer one does. -/
+private def carrierOpenBlock (inPar endPe : Bool) : Block → Block
+  | .altSteps s fa oa =>
+    .altSteps s (carrierOpenList inPar endPe fa.toList).toArray
+      (carrierOpenList inPar endPe oa.toList).toArray
+  | .onSteps s body => .onSteps s (carrierOpenList inPar endPe body.toList).toArray
+  | b@(.para ..) | b@(.section ..) | b@(.list ..) | b@(.center ..) | b@(.ragged ..) |
+    b@(.spaced ..) | b@(.role ..) | b@(.link ..) | b@(.quote ..) | b@(.abstract ..) |
+    b@(.titled ..) | b@(.disclosure ..) | b@(.equation ..) | b@(.verbatim ..) |
+    b@(.algorithm ..) | b@(.columns ..) | b@(.note ..) | b@(.only ..) | b@(.nav ..) |
+    b@(.logo ..) | b@(.pagebreak) | b@(.frame ..) | b@(.framefoot ..) | b@(.setPalette ..) |
+    b@(.setTokens ..) | b@(.rule ..) | b@(.picture ..) | b@(.table ..) | b@(.float ..) |
+    b@(.bibliography ..) =>
+    openDisplayAt inPar endPe b
+
+private def carrierOpenList (inPar endPe : Bool) : List Block → List Block
+  | b :: rest => carrierOpenBlock inPar endPe b :: rest
+  | [] => []
+
+end
+
+mutual
+
+/-- The closing half of `carrierDisplays` on a carrier's last block: a
+display takes the break after the carrier (`closeDisplayAt`), and a carrier
+closing it closes before that break too. -/
+private def carrierCloseBlock (parEnd : Bool) : Block → Block
+  | .altSteps s fa oa =>
+    .altSteps s (carrierCloseList parEnd fa.toList).toArray
+      (carrierCloseList parEnd oa.toList).toArray
+  | .onSteps s body => .onSteps s (carrierCloseList parEnd body.toList).toArray
+  | b@(.para ..) | b@(.section ..) | b@(.list ..) | b@(.center ..) | b@(.ragged ..) |
+    b@(.spaced ..) | b@(.role ..) | b@(.link ..) | b@(.quote ..) | b@(.abstract ..) |
+    b@(.titled ..) | b@(.disclosure ..) | b@(.equation ..) | b@(.verbatim ..) |
+    b@(.algorithm ..) | b@(.columns ..) | b@(.note ..) | b@(.only ..) | b@(.nav ..) |
+    b@(.logo ..) | b@(.pagebreak) | b@(.frame ..) | b@(.framefoot ..) | b@(.setPalette ..) |
+    b@(.setTokens ..) | b@(.rule ..) | b@(.picture ..) | b@(.table ..) | b@(.float ..) |
+    b@(.bibliography ..) =>
+    closeDisplayAt parEnd b
+
+private def carrierCloseList (parEnd : Bool) : List Block → List Block
+  | [] => []
+  | [b] => [carrierCloseBlock parEnd b]
+  | b :: rest => b :: carrierCloseList parEnd rest
+
+end
 
 /-- A carrier's displays stand in their paragraph as they would with no carrier there. -/
 public def carrierDisplays (inPar endPe parEnd : Bool) (blocks : Array Block) :
     Array Block :=
-  carrierCloseDisplay parEnd (carrierOpenDisplay inPar endPe blocks)
+  (carrierCloseList parEnd (carrierOpenList inPar endPe blocks.toList)).toArray
 
 /-- The frames the deck numbers: every `.frame` except a golden title page and a standout frame. -/
 public def Block.countable : Block → Bool
@@ -11423,36 +11468,72 @@ private theorem withDisplayCtx_text (acc : String) (c : DisplayCtx) (d : Block) 
   · rfl
   · simp [blockTextOne, blockTextList]
 
-private theorem carrierOpenDisplay_text (inPar endPe : Bool) :
-    Conserves blocksText (carrierOpenDisplay inPar endPe) := fun xs => by
-  unfold carrierOpenDisplay
+private theorem openDisplayAt_text (inPar endPe : Bool) (acc : String) (b : Block) :
+    blockTextOne acc (openDisplayAt inPar endPe b) = blockTextOne acc b := by
+  unfold openDisplayAt
+  dsimp only
   split
-  · next b rest h =>
-    dsimp only
-    split
-    · have hb := displayCtxOf_text "" b
-      simp only [blocksText, h, blockTextList] at hb ⊢
-      rw [withDisplayCtx_text, hb]
-    · rfl
+  · rw [withDisplayCtx_text, displayCtxOf_text]
   · rfl
 
-private theorem carrierCloseDisplay_text (parEnd : Bool) :
-    Conserves blocksText (carrierCloseDisplay parEnd) := fun xs => by
-  unfold carrierCloseDisplay
+private theorem closeDisplayAt_text (parEnd : Bool) (acc : String) (b : Block) :
+    blockTextOne acc (closeDisplayAt parEnd b) = blockTextOne acc b := by
+  unfold closeDisplayAt
+  dsimp only
   split
-  · next b hb =>
-    obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.1 hb
-    dsimp only
-    split
-    · rw [Array.pop_push, blocksText_push, blocksText_push, withDisplayCtx_text,
-        displayCtxOf_text]
-    · rfl
+  · rw [withDisplayCtx_text, displayCtxOf_text]
   · rfl
+
+mutual
+
+private theorem carrierOpenBlock_text (inPar endPe : Bool) (acc : String) (b : Block) :
+    blockTextOne acc (carrierOpenBlock inPar endPe b) = blockTextOne acc b := by
+  match b with
+  | .altSteps s fa oa => simp only [carrierOpenBlock, blockTextOne, carrierOpenList_text]
+  | .onSteps s body => simp only [carrierOpenBlock, blockTextOne, carrierOpenList_text]
+  | .para .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role .. |
+    .link .. | .quote .. | .abstract .. | .titled .. | .disclosure .. | .equation .. |
+    .verbatim .. | .algorithm .. | .columns .. | .note .. | .only .. | .nav .. | .logo .. |
+    .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. |
+    .picture .. | .table .. | .float .. | .bibliography .. =>
+    simp only [carrierOpenBlock]
+    exact openDisplayAt_text inPar endPe acc _
+
+private theorem carrierOpenList_text (inPar endPe : Bool) (acc : String) (xs : List Block) :
+    blockTextList acc (carrierOpenList inPar endPe xs) = blockTextList acc xs := by
+  match xs with
+  | b :: rest => simp only [carrierOpenList, blockTextList, carrierOpenBlock_text]
+  | [] => rfl
+
+end
+
+mutual
+
+private theorem carrierCloseBlock_text (parEnd : Bool) (acc : String) (b : Block) :
+    blockTextOne acc (carrierCloseBlock parEnd b) = blockTextOne acc b := by
+  match b with
+  | .altSteps s fa oa => simp only [carrierCloseBlock, blockTextOne, carrierCloseList_text]
+  | .onSteps s body => simp only [carrierCloseBlock, blockTextOne, carrierCloseList_text]
+  | .para .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role .. |
+    .link .. | .quote .. | .abstract .. | .titled .. | .disclosure .. | .equation .. |
+    .verbatim .. | .algorithm .. | .columns .. | .note .. | .only .. | .nav .. | .logo .. |
+    .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. |
+    .picture .. | .table .. | .float .. | .bibliography .. =>
+    simp only [carrierCloseBlock]
+    exact closeDisplayAt_text parEnd acc _
+
+private theorem carrierCloseList_text (parEnd : Bool) (acc : String) (xs : List Block) :
+    blockTextList acc (carrierCloseList parEnd xs) = blockTextList acc xs := by
+  match xs with
+  | [] => rfl
+  | [b] => simp only [carrierCloseList, blockTextList, carrierCloseBlock_text]
+  | b :: c :: rest => simp only [carrierCloseList, blockTextList, carrierCloseList_text]
+
+end
 
 public theorem carrierDisplays_text (inPar endPe parEnd : Bool) :
     Conserves blocksText (carrierDisplays inPar endPe parEnd) := fun xs => by
-  unfold carrierDisplays
-  rw [carrierCloseDisplay_text, carrierOpenDisplay_text]
+  simp only [carrierDisplays, blocksText, carrierCloseList_text, carrierOpenList_text]
 
 public theorem markDisplay_text (inPar parEnd afterEnv : Bool) (k : Nat) :
     Conserves blocksText (markDisplay inPar parEnd afterEnv k) := fun xs => by
