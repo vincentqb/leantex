@@ -224,7 +224,7 @@ def Tsv.pendingRetirements (t : Tsv) : Array String :=
 
 /-- Faults of a committed baseline: row order and uniqueness, and each lowering request
 naming the fall from the floor the file commits (or the cap, for an unbaselined headroom
-item); a record is never held to the current rows. -/
+item); a record is never held to the rows. -/
 def validate (t : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   match t.tierRetired with

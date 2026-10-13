@@ -2372,7 +2372,7 @@ def VictimState.changed (a b : VictimState) : String :=
   | bad => String.intercalate "," (bad.map (·.1))
 
 /-- A harness started the way a hook in a linked worktree starts a program, `GIT_DIR` and
-`GIT_INDEX_FILE` naming that repository, leaves it and its origin as they were. -/
+`GIT_INDEX_FILE` naming its repository, leaves it and its origin as they were. -/
 def scenarioHookGitDir (self root : String) : IO Outcome := do
   let v ← mkVictim s!"{root}/hookdir"
   let before ← victimState v

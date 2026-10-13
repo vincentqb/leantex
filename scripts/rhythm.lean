@@ -14,8 +14,7 @@ namespace Rhythm
 def rhythmDir : String := "testdata/rhythm"
 
 /-- The tolerance a shipped gap is judged within, in thousandths of a bp: half a bp, under
-one review-raster pixel and above the engines' 0.375 % unit difference on a typical
-gap. -/
+one pixel at 110 dpi and above the engines' 0.375 % unit difference on a typical gap. -/
 def toleranceMilliBp : Int := 500
 
 /-- The second band, in thousandths of a bp: half the 6 bp rhythm quantum at the article

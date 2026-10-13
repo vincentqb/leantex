@@ -141,8 +141,8 @@ def rungOfLoss : Loss → Rung
   | .info => .rewritten
 
 /-- One probe's rung from its diagnostics, the first rule that applies deciding: those
-naming the construct, a rewrite to nothing, the probe's own complaints, a rewrite note, a
-clean document, then operand complaints. -/
+naming the construct, a rewrite to nothing, a subjectless or place-own complaint, a
+rewrite note, a clean document, then operand complaints. -/
 def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
   let worstOf (xs : Array Diag) : Rung :=
     xs.foldl (fun acc d => Rung.worse acc (rungOfLoss d.kind.loss)) .verified

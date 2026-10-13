@@ -414,7 +414,7 @@ def skipBlanks (cs : Array Char) (i : Nat) : Nat := Id.run do
 
 /-- TeX's spellings of letters undone: accent commands dropped with the blanks before
 their argument, letter commands as letters, `\-`, italic correction and `\@` removed, ties
-and spacing as spaces, braces and format characters dropped; other commands kept. -/
+and spacing as spaces, braces and `invisible` characters dropped; other commands kept. -/
 def texReading (cs : Array Char) : Array Char := Id.run do
   let mut out : Array Char := Array.mkEmpty cs.size
   let mut i := 0
@@ -884,8 +884,8 @@ def decodedReadings (bs : ByteArray) : Array (Array Char) := Id.run do
   return out
 
 /-- Where one blob holds a term: lines of text by segment (`segmentReadings`) where no
-zero byte stands, else `binary` for a hit in the bytes as lenient UTF-8, without zero
-bytes (`cp1252NonZero`), or decompressed (`decodedReadings`). -/
+zero byte stands, and `binary` for a hit where one does, as lenient UTF-8 or without zero
+bytes (`cp1252NonZero`), or in any blob's `decodedReadings`. -/
 structure Hits where
   lines : Array Nat
   binary : Bool

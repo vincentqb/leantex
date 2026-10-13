@@ -97,7 +97,7 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
     ui.errStream.putStrLn (Render.human ui.color d (showOutput := ui.showOutput))
 
 /-- Resolve and print one phase against the document's acceptance (`\allow`,
-`--best-effort`): a repeated wording prints once with its count, its repeats as notes
+`--best-effort`): a repeated warning prints once with its count, its repeats as notes
 shown under `-v`; porcelain keeps every site. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
