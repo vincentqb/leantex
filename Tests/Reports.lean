@@ -1532,7 +1532,8 @@ def reports : List Report := [
   { id := "R169", date := "2026-10-13"
     what := "a palette generated from a brand's few colours left its code mostly in the ink: under an ink with no hue of its own, a listing's keywords and names set in the ink, and under an ink with one, keywords and names shared one colour, so only literals, comments and errors stood apart"
     pins := [check% seededCodeChecks]
-    accept := ["eight of the guard's assertions fail on the tree at 1805d55c before the fix: for a black ink beside a yellow accent and a neutral ink beside a magenta one, keywords and names in the ink, the web page painting no colour for them and the export a TeX build reads defining none; and for a violet ink beside an orange accent, keywords and names in one colour, their hues not apart"]
+    accept := ["eighteen of the guard's assertions fail on the tree at 1805d55c before the fix: for a black ink beside a yellow accent, a neutral ink beside a magenta one, and the black ink beside a declared literal or a declared keyword, keywords and names in the ink, showing no hue, the web page painting no colour for them and the export a TeX build reads defining none; and for a violet ink beside an orange accent, keywords and names in one colour, their hues not apart",
+      "the first review's guards: with its answer reverted onto 34b7ad87, three assertions fail: keywords planned over a literal its own key declares, 13° from it, names over a declared keyword, 20° from it, and two inks a channel step apart setting names in hues 132° apart, where equal arcs fell to rounding"]
     state := .guarded "1805d55c" .before .author }
 ]
 

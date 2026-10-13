@@ -214,9 +214,15 @@ takes none of its default theme's colours. A generated colour standing on a
 ground it does not read on — a frame-title or block bar, the standout frame —
 takes its family's tone there, and highlighted code takes colours derived
 from the same palette, one tone wherever the listing stands: errors in the
-alert, comments in the muted ink, and keywords, names and literals each in a
-hue of its own, spaced around the hue circle from the alert's and the ink's
-(keywords keep the ink's hue where it has one). The seeds'
+alert, comments in the muted ink, literals in a named example's colour, and
+otherwise keywords, names and literals each in a hue of its own, spaced
+around the hue circle from the ink's and the alert's. Keywords keep the
+ink's hue where it stands 60° or more from the alert's and the literal's,
+and a code role the palette declares under its own key ships as declared
+and is spaced around. Seeds whose ink and accent show no hue leave nothing
+to space from, so their keywords and names stay in the ink, and on a ground
+where no tone of a role's hue reads as it does on the page, such as the
+standout frame, the role sets in the listing's own ink. The seeds'
 ink, paper and accent declare the page's text, ground and accent, so the later
 of a seed and the document's own declaration of that role wins. Any other
 colour the document declares, before `\palette[seeds]` or after it, keeps its
@@ -294,7 +300,9 @@ the role follows the palette: errors take `alert`, comments `muted` (or
 the quietest tone of the ink's own hue that still reads as text),
 literals `example` (or one more hue, set apart from the ink and the alert),
 and keywords and names a tone of the ink's own hue, or the ink itself where
-it has no hue of its own, keywords then set apart by weight alone. A role
+it has no hue of its own, keywords then set apart by weight alone; a palette
+generated from seeds gives keywords and names a hue of their own each (see
+`\palette[seeds]` above). A role
 the palette leaves open takes the minted style's colour for that role.
 Every colour the engine derives or adapts stays legible on the ground the
 listing stands on; a colour the document declares ships as declared, and

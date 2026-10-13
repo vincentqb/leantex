@@ -259,6 +259,14 @@ def hueCosMilli (c c' : Ir.Color) : Int :=
 
 def chromaOf (c : Ir.Color) : Nat := Nat.sqrt (Oklab.chromaSq (Oklab.labOf c)).toNat
 
+/-- A listing document's visible code as each artifact paints it: the laid
+glyphs' face index and colour, and the typed HTML's paint. -/
+def codePaints (fonts : Font.FontSet) (doc : Ir.Doc) :
+    Array (Char × Nat × Ir.Color) × Array (Char × HtmlPaint) :=
+  (((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
+      ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color)),
+    (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c)
+
 /-- The code roles: every token type's role by its parent chain, each role's
 colour from the document's palette by the stated rule or the style, and one
 colour and weight for every type of one role, in both artifacts. -/
@@ -373,9 +381,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("a role's own key", palette ++ "\\palette{codeerror=#702090}", .default, some own)] do
     let (doc, ds) := markerDoc preamble
     t s!"code roles, {label}: the listings elaborate clean" (ds.all (·.severity != .error))
-    let laid := ((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
-      ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color))
-    let typed := (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c
+    let (laid, typed) := codePaints fonts doc
     let pdf (w : String) := ShellHighlight.witnessPaint? source w laid
     let html (w : String) := ShellHighlight.witnessPaint? source w typed
     let hole := onePaint (pdf "sorry")
@@ -460,42 +466,58 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
 /-- A generated palette's code is complete: under `\palette[seeds]`, a
-listing's keywords, names and literals each set in a colour of their own,
-their hues 60° or more apart and from the alert the error sets in, each
+listing's keywords, names and literals each set in a colour of its own,
+showing a hue 60° or more from the others' and from the error's, each
 reading at the code tone on the page; comments set in the generated muted
 step and errors in the alert, and the web page sets every role in the PDF's
-colour. An ink that shows a hue keeps its keywords in it. Held over the
-shipped page and the typed HTML, and over the export a TeX build reads. -/
+colour. An ink whose hue stands clear of the alert's keeps its keywords in
+it; a role the palette declares under its own key ships as declared and the
+others are spaced around it; and two inks a channel step apart set their
+code in the same hues. Held over the shipped page and the typed HTML, and
+over the export a TeX build reads, from the palette the script builds. -/
 def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "seeded code: the serif faces load"
   let source := "@cache\ndef probe(n):\n    # an invented remark\n" ++
     "    raise NotImplementedError(len(\"synthetic\") + 1)"
-  for (label, seeds, inkHue) in [
-      ("a black ink and a yellow accent", "ink = #000000, paper = #FFFFFF, accent = #FACC15", false),
-      ("a neutral ink and a magenta accent", "ink = #1A1A1A, paper = #FFFFFF, accent = #C026D3", false),
-      ("a violet ink and an orange accent", "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A", true)] do
-    let (doc, ds) := elabStr (dvDeck ("\\usepackage{minted}\n\\palette[seeds]{ " ++ seeds ++ " }\n")
+  let build (seeds more : String) : Ir.Doc × Array Diag :=
+    elabStr (dvDeck ("\\usepackage{minted}\n\\palette[seeds]{ " ++ seeds ++ " }\n" ++ more)
       ("\\begin{frame}[fragile]\n\\begin{minted}{python}\n" ++ source ++ "\n\\end{minted}\n\\end{frame}"))
+  let paints (doc : Ir.Doc) : List (Option Ir.Color) :=
+    let (laid, _) := codePaints fonts doc
+    ["def", "len", "synthetic", "remark", "NotImplementedError"].map fun w =>
+      (onePaint (ShellHighlight.witnessPaint? source w laid)).map (·.2)
+  let black := "ink = #000000, paper = #FFFFFF, accent = #FACC15"
+  for (label, seeds, more, inkHue, declared) in [
+      ("a black ink and a yellow accent", black, "", false, none),
+      ("a neutral ink and a magenta accent", "ink = #1A1A1A, paper = #FFFFFF, accent = #C026D3", "",
+        false, none),
+      ("a violet ink and an orange accent", "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A", "",
+        true, none),
+      ("a declared literal", black, "\\palette{ codeliteral = #15803D }\n", false,
+        some (ListingHighlight.Role.literal, Ir.Color.ofHtml 0x15 0x80 0x3D)),
+      ("a declared keyword", black, "\\palette{ codekeyword = #BE185D }\n", false,
+        some (ListingHighlight.Role.keyword, Ir.Color.ofHtml 0xBE 0x18 0x5D))] do
+    let (doc, ds) := build seeds more
     t s!"seeded code, {label}: the listing elaborates clean" (ds.all (·.severity != .error))
-    let laid := ((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
-      ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color))
-    let typed := (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c
-    let pdf (w : String) := (onePaint (ShellHighlight.witnessPaint? source w laid)).map (·.2)
+    let (_, typed) := codePaints fonts doc
     let html (w : String) := onePaint (ShellHighlight.witnessPaint? source w typed)
     let d := Ir.Design.ofPalette doc.palette
     let alert := Ir.Design.declared? doc.palette .alert
     let muted := Ir.Design.declared? doc.palette .muted
-    match pdf "def", pdf "len", pdf "synthetic", pdf "remark", pdf "NotImplementedError", alert with
-    | some kw, some nm, some lit, some cm, some err, some al =>
+    match paints doc, alert with
+    | [some kw, some nm, some lit, some cm, some err], some al =>
       let hued := [kw, nm, lit]
       t s!"seeded code, {label}: keywords, names and literals each set in a colour of their own"
         (hued.all (· != d.fg) && kw != nm && nm != lit && kw != lit)
+      t s!"seeded code, {label}: each shows a hue"
+        (hued.all fun c => Oklab.okJnd ≤ chromaOf c)
       let apart := (hued ++ [al]).zipIdx
-      t s!"seeded code, {label}: their hues stand 60° or more apart, and from the alert's"
+      t s!"seeded code, {label}: their hues stand 60° or more apart, and from the error's"
         (apart.all fun (c, i) => apart.all fun (c', j) => i == j || hueCosMilli c c' ≤ 500)
       t s!"seeded code, {label}: each reads at the code tone on the page"
-        (hued.all fun c => CodeColor.codeTone ≤ Contrast.contrastMilli c d.bg)
+        (hued.all fun c => CodeColor.codeTone ≤ Contrast.contrastMilli c d.bg ||
+          declared.any (·.2 == c))
       t s!"seeded code, {label}: comments set in the generated muted step, errors in the alert"
         (some cm == muted && err == al)
       t s!"seeded code, {label}: the web page sets each role in the PDF's colour"
@@ -503,11 +525,39 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
           fun (w, c) => (html w).any fun p => p.color.any (hasStr · (HtmlDoc.cssColor c)))
       if inkHue then
         t s!"seeded code, {label}: keywords keep the ink's own hue" (hueCosMilli kw d.fg ≥ 990)
+      if let some (r, c) := declared then
+        t s!"seeded code, {label}: the declared role ships as declared"
+          ((if r == .literal then lit else kw) == c)
       let exported := CodeExport.pageBrushes doc.palette .default
       t s!"seeded code, {label}: the export colours every role but the ink, as the page does"
         ([(ListingHighlight.Role.keyword, kw), (.name, nm), (.literal, lit), (.comment, cm),
           (.error, err)].all fun (r, c) => (exported.get r).ink == some c)
-    | _, _, _, _, _, _ => t s!"seeded code, {label}: every role's token ships in one colour" false
+    | _, _ => t s!"seeded code, {label}: every role's token ships in one colour" false
+  -- The palette the script builds from the same seeds paints the same code.
+  for (label, spelled, ink, accent) in [
+      ("a black ink and a yellow accent", black, Ir.Color.ofHtml 0 0 0, Ir.Color.ofHtml 0xFA 0xCC 0x15),
+      ("a violet ink and an orange accent", "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A",
+        Ir.Color.ofHtml 0x2B 0x24 0x40, Ir.Color.ofHtml 0xE8 0x5D 0x2A)] do
+    let seeds : SeedPalette.Seeds := { ink, paper := Ir.Color.white, accent }
+    match SeedPalette.generate seeds (seeds.targets .decks) with
+    | .error _ => t s!"seeded code, {label}: the seeds generate" false
+    | .ok g =>
+      let st : SeedPalette.SeedState :=
+        { seeds, targets := seeds.targets .decks, blocks := .tonal, colors := g.colors }
+      let script := CodeExport.pageBrushes (({} : Ir.Palette).applySeeds st) .default
+      let (doc, _) := build spelled ""
+      let native := CodeExport.pageBrushes doc.palette .default
+      t s!"seeded code, {label}: the script's palette paints the native page's code"
+        (ListingHighlight.Role.all.all fun r => (script.get r).ink == (native.get r).ink)
+  -- Two inks a channel step apart plan their code alike: equal arcs are a
+  -- tie the rule settles, never rounding.
+  let (near, _) := build "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A" ""
+  let (next, _) := build "ink = #2C2440, paper = #FFFFFF, accent = #E85D2A" ""
+  match paints near, paints next with
+  | [some kw, some nm, some lit, _, _], [some kw', some nm', some lit', _, _] =>
+    t "seeded code: two inks a step apart set keywords, names and literals in the same hues"
+      (hueCosMilli kw kw' ≥ 990 && hueCosMilli nm nm' ≥ 990 && hueCosMilli lit lit' ≥ 990)
+  | _, _ => t "seeded code: two inks a step apart ship every role in one colour" false
 
 /-- A name reads alike where its listing defines it and where it uses it,
 and from one language to the next: a definition's name sets in the ink, as
@@ -530,9 +580,7 @@ def definitionNameChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("an invented palette",
         "\\palette{fg=#202440,bg=#FFFFFF,alert=#B01030,muted=#5A6068,example=#1A6A3A}")] do
     let doc := defsDoc preamble
-    let laid := ((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
-      ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color))
-    let typed := (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c
+    let (laid, typed) := codePaints fonts doc
     let pdf := sites.map fun (what, context, name, skip) =>
       (what, onePaint (ShellHighlight.namePaint? source context name skip laid))
     let html := sites.map fun (what, context, name, skip) =>

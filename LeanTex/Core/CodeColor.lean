@@ -25,10 +25,14 @@ colours of its own:
 * keywords and names are the ink's hue family: a tone of the ink's own hue
   where it has one and the literal's hue stands clear of it; else the ink,
   keywords set apart by weight. Under a palette generated from seeds, whose
-  code is the generator's to complete, each takes a hue of its own instead:
-  keywords the ink's where it stands clear, else the middle of the widest
-  arc the hues already set leave open (`openArc`), and names the next
-  widest arc's middle, so no role but the ink's sets in the ink;
+  code is the generator's to complete, each takes a hue of its own instead,
+  planned around the hues the code ships in (a role its own key declares
+  ships as declared): keywords the ink's hue where it stands clear of the
+  literal's and the error's, else the middle of the widest arc the ink's,
+  the error's and the literal's hues leave open (`openArc`), and names the
+  middle of the widest arc left once the keywords' hue is set. Where neither
+  the ink nor the alert shows a hue there is nothing to space from, and
+  keywords and names stay in the ink;
 * the ink role is the listing's own text colour.
 
 A derived hue ships as a tone (`tone`): its hue at `codeChroma`, never
@@ -131,24 +135,29 @@ private def openHue : List (Int × Int) → Option (Int × Int)
     let s := (u.1 * norm w + w.1 * norm u, u.2 * norm w + w.2 * norm u)
     if s == (0, 0) then some (-u.2, u.1) else some (-s.1, -s.2)
 
+/-- Arcs within a degree of the widest count as wide as it: the hue
+arithmetic and the bisector a literal is set at agree far closer than that,
+and at `codeChroma` a just-noticeable difference spans about 11° of hue, so
+the tie rule, never rounding, chooses between arcs a degree apart. -/
+private def arcSlack : Int := 1000
+
 /-- The middle of the widest arc a list of hues (millidegrees) leaves open on
 the hue circle: each listed hue opens the arc running counter-clockwise to
-the nearest other hue listed, and between arcs equally wide the
-earliest-listed hue's is taken — `openHue`'s rule for two hues, at any
-count. One hue leaves the whole circle, whose middle stands opposite it. -/
+the nearest other hue listed, and of the arcs within `arcSlack` of the
+widest the earliest-listed hue's is taken — `openHue`'s rule for two hues,
+at any count. One hue leaves the whole circle, whose middle stands opposite
+it. -/
 private def openArc (hs : List Int) : Option Int :=
   let width (h : Int) : Int :=
     hs.foldl (fun w h' => let d := (h' - h) % 360000; if d == 0 then w else min w d) 360000
-  let widest := hs.foldl (fun (acc : Option (Int × Int)) h =>
-    let w := width h
-    match acc with
-    | some (_, best) => if best < w then some (h, w) else acc
-    | none => some (h, w)) none
-  widest.map fun (h, w) => (h + w / 2) % 360000
+  let widest := hs.foldl (fun w h => max w (width h)) 0
+  (hs.find? fun h => widest ≤ width h + arcSlack).map fun h => (h + width h / 2) % 360000
 
 example : openArc [88000, 268000] = some 178000 := by decide
 example : openArc [88000, 268000, 178000] = some 358000 := by decide
 example : openArc [255000, 42000] = some 148500 := by decide
+example : openArc [255000, 165000, 30001] = some 322500 := by decide
+example : openArc [255000, 165000, 29999] = some 322499 := by decide
 example : openArc [] = none := by decide
 
 /-- The colour at Oklab lightness `L` and chromatic coordinates `(a, b)`. -/
@@ -292,36 +301,43 @@ private def literalOf (p : Reads) (grounds : List Color) : Derived × Option (In
     | some u => ((hueTone grounds (scaled p.chroma u)).elim .ink .color, some u)
     | none => (.none, none)
 
+/-- The ink's own hue, where it stands clear of the literal's and the
+error's. -/
+private def inkHueClear (p : Reads) (literal error : Option (Int × Int)) : Option (Int × Int) :=
+  (p.fg.bind hue?).filter fun u => literal.all (clear u) && error.all (clear u)
+
 /-- Keywords and names: a tone of the ink's own hue where it stands clear
 of both the literal's hue and the alert's, else the ink. -/
 private def familyOf (p : Reads) (grounds : List Color) (literal : Option (Int × Int)) : Derived :=
   match p.fg with
   | none => .none
   | some _ =>
-    match ((p.fg.bind hue?).filter fun u => literal.all (clear u) &&
-          (p.alert.bind hue?).all (clear u)).bind
+    match (inkHueClear p literal (p.alert.bind hue?)).bind
         (fun u => hueTone grounds (scaled p.chroma u)) with
     | some c => .color c
     | none => .ink
 
 /-- Keywords and names under a palette generated from seeds, each a hue of
-its own: keywords the ink's own where it stands clear of the literal's and
-the alert's, else the middle of the widest arc the hues already set (the
-ink's, the alert's, the literal's) leave open; names the middle of the
-widest arc left open once the keywords' hue is set too. -/
-private def seededFamily (p : Reads) (grounds : List Color) (literal : Option (Int × Int)) :
-    Derived × Derived :=
+its own, planned around the hues the code ships in — a role's colour where
+its own key declares one (`declared`), else the literal's and the alert's:
+keywords the ink's own hue where it stands clear of the literal's and the
+error's, else the middle of the widest arc the ink's, the error's and the
+literal's hues leave open; names the middle of the widest arc left open once
+the keywords' hue is set too. -/
+private def seededFamily (p : Reads) (grounds : List Color) (literal : Option (Int × Int))
+    (declared : ListingHighlight.Role → Option (Int × Int)) : Derived × Derived :=
   match p.fg with
   | none => (.none, .none)
   | some _ =>
     let hueOf (v : Int × Int) : Int := Oklab.hueMilli v.1 v.2
     let dirOf (h : Int) : Int × Int := let l := Oklab.ofLch 0 p.chroma h; (l.a, l.b)
     let toned (v : Int × Int) : Derived := (hueTone grounds (scaled p.chroma v)).elim .ink .color
-    let set := (p.hues ++ literal.toList).map hueOf
-    let own := (p.fg.bind hue?).filter fun u =>
-      literal.all (clear u) && (p.alert.bind hue?).all (clear u)
-    let keyword := own.orElse fun _ => (openArc set).map dirOf
-    let name := (openArc (set ++ (keyword.map hueOf).toList)).map dirOf
+    let error := (declared .error).orElse fun _ => p.alert.bind hue?
+    let lit := (declared .literal).orElse fun _ => literal
+    let set := ((p.fg.bind hue?).toList ++ error.toList ++ lit.toList).map hueOf
+    let keyword := (inkHueClear p lit error).orElse fun _ => (openArc set).map dirOf
+    let shipped := (declared .keyword).orElse fun _ => keyword
+    let name := (openArc (set ++ (shipped.map hueOf).toList)).map dirOf
     (keyword.elim .ink toned, name.elim .ink toned)
 
 /-- The quietest tone of the ink's own hue and chroma that still reads as
@@ -360,7 +376,8 @@ private theorem elim_ink_ne_none {α : Type} (o : Option α) (f : α → Derived
   | some a => exact hf a
 
 private theorem seededFamily_none {p : Reads} {grounds : List Color} {l : Option (Int × Int)}
-    (h : (seededFamily p grounds l).1 = .none ∨ (seededFamily p grounds l).2 = .none) :
+    {declared : ListingHighlight.Role → Option (Int × Int)}
+    (h : (seededFamily p grounds l declared).1 = .none ∨ (seededFamily p grounds l declared).2 = .none) :
     p.fg = none := by
   unfold seededFamily at h
   split at h
@@ -411,11 +428,12 @@ private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = non
   · assumption
 
 /-- Keywords and names: the ink's hue family, or under a palette generated
-from seeds a hue of their own each (`seededFamily`). -/
+from seeds a hue of their own each (`seededFamily`), around the hues of the
+code roles the palette declares under their own keys. -/
 private def keywordsNames (pal : Palette) (p : Reads) (grounds : List Color)
     (literal : Option (Int × Int)) : Derived × Derived :=
   match pal.seeded with
-  | some _ => seededFamily p grounds literal
+  | some _ => seededFamily p grounds literal fun r => (Design.declared? pal (Ir.Role.ofCode r)).bind hue?
   | none => let family := familyOf p grounds literal; (family, family)
 
 private theorem keywordsNames_none {pal : Palette} {p : Reads} {grounds : List Color}
