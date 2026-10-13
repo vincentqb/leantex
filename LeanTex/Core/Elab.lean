@@ -35,13 +35,10 @@ public structure Param where
   name : String
   type : ParamType
   optional : Bool
-  /-- A command's replacement references this parameter. An unreferenced
-  argument is consumed without elaboration, as in TeX substitution.
-  Environment parameters conservatively retain the ordinary binding. -/
+  /-- The replacement references this parameter; an unreferenced argument is
+  consumed without elaboration. -/
   referenced : Bool := true
-  /-- A minted command in the replacement reads this parameter as code
-  (`#k` in its capture): a call binds the argument's source beside its
-  elaboration (`bindParam`), which the code takes as TeX binds it. -/
+  /-- A minted command in the replacement reads this parameter as code. -/
   code : Bool := false
   deriving Repr, BEq
 
@@ -49,40 +46,25 @@ public structure UserCmd where
   name : String
   params : Array Param
   body : Array Raw
-  /-- Where the definition stands, for the shadowing warning: the check
-  runs once the final palette is known, long after this site scrolls by. -/
   span : Span
   deriving Repr, BEq
 
-/-- A document-defined environment (`\defineenv`, the native spelling of
-`\newenvironment`): its begin and end halves wrap the environment's content,
-and its parameters bind from the groups after `\begin{name}`. The three
-flags are the space rules TeX's own commands state at its seams
-(`envOfHalves`). -/
+/-- An environment the document defines with `\defineenv` or
+`\newenvironment`. -/
 public structure UserEnv where
   name : String
   params : Array Param
   beginBody : Array Raw
   endBody : Array Raw
-  /-- Commands the halves may use: those defined before this environment.
-  That bound is what makes expansion terminate, as `limit` does for
-  commands. -/
+  /-- The halves see only the commands defined before this environment. -/
   cmdLimit : Nat
-  /-- The body's leading spaces are skipped: `\ignorespaces` closes the
-  begin code, or environ trims the body. -/
   ignoresLead : Bool := false
-  /-- The body's trailing spaces are dropped: environ trims the body. -/
   trimsTail : Bool := false
-  /-- The spaces after `\end{name}` are skipped: `\ignorespacesafterend` in
-  the end code, environ's default final code. -/
   ignoresAfterEnd : Bool := false
   deriving Repr, BEq
 
-/-- A theorem-like environment's style: the kernel's (latex.ltx
-`\@begintheorem`: the head bold, the body `\itshape`) where amsthm is not
-loaded, else amsthm's three (amsthm.sty `\th@plain`, `\th@definition`,
-`\th@remark`: a bold head over an italic or upright body, and an italic
-head over an upright one). -/
+/-- A theorem style: the kernel's (latex.ltx `\@begintheorem`) without
+amsthm, else one of amsthm's three. -/
 public inductive ThmStyle where
   | kernel
   | plain
@@ -90,16 +72,13 @@ public inductive ThmStyle where
   | remark
   deriving Repr, BEq, Inhabited
 
-/-- The space a style's theorems open (`Ir.thmSkips`): the kernel's
-trivlist, amsthm's `\thm@preskip` and `\thm@postskip`, remark's halves. -/
 private def ThmStyle.space : ThmStyle → Ir.ThmSpace
   | .kernel => .kernel
   | .plain | .definition => .ams
   | .remark => .amsHalf
 
-/-- One `\newtheorem`: the environment, its heading, the counter it steps
-(`none` is amsthm's unnumbered `\newtheorem*`) and the style in force where
-it was declared (amsthm.sty: `\newtheorem` captures `\thm@style`). -/
+/-- One `\newtheorem`; `counter` is `none` for amsthm's unnumbered
+`\newtheorem*`. -/
 public structure ThmDef where
   env : String
   heading : Array Inline
@@ -107,100 +86,53 @@ public structure ThmDef where
   style : ThmStyle
   deriving Repr, BEq
 
-/-- The theorem declarations the preamble made and the counters the body
-steps: the environments, each counter with the heading level that resets it
-(`[section]`), the `\theoremstyle` in force — `.kernel` until amsthm is
-loaded, whose default is `plain` (Compat spells the load that way), so
-whether amsthm's heads and its `proof` exist is read off the style — and,
-in flow order, each counter with the heading number it last stepped under
-(the `[within]` levels, spelled) and its value: a counter that finds its
-heading moved restarts at 1, `\@addtoreset`'s effect read where the number
-is used. One field on `ESt`, the `AlgSt` shape: the knots' state stays
-narrow. -/
+/-- The theorem environments the preamble declared and the counters the body
+steps. -/
 public structure ThmDecls where
   defs : Array ThmDef := #[]
   counters : Array (String × Option Nat) := #[]
   style : ThmStyle := .kernel
   nums : Array (String × String × Nat) := #[]
-  /-- The proofs open around the walk: amsthm's QED stack holds a mark only
-  inside one, so a `\qedhere` outside sets nothing. -/
+  /-- How many proofs are open; a `\qedhere` outside one sets nothing. -/
   proofs : Nat := 0
-  /-- The innermost open proof's `\qedhere` has set its mark in a display's
-  number slot, so the proof's end sets none. -/
+  /-- The innermost proof's `\qedhere` has set its mark, so its end sets
+  none. -/
   qedPlaced : Bool := false
   deriving Repr, BEq
 
-/-- amsthm is loaded: some `\theoremstyle` has been declared. -/
+/-- Whether amsthm is loaded. -/
 private def ThmDecls.ams (d : ThmDecls) : Bool := d.style != .kernel
 
-/-- What the picture arm reads, as one field of `Ctx`: the block knot copies
-every `Ctx` field at each `{ ctx with … }`, and its compilation is at its
-budget (AGENTS.md § Lean rules), so the picture context travels as one value — the
-`SpanRecords` shape. -/
 public structure PicCtx where
-  /-- The boundary tool in force: the external TeX that draws pictures
-  outside the rendered subset. Open by default — the tool belongs to the
-  build environment exactly as fonts do, and the driver alone decides
-  fulfilment (`boundary_request_env_free`) — so the declaration
-  (`\pictures{ tool = lualatex }`, or TikZ's own `\tikzexternalize`
-  spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
-  boundary: `none` here is the declared refusal. -/
+  /-- The external TeX that draws pictures outside the rendered subset;
+  `none` is the declared refusal. -/
   tool : Option String := some "lualatex"
-  /-- Whether an external converter may draw a figure the engine
-  cannot draw whole: open by default; `\figures{ convert = none }` is the
-  declared refusal, under which the engine's own drawing ships with every
-  loss it names. -/
+  /-- An external converter may draw a figure the engine cannot draw whole. -/
   convert : Bool := true
-  /-- The boundary requests fulfilment withdrew: pictures the rendered
-  subset draws in part whose request no tool drew (`Cli.Boundary.withdraw`).
-  Each is drawn natively on the elaboration the driver runs with them, its
-  refusals the ones a refused door names, keyed under the picture so the
-  driver folds them into its one line (`Cli.Boundary.fold`). Empty on the
-  first pass, which states every request from the document alone. -/
+  /-- Boundary requests the driver withdrew, drawn natively instead. -/
   withdrawn : Array String := #[]
-  /-- The preamble declarations a boundary standalone needs beyond the
-  document's design — non-native package loads and the tikz-family set
-  lines, as written (`Compat.boundaryDecls`). The font roles and the
-  palette are not carried here: the request site (`Ir.pictureRefs`) reads
-  them off the finished `Doc`. -/
+  /-- The preamble lines a boundary standalone needs, as written. -/
   preamble : String := ""
-  /-- The document's own macro definitions for the boundary standalone, as
-  written (`macroScan`). One entry per name; the request site carries the
-  subset a picture body reaches. -/
+  /-- The document's macro definitions for the boundary standalone. -/
   macros : Array (String × String) := #[]
-  /-- The directories the document's last `\graphicspath` names
-  (`Compat.graphicsPath`), which the finished document carries for the
-  driver's image lookup (`Ir.Doc.graphicsPath`). -/
+  /-- The directories the document's last `\graphicspath` names. -/
   graphics : Array String := #[]
-  /-- The key lists the document's `\tikzset` lines wrote, in source order
-  and wherever they stood, each beside the span of its line in the file
-  that holds it (`Compat.tikzsetKeys`). Their `/.style` definitions are
-  what every picture's own option block starts from, so a style reaches its
-  picture whether it was declared in the preamble or beside the figure.
-  Set once by the elaborator, as `preamble` is. -/
+  /-- The document's `\tikzset` key lists in source order, each beside its
+  line's span. -/
   sets : Array (Span × Array Raw) := #[]
-  /-- How a node label's content measures at a per-mille size: the face,
-  arriving as a function rather than a font set, because the elaborator has
-  no face of its own and does not acquire one by knowing this. The driver
-  resolves it and passes it in; the default answers nothing, which is what a
-  first pass — the one that discovers which face the document declared —
-  must use. -/
+  /-- How a node label's content measures at a per-mille size; the default
+  answers nothing. -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
 
-/-- An expansion's open semantic role and the first emitted node it owns.
-The source tokens stay in their ordinary stream: a role is not a TeX group
-and cannot stop a primitive reading its next argument. -/
+/-- An expansion's open semantic role and the first emitted node it owns. -/
 private structure MacroRun where
   origin : MacroOrigin
   start : Nat
-  /-- The open paragraph began before this owner. Its own tokens receive
-  inline roles; only the next completed block can belong to this run.
-  State-only blocks emitted before that paragraph cannot settle this. -/
+  /-- The open paragraph began before this owner: only the next completed
+  block can belong to this run. -/
   pendingPara : Bool := false
 
-/-- Semantic names carried by the compatibility pass's executed tokens.
-Each fresh content scope masks identities already owned by its caller;
-distinct occurrences of the same command remain distinct. -/
+/-- Semantic names carried by the compatibility pass's executed tokens. -/
 public structure MacroRoles where
   private inherited : List MacroOrigin := []
   private inlines : Array MacroRun := #[]
@@ -213,9 +145,6 @@ private def MacroRoles.enter (roles : MacroRoles) : MacroRoles :=
   { inherited := roles.inherited ++ roles.blocks.toList.map (·.origin)
       ++ roles.inlines.toList.map (·.origin) }
 
-/-- A primitive can consume an argument from a different expansion.
-Remove identities already owned anywhere in that caller's ancestry; the
-argument's other identities retain their order. -/
 private def relativeOrigins (owned actual : List MacroOrigin) : List MacroOrigin :=
   actual.filter (!owned.contains ·)
 
@@ -223,8 +152,7 @@ private def commonOrigins : List MacroOrigin → List MacroOrigin → Nat
   | a :: as, b :: bs => if a == b then 1 + commonOrigins as bs else 0
   | _, _ => 0
 
-/-- Close inner roles first. Empty replacement text contributes no semantic
-node: metadata cannot invent a source token just to retain an empty role. -/
+/-- Closes inner runs first; a run that owns no node wraps nothing. -/
 private def closeMacroRuns (wrap : String → Array α → α)
     (acc : Array α) : List MacroRun → Array α
   | [] => acc
@@ -245,144 +173,88 @@ private def moveMacroRuns (wrap : String → Array α → α)
       { origin, start := acc.size, pendingPara := pending })
   (active, acc)
 
-/-- A user command sees only commands defined before it: `limit` bounds the
-visible prefix of `user`. That rule is what makes expansion terminate. -/
+/-- The elaboration context; `limit` bounds the prefix of `user` a command
+sees. -/
 public structure Ctx where
   file : String
-  /-- Stored replacement code is attributed to the outer written call.
-  Arguments are bound before entering this scope; input wrappers clear it. -/
+  /-- The outer written call that stored replacement code is attributed to. -/
   callSite : Option (Span × String) := none
-  /-- Source-checked highlighting replies captured once by the driver. These
-  are immutable across body scopes and font remeasurement. -/
+  /-- The highlighting replies the driver captured. -/
   listingReplies : Array ListingReply.Answer := #[]
   user : Array UserCmd := #[]
   limit : Nat := 0
-  /-- Document-defined environments; `envLimit` bounds the visible prefix,
-  as `limit` does for commands. -/
+  /-- Document-defined environments; `envLimit` bounds the visible prefix. -/
   userEnvs : Array UserEnv := #[]
   envLimit : Nat := 0
   args : Array (String × Option (Array Inline)) := #[]
   /-- Palette names usable as colour commands, from `\palette`. -/
   palette : Palette := {}
-  /-- The document/class palette in force when the body opens. A page-colour
-  reset restores only its ground from this snapshot while preserving every
-  unrelated body declaration. -/
+  /-- The palette in force when the body opens. -/
   basePalette : Palette := {}
-  /-- The cancel package's load options, as its `\ProcessOptions` reads
-  them (`Math.CancelSpec.ofOptions`): the marks every formula draws. The
-  marks' colour is not here — `\CancelColor` is a command the document may
-  redefine anywhere, read where a formula stands (`mathEnv`). -/
+  /-- The cancel package's load options: the marks every formula draws. -/
   cancel : Math.CancelSpec := {}
-  /-- The document's resolved main locale, from the preamble's declared
-  language: what the body walk's generated furniture (the References
-  heading) is worded in. -/
+  /-- The document's main locale, which generated furniture is worded in. -/
   locale : Locale := Locale.en
   /-- Named lengths from `\tokens`. -/
   tokens : Tokens := {}
-  /-- The resolved page in force for the body: what the engine length
-  tokens (`paperwidth`, `textwidth`, …) and a token-named column width
-  resolve against. Set once, after the class defaults are applied. -/
+  /-- The resolved page the engine length tokens resolve against. -/
   page : Ir.PageSpec := {}
-  /-- The surface the document was written in, set once with `page`: an
-  input wrapper changes `file`, never this. -/
+  /-- The surface the main document was written in. -/
   surface : Ir.Surface := .tex
-  /-- The class's list lineage (`Ir.ClassRecord.lists`), set once with
-  `page`: what a listing's frame reads (`Ir.ListingFrame.onPage`). -/
+  /-- The class's list lineage, which a listing's frame reads. -/
   lists : Ir.ListLineage := .sizeFile
-  /-- The engine's own length tokens, resolved from the final page: the
-  body-side lookup `\setlength` expressions extend theirs with. -/
+  /-- The engine's length tokens, resolved from the final page. -/
   engineTokens : Array (String × Dim.SymGlue) := #[]
-  /-- Element styles declared so far (`\style`, theme bundles): the body
-  reads `titlepage` at `\maketitle`. -/
+  /-- Element styles declared so far (`\style`, theme bundles). -/
   styles : Styles := {}
   /-- Inside mono/verbatim content, where punctuation stays literal. -/
   literalText : Bool := false
-  /-- A conditional mono face keeps punctuation literal only on its selected
-  steps. Nested selectors combine here, so the source body executes once. -/
+  /-- The steps on which a conditional mono face keeps punctuation literal. -/
   literalWhen : Option OverlaySpec := none
-  /-- Inside a speaker note, absorbed as beamer absorbs it: a reserved
-  character is literal text there, never a build error. -/
+  /-- Inside a speaker note, where a reserved character is literal text. -/
   noteBody : Bool := false
-  /-- The ground the content being elaborated stands on, where a region
-  paints one of its own — a title's bar, a block's body, the standout
-  inversion: a generated role's run takes its family's tone there
-  (`coloredRun`). -/
+  /-- The ground a region paints under the content being elaborated. -/
   ground : Option Color := none
-  /-- The ground a frame paints under its content where `ground` stays
-  unset for the generated roles' re-toning — a standout frame's inversion
-  under a palette with no seeds: what inline code's derived colours fit to
-  (`inlineCodeOf`), as a listing's are fitted to the frame's ground. -/
+  /-- The frame's ground that inline code's derived colours fit to. -/
   codeGround : Option Color := none
-  /-- The position of the `\note` whose body is being elaborated, when
-  `noteBody` is set: where E0359 names the note whose frame tried to carry
-  another note. -/
+  /-- The position of the `\note` whose body is being elaborated. -/
   notePos : Option Pos := none
-  /-- Inside a user command's or environment's argument, bound before its
-  use is known: a reserved character there is the caller's literal token —
-  the definition may place it in a key position (`\label{\k}`), where it
-  is content read verbatim. A text placement keeps it too, a recorded
-  leniency over LaTeX's error: dropping it mangled every key that
-  travelled through a macro parameter. -/
+  /-- Inside a user command's or environment's argument, where a reserved
+  character is the caller's literal token. -/
   argBody : Bool := false
-  /-- Overlay steps already opened by `\pause` in enclosing scopes: the next
-  pause reveals at `stepBase + 1`. -/
+  /-- Overlay steps `\pause` opened in enclosing scopes. -/
   stepBase : Nat := 0
-  /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
-  /-- How far a palette generated in the body stands its grounds from the
-  page: the class's (`Ir.ClassRecord.groundDepth`). -/
+  /-- The class's ground depth for a palette generated in the body. -/
   groundDepth : GroundDepth := .documents
-  /-- The vertical distribution a frame takes when its options name none:
-  beamer's class options `t` and `c` (beamer.cls: `\ExecuteOptionsBeamer{c}`
-  then the document's options in order, the last winning; `slidestop` and
-  `slidescentered` are their obsolete spellings), read by `frameOpts`. -/
+  /-- A frame's vertical alignment when its options name none, from beamer's
+  class options `t` and `c`. -/
   frameAlign : VAlign := .center
-  /-- The page model is `face` (card, poster's trimmed faces): one face of
-  display text with no note apparatus — where `\footnote` is refused by
-  name (W0374). -/
+  /-- The page model is `face`: display text with no note apparatus. -/
   face : Bool := false
-  /-- The class numbers its unstarred headings (article; classes.dtx
-  §Sectioning). Slides and card headings never number, so a deck renders
-  exactly as before. -/
   numberHeadings : Bool := false
-  /-- The effective backend target set of the enclosing `{ifbackend}`
-  nesting: every backend at the top, intersected at each conditional on the
-  way in, so a nested conditional that empties the set is diagnosed where
-  it stands (E0334) — the same walk `Ir.orphanFree` performs. -/
+  /-- The backends the enclosing `{ifbackend}` conditionals leave in force. -/
   backendTargets : List String := Ir.backendNames
-  /-- The picture arm's context (`PicCtx`): the boundary door, the withdrawn
-  requests, the standalone's material and the label measurement. -/
   pic : PicCtx := {}
-  /-- A definition body read the way its use will read it, at the definition
-  (rule (b)'s trial, `gateRedefB`): document content, whatever file defined
-  it. A command a style file defines is called from the document's own text,
-  and the call is where its arguments stand, so the trial must not read the
-  body as package code. -/
+  /-- A definition body reads as document content, as its use will. -/
   atUse : Bool := false
-  /-- The semantic ancestry of executed compatibility macros, independent
-  of command visibility and of the token scanner's argument boundaries. -/
+  /-- The semantic ancestry of executed compatibility macros. -/
   macroRoles : MacroRoles := .empty
 
-/-- The source of replacement code is its call; ordinary tokens retain
-their own file and position. Diagnostics and content-source collectors share
-this projection. -/
+/-- The span of `pos`, or of the written call when inside replacement code. -/
 public def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
   (ctx.callSite.map (·.1)).getD ⟨ctx.file, pos⟩
 
-/-- Enter stored replacement code without losing an enclosing written call. -/
+/-- Enters replacement code, keeping an enclosing written call. -/
 private def Ctx.atCall (ctx : Ctx) (name : String) (pos : Pos) : Ctx :=
   { ctx with callSite := ctx.callSite.orElse (fun _ =>
       some (⟨ctx.file, pos⟩, "\\" ++ name)) }
 
-/-- Source collectors share the written call's span for every replacement
-position. This changes attribution, not content or its styling. -/
 public theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : String) (pos : Pos) :
     ({ ctx with callSite := some (span, name) } : Ctx).sourceSpan pos = span := by rfl
 
-/-- The numeral spellings a counter format may use, LaTeX's own set
-(clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
-rendering reuses the `ListMark` encoders, so a format's digits and the
-list markers' cannot drift. -/
+/-- A counter's numeral style: `\arabic`, `\alph`, `\Alph`, `\roman` or
+`\Roman`. -/
 public inductive SecNumStyle where
   | arabic
   | alph
@@ -391,23 +263,15 @@ public inductive SecNumStyle where
   | uRoman
   deriving Repr, BEq
 
-/-- One piece of a heading-number format — what `\renewcommand
-{\thesubsection}{Item \arabic{subsection}.}` declares (classes.dtx
-§Sectioning: `\the<counter>` is the counter's printed format, not a
-macro): literal text, a numeral over a section counter, or another
-level's own format (`\thesection` inside a subsection format). -/
+/-- One piece of a `\the<counter>` format: literal text, a section counter's
+numeral, or another level's format. -/
 public inductive SecPart where
   | lit (s : String)
   | num (style : SecNumStyle) (level : Nat)
   | the (level : Nat)
   deriving Repr, BEq
 
-/-- A document-defined algorithm keyword (`\SetKw`, `\SetKwInOut`,
-`\SetKwInput`, `\SetKwFunction`, `\SetKwData` — algorithm2e §10.3):
-what the defined control sequence means when it is met inside an
-algorithm. The word/function/data payloads stay raws so accents in the
-declared text still elaborate; an io label is rendered text, the line
-kind's own word. -/
+/-- An algorithm2e keyword the document defines (`\SetKw` and family). -/
 public inductive AlgKwDef where
   | word (body : Array Raw)
   | io (label : String)
@@ -415,26 +279,19 @@ public inductive AlgKwDef where
   | data (name : Array Raw)
   deriving Repr, BEq
 
-/-- The document-global algorithm state the preamble declares: keywords
-(`\SetKw` and family — algorithm2e's definitions are document-wide) and
-the display defaults every algorithm starts from (`\DontPrintSemicolon`,
-`\LinesNumbered`). One field on `ESt`, so the elaboration knot's state
-stays narrow. -/
+/-- The algorithm2e keywords and display defaults the preamble declares. -/
 public structure AlgSt where
   kws : Array (String × AlgKwDef) := #[]
   semis : Bool := true
   numbered : Bool := false
   deriving Repr, BEq
 
-/-- Source metadata for the block accumulator currently being elaborated.
-`base = some n` means its blocks will be spliced into the document at `n`;
-`none` means a retained wrapper owns them. The sites name actual frame
-emissions, including empty frames, rather than searching their content. -/
+/-- The frame sources of the current block accumulator, spliced into the
+document at `base`, or owned by a wrapper when `base` is `none`. -/
 public structure FrameSources where
   base : Option Nat := none
   sites : Array (Nat × Span) := #[]
-  /-- The next fresh accumulator's absolute offset. A splice sets it;
-  entering any accumulator consumes it, so ordinary wrappers stay local. -/
+  /-- The next fresh accumulator's absolute offset. -/
   nextBase : Option Nat := none
   deriving Repr, BEq
 
@@ -446,8 +303,7 @@ public def FrameSources.record (s : FrameSources) (n : Nat) (source : Span) : Fr
   | some i => { s with sites := s.sites.push (i, source) }
   | none => s
 
-/-- A suffix that becomes one retained wrapper no longer contributes
-top-level frames. Its earlier prefix keeps the same indices and spans. -/
+/-- Drops the sites from offset `n` on, which a retained wrapper now owns. -/
 public def FrameSources.keepPrefix (s : FrameSources) (n : Nat) : FrameSources :=
   match s.offset n with
   | some i => { s with sites := s.sites.filter (·.1 < i) }
@@ -468,92 +324,51 @@ public theorem FrameSources.keepPrefix_exact (sites : Array (Nat × Span))
       (i, source) ∈ sites ∧ i < base + n := by
   simp [FrameSources.keepPrefix, FrameSources.offset]
 
-/-- The spans the reporting layer reads back out of elaboration — the
-`AlgSt` shape: one field on `ESt`, so the elaboration knot's state stays
-narrow. `bib` is where each `\bibliography` marker stands (E0503's `-->`);
-`images` each non-text object's first reporting span: file and boundary
-image sources, and positional native-picture keys (the alt judge's `-->`,
-the driver's per-picture diagnostics);
-`cites` each citation key's first `\cite` (the no-bibliography judge:
-with no `\bibliography` anywhere, `Bib.apply` never runs and nothing else
-explains the '?' the mark ships). -/
+/-- The spans the reporting layer reads back out of elaboration. -/
 public structure SpanRecords where
   bib : Array (String × Span) := #[]
   images : Array (String × Span) := #[]
   cites : Array (String × Span) := #[]
-  /-- Each colour expression and source value's first use in its palette.
-  Equal ink on different grounds must retain distinct reporting sites. -/
+  /-- Each colour expression's and source value's first use in its palette. -/
   colors : Array (Palette × String × Color × Bool × Span) := #[]
-  /-- Declarations supply origins for furniture and implicit foregrounds;
-  an explicit use of the same value takes precedence for reporting. -/
+  /-- The declaration sites furniture and implicit foregrounds report. -/
   colorDeclarations : Array (String × Color × Bool × Span) := #[]
-  /-- Each `\palette` entry that declares an author colour under a name an
-  earlier engine read as the page's text or ground (`ink`, `surface`), at
-  its first declaration: the judge names one the document names nowhere
-  else (`unreadPaletteKeys`). -/
+  /-- Each `\palette` entry that declares an author colour under a retired
+  text or ground key (`ink`, `surface`), at its first declaration. -/
   tokenKeys : Array (String × Span) := #[]
-  /-- The declared `tokenKeys` the engine read, once each: a name a colour
-  expression it resolved spells (`Ir.colorNames`) — a run's or a
-  declaration's colour, a palette entry's value, a beamer colour, a listing
-  ground, a picture's colours — recorded only while a declared key is still
-  unread. What `unreadPaletteKeys` judges a key by. -/
+  /-- The declared `tokenKeys` some resolved colour expression spells, once
+  each. -/
   colorReads : Array String := #[]
-  /-- How many of the document's picture settings and macro definitions
-  `colorReads` holds the names of: each is read once, at the first picture
-  elaborated after it is declared (`notePictureReads`). -/
+  /-- How many picture settings and macro definitions `colorReads` has read. -/
   pictureContextRead : Nat × Nat := (0, 0)
-  /-- The boundary pictures the rendered subset draws in part, by picture
-  id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
+  /-- Boundary pictures the rendered subset draws in part, by picture id. -/
   fallbacks : Array String := #[]
-  /-- The pictures the rendered subset draws in part under the document's
-  `\pictures{ tool = none }`, by picture id (`ReqSpans.declined`). -/
+  /-- Pictures drawn in part under `tool = none`, by picture id. -/
   declined : Array String := #[]
-  /-- Inline code in a language only the highlighter reads, as language
-  and source, each once: what the driver asks it to classify beside the
-  listings (`ReqSpans.code`). -/
+  /-- Inline code the highlighter must classify, as language and source. -/
   code : Array (String × String) := #[]
   /-- Top-level frame openings, maintained with the block accumulator. -/
   frames : FrameSources := {}
-  /-- The actual log at the last content-recovery emission. Its persistent
-  array retains every site's source, aggregate wording, help and demotion
-  for completion after a caller discards the ordinary log. -/
+  /-- The log at the last content-recovery emission. -/
   recoveryDiags : Array Diag := #[]
-  /-- Each palette `\palette[seeds]` generated, by its seeds and targets, with
-  the colours or the failure: one generation per seeds however many epochs
-  declare them (`generated`). -/
+  /-- Each `\palette[seeds]` generation by seeds and targets, with its colours
+  or its failure. -/
   seedPalettes : Array (SeedPalette.Seeds × SeedPalette.Targets ×
     Option SeedPalette.Colors × Option SeedPalette.Failure) := #[]
-  /-- The roles the document has declared through a role door — a
-  `\palette` role key, an xcolor colour of a code role's key, a
-  `\setbeamercolor` channel, `\pagecolor`, the seeds' own ink, paper and
-  accent — and no theme has installed over since: what a generated palette
-  keeps (`Elab.applySeeds`). Any other author colour's name is no role door. -/
+  /-- The roles the document declared through a role door and no theme has
+  installed over since. -/
   docRoles : Array Role := #[]
   deriving Repr, BEq
 
-/-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
-body alike, and the gemini lineage's `\logoleft`/`\logoright` — the
-headline band's corner slots; the last of each wins, as in beamer. -/
+/-- The headline logos: beamer's `\logo` and the `\logoleft`/`\logoright`
+corner slots, the last of each winning. -/
 public structure Logos where
   main : Option (Array Inline) := none
   left : Option (Array Inline) := none
   right : Option (Array Inline) := none
   deriving Repr, BEq
 
-/-- **The argument shapes a counted refusal has met, as a set.** A
-once-per-construct warning shows the first site's words and the group's
-total, so those words are a claim about every site the number counts. When
-the sites differ in shape — one call of `\x` leading with a `[...]` run,
-another not — the first call's wording either hides a drop the reader needs
-or claims one that never happened. Both were live: a dropped run went
-unmentioned at default verbosity, and `(2 sites)` read as runs dropped at
-both.
-
-Two independent bits rather than a three-valued state, because that is what
-makes the accumulation order-blind: each is an `Array.any` over the sites'
-bits, so permuting the document's calls cannot change the wording
-(`runShape_fold_exact`). `{}` is the empty group — no site yet — and is
-never a wording. -/
+/-- The argument shapes a counted refusal's sites have met, as a set. -/
 public structure RunShape where
   /-- Some site of this group led with a `[...]` run. -/
   withRun : Bool := false
@@ -561,16 +376,9 @@ public structure RunShape where
   withoutRun : Bool := false
   deriving Repr, BEq, DecidableEq
 
-/-- One more site, folded in. -/
 public def RunShape.add (s : RunShape) (optionRun : Bool) : RunShape :=
   if optionRun then { s with withRun := true } else { s with withoutRun := true }
 
-/-- **The accumulated shape is exactly the pair of `any`s over the sites.**
-Both projections are `Array.any`/`List.any`, so the wording a group's
-visible line carries is a function of the *set* of its sites' shapes and
-never of their order: the same document with its two calls swapped reports
-the same sentence. This is the statement behind the mixed-shape test that
-runs both orders. -/
 public theorem runShape_fold_exact (bs : List Bool) :
     bs.foldl RunShape.add {} =
       { withRun := bs.any id, withoutRun := bs.any (!·) } := by
@@ -583,82 +391,47 @@ public theorem runShape_fold_exact (bs : List Bool) :
   | cons b rest ih =>
     cases b <;> simp [RunShape.add, ih, List.any_cons, Bool.or_comm]
 
-/-- Folding a site in only ever adds shapes: a group's wording widens and
-never narrows, which is why one rewrite of the visible line per new shape is
-enough (there are two shapes, so at most one rewrite per group). -/
 public theorem runShape_add_monotone (s : RunShape) (b : Bool) :
     (s.withRun → (s.add b).withRun) ∧ (s.withoutRun → (s.add b).withoutRun) := by
   cases b <;> simp [RunShape.add]
 
-/-- The counters the flow keeps (ltcounts.dtx), in document order, and
-the heading-number state they render through. -/
+/-- The counters the flow keeps, and the heading-number state they render
+through. -/
 public structure Counters where
-  /-- The section counters in flow order, levels 1–3: elaboration is one
-  pass in document order, so stepping them here is exactly LaTeX's
-  \refstepcounter sequence. -/
+  /-- The section counters, levels 1–3. -/
   secNums : Nat × Nat × Nat := (0, 0, 0)
-  /-- LaTeX's `secnumdepth` counter: the deepest level a heading numbers
-  at, and above which it neither numbers nor steps (ltsect.dtx `\@sect`).
-  3 is article's (classes.dtx); the run-in levels four and five number
-  where a document raises it (`runNums`). -/
+  /-- LaTeX's `secnumdepth`: the deepest level a heading numbers at; 3 is
+  article's. -/
   secDepth : Int := 3
-  /-- The run-in levels' counters, `paragraph` and `subparagraph`
-  (classes.dtx: levels four and five), stepped only where `secDepth`
-  reaches them and zeroed whenever a level above them steps
-  (`\@addtoreset`, whose resets cascade). -/
+  /-- The `paragraph` and `subparagraph` counters. -/
   runNums : Nat × Nat := (0, 0)
-  /-- Declared heading-number formats, one per level, last wins — the
-  flow-order state a `\renewcommand{\the<counter>}{...}` writes wherever
-  it stands, as LaTeX's redefinition applies from its own position. Empty
-  for a level means the class default (classes.dtx §Sectioning). -/
+  /-- The declared heading-number format of each level, the last winning; a
+  level with none takes the class default. -/
   secFmts : Array (Nat × Array SecPart) := #[]
-  /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …)
-  and the section counter restarted — a from-here-forward flow state, the
-  `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
+  /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …). -/
   inAppendix : Bool := false
-  /-- The equation counter, per document unless `\numberwithin` declared a
-  heading counter it restarts under (`eqWithin`, the level; `eqSnap`, the
-  heading numbers it was last stepped under — `withinSnap`). -/
+  /-- The equation counter, restarting under the `\numberwithin` level
+  `eqWithin` when one is declared. -/
   eqNum : Nat := 0
   eqWithin : Option Nat := none
   eqSnap : String := ""
-  /-- The listing counter, per document: every captioned listing takes the
-  next number in flow order, exactly the equation counter's fold
-  (listings steps `\thelstlisting` per captioned listing). -/
+  /-- The listing counter, stepped per captioned listing. -/
   lstNum : Nat := 0
-  /-- The footnote counter, per document, stepped by `Ir.footnoteMark`:
-  `\footnote[n]` overrides without stepping, so
-  `Ir.footnote_numbers_gapless` is the numbering this fold realizes.
-  Per-chapter numbering waits for a real report class (a `ClassRecord`
-  field then). -/
+  /-- The footnote counter, stepped by `Ir.footnoteMark`. -/
   fnNum : Nat := 0
-  /-- A field's reading (`Bib.FieldDoor`): an unoverridden `\footnote` is
-  numbered where its reference list stands, after the notes before the list
-  (`Ir.numberListNotes`), so its mark is left to the list (`none`). -/
+  /-- Inside a bibliography field's reading, where an unoverridden
+  `\footnote`'s mark is left to its list. -/
   fnDefer : Bool := false
-  /-- The notes each `\bibliography` list's fields set, in document order —
-  a resolution's answer (`Prepared.listNotes`): the counter steps by them
-  where each list stands, as LaTeX's reading of the `.bbl` there steps it,
-  so a note after the list numbers after the list's. -/
+  /-- The notes each `\bibliography` list's fields set, in document order. -/
   listNotes : Array Nat := #[]
-  /-- The footnote counter where each `\bibliography` list stands, in
-  document order: the number its fields' notes continue from
-  (`Ir.Doc.listNotes`). -/
+  /-- The footnote counter where each `\bibliography` list stands. -/
   notesAt : Array Nat := #[]
-  /-- The theorem-like environments (`\newtheorem`, `\theoremstyle`) and
-  their counters in flow order. -/
   thm : ThmDecls := {}
 
-/-- A global assignment made inside a group: the one thing a group's end
-keeps (TeXbook ch. 24 — a `\global` value outlives every group it was made
-in). `\pagecolor` and `\nopagecolor` set the page ground globally, and a
-body `\palette` keeps its documented flow scope the same way: each logs the
-entry it left, and a group's end replays the entries logged since its start
-over the state it restores. -/
+/-- A global assignment made inside a group, which the group's end replays. -/
 public inductive GlobalWrite where
-  /-- A palette name set (`some`) or cleared (`none`), with its decorative
-  class; `native` when Beamer's role state follows a role's entry, as a
-  native `\palette` entry's does (`BeamerColor.State.native`). -/
+  /-- A palette name set or cleared; `native` when Beamer's role state
+  follows it. -/
   | entry (ref : ColorRef) (value : Option Color) (decorative : Bool) (native : Bool)
   /-- The cover fraction a body `\palette{ covered = ... }` set. -/
   | covered (fraction : Option Nat)
@@ -666,50 +439,26 @@ public inductive GlobalWrite where
   | seeded (state : Option SeedPalette.SeedState)
   deriving Repr, BEq, Inhabited
 
-/-- The declaration state TeX's save stack governs (TeXbook ch. 24): the local
-declarations a group's end puts back — the palette and Beamer colour state a
-`\color` or `\setbeamercolor` changes, the language a block `\selectlanguage`
-sets, the URL face `\urlstyle` names, the declarations met between blocks —
-and the log of global assignments, which outlive every group and are
-replayed at each group's end. One record, saved and restored at one point per
-group (`texGroup`), so a group's restore is one equation
-(`texGroup_scope_id`). -/
+/-- The declaration state TeX's save stack governs, and the log of global
+assignments each group's end replays. -/
 public structure GroupScope where
-  /-- The palette in force in flow order and the named Beamer colours: the
-  last body declaration's state, read back at the top of every
-  `elabBlocks` iteration. `none` while the body declared nothing. The
-  document palette both backends read as epoch 0 stays the preamble+theme
-  state; the flow state rides the `.setPalette` blocks. -/
+  /-- The palette in force in flow order and the named Beamer colours. -/
   palette : BeamerColor.State := {}
-  /-- The language in force from a block-level switch (`\selectlanguage`),
-  `none` for the document's main language. Paragraphs formed under it
-  carry the attribute (`mkPara`). -/
+  /-- The language a block-level `\selectlanguage` set, `none` for the
+  document's main language. -/
   lang : Option String := none
-  /-- The family a `\url`/`\nolinkurl` sets in, from url.sty's `\urlstyle`:
-  `tt`/`rm`/`sf` name the mono/roman/sans family, and `same` asks for the
-  running face, which is `none` — no family style at all, not a fourth
-  family. url.sty's own default is `tt`, so that is the initial value.
-  In the preamble it is the last defined value the preamble names, for
-  every declaration wherever the selector stands (`elabDoc` reads it before
-  the fold); in the body it applies to the URLs after it in its group. -/
+  /-- The family a `\url` sets in, from url.sty's `\urlstyle`; `none` is the
+  running face. -/
   urlFamily : Option Ir.Style := some .mono
-  /-- The declarations met between blocks in the enclosing scopes,
-  outermost first (`Ir.Decl`): every inline region built under them — a
-  paragraph, a table cell — is wrapped in them (`Ir.wrapDecls`), which is
-  how `\footnotesize` before a tabular reaches its cells
-  (`Ir.decl_between_blocks_covers`). The declaration arm pushes on entering
-  the rest of its scope and restores on leaving. -/
+  /-- The declarations met between blocks in the enclosing scopes, outermost
+  first, which wrap every inline region built under them. -/
   blockDecls : List Ir.Decl := []
-  /-- Every global assignment in flow order (`GlobalWrite`): the one field a
-  group's end keeps, replaying the entries logged since its start over the
-  local fields it puts back. -/
+  /-- Every global assignment in flow order, which a group's end keeps. -/
   globals : Array GlobalWrite := #[]
   deriving Inhabited
 
-/-- One global assignment replayed over a restored colour state, through the
-door the assignment used: the palette entry set or cleared, and Beamer's
-role state where a native entry moves it. `base` is the palette a `current`
-of `none` stands for. -/
+/-- Replays one global assignment over a restored colour state; `base` is the
+palette an unset `current` stands for. -/
 @[expose] public def GlobalWrite.replay (base : Palette) (s : BeamerColor.State) :
     GlobalWrite → BeamerColor.State
   | .entry ref value decorative native =>
@@ -725,17 +474,13 @@ of `none` stands for. -/
   | .seeded state =>
     { s with current := some { s.current.getD base with seeded := state } }
 
-/-- Does a replayed entry move Beamer's role state, so the named colours
-resolve again over it? -/
 @[expose] public def GlobalWrite.movesRoles : GlobalWrite → Bool
   | .entry _ _ _ native => native
   | .covered _ => false
   | .seeded _ => false
 
-/-- What a group's end leaves (TeXbook ch. 24): the local fields its start
-held, the global assignments logged since replayed over them in order — a
-named Beamer colour then resolves again against the replayed roles, as it
-does after a body `\palette` — and the log as the group closed it. -/
+/-- The scope a group's end leaves: the fields its start held, with the
+global assignments logged since replayed over them. -/
 @[expose] public def GroupScope.restore (base : Palette) (saved closed : GroupScope) :
     GroupScope :=
   let logged := closed.globals.extract saved.globals.size closed.globals.size
@@ -746,8 +491,6 @@ does after a body `\palette` — and the log as the group closed it. -/
     else s
   { saved with palette := s, globals := closed.globals }
 
-/-- With no global assignment logged since its start, a group's end leaves
-exactly the scope its start held. -/
 public theorem GroupScope.restore_id (base : Palette) (saved closed : GroupScope)
     (h : closed.globals = saved.globals) : saved.restore base closed = saved := by
   unfold GroupScope.restore
@@ -759,134 +502,68 @@ public theorem GroupScope.restore_id (base : Palette) (saved closed : GroupScope
 
 public structure ESt where
   diags : Array Diag := #[]
-  /-- Warn-once keys already fired: a macro used forty times is one problem,
-  not forty. Keys are namespaced (`env:`, `ctrl:`, `palette:`) so an
-  environment and a command sharing a name cannot silence each other. -/
+  /-- Warn-once keys already fired. -/
   warnedUnknown : Array String := #[]
-  /-- Per counted-refusal key: the argument shapes its sites have carried,
-  and the index in `diags` of the line the group's total is read off. The
-  index is recorded rather than searched for, so only the diagnostic *this*
-  emitter wrote is ever rewritten — the preamble's own refusal, which shares
-  the key but not the wording, is untouched. An index is a position in one
-  `diags` array, so it is reset with that array (`ESt.freshReport`). -/
+  /-- Per counted-refusal key: its sites' shapes and the index in `diags` of
+  the line carrying the group's total. -/
   runShapes : Array (String × RunShape × Nat) := #[]
-  /-- `\title` / `\subtitle` / `\author` / `\institute` / `\date`, wherever
-  they appear — beamer documents declare them in the body — read back by
-  `\maketitle` and, as plain text, by the PDF metadata fallback. -/
+  /-- `\title`, `\subtitle`, `\author`, `\institute` and `\date`, wherever
+  they appear. -/
   title : Option (Array Inline) := none
   subtitle : Option (Array Inline) := none
   author : Option (Array Inline) := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
-  /-- Beamer's optional short forms, read by its `\insertshort...`
-  commands. A new declaration without a short form restores the full
-  datum as its fallback (beamerbasetitle.sty). -/
+  /-- Beamer's optional short forms, read by its `\insertshort...` commands. -/
   shortTitles : List (TitleDatum × Array Inline) := []
-  /-- A `\maketitle` already set the title: LaTeX typesets a title once
-  (classes.dtx: `\maketitle` ends with `\global\let\maketitle\relax`), and
-  keeping to that is what makes the level-0 heading unique by
-  construction — a second call warns and produces nothing. -/
+  /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
-  /-- The body of the last refused `\maketitle` redefinition (rule (b),
-  W0361): read once more at the preamble's end — when the internals it
-  names (`\@maketitle`, `\@toptitlebar`) are all defined — for the
-  declarative title styling it may carry (`applyRefusedTitleStyle`). -/
+  /-- The last refused `\maketitle` redefinition's body, read again at the
+  preamble's end for its title styling. -/
   refusedTitleBody : Option (Array Raw) := none
-  /-- The bodies of refused size-command redefinitions (rule (b), W0361),
-  in document order: read once more at the preamble's end for the
-  `\@setfontsize` ladder they may declare (`applyRefusedSizeLadder`), as
-  `refusedTitleBody` is for `\maketitle`'s styling. -/
+  /-- Refused size-command redefinitions' bodies, read again at the preamble's
+  end for their `\@setfontsize` ladder. -/
   refusedSizeBodies : Array (String × Array Raw × Span) := #[]
-  /-- Speaker-note bodies met inside inline content, where a block cannot
-  stand, each with its `\note`'s position: the enclosing frame drains them
-  to its end, so a mid-sentence `\note` neither splits its paragraph nor
-  loses its words. -/
+  /-- Speaker-note bodies met inside inline content, which the enclosing
+  frame drains to its end. -/
   pendingNotes : Array (Array Raw × Pos) := #[]
-  /-- The logo declarations, one field: the knot state stays narrow (every
-  `{ st with … }` across the knots copies each field, and the knot's LCNF
-  compile scales with the count — the SpanRecords shape). -/
   logos : Logos := {}
-  /-- Boundary picture requests met in the body: content hash of each
-  wrapped standalone source, with the source — deduplicated, so one
-  picture repeated is one request. Assembled onto `Doc.pictureSrcs`. -/
+  /-- Boundary picture requests by content hash, one per distinct source. -/
   pictures : Array (String × Ir.PicSrc) := #[]
-  /-- The salvage this elaboration recovered, in flow order: assembled onto
-  `Doc.salvage`. Written at the recovery sites and read nowhere inside the
-  elaborator — it is the attribution the census needs, not a decision the
-  front end makes. -/
   salvage : Array Ir.Recovered := #[]
-  /-- Where the deck's frame count starts over (`Compat.frameRestartMark`):
-  the index of the next top-level block when the mark was read. Assembled
-  onto `Doc.frameRestart`. -/
+  /-- The top-level block index where the deck's frame count starts over. -/
   frameRestart : Option Nat := none
-  /-- `\bibliographystyle`, wherever it appears — LaTeX reads it anywhere
-  before the .aux is written; here the `\bibliography` marker met later
-  carries it, so the declared name reaches resolution with the block. -/
+  /-- The `\bibliographystyle` name, wherever it appears. -/
   bibStyle : Option String := none
-  /-- natbib's declarations, as `Doc.natbib` carries them: `none` until the
-  load's marker (`@natbib`, which the compatibility pass replays at
-  `\begin{document}`) says natbib is there. -/
+  /-- natbib's declarations, `none` until natbib is loaded. -/
   natbib : Option (Array String) := none
-  /-- The declaration state, restored at each group's end (`texGroup`). -/
   scope : GroupScope := {}
-  /-- Body-declared tokens (`\setlength` mid-document): a group restores the
-  lengths it assigned through the keys the compatibility pass marks at its
-  close (`closeLengthScope`). -/
+  /-- Lengths the body declares (`\setlength` mid-document). -/
   flowTokens : Option Tokens := none
-  /-- Bumped by each body declaration: the cheap guard that lets the block
-  loop skip re-reading the flow state per raw item. -/
+  /-- Bumped by each body declaration, so the block loop re-reads the flow
+  state only when it moved. -/
   flowGen : Nat := 0
-  /-- Scalar settings the preamble has declared so far, `(decl, key) ↦` the
-  value as written: the store behind W0343, which fires only when the same
-  key returns with a *different* value — a same-value repeat is harmless
-  and stays silent. Holds document declarations only: a theme install never
-  writes here, so overriding a theme's default never warns. -/
+  /-- The scalar settings the document has declared, by `(decl, key)`, each
+  with its value as written. -/
   seenScalars : Array (String × String × String) := #[]
-  /-- Keyed entries the document itself has declared, `(decl, key)`: the
-  store behind W0348, which fires only when a `\theme` install replaces a
-  value standing from one of these. A theme install removes the keys it
-  declares — the standing value is then the bundle's — so `\theme` after
-  `\theme` never claims the document declared what a bundle did. -/
+  /-- The keyed entries the document itself declared, `(decl, key)`, that no
+  theme install has replaced. -/
   declaredKeys : Array (String × String) := #[]
-  /-- LaTeX's counters and the heading numbers they render, apart: the
-  inline elaboration knot's compile grows with this structure's fields and
-  stands at its heartbeat budget, so state the knot never reads is a record
-  of its own (`Counters`). -/
   ctr : Counters := {}
-  /-- The binding of the nearest preceding numbered thing — what a `\label`
-  declared here binds to: the rendered number with the kind of what it
-  names (`Ir.RefBinding`). A heading sets it for the flow after it; a bare
-  `\refstepcounter` sets a kindless binding (`applyCounter`). A captioned
-  float never writes here: its number exists only after
-  `Ir.numberFloats` runs on the finished body, so the labels under it are
-  bound from the numbered IR (`Ir.floatLabelRows`), never predicted. -/
+  /-- The binding of the nearest preceding numbered thing, which a `\label`
+  declared here takes. -/
   refTarget : Option Ir.RefBinding := none
-  /-- The label table in flow order: each key with the binding it took.
-  The first declaration of a key wins (LaTeX's behaviour); a second is
-  W0350 at its own position. -/
+  /-- The label table in flow order; a key's first declaration wins. -/
   labels : Array (String × Option Ir.RefBinding) := #[]
-  /-- The same table's key set, the only thing the duplicate test asks of
-  it. The table stays flow-ordered because backends read it in order; the
-  set answers "already declared" without walking it, which a document of
-  a few thousand labels had been paying a square for. One writer
-  (`labelStep`) moves both, and `labelStep_set_eq` is that they cannot
-  drift. -/
+  /-- The label table's key set. -/
   labelKeys : Std.HashSet String := {}
-  /-- Every reference site with its form, for W0349 and W0380 once the
-  whole table is known: a reference may point forward, so it cannot be
-  judged where it stands. -/
+  /-- Every reference site with its form, judged once the label table is
+  complete. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
-  /-- The spans the reporting layer reads, packed as one field: the state
-  is copied at every `{ st with ... }` across the elaboration knots, and
-  the knots' compile cost scales with the field count, so the three
-  span records ride together. Reporting metadata, delivered beside the
-  `Doc` (`ReqSpans`), never on it. -/
   spans : SpanRecords := {}
-  /-- The document-global algorithm state the preamble declared. -/
   alg : AlgSt := {}
 
-/-- The declared title datum, shared by ordinary Beamer inserts and the
-short form's fallback. An undeclared datum contributes no content. -/
+/-- The declared title datum, empty when undeclared. -/
 public def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
   | .title => st.title.getD #[]
   | .subtitle => st.subtitle.getD #[]
@@ -894,8 +571,7 @@ public def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
   | .institute => st.institute.getD #[]
   | .date => st.date.getD #[]
 
-/-- Read the Beamer insert family from the metadata already elaborated at
-its declaration. This does not reparse or re-expand the author's text. -/
+/-- A Beamer `\insert…` command's content, from the elaborated metadata. -/
 public def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) := do
   if name.startsWith "insertshort" then
     let datum ← TitleDatum.ofName? (name.drop "insertshort".length).copy
@@ -905,8 +581,6 @@ public def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) :
     return st.titlePart datum
   else none
 
-/-- Every full insert is exactly the declared datum; backend layout never
-has to recover metadata from a command spelling. -/
 public theorem ESt.titleInsert_exact (st : ESt) (datum : TitleDatum) :
     st.titleInsert? ("insert" ++ datum.name) = some (st.titlePart datum) := by
   have hdrop : (("insert" ++ datum.name).drop "insert".length).copy = datum.name := by
@@ -919,13 +593,8 @@ public theorem ESt.titleInsert_exact (st : ESt) (datum : TitleDatum) :
     cases datum <;> simp +decide [TitleDatum.name_exact]
   simp [hshort]
 
-/-- **The reporting state a trial elaboration starts from.** A trial swaps
-`diags` for an empty array, and every field that indexes that array or
-dedups against it goes with it: `runShapes` holds positions in `diags`, so a
-trial that kept it while emptying `diags` let `bumpRunShape` reword whatever
-the trial had pushed at a recorded position — a diagnostic another construct
-emitted — and W0361 then quoted that construct. One helper, so a field of
-this kind is reset at the one place a trial begins, never field by field. -/
+/-- The reporting state a trial elaboration starts from, every field that
+indexes or dedups against `diags` reset with it. -/
 public def ESt.freshReport (e : ESt) : ESt :=
   { e with
     diags := #[]
@@ -933,16 +602,15 @@ public def ESt.freshReport (e : ESt) : ESt :=
     runShapes := #[]
     spans := { e.spans with recoveryDiags := #[] } }
 /-- Where a listing body's content starts: past the option head and, for
-`{minted}`, its language argument — the one index both the block arm and
-the inline degradation strip from. -/
+`{minted}`, its language argument. -/
 private def listingContentStart (env s : String) : Nat :=
   let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
   if env == "minted" then
     ((Parse.mintedLangHead s afterOpt).map (·.2)).getD afterOpt
   else afterOpt
 
-/-- Strip the value's one surrounding brace group: `{An example}` reads as
-`An example`, as listings' keyval values do. -/
+/-- A keyval value without its one surrounding brace group, as listings
+reads it. -/
 private def listingVal (v : String) : String :=
   let v := v.trimAscii.toString
   if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
@@ -951,13 +619,8 @@ private def listingVal (v : String) : String :=
 
 public abbrev EM := StateM ESt
 
-/-- **A TeX group** (TeXbook ch. 24): whatever the group's body does, its
-end puts back the declaration state its start held, then replays the global
-assignments logged inside. When the palette in force at the end differs from
-the restored one, the restored palette rides one `.setPalette` placed after
-the group, so both backends read the epoch the state holds; `flowGen` moves
-so the block spine re-reads the state. `base` is the palette a `current` of
-`none` stands for. -/
+/-- A TeX group: its end restores its start's scope and places a
+`.setPalette` after it when the palette in force changed. -/
 @[expose] public def texGroup (base : Palette) (act : EM α) : EM (α × Array Block) := fun st =>
   let (a, done) := act st
   let scope := st.scope.restore base done.scope
@@ -966,51 +629,38 @@ so the block spine re-reads the state. `base` is the palette a `current` of
     else #[Block.setPalette restored]
   ((a, epoch), { done with scope := scope, flowGen := done.flowGen + 1 })
 
-/-- A group's end restores the state its start held with the global
-assignments logged inside replayed over it, whatever its body did. -/
 public theorem texGroup_scope_exact (base : Palette) (act : EM α) (st : ESt) :
     ((texGroup base act).run st).2.scope = st.scope.restore base (act.run st).2.scope := rfl
 
-/-- **With no global assignment inside, a group's end is the identity on the
-declaration state**: the state after it equals the state before it. -/
 public theorem texGroup_scope_id (base : Palette) (act : EM α) (st : ESt)
     (hglobal : (act.run st).2.scope.globals = st.scope.globals) :
     ((texGroup base act).run st).2.scope = st.scope := by
   rw [texGroup_scope_exact]
   exact GroupScope.restore_id base st.scope _ hglobal
 
-/-- A group passes its global assignments on: the log after it is its body's. -/
 public theorem texGroup_globals_exact (base : Palette) (act : EM α) (st : ESt) :
     ((texGroup base act).run st).2.scope.globals = (act.run st).2.scope.globals := rfl
 
-/-- The epoch a group's end places is exactly the restored palette, when the
-palette its body closed with resolves differently, and nothing otherwise. -/
 public theorem texGroup_epoch_exact (base : Palette) (act : EM α) (st : ESt) :
     ((texGroup base act).run st).1.2 =
       let restored := (st.scope.restore base (act.run st).2.scope).palette.current.getD base
       if ((act.run st).2.scope.palette.current.getD base).sameAs restored then #[]
       else #[Block.setPalette restored] := rfl
 
-/-- An inline group's end: the same restore, with no epoch — inline content
-writes no palette and no block can stand in it, so only the URL face can
-have moved. -/
+/-- An inline TeX group: the same restore, with no palette epoch. -/
 @[expose] public def inlineGroup (base : Palette) (act : EM α) : EM α := fun st =>
   let (a, done) := act st
   (a, { done with scope := st.scope.restore base done.scope })
 
-/-- An inline group's end restores the state its start held, as a block
-group's does. -/
 public theorem inlineGroup_scope_exact (base : Palette) (act : EM α) (st : ESt) :
     ((inlineGroup base act).run st).2.scope = st.scope.restore base (act.run st).2.scope := rfl
 
-/-- An inline group around a value that touches no state is that value. -/
 public theorem inlineGroup_pure (base : Palette) (x : α) :
     inlineGroup base (pure x : EM α) = pure x := by
   funext st
   show (x, { st with scope := st.scope.restore base st.scope }) = (x, st)
   rw [GroupScope.restore_id base st.scope st.scope rfl]
 
-/-- Log a global assignment, for every enclosing group's end to replay. -/
 private def logGlobal (w : GlobalWrite) : EM Unit :=
   modify fun st => { st with scope := { st.scope with globals := st.scope.globals.push w } }
 
@@ -1018,8 +668,7 @@ private def setFrameSourceBase (base : Option Nat) : EM Unit :=
   modify fun st => { st with spans := { st.spans with
     frames := { st.spans.frames with base } } }
 
-/-- Schedule a child accumulator's source offset at the same site that
-splices its result. The recursive block API keeps its existing parameters. -/
+/-- Runs `scope` as a child accumulator whose blocks splice in at `offset`. -/
 @[noinline] private def splicedFrameScope (offset : Option Nat)
     (scope : EM (Array Block)) : EM (Array Block) := do
   modify fun st => { st with spans := { st.spans with frames :=
@@ -1034,9 +683,7 @@ private def keepFrameSourcePrefix (size : Nat) : EM Unit :=
   modify fun st => { st with spans := { st.spans with
     frames := st.spans.frames.keepPrefix size } }
 
-/-- Build the diagnostic `diag` pushes, as a value: the one constructor
-both the monadic emitter and the pure preamble steps (`PEvent.say`) share,
-so a message exists in exactly one spelling. -/
+/-- The diagnostic `diag` pushes, as a value. -/
 private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
@@ -1051,19 +698,12 @@ private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
   modify fun st => { st with
     diags := st.diags.push (diagOf ctx code msg pos help (refused := refused)) }
 
-/-- One reporting effect a preamble apply step asks for — effects as data,
-so the value half of a step is a pure function a theorem can range over.
-`.say` is a diagnostic; `.scalar` goes through the `seenScalars` store
-(W0343 when the same key returns with a different value); `.declared`
-marks a key document-declared (W0348's store). Every constructor writes
-only the reporting fields of `ESt` — the ones `ESt.sem` erases — which is
-the whole point: an apply step's effect on the compared state is nothing. -/
+/-- One reporting effect a preamble apply step asks for. -/
 private inductive PEvent where
   | say (d : Diag)
   | scalar (decl key value : String) (pos : Pos)
   | declared (decl key : String)
 
-/-- Apply one reporting event to the elaboration state, purely. -/
 private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
   | .say d => { st with diags := st.diags.push d }
   | .scalar decl key value pos =>
@@ -1083,29 +723,11 @@ private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
       if st.declaredKeys.contains (decl, key) then st.declaredKeys
       else st.declaredKeys.push (decl, key) }
 
-/-- Fulfil a step's reporting events, in order, as one state update. -/
 private def emitEvents (ctx : Ctx) (evs : Array PEvent) : EM Unit :=
   modify fun st => evs.foldl (applyEvent ctx) st
 
-/-- A warning delivered once per construct and *counted* every time: the
-same unsupported construct in forty frames is one problem, not forty, but it
-is also not one loss. The first site carries the message, the help, and —
-after `Diag.tallySites` — the total; each later site rides beside it as a
-note with the same code and the same structured `subject`, so it reads
-under `-v` at its own position and the count on the visible line is the
-number of sites the log holds. The words match too, except where a refusal
-words its argument shape (`RunShape.clause`): there each note keeps its own
-site's clause, and the first line is reworded to the group's. Keying on the
-construct alone is what
-made ten lines stand for fifty losses, two of them node labels dropped with
-no diagnostic at all because an earlier site had spent the key.
-`demote` delivers the first site as a note instead — the spliced-`.sty`
-TeX-internal refusal (`Compat.styInternal`), correct and unactionable per
-line, counted once by N0020 and listed under `-v`.
-
-The state step is a pure function so that a statement can name it: the
-first-site flag is a term over the state passed in, not a bound variable
-inside a `do` block, which is what `warnUnknownCmd_push_exact` reads. -/
+/-- One site of a warning delivered once per construct and counted every
+time: later sites, and `demote`d ones, are notes. -/
 private def warnOnceDiag (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -1126,8 +748,6 @@ private theorem demote_output (d : Diag) : d.demote.output = d.output := by
   have h := congrArg Diag.output (Diag.demote_record_exact d)
   exact h
 
-/-- **One keyed warning, one diagnostic, carrying its code and its key as
-subject.** Typed presentation and output scope never replace census identity. -/
 private theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -1155,15 +775,14 @@ private theorem warnOnceDiag_output_exact (ctx : Ctx) (key : String) (code : Dia
   dsimp only
   split <;> simp only [demote_output, Diag.of_record_exact]
 
-/-- A scoped loss has its own first site. The subject stays the construct's
-key; only the once-per-output bookkeeping distinguishes the two backends. -/
+/-- The warn-once key of a loss scoped to one output. -/
 private def warnOnceKey (key : String) : Option Diag.Output → String
   | none => key
   | some .pdf => key ++ "\npdf"
   | some .html => key ++ "\nhtml"
   | some .md => key ++ "\nmd"
 
-/-- Record one loss site. Repetition changes presentation, never accounting. -/
+/-- Records one loss site; a repeat changes presentation, not the count. -/
 public def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -1183,11 +802,6 @@ private theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : Dia
       st.diags.push (warnOnceDiag ctx key code msg pos help demote
         (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output detail) := by rfl
 
-/-- Each call adds exactly one site to its own loss group and none to any
-other group. The law ranges over the actual reporting operation, not over
-repeated source text: declarations and stateful bodies need not execute the
-same sites twice. Output scope, code and subject are the census identity;
-message wording, location, help and demotion cannot change the count. -/
 public theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) (d : Diag)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -1220,18 +834,13 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (output : Option Diag.Output := none) (detail : Option String := none) : EM Unit :=
   modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output detail
 
-/-- Record a citation group's keys with their `\cite`'s span, first
-occurrence per key: the no-bibliography judge's sites (elabDoc). A
-top-level helper so the inline knot carries a call, not a closure. -/
+/-- Records each citation key's first `\cite` span. -/
 private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) : EM Unit :=
   modify fun st => { st with spans := keys.foldl (fun sp k =>
     if sp.cites.any (·.1 == k) then sp
     else { sp with cites := sp.cites.push (k, ctx.sourceSpan pos) }) st.spans }
 
-/-- Record a non-text object's census key and span. File and boundary
-images use their source; every native picture uses a positional
-`picture#k` key, including described and decorative pictures so a caption
-cannot renumber a later missing alternative. -/
+/-- Records a non-text object's census key with its first span. -/
 private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
   modify fun st =>
     if st.spans.images.any (·.1 == src) then st
@@ -1242,24 +851,18 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
   let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
   recordImageSpan ctx (Ir.picKeyPrefix ++ toString k) pos
 
-/-- The `\palette` keys an earlier engine read as the page's text and ground
-on screen alone: author colours now, each judged by whether anything reads it
-(`unreadPaletteKeys`). -/
+/-- Retired `\palette` text and ground keys, now ordinary author colours. -/
 private def legacyScreenKeys : List String := ["ink", "surface"]
 
-/-- The legacy keys the document declares that the engine has not read yet:
-what a read can still matter for. A read before a key's declaration reads no
-declared colour. -/
+/-- The declared legacy keys the engine has not read yet. -/
 private def owedKeys : EM (List String) := do
   let spans := (← get).spans
   return spans.tokenKeys.toList.filterMap fun (k, _) =>
     if spans.colorReads.contains k then none else some k
 
-/-- Whether a read can still matter: a declared legacy key is still unread. -/
 private def readsOwed : EM Bool := return !(← owedKeys).isEmpty
 
-/-- Record the owed keys among colour names the engine read
-(`SpanRecords.colorReads`): no other name is judged by what reads it. -/
+/-- Records the owed keys among colour names the engine read. -/
 private def noteColorNames (names : Array String) : EM Unit := do
   let owed ← owedKeys
   if owed.isEmpty then return
@@ -1269,20 +872,18 @@ private def noteColorNames (names : Array String) : EM Unit := do
   if more.size != reads.size then
     modify fun st => { st with spans := { st.spans with colorReads := more } }
 
-/-- Record the colour names an expression the engine resolves spells: an
-expression that spells no owed key anywhere is never split into names. -/
+/-- Records the owed colour names a resolved expression spells. -/
 private def noteColorReads (expr : String) : EM Unit := do
   let owed ← owedKeys
   if owed.any (expr.contains ·) then noteColorNames (Ir.colorNames expr)
 
-/-- Roles the document declares through a role door (`SpanRecords.docRoles`). -/
 private def noteDocRoles (rs : List Role) : EM Unit :=
   modify fun st =>
     let roles := rs.foldl (fun acc r => if acc.contains r then acc else acc.push r)
       st.spans.docRoles
     { st with spans := { st.spans with docRoles := roles } }
 
-/-- Record a colour expression's first use in its source palette. -/
+/-- Records a colour expression's first use in its palette. -/
 private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
     (pos : Pos) : EM Unit := do
   noteColorReads expr
@@ -1301,10 +902,6 @@ private def recordColorDeclaration (key : String) (c : Color) (span : Span) : EM
       { st.spans with colorDeclarations :=
         st.spans.colorDeclarations.push (key, c, true, span) } }
 
-/-- The one W0304: a palette name that resolves to nothing keeps its
-content uncoloured. Every colour door — the inline `\textcolor` arm, the
-flow block form, and a formula's colours — speaks through here, so the
-message has one spelling. Outside the knot. -/
 private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
   warnOnce ctx ("palette:" ++ key) .W0304
     s!"'{key}' is not in the palette; content kept uncoloured" pos
@@ -1313,9 +910,8 @@ private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
       else s!"declared: {String.intercalate ", "
         (ctx.palette.entries.toList.map (·.1.key))}")
 
-/-- A use's origin matches its role, source value and judged palette.
-Equal ink on a different ground cannot borrow an earlier use's source.
-Furniture without an explicit use falls back to its declaration. -/
+/-- The reporting site of a colour: its first use matching role, source and
+palette, else its declaration. -/
 public def colorSiteOf (colors : Array (Palette × String × Color × Bool × Span))
     (name : Option String) (c : Color)
     (declarations : Array (String × Color × Bool × Span) := #[])
@@ -1330,11 +926,8 @@ public def colorSiteOf (colors : Array (Palette × String × Color × Bool × Sp
   (used.map fun (_, e, _, _, sp) => (e, sp)).orElse fun _ =>
     (declarations.find? matchesSite).map fun (e, _, _, sp) => (e, sp)
 
-/-- A `\bibliography` list stands here: its span, E0503's `-->`
-(`ReqSpans.bib`), the footnote counter its
-fields' notes continue from, and the counter stepped by the notes a
-resolution found the list sets (`Counters.listNotes`), as LaTeX's reading of
-the `.bbl` there steps it. -/
+/-- Records a `\bibliography` list here: its span, and the footnote counter
+stepped by the notes its fields set. -/
 private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
   modify fun st =>
     let c := st.ctr
@@ -1342,11 +935,8 @@ private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
     { st with spans := { st.spans with bib := st.spans.bib.push (src, ctx.sourceSpan pos) }
               ctr := { c with notesAt := c.notesAt.push c.fnNum, fnNum := c.fnNum + step } }
 
-/-- **url.sty's `\urlstyle` values, as the family each names.** `tt`, `rm`
-and `sf` name the mono, roman and sans families; `same` asks for the face in
-force, which is no family style at all rather than a fourth family — hence
-the nested `Option`. Anything else is not a url.sty value (url.sty header,
-`\urlstyle`). -/
+/-- The family a url.sty `\urlstyle` value names, `some none` for `same`'s
+face in force. -/
 private def urlStyleFamily? : String → Option (Option Ir.Style)
   | "tt" => some (some .mono)
   | "rm" => some (some .roman)
@@ -1354,9 +944,7 @@ private def urlStyleFamily? : String → Option (Option Ir.Style)
   | "same" => some none
   | _ => none
 
-/-- Reserved control words, and the code each skip earns — W0307 (pending,
-a warning: a milestone owns the construct) when the skipped arguments carry
-content, W0329 (config) when only layout or selection is lost. -/
+/-- Reserved control words with the code each skip earns. -/
 private def reservedCtrl : List (String × DiagCode) :=
   [("vspace", .W0329), ("noindent", .W0329),
    ("fontfallback", .W0329), ("figure", .W0307), ("pageref", .W0307)]
@@ -1366,13 +954,10 @@ public def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
    "theme", "chrome", "pictures", "figures", "allow"]
 
-/-- The boundary tools the engine will run. A document declares *which* of
-these draws its pictures, never an arbitrary binary: the driver executes
-the named tool, so an open value would be a document running commands. -/
+/-- The only boundary tools a document may select to draw its pictures. -/
 private def picTools : List String := ["lualatex"]
 
-/-- Preamble declarations that take one group of *inline content* rather than
-a key/value block: running head and foot. -/
+/-- Preamble declarations that take one inline-content group. -/
 public def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 private def pageKeys : List String :=
@@ -1382,11 +967,8 @@ private def pageKeys : List String :=
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
    "furnituregap", "headsep", "footskip", "rule", "trim", "bottom"]
 
-/-- The `\page` keys that declare the page's physical extent. Exactly these
-claim the page as declared (`sawPage` in `elabDoc`), keeping every value
-named; a rhythm or policy key (`parskip`, `leading`, `fontsize`, `measure`,
-`hyphenate`, `justify`) speaks to the text and must not silently forfeit
-the Bringhurst text-block margin the undeclared page is owed. -/
+/-- The `\page` keys that declare the page's physical extent, and so claim
+the page as declared. -/
 private def pageGeometryKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "bleed"]
@@ -1399,44 +981,37 @@ private def fontKeys : List String :=
   ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
    "mathrm", "mathit", "mathbf", "mathsf", "mathtt"]
 
-/-- Named page sizes, in sp: the ISO 216 A-series at TeX's big-point
-rounding (A4 595 × 842 pt, A5 420 × 595 pt) and the ANSI/US office sizes
-(letter 8.5 × 11 in, legal 8.5 × 14 in = 612 × 792 / 612 × 1008 pt). -/
+/-- Named page sizes: ISO 216's A4 and A5 at TeX's big-point rounding, and
+US letter and legal. -/
 private def pageSizes : List (String × (Sp × Sp)) :=
   [("letter", (pt 612, pt 792)),
    ("legal", (pt 612, pt 1008)),
    ("a4", (Dim.pt 595, Dim.pt 842)),
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
-/-- The slides stage a class-option list selects: beamer's `aspectratio=`
-option read through `Ir.slidesStages`; absent — or naming a ratio beamer
-does not — the 4:3 stage, beamer's documented default (user guide §8.1). -/
+/-- The slides stage beamer's `aspectratio=` option selects, else beamer's
+default 4:3. -/
 private def slidesStageOf (opts : List String) : Sp × Sp :=
   (opts.findSome? fun o =>
     if o.startsWith "aspectratio=" then
       Ir.slidesStageNamed ((o.drop "aspectratio=".length).toString)
     else none).getD Ir.slidesStage43
 
-/-- The picture environments, whose body is the boundary's or the
-picture reader's and never a paragraph's text: a `tikzpicture`, a
-`tikzcd` (outside mathematics, the tikz-cd manual's own spelling), and the
-externalized picture. -/
+/-- The picture environments, whose body is never a paragraph's text. -/
 private def reservedEnv : List String :=
   ["external", "tikzpicture", "tikzcd"]
 
-/-- The alignment environments this slice renders as grids: the column
-model, and whether LaTeX numbers the rows (numbers are owed, W0014).
-`array` is not here — it lives inside math and the math parser owns it. -/
+/-- The alignment environments rendered as grids: the column model, and
+whether LaTeX numbers the rows. -/
 public def alignEnvs : List (String × Math.GridKind × Bool) :=
   [("align", .align, true), ("align*", .align, false),
    ("gather", .gather, true), ("gather*", .gather, false)]
 
-/-- The display-math environments rendered as one centred formula, and
-whether LaTeX numbers them (`equation` renders unnumbered under W0014). -/
+/-- The display-math environments set as one centred formula, and whether
+LaTeX numbers them. -/
 public def displayMathEnvs : List (String × Bool) :=
   [("equation*", false), ("displaymath", false), ("equation", true)]
 
-/-- Is this environment display mathematics — its own centred block? -/
 private def isMathEnv (name : String) : Bool :=
   (displayMathEnvs.lookup name).isSome || (alignEnvs.lookup name).isSome
 
@@ -1444,25 +1019,16 @@ private def isMathEnv (name : String) : Bool :=
 private def titleCtrls : List String :=
   ["title", "subtitle", "author", "institute", "date"]
 
-/-- Preamble file markers, spliced around an `\input`'s declarations so the
-flat preamble walk knows which file it is reading. `@` never lexes into a
-control word, so no document can forge one. -/
+/-- A preamble marker naming the file the declarations after it come from;
+no document can spell one. -/
 private def fileMarker (f : String) : String := "@file:" ++ f
 
 private def fileMarkerFile? (name : String) : Option String :=
   if name.startsWith "@file:" then some ((name.drop "@file:".length).toString)
   else none
 
-/-- The NFSS font axes, one row per axis value with its two spellings — the
-declaration (`{\bfseries …}`) and the one-argument text command
-(`\textbf{…}`) — as fntguide §2.2's table of font-change commands gives
-them (LaTeX2e font selection: family roman/sans/typewriter, series
-medium/bold, shape upright/italic/slanted/small-caps, plus the default and
-`\em`). `argStyles` and `declStyles` derive from this table, so the two
-spellings cannot disagree; they once did as two hand lists (`\scshape` in,
-`\textsc` out). The slanted shape sets italic: the engine's face model
-carries upright and italic variants, the substitution NFSS itself makes
-when a face has no slanted shape. -/
+/-- The NFSS font axes: each value with its declaration and its text-command
+spelling (fntguide §2.2). -/
 public def fontAxes : List (String × String × Style) :=
   [("rmfamily", "textrm", .roman), ("sffamily", "textsf", .sans),
    ("ttfamily", "texttt", .mono),
@@ -1480,18 +1046,12 @@ public def declStyles : List (String × Style) :=
   (["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large",
     "Large", "LARGE", "huge", "Huge"].map fun n => (n, Style.size n))
 
-/-- Which edges of a text-font command's argument get ltfntcmd's
-`\maybe@ic`, as `(before, after)`. `\DeclareTextFontCommand` sets
-`\check@icl` before the argument and `\check@icr` after the group; there is
-neither for an empty or a lone-space argument (`\text@command`), none
-before when the argument opens with `\nocorr`, none after when a `\nocorr`
-follows its first token (`\check@nocorr@`), and none where the token
-`\maybe@ic` reads next — the argument's first, or the one after the
-group — is `,` or `.` (`\nocorrlist`). -/
 private def fontCmdNocorr : Raw → Bool
   | .ctrl "nocorr" _ => true
   | _ => false
 
+/-- Which edges of a text-font command's argument get ltfntcmd's
+`\maybe@ic`, as `(before, after)`. -/
 private def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
   Ir.fontCmdEdges (· == .space) fontCmdNocorr
     (fun
@@ -1499,39 +1059,28 @@ private def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :
       | _ => true)
     body next?
 
-/-- The argument content after ltfntcmd consumes its top-level `\nocorr`
-markers. A marker inside a nested group is not one `fontCmdEdges` reads, so
-it stays for that group's own elaboration rather than becoming a global
-no-op command. -/
+/-- The argument without the top-level `\nocorr` markers ltfntcmd
+consumes. -/
 private def fontCmdContent (body : Array Raw) : Array Raw :=
   body.filter fun r => !fontCmdNocorr r
 
 public def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
    ("_", "_"), ("~", "~"), (" ", " "),
-   -- Control-symbol spaces, TeX's spelling. Fixed widths, so they are text.
+   -- TeX's control-symbol spaces, as fixed-width Unicode spaces.
    (",", "\u2009"), (":", "\u2005"), (";", "\u2004"),
-   -- The named fixed spaces, TeXbook widths as Unicode's own space
-   -- characters (plain.tex: \quad is 1 em, \qquad 2, \enspace ½;
-   -- U+2003 EM SPACE, U+2002 EN SPACE). Rows here, not in
-   -- `Lex.textSymbols`: a space command swallows the source space after
-   -- it, as in TeX — its content already is the space.
+   -- plain.tex: \quad 1 em, \qquad 2 em, \enspace ½ em.
    ("quad", "\u2003"), ("qquad", "\u2003\u2003"), ("enspace", "\u2002"),
-   -- The logos set as their plain words (the kerned lowering is a
-   -- rendering nicety, the name is the content), and textcomp's symbol
-   -- commands beside their bare-symbol siblings in `Lex.textSymbols`.
    ("LaTeX", "LaTeX"), ("TeX", "TeX"), ("LaTeXe", "LaTeX2ε"),
    ("textdegree", "°"), ("texteuro", "€"),
-   -- latex.ltx's `\def\lq{`}` and `\def\rq{'}`, as the TeX quote ligatures
-   -- set them (lualatex sets U+2018 and U+2019 for the two).
+   -- latex.ltx `\lq` and `\rq`, as lualatex sets them.
    ("lq", "‘"), ("rq", "’")]
 
 private def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
    "defineenv", "block", "framefoot", "pagebreak"]
 
-/-- The overlay commands, dim-not-hide (PLAN M5). `\alt` is not here: it
-takes two groups and is handled beside them. -/
+/-- The overlay commands, which dim content before its step. -/
 private def overlayCtrls : List String :=
   ["uncover", "visible", "only", "onslide"]
 
@@ -1540,25 +1089,15 @@ private def decorationCtrls : List (String × Ir.Decoration) :=
 
 public def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
-   -- `ul` and `varul` rewrite through the native decoration family.
    "ul", "varul"] ++ (decorationCtrls.map (·.1)) ++ [
-   -- The phantom family is spelled out rather than derived from
-   -- `Picture.phantomCtrl`: a registry that derived itself from the family
-   -- could not witness a member missing from it, which is what
-   -- `phantom_rendered_covers` is for.
+   -- Spelled out, not derived from `Picture.phantomCtrl`: a gap must show.
    "vphantom", "hphantom", "phantom"] ++
   blockOnly ++ (escapes.map (·.1)) ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
 
-/-- Built-ins a definition may never touch, whatever its body: the names
-the walks' own shape depends on — grouping, definition machinery, block
-boundaries, the reserved characters' escapes, the engine's declarations —
-plus the underline family and the flexible-table column resolver, whose
-refusal is the recorded divergence (`builtinNames`' comment). Redefining one would not change what renders
-(the dispatch reads these before any user definition), so refusing loudly
-(W0303) is the honest answer. Every other protected name is in
-`renderedBuiltins`, where rule (b) judges the body instead. -/
+/-- Built-ins a definition may never touch, whatever its body: the names the
+walks' own shape depends on. -/
 public def structuralNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass",
    "ul", "varul", "tabularxcolumn",
@@ -1566,14 +1105,8 @@ public def structuralNames : List String :=
   (decorationCtrls.map (·.1)) ++
   (escapes.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl
 
-/-- Built-ins the engine renders that a document may nonetheless redefine,
-as LaTeX allows — the names the block and inline dispatch handles by
-literal arm only after `lookupUser` fails, so a registered definition
-shadows them. `gateRedef` gates a redefinition of one by rule (b): it
-wins only if its body, expanded once at the definition, is non-empty and
-loses nothing; a body the engine cannot run would otherwise silently erase
-the built-in's output (W0361), which is how a venue's `\renewcommand
-{\maketitle}` of kernel internals erased a paper's title. -/
+/-- Built-ins the engine renders that a document may redefine; a
+redefinition wins only if its body, expanded once, loses nothing. -/
 public def renderedBuiltins : List String :=
   ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
@@ -1588,26 +1121,10 @@ public def renderedBuiltins : List String :=
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
 
-/-- Which axes each member of the family reserves, which is the whole of
-what tells them apart (plain.tex ll. 1024-1031): `\vphantom{x}` takes x's
-height and depth and no width, `\hphantom{x}` takes its width and no height
-or depth, `\phantom{x}` takes all three. None takes ink — that is what makes
-them one family. Getting a column wrong here is a subtler defect than the
-one this table was written for: an `\hphantom` that propped a height, or a
-`\vphantom` that claimed a width, would be wrong in a direction no page
-shows plainly.
-
-This table is also the *arm's gate*: the dispatch fires on a key of this
-list, not on the family list, so `phantom_axes_set_eq` below is what ties
-the arm to the family. -/
+/-- The axes a phantom command reserves of its argument (plain.tex): width,
+and height with depth. -/
 public structure PhantomAxes where
-  /-- Reserves the argument's width. No width this engine sets was
-  undeclared, so this axis has no carrier and is a named loss. -/
   width : Bool
-  /-- Reserves the argument's height and depth. Already in force when the
-  argument borrows the running face — `Layout.line_box_glyph_free` plus
-  idempotence of the line box's componentwise `max` — which is the
-  hypothesis `phantomBorrows` checks rather than assumes. -/
   extent : Bool
   deriving Repr, BEq, Inhabited
 
@@ -1615,24 +1132,16 @@ public def phantomAxes : List (String × PhantomAxes) :=
   [("vphantom", ⟨false, true⟩), ("hphantom", ⟨true, false⟩),
    ("phantom", ⟨true, true⟩)]
 
-/-- TU's accent and symbol tables as maps: the inline dispatch asks them of
-every control word the hand tables before them do not answer, and a list
-walk there cost `bench/underline.tex` 7 ms of 515. -/
 private def accentMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.accents
 
 private def textSymbolMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.symbols
 
-/-- TeX's accent commands the engine composes to NFC: the combining mark
-each adds to its base, from TU's accent table (`TextSymData.accents`) —
-one table with .bib values (`Bib.accentOf`), so a name renders identically
-in text and in a bibliography entry. -/
+/-- The combining mark an accent command adds to its base (TU's table). -/
 private def accentMarkOf (name : String) : Option Char :=
   accentMap[name]?
 
-/-- The one-character word commands (`\ss`, `\ae`, `\o`…), the same table
-`.bib` values read (`Bib.charCommands`), and TU's text symbols
-(`TextSymData.symbols`: `\S`, `\dag`, `\textbullet`, `\OE`…), folded into
-one lookup with the escape table: all splice literal text. -/
+/-- The literal text an escape, a one-character word command (`\ss`) or a TU
+text symbol splices. -/
 public def escapeOf (name : String) : Option String :=
   match escapes.lookup name with
   | some lit => some lit
@@ -1642,21 +1151,15 @@ public def escapeOf (name : String) : Option String :=
     | none => textSymbolMap[name]?.map (String.ofList [·])
 
 /-- The letter a command stands for as an accent's base: `\i` and `\j` are
-the dotted letters (tuenc.def composes `\'\i` as í: the dotless letter
-exists only to carry an accent), and a one-character command is its
-character (`\'\AE` is Ǽ). -/
+the dotted letters, as tuenc.def composes them. -/
 public def accentBase (d : String) : Option Char :=
   if d == "i" then some 'i' else if d == "j" then some 'j'
   else match (escapeOf d).map (·.toList) with
     | some [c] => some c
     | _ => none
 
-/-- The composed text of an accent command applied to what follows: the
-first letter of an adjacent word (`\'ecole` → "école"), a one-letter group
-(`\'{e}`), a command base (`\'{\i}`, `\'\AE`), or an empty group (`\^{}` →
-"^", TU's empty-base composite). `none` — a shape or a pair with no
-precomposed scalar — falls through to the ordinary dispatch, so nothing new
-is dropped and an unknown pair still warns by name. -/
+/-- The composed text of an accent command applied to what follows, or `none`
+where no precomposed scalar exists. -/
 public def accentCompose (name : String) (r : Parse.Raw) : Option String := do
   let mark ← accentMarkOf name
   let one (b : Char) : Option String := (Bib.composeAccent mark b).map (String.ofList [·])
@@ -1679,24 +1182,8 @@ public def accentCompose (name : String) (r : Parse.Raw) : Option String := do
 
 mutual
 
-/-- Does a phantom's argument borrow only the face, size and raise the line
-already carries? That is the *hypothesis* under which the height and depth a
-phantom props are already in force — `Layout.line_box_glyph_free` says the
-line box is the metric extent of the (font, size, raise) triples on the line
-and never a glyph, and the box is a componentwise `max`, which is idempotent
-for a triple the line already holds. Under this predicate the construct is
-inert; outside it the extent really does go unreserved, and the arm names
-that rather than dropping it in silence.
-
-Words, spaces, reserved symbols, accents, escapes and named symbols set
-characters in the running face, and which characters they are is exactly
-what the line box does not read. A size switch, a face switch, a raise,
-math, an environment: each is a triple the line may not carry.
-
-Conservative in the safe direction — an unknown control word answers
-`false`, so a construct this engine gains later is named until someone
-decides it borrows. The cost is a name where nothing was lost; the
-alternative is silence where something was. -/
+/-- Whether a phantom's argument sets only running-face characters, whose
+height and depth the line already carries. -/
 private def phantomBorrowsOne : Raw → Bool
   | .word _ _ | .space | .sym _ _ => true
   | .group body _ => phantomBorrowsList body.toList
@@ -1705,24 +1192,16 @@ private def phantomBorrowsOne : Raw → Bool
       (Lex.textSymbols.lookup n).isSome
   | _ => false
 
-/-- The `List` companion: the tail drives the recursion, the group's body is
-a field of its head, so the walk is structural and owes no measure —
-`Compat.boxShape`'s neighbour `boundaryLevel`/`boundaryRaw` is the shape. -/
 private def phantomBorrowsList : List Raw → Bool
   | [] => true
   | r :: rest => phantomBorrowsOne r && phantomBorrowsList rest
 
 end
 
-/-- A phantom's whole argument, as the predicate above judges it. -/
 private def phantomBorrows (raws : Array Raw) : Bool := phantomBorrowsList raws.toList
 
-/-- The declaration styles by name, plus two unforgeable markers (`@` never
-lexes into a control word): `@lang:fr` → `Style.lang "fr"` (Compat's
-rewrite of `\selectlanguage`) and `@series:l` → `Style.series .l`
-(Compat's rewrite of `\fontseries`, already validated there — an
-unparsable code never becomes a marker). All apply to the rest of the
-scope, so one dispatch arm serves them all. -/
+/-- A declaration style by name, or by one of Compat's `@lang:`, `@series:`
+and `@family:` markers. -/
 private def declStyleOf (name : String) : Option Ir.Style :=
   if name.startsWith "@lang:" then
     some (.lang ((name.drop "@lang:".length).toString))
@@ -1733,15 +1212,13 @@ private def declStyleOf (name : String) : Option Ir.Style :=
     ((name.drop "@family:".length).toString.toNat?).map .family
   else declStyles.lookup name
 
-/-- The block form of the language switch: the flow state update, outside
-the block-walk knot so the arm inside costs it one call. A switch back to
-the main language clears the attribute rather than tagging redundantly. -/
+/-- The block-level language switch; a switch back to the main language
+clears the attribute. -/
 private def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
   let tag := (marker.drop "@lang:".length).toString
   { st with scope := { st.scope with lang := if tag == ctx.locale.tag then none else some tag } }
 
-/-- A paragraph under the flow language carries the attribute
-(`langWrap_text`: the census is untouched). -/
+/-- A paragraph carrying the flow language's attribute. -/
 private def paraUnder (lang : Option String) (inlines : Array Ir.Inline) : Ir.Block :=
   match lang with
   | some tag => .para (Ir.langWrap tag inlines)
@@ -1767,14 +1244,11 @@ private theorem lookupUserGo_lt {user : Array UserCmd} {name : String}
   | case3 m hm heq ih => exact Nat.lt_succ_of_lt (ih h)
   | case4 m hm ih => exact Nat.lt_succ_of_lt (ih h)
 
-/-- The visible-prefix bound expansion terminates by: a found command's
-index is strictly below the limit the caller searched under. -/
 private theorem lookupUser_lt {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) : k < ctx.limit :=
   lookupUserGo_lt h
 
-/-- The latest visible definition wins, so `\renewenvironment` is one more
-push, exactly as `lookupUser` treats commands. -/
+/-- The latest visible definition wins. -/
 private def lookupUserEnvGo (envs : Array UserEnv) (name : String) :
     Nat → Option (Nat × UserEnv)
   | 0 => none
@@ -1800,10 +1274,6 @@ private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
     k < ctx.envLimit :=
   lookupUserEnvGo_lt h
 
--- Best-effort source text of raw content (math bodies, class options).
--- Structural recursion through `List`; the outer call trims, and so does each
--- nested group, matching what the elaborator has always emitted.
-
 private def isSpace : Raw → Bool
   | .space => true
   | _ => false
@@ -1813,23 +1283,12 @@ private def isSpaceOrPar : Raw → Bool
   | .par _ => true
   | _ => false
 
-/-- Content between `column`s that is real stray content, deciding whether
-the run flushes the accumulated columns row: space never is, and neither
-is `\hfill` — beamer's own columns row opens with `\hbox{}\hfill` and
-closes every column with one (beamerbaseframecomponents.sty,
-`beamer@colentrycode` and `beamer@columnenv`'s end code), so a fill
-standing between columns is glue in the row: the gutter the columns
-layout already distributes, never a paragraph. Treating it as stray
-content flushed the row and stacked each column in its own `.columns`
-block — the A0 poster's four-page spill. A fill inside real stray
-content still rides with that content into its paragraph. -/
+/-- Stray content between `column`s, which flushes the columns row: neither
+space nor `\hfill`, beamer's gutter glue there. -/
 private def isColumnStray (r : Raw) : Bool :=
   !isSpaceOrPar r && !(r matches .ctrl "hfill" _)
 
-/-- The one forward walk over sibling raws: the index past the run
-satisfying `p`. Every scan here — spaces, the junk after a malformed
-argument, an edge trim — is this walk; a caller's intent is its predicate,
-never a hand-rolled loop of its own. -/
+/-- The index past the run of raws from `i` satisfying `p`. -/
 private def spanRaws (raws : Array Raw) (i : Nat) (p : Raw → Bool) : Nat :=
   if h : i < raws.size then
     if p raws[i] then spanRaws raws (i + 1) p else i
@@ -1840,7 +1299,7 @@ private theorem spanRaws_ge (raws : Array Raw) (i : Nat) (p : Raw → Bool) :
     i ≤ spanRaws raws i p := by
   fun_induction spanRaws raws i p <;> omega
 
-/-- The backward companion: the index before the trailing run satisfying `p`. -/
+/-- The index where the trailing run satisfying `p` starts. -/
 private def spanRawsEnd (raws : Array Raw) (p : Raw → Bool) : Nat := Id.run do
   let mut b := raws.size
   for _ in [0:raws.size] do
@@ -1849,28 +1308,21 @@ private def spanRawsEnd (raws : Array Raw) (p : Raw → Bool) : Nat := Id.run do
     | none => break
   return b
 
-/-- The array between its edge runs of `p`. -/
 private def trimBy (raws : Array Raw) (p : Raw → Bool) : Array Raw :=
   raws.extract (spanRaws raws 0 p) (spanRawsEnd raws p)
 
-/-- Drop whitespace at both edges: a define body's braces delimit, the
-padding inside them is not content. -/
 private def trimRaws (raws : Array Raw) : Array Raw :=
   trimBy raws isSpaceOrPar
 
-/-- An environment's halves lose only their outer edges — the begin code's
-lead and the end code's tail. The edges facing the body are content, as TeX
-reads them: `{Lead words }` ends in a space before the body, so the body's
-first word is set apart from the code's last, and a body bringing its own
-space there sets a second one, as TeX does (`mergeText`). -/
+/-- A begin code's outer edge trimmed: the edge facing the body is content,
+as TeX reads it. -/
 private def trimLead (raws : Array Raw) : Array Raw :=
   raws.extract (spanRaws raws 0 isSpaceOrPar) raws.size
 
 private def trimTail (raws : Array Raw) : Array Raw :=
   raws.extract 0 (spanRawsEnd raws isSpaceOrPar)
 
-/-- Whether a minted command in `rs` reads parameter `name` as code: `#k`
-inside its capture is the native `\ak` (`bindCodeParams`). -/
+/-- Whether a minted command in `rs` reads parameter `name` as code. -/
 private def referencesParamCode (name : String) : List Raw → Bool
   | [] => false
   | .verb e s _ :: rest =>
@@ -1887,13 +1339,8 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- A defined environment from its halves, with the space rules TeX's own
-commands state at its seams, each command spent here so none reaches a
-half as an unknown word: `\ignorespaces` closing the begin code skips the
-body's leading spaces (TeXbook ch. 24); environ's mark there trims both of
-the body's edges (environ.sty `\env@save`: `\trim@spaces`); and
-`\ignorespacesafterend` in the end code skips the spaces after
-`\end{name}` (latex.ltx `\end`: `\if@ignore \@ignorefalse \ignorespaces`). -/
+/-- A defined environment from its halves, with the space rules
+`\ignorespaces`, environ and `\ignorespacesafterend` state at its seams. -/
 private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
     (limit : Nat) : UserEnv :=
   let isCtrl (n : String) (r : Raw) : Bool := match r with
@@ -1912,8 +1359,7 @@ private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
     ignoresLead := lead, trimsTail := environ,
     ignoresAfterEnd := e.any (isCtrl "ignorespacesafterend") }
 
-/-- `lookupUser` over an explicit table and prefix bound, for the math
-expansion below, which threads its own decreasing `limit`. -/
+/-- `lookupUser` over an explicit table and prefix bound. -/
 private def lookupUserIn (user : Array UserCmd) (limit : Nat) (name : String) :
     Option (Nat × UserCmd) := Id.run do
   let mut k := limit
@@ -1924,11 +1370,8 @@ private def lookupUserIn (user : Array UserCmd) (limit : Nat) (name : String) :
         return some (k, user[k])
   return none
 
-/-- Bind a user command's parameters from already-expanded raws, for the
-math expansion: the raw-level twin of `takeArgs` — an optional binds from
-`[...]`, a required from the next group or word — except that values stay
-raws, because they splice back into a token stream the math parser reads.
-Pure and forward: it only slices `rest`, never expands. -/
+/-- Binds a user command's parameters from raws, each value kept as raws for
+the math parser to read. -/
 private def bindMathArgs (params : Array Param) (rest : Array Raw) :
     Array (String × Array Raw) × Array Raw := Id.run do
   let mut bindings : Array (String × Array Raw) := #[]
@@ -1965,18 +1408,8 @@ private def bindMathArgs (params : Array Param) (rest : Array Raw) :
         bindings := bindings.push (p.name, #[])
   return (bindings, rest.extract i rest.size)
 
-/-- Expand user commands (`\define`) inside a formula's raws: the one hook
-where `MathParse` meets the elaborator's macro table, closing the
-document-defined macro tail W0012 named formula by formula. The walk runs
-right to left — the suffix is fully expanded before its head — so when a
-command binds its arguments they are already macro-free splices, expanded
-under the caller's visible prefix exactly as `takeArgs` elaborates them in
-text. Termination is the definition-order rule that already terminates
-text-mode expansion, made structural: a definition sees only definitions
-before it, so the body expands under `k < limit` (the measure's first
-component), and within one level the walk descends the raw list (the
-second). No fuel and no escape hatch: the language stays terminating by
-design. -/
+/-- Expands `\define`d commands inside a formula's raws, right to left, each
+body under only the definitions before it. -/
 private def expandMathList (user : Array UserCmd) (limit : Nat)
     (args : Array (String × Array Raw)) : List Raw → Array Raw
   | [] => #[]
@@ -1985,8 +1418,7 @@ private def expandMathList (user : Array UserCmd) (limit : Nat)
     if let some (_, sub) := args.find? (·.1 == n) then
       sub ++ tail
     else if n.startsWith "@ink:" then
-      -- Compatibility rewrites colour declarations inside macro bodies too;
-      -- feed their value to the same math colour resolver as a direct use.
+      -- Compat's colour markers in macro bodies resolve as a direct \color.
       #[Raw.ctrl "color" pos, Raw.group #[Raw.word (n.drop 5).toString pos] pos] ++ tail
     else
       match lookupUserIn user limit n with
@@ -2012,21 +1444,14 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- How a degraded formula's recovery reads, so the warning and the page
-agree: the floor is the formula's text content, unless that content is
-nothing at all, where a declared placeholder ships instead
-(`Ir.floorInk_accounts`). Saying "sets as its text content" over a page
-showing `[…]` would be a diagnostic describing a recovery that did not
-happen. -/
+/-- The recovery a degraded formula's warning names: its text content, or a
+placeholder when it has none. -/
 private def floorWording (src : String) : String :=
   if (Ir.floorChars src).isEmpty then
     "sets as a placeholder: it has no text content"
   else "sets as its text content"
 
-/-- One parser note to its own diagnostic: the two losses a formula can
-carry while still rendering are different kinds, so each takes its own
-code. `where` prefixes the environment's name when the note came from an
-alignment body. -/
+/-- Reports one parser note, prefixed by `where_` inside an alignment. -/
 private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
     (pos : Pos) : EM Unit := do
   match note with
@@ -2044,13 +1469,8 @@ in its place" pos
   | .inkUsed expr c entry => recordColorSpan ctx expr c entry pos
   | .inkMissed expr => warnPaletteMiss ctx expr pos
 
-/-- The colour `\CancelColor` names, as the document last defined it.
-cancel.sty declares it empty (`\newcommand{\CancelColor}{}`: the marks take
-the colour in force) for a document to redefine as a colour command; the
-body is read as the colour it selects — a palette command (`\color{red}`
-reaches here as `\red`), a `\color` marker's expression, or `\color{…}`
-itself — through the palette the text path reads. `.error` carries an
-expression the palette cannot resolve. -/
+/-- The colour expression the document's `\CancelColor` selects, if it
+defines one. -/
 private def cancelKey? (ctx : Ctx) : Option String :=
   (lookupUser ctx "CancelColor").bind fun (_, cmd) =>
     match (cmd.body.filter fun r => !(r matches .space)).toList with
@@ -2068,11 +1488,8 @@ private def cancelColorOf (ctx : Ctx) : Except String (Option (Color × Option C
     | some c => .ok (some (c, ctx.palette.refOf? key))
     | none => .error key
 
-/-- What a formula reads from its document: colour expressions through the
-palette the text path resolves with — the one resolving site, so the
-contrast report reads a formula's colours as it reads a run's — and the
-cancel package's marks, coloured as `\CancelColor` says where the formula
-stands. -/
+/-- A formula's colour resolver and cancel marks, read through the text
+path's palette. -/
 private def mathEnv (ctx : Ctx) : MathParse.Env :=
   let (color, miss) := match cancelColorOf ctx with
     | .ok c => (c, none)
@@ -2081,28 +1498,18 @@ private def mathEnv (ctx : Ctx) : MathParse.Env :=
     cancel := { ctx.cancel with color }
     cancelMiss := miss }
 
-/-- The colour names a formula reads beyond its own expressions (each of
-which `recordColorSpan` notes): `\CancelColor`'s, where the formula spells a
-cancel mark. -/
+/-- Notes `\CancelColor` as read where the formula spells a cancel mark. -/
 private def noteFormulaReads (ctx : Ctx) (expanded : Array Parse.Raw) : EM Unit := do
   if let some key := cancelKey? ctx then
     let names := Ir.ctrlNames (Parse.rawSrc expanded)
     if ["cancel", "bcancel", "xcancel", "cancelto"].any names.contains then
       noteColorReads key
 
-/-- Source annotations follow the token that contributed content. They carry
-no style and introduce no grouping or shaping boundary. -/
 private def sourceInline (ctx : Ctx) (pos : Pos) (inline : Inline) : Inline :=
   .located (ctx.sourceSpan pos) #[inline]
 
-/-- One formula: parsed into math atoms when this slice can model it, kept
-as its text content with a warning naming the construct when it cannot —
-out of scope is a named warning, never a silent drop, and never its source
-on the page (`Ir.mathFloor`). User commands expand first
-(`expandMathList`), so a `\define`d macro renders instead of degrading its
-formula. A ragged alignment row inside the formula (an `array`) is W0014,
-padded; a colour or font change the math list cannot carry is W0385, its
-content kept. -/
+/-- One formula: parsed into math atoms, or kept as its text content with a
+warning naming the construct it cannot model. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
@@ -2118,12 +1525,8 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
       s!"math with {what} is not rendered yet; the formula {floorWording src}" pos
     return sourceInline ctx pos (.math display src)
 
-/-- One alignment environment (`align`/`gather` and their starred forms):
-its rows parsed into one display grid formula. A construct the parser
-cannot model keeps the whole environment as its text content, named
-(W0012); a ragged row is W0014, padded; a colour or font change the math
-list cannot carry is W0385, its content kept; a numbered form warns W0015
-once — the equation numbers are owed, the mathematics is not. -/
+/-- One alignment environment (`align`, `gather`, starred or not) as one
+display grid formula, or its text content when the parser cannot model it. -/
 private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
@@ -2145,13 +1548,8 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
       s!"math with {what} is not rendered yet; '\{{name}}' {floorWording src}" pos
     return sourceInline ctx pos (.math true src)
 
-/-- The run an unclosed `[` still owns: tokens on its command's own line —
-the stop-at-the-anchor's-line rule, stated once. A raw on a later line, or
-any construct (a control word, an environment, verbatim, a paragraph
-break), is the author's next thing, never consumed with the junk. A group
-or math on the anchor's line counts as junk only where no group can be the
-argument the author wrote (`groups := true`, a skipped configuration
-command); elsewhere a group ends the run, because it may be that argument. -/
+/-- The run an unclosed `[` owns: the spaces, words and symbols on its
+command's line, and groups or math there only when `groups`. -/
 private def malformedRun (raws : Array Raw) (i : Nat) (anchor : Pos)
     (groups : Bool) : Nat :=
   spanRaws raws i fun r =>
@@ -2167,8 +1565,8 @@ private def allText (xs : Array Inline) : Bool :=
     | .text _ | .role _ _ | .located _ _ => true
     | _ => false) true xs
 
-/-- Punctuation is a presentation leaf: conditional mono text carries two
-spellings, without executing its containing source or semantic effects twice. -/
+/-- A text leaf with smart punctuation, or both spellings under a monospace
+selector. -/
 private def punctuationInline (literal : Bool) (when? : Option OverlaySpec)
     (s : String) : Inline :=
   if literal then .text s else
@@ -2178,15 +1576,14 @@ private def punctuationInline (literal : Bool) (when? : Option OverlaySpec)
   | some spec => .alternate spec #[.text s] #[.text smart]
   | none => .text smart
 
-/-- A bare word consumed as an argument carries the same semantic owners
-as a braced word, without re-reading its source or inventing a group. -/
+/-- A bare-word argument, carrying the macro owners a braced word would. -/
 private def wordInlines (ctx : Ctx) (s : String) (pos : Pos) : Array Inline :=
   (relativeOrigins ctx.macroRoles.enter.inherited pos.origins).foldr
     (fun origin inner => #[.role origin.name inner])
     #[sourceInline ctx pos (punctuationInline ctx.literalText ctx.literalWhen s)]
 
-/-- Literal punctuation follows the union of the active monospace scopes.
-Return only those fields: a font modifier never changes elaboration's budgets. -/
+/-- The literal-punctuation scope under a font modifier: the union of the
+active monospace selectors. -/
 private def modifierLiteral (ctx : Ctx) (style : Style) (spec : Option OverlaySpec) :
     Bool × Option OverlaySpec :=
   if style != .mono || ctx.literalText then (ctx.literalText, ctx.literalWhen) else
@@ -2194,16 +1591,13 @@ private def modifierLiteral (ctx : Ctx) (style : Style) (spec : Option OverlaySp
   | none => (true, ctx.literalWhen)
   | some selected => (false, some ((ctx.literalWhen.map (·.union selected)).getD selected))
 
-/-- Canonical selector words come from the shared compatibility boundary. -/
 private def specWord? : Raw → Option String := Compat.overlayWord?
 
 private def modifierStyle? (name : String) : Option Style :=
   if name == Compat.alertMark true || name == Compat.alertMark false then some .bold
   else argStyles.lookup name
 
-/-- Every supported command family receives the canonical selector head
-from Compat.overlayInputs. Consume it independently of ordinary arguments:
-a selector can never become a title, target, label or styled text. -/
+/-- Consumes an overlay selector at `start`, apart from ordinary arguments. -/
 private def selectorHead (raws : Array Raw) (start : Nat) : Option String × Nat :=
   let j := skipSpaces raws start
   match raws[j]?.bind specWord? with
@@ -2218,8 +1612,7 @@ private theorem selectorHead_monotone (raws : Array Raw) (start : Nat) :
   dsimp only
   split <;> dsimp <;> omega
 
-/-- Only Beamer's native target wrappers advertise selector slots. General
-href/link keep their ordinary two-group signature in block and inline use. -/
+/-- A selector head for `\hyperlink` and `\hypertarget` only. -/
 private def linkSelectorHead (name : String) (raws : Array Raw) (start : Nat) :
     Option String × Nat :=
   if name == "hyperlink" || name == "hypertarget" then selectorHead raws start
@@ -2232,17 +1625,14 @@ private theorem linkSelectorHead_monotone (name : String) (raws : Array Raw) (st
   · exact selectorHead_monotone raws start
   · exact skipSpaces_ge raws start
 
-/-- A modifier changes only its selected reading. With no numbered
-selector, its ordinary styled reading remains; unsupported syntax is
-accounted by `selectorSpec` before this constructor is called. -/
+/-- A modifier's reading: alternated under its selector, else styled. -/
 private def pushModifier (acc : Array Inline) (spec : Option OverlaySpec)
     (active otherwise : Array Inline) : Array Inline :=
   match spec with
   | some s => acc.push (.alternate s active otherwise)
   | none => acc ++ active
 
-/-- Cover is shared by inline content, blocks and whole items. The selector
-is already an Ir.OverlaySpec; empty content never opens an artifact wrapper. -/
+/-- Wraps non-empty content in its selector's cover. -/
 private def selectedCover {α : Type} (wrap : OverlaySpec → Array α → α)
     (spec : Option OverlaySpec) (body : Array α) : Array α :=
   if body.isEmpty then #[] else
@@ -2253,9 +1643,8 @@ private def selectedCover {α : Type} (wrap : OverlaySpec → Array α → α)
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
 
-/-- Positioned tokens carry their owners. A separator carries only the
-ancestry shared by its neighbours, so a following space cannot become part
-of a completed call. Pending text is flushed before its old owner closes. -/
+/-- Moves the open macro roles to a token's owners; a separator keeps only
+the ancestry its neighbours share. -/
 private def inlineMacroStep (roles : MacroRoles) (raw : Option Raw)
     (acc : Array Inline) (sb : String) (following : List MacroOrigin := []) :
     MacroRoles × Array Inline × String :=
@@ -2270,8 +1659,8 @@ private def inlineMacroStep (roles : MacroRoles) (raw : Option Raw)
     let (active, acc) := moveMacroRuns Inline.role roles.inlines desired (flushText acc sb)
     ({ roles with inlines := active }, acc, "")
 
-/-- Read the next positioned token only at a separator. This observes the
-existing stream without changing the argument boundaries it contains. -/
+/-- Steps the macro roles at `raws[i]`, reading the next token's owners past
+a separator. -/
 private def inlineMacroAt (roles : MacroRoles) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) : MacroRoles × Array Inline × String :=
   let following := if raws[i]? matches some .space then
@@ -2279,10 +1668,8 @@ private def inlineMacroAt (roles : MacroRoles) (raws : Array Raw) (i : Nat)
     else []
   inlineMacroStep roles raws[i]? acc sb following
 
-/-- Scalar composition consumes the operand without visiting it again.
-Keep the accent's owners and enter any additional operand owners once;
-a group carries both its own ancestry and its composed child's ancestry.
-The existing run stack keeps an operand's following text in the same role. -/
+/-- Enters an accent operand's additional macro owners once, keeping the
+accent's own. -/
 private def accentOperandStep (roles : MacroRoles) (operand : Option Raw)
     (acc : Array Inline) (sb : String) : MacroRoles × Array Inline × String :=
   let origins := match operand with
@@ -2303,9 +1690,8 @@ private def unskipText (acc : Array Inline) (sb : String) : Array Inline :=
   else if let some (.text s) := acc.back? then flushText acc.pop s.trimAsciiEnd.toString
   else acc
 
-/-- The key a text-mode `\qedhere` mark stands under until its proof sets it
-(`thmClose`): no document can spell a NUL, so no `\label` collides, and the
-proof replaces every one it holds before a backend sees it. -/
+/-- The label key a text-mode `\qedhere` mark stands under until its proof
+sets it; no document can spell its NUL. -/
 private def qedHereKey : String := "\u0000qedhere"
 
 /-- amsthm.sty's `\qed` in text, `\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}`,
@@ -2313,10 +1699,8 @@ with the mark's place (`qedHereKey`) for the symbol. -/
 private def qedHereRun : Array Inline :=
   #[.strut {}, .fill, .text "\u2003", .label qedHereKey]
 
-/-- Adjacent text runs join into one, every space kept: where both bring a
-space to the seam — an environment half's edge meeting its body's, a macro
-body's tail meeting the text after it — TeX sets two interword glues, and
-so does the joined run. -/
+/-- Joins adjacent text runs with every space kept, as TeX sets both glues
+where both runs bring one to the seam. -/
 private def mergeText (xs : Array Inline) : Array Inline := Id.run do
   let mut out : Array Inline := #[]
   for x in xs do
@@ -2331,9 +1715,7 @@ private inductive ArgScan where
   | unclosed (bpos : Pos)
   | content
 
-/-- The index of the next `]` symbol at or past `k`, if any: the closing
-half every bracket-argument collector shares, stated as an index so the
-consumed extent is a fact the termination measure can read. -/
+/-- The index of the next `]` symbol at or past `k`, if any. -/
 private def closeBracketFrom (raws : Array Raw) (k : Nat) : Option Nat :=
   if h : k < raws.size then
     if raws[k] matches .sym ']' _ then some k else closeBracketFrom raws (k + 1)
@@ -2353,14 +1735,8 @@ private theorem closeBracketFrom_ge {raws : Array Raw} {k c : Nat}
     omega
   | case3 => simp at h
 
-/-- The one bracket-argument scan, shared by every consumer of an optional
-`[...]`. An argument's `[` opens on `anchor`'s line — a bracket on a later
-line is content, where LaTeX's own argument scanning stops looking too — and
-it has a matching `]`. One that never closes is malformed content, never an
-argument: consuming to the end of the scan would silently drop everything
-after it, a frame body or the rest of a preamble included. `.took` carries
-the index past the `]`; `.unclosed` consumes nothing and carries the `[`'s
-position for the caller to warn about. -/
+/-- Scans an optional `[...]` argument opened on `anchor`'s line: `.took` past
+its `]`, `.unclosed` with the `[`'s position, else `.content`. -/
 private def scanBracketArg (raws : Array Raw) (i : Nat) (anchor : Pos) : ArgScan :=
   let j := skipSpaces raws i
   match raws[j]? with
@@ -2394,18 +1770,15 @@ private theorem scanBracketArg_took_lt {raws : Array Raw} {i : Nat}
 private def bracketSrc (raws : Array Raw) (i k : Nat) : String :=
   rawSrc (raws.extract (skipSpaces raws i + 1) (k - 1))
 
-/-- The optional argument's parsed contents, only when its shared scanner
-consumed a complete argument. Malformed content stays with recovery. -/
+/-- The raws inside a complete optional `[...]` argument at `i`, if any. -/
 private def bracketArgRaws? (raws : Array Raw) (i : Nat) (anchor : Pos) :
     Option (Array Raw) :=
   match scanBracketArg raws i anchor with
   | .took k => some (raws.extract (skipSpaces raws i + 1) (k - 1))
   | _ => none
 
-/-- The point a box's `[pos]` stands it on its row's baseline by (latex.ltx
-`\@iiiparbox`: `t` builds a `\vtop`, `b` a `\vbox`, `c` a `\vcenter`;
-beamer's `column` and `columns` add `T`, the top edge). `none` for a
-spelling no box reads. -/
+/-- A box's `[pos]`: latex.ltx's `t`, `c` and `b`, and beamer's `T` for the
+top edge. -/
 private def boxPosOf (src : String) : Option Ir.BoxPos :=
   match src.trimAscii.toString with
   | "t" => some .first
@@ -2414,23 +1787,12 @@ private def boxPosOf (src : String) : Option Ir.BoxPos :=
   | "T" => some .top
   | _ => none
 
-/-- An unclosed `[` stays as content; this says why it was not an argument. -/
 private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
   diag ctx .W0310 s!"'[' after {after} never closes; it is not an argument" (some bpos)
     (help := "add the matching ']'")
 
-/-- The index of a command's `{...}` group past its optional argument, best
-effort — the pure extent half, so a scanner that owns no diagnostics can
-walk it too. A well-formed `[...]` is skipped whole. An unclosed one is
-returned as data (its position, for the caller that owns W0310); its
-run — the rest of the command's own line — is returned too, because W0310
-calls it content: a body position renders it, and only the preamble, where
-no content can live, drops it with the warning already pointing there. The
-group the author wrote is then found wherever the line break falls — this
-line, the next, or past a blank line — but never past another construct.
-Returns the candidate index, whether it recovered from an unclosed bracket
-(a recovered command with no group left is skipped with a warning by its
-caller, never a fatal error), the malformed run, and the unclosed `[`'s
+/-- The index of a command's `{...}` group past its optional argument, with
+whether it recovered from an unclosed `[`, the malformed run, and that `[`'s
 position. -/
 private def scanOptArg (raws : Array Raw) (start : Nat) (pos : Pos) :
     Nat × Bool × Array Raw × Option Pos :=
@@ -2476,13 +1838,8 @@ private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
     return (⟨j, by have := scanOptArg_ge raws start pos; rw [h] at this; exact this⟩,
       recovered, junk)
 
-/-- The body of an unknown environment without its arguments: leading `[...]`
-runs and `{...}` groups on the `\begin` line are the environment's own
-arguments (`\begin{banner}{Logo}`), not content. A group or bracket on a
-later line is content — LaTeX's own argument scanning stops looking there
-too. Also returns the position of an unclosed `[`, for the caller to warn
-about (its run is kept as content), and how many groups went with the
-wrapper, for the caller to name what W0302's "body is kept" does not cover. -/
+/-- Where an unknown environment's body starts past the arguments on its
+`\begin` line, with an unclosed `[`'s position and the groups dropped. -/
 private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
     Nat × Option Pos × Nat := Id.run do
   let mut i : Nat := 0
@@ -2502,8 +1859,6 @@ private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
       | _ => break
   return (i, none, dropped)
 
-/-- Exactly what went with an unknown wrapper: the count W0302's "its body
-is kept" cannot carry. -/
 private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
     (pos : Pos) : EM Unit := do
   if dropped > 0 then
@@ -2512,28 +1867,17 @@ private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
       s!"{dropped} \{...} {noun} on the '\\begin\{{name}}' line went with the unknown wrapper" (some pos)
       (help := "content, not an argument? put it after the '\\begin' line")
 
-/-- A command whose group never materialised after an unclosed `[` is
-dropped whole: W0310 already named the typo, and one skipped declaration
-must not fail the build or bleed into the next construct as stray content. -/
 private def warnSkippedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   diag ctx .W0312 s!"no \{...} group after '\\{name}'; it is skipped" (some pos)
     (help := s!"write \\{name}\{...}")
 
 /-- The index of the next construct after a skipped preamble command's
-malformed arguments. The junk ends with the command's line, and a control
-word, an environment, or a verbatim block ends it early: the author's next
-declaration is never consumed with the junk, whether it follows the line or
-shares it. -/
+malformed arguments. -/
 private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat :=
   malformedRun raws i anchor (groups := true)
 
-/-- The index past consecutive `[...]` option runs, each accepted by
-`scanBracketArg`'s rule — opened on `anchor`'s line, closed. An option run
-is how the author addressed a command, never their content, so the callers
-(`skipReservedArgs`, and the unknown-command recovery) send it with the
-command rather than onto the page. A run that never closes stops the scan
-and its `[` position is returned: that run is malformed content, the
-caller's to keep and warn about. -/
+/-- The index past consecutive closed `[...]` option runs opened on
+`anchor`'s line, with the `[` of an unclosed one that stops the scan. -/
 private def skipOptionRuns (raws : Array Raw) (i : Nat) (anchor : Pos) :
     Nat × Option Pos :=
   match _h : scanBracketArg raws i anchor with
@@ -2553,17 +1897,8 @@ private theorem skipOptionRuns_ge (raws : Array Raw) (i : Nat) (anchor : Pos) :
   | case2 => simp
   | case3 => simp
 
-/-- Skip an argument run: argument recovery after a reserved (not yet
-implemented) or unknown command. A starred form's `*`, the `[...]` option
-runs, and up to `maxGroups` `{...}` groups are consumed with the command
-they belong to — recovery never turns a warning into an error, and a stray
-`*` or second group in the preamble is exactly how one skipped command
-used to become E0313. In the body `maxGroups` stays 1, so a scope group
-standing after a reserved command is still content; in the preamble there
-is no content, so the caller passes TeX's own argument limit of nine. The
-scan stops at anything else, so the author's next construct is never
-consumed. Returns the next index and, when an unclosed `[` stopped the
-scan, its position. -/
+/-- The index past a skipped command's option runs and up to the given number
+of `{...}` groups, with the position of an unclosed `[` that stops it. -/
 private def skipReservedArgsGo (raws : Array Raw) (j : Nat) (anchor : Pos) :
     Nat → Nat × Option Pos
   | 0 => (j, none)
@@ -2608,16 +1943,7 @@ private theorem skipReservedArgs_ge (raws : Array Raw) (i : Nat) (anchor : Pos)
   · have := skipReservedArgsGo_ge raws anchor maxGroups (i + 1); omega
   · exact skipReservedArgsGo_ge raws anchor maxGroups i
 
--- The termination measure for the elaboration knot: every raw weighs at
--- least one, a container outweighs its body, so consuming a token or
--- descending into one strictly lightens the remaining slice. Measure only,
--- erased at runtime — no artifact reads a weight. Every component of the
--- knot's measure — weight, pars, items — is a pointwise `Nat` measure
--- summed over a list, so each list-sum fact is stated once below over the
--- pointwise measure `μ` and instantiated per component.
-
-/-- The sum of a pointwise measure over a list: the one shape every
-component of the knot's termination measure shares. -/
+/-- The sum of a pointwise measure over a list. -/
 private def measList (μ : α → Nat) : List α → Nat
   | [] => 0
   | x :: rest => μ x + measList μ rest
@@ -2680,8 +2006,7 @@ private theorem measList_extract_le (μ : α → Nat) (body : Array α) (a b : N
   rw [Array.toList_extract]
   exact Nat.le_trans (measList_take_le ..) (measList_drop_le ..)
 
-/-- A measure component over the knot spine's slice: the pointwise sum
-from `i` on. -/
+/-- The pointwise measure summed over the slice from `i`. -/
 private def sliceMeas (μ : α → Nat) (raws : Array α) (i : Nat) : Nat :=
   measList μ (raws.toList.drop i)
 
@@ -2705,8 +2030,6 @@ private theorem sliceMeas_end (μ : α → Nat) (raws : Array α) {j : Nat}
   rw [List.drop_eq_nil_of_le (by simpa using h)]
   rfl
 
-/-- An element standing anywhere at or past `i` measures no more than the
-slice from `i`. -/
 private theorem sliceMeas_elem_le {μ : α → Nat} {raws : Array α} {j : Nat}
     {x : α} (h : raws[j]? = some x) {i : Nat} (hij : i ≤ j) :
     μ x ≤ sliceMeas μ raws i := by
@@ -2721,9 +2044,6 @@ private theorem sliceMeas_extract_le (μ : α → Nat) (raws : Array α) (a b : 
   rw [Array.toList_extract]
   exact measList_take_le ..
 
-/-- Replacing the element at `i` by a run that measures strictly below it
-strictly lowers the slice measure from `i`: the shape of every splice
-edge. -/
 private theorem sliceMeas_splice_lt {μ : α → Nat} {raws : Array α} {i : Nat}
     (h : i < raws.size) {seg : Array α}
     (hseg : measList μ seg.toList < μ raws[i]) :
@@ -2747,8 +2067,6 @@ private theorem sliceMeas_splice_lt {μ : α → Nat} {raws : Array α} {i : Nat
   rw [hdrop, measList_append]
   omega
 
-/-- The non-increasing companion of the strict splice fact. Selecting a
-stored alternative removes its wrapper without introducing new content. -/
 private theorem sliceMeas_splice_le {μ : α → Nat} {raws : Array α} {i : Nat}
     (h : i < raws.size) {seg : Array α}
     (hseg : measList μ seg.toList ≤ μ raws[i]) :
@@ -2772,8 +2090,6 @@ private theorem sliceMeas_splice_le {μ : α → Nat} {raws : Array α} {i : Nat
   rw [hdrop, measList_append]
   omega
 
--- The weight component of the knot's measure.
-
 mutual
 -- conserves: none — a termination measure, not a content walk
 private def rawWeight : Raw → Nat
@@ -2787,17 +2103,14 @@ private def rawWeightList : List Raw → Nat
   | r :: rest => rawWeight r + rawWeightList rest
 end
 
-/-- The mutual recursion above is `measList rawWeight`: the bridge every
-weight fact crosses into the parametrized family. -/
 private theorem rawWeightList_eq (l : List Raw) :
     rawWeightList l = measList rawWeight l := by
   induction l with
   | nil => rfl
   | cons x xs ih => simp [rawWeightList, measList, ih]
 
-/-- The measure component the knot's spine recurses on: the weight of the
-slice from `i`. Kept definitionally over `rawWeightList`, so `sliceWeight a 0`
-still unfolds to the whole-array weight the knot's `have` facts spell. -/
+/-- The weight of the slice from `i`, kept over `rawWeightList` so the knot's
+facts unfold it. -/
 private def sliceWeight (raws : Array Raw) (i : Nat) : Nat :=
   rawWeightList (raws.toList.drop i)
 
@@ -2824,7 +2137,6 @@ private theorem sliceWeight_here (raws : Array Raw) {i : Nat} (h : i < raws.size
     sliceWeight raws i = rawWeight raws[i] + sliceWeight raws (i + 1) := by
   simp only [sliceWeight_eq]; exact sliceMeas_here rawWeight raws h
 
-/-- The workhorse: any strict advance strictly lightens the slice. -/
 private theorem sliceWeight_lt (raws : Array Raw) {i j : Nat}
     (hi : i < raws.size) (hij : i < j) : sliceWeight raws j < sliceWeight raws i := by
   have h1 := sliceMeas_here rawWeight raws hi
@@ -2833,21 +2145,15 @@ private theorem sliceWeight_lt (raws : Array Raw) {i j : Nat}
   simp only [sliceWeight_eq]
   omega
 
-/-- An element standing anywhere at or past `i` weighs no more than the
-slice from `i`. -/
 private theorem elem_weight_le {raws : Array Raw} {j : Nat} {r : Raw}
     (h : raws[j]? = some r) {i : Nat} (hij : i ≤ j) :
     rawWeight r ≤ sliceWeight raws i := by
   simp only [sliceWeight_eq]; exact sliceMeas_elem_le h hij
 
-/-- An extracted tail of a body weighs no more than the body. -/
 private theorem extract_weight_le (body : Array Raw) (a b : Nat) :
     rawWeightList (body.extract a b).toList ≤ rawWeightList body.toList := by
   simp only [rawWeightList_eq]; exact measList_extract_le ..
 
-/-- The unknown-environment splice strictly lightens the slice: the kept
-body is lighter than the wrapper it replaces, whatever prefix its argument
-scan dropped. -/
 private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
     (h : i < raws.size) {name : String} {body : Array Raw} {pos : Pos}
     (hr : raws[i] = .env name body pos) (keptFrom : Nat) :
@@ -2860,14 +2166,8 @@ private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
   simp only [rawWeight, rawWeightList_eq]
   omega
 
-/-- The measure of every command body the walk can see: the elabBlocks
-measure term that makes a user-command expansion decrease — the expanded
-body leaves this sum (`visGo_expand`), and what a body `\define` adds to it
-is exactly the body the walk paid a heavier group for (`bindCmd_visGo`).
-The old `(envLimit, limit, …)` lex is unsound for the block walk: `limit`
-rises across a define on the spine; this sum replaces it. Parametrized by
-the pointwise body measure `f`; the weight and pars components
-instantiate it. -/
+/-- The body measure `f` summed over the user commands below an index: the
+bodies the walk can still expand. -/
 private def visGo (f : UserCmd → Nat) (user : Array UserCmd) : Nat → Nat
   | 0 => 0
   | k + 1 => (if h : k < user.size then f user[k] else 0) + visGo f user k
@@ -2909,7 +2209,6 @@ private theorem visGo_congr {f : UserCmd → Nat} {u v : Array UserCmd} {n : Nat
       simp at h1
     · rw [h2]
 
-/-- The weight component of the visible sum. -/
 private def visWeightGo (user : Array UserCmd) : Nat → Nat :=
   visGo (fun cmd => rawWeightList cmd.body.toList) user
 
@@ -2924,9 +2223,6 @@ private theorem lookupUserGo_found {user : Array UserCmd} {name : String}
   | case3 m hm heq ih => exact ih h
   | case4 m hm ih => exact ih h
 
-/-- Expanding a visible command moves its measure out of the visible sum:
-the body recursed into, plus everything still visible to the callee, never
-exceeds what the caller's sum already carried. -/
 private theorem visGo_expand {f : UserCmd → Nat} {ctx : Ctx} {name : String}
     {k : Nat} {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     f cmd + visGo f ctx.user k ≤ visGo f ctx.user ctx.limit := by
@@ -2938,7 +2234,6 @@ private theorem visGo_expand {f : UserCmd → Nat} {ctx : Ctx} {name : String}
   have hmono := visGo_mono f ctx.user (show k + 1 ≤ ctx.limit by omega)
   omega
 
-/-- Expanding a visible command moves its weight out of the visible sum. -/
 private theorem visWeight_expand {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     rawWeightList cmd.body.toList + visWeightGo ctx.user k
@@ -2946,14 +2241,8 @@ private theorem visWeight_expand {ctx : Ctx} {name : String} {k : Nat}
   unfold visWeightGo
   exact visGo_expand (f := fun cmd => rawWeightList cmd.body.toList) h
 
--- Inline elaboration and argument binding are mutually recursive: a call
--- site's arguments are themselves inline content. Nontermination is
--- impossible by design (a body sees only earlier definitions), but the
--- checker cannot see that yet: de-partialing is scheduled proof work.
-/-- An argument read as text — a URL, a palette key — with the command's
-parameters substituted: inside `\define \link(url, text) {\href{\url}...}`,
-`\url` is the caller's text, not the two characters `\url`. `rawSrc` alone
-would print the parameter's name. -/
+/-- An argument read as text, such as a URL or a palette key, with the
+command's parameters substituted. -/
 private def argText (ctx : Ctx) (raws : Array Raw) : String :=
   let one (r : Raw) : String :=
     match r with
@@ -2970,9 +2259,8 @@ private def argText (ctx : Ctx) (raws : Array Raw) : String :=
     | _ => one r
   (String.join (raws.toList.map flat)).trimAscii.toString
 
-/-- Whether a paragraph break inside inline content separates here: yes,
-unless a space is already there. A group body keeps a deliberate leading
-space (`{ (x)}`); a paragraph's own edges are trimmed by `mkPara`, not here. -/
+/-- Whether a paragraph break inside inline content adds a space: only where
+none is already there. -/
 private def needsSep (acc : Array Inline) (sb : String) : Bool :=
   if sb.isEmpty then
     match acc.back? with
@@ -2980,28 +2268,16 @@ private def needsSep (acc : Array Inline) (sb : String) : Bool :=
     | _ => true
   else !sb.endsWith " "
 
-/-- Whether a space token separates here. TeX's input reader makes one
-token of a run of blanks and skips the blanks after a control space
-(TeXbook ch. 8, state S), so a space against one this scan already holds
-adds nothing — the one collapse, a splice's two runs included. A space
-after anything else is the second glue TeX sets there too: after the text
-a group, a macro or an environment half brought (`{word } next` sets two).
-A paragraph's own edges are trimmed by `mkPara`, not here. -/
+/-- Whether a space token adds glue: not against a space this scan already
+holds, as TeX's input reader collapses a run of blanks. -/
 private def spaceSeps (sb : String) : Bool := !sb.endsWith " "
 
-/-- The one writer of the label store: the flow-ordered table and its key
-set move together, so no caller can leave them disagreeing. -/
+/-- Records a label in the flow-ordered table and its key set together. -/
 private def labelStep (st : ESt) (key : String) (target : Option Ir.RefBinding) : ESt :=
   { st with
     labels := st.labels.push (key, target)
     labelKeys := st.labelKeys.insert key }
 
-/-- **The key set is the table's key set.** The duplicate test reads the
-set and the backends read the table, so the two must answer the same
-question about every key; this is that the one writer keeps them equal,
-and `labelKeys_set_eq_empty` is that they start equal. Without it a
-`\label` could be accepted twice, or refused once, with nothing to
-notice — the set is the only part of this store that can lie. -/
 private theorem labelStep_set_eq (st : ESt) (key k : String)
     (target : Option Ir.RefBinding)
     (h : st.labelKeys.contains k = st.labels.any (·.1 == k)) :
@@ -3010,15 +2286,13 @@ private theorem labelStep_set_eq (st : ESt) (key k : String)
   simp only [labelStep, Std.HashSet.contains_insert, Array.any_push, h]
   exact Bool.or_comm _ _
 
-/-- The store starts with both faces empty, the base case that with
-`labelStep_set_eq` makes the equality hold at every point of elaboration. -/
 private theorem labelKeys_set_eq_empty (k : String) :
     (∅ : Std.HashSet String).contains k
       = (#[] : Array (String × Option Ir.RefBinding)).any (·.1 == k) := by
   simp
 
-/-- Record one `\label` binding. The first declaration of a key wins,
-LaTeX's behaviour; a second is W0350 where it stands and binds nothing. -/
+/-- Records one `\label` binding; the first declaration of a key wins, as in
+LaTeX. -/
 private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBinding)
     (pos : Pos) : EM Unit := do
   let st ← get
@@ -3028,16 +2302,8 @@ private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBindin
   else
     modify fun st => labelStep st key target
 
-/-- Strip a display-math body's metadata before the math parser sees it:
-top-level `\label{...}` keys (returned for binding to the display's
-number), `\nonumber`/`\notag` (amsldoc §3: a numbered form opts out), and
-the first `\tag{t}`/`\tag*{t}` (amsldoc §3.4: the tag takes the number's
-place, parenthesised unless starred, and steps no counter), returned as its
-argument's raws for the caller to set as text. None is mathematics; left
-in place they would push the whole formula into the W0012 source-text
-degradation — with the label spelled inside the rendered text — or set a
-tag inside the formula. A second `\tag` stays, so the containment that
-names it still does. -/
+/-- Strips a display body's top-level `\label` keys, `\nonumber`/`\notag`,
+and first `\tag{t}`/`\tag*{t}` before the math parser sees it. -/
 private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
     EM (Array Raw × Array String × Bool × Option (Array Raw × Bool)) := do
   let mut out : Array Raw := #[]
@@ -3081,8 +2347,8 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
     else break
   return (out, keys, nonum, tag)
 
-/-- One source length through the shared parser. Dimension consumers admit
-only rigid absolute literals; local measures remain typed until layout. -/
+/-- A rigid absolute length from source, its measures limited to those
+`admits` allows. -/
 private def affineLength (ctx : Ctx) (admits : Measure → Bool) (src : String) :
     Except String (Affine Measure) := do
   let e ← Decl.parseAffineLengthExprFor
@@ -3099,12 +2365,9 @@ private def tableTarget (ctx : Ctx) (src : String) : Except String Ir.TableTarge
   let e ← affineLength ctx (· != .textHeight) src
   return .sized e
 
-/-- An array `>{decl}`/`<{decl}` modifier group: the alignment its
-declarations select — the last of `\raggedright` (flush left),
-`\raggedleft` (flush right), `\centering` wins, as in LaTeX — with
-`\arraybackslash` consumed as inert and every other effect named once as a
-`(key, message, help)` the caller's `warnOnce` keys by the command, so one
-unmodelled effect fires once over the whole table rather than per row. -/
+/-- An array `>{decl}`/`<{decl}` group's alignment, the last of
+`\raggedright`, `\raggedleft` and `\centering`, with every other effect as a
+keyed warning. -/
 private def decodeColMods (g : Array Raw) :
     Option Ir.HAlign × Array (String × String × String) := Id.run do
   let mut align : Option Ir.HAlign := none
@@ -3127,16 +2390,8 @@ alignment", "")
           "a column modifier is not modelled; the column keeps its alignment", "")
   return (align, warns)
 
-/-- The `tabular` column spec: `l`/`c`/`r` natural columns, `p{width}`
-(and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
-`@{}` deleting the outer pad on its edge, `|` warned and never drawn —
-"Never, ever use vertical rules" (booktabs.dtx §The layout of formal
-tables), and the array `>{decl}`/`<{decl}` modifiers selecting a wrapping
-column's alignment (`Ir.ColSpec.ragged`). On an `l`, `c` or `r` column a
-side declaration changes nothing: the cell sets no paragraph, so the skips
-`\raggedleft` and `\centering` set are read by none, and lualatex leaves
-`>{\raggedleft}l` flush left. Returns the columns, the outer-pad flags, and
-warnings as (key, message, help) for the caller's `warnOnce`. -/
+/-- Parses a `tabular` column spec into its columns, the outer-pad flags, and
+keyed warnings for what it does not model. -/
 private def parseColSpec (ctx : Ctx) (spec : Array Raw)
     (flexTarget : Option Ir.TableTarget := none) :
     Array Ir.ColSpec × Bool × Bool × Array (String × String × String) := Id.run do
@@ -3145,7 +2400,6 @@ private def parseColSpec (ctx : Ctx) (spec : Array Raw)
   let mut padR := true
   let mut warns : Array (String × String × String) := #[]
   let mut i : Nat := 0
-  -- A pending `>{decl}` alignment, applied to the next column pushed.
   let mut pendingAlign : Option Ir.HAlign := none
   for _ in [0:spec.size] do
     if h : i < spec.size then
@@ -3214,8 +2468,6 @@ as 'p'", "")
                                 ragged := pendingAlign.isSome }
             pendingAlign := none
           | '>' | '<' =>
-            -- The same declaration decoder serves the next column (`>`) and
-            -- the preceding one (`<`); neither modifier becomes a column.
             let group := if ci == last then spec[i + 1]? else none
             match group with
             | some (.group g _) =>
@@ -3233,8 +2485,7 @@ as 'p'", "")
               cols := cols.push { width := .natural, align := .left }
               pendingAlign := none
           | '@' =>
-            -- `@{...}` lexes as a word character with the group beside it:
-            -- the empty `@{}` deletes the outer pad on its edge.
+            -- `@{...}` can also lex inside a word, its group beside it.
             if cols.isEmpty then padL := false else padR := false
             if ci == last then
               if let some (.group g _) := spec[i + 1]? then
@@ -3268,8 +2519,8 @@ private def cmidRange (src : String) : Option (Nat × Nat) :=
   | [some a] => some (a, a)
   | _ => none
 
-/-- A table cell's edges: LaTeX ignores the spaces around `&` and `\\`
-(the template's `\ignorespaces`/`\unskip`). -/
+/-- Trims a table cell's edge spaces, as the template's `\ignorespaces` and
+`\unskip` do. -/
 private def trimRawEdges (raws : Array Raw) : Array Raw := Id.run do
   let mut rs := raws
   repeat
@@ -3280,8 +2531,6 @@ private def trimRawEdges (raws : Array Raw) : Array Raw := Id.run do
   for r in rs do
     if isSpaceOrPar r then k := k + 1 else break
   return rs.extract k rs.size
-
--- Small pure helpers whose progress the knot's termination proof reads.
 
 private theorem getElem?_lt {raws : Array Raw} {j : Nat} {r : Raw}
     (h : raws[j]? = some r) : j < raws.size := by
@@ -3301,8 +2550,8 @@ private theorem extract_lt_slice {raws : Array Raw} {i a : Nat} (b : Nat)
     rawWeightList (raws.extract a b).toList < sliceWeight raws i :=
   Nat.lt_of_le_of_lt (extract_slice_le raws a b) (sliceWeight_lt raws h ha)
 
-/-- A defined environment's body from `j` (past its arguments), its edges
-as the definition reads them (`UserEnv.ignoresLead`, `trimsTail`). -/
+/-- A defined environment's body from `j`, its edges trimmed as the
+definition declares. -/
 private def envBody (env : UserEnv) (body : Array Raw) (j : Nat) : Array Raw :=
   let lo := if env.ignoresLead then skipSpaces body j else j
   body.extract lo (if env.trimsTail then spanRawsEnd body (· matches .space) else body.size)
@@ -3323,8 +2572,6 @@ private theorem body_lt_slice {raws : Array Raw} {j : Nat} {r : Raw}
     rawWeightList body.toList < sliceWeight raws i :=
   Nat.lt_of_lt_of_le hb (elem_weight_le hj hij)
 
-/-- The index past a starred form's `*`: a star belongs to the command,
-not to the text. -/
 private def skipStar (raws : Array Raw) (j : Nat) : Nat :=
   match raws[j]? with
   | some (.word "*" _) => skipSpaces raws (j + 1)
@@ -3336,8 +2583,7 @@ private theorem skipStar_ge (raws : Array Raw) (j : Nat) : j ≤ skipStar raws j
   · have := skipSpaces_ge raws (j + 1); omega
   · omega
 
-/-- The index past a consumed `[short]` title and the spaces after it —
-`.took`'s continuation, one pure function so its progress is a fact. -/
+/-- The index past a `[short]` title and the spaces after it. -/
 private def skipShortTitle (raws : Array Raw) (j : Nat) (pos : Pos) : Nat :=
   match scanBracketArg raws j pos with
   | .took k => skipSpaces raws k
@@ -3353,9 +2599,7 @@ private theorem skipShortTitle_ge (raws : Array Raw) (j : Nat) (pos : Pos) :
     omega
   next => omega
 
-/-- The content of one adjacent `[...]` run — `\includegraphics` and
-`\faIcon`'s option scan. An unclosed run consumes to the end, as the
-collectors always have. -/
+/-- The content of the `[...]` run at `j`; an unclosed run takes the rest. -/
 private def bracketRunSrc (raws : Array Raw) (j : Nat) : Option (Array Raw) :=
   match raws[j]? with
   | some (.sym '[' _) =>
@@ -3364,8 +2608,7 @@ private def bracketRunSrc (raws : Array Raw) (j : Nat) : Option (Array Raw) :=
     | none => some (raws.extract (j + 1) raws.size)
   | _ => none
 
-/-- The index past that run and the spaces after it, one pure function so
-its progress is a fact. -/
+/-- The index past the `[...]` run at `j` and the spaces after it. -/
 private def skipBracketRun (raws : Array Raw) (j : Nat) : Nat :=
   match raws[j]? with
   | some (.sym '[' _) =>
@@ -3390,11 +2633,8 @@ private theorem skipBracketRun_ge (raws : Array Raw) (j : Nat) :
       omega
   next => omega
 
-/-- One citation note, the `[...]` run at `j`, elaborated by `el` — the
-knot's own inline elaborator, handed the weight fact its caller's measure
-needs: the note's text and the index past the run and its spaces, or
-`none` at the same index when no bracket opens there. An unclosed run
-takes the rest, as the option collectors do. -/
+/-- One citation note, the `[...]` run at `j` elaborated by `el`, with the
+index past it; `none` at `j` when no bracket opens there. -/
 private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤ w)
     (el : (sub : Array Raw) → rawWeightList sub.toList < w → EM (Array Inline)) :
     EM (Option String × { k : Nat // j ≤ k }) := do
@@ -3410,20 +2650,8 @@ private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤
     return (some (Ir.plainText note), ⟨skipSpaces raws (c + 1), by omega⟩)
   | _ => return (none, ⟨j, Nat.le_refl j⟩)
 
-/-- natbib's citation family (`Ir.natbibCites`), read at `i` with the
-knot's inline elaborator `el`: one node per citation group, keys as written
-and the form beside them — the brackets, separators and names are the
-bibliography's to draw, so elaboration keeps the group whole and
-resolution renders it. A star asks for the full author list; one `[...]`
-note is the note after the citation, two are the notes before and after
-(natbib.sty `\NAT@@citetp`), and a noted `\cite` is the parenthetical form
-in either mode (natbib.sty `\NAT@cites`). The keys are read raw — a key is
-a name, not text; `\nocite`'s keys only enter the list. `\citetext` is
-natbib's `\NAT@open#1\NAT@close` (natbib.sty:739): its body is body text
-between two bracket marks, so a citation inside it is one like any other.
-Returns the nodes — none when the group is missing, named E0304 — and the
-index past what was read. Outside the knot, which stands at its heartbeat
-budget: the arm there only dispatches. -/
+/-- natbib's citation family at `i`: one node per citation group, its keys as
+written and its form beside them, and the index past what was read. -/
 private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
     (base : Ir.CiteForm) (pos : Pos)
     (el : (sub : Array Raw) → rawWeightList sub.toList < sliceWeight raws i → EM (Array Inline)) :
@@ -3452,14 +2680,12 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
       let keys := (((argText ctx body).splitOn ",").map (·.trimAscii.toString)).filter
         (!·.isEmpty)
       if base.cmd == .nocite then
-        -- No ink, so nothing for the no-bibliography judge; a space before it
-        -- swallows the spaces after it (latex.ltx `\@bsphack`/`\@esphack`).
+        -- `\@bsphack`/`\@esphack`: a space before swallows the spaces after.
         let j4 := skipSpaces raws (j3 + 1)
         have hj4 := skipSpaces_ge raws (j3 + 1)
         return (#[.cite form keys.toArray],
           if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
-      -- Recorded for the no-bibliography judge (elabDoc): a citation cannot
-      -- be judged where it stands, because its `\bibliography` may follow it.
+      -- Judged in elabDoc: the `\bibliography` may follow the citation.
       recordCiteSites ctx keys pos
       return (#[.cite form keys.toArray], ⟨j3 + 1, by omega⟩)
   | _ =>
@@ -3467,9 +2693,8 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
     return (#[], ⟨j3, by omega⟩)
 
 mutual
-/-- Roles annotate this level's own text. Other nested bodies were already
-processed by their own call, with their own literal-text setting, so this
-walk deliberately descends only through semantic roles. -/
+/-- Smart punctuation over this level's text, descending only through roles
+and spans: other bodies carry their own literal setting. -/
 -- conserves: none — smart punctuation changes the text's scalar sequence.
 private def mapSmartText (when? : Option OverlaySpec) : Inline → Inline
   | .text t => punctuationInline false when? t
@@ -3506,10 +2731,8 @@ private def inlineLengthSrc (ctx : Ctx) (body : Array Raw) : String :=
     | some (_, none) => some ""
     | none => some n) body).getD ""
 
-/-- A register operation the affine grammar deliberately does not model.
-These controls need mutable TeX register state rather than a local geometric
-value, so each consumer names the boundary instead of treating the register
-name as a token or as zero. -/
+/-- The first register operation in a length that the affine grammar does not
+model, if any. -/
 private def unsupportedLengthControl (body : Array Raw) : Option String :=
   body.findSome? fun r => match r with
     | .ctrl n _ =>
@@ -3530,9 +2753,8 @@ private def lengthStringError (src why : String) : String :=
   | some n => s!"register arithmetic '\\{n}' is not supported by affine lengths"
   | none => why
 
-/-- One `\fontsize` argument through the affine dimension grammar. NFSS
-supplies `pt` when the argument is a bare decimal; every other spelling is
-the shared parser's unchanged. -/
+/-- One `\fontsize` argument as a rigid dimension, a bare decimal read in `pt`
+as NFSS reads it. -/
 private def fontDim (ctx : Ctx) (src : String) : Except String (Affine Measure) := do
   let trimmed := src.trimAscii.toString
   let src := if (Decl.parseDecimal trimmed).isSome then trimmed ++ "pt" else trimmed
@@ -3540,7 +2762,7 @@ private def fontDim (ctx : Ctx) (src : String) : Except String (Affine Measure) 
   if e.rigid then return e
   throw "rubber is not a font dimension"
 
-/-- Decode the compatibility marker into one typed size declaration. -/
+/-- Decodes Compat's `\fontsize` marker into one typed size declaration. -/
 private def readFontSizeStyle (ctx : Ctx) (name : String) (pos : Pos) :
     EM (Option Style) := do
   let payload := (name.drop Compat.fontSizeMark.length).toString
@@ -3562,8 +2784,7 @@ private def readFontSizeStyle (ctx : Ctx) (name : String) (pos : Pos) :
     diag ctx .E0331 "cannot read the affine dimensions in '\\fontsize'" pos
     return none
 
-/-- `\hspace` glue through the affine parser; finite TeX glue and infinite
-fill keep their existing semantics. -/
+/-- An `\hspace` argument as affine glue, its fill stretch one fill. -/
 private def readHskip (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Affine Measure) := do
   let parts := body.filter fun r => !(r matches .space)
@@ -3657,14 +2878,13 @@ private def ruleArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
     diag ctx .E0304 "'\\rule' needs {width} and {height} groups" pos
     return (none, ⟨i + 1, by omega⟩)
 
-/-- An image dimension through the shared affine parser. All local
-measures are carried to layout; literals stay rigid and absolute. -/
+/-- An image dimension through the shared affine parser, every local measure
+carried to layout. -/
 private def imageLenOf (ctx : Ctx) (v : String) : Except String Image.Len := do
   let e ← affineLength ctx (fun _ => true) v
   return ⟨e⟩
 
-/-- The text of an `alt={...}` value: braced or quoted spellings both read
-as text — the one reading `\includegraphics` and `tikzpicture` share. -/
+/-- The text of an `alt={...}` value, braced or quoted. -/
 private def altValueText (v : String) : String :=
   if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
     String.ofList (v.toList.drop 1).dropLast
@@ -3672,9 +2892,8 @@ private def altValueText (v : String) : String :=
     String.ofList (v.toList.drop 1).dropLast
   else v
 
-/-- Local image settings, with animation losses collected for one
-diagnostic at the command. A frame-selection option cannot be ignored if
-doing so would silently choose a different poster. -/
+/-- An image's settings, with its ignored and refused animation keys
+collected for one diagnostic. -/
 private structure ImageOptions where
   spec : Image.Spec := {}
   alt : Ir.Alt := .undeclared
@@ -3682,26 +2901,19 @@ private structure ImageOptions where
   refused : Array String := #[]
   valid : Bool := true
 
-/-- graphicx's size keys and page selection; animate manual §6.1's poster
-selection uses zero-based frame numbers, whereas graphicx's `page` key
-uses positive one-based PDF pages (graphicx.sty `Gin/page`, luatex.def;
-a synthetic three-page LuaLaTeX probe also rejects page=0 and page=last).
-The animate default and a bare `poster` both mean the first frame. -/
+/-- Reads graphicx's size keys and one-based `page`, and animate's zero-based
+`poster` frame. -/
 private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
     (pos : Pos) (animated : Bool) : EM ImageOptions := do
   let mut spec : Image.Spec := { animated }
   let mut alt : Ir.Alt := .undeclared
   let mut ignored : Array String := #[]
   let mut refused : Array (String × String) := #[]
-  -- Per-key deferred validation for page/poster: a repeated key keeps its
-  -- last value, so its validity and error track only the last occurrence.
-  -- An earlier invalid value must not poison a later valid one.
+  -- A repeated key keeps its last value, so only its last error counts.
   let mut pageErr : Option String := none
   let mut posterErr : Option String := none
   if let some src := optSrc then
     for e in Decl.splitEntries (rawSrc src) do
-      -- Like the package's key reader, repeated keys keep their last
-      -- value: `poster=none,poster=last` still has a printable poster.
       if let some (key, _) := Decl.splitEntry e then
         refused := refused.filter (·.1 != key)
       match Decl.splitEntry e with
@@ -3712,8 +2924,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
             (help := "image sizes look like 3cm or 0.8\\textwidth")
       | some ("height", v) | some ("totalheight", v) =>
-        -- totalheight is height plus depth, and an image has no
-        -- depth, so the two keys coincide here.
+        -- An image has no depth, so totalheight is its height.
         match imageLenOf ctx v with
         | .ok l => spec := { spec with height := some l }
         | .error _ =>
@@ -3773,9 +2984,6 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
         else
           ignored := ignored.push e
       | some ("alt", v) =>
-        -- graphicx's own alt key (LaTeX News 37, 2023): the text
-        -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
-        -- image is.
         alt := Ir.Alt.declare (altValueText v)
       | _ =>
         if e.trimAscii.toString == "keepaspectratio" then
@@ -3786,13 +2994,10 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
           posterErr := none
         else if e.trimAscii.toString == "artifact" ||
             (Decl.splitEntry e).any (·.1 == "artifact") then
-          -- latex-lab-graphic's key for decoration (its value is ignored):
-          -- no Figure in the PDF, its ink an artifact.
+          -- latex-lab-graphic's decoration key; its value is ignored.
           alt := .decorative
         else
           ignored := ignored.push e
-  -- Emit the surviving page/poster error (last occurrence only) and gate
-  -- the image on it: a later valid value clears an earlier invalid one.
   if let some msg := pageErr then diag ctx .E0321 msg pos
   if let some msg := posterErr then diag ctx .E0321 msg pos
   let valid := pageErr.isNone && posterErr.isNone
@@ -3803,9 +3008,8 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
         (help := "modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact")
   return { spec, alt, ignored, refused := refused.map (·.2), valid }
 
-/-- Read exactly the grammar's number of mandatory groups, preserving the
-first non-group for body recovery. The cursor bound lets the inline knot
-consume every supplied argument even when the image itself is refused. -/
+/-- Reads up to the given number of mandatory groups, stopping at the first
+non-group. -/
 private def imageGroups (raws : Array Raw) (start : Nat) :
     Nat → Array (Array Raw) × { j : Nat // start ≤ j }
   | 0 => (#[], ⟨start, Nat.le_refl _⟩)
@@ -3818,12 +3022,8 @@ private def imageGroups (raws : Array Raw) (start : Nat) :
       (#[arg] ++ args, ⟨k, by omega⟩)
     | _ => (#[], ⟨j, hj⟩)
 
-/-- Both image commands lower at this door. animate manual §5 gives four
-groups and makes empty first/last groups the whole multipage PDF. A
-nonempty range also admits numbered files, reversed order and skipped
-frames: none of those may silently select a PDF page here. Playback is
-always named as degraded: PDF has no animation JavaScript, and HTML uses
-the source or companion SVG when present or the same static poster otherwise. -/
+/-- `\includegraphics` and `\animategraphics`; an animation ships its static
+poster with its playback named as lost. -/
 private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (pos : Pos) (animated : Bool) :
     EM (Option Inline × { j : Nat // i < j }) := do
@@ -3885,12 +3085,8 @@ private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
           (help := "the face that renders an icon is whichever declared or installed face covers its scalar; 'label = ...' overrides the icon's text alternative")
   return label
 
-/-- Discharges the knot's termination goals: navigate the lexicographic
-tuple to the strictly-decreasing component; the strict fact is a `have`
-standing beside each recursive call. The goals arrive already cleaned by
-the elaborator's own termination-goal cleanup, so no second simp pass runs
-first: that pass over every goal cost the knot more than 10,000 of its
-200,000 heartbeats (judged by deletion and rebuild). -/
+/-- Discharges the knot's termination goals by navigating the lexicographic
+tuple to the component the `have` beside each call decreases. -/
 macro "knot_dec" : tactic =>
   `(tactic| (
     first
@@ -3911,9 +3107,8 @@ private def sectionLevel : String → Option Nat
   | "subsubsection" => some 3
   | _ => none
 
-/-- Block heading identity is separate from LaTeX's section counters.
-The native reader bridge carries body h1–h6 without changing the
-run-in meaning of `\paragraph` and `\subparagraph`. -/
+/-- The heading level of a block heading control, independent of the section
+counters. -/
 private def blockHeading? : String → Option Ir.HeadingLevel
   | "section" => some .h2
   | "subsection" => some .h3
@@ -3948,9 +3143,8 @@ private def counterAt (nums : Nat × Nat × Nat) (level : Nat) : Nat :=
   | 2 => nums.2.1
   | _ => nums.2.2
 
-/-- The class default number (classes.dtx §Sectioning): `\thesection` is
-`\arabic{section}` (`\Alph` after `\appendix`), each deeper level prefixes
-its parent. -/
+/-- classes.dtx's default heading number: `\arabic{section}`, `\Alph` after
+`\appendix`, each deeper level prefixed by its parent. -/
 private def defaultSecNum (nums : Nat × Nat × Nat) (inApp : Bool)
     (level : Nat) : String :=
   let (n1, n2, n3) := nums
@@ -3960,29 +3154,17 @@ private def defaultSecNum (nums : Nat × Nat × Nat) (inApp : Bool)
   | 2 => s!"{base}.{n2}"
   | _ => s!"{base}.{n2}.{n3}"
 
-/-- Appendix numbering is exactly the letter of the section counter:
-appendix.sty (v1.2c) `\@resets@pp` makes `\thesection` `\Alph{section}`,
-replacing the arabic form classes.dtx §Sectioning defines, and the deeper
-levels keep prefixing it — the class numbering contract continues under
-`\appendix` with the letter base, gapless because the counter stepping is
-untouched by the mark. -/
 private theorem defaultSecNum_appendix_exact (n1 n2 n3 : Nat) :
     defaultSecNum (n1, n2, n3) true 1 = ListMark.AlphN n1 := by rfl
 
-/-- Distinct appendix sections render distinct letters: the letter
-assignment is injective on the counter, so the gapless counter is gapless
-in its rendered form too. -/
 private theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
     (h : defaultSecNum m true 1 = defaultSecNum n true 1) : m.1 = n.1 :=
   match m, n with
   | (_, _, _), (_, _, _) => ListMark.letterN_inj (.inr rfl) h
 
 mutual
-/-- Render one level's heading number: the declared format when one
-stands (`Counters.secFmts`, last declaration wins), the class default
-otherwise. `fuel` bounds `\the<counter>` references between formats —
-a self-referential chain cannot outrun it — and an exhausted budget
-falls back to the counter's bare arabic value. -/
+/-- One level's heading number: its last declared format, else the class
+default; an exhausted `fuel` gives the bare arabic value. -/
 private def renderSecLevel (fmts : Array (Nat × Array SecPart))
     (nums : Nat × Nat × Nat) (inApp : Bool) (fuel level : Nat) : String :=
   match fuel with
@@ -4006,14 +3188,11 @@ private def renderSecParts (fmts : Array (Nat × Array SecPart))
 termination_by parts _ => (fuel, parts.length + 1)
 end
 
-/-- The `\the<counter>` render budget: the three section levels can chain
-at most through each other once each. -/
+/-- Three section levels chain through each other at most once each. -/
 private def secFmtFuel : Nat := 3
 
-/-- Read a definition body as a heading-number format: literal words and
-spaces, a numeral command over a section counter (`\arabic{subsection}`),
-or another level's format (`\thesection`). Any other token means the
-definition is not a format and stays an ordinary macro (`none`). -/
+/-- A definition body as a heading-number format (words, spaces, numerals
+over section counters, `\the<level>` references), or `none`. -/
 private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run do
   let mut parts : Array SecPart := #[]
   let mut i : Nat := 0
@@ -4046,37 +3225,26 @@ private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run d
     | some _ => return none
   return some parts
 
-/-- A definition that is a heading-number format: parameterless, named
-`\the<section counter>`, its body readable as a format. classes.dtx
-§Sectioning: `\the<counter>` is the counter's printed format, so
-`\renewcommand{\thesubsection}{Item \arabic{subsection}.}` — which the
-definer rewrite spells `\define \thesubsection() {...}` — restyles the
-heading numbers; binding it as a macro instead left every such document
-with dead `\arabic` text and E0312 where the renew stood inline. -/
+/-- A parameterless `\the<section counter>` definition whose body reads as a
+heading-number format. -/
 private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
   if !cmd.params.isEmpty then none
   else (theCounterLevel? cmd.name).bind fun lvl =>
     (secFmtOfBody cmd.body).map ((lvl, ·))
 
-/-- Declare one level's heading-number format from where it stands: flow
-scope, the `\logo`/body-`\palette` model, never a brace revert. -/
+/-- Declares one level's heading-number format, in flow scope. -/
 private def applySecFmt (lvl : Nat) (parts : Array SecPart) : EM Unit :=
   modify fun st =>
     { st with ctr := { st.ctr with
         secFmts := (st.ctr.secFmts.filter (·.1 != lvl)).push (lvl, parts) } }
 
-/-- The counter-command names (ltcounts.dtx), one gate for the
-block-shape judgement and the block walk's arm. -/
 private def counterCtrl (n : String) : Bool :=
   n == "refstepcounter" || n == "stepcounter"
     || n == "addtocounter" || n == "setcounter"
 
-/-- LaTeX's counter commands over the section counters (ltcounts.dtx):
-`\stepcounter` steps and zeroes the levels below, `\refstepcounter` also
-makes the counter the current `\ref` target (`\@currentlabel` is
-`\p@counter\thecounter`, so the format in force renders it), and
-`\addtocounter`/`\setcounter` change the value alone. Values are flow
-Nats; a negative result clamps to zero. -/
+/-- Applies a counter command to a section counter as ltcounts.dtx does: a
+step zeroes the levels below, `\refstepcounter` also sets the `\ref` target,
+and a negative result clamps to zero. -/
 private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
   let st ← get
   let (s1, s2, s3) := st.ctr.secNums
@@ -4095,13 +3263,10 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
                                                   runNums := if step then (0, 0) else st.ctr.runNums } }
   if name == "refstepcounter" then
     let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel lvl
-    -- A bare counter step numbers no node: what a label here names has no
-    -- kind, so the binding is kindless — a `\cref` to it is W0380.
+    -- A bare counter step numbers no node, so its label is kindless.
     modify fun st => { st with refTarget := some { kind := none, num := num } }
 
-/-- The counters besides the sections that the flow keeps (ltcounts.dtx):
-`secnumdepth`, how deep headings number; `footnote` and `equation`, the
-last number each gave. Each is its reader and its writer over the state. -/
+/-- The reader and writer of each non-section counter the flow keeps. -/
 private def flowCounter? (ctr : String) :
     Option ((Counters → Int) × (Counters → Int → Counters)) :=
   match ctr with
@@ -4110,9 +3275,8 @@ private def flowCounter? (ctr : String) :
   | "equation" => some (fun c => c.eqNum, fun c v => { c with eqNum := v.toNat })
   | _ => none
 
-/-- Set, add to or step a flow counter, as `applyCounter` does a section's:
-a count below zero clamps to zero, and the depth may go negative, as
-LaTeX's `-1` turns every heading's number off. -/
+/-- Sets, adds to or steps a flow counter; `secnumdepth` alone may go below
+zero. -/
 private def applyFlowCounter (name : String)
     (rw : (Counters → Int) × (Counters → Int → Counters)) (n : Int) : EM Unit :=
   modify fun st => { st with
@@ -4121,18 +3285,14 @@ private def applyFlowCounter (name : String)
       | "addtocounter" => rw.1 st.ctr + n
       | _ => rw.1 st.ctr + 1) }
 
-/-- A counter command's integer argument, as read where it stands: a
-literal, `\value{c}` — the counter's register (ltcounts.dtx) — or one of the
-kernel's integer constants (`kernelInt`); the value of a counter `c` the
-flow does not keep; or a value no reading here reaches, as written. -/
+/-- A counter command's integer argument: a value, a counter the flow does
+not keep, or source text no reading reaches. -/
 private inductive CounterArg where
   | int (v : Int)
   | unkept (c : String)
   | unread (shown : String)
 
-/-- The kernel's integer constants a counter value names (plain.tex: `\z@`
-is a dimen register at 0pt, read as TeX coerces one to a number; the rest
-are `\chardef`, `\mathchardef` and `\countdef` constants). -/
+/-- The plain.tex integer constants a counter value may name. -/
 private def kernelInt : String → Option Int
   | "z@" => some 0
   | "m@ne" => some (-1)
@@ -4147,7 +3307,6 @@ private def kernelInt : String → Option Int
   | "@MM" => some 20000
   | _ => none
 
-/-- Read a counter command's value group (`CounterArg`). -/
 private def counterValue (st : ESt) (nRaw : Array Raw) : CounterArg :=
   let shown := (rawSrc nRaw).trimAscii.toString
   let named (r : String) (sign : Int) : CounterArg :=
@@ -4165,14 +3324,8 @@ private def counterValue (st : ESt) (nRaw : Array Raw) : CounterArg :=
   | [.word "-" _, .ctrl r _] => named r (-1)
   | _ => (shown.toInt?.map .int).getD (.unread shown)
 
-/-- One counter command with its arguments starting at `i` (just past
-the control word): scan, apply over the section counters, name any
-other counter (W0104) with its arguments consumed — configuration,
-never content — and a value it cannot read (W0104, keyed on the
-counter's value), the counter keeping what it held. A missing group is
-the one error. Out of the block knot so the fixpoint never unfolds
-it; the returned index carries the progress fact the knot's measure
-reads. -/
+/-- One counter command from `i`: applied to a kept counter, otherwise named
+with its arguments consumed; returns the index past them. -/
 private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (n : String) (pos : Pos) : EM { j : Nat // i ≤ j } := do
   let j := skipSpaces raws i
@@ -4216,18 +3369,13 @@ the counter keeps its value" pos
     diag ctx .E0304 s!"'\\{n}' needs a \{counter} group" pos
     return ⟨i, Nat.le_refl _⟩
 
-/-- A run-in heading's title as it sets: bold, after its number where
-`secnumdepth` reaches its level (classes.dtx: `\paragraph` is level four,
-`\subparagraph` five; `\@startsection` steps and numbers only there). The
-number is its parent's and its own (`\theparagraph` is
-`\thesubsubsection.\arabic{paragraph}`), followed by `\@seccntformat`'s
-`\quad`, and it is the `\ref` target from here on. Out of the inline knot. -/
+/-- A `\paragraph` or `\subparagraph` title: bold, after its number when
+`secnumdepth` reaches its level. -/
 private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Array Inline) :
     EM Inline := do
   let st ← get
   let level : Int := if name == "paragraph" then 4 else 5
-  -- premise: counterChecks — a run-in level past secnumdepth ships no
-  -- number, and one it reaches ships its parent's and its own
+  -- premise: counterChecks — numbered only within secnumdepth
   if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
     return .styled .bold title
   let (n4, n5) := st.ctr.runNums
@@ -4238,16 +3386,8 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
                              refTarget := some { kind := some .heading, num := num } }
   return .styled .bold (#[.text (num ++ "\u2003")] ++ title)
 
--- The well-founded translation whnf-reduces through the knot's body when it
--- assembles the fixpoint and its equations; the string machinery in the
--- arms is data to that process, never proof material, and unfolding it is
--- what blew the elaboration budget (measured: String.Slice.skipPrefixWhile
--- alone at 184k reductions). Sealed for the knot, unsealed right after.
-
-/-- The bracketed number of `\footnote[num]{...}`: the raws between the
-brackets as text, read as a number. `none` when no bracket argument stands
-there or its text is not a number. Outside the knot (and sealed for it):
-its string machinery is data, never proof material. -/
+/-- The number in `\footnote[num]`'s bracket, or `none` when there is none
+or it is not a number. -/
 private def footnoteOverride (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (pos : Pos) : Option Nat :=
   match scanBracketArg raws i pos with
@@ -4256,20 +3396,15 @@ private def footnoteOverride (ctx : Ctx) (raws : Array Raw) (i : Nat)
       |>.trimAscii.toString.toNat?
   | _ => none
 
-/-- Does a group's body carry a paragraph break at its top level? The
-W0371 test, outside the knot. -/
 private def hasParRaw (body : Array Raw) : Bool :=
   body.any (fun r => r matches .par _)
 
-/-- W0371, outside the knot: the arm calls one sealed action. -/
 private def footnoteWarnPar (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "footnote:par" .W0371
     "a paragraph break inside '\\footnote' is set as a space" pos
     (help := "a footnote is one paragraph; split a long note into \
 two \\footnote calls")
 
-/-- W0374, outside the knot: one face of display text has no note
-apparatus, so the text stays inline where it stands, named. -/
 private def footnoteWarnFace (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "footnote:face" .W0374
     "a footnote on this card is kept inline; a card face has no \
@@ -4277,17 +3412,13 @@ note apparatus" pos
     (help := "write the aside in the running text, or declare \
 \\documentclass{article} to give notes a page foot")
 
-/-- W0373, outside the knot: fnsymbol marks and the title-foot placement
-are owed, so the content stays inline in the title block, named. -/
 private def thanksWarn (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "ctrl:thanks" .W0373
     "'\\thanks' content is kept inline in the title block" pos
     (help := "a plain \\footnote in the body text renders as a page footnote")
 
-/-- Step the footnote counter through `Ir.footnoteMark` and return the
-mark's number: an override is itself and steps nothing. In a field's
-reading (`Counters.fnDefer`) an unoverridden mark is left to the list,
-which numbers it where it stands (`none`), and steps nothing here. -/
+/-- Steps the footnote counter and returns the mark's number; an override
+steps nothing, and a deferred mark returns `none`. -/
 private def footnoteStepNum (override : Option Nat) : EM (Option Nat) := do
   let c := (← get).ctr
   if override.isNone && c.fnDefer then return none
@@ -4295,49 +3426,29 @@ private def footnoteStepNum (override : Option Nat) : EM (Option Nat) := do
   modify fun st => { st with ctr := { st.ctr with fnNum := fn } }
   return some num
 
-/-- The missing-group diagnostic the two note arms share, outside the knot. -/
 private def noteNeedsGroup (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
 
-/-- The clause a dropped option run contributes to the refusing construct's
-own message: the run's fate, named once, inside the accounting of the
-construct whose argument list it was part of. Written as a wrapper around
-the construct's own recovery clause rather than a prefix to it, so one
-spelling reads as one sentence at both refusal doors. -/
+/-- A refusal's recovery clause, led by the fate of a dropped `[...]` run. -/
 private def optionRunClause (optionRun : Bool) (kept : String) : String :=
   if optionRun then s!"its [...] options were dropped and {kept}" else kept
 
-/-- The same clause for a *group* of sites rather than one call: the wording
-the visible line carries, which must be true of every site the number beside
-it counts. A group whose calls all led with a run, or none of which did, is
-the single-site wording; a group that met both shapes says so. That line is
-the first site's own diagnostic reworded in place (`bumpRunShape`), so the
-first site reads the group's rule, not its own event, under `-v` and in
-`--porcelain` alike; every later site keeps its own event as a note. -/
+/-- The recovery clause for a group of sites, true of every site it counts. -/
 private def RunShape.clause (s : RunShape) (kept : String) : String :=
   if !s.withRun then kept
   else if !s.withoutRun then optionRunClause true kept
   else s!"any [...] options were dropped and {kept}"
 
-/-- The advice a dropped option run carries, appended to the refusing
-construct's own help rather than delivered by a second code: one spelling,
-so the two refusal doors cannot disagree about what a reader should do with
-a bracket run they meant as content. -/
+/-- The help a dropped `[...]` run appends to its refusal's own help. -/
 private def optionRunAdvice (optionRun : Bool) : String :=
   if optionRun then "; content, not options? start the '[' on the next line" else ""
 
-/-- ragged2e's alignment declarations (ragged2e manual §2): the package is
-not read, so a region's justification or raggedness it declares stays the
-page's own. -/
+/-- ragged2e's alignment declarations (manual §2), which change nothing. -/
 private def raggedTwoE : List String :=
   ["justifying", "RaggedRight", "RaggedLeft", "Centering"]
 
-/-- The help an unknown command's warning points at: the generic
-declaration route, except where the engine knows what the construct is
-usually for and can name the native key instead — `\AddToHook`'s shipout
-hooks are how a LaTeX document draws its own printer's marks, and those
-are a declared key here. A leading `[...]` run adds its own advice here,
-in the command's own help. -/
+/-- An unknown command's help: the native key where the construct's purpose
+is known, else the `\define` route. -/
 private def unknownCmdHelp (name : String) (optionRun : Bool) : String :=
   let route :=
     if name == "AddToHook" || name == "AddToHookNext" then
@@ -4349,28 +3460,7 @@ printer's cut marks, derived from the trim and bleed"
     else "\\define \\name(...) {body} declares it"
   s!"{route}{optionRunAdvice optionRun}"
 
-/-- **A refused command's recovery accounts for all of its arguments.** The
-code, message and help a refusal earns, as a value — the pure half of
-`warnUnknownCmd`, split out because the invariant is about *which* diagnostic
-the construct earns. `unknownCmdDiag_code_exact` is the statement that the
-code is fixed by the construct's name alone.
-
-The argument is a `RunShape`, the set of argument shapes the diagnostic
-speaks for: one site's own shape at a per-site note, the whole group's at the
-line that carries the total. A leading `[...]` run earns no code of its own —
-its fate is a clause of *this* message, because the run is part of this
-construct's own recovery: those bytes addressed the command, not the
-sentence, and kept as text they printed ink nobody wrote. It was a second
-code (W0341, retired) naming a fragment of the argument list this message
-already covers, and the two doors disagreed about being counted: this one
-goes through `warnOnce` with subject `ctrl:<name>`, that one went through the
-raw door with none, so `tallySites` put `(2 sites)` on one line while the
-other printed at every site.
-
-The one named exception is still the `\footnotemark`/`\footnotetext` pair,
-which is pending (W0370, cross-command state — a minipage's notes too) and
-never "unknown". The retired code called it an unknown command at its own
-span, which was false; with one diagnostic there is nothing left to say it. -/
+/-- The code, message and help a refused command earns for a site shape. -/
 public def unknownCmdDiag (name : String) (shape : RunShape) :
     DiagCode × String × String :=
   if name == "footnotemark" || name == "footnotetext" then
@@ -4384,16 +3474,9 @@ at the page foot"
     let kept := shape.clause "its {...} arguments were kept as text"
     (.W0301, s!"unknown command '\\{name}'; {kept}", unknownCmdHelp name shape.withRun)
 
-/-- One site's own shape. -/
 private def RunShape.one (optionRun : Bool) : RunShape := ({} : RunShape).add optionRun
 
-/-- **The line that carries a group's total says what is true of every site
-it counts.** Fold this site's shape into the group's, and when that widens
-the set — the second shape arriving — reword the line the total is read off
-so its clause covers both. The index is the one this emitter recorded, never
-a search, so only the diagnostic *this* emitter wrote is ever touched: the
-preamble's own refusal shares the key but not the wording, and stays as it
-is. -/
+/-- Rewords the diagnostic at `idx` to the group's widened shape. -/
 private def runShapeReword (name : String) (new : RunShape) (idx : Nat)
     (ds : Array Diag) : Array Diag :=
   let (_, msg, help) := unknownCmdDiag name new
@@ -4402,8 +3485,6 @@ private def runShapeReword (name : String) (new : RunShape) (idx : Nat)
   | some d => ds.setIfInBounds idx
       { d with message := msg, help := d.help.map fun _ => help }
 
-/-- Rewording preserves the count: no site is added or removed by making the
-visible line honest. -/
 private theorem runShapeReword_size_exact (name : String) (new : RunShape) (idx : Nat)
     (ds : Array Diag) : (runShapeReword name new idx ds).size = ds.size := by
   unfold runShapeReword
@@ -4428,10 +3509,7 @@ private theorem bumpRunShape_size_exact (name key : String) (optionRun : Bool) (
   · dsimp only
     split <;> simp [runShapeReword_size_exact]
 
-/-- The refusal a command earns, through the counted door. Outside the knot:
-the arm calls one sealed action. The demotion is W0301's alone — a spliced
-`.sty`'s TeX internals are refused per line and unactionable
-(`Compat.styInternal`), while the pending pair is neither. -/
+/-- Records an unknown command's refusal and its site shape. -/
 private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) : EM Unit :=
   let key := "ctrl:" ++ name
@@ -4442,16 +3520,13 @@ private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
       (bumpRunShape name key optionRun st)
     { emitted with spans := { emitted.spans with recoveryDiags := emitted.diags } }
 
-/-- Recovery retains the emitted records themselves, including earlier
-sites reworded by the emitter to describe a mixture of argument shapes. -/
 private theorem warnUnknownCmd_recovery_exact (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) (st : ESt) :
     ((warnUnknownCmd ctx name optionRun pos).run st).2.spans.recoveryDiags =
       ((warnUnknownCmd ctx name optionRun pos).run st).2.diags := by rfl
 
-/-- The index past an unknown command's `{...}` groups: up to `n` of them,
-each after any spaces. Spaces after the last group stay where they stand, as
-TeX leaves them after a macro's arguments. -/
+/-- The index past up to `n` `{...}` groups, each after any spaces; spaces
+after the last group stay. -/
 private def argGroupsEnd (raws : Array Raw) (j : Nat) : Nat → Nat
   | 0 => j
   | n + 1 =>
@@ -4471,14 +3546,11 @@ private theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroups
       omega
     · omega
 
-/-- Is the raw at `m` a `{...}` group? -/
 public def groupAt (raws : Array Raw) (m : Nat) : Bool :=
   match raws[m]? with
   | some (.group _ _) => true
   | _ => false
 
-/-- Is the raw at `m` a space or a `{...}` group, the two things an argument
-list holds between a command and its last group? -/
 public def spaceOrGroupAt (raws : Array Raw) (m : Nat) : Bool :=
   match raws[m]? with
   | some .space | some (.group _ _) => true
@@ -4527,12 +3599,8 @@ private theorem groupsIn_spaces (raws : Array Raw) (j len : Nat)
 private theorem groupsIn_one (raws : Array Raw) (j : Nat) :
     groupsIn raws j 1 = if groupAt raws j then 1 else 0 := by rfl
 
-/-- **The index covers the argument list, and only it.** What
-`argGroupsEnd` passes over is spaces and `{...}` groups and nothing else, at
-most `n` groups; and it stops short of a further group only at the bound —
-otherwise the next raw after any spaces is no group. So every group that
-could be one of the command's arguments lies behind the index, and nothing
-that could not be is consumed. -/
+/-- The index passes only spaces and at most `n` groups, and stops short of
+`n` only where no group follows. -/
 private theorem argGroupsEnd_covers (raws : Array Raw) (j n : Nat) :
     (∀ m, j ≤ m → m < argGroupsEnd raws j n → spaceOrGroupAt raws m = true) ∧
       groupsIn raws j (argGroupsEnd raws j n - j) ≤ n ∧
@@ -4580,47 +3648,23 @@ private theorem argGroupsEnd_covers (raws : Array Raw) (j n : Nat) :
       · rename_i body p hg; exact (hk body p hg).elim
       · rfl
 
-/-- The key an unknown LaTeX internal in package code is counted under: its
-own, never the document's `ctrl:` one. The two sites have different fates —
-a document's arguments stand as text, package code's go — so a shared key
-would put one fate's words on the other's line and ride the second as a
-note under the first. -/
+/-- The warn-once key of an unknown LaTeX internal in package code. -/
 public def pkgCodeKey (name : String) : String := "pkgcode:" ++ name
 
-/-- The words a LaTeX internal in package code is refused in. They name what
-went and nothing more: a word run after the command is no `{...}` group and
-stays where it stands. -/
 private def pkgCodeMsg (name : String) : String :=
   s!"unknown command '\\{name}' in package code; any [...] options and its " ++
     "{...} arguments were dropped, not set as text"
 
-/-- **A LaTeX internal in package code sets none of its arguments.** A
-control word with `@` in it is written only where `@` is a letter, a style
-or class file being read, and names the kernel's or a package's own code
-(`Compat.codeInternal`). The groups after it are that code's operands; set
-as text, they printed a style file's own package test on a paper's first
-line. The arm skips the command's option runs, and the recovery returns the
-index past the `{...}` groups after them, up to TeX's nine: the arm walks on
-from there with its text accumulator as it came, so the groups never reach
-the walk. The loss is still accounted for, once per site, under the
-construct's own key, demoted as a TeX internal is in the preamble
-(`Compat.styInternal`). `recoverPackageCmd_accounts` states both halves.
-Any other unknown command in package code keeps the document's recovery:
-`\fbox` or `\hbox` there sets its group in LaTeX. The rule's one known cost
-is an internal that sets an operand, the kernel's `\@firstofone`: its
-operand goes too. -/
+/-- Refuses an unknown LaTeX internal in package code, returning the index
+past up to nine `{...}` groups, which are dropped. -/
 public def recoverPackageCmd (ctx : Ctx) (name : String) (raws : Array Raw) (j : Nat)
     (pos : Pos) : EM { k : Nat // j ≤ k } := do
   modify (warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name)
     pos (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name))
   return ⟨argGroupsEnd raws j 9, argGroupsEnd_ge raws j 9⟩
 
-/-- Record what a refusal recovered: the code that named the loss, the
-command it stood for, and the source the kept groups carried. Outside the
-inline knot for the same reason `warnUnknownCmd` is — the arm calls one
-sealed action. Empty salvage records nothing: a refused command with no
-group put no ink on the page, and an entry for it would make the census
-claim ink that is not there. -/
+/-- Records a refusal's kept text with its code and command; empty text
+records nothing. -/
 private def noteSalvage (code : DiagCode) (name text : String) : EM Unit := do
   let t := text.trimAscii.toString
   unless t.isEmpty do
@@ -4628,9 +3672,6 @@ private def noteSalvage (code : DiagCode) (name text : String) : EM Unit := do
       { st with
         salvage := st.salvage.push { code := code, command := name, text := t } }
 
-/-- The misplaced-declaration diagnostics (E0347 for running content,
-W0346 for configuration), outside the knot: the arm calls one sealed
-action, as `warnUnknownCmd` does. -/
 private def warnMisplacedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   if runningCtrl.contains name then
     diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
@@ -4643,7 +3684,6 @@ private def warnMisplacedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit 
 from where it stands"
         else "declare it in the preamble, before '\\begin{document}'")
 
-/-- The reserved-control skip warning, outside the knot. -/
 private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
     (pos : Pos) : EM Unit :=
   if name == "block" then
@@ -4653,13 +3693,8 @@ private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
   else
     warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
 
-/-- The reserved control a name stands for at `i` in inline content: the
-table's (`reservedCtrl`), and an empty `\block` with its option — a
-document skip (`\vspace`, `\vskip`, a skip macro) met inside inline content,
-a table cell or an argument, where the engine sets no vertical glue. The
-skip is layout alone, so it is skipped with W0329, its option and empty
-group with it, and none of it is set as text. Outside the inline knot, so
-the knot's arm reads one lookup, as it did. -/
+/-- The code a reserved control at `i` earns in inline content, including a
+`\block` skip with an option and an empty group. -/
 private def reservedCtrlAt (raws : Array Raw) (i : Nat) (name : String) (pos : Pos) :
     Option DiagCode :=
   if blockOnly.contains name && name == "block" then
@@ -4674,9 +3709,8 @@ private inductive ColorRead where
   | missing
   | rejected
 
-/-- Parse and resolve one source colour through `Palette.resolveSource`.
-This is the only elaboration door for model syntax; callers differ only in
-how an unresolved named expression is reported. -/
+/-- The one door that parses and resolves a source colour, naming what it
+rejects. -/
 private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
     (src : String) (pos : Pos) : EM ColorRead := do
   if model.isNone && src == Compat.normalInkSource then
@@ -4699,25 +3733,20 @@ private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
       (help := "model values use their documented component count and range")
     return .rejected
 
-/-- A run in a colour as it ships on the ground it is elaborated on: a
-generated role's run that does not read there takes its family's tone
-(`Palette.groundRun`); every other run stands as written. -/
+/-- A coloured run as it ships on the current ground: a generated role that
+does not read there takes its family's tone. -/
 private def coloredRun (ctx : Ctx) (c : Color) (ref : Option ColorRef) (body : Array Inline) :
     Inline :=
   match ctx.ground with
   | some g => ctx.palette.groundRun g (.colored c ref body)
   | none => .colored c ref body
 
-/-- A conditional alert derives both readings from the same elaborated
-body. Ordinary font commands retain their measured correction edges. -/
+/-- The inlines a font command or `\alert` sets around an elaborated body. -/
 private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
     (edges : Bool × Bool) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
   if name == Compat.alertMark false then return #[.styled .bold inner]
   if name != Compat.alertMark true then return Ir.fontCmdInlines style edges inner
-  -- Themed, the alert colour alone (`Compat.alertStyled`): beamer's
-  -- `\alert` sets `alerted text`, the alert role, whatever a colour named
-  -- `alert` holds (beamerbaselocalstructure.sty); with no colour to read,
-  -- bold stands in as unthemed.
+  -- beamer's `\alert` sets the `alerted text` role, not a colour named `alert`.
   match Ir.Design.declared? ctx.palette .alert with
   | some c =>
     recordColorSpan ctx "alert" c true pos
@@ -4726,8 +3755,6 @@ private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
     warnPaletteMiss ctx "alert" pos
     return #[.styled .bold inner]
 
-/-- The one W0105 for an overlay specification the step model cannot
-number, outside the knot: one spelling for its three doors. -/
 private def warnOverlaySpec (ctx : Ctx) (w : String) (pos : Pos) : EM Unit :=
   warnOnce ctx "spec:overlay" .W0105
     s!"overlay specification '{w}' does not name a step; its content is \
@@ -4735,9 +3762,8 @@ shown on every step" pos
     (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
 
-/-- Number a modifier's optional selector with the same reader as every
-other overlay. Refused selectors retain the ordinary styled reading and
-are named by the existing overlay diagnostic. -/
+/-- A modifier's overlay selector, named when the step model cannot number
+it. -/
 private def selectorSpec (ctx : Ctx) (head : Option String) (pos : Pos) : EM (Option OverlaySpec) := do
   match head with
   | none => return none
@@ -4746,9 +3772,8 @@ private def selectorSpec (ctx : Ctx) (head : Option String) (pos : Pos) : EM (Op
     unless spec.isSome do warnOverlaySpec ctx w pos
     return spec
 
-/-- Beamer's native targets use \only (beamerbaseoverlay.sty): select the
-whole link or destination body, with an empty excluded reading. The body
-has already been elaborated, so selection cannot duplicate its effects. -/
+/-- A link or target over an elaborated body, selected whole by its spec as
+beamerbaseoverlay.sty's `\only` does. -/
 private def targetInlines (ctx : Ctx) (name key : String)
     (spec : Option OverlaySpec) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
   let wrapped ← if name == "hyperlink" then
@@ -4763,12 +3788,6 @@ private def targetInlines (ctx : Ctx) (name key : String)
       pure (#[.label key] ++ inner)
   return pushModifier #[] spec wrapped #[]
 
-/-- The one W0105 for `\alt` without a numbered specification, outside
-the knot. An alternation inks exactly one alternative per step page, and
-an unnumberable spec does not lift that: the step model cannot say which
-page the switch happens on, so the honest degradation is the active
-alternative on every step — the styled reading for `\alert<spec>{body}`,
-as beamer reads an alert-with-spec — never both alternatives at once. -/
 private def warnAltSpec (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "spec:overlay" .W0105
     "'\\alt' without a numbered specification shows its first \
@@ -4776,11 +3795,8 @@ alternative on every step" pos
     (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
 
-/-- The reference commands and the form each resolves with: LaTeX's
-`\ref`/`\eqref` and cleveref's family (manual v0.21.4 §2) — one key
-group each; the `\crefrange` pair arrives desugared to its two halves
-(`@crefrange` + `labelcref`, Compat's rewrite). Outside the knot: the
-inline dispatch reads one lookup where it read two name tests. -/
+/-- The form each reference command resolves with: `\ref`, `\eqref` and
+cleveref's (manual v0.21.4 §2). -/
 private def refCtrlForm? (name : String) : Option Ir.RefForm :=
   [("ref", Ir.RefForm.plain), ("eqref", .paren),
    ("cref", .cref false), ("Cref", .cref true),
@@ -4788,12 +3804,11 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
    ("namecref", .name false), ("nameCref", .name true),
    ("@crefrange", .crefRange false), ("@Crefrange", .crefRange true)].lookup name
 
-/-- The forms whose rendering needs the target's kind — a kindless
-binding under one of these is W0380's case. -/
 private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
   | .plain | .paren | .labelOnly => false
 
+-- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
@@ -4803,11 +3818,8 @@ seal imageArm
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 
-/-- The leading `[...]` of a `tikzpicture` body split at its top-level
-commas — a `{...}` group is one raw, so a braced value never splits — each
-entry with the spaces around it, so the run can be rebuilt as written. A
-comma is not special to the lexer, so it rides inside a word: `alt=,` or
-`},` split at each one. -/
+/-- A picture's option run split at its top-level commas, each entry keeping
+its spaces so the run rebuilds as written. -/
 private def pictureOptEntries (opts : Array Raw) : Array (Array Raw) := Id.run do
   let mut out : Array (Array Raw) := #[]
   let mut cur : Array Raw := #[]
@@ -4823,16 +3835,8 @@ private def pictureOptEntries (opts : Array Raw) : Array (Array Raw) := Id.run d
     | r => cur := cur.push r
   return out.push cur
 
-/-- latex-lab-tikz's per-picture keys, consumed from the leading option run
-before the rendered subset or the boundary sees it: `alt={...}` describes
-the picture, `artifact` makes it decoration, and an empty `alt=` says
-nothing. Every other entry stays as written, and the whitespace a removed
-entry opened with passes to the entry that takes its place, so a body
-without the keys is returned unchanged and one with them is exactly the
-body its author would have written without them — the boundary's
-standalone never meets a key plain TikZ does not define, and the
-picture's content hash (`Ir.picHash`, the boundary cache's key) is a fact
-about its ink, never its words. -/
+/-- Takes latex-lab-tikz's `alt` and `artifact` keys out of a picture's
+option run, leaving the body as written without them. -/
 private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Raw := Id.run do
   let j0 := Parse.skipSpaces body 0
   let some opts := bracketRunSrc body j0 | return (.undeclared, body)
@@ -4871,13 +3875,8 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
     rebuilt := rebuilt.push (.sym ']' pos0)
   return (alt, rebuilt ++ body.extract (c + 1) body.size)
 
-/-- The rendered subset's drawing of one picture body, with what it names:
-the one elaboration both the block arm and the in-line arm read, so the
-two cannot disagree about what the subset draws. A label's formula is
-located at its opener, as `sourceInline` locates a paragraph's, so the notes
-the formula census raises after elaboration name the label; one a document
-style sets is located in the file that wrote the style
-(`Picture.ofSetting`). -/
+/-- A picture label's formula, or its source text and the loss when it does
+not parse. -/
 private def pictureMath (ctx : Ctx) (d : Bool) (raws : Array Parse.Raw) :
     Ir.Inline × Array Picture.PDiag :=
   let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
@@ -4894,10 +3893,8 @@ private def subsetPicture (ctx : Ctx) (body : Array Raw) (size : Option String) 
     (locate := fun pos => some (ctx.sourceSpan pos))
     (metaArrows := Picture.metaArrowsOf ctx.pic.preamble) (outerDecls := size.toArray)
 
-/-- The size switch in force where a picture stands, by its ladder name,
-when it is not `normalsize` — the declaration scope a paragraph's text
-reads (`blockDecls`), resolved as a listing's size is. An explicit
-`\fontsize` names no ladder step and stands as the body size. -/
+/-- The size switch in force by its ladder name; `none` at `normalsize` or
+under an explicit `\fontsize`. -/
 private def pictureSizeInForce : EM (Option String) := do
   let size := (← get).scope.blockDecls.foldl (fun size decl => match decl with
     | .style (.size s) => some s
@@ -4905,18 +3902,12 @@ private def pictureSizeInForce : EM (Option String) := do
     | _ => size) none
   return size.filter (· != "normalsize")
 
-/-- A `tikzpicture` body's request where it stands: the body as written and
-the size in force. Every site that asks whether a picture's request was
-withdrawn reads its identity here, so the identity a withdrawal names is the
-one the request was stated under. -/
+/-- A `tikzpicture`'s boundary request: its source and the size in force. -/
 private def pictureSrcAt (body : Array Raw) : EM Ir.PicSrc := do
   return { kind := .picture, body := Parse.rawSrc body, size := ← pictureSizeInForce }
 
-/-- The colour names a picture reads: what its body spells, and what the
-document's picture settings and macro definitions spell, each of those read
-once, at the first picture after its declaration — the names the boundary
-request exports colours over (`Ir.pictureRequest`), its macros taken whole
-rather than as the closure one body reaches. -/
+/-- Notes the colour names a picture reads: its body's, and those of each
+picture setting and macro once. -/
 private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit := do
   unless ← readsOwed do return
   noteColorReads (Parse.rawSrc body)
@@ -4928,14 +3919,8 @@ private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit := do
   modify fun st => { st with spans := { st.spans with
     pictureContextRead := (ctx.pic.sets.size, ctx.pic.macros.size) } }
 
-/-- One picture sent to the boundary: its request stated once, a picture
-the subset draws in part recorded as a fallback the driver may withdraw
-(`ReqSpans.fallbacks`) where it stands as a block (`block`) — the subset
-never sets one in a line, so there a refused request keeps its placeholder,
-which marks the place, rather than an empty line — its span, the N0023
-note, and the image that stands where the picture does — named by the words
-its own labels set (`Ir.Pic.Picture.said`), as the subset's drawing would
-have been named. -/
+/-- Sends a picture to the boundary and returns the image standing for it; a
+block the subset partly draws is recorded as a fallback. -/
 private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
     (block : Bool) : EM Ir.Inline := do
   let src ← pictureSrcAt body
@@ -4955,22 +3940,13 @@ in the document's census" pos
 artifact on the picture, or a figure caption, names it for assistive technology")
   return .image img {} pic.alternative
 
-/-- **A picture in a line of text stands in its line, drawn by the
-boundary.** TeX sets a `tikzpicture` as a box of its line, bottom on the
-baseline (pgfmanual §12.2.1), and the boundary's image is exactly such a
-box, so a picture met inside inline content — a table cell, a group's text,
-a command's argument — is the image the boundary draws for it, wherever the
-boundary is open and the request was not withdrawn. The rendered subset
-sets a picture only as a block, which a line cannot hold, so where the
-boundary is closed (or withdrew the request) the picture is named and not
-drawn — never the false "not implemented" of an unknown environment. -/
+/-- A picture inside a line: the boundary's image where the boundary is open
+and the request stands, else `none` with the loss named. -/
 private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
   let (alt, body) := splitPictureAlt body pos
   let id := Ir.picHash (← pictureSrcAt body).source
-  -- premise: pictureInlineLineChecks — a picture in a line either ships the
-  -- boundary's image there or names that it is not drawn, and a withdrawn
-  -- request takes the second door.
+  -- premise: pictureInlineLineChecks — drawn in its line or named
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
     notePictureReads ctx body
     let (pic, _) := subsetPicture ctx body (← pictureSizeInForce)
@@ -4982,23 +3958,14 @@ picture only as a block" pos
 paragraph of its own, the rendered subset draws it")
   return none
 
-/-- The `tikzcd` a display holds alone, its body and position: the display's
-labels and tags are already stripped (`stripMathMeta`), and spaces are not
-content. Anything else beside the diagram is a formula the display sets,
-so a diagram mixed with other mathematics is not this shape. -/
+/-- The body and position of a `tikzcd` a display holds alone. -/
 private def soleTikzcd (body : Array Raw) : Option (Array Raw × Pos) :=
   match (body.filter fun r => !(r matches .space)).toList with
   | [.env "tikzcd" b p] => some (b, p)
   | _ => none
 
-/-- A diagram's request and the reader's drawing of it: its source as the
-boundary states it (`Ir.PicKind.cd`, at the size in force), its identity,
-and what `Picture.Cd.elabCd` draws with the losses it names — the
-document's `\tikzcdset` lines among them, whose keys the reader does not
-read, so the boundary reads them or the drawing ships without them, named.
-A `description` label's box is tikz-cd's `background color`, white unless a
-`\tikzcdset` changes it (tikzlibrarycd.code.tex), which routes the diagram
-whole. -/
+/-- A diagram's boundary request, its identity, and the native reader's
+drawing with the losses it names. -/
 private def cdReading (ctx : Ctx) (b : Array Raw) :
     EM (Ir.PicSrc × String × Ir.Pic.Picture × Array Picture.PDiag) := do
   let src : Ir.PicSrc :=
@@ -5011,11 +3978,8 @@ diagram reader; the diagram is drawn without them")
     else pdiags
   return (src, Ir.picHash src.source, pic, pdiags)
 
-/-- The reader's losses where its drawing ships, each named once: keyed under
-the picture where the boundary withdrew its request or the document declined
-the boundary (`\pictures{ tool = none }`), so the driver folds them into the
-picture's one line as it folds a `tikzpicture`'s (`Cli.Boundary.foldLines`),
-and the drawing's span recorded. -/
+/-- Names the reader's losses where its drawing ships, keyed under the
+picture when its request is withdrawn or declined. -/
 private def cdNamed (ctx : Ctx) (id : String) (pic : Ir.Pic.Picture)
     (pdiags : Array Picture.PDiag) (pos : Pos) : EM Unit := do
   let declined := ctx.pic.tool.isNone && !pic.shapes.isEmpty && Picture.namesLoss pdiags
@@ -5027,18 +3991,15 @@ private def cdNamed (ctx : Ctx) (id : String) (pic : Ir.Pic.Picture)
       | .W0334 => some "write it with arrows, labels and keys the diagram reader draws, \
 or let a boundary tool draw it"
       | _ => none
-    -- premise: pictureRouteChecks — the driver folds every refusal keyed
-    -- under a withdrawn or declined picture into that picture's one line,
-    -- none dropped
+    -- premise: pictureRouteChecks — the driver folds these, none dropped
     if ctx.pic.withdrawn.contains id || declined then
       warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
     else
       warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
   recordNativePictureSpan ctx pos
 
-/-- A diagram's boundary request, stated once: its source, a fallback the
-driver may withdraw when `fallback`, its span and the N0023 note. The image
-source that stands where the diagram does. -/
+/-- States a diagram's boundary request once and returns the image source
+that stands for it. -/
 private def cdRequest (ctx : Ctx) (src : Ir.PicSrc) (id : String) (pos : Pos)
     (fallback : Bool) : EM String := do
   let tool := ctx.pic.tool.getD "lualatex"
@@ -5056,66 +4017,38 @@ in the document's census" pos
 names it for assistive technology")
   return img
 
-/-- **A commutative diagram the engine draws whole is its own picture.** The
-diagram reader (`Picture.Cd.elabCd`) lays the cells out and draws the
-arrows; where it names no loss, the display ships its drawing and asks the
-boundary for nothing. Where it names one and the boundary is open, the
-boundary draws the diagram (`tikzcdDisplay`) and this drawing is the
-fallback a withdrawal returns to; where the boundary is closed or the
-request withdrawn, this drawing ships with its losses named — never the
-formula's text where the reader drew something. -/
+/-- A display's sole `tikzcd` as the native reader draws it, or `none` where
+it draws nothing or the open boundary takes a lossy drawing. -/
 private def tikzcdNative (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Pic.Picture) := do
   let some (b, _) := soleTikzcd body | return none
   let (_, id, pic, pdiags) ← cdReading ctx b
   if pic.shapes.isEmpty then return none
-  -- premise: tikzcdNativeChecks — a diagram the reader draws with a named
-  -- loss goes to the open boundary whole, and draws here, named, where it
-  -- is closed or the request was withdrawn.
+  -- premise: tikzcdNativeChecks — lossy diagrams go to an open boundary
   if Picture.namesLoss pdiags && ctx.pic.tool.isSome && !ctx.pic.withdrawn.contains id then
     return none
   cdNamed ctx id pic pdiags pos
   return some pic
 
-/-- **A commutative diagram standing alone in a display is a picture.**
-`\[\begin{tikzcd}…\end{tikzcd}\]` is TikZ ink set as display mathematics,
-and no formula can carry it: the boundary draws it as its own request kind
-(`Ir.PicKind.cd`, the diagram's own environment, never wrapped in a
-`tikzpicture`), and the display ships the boundary's box with its skips
-(`Ir.displayPictureRole`). Recorded as a fallback the driver may withdraw:
-where no tool drew it, the second elaboration takes the other door —
-`none` here, and the display keeps the formula's text floor with its W0012,
-never a placeholder. The boundary closed (`\pictures{ tool = none }`) is
-that door from the start. -/
+/-- A display's sole `tikzcd` as the boundary's image, or `none` where the
+boundary is closed or withdrew the request. -/
 private def tikzcdDisplay (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
   let some (b, _) := soleTikzcd body | return none
   let src : Ir.PicSrc :=
     { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
   let id := Ir.picHash src.source
-  -- premise: tikzcdRouteChecks — a diagram the boundary withdraws or a closed
-  -- door refuses keeps the text floor and its W0012, and a drawn one ships
-  -- the boundary's box with no floor.
+  -- premise: tikzcdRouteChecks — a refused diagram keeps its text floor
   if ctx.pic.tool.isNone || ctx.pic.withdrawn.contains id then return none
   let img ← cdRequest ctx src id pos true
   return some (.role Ir.displayPictureRole #[.image img {} .undeclared])
 
-/-- **A commutative diagram standing as a block is a picture**, as a
-`tikzpicture` there is: the tikz-cd manual's own spelling, `\begin{tikzcd}`
-outside mathematics — in a paragraph of its own or a `center`, or among a
-paragraph's text, which breaks at it and is named so (`pictureInSentence`).
-The reader draws it where it names no loss; where it names one, or draws
-nothing, and the boundary is open, the boundary draws it whole as its own
-request kind, the reader's drawing the fallback a withdrawal returns to;
-where the boundary is closed or the request withdrawn, the drawing ships
-with its losses named, and a diagram the reader draws nothing of is the
-placeholder a `tikzpicture`'s is (W0362). -/
+/-- A block `tikzcd`: the boundary's image where the boundary is open and the
+reader falls short, else the reader's drawing or a placeholder. -/
 private def tikzcdArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let (src, id, pic, pdiags) ← cdReading ctx body
-  -- premise: tikzcdNativeChecks — a diagram the reader draws with a named
-  -- loss goes to the open boundary whole, and draws here, named, where it
-  -- is closed or the request was withdrawn.
+  -- premise: tikzcdNativeChecks — lossy diagrams go to an open boundary
   if ctx.pic.tool.isSome && !body.isEmpty &&
       (pic.shapes.isEmpty || (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
     let img ← cdRequest ctx src id pos !pic.shapes.isEmpty
@@ -5129,11 +4062,8 @@ its place" pos
     return blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
   return blocks.push (.picture pic)
 
-/-- A definition's parameter in the code minted's command reads (`#1` in
-`\NewDocumentCommand{\py}{m}{\mintinline{python}{#1}}`): the argument's
-source where the call bound it (`bindParam`) — TeX binds the parameter
-before minted reads the code — and `##` one `#`. Nothing is bound outside a
-body, where `#1` is the code it spells. -/
+/-- Code with each bound `#k` replaced by its argument's source and `##` by
+`#`, as TeX substitutes before minted reads the code. -/
 private def bindCodeParams (ctx : Ctx) (code : String) : String := Id.run do
   if ctx.args.isEmpty || !code.contains '#' then return code
   let cs := code.toList.toArray
@@ -5160,18 +4090,15 @@ private def bindCodeParams (ctx : Ctx) (code : String) : String := Id.run do
       i := i + 1
   return out
 
-/-- A size command's name, `\small` read as `small`, where the size ladder
-holds it. -/
+/-- `\small` read as `small`, when the size ladder holds it. -/
 private def sizeCommand? (v : String) : Option String :=
   if v.startsWith "\\" then
     let name := (v.drop 1).toString
     if Ir.sizeScale.any (·.1 == name) then some name else none
   else none
 
-/-- A `fontsize` entry that asks for no size: `auto`, `\relax`, or an empty
-value — what `\relax` leaves once the rewrite has run it, inside a
-`\setminted` group (fancyvrb's `\FV@FontSize` is then empty, and the size
-in force stands). -/
+/-- A `fontsize` entry that keeps the size in force: `auto`, `\relax` or an
+empty value. -/
 private def keepsSize (bare : String) : Bool :=
   match bare.splitOn "=" with
   | [key, v] =>
@@ -5179,8 +4106,6 @@ private def keepsSize (bare : String) : Bool :=
       (let v := listingVal v; v.isEmpty || v == "auto" || v == "\\relax")
   | _ => false
 
-/-- minted's `formatcom` runs TeX on the Pygments formatter's macros: said
-once, wherever a listing or inline code carries it. -/
 private def noteFormatcom (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "lstopt:formatcom" .N0102
     "minted's formatcom runs TeX on the Pygments formatter's macros, which only a TeX \
@@ -5188,16 +4113,11 @@ engine runs; the listing's tokens paint by their code roles" pos
     (help := "set a role's colour in the palette by its name: codeink, codekeyword, \
 codename, codeliteral, codecomment or codeerror")
 
-/-- A listing's language selects a lexer only where the engine or Pygments'
-registry has one (`LexerName.known`), or where the installed highlighter
-answered for it (`listingReplies`): any other name is named once, its code
-set as plain text. minted's language is a lexer's name, so its help is the
-known name nearest the spelling; a listings language or a fence's word
-names no lexer by its spelling, and its help is none. The suggestion is
-sought at the first site alone (`warnOnce` drops the help of a repeat). -/
+/-- Names once a language no known lexer or highlighter reply reads, with the
+nearest lexer name as minted's help. -/
 private def nameUnknownLexer (ctx : Ctx) (lang : String) (minted : Bool) (pos : Pos) :
     EM Unit := do
-  -- premise: Tests.inlineCodeRequestChecks — a language the installed highlighter classified ships its classes and is named nothing; one it refused is named here once and nowhere else
+  -- premise: Tests.inlineCodeRequestChecks — a refused language is named once
   if LexerName.known lang || ctx.listingReplies.any (·.request.language == lang) then return
   let help := if !minted || (← get).warnedUnknown.contains ("listing-language:" ++ lang) then none
     else match LexerName.nearest? lang with
@@ -5207,9 +4127,8 @@ private def nameUnknownLexer (ctx : Ctx) (lang : String) (minted : Bool) (pos : 
     s!"'{lang}' names no lexer the engine or Pygments has; its code is set as plain text" pos
     (help := help)
 
-/-- An author's language spelling as the token a listing or inline code
-carries, the spelling outside the token grammar named and carried by
-neither, and a name no lexer reads named too (`nameUnknownLexer`). -/
+/-- An author's language spelling as a listing's language token, or `none`
+with a spelling outside the token grammar named. -/
 private def codeLanguage (ctx : Ctx) (raw : String) (minted : Bool) (pos : Pos) :
     EM (Option Ir.ListingLang) := do
   match Ir.listingLang? raw with
@@ -5223,27 +4142,22 @@ listing carries no language"
       (help := "spell it as letters, digits, +, #, - or . (python, c++, c#)")
     return none
 
-/-- What inline code reads of minted's options — `\setminted`'s layers, then
-`\setmintedinline`'s, then its own, the later winning: a declared size, or
-the size around it under `\relax` or `auto` (`none`); a style; tab stops;
-whether its spaces may break. -/
+/-- The minted options inline code reads, later layers winning. -/
 private structure InlineCodeOpts where
   size : Option Ir.Style := none
   style : Option Ir.ListingStyle := none
   tabSize : Nat := 8
   breakLines : Bool := false
 
-/-- minted's keys that configure a display alone — its numbering, frame,
-margins, line range, page breaking — which minted reads for no inline
-code. -/
+/-- minted's keys that configure a display alone, read for no inline code. -/
 private def displayOnlyKeys : List String :=
   ["linenos", "numbers", "firstnumber", "stepnumber", "numbersep", "numberblanklines",
    "numberfirstline", "frame", "framerule", "framesep", "rulecolor", "label",
    "labelposition", "xleftmargin", "xrightmargin", "resetmargins", "samepage", "vspace",
    "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor"]
 
-/-- Inline code's options, each read as minted reads it there; a key no
-inline code honours is named W0110, never a silent drop. -/
+/-- Inline code's options as minted reads them there; a key inline code does
+not honour is named. -/
 private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCodeOpts := do
   let unhonoured (msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
@@ -5256,7 +4170,7 @@ private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCo
     if key == "formatcom" || bare.startsWith "formatcom=" then
       noteFormatcom ctx pos
       continue
-    -- premise: inlineCodeChecks — inline code under a `\setminted` of display keys ships the page it ships without them, as minted's own inline code does
+    -- premise: inlineCodeChecks — display keys leave inline code unchanged
     if displayOnlyKeys.contains key then
       continue
     if keepsSize bare then
@@ -5298,7 +4212,7 @@ the current wrapping stands" none
     | none =>
       if bare == "breaklines" then o := { o with breakLines := true }
       else unhonoured s!"inline code key '{bare}' is not honoured; ignored" none
-  -- premise: codeRoleChecks — two builds that differ only by the declared style ship byte-identical pages under a palette that gives every code role its colour, and different pages under one that leaves a role to the style
+  -- premise: codeRoleChecks — the style is inert under a full palette
   if let some declared := o.style then
     let pal := (← get).scope.palette.current.getD ctx.palette
     if !(ListingHighlight.Role.all.any (CodeColor.styleReads pal)) then
@@ -5308,14 +4222,8 @@ or derives a colour for every code role" pos
         (help := "\\allow{W0387} accepts the skip")
   return o
 
-/-- Code set inline (`\mintinline`, and a listing written where inline
-content stands): its lines classified by the lexer its language names — a
-native one, else the highlighter's reply, which a language only the
-highlighter reads asks for through the driver — each token painted in its
-code role on the ground the code stands on (`Listing.inlineCode`), lines
-joined by forced breaks, all in the mono family alone, so the size, weight,
-slant and colour around the code stand — but for a size its options
-declare. -/
+/-- Inline code: lines classified and painted by code role in the mono
+family, joined by forced breaks, at any size its options declare. -/
 private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Array String)
     (o : InlineCodeOpts) : EM (Array Inline) := do
   if lines.all (·.isEmpty) then return #[]
@@ -5347,11 +4255,8 @@ private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Arr
     | some size => #[.styled size code]
     | none => code
 
-/-- Verbatim met inside inline content. `\verb`: its text in the mono face,
-spaces held. `\mintinline`: inline code (`inlineCodeOf`) under its options.
-A display listing written there — `\mint`, or a listing environment, which
-LaTeX cannot set within a line or an argument — is named once and set by its
-evident intent, as inline code. -/
+/-- Verbatim inside inline content: `\verb` in the mono face, `\mintinline`
+as inline code, and a display listing named and set as inline code. -/
 private def inlineVerbatim (ctx : Ctx) (env s : String) (pos : Pos) : EM (Array Inline) := do
   if env == "verb" then
     let kept := s.map fun c => if c == ' ' then '\u00a0' else c
@@ -5396,13 +4301,9 @@ seal theCounterLevel? sectionLevel
 seal inlineGroup
 
 mutual
-/-- A pure declaration chain: an inline that is nothing but nested style
-wrappers around emptiness — what a 0-ary definition whose body *ends* in
-declarations (`\newcommand{\featherweight}{\fontseries{l}\selectfont}`,
-`\newcommand{\strong}{\bfseries}`) elaborates to in isolation. Outermost
-style first. `none` when any real content is present. -/
--- conserves: none — a census, not a rewrite: it reads a shape and returns
--- the styles it is made of; the tree is reassembled by the caller.
+/-- The styles of an inline that is only nested style wrappers around
+nothing, outermost first; `none` when it holds content. -/
+-- conserves: none — a census, not a rewrite
 private def declChainOne : Ir.Inline → Option (Array Ir.Style)
   | .styled st inner => (declChainList inner.toList).map (#[st] ++ ·)
   | _ => none
@@ -5410,18 +4311,11 @@ private def declChainOne : Ir.Inline → Option (Array Ir.Style)
 private def declChainList : List Ir.Inline → Option (Array Ir.Style)
   | [] => some #[]
   | [x] => declChainOne x
-  -- Two or more elements carry content beside any style wrapper: no chain.
   | _ => none
 end
 
-/-- Split a 0-ary expansion into its content and the declaration chain it
-ends with, if any. Expansion is token replacement, so a trailing
-declaration must style the rest of the *enclosing* group, exactly as the
-same declaration written directly would — elaborating the body in
-isolation had it styling the empty rest of the body instead, and a
-document's `{\featherweight …}` runs rendered in the upright face while an empty
-`<strong></strong>` marked where the style went. The chain is outermost
-style first. -/
+/-- A 0-ary expansion split into its content and the trailing declaration
+chain, outermost first, that styles the rest of the enclosing group. -/
 private def splitTrailingDecls (xs : Array Ir.Inline) :
     Array Ir.Inline × Array Ir.Style :=
   match xs.back? with
@@ -5431,10 +4325,8 @@ private def splitTrailingDecls (xs : Array Ir.Inline) :
     | none => (xs, #[])
   | none => (xs, #[])
 
-/-- A parameter's binding: its elaboration, and — where a minted command in
-the replacement reads it as code (`Param.code`) — its source beside it,
-under its name and a space, which no document's name holds, for
-`bindCodeParams`. -/
+/-- Binds a parameter's elaboration and, for a code parameter, its source
+under its name and a space, which no document name holds. -/
 private def bindParam (p : Param) (v : Array Inline) (source : Unit → String)
     (bindings : Array (String × Option (Array Inline))) : Array (String × Option (Array Inline)) :=
   let bindings := bindings.push (p.name, some v)
@@ -5442,11 +4334,8 @@ private def bindParam (p : Param) (v : Array Inline) (source : Unit → String)
 
 mutual
 
-/-- One parameter binding at a time — `takeArgs`' recursion spelled so the
-measure can read it: each parameter either consumes tokens (the slice from
-the scan position lightens strictly) or binds nothing (the parameter index
-advances). The final index returns with its progress fact, which is what
-lets a caller's own termination argument continue from it. -/
+/-- Binds the parameters from index `k` on, returning the bindings and the
+index past their arguments. -/
 private def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos)
     (bindings : Array (String × Option (Array Inline))) :
@@ -5528,11 +4417,8 @@ private def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : St
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws start, 5 + (params.size - k))
 decreasing_by all_goals knot_dec
 
-/-- An unknown command's argument groups: up to nine `{...}` groups (TeX's
-own argument limit) are kept as content, a space standing in where the
-consumed separators were. Returns the accumulator and pending text, the
-index past the run with its progress fact, how many groups were kept, and
-whether whitespace followed the last one. -/
+/-- Keeps up to nine of an unknown command's `{...}` groups as content, a
+space standing between them. -/
 private def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Nat)
     (acc : Array Inline) (sb : String) (spaceAfter : Bool) :
     EM (Array Inline × String × { j' : Nat // j ≤ j' } × Nat × Bool) := do
@@ -5543,9 +4429,6 @@ private def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Na
     | some (.group body _) =>
       have hjlt := getElem?_lt hj
       let acc := flushText acc sb
-      -- Whatever separated the arguments visually is gone with the
-      -- command, so a space stands in; without one, `{a}{b}` runs
-      -- together as `ab`.
       let acc := flushText acc (if count > 0 then " " else "")
       have hw : rawWeightList body.toList < sliceWeight raws j :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (Nat.le_refl j)
@@ -5562,19 +4445,14 @@ termination_by (ctx.envLimit, ctx.limit, sliceWeight raws j, 0)
 decreasing_by all_goals knot_dec
 
 
-/-- Elaborate raw items as inline content. -/
 private def elabInlinesCore (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
   let out ← elabInlinesFrom { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] ""
   return if ctx.literalText then out else out.map (mapSmartText ctx.literalWhen)
 termination_by (ctx.envLimit, ctx.limit, rawWeightList raws.toList, 4)
 decreasing_by all_goals knot_dec
 
-/-- The inline elaboration spine: one raw at `i` per step, the text
-accumulator and pending string threading through as arguments. The measure
-is lexicographic — user environments, then user commands, then the weight
-of the slice from `i` — so every step either consumes tokens, descends
-into a strictly lighter body, or expands under a strictly smaller
-visibility limit. -/
+/-- The inline elaboration spine: one raw at `i` per step, threading the
+inline accumulator and pending text. -/
 private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) : EM (Array Inline) := do
   let (roles, acc, sb) := inlineMacroAt ctx.macroRoles raws i acc sb
@@ -5586,9 +4464,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .word s pos =>
       elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push (sourceInline ctx pos (.text s))) ""
     | .space =>
-      -- A run of blanks was one token at the lexer; a splice that puts two
-      -- runs side by side sets one separator, and a paragraph never opens
-      -- with one: a leading space glue would indent the line (`spaceSeps`).
+      -- A splice sets one separator per run, and no paragraph opens with one.
       elabInlinesFrom ctx raws (i + 1) acc
         (if spaceSeps sb then sb.push ' ' else sb)
     | .par _ =>
@@ -5601,15 +4477,11 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       elabInlinesFrom ctx raws (i + 1)
         ((flushText acc sb).push (sourceInline ctx pos (.text "]"))) ""
     | .sym '~' pos =>
-      -- Every LaTeX author means a non-breaking space by `~`, and reserving
-      -- it buys nothing: there is no catcode machinery here to reserve it for.
       elabInlinesFrom ctx raws (i + 1)
         ((flushText acc sb).push (sourceInline ctx pos (.text "\u00a0"))) ""
     | .sym c pos =>
       if ctx.noteBody || ctx.argBody then
-        -- A note is absorbed, as beamer absorbs it, and an argument is
-        -- the caller's token list: in both, a reserved character is
-        -- literal text — an argument's may still be a key on arrival.
+        -- An argument's reserved character may still be a key on arrival.
         elabInlinesFrom ctx raws (i + 1)
           ((flushText acc sb).push (sourceInline ctx pos (.text (String.singleton c)))) ""
       else
@@ -5638,9 +4510,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
-        -- A display in an inline position (a caption, an item label) has
-        -- no block to hang a number on: it sets unnumbered, named — a
-        -- `\tag` as much as a counter's number.
+        -- An inline display has no block to number: it sets unnumbered, named.
         let (cleaned, keys, _, tag) ← stripMathMeta ctx body
         let mut acc := acc
         for key in keys do
@@ -5670,10 +4540,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         match he : lookupUserEnv ctx name with
         | some (k, env) =>
-          -- A defined wrapper: its parameters bind from the groups after
-          -- `\begin{name}`, its halves elaborate around the content. The
-          -- halves see the commands and environments defined before the
-          -- wrapper (never itself), the content sees the caller's.
+          -- Halves see only earlier definitions; the content sees the caller's.
           have hklt : k < ctx.envLimit := lookupUserEnv_lt he
           have hb0 : sliceWeight body 0 < sliceWeight raws i := by
             have h0 : sliceWeight body 0 = rawWeightList body.toList := by
@@ -5702,12 +4569,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         else
           warnOnce ctx ("env:" ++ name) .W0302 s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "\\defineenv{name}(...) {begin} {end} declares one")
-          -- The arguments on the `\begin` line go with the wrapper here
-          -- too: an inline unknown environment obeys the same scanner as a
-          -- block one. The body splices into this very scan, so its edge
-          -- spaces are ordinary separators — collapsed against the
-          -- neighbours by the whitespace arm, never dropped (gluing
-          -- `before` to `inner`) and never doubled.
+          -- Spliced into this scan, so its edge spaces are ordinary separators.
           let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
@@ -5718,17 +4580,11 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           elabInlinesFrom ctx (raws.extract 0 i ++ body.extract keptFrom body.size
             ++ raws.extract (i + 1) raws.size) i acc sb
     | .verb env s vpos =>
-      -- Verbatim inside inline content, read whole outside the knot.
       let acc := flushText acc sb
       let code ← inlineVerbatim ctx env s vpos
       elabInlinesFrom ctx raws (i + 1) (acc ++ code) ""
     | .ctrl name pos =>
-      -- The document's own names come first: a parameter, then a defined
-      -- command. Built-ins the document cannot redefine are exactly
-      -- `builtinNames`, refused with W0303 at the definition; every other
-      -- built-in yields to a definition, silently, as in LaTeX. Order here
-      -- is the whole mechanism — a built-in tested earlier would shadow
-      -- the definition without a word.
+      -- Parameters, then definitions, come before built-ins: order is the rule.
       if let some (_, binding) := ctx.args.find? (·.1 == name) then
         let acc := flushText acc sb
         match binding with
@@ -5746,16 +4602,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
           let callCtx : Ctx := { ctx.atCall name pos with limit := k, args := bindings }
           let expanded ← elabInlinesCore callCtx cmd.body
-          -- A parameterized command is a classifier of its argument — a
-          -- semantic role — and its name survives into the artifact as an
-          -- addressable annotation (Inline.role, the class hook). A 0-ary
-          -- command is a spelling and splices transparently: arity reads
-          -- the definition, not the use, so one name gets one treatment
-          -- document-wide, with no new syntax and no body inspection.
           if cmd.params.isEmpty then
-            -- A spelling is token replacement, so a declaration chain its
-            -- body ends with styles the rest of the enclosing group — the
-            -- same scope the declaration written directly takes below.
             let (expanded, decls) := splitTrailingDecls expanded
             let acc := acc ++ expanded
             if decls.isEmpty then
@@ -5784,16 +4631,11 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let acc := flushText acc sb
           elabInlinesFrom ctx raws (i + 1) (acc.push .fill) ""
         else if name == "qedhere" then
-          -- amsthm's `\qedhere` in text (amsthm.sty:290): its `\qed` where it
-          -- stands, the space before taken back; the proof sets the mark
-          -- (`thmClose`). Outside a proof amsthm's stack is empty: nothing.
+          -- amsthm.sty's `\qedhere`: the mark here, the space before taken back.
           let acc := if (← get).ctr.thm.proofs == 0 then flushText acc sb
             else unskipText acc sb ++ qedHereRun
           elabInlinesFrom ctx raws (i + 1) acc ""
         else if name == "ensuremath" then
-          -- `\ensuremath` enters math from text (amsldoc: the argument is
-          -- typeset in math mode wherever the command lands); inside math
-          -- the parser treats it as transparent.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           match hj : raws[j]? with
@@ -5808,11 +4650,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             diag ctx .E0304 "missing argument 'body' for '\\ensuremath'" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "\\" || name == "par" then
-          -- `\\[len]` adds space after the break. The bracket must be
-          -- adjacent: LaTeX skips spaces here and so swallows the `[` of a
-          -- line that legitimately starts with one. Whitespace after a
-          -- break is the source's line ending, not content; keeping it
-          -- would open the next line with a stray space.
+          -- The `[` must be adjacent, so a line opening with `[` keeps it.
           if name == "\\" then
             match hb : raws[i + 1]? with
             | some (.sym '[' _) =>
@@ -5847,24 +4685,19 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws j acc ""
         else if let some composed := raws[i + 1]?.bind (accentCompose name) then
-          -- `\'e` and family: composed to NFC at elaboration, one table
-          -- with Bib — the accent is content, never a droppable mark.
           have hadv : sliceWeight raws (i + 2) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           let (roles, acc, sb) := accentOperandStep ctx.macroRoles raws[i + 1]? acc sb
           elabInlinesFrom { ctx with macroRoles := roles } raws (i + 2)
             ((flushText acc sb).push (sourceInline ctx pos (.text composed))) ""
         else if let some lit := escapeOf name then
-          -- A control space remains reader state: `spaceSeps` skips the
-          -- input blanks after it. Only ink needs a source annotation.
+          -- A control space stays pending, so the blanks after it are skipped.
           if name == " " then
             elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
           else
             elabInlinesFrom ctx raws (i + 1)
               ((flushText acc sb).push (sourceInline ctx pos (.text lit))) ""
         else if (Lex.textSymbols.lookup name).isSome then
-          -- A document may define a symbol's name for itself; its definition
-          -- wins, so the symbol only fires when nothing shadows it.
           elabInlinesFrom ctx raws (i + 1)
             ((flushText acc sb).push (sourceInline ctx pos
               (.text ((Lex.textSymbols.lookup name).getD "")))) ""
@@ -5872,18 +4705,14 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let head := selectorHead raws (i + 1)
           let j := head.2
           have hjge : i + 1 ≤ j := selectorHead_monotone raws (i + 1)
-          -- beamerbaseoverlay.sty: the font wrappers take a leading selector;
-          -- only emph, declared with newcommand<>, also takes a trailing one.
+          -- beamerbaseoverlay.sty: only `\emph` also takes a trailing selector.
           let tailSpec := if name == "emph" && head.1.isNone then
               raws[j + 1]?.bind specWord? else none
           let next := j + 1 + if tailSpec.isSome then 1 else 0
           have hnext : j + 1 ≤ next := Nat.le_add_right _ _
           let spec ← selectorSpec ctx (head.1.orElse fun _ => tailSpec) pos
-          -- Beamer presentation emphasis selects italic (beamerbaseoverlay.sty
-          -- emph), while the flow class retains LaTeX's alternating emphasis.
+          -- beamer's `\emph`: an italic declaration, with no italic correction.
           let style := if name == "emph" && ctx.slides then .italic else style
-          -- Beamer's emph is an italic declaration wrapper, not a font command;
-          -- its measured edges have no automatic correction (overlayStyleChecks).
           let edges := fun body next => if name == "emph" && ctx.slides
             then (false, false) else fontCmdEdges body next
           let literal := modifierLiteral ctx style spec
@@ -5940,23 +4769,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if let some axes := phantomAxes.lookup name then
-          -- A phantom sets a box of its argument's size and no ink
-          -- (plain.tex ll. 1024-1031): the group is sizing, never content,
-          -- so it is consumed unread — no ink, no label, no reference, no
-          -- diagnostic from inside it. `sb` is carried through rather than
-          -- flushed, so the words on either side stay one run and a
-          -- zero-width box costs the line nothing.
-          --
-          -- One answer per axis the member actually reserves (`phantomAxes`),
-          -- and none of them silent by accident. The height and depth are
-          -- already in force when the argument borrows the running face
-          -- (`phantomBorrows`, the hypothesis `Layout.line_box_glyph_free`
-          -- earns): the hand-written alignment fix is then inert rather than
-          -- lost, and N0100 says so in the shape every read-and-no-effect
-          -- idiom uses. An argument in another face or size is a triple the
-          -- line may not carry, so that prop really goes unreserved — named,
-          -- never dropped quietly. A width has no carrier at all: W0104, the
-          -- code `\makebox`'s declared width already takes.
+          -- A phantom's group is sizing alone: consumed unread, the run unbroken.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           let say (borrows : Bool) : EM Unit := do
@@ -5982,10 +4795,7 @@ no extent is reserved for it" pos
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1) acc sb
           | some (.word s wordPos) =>
-            -- TeX takes one token, so a bare word gives its first character
-            -- and keeps the rest: `\vphantom value` props a `v` and still
-            -- ships "alue". Consuming the whole word would drop content in
-            -- silence, which is the one recovery no phantom may choose.
+            -- TeX takes one token: the word's first character, the rest still ships.
             have hjlt := getElem?_lt hj
             say true
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
@@ -6019,9 +4829,7 @@ no extent is reserved for it" pos
           | some (.group keyRaw _) =>
             have hjlt := getElem?_lt hj
             let key := argText ctx keyRaw
-            -- Unresolved until the whole document's labels are known:
-            -- `resolveRefs` fills the number at the end of elaboration, so
-            -- a forward reference costs no second pass over the source.
+            -- `resolveRefs` fills the number once every label is known.
             let acc := flushText acc sb ++ ctx.styles.linkInk "link" #[.ref key form "??" none]
             modify fun st => { st with refSites := st.refSites.push (key, form, pos) }
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
@@ -6031,14 +4839,7 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a \{key} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "paragraph" || name == "subparagraph" then
-          -- The level-4 and level-5 headings are run-in in article
-          -- (clsguide §2.2; classes.dtx defines both with a negative
-          -- afterskip of 1 em): the title sets bold at the body size on
-          -- the text's own line, an em quad between title and text —
-          -- never display type, so `heading_hierarchy`'s display levels
-          -- are untouched and no new level joins that statement. Both are
-          -- below article's secnumdepth of 3, so neither numbers unless a
-          -- document raises it (`runInHead`).
+          -- Run-in in article (classes.dtx: a negative afterskip of 1 em).
           let j0 := skipSpaces raws (i + 1)
           have hj0 := skipSpaces_ge raws (i + 1)
           let j1 := skipStar raws j0
@@ -6056,10 +4857,7 @@ no extent is reserved for it" pos
             let acc := flushText acc sb
             let inner ← elabInlinesCore ctx body
             let acc := acc.push (← runInHead ctx name (j1 != j0) inner)
-            -- The run-in gap: classes.dtx's 1 em, as the em quad U+2003
-            -- (a fixed-width space, kerned in layout like the \, family).
-            -- Whitespace after the title collapses into the quad: the gap
-            -- is the declared em, not the em plus the source's newline.
+            -- The 1 em gap (classes.dtx) as U+2003, absorbing following spaces.
             let j2 := skipSpaces raws (j + 1)
             have hj2 := skipSpaces_ge raws (j + 1)
             have hadv : sliceWeight raws j2 < sliceWeight raws i :=
@@ -6069,8 +4867,6 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a \{title}" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "hyperlink" || name == "hypertarget" then
-          -- Beamer's native two-group wrappers select the complete link or
-          -- destination body. All documented selector slots reach this head.
           let head := selectorHead raws (i + 1)
           let j := head.2
           have hjge : i + 1 ≤ j := selectorHead_monotone raws (i + 1)
@@ -6110,8 +4906,6 @@ no extent is reserved for it" pos
             elabInlinesFrom ctx raws (j2 + 1)
               (acc.push (.link (argText ctx urlRaw) (ctx.styles.linkInk "url" inner))) ""
           | some (.group urlRaw _), _ =>
-            -- One argument: the URL is also the text, which is the common case
-            -- for a bare link and saves writing it twice.
             have hjlt := getElem?_lt hj
             let url := argText ctx urlRaw
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
@@ -6122,10 +4916,7 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "urlstyle" then
-          -- url.sty's face selector for `\url`/`\nolinkurl`: four values,
-          -- `tt`/`rm`/`sf` naming a family and `same` the running face.
-          -- It applies to the URLs after it; a group's end puts the face
-          -- its start held back (`texGroup`, `inlineGroup`).
+          -- url.sty's face selector; a group's end restores the face.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           match hj : raws[j]? with
@@ -6145,22 +4936,6 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a \{tt|rm|sf|same} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "url" || name == "nolinkurl" then
-          -- hyperref/url/xurl's one-argument sibling of `\href`: the URL is
-          -- its own text, set in the family `\urlstyle` names — url.sty's
-          -- own semantics, whose default is `tt` (mono) and whose `same`
-          -- asks for the running face, so no family style at all.
-          -- `\nolinkurl` is the same command minus the link (hyperref
-          -- manual, "User macros": "\nolinkurl{URL} ... without a link"),
-          -- so it resolves HERE, from the same group, the same text and the
-          -- same face — one site, one difference. Two sites is how the face
-          -- went missing: the URL was set as plain text elsewhere, which is
-          -- byte-identical to dropping an unknown command.
-          --
-          -- The selector is read here rather than refused in the compat
-          -- layer because that refusal was false twice over: it told a
-          -- reader who asked for the running face that the engine sets URLs
-          -- mono, and the slot census then counted the URL as mono the
-          -- document had lost.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           let fam := (← get).scope.urlFamily
@@ -6192,9 +4967,8 @@ no extent is reserved for it" pos
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 3)
 decreasing_by all_goals knot_dec
 
-/-- The rest of the control-word chain — graphics, icons, colour, overlay,
-recovery — split from `elabInlinesFrom` only so each half stays within the
-elaborator's budget for one definition. Same measure, same step shape. -/
+/-- The inline control-word arms for space, rules, graphics, icons, page
+numbers, title data and colour. -/
 private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size)
@@ -6219,14 +4993,6 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
     elabInlinesFrom ctx raws j acc ""
   else if name == "faIcon" then
-    -- fontawesome5's generic spelling: `\faIcon[style]{icon-name}`,
-    -- optionally starred for the `-alt` variant. The style argument
-    -- selects a Pro face there; here which file covers the scalar is
-    -- the per-scalar fallback chain's question, so a style is named
-    -- as an ignored option rather than dropped without a word. The
-    -- one extension: `label = ...` overrides the icon's default text
-    -- alternative, for a context where Font Awesome's own name is
-    -- not the right accessible name (`Return to top` on an arrow).
     let j0 := skipSpaces raws (i + 1)
     have hj0 := skipSpaces_ge raws (i + 1)
     let alt := raws[j0]? matches some (.word "*" _)
@@ -6255,9 +5021,6 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
       diag ctx .E0304 "'\\faIcon' needs an {icon-name} group" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
   else if let some e := FaIcons.byMacro.get[name]? then
-    -- The per-icon fontawesome5 command (`\faGithub`, `\faArrowUp`):
-    -- the package's own name-to-scalar mapping, carried as data
-    -- (`FaData`, generated from fontawesome5-mapping.def).
     elabInlinesFrom ctx raws (i + 1)
       ((flushText acc sb).push (.icon e.scalar e.label)) ""
   else if name == "pagenumber" then
@@ -6312,15 +5075,12 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 2)
 decreasing_by all_goals knot_dec
 
-/-- The chain's tail: colour declarations, overlays, notes, and the
-recovery arms. Same measure, same step shape. -/
+/-- The inline control-word arms for colour declarations, overlays, notes and
+recovery. -/
 private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size)
-    -- Load-bearing despite the underscore (judged by deletion+rebuild):
-    -- knot_dec's trailing `assumption` consumes it on the fall-through
-    -- edges. The linter cannot see that use, so the name must stay
-    -- underscore-prefixed.
+    -- knot_dec's `assumption` consumes it on the fall-through edges.
     (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
   let inkMarker := name.startsWith "@ink:"
@@ -6333,11 +5093,7 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
         | none => .missing
   if let .resolved c cssName := read then
 
-    -- With a group, that group is the argument: `\primary{Alex}` means
-    -- colour Alex, which is what it looks like. Without one it is a
-    -- declaration colouring the rest of the group, as `\bfseries` does.
-    -- `\color{c}` took its one argument already, so a group after it is
-    -- the declaration's content, not an argument.
+    -- `\color` took its argument already, so a group after it is content.
     recordColorSpan ctx source c cssName.isSome pos
     let j := if inkMarker then raws.size else skipSpaces raws (i + 1)
     have hjge : i + 1 ≤ j := by
@@ -6428,11 +5184,6 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       diag ctx .E0304 "'\\ifgiven' needs {\\param} and {content}" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
   else if overlayCtrls.contains name then
-    -- Overlay commands, dim-not-hide (PLAN M5): the content wraps in
-    -- a step and dims before its turn — \only included, one overlay
-    -- semantics for both backends. Without a group the spec declares:
-    -- the rest of this inline scope steps. A spec the model cannot
-    -- number keeps the honest W0105 and the content stays shown.
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]?.bind specWord? with
@@ -6469,11 +5220,6 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | none =>
       elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "alt" then
-    -- `\alt<spec>{active}{otherwise}`: one node carrying both alternatives,
-    -- because exactly one of them is inked on each step page — the declared
-    -- exception to dim-not-hide (`Ir.Inline.alt`). A pair of `step` nodes
-    -- cannot say it: the complement of a mid-deck range is two ranges, so
-    -- the selection has to see both alternatives at once.
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]?.bind specWord? with
@@ -6497,14 +5243,8 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
         | some spec =>
           let ia ← elabInlinesCore ctx ga
           let ib ← elabInlinesCore ctx gb
-          -- Page order, not spec order (`Ir.Inline.alt`): step 1 ships the
-          -- in-range group only when the range already covers it.
           elabInlinesFrom ctx raws (j3 + 1) (acc.push (.alternate spec ia ib)) ""
         | none =>
-          -- One reading, never two: the warning says the step model cannot
-          -- number this spec, so the active alternative — the styled one
-          -- under `\alert<spec>{body}`, as beamer reads an alert with a
-          -- spec — stands on every step, and the other is never inked.
           warnAltSpec ctx pos
           let ia ← elabInlinesCore ctx ga
           elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia) ""
@@ -6535,15 +5275,10 @@ braced groups: the second is what every other step shows, so give it even \
 when it is empty — '{}'")
         elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "pause" then
-    -- Reachable only inside an argument or definition body; between
-    -- blocks the boundary rule steps the rest of the scope.
     warnOnce ctx "spec:pause-inline" .W0105
       "'\\pause' inside an argument cannot step; its content is shown" pos
     elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "note" then
-    -- A speaker note met mid-sentence: no block can stand here, so
-    -- the body is stashed for the enclosing frame to drain — the
-    -- paragraph flows on unbroken and the note never leaks into it.
     if scanBracketArg raws (i + 1) pos matches .took _ then
       warnOnce ctx "note:options" .N0102
         "'\\note' placement and overlay options are ignored: the note is \
@@ -6564,8 +5299,6 @@ a side channel, never slide content" pos
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (j2 + 1) acc sb
       | _ =>
-        -- No body: malformed, and said so — a bare `\note` once vanished
-        -- with no word at all (the silence-is-fidelity audit).
         noteNeedsGroup ctx "note" pos
         have hadv : sliceWeight raws (js + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
@@ -6584,22 +5317,16 @@ a side channel, never slide content" pos
         elabInlinesFrom ctx raws j acc sb
   else if name == "centering" then
 
-    -- Between blocks the declaration centres the rest of its scope;
-    -- here, inside inline content, there is no block to centre.
     warnOnce ctx "ctrl:centering" .W0108
       "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
       (help := "move '\\centering' to the start of the group or environment body")
     elabInlinesFrom ctx raws (i + 1) acc sb
   else if (Ir.raggedSideOf? name).isSome then
-    -- The ragged declarations are block declarations the same way.
     warnOnce ctx ("ctrl:" ++ name) .W0108
       s!"'\\{name}' aligns nothing inside an argument; content keeps its alignment" pos
       (help := s!"move '\\{name}' to the start of the group or environment body")
     elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "footnote" then
-    -- `\footnote[num]{text}`: the mark takes the next counter value, or
-    -- the override without stepping (`footnoteStepNum`; the sourcing lives
-    -- on `Ir.footnoteMark`, the contract on `Ir.footnote_numbers_gapless`).
     let override : Option Nat := footnoteOverride ctx raws (i + 1) pos
     let (⟨j1, hj1⟩, _, _) ← skipOptArg ctx name raws (i + 1) pos
     let j := skipSpaces raws j1
@@ -6609,12 +5336,10 @@ a side channel, never slide content" pos
       have hjlt := getElem?_lt hj
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
-      -- A note is one paragraph by design: a break inside it is a space.
       if hasParRaw body then
         footnoteWarnPar ctx pos
       let acc := flushText acc sb
-      -- A note ships at the page's foot, on the page, wherever its mark
-      -- stands; on a card it sets in the flow, on the flow's ground.
+      -- A note sets on the page's ground; a card face keeps it in the flow.
       let inner ← elabInlinesCore { ctx with ground := if ctx.face then ctx.ground else none } body
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
@@ -6654,11 +5379,6 @@ a side channel, never slide content" pos
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
   else if declCtrl.contains name || runningCtrl.contains name then
-    -- A native declaration met inside inline content is ours,
-    -- misplaced — never "unknown": its arguments address the engine,
-    -- not the sentence, so they go with the declaration. A running
-    -- declaration carries content, so skipping it is a drop (E0347);
-    -- the key/value rest is configuration (W0346) — `warnMisplacedDecl`.
     warnMisplacedDecl ctx name pos
     let jr := skipReservedArgs raws (i + 1) pos (maxGroups := 2)
     if let some bpos := jr.2 then
@@ -6674,16 +5394,7 @@ a side channel, never slide content" pos
     elabInlinesFrom ctx raws (i + 1) acc sb
   else if Compat.nativeReadCtrls.contains name ||
       (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
-    -- A tikz-family set line is not unknown wherever it stands. Its group
-    -- addresses the picture machinery, never the sentence: kept as text it
-    -- printed the definition's own source into the paragraph. The engine
-    -- reads `\tikzset` and `\usetikzlibrary` itself now
-    -- (`Compat.nativeReadCtrls`), so those lines are consumed whichever
-    -- renderer draws; the rest are the boundary's
-    -- while it is open (`Compat.boundaryDecls` collected them — body-level
-    -- lines included, `boundaryDecls_covers`), and a declared refusal
-    -- (`tool = none`) makes those unknown again, arguments and all. What a
-    -- read line left unread is named at the line itself, in `elabDoc`.
+    -- A picture set line's groups address the picture machinery, not text.
     let jr := skipReservedArgs raws (i + 1) pos
     if let some bpos := jr.2 then
       warnUnclosed ctx s!"'\\{name}'" bpos
@@ -6693,13 +5404,7 @@ a side channel, never slide content" pos
     elabInlinesFrom ctx raws jr.1 acc sb
   else if (unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
       Compat.codeInternal name && !ctx.atUse then
-    -- premise: packageCodeChecks — a style's spans, and the hooks it
-    -- registers, carry the style's own file; that block builds both sides
-    -- A LaTeX internal in package code sets no text: its option runs and
-    -- `{...}` groups are its code and go with it (`recoverPackageCmd`), and
-    -- `acc`/`sb` pass on as they came. Any other unknown command there
-    -- takes the document's recovery below. A definition's trial reads as
-    -- its use (`atUse`).
+    -- premise: packageCodeChecks — a style's spans carry its own file
     let j0 := skipSpaces raws (i + 1)
     have hj0 := skipSpaces_ge raws (i + 1)
     let j1 := skipStar raws j0
@@ -6717,27 +5422,15 @@ a side channel, never slide content" pos
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 1)
 decreasing_by all_goals knot_dec
 
-/-- The dispatched unknown-command recovery. Keeping this arm separate
-exposes its actual consumption and content contract without repeating the
-control-word registry in proofs. The caller has already ruled out native
-commands, definitions, symbols, colours and package-code recovery. -/
+/-- The unknown-command recovery: the command and its option runs go, its
+groups stay as content. -/
 private def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size) : EM (Array Inline) := do
-  -- Best effort: the {...} arguments are content, and content is
-  -- never dropped for want of a command. Only the formatting is lost.
-  -- (The one named exception, `warnUnknownCmd`: the \footnotemark pair
-  -- is pending, W0370, never "unknown".)
   let j0 := skipSpaces raws (i + 1)
   have hj0 := skipSpaces_ge raws (i + 1)
-  -- A starred form's `*` belongs to the command, not to the text.
   let j1 := skipStar raws j0
   have hj1 := skipStar_ge raws j0
-  -- A leading [...] run is how the author addressed the command,
-  -- never their content: kept, it is ink nobody wrote ('[16]'
-  -- printed in front of a URL). It goes with the command, and the
-  -- command's own diagnostic says so — the run is part of this
-  -- construct's recovery, so it is one accounting and not two.
   let jr := skipOptionRuns raws j1 pos
   have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
   warnUnknownCmd ctx name (jr.1 > j1) pos
@@ -6748,14 +5441,9 @@ private def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   have hcall : sliceWeight raws j2 < sliceWeight raws i :=
     sliceWeight_lt raws h (by omega)
   let (acc2, sb2, ⟨j3, hj3⟩, kept, sp) ← elabUnknownArgs ctx raws j2 0 acc sb false
-  -- What the floor kept, recorded as salvage: this ink is the engine's
-  -- recovery, not the author's prose, and nothing downstream could tell
-  -- the two apart from the bytes alone.
   noteSalvage (unknownCmdDiag name (RunShape.one false)).1 name
     (Parse.rawSrc (raws.extract j2 j3))
-  -- The control word swallowed a space after it; give back only one
-  -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
-  -- gains no ink the author never wrote.
+  -- Restore the space the control word swallowed only when one stood there.
   let sbF := if kept > 0 && sp && j3 < raws.size then " " else sb2
   have hadv : sliceWeight raws j3 < sliceWeight raws i :=
     sliceWeight_lt raws h (by omega)
@@ -6766,7 +5454,6 @@ decreasing_by all_goals knot_dec
 
 end
 
-/-- The inline interpreter with its recursive machinery kept private. -/
 public def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) :=
   elabInlinesCore ctx raws
 
@@ -6784,9 +5471,7 @@ unseal inlineVerbatim
 unseal theCounterLevel? sectionLevel
 unseal inlineGroup
 
-/-- Input-side resolver misses for the ordinary recovery arm. This checks
-registries and declared context, never the result of elaborating the call.
-Pending footnote spellings also take this recovery arm, with their own code. -/
+/-- Whether an inline control word reaches the unknown-command recovery. -/
 public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   Compat.overlayName name == name &&
   (ctx.args.find? (·.1 == name)).isNone && (lookupUser ctx name).isNone &&
@@ -6868,8 +5553,6 @@ private theorem elabInlinesCtrl_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat)
   simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure]
   rw [ht st, htail]
 
-/-- Ordinary recovery runs after exactly the macro-origin transition of the
-inline spine. The equation preserves both the inlines and reporting state. -/
 private theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb name : String) (pos : Pos) (h : i < raws.size)
     (hr : raws[i] = .ctrl name pos) (hn : recoversInlineName ctx name = true) :
@@ -6900,8 +5583,6 @@ private theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i 
   rw [hu]
   simp only [dite_false]
 
-/-- The empty-context entry point dispatches a source command to recovery,
-including smart punctuation, without dropping its reporting state. -/
 private theorem elabInlines_unknown_exact (file name : String) (raws : Array Raw)
     (pos : Pos) (h : 0 < raws.size) (hr : raws[0] = .ctrl name pos)
     (hp : pos.origins = []) (hn : recoversInlineName {file} name = true) :
@@ -6919,7 +5600,6 @@ private theorem elabInlines_unknown_exact (file name : String) (raws : Array Raw
     relativeOrigins, List.map_nil]
   rfl
 
-/-- At the end of the inline input, close the active macro scope and flush text. -/
 private theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (h : raws.size ≤ i) :
     elabInlinesFrom ctx raws i acc sb =
@@ -6928,7 +5608,6 @@ private theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : N
   rw [elabInlinesFrom]
   simp only [show ¬ i < raws.size from Nat.not_lt_of_ge h, dite_false]
 
-/-- A positioned word under the empty context is independent of elaboration state. -/
 private theorem elabInlines_word_exact (file w : String) (p : Pos) (hp : p.origins = []) :
     elabInlines {file} #[.word w p] =
       pure (#[sourceInline {file} p (.text w)].map (mapSmartText none)) := by
@@ -6938,7 +5617,6 @@ private theorem elabInlines_word_exact (file w : String) (p : Pos) (hp : p.origi
   rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
   simp [inlineMacroAt, inlineMacroStep, flushText, mergeText]
 
-/-- Recovery beyond the input keeps the accumulated content and state. -/
 private theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
     (j count : Nat) (acc : Array Inline) (sb : String) (spaceAfter : Bool)
     (h : raws.size ≤ j) :
@@ -6954,8 +5632,6 @@ private theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
       cases hn
     · rfl
 
-/-- A final argument group runs its own elaboration exactly once, retaining
-its returned content and state. No assumption about that child run is needed. -/
 private theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
     (j : Nat) (body : Array Raw) (pos : Pos) (acc : Array Inline) (sb : String)
     (spaceAfter : Bool) (hg : raws[j]? = some (.group body pos))
@@ -6977,9 +5653,6 @@ private theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
     (Nat.le_trans hend (skipSpaces_ge raws (j + 1))), pure_bind]
   simp only [elabInlines, hs, bne_self_eq_false]
 
-/-- Once dispatch has selected unknown recovery, a closed option contributes
-no inline; the braced word retains the same positioned content for every
-option, content string, accumulator and initial state. -/
 private theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
     (acc : Array Inline) (sb : String) (st : ESt) :
     ((elabUnknownCtrl {file}
@@ -7078,9 +5751,8 @@ private theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
     StateT.run, bind, StateT.bind, pure, StateT.pure]
   split <;> split <;> split <;> split <;> rfl
 
-/-- A closed leading option of an unregistered command contributes no
-inline content. The command's grouped content keeps its exact source
-annotation; the diagnostic may describe the dropped option. -/
+/-- A closed leading option of an unregistered command adds no inline
+content. -/
 public theorem elabInlines_option_run_exact (file name w kept : String) (st : ESt)
     (hn : recoversInlineName {file} name = true) :
     ((elabInlines {file}
@@ -7100,48 +5772,16 @@ public theorem elabInlines_option_run_exact (file name w kept : String) (st : ES
   simp_all only
 
 
-/-- **The code a refusal earns is fixed by the construct's name alone.** A
-construct the engine knows and defers is named as pending, everything else as
-unknown, and the call's argument shape does not enter: a leading `[...]` run
-earns no code of its own. The message and help *do* depend on the shape — the
-run's fate is a clause of them — so this states the code and nothing more.
-The wording is the golden's to witness
-(`testdata/golden/diagnostics.txt`), and that the wording on the counted line is
-true of every site it counts is `runShape_fold_exact` plus
-`optionRunAccountingChecks`' mixed-shape rows in both orders.
-
-The retired W0341 is why the code matters on its own: it named a fragment of
-the argument list this diagnostic already covers, at the same span, and for
-the pending pair it called a construct the engine knows an unknown command.
-With one code at the span there is nothing left to make that claim. -/
 public theorem unknownCmdDiag_code_exact (name : String) (shape : RunShape) :
     (unknownCmdDiag name shape).1 =
       (if name == "footnotemark" || name == "footnotetext" then .W0370 else .W0301) := by
   unfold unknownCmdDiag
   split <;> rfl
 
-/-- The option run earns no code: the *code* naming a refused command is the
-same whatever shapes its sites carried, so the run is accounted for inside
-that diagnostic and never beside it. Message and help differ by design —
-the run's fate is a clause of them — and this says only that the choice of
-code is shape-blind. -/
 private theorem unknownCmdDiag_shape_id (name : String) (shape : RunShape) :
     (unknownCmdDiag name shape).1 = (unknownCmdDiag name {}).1 := by
   rw [unknownCmdDiag_code_exact, unknownCmdDiag_code_exact]
 
-/-- **One refusal, one diagnostic, with a subject.** The emitter fact the
-census needs and the fold cannot state: every call of `warnUnknownCmd` pushes
-exactly one diagnostic, carrying the construct's code and the subject
-`ctrl:<name>`. Rewriting the group's counted line (`bumpRunShape`) happens in
-place and is not a push, which is why this is stated as one more element at
-the end rather than as `st.diags.push d`.
-
-This is the hypothesis `Diag.tallySites_exact` carries and could not get:
-that theorem — the number on the line is the number of sites of that loss —
-assumes `subject.isSome`, so it was *vacuous* on exactly the class that
-miscounted. Here it is discharged by construction for every refused command.
-`subjectCensusChecks` and `siteAccountingChecks` hold the surface-wide
-gates. -/
 private theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) (st : ESt) :
     ∃ d, ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.size
@@ -7171,18 +5811,8 @@ private theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun
   · rw [hrun, warnOnceState_diags_exact]
     simp [warnOnceKey]
 
-/-- **Package code sets no text: a LaTeX internal's arguments are consumed,
-and its refusal is paid for by exactly one diagnostic.** The empty recovery
-`_accounts` names. The index the recovery returns stands past a run of
-spaces and `{...}` groups and nothing else — at most nine groups, TeX's
-limit, and at the bound or before a raw that is no group — so every group
-that could be one of the internal's arguments is behind it
-(`argGroupsEnd_covers`), and the arm, which walks on from that index with
-its text accumulator as it came, never walks them as text. It records no
-salvage, so the census can attribute no ink to it. What it does push is one
-diagnostic at the end, W0391, under the construct's own key: the loss named
-once per site, as every counted refusal is (`Diag.tallySites_exact` reads
-that subject). -/
+/-- A LaTeX internal in package code records no salvage, pushes exactly one
+diagnostic, and consumes only spaces and at most nine argument groups. -/
 public theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw)
     (j : Nat) (pos : Pos) (st : ESt) :
     ((recoverPackageCmd ctx name raws j pos).run st).2.salvage = st.salvage ∧
@@ -7203,20 +5833,14 @@ public theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Ar
   exact ⟨rfl, ⟨_, warnOnceState_diags_exact .., warnOnceDiag_kind_exact ..,
     warnOnceDiag_subject_exact ..⟩, h1, h2, h3⟩
 
-/-- Bind declared parameters from the call site — a user command's, or a
-user environment's from the groups after its `\begin`. Returns the bindings
-and the index just past the consumed arguments. Shared by inline and block
-expansion so both bind identically. -/
+/-- Binds declared parameters from the call site, returning the bindings and
+the index past the consumed arguments. -/
 private def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos) :
     EM (Array (String × Option (Array Inline)) × Nat) := do
   let (bs, ⟨j, _⟩) ← takeArgsFrom ctx params 0 name raws start pos #[]
   return (bs, j)
 
-/-- Argument consumption only moves forward: the index `takeArgs` returns
-is never before the one it was given — the progress half of the
-elaborator's termination measure (arch-provable I6), discharged by the
-subtype `takeArgsFrom` carries its progress in. -/
 private theorem take_args_consumes_forward
     (ctx : Ctx) (params : Array Param) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos) (st : ESt) :
@@ -7228,7 +5852,7 @@ private theorem take_args_consumes_forward
   rw [h]
   exact hj
 
-/-- Block environments: those whose content is a block sequence. -/
+/-- Environments whose content is a block sequence. -/
 private def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
    "columns", "tabularx", "figure",
@@ -7236,51 +5860,27 @@ private def blockEnvs : List String :=
    "thebibliography", "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
-/-- The titled block an environment opens: beamer's three, and tcolorbox's
-box, which its lowering hands the same surface (`Tcolorbox.boxEnv`). -/
 private def titledKind? : String → Option Ir.TitledKind
   | "block" => some .block
   | "alertblock" => some .alert
   | "exampleblock" => some .example
   | n => if n == Tcolorbox.boxEnv then some .box else none
 
-/-- Environment names a document cannot redefine, the environment mirror of
-`builtinNames`: everything the engine gives a meaning of its own. -/
+/-- Environment names a document cannot redefine. -/
 public def builtinEnvNames : List String :=
   blockEnvs ++ (alignEnvs.map (·.1)) ++ (displayMathEnvs.map (·.1)) ++
   ["verbatim", "tabular", "tabular*", "column", "array",
    "algorithm", "algorithm*", "algorithm2e", "algorithmic"] ++
   reservedEnv
 
-/-- The text-block width the page yields: `width − 2·hmargin`, spelled
-once — a page fact has one resolving def. -/
 private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
   p.width - 2 * p.hmargin
 
-/-- The text-block height the page yields: `height − 2·vmargin`. -/
 private def _root_.LeanTex.Core.Ir.PageSpec.textHeight (p : PageSpec) : Sp :=
   p.height - 2 * p.vmargin
 
-/-- The page the class yields for a declared spec and options: the one
-resolving site for class page geometry, read by `engineLengthTokens` and
-the `elabDoc` fold alike so the preamble's token environment and the
-shipped page cannot drift (`engine_tokens_agree`). A face takes the class
-option's US (3.5 × 2 in) or Japanese (91 × 55 mm) card trade size, else
-the class record's `trimDefault`, with `safeMargin` on both margins, and
-sets display-text policy: no hyphenation, and — below the 40-character
-working minimum for justified text (Bringhurst, Elements 2.1.2) — ragged.
-A frame fills beamer's stage (`slidesStageOf`) with the slides margins,
-its text ragged right as beamer.cls declares among its defaults
-(`\raggedright`, measured under lualatex: no frame line is stretched to
-the measure, each takes every word that fits, and no hyphen pays against
-`\raggedright`'s infinite stretch).
-Flow reads the `*paper`/`paper=` options against `pageSizes` and
-`landscape` swaps the axes — the reading the geometry package documents
-for exactly these options (geometry manual §5.2). A document that declared
-its own geometry keeps every value it named: a class option is a default,
-never a lock. The flow classes' undeclared text block (Bringhurst's 26
-picas, `Ir.articleTextBlock`) is deliberately not applied here — it is the
-fold's own `!sawPage` step, after the whole preamble has spoken. -/
+/-- The class's page for a declared spec and options: every value the
+document declared is kept, the rest take the class's defaults. -/
 private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
     (page : PageSpec) : PageSpec := Id.run do
   let dflt : PageSpec := {}
@@ -7305,8 +5905,7 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Ir.slidesVMargin }
-    -- beamer.cls sets `\raggedright` among its defaults, for every frame:
-    -- LaTeX's own, whose lines fill first (`raggedFil`).
+    -- beamer.cls sets `\raggedright` for every frame.
     if page.justify.isNone then
       page := { page with justify := some false }
     page := { page with raggedFil := true }
@@ -7330,19 +5929,8 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with justify := some false }
   return page
 
-/-- A box's declared width (`{minipage}`, `\parbox`, `{column}`): a fraction
-of the enclosing measure in per mille (`0.48\textwidth`, `.5\linewidth`, a
-bare factor, or `\textwidth` alone — a factor of one, as TeX reads a
-coefficient-less internal dimen), or an absolute length. `none` is
-unreadable.
-
-Three spellings name the width indirectly and all three are resolved here,
-because a width the reader cannot read is a box that takes the whole
-measure. A declared token (`\begin{column}{\colwidth}`, the beamerposter
-idiom) resolves to its length. A document command whose body is one width
-(`\newcommand{\panelw}{.45\textwidth}`) is expanded once and re-read — one
-step, not a fixpoint: a width is a length, and a length that needs two
-expansions to become one is a macro program rather than a declaration. -/
+/-- A box's declared width: a length, a fraction of the enclosing measure,
+or a parameterless command's body read once; `none` when unreadable. -/
 private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.run do
   let s := src.trimAscii.toString
   match affineLength ctx (· != .textHeight) s with
@@ -7369,20 +5957,13 @@ private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.ru
 
 mutual
 
-/-- One raw's verdict for `bodyIsBlock`; the `List` companion below carries
-the walk, as everywhere a tree with `Array` children is recursed. The arms
-mirror the boundary rule in `elabBlocks` — verbatim included, since it is a
-first-class block on this branch — and descend into scope groups and
-environment bodies: block content one group deeper is still block content.
-A body that ends its own paragraph (`...\par`, the LaTeX habit for a
-one-line entry) produces one, so it is a block too. -/
+/-- Whether one raw makes a body block content, as `elabBlocks`' boundary
+rule reads it. -/
 private def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
       || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
-      -- A definition or a counter command makes the body
-      -- declaration-shaped: it must expand through the block walk,
-      -- where the define door and the counter arm stand.
+      -- Definitions and counter commands expand only through the block walk.
       || n == "define" || counterCtrl n
       || (Compat.lengthRestoreKeys? n).isSome
       || (blockHeading? n).isSome
@@ -7406,20 +5987,11 @@ private def bodyIsBlockList : List Raw → Bool
 
 end
 
-/-- Does this body produce block-level content? Decides whether a user command
-called between paragraphs expands as blocks or as inline content. A purely
-inline macro must stay inline, or `\role{Ada} and more text` would split the
-paragraph. -/
 public def bodyIsBlock (raws : Array Raw) : Bool :=
   bodyIsBlockList raws.toList
 
-/-- Does an overlay command standing at `i` take the block path? Grouped
-content is judged by its shape, exactly as an environment body is — a list
-or a paragraph break inside `\onslide{...}` is block content wherever the
-command stands. The open form (a spec with no group) steps the rest of the
-scope, so it is block-level only where a paragraph has not begun; begun,
-it steps the rest of its sentence inline. `\alt` (two groups) takes the
-block path when either alternative is block-shaped. -/
+/-- Whether the overlay command at `i` takes the block path: a group by its
+shape, the open form only where no paragraph has begun. -/
 private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
     (twoGroups : Bool) : Bool :=
   let j := skipSpaces raws (i + 1)
@@ -7432,9 +6004,7 @@ private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
         | _ => false))
   | _ => curEmpty && !twoGroups
 
-/-- Does a two-group content wrapper carry block-shaped content in its second
-argument? Hyperref's `\\hyperlink` and `\\hypertarget` use exactly this
-signature; the first group names the destination and the second is content. -/
+/-- Whether a two-group content wrapper's second group is block-shaped. -/
 private def contentWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) : Bool :=
   let j := (linkSelectorHead n raws (i + 1)).2
   let j2 := skipSpaces raws (j + 1)
@@ -7442,24 +6012,12 @@ private def contentWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) 
   | some (.group _ _), some (.group body _) => bodyIsBlock body
   | _, _ => false
 
-/-- Is `n` one of the two-group content wrappers whose second group here is
-block-shaped? Factored out of the `elabBlocksGo` block knot so the list
-literal and the `contentWrapperTakesBlocks` call compile once, outside the
-knot whose own `match` is at the LCNF compiler's heartbeat budget. -/
 private def linkWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) : Bool :=
   (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget")
     && contentWrapperTakesBlocks n raws i
 
-/-- The number an unstarred heading takes, stepped in flow order — or
-`none`, which is also the answer for every heading of a class that does
-not number. classes.dtx §Sectioning: `\thesection` is `\arabic{section}`
-(`\Alph` after `\appendix`), each deeper level prefixes its parent, a
-starred form neither numbers nor steps, and neither does a heading deeper
-than `secnumdepth` (`Counters.secDepth`: 3, article's, unless the document sets
-it), so `\paragraph` and below never number. A document's own
-`\renewcommand{\the<counter>}{...}` format (`Counters.secFmts`) renders
-instead where one stands. Stepping a level zeroes the deeper
-ones, so `2.1` after a fresh `\section` is impossible by construction. -/
+/-- The number a heading takes, stepped in flow order; `none` when starred,
+past `secnumdepth`, or in a class that does not number. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
@@ -7472,15 +6030,11 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     | 2 => (s1, s2 + 1, 0)
     | _ => (s1, s2, s3 + 1)
   let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel level
-  -- The heading is the numbered thing in force from here on: a \label in
-  -- the flow after it binds to this number, as a heading (`\cref` says
-  -- "section").
   modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) }
                              refTarget := some { kind := some .heading, num := num } }
   return some num
 
-/-- A declaration standing in a group applies to the rest of the group:
-`\Huge`, `\bfseries`, `\centering`, a palette name used bare. -/
+/-- Whether a raw sets a style, size, alignment or colour for its group. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
     n == "centering" || n.startsWith Compat.fontSizeMark || (Ir.raggedSideOf? n).isSome
@@ -7488,8 +6042,7 @@ private def isDeclaration (ctx : Ctx) : Raw → Bool
       || n.startsWith "@ink:" || n.startsWith "@lang:"
   | _ => false
 
-/-- A palette name read with its argument colours the argument alone:
-`\accent{word}` is content, bare `\accent` a declaration. -/
+/-- False exactly for a palette name followed by a group, its argument. -/
 private def argFree (ctx : Ctx) (r : Raw) (rest : List Raw) : Bool :=
   match r with
   | .ctrl n _ =>
@@ -7497,9 +6050,7 @@ private def argFree (ctx : Ctx) (r : Raw) (rest : List Raw) : Bool :=
       (rest.dropWhile (· matches .space)).head? matches some (.group _ _))
   | _ => true
 
-/-- A named font declaration or a palette name used without an argument.
-The paragraph and list-prefix readers share this lexical distinction:
-`\accent{word}` is content, while bare `\accent` changes the scope. -/
+/-- The declaration a named style or a bare palette name makes, if any. -/
 private def namedScopeDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) :
     Option Ir.Decl :=
   match declStyleOf n with
@@ -7510,40 +6061,26 @@ private def namedScopeDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       | some (.group _ _) => none
       | _ => some (.color c (ctx.palette.refOf? n))
 
-/-- The block reading of a declaration met between blocks — the `isB` row
-and its arm's one computation: the `Ir.Decl` the rest of the scope is
-elaborated under, when `n` is a style declaration or a bare palette name
-and the open paragraph holds nothing but space. Bare: `\accent{word}`
-opening a paragraph keeps its argument reading. Mid-paragraph a
-declaration keeps the inline reading, as the ink marker does.
-`\centering` keeps its block wrapper, the `@lang:` marker its
-flow-state arm, and `\ttfamily` its inline arm. -/
+/-- The declaration a style or bare palette name makes for the rest of the
+scope, when the open paragraph holds only space. -/
 private def declBlockOf (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Option Ir.Decl :=
-  -- `\ttfamily` keeps its inline reading: its literal treatment of
-  -- punctuation lives on the inline context, not in the flow state.
+  -- `\ttfamily`'s literal punctuation lives on the inline context.
   if !cur.all isSpaceOrPar || n.startsWith "@lang:" || n == "ttfamily" then none
   else namedScopeDecl ctx n raws i
 
-/-- The `isB` row of the declaration's block reading: one Bool for the
-knot, computed outside it. -/
 private def isDeclBlock (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Bool :=
   (cur.all isSpaceOrPar && n.startsWith Compat.fontSizeMark) ||
     (declBlockOf ctx n raws i cur).isSome
 
-/-- A font size read whole, needing no size around it: no `em` or `ex` part. -/
+/-- A font size with no `em` or `ex` part, needing no size around it. -/
 private def absoluteSize : Dim.Affine Dim.Measure → Bool
   | .lit g => g.width.em == 0 && g.width.ex == 0
   | _ => false
 
-/-- The axis a style declaration sets, where a later one on the same axis
-replaces it: the size (named, or a `\fontsize` read whole), the family,
-the series, the upright/italic shape, small caps — a separate axis since
-LaTeX 2020, so `\scshape` keeps italic — and the language. `\em` turns the
-slant and `\normalfont` resets several axes, which `pushDecl` reads apart,
-and a `\fontsize` reading the size around it (`1.2em`) compounds, so none
-of the three has an axis. -/
+/-- The axis a style sets, where a later style on that axis replaces it;
+`\em`, `\normalfont` and a relative `\fontsize` have none. -/
 private def styleAxis : Ir.Style → Option Nat
   | .size _ => some 0
   | .fontSize size _ => if absoluteSize size then some 0 else none
@@ -7554,15 +6091,12 @@ private def styleAxis : Ir.Style → Option Nat
   | .lang _ => some 4
   | .emph | .normal => none
 
-/-- Does a declaration set the slant outright, whatever came before it, so
-no `\em` before it still turns? -/
 private def setsSlant : Ir.Decl → Bool
   | .style .italic | .style .upright | .style .normal => true
   | _ => false
 
-/-- The `\em` turn standing after the innermost declaration that sets the
-slant, taken out — two turns with nothing setting the slant between them
-cancel. The list is innermost first. -/
+/-- Removes the `\em` turn after the innermost declaration that sets the
+slant, if any; the list is innermost first. -/
 private def dropEmTurn : List Ir.Decl → Option (List Ir.Decl)
   | [] => none
   | e :: rest =>
@@ -7570,12 +6104,7 @@ private def dropEmTurn : List Ir.Decl → Option (List Ir.Decl)
     else if setsSlant e then none
     else (dropEmTurn rest).map (e :: ·)
 
-/-- Push a declaration onto a scope's list, dropping what it overrides: an
-earlier one on its axis, every `\em` turn before a declaration that sets the
-slant, everything but size and language before `\normalfont`, and the turn a
-second `\em` cancels. The inner one wins anyway, so what is dropped wrapped
-nothing, and the list keeps one declaration per axis, one `\normalfont`,
-one `\em` turn and one colour however many declarations a scope makes. -/
+/-- Pushes a declaration onto a scope's list, dropping what it overrides. -/
 private def pushDecl (decls : List Ir.Decl) (d : Ir.Decl) : List Ir.Decl :=
   if d == .style .emph then
     match dropEmTurn decls.reverse with
@@ -7594,9 +6123,7 @@ private def pushDecl (decls : List Ir.Decl) (d : Ir.Decl) : List Ir.Decl :=
     | .color .. => fun e => e matches .color ..
   decls.filter (!replaced ·) ++ [d]
 
-/-- Enter the rest of a declaration's scope: the declaration joins the open
-ones innermost (unchanged for `\centering` and the ragged pair). Returns
-the list to restore on leaving. -/
+/-- Opens a declaration's scope and returns the declarations to restore. -/
 private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) (pos : Pos) : EM (List Ir.Decl) := do
   let saved := (← get).scope.blockDecls
@@ -7611,28 +6138,21 @@ private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     | none => pure ()
   return saved
 
-/-- Leave the scope: restore what `enterBlockDecl` saved. -/
 private def leaveBlockDecl (saved : List Ir.Decl) : EM Unit :=
   modify fun st => { st with scope := { st.scope with blockDecls := saved } }
 
-/-- Elaborate under additional declarations, then restore the caller's
-declarations while retaining every other effect. `Ir.wrapDecls_text` is the
-IR conservation law; this operation supplies its scoped declaration input. -/
+/-- Runs an action under additional declarations, then restores the
+caller's declarations, keeping every other effect. -/
 public def withBlockDecls (decls : List Ir.Decl) (action : EM α) : EM α :=
   fun st =>
     let (value, done) := action { st with scope := { st.scope with blockDecls := st.scope.blockDecls ++ decls } }
     (value, { done with scope := { done.scope with blockDecls := st.scope.blockDecls } })
 
-/-- Declaration scope restores exactly that field for every elaboration
-action, including an action that changes declarations itself. Its result
-and all other state effects are preserved. -/
 public theorem withBlockDecls_exact (decls : List Ir.Decl) (action : EM α) (st : ESt) :
     withBlockDecls decls action st =
       let (value, done) := action { st with scope := { st.scope with blockDecls := st.scope.blockDecls ++ decls } }
       (value, { done with scope := { done.scope with blockDecls := st.scope.blockDecls } }) := by rfl
 
-/-- Nested declaration scopes compose in source order for every action;
-restoration cannot discard effects outside the declaration field. -/
 public theorem withBlockDecls_compose_exact (outer inner : List Ir.Decl) (action : EM α) :
     withBlockDecls outer (withBlockDecls inner action) =
       withBlockDecls (outer ++ inner) action := by
@@ -7641,7 +6161,6 @@ public theorem withBlockDecls_compose_exact (outer inner : List Ir.Decl) (action
   cases action { st with scope := { st.scope with blockDecls := st.scope.blockDecls ++ (outer ++ inner) } }
   rfl
 
-/-- Declaration alignment is shared by paragraph and list scopes. -/
 private def declAlignOf (n : String) : Option Ir.HAlign :=
   if n == "centering" then some .center
   else (Ir.raggedSideOf? n).map Ir.FlushSide.halign
@@ -7655,16 +6174,11 @@ private def wrapDeclAlign (align : Option Ir.HAlign) (inner : Array Block) :
     | some .right => #[.ragged .right inner]
     | none => inner
 
-/-- The declaration arm's whole effect but the recursion: the elaborated
-rest of the scope, centred or ragged as one block wrapper (an empty scope
-wraps nothing); a style or colour declaration already reached every
-region inside through `scope.blockDecls`. -/
 private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
   wrapDeclAlign (declAlignOf n) inner
 
-/-- Declarations between `\begin{list}` and the first item belong to the
-list group (ltlists.dtx). They have no text of their own, and remain in
-force while the individual items open and close their own scopes. -/
+/-- The declarations between a list's opening and its first item, in force
+for every item. -/
 private structure ListScope where
   decls : List Ir.Decl := []
   align : Option Ir.HAlign := none
@@ -7688,9 +6202,8 @@ private def listScopeCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   if let some (.color _ _) := decl then noteColorReads name
   return decl.map fun d => { scope with decls := scope.decls ++ [d] }
 
-/-- A `\color` in force from here: the palette carrying its ink, and the
-scope's colour declarations dropped, since one ink stands at a time and the
-last declared wins over a palette name declared before it. -/
+/-- Puts a `\color`'s palette in force, dropping the scope's earlier colour
+declarations: the last ink declared wins. -/
 private def setInk (pal : Palette) (st : ESt) : ESt :=
   { st with
     scope := { st.scope with
@@ -7698,15 +6211,13 @@ private def setInk (pal : Palette) (st : ESt) : ESt :=
       blockDecls := st.scope.blockDecls.filter (!· matches .color ..) }
     flowGen := st.flowGen + 1 }
 
-/-- The block form's whole effect but the recursion: resolve the explicit
-ink source through the typed colour door, declare the flow ink, and bump the
-flow state. -/
+/-- Declares a block-level `\color`'s ink for the rest of the flow; `none`
+when the colour does not resolve. -/
 private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
   let source := (marker.drop "@ink:".length).toString
   if source == Compat.normalInkSource then
-    -- `\normalcolor` between blocks: the opening ink back, declared or
-    -- defaulted as it opened.
+    -- `\normalcolor`: the opening ink back.
     let pal := ctx.palette.restore ctx.basePalette (.role .ink)
     modify (setInk pal)
     return some pal
@@ -7725,9 +6236,8 @@ private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Uni
     s!"'{source}' is not in the palette; the page ground is unchanged" pos
     (help := "declare the colour before using it as a page ground")
 
-/-- `\pagecolor` sets the page ground globally (xcolor manual §2.6.4: it
-holds for the current and all following pages, whatever group it stands
-in), so the entry is logged for every enclosing group's end to replay. -/
+/-- `\pagecolor`'s page ground, set globally as xcolor sets it, whatever
+group it stands in. -/
 private def pageGroundDecl (ctx : Ctx) (marker : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
   let source := (marker.drop Compat.pageColorMarkPrefix.length).toString
@@ -7742,14 +6252,12 @@ private def pageGroundDecl (ctx : Ctx) (marker : String) (pos : Pos) :
     return none
   | .rejected => return none
 
-/-- `\nopagecolor`: the opening ground back, every other role kept, as
-global as the `\pagecolor` it undoes. -/
+/-- `\nopagecolor`: the opening page ground back, set globally. -/
 private def pageGroundReset (ctx : Ctx) : EM Ir.Palette := do
   logGlobal (.entry (.role .page) (Ir.Design.declared? ctx.basePalette .page)
     (ctx.basePalette.decorative.contains (.role .page)) false)
   return ctx.palette.restore ctx.basePalette (.role .page)
 
-/-- A paragraph end: a blank line, or `\par` spelled. -/
 public def isParRaw : Raw → Bool
   | .par _ => true
   | .ctrl "par" _ => true
@@ -7770,9 +6278,7 @@ private def rawParsList : List Raw → Nat
   | r :: rest => rawPars r + rawParsList rest
 end
 
-/-- The pars standing strictly inside an element: what the par-splice
-measure component counts, since a top-level `\par` is a boundary the walk
-consumes, never descends into. -/
+/-- The pars strictly inside an element, not counting a top-level `\par`. -/
 private def nestedPars : Raw → Nat
   | .group body _ => rawParsList body.toList
   | .math _ body _ => rawParsList body.toList
@@ -7790,8 +6296,6 @@ private theorem rawPars_split (r : Raw) :
   | ctrl n _ => simp only [rawPars, nestedPars, isParRaw]; split <;> simp_all
   | _ => simp [rawPars, nestedPars, isParRaw]
 
-/-- The bridge from the pars recursion into the parametrized family,
-mirroring `rawWeightList_eq`. -/
 private theorem rawParsList_eq (l : List Raw) :
     rawParsList l = measList rawPars l := by
   induction l with
@@ -7817,9 +6321,6 @@ private theorem nestedParsList_le (l : List Raw) :
   simp only [nestedParsList_eq, rawParsList_eq]
   exact measList_le_of_le (fun r => by have := rawPars_split r; omega) l
 
-/-- A declaration is a control word other than `\par`, so it carries no
-pars: duplicating the declarations into each split part costs the measure
-nothing. -/
 private theorem rawPars_decl {ctx : Ctx} {r : Raw}
     (hnp : isParRaw r = false) (hd : isDeclaration ctx r = true) :
     rawPars r = 0 := by
@@ -7831,24 +6332,20 @@ private theorem rawPars_decl {ctx : Ctx} {r : Raw}
     · rfl
   | _ => simp_all [isDeclaration]
 
-/-- A raw that makes the brace group it stands in a block scope: an
-alignment declaration, or a declaration only the block walk reads — a page
-ground (`\pagecolor`, `\nopagecolor`) or a Beamer colour. -/
+/-- Whether a raw makes its brace group a block scope: an alignment, page
+ground or beamer colour declaration. -/
 private def isCenteringRaw : Raw → Bool
   | .ctrl n _ => n == "centering" || (Ir.raggedSideOf? n).isSome
       || n.startsWith Compat.pageColorMarkPrefix || n == Compat.pageColorResetMark
       || n == BeamerColor.marker || n == BeamerColor.starMarker
   | _ => false
 
-/-- Is a group here an argument? It is when, looking back over spaces and
-earlier argument groups, a control word or an `[option]` precedes it; a group
-standing on its own is a scope (`Parse.endsInArgument`, the rule an
-environment's rewrite reads too). -/
+/-- Whether a group after `cur` is an argument: a control word or an option
+precedes it, past spaces and earlier argument groups. -/
 private def isArgument (cur : Array Raw) : Bool := Parse.endsInArgument cur
 
-/-- The declarations a group split at a paragraph end re-applies to the parts
-after it: a declaration standing in it (`isDeclaration`, its argument
-aside), and `\urlstyle` with its face, whose group holds no paragraph end. -/
+/-- Collects the declarations a split group re-applies after a paragraph
+end, `\urlstyle` with its face included. -/
 private def carryDecl (ctx : Ctx) (r : Raw) (rest : List Raw) (decls : Array Raw) :
     Array Raw :=
   if isDeclaration ctx r && argFree ctx r rest then decls.push r
@@ -7857,15 +6354,8 @@ private def carryDecl (ctx : Ctx) (r : Raw) (rest : List Raw) (decls : Array Raw
       if rawParsList b.toList == 0 then (decls.push r).push (.group b gp) else decls
     | _, _ => decls
 
-/-- `\par` ends a paragraph wherever it stands, a scope group included:
-`{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
-re-applied to what follows. So `{\Huge Title \par}` sets one line and stops,
-where a forced break would have set an empty Huge line after it. A part that
-holds only declarations and space sets nothing and is dropped. Explicit
-recursion (state: split parts built, declarations seen, the open part) so
-`splitAtPars_pars_lt` — the splice edge of the elabBlocks measure — can
-follow the accumulators; the goldens witness it computes what the old
-`Id.run` loop did. -/
+/-- Splits a scope group at each `\par`, re-applying its declarations to
+every later part and dropping parts that set nothing. -/
 private def splitAtParsGo (ctx : Ctx) (pos : Pos) :
     List Raw → Array Raw → Array Raw → Array Raw → Array Raw
   | [], out, _, pre =>
@@ -7885,13 +6375,8 @@ private def splitAtParsGo (ctx : Ctx) (pos : Pos) :
 private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw :=
   splitAtParsGo ctx pos body.toList #[] #[] #[]
 
-/-- A scope group whose paragraph ends inside it, under the size declaration
-it opens with (`{\small A\\B\par}`): LaTeX's `\par` there reads that size's
-`\baselineskip`, so the group is the block scope it is — its declaration
-standing over the paragraph (`Ir.paraAt`) — never spliced open at the
-paragraph end (`splitAtPars`), which would close the size before the `\par`
-and lead the paragraph at the body's skip. Only a group that ends at its
-paragraph end: text after the brace then joins no paragraph inside it. -/
+/-- Whether a group opens with a size declaration and ends with `\par`, so
+its paragraph leads at that size's `\baselineskip`. -/
 private def sizeParScope (body : Array Raw) : Bool :=
   let ws := body.toList.filter fun r => !(r matches .space)
   match ws.head?, ws.getLast? with
@@ -7908,11 +6393,6 @@ private theorem rawParsList_push (a : Array Raw) (r : Raw) :
     rawParsList (a.push r).toList = rawParsList a.toList + rawPars r := by
   simp [Array.toList_push, rawParsList_append, rawParsList]
 
-/-- The accounting invariant of the split: however the walk closes its
-parts, the pars nested in its output never exceed the pars already nested
-in `out`, still open in `pre`, or anywhere in the input — with the
-declarations array par-free, so duplicating it into each part costs
-nothing. -/
 private theorem splitAtParsGo_pars (ctx : Ctx) (pos : Pos) (l : List Raw)
     (out decls pre : Array Raw) (hd : rawParsList decls.toList = 0) :
     nestedParsList (splitAtParsGo ctx pos l out decls pre).toList
@@ -8000,10 +6480,6 @@ private theorem directParsList_pos {body : Array Raw}
   obtain ⟨i, hi, hr⟩ := hp
   exact directParsList_mem (Array.getElem_mem_toList hi) hr
 
-/-- The splice edge strictly lightens the par component: what the split
-emits nests strictly fewer pars than the group it replaces carried,
-because every top-level `\par` of the body — and the guard promises one —
-now stands at the boundary depth the walk consumes directly. -/
 private theorem splitAtPars_pars_lt (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (hp : body.any isParRaw = true) :
     nestedParsList (splitAtPars ctx body pos).toList
@@ -8015,13 +6491,6 @@ private theorem splitAtPars_pars_lt (ctx : Ctx) (body : Array Raw) (pos : Pos)
   simp only [nestedParsList, rawParsList] at h1 ⊢
   omega
 
--- The pars side of the block knot's measure, mirroring the weight side
--- above: `slicePars` is to `nestedParsList` what `sliceWeight` is to
--- `rawWeightList`, and `visParsGo` mirrors `visWeightGo`. The par-splice
--- edge falls in this component (`slicePars_splice`); every other edge
--- keeps it and falls in the weight component.
-
-/-- An extracted piece of a body nests no more pars than the body. -/
 private theorem extract_pars_le (body : Array Raw) (a b : Nat) :
     rawParsList (body.extract a b).toList ≤ rawParsList body.toList := by
   simp only [rawParsList_eq]; exact measList_extract_le ..
@@ -8030,9 +6499,6 @@ private theorem extract_nested_le (body : Array Raw) (a b : Nat) :
     nestedParsList (body.extract a b).toList ≤ nestedParsList body.toList := by
   simp only [nestedParsList_eq]; exact measList_extract_le ..
 
-/-- The pars companion of `sliceWeight`: what still nests below the
-spine's own boundary depth, from `i` on. Kept definitionally over
-`nestedParsList` for the same reason as `sliceWeight`. -/
 private def slicePars (raws : Array Raw) (i : Nat) : Nat :=
   nestedParsList (raws.toList.drop i)
 
@@ -8048,8 +6514,6 @@ private theorem slicePars_le (raws : Array Raw) {i j : Nat} (hij : i ≤ j) :
     slicePars raws j ≤ slicePars raws i := by
   simp only [slicePars_eq]; exact sliceMeas_le nestedPars raws hij
 
-/-- An element standing anywhere at or past `i` nests no more pars than the
-slice from `i`. -/
 private theorem elem_pars_le {raws : Array Raw} {j : Nat} {r : Raw}
     (h : raws[j]? = some r) {i : Nat} (hij : i ≤ j) :
     nestedPars r ≤ slicePars raws i := by
@@ -8059,9 +6523,6 @@ private theorem extract_slice_pars_le (raws : Array Raw) (a b : Nat) :
     nestedParsList (raws.extract a b).toList ≤ slicePars raws a := by
   rw [nestedParsList_eq, slicePars_eq]; exact sliceMeas_extract_le ..
 
-/-- The par-splice strictly lowers the pars component: the split parts
-spliced in place of the group nest strictly fewer pars than the group
-carried, and the rest of the slice is untouched. -/
 private theorem slicePars_splice {raws : Array Raw} {i : Nat}
     (h : i < raws.size) {body : Array Raw} {gpos : Pos}
     (hr : raws[i] = .group body gpos) (hp : body.any isParRaw = true)
@@ -8076,13 +6537,9 @@ private theorem slicePars_splice {raws : Array Raw} {i : Nat}
   rw [← nestedParsList_eq]
   exact splitAtPars_pars_lt ctx body pos hp
 
-/-- The pars component of the visible sum, mirroring `visWeightGo` through
-the same `visGo`: the component a user-command expansion must not raise. -/
 private def visParsGo (user : Array UserCmd) : Nat → Nat :=
   visGo (fun cmd => rawParsList cmd.body.toList) user
 
-/-- Expanding a visible command moves its pars out of the visible sum,
-mirroring `visWeight_expand`. -/
 private theorem visPars_expand {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     rawParsList cmd.body.toList + visParsGo ctx.user k
@@ -8091,9 +6548,9 @@ private theorem visPars_expand {ctx : Ctx} {name : String} {k : Nat}
   exact visGo_expand (f := fun cmd => rawParsList cmd.body.toList) h
 
 mutual
-/-- Paragraph edges see through semantic roles, which introduce no TeX
-group. Styled argument bodies remain opaque, as they were before a macro
-name annotated the paragraph. The boolean says the edge is still open. -/
+/-- Trims a paragraph edge through roles and source locations, which open no
+TeX group, but not into styled bodies; the boolean says the edge is still
+open. -/
 -- conserves: none — trims discarded paragraph-edge space and final breaks.
 private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | .text s =>
@@ -8133,16 +6590,10 @@ private def trimParaList (leading : Bool) (acc : Array Inline) :
 end
 
 private def finishPara (inlines : Array Inline) : EM (Option Block) := do
-  -- A spliced body can leave a leading space no raw-level skip saw; a
-  -- paragraph never opens with a space glue. Leading label anchors ship
-  -- no ink, so the paragraph's first text is judged past them.
   let inlines := (trimParaList true #[] inlines.toList).1
-  -- A forced break at the very end says what the paragraph end already
-  -- says; kept, it is an empty line in the PDF and an empty row in HTML.
   let inlines := (trimParaList false #[] inlines.toList).1
   if inlines.isEmpty then return none
-  -- The declarations in force where the paragraph ends set its step
-  -- (`Ir.paraAt`): LaTeX reads `\baselineskip` at `\par`.
+  -- LaTeX reads `\baselineskip` at `\par`: the end's declarations set it.
   return some (paraUnder (← get).scope.lang (Ir.paraAt (← get).scope.blockDecls inlines))
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
@@ -8156,9 +6607,6 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
     return none
   finishPara (← elabInlines ctx cur)
 
-/-- Store one `\title`-family part; both doors — the body's
-`takeTitleDecl` and the preamble's `.titleDecl` arm — write through
-here. -/
 private def storeTitlePart (name : String) (content : Array Inline)
     (short : Option (Array Inline)) : EM Unit :=
   modify fun (st : ESt) =>
@@ -8174,16 +6622,10 @@ private def storeTitlePart (name : String) (content : Array Inline)
     | "institute" => { st with institute := some content }
     | _ => { st with date := some content }
 
-/-- Store one `\title`-family declaration; `\maketitle` reads them back.
-Returns the index just past the consumed arguments, and the malformed run
-of an unclosed optional argument for the caller to keep where content can
-live. -/
+/-- Stores one `\title`-family declaration, returning the index past its
+arguments and the run of an unclosed optional argument. -/
 private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     (start : Nat) (pos : Pos) : EM ({ j : Nat // start ≤ j } × Array Raw) := do
-  -- `\title[short]{long}`: the short form feeds Beamer's running inserts.
-  -- Past an unclosed `[`, the group the author wrote is still there —
-  -- wherever the line break falls — and best effort takes it as the
-  -- argument rather than failing the build.
   let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
@@ -8197,23 +6639,12 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
     return (⟨start, Nat.le_refl start⟩, #[])
 
-/-- The title content `\maketitle` sets, from what was declared, per the
-`titlepage` style. A declared `separator` becomes a full-measure rule
-between the title block (title, subtitle) and the author block (author,
-institute, date), in the declared palette colour at the `separatorheight`
-token's thickness — moloch's title separator. The inter-part spacing reads
-the `subtitlegap`/`separatorgap`/`authorgap`/`institutegap` tokens (the
-moloch bundle carries that theme's values); an after-gap materialises only
-when a later part follows. A declared but empty part (`\date{}`) is
-deliberately blank and sets nothing. -/
+/-- The blocks `\maketitle` sets from the declared parts under the
+`titlepage` style; a declared but empty part sets nothing. -/
 private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   let tps : ElementStyle := (ctx.styles.find? "titlepage").getD {}
   let part (v : Option (Array Inline)) : Option (Array Inline) :=
     v.bind fun xs => if xs.isEmpty then none else some xs
-  -- A title page that declares slots is its slots: each sets its datum (or
-  -- its own content) in its own font and alignment, inside the role its
-  -- placement is found by. The title stays the document's one level-0
-  -- heading wherever its slot stands.
   unless tps.slots.isEmpty do
     let datumOf : Ir.TitleDatum → Option (Array Inline)
       | .title => part st.title
@@ -8265,11 +6696,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   let mut inner : Array Block := #[]
   let mut pending : Option (Sourced SymGlue) := none
   if let some xs := part st.title then
-    -- The document title is a heading at level 0, not a decorated
-    -- paragraph: the heading outline starts here (HTML §4.3.11 renders it
-    -- as the one <h1>, markdown as the one #), and layout gives it the
-    -- scale's LARGE step in the bold face — classes.dtx's \@maketitle sets
-    -- {\LARGE \@title \par}. Starred: a title is never numbered.
+    -- The title is the outline's one level-0 heading, never numbered.
     inner := push inner none (.section 0 true none xs)
   if let some xs := part st.subtitle then
     inner := push inner (ctx.tokens.findSourced? "subtitlegap") (.para #[.styled (.size "large") xs])
@@ -8277,26 +6704,12 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
     unless inner.isEmpty && (part st.author).isNone && (part st.institute).isNone
         && (part st.date).isNone do
       let c := (nm.bind ctx.palette.lookup).getD c
-      -- moloch's own default, `titleseparator linewidth=0.5pt`
-      -- (beamerinnerthememoloch.dtx, \moloch@inner@setdefaults), when no
-      -- token names one. A default is nobody's declaration, so it carries no
-      -- name and the HTML prints the length rather than deferring to a
-      -- property `tokenVars` never emitted.
+      -- beamerinnerthememoloch.dtx: titleseparator linewidth=0.5pt
       let th := (ctx.tokens.findSourced? "separatorheight").getD
         (Ir.Sourced.bare { width := Dim.Length.ofSp (Dim.pt 1 / 2) })
-      -- The separator stands its declared gap on both sides — the one
-      -- `separatorgap` token, above the rule here and below it through
-      -- `pending`: under the rule convention (`Layout.interlineFor`) the
-      -- gap runs from the title matter's baseline to the rule's top edge
-      -- and from its bottom edge to the author's cap line, so one token
-      -- means equal visible gaps. It used to stand on the rule line's
-      -- phantom body strut, which the convention removed.
       inner := push inner (ctx.tokens.findSourced? "separatorgap") (.rule c nm th)
       pending := ctx.tokens.findSourced? "separatorgap"
   if let some xs := part st.author then
-    -- The declared author styling: the font template wraps the name (the
-    -- lineage's \bf, or author-font), and the strut props its line open
-    -- to the declared height.
     let xs := match tps.authorFont with
       | some tpl => Ir.fillTemplate tpl xs
       | none => xs
@@ -8310,31 +6723,22 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
     pending := ctx.tokens.findSourced? "institutegap"
   if let some xs := part st.date then
     inner := push inner pending (.para xs)
-  -- A separator with nothing else declared is no title page at all.
   match inner with
   | #[.rule _ _ _] => return #[]
   | _ =>
-    -- The declared title bars bracket the level-0 heading, in the ink
-    -- colour (`Design.ofDoc`'s own rule: the palette's `fg`, else black).
-    -- `titleBars_text` is the statement that they change no content.
     let ink := match Ir.Design.declared? ctx.palette .ink with
       | some c => (c, some (ColorRef.role .ink))
       | none => (Ir.Color.black, none)
     let blocks := Ir.titleBars tps ink inner
-    -- The declared gap after the whole block (`after` on titlepage): a
-    -- standalone skip the next placed line pays, no ink of its own.
     return match tps.after with
       | some g => blocks.push (.spaced (Ir.Sourced.bare g) #[])
       | none => blocks
 
-/-- One keyed declaration accepted from the document, remembered for the
-`\theme` site: replacing it there is worth a word (W0348). The store logic
-is `applyEvent`'s `.declared` arm — one meaning, two doors. -/
+/-- Remembers a document-declared key, so a later `\theme` replacing it is
+named. -/
 private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
-/-- The engine tokens over the finished page, for body reads: every value
-is determined once the class defaults are applied. -/
 private def engineLengthTokensOfPage (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
   #[("paperwidth", { width := Dim.Length.ofSp page.width }),
@@ -8345,18 +6749,8 @@ private def engineLengthTokensOfPage (page : PageSpec) :
     ("baselineskip", { width := Dim.Length.ofSp (Ir.baselineSkipOf page) }),
     ("parskip", Ir.texParskipOf page)]
 
-/-- The engine's own length tokens, LaTeX's page dimen parameters read
-onto the token namespace: `paperwidth`/`paperheight` (the physical page),
-`textwidth`/`textheight` (the measure between the margins — TeX's own
-parameters, TeXbook ch. 23), and the class's text-column gap
-(`Ir.columnSep`). Resolved eagerly at the read site, as every
-token reference is (the `\setlength{\x}{2\x}` rule) — the offered keys of
-the one resolving site, `engineLengthTokensOfPage ∘ classPageDefaults`:
-offered from the declared page where one is declared, else where the class
-already fixes the value. A dimension the class will still adjust after the
-preamble fold — the flow classes' text block — is deliberately not
-offered: an expression reading it keeps its named error (E0321) rather
-than capturing a value the finished page would contradict. -/
+/-- The engine length tokens the preamble may read: those whose value the
+declared page or the class already fixes. -/
 private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     (page : PageSpec) : Array (String × Dim.SymGlue) :=
   let record := docClass.record
@@ -8383,23 +6777,12 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | "textwidth" => whKnown && hmKnown
     | "textheight" => whKnown && vmKnown
     | "columnsep" => true
-    -- The body size and the declared `\parskip` may still change in the
-    -- preamble; the body reads both off the finished page.
+    -- The body size and `\parskip` may still change in the preamble.
     | "baselineskip" | "parskip" => false
     | _ => false
   (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
     (fun kv => offered kv.1)
 
-/-- The preamble's engine token environment and the shipped page are one
-value (shape: `_set_eq` over the token array, as an inclusion — the offered
-keys are exactly those the class already fixes): every binding
-`engineLengthTokens` offers is the corresponding entry of the resolved
-page's environment. The one deliberate remainder is the flow classes'
-undeclared text block, applied by the fold's `!sawPage` step — and exactly
-then `textwidth` is withheld here, so no offered token can disagree with
-the page that ships. This is the statement whose absence would let a
-preamble `\setlength` read a different page than the document renders
-on. -/
 private theorem engine_tokens_agree (docClass : Ir.DocClass)
     (classOptions : String) (page : PageSpec) :
     ∀ kv ∈ engineLengthTokens docClass classOptions page,
@@ -8408,9 +6791,8 @@ private theorem engine_tokens_agree (docClass : Ir.DocClass)
   intro kv h
   exact (Array.mem_filter.mp h).1
 
-/-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
-token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
-parsing the block in one shot would leave those references unresolved. -/
+/-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
+an earlier one. -/
 private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
     (engine : Array (String × Dim.SymGlue) := #[]) : EM Tokens := do
   let mut acc : Tokens := toks
@@ -8420,10 +6802,6 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
       diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.quote}" pos
         (help := "entries look like: name = length")
     | some (key, valueSrc) =>
-      -- A redeclared token replaces the earlier entry, so a later
-      -- declaration overrides — a theme's defaults included. Entries
-      -- already derived from the old value keep it: references resolve
-      -- when the entry is read, in declaration order.
       match Decl.parseValue valueSrc (acc.entries ++ engine) with
       | some (.glue g) =>
         acc := acc.declare key g
@@ -8436,8 +6814,6 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
             "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
       | none =>
-        -- The expression parser's own verdict names the defect: an
-        -- unknown token errors as itself, never resolving to zero.
         let detail := if Decl.looksLikeExpr valueSrc then
             match Decl.parseLengthExpr (acc.entries ++ engine) valueSrc with
             | .error e => s!": {e}"
@@ -8448,14 +6824,8 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
   return acc
 
 
-/-- The `\palette` option run: `decorative` marks the block's entries as
-deliberately low-contrast and exempt from the pairing check. An
-unrecognised option skips the block (W0316) rather than applying it as the
-base palette — a variant block applied as base would silently restyle the
-document. `seeds` reads the block as the seeds a palette is generated from
-(`applySeeds`). Returns (decorative, seeds, skipBlock); both `\palette`
-doors — the preamble's `.palette` arm and the body arm — read their options
-here. -/
+/-- Reads a `\palette` option run as (decorative, seeds, skipBlock); an
+unknown option skips the block. -/
 private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
     EM (Bool × Bool × Bool) := do
   let mut decorative := false
@@ -8470,7 +6840,7 @@ private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
       diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
         (help := "options: decorative, seeds")
       skipBlock := true
-  -- premise: seedRoleChecks — the decorative and the plain seeded builds install one palette and judge it alike
+  -- premise: seedRoleChecks — decorative and plain seeded builds agree
   if seeds && decorative then
     warnOnce ctx "palette:seeds:decorative" .W0110 "'decorative' exempts nothing in \
 '\\palette[seeds]': a generated palette meets the contrast its sites owe; the option is \
@@ -8480,8 +6850,8 @@ ignored" pos
     decorative := false
   return (decorative, seeds, skipBlock)
 
-/-- Resolve named Beamer colours into the palette in force; report
-unresolved expressions only once declarations have settled. -/
+/-- Resolves named Beamer colours into the palette in force; unresolved
+expressions are reported only under `settle`. -/
 private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
     (settle : Bool := false) : EM Palette := do
   let (colors, pal, issues) := (← get).scope.palette.resolve pal
@@ -8495,9 +6865,6 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
       warnOnce origin ("beamercolor:" ++ issue.message) .W0104
         ("'\\setbeamercolor': " ++ issue.message ++ "; the unresolved value is ignored") issue.span.pos
         (trigger := "\\setbeamercolor")
-  -- A bundle's generated palette follows the seeds the document declares,
-  -- and a ground declared through any door takes back the inks generated
-  -- for another, whatever the scope restated.
   let docRoles := (← get).spans.docRoles
   return (pal.reseed docRoles.contains).yieldGrounds docRoles.contains
 
@@ -8521,8 +6888,7 @@ private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
             (trigger := "\\setbeamercolor")
   resolveBeamerColors ctx pal
 
-/-- Keep declaration parsing and state updates outside the block knot;
-the returned index carries the progress fact its measure reads. -/
+/-- The `\setbeamercolor{element}{declaration}` arm. -/
 private def beamerColorArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (star : Bool) (pos : Pos) : EM { t : Option Palette × Nat // i ≤ t.2 } := do
   let j := skipSpaces raws i
@@ -8540,23 +6906,17 @@ private def beamerColorArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     diag ctx .E0304 "'\\setbeamercolor' needs an element and a colour declaration" pos
     return ⟨(none, i), Nat.le_refl _⟩
 
-/-- A named element can be a parent even when it has no paint site of its
-own. Refuse it only when no supported site resolves through it. -/
+/-- Names each declared element that no supported paint site reaches. -/
 private def finishBeamerColors (ctx : Ctx) : EM Unit := do
   let colors := (← get).scope.palette
   for e in colors.elements do
-    -- premise: beamerReachChecks — under both colour themes an element is
-    -- named here exactly when declaring it leaves both artifacts unchanged:
-    -- a reached element (`BeamerColor.reach`) changes paint, an element no
-    -- open channel reaches changes none.
+    -- premise: beamerReachChecks — named exactly when it changes no paint
     if e.declared && !(colors.reached.contains e.name) then
       let origin := { ctx with file := e.span.file, callSite := none }
       warnOnce origin ("beamercolor:element:" ++ e.name) .W0104
         s!"'\\setbeamercolor' element '{e.name}' has no supported paint site or inheriting element; its colours are unused" e.span.pos
         (help := Compat.beamerNative.lookup "setbeamercolor") (trigger := "\\setbeamercolor")
 
-/-- One assignment, shared by native entries and scoped aliases. Keeping
-the name and source separate prevents an alias operand becoming entries. -/
 private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : String)
     (pos : Pos) (decorative : Bool := false) (aliasOnly : Bool := false) : EM Palette := do
   let mut pal := pal
@@ -8567,11 +6927,7 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
     diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
   else if !aliasOnly && key == "covered" &&
       (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
-    -- `covered = 38\%`: cover each colour to 38% of itself over the
-    -- page (beamer's \setbeamercovered{transparent=38}). TeX comments
-    -- make a bare % unwritable, so the escaped spelling is the
-    -- declared one; the raw source shows it as `\%`. A colour value
-    -- stays accepted below as the cover of uncoloured runs.
+    -- beamer's \setbeamercovered{transparent=n}; a bare % opens a comment.
     let digits := if valueSrc.endsWith "\\%" then (valueSrc.dropEnd 2).toString
       else (valueSrc.dropEnd 1).toString
     match (digits.trimAscii.toString).toNat? with
@@ -8587,17 +6943,11 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
       diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
         (help := "a percentage like: covered = 38\\%")
   else
-    -- An xcolor definition (`\definecolor`, `\colorlet`) and a standout
-    -- alias name an author colour whatever their spelling; a `\palette`
-    -- key declares the role it is the key of, and so does an xcolor
-    -- definition of a code role's key, beside its colour (`Role.ofXcolor?`).
     let xcolor := valueSrc.trimAscii.toString.startsWith Decl.xcolorDefinitionPrefix
     let ref : ColorRef := if aliasOnly || xcolor then .color key else ColorRef.ofKey key
-    -- Every name the declaration declares: the palette, the flow scope and
-    -- the global log are written through this one list.
     let refs : List ColorRef := if xcolor && !aliasOnly then Palette.xcolorRefs key else [ref]
     let put (pal : Palette) (c : Color) : EM Palette := do
-      -- premise: codeRoleChecks — two builds that differ only by a retired key ship one listing paint, over a listing holding a token of each key's type
+      -- premise: codeRoleChecks — a retired key changes no listing paint
       if let some r := CodeColor.retiredKeys.lookup key then
         warnOnce ctx ("listingkey:" ++ key) .W0387
           s!"palette key '{key}' still names a colour, but listings now colour each token \
@@ -8617,8 +6967,6 @@ by its code role" pos
             modify fun st => { st with scope := { st.scope with
               palette := st.scope.palette.native r c } }
             noteDocRoles [r]
-          -- A body `\palette` keeps its flow scope past every group's end:
-          -- a global assignment (`GlobalWrite`).
           logGlobal (.entry k (some c) decorative true)
       return if xcolor && !aliasOnly then pal.defineXcolor key c decorative
         else pal.declare ref c decorative
@@ -8639,14 +6987,11 @@ by its code role" pos
           (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
   return pal
 
-/-- **A `\palette` name nothing reads is named where it stands** (W0387):
-`ink` and `surface`, which an earlier engine read as the page's text and
-ground on screen alone, are author colours like any other name the registry
-holds no role for, so one the document names nowhere else changes no page;
-the page's text and ground are `fg` and `bg`. -/
+/-- Names each declared `ink` or `surface` palette key nothing in the
+document paints with. -/
 private def unreadPaletteKeys (reads : Array String) (keys : Array (String × Span)) :
     Array Diag :=
-  -- premise: Tests.ColorNames.unreadKeyFlipChecks — two builds apart by the key's value ship one artifact exactly where the key draws W0387: what the engine paints with reads it, prose, a comment and an unpainted construct do not
+  -- premise: Tests.ColorNames.unreadKeyFlipChecks — named exactly when inert
   keys.filterMap fun (key, span) =>
     if reads.contains key then none
     else
@@ -8658,8 +7003,7 @@ the page's {what} colour is the '{role}' key" (span := some span)
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
 '{key}' where it is used"))
 
-/-- The palette seeds generate at their targets, generated once per seeds
-and targets in a document (`SpanRecords.seedPalettes`). -/
+/-- The palette the seeds generate at their targets, memoised per document. -/
 private def generated (seeds : SeedPalette.Seeds) (targets : SeedPalette.Targets) :
     EM (Except SeedPalette.Failure SeedPalette.Colors) := do
   let memo := (← get).spans.seedPalettes
@@ -8674,7 +7018,6 @@ private def generated (seeds : SeedPalette.Seeds) (targets : SeedPalette.Targets
     modify fun st => { st with spans := { st.spans with seedPalettes := memo.push entry } }
     return result
 
-/-- What to change when seeds generate no palette, by why they did not. -/
 private def seedHelp (f : SeedPalette.Failure) : String :=
   if f.cmyk then "declare the seed in sRGB: #RRGGBB or oklch(L C H)"
   else if [Role.surface, .surfaceStrong, .rule, .accentWash, .accentSoft].contains f.role then
@@ -8684,16 +7027,10 @@ private def seedHelp (f : SeedPalette.Failure) : String :=
     "move the ink and the paper further apart, so every tone derived between them reads: \
 \\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
 
-/-- The seed keys `\palette[seeds]` reads, each a colour. -/
 private def seedKeys : List String := ["ink", "paper", "accent", "alert", "example", "neutral"]
 
-/-- `\palette[seeds]{ ink = …, paper = …, accent = …, blocks = tonal|strong }`,
-and an `alert`, `example` or `neutral` if the author names one: a palette
-generated from its seeds at the class's ground depth (`SeedPalette.generate`)
-and installed where it stands (`Palette.applySeeds`), every role it sets
-declared as a `\palette` entry is, so a later declaration overrides it.
-Seeds that generate none stand as the page's text, ground and accent, and
-the role that failed is named once (W0306). -/
+/-- Installs the palette generated from `\palette[seeds]{…}`; seeds that
+generate none stand as the page's text, ground and accent. -/
 private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
     (depth : GroundDepth) : EM Palette := do
   let mut found : Array (String × Color) := #[]
@@ -8728,15 +7065,9 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
     { ink, paper, accent, alert := seed "alert", exampleColor := seed "example",
       neutral := seed "neutral" }
   let targets := seeds.targets depth
-  -- A role the seeds derive or bind keeps the colour the document declared
-  -- for it through any role door, before or after (`SpanRecords.docRoles`;
-  -- an author colour's name never counts): the document's colour outranks
-  -- what is generated, which outranks a bundle's. The seeds' own ink,
-  -- paper and accent are declarations, the latest winning.
+  -- The document's own role colours outrank the generated ones.
   let docRoles := (← get).spans.docRoles
   let keep (r : Role) : Bool := docRoles.contains r
-  -- Each role the install changed is a declaration the log and the report
-  -- read, and a later theme replacing it says so (W0348).
   let note (before after : Palette) : EM Unit := do
     for r in Role.all do
       if let some c := Design.declared? after r then
@@ -8775,8 +7106,6 @@ where
     return pal
 
 
-/-- Native colour declarations update the same epoch as named Beamer
-colours. Later explicit native declarations retain their precedence. -/
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
     (pos : Pos) (decorative : Bool := false) (seeds : Bool := false)
     (depth : GroundDepth := .documents) : EM Palette := do
@@ -8833,15 +7162,12 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
   return params
 
 
-/-- Rule (b)'s three answers for a redefinition of a rendered built-in. -/
+/-- The outcome of redefining a rendered built-in. -/
 private inductive RedefVerdict where
   | wins
   | empty
   | refused (d : Diag)
 
-/-- The W0361 a refused redefinition earns: the built-in stands, and the
-message names why the body cannot run — its first losing construct and
-that construct's site, or the empty expansion. -/
 private def refuseRedef (cmd : UserCmd) (verdict : RedefVerdict) : EM Unit := do
   let (msg, detail) : String × Option String := match verdict with
     | .refused d =>
@@ -8855,7 +7181,6 @@ engine cannot run; the built-in stands",
   modify fun st => { st with
     diags := st.diags.push (Diag.of .W0361 msg (some cmd.span) (detail := detail)) }
 
-/-- Past the end, a slice weighs nothing. -/
 private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
     (h : raws.size ≤ j) : sliceWeight raws j = 0 := by
   rw [sliceWeight_eq]; exact sliceMeas_end rawWeight raws h
@@ -8870,7 +7195,6 @@ private theorem sliceWeight_zero (a : Array Raw) :
 private theorem slicePars_zero (a : Array Raw) :
     slicePars a 0 = nestedParsList a.toList := by rfl
 
-/-- Trimming a body's whitespace edges never adds weight or pars. -/
 private theorem trimRaws_weight_le (raws : Array Raw) :
     rawWeightList (trimRaws raws).toList ≤ rawWeightList raws.toList := by
   unfold trimRaws trimBy
@@ -8881,9 +7205,7 @@ private theorem trimRaws_pars_le (raws : Array Raw) :
   unfold trimRaws trimBy
   exact extract_pars_le ..
 
-/-- The first `{...}` group at or past `k` with the index just after it —
-`takeDefine`'s body scan, carrying what the consumed run weighs so a
-`\define`'s termination edges can read it. -/
+/-- The first `{...}` group at or past `k`, with the index just after it. -/
 private def defineBody? (raws : Array Raw) (k : Nat) :
     Option ((b : Array Raw) × { k' : Nat //
       k < k'
@@ -8910,45 +7232,22 @@ private def defineBody? (raws : Array Raw) (k : Nat) :
   else none
 termination_by raws.size - k
 
--- Rule (b)'s third answer: a redefinition the engine cannot run may still
--- *declare* the built-in's styling. The scan below reads a refused
--- `\maketitle` body once — expanded through the user commands visible at
--- the preamble's end — for the closed list of declarative title-styling
--- constructs: rules (`\hrule height`), skips (`\vskip`), size and weight
--- declarations, alignment, sitting around the built-in's own datum
--- (`\@title`). Everything else in the body stays refused and counted.
-
-/-- One observed construct of a refused `\maketitle` body, in body order:
-`barInterpret` reads the sequence relative to the `\@title` event. -/
+/-- A declarative title-styling construct read from a refused `\maketitle`
+body. -/
 private inductive BarEvent where
-  /-- A `\vskip` stands here. Its length is not read: the venue
-  contributes the bars' weights, and the gaps beside them are the
-  engine's rhythm (`Ir.titleBarGap`/`Ir.titleBarSkip`) unless the
-  document declares its own through `\style{titlepage}`. The event
-  survives to close the author block's trailing skip; `\vskip -\parskip`
-  emits nothing — under the engine's gap model a declared gap already
-  replaces the paragraph skip, so the venue's cancellation is the
-  identity. -/
+  /-- A `\vskip`; its length is not read. -/
   | gap
-  /-- An `\hrule`; `none` when its declared height cannot be read, which
-  abandons that side's extraction entirely. -/
+  /-- An `\hrule`; `none` when its declared height cannot be read. -/
   | bar (w : Option Dim.SymGlue)
-  /-- `\@title`, with the size, weight, and alignment declarations in
-  force where it stands. -/
+  /-- `\@title`, with the size, weight and alignment in force. -/
   | title (size : Option String) (bold : Bool) (align : Option Ir.HAlign)
-  /-- `\@author`, with the weight in force and whether a zero-width
-  `\rule` strut props its line — the NeurIPS-lineage author `tabular`
-  (`\begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author`), read off the
-  environment that holds it (`authorStrutList`). Ink, like `.content`: it
-  closes the bottom bar's trailing skip. -/
+  /-- `\@author`, with the weight in force and whether a zero-width `\rule`
+  strut props its line. -/
   | author (bold : Bool) (strut : Bool)
-  /-- Ink that is not the title — an environment, math, verbatim, a word:
-  what closes the bottom bar's trailing skip. -/
+  /-- Ink that is not the title. -/
   | content
 
-/-- The declarations in force at a point of the scanned body: threaded
-along each list, copied into groups and expansions so a scoped
-declaration does not escape. -/
+/-- The declarations in force at a point of the scanned body. -/
 private structure BarSt where
   size : Option String := none
   bold : Bool := false
@@ -8960,9 +7259,7 @@ private def barSkipSp : List Raw → List Raw
   | .space :: rest => barSkipSp rest
   | r :: rest => r :: rest
 
-/-- A length at the head of a raw run: a self-contained word (`0.25in`),
-or a number completed by `\p@` (`4\p@`, source2e's one-point register).
-`-\parskip` is the identity (`BarEvent.gap`'s docstring says why). -/
+/-- A length read at the head of a raw run; `-\parskip` reads as `cancel`. -/
 private inductive BarLen where
   | len (g : Dim.SymGlue)
   | cancel
@@ -8987,9 +7284,8 @@ private def barLength (l : List Raw) : BarLen :=
       | _ => .unread
   | _ => .unread
 
-/-- `\hrule` and its declared height; a bare `\hrule` is TeX's default rule
-thickness, 0.4 pt (TeXbook ch. 21). `none` when a written height cannot be
-read. -/
+/-- An `\hrule`'s declared height, TeX's 0.4 pt default when bare (TeXbook
+ch. 21); `none` when a written height cannot be read. -/
 private def barRuleWeight (l : List Raw) : Option Dim.SymGlue :=
   match barSkipSp l with
   | .word "height" _ :: rest =>
@@ -8998,9 +7294,8 @@ private def barRuleWeight (l : List Raw) : Option Dim.SymGlue :=
     | _ => none
   | _ => some { width := Dim.Length.ofSp (Dim.pt 2 / 5) }
 
-/-- A word that is a construct's own operand, never ink: a readable length
-or number (`0.25in`, `4`), a sign, or one of the dimension keywords TeX
-spells beside `\hrule` and `\hbox`. -/
+/-- A word that is a construct's operand rather than ink: a length, a
+number, a sign or a dimension keyword. -/
 private def barWordTransparent (w : String) : Bool :=
   ["-", "height", "width", "depth", "to", "plus", "minus"].contains w ||
     (match Decl.parseValue w with
@@ -9009,19 +7304,8 @@ private def barWordTransparent (w : String) : Bool :=
 
 private def sizeCtrlNames : List String := Ir.sizeScale.map (·.1)
 
-/-- **beamer's spelling of the LaTeX internals a refused body's read-out
-already knows.** A theme writes its title page over `\inserttitle` and
-`\insertauthor`; latex.ltx's own title code writes `\@title` and
-`\@author`. They name the same declared datum — beamer defines each insert
-as the document's own metadata (beamerbasetitle.sty, the `\insert...`
-family) — so the read-out must not know one spelling and miss the other.
-
-One table, resolved once (`barCtrlName`), so the scans below match a
-single name: the whole vocabulary difference is here, and a scan cannot
-learn one alias and not another (`barScan_alias_agree`). A datum with no
-event of its own (`\insertdate`, the institute, a frame number) aliases to
-`\@date`, which is what the scan already spells "ink that is not the
-title". -/
+/-- Beamer's `\insert…` metadata commands, each mapped to the LaTeX internal
+a refused body's scans read. -/
 public def beamerInsertAlias : List (String × String) :=
   [("inserttitle", "@title"),
    ("insertshorttitle", "@title"),
@@ -9033,23 +7317,10 @@ public def beamerInsertAlias : List (String × String) :=
    ("insertinstitute", "@date"),
    ("insertshortinstitute", "@date")]
 
-/-- The name a refused body's scans read: beamer's insert resolved to the
-internal it aliases, every other control word itself. -/
 public def barCtrlName (n : String) : String := (beamerInsertAlias.lookup n).getD n
 
-/-- The zero-width `\rule` strut that props an author's line — the
-NeurIPS-lineage author `tabular`
-(`\begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author`), read off the
-environment that holds it. The strut's own height is not taken; the
-engine's is `Ir.titleAuthorStrut`. Groups are looked through; everything
-else stays the refusal's.
-
-Only the strut: the weight in force and the author datum itself are the
-scan's own business, threaded and emitted where they stand
-(`barScanList`). Folding the whole shape here instead cost the read-out
-every other datum the same environment held — a theme's title and its
-author share one canvas, and an environment answered for by its author
-alone reported no title. -/
+/-- Whether a zero-width `\rule` strut stands in the raws, groups looked
+through. -/
 private def authorStrutList (found : Bool) : List Raw → Bool
   | [] => found
   | .group body _ :: rest =>
@@ -9069,13 +7340,8 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- The declarative appearance a refused built-in *environment*
-redefinition still declares — the abstract's
-`\centerline{\large\bf Abstract}`: sizes and weights anywhere in the
-begin body (the heading's font), `\centerline`/`\centering` (its
-alignment). `\begin{quote}` is the built-in's own shape and the `\vskip`s
-are the engine's rhythm: both stay refused. Groups are looked through with
-the state threaded — the closed list wants any declaration in the body. -/
+/-- The size, weight and alignment a refused environment redefinition's
+begin body declares, groups looked through. -/
 private def envStyleScanList (st : BarSt) : List Raw → BarSt
   | [] => st
   | .group body _ :: rest => envStyleScanList (envStyleScanList st body.toList) rest
@@ -9096,13 +7362,8 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- The size the environment's *body* sets at, read off a refused
-redefinition's begin body with TeX's scoping: a size switch standing at the
-begin body's top level holds to the environment's end, one inside a group
-(the heading's `\centerline{\large ...}`) only to its brace. The begin
-body's last item, when it is an environment, is the one the definer's split
-idiom leaves open for the body (`\begin{quote}` in the begin body,
-`\end{quote}` in the end body), so its own top level counts too. -/
+/-- The size a refused environment redefinition's body sets at: the last
+top-level size switch in the begin body, or in an environment that ends it. -/
 private def envBodySizeList (acc : Option String) : List Raw → Option String
   | [] => acc
   | [.env _ body _] => envBodySizeList acc body.toList
@@ -9116,24 +7377,15 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- The kernel's commands that take argument groups and set no ink where they
-stand, with how many (latex.ltx: `\addcontentsline{file}{type}{text}`,
-`\addtocontents{file}{text}`, `\markboth{left}{right}`, `\markright{right}`,
-`\label{key}`, `\index{entry}`, `\vspace{skip}`, `\hspace{skip}`,
-`\thispagestyle{style}`): what a heading reader leaves unread. -/
+/-- latex.ltx commands that set no ink, with how many argument groups each
+takes. -/
 private def inklessArgs : List (String × Nat) :=
   [("addcontentsline", 3), ("addtocontents", 2), ("markboth", 2), ("markright", 1),
    ("label", 1), ("index", 1), ("vspace", 1), ("hspace", 1), ("thispagestyle", 1)]
 
-/-- The words a redefined environment's begin body sets ahead of the body —
-the heading a venue writes (`\centerline{\large\bf Summary}`) — with the
-body's own container left out: the begin body's last environment, which
-the definer's split idiom leaves open for the body. A word that reads as a
-length, or a glue keyword beside one, is a skip's argument (`\vskip 2ex
-plus 1ex`), one inside `[…]` an option's (`\vspace` arrives as
-`\block[before = …]`), and the groups of a command that sets no ink
-(`\addcontentsline{toc}{section}{…}`, `\label`) its arguments — never
-heading text. `skip` counts the groups still owed such a command. -/
+/-- The words a redefined environment's begin body sets ahead of its body,
+skipping lengths, options and inkless commands' arguments; `skip` counts the
+groups still owed such a command. -/
 private def envHeadWords (acc : Array String) (opt : Bool) (skip : Nat) :
     List Raw → Array String
   | [] => acc
@@ -9157,8 +7409,7 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- The size × bold font fragment `envStyleInterpret` and `barInterpret`
-both spell: the inline tree the closed style vocabulary can honour. -/
+/-- The font template for a size and a weight; `none` for neither. -/
 private def fontFragment (size : Option String) (bold : Bool) :
     Option (Array Ir.Inline) :=
   match size, bold with
@@ -9167,26 +7418,13 @@ private def fontFragment (size : Option String) (bold : Bool) :
   | none, true => some #[.styled .bold #[]]
   | none, false => none
 
-/-- `envStyleScanList`'s verdict as the style fragment the built-in can
-honour, `barInterpret`'s font shape. -/
 private def envStyleInterpret (sc : BarSt) : Option Ir.ElementStyle :=
   let font := fontFragment sc.size sc.bold
   if font.isNone && sc.align.isNone then none
   else some { font := font, align := sc.align }
 
-/-- The scan: one pass over the refused body, expanding the user commands
-visible below `bound` (the definition-order rule that terminates every
-expansion here), descending into groups with a copy of the declarations in
-force so a scoped declaration does not escape. Unrecognised commands are
-transparent — the refusal already counted them; this pass only collects
-what the closed list can honour.
-
-An environment is a grouping like any other and is descended into on the
-same terms, its author strut read off it first (`authorStrutList`) so a
-propped author line still declares one. A theme writes its title page
-inside one — a `tikzpicture`, a `minipage` — so an environment answered for
-by one opaque event hid every declaration and every datum the body placed,
-and the read-out found no title to style. -/
+/-- The title-styling events of a refused body, expanding user commands below
+`bound` and scoping declarations to their group or environment. -/
 private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     (events : Array BarEvent) : List Raw → Array BarEvent
   | [] => events
@@ -9245,20 +7483,6 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- **The invariant the read-out owed: a theme's spelling of a declared
-datum reads as the engine's own.** A refused redefinition's declarative
-content is read through one closed vocabulary, and a control word reaches
-that vocabulary only after `barCtrlName` has resolved it — so beamer's
-insert and the LaTeX internal it aliases are not merely read to the same
-style, they are the same scan step in the same state. The read-out knew
-`\@title` and not `\inserttitle`, so a theme-authored title page read as no
-title page at all: the refusal stood alone and the declarative appearance
-the body carried went with the layout code that could not be expressed.
-
-Two spellings that resolve alike scan alike, at the head of a run and
-therefore — the scan being a fold that reads no other name — at any
-occurrence. `barCtrlName_alias_resolves` supplies both hypotheses for every
-row of the table, so the property is the table's, not one name's. -/
 private theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : BarSt)
     (events : Array BarEvent) (post : List Raw) (p q : Pos) (b l : String)
     (hb : barCtrlName b = l) (hl : barCtrlName l = l) :
@@ -9266,23 +7490,14 @@ private theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : B
       = barScanList user bound st events (.ctrl l q :: post) := by
   rw [barScanList, barScanList, hb, hl]
 
-/-- Every row of the alias table resolves its beamer spelling to the
-internal, and the internal to itself: the two hypotheses
-`barScan_alias_agree` asks for, discharged for the whole vocabulary at
-once. -/
 public theorem barCtrlName_alias_resolves :
     (beamerInsertAlias.all fun r =>
       barCtrlName r.1 == r.2 && barCtrlName r.2 == r.2) = true := by
   decide +kernel
 
-/-- Read the event sequence relative to `\@title` into the style fragment
-the built-in can honour: the last bar before the title and the first after
-it — their declared *weights* only; the skips beside a venue's bars are
-the engine's rhythm (`Ir.titleBars`'s defaults), never the venue's
-`\vskip`s — plus the size, weight, and alignment the title stood under. A
-body with no `\@title` is not a title restyling — rule (b) stands alone
-and nothing is extracted. A bar whose weight cannot be read extracts
-nothing on its side. -/
+/-- The element style a refused title body's events declare: the weights of
+the bars nearest the title, its font and alignment, and the author's weight
+and strut; `none` without a `\@title`. -/
 private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := Id.run do
   let some t := events.findIdx? (· matches .title _ _ _) | return none
   let mut st : Ir.ElementStyle := {}
@@ -9306,10 +7521,7 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
     if h : j < events.size then
       if let .bar (some w) := events[j] then
         st := { st with ruleBelow := some w }
-  -- The author block: the weight is the venue's, read; the strut and the
-  -- gap after the block are the engine's rhythm (`Ir.titleAuthorStrut`,
-  -- `Ir.titleBlockAfter`) — the venue chooses that the furniture exists,
-  -- the engine chooses where it sits (title-bars' gap rule).
+  -- The author's strut and trailing gap are the engine's, not the body's.
   if let some ai := events.findIdx? (· matches .author _ _) then
     if h : ai < events.size then
       if let .author bold strutDeclared := events[ai] then
@@ -9331,11 +7543,8 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
 
 mutual
 
-/-- The syntax read by a refused title body's declarative interpreter.
-Normalize only here, after execution has selected the body: a conditional
-or a definition elsewhere must still see the spelling the author wrote.
-This is a raw-tree walk, before IR; its list companion preserves positions,
-grouping and order. Math and verbatim are opaque to the title reader. -/
+/-- A refused title body with beamer's inserts resolved to the internals
+they alias; math and verbatim stay opaque. -/
 public def declarativeTitleRaw : Raw → Raw
   | .ctrl n p => .ctrl (barCtrlName n) p
   | .group body p => .group (declarativeTitleList #[] body.toList) p
@@ -9360,9 +7569,7 @@ public theorem declarativeTitleList_toList (acc : Array Raw) (rs : List Raw) :
   | nil => simp [declarativeTitleList]
   | cons r rs ih => simp [declarativeTitleList, ih, List.append_assoc]
 
-/-- The complete declarative readout, including event interpretation. Both
-the production preamble finalizer and the spelling contract read this
-value; neither exposes the scanner's private event or state types. -/
+/-- The element style a refused `\maketitle` body still declares. -/
 public def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
     Option Ir.ElementStyle :=
   barInterpret (barScanList user bound {} #[]
@@ -9382,11 +7589,8 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- `\\define \\name(sig) {body}`, from the element after the `\\define`
-head: parses and validates the definition, returning the bound command and
-the index after its body. One door for the preamble walk and the body arm,
-so the two positions cannot drift (built-in collision W0303, missing-body
-E0303, the signature grammar). -/
+/-- Reads `\define \name(sig) {body}` after its head, returning the command
+and the index after its body. -/
 private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
     EM { r : Option UserCmd × Nat // i ≤ r.2 ∧
       ∀ cmd, r.1 = some cmd →
@@ -9460,26 +7664,14 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
       refine ⟨show i ≤ j + 1 by omega, ?_⟩
       intro _ h; simp at h⟩
 
-/-- Bind one document-defined command: it enters at the visibility
-boundary `min limit user.size`, and the boundary advances past it, so the
-walk sees exactly one more command — never the suffix beyond `limit`. One
-door for the preamble fold and the body arm, so the two positions cannot
-drift; `bindCmd_monotone` is the invariant every edit here must keep. -/
+/-- Binds a document-defined command at the visibility boundary, which then
+advances past it alone. -/
 private def bindCmd (ctx : Ctx) (cmd : UserCmd) : Ctx :=
   let b := min ctx.limit ctx.user.size
   { ctx with
     user := (ctx.user.extract 0 b).push cmd ++ ctx.user.extract b ctx.user.size
     limit := b + 1 }
 
-/-- Monotone visibility survives a body definition: a command the walk
-cannot see — the one being expanded, standing at `j ≥ limit` — is after
-the bind still the same command and still invisible, at its shifted
-index. This is the statement the body-`\define` arm of 2026-09-19 01:56
-(cffb141, `limit := ctx.user.size + 1`) would have failed to compile: it
-re-exposed an expanding command to its own body, and a four-line document
-looped forever while PLAN still said nontermination was impossible by
-design. A termination guarantee is a theorem the build checks, never a
-sentence in a plan (PLAN 2026-09-19). -/
 private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
     (hj : ctx.limit ≤ j) (hs : j < ctx.user.size) :
     (bindCmd ctx cmd).limit ≤ j + 1 ∧
@@ -9498,10 +7690,6 @@ private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
   rw [ite_eq_left (by simp; omega),
     show min ctx.limit ctx.user.size + (j - min ctx.limit ctx.user.size) = j by omega]
 
-/-- What a body define adds to the visible sum is exactly its stored body,
-which the walk paid a strictly heavier group for: across the bind, the
-elabBlocks measure still falls — in every component at once, since the
-bound is parametrized by the pointwise body measure. -/
 private theorem bindCmd_visGo (f : UserCmd → Nat) (ctx : Ctx) (cmd : UserCmd) :
     visGo f (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
       ≤ visGo f ctx.user ctx.limit + f cmd := by
@@ -9531,33 +7719,24 @@ private theorem bindCmd_visGo (f : UserCmd → Nat) (ctx : Ctx) (cmd : UserCmd) 
   have := visGo_mono f ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
   omega
 
-/-- The weight instance of `bindCmd_visGo`. -/
 private theorem bindCmd_visWeight (ctx : Ctx) (cmd : UserCmd) :
     visWeightGo (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
       ≤ visWeightGo ctx.user ctx.limit + rawWeightList cmd.body.toList := by
   unfold visWeightGo; exact bindCmd_visGo _ ctx cmd
 
-/-- The pars instance of `bindCmd_visGo`. -/
 private theorem bindCmd_visPars (ctx : Ctx) (cmd : UserCmd) :
     visParsGo (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
       ≤ visParsGo ctx.user ctx.limit + rawParsList cmd.body.toList := by
   unfold visParsGo; exact bindCmd_visGo _ ctx cmd
 
-/-- The note component of the block knot's measure: draining a frame's
-stashed notes elaborates bodies that came from the state, not from the
-slice, so no weight fact covers that edge — instead the walk is `2`
-outside a note body, the drain runs at `1`, and the note-body walk it
-opens runs at `0`. Inside a note body the drain is refused (E0359), so
-the flag never needs to rise. -/
+/-- The note component of the block knot's measure: `2` outside a note body
+and `0` inside one, where draining stashed notes is refused. -/
 private def noteFlag (ctx : Ctx) : Nat :=
   match ctx.noteBody with
   | true => 0
   | false => 2
 
 
-/-- One lexicographic fall in the block knot's six-component measure,
-stated so `omega` can discharge each edge from the `have` facts standing
-beside the call. -/
 private theorem lex6_of {a₁ a₂ b₁ b₂ c₁ c₂ d₁ d₂ e₁ e₂ f₁ f₂ : Nat}
     (h : a₁ < a₂ ∨ (a₁ = a₂ ∧ (b₁ < b₂ ∨ (b₁ = b₂ ∧ (c₁ < c₂ ∨ (c₁ = c₂ ∧
       (d₁ < d₂ ∨ (d₁ = d₂ ∧ (e₁ < e₂ ∨ (e₁ = e₂ ∧ f₁ < f₂)))))))))) :
@@ -9576,13 +7755,8 @@ private theorem lex6_of {a₁ a₂ b₁ b₂ c₁ c₂ d₁ d₂ e₁ e₂ f₁ 
   · exact .right _ (.right _ (.right _ (.right _ (.left _ _ h))))
   · exact .right _ (.right _ (.right _ (.right _ (.right _ h))))
 
-/-- Discharges the block knot's termination goals: the lexicographic fall
-first (`lex6_of`, then `omega` over the `have` facts standing beside each
-recursive call), on the goal as the elaborator's own cleanup left it; only
-a goal that needs more normal form (a list's length under a cons) takes a
-second simp pass before the same two steps. Running that pass on every
-goal cost the knot more than 10,000 of its 200,000 heartbeats (judged by
-deletion and rebuild). -/
+/-- Discharges a block-knot termination goal by `lex6_of` and `omega`,
+normalising the goal first only when that fails. -/
 macro "blocks_dec" : tactic =>
   `(tactic| (
     first
@@ -9642,11 +7816,8 @@ private theorem itemsP_elem_le {a : Array (Array Raw)} {m : Nat}
   exact measList_mem_le (μ := fun it => nestedParsList it.toList)
     (hget ▸ Array.getElem_mem_toList hm)
 
-/-- The frame body past its options and title group: `\frametitle{...}`
-pairs consumed into the running title (the last one wins, named W0311),
-everything else kept in order — explicit recursion carrying the kept run's
-weight and pars bounds, the facts the frame arm's recursion into the kept
-content stands on. -/
+/-- Splits a frame body into its last `\frametitle`, with any subtitle, and
+the rest in order. -/
 private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
     (title subtitle : Array Inline) (rest : Array Raw) (bound pbound : Nat)
     (hw : rawWeightList rest.toList + sliceWeight body j ≤ bound)
@@ -9656,8 +7827,6 @@ private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
   if h : j < body.size then
     match hj : body[j], body[j + 1]? with
     | .ctrl "frametitle" fpos, some (.group t _) =>
-      -- The last title wins, as in beamer, but never silently: the
-      -- author wrote two and only one can show.
       unless title.isEmpty do
         diag ctx .W0311 "this '\\frametitle' replaces the frame's earlier title"
           (some fpos) (help := "the last one wins; remove the other '\\frametitle'")
@@ -9690,18 +7859,15 @@ private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
   else
     have h1 := sliceWeight_end body (show body.size ≤ j by omega)
     have h2 := slicePars_end body (show body.size ≤ j by omega)
-    -- Beamer's frame-title template reads the subtitle only when there is
-    -- a title. Reuse the title's inline line break and colour sites; this
-    -- adds no new IR constructor or document walk.
+    -- Beamer's frame-title template sets the subtitle only under a title.
     let title := if title.isEmpty || subtitle.isEmpty then title else
       title ++ #[.linebreak {}, .colored (Design.ofPalette ctx.palette).framesubtitle
         (some (.role .frameSubtitleInk)) #[.styled (.size "small") subtitle]]
     return (title, ⟨rest, by omega, by omega⟩)
 termination_by body.size - j
 
-/-- A subfigure body past its width group: `\caption` consumed into the
-sub-caption (last one wins, W0311) and `\centering` satisfied, everything
-else kept — the subfigure mirror of `frameRestGo`, same bounds. -/
+/-- Splits a subfigure body into its last `\caption`, whether that caption
+stands above the content, and the rest; `\centering` is dropped. -/
 private def subRestGo (ctx : Ctx) (sn : String) (sbody : Array Raw) (q : Nat)
     (sCaption : Array Inline) (sCapAbove : Bool) (sRest : Array Raw)
     (bound pbound : Nat)
@@ -9759,17 +7925,9 @@ private def subRestGo (ctx : Ctx) (sn : String) (sbody : Array Raw) (q : Nat)
 termination_by sbody.size - q
 decreasing_by all_goals omega
 
-/-- A float's alignment grouping is transparent: a `center` (or
-`centering`) environment child of a float body is spliced into the body
-before the float walk, so the `\caption` and `\label` inside it are the
-float's own — LaTeX's manual spells the figure idiom
-`\begin{figure}\begin{center} … \caption{…} \end{center}\end{figure}`, and
-inside a float the group adds no box: the float centres already, as the
-`\centering` arm of `figureGo` says. The bounds returned are what the
-float walk's own invariant reads: splicing only ever drops wrapper
-weight. -/
--- conserves: none — deliberately drops the grouping wrapper; the float
--- walk's census facts stand over the spliced body
+/-- A float body with its `center` and `centering` environments spliced in,
+so their captions and labels are the float's own. -/
+-- conserves: none — drops the grouping wrapper by design
 private def spliceCenterGo (l : List Raw) (acc : Array Raw)
     (bound pbound : Nat)
     (hw : rawWeightList acc.toList + rawWeightList l ≤ bound)
@@ -9818,10 +7976,8 @@ decreasing_by
   · simp only [rawWeightList, rawWeight]; omega
   · simp only [rawWeightList]; have := rawWeight_pos r; omega
 
-/-- The list split at its `\item`s: items with their overlay steps and the
-`\pause` count standing before each, the warnings of the old in-loop split
-fired at the same points — explicit recursion so the split's conservation
-(no item outweighs the body) is a fact the item elaboration stands on. -/
+/-- Splits a list body at its `\item`s, each item with its overlay step and
+the `\pause` count before it. -/
 private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (scope : ListScope) (j : Nat)
     (items : Array (Array Raw)) (steps : Array (Option Ir.OverlaySpec))
     (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
@@ -9858,8 +8014,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             have hpj := slicePars_here body h
             simp [nestedParsList]; omega)
     | .ctrl "pause" _ =>
-      -- Counted for the items that follow; kept in the item so a
-      -- mid-item pause still steps the item's own remaining blocks.
+      -- Also kept in the item, so a mid-item pause steps the item's rest.
       if seen then
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen
@@ -9883,8 +8038,6 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             have h2 := rawPars_split body[j]
             omega)
     | item =>
-      -- Inside a consumed `\item[...]` override: dropped through its
-      -- closing bracket.
       if inOpt then
         let inOpt := !(item matches .sym ']' _)
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
@@ -9898,13 +8051,9 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             have h2 := rawPars_split body[j]
             omega)
       else
-      -- `\item<2->`: the spec directly after the item names the step its
-      -- content reveals at, dim-not-hide (PLAN M5). `\item[marker]` is
-      -- enumitem's per-item override: consumed and named (W0110).
       if seen && awaitSpec && !isSpace item then
         if item matches .sym '[' _ then
-          -- A description item's label is its content (`descItems`), not
-          -- an override of a marker.
+          -- A description item's label is content, not a marker override.
           unless desc do
             warnOnce ctx "item:marker" .W0110
               "'\\item' [marker] override is not modelled; the level's marker stands" pos
@@ -9964,9 +8113,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
       else do
         if let .ctrl c cpos := item then
           if counterCtrl c then
-            -- A counter command before the first `\item` sets its counter,
-            -- as LaTeX allows there (ltlists.dtx: the list's own settings
-            -- follow `\list`'s): a declaration, never content.
+            -- ltlists.dtx: a counter set before the first `\item` declares.
             let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
             return ← itemSplitGo ctx body pos desc scope k items steps itemPauses pauses curItem
               curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
@@ -10017,11 +8164,8 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
         show itemsP items.toList ≤ pbound by omega⟩
 termination_by body.size - j
 
-/-- The block spine's per-iteration flow refresh: a body declaration
-anywhere earlier in flow order — this scope or a nested one — reaches the
-walk through the state; the generation guard makes the common
-no-declaration path one Nat comparison. Named so the refresh provably
-leaves every measure component alone (`flowCtx_measure`). -/
+/-- `ctx` with the palette and tokens that body declarations earlier in flow
+order set, unchanged while the declaration generation is still `gen`. -/
 private def flowCtx (ctx : Ctx) (st : ESt) (gen : Nat) : Ctx :=
   if st.flowGen != gen then
     { ctx with palette := st.scope.palette.current.getD ctx.palette
@@ -10038,30 +8182,21 @@ private theorem flowCtx_measure (ctx : Ctx) (st : ESt) (gen : Nat) :
   unfold flowCtx
   split <;> exact ⟨rfl, rfl, rfl, rfl⟩
 
-/-- A context sharing `ctx`'s measure components, the fact carried beside
-it: what a knot edge needs to know about a context that changed only
-fields the measure never reads. -/
+/-- A context sharing `ctx`'s termination-measure components. -/
 private def MCtx (ctx : Ctx) := { c : Ctx // c.envLimit = ctx.envLimit
   ∧ noteFlag c = noteFlag ctx
   ∧ visParsGo c.user c.limit = visParsGo ctx.user ctx.limit
   ∧ visWeightGo c.user c.limit = visWeightGo ctx.user ctx.limit }
 
-/-- A region's context: its content stands on `ground` where the region
-paints one, else on what stands around it. -/
 private def regionCtx (ctx : Ctx) (ground : Option Color) : MCtx ctx :=
   ⟨{ ctx with ground := ground.or ctx.ground }, rfl, rfl, rfl, rfl⟩
 
-/-- A title on the bar its role paints, where the palette declares one. -/
 private def barCtx (ctx : Ctx) (bar : Role) : Ctx :=
   (regionCtx ctx (Design.declared? ctx.palette bar)).1
 
-/-- A titled block's body on the ground its kind paints, where the palette
-declares one. -/
 private def titledBodyCtx (ctx : Ctx) (kind : TitledKind) : MCtx ctx :=
   regionCtx ctx (Design.declared? ctx.palette (Role.bodyGround kind))
 
-/-- Keep the refreshed context beside its unchanged termination fields.
-An equation about the value can then rewrite both together. -/
 private def flowMCtx (ctx : Ctx) (st : ESt) (gen : Nat) : MCtx ctx :=
   ⟨flowCtx ctx st gen, flowCtx_measure ctx st gen⟩
 
@@ -10070,12 +8205,9 @@ private theorem flowMCtx_idle (ctx : Ctx) (st : ESt) :
   apply Subtype.ext
   simp [flowMCtx, flowCtx]
 
-/-- `\multicolumn{n}{spec}{text}` read from `raws`, whose element `j` is the
-command: the count when it is a numeral; the one column its spec declares,
-read by the table's own spec reader so `p{…}` keeps its width, with what
-that reader names — a `|`, an unknown column type — and an `@{}`, whose pad
-a span does not model; the text group; and the index after it. `none` when
-the three groups are not there. -/
+/-- The `\multicolumn` at `raws[j]`: its count when a numeral, its one column
+spec with the spec reader's warnings, its text, and the index after it;
+`none` without the three groups. -/
 private def readMulticolumn (ctx : Ctx) (raws : Array Raw) (j : Nat) :
     Option (Option Nat × Ir.ColSpec × Array (String × String × String) × Array Raw × Nat) :=
   let j0 := skipSpaces raws (j + 1)
@@ -10090,10 +8222,8 @@ private def readMulticolumn (ctx : Ctx) (raws : Array Raw) (j : Nat) :
       cols[0]?.getD { width := .natural, align := .left }, warns, text, j2 + 1)
   | _, _, _ => none
 
-/-- The span a `\multicolumn` at a cell's head declares, when its count is
-a numeral, with every loss its spec and count carry named where it stands:
-what the spec reader named, and a count the engine cannot read, whose text
-then fills one cell. -/
+/-- The span a cell-head `\multicolumn` declares when its count is a numeral,
+naming each loss its spec and count carry. -/
 private def spanOf (ctx : Ctx) (count : Option Nat) (spec : Ir.ColSpec)
     (warns : Array (String × String × String)) (pos : Pos) :
     EM (Option (Nat × Ir.ColSpec)) := do
@@ -10108,12 +8238,8 @@ private def spanOf (ctx : Ctx) (count : Option Nat) (spec : Ir.ColSpec)
 cell in its column's alignment" pos
     return none
 
-/-- A user command at a cell's head whose definition opens with
-`\multicolumn`: the invocation's expansion, and how many elements of `raws`
-it took (the command, at `j`, and its arguments). TeX expands a cell's
-first tokens looking for the `\omit` a `\multicolumn` begins with; the
-expansion is the math path's raw-level one, terminating by definition
-order (`expandMathList`). -/
+/-- The expansion of the user command at `raws[j]` when its definition opens
+with `\multicolumn`, and how many raws the call took. -/
 private def expandSpanHead (ctx : Ctx) (raws : Array Raw) (j : Nat) (name : String) :
     Option (Array Raw × Nat) :=
   (lookupUser ctx name).bind fun (k, cmd) =>
@@ -10124,9 +8250,8 @@ private def expandSpanHead (ctx : Ctx) (raws : Array Raw) (j : Nat) (name : Stri
         1 + (rest.size - rest'.size))
     else none
 
-/-- Close a cell that a `\multicolumn` opened: record its span at the cell
-just pushed, and push the `n − 1` cells it covers, empty, so the grid stays
-rectangular. -/
+/-- Records a `\multicolumn` span at the cell just pushed and pushes the
+`n − 1` empty cells it covers, keeping the grid rectangular. -/
 private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Inline))
     (row : Nat) : Option (Nat × Ir.ColSpec) → Array Ir.ColSpan × Array (Array Inline)
   | none => (spans, cells)
@@ -10134,17 +8259,9 @@ private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Inline))
     (spans.push { row := row, col := cells.size - 1, n := n, spec := spec },
       cells ++ Array.replicate (n - 1) #[])
 
-/-- The `{tabular}` arm, whole: no recursion into the block walk, so it
-lives outside the knot to keep the pack small. -/
 private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
-  -- A formal table, booktabs-shaped by construction: the column
-  -- spec drives `.table`'s columns, `&`/`\\` split cells and
-  -- rows, and the rule commands become typed rules at their
-  -- index. Elaboration delivers the rectangularity the layout
-  -- trusts: a short row is padded, a long one widens the grid,
-  -- warning either way (W0337).
   let mut k := skipSpaces body 0
   let mut flexTarget : Option Ir.TableTarget := none
   if n == "tabularx" then
@@ -10177,8 +8294,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   match body[k]? with
   | some (.group spec _) =>
     let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
-    -- A markdown table's natural columns narrow as a web table's do: its
-    -- source declares no width (`Ir.ColSpec.narrows`).
+    -- A markdown table declares no widths, so its natural columns narrow.
     cols := if n == Parse.markdownTableEnv then
         cs.map fun c => { c with narrows := c.width matches .natural }
       else cs
@@ -10194,8 +8310,6 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   let mut spans : Array Ir.ColSpan := #[]
   let mut cells : Array (Array Inline) := #[]
   let mut cellRaws : Array Raw := #[]
-  -- the span a `\multicolumn` at the head of the cell being collected
-  -- declares, recorded when the cell closes
   let mut spanHere : Option (Nat × Ir.ColSpec) := none
   let mut j := k
   let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
@@ -10211,8 +8325,6 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         rows := rows.push cells
         cells := #[]
         j := j + 1
-        -- `\\[len]`: declared space after the row, booktabs'
-        -- class-2 gap.
         let j0 := skipSpaces body j
         match scanBracketArg body j bpos with
         | .took j' =>
@@ -10232,8 +8344,6 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         cellRaws := #[]
         j := j + 1
       | .ctrl "multicolumn" rpos =>
-        -- At a cell's head the text is the cell and the count and spec its
-        -- span; anywhere else LaTeX refuses it, and the text stays in place.
         match readMulticolumn ctx body j with
         | some (count, spec, warns, text, next) =>
           if cellRaws.all isSpaceOrPar && spanHere.isNone then
@@ -10251,8 +8361,6 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             cellRaws.all isSpaceOrPar && cells.isEmpty then
           j := j + 1
           cellRaws := #[]
-          -- booktabs' optional [width] per rule is not modelled:
-          -- the three weights are the design, one source.
           if let .took j' := scanBracketArg body j rpos then
             warnOnce ctx ("tabular:rulewidth:" ++ name) .N0102
               s!"'\\{name}' [width] is ignored: rule weights come \
@@ -10266,8 +8374,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             rules := rules.push (rows.size,
               .gap { width := Ir.defaultAddSpace })
           | _ =>
-            -- `\cmidrule(lr){a-b}`, `\cline{a-b}`: the trim spec
-            -- lexes as one word, "(lr)"
+            -- The `(lr)` trim spec lexes as one word.
             let mut trimL := false
             let mut trimR := false
             if let some (.word w _) := body[j]? then
@@ -10288,9 +8395,6 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
               diag ctx .E0304
                 s!"'\\{name}' needs a \{from-to} column range" (some rpos)
         else
-          -- A command whose definition opens with `\multicolumn`, at a
-          -- cell's head, is read as the `\multicolumn` it expands to; its
-          -- expansion must stay inside the cell.
           let head := if cellRaws.all isSpaceOrPar && spanHere.isNone then
               (expandSpanHead ctx body j name).bind fun (exp, took) =>
                 (readMulticolumn ctx exp 0).bind fun (count, spec, warns, text, next) =>
@@ -10314,7 +8418,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
     (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
-  -- Rectangularity: every walk below trusts `cols.size`.
+  -- Every walk below trusts `cols.size`.
   let widest := rows.foldl (fun m r => max m r.size) cols.size
   if cols.size < widest then
     warnOnce ctx "tabular:wide" .W0337
@@ -10331,12 +8435,8 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   blocks := blocks.push (.table cols padL padR rows rules spans)
   return blocks
 
-/-- Whether a verbatim the block walk meets runs inline in the paragraph
-it stands in: `\verb` and `\mintinline` always; a listing environment
-written all on one line, which LaTeX cannot set, where text shares its
-paragraph — a word, an inline formula or inline code before it, or after it
-before the paragraph ends — its evident intent then inline code
-(`inlineVerbatim`). A heading, a label or a list beside it is no text. -/
+/-- Whether a verbatim runs inline: `\verb` and `\mintinline` always, and a
+one-line listing environment when text shares its paragraph. -/
 private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : Bool :=
   let text (r : Raw) : Bool := match r with
     | .word .. => true
@@ -10352,34 +8452,10 @@ private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : B
   env == "verb" || env == "mintinline" ||
     ((env == "minted" || env == "lstlisting") && !s.contains '\n' && (cur.any text || after))
 
-/-- One listing block from a lexically blind capture. `{verbatim}` is the
-default spec, as always. `{lstlisting}` reads listings' per-environment
-keys from its option head, `{minted}` its option head and its mandatory
-language argument. Honoured keys: `caption` (numbered in flow order — the
-listing counter steps exactly as the equation counter does), `label`
-(bound to the caption's number), `numbers=left`/`none` and minted's
-`linenos`, `language` (normalized through `Ir.listingLang?` to the token
-both text artifacts carry; a language with a native lexer receives its
-token types, other names consume source-checked driver replies or remain
-plain, and a
-spelling outside the token grammar is named W0110 and carries nothing), minted's
-`fontsize` (a named size command or `auto`) and `style` (`default` or
-`friendly`, which colours the code roles the document's palette answers
-nothing for), listings' `basicstyle`
-(`\ttfamily` and named size commands), `tabsize` and `breaklines`. minted's
-`formatcom` runs TeX on the Pygments formatter's macros, which no part of
-the engine runs: its listings paint by their code roles, said once (N0102).
-LuaLaTeX's synthetic probe pins the defaults: ambient size, eight-column
-tabs, no wrapping. Bare fontsize names are text in FancyVerb, not size
-commands; name that unsupported spelling with its correction.
-Every other key, and a value
-asking for what the engine does not draw, is named W0110 — never a
-silent drop. The caption is kept as its literal
-text: a listing caption is plain prose; markup inside one is out of the
-blind capture's reach. -/
+/-- A listing block from a lexically blind capture, honouring the supported
+listings and minted keys and naming every other key or value. -/
 private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
-  -- `\mint` is the minted environment of one line (minted.sty v3.7: its
-  -- code goes through the environment's own buffer and display).
+  -- `\mint` is minted's one-line environment (minted.sty v3.7).
   let (env, s, opener) := if env == "mint" then
       let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
       let afterLang := ((Parse.mintedLangHead s afterOpt).map (·.2)).getD afterOpt
@@ -10396,15 +8472,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
 is set as a display listing" pos
       (help := s!"put the code on lines of its own between '\\begin\{{env}}" ++
         (if lang.isEmpty then "" else "{" ++ lang ++ "}") ++ s!"' and '\\end\{{env}}'")
-  -- The size in force where the environment stands, resolved once through
-  -- the ordinary declaration scope (`blockDecls`), defaulting to the body
-  -- size. Bare `verbatim`, `minted`, and `lstlisting` all inherit it: LaTeX's
-  -- `\verbatim@font` is `\normalfont\ttfamily`, which selects the mono family
-  -- and changes no size, so verbatim sets at the ambient size — never a fixed
-  -- `footnotesize`. A package's own size option overrides it below. What
-  -- a listing starts from before any of that is its surface's
-  -- (`Ir.Surface.listing`): LaTeX's defaults on a tex document, and on a
-  -- markdown one, which can declare none, its smaller wrapping code.
+  -- Verbatim sets at the ambient size: `\verbatim@font` changes no size.
   let base := ctx.surface.listing
   let inherited := (← get).scope.blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
@@ -10426,7 +8494,7 @@ is set as a display listing" pos
   let mut tabSize := base.tabSize
   let mut breakLines := base.breakLines
   let mut ground := base.ground
-  -- Keyed by its words: two listings share a loss exactly when they print the same.
+  -- Keyed by its words: listings share a loss when they print the same.
   let unhonoured (msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw (env == "minted") pos
@@ -10434,7 +8502,6 @@ is set as a display listing" pos
     let bare := entry.trimAscii.toString
     if bare.isEmpty then
       continue
-    -- minted's `formatcom` whatever its value spells, an empty one included.
     if env == "minted" && ((Decl.splitEntry entry).map (·.1) == some "formatcom" ||
         bare == "formatcom" || bare.startsWith "formatcom=") then
       noteFormatcom ctx pos
@@ -10543,12 +8610,9 @@ size commands; the current style stands" none
     tabSize := tabSize
     breakLines := breakLines
     lineOverlap := if env == "minted" then Ir.fvextraLineOverlap else 0
-    -- fvextra sets each line of a coloured listing over a strut
-    -- (`\FV@bgcolorstrut`), as it does each line it breaks.
+    -- fvextra struts each coloured or broken line (`\FV@bgcolorstrut`).
     lineStrut := env == "minted" && (breakLines || ground.isSome)
-    -- listings wraps with its own continuation indent; minted's fvextra
-    -- wrap keeps the surface's (none on a tex document).
-    -- premise: markdownCodeChecks — a breaklines lstlisting wraps at listings' own units, each line filled to its last unit that fits, its lines lualatex's but for the white space a wrap falls before, which listings carries and the engine drops (Ir.ListingWrap.units), continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
+    -- premise: markdownCodeChecks — lstlisting wraps with its own indent
     breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
     wrapAt := base.wrapAt
     frame := if env == "minted" then Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .list
@@ -10560,11 +8624,7 @@ size commands; the current style stands" none
       modify fun st => { st with ctr := { st.ctr with lstNum := num } }
       match label with
       | some key =>
-        -- The anchor rides in the caption, as an equation's rides in its
-        -- content: the reference's target must ship on the page. The kind
-        -- is `none` until RefKind grows a listing constructor (the cref
-        -- prefix is the resolver slice's): a \cref meanwhile sets the
-        -- plain number, named W0380 — degraded, never silently wrong.
+        -- The anchor rides in the caption so the target ships on the page.
         recordLabel ctx key (some { kind := none, num := toString num }) pos
         pure { spec with caption := some (num, #[.label key, .text cap]) }
       | none =>
@@ -10577,7 +8637,7 @@ size commands; the current style stands" none
     | some language => ListingHighlight.tokenize language (Ir.verbatimLines content)
     | none => (spec.langToken.bind fun language =>
         ListingReply.lookup ctx.listingReplies language content).getD #[]
-  -- premise: codeRoleChecks — two builds that differ only by the declared style ship byte-identical pages under a palette that gives every code role its colour, and different pages under one that leaves a role to the style
+  -- premise: codeRoleChecks — unread when the palette colours every role
   if let some declared := style then
     let pal := (← get).scope.palette.current.getD ctx.palette
     if !(ListingHighlight.Role.all.any (CodeColor.styleReads pal)) then
@@ -10587,10 +8647,8 @@ or derives a colour for every code role" pos
         (help := "\\allow{W0387} accepts the skip")
   return .verbatim none content { spec with highlight }
 
-/-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)
-around an elaborated tag, the parentheses joining the tag's first and last
-runs of text where it has them — so a plain tag is the one run a counter's
-number is, and ships the same ink. -/
+/-- amsmath's `\tagform@`: the tag in parentheses, joined to its first and
+last text runs. -/
 private def tagForm (t : Array Ir.Inline) : Array Ir.Inline :=
   let opened : Array Ir.Inline := match t[0]? with
     | some (Ir.Inline.text s) => t.set! 0 (.text ("(" ++ s))
@@ -10599,28 +8657,21 @@ private def tagForm (t : Array Ir.Inline) : Array Ir.Inline :=
   | some (Ir.Inline.text s) => opened.pop.push (.text (s ++ ")"))
   | _ => opened.push (.text ")")
 
-/-- A caption word the document may redefine (`\proofname`, `\qedsymbol`):
-its definition where one stands, else `dflt`. -/
 private def definedOr (ctx : Ctx) (name : String) (pos : Pos) (dflt : EM (Array Inline)) :
     EM (Array Inline) := do
   if (lookupUser ctx name).isSome then elabInlines ctx #[.ctrl name pos] else dflt
 
-/-- The `\qedsymbol` in force: the document's definition where one stands,
-else amsthm's box as the math face's □ (amsthm.sty's `\openbox` draws it in
-rules). -/
+/-- The `\qedsymbol` in force; by default amsthm's box, the math face's □. -/
 private def qedMark (ctx : Ctx) (pos : Pos) : EM (Array Inline) :=
   definedOr ctx "qedsymbol" pos (return #[← elabMathInline ctx false #[.ctrl "square" pos] pos])
 
-/-- A display's top-level `\qedhere`, taken out before the math parser reads
-the body, and where the first one stood. -/
+/-- The display body without its top-level `\qedhere`, and where the first one
+stood. -/
 private def dropQedHere (body : Array Raw) : Array Raw × Option Pos :=
   body.foldl (fun (out, at?) r => match r with
     | .ctrl "qedhere" p => (out, at?.orElse fun _ => some p)
     | r => (out.push r, at?)) (#[], none)
 
-/-- A `\qedhere` in a display whose QED this engine cannot stand where amsthm
-sets it — beside an alignment's row, under a number — is named, and the
-proof's end sets the QED on a line of its own after the display. -/
 private def qedHereLost (ctx : Ctx) (env : String) (p : Pos) : EM Unit := do
   if (← get).ctr.thm.proofs == 0 then return
   warnOnce ctx ("qedhere:" ++ env) .W0435
@@ -10628,20 +8679,16 @@ private def qedHereLost (ctx : Ctx) (env : String) (p : Pos) : EM Unit := do
 stands on a line of its own after the display" p
     (help := "an unnumbered \\[ ... \\] sets it beside the formula")
 
-/-- The QED a display's `\qedhere` sets in the number's slot (amsthm.sty
-`\displaymath@qed`: `\eqno\hbox{\qedsymbol}`), inside a proof — outside one
-amsthm's stack is empty and it sets nothing — and the proof told its end
-sets none. -/
+/-- The QED amsthm's `\displaymath@qed` sets in the number's slot, inside a
+proof only; the proof's end then sets none. -/
 private def qedHereTag (ctx : Ctx) (p : Pos) : EM (Option (Array Inline)) := do
   if (← get).ctr.thm.proofs == 0 then return none
   let mark ← qedMark ctx p
   modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with qedPlaced := true } } }
   return some (Ir.wrapDecls (← get).scope.blockDecls mark)
 
-/-- The heading numbers a counter numbered within heading level `within`
-was stepped under, the appendix mark included, as one key: the counter
-restarts whenever the key moves (ltcounts.dtx `\@addtoreset`). Empty for a
-counter numbered per document. -/
+/-- The heading numbers a counter within a heading level was stepped under,
+as the key whose change restarts it (`\@addtoreset`). -/
 private def withinSnap (c : Counters) : Option Nat → String
   | none => ""
   | some lvl =>
@@ -10652,17 +8699,15 @@ private def withinSnap (c : Counters) : Option Nat → String
       | _ => s!"{s1}.{s2}.{s3}"
     (if c.inAppendix then "A" else "") ++ levels
 
-/-- A counter's number `v` as `\the<counter>` renders it: `\arabic`, after
-`\the<within>.` for one numbered within a heading counter. -/
+/-- `\the<counter>` for value `v`: `\arabic`, after `\the<within>.` when
+numbered within a heading counter. -/
 private def withinNumber (c : Counters) (within : Option Nat) (v : Nat) : String :=
   match within with
   | some lvl => s!"{renderSecLevel c.secFmts c.secNums c.inAppendix secFmtFuel lvl}.{v}"
   | none => toString v
 
-/-- Step the equation counter and render `\theequation`, the theorem
-counters' rule for a counter numbered within a heading counter: amsmath's
-`\numberwithin{equation}{w}` is `\@addtoreset{equation}{w}` with
-`\theequation` redefined as `\thew.\arabic{equation}` (amsmath.sty). -/
+/-- Steps the equation counter and renders `\theequation`, restarting within
+its heading as amsmath's `\numberwithin` does. -/
 private def stepEquation : EM String := do
   let st ← get
   let snap := withinSnap st.ctr st.ctr.eqWithin
@@ -10670,14 +8715,11 @@ private def stepEquation : EM String := do
   modify fun st => { st with ctr := { st.ctr with eqNum := v, eqSnap := snap } }
   return withinNumber st.ctr st.ctr.eqWithin v
 
-/-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
   let (body, qedAt) := dropQedHere body
   let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
-  -- An unnumbered display the diagram reader draws ships its drawing, its
-  -- labels' anchors beside it as the formula's stand in its paragraph.
   if qedAt.isNone && tag.isNone && (!numbered || nonum) then
     if let some pic ← tikzcdNative ctx cleaned pos then
       for key in keys do
@@ -10697,39 +8739,26 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
     blocks := blocks.push (.equation q content)
   else if let some (raws, star) := tag then
-    -- `\tag{t}` stands in the number's place, `(t)` unless starred, and
-    -- steps no counter (amsldoc §3.4). Its argument is text set in an
-    -- `\hbox` (amsmath's `\maketag@@@`), so it elaborates as inline content
-    -- — markup and math are ink, never source — with the spaces at its
-    -- edges dropped (`\ignorespaces…\unskip`). A label binds to the tag's
-    -- text, so `\ref` sets `t` and `\eqref` `(t)`, as it would a number.
+    -- `\tag{t}` takes the number's place and steps no counter (amsldoc §3.4).
     let t ← elabInlines ctx (trimRaws raws)
     for key in keys do
       recordLabel ctx key (some { kind := some .equation, num := Ir.plainText t }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
     blocks := blocks.push (.equation (if star then t else tagForm t) content)
   else if numbered && !nonum then
-    -- The display takes the next equation number (amsldoc §3);
-    -- its labels bind to it, scoped to the environment as
-    -- LaTeX's \refstepcounter group is.
     let num ← stepEquation
     for key in keys do
       recordLabel ctx key (some { kind := some .equation, num }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
     blocks := blocks.push (.equation #[.text s!"({num})"] content)
   else
-    -- The unnumbered forms; a label here binds to whatever the
-    -- flow last numbered, as LaTeX's \@currentlabel does.
+    -- A label here binds to what the flow last numbered (`\@currentlabel`).
     for key in keys do
       recordLabel ctx key (← get).refTarget pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
     blocks := blocks.push (.center #[.para content])
   return blocks
 
-/-- An alignment environment, outside the knot: no recursion into the
-block walk. Row numbers are still owed (W0015): a label here binds to
-nothing, so a reference to it is the named ??, never a silently wrong
-number. -/
 private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Raw) (pos : Pos) (blocks : Array Block) :
     EM (Array Block) := do
@@ -10738,8 +8767,6 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
   let (cleaned, keys, _, tag) ← stripMathMeta ctx body
   for key in keys do
     recordLabel ctx key none pos
-  -- A numbered row owes its number (W0015, `elabMathEnv`'s), so only an
-  -- unnumbered alignment's lone diagram takes the picture's door.
   if !numbered && tag.isNone then
     if let some native ← tikzcdNative ctx cleaned pos then
       return blocks.push (.role ({ align := true } : Ir.DisplayCtx).role
@@ -10749,24 +8776,14 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
     | some pic => pure pic
     | none => elabMathEnv ctx n kind (numbered || tag.isSome) cleaned pos
   let content := keys.map (Ir.Inline.label ·) |>.push inl
-  -- A display alignment: TeX spaces it with the long skips whatever line
-  -- stands before it (tex.web §1206), its rows on amsmath's strut.
+  -- TeX spaces a display alignment with the long skips (tex.web §1206).
   return blocks.push (.role ({ align := true } : Ir.DisplayCtx).role #[.center #[.para content]])
 
-/-- A sentence's text, as the in-sentence naming counts it: a word, a symbol
-or inline math, never a declaration or a spacing command. -/
 private def sentenceText (r : Raw) : Bool :=
   r matches .word _ _ || r matches .sym _ _ || r matches .math false _ _
 
-/-- **A picture inside a sentence is named where it stands.** LaTeX sets a
-`tikzpicture` as a box of its line, so the sentence runs on around it; the
-engine sets a picture as a block, which breaks the sentence into two
-paragraphs with the picture between. The sentence is the paragraph's text
-(`sentenceText`) before the picture (`cur`, what the block walk holds) and
-after it, up to the next paragraph break or environment — read through the
-place an environment's rewrite keeps (`Parse.isPlaceKeeper`), which is no
-environment of the paragraph. A box followed by a picture on its own line
-is a row (`Compat.boxRows`), and never reaches here. Outside the knot. -/
+/-- Names a `tikzpicture` or `tikzcd` inside a sentence, which the engine sets
+as its own block where LaTeX runs the sentence on around it. -/
 private def pictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : EM Unit := do
   if n != "tikzpicture" && n != "tikzcd" then return
@@ -10779,8 +8796,6 @@ at it instead of running on beside it" pos
 
 mutual
 
-/-- One raw's picture for `scopePicture?`, `seen` the raws before it in its
-group; the `List` companion below carries the walk. -/
 private def scopePictureOne (seen : Array Raw) : Raw → Option (String × Pos)
   | .env n _ p => if n == "tikzpicture" || n == "tikzcd" then some (n, p) else none
   | .group b _ =>
@@ -10796,45 +8811,29 @@ private def scopePictureList (seen : Array Raw) : List Raw → Option (String ×
 
 end
 
-/-- The picture a scope group sets as its own block where the group's own
-walk names nothing: a `tikzpicture` or `tikzcd` the group holds beside no
-text of its own (`sentenceText`), through scope groups nested the same way
-— an argument group (`isArgument`) is its command's. Text inside the group
-is the group's own walk's to name (`pictureInSentence`). -/
+/-- The `tikzpicture` or `tikzcd` a scope group holds beside no text of its
+own, through scope groups nested the same way. -/
 private def scopePicture? (body : Array Raw) : Option (String × Pos) :=
   if body.any sentenceText then none else scopePictureList #[] body.toList
 
-/-- **A picture a group holds is named in the sentence the group stands
-in.** `\mbox` keeps its content in the line, and a brace group is a scope,
-so LaTeX runs the sentence on around a picture inside either; the engine
-sets the group as a block scope (`bodyIsBlock`), so the sentence breaks at
-the group exactly as at a picture written there — but the group's own walk
-begins a sentence of its own and sees none around the picture. The
-sentence is the one the group stands in, the group at `i`. Outside the
-knot. -/
+/-- Names a picture a group at `raws[i]` holds, within the sentence the group
+stands in. -/
 private def groupPictureInSentence (ctx : Ctx) (body cur raws : Array Raw) (i : Nat) :
     EM Unit :=
   match scopePicture? body with
   | some (n, pos) => pictureInSentence ctx n cur raws i pos
   | none => pure ()
 
-/-- The in-sentence naming for a command whose body is a picture: expanded
-at the block level (`bodyIsBlock`), the picture is set as its own block and
-the sentence around the command breaks at it, exactly as a picture written
-there does, so it is named the same way (`pictureInSentence`). -/
+/-- Names a user command whose body is a `tikzpicture` inside a sentence, as a
+picture written there is named. -/
 private def macroPictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : EM Unit := do
   if let some (_, cmd) := lookupUser ctx n then
     if cmd.body.any (· matches .env "tikzpicture" _ _) then
       pictureInSentence ctx "tikzpicture" cur raws i pos
 
-/-- The `{tikzpicture}` arm, outside the knot: the rendered subset —
-shapes evaluate here, loops unrolled, expressions reduced, colours
-resolved against the palette — and everything the subset cannot render is
-a named loss beside the shapes that did (W0334 outside the subset, E0333
-unreadable inside it), never one blanket W0307. Node-body math elaborates
-through the same parser a paragraph's does; a formula the parser cannot
-model degrades to source text, named (W0012), as it would in a paragraph. -/
+/-- The `{tikzpicture}` arm: the rendered subset's drawing, or a boundary
+request for what the subset draws only with a loss, every loss named. -/
 private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
@@ -10842,70 +8841,31 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   notePictureReads ctx body
   let (pic, pdiags) := subsetPicture ctx body (← pictureSizeInForce)
   let pic := { pic with alt := alt }
-  -- **The boundary draws what the subset would draw with a loss.** A
-  -- picture the subset draws whole stays native: the engine owns that ink.
-  -- One it draws nothing of, or draws with a named loss
-  -- (`Picture.namesLoss`), goes to the real TikZ at the edge, so the page is
-  -- LaTeX's rather than a departure the tool could have avoided (PLAN,
-  -- Heavy machinery: isolate, then absorb). The subset's drawing is kept
-  -- as the request's fallback, not thrown away: when fulfilment draws
-  -- nothing — no tool on this machine and a cold cache, or a tool that
-  -- failed — the driver withdraws the request and elaborates again with its
-  -- id in `picWithdrawn` (`Cli.Boundary.withdraw`), and the drawing ships
-  -- with the refusals `\pictures{ tool = none }` names folded into its one
-  -- line (`Cli.Boundary.fold`, W0419). So a boundary failure never costs a page
-  -- the subset could draw in part — the trade that once made native-first
-  -- the rule — nor the document.
-  -- The tool is the build environment's, exactly as fonts are: the request
-  -- rides the IR — content hash of the wrapped standalone source — and the
-  -- driver fulfils it, cached by content, so a warm cache needs no TeX
-  -- installed and a machine with none gets the driver's W0379 with the
-  -- placeholder where the subset drew nothing. `\pictures{ tool = none }`
-  -- is the declared refusal: the subset draws every picture, one it draws
-  -- in part shipping with its refusals folded into one line as a withdrawn
-  -- picture's are. The trust label: the engine claims placement and
-  -- measurement of the returned box, never its contents.
   let id := Ir.picHash (← pictureSrcAt body).source
   -- premise: pictureRouteChecks — a routed picture's losses are never dropped
-  -- in silence: a drawn request ships the boundary's box, and a withdrawn one
-  -- the refused door's drawing with the refused door's refusals in its line.
   if ctx.pic.tool.isSome && !body.isEmpty &&
       (pic.shapes.isEmpty ||
         (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
     return blocks.push (.para #[← routePicture ctx body pic pos true])
-  -- A picture the subset draws in part under `\pictures{ tool = none }` is
-  -- the subset's as a withdrawn one is: its refusals keyed under it, and its
-  -- id recorded for the driver's fold (`ReqSpans.declined`).
   let declined := ctx.pic.tool.isNone && !pic.shapes.isEmpty && Picture.namesLoss pdiags
   if declined then
     modify fun st => if st.spans.declined.contains id then st
       else { st with spans := { st.spans with declined := st.spans.declined.push id } }
   for (code, msg) in pdiags do
-    -- Only a construct outside the subset is helped by the subset's reach;
-    -- a note names a decision, and an error the document's own mistake.
+    -- Only a construct outside the subset is helped by the subset's reach.
     let help : Option String := match code with
       | .W0334 => some "write it with paths, nodes, trees, \\foreach and pgfmath values, \
 which the rendered subset draws, or let a boundary tool draw it"
       | _ => none
-    -- A withdrawn or declined picture's refusals are keyed under the
-    -- picture (`Ir.picFragmentKey`), so the driver folds them into its one
-    -- line (`Cli.Boundary.foldLines`) and two such pictures never share one.
-    -- premise: pictureRouteChecks — the driver folds every refusal keyed
-    -- under a withdrawn or declined picture into that picture's one line,
-    -- none dropped
+    -- premise: pictureRouteChecks — the driver folds the picture's refusals
     if ctx.pic.withdrawn.contains id || declined then
       warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
     else
       warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
-  -- A refused boundary (`tool = none`) names no door warning: the
-  -- declaration is the acceptance. W0379 is the driver's, for a stated
-  -- request no available tool can fulfil.
   unless pic.shapes.isEmpty do
     recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture pic)
-  -- An all-refused picture still owes the reader its place: the
-  -- float around it would otherwise collapse to orphan captions.
-  -- A placeholder box marks it, as an unloadable image's does.
+  -- A refused picture keeps its place, or its float leaves orphan captions.
   if pic.shapes.isEmpty && !pdiags.isEmpty then
     warnOnce ctx "picture:placeholder" .W0362
       "no part of this picture is inside the rendered subset; a \
@@ -10917,18 +8877,12 @@ accepts the loss")
   return blocks
 
 
-/-- The picture environments a block stands for: a `tikzpicture`
-(`tikzArm`) and a commutative diagram outside mathematics (`tikzcdArm`).
-One door in the block knot, whose compilation is at its budget. -/
 private def pictureEnvArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) :=
   if n == "tikzcd" then tikzcdArm ctx body pos blocks else tikzArm ctx body pos blocks
 
-/-- The `\maketitle`/`\titlepage` arm, outside the knot: no recursion
-into the block walk. LaTeX typesets the title once: \maketitle disables
-itself (classes.dtx, \global\let\maketitle\relax), which is also what
-keeps the document to one level-0 heading — a second call warns and
-produces nothing. -/
+/-- The `\maketitle`/`\titlepage` arm: the title is set once, as classes.dtx's
+`\maketitle` disables itself. -/
 private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
@@ -10943,11 +8897,7 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
       s!"'\\{n}' with nothing declared; no title is set" pos
       (help := "declare \\title{...} (and \\author, \\date, ...) before it")
   else if ctx.slides then
-    -- The title frame takes the golden split (moloch's
-    -- `title page` template: `0pt plus 1.618fil` + `\vfil` above
-    -- against `plus 1fil` below), and its horizontal alignment is
-    -- the `titlepage` style's declaration: moloch sets its title
-    -- matter ragged left; undeclared, the title page centres.
+    -- The golden split is moloch's `title page` template glue.
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
     -- A slotted title page aligns per slot (`titleBlocks`), never as one.
@@ -10956,35 +8906,15 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     recordFrameSource ctx pos blocks.size
     blocks := blocks.push (.frame #[] false .golden false content)
   else
-    -- The flow classes centre the title block, as `\@maketitle`
-    -- does — unless the `titlepage` style declares its matter
-    -- ragged left, the same declaration the slides branch reads.
+    -- The flow classes centre the title block, as `\@maketitle` does.
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
     let content := if tps.align == some .left then inner else #[.center inner]
     blocks := blocks ++ content
   return blocks
 
-/-- **A page model nests no page: one frame never contains another.**
-
-`\titlepage` inside an author's own `\begin{frame}` is beamer's documented
-idiom and what every real deck writes, and the title arm opens a frame of its
-own to carry the golden split — so the body walk produced `frame > frame`.
-The PDF backend flattened that and placed the page correctly; the HTML
-backend gives each frame a `section.slide` with vertical fills of its own, so
-two nested slide-height containers pushed the title matter a full viewport
-down and out of sight. The divergence was in neither backend: the IR should
-not have carried the nesting. The inner frame's vertical distribution is the
-one to keep — its `.golden` is a deliberate declaration, where the outer
-frame's is whatever the page model defaults to — which is also beamer's own
-arrangement, the title-page template's glue sitting inside the frame the
-author opened. Breakability is either frame's to ask for.
-
-Guarded on both titles being empty: a titled outer frame around a titled
-inner one is not this shape and keeps its nesting, so the flatten cannot
-silently drop a frame title. Outside the block knot, as a function of its
-arguments only, so the measure machinery never sees a match on a recursive
-call's result. -/
+/-- A frame, flattened into the lone frame it holds when neither carries a
+title, so that one frame never contains another. -/
 private def flattenFrame (title : Array Inline) (standout : Bool)
     (valign : Ir.VAlign) (breakable : Bool) (inner : Array Block) : Block :=
   match inner with
@@ -10994,8 +8924,6 @@ private def flattenFrame (title : Array Inline) (standout : Bool)
     else .frame title standout valign breakable inner
   | _ => .frame title standout valign breakable inner
 
-/-- The `{nav}` optional argument's own facts — label, pin, offset,
-reveal — parsed outside the knot. -/
 private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
     EM Ir.NavSpec := do
   let mut spec : Ir.NavSpec := {}
@@ -11064,9 +8992,8 @@ private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
         (help := "declare the corner too: pin = bottom right")
   return spec
 
-/-- Empty groups and whitespace have not opened paragraph content. Keep
-the groups in the source stream, where argument readers may still need
-them; this predicate decides only whether a new owner starts mid-paragraph. -/
+/-- Whether the raws hold paragraph content beyond spaces, paragraph breaks
+and empty groups. -/
 private def pendingParaInput : List Raw → Bool
   | [] => false
   | .space :: rest | .par _ :: rest => pendingParaInput rest
@@ -11075,18 +9002,14 @@ private def pendingParaInput : List Raw → Bool
 termination_by raws => rawWeightList raws
 decreasing_by all_goals simp only [rawWeightList, rawWeight] <;> omega
 
-/-- Does a control word standing at a paragraph's top level stay in force past
-the paragraph's end? A colour, a font, series, size or language declaration,
-a palette name read bare: a paragraph end closes no group (TeXbook ch. 24), so
-each holds for what follows in its group. `\ttfamily` keeps its inline
-reading, as between blocks (`declBlockOf`). -/
+/-- Whether a declaration at a paragraph's top level stays in force past its
+end, since a paragraph end closes no group (TeXbook ch. 24). -/
 private def carriesPar (ctx : Ctx) (n : String) : Bool :=
   n != "ttfamily" &&
     (n.startsWith "@ink:" || n.startsWith Compat.fontSizeMark || (declStyleOf n).isSome
       || (ctx.palette.resolve n).isSome)
 
-/-- `readFontSizeStyle` without its diagnostics: the paragraph's own reading
-already named a size it could not read. -/
+/-- `readFontSizeStyle` without its diagnostics. -/
 private def fontSizeStyle? (ctx : Ctx) (name : String) : Option Style :=
   let payload := (name.drop Compat.fontSizeMark.length).toString
   match payload.splitOn Compat.fontSizeSep with
@@ -11096,11 +9019,8 @@ private def fontSizeStyle? (ctx : Ctx) (name : String) : Option Style :=
     | _, _ => none
   | _ => none
 
-/-- One carried declaration, applied as its reading between blocks applies
-it: a colour as the next palette epoch over `pal`, the palette in force; a
-language switch as the flow's; a style, size or bare palette name as the
-scope's declaration. The paragraph's own reading named whatever does not
-read, so this one is silent. -/
+/-- Applies one carried declaration as its reading between blocks does,
+silently, over `pal`, the palette in force. -/
 private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n : String)
     (blocks : Array Block) : EM (Array Block × Palette) := do
   if n.startsWith "@ink:" then
@@ -11130,8 +9050,8 @@ private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n 
     | none => pure ()
     return (blocks, pal)
 
-/-- Every declaration a paragraph's text made at its top level, carried in
-order past its end (`carriesPar`), with the palette they leave in force. -/
+/-- Carries a paragraph's top-level declarations past its end, in order, with
+the palette they leave in force. -/
 private def carryDeclsGo (ctx : Ctx) (cur : Array Raw) (i : Nat) :
     List Raw → Array Block × Palette → EM (Array Block × Palette)
   | [], acc => pure acc
@@ -11146,7 +9066,6 @@ private def carryDecls (ctx : Ctx) (cur : Array Raw) (blocks : Array Block) :
     EM (Array Block × Palette) :=
   carryDeclsGo ctx cur 0 cur.toList (blocks, ctx.palette)
 
-/-- A paragraph holding no carried declaration carries nothing. -/
 private def quietRaw (ctx : Ctx) : Raw → Bool
   | .ctrl n _ => !carriesPar ctx n
   | _ => true
@@ -11171,8 +9090,6 @@ private theorem carryDecls_quiet (ctx : Ctx) (cur : Array Raw)
     carryDecls ctx cur = fun blocks => pure (blocks, ctx.palette) :=
   funext fun blocks => carryDeclsGo_quiet ctx cur 0 cur.toList blocks ctx.palette h
 
-/-- A name the recovery arm reads as unknown is no declaration a paragraph
-carries. -/
 private theorem carriesPar_recovers (ctx : Ctx) (name : String)
     (hn : recoversInlineName ctx name = true) : carriesPar ctx name = false := by
   simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
@@ -11182,10 +9099,8 @@ private theorem carriesPar_recovers (ctx : Ctx) (name : String)
 private theorem carryDecls_empty (ctx : Ctx) (blocks : Array Block) :
     carryDecls ctx #[] blocks = pure (blocks, ctx.palette) := rfl
 
-/-- Flush the open paragraph, if any, carry the declarations its text made
-past its end (`carryDecls`), and settle owners that began inside it. A
-palette or other state-only block is not a paragraph: only this boundary
-advances a pending owner's start. -/
+/-- Flushes the open paragraph, carries its declarations past its end, and
+settles the owners that began inside it. -/
 private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
     EM (MCtx ctx × Array Block) := do
   let paraCtx := { ctx with macroRoles := { ctx.macroRoles with
@@ -11200,14 +9115,11 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
   return (⟨{ ctx with palette := pal, macroRoles := { ctx.macroRoles with blocks := roles } },
     rfl, rfl, rfl, rfl⟩, blocks)
 
-/-- A declaration or open overlay consumes the rest of the same source
-stream, not a nested content argument. Close the caller's completed roles
-before that continuation; its tokens reopen only the owners they carry. -/
+/-- Drops the frame sources recorded from the earliest completed role that
+`desired` does not continue. -/
 private def closeBlockFrameSources (active : Array MacroRun)
     (desired : List MacroOrigin) (size : Nat) : EM Unit := do
   let keep := commonOrigins (active.toList.map (·.origin)) desired
-  -- All closed roles own suffixes. The earliest nonempty one is exactly
-  -- where top-level nodes stop surviving; a one-node suffix still wraps.
   let retained := (active.toList.drop keep).foldl (init := size) fun retained run =>
     if run.pendingPara then retained else min retained run.start
   if retained < size then keepFrameSourcePrefix retained
@@ -11219,9 +9131,8 @@ private def closeBlockMacros (ctx : Ctx) (blocks : Array Block) :
   return (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := #[] } },
     rfl, rfl, rfl, rfl⟩, blocks)
 
-/-- The open overlay arm consumes the whole tail exactly when its spec
-resolves and there is no content group. A malformed spec still takes the
-ordinary recovery arm; it cannot transfer the caller's ownership. -/
+/-- Whether the overlay at `raws[i]` is open: its spec resolves and no
+content group follows it. -/
 private def openBlockOverlay (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) : Bool :=
   if !overlayCtrls.contains (Compat.overlayName n) || (lookupUser ctx n).isSome then false
   else
@@ -11232,17 +9143,15 @@ private def openBlockOverlay (ctx : Ctx) (n : String) (raws : Array Raw) (i : Na
       (Ir.overlayRange spec).isSome &&
         !(raws[skipSpaces raws (j + 1)]? matches some (.group ..))
 
-/-- Grouped controls open a content scope; an open overlay consumes the
-current stream's tail. Only that latter arm closes completed ownership. -/
+/-- Closes completed macro ownership before an open overlay, which consumes
+the stream's tail. -/
 private def blockControlContext (ctx : Ctx) (n : String) (raws : Array Raw)
     (i : Nat) (blocks : Array Block) : EM (MCtx ctx × Array Block) :=
   if openBlockOverlay ctx n raws i then closeBlockMacros ctx blocks
   else pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks)
 
-/-- Classify each newly entered expansion once, using the same block
-predicate as native commands. The span is observed, never extracted into a
-separate elaboration: a final primitive still reads following source.
-Remembering the classification also keeps a role open past its last `\par`. -/
+/-- Each expansion origin at `raws[i]` with whether its span is block
+content, classified once per origin. -/
 private def blockMacroKinds (roles : MacroRoles) (raws : Array Raw) (i : Nat) :
     List (MacroOrigin × Bool) :=
   match raws[i]? with
@@ -11259,10 +9168,8 @@ private def blockMacroKinds (roles : MacroRoles) (raws : Array Raw) (i : Nat) :
             bodyIsBlock span.toArray
         (origin, isBlock)
 
-/-- Refresh flow state and block ownership without changing paragraph or
-argument boundaries. Only completed blocks close at an origin transition.
-At end of input the pending paragraph completes before its owner closes.
-The context's termination components are unchanged. -/
+/-- Refreshes flow state and block macro ownership at `raws[i]`, flushing the
+pending paragraph at the end of input. -/
 private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
     (raws : Array Raw) (i : Nat) (blocks : Array Block) (cur : Array Raw) :
     EM (MCtx ctx × Array Block × Array Raw) := do
@@ -11281,17 +9188,14 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
   return (⟨ctx', hm.1.trans hf.1, hm.2.1.trans hf.2.1,
     hm.2.2.1.trans hf.2.2.1, hm.2.2.2.trans hf.2.2.2⟩, blocks, cur)
 
-/-- Declarations that change the flowing palette or spacing tokens. Their
-reader and state transition are independent of block recursion. -/
+/-- Declarations that change the flowing palette or spacing tokens. -/
 private def flowStyleCtrl (n : String) : Bool :=
   n.startsWith "@ink:" || n.startsWith Compat.pageColorMarkPrefix ||
     n == Compat.pageColorResetMark || n == BeamerColor.marker ||
     n == BeamerColor.starMarker || n == "palette" || n == "tokens"
 
-/-- Read a flow declaration after its command. Every arm carries its
-progress and unchanged termination components to the single continuation
-in the block knot. The declaration also rides the IR, so both backends
-replay the same epoch where it stands. -/
+/-- Reads a flow declaration after its command, publishing it to the state and
+the IR. -/
 private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
     (start : Nat) (hstart : start ≤ raws.size) (pos : Pos) (blocks : Array Block) (gen : Nat) :
     EM (MCtx ctx × { j : Nat // start ≤ j } × Array Block × Nat) := do
@@ -11311,14 +9215,10 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
   let ⟨(pal?, j), hj⟩ : { t : Option Palette × Nat // start ≤ t.2 } ←
     if n.startsWith "@ink:" then do
       -- xcolor's `\color` colours the rest of its group (manual §2.6.4).
-      -- Its `fg` declaration reaches design resolution and contrast,
-      -- just as a native palette does; the group's end restores it
-      -- (`texGroup`).
       pure ⟨(← inkFlowDecl ctx n pos, start), Nat.le_refl _⟩
     else if n.startsWith Compat.pageColorMarkPrefix then do
       pure ⟨(← pageGroundDecl ctx n pos, start), Nat.le_refl _⟩
     else if n == Compat.pageColorResetMark then do
-      -- Restore only the opening ground, preserving every other role.
       pure ⟨(some (← pageGroundReset ctx), start), Nat.le_refl _⟩
     else if n == BeamerColor.marker || n == BeamerColor.starMarker then
       beamerColorArm ctx raws start (n == BeamerColor.starMarker) pos
@@ -11351,8 +9251,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       | _ =>
         diag ctx .E0304 "'\\palette' needs a {...} block" pos
         pure ⟨(none, start), Nat.le_refl _⟩
-  -- Ink and Beamer readers publish their own palette. Native palettes
-  -- and page-ground declarations publish here, once per declaration.
+  -- Ink and Beamer readers publish their own palette.
   if n == "palette" || n.startsWith Compat.pageColorMarkPrefix ||
       n == Compat.pageColorResetMark then
     if let some pal := pal? then
@@ -11366,16 +9265,11 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
   return (⟨{ ctx with palette := pal?.getD ctx.palette }, rfl, rfl, rfl, rfl⟩,
     ⟨j, hj⟩, blocks, nextGen)
 
-/-- Does a paragraph break follow position `i` — is the next raw past the
-spaces a blank line? What a display's `DisplayCtx.parEnd` records. The end
-of a body is none: what follows there is the enclosing scope's, a group's
-text running on as the group scopes nothing else. -/
 private def parFollows (raws : Array Raw) (i : Nat) : Bool :=
   match (raws.extract i raws.size).toList.dropWhile (· matches .space) with
   | [] => false
   | r :: _ => r matches .par _
 
-/-- Does a blank line stand just before position `i`, past the spaces? -/
 private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
   let mut j := i
   for _ in [0:i] do
@@ -11386,14 +9280,9 @@ private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
     | _ => return false
   return false
 
-/-- The paragraph state an overlay carrier standing at `raws[i]` opens in,
-`body` its content and `blocks` what stood before it once its opening
-flushed the paragraph: inside the paragraph whose text ran on to it with no
-break between (`inPar`), or else right after an environment end that left
-`\@endpe` (`endPe`) — what a display opening the carrier reads, as it
-reads it with no carrier there (`Ir.carrierDisplays`), unless a blank line
-stands between, whose `\par` ends it (`parPrecedes`). Content opening on a
-paragraph break is in no paragraph. -/
+/-- The paragraph state an overlay carrier at `raws[i]` opens in: inside the
+paragraph its text ran on from, or right after an environment end that left
+`\@endpe`. -/
 private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
     (body : Array Raw) : Bool × Bool :=
   let opensOnText := match body.toList.dropWhile (· matches .space) with
@@ -11405,16 +9294,15 @@ private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
   let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
   (inPar, !inPar && Ir.lastLeavesEndPe blocks && !parPrecedes raws i)
 
-/-- A braced overlay's carrier, its group `body` at `raws[jg]`, stood in its
-paragraph (`carrierOpening`) and before the break after the group. Outside
-the block knot, whose compilation is at its budget. -/
+/-- A braced overlay's carrier, stood in its paragraph and before the break
+after its group at `raws[jg]`. -/
 private def carrierInGroup (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
     (body : Array Raw) (inner : Array Block) : Array Block :=
   let (inPar, endPe) := carrierOpening raws i blocks body
   Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) inner
 
 /-- An open overlay's carrier, the rest of the scope from `raws[jg]` on,
-stood in its paragraph: nothing follows it in the scope. -/
+stood in its paragraph. -/
 private def carrierToEnd (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
     (inner : Array Block) : Array Block :=
   let (inPar, endPe) := carrierOpening raws i blocks (raws.extract jg raws.size)
@@ -11429,30 +9317,21 @@ private def altCarriers (raws : Array Raw) (i j3 : Nat) (blocks : Array Block)
   let (pb, eb) := carrierOpening raws i blocks gb
   .alternate spec (Ir.carrierDisplays pa ea after ia) (Ir.carrierDisplays pb eb after ib)
 
-/-- `\pause`'s carrier, the rest of the scope from `raws[i]` on, revealed at
-step `n` and stood in its paragraph (`carrierOpening`): nothing follows it
-in the scope, so its last display keeps the break it found there. An empty
-rest pushes nothing. Outside the block knot, whose compilation is at its
-budget. -/
+/-- `\pause`'s carrier: the rest of the scope from `raws[i]` on, revealed at
+step `n` and stood in its paragraph. -/
 private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n : Nat)
     (inner : Array Block) : Array Block :=
   if inner.isEmpty then blocks else
   let (inPar, endPe) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
   blocks.push (.step n none (Ir.carrierDisplays inPar endPe false inner))
 
-/-- Does an environment's `\@endpe` reach a display at position `i`, so that
-TeX sets no empty line before it (`Ir.DisplayCtx.afterEnv`): no text of the
-paragraph precedes it, the block before it leaves `\@endpe` set
-(`Ir.Block.leavesEndPe`), and no blank line stands between — the blank
-line's `\par` ends it (ltlists.dtx `\@doendpe`), and the display then opens
-a paragraph of its own, on the empty line TeX sets after a paragraph. -/
+/-- Whether an environment's `\@endpe` reaches a display at `i`, so TeX sets
+no empty line before it (ltlists.dtx `\@doendpe`). -/
 private def endPeAt (raws : Array Raw) (i : Nat) (inPar : Bool) (flushed : Array Block) : Bool :=
   !inPar && Ir.lastLeavesEndPe flushed && !parPrecedes raws i
 
-/-- A display formula met between words, outside the knot: the open
-paragraph flushed, the display's own arm, and where the display at `i`
-stands in its paragraph (`Ir.markDisplay`) — text before it, whether a
-paragraph break follows, and an environment end's `\@endpe` (`endPeAt`). -/
+/-- A display formula met between words: the paragraph flushed, and the
+display marked with where it stands in its paragraph. -/
 private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : Array Block)
     (cur : Array Raw) (raws : Array Raw) (i : Nat) : EM (MCtx ctx × Array Block) := do
   let k := blocks.size
@@ -11462,10 +9341,7 @@ private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : 
   return (next, Ir.markDisplay inPar (parFollows raws (i + 1)) (endPeAt raws i inPar flushed)
     flushed.size out)
 
--- The well-founded translation whnf-reduces through the knot's body when
--- it assembles the fixpoint and its equations; everything the arms call is
--- data to that process, never proof material, and unfolding it is what
--- blows the elaboration budget. Sealed for the knot, unsealed right after.
+-- Sealed so the knot's equations never unfold what its arms call.
 seal takeArgs mkPara finishPara flushPara stripMathMeta
 seal blockMacroStep pauseCarrier carrierInGroup carrierToEnd altCarriers
 seal closeBlockMacros blockControlContext
@@ -11477,47 +9353,29 @@ seal titleBlocks
 seal skipOptArg takeTitleDecl
 seal sectionNumber columnWidth cmidRange trimRawEdges
 seal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
-/-- Enter appendix.sty's `{appendices}` scope when `b` (the environment's
-own arm shares its branch, so the flag): save the section counters and the
-mark, zero the counters, set the mark (`\@resets@pp`). Outside the block
-knot so the shared arm stays three lines. -/
+/-- Enters appendix.sty's `{appendices}` scope when `b`, returning the section
+counters and mark it saved (`\@resets@pp`). -/
 private def enterAppendicesIf (b : Bool) : EM (Option ((Nat × Nat × Nat) × Bool)) := do
   if !b then return none
   let st ← get
   modify fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
   return some (st.ctr.secNums, st.ctr.inAppendix)
 
-/-- Leave the `{appendices}` scope: restore what `enterAppendicesIf` saved
-(`\@ppsavesec`/`\@pprestoresec`), so numbering after the environment
-continues where it left off. -/
+/-- Leaves the `{appendices}` scope, restoring what `enterAppendicesIf` saved
+(`\@pprestoresec`). -/
 private def leaveAppendices (saved : Option ((Nat × Nat × Nat) × Bool)) : EM Unit :=
   match saved with
   | none => pure ()
   | some s =>
     modify fun st => { st with ctr := { st.ctr with inAppendix := s.2, secNums := s.1 } }
 
-/-- The node a block-sequence wrapper environment ships: `{quote}` and
-`{quotation}` are one node (they differ only in `\listparindent`, which
-nothing here binds to — the constructor's docstring), `{verse}` is that
-node too (latex.ltx: `\list{}{\itemsep\z@ \itemindent -1.5em
-\listparindent\itemindent \rightmargin\leftmargin \advance\leftmargin
-1.5em}` under `\let\\\@centercr`: both margins in, each `\\` a new line at
-the leading, a stanza a paragraph — what a quotation of lines sets; a line
-too long for the measure wraps at the quotation's margin, where LaTeX hangs
-it 1.5 em further, the one thing the node cannot say), `{abstract}` is
-article's unnumbered titled block, and `{appendices}` wraps nothing — its
-meaning is the numbering scope `enterAppendicesIf` carries, so its blocks
-splice. One def outside the knot: the environments share one branch and
-one recursion site there. -/
+/-- The node a block-sequence wrapper environment ships: `{abstract}`'s titled
+block, `{appendices}`'s splice, else a quotation. -/
 private def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
   if n == "abstract" then blocks.push (.abstract inner)
   else if n == "appendices" then blocks ++ inner
   else blocks.push (.quote inner)
 
-/-- The wrapper node ships exactly its body's census: `{quote}` and
-`{abstract}` are body-transparent constructors (`blockTextOne` reads
-straight through both) and the `{appendices}` splice is the identity, so
-the shared environment arm conserves the text whatever the name. -/
 private theorem wrapScopedEnv_text (n : String) :
     Ir.Conserves Ir.blocksText (wrapScopedEnv n #[]) := fun inner => by
   unfold wrapScopedEnv
@@ -11527,41 +9385,26 @@ private theorem wrapScopedEnv_text (n : String) :
     · simp
     · rfl
 
-/-- The theorem-like environment `n` names, when a `\newtheorem` declared it. -/
 private def thmOf? (thm : ThmDecls) (n : String) : Option ThmDef :=
   thm.defs.find? (·.env == n)
 
-/-- `n` opens a theorem-like scope: an environment a `\newtheorem` declared,
-or amsthm's `proof` once amsthm is loaded (amsthm.sty defines it; the kernel
-does not, so without amsthm it stays unknown, as LaTeX has it). -/
+/-- Whether `n` opens a theorem-like scope: a declared theorem, or amsthm's
+`proof` once amsthm is loaded. -/
 private def thmEnv (thm : ThmDecls) (n : String) : Bool :=
   (thmOf? thm n).isSome || (n == "proof" && thm.ams)
 
-/-- `\labelsep`, .5 em (article.cls, `\setlength\labelsep{.5em}`): what a
-list's `\item` sets between its label and the text (ltlists.dtx `\@item`,
-`\hskip\labelsep` after the label box) — a description label's, the
-kernel's theorem head (latex.ltx `\@begintheorem`, `\item[\hskip\labelsep
-…]`) and amsthm's proof head (`\item[\hskip\labelsep\itshape …]`).
-amsthm's theorem head closes with `\thm@headsep`, `5pt plus 1pt minus 1pt`
-(amsthm.sty `\@thm`): the same length at a 10 pt body, 0.5 pt over at 11 pt
-and 1 pt at 12 pt, its ±1 pt rubber not carried — the IR has no
-fixed-length inline glue, and the en space (U+2002, `\enspace`, a kern of
-half the em) stands for both. -/
+/-- `\labelsep` (article.cls, .5 em) as an en space, which also stands for
+amsthm's `\thm@headsep`. -/
 private def labelSep : String := "\u2002"
 
-/-- `\@addpunct{.}` (amsthm.sty): a period after a head, unless the head
-already ends in one of the punctuation marks it tests for. -/
+/-- amsthm's `\@addpunct{.}`: a period after a head not already ending in
+punctuation. -/
 private def addPunct (head : Array Inline) : Array Inline :=
   let t := (Ir.plainText head).trimAscii.toString
   if [".", "?", "!", ":", ";", ","].any (t.endsWith ·) then #[] else #[.text "."]
 
-/-- The head a theorem-like environment opens with, the separator
-included. The kernel's (latex.ltx `\@begintheorem`, `\@opargbegintheorem`):
-name, number and `(note)`, bold. amsthm's (amsthm.sty `\thmhead@plain`,
-`\@begintheorem`): name and number in the style's head font — bold, italic
-under `remark` — the number `\@upn` upright, the note parenthesised in the
-note font (`\fontseries\mddefault\upshape`), then the head punctuation `.`
-in the head font. -/
+/-- A theorem-like environment's head with its separator, as the kernel's
+`\@begintheorem` or amsthm's `\thmhead@plain` sets it. -/
 private def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
     (note : Option (Array Inline)) : Array Inline :=
   match style with
@@ -11585,12 +9428,7 @@ private def thmHead (style : ThmStyle) (name : Array Inline) (num : Option Strin
     #[.styled font (name ++ numRun)] ++ noteRun ++
       #[.styled font #[.text "."], .text labelSep]
 
-/-- A theorem-like scope's state at its `\begin`: the head its first
-paragraph opens with, the space its trivlist opens (`Ir.ThmSpace`), whether
-a QED closes it (amsthm's `proof`) and the `\qedsymbol` its own body
-redefines, and the label target and block declarations to restore at its
-`\end` — `\refstepcounter` and the body font are local to the environment's
-group. -/
+/-- A theorem-like scope's state at its `\begin`, read again at its `\end`. -/
 private structure ThmOpen where
   head : Array Inline
   space : Ir.ThmSpace
@@ -11601,10 +9439,8 @@ private structure ThmOpen where
   target : Option Ir.RefBinding
   decls : List Ir.Decl
 
-/-- The `\qedsymbol` a proof's own body redefines — the manual's way to
-change or omit one proof's mark (amsthdoc §5: "just before
-`\end{proof}`") — read off the body's top level, where Compat spells the
-redefinition `\define \qedsymbol() {…}`: the body of the last one. -/
+/-- The body of the last `\qedsymbol` redefinition at a proof body's top
+level. -/
 private def bodyQedDef? (body : Array Raw) : Option (Array Raw) := Id.run do
   let mut found : Option (Array Raw) := none
   for i in [0:body.size] do
@@ -11616,10 +9452,8 @@ private def bodyQedDef? (body : Array Raw) : Option (Array Raw) := Id.run do
         | _ => pure ()
   return found
 
-/-- Step a theorem counter and render its number (ltthm.dtx `\newtheorem`:
-`\the<counter>` is `\arabic`, after `\the<within>.` for a `[within]`
-counter, which restarts whenever that heading counter moves — read here as
-the heading numbers it last stepped under, the appendix mark included). -/
+/-- Steps a theorem counter and renders its number, restarting within its
+heading counter as ltthm.dtx's `\newtheorem` does. -/
 private def stepThmCounter (c : String) : EM String := do
   let st ← get
   let within := (st.ctr.thm.counters.find? (·.1 == c)).bind (·.2)
@@ -11631,10 +9465,8 @@ private def stepThmCounter (c : String) : EM String := do
     nums := (st.ctr.thm.nums.filter (·.1 != c)).push (c, snap, v) } } }
   return withinNumber st.ctr within v
 
-/-- Open a theorem-like scope: read the optional `[note]`, step the counter
-and make its number the label target, push the style's body font
-(`\itshape` for the kernel's and `plain`), and build the head. Returns the
-index past the note, where the body starts. -/
+/-- Opens a theorem-like scope, returning its state and the index where the
+body starts. -/
 private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
     EM (ThmOpen × Nat) := do
   let (note, k) ← match scanBracketArg body 0 pos with
@@ -11656,16 +9488,14 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
       pure (thmHead d.style d.heading num note, d.style == .plain || d.style == .kernel, false,
         d.style.space)
     | none =>
-      -- amsthm's proof: `\itshape #1\@addpunct{.}` over `\proofname`,
-      -- `\labelsep`, the body `\normalfont` and a QED at its end.
+      -- amsthm's proof head: `\itshape #1\@addpunct{.}` over `\proofname`.
       let name ← match note with
         | some nt => pure nt
         | none => definedOr ctx "proofname" pos (pure #[.text ctx.locale.proof])
       pure (#[.styled .italic (name ++ addPunct name), .text labelSep], false, true, .proof)
   if italic then
     modify fun s => { s with scope := { s.scope with blockDecls := st.scope.blockDecls ++ [.style .italic] } }
-  -- A proof pushes its QED (amsthm.sty `\pushQED{\qed}`): a `\qedhere` in
-  -- it may set the mark.
+  -- A proof pushes its QED (amsthm.sty `\pushQED{\qed}`).
   if qed then
     modify fun s => { s with ctr := { s.ctr with thm := { s.ctr.thm with
       proofs := s.ctr.thm.proofs + 1, qedPlaced := false } } }
@@ -11674,8 +9504,8 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
             outerPlaced := st.ctr.thm.qedPlaced, target := st.refTarget,
             decls := st.scope.blockDecls }, k)
 
-/-- Run `q` on at the end of the last paragraph standing before any trailing
-epoch (state, never content), or set it as a paragraph of its own. -/
+/-- Appends `q` to the last paragraph before any trailing epoch, or sets it as
+a paragraph of its own. -/
 private def appendLastPara (inner : Array Block) (q : Array Inline) : Array Block :=
   let tail := (inner.toList.reverse.takeWhile fun b => b matches .setPalette _ | .setTokens _).length
   let k := inner.size - tail
@@ -11683,16 +9513,9 @@ private def appendLastPara (inner : Array Block) (q : Array Inline) : Array Bloc
   | j + 1, some (.para c) => inner.set! j (.para (c ++ q))
   | _, _ => inner.push (.para q)
 
-/-- Close a theorem-like scope: restore what `thmOpen` changed, open the
-first paragraph with the head — or stand it alone when the body opens with
-anything else — end a proof with its QED (amsthm.sty `\qed`:
-`\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}` on the last line, a line of its
-own after a display or list, where the empty box keeps the fill that a line's
-start would otherwise drop), and set the whole as the trivlist it is
-(ltthm.dtx and amsthm.sty both open `\trivlist`), in the role that names
-the space its spelling opens (`Ir.thmSpaceRole`), under the environment's
-name. A `\qedhere` moves the mark (amsthm.sty `\setQED@elt` empties the
-stack): its text-mode run gets the mark here, and the end sets none. -/
+/-- Closes a theorem-like scope: its state restored, its first paragraph
+opened with the head, a proof ended with its QED, the whole set as its
+trivlist. -/
 private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) := do
   modify fun st => { st with refTarget := o.target, scope := { st.scope with blockDecls := o.decls } }
@@ -11711,8 +9534,7 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       let set : Inline := match shown with
         | #[x] => x
         | xs => .role "qedsymbol" xs
-      -- No picture label holds the marker: the label reader refuses
-      -- `\qedhere` (`Picture.salCtrl`).
+      -- No picture label holds the marker: their reader refuses `\qedhere`.
       let inner := if here then
           Ir.mapBlocks (fun x => if x == .label qedHereKey then set else x) inner
         else inner
@@ -11723,28 +9545,24 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
     else pure inner
   return #[.role (Ir.thmSpaceRole o.space) #[.role n inner]]
 
-/-- A markdown disclosure's head (`Md.disclosureRaws`): whether its `[open]`
-option stands first, and where its summary's group stands. -/
+/-- A markdown disclosure's head: whether `[open]` stands first, and where its
+summary's group stands. -/
 private def disclosureHead (body : Array Raw) : Bool × Nat :=
   match (body[0]? : Option Raw), (body[1]? : Option Raw), (body[2]? : Option Raw) with
   | some (Raw.sym '[' _), some (Raw.word "open" _), some (Raw.sym ']' _) => (true, 3)
   | _, _, _ => (false, 0)
 
-/-- What a scope the block knot opens and closes outside itself carries
-across its body: a theorem-like scope's opening, or a markdown disclosure's
-summary and whether it stands open. -/
+/-- What a scoped environment carries across its body: a theorem-like opening,
+or a disclosure's summary and whether it stands open. -/
 private inductive ScopeOpen where
   | thm (o : ThmOpen)
   | disclosure (summary : Array Inline) (expanded : Bool)
 
-/-- The environments the knot's scoped arm reads: the theorem-like ones and
-the markdown disclosure. -/
 private def scopedEnv (thm : ThmDecls) (n : String) : Bool :=
   n == Parse.markdownDisclosureEnv || thmEnv thm n
 
-/-- Open a scoped environment: a markdown disclosure reads its option and its
-summary's group, a theorem-like scope its head (`thmOpen`). Returns the index
-where the body starts. -/
+/-- Opens a scoped environment, returning its state and the index where the
+body starts. -/
 private def scopeOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
     EM (ScopeOpen × Nat) := do
   if n == Parse.markdownDisclosureEnv then
@@ -11756,16 +9574,14 @@ private def scopeOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
     let (o, k) ← thmOpen ctx n body pos
     return (.thm o, k)
 
-/-- Close a scoped environment over its elaborated body. -/
 private def scopeClose (ctx : Ctx) (n : String) (o : ScopeOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) :=
   match o with
   | .thm o => thmClose ctx n o inner pos
   | .disclosure summary expanded => pure #[.disclosure summary expanded inner]
 
-/-- The labels a description list's `\item`s carry, one per item in the
-order `itemSplitGo` splits them: the `[...]` run after each top-level
-`\item`, past an overlay spec, `none` where the item carries none. -/
+/-- Each top-level `\item`'s `[...]` label run, past an overlay spec, in item
+order. -/
 private def descLabelRaws (body : Array Raw) : Array (Option (Array Raw)) := Id.run do
   let mut out := #[]
   for i in [0:body.size] do
@@ -11783,13 +9599,8 @@ private def descLabelRaws (body : Array Raw) : Array (Option (Array Raw)) := Id.
       out := out.push label
   return out
 
-/-- A description list's items with their labels run in (latex.ltx
-`\descriptionlabel`: `\hspace\labelsep\normalfont\bfseries #1`, the
-`\hspace` taken back by the label box's `\hskip-\labelsep`): each label in
-the description label role with `\labelsep` after it, first in the item's
-first paragraph, or a paragraph of its own when the item opens with another
-block. An item with no label keeps the separator, as LaTeX's empty label box
-still leaves `\labelsep` before the text. -/
+/-- A description list's items with their labels run in, bold and followed by
+`\labelsep`, as latex.ltx's `\descriptionlabel` sets them. -/
 private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block)) :
     EM (Array (Array Block)) := do
   let labels := descLabelRaws body
@@ -11805,9 +9616,8 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
       | _ => #[Block.para head] ++ item)
   return out
 
-/-- Apply an item's selector after its description label has joined the
-body. Beamer's actionenv encloses the entire item (beamerbaseoverlay.sty,
-beamer@parseitem), including its label; pause bases retain their old policy. -/
+/-- Applies each item's overlay selector to the whole item, label included, as
+beamer's `beamer@parseitem` does. -/
 private def coverItems (ctx : Ctx) (steps : Array (Option OverlaySpec))
     (pauses : Array Nat) (items : Array (Array Block)) : Array (Array Block) :=
   items.mapIdx fun i inner =>
@@ -11817,19 +9627,15 @@ private def coverItems (ctx : Ctx) (steps : Array (Option OverlaySpec))
     | some _ => selectedCover Block.onSteps spec inner
     | none => if p > 0 then #[.step (ctx.stepBase + p + 1) none inner] else inner
 
-/-- A raw run with its edge spaces and paragraph ends dropped, and a
-paragraph end inside it read as a space: a `\bibitem`'s text. -/
+/-- A `\bibitem`'s text: paragraph ends as spaces, edge spaces dropped. -/
 private def entryRaws (raws : Array Raw) : Array Raw :=
   let rs := raws.map fun r => if r matches .par _ then Raw.space else r
   let a := (rs.findIdx? (· != Raw.space)).getD rs.size
   let b := rs.size - ((rs.reverse.findIdx? (· != Raw.space)).getD rs.size)
   rs.extract a b
 
-/-- `thebibliography` (classes.dtx): an unnumbered References section, then
-each `\bibitem[label]{key}` entry in source order — its key, its label as
-written, and its text. The widest-label argument names the label column's
-width, which the layout measures from the labels themselves; `\newblock`'s
-.11 em between an entry's blocks is not set, the source's space standing. -/
+/-- `thebibliography` (classes.dtx): an unnumbered References section over its
+`\bibitem` entries in source order. -/
 private def ownBibList (ctx : Ctx) (body : Array Raw) : EM (Array Block) := do
   let j := skipSpaces body 0
   let start := if body[j]? matches some (.group _ _) then j + 1 else 0
@@ -11883,39 +9689,24 @@ seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars siz
 seal isColumnStray
 seal parFollows parPrecedes endPeAt displayAtBlock
 
--- ===== Pseudocode environments: algorithm2e and algorithmicx ============
---
--- Both surfaces parse onto the one `Ir.Block.algorithm` value: lines of
--- rich text with depth from nesting, keywords generated from the locale
--- table at the backends. algorithm2e's grammar is grouped
--- (`\For{cond}{body}`, `\;` the line terminator — algorithm2e.sty's own
--- macro definitions and the manual's block forms); algorithmicx's is flat
--- (`\For{cond}` … `\EndFor` — algorithmicx manual §2). No recursion into
--- the block walk, so the whole family lives outside the knot, as
--- `tabularArm` does.
-
-/-- One parsed pseudocode line, still raw: elaboration to `Ir.AlgLine`
-happens per segment, after the structural walk. -/
+/-- One parsed pseudocode line, still raw. -/
 private structure AlgSeg where
   depth : Nat
   kind : Ir.AlgKind
   content : Array Raw
   comment : Option (Array Raw)
 
-/-- The structural walk's work items: a source raw, or a virtual marker a
-block form's expansion leaves behind — `close` ends a nested body
-(repeat's carries its until-condition), `mid` is `\eIf`'s else at the
-opener's level, `dedent` closes a `\uIf`-style block that prints no
-end. -/
+/-- The pseudocode walk's work items: a source raw, or the marker a block form
+leaves: `close` ends a body, `mid` is an `\eIf` else, `dedent` closes a
+`\uIf`. -/
 private inductive AlgTok where
   | raw (r : Raw)
   | close (o : Ir.AlgOpen) (cond : Array Raw)
   | mid (o : Ir.AlgOpen)
   | dedent
 
-/-- algorithm2e's `{cond}{body}` block openers, each with its opener kind
-and whether it prints an end line (`\SetKwFor`/`\SetKwIF` defaults; the
-`u` forms are the if-chain links that print none). -/
+/-- algorithm2e's `{cond}{body}` block openers, with their kind and whether
+they print an end line. -/
 private def algA2eBlocks : List (String × Ir.AlgOpen × Bool) :=
   [("For", (.forLoop, true)), ("ForEach", (.forEach, true)),
    ("ForAll", (.forEach, true)), ("While", (.whileLoop, true)),
@@ -11928,9 +9719,7 @@ private def algA2eIo : List (String × Ir.AlgIo) :=
    ("KwResult", .result)]
 
 /-- algorithm2e display settings the engine does not model, each with the
-group count it consumes: named and ignored (N0102), never silent — the
-engine keeps its own display (vertical block lines included, until the
-layout grows a vertical-rule op). -/
+group count it consumes. -/
 private def algA2eSettings : List (String × Nat) :=
   [("SetAlgoLined", 0), ("SetAlgoNoLine", 0), ("SetAlgoVlined", 0),
    ("SetLine", 0), ("SetNoline", 0), ("SetVline", 0),
@@ -11946,10 +9735,8 @@ private def algA2eSettings : List (String × Nat) :=
    ("SetSideCommentRight", 0), ("LinesNumberedHidden", 0),
    ("SetNlSty", 3), ("SetAlgoNlRelativeSize", 1)]
 
-/-- algorithm2e constructs outside the modeled subset, each with its
-group count: W0383 names the construct and the groups' contents splice
-back into the stream, so the text is kept as plain lines, never
-dropped. -/
+/-- algorithm2e constructs outside the modeled subset, with their group
+counts; their groups' contents are kept as plain lines. -/
 private def algA2eRefused : List (String × Nat) :=
   [("Begin", 1), ("lIf", 2), ("lElseIf", 2), ("lElse", 1), ("lFor", 2),
    ("lForEach", 2), ("lForAll", 2), ("lWhile", 2), ("lRepeat", 2),
@@ -11962,24 +9749,17 @@ private def algAcxBlocks : List (String × Ir.AlgOpen) :=
   [("For", .forLoop), ("ForAll", .forEach), ("While", .whileLoop),
    ("If", .ifThen)]
 
-/-- algorithmicx's end commands, each naming the opener it closes (the
-kind only selects the generated word: every non-repeat block ends on
-`end`). -/
+/-- algorithmicx's end commands, each naming the opener it closes. -/
 private def algAcxEnds : List (String × Ir.AlgOpen) :=
   [("EndFor", .forLoop), ("EndWhile", .whileLoop), ("EndIf", .ifThen),
    ("EndFunction", .function), ("EndProcedure", .procedure)]
 
-/-- algorithmicx constructs outside the modeled subset: W0383 names each;
-none carries a content group, so nothing needs keeping. -/
+/-- algorithmicx constructs outside the modeled subset; none carries a
+content group. -/
 private def algAcxRefused : List String := ["Loop", "EndLoop"]
 
-/-- Rewrite document-defined algorithm keywords inside content raws, so a
-`\KwTo` in a `\For` condition or a `\SetKwFunction` name in a statement
-reaches `elabInlines` as the styled text algorithm2e prints: a keyword
-bold (`\KwSty`'s default), a function name in small caps with its `(args)`
-(`\FuncSty`), a data name in sans (`\DataSty`). An io keyword met inline
-renders as its bold label. Anything else passes through; groups are
-rewritten inside. -/
+/-- Rewrites document-defined algorithm keywords in content raws to the
+styled text algorithm2e prints. -/
 private def algSubstList (kws : Array (String × AlgKwDef)) (out : Array Raw) :
     List Raw → Array Raw
   | [] => out
@@ -12013,9 +9793,8 @@ decreasing_by all_goals first
   | (simp only [rawWeightList]; have := rawWeight_pos r; omega)
   | simp_all [rawWeightList, rawWeight]
 
-/-- Flush the accumulated line, skipping an empty statement (a stray `\;`,
-whitespace between structure commands); a non-statement kind always
-emits — `\Return\;` is a real line. -/
+/-- Flushes the accumulated line, skipping an empty statement; a
+non-statement kind always emits. -/
 private def algFlush (segs : Array AlgSeg) (depth : Nat) (kind : Ir.AlgKind)
     (cur : Array Raw) (comment : Option (Array Raw)) : Array AlgSeg :=
   if (kind matches Ir.AlgKind.statement) && cur.all isSpaceOrPar
@@ -12025,7 +9804,7 @@ private def algFlush (segs : Array AlgSeg) (depth : Nat) (kind : Ir.AlgKind)
                    content := trimRawEdges cur
                    comment := comment }
 
-/-- Pop the next `{...}` group off the walk's stack, skipping spaces. -/
+/-- Pops the next `{...}` group off the walk's stack, skipping spaces. -/
 private def algPopGroup (stack : Array AlgTok) :
     Option (Array Raw × Pos) × Array AlgTok := Id.run do
   let mut stack := stack
@@ -12037,16 +9816,12 @@ private def algPopGroup (stack : Array AlgTok) :
     | _ => return (none, stack)
   return (none, stack)
 
-/-- The structural walk: one dialect flag, one bounded pass over a work
-stack — a block form's body group is expanded onto the stack behind its
-virtual closer, so nesting costs no recursion and the weight bound makes
-the loop total. Returns the elaborated lines with the `\LinesNumbered`
-and `\DontPrintSemicolon` flags met on the way. -/
+/-- An algorithm's lines with its numbering and semicolon flags, from one
+bounded pass over a work stack. -/
 private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
     (pos : Pos) : EM (Array Ir.AlgLine × Bool × Bool) := do
   let mut kws : Array (String × AlgKwDef) := (← get).alg.kws
-  -- The one built-in inline keyword (`\SetKw{KwTo}{to}`, the sty's own
-  -- default); the io and block keywords are line kinds, not inline text.
+  -- algorithm2e.sty's own `\SetKw{KwTo}{to}`.
   kws := kws.push ("KwTo", .word #[.word "to" pos])
   let mut stack : Array AlgTok := body.reverse.map AlgTok.raw
   let mut segs : Array AlgSeg := #[]
@@ -12085,7 +9860,6 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
         segs := algFlush segs depth curKind cur curComment
         cur := #[]; curKind := .statement; curComment := none
       | .raw (.par _) =>
-        -- a paragraph break between lines is whitespace, as in a table
         pure ()
       | .raw (.ctrl name p) =>
         if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
@@ -12348,8 +10122,6 @@ subset; its content is kept as plain lines" p
             s!"'\\{name}' is an algorithm construct outside the modeled \
 subset; its content is kept as plain lines" p
         else
-          -- an unknown command is line content: `elabInlines` judges it
-          -- (a document-defined keyword substitutes at elaboration below)
           cur := cur.push (Raw.ctrl name p)
       | .raw r =>
         cur := cur.push r
@@ -12366,10 +10138,8 @@ subset; its content is kept as plain lines" p
                           comment := comment }
   return (lines, numbered, semis)
 
-/-- The bare `{algorithmic}` arm (algorithmicx/algpseudocode): `[n]`
-numbers the lines, the body parses in the flat dialect, and the node
-stands alone — uncaptioned, unnumbered, exactly where written. Inside an
-`{algorithm}` float the wrapper's arm takes it instead. -/
+/-- A bare `{algorithmic}` environment: an uncaptioned algorithm in the flat
+dialect, `[n]` numbering its lines. -/
 private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut k := 0
@@ -12389,12 +10159,8 @@ is numbered" pos
     algorithmLines ctx true (body.extract k body.size) pos
   return blocks.push (.algorithm (numbered || n2) semis lines)
 
-/-- The `{algorithm}`/`{algorithm2e}` arm: a float of the algorithm kind.
-`[placement]` is noted and ignored (floats stand where written);
-`\caption` fills the float's caption — set above the lines, algorithm2e's
-own default position — and `numberFloats` assigns the number afterwards.
-A nested `{algorithmic}` body parses in the flat dialect; otherwise the
-body is algorithm2e's own grouped grammar. -/
+/-- An `{algorithm}` or `{algorithm2e}` float, its caption set above the lines
+and its placement ignored. -/
 private def algorithmArm (ctx : Ctx) (n : String) (body : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   let mut k := 0
@@ -12418,8 +10184,6 @@ nowhere for a float to float" pos
     if h : j < body.size then
       match body[j] with
       | .ctrl "label" lpos =>
-        -- The float's own anchor (`\caption{…}\label{alg:…}`): it rides
-        -- with the caption, never as a numbered line of pseudocode.
         let j2 := skipSpaces body (j + 1)
         match body[j2]? with
         | some (.group g _) =>
@@ -12469,8 +10233,6 @@ line is numbered" apos
         algorithmLines ctx true (abody.extract m abody.size) apos
       pure (lines, numbered || n2, semis)
     | none => algorithmLines ctx false rest pos
-  -- Anchors bind to the float's number wherever they can: inside the
-  -- caption when there is one, on the first line otherwise.
   let mut lines := lines
   if !anchors.isEmpty then
     if !caption.isEmpty then
@@ -12488,10 +10250,8 @@ line is numbered" apos
 
 seal scanBracketArg
 
-/-- A proposed linked row is native only while every wrapper retains its
-native meaning. This reads the elaborator's accepted, visible definitions,
-not Compat's provisional names: refused definitions, local scopes and
-stored replacement text therefore use the ordinary precedence owner. -/
+/-- Whether a proposed linked row's `\href` and `\hyperlink` keep their
+native meaning: no visible definition or parameter owns them. -/
 private def nativeLinkedRow (ctx : Ctx) (body : Array Raw) : Bool :=
   match (body[0]? : Option Raw) with
   | some (.group source _) =>
@@ -12502,8 +10262,6 @@ private def nativeLinkedRow (ctx : Ctx) (body : Array Raw) : Bool :=
       | _ => false
   | _ => false
 
-/-- A row conversion cannot consume a link name owned by an active macro
-or parameter. The lookup carries the ordinary source-order visibility. -/
 private theorem nativeLinkedRow_gated {ctx : Ctx} {body source : Array Raw} {pos : Pos}
     (hg : body[0]? = some (.group source pos)) (h : nativeLinkedRow ctx body = true)
     {name : String} {p : Pos} (hm : Raw.ctrl name p ∈ source)
@@ -12513,9 +10271,7 @@ private theorem nativeLinkedRow_gated {ctx : Ctx} {body source : Array Raw} {pos
   have hc := h (.ctrl name p) hm
   rcases hn with rfl | rfl <;> simpa using hc
 
-/-- Select one stored alternative. Both are proper children of the
-candidate, so selection decreases the block walk's weight for every raw
-body, independently of which command meanings are active. -/
+/-- Selects a linked row's native or source alternative. -/
 private def linkedRowChoice (body : Array Raw) (native : Bool) :
     { rs : Array Raw // rawWeightList rs.toList ≤ rawWeightList body.toList ∧
       nestedParsList rs.toList ≤ rawParsList body.toList } :=
@@ -12535,8 +10291,8 @@ private def linkedRowChoice (body : Array Raw) (native : Bool) :
         exact Nat.le_trans hn hp⟩
   | _ => ⟨#[], by simp [rawWeightList, nestedParsList]⟩
 
-/-- The conversion is named only once its premise has been established at
-the use site. A discarded argument is not a translated row. -/
+/-- Names a minipage row's conversion to a row of boxes and its ignored
+options. -/
 private def noteLinkedRow (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Unit := do
   warnOnce ctx "env:minipage-row" .N0100
     "'\\begin{minipage}…\\end{minipage}\\hfill\\begin{minipage}…' → \
@@ -12546,8 +10302,6 @@ one row of boxes, the fill between them" pos
       "'minipage' [height] and [inner-pos] options are ignored in a row of boxes: each \
 box is as tall as its content" pos
 
-/-- Splicing a selected child removes the candidate wrapper, strictly in
-weight and non-increasingly in nested paragraph boundaries. -/
 private theorem linkedRowChoice_splice {raws : Array Raw} {i : Nat}
     (h : i < raws.size) {body : Array Raw} {pos : Pos}
     (hr : raws[i] = .env Compat.linkedBoxRowMark body pos) (native : Bool) :
@@ -12568,28 +10322,22 @@ private theorem linkedRowChoice_splice {raws : Array Raw} {i : Nat}
     rw [hr]
     simpa only [nestedPars, ← nestedParsList_eq] using hb.2
 
-/-- A group's blocks with the epoch its end places after them: the block
-spine's one call per group (`texGroup`). -/
+/-- A group's blocks followed by the epoch its end restores. -/
 @[noinline] private def groupBlocks (base : Palette) (act : EM (Array Block)) :
     EM (Array Block) := do
   let (blocks, epoch) ← texGroup base act
   return blocks ++ epoch
 
-/-- A group the open paragraph runs into: its text before the `{` was
-written outside the group, so the declarations it made stand again after
-the group's end puts the state back. -/
+/-- A group inside an open paragraph, whose earlier declarations stand again
+after the group ends. -/
 @[noinline] private def restoringGroup (ctx : Ctx) (cur : Array Raw) (act : EM (Array Block)) :
     EM (Array Block) := do
   let blocks ← groupBlocks ctx.palette act
   let pal := (← get).scope.palette.current.getD ctx.palette
   return (← carryDeclsGo ctx cur 0 cur.toList (blocks, pal)).1
 
-/-- An environment is a group (ltmiscen.dtx: `\begin` opens one), save an
-`\input` file's wrapper, which names the file its raws came from and scopes
-nothing (`\input` opens no group). A list or quote opened inside an open
-paragraph (no blank line before it) rides in the in-paragraph role:
-`\@trivlist` finds horizontal mode there and adds no `\partopsep`. The
-marks read the environment's own blocks; the epoch stands after them. -/
+/-- An environment's blocks, grouped unless it wraps an `\input` file, with
+their in-paragraph and display marks. -/
 @[noinline] private def envGroup (n : String) (base : Palette) (inPar parEnd afterEnv : Bool)
     (k : Nat) (act : EM (Array Block)) : EM (Array Block) := do
   let (blocks, epoch) ←
@@ -12599,11 +10347,8 @@ marks read the environment's own blocks; the epoch stands after them. -/
 seal nativeLinkedRow linkedRowChoice noteLinkedRow
 seal texGroup groupBlocks restoringGroup envGroup
 
-/-- Does the control sequence `n`, met at `raws[i]` with the current paragraph
-accumulator `cur`, open a block rather than continue the paragraph? Lifted
-whole out of the `elabBlocksGo` block knot — whose own `match` sits at the
-LCNF compiler's heartbeat budget — so this decision compiles as one unit
-outside it (`isDeclBlock` is sealed here, so the call stays opaque). -/
+/-- Whether control `n` at `raws[i]` opens a block rather than continuing the
+paragraph `cur`. -/
 private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Bool :=
   let sourceName := n
@@ -12617,13 +10362,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
     || (n == "note" && cur.isEmpty)
-    -- A declaration met between blocks scopes the rest of the group,
-    -- as `\centering` does (the arm below); mid-paragraph it keeps
-    -- the inline reading.
     || isDeclBlock ctx' n raws i cur
-    -- `\color{n}`'s block form: a flow ink declaration (the arm
-    -- below). Mid-paragraph the marker keeps the inline reading —
-    -- splitting the paragraph there would move text.
+    -- Mid-paragraph these markers stay inline: splitting there would move text.
     || (cur.isEmpty && n.startsWith "@ink:")
     || (cur.isEmpty && n.startsWith Compat.pageColorMarkPrefix)
     || (cur.isEmpty && n == Compat.pageColorResetMark)
@@ -12643,45 +10383,15 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
               titleCtrls.contains n || n == "maketitle"
                 || n == "titlepage" || n == "logo")))
 
--- The block knot: the spine (`elabBlocksGo`), its two dispatch arms, the
--- loop members that recurse into accumulated content, and the redefinition
--- gate — mutually recursive, terminating by one six-component measure:
---
---   (envLimit, noteFlag, visPars + slicePars, visWeight + sliceWeight,
---    layer, scan)
---
--- A user-environment expansion falls in `envLimit`; a frame's note drain
--- falls in `noteFlag` (its bodies come from the state, so no weight fact
--- covers them); the par-splice falls in the pars sum; every other edge
--- falls in the weight sum — a define moves its body's weight from the
--- slice into the visible sum and pays the group wrapper (`takeDefine`'s
--- facts), an expansion moves it back out (`visWeight_expand`). `layer`
--- orders spine (2) over dispatch arms (1) over loop members (0) where the
--- sums tie, and `scan` is a loop member's own index.
+-- The block knot's measure: (envLimit, noteFlag, pars, weight, layer, scan).
 
-/-- `\begin{frame}[options]`, read. `fragile` and `fragile=true` are
-consumed silently over `fragileNoopChecks`: Beamer uses those spellings to
-select its external reader, while this lexer captures the supported raw forms
-before the parser collects environments. `fragile=false` is not in that class:
-Beamer's environment path differs, so it remains a registered unsupported
-option. Other unmodelled options are ignored with a note (plain and friends say
-how beamer should cope, not what to say), except `standout`, which says what the
-frame IS, `allowframebreaks`, which declares that content taller than one page
-continues (beamer user guide §8.1; the layout's spill account reads it), and
-`t`/`c`/`b`, which say how the frame distributes its leftover vertical space
-(`c` is beamer's default, the class options' `t` the deck's other,
-`Ctx.frameAlign`). A standout frame is centred whatever its options say:
-moloch's `standout` key opens with `\setkeys{beamerframe}{c}`
-(beamerinnerthememoloch.sty:465), so an alignment before it is overridden,
-and the nested `\setkeys` leaves an alignment after it undefined, an error
-lualatex steps over; a note names the alignment either way. Outside the
-elaboration knot on purpose: its loop state is what pushed the knot's compile
-over the heartbeat wall. -/
+/-- The `\begin{frame}` options the frame model reads; a standout frame is
+centred whatever its options say. -/
 private structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
-  /-- beamer's `[squeeze]` (beamerbaseframesize.sty:21-22): the frame's
-  lists set with `\itemsep0pt`, a trivlist inside an item `\topsep0.5pt`. -/
+  /-- beamer's `[squeeze]` (beamerbaseframesize.sty): the frame's lists set
+  tight. -/
   squeeze : Bool := false
   valign : VAlign := .center
   /-- The alignment options the frame names, in order. -/
@@ -12689,7 +10399,7 @@ private structure FrameOpts where
   /-- The index past the last bracket group read. -/
   next : Nat := 0
 
-/-- The deck's frame alignment its class options declare (`Ctx.frameAlign`). -/
+/-- The frame alignment a deck's class options declare. -/
 private def classFrameAlign (opts : List String) : VAlign :=
   opts.foldl (fun v o =>
     if o == "t" || o == "slidestop" then .top
@@ -12705,8 +10415,7 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
       let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
       for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
         match opt with
-        -- premise: fragileNoopChecks — over Beamer-accepted external-reader
-        -- inputs, diagnostics and both artifacts agree for exactly these spellings.
+        -- premise: fragileNoopChecks — these spellings change no artifact
         | "fragile" | "fragile=true" => pure ()
         | "standout" => o := { o with standout := true }
         | "allowframebreaks" => o := { o with breakable := true }
@@ -12715,8 +10424,6 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | "c" => o := { o with valign := .center, aligns := o.aligns.push opt }
         | "b" => o := { o with valign := .bottom, aligns := o.aligns.push opt }
         | other =>
-          -- plain and friends say how beamer should cope, not what to
-          -- say: registered, never silent.
           unless other.isEmpty do
             warnOnce ctx ("frame:opt:" ++ other) .N0102
               s!"frame option '{other}' is not modelled; ignored" pos
@@ -12733,11 +10440,8 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
     return { o with valign := .center }
   return o
 
-/-- A box's optional arguments from the start of `body`: `[pos]`
-(`boxPosOf`), then `[height]` and `[inner-pos]`, which size and fill a box
-the engine sets at its content's height, named once per box kind. The
-position and the index past the brackets. Outside the knot, as `tikzArm`
-is, so the environment arms stay inside the elaboration budget. -/
+/-- A box's `[pos][height][inner-pos]` arguments: its position and the index
+past them, the last two named and ignored. -/
 private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String) :
     EM (Ir.BoxPos × Nat) := do
   let mut k := 0
@@ -12757,10 +10461,8 @@ private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String
     | .content => break
   return (boxPos, k)
 
-/-- beamer's `\begin{columns}[...]`: `t`/`c`/`b`/`T` is the point each column
-stands on the row's baseline by unless a `{column}` declares its own
-(`Ir.BoxPos`, carried to the columns by `Compat.columnsRowPos`); any other
-option is named. The index past the brackets. Outside the knot. -/
+/-- The index past `\begin{columns}`'s options, naming each that is not a
+position. -/
 private def columnsOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Nat := do
   let mut k := 0
   for _ in [0:body.size] do
@@ -12778,24 +10480,14 @@ private def columnsOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Nat :
     | .content => break
   return k
 
-/-- beamer's `\begin{column}[pos]{width}`: the point it stands on the row's
-baseline by, and where its width group may stand. A row's own `[pos]`
-reaches a column that declares none through the raws
-(`Compat.columnsRowPos`), so this reads the column alone. -/
+/-- A `\begin{column}[pos]`'s position and the index of its width group. -/
 private def columnPosOf (cbody : Array Raw) (cpos : Pos) : Ir.BoxPos × Nat :=
   match scanBracketArg cbody 0 cpos with
   | .took k' => ((boxPosOf (bracketSrc cbody 0 k')).getD .top, skipSpaces cbody k')
   | _ => (.top, skipSpaces cbody 0)
 
-/-- The flow-state declarations a block list reads between blocks: each
-changes the state from here forward and places nothing (the `\appendix`
-scope model). The language switch, block form; appendixnumberbeamer's
-restart (`Compat.frameRestartMark`), which records the index the next block
-takes, where the frame count starts over as its `\appendix` sets
-`framenumber` to 0; and `\appendix` itself, not a heading but a declaration
-affecting every heading after it — the counter restarts and level-1 numbers
-letter. Outside the elaboration knot on purpose, as `FrameOpts` is: the knot
-asks once and recurses once, and its compile budget is spent. -/
+/-- The flow-state update a declaration between blocks makes: a language
+switch, a frame-count restart, or `\appendix`. -/
 private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ESt) :=
   if n.startsWith "@lang:" then some (flowLangUpdate ctx n)
   else if n == Compat.frameRestartMark then
@@ -12804,22 +10496,14 @@ private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ES
     some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
   else none
 
-/-- What a `\block`'s `before` reads: the document's tokens, then the
-engine's own over the finished page (`engineLengthTokensOfPage`) — the
-lookup a body `\setlength` reads — so `\vspace{\baselineskip}`,
-`\vspace{-\parskip}` and `\vspace{0.1\textheight}` read the registers
-LaTeX reads there. Outside the elaboration knot, as `pageMark?` is. -/
+/-- The tokens a `\block`'s `before` reads: the document's, then the engine's
+page lengths and skip amounts. -/
 private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
   ctx.tokens.entries ++ ctx.engineTokens ++
     #["smallskipamount", "medskipamount", "bigskipamount"].map fun n => (n, Ir.skipAmount ctx.tokens n)
 
-/-- A `\block`'s option, read: its `before` skip, stretching as `\fill`
-beside its width where `stretch = fill` says so, and whether the skip is
-TeX's primitive `\vskip` (`kind = vskip`, the spelling Compat's `\vskip`
-door writes) — its glue stays the last skip an element's `\addvspace`
-compares with (`Ir.primitiveSkipRole`) — rather than `\vspace`'s
-(`kind = vspace`, the default). Outside the elaboration knot, whose arm
-keeps only the bracket scan. -/
+/-- A `\block`'s option: its `before` skip, whether it stretches as `\fill`,
+and whether it is a primitive `\vskip`. -/
 private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymGlue × Bool) := do
   let (opts, ds) := Decl.parseBlock ctx.file (rawSrc optSrc) pos "block" (blockSkipTokens ctx)
   modify fun st => { st with diags := st.diags ++ ds }
@@ -12832,14 +10516,11 @@ private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymG
     | "before", .dim d => before := { width := Dim.Length.ofSp d }
     | "kind", .ident "vskip" => primitive := true
     | "kind", .ident "vspace" => primitive := false
-    -- `fill` reads as `\fill`'s glue: the skip stretches as it, beside its width.
     | "stretch", .glue g =>
       if g == { fil := true } then fill := true
       else
         let d := Decl.wrongType ctx.file "block" "stretch" "fill or unranked" (.glue g) pos
         modify fun st => { st with diags := st.diags.push d }
-    -- The skip door's mark of an infinite stretch the engine's one order
-    -- cannot rank (Compat's `skipNative`): named here, where the skip is set.
     | "stretch", .ident "unranked" =>
       warnOnce ctx "skip:stretch:unranked" .W0104
         "a skip's infinite stretch has an order or factor other than \\fill's; \
@@ -12853,10 +10534,8 @@ fills here have one order, so the skip sets at its natural width" pos
       modify fun st => { st with diags := st.diags.push d }
   return ({ before with fil := before.fil || fill }, primitive)
 
-/-- A skip block, and after it, where it is TeX's primitive `\vskip` standing
-alone — a block holding content is the content's own space, no skip on the
-list — the page-model mark that keeps its glue the last skip
-(`Ir.primitiveSkipRole`). -/
+/-- Pushes a skip block, marked as the last skip when it is an empty
+primitive `\vskip`. -/
 private def pushSkipBlock (blocks : Array Block) (b : Block) (primitive : Bool) : Array Block :=
   let empty := match b with
     | .spaced _ inner => inner.isEmpty
@@ -12865,11 +10544,7 @@ private def pushSkipBlock (blocks : Array Block) (b : Block) (primitive : Bool) 
 
 seal blockSkipTokens blockOptions pushSkipBlock
 
-/-- The page-model marks a control word stands for between blocks: the
-declared boundary `\pagebreak` names, `\vspace*`'s anchor
-(`Compat.vspaceAnchorMark`, which no document spells) and
-`\nointerlineskip`. Outside the elaboration knot, as `flowDecl?` is: one
-arm inside reads the three. -/
+/-- The page-model mark a control word stands for between blocks. -/
 private def pageMark? (n : String) : Option Block :=
   if n == "pagebreak" then some .pagebreak
   else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
@@ -12877,17 +10552,14 @@ private def pageMark? (n : String) : Option Block :=
   else if (Ir.pageOpeningOfRole? n).isSome then some (.role n #[])
   else none
 
-/-- Compat's closing metadata belongs to the enclosing scope, including
-when a paracol body is split into two flows. It is not body content. -/
+/-- The length keys Compat's closing mark restores at a scope's end. -/
 private def lengthScopeKeys? (raws : Array Raw) : Option (Array String) :=
   match raws[raws.size - 1]? with
   | some (.ctrl n _) => Compat.lengthRestoreKeys? n
   | _ => none
 
-/-- Capture the already-resolved opening values through the same token
-environment `applyTokens` reads. A saved expression would instead read a
-dependent register's closing value; Compat alone cannot see native tokens.
-Removing the metadata only shrinks the block walk's measures. -/
+/-- Saves the resolved opening values of a scope's restored lengths and strips
+the closing mark. -/
 private def openLengthScope (ctx : Ctx) (raws : Array Raw) :
     Array (String × SymGlue) × { body : Array Raw //
       rawWeightList body.toList ≤ rawWeightList raws.toList ∧
@@ -12902,8 +10574,7 @@ private def openLengthScope (ctx : Ctx) (raws : Array Raw) :
   else
     (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩)
 
-/-- Restore only locally assigned lengths, retaining unrelated flow
-declarations. One resolved token epoch reaches both backends. -/
+/-- Restores a scope's saved lengths as one token epoch. -/
 private def closeLengthScope (ctx : Ctx) (saved : Array (String × SymGlue))
     (blocks : Array Block) : EM (Array Block) := do
   if saved.isEmpty then return blocks
@@ -12913,16 +10584,14 @@ private def closeLengthScope (ctx : Ctx) (saved : Array (String × SymGlue))
   modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
   return blocks.push (.setTokens tk)
 
-/-- The theme's standout option opens a group before its appended aliases.
-Use the same colour parser and dependent Beamer resolver as declarations,
-retaining their source expressions for resolution after the group closes. -/
+/-- Opens a standout frame's palette scope with the theme's standout
+aliases. -/
 private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Block) :
     EM (MCtx ctx × Array Block × Bool) := do
   let aliases := (← get).scope.palette.standoutAliases
   if !standout then
     return (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, false)
-  -- A standout frame's content stands on the inversion its frame paints,
-  -- which only a generated palette re-tones a run against.
+  -- Only a generated palette re-tones a run against the standout ground.
   let ground (pal : Palette) : Option Color :=
     if pal.seeded.isSome then
       some ((Design.at pal .print .standoutGround).getD (Design.printInk pal))
@@ -12950,9 +10619,6 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
     (title : Array Inline) (opts : FrameOpts) (inner : Array Block)
     (aliasScope : Bool) : EM (Array Block) := do
   recordFrameSource ctx pos blocks.size
-  -- A declared `[squeeze]` rides as its marker opening the body of the frame
-  -- as it stands once flattened (`Ir.squeezeRole`), the one reading both
-  -- backends make.
   let frame := flattenFrame title opts.standout opts.valign opts.breakable inner
   let blocks := blocks.push (if opts.squeeze then frame.markFrame Ir.squeezeRole else frame)
   if !aliasScope then return blocks
@@ -12964,8 +10630,8 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
                              flowGen := st.flowGen + 1 }
   return blocks.push (.setPalette pal)
 
-/-- Enter a fresh accumulator, consuming its scheduled splice offset.
-Length snapshots and the flow epoch are captured before its first token. -/
+/-- Opens a block scope: its frame-source base, flow epoch and saved
+lengths. -/
 private def openBlockScope (ctx : Ctx) (raws : Array Raw) :
     EM ((Option Nat × Nat) × Array (String × SymGlue) × { body : Array Raw //
       rawWeightList body.toList ≤ rawWeightList raws.toList ∧
@@ -12987,18 +10653,8 @@ seal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlock
 
 mutual
 
-/-- Rule (b), judged once at the definition — the gate both registration
-doors (the preamble fold and the body walk) run on a parsed definition
-before pushing it into `ctx.user`. A redefinition of a rendered built-in
-wins only if its body elaborates: the body is expanded here under the
-definition's own visibility — `ctx.limit` is exactly the prefix a call
-site will see — with each parameter bound to a probe word, so a body that
-only echoes its argument is non-empty. A block-shaped body is judged by
-the block walk, the same walk its use would take. The expansion's
-diagnostics are inspected and discarded: the verdict is recorded at the
-definition, never doubled at a use. A loss in {dropped, pending, degraded}
-means the body renders less than the built-in it shadows; config and info
-losses are harmless and do not refuse. -/
+/-- Whether a redefinition of a rendered built-in wins: its body, expanded
+with probe arguments, must elaborate non-empty and without loss. -/
 private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
   if !renderedBuiltins.contains cmd.name then return true
   let saved ← get
@@ -13029,8 +10685,6 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
     refuseRedef cmd (.refused d)
     if cmd.name == "maketitle" then
       modify fun st => { st with refusedTitleBody := some cmd.body }
-    -- A refused size command may still declare its step (`\@setfontsize`):
-    -- stashed for the preamble's-end read-out, the title-body shape.
     if sizeCtrlNames.contains cmd.name && cmd.name != "normalsize" then
       modify fun st => { st with refusedSizeBodies :=
         st.refusedSizeBodies.push (cmd.name, cmd.body, cmd.span) }
@@ -13047,11 +10701,7 @@ termination_by (ctx.envLimit, noteFlag ctx,
   visWeightGo ctx.user ctx.limit + rawWeightList cmd.body.toList + 1, 0, 0)
 decreasing_by all_goals blocks_dec
 
-/-- A frame's stashed notes, drained to its end: the side channel stays
-with its frame. The bodies came from the state, not from any slice, so
-this edge falls in the measure's note component alone: the drain runs at
-`1`, between the walk that called it (`2`) and the note-body walks it
-opens (`0`). -/
+/-- Drains a frame's stashed notes into its blocks. -/
 private def drainNotesGo (ctx : Ctx) (stash : List (Array Raw × Pos))
     (inner : Array Block) : EM (Array Block) := do
   match stash with
@@ -13065,9 +10715,7 @@ private def drainNotesGo (ctx : Ctx) (stash : List (Array Raw × Pos))
 termination_by (ctx.envLimit, 1, 0, 0, 0, stash.length)
 decreasing_by all_goals blocks_dec
 
-/-- One list item after another, each elaborated under its accumulated
-`\pause` base and wrapped in its overlay step — the item elaboration half
-of the split `itemSplitGo` carried the conservation facts for. -/
+/-- Elaborates each list item under its accumulated `\pause` base. -/
 private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
     (steps : Array (Option Ir.OverlaySpec)) (itemPauses : Array Nat)
     (m : Nat) (acc : Array (Array Block)) (bound pbound : Nat)
@@ -13093,12 +10741,8 @@ termination_by (ctx.envLimit, noteFlag ctx,
   visWeightGo ctx.user ctx.limit + bound, 0, items.size + 1 - m)
 decreasing_by all_goals blocks_dec
 
-/-- A float body, one element at a time: `\caption` into the caption slot
-(last one wins, W0311), `\centering` satisfied, an `\hfill` between
-subfigures absorbed as the gutter, a `{subfigure}`/`{subtable}` child a
-`.sub` float in a column of its declared width — and everything else
-accumulated to elaborate in place. The invariant carries what the
-accumulated run weighs; the base case flushes it and ships the float. -/
+/-- Walks a float body: captions, subfigure columns and their gutters, and
+the rest elaborated in place. -/
 private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
     (body : Array Raw) (pos : Pos) (j : Nat) (innerBlocks : Array Block)
     (cols : Array (BoxWidth × Array Block)) (rest : Array Raw)
@@ -13141,8 +10785,7 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
         (by have := sliceWeight_le body (show j ≤ j + 1 by omega); omega)
         (by have := slicePars_le body (show j ≤ j + 1 by omega); omega)
     | .ctrl "hfill" _ =>
-      -- Between two subfigures the fill is the gutter, which the columns
-      -- layout distributes by itself; anywhere else it is ordinary content.
+      -- Between subfigures the fill is the gutter the columns layout sets.
       if !cols.isEmpty && rest.all isSpaceOrPar then
         figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
           capAbove blocks
@@ -13180,10 +10823,6 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
             let rb ← elabBlockScope ctx rest
             pure (innerBlocks ++ rb, (#[] : Array (BoxWidth × Array Block)))
           else pure (innerBlocks, cols)
-        -- The minipage shape: `[pos]` is the point the box stands on its
-        -- row's baseline by (`Ir.BoxPos`); `[height]` and `[inner-pos]` are
-        -- noted, since the box takes its content's height. The `{width}`
-        -- group is a fraction of the measure, exactly as a column's.
         let (subPos, m0) ← boxOptsArm ctx sbody spos sn
         let mut m := m0
         m := skipSpaces sbody m
@@ -13266,9 +10905,8 @@ termination_by (ctx.envLimit, noteFlag ctx,
   body.size + 1 - j)
 decreasing_by all_goals blocks_dec
 
-/-- The `{columns}` body: each `{column}` child a column of its declared
-width, consecutive ones one `.columns` row, content standing outside any
-column kept in place as ordinary blocks — never dropped. -/
+/-- Walks a `{columns}` body: consecutive `{column}` children form one row,
+and other content stays in place. -/
 private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
     (cols : Array (BoxWidth × Array Block)) (strayRaws : Array Raw)
     (blocks : Array Block)
@@ -13299,8 +10937,6 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
           let sb ← splicedFrameScope (some blocks.size) (elabBlockScope ctx strayRaws)
           pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ sb)
         else pure (cols, blocks)
-      -- beamer's `\begin{column}[pos]{width}`: its own point on the row's
-      -- baseline, else the row's.
       let (colPos, m) := columnPosOf cbody cpos
       let mut width : Ir.BoxWidth := .share
       let mut m2 := m
@@ -13361,11 +10997,7 @@ termination_by (ctx.envLimit, noteFlag ctx,
   body.size + 1 - j)
 decreasing_by all_goals blocks_dec
 
-/-- One environment at block level: the whole `.env` dispatch, from display
-math through tables, frames, lists, floats and columns to defined wrappers
-and the unknown-wrapper splice. The caller consumed the environment
-itself; every recursion here descends into its body, so the weight sum
-falls by at least the wrapper. -/
+/-- Elaborates one environment at block level. -/
 private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   let (savedLengths, ⟨body, hsw, hsp, hsn⟩) := openLengthScope ctx scope
@@ -13376,8 +11008,6 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   if n == Parse.scopeEnv then
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if let some f := Parse.inputEnvFile? n then
-    -- An \input file's blocks, elaborated under its own name so a
-    -- diagnostic points at the file that holds the construct.
     let ⟨fileCtx, hm⟩ : MCtx ctx ←
       pure ⟨{ ctx with file := f, callSite := none }, rfl, rfl, rfl, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope fileCtx body))
@@ -13390,10 +11020,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
   else if n == "frame" then
-    -- \begin{frame}[options]{title}: the options are `frameOpts`'; the
-    -- title group counts only when it follows directly — a paragraph
-    -- break before a group makes it content, which is where LaTeX's
-    -- own argument scanning stops looking too.
+    -- A paragraph break before the title group makes it content, as in LaTeX.
     let opts ← frameOpts ctx body pos
     let (⟨frameCtx, hm⟩, frameBlocks, aliasScope) ← openStandoutPalette ctx opts.standout blocks
     blocks := frameBlocks
@@ -13402,7 +11029,6 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     if let some (.group t _) := body[k]? then
       title ← elabInlines (barCtx frameCtx .frameTitleBar) t
       k := k + 1
-    -- \frametitle{...} anywhere in the frame names it too.
     let (title2, ⟨rest, hrf⟩) ← frameRestGo (barCtx frameCtx .frameTitleBar) body k title #[] #[]
       (sliceWeight body k) (slicePars body k)
       (by simp [rawWeightList]) (by simp [nestedParsList])
@@ -13415,12 +11041,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       have := slicePars_le body (Nat.zero_le k); omega
     have hr0 : sliceWeight rest 0 = rawWeightList rest.toList := sliceWeight_zero _
     have hr1 : slicePars rest 0 = nestedParsList rest.toList := slicePars_zero _
-    -- Notes met inside the frame's inline content drain to the
-    -- frame's end: the side channel stays with its frame. Inside a
-    -- note's own body there is no side channel to drain into — a
-    -- note is not slide content, so its frame cannot carry one —
-    -- and the stashed notes are refused, named at the note that
-    -- encloses them (E0359; the noteFlag decision, PLAN).
+    -- A note's own frame has no side channel, so its stashed notes are refused.
     modify fun st => { st with pendingNotes := #[] }
     let mut inner ← elabBlockScope frameCtx rest
     let stash := (← get).pendingNotes
@@ -13435,23 +11056,9 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       have hnf : noteFlag ctx = 2 := by simp [noteFlag, hnb]
       have hnf' : noteFlag frameCtx = 2 := hm.2.1.trans hnf
       inner ← drainNotesGo frameCtx stash.toList inner
-    -- **A page model nests no page.** `\titlepage` inside an author's own
-    -- `\begin{frame}` is beamer's documented idiom and what every real deck
-    -- writes, and the title arm opens a frame of its own for the golden
-    -- split — so the body walk produced `frame > frame`. The PDF flattened
-    -- that (one page, correctly placed); the HTML backend gives each frame a
-    -- `section.slide` with its own vertical fills, so the title matter was
-    -- pushed a full slide-height down and off the viewport. The divergence
-    -- was in neither backend: an `Ir.Block.frame` must not contain one, and
-    -- the only producer of a titleless inner frame is the title arm, whose
-    -- `.golden` distribution is the one to keep — as in beamer, where the
-    -- title-page template's glue sits inside the frame the author opened.
+    -- A frame nests no frame: an inner title frame flattens into this one.
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
   else if n == "itemize" || n == "enumerate" || n == "description" then
-    -- enumitem's per-instance `[keys]` are consumed and named: the
-    -- engine styles lists per element, not per instance, and the
-    -- old path let the bracket land as content before the first
-    -- \item — a false E0310 error from a documented interface.
     let mut bodyFrom := 0
     match scanBracketArg body 0 pos with
     | .took k' =>
@@ -13467,9 +11074,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
           ∧ nestedParsList a.toList ≤ nestedParsList body.toList } ←
       pure ⟨body.extract bodyFrom body.size, extract_weight_le ..,
         extract_nested_le ..⟩
-    -- `\pause` between items steps the rest of the LIST, not just
-    -- the rest of an item's own blocks: each item records how many
-    -- pauses stand before it and reveals one step after the last.
+    -- `\pause` between items steps the rest of the list, not only the item.
     let ⟨(items, steps, itemPauses, scope), hsplit⟩ ← itemSplitGo ctx lbody pos
       (n == "description") {} 0
       #[] #[] #[] 0 #[] none 0 false false false false
@@ -13481,8 +11086,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       sliceWeight_zero _
     have hl1 : slicePars lbody 0 = nestedParsList lbody.toList :=
       slicePars_zero _
-    -- Literal punctuation is a lexical effect of the same font scope;
-    -- it must reach the item reader before its text is elaborated.
+    -- Literal punctuation must reach the item reader before its text elaborates.
     let literal := ctx.literalText || Ir.Decl.anyStyle (· == .mono) scope.decls
     let ⟨itemCtx, hm⟩ : MCtx ctx ← pure ⟨{ ctx with literalText := literal },
       rfl, rfl, rfl, rfl⟩
@@ -13496,20 +11100,11 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       #[.list (n == "enumerate") (coverItems ctx steps itemPauses elabItems)]
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlockScope ctx body
-    -- The environment is a trivlist and opens `\topsep` around its scope;
-    -- the `\centering`/`\raggedright` declarations open the same scope and
-    -- no space, so the environment's rides in the engine's trivlist role.
+    -- The environment is a trivlist and opens `\topsep`; the declaration does not.
     blocks := blocks.push (.role Ir.trivlistRole #[match Ir.raggedSideOf? n with
       | some side => .ragged side inner
       | none => .center inner])
   else if n == "minipage" then
-    -- A minipage is one column of declared width: the column model
-    -- reused whole, never a parallel box model. LaTeX's signature
-    -- is [pos][height][inner-pos]{width} (classes.dtx §minipage):
-    -- `[pos]` is the point the box stands on its row's baseline by
-    -- (`Ir.BoxPos`), carried; `[height]` and `[inner-pos]` size and fill
-    -- a box the engine sets at its content's height, so they are noted.
-    -- An absolute width is the same loss a column has (W0314).
     let (boxPos, k) ← boxOptsArm ctx body pos "minipage"
     let m := skipSpaces body k
     let mut width : Ir.BoxWidth := .share
@@ -13537,12 +11132,6 @@ the text width; the box takes the whole measure" pos
     blocks := blocks.push
       (.columns #[({ width with pos := boxPos }, ← elabBlockScope ctx (body.extract m2 body.size))])
   else if let some kind := titledKind? n then
-    -- beamer's titled blocks (user guide §12.3): the {title} group on
-    -- the `\begin` line is the title — beamer's own mandatory argument,
-    -- so an empty group is the documented untitled block, whose title box
-    -- beamer still sets, empty, and a missing group is named (E0304). A
-    -- paragraph break before a group makes it content, as the frame's
-    -- title rule reads it. A lowered tcolorbox arrives the same way.
     let (head, k) := selectorHead body 0
     let spec ← selectorSpec ctx head pos
     let mut title : Array Inline := #[]
@@ -13570,10 +11159,6 @@ the text width; the box takes the whole measure" pos
     let inner ← elabBlockScope bodyCtx (body.extract m body.size)
     blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
   else if scopedEnv (← get).ctr.thm n then
-    -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
-    -- counter, the label target and the body font are the scope's own,
-    -- opened and closed outside the knot; the body recurses here. A
-    -- markdown disclosure shares the arm: its summary is read outside.
     let (o, k) ← scopeOpen ctx n body pos
     have hxw : rawWeightList (body.extract k body.size).toList
         ≤ rawWeightList body.toList := extract_weight_le ..
@@ -13587,35 +11172,15 @@ the text width; the box takes the whole measure" pos
     blocks := blocks ++ (← scopeClose ctx n o inner pos)
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
       || n == "appendices" then
-    -- Three same-shaped block-sequence wrappers, one branch and one
-    -- recursion site (the knot compiles as one LCNF unit; a branch per
-    -- wrapper is what its budget cannot afford): the node each ships is
-    -- `wrapScopedEnv`'s, and `{appendices}`'s meaning is the numbering
-    -- scope — appendix.sty's `\appendix` scoped to the body, counters
-    -- restored at `\end` (see `enterAppendicesIf`).
     let saved ← enterAppendicesIf (n == "appendices")
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
       (elabBlockScope ctx body)
     leaveAppendices saved
     blocks := wrapScopedEnv n blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
-    -- A single-pass engine has nowhere for a float to float: the
-    -- float stands where written as a `.float`, `[placement]`
-    -- ignored with a note saying so. Its caption keeps its source
-    -- side — before the content it stands above, the table
-    -- convention — and becomes the alt text of the images it
-    -- captions; `numberFloats` assigns the number afterwards.
-    -- A `{subfigure}`/`{subtable}` child (subcaption §2: a
-    -- minipage-shaped box with its own caption, lettered under the
-    -- parent's number) is a `.sub` float in a column of its
-    -- declared width; consecutive ones share one `.columns` row so
-    -- they stand side by side, and an `\hfill` between them is the
-    -- gutter the columns layout already distributes.
     let kind : Ir.FloatKind :=
       if n == "table" || n == "table*" then .table else .figure
-    -- A float's alignment grouping is transparent (`spliceCenterGo`): a
-    -- `center` child is spliced before the walk, so its `\caption` and
-    -- `\label` are the float's own.
+    -- A `center` child is spliced first, so its `\caption` and `\label` are the float's.
     let ⟨fbody, hfw, hfp⟩ ← pure (spliceCenterGo body.toList #[]
       (rawWeightList body.toList) (nestedParsList body.toList)
       (by simp [rawWeightList]) (by simp [nestedParsList]))
@@ -13646,12 +11211,6 @@ has nowhere for a float to float" pos
   else if n == "algorithmic" then
     blocks ← algorithmicArm ctx body pos blocks
   else if n == "columns" then
-    -- beamer's `[t]`/`[c]`/`[b]`/`[T]` is the point each column stands on
-    -- the row's baseline by, unless a `{column}` declares its own
-    -- (`Ir.BoxPos`); an undeclared row stands its columns top-aligned
-    -- where beamer centres them. A column's width is its first group, a
-    -- fraction of the text width; content standing outside any column
-    -- keeps its place as ordinary blocks — never dropped.
     let k ← columnsOptsArm ctx body pos
     have hkw : sliceWeight body k ≤ rawWeightList body.toList := by
       have := sliceWeight_le body (Nat.zero_le k); omega
@@ -13660,21 +11219,9 @@ has nowhere for a float to float" pos
     blocks ← columnsGo ctx body k #[] #[] blocks
       (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
   else if n == "ifbackend" then
-    -- `{ifbackend}{html,md}`: block content addressed to a subset
-    -- of the backends. An unknown name is dropped from the set with
-    -- W0323; a set that keeps no backend along its nesting path is
-    -- E0334 — content nothing will emit. The body still elaborates
-    -- and the node still carries it (the IR reflects the document);
-    -- `Ir.keepFor` at each backend's entry is the one drop site,
-    -- and `Ir.keepFor_covers` is why the diagnostic is sufficient.
     let j ← pure (skipSpaces body 0)
     match body[j]? with
     | some (.group g gpos) =>
-      -- A backend conditional writes a per-medium decision by hand
-      -- in content — the decision a construct or the class should
-      -- carry (a nav becomes the print outline by itself, a note
-      -- leaves the handout). Named where it stands, as a note: the
-      -- escape hatch remains for the genuine remainder.
       diag ctx .N0019
         "content addressed per backend encodes a per-medium decision by hand" pos
         (help := "a construct carries its own medium answer (a nav, a note); \
@@ -13717,15 +11264,6 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
         (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
       blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if n == "nav" then
-    -- `{nav}`: the navigation landmark — a group of links, content
-    -- rather than a widget; the links inside are ordinary `\href`s.
-    -- The optional argument declares the instance's own facts:
-    -- `label` (its accessible name; ARIA Landmark Regions asks a
-    -- repeated landmark for a unique label), `pin` (a viewport
-    -- corner: two words, `bottom right`), `offset` (a length off
-    -- both pinned edges), and `reveal` (`scroll`, or the scroll
-    -- length after which the nav is fully revealed). `offset` and
-    -- `reveal` ride the pin: without one they are named as ignored.
     match scanBracketArg body 0 pos with
     | .took k =>
       let j0 := skipSpaces body 0
@@ -13744,10 +11282,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
       blocks := blocks.push (.nav {}
         (← elabBlockScope ctx body))
   else if hle : (lookupUserEnv ctx n).isSome then
-    -- A defined wrapper at block level: the halves and the content
-    -- each contribute their blocks, in order. An inline half becomes
-    -- its own paragraph beside block content — the splice that would
-    -- merge them re-elaborates raws under two argument scopes.
+    -- Halves and content elaborate apart: merging them mixes two argument scopes.
     let ke := (lookupUserEnv ctx n).get hle
     have hle2 : lookupUserEnv ctx n = some ke := (Option.some_get hle).symm
     have hk : ke.1 < ctx.envLimit := lookupUserEnv_lt hle2
@@ -13774,8 +11309,6 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     warnOnce ctx ("env:" ++ n) .W0307
       s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
   else
-    -- An unknown wrapper's decoration is unknowable; its body is
-    -- not. The arguments on the `\begin` line go with the wrapper.
     warnOnce ctx ("env:" ++ n) .W0302 s!"unknown environment '\{{n}}'; its body is kept" pos
       (help := "\\defineenv{name}(...) {begin} {end} declares one")
     let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
@@ -13796,11 +11329,9 @@ termination_by (ctx.envLimit, noteFlag ctx,
   visWeightGo ctx.user ctx.limit + 1 + rawWeightList scope.toList, 1, 0)
 decreasing_by all_goals blocks_dec
 
-/-- One general control word at block level, standing at `i`: native
-declarations misplaced in the body, user-command expansion, block-level
-overlays, title declarations, `\logo`, `\maketitle`, and the section
-headings. Returns the walk's next index with its progress fact — every
-path consumes at least the control word itself. -/
+/-- One general control word at block level: misplaced declarations, user
+commands, block overlays, title declarations, `\logo`, `\maketitle` and the
+headings. -/
 private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (h : i < raws.size) (n : String) (pos : Pos) (blocks : Array Block) :
     EM (Array Block × { j : Nat // i < j }) := do
@@ -13812,11 +11343,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     slicePars_le raws (by omega)
   let mut blocks := blocks
   if declCtrl.contains n then
-    -- A native declaration met in the body is never "unknown": it
-    -- is ours, misplaced. `\palette` and `\tokens` have arms above;
-    -- the rest configure the whole document and are read only in
-    -- the preamble, so the declaration is skipped with its block,
-    -- named as what it is.
     warnOnce ctx ("ctrl:" ++ n) .W0340
       s!"'\\{n}' is a declaration; in the body it is ignored" pos
       (help := "declare it in the preamble, before '\\begin{document}'")
@@ -13826,9 +11352,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       warnUnclosed ctx s!"'\\{n}'" bpos
     return (blocks, ⟨ju.1, by omega⟩)
   else if runningCtrl.contains n then
-    -- Running head/foot in the body: ours, misplaced — never
-    -- "unknown". The declaration carries content, so skipping it
-    -- drops that content: an error, not a config warning.
     diag ctx .E0347 s!"'\\{n}' in the body is dropped with its content" pos
       (help := "declare it in the preamble, before '\\begin{document}'")
     let ju := skipReservedArgs raws (i + 1) pos
@@ -13836,9 +11359,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     if let some bpos := ju.2 then
       warnUnclosed ctx s!"'\\{n}'" bpos
     return (blocks, ⟨ju.1, by omega⟩)
-  -- `renderedBuiltins`: the literal link arm fires only after `lookupUser`
-  -- fails, so a document's redefinition shadows it — the same precedence
-  -- the inline dispatch keeps, now kept here too.
+  -- A document's redefinition shadows the literal link arm.
   else if ["href", "link", "hyperlink", "hypertarget"].contains n
       && (lookupUser ctx sourceName).isNone then
     let head := linkSelectorHead n raws (i + 1)
@@ -13879,12 +11400,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               (help := "links cannot nest; move the inner link outside the outer wrapper")
             pure inner
           else
-            -- The nested text takes the inline link's two affordances — the
-            -- kind's ink and an underline — from the one `Styles` door the
-            -- inline arm uses: `link` for an internal `\hyperlink`, `url`
-            -- for `\href`/`\link`. `hasBlockAnchor` cleared the body of
-            -- every inner link above, so no span is afforded twice; an
-            -- image-only body takes no decoration (`linkBodyAfford`).
             let kind := if n == "hyperlink" then "link" else "url"
             pure (Ir.linkBlocks url (ctx.styles.linkBodyAfford kind inner))
       let selected := match spec with
@@ -13892,8 +11407,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let (firstPage, otherPage) := spec.pageOrder wrapped #[]
           #[Block.altSteps spec firstPage otherPage]
         | none => wrapped
-      -- The nested-anchor recovery and hypertarget splice their bodies.
-      -- Every other link/selector keeps a wrapper around the child frames.
+      -- Only the nested-anchor recovery and hypertarget splice their bodies.
       if spec.isSome || (n != "hypertarget" && !Ir.hasBlockAnchor inner) then
         keepFrameSourcePrefix blocks.size
       return (blocks ++ selected, ⟨j2 + 1, by omega⟩)
@@ -13903,11 +11417,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else
   match hlk : lookupUser ctx sourceName with
   | some (k, cmd) =>
-    -- Block-producing user command: bind its arguments, then
-    -- elaborate the body as blocks so `\block` inside a definition
-    -- works instead of reporting E0312. A parameterized command's
-    -- expansion wraps in its name, as at the inline splice: the
-    -- role survives at whichever level its content lives.
     let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 n raws (i + 1)
       pos #[]
     let ⟨callCtx, hm1, hm2, hvp, hvw⟩ : { c : Ctx // c.envLimit = ctx.envLimit
@@ -13934,13 +11443,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     return (blocks, ⟨j, by omega⟩)
   | none =>
   if overlayCtrls.contains n || n == "alt" then
-    -- Block-level overlay: the step wrapper survives at block
-    -- level, so a list or a multi-paragraph group inside
-    -- \onslide<2->{...} steps whole — elaborated as blocks, never
-    -- squeezed through a paragraph. A spec the model cannot number
-    -- keeps the honest W0105 and the content stays shown. `\pause`
-    -- inside the wrapped content counts from the wrapper's own
-    -- step, so pending stays pending.
     let j := skipSpaces raws (i + 1)
     have hjge : i + 1 ≤ j := skipSpaces_ge raws (i + 1)
     let ⟨(spec, jg), hjg⟩ :
@@ -13998,10 +11500,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           blocks := blocks.push (altCarriers raws i j3 blocks spec ga gb ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
-          -- One reading at block level too: an unnumberable spec keeps the
-          -- active alternative on every step, never a second copy beside
-          -- it. W0105 accounts for the group that is not inked; it is the
-          -- one already fired for the spec when there was one to read.
           warnAltSpec ctx pos
           blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx ga))
           return (blocks, ⟨j3 + 1, by omega⟩)
@@ -14043,8 +11541,7 @@ when it is empty — '{}'")
           blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx gbody))
           return (blocks, ⟨jg + 1, by omega⟩)
       | _ =>
-        -- The open form: the rest of this scope steps. Bare
-        -- \onslide (no spec) ends stepping — the rest simply flows.
+        -- The open form: the rest of the scope steps; a bare `\onslide` ends stepping.
         match spec with
         | some spec =>
           have hxw : rawWeightList (raws.extract jg raws.size).toList
@@ -14078,9 +11575,6 @@ when it is empty — '{}'")
       blocks := blocks.push p
     return (blocks, ⟨j, by omega⟩)
   else if n == "logo" then
-    -- The declaration is legal in the body too, where beamer decks
-    -- scope a logo to a frame (`\logo{...}` before it, `\logo{}`
-    -- after): a stateful block the layout replays per page.
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]? with
@@ -14102,10 +11596,6 @@ when it is empty — '{}'")
       | _ => ⟨i + 1, by omega⟩
     let i1 := i1p.1
     have hi1 : i + 1 ≤ i1 := i1p.2
-    -- `\section[short]{long}`: the short form feeds furniture no
-    -- backend consumes yet, and its bracket obeys the shared
-    -- scanner. The malformed run of an unclosed bracket is content
-    -- here, exactly as in the scanner's sibling paths.
     if let .took _ := scanBracketArg raws i1 pos then
       warnOnce ctx ("section:short:" ++ n) .N0103
         s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
@@ -14129,13 +11619,8 @@ termination_by (ctx.envLimit, noteFlag ctx,
   visWeightGo ctx.user ctx.limit + sliceWeight raws i, 1, 0)
 decreasing_by all_goals blocks_dec
 
-/-- The block spine: one raw considered per call. A scope group holding a
-paragraph end is spliced open first, so the `\par` inside it is the
-boundary it is everywhere else; a non-boundary raw joins the open
-paragraph; a boundary flushes it and dispatches. The flow state is re-read
-each step (`flowCtx`), so a declaration reaches the content after it to the
-end of its group, where `texGroup` puts the group's start back — and a
-global one past it. -/
+/-- The block spine: a boundary raw flushes the open paragraph and
+dispatches, and any other raw joins it. -/
 private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (blocks : Array Block) (cur : Array Raw) (gen : Nat) :
     EM (Array Block) := do
@@ -14165,9 +11650,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         slicePars_zero _
       if hpp : body.any isParRaw && !isArgument cur && (lengthScopeKeys? body).isNone &&
           !sizeParScope body then
-        -- A scope group holding a paragraph end is spliced open first, so
-        -- the `\par` inside it is the boundary it is everywhere else — save
-        -- a size scope ending its paragraph inside it (`sizeParScope`).
+        -- A group holding a paragraph end splices open, save a size scope ending one.
         have hpp2 : body.any isParRaw = true := by
           simp only [Bool.and_eq_true] at hpp; exact hpp.1.1.1
         have hdec := slicePars_splice h hr hpp2 ctx' gpos
@@ -14179,20 +11662,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           ++ splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size) i
           blocks cur gen'
       else if body.any isParRaw && !isArgument cur then
-        -- A restoring scope stays whole so its snapshot predates every
-        -- assignment. Its opening text still joins the pending paragraph:
-        -- only a boundary inside the body may flush that paragraph.
+        -- A restoring scope stays whole so its snapshot predates every assignment.
         let inner ← restoringGroup ctx' cur
           (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur))
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
-        -- A scope group carrying a `\centering` declaration, or holding
-        -- block content — a list, a table, a heading, a display — is a
-        -- block scope: a group scopes declarations and nothing else
-        -- (TeXbook ch. 5), so the blocks inside stay blocks and a
-        -- declaration reaches exactly to the group's edge. An argument
-        -- group is the command's, as in the par splice above; its own
-        -- block sequence, so the declaration stops at the closing brace.
         groupPictureInSentence ctx' body cur raws i
         let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
         let inner ← groupBlocks ctx'.palette
@@ -14212,10 +11686,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       elabBlocksGo ctx' raws (i + 1) (blocks.push b) #[] gen'
     | .math display body mpos =>
       if display then
-        -- A display formula is amsmath's `equation*` (amsmath.sty:
-        -- `\DeclareRobustCommand{\[}{\begin{equation*}}`), so it takes that
-        -- environment's one arm: unnumbered, a label binding to the flow's
-        -- last number, and a `\tag` standing in the number's place.
+        -- `\[` is amsmath's `equation*`.
         let (⟨ctx', hm⟩, blocks) ←
           displayAtBlock ctx' body mpos blocks cur raws i
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
@@ -14223,7 +11694,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .env n body epos =>
       if hn : n = Compat.linkedBoxRowMark then
-        -- premise: nativeLinkedRow_gated — active macros and parameters own their arguments.
+        -- premise: nativeLinkedRow_gated — macros and parameters own their arguments
         if nativeLinkedRow ctx' body then noteLinkedRow ctx' body epos
         let chosen := (linkedRowChoice body (nativeLinkedRow ctx' body)).val
         have hd := linkedRowChoice_splice h (body := body) (pos := epos)
@@ -14266,10 +11737,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
-      -- A page-ground command in horizontal mode changes shipout state,
-      -- not paragraph structure. Consume it without flushing `cur`, and
-      -- elaborate the whole open paragraph under the last state that will
-      -- paint its page.
+      -- A page-ground command mid-paragraph changes shipout state, not structure.
       if !cur.isEmpty &&
           (n.startsWith Compat.pageColorMarkPrefix || n == Compat.pageColorResetMark) then
         let pal? ← if n.startsWith Compat.pageColorMarkPrefix then
@@ -14301,20 +11769,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "centering" || (Ir.raggedSideOf? n).isSome
           || isDeclBlock ctx' n raws i cur then
-        -- The declaration form of \begin{center} / \begin{flushleft}
-        -- (ltmiscen.dtx: flushleft is a trivlist under \raggedright, and
-        -- \raggedright is the same declaration bare): the rest of this
-        -- scope centres, or sets ragged left. Text flushed just above
-        -- stays unaligned — LaTeX would re-align the whole broken
-        -- paragraph; this engine aligns from the declaration on. The
-        -- style and colour declarations met between blocks take the same
-        -- rest-of-scope reading, pushed onto the scope's leaves
-        -- (`Ir.styleBlocks`, `Ir.decl_between_blocks_covers`), so a table
-        -- or list standing next receives them and no empty styled
-        -- paragraph is set in the declaration's place. One arm for the
-        -- family: the elabBlocks termination burden is per recursive
-        -- call, and the wrapper (`declScopeWrap`) and the state
-        -- (`enterBlockDecl`) are the only differences.
+        -- The declaration forms of center and flushleft align the rest of the scope.
         have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
             ≤ sliceWeight raws (i + 1) := extract_slice_le ..
         have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
@@ -14340,9 +11795,6 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         modify f
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "pause" then
-        -- The rest of this scope reveals one step later. Numbering is
-        -- cumulative through nesting: each pause raises the base its
-        -- successors count from, so pending content stays pending.
         have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
             ≤ sliceWeight raws (i + 1) := extract_slice_le ..
         have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
@@ -14364,9 +11816,6 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           slicePars_end raws (Nat.le_refl _)
         elabBlocksGo ctx' raws raws.size blocks #[] gen'
       else if n == "note" then
-        -- \note[placement]<spec>{...}: the placement and the spec are
-        -- ignored with a note saying so; the body is the side channel,
-        -- never slide content.
         if let .took _ := scanBracketArg raws (i + 1) cpos then
           warnOnce ctx' "note:options" .N0102
             "'\\note' placement and overlay options are ignored: the note is \
@@ -14421,9 +11870,7 @@ a side channel, never slide content" cpos
             slicePars_le raws (by omega)
           elabBlocksGo ctx' raws i2 blocks #[] gen'
       else if n == "framefoot" then
-        -- The per-frame footer note (beamer's `frame footer` template,
-        -- through compat): sets the chrome footer's left slot for the
-        -- frames that follow; an empty group clears it.
+        -- beamer's `frame footer`: the footer's left slot from here on; empty clears it.
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
           pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
         match raws[j]? with
@@ -14446,11 +11893,6 @@ a side channel, never slide content" cpos
           slicePars_le raws (by omega)
         elabBlocksGo styleCtx raws j blocks #[] nextGen
       else if n == "define" then
-        -- A definition in the body, legal as in LaTeX (`\newcommand`
-        -- rewrites here): it binds through the shared door the preamble
-        -- uses and applies to the rest of this walk. Inline positions
-        -- (inside a paragraph or an argument) keep the E0312 refusal,
-        -- except the heading-number format, legal anywhere.
         let ⟨(cmd?, k), hdef⟩ ← takeDefine ctx' raws (i + 1) cpos
         have hk : i + 1 ≤ k := hdef.1
         have hks : sliceWeight raws k ≤ sliceWeight raws (i + 1) :=
@@ -14460,8 +11902,7 @@ a side channel, never slide content" cpos
         match hcm : cmd? with
         | some cmd =>
           if let some (lvl, parts) := secFmtDefine? cmd then
-            -- Not a macro: a heading-number format declaration
-            -- (`secFmtDefine?`), applied from where it stands.
+            -- Not a macro: a heading-number format declaration.
             applySecFmt lvl parts
             elabBlocksGo ctx' raws k blocks #[] gen'
           else
@@ -14471,14 +11912,7 @@ a side channel, never slide content" cpos
                 ≤ slicePars raws (i + 1) := (hdef.2 cmd hcm).2
             let keep ← gateRedefB ctx' cmd
             if keep then
-              -- The definition binds at the visibility boundary
-              -- (`bindCmd`): the rest of this walk sees exactly one more
-              -- command, never the suffix beyond `limit`. Monotone
-              -- visibility is the expansion's whole termination argument
-              -- (`Ctx.limit`, `bindCmd_monotone`); raising `limit` to the
-              -- array's end here re-exposed a command being expanded to its
-              -- own body, and a venue file's `\maketitle` — which renews
-              -- `\thefootnote` and then names itself in `\let` — diverged.
+              -- Binding at the visibility boundary keeps expansion terminating.
               have hbp := bindCmd_visPars ctx' cmd
               have hbw := bindCmd_visWeight ctx' cmd
               have hbe : (bindCmd ctx' cmd).envLimit = ctx'.envLimit
@@ -14496,10 +11930,6 @@ a side channel, never slide content" cpos
           slicePars_le raws (by omega)
         elabBlocksGo ctx' raws j2 blocks #[] gen'
       else if n == "bibliographystyle" || n == "@natbib" then
-        -- The declared style rides the state to the `\bibliography`
-        -- marker; resolution reads it from the block (W0353 there names
-        -- an unknown one). natbib's marker carries its declarations, one
-        -- word each (`Compat.natbibLoad`), to the document.
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
           pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
         match raws[j]? with
@@ -14526,10 +11956,7 @@ a side channel, never slide content" cpos
           diag ctx' .E0304 "'\\bibliographystyle' needs a {style} group" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "bibliography" then
-        -- The reference list marker: an unnumbered References section
-        -- (classes.dtx: thebibliography opens with \section*{\refname})
-        -- and the empty list the driver's `.bib` effect fills
-        -- (`Ir.bibRefs` is the request, `Bib.apply` the fulfilment).
+        -- classes.dtx: the list opens with an unnumbered `\refname` section.
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
           pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
         match raws[j]? with
@@ -14537,8 +11964,6 @@ a side channel, never slide content" cpos
           let src := (rawSrc body).trimAscii.toString
           let style := (← get).bibStyle
           recordBibSpan ctx' src cpos
-          -- \refname is locale data (babel ini captions): the heading is
-          -- worded in the document's declared language.
           let blocks := blocks.push
             (.section 1 true none #[.text ctx'.locale.references])
           let blocks := blocks.push (.bibliography src style #[])
@@ -14551,12 +11976,8 @@ a side channel, never slide content" cpos
           diag ctx' .E0304 "'\\bibliography' needs a {file} group" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if let some mark := pageMark? n then
-        -- A page-model mark: the declared boundary (adjacent boundaries
-        -- never make a blank page — the page builder closes only pages that
-        -- hold something), `\vspace*`'s anchor, `\nointerlineskip`.
         elabBlocksGo ctx' raws (i + 1) (blocks.push mark) #[] gen'
       else if n == "block" then
-        -- \block[before = <len>]{content}
         let j0 := skipSpaces raws (i + 1)
         have hj0 : i + 1 ≤ j0 := skipSpaces_ge raws (i + 1)
         let ⟨((before, primitive), jf), hjf⟩ : { t : (SymGlue × Bool) × Nat // i + 1 ≤ t.2 } ←
@@ -14622,10 +12043,7 @@ termination_by (ctx.envLimit, noteFlag ctx,
   visWeightGo ctx.user ctx.limit + sliceWeight raws i, 2, 0)
 decreasing_by all_goals blocks_dec
 
-/-- A fresh block accumulator inherits its caller's semantic owners but
-never their accumulator offsets. Tokens retain any deeper ancestry.
-A restoring paragraph scope also carries its caller's pending text, so
-capturing the opening lengths introduces no paragraph boundary. -/
+/-- Elaborates a nested block scope, carrying the caller's pending text `cur`. -/
 private def elabBlockScope (ctx : Ctx) (raws : Array Raw) (cur : Array Raw := #[]) :
     EM (Array Block) := do
   let ((savedBase, gen), savedLengths, ⟨body, _hsw, _hsp, _hsn⟩) ← openBlockScope ctx raws
@@ -14644,25 +12062,13 @@ decreasing_by all_goals blocks_dec
 
 end
 
-/-- Elaborate raw items as a block sequence. -/
 public def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   modify fun st => { st with spans := { st.spans with frames :=
     { st.spans.frames with nextBase := some 0 } } }
   elabBlockScope ctx raws
 
-/-- Elaboration terminates — not a sentence in a plan: `takeArgs`,
-`elabInlines`, and `elabBlocks` are total functions of this file, so a
-change that reintroduces nontermination fails the termination checker at
-its own commit, never a document build (PLAN 2026-09-19; the sentence with
-no checker that hid the bindCmd bug for twelve hours — `bindCmd_monotone`
-holds the monotone-visibility half). The block knot's measure is
-(envLimit, noteFlag, visPars + slicePars, visWeight + sliceWeight, layer,
-scan); the inline knot's is (envLimit, limit, slice weight). The statement
-below is deliberately the weakest sufficient form — evaluation is
-defined — because the guarantee's force lives in the definitions the
-checker verified and in the pre-commit gate that keeps the escape-keyword
-allowance at none; the name exists so the plan's claim has a checker to
-cite. -/
+/-- Elaboration terminates: `elabBlocks` is a total function, so every run
+has a result. -/
 public theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
     ∃ r, (elabBlocks ctx raws).run st = r :=
   ⟨_, rfl⟩
@@ -14697,10 +12103,6 @@ unseal texGroup groupBlocks restoringGroup envGroup
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 unseal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 
-/- The recovery contract follows the production block interpreter. These
-state equations live here because macro-origin frames and the recursive
-termination witnesses are private. The public statement below reads only
-its actual block-entry context and syntax. -/
 private theorem elabInlines_word (ctx : Ctx) (w : String) (p : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = []) :
     elabInlines ctx #[.word w p] =
@@ -15162,9 +12564,8 @@ private theorem closeBlockScope_note (ctx : Ctx) (base : Option Nat) (blocks : A
   by_cases ht : text.trimAscii.isEmpty = true <;>
     simp [noteSalvage, closeBlockScope, closeLengthScope, setFrameSourceBase, ht] <;> rfl
 
-/-- Keep the producer's warning and recovery record around an otherwise
-ordinary content interpretation. The warning uses the command's actual
-source position and code; recovery uses its exact operand spelling. -/
+/-- Runs `content` between an unhandled control's warning and its recovery
+record. -/
 public def withControlRecovery (ctx : Ctx) (name : String) (pos : Pos) (operands : Array Raw)
     (content : EM α) : EM α := do
   warnUnknownCmd ctx name false pos
@@ -15174,10 +12575,6 @@ public def withControlRecovery (ctx : Ctx) (name : String) (pos : Pos) (operands
 
 attribute [local irreducible] elabBlocks mkPara closeBlockScope
   warnUnknownCmd noteSalvage in
-/-- An unhandled command's inline group is interpreted by the same complete
-block entrypoint as an ordinary braced group. Only its warning and recovery
-record surround that interpretation. The conditions concern syntax and
-dispatch, never the result or diagnostics of elaborating the content. -/
 private theorem elabBlocks_recovery_group_exact (ctx : Ctx) (name : String)
     (body : Array Raw) (pos groupPos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
@@ -15421,8 +12818,7 @@ private theorem numbered_recovered_para (lang : Option String) (xs : Array Inlin
     Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
   cases lang <;> exact Ir.numberFloats_para_exact _
 
-/-- A declared value as its author would rewrite it: what W0343 quotes back
-when a later declaration overwrites it. -/
+/-- A declared value as its author would write it. -/
 private def renderValue : Decl.Value → String
   | .str s => s
   | .dim sp => s!"{sp.toPtString}pt"
@@ -15433,27 +12829,13 @@ private def renderValue : Decl.Value → String
   | .cmyk c m y k => s!"cmyk({c}, {m}, {y}, {k})"
   | .glue g => Ir.dumpGlue g
 
-/-- One scalar setting was declared: warn (W0343) when this `(decl, key)`
-was already given a *different* value — the earlier write is dead
-configuration, and silence here is how `\fonts` faces stayed first-wins for
-so long — then record the new value, the one that wins. A repeat of the
-same value stays silent: it changes nothing and is often synthesized
-(a class option beside its `\usepackage` spelling). Keyed-merge stores
-(tokens, palette, styles) never come through here: redeclare-to-override is
-their layering mechanism, not a conflict. -/
+/-- Records one scalar setting, warning when it overwrites a different earlier
+value. -/
 private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit :=
   modify fun st => applyEvent ctx st (.scalar decl key value pos)
 
-/-- The page's leading factor as LaTeX's `\selectfont` sets the body's
-`\baselineskip`: the skip the body's size declares (`bodySkip`, a class's
-`\normalsize` — the 6⁄5 rule where none is declared) stretched by
-`\linespread` (`spread`). The declared skip lands as its share of the 6⁄5
-rule at the body size, at milli-point precision (the arithmetic a class's
-`\@setfontsize` arguments are read at), and as the skip column's
-`\normalsize` row, so a named step the document does not declare keeps
-size10.clo's own length (`Ir.stepLead`). Read at the end of each `\page`
-block, so neither the order of its keys nor which of the two came first
-changes the page; they compose, never overwrite. -/
+/-- The page's leading factor: the body's declared skip stretched by
+`\linespread`, composed at the end of each `\page` block. -/
 private def composeLeading (spec : PageSpec) : PageSpec :=
   match spec.bodySkip with
   | none => { spec with leading := spec.spread }
@@ -15467,10 +12849,7 @@ private def composeLeading (spec : PageSpec) : PageSpec :=
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
-  -- A page dimension may be a declared token or an expression over them
-  -- (`\geometry{paperheight=\sheetheight}`), which parses as glue: it
-  -- is a dimension when nothing font-relative or infinite rides in it —
-  -- the page exists before any font is chosen.
+  -- A page dimension may be glue over tokens with nothing font-relative in it.
   let asDim : Decl.Value → Option Sp
     | .dim d => some d
     | .glue g =>
@@ -15484,9 +12863,6 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
   for e in entries do
     let before := evs.size
     match e.key, e.value with
-    -- `size` names a paper (`a4`) or a slides stage by its ratio
-    -- (`16:9`, or beamer's bare digits, which arrive as an int) — one
-    -- vocabulary; the ratio spellings are `Ir.slidesStages`'s rows.
     | "size", .ident name =>
       match (pageSizes.lookup name.toLower).orElse
           (fun _ => Ir.slidesStageNamed name) with
@@ -15517,13 +12893,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "hmargin", v =>
       if let some d := asDim v then spec := { spec with hmargin := d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "hmargin" "a dimension" v pos))
-    -- The geometry manual's text-block spelling (§5.2: `textwidth`/
-    -- `textheight` size the body). The engine's page model has one margin
-    -- per axis, so the block centres — geometry's own oneside horizontal
-    -- default (`hmarginratio` 1:1); its 2:3 vertical ratio and an explicit
-    -- `top=` are not representable and stay named (W0101 at the compat
-    -- door). Resolved against the page dimension in force where the entry
-    -- stands, as geometry sizes the body against the current paper.
+    -- geometry's `textwidth` and `textheight` centre the block (§5.2).
     | "textwidth", v =>
       if let some d := asDim v then
         if 0 < d && d ≤ spec.width then
@@ -15540,22 +12910,16 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           evs := say evs .E0323
             "'textheight' in '\\page' expects a dimension between zero and the page height"
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textheight" "a dimension" v pos))
-    -- `leading` is `\linespread`'s stretch, composed with the body's
-    -- declared skip once the block ends (`composeLeading`).
+    -- `leading` is `\linespread`'s stretch, composed when the block ends.
     | "leading", .int n => spec := { spec with spread := n.toNat * 1000 }
     | "leading", .dim d =>
-      -- A bare decimal like 1.15 reads as a dimension in points; the factor
-      -- is what was meant.
+      -- A bare decimal like 1.15 reads as points; the factor is meant.
       spec := { spec with spread := (d * 1000 / pt 1).toNat }
     | "leading", .ident f =>
-      -- ...and one without a unit reaches here as a name.
+      -- A decimal without a unit arrives as a name.
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with spread := (m * 1000 / s).toNat }
       | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.15, got '{f}'"
-    -- The body's `\baselineskip` as a class's `\normalsize` declares it
-    -- (`\@setfontsize`'s third argument, fntguide), resolved at the body
-    -- size the block ends on (`composeLeading`), whatever order its keys
-    -- stand in.
     | "baselineskip", v =>
       if let some d := asDim v then
         if 0 < d then spec := { spec with bodySkip := some d }
@@ -15565,17 +12929,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
-      -- The floor is the theorem's (`Layout.heading_hierarchy`): at every
-      -- base of at least one point the heading hierarchy holds; below it
-      -- the integer size arithmetic rounds the levels together, so the
-      -- guard admits exactly what the guarantee covers.
+      -- The floor `Layout.heading_hierarchy` covers: the hierarchy holds from 1pt.
       if d ≥ Dim.pt 1 then
         spec := { spec with fontSize := d }
       else
         evs := say evs .E0323 "'fontsize' in '\\page' expects a dimension of at least 1pt"
     | "measure", .ident v =>
-      -- `free`: the document takes responsibility for its line length, and
-      -- the readable-band diagnostic (W0201) stays quiet.
       match v with
       | "free" => spec := { spec with measureChecked := false }
       | "checked" => spec := { spec with measureChecked := true }
@@ -15585,11 +12944,6 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "bleed", v =>
       if let some d := asDim v then spec := { spec with bleed := d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "bleed" "a dimension" v pos))
-    -- Printer's cut marks, a declared feature of the page: `cut` draws
-    -- the eight derived hairlines (`Layout.cutMarks`), `none` is the
-    -- default — a shop that wants only the declared boxes gets only
-    -- boxes. The marks need a bleed to stand in: they occupy the strip
-    -- the cutter discards, `mark-gap` short of the trim.
     | "marks", .ident v =>
       match v with
       | "cut" => spec := { spec with marks := true }
@@ -15604,10 +12958,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else
         evs := evs.push
           (.say (Decl.wrongType ctx.file "page" "mark-thickness" "a dimension" v pos))
-    -- A rule drawn on every page, as a shipout picture draws it
-    -- (`Ir.DrawnRule`): `"x; y; w; h; colour"`, the lower-left corner from
-    -- the page's top-left with y up, as the kernel's picture reads it. The
-    -- box is stored y down from the medium's top-left corner.
+    -- `rule` reads y up from the page's top-left; it is stored y down.
     | "rule", .str s =>
       match s.splitOn ";" |>.map (·.trimAscii.toString) with
       | [x, y, w, h, c] =>
@@ -15618,7 +12969,6 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | _ =>
         let msg := s!"'rule' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
         evs := say evs .E0323 msg
-    -- The page's trim is the one its drawn cut marks cut (`Ir.PageSpec.trimMarked`).
     | "trim", .ident v =>
       match v with
       | "marks" => spec := { spec with trimMarked := true }
@@ -15653,10 +13003,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with numbers := some false }
       | _ =>
         evs := say evs .E0323 s!"'numbers' in '\\page' expects on or off, got '{v}'"
-    -- Margin line numbers: a declared page feature (the obligation-table
-    -- rule), lineno's \linenumbers natively. `modulo` beside it prints
-    -- only multiples while counting every line, lineno's
-    -- \modulolinenumbers[n].
+    -- lineno's `\linenumbers`; `modulo` is its `\modulolinenumbers[n]`.
     | "linenumbers", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with linenumbers := some true }
@@ -15666,9 +13013,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "modulo", .int n =>
       if n ≥ 1 then spec := { spec with lineModulo := some n.toNat }
       else evs := say evs .E0323 "'modulo' in '\\page' expects a count of at least 1"
-    -- The furniture gaps: the native key speaks in ink terms and sets both
-    -- sides; the LaTeX spellings carry their baseline semantics to the one
-    -- correction site in Layout (`furnGapOfSep`).
+    -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
     | "furnituregap", v =>
       if let some d := asDim v then spec := { spec with furnitureGap := some d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "furnituregap" "a dimension" v pos))
@@ -15678,8 +13023,6 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "footskip", v =>
       if let some d := asDim v then spec := { spec with footskip := some d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "footskip" "a dimension" v pos))
-    -- The page's bottom: `\flushbottom` sets a page the page builder broke
-    -- flush with the text area's floor, `\raggedbottom` keeps its glue.
     | "bottom", .ident v =>
       match v with
       | "flush" => spec := { spec with flushBottom := some true }
@@ -15688,8 +13031,6 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         evs := say evs .E0323 s!"'bottom' in '\\page' expects flush or ragged, got '{v}'"
     | key, v =>
       if key == "header" || key == "footer" then
-        -- The feature exists, just not as a page key: running content is
-        -- inline content, which a key/value block cannot carry.
         let cmd := if key == "header" then "\\runninghead" else "\\runningfoot"
         evs := say evs .E0327 s!"'{key}' is not a '\\page' key"
           (help := s!"{cmd}\{...} declares it; \\hfill pushes content to the right")
@@ -15705,26 +13046,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           else "a dimension"
         evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else
-        -- The help names the native surface; `headsep`/`footskip` stay
-        -- accepted as the LaTeX spellings of `furnituregap` (read through
-        -- the baseline-to-ink correction), `textwidth`/`textheight`
-        -- as geometry's spellings of the block size the native
-        -- width/height + margin surface already covers, and the
-        -- `mark-gap`/`mark-thickness` riders are learned from `marks`,
-        -- the key that owns them — accepted, not advertised beside it.
-        -- `modulo` only qualifies `linenumbers` (named beside it in the
-        -- lineno translation notes), so it too is accepted without a
-        -- listing of its own; `bottom` is `\flushbottom`'s and
-        -- `\raggedbottom`'s, which name it in their translation notes, as a
-        -- class's `\normalsize` names `baselineskip`.
+        -- The help lists the native keys; LaTeX spellings and riders stay unlisted.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
             (!["headsep", "footskip", "textwidth", "textheight", "baselineskip",
                "mark-gap", "mark-thickness", "modulo", "rule", "trim", "bottom"].contains ·)) pos))
-    -- Every failing arm above records a diagnostic, so a clean count means
-    -- the entry applied: record it, and warn if it overwrote (W0343). A
-    -- `rule` adds a drawing rather than setting a value, so a second one
-    -- overwrites nothing.
+    -- A clean count means the entry applied; a `rule` adds, so it overwrites nothing.
     if evs.size == before && e.key != "rule" then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
   return (composeLeading spec, evs)
@@ -15736,15 +13063,12 @@ private def fontSlot? (name : String) : Option Nat :=
   | "mono" | "tt" => some 2
   | _ => none
 
-/-- `body.bold`-style keys: `(slot, weight, italic)`. The four LaTeX-shaped
-spellings name the standard corners of the axis; a series code
-(`body.l`, `sans.sb.italic`) names any other weight — the native surface
-fontspec's `FontFace={series}{shape}{font}` rewrites into. -/
+/-- A `body.bold`-style key as `(slot, weight, italic)`; a series code such as
+`sans.sb.italic` names any other weight. -/
 private def fontVariantKey? (key : String) : Option (Nat × Nat × Bool) :=
   let seriesKey (s : String) (italic : Bool) : Option (Nat × Bool) :=
     match Ir.Weight.parseSeries s with
-    -- A width half names an axis the engine does not have; a key that
-    -- asks for one is unknown rather than quietly weight-only.
+    -- A width half names an axis the engine lacks, so the key is unknown.
     | some (w, "") => some (w.css, italic)
     | _ => none
   match key.splitOn "." with
@@ -15761,16 +13085,12 @@ private def fontVariantKey? (key : String) : Option (Nat × Nat × Bool) :=
     (seriesKey series true).map fun (w, i) => (slot, w, i)
   | _ => none
 
-/-- A declared family's variant spelling, `fontVariantKey?`'s past the
-slot: `bold`, `sb`, `sb.italic`. -/
+/-- A declared family's variant spelling past the slot, such as `sb.italic`. -/
 private def familyVariantKey? (variant : List String) : Option (Nat × Bool) :=
   (fontVariantKey? (String.intercalate "." ("body" :: variant))).map fun (_, w, i) => (w, i)
 
-/-- `\fonts{...}`: family names per slot, and `dir`, a directory of font
-files shipped beside the document. `rm`/`sf`/`tt` are accepted as aliases so
-a LaTeX habit does not become an error. A dotted key names one variant's
-face (`body.bold = "X"`, fontspec's `BoldFont=`), which resolution honours
-over the family's own variant. -/
+/-- Applies `\fonts{...}`: family names per slot, variant faces and font
+directories. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
     (pos : Pos) : FontSpec × Array PEvent := Id.run do
   let mut spec := spec
@@ -15787,9 +13107,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "math", .str f => spec := { spec with math := some f }
     | "dir", .str d =>
       spec := if spec.dirs.contains d then spec else { spec with dirs := spec.dirs.push d }
-    -- A declared family beside the three slots (fontspec's
-    -- `\newfontfamily\cmd{Family}`): `family.<cmd>`, its faces
-    -- `family.<cmd>.<variant>` under its slot (`FontSpec.familySlot`).
+    -- fontspec's `\newfontfamily`: `family.<cmd>` and its `family.<cmd>.<variant>` faces.
     | key, v@(.str f) =>
       match key.splitOn "." with
       | ["family", name] => spec := spec.declareFamily name f
@@ -15839,9 +13157,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
             evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
               (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic",
                 "<slot>.<series>[.italic] (series ul/el/l/sl/m/sb/b/eb/ub)"]) pos))
-    -- A family slot or alphabet source is a scalar; `dir` is a list and a
-    -- dotted face is fontspec's own replace idiom, so only those scalar
-    -- settings report an overwrite. The aliases fold onto their family.
+    -- Only slot and alphabet settings are scalars that report an overwrite.
     if evs.size == before then
       let aliases := [("rm", "body"), ("sf", "sans"), ("tt", "mono")]
       let canonical := (aliases.lookup e.key).getD e.key
@@ -15856,17 +13172,15 @@ private def styleKeys : List String :=
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
    "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "shape"]
 
-/-- The keys of a block's `shape = {...}` (`Ir.BlockShape`), and of one of
-its `edge = {...}` groups (`Ir.BlockEdge`). -/
+/-- The keys of a block's `shape = {...}`. -/
 private def blockShapeKeys : List String :=
   ["before", "title", "untitled", "between", "after", "whole", "edge"]
 
 private def blockEdgeKeys : List String :=
   ["span", "side", "width", "sep", "hang", "color", "height", "depth"]
 
-/-- A title metric's native spelling (`BlockTemplate.native` writes it):
-terms in `lh`, the title's `\baselineskip`, in `cap`, its cap height, and
-fixed lengths, joined by `+` and `-`. -/
+/-- Reads a title metric: terms in `lh` (the title's `\baselineskip`), `cap`
+(its cap height) and fixed lengths, joined by `+` and `-`. -/
 private def blockMetricOf (src : String) : Option BlockMetric :=
   let terms := ((src.replace " - " " + -").splitOn "+").map (·.trimAscii.toString)
   terms.foldlM (init := ({} : BlockMetric)) fun m t =>
@@ -15880,10 +13194,8 @@ private def blockMetricOf (src : String) : Option BlockMetric :=
     else (Decl.parseLength t).bind fun l =>
       if l.em == 0 && l.ex == 0 then some { m with sp := m.sp + l.sp } else none
 
-/-- A block's `shape = {...}`, the native spelling of a beamer block
-template's reading (`BlockTemplate.native` writes it): skips as `+`-joined
-skip registers or glues, the title's box as flags, the untitled arm, the
-box holding title and body, and the rules beside the boxes. -/
+/-- Reads a block's `shape = {...}`, the native spelling of a beamer block
+template. -/
 private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option BlockShape) := do
   let unbrace (src : String) : String :=
     let t := src.trimAscii.toString
@@ -15931,7 +13243,6 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
       | "untitled" =>
         if vt == "box" then sh := { sh with bare := none }
         else if vt.startsWith "{" then
-          -- The arm the template's title test takes, its own skips.
           let mut bare : BlockBare := {}
           for sub in Decl.splitEntries (unbrace vt) do
             match Decl.splitEntry sub with
@@ -16001,8 +13312,6 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
               ok := false
               modify fun st' => { st' with
                 diags := st'.diags.push (Decl.unknownKey ctx.file "block edge" ek blockEdgeKeys pos) }
-        -- A reach read about the title's lines stands beside the title's box,
-        -- or beside the whole block from those lines to its last.
         let reach : Option BlockReach := match height, depth, span with
           | none, none, _ => some .box
           | some a, some b, some _ => some (.lines a b)
@@ -16027,17 +13336,13 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
   if sh.edges.any (·.reach matches .lines ..) && !(sh.title.boxed && sh.title.strut) then
     ok := false
     bad "an edge reaching by lines beside a title that is not a box its struts bound"
-  -- A rule reaching by the block's lines hangs beside them, which stand
-  -- unboxed: no box holds title and body for it to stand beside or in.
   if sh.edges.any (fun e => e.span == .whole && e.reach matches .lines ..) &&
       (sh.whole.isSome || sh.edges.any fun e => e.span == .whole && e.reach matches .lines .. && !e.hang) then
     ok := false
     bad "an edge reaching by the block's lines inside its line or beside a box holding title and body"
   return if ok then some sh else none
 
-/-- The keys of one `slot = {...}` group in `\style{titlepage}`. A
-slot owns its box; repeated `part` entries own independently styled data.
-The legacy part keys remain accepted and translate to one or more parts. -/
+/-- The keys of one `slot = {...}` group in `\style{titlepage}`. -/
 private def titleSlotKeys : List String :=
   ["part", "set", "content", "font", "align", "width", "size", "anchor", "at",
    "xshift", "yshift", "inner-sep"]
@@ -16046,19 +13351,11 @@ private def titleSlotKeys : List String :=
 private def titlePartKeys : List String :=
   ["set", "content", "font", "align", "size", "leading", "new-line", "before"]
 
-/-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
-are inline content and elaborate as such; the rest are lengths and a palette
-colour. A length may name a token, so the entries are read one at a time
-against the tokens declared so far. -/
+/-- Applies `\style{element}{...}`, each entry read against the tokens
+declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
     EM Styles := do
-  -- A `\define`d name is styleable too: the role survives as a class hook
-  -- (`u-<name>` in HTML, `Block.role` on the page), so its rhythm and
-  -- format are declared once, upstream, instead of leaking into every use
-  -- site. Positional, like every declaration: the `\define` stands first.
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
-    -- Compact the heading and list families without omitting their valid
-    -- suffixes; the empty suffix retains the base list spelling.
     let named := (styleableElements.filter fun e =>
       !(e.startsWith "itemize" && e != "itemize") &&
         !(e.startsWith "enumerate" && e != "enumerate") &&
@@ -16071,25 +13368,13 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       (help := s!"elements: {String.intercalate ", " named}")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
-  -- The two value readers, over any source text: an entry's own value, or
-  -- one sub-entry of a `slot = {...}` group, read through the same door.
   let inlineOf (src : String) : EM (Option (Array Inline)) := do
     let inner := if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
       then (src.drop 1).dropEnd 1 |>.toString else src
-    -- Fragment positions are relative to the value, not the source file.
-    -- Requests and diagnostics retain the enclosing declaration's location.
     let fragmentCtx := ctx.atCall "style" pos
     let (toks, _) := Lex.lex ctx.file inner
     let (raws, _) := Parse.parse ctx.file toks
-    -- Value text re-enters through the same door as the document, idiom
-    -- translation included, or a \color inside a font spec would leak.
-    -- Seeded with the document's warn-once keys (one set, `Compat.rewrite`
-    -- carries why) but not merged back: this site discards the notes the
-    -- rewrite produced, so a key it fired may stand for a diagnostic the
-    -- document never received, and recording it would silence the later
-    -- visible one.
-    -- A fragment inherits the caller's visible definitions, so a kernel
-    -- default cannot replace one before the elaborator reads it.
+    -- Warn-once keys are read, never merged back: this site drops the notes.
     let inherited := (ctx.user.extract 0 ctx.limit).toList.map (·.name)
     let (raws, ds, _) := Compat.rewrite ctx.file raws
       (warned := (← get).warnedUnknown) (inherited := inherited)
@@ -16098,10 +13383,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
     modify fun st => { st with diags := st.diags ++ ds }
     return some (← elabInlines fragmentCtx raws)
   let lengthOf (key src : String) : EM (Option SymGlue) := do
-    -- The engine's own page lengths read here as in any length the
-    -- document writes (`0.6\paperwidth`, a template node's measure): the
-    -- expression grammar spells tokens bare, so the backslash is dropped,
-    -- as `imageLenOf` drops it.
+    -- The length grammar spells tokens bare, so the backslash is dropped.
     let expr := fun (_ : Unit) =>
       match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
           (String.join (src.splitOn "\\")) with
@@ -16121,15 +13403,12 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       diag ctx .E0320 s!"invalid entry in '\\style': {entry.quote}" pos
         (help := "entries look like: key = value")
     | some (key, valueSrc) =>
-      -- premise: titleHeadingChecks — no site reads these keys on the title page: both artifacts ship the same page with and without each
+      -- premise: titleHeadingChecks — no title-page site reads these keys
       if element == "titlepage" && Ir.titleUnreadKeys.contains key then
         warnOnce ctx ("style:titlepage:" ++ key) .W0104
           s!"'{key}' has no meaning on the title page; the title is set without it" pos
           (help := "draw rules around the title with rule-above, rule-below or separator")
-      -- A key no beamer block reads is named and not stored, so no site can
-      -- read it; a key `\style` does not know, or one the title page owns,
-      -- is refused by its own arm below, the one accounting at its site.
-      -- premise: blockStyleKeyChecks — both artifacts ship the same page with and without each such key, a page with no palette included
+      -- premise: blockStyleKeyChecks — no block site reads these keys
       if Ir.blockStyleElements.contains element && styleKeys.contains key &&
           !Ir.blockStyleKeys.contains key && key != "slot" then
         warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
@@ -16138,8 +13417,6 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         continue
       let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
-      -- Every colour-valued style key uses the same typed source resolver
-      -- as palette declarations and inline colour commands.
       let asColor : EM (Option (Ir.Color × Option Ir.ColorRef)) := do
         match ← readColor ctx ctx.palette none valueSrc pos with
         | .resolved c token => return some (c, token)
@@ -16187,9 +13464,6 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | v =>
           diag ctx .E0323 s!"'rule-position' in '\\style' expects baseline or xheight, got '{v}'" pos
       | "separator" =>
-        -- `none` is a declaration too: a title page whose own template draws
-        -- no rule (a theme's `title page` replaces the lineage's separator
-        -- along with the rest of the page).
         if valueSrc.trimAscii.toString == "none" then st := { st with separator := none }
         else if let some v ← asColor then st := { st with separator := some v }
       | "slot" =>
@@ -16359,8 +13633,6 @@ institute, or date, got '{vt}'" pos
       | "color" =>
         if let some v ← asColor then st := { st with color := some v }
       | "motion" =>
-        -- A duration, in milliseconds: the one unit CSS transitions and
-        -- the reduced-motion literature both speak in.
         let v := valueSrc.trimAscii.toString
         let digits := if v.endsWith "ms" then (v.dropEnd 2).toString.trimAscii.toString else v
         match digits.toNat? with
@@ -16375,14 +13647,8 @@ institute, or date, got '{vt}'" pos
   noteDeclared ctx "style" element
   return styles.declare element st
 
-/-- `\chrome{ footer = { left = \sectiontitle, right = \framenumber } }`:
-page furniture as declared data. A slot names a per-page datum the engine
-supplies — the current section's title, or the frame's own number — never
-literal content (that is `\runningfoot`, which overrides the whole footer).
-Redeclaring merges per slot onto the chrome already declared — across
-blocks exactly as within one, and onto a theme's default exactly as a
-`\palette` entry overrides the theme's — so a second block refines the slot
-it names and leaves its sibling standing. -/
+/-- Applies `\chrome{...}`, merging each declared footer slot onto the chrome
+already declared. -/
 private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
     Chrome × Array PEvent := Id.run do
   let mut chrome : Chrome := c0
@@ -16411,9 +13677,7 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
               let datum : Option ChromeSlot :=
                 match v with
                 | "sectiontitle" => some .sectionTitle
-                -- The deck spelling and the beamer lineage's name one datum.
                 | "framenumber" | "slidenumber" => some .frameNumber
-                -- moloch's numbering=fraction: the n / N form.
                 | "framefraction" => some .frameFraction
                 | _ => none
               match datum with
@@ -16456,17 +13720,14 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
         evs := evs.push (.say (Decl.unknownKey ctx.file "chrome" key ["footer", "standout-note"] pos))
   return (chrome, evs)
 
-/-- The two bare comma lists `\output` takes; an entry without `=`
-continues whichever was last opened. -/
+/-- The bare comma lists `\output` takes. -/
 private inductive OutputList where
   | formats
   | profiles
   | schemes
 
-/-- `\output{...}`: what to build, so a document needs no CLI options.
-`formats` and `profiles` take bare comma lists (`formats = pdf, html`,
-`profiles = pdf/a-4, pdf/ua-2`), so entries are walked by hand: an entry
-without `=` continues the open list. -/
+/-- Applies `\output{...}`; an entry without `=` continues the list last
+opened. -/
 private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos) :
     OutputSpec × Array PEvent := Id.run do
   let mut o := o0
@@ -16482,9 +13743,6 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     else
       (o, say evs .E0321 s!"'{f}' is not an output format"
         (help := "formats: pdf, html, md"))
-  -- A profile name is checked against the registered table, the `formats`
-  -- pattern: an unknown name is refused naming the registered ones and
-  -- never enters the set.
   let addProfile (o : OutputSpec) (evs : Array PEvent) (p : String) :
       OutputSpec × Array PEvent :=
     if PdfContract.Profile.names.contains p then
@@ -16492,7 +13750,6 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     else
       (o, say evs .E0321 s!"'{p}' is not a conformance profile"
         (help := s!"profiles: {String.intercalate ", " PdfContract.Profile.names}"))
-  -- A scheme name is one of the five; a later `schemes =` replaces the list.
   let addScheme (o : OutputSpec) (evs : Array PEvent) (v : String) :
       OutputSpec × Array PEvent :=
     match Scheme.all.find? (·.name == v) with
@@ -16535,8 +13792,6 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
           (help := "css: own (the engine's sheet), bulma (Bulma's class names, styled by the sheet stylesheet = ... declares, within the page's CSS subset), none (markup only)")
     | some ("stylesheet", v) =>
       inList := none
-      -- A path is a string; the quotes other declarations require are
-      -- accepted but not demanded, as `formats` entries are bare too.
       let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
           String.ofList (v.toList.drop 1).dropLast
         else v
@@ -16549,8 +13804,6 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         else v
       o := { o with md := some v }
       evs := evs.push (.scalar "output" "md" v pos)
-    -- The contract keys: each a closed enumeration, last wins, and each
-    -- an apply site the commutation oracle sees through its event.
     | some ("alternatives", v) =>
       inList := none
       let pol : Option AltPolicy := match v with
@@ -16605,7 +13858,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
           (help := some "entries look like: formats = pdf, html")
   return (o, evs)
 
-/-- `\pdfmeta{...}`: PDF document information. -/
+/-- Applies `\pdfmeta{...}`, the PDF document information. -/
 private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     (pos : Pos) : Meta × Array PEvent := Id.run do
   let mut m := m0
@@ -16615,8 +13868,6 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     match e.key, e.value with
     | "title", .str s => m := { m with title := some s }
     | "language", .str s =>
-      -- Stored as declared — both artifacts carry the author's tag even
-      -- when no locale record ships; the data fallback is named here.
       if (Locale.forTag s).isNone then
         evs := evs.push (.say (Diag.of .W0368
           s!"no locale for language '{s}'; English captions and patterns stand in" (some ⟨ctx.file, pos⟩)
@@ -16652,8 +13903,8 @@ private def cmpOp : String → Option CmpOp
   | ">" => some .gt
   | _ => none
 
-/-- `\assert{ ... }`: a layout invariant, checked against the shipped page
-tree. Grammar is deliberately tiny: `pages <op> N`, or `fonts.all_embedded`. -/
+/-- Reads `\assert{...}`, a layout invariant checked against the shipped
+pages. -/
 private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) :
     Option Assertion × Array PEvent :=
   let words := (src.splitOn " ").filterMap fun w =>
@@ -16684,14 +13935,8 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) :
     | _, none => fail s!"'{n}' is not a whole number"
   | _ => fail "supported forms: pages <op> N, fonts.all_embedded, text.in_area, text.xheight >= <len>, accessibility = AA"
 
-/-- One scanned preamble declaration: the value `applyDecl` folds over and
-the commutation statement (T1) quantifies over. Scanning is segmentation
-only — payloads stay raw (token runs, block sources): content elaborates at
-apply time, where the context (user commands, palette, tokens) is the one
-the declaration stands after, because reference→referent order is real and
-stays sequential. Malformation facts met while finding extents (an unclosed
-`[`, a missing group) ride as data, so `applyDecl` owns every diagnostic
-and emits it in scan order. -/
+/-- One scanned preamble declaration, its payload raw until `applyDecl`
+elaborates it in order. -/
 public inductive PDecl where
   | docclass (options : Option String) (cls : Option String) (pos : Pos)
   | pictures (src : Option String) (pos : Pos)
@@ -16703,19 +13948,15 @@ public inductive PDecl where
   | running (name : String) (opts : Option (Array Raw))
       (body : Option (Array Raw)) (pos : Pos)
   | logo (body : Option (Array Raw)) (pos : Pos)
-  /-- `\logoleft`/`\logoright` (the gemini poster lineage's commands):
-  one piece of inline content each, the headline band's corner slots. -/
+  /-- `\logoleft`/`\logoright`: a headline band's corner slot. -/
   | logoSlot (left : Bool) (body : Option (Array Raw)) (pos : Pos)
   | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
   | beamerColor (name : String) (star : Bool) (source : String) (pos : Pos)
   | standoutColor (name source : String) (pos : Pos)
-  /-- A block template's paint site (`BeamerColor.siteMarker`): the beamer
-  elements a template rule's channel is bound through, the latest first, the
-  channel, and the palette entry it paints, resolved with every named colour
-  from here on. -/
+  /-- A block template's paint site: the beamer element chain, latest first,
+  the channel and the palette entry it paints. -/
   | beamerSite (chain : List String) (channel key : String) (pos : Pos)
-  /-- A preamble page-ground selection, resolved where it stands. `none`
-  is `\nopagecolor`; a concrete source is `\pagecolor`. -/
+  /-- `\pagecolor`, or `\nopagecolor` as `none`. -/
   | pageGround (source : Option String) (pos : Pos)
   | style (args : Option (String × String)) (pos : Pos)
   | allow (body : Option String) (pos : Pos)
@@ -16728,52 +13969,37 @@ public inductive PDecl where
   | fonts (src : Option String) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
-  /-- url.sty's `\urlstyle`: the family `\url`/`\nolinkurl` set in. Legal in
-  the preamble, where url.sty documents it, and in the body, where the inline
-  arm reads it. -/
+  /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
-  /-- A declaration written in the preamble proper that is in force where
-  the body begins: Compat's `\color` marker, which LaTeX's
-  `\begin{document}` keeps (measured against lualatex). It is the body's
-  first declaration, the reading a `\begin{document}` hook body gets. -/
+  /-- A preamble declaration still in force where the body begins, replayed
+  as the body's first. -/
   | bodyStart (marker : String) (pos : Pos)
   | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
       (body : Option (Array Raw × Option (Array Raw))) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
   | unknownCmd (name : String) (unclosed : Option Pos) (pos : Pos)
-  /-- `\SetKw` and family in the preamble: a document-global algorithm
-  keyword (algorithm2e §10.3), carried whole so the io label's accents
-  still elaborate. -/
+  /-- `\SetKw` and family: a document-global algorithm2e keyword. -/
   | algKw (name : String) (args : Option (Array Raw × Array Raw)) (pos : Pos)
-  /-- `\DontPrintSemicolon`/`\LinesNumbered` in the preamble: the
-  document-wide display default every algorithm starts from. -/
+  /-- `\DontPrintSemicolon`/`\LinesNumbered`: a document-wide algorithm
+  default. -/
   | algFlag (name : String) (pos : Pos)
-  /-- An algorithm2e display setting outside the model, met in the
-  preamble: named and ignored, its groups consumed with it. -/
+  /-- An algorithm2e display setting outside the model, named and ignored. -/
   | algSetting (name : String) (pos : Pos)
-  /-- `\newtheorem{env}[shared]{heading}[within]` (latex.ltx, ltthm.dtx),
-  amsthm's starred form unnumbered: the environment, the counter it
-  shares, its heading, and the heading counter that resets its own. -/
+  /-- `\newtheorem{env}[shared]{heading}[within]`, starred unnumbered as in
+  amsthm. -/
   | newtheorem (star : Bool) (env : String) (shared : Option String)
       (heading : Option (Array Raw)) (within : Option String) (pos : Pos)
   /-- amsthm's `\theoremstyle{s}`: the style the `\newtheorem`s after it
   take. -/
   | theoremstyle (name : Option String) (pos : Pos)
-  /-- amsmath's `\numberwithin[fmt]{counter}{within}`: the counter restarts
-  whenever the heading counter `within` moves, and renders after it. `none`
-  for the counter is a declaration missing its two groups. -/
+  /-- amsmath's `\numberwithin[fmt]{counter}{within}`; `none` when its groups
+  are missing. -/
   | numberwithin (fmt : Option String) (counter : Option (String × String)) (pos : Pos)
-  /-- A cancel package load's options (`Compat.cancelOptionsMark`), as
-  written: the marks every formula after it draws. -/
+  /-- A cancel package load's options, as written. -/
   | cancelOpts (src : String) (pos : Pos)
   | stray
 
-/-- The preamble fold's threaded state: exactly the loop-local values the
-imperative scanner carried, as a value `applyDecl` maps. `textDiagged` is
-the E0313 once-latch — reporting machinery, beside ESt's diags,
-`warnedUnknown`, `seenScalars`, and `declaredKeys`: the commutation
-statement's projection excludes these four and nothing else, because their
-only readers are diagnostic sites. -/
+/-- The preamble fold's state. -/
 public structure PreState where
   ctx : Ctx
   docClass : Ir.DocClass := .article
@@ -16783,11 +14009,11 @@ public structure PreState where
   sawPage : Bool := false
   fonts : FontSpec := {}
   palette : Palette := {}
-  /-- A `\pagecolor` already resolved in preamble order. It overlays the
-  eventual class/document palette without becoming that reset target. -/
+  /-- A `\pagecolor` resolved in preamble order, overlaid on the final
+  palette. -/
   pageGround : Option Color := none
   tokens : Tokens := {}
-  /-- Caption positions `\captionsetup` declared (`Doc.captionPos`). -/
+  /-- The caption positions `\captionsetup` declared. -/
   captionPos : Array (String × Ir.CaptionPos) := #[]
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
@@ -16801,15 +14027,13 @@ public structure PreState where
   asserts : Array Assertion := #[]
   allow : Array String := #[]
   textDiagged : Bool := false
-  /-- The document wrote `\theme{...}` — any spelling, known or not: the
-  author's choice stands and the class default steps aside. -/
+  /-- The document wrote a `\theme{...}`, known or not. -/
   sawTheme : Bool := false
-  /-- The frame-alignment keys the installed theme sets (`Theme.frameKeys`). -/
+  /-- The frame-alignment keys the installed theme sets. -/
   frameKeys : Ir.FrameKeys := .beamer
 
-/-- An optional `[...]` run at `j`: its contents and the index past it —
-`closeBracketFrom` doing the collection the preamble scanners below used
-to hand-roll. An unclosed run reaches the end of the preamble. -/
+/-- An optional `[...]` run at `j` and the index past it; an unclosed run
+reaches the end. -/
 private def takeOptRun (preamble : Array Raw) (j : Nat) :
     Option (Array Raw) × Nat :=
   if preamble[j]? matches some (.sym '[' _) then
@@ -16818,13 +14042,8 @@ private def takeOptRun (preamble : Array Raw) (j : Nat) :
     | none => (some (preamble.extract (j + 1) preamble.size), preamble.size)
   else (none, j)
 
-/-- Segment the preamble into declaration values. Pure and positional: the
-same argument extents the imperative loop walked (`skipSpaces`,
-`scanBracketArg`, group taking, `skipReservedArgs`), including its recovery
-quirks — a declaration whose group never materialises consumes only what
-the loop consumed, and the tokens it looked past rescan as their own units,
-exactly as they always did. `\input` wrappers splice open in place between
-file markers, so a value's diagnostics name the file that holds it. -/
+/-- Segments the preamble into declaration values, `\input` wrappers spliced
+open between file markers. -/
 public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
   let mut preamble := pre
   let mut curFile := file
@@ -16893,14 +14112,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
               k := k + 1
             | none => break
           let k2 := skipSpaces preamble k
-          -- environ's spelling (`\NewEnviron`, which Compat gives the
-          -- native head and marks): one code body with `\BODY` at its top
-          -- level is the begin code before it — the mark closing it, the
-          -- body's edges trimmed — and the end code after it; a code with
-          -- none is all end code, its body discarded at each use. The final
-          -- code joins the end, environ's `\ignorespacesafterend` where
-          -- none follows. Unmarked, the head is the kernel's, and a `\BODY`
-          -- in it the document's own macro.
+          -- environ's `\NewEnviron`: the code before `\BODY` begins, the rest ends.
           let isMark (r : Raw) : Bool := match r with
             | .ctrl n _ => n == Compat.environBodyMark
             | _ => false
@@ -16937,15 +14149,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           curFile := f
           out := out.push (.fileMark f)
         else if name.startsWith "@series:" || name.startsWith "@lang:" then
-          -- premise: compatMarkerChecks — the Doc is the one without it, `\enquote` included
-          -- Compat's markers for `\fontseries` and `\selectlanguage`, met in
-          -- the preamble proper. LaTeX's `\begin{document}` selects the
-          -- normal font and babel's main language (measured against
-          -- lualatex), so neither reaches text there. Compat discards both
-          -- there itself, with a `ctrl:nothing:` note and no marker, so this
-          -- arm drops only what a note already names as nothing. Never an
-          -- unknown command: the marker is Compat's own spelling, and a
-          -- warning quoting it named nothing the document wrote.
+          -- premise: compatMarkerChecks — the Doc is the one without it
           pure ()
         else if name.startsWith Compat.pageColorMarkPrefix then
           out := out.push (.pageGround
@@ -16953,8 +14157,6 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
         else if name == Compat.pageColorResetMark then
           out := out.push (.pageGround none pos)
         else if name.startsWith "@ink:" then
-          -- An ink declaration survives `document`; page-ground markers
-          -- are applied above in preamble order instead.
           out := out.push (.bodyStart name pos)
         else if runningCtrl.contains name then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
@@ -16988,7 +14190,6 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]?, preamble[j2]?, preamble[j3]? with
           | some (.group elems _), some (.group ch _), some (.group key _) =>
             i := j3 + 1
-            -- One group per element of the chain, the latest first.
             let chain := elems.toList.filterMap fun r => match r with
               | .group el _ => some (rawSrc el).trimAscii.toString
               | _ => none
@@ -17033,10 +14234,6 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           | _ =>
             out := out.push (.allow none pos)
         else if name == "tikzexternalize" then
-          -- TikZ's own externalization spelling (pgf manual §53): the
-          -- LaTeX-shaped door to the boundary, with the pinned default
-          -- tool. Its optional configuration is the external library's
-          -- own business and is consumed with it.
           let (_, k) := takeOptRun preamble (skipSpaces preamble i)
           i := k
           out := out.push (.pictures (some "tool = lualatex") pos)
@@ -17124,7 +14321,6 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             if recovered then
               i := j
         else if name == "newtheorem" then
-          -- \newtheorem{env}[shared]{heading}[within]; amsthm's `*` form.
           let j0 := skipSpaces preamble i
           let (star, j0) := match preamble[j0]? with
             | some (.word "*" _) => (true, skipSpaces preamble (j0 + 1))
@@ -17178,9 +14374,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             out := out.push (.reserved name code none pos)
             i := j
         else
-          -- TeX's register assignment (`\widowpenalty=10000`,
-          -- `\parindent=\z@`) is one construct: the `=` and its value go
-          -- with the skipped name, never left behind as stray content.
+          -- A TeX register assignment's `=` and value go with the skipped name.
           let j0 := skipSpaces preamble i
           match preamble[j0]? with
           | some (.sym '=' _) =>
@@ -17206,15 +14400,8 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
       break
   return out
 
-/-- `\allow{W0307, E0502}`: the document accepts the named losses. The
-teeth: an unknown code is an error (a typo must not grant a silent
-blanket), an entry that never fires warns (Main), and the acceptance always
-prints in the build summary. A *retired* code is not an unknown one: it
-answers through `DiagCode.retired` with a note (N0105) naming what reports
-its loss now, because a document that names it was written against an
-engine that had it — and it accepts nothing, because a successor that folds
-the retired fragment into a wider diagnostic would otherwise be a blanket
-the document never wrote. -/
+/-- Applies `\allow{...}`: each named code accepts its loss, a renumbered or
+retired code is noted, and an unknown one is refused. -/
 private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : Pos) :
     Array String × Array PEvent := Id.run do
   let mut allow := allow
@@ -17252,9 +14439,7 @@ so this accepts nothing"
           (help := "codes look like 'E0333'; each names the one loss it accepts")))
   return (allow, evs)
 
-/-- One keyed apply step, finished: fulfil its reporting events and return
-its value. Every keyed `applyDecl` arm is `stepDone` of a pure step — the
-shape T1's proof reads, one run lemma for all seven heads. -/
+/-- Emits a pure step's reporting events and returns its state. -/
 private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState := do
   emitEvents ctx r.2
   return r.1
@@ -17263,9 +14448,7 @@ private def stepPage (s : PreState) (src : String) (pos : Pos) :
     PreState × Array PEvent :=
   let pb := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
   let pe := applyPage s.ctx s.page pb.1 pos s.tokens.entries
-  -- Only geometry keys claim the page: `\page{ parskip = ... }` keeps the
-  -- Bringhurst default margin standing (≈ the `!sawPage` branch after the
-  -- fold).
+  -- Only geometry keys claim the page, so a parskip alone keeps the default margin.
   ({ s with
       page := pe.1
       sawPage := pb.1.any (pageGeometryKeys.contains ·.key) || s.sawPage },
@@ -17283,18 +14466,12 @@ private def stepPdfmeta (s : PreState) (src : String) (pos : Pos) :
   let me := applyMeta s.ctx s.info pb.1 pos
   ({ s with info := me.1 }, pb.2.map .say ++ me.2)
 
-/-- Parses its own entries: `formats` is a bare comma list, which a generic
-key/value pre-parse would break apart. -/
 private def stepOutput (s : PreState) (src : String) (pos : Pos) :
     PreState × Array PEvent :=
   let oe := applyOutput s.ctx s.output src pos
   ({ s with output := oe.1 }, oe.2)
 
-/-- Parses its own entries: slot values are `\sectiontitle` spellings a
-key/value pre-parse would reject. Inert chrome would be a silent failure —
-only slides draw it — so the step also says W0318 off the slides class;
-declaring the block names what the footer band holds (`chromeDeclared`,
-read by `footerSequenceDiags`). -/
+/-- Applies `\chrome`, warning under a class that never draws it. -/
 private def stepChrome (s : PreState) (src : String) (pos : Pos) :
     PreState × Array PEvent :=
   let ce := applyChrome s.ctx s.chrome src pos
@@ -17319,16 +14496,12 @@ private def stepAllow (s : PreState) (src : String) (pos : Pos) :
   let ae := applyAllow s.ctx s.allow src pos
   ({ s with allow := ae.1 }, ae.2)
 
-/-- The E0304 a keyed head without its `{...}` block earns, as a step. -/
+/-- A keyed head missing its `{...}` block, as a step. -/
 private def stepMissing (s : PreState) (name : String) (what : String) (pos : Pos) :
     PreState × Array PEvent :=
   (s, #[.say (diagOf s.ctx .E0304 s!"'\\{name}' needs {what}" (some pos))])
 
-/-- Apply one declaration to the fold state: the imperative loop's arm
-bodies over a value, one arm per constructor, no wildcard. Every diagnostic
-the loop emitted is emitted here, in the same order — the scan owns extents
-only. The preamble IS `foldlM applyDecl` over `scanDecls`' values; the
-commutation statement ranges over exactly this function. -/
+/-- Applies one preamble declaration to the fold state. -/
 public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   match d with
   | .docclass options cls pos =>
@@ -17340,8 +14513,6 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some named =>
       match Ir.DocClass.ofString? named with
       | some c =>
-        -- The class's defaults ride on the palette from here, so a bundle the
-        -- preamble installs realizes at the class's depth.
         return { s with docClass := c, palette := { s.palette with
           classColors := c.classColors (Ir.Surface.ofPath s.ctx.file) } }
       | none =>
@@ -17352,16 +14523,10 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       diag s.ctx .E0304 "'\\documentclass' needs a {class}" pos
       return s
   | .defineCmd decl pos =>
-    -- Through `takeDefine`, the one door the body arm uses too: the
-    -- validation (W0303, E0303, the signature grammar) cannot drift
-    -- between the two positions. The scan carried the declaration's own
-    -- token run; the extent is the scan's, so the returned index is not
-    -- read here.
     let ⟨(cmd?, _), _⟩ ← takeDefine s.ctx decl 0 pos
     if let some cmd := cmd? then
       if let some (lvl, parts) := secFmtDefine? cmd then
-        -- Not a macro: a heading-number format declaration, the same
-        -- interception as the body walk's define arm.
+        -- Not a macro: a heading-number format declaration.
         applySecFmt lvl parts
         return s
     let cmd? ← match cmd? with
@@ -17370,26 +14535,13 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       | none => pure none
     match cmd? with
     | some cmd =>
-      -- The same boundary insertion as the body walk's define arm
-      -- (`bindCmd`): at the preamble top level `limit` equals the array's
-      -- size and this is a plain push, but the spelling keeps visibility
-      -- monotone wherever the fold runs.
       return { s with ctx := bindCmd s.ctx cmd }
     | none => return s
   | .defineEnv name sig beginB endB pos =>
     match name with
     | some (envName, npos) =>
       if builtinEnvNames.contains envName then
-        -- Rule (b)'s remainder for environments: the abstract's refused
-        -- redefinition may still declare the built-in's appearance —
-        -- `\large\bf` and `\centerline` are read as `\style{abstract}`
-        -- keys, merged under anything the document declared itself, and
-        -- the W0303 gains W0361's clause naming what survived. The body's
-        -- size is always declared: a begin body that switches none leaves
-        -- the body at the size in force, never at the built-in's `\small`.
-        -- The refusal names what the built-in keeps: its heading text
-        -- where the definition writes another, and its heading and margins
-        -- where nothing of the definition's heading was read.
+        -- A refused abstract redefinition still declares its heading style and body size.
         let heading := if envName == "abstract" then
             beginB.bind fun b => envStyleInterpret (envStyleScanList {} b.toList)
           else none
@@ -17437,10 +14589,7 @@ the built-in's heading and margins stand{replaced}"
   | .fileMark f =>
     return { s with ctx := { s.ctx with file := f, callSite := none } }
   | .running name opts body pos =>
-    -- `[from = 2]` keeps the opening page clean, as a title page is.
-    -- The option is this declaration's own: it gates the head or foot
-    -- it rides on, never the sibling's, and a redeclaration without
-    -- it resets the gate — a replace is whole, options included.
+    -- `from` gates only this head or foot; a redeclaration without it resets.
     let mut fromPage : Nat := 1
     if let some opt := opts then
       for e in Decl.splitEntries (rawSrc opt) do
@@ -17455,21 +14604,12 @@ the built-in's heading and margins stand{replaced}"
     match body with
     | some b =>
       let content ← elabInlines s.ctx b
-      -- The gate-only spelling: `\runningfoot[from = 2]{}` moves the run's
-      -- start without declaring a line — `\thispagestyle{empty}`'s carrier
-      -- (its page-1 form: this-page-only and from-page-2 coincide when the
-      -- override is the opening page's). It only defers — a declaration's
-      -- own later `from` stands (max) — and it never touches content, so
-      -- it cannot clear a declared line or suppress the class default.
+      -- An empty body only defers the gate; it never clears a declared line.
       if content.isEmpty then
         if name == "runninghead" then
           return { s with headFrom := max s.headFrom fromPage }
         else
           return { s with footFrom := max s.footFrom fromPage }
-      -- The whole declaration is one scalar: a second one replaces
-      -- the first, said aloud when their content differs (the same
-      -- store W0343's keyed sites use; a byte-identical repeat is
-      -- silent).
       let raw := (rawSrc b).trimAscii.toString
       let store := (← get).seenScalars
       if let some prev := store.find? (fun e => e.1 == name && e.2.1 == "content") then
@@ -17487,10 +14627,6 @@ the built-in's heading and margins stand{replaced}"
       diag s.ctx .E0304 s!"'\\{name}' needs one group of inline content" pos
       return s
   | .logo body pos =>
-    -- beamer's `\logo{...}`: one piece of inline content — normally an
-    -- image — placed at the lower-right corner of every page carrying
-    -- running content. The image inside is the same node
-    -- `\includegraphics` makes; only the placement is the deck's.
     match body with
     | some b =>
       let content ← elabInlines s.ctx b
@@ -17501,16 +14637,9 @@ the built-in's heading and margins stand{replaced}"
       diag s.ctx .E0304 "'\\logo' needs one group of inline content" pos
       return s
   | .logoSlot left body pos =>
-    -- The gemini lineage's `\logoleft`/`\logoright`: one piece of inline
-    -- content — normally an image — for the headline band's corner slot.
-    -- The band itself is class furniture (`ClassRecord.headline`); a
-    -- declaration a class cannot draw is dropped by name at assembly.
     let cmd := if left then "logoleft" else "logoright"
     match body with
     | some b =>
-      -- The logo's image sizes read the same token environment a
-      -- `\\setlength` reads (`0.2\\paperheight` names the page the class
-      -- and the declarations so far have fixed).
       let ctx := { s.ctx with
         engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
       let content ← elabInlines ctx b
@@ -17535,8 +14664,6 @@ the built-in's heading and margins stand{replaced}"
         [⟨name.trimAscii.toString, source, s.ctx.sourceSpan pos⟩] } } }
     return s
   | .palette opts body pos =>
-    -- `\palette[decorative]{...}`: options read by the one door
-    -- (`parsePaletteOpts`), the body arm's too.
     let (decorative, seeds, skipBlock) ← match opts with
       | some opt => parsePaletteOpts s.ctx (rawSrc opt) pos
       | none => pure (false, false, false)
@@ -17554,9 +14681,6 @@ the built-in's heading and margins stand{replaced}"
   | .style args pos =>
     match args with
     | some (elem, body) =>
-      -- A style's lengths read the token environment a `\setlength` reads
-      -- (`0.6\paperwidth` names the page the class has fixed so far), as
-      -- the logo arm's sizes do.
       let ctx := { s.ctx with
         engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
       let styles ← applyStyle ctx s.styles elem body pos
@@ -17570,25 +14694,13 @@ the built-in's heading and margins stand{replaced}"
   | .theme src pos =>
     match src with
     | some src =>
-      let s := { s with sawTheme := true }      -- A theme is a named bundle of typed values, installed here
-      -- through the same replace-on-redeclare door the document's
-      -- own declarations use. Everything after this site overrides:
-      -- the theme is a default, never a lock. The install itself is
-      -- `Theme.apply` — values in, values out; this site only
-      -- threads the result back into the fold's state.
+      let s := { s with sawTheme := true }
       let tname := src.trimAscii.toString
-      -- beamer's own `\usetheme{default}` is the base look: no bundle
-      -- installs, and the class default (the slides `daylight` install)
-      -- steps aside — the author chose bareness by name.
+      -- beamer's `default` installs no bundle and displaces the class default.
       if tname == "default" then
         return s
       match Theme.find? tname with
       | some th =>
-        -- The class gates whether furniture draws; the theme only
-        -- supplies its values. A bundle whose chrome or slides
-        -- furniture styles land under a class that never draws
-        -- them would be silently inert, so the install says so —
-        -- the document's own `\chrome` has its own name (W0318).
         if !s.docClass.record.chrome then
           let inert := (if th.chrome.hasFooter then ["chrome"] else []) ++
             ["frametitle", "sectionpage", "standout"].filter
@@ -17604,19 +14716,13 @@ the built-in's heading and margins stand{replaced}"
         let before : Theme.Decls :=
           { palette := s.palette, tokens := s.tokens
             styles := s.styles, chrome := s.chrome }
-        -- A theme replacing a key the document already declared is
-        -- almost certainly an ordering mistake, not an intent: the
-        -- positional rule says the theme wins, so say so (W0348).
-        -- Judged against what the DOCUMENT declared — a value
-        -- standing from an earlier bundle warns nothing.
+        -- Judged against what the document declared, not an earlier bundle.
         for (kind, key) in Theme.replaces th before do
           if (← get).declaredKeys.contains (kind.name, key) then
             diag s.ctx .W0348
               s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind.name}'"
               (some pos)
               (help := "overrides go after '\\theme': move the declaration below it")
-        -- The keys the bundle installs now stand from it, not from
-        -- the document, whatever they replaced.
         let installed := (Theme.declares th s.palette.classColors.depth).map
           fun (k, key) => (k.name, key)
         let ownRoles (rs : Array Role) : Array Role :=
@@ -17625,8 +14731,6 @@ the built-in's heading and margins stand{replaced}"
           declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e)
           spans := { st.spans with docRoles := ownRoles st.spans.docRoles } }
         let ds := Theme.apply th before
-        -- The bundle's colour theme declares its own relationships under the
-        -- document's (`BeamerColor.themeElement`).
         modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with theme := tname } } }
         for (key, c) in (th.realize s.palette.classColors.depth).entries do
           recordColorDeclaration key.key c (s.ctx.sourceSpan pos)
@@ -17657,8 +14761,6 @@ the built-in's heading and margins stand{replaced}"
   | .tokens src pos =>
     match src with
     | some src =>
-      -- Parses its own entries one at a time; a generic pre-parse
-      -- would reject `0.6 * rhythm` before the reference resolves.
       let tk ← applyTokens s.ctx s.tokens src pos
         (engine := engineLengthTokens s.docClass s.classOptions s.page)
       return { s with tokens := tk, ctx := { s.ctx with tokens := tk } }
@@ -17674,11 +14776,6 @@ the built-in's heading and margins stand{replaced}"
   | .pictures body pos =>
     match body with
     | some src =>
-      -- The boundary door: which pinned tool draws pictures outside the
-      -- rendered subset, or `tool = none`, the declared refusal. The
-      -- boundary is open by default, so the block pins or refuses; a
-      -- pinned value is drawn from `picTools`, never an arbitrary binary
-      -- (the driver executes it).
       let mut s := s
       for e in Decl.splitEntries src do
         match Decl.splitEntry e with
@@ -17704,11 +14801,6 @@ tool = none refuses the boundary")
   | .figures body pos =>
     match body with
     | some src =>
-      -- The converter door: whether the converters the engine pins —
-      -- pdftocairo for a PDF figure's web face, rsvg-convert for an SVG
-      -- figure — may draw a figure the engine cannot draw whole. Open by
-      -- default, as the picture boundary is; `convert = none` refuses both,
-      -- and naming either is the default, since the engine runs no other.
       let mut s := s
       for e in Decl.splitEntries src do
         match Decl.splitEntry e with
@@ -17735,14 +14827,7 @@ convert = none refuses both")
   | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
   | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
   | .urlstyle v pos =>
-    -- url.sty's face selector, honoured rather than refused: the four
-    -- values it defines map onto the engine's three families and the
-    -- running face. Refusing it was wrong twice — it told a reader who
-    -- asked for the running face that URLs are set mono, and the slot
-    -- census then counted such a URL as mono the document had lost. The
-    -- family itself is read before the fold (`elabDoc`, `urlFamily0`), so
-    -- this arm only reports: a write here would give a `\url` in a title
-    -- part the selector's position rather than the preamble's value.
+    -- The family is read before the fold (`urlFamily0`); this arm only reports.
     match v with
     | some val =>
       match urlStyleFamily? val with
@@ -17768,29 +14853,10 @@ convert = none refuses both")
         return s
       | .rejected => return s
   | .bodyStart _ _ =>
-    -- Read off the scanned declarations by `elabDoc`, which opens the body
-    -- with it; the fold has nothing to apply.
+    -- The body opens with it; the fold has nothing to apply.
     return s
   | .captionsetup scope unclosed body pos =>
-    -- The caption package's option interface (caption manual §2–4).
-    -- `skip` and `aboveskip` set `\abovecaptionskip`, `belowskip` sets
-    -- `\belowcaptionskip` (caption3.sty's option declarations): the
-    -- `captionsep` and `belowcaptionskip` tokens, the two skips
-    -- `Ir.captionSides` places. `position`/`tableposition`/`figureposition`
-    -- declare the side captions are placed for (§2.2: the option does not
-    -- move a caption, it tells the package which way its skips face), the
-    -- document's `Doc.captionPos`. `margin` is the caption's own both-side
-    -- margin (§2.4), the `captionmargin` token. A `[float type]` scope (§4)
-    -- declares the kind's own token or position (`tablecaptionsep`),
-    -- which only that kind reads; a type the engine has no float for
-    -- names its keys unhonoured rather than reach every kind. A length
-    -- reads as the document's other lengths do — a literal, or an
-    -- expression over the declared tokens — and a skip set to its own
-    -- register (`skip=\abovecaptionskip`) is the gap set to itself, which
-    -- the package evaluates where the caption is set: a no-op. Every
-    -- other key, and an honoured key whose value no reading carries (a
-    -- {left,right} pair, an unknown position), is named and ignored
-    -- (W0354), one warning per key.
+    -- caption3.sty's skip, margin and position keys; any other key is named.
     if let some bpos := unclosed then
       warnUnclosed s.ctx "'\\captionsetup'" bpos
     let kind? : Option (Option Ir.FloatKind) := scope.map Ir.FloatKind.ofCaptionType?
@@ -17803,8 +14869,6 @@ convert = none refuses both")
         if key.isEmpty then continue
         let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
         let honouredToken ← do
-          -- Each honoured length key is one token, the styling door both
-          -- backends read, beside the register it sets.
           let tokenOf := [("skip", ("captionsep", "abovecaptionskip")),
             ("aboveskip", ("captionsep", "abovecaptionskip")),
             ("belowskip", ("belowcaptionskip", "belowcaptionskip")),
@@ -17815,8 +14879,7 @@ convert = none refuses both")
             let tok := match kind? with
               | some (some k) => k.captionScope ++ tok
               | _ => tok
-            -- premise: captionScopeChecks — a skip set to the caption skip
-            -- itself ships the page the document ships without it
+            -- premise: captionScopeChecks — a self-assigned caption skip is a no-op
             if !reg.isEmpty && value == s!"\\{reg}" then pure true
             else
               let glue := (Decl.parseGlue value).orElse fun _ =>
@@ -17832,9 +14895,7 @@ convert = none refuses both")
                 pure true
               | none => pure false
           | none, _ => pure false
-        -- caption3.sty: `tableposition`/`figureposition` are
-        -- `\captionsetup*[table|figure]{position=…}`, whatever scope the
-        -- key is written under.
+        -- caption3.sty: `tableposition` and `figureposition` carry their own scope.
         let posScope : Option String := match key, kind? with
           | "tableposition", _ => some "table"
           | "figureposition", _ => some "figure"
@@ -17859,8 +14920,6 @@ its declared layout" pos
       diag s.ctx .E0304 "'\\captionsetup' needs a {key = value} block" pos
       return s
   | .titleDecl name unclosed recovered body pos =>
-    -- A declaration-only position: the malformed run is dropped with
-    -- W0310 already pointing at it — the preamble has no content.
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     match body with
@@ -17878,9 +14937,6 @@ its declared layout" pos
   | .reserved name code unclosed pos =>
     warnOnce s.ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
     if let some bpos := unclosed then
-      -- The malformed arguments end with the command's line or at the
-      -- next construct on it: the author's next declaration is never
-      -- consumed here.
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     return s
   | .algKw name args pos =>
@@ -17915,8 +14971,6 @@ its declared layout" pos
         return s
       let thms := (← get).ctr.thm
       let name ← elabInlines s.ctx h
-      -- A shared counter must exist (ltthm.dtx: "No counter defined" is an
-      -- error there); unknown, the environment numbers on its own.
       let sharedOk := shared.any fun c => thms.counters.any (·.1 == c)
       if let some c := shared then
         unless sharedOk do
@@ -17956,8 +15010,6 @@ does not keep; the number stands alone" pos
       modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with style := st } } }
       return s
     | none =>
-      -- amsthm.sty's `\theoremstyle`: an undefined `th@<name>` warns and
-      -- sets `\thm@style{plain}`, whatever style stood before.
       warnOnce s.ctx ("theoremstyle:" ++ name.getD "") .W0110
         s!"'\\theoremstyle' names '{name.getD ""}', not one of plain, definition, \
 remark; plain applies, as amsthm sets it" pos
@@ -17998,17 +15050,10 @@ a heading; its numbers stand alone" pos
     let opts := (src.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
   | .unknownCmd name unclosed pos =>
-    -- A tikz-family set line is not unknown: the engine reads `\tikzset`
-    -- and `\usetikzlibrary` itself (`Compat.nativeReadCtrls`), and while the
-    -- boundary is open the rest ride into every wrapped standalone
-    -- (`Compat.boundaryDecls` collected them), where the real TikZ reads
-    -- them. A declared refusal (`tool = none`) makes only the ones the
-    -- engine does not read unknown again.
+    -- Set lines the engine or an open boundary reads are not unknown.
     if Compat.nativeReadCtrls.contains name ||
         (s.ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
       return s
-    -- Unknown preamble commands are configuration, not content: their
-    -- arguments are skipped with them, never elaborated as stray text.
     warnOnce s.ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}' in the preamble; skipped" pos
       (help := unknownCmdHelp name false)
@@ -18023,24 +15068,15 @@ a heading; its numbers stand alone" pos
       diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" none
       return { s with textDiagged := true }
 
-/-- The elaboration state with the reporting machinery erased: the
-projection T1's commutation compares. What it deliberately ignores — and
-nothing else — is the four stores whose only readers are diagnostic sites:
-the emitted diagnostics themselves (a swap legitimately reorders emission;
-the diagnostic-code multiset stays under `scripts/compose-fuzz.lean`'s
-watch), the warn-once memo (read only by `warnOnce`), the W0343 scalar
-store (read only by `applyEvent`'s `.scalar` arm), and the W0348
-declared-key store (read only by the `\theme` site). Everything a backend
-or the body elaboration reads survives the projection. -/
+/-- The elaboration state with the four stores only diagnostics read erased. -/
 public def ESt.sem (e : ESt) : ESt :=
   { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[] }
 
-/-- The fold state with its one piece of reporting machinery erased, the
-E0313 once-latch. -/
+/-- The fold state with its reporting once-latch erased. -/
 public def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
 
-/-- The heads in T1's proved tier: the keyed block declarations whose whole
-apply step is a pure value plus reporting events. -/
+/-- The head of a keyed block declaration, whose apply step is a pure value
+plus reporting events. -/
 public def PDecl.keyedHead? : PDecl → Option String
   | .page _ _ => some "page"
   | .pdfmeta _ _ => some "pdfmeta"
@@ -18051,16 +15087,6 @@ public def PDecl.keyedHead? : PDecl → Option String
   | .allow _ _ => some "allow"
   | _ => none
 
-/-- T1's independence condition, proved tier: two keyed declarations with
-different heads. The named exceptions stay outside by construction —
-`\define`/`\defineenv`/`\tokens`/`\palette`/`\style` (reference→referent
-order is essential), `\theme` (positional by design), `\documentclass`
-(W0318 reads the class declared so far), same-head pairs (same-key
-last-wins is the one essential order), and the inline-content heads
-(running head/foot, logo, the title declarations), whose apply elaborates
-content through `elabInlines` — one of the three tracked exemptions from
-the termination checker, opaque to the kernel, which no theorem can range
-over — so those heads stay with the oracle. -/
 public def PDecl.Independent (d₁ d₂ : PDecl) : Prop :=
   match d₁.keyedHead?, d₂.keyedHead? with
   | some h₁, some h₂ => h₁ ≠ h₂
@@ -18138,15 +15164,8 @@ private theorem applyDecl_allow_none (s : PreState) (pos : Pos) :
       = stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos) := by rfl
 
 set_option maxHeartbeats 1000000 in
-/-- T1 over `applyDecl`, the proved tier (audit-compose; the statement the
-2026-09-18 PLAN entry records as unstatable before this fold existed):
-independent adjacent preamble declarations commute up to reporting — the
-fold state agrees under `PreState.sem`, and the elaboration state comes
-back reporting-equal to where it started (`ESt.sem`), in both orders. The
-oracle `scripts/compose-fuzz.lean` keeps watching what this tier does not
-reach: the inline-content heads, same-head field-disjoint swaps, and the
-diagnostic-code multiset. A commutation is a new theorem shape beside the
-registered suffixes; `_comm` names it. -/
+/-- Independent adjacent preamble declarations commute up to reporting, in
+both orders. -/
 public theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
     (h : PDecl.Independent d₁ d₂) :
     (((applyDecl s d₁ >>= fun s' => applyDecl s' d₂).run e).1.sem
@@ -18172,51 +15191,26 @@ public theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
                   stepAssert, stepAllow, stepMissing]
                 all_goals rfl))
 
-/-- `sty_is_defaults_tokens`, the `\tokens` half (the sty-e2e audit's q2): a
-`.sty`-sourced value is a default — for a keyed store, a document
-declaration folding after the `.sty`'s wins, never the reverse. A
-corollary of keyed last-wins (`Tokens.declare_last_wins`) plus the splice
-preserving position: `Compat.applyLocalSty` inserts the file's text at
-the `\usepackage` itself, so the `.sty`'s declarations fold before every
-later document declaration — the premise this statement pins against a
-future splice change. Source: LaTeX's own semantics, where package code
-executes at `\usepackage` time (ltfiles.dtx `\@onefilewithoptions`) — so
-a document declaration written *before* the `\usepackage` is overridden
-by the `.sty`, exactly as in LaTeX. Layering (the audit's q3): a `.sty`
-is document-layer text at its splice position — after class defaults,
-before everything later in the preamble — not a new layer; `\theme`
-stays the visual layer and `Theme.apply`'s theorems are untouched. -/
 public theorem sty_is_defaults_tokens (t : Tokens) (k : String) (sty doc : SymGlue) :
     ((t.declare k sty).declare k doc).find? k = some doc :=
   Tokens.declare_last_wins _ k doc
 
-/-- `sty_is_defaults_palette`, the `\palette` half: the same corollary through the
-same one install door (`Palette.declare_find_exact`). -/
 public theorem sty_is_defaults_palette (p : Palette) (k : ColorRef) (sty doc : Color)
     (d d' : Bool) :
     ((p.declare k sty d).declare k doc d').lookup k = some doc :=
   Palette.declare_find_exact _ k doc d'
 
 
-/-- Rule (b)'s remainder, honoured: a `\renewcommand{\maketitle}` the gate
-refused may still *declare* the built-in's styling — rules, skips, size and
-weight, alignment — sitting around the built-in's own datum (`\@title`).
-Read here, at the preamble's end, and not at the gate: the venue defines
-the internals the body names (`\@maketitle`, `\@toptitlebar`) *after* the
-redefinition itself, so only now does the body's expansion reach them. The
-extracted keys merge *under* anything the document declared itself
-(`\style{titlepage}` wins, `Theme.styleMerge`), and the W0361 that refused
-the body gains the clause naming what survived. A redefinition that later
-won (the built-in will not render) extracts nothing; a body-walk
-redefinition keeps plain rule (b) — the venue's site is the preamble. -/
+/-- The styling a refused `\renewcommand{\maketitle}` body declares around
+`\@title`, read at the preamble's end; `none` once a redefinition won. -/
 public def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
     Option Ir.ElementStyle := do
   let body ← body
   if (lookupUser s.ctx "maketitle").isSome then none
   else refusedTitleReadout s.ctx.user s.ctx.limit body
 
-/-- The production merge, over the preamble fold's complete result. Explicit
-document styles retain their precedence over a refused body's readout. -/
+/-- Merges a refused title body's styling under the document's own
+`titlepage` style. -/
 public def titleStyleMerge (s : PreState) (fragment : Option Ir.ElementStyle) : PreState :=
   match fragment with
   | none => s
@@ -18241,9 +15235,8 @@ private def titleStyleDiagState (st : ESt) : ESt := Id.run do
           break
     return { st with diags := diags, refusedTitleBody := none }
 
-/-- Apply the readout and retain the original refusal's site and provenance.
-The pure result equation is exported so contracts cross the diagnostic
-loop without depending on its private iteration state. -/
+/-- Applies a refused title body's styling and names it on the refusal's
+diagnostic. -/
 public def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
   let fragment := refusedTitleFragment s st.refusedTitleBody
   let st := { st with refusedTitleBody := none }
@@ -18252,30 +15245,13 @@ public def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
 public theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
     ((applyRefusedTitleStyle s).run st).1 = titleStyleApply s st.refusedTitleBody := by rfl
 
-/-- Rule (b)'s remainder for the size ladder: a refused size-command
-redefinition whose body opens with `\@setfontsize\X<size><leading>`
-(fntguide §"\@setfontsize") still *declares* `\X` — the size read as a
-per-mille step of the body in force, exactly as a class's `\normalsize`
-already declares the body size itself (the Compat size idiom). Read at
-the preamble's end in document order, as one declaration: the whole read
-ladder through `Ir.setStepsAll`'s ordered door, or — only when the venue's
-own ladder disorders — step by step through `Ir.setStep`, the offenders
-named (`Ir.size_ladder_monotone`, `Ir.size_ladder_monotone_all`). A landed
-step drops its W0361 and notes what it became (N0100); a step that would
-disorder the named sizes keeps the built-in, its W0361 gaining the clause
-saying why; a body whose head is not the idiom keeps plain rule (b). A
-landed step's declared leading — the idiom's third argument — lands with it
-as the step's row of the document's skip column (`Ir.setSkip`, read as its
-per-mille share of the body, `Ir.skipRowOf`), so its lines lead at the skip
-the venue wrote (`Ir.stepLead`) against the body's own, the venue's
-`\normalsize` read-out (`\page{ baselineskip = … }`); a step it refuses keeps
-size10.clo's size and skip together. A redefinition that later won extracts
-nothing. -/
+/-- Reads each refused size-command redefinition opening with
+`\@setfontsize` as a size step and leading of the body, keeping the
+built-in where the step would put the named sizes out of order. -/
 private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
   let stash := (← get).refusedSizeBodies
   if stash.isEmpty then return s
   modify fun st => { st with refusedSizeBodies := #[] }
-  -- Each stashed body's readable step, in document order — later wins.
   let mut steps : Array (String × Nat × Option Nat × Span) := #[]
   for (name, body, span) in stash do
     if (lookupUser s.ctx name).isSome then continue
@@ -18287,10 +15263,8 @@ private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
     let some sz := Compat.ptMacroArg a1 | continue
     let bodySp := s.page.fontSize
     if sz == 0 || bodySp ≤ 0 then continue
-    -- `sz` is milli-points, so `Dim.pt sz` is a thousand times the size in
-    -- sp: dividing by the body straight off gives the per-mille step.
+    -- `sz` is milli-points, so the quotient is already per mille.
     let factor : Nat := ((Dim.pt (Int.ofNat sz) + bodySp / 2) / bodySp).toNat
-    -- The declared leading, as its row of the skip column at the same body.
     let skip := (fsArgs[2]?.bind Compat.ptMacroArg).filter (0 < ·) |>.map fun ld =>
       Ir.skipRowOf (Dim.pt (Int.ofNat ld)) bodySp
     steps := (steps.filter (·.1 != name)).push (name, factor, skip, span)
@@ -18313,11 +15287,6 @@ private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
 ({Compat.milliStr factor} of the body) would put the named sizes out of \
 order, so it is not read" }
         else d }
-  -- The venue's steps are one declaration: judged whole first, and only a
-  -- ladder that disorders whole is salvaged step by step, the offenders
-  -- named — both doors ordered by construction (`Ir.size_ladder_monotone`,
-  -- `Ir.size_ladder_monotone_all`).
-  -- A landed step's declared skip lands with its size, as one row.
   let withSkips (skips : List (String × Nat)) (landed : List (String × Option Nat)) :
       List (String × Nat) :=
     landed.foldl (fun sk (name, skip) => match skip with
@@ -18346,27 +15315,20 @@ order, so it is not read" }
     else
       return s
 
-/-- The LaTeX2e definer family the boundary standalone reads back as one
-`\renewcommand`: each declares one command with an arity and an optional
-default, so one re-emission serves them all (usrguide, "Defining
-commands"). -/
+/-- The LaTeX2e definers, re-emitted to the boundary standalone as one
+guarded `\renewcommand`. -/
 private def latexDefiners : List String :=
   ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand"]
 
-/-- xparse's family. `\DeclareDocumentCommand` defines irrespective of
-whether the name already exists (usrguide3, "Creating document commands"),
-so the re-emission needs no guard of its own. -/
+/-- The xparse definers, re-emitted as `\DeclareDocumentCommand`. -/
 private def xparseDefiners : List String :=
   ["NewDocumentCommand", "RenewDocumentCommand", "DeclareDocumentCommand",
    "ProvideDocumentCommand"]
 
-/-- TeX's own definers, already total: each binds whatever the name held
-(TeXbook ch. 20), so they ride in their own spelling. -/
+/-- TeX's primitive definers, re-emitted in their own spelling. -/
 private def texDefiners : List String := ["def", "gdef", "edef", "xdef"]
 
-/-- A definer's name argument: `\newcommand{\x}` and `\newcommand\x` both
-spell it — the braced form is what LaTeX documents, the bare one what TeX
-accepts and many classes write. -/
+/-- A definer's name argument, braced or bare. -/
 private def definerName? (raws : Array Raw) (i : Nat) : Option String :=
   match raws[i]? with
   | some (.ctrl n _) => some n
@@ -18377,12 +15339,8 @@ private def definerName? (raws : Array Raw) (i : Nat) : Option String :=
       | _ => none
   | _ => none
 
-/-- One LaTeX2e definer, from the element after its head: the name, the
-arity and the optional default as written, and the body. The re-emission
-guards with `\providecommand` first, so the declaration cannot fail on a
-name the standalone's own packages already own, and then states the
-document's definition — a document that defined a name defined it for its
-pictures too. -/
+/-- One LaTeX2e definer, re-emitted as a `\providecommand` guard and a
+`\renewcommand` with its arity and default as written. -/
 private def latexDefiner? (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := do
   let i := skipStar raws i
@@ -18399,7 +15357,7 @@ private def latexDefiner? (raws : Array Raw) (i : Nat) :
     some ((name, line), j + 1)
   | _ => none
 
-/-- One xparse definer: its argument specification rides as written. -/
+/-- One xparse definer, its argument specification kept as written. -/
 private def xparseDefiner? (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := do
   let i := skipStar raws i
@@ -18412,10 +15370,8 @@ private def xparseDefiner? (raws : Array Raw) (i : Nat) :
       s!"\\DeclareDocumentCommand\{\\{name}}\{{rawSrc sig}}\{{rawSrc body}}"), k + 1)
   | _, _ => none
 
-/-- One TeX definer: the parameter text between the name and the body rides
-verbatim. The scan for the body group is bounded — a parameter text is a
-short run of `#k` tokens and delimiters, so a head with no body group of its
-own never reaches forward into the document for one. -/
+/-- One TeX definer, its parameter text kept verbatim; the body group must
+follow within 16 elements. -/
 private def texDefiner? (head : String) (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := Id.run do
   match raws[i]? with
@@ -18436,10 +15392,8 @@ private def texDefiner? (head : String) (raws : Array Raw) (i : Nat) :
     | _ => return none
   | _ => return none
 
-/-- amsmath's operator definer, `\DeclareMathOperator{\name}{text}` and its
-starred limits form: re-emitted through `\operatorname`, guarded as a LaTeX
-definer is, so a standalone whose packages already own the name still
-reads the document's operator. -/
+/-- `\DeclareMathOperator` and its starred form, re-emitted through
+`\operatorname` and guarded as a LaTeX definer is. -/
 private def operatorDefiner? (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := do
   let star := raws[i]? matches some (.word "*" _)
@@ -18453,9 +15407,8 @@ private def operatorDefiner? (raws : Array Raw) (i : Nat) :
 \\renewcommand\{\\{name}}\{{op}\{{rawSrc body}}}"), j + 1)
   | _ => none
 
-/-- A length's value, `\setlength{\name}{value}`: re-emitted with the
-declaration the document made of it, guarded so a length the standalone
-already owns is set and never declared twice. -/
+/-- `\setlength{\name}{value}`, re-emitted with a `\newlength` only where the
+length is undefined. -/
 private def lengthDefiner? (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := do
   let name ← definerName? raws i
@@ -18466,13 +15419,8 @@ private def lengthDefiner? (raws : Array Raw) (i : Nat) :
 \\setlength\{\\{name}}\{{rawSrc body}}"), j + 1)
   | _ => none
 
-/-- The native `\define \name(sig) {body}`, so the LaTeX spelling and the
-native one carry the same definition to the boundary — a document that
-writes `\define` itself is not a document whose pictures lose their macros.
-The signature's parameter count becomes LaTeX's arity and a leading
-optional parameter its empty default: the native form carries no default
-value to spell back, which is why the definer family is read as written
-rather than through a `UserCmd`. -/
+/-- The native `\define \name(sig) {body}`, re-emitted as a LaTeX definer
+whose arity is the signature's parameter count. -/
 private def nativeDefiner? (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := Id.run do
   match raws[i]? with
@@ -18502,10 +15450,7 @@ private def nativeDefiner? (raws : Array Raw) (i : Nat) :
 
 mutual
 
--- conserves: none — the walk collects the document's macro definitions for
--- the boundary standalone and drops everything else by design, so no
--- census equality can hold. What the collection must satisfy is stated
--- where it pays: `Ir.macroDecls_covers` over the request it feeds.
+-- conserves: none — collects macro definitions, drops the rest
 private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
     List Raw → Nat → Nat → Array (String × String)
   | [], _, _ => out
@@ -18521,8 +15466,6 @@ private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
       else none
     match read? with
     | some (entry, k) =>
-      -- LaTeX's provide keeps an existing definition, so a provide of a
-      -- name this document already bound declares nothing.
       let provide := name == "providecommand" || name == "ProvideDocumentCommand"
       let kept := if provide && out.any (fun q => q.1 == entry.1) then out
         else out.push entry
@@ -18530,9 +15473,7 @@ private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
     | none => macroScanLevel raws out rest (i + 1) 0
   | r :: rest, i, 0 => macroScanLevel raws (macroScanRaw out r) rest (i + 1) 0
 
-/-- Descend into a group or an environment, structurally on `Raw` —
-`boundaryRaw`'s shape. A picture's own body is that standalone's already,
-so a definition written inside one is not hoisted out of it. -/
+/-- Descends into a group or an environment, skipping a picture's own body. -/
 private def macroScanRaw (out : Array (String × String)) : Raw → Array (String × String)
   | .group body _ => macroScanLevel body out body.toList 0 0
   | .env n body _ =>
@@ -18548,27 +15489,8 @@ private def macroScanRaw (out : Array (String × String)) : Raw → Array (Strin
 
 end
 
-/-- The document's own macro definitions for the boundary and the picture
-walk, one entry per name, in the document order of each name's last word —
-LaTeX's last definition is what a use at the end of the document means, and
-the standalone reads one definition per name rather than a replay.
-
-**A name the document defines with different texts is left out.** A
-picture reads a macro where the picture stands, and one table for the whole
-document cannot say which of several definitions is in force at a given
-picture: read that way, a label drew the last definition at every site.
-The conditional pass puts the site's own value into a picture for every
-macro whose required arguments it can bind there; what is left here is
-the rest, so a name whose definitions all agree is the same at every site,
-and one whose definitions differ is not expanded at all — the walk names it where it
-stands, and a boundary standalone that needs it fails in the tool, in the
-tool's words — rather than drawn with a definition that may not be its.
-
-Read over the *unrewritten* tree, as the boundary preamble's collector is
-(`Compat.boundaryScan`): the native `\define` a rewrite produces cannot
-spell an optional argument's default back, so the declaration the
-standalone reads is captured as the document wrote it rather than
-reconstructed from a `UserCmd`. -/
+/-- The document's macro definitions for the boundary, one per name at its
+last definition; a name defined with different texts is left out. -/
 public def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
   let all := macroScanLevel raws #[] raws.toList 0 0
   let mut last : Std.HashMap String Nat := {}
@@ -18586,21 +15508,18 @@ public def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
       if last[n]? == some i && !differ.contains n then out := out.push (n, l)
   return out
 
-/-- The style table before the next picture setting. This is the same
-one-pass interpretation used by the drawing's `Picture.documentStyles`. -/
+/-- The style table a picture setting leaves for the next one. -/
 public def pictureSettingStyles (styles : List (String × Array Picture.Tok))
     (setting : Span × Array Raw) : List (String × Array Picture.Tok) :=
   (Picture.readStyleList styles (Picture.ofSetting setting)).1
 
-/-- Account for a key at the setting that declares it, in the file that
-holds the setting's line. -/
+/-- Names an unread picture key once, at the setting that declares it. -/
 private def pictureKeyState (ctx : Ctx) (span : Span) (st : ESt) (key : String) : ESt :=
   warnOnceState { ctx with file := span.file, callSite := none } ("picture:set:" ++ key)
     .W0334 s!"picture key {key} is outside the rendered picture subset; the key is dropped"
     span.pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
 
-/-- One real reporting loop, over the keys this setting leaves unread.
-The style table is advanced only after the setting has been interpreted. -/
+/-- Names the keys one setting leaves unread, then advances the style table. -/
 private def pictureSettingState (ctx : Ctx)
     (acc : List (String × Array Picture.Tok) × ESt)
     (setting : Span × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
@@ -18609,8 +15528,8 @@ private def pictureSettingState (ctx : Ctx)
     st := pictureKeyState ctx setting.1 st key
   return (pictureSettingStyles acc.1 setting, st)
 
-/-- Interpret and report every prepared picture setting, in declaration
-order, carrying the earlier style definitions into each later setting. -/
+/-- Names every picture setting's unread keys in declaration order, earlier
+styles carried forward. -/
 public def reportPictureKeys (ctx : Ctx) (sets : Array (Span × Array Raw)) (st : ESt) : ESt :=
   Id.run do
     let mut acc := (([] : List (String × Array Picture.Tok)), st)
@@ -18618,38 +15537,30 @@ public def reportPictureKeys (ctx : Ctx) (sets : Array (Span × Array Raw)) (st 
       acc := pictureSettingState ctx acc setting
     return acc.2
 
-/-- Where picture losses belong in the document's diagnostic sequence.
-The body determines whether there is a loss; the context determines its
-source span, independently of the later document judges. -/
+/-- Where picture key losses enter the document's diagnostic sequence. -/
 public structure PictureReportContext where
   ctx : Ctx
   offset : Nat
 
-/-- Name settings against the body actually returned by the frontend.
-Later document judges keep their diagnostic order: picture losses are
-inserted at the position captured immediately after body elaboration. -/
+/-- Names unread picture keys at the report's offset when the body holds an
+engine-drawn picture. -/
 public def finishPictureKeys (report : PictureReportContext) (doc : Doc)
     (sets : Array (Span × Array Raw)) (st : ESt) : ESt :=
-  -- premise: pictureKeyGateChecks — only an engine-rendered picture loses
-  -- these keys; a configured boundary alone cannot silence that loss.
+  -- premise: pictureKeyGateChecks — only engine-drawn pictures lose keys
   if 0 < enginePictures doc.body then
     let named := reportPictureKeys report.ctx sets { st with diags := #[] }
     { named with diags := st.diags.extract 0 report.offset ++ named.diags ++
         st.diags.extract report.offset st.diags.size }
   else st
 
-/-- The declaration fold's output and the raw regions its continuation
-will read. Execution and declaration binding have finished; selected
-refused bodies are interpreted declaratively at this boundary. -/
+/-- The declaration fold's result with the body and trailing raws it leaves. -/
 public structure DocPreamble where
   state : PreState
   decls : Array PDecl
   body : Array Raw
   trailing : Array Raw
 
-/-- Everything decided after the body has elaborated, apart from the body
-itself. Reference resolution is the only remaining pass that can replace
-its inlines; metadata and diagnostic collection cannot substitute content. -/
+/-- What the document continuation decides after the body elaborates. -/
 public structure BodyCompletion where
   doc : Doc
   table : Ir.RefTable
@@ -18657,8 +15568,7 @@ public structure BodyCompletion where
   locale : Locale
   resolve : Bool
 
-/-- Attach the actual numbered body before resolving references in every
-document region. This is the single assembly site used by `runDocBody`. -/
+/-- Attaches the numbered body and resolves references across the document. -/
 public def BodyCompletion.attach (completion : BodyCompletion) (blocks : Array Block) : Doc :=
   let doc := { completion.doc with body := blocks }
   if completion.resolve then
@@ -18674,29 +15584,23 @@ public theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
   unfold BodyCompletion.attach
   split <;> rfl
 
-/-- The real body interpreter's inputs and its metadata continuation.
-Class defaults and preamble declarations have already supplied the context.
-The continuation observes the numbered blocks but does not own their slot. -/
+/-- The body interpreter's inputs and its document continuation. -/
 public structure DocBodyPlan where
   ctx : Ctx
   raws : Array Raw
   finish : Array Block → EM BodyCompletion
 
-/-- Complete the actual body through numbering, metadata and reference
-resolution. Both the production entrypoint and its braced-content contract
-use this one continuation. -/
+/-- Numbers the body's floats, runs the continuation and attaches the body. -/
 public def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let blocks := Ir.numberFloats blocks
   let completion ← plan.finish blocks
   return (completion.attach blocks, completion.table, completion.pictureReport)
 
-/-- Run the production block interpreter and its document continuation. -/
 public def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
   finishDocBody plan (← elabBlocks plan.ctx plan.raws)
 
-/-- One unhandled control and its grouped content, at the executed body
-boundary. The group can contain arbitrary inline syntax. -/
+/-- An unhandled control and its group. -/
 public structure RecoveryGroup where
   name : String
   body : Array Raw
@@ -18709,10 +15613,8 @@ public def RecoveryGroup.call (group : RecoveryGroup) : Array Raw :=
 public def RecoveryGroup.braced (group : RecoveryGroup) : Array Raw :=
   #[.group group.body group.groupPos]
 
-/-- The dispatch domain where a group's ordinary braced spelling is an
-inline paragraph. Execution is already complete; no macro-origin run is
-open. These are syntax and context conditions, with no premise about the
-result of elaborating the group. -/
+/-- The inputs on which an unhandled control's group recovers as an inline
+paragraph of its braced spelling. -/
 public def RecoveryGroupInput (ctx : Ctx) (raws : Array Raw) (group : RecoveryGroup) : Prop :=
   raws = group.call ∧
   ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧
@@ -18722,9 +15624,8 @@ public def RecoveryGroupInput (ctx : Ctx) (raws : Array Raw) (group : RecoveryGr
   group.body.any isParRaw = false ∧
   (group.body.any isCenteringRaw || bodyIsBlock group.body) = false
 
-/-- Interpret the ordinary braced content with the original warning and
-recovery attribution, then run the actual document continuation. This
-exposes what content recovery means without copying either interpreter. -/
+/-- Elaborates the group as braced content under the control's recovery
+warning, then finishes the document. -/
 public def runBracedRecovery (plan : DocBodyPlan) (group : RecoveryGroup) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let blocks ← withControlRecovery plan.ctx group.name group.pos group.braced
@@ -18732,10 +15633,6 @@ public def runBracedRecovery (plan : DocBodyPlan) (group : RecoveryGroup) :
   finishDocBody plan blocks
 
 attribute [local irreducible] elabBlocks finishDocBody in
-/-- Arbitrary inline content of an unhandled control passes through the
-ordinary braced interpreter and the same numbering, metadata and reference
-resolution as production. The entire document, log and continuation state
-agree, not only a selected text census. -/
 public theorem runDocBody_recovery_group_exact (plan : DocBodyPlan) (group : RecoveryGroup)
     (h : RecoveryGroupInput plan.ctx plan.raws group) :
     runDocBody plan = runBracedRecovery plan group := by
@@ -18749,10 +15646,8 @@ public theorem runDocBody_recovery_group_exact (plan : DocBodyPlan) (group : Rec
     group.groupPos hm hp hgp hn hb hpar hblock]
   rfl
 
-/-- A nonempty literal word passed to an unhandled control at the actual
-body-entry boundary. No macro-origin run is open; the dispatch classifiers
-select inline recovery, and paragraph trimming and smart punctuation leave
-the word fixed. These are input conditions, independent of any result. -/
+/-- An unhandled control applied to one literal word that trimming and smart
+punctuation leave fixed. -/
 public def RecoveryWordInput (ctx : Ctx) (raws : Array Raw) (word : String) : Prop :=
   ∃ name pos groupPos wordPos,
     raws = #[.ctrl name pos, .group #[.word word wordPos] groupPos] ∧
@@ -18765,10 +15660,6 @@ public def RecoveryWordInput (ctx : Ctx) (raws : Array Raw) (word : String) : Pr
     String.ofList ((word.toList.reverse.dropWhile (· == ' ')).reverse) = word ∧
     isBlockStart ctx name raws 0 #[] = false
 
-/-- An unknown control's literal argument survives the real block
-interpreter, numbering, the metadata continuation and reference resolution.
-The complete body census is the argument, for every state and continuation
-supplied by preamble and class preparation. -/
 public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (word : String)
     (h : RecoveryWordInput plan.ctx plan.raws word) :
     Ir.blocksText ((runDocBody plan).run st).1.1.body = word := by
@@ -18808,17 +15699,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
         | _ => #[]
       (raws.extract 0 idx, bodyRaws, raws.extract (idx + 1) raws.size)
     | none => (#[], raws, #[])
-  -- The preamble is a fold: `scanDecls` segments it into declaration
-  -- values, `applyDecl` applies each. The commutation statement (T1)
-  -- quantifies over exactly these values; everything after the fold is a
-  -- function of the fold's result.
   let decls := scanDecls file preamble
-  -- The boundary door is read before the fold: a `\tikzset` above the
-  -- `\pictures` line is already the boundary's to keep (or W0301's, above
-  -- a refusal), so the door is read off the scanned declarations first,
-  -- order-free. Open by default; a `\pictures` block pins a tool or
-  -- refuses (`tool = none`). The apply arm still owns every diagnostic
-  -- for the block's contents.
+  -- Read before the fold, so a `\pictures` line binds the settings above it.
   let picTool0 : Option String :=
     (decls.findSome? fun d =>
       match d with
@@ -18831,15 +15713,7 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
             else if picTools.contains v then some (some v) else none
           | _ => none
       | _ => none).getD (some "lualatex")
-  -- url.sty's selector is read off the scanned declarations too, for the
-  -- reason the boundary door is: order. A `\url` inside `\author`, a
-  -- running head or a logo elaborates where it is declared, while LaTeX
-  -- typesets it at `\maketitle` or on the page — after every preamble
-  -- selector has run. So the family the preamble's content reads is the
-  -- last defined value the preamble names, wherever it stands (T1, the
-  -- commutation `scripts/compose-fuzz.lean` checks over this head); the
-  -- apply arm keeps every diagnostic and writes nothing, and the body
-  -- starts from the same value.
+  -- Read before the fold: LaTeX sets preamble content after every selector.
   let urlFamily0 : Option Ir.Style := decls.foldl (fun fam d =>
       match d with
       | .urlstyle (some v) _ => (urlStyleFamily? v).getD fam
@@ -18854,7 +15728,6 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
     (body trailing : Array Raw) (s : PreState) : EM DocBodyPlan := do
-  -- What refused size redefinitions still declare: the document's ladder.
   let s ← applyRefusedSizeLadder s
   let mut ctx := s.ctx
   let docClass := s.docClass
@@ -18863,27 +15736,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let mut page := s.page
   let sawPage := s.sawPage
   let fonts := s.fonts
-  -- A deck that declares no theme takes the default bundle, installed
-  -- *under* the document (`Theme.applyUnder`: the document's own
-  -- declarations win): a presentation always paints its pages, so the
-  -- slides class defaults to `daylight`. Every other class keeps the
-  -- unpainted defaults — a default bundle on print classes paints every
-  -- page edge to edge (measured at a 99.9% pixel change on a one-page
-  -- résumé). A `\theme` of any spelling is the author's choice and
-  -- stands, unknown names included (W0319 already spoke).
   let defaultBundle := s.docClass == Ir.DocClass.slides && !s.sawTheme
-  -- A palette generated from seeds is the whole palette: the default
-  -- bundle's rhythm and furniture still install, its colours do not, so no
-  -- colour reaches the page but through the seeds. A deck that declares its
-  -- own ink, paper or accent takes the default bundle over those seeds: the
-  -- settling resolution below generates its cards and secondary colours
-  -- from what it declares (`Palette.reseed`), the one entry point every
-  -- colour comes through.
+  -- A seeded palette is the whole palette: the bundle's colours do not install.
   let bundle := if s.palette.seeded.isSome then
       { Theme.daylight with palette := {}, seeds := none, derived := [] }
     else Theme.daylight
-  -- The class's defaults ride on the palette every artifact reads: what a
-  -- role nothing declares resolves to (`Ir.DocClass.classColors`).
   let classColors := s.docClass.classColors (Ir.Surface.ofPath file)
   let themedDs : Theme.Decls :=
     let own : Theme.Decls := { palette := { s.palette with classColors }, tokens := s.tokens
@@ -18894,9 +15751,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let palette := match s.pageGround with
     | some c => (basePalette.declare (.role .page) c).reseed docRoles.contains
     | none => basePalette
-  -- The ink a `\normalcolor` restores is the one in force when the body
-  -- opens (color.sty's `\default@color`): a preamble `\color`, which the
-  -- body's start replays, included.
+  -- `\normalcolor` restores the ink in force when the body opens (color.sty).
   let openingInk := decls.foldl (fun pal d => match d with
     | .bodyStart m _ =>
       if m.startsWith "@ink:" then
@@ -18921,21 +15776,10 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let mut output := s.output
   let mut asserts := s.asserts
   let allow := s.allow
-  -- A classless .tex builds — the no-preamble pitch needs a bare document
-  -- to build, and the article default is a real, sourced page model — but
-  -- not silently: the class switches the page model, the furniture
-  -- legality, and the implied assertions, so a choice the engine made for
-  -- the author is named. LaTeX errors here out of implementation necessity
-  -- (no class, no \normalsize), not design. Markdown has no class concept:
-  -- the omission is that surface's grammar, never noted.
   if !sawClass && file.endsWith ".tex" then
     diag ctx .N0017 "no '\\documentclass'; the article page model is assumed" none
       (help := "declare \\documentclass{article} (or slides, card, resume, webpage, poster) to choose it")
   let record := docClass.record
-  -- The body size: `\page{ fontsize = ... }` wins, else the class option
-  -- (`fontsize=11pt`, KOMA's spelling, or the standard classes' bare
-  -- `11pt`), else the class record's default — beamer's documented 11pt
-  -- for slides (user guide §18.2.1), the engine's 10pt base otherwise.
   if page.fontSize == ({} : PageSpec).fontSize then
     let optSize := (classOptions.splitOn ",").findSome? fun o =>
       let o := o.trimAscii.toString
@@ -18948,19 +15792,9 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     | none =>
       if let some d := record.fontSize then
         page := { page with fontSize := d }
-  -- The class's paragraph separation, where the document declares none:
-  -- `\page{ parskip = ... }` and compat's injected declaration both win.
   if page.parskip.isNone then
     if let some g := record.parskip then
       page := { page with parskip := some g }
-  -- The geometry is the page model's, the kernel's own: a frame fills
-  -- beamer's stage, a face is trimmed to a trade size, flow takes the
-  -- text block. `classPageDefaults` is the one resolving site — the same
-  -- door `engineLengthTokens` reads, so the preamble's token environment
-  -- and the shipped page are one value (`engine_tokens_agree`). `twocolumn`
-  -- and `draft` ask for a page model and a proofing mode the engine does
-  -- not have: each is refused by name (W0356) — the silent drop was the
-  -- defect class here, an a4paper request quietly shipping on letter.
   let classOpts := (classOptions.splitOn ",").map (·.trimAscii.toString)
   page := classPageDefaults record classOpts page
   for o in classOpts do
@@ -18974,31 +15808,17 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         none
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
-    -- An undeclared letter page takes Bringhurst's text block for a 10pt
-    -- text face, 26 picas, not the word-processor inch: the default must
-    -- satisfy the measure band the engine checks (W0201). A document that
-    -- declares any \page geometry keeps every value it named. A markdown
-    -- source can declare none, so its page is its surface's text block.
     page := { page with hmargin := (page.width - surface.textBlock) / 2 }
-  -- Furniture legality is the class record's, not the geometry's: a class
-  -- that carries no running furniture drops the declaration and says so.
   if !record.runningFurniture && (head.isSome || foot.isSome) then
     diag ctx .W0317
       "a card carries no running head or foot; the declaration is dropped" none
     head := none
     foot := none
-  -- Build intent the class carries, when the document's `\output` names
-  -- none: the class declares what to build the way `\documentclass`
-  -- already declares the page model. A document's own `formats = ...`
-  -- replaces it whole — opting into the print twin is one declared line.
   if output.formats.isEmpty then
     for f in record.formats do
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
-  -- A table length the preamble declares is fixed there, in the preamble's
-  -- font, as `\setlength` evaluates it (`Ir.PreambleFace.fixTableLengths`):
-  -- the body's token state starts from the fixed values.
   let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixTableLengths tokens
   ctx := { ctx with slides := record.model == .frame
                     groundDepth := record.groundDepth
@@ -19007,12 +15827,6 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists
                     engineTokens := engineLengthTokensOfPage page }
-  -- Numbering is a property of the finished document, not of any one
-  -- elaboration site: `Ir.numberFloats` fills every captioned float's
-  -- number in document order (`numberFloats_exact` is the fact `\ref`
-  -- will resolve against), once, before any backend reads the body.
-  -- The preamble's own declarations that are in force where the body
-  -- begins open it, in the order they were written (`PDecl.bodyStart`).
   let opening : Array Raw := decls.filterMap fun d =>
     match d with
     | .bodyStart m p => some (.ctrl m p)
@@ -19022,29 +15836,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     let mut output := output
     let mut info := info
     finishBeamerColors ctx
-    -- **Whatever drew a picture, the keys that drawing did not read are
-    -- named.** A `\tikzset` entry outside the rendered subset has exactly one
-    -- other reader: the real TikZ, and only for a picture that went to the
-    -- boundary (`tikzArm` routes there what the subset draws nothing of, or
-    -- draws with a loss it names). So the loss is real as soon as the engine
-    -- drew one picture itself — whatever `\pictures{ tool = ... }` nominally
-    -- says, and
-    -- a mixed document is the case that matters, since one boundary picture
-    -- buys no silence for the twelve beside it. The gate the refusal used to
-    -- carry claimed the boundary read them whenever a tool was configured;
-    -- native drawing made that premise false and the keys were dropped in
-    -- silence, an arrow-tip default among them.
-    -- Capture the reporting context and sequence position here. Completion
-    -- reads *who drew it* from the returned body, after references, so its
-    -- accounting contract names the IR a caller receives.
     let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
-    -- The label table, complete: the float rows are read off the numbered IR
-    -- just produced (`Ir.floatLabelRows`), so a label under a captioned
-    -- float binds to the number the node carries — one numbering,
-    -- `Ir.refs_agree_with_numbering` the statement. References resolve
-    -- against it once the document is assembled below; W0380 is judged here
-    -- from the recorded sites, because a kindless binding is a fact of the
-    -- table, not of the resolved node.
     let stRefs ← get
     let table := if stRefs.labels.isEmpty then stRefs.labels
       else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
@@ -19052,21 +15844,12 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     for (key, form, rpos) in stRefs.refSites do
       unless warnedRefs.contains key do
         if let some (_, some b) := table.find? (·.1 == key) then
-          -- The binding is numbered but kindless (a bare \refstepcounter):
-          -- a form that must name what the label names has no name to use,
-          -- so the plain number stands (refText), named here.
           if b.kind.isNone && refFormNeedsKind form then
             warnedRefs := warnedRefs.push key
             diag ctx .W0380
               s!"'{key}' names a bare counter step, not a heading, equation, or float; the plain number is set"
               (some rpos)
               (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
-    -- A citation with no bibliography anywhere: `Bib.apply` never runs
-    -- (`Ir.bibRefs` stays empty — nothing requests a file), the
-    -- missing-file diagnostic has no file to miss, and the mark ships '?'
-    -- unexplained. The loss is W0351's (a citation names no bibliography
-    -- entry); the message and help name this cause. One diagnostic per
-    -- distinct key, at its first `\cite`.
     if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
       for (key, span) in stRefs.spans.cites do
         modify fun st => { st with diags := st.diags.push (Diag.of .W0351
@@ -19075,21 +15858,9 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
           (help := "the document declares no bibliography; \\bibliography{file} \
   names the .bib file")
           (subject := some key)) }
-    -- Body declarations do NOT displace the document state: `doc.palette`
-    -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
-    -- body declaration rides its own `.setPalette`/`.setTokens` block, so a
-    -- setting's effect is confined to the flow after it. The final flow
-    -- state exists only for the shadow judge below, which must see every
-    -- role the document ever declares.
+    -- The final flow palette only judges shadowing; the document keeps epoch 0.
     let stBody ← get
     let finalPalette := stBody.scope.palette.current.getD palette
-    -- A definition that shadows a palette role replaces a value that adapts
-    -- with one that cannot: the palette no longer reaches those words (a
-    -- variant or a host page's override dies there), and the contrast judge —
-    -- which sees a role use only because it resolves through the palette —
-    -- goes blind to them. Shadowing a command is LaTeX-normal and stays
-    -- permitted; the warning names what this particular shadow costs. Judged
-    -- against the final palette, so declaration order cannot hide it.
     let mut shadowSaid : Array String := #[]
     for cmd in ctx.user do
       if !shadowSaid.contains cmd.name && (finalPalette.find? cmd.name).isSome then
@@ -19100,18 +15871,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
           (some cmd.span)
           (help := s!"drop the definition and '\\{cmd.name}' colours as declared; " ++
             s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1.key))}")) }
-    -- The logo may have been declared in either half; a card carries none.
     let mut logo := (← get).logos.main
     if !record.runningFurniture && logo.isSome then
       diag ctx .W0317
         "a card carries no logo; the declaration is dropped" none
       logo := none
-    -- The headline band: a headline class (`ClassRecord.headline`) reads
-    -- the `\title` family as furniture, the gemini lineage's headline rule.
-    -- The corner slots ride only with the band: under a class with no band
-    -- they are dropped by name (the card-logo rule), and under a headline
-    -- class with no declared `\title` there is no band for them to stand
-    -- in, so that is said too rather than dropped silently.
     let stH ← get
     let nonEmpty (v : Option (Array Inline)) : Option (Array Inline) :=
       v.bind fun xs => if xs.isEmpty then none else some xs
@@ -19136,12 +15900,6 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
           none (help := "declare \\title{...} (and \\author, \\institute) in the preamble")
         logoLeft := none
         logoRight := none
-    -- The class's implied contract, stated as the assertions the engine
-    -- already enforces against the shipped pages (the card's: content fits
-    -- its faces, ink respects the safe margin, the smallest type clears the
-    -- fluent-reading floor; the resume's: the same frame over one page).
-    -- Declaring an assertion of the same form is intent and silences the
-    -- class default; the help beside each value is the record's own.
     if let some pb := record.pagesBound then
       unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
         match pb with
@@ -19162,13 +15920,6 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     if let some (floor, h) := record.xHeightFloor then
       unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
         asserts := asserts.push { kind := .minXHeight floor, help := some h }
-    -- A declared conformance profile is a set element that implies exactly
-    -- one assertion, `pdf.profile = <name>`, judged on the census of the
-    -- built bytes (the class-implied shape); and it folds its
-    -- backend-neutral demands into the output contract — where the document
-    -- declared a contract key itself, the declaration wins, whatever order
-    -- the two were written in (read here, after every `\output`, so the
-    -- fold commutes with the declarations).
     let seen := (← get).seenScalars
     let declaredKey (k : String) : Bool :=
       seen.any fun e => e.1 == "output" && e.2.1 == k
@@ -19186,9 +15937,6 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
           then output.contract.fonts else imp.fonts } }
     if trailing.any (!isSpaceOrPar ·) then
       diag ctx .W0001 "content after '\\end{document}' is ignored" none
-    -- PDF metadata falls back to the title declarations: a deck that says
-    -- \title deserves an Info dictionary without saying it twice. A name,
-    -- so the words the title's first page shows (`Ir.firstPageText`).
     let st ← get
     let fallback (cur : Option String) (src : Option (Array Inline)) : Option String :=
       match cur with
@@ -19231,35 +15979,22 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       pictureSrcs := (← get).pictures
       picturePreamble := ctx.pic.preamble
       graphicsPath := ctx.pic.graphics
-      -- Request material, so a document that states no request carries none:
-      -- a `\newcommand` is otherwise a change to every document's `Doc`, and
-      -- the definer family's whole point is that it moves no ink by itself.
+      -- Only a picture request carries macros, so a definition alone moves no `Doc`.
       pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
       salvage := (← get).salvage
       frameRestart := (← get).frameRestart
       listNotes := (← get).ctr.notesAt.map (·, 0)
     }
-    -- Cross-references resolve here, once, against the whole document's
-    -- labels — every region a backend reads (`Ir.mapDoc`), so a `\ref` in a
-    -- running head resolves as one in the body does, and `Ir.resolveRefs` is
-    -- a pure pass over the IR: no backend re-scans for labels and a forward
-    -- reference costs nothing. What stays `??` is named by `Ir.refDiags`,
-    -- read off the resolved census (`runRaws`, and the driver after the
-    -- bibliography resolves), never from the sites: a reference cannot be
-    -- judged where it stands, because its label may follow it.
     return { doc, table, pictureReport, locale := ctx.locale, resolve := !stRefs.refSites.isEmpty }
   }
 
-/-- Resolve declarative title and size bodies and class defaults before
-entering the block interpreter. The returned plan is the one
-`finishPreamble` executes, including class-supplied opening material. -/
+/-- Applies refused title and size bodies and class defaults, returning the
+body plan. -/
 public def prepareDocBody (file : String) (preamble : DocPreamble) : EM DocBodyPlan := do
   let s ← applyRefusedTitleStyle preamble.state
   prepareStyledBody file preamble.decls preamble.body preamble.trailing s
 
-/-- The production continuation from a completed declaration fold through
-class defaults, body elaboration, numbering, and reference resolution.
-The title body is read once before this continuation consumes its style. -/
+/-- Elaborates the body that follows a completed declaration fold. -/
 public def finishPreamble (file : String) (preamble : DocPreamble) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   runDocBody (← prepareDocBody file preamble)
@@ -19288,8 +16023,8 @@ private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "
   let preamble ← beginDoc file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
   finishPreamble file preamble
 
-/-- Elaborate a document and account for every unread setting of its
-engine pictures. The output gate is read from the completed body. -/
+/-- Elaborates a document and names the unread settings of its engine-drawn
+pictures. -/
 public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
@@ -19301,52 +16036,34 @@ public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (elabDocCore file raws picPre picSets picMacros picMetric picWithdrawn listingReplies).run initial
   ((doc, table), finishPictureKeys report doc picSets st)
 
-/-- Where the requests a document states were declared — reporting metadata
-the driver reads to place its missing-file diagnostics. Delivered beside
-the `Doc`, never in it: two spellings of one document elaborate to one
-`Doc` (the compat conservation oracle holds them equal), while their
-marker positions differ. -/
+/-- Where a document's requests were declared, for the driver's missing-file
+diagnostics. -/
 public structure ReqSpans where
-  /-- The exact input-reader calls that produced the prepared surface.
-  Measurement and withdrawal passes carry these receipts, never repeat I/O. -/
+  /-- The input-reader calls that produced the prepared surface. -/
   inputAttempts : Array Compat.InputAttempt := #[]
-  /-- Each `\bibliography` marker's span, keyed by its named source: the
-  line E0503 names when the driver finds no file. -/
+  /-- Each `\bibliography` marker's span, keyed by its source. -/
   bib : Array (String × Span) := #[]
-  /-- Each image source's first span — file images and boundary pictures
-  alike: where the driver's per-picture N0376 and W0382 point. -/
+  /-- Each image source's first span, file images and boundary pictures alike. -/
   images : Array (String × Span) := #[]
-  /-- Openings of top-level frames, keyed by their block index in this
-  elaboration's final `Doc.body`, before backend filtering or overlays.
-  Recomputed on every prepared run, including a withdrawal or measurement
-  pass. A title frame names its call; a flattened title frame names the
-  outer frame. Retained wrappers do not contribute top-level sites. -/
+  /-- Each top-level frame's opening span, keyed by its block index in
+  `Doc.body`. -/
   frames : Array (Nat × Span) := #[]
-  /-- The boundary pictures the rendered subset draws in part, by picture
-  id: a request here that no tool draws is withdrawn, and the picture is
-  drawn natively instead (`Cli.Boundary.withdraw`, and `runRaws` for a
-  caller that fulfils nothing). -/
+  /-- The boundary pictures, by id, that the rendered subset draws in part
+  and draws natively when no tool does. -/
   fallbacks : Array String := #[]
-  /-- The pictures the rendered subset draws in part because the document
-  declared `\pictures{ tool = none }`, by picture id: each refusal of one is
-  keyed under the picture, as a withdrawn picture's is, and the driver folds
-  them into the picture's one line (`Cli.Boundary.foldLines`). -/
+  /-- The pictures, by id, the rendered subset draws in part under
+  `\pictures{ tool = none }`. -/
   declined : Array String := #[]
-  /-- Each reference key's first site: where W0349 points. -/
+  /-- Each reference key's first site. -/
   refs : Array (String × Span) := #[]
-  /-- The label table resolution spent, for W0349's cause (`Ir.refDiags`). -/
+  /-- The label table resolution read. -/
   labels : Ir.RefTable := #[]
   /-- Inline code in a language only the highlighter reads, as language and
-  source: the requests beside the listings' (`ListingReply.requests`). -/
+  source. -/
   code : Array (String × String) := #[]
   deriving Repr, BEq, Inhabited
 
-/-- The source both of a document's elaborations read: the compat rewrite
-applied, the boundary and macro scans taken, the warn-once key set the
-rewrite already spent. Held as a value because a metric-carrying pass and
-the pass that discovers the metric must read the *same* rewritten tree —
-rewriting twice would make the two passes' documents functions of two
-sources, and nothing would state they agree. -/
+/-- The rewritten source and scans every elaboration of one document reads. -/
 public structure Prepared where
   raws : Array Raw
   picPre : String
@@ -19354,17 +16071,14 @@ public structure Prepared where
   picMacros : Array (String × String)
   warned : Array String
   compatDiags : Array Diag
-  /-- Original spellings remain available after compatibility expands macros. -/
+  /-- The original spellings, kept after compatibility expands macros. -/
   sourceTriggers : Compat.SourceTriggers := {}
-  /-- Reader receipts belong to execution, before compatibility rewriting. -/
+  /-- The input-reader calls execution made. -/
   inputAttempts : Array Compat.InputAttempt := #[]
-  /-- One external highlighter snapshot for every elaboration of this input.
-  Pure callers need no provider; unsupported languages keep their source. -/
+  /-- The highlighter answers every elaboration of this input reads. -/
   listingReplies : Array ListingReply.Answer := #[]
-  /-- The notes each `\bibliography` list's fields set, in document order,
-  as a resolution of the lists found them (`Ir.Doc.listNotes`): an
-  elaboration given them steps the footnote counter by them where each list
-  stands (`Counters.listNotes`). Empty on a first elaboration. -/
+  /-- The notes each bibliography list's fields set, in document order; empty
+  on a first elaboration. -/
   listNotes : Array Nat := #[]
 
 /-- The name a definer's head binds, when its next item (past spaces and a
@@ -19377,23 +16091,14 @@ private def definedEnvName : List Raw → Option String
 
 mutual
 
-/-- **Only a definer judges its bodies.** The parse keeps an environment or
-math opened in one of an environment definer's bodies and closed in the
-other as two halves (`Parse.splitOpen`, `Parse.splitClose`), because LaTeX
-balances them where the environment is used. A refused definition — a
-built-in name, W0303's — ignores its bodies, so its halves raise nothing
-and ship nothing; every other definition's halves settle to the tree a
-plain parse builds, the open half closed at its body's brace and the close
-half dropped, with that parse's diagnostics. A package file's splice drops them, as it drops its
-parse's (the style the driver reads for an input request). `skip` counts the groups a refused
-definition still holds at this level: its name and its two bodies. -/
--- conserves: none — settling rebuilds the parse's recovery tree by design.
+/-- Settles split environment halves as a plain parse does; the `skip`
+groups a refused definition still holds pass through unsettled. -/
+-- conserves: none — rebuilds the parse's recovery tree
 private def settleList (file : String) (skip : Nat) (out : Array Raw)
     (ds : Array Diag) : List Raw → Array Raw × Array Diag
   | [] => (out, ds)
   | .ctrl d p :: rest =>
-    -- premise: refusedEnvChecks — a built-in's definition is ignored whole
-    -- (W0303), so its halves owe no diagnostic
+    -- premise: refusedEnvChecks — a refused definition's halves owe nothing
     let refused := Parse.envDefiners.contains d &&
       (definedEnvName rest).any builtinEnvNames.contains
     settleList file (if refused then 3 else skip) (out.push (.ctrl d p)) ds rest
@@ -19436,22 +16141,18 @@ private def settleOne (file : String) (ds : Array Diag) : Raw → Array Raw × A
 
 end
 
-/-- Settle every definer body's halves in a parsed tree (`settleList`). -/
+/-- Settles every definer body's split halves in a parsed tree. -/
 public def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   settleList file 0 #[] #[] raws.toList
 
-/-- A live literal package declaration contains no split definer bodies.
-The public execution door therefore passes the same call and positions to
-the shared evaluator, without adding a parse-recovery diagnostic. -/
 public theorem settleSplits_package_exact (file command names : String)
     (pos groupPos namePos : Pos) :
     settleSplits file (Compat.packageCall command names pos groupPos namePos) =
       (Compat.packageCall command names pos groupPos namePos, #[]) := by
   simp [settleSplits, Compat.packageCall_exact, settleList, settleOne]
 
-/-- Execute input-bearing macros with the driver's reader. Parse recovery
-is settled before the shared evaluator; selector boundaries follow expansion, just
-as they are on the file-free preparation path. -/
+/-- Executes input-bearing macros with the driver's reader, after settling
+split halves. -/
 public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
@@ -19459,17 +16160,14 @@ public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : Strin
     (provideKeeps := renderedBuiltins ++ structuralNames ++
       builtinEnvNames.map Tcolorbox.bindingName) (diags := splitDiags)
 
-/-- A file answer enters the same execution state after its own parse
-recovery. Its source wrapper remains intact, so requests and diagnostics
-inside it keep the file that owns their positions. -/
+/-- Resumes execution with a file answer, after settling its split halves. -/
 public def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
     (file : String) (raws : Array Raw) : m (Array Raw × Compat.InputContext) :=
   let (raws, splitDiags) := settleSplits file raws
   Compat.resumeInput reader context raws splitDiags
 
-/-- The production preparation tail. Picture and macro metadata come from
-the caller's specified scan stage; the completed compatibility walk supplies
-the only source sent to text rewriting and then body elaboration. -/
+/-- Finishes preparation: text rewriting over the compatibility walk's
+output, with the caller's scans. -/
 public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
@@ -19482,17 +16180,13 @@ public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     compatDiags := priorDiags ++ compatDiags ++ textDiags
     sourceTriggers := sourceTriggers, inputAttempts := inputAttempts }
 
-/-- Prepare a document whose macro and input execution already ran. Scans
-see the fulfilled surface, and compatibility translation continues from
-that execution's state rather than replaying any effects. -/
+/-- Prepares a document whose macro and input execution already ran. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
   let picScan := Compat.boundaryScan file executed.raws
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers #[]
     (Compat.rewriteExecuted executed) executed.inputAttempts
 
-/-- Input receipts are independent of text rewriting. Exposing this
-projection keeps preparation proofs out of the compatibility state. -/
 public theorem prepareRewritten_inputAttempts_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
@@ -19511,7 +16205,6 @@ public theorem prepareExecuted_inputAttempts_exact (file : String) (executed : C
   unfold prepareExecuted
   exact prepareRewritten_inputAttempts_exact file _ _ _ _ _ _
 
-/-- Lexical evidence is independent of rewriting and stays with its source. -/
 public theorem prepareRewritten_sourceTriggers_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
@@ -19530,10 +16223,7 @@ public theorem prepareExecuted_sourceTriggers_exact (file : String) (executed : 
   unfold prepareExecuted
   exact prepareRewritten_sourceTriggers_exact file _ _ _ _ _ _
 
-/-- Rewrite and scan, once. LaTeX idioms become native declarations here,
-which is why a `\fonts` a document never wrote — `\setmainfont`, a class
-option, a beamer font theme — is nonetheless a declaration the preamble
-carries by the time anything reads it. -/
+/-- Settles, scans, executes and rewrites a parsed document, once. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
   let picScan := Compat.boundaryScan file raws
@@ -19544,27 +16234,19 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
   prepareRewritten file picScan picMacros executed.sourceTriggers splitDiags
     (Compat.rewriteExecuted executed)
 
-/-- What a source's own pictures could ask a face for. `draws` is whether an
-environment the native subset draws stands anywhere in the rewritten tree;
-`math` is whether any of those bodies sets a formula, which decides whether
-a face resolved before elaboration needs a math slot. -/
+/-- Whether the source holds a natively drawn picture, and whether one sets a
+formula. -/
 public structure PicWants where
   draws : Bool := false
   math : Bool := false
 
 mutual
 
-/-- One level of the picture-possibility walk; the list drives the recursion. -/
--- conserves: none — the walk answers two Bools about the tree, not a tree,
--- so no census equality can hold. What it must satisfy is stated where it
--- pays: a false `draws` means no node is ever measured, so no face is
--- needed to elaborate (`Cli.FontFix`'s fallback covers a false positive in
--- either field, which is why only the negative answer must be exact).
+-- conserves: none — answers two Bools, not a tree
 private def picWantsLevel (inPic : Bool) (acc : PicWants) : List Raw → PicWants
   | [] => acc
   | r :: rest => picWantsLevel inPic (picWantsRaw inPic acc r) rest
 
-/-- Descend into a group or an environment, structurally on `Raw`. -/
 private def picWantsRaw (inPic : Bool) (acc : PicWants) : Raw → PicWants
   | .env n body _ =>
     let drawn := Compat.pictureEnvs.contains n
@@ -19582,26 +16264,13 @@ private def picWantsRaw (inPic : Bool) (acc : PicWants) : Raw → PicWants
 
 end
 
-/-- Whether an engine picture is *possible*, and what it would measure. The
-negative answer is the one that has to be trustworthy, and it is: `.picture`
-blocks have exactly one producer, the `{tikzpicture}` arm of the body walk,
-so no such environment means no node is ever measured and no face is needed
-to elaborate. A positive answer promises nothing — a picture may still
-refuse whole to the boundary, and a label may take its formula from a macro
-this walk cannot see — which is why it only buys a *provisional* face, and
-why the driver checks that face against the settled one. -/
+/-- What a source's pictures could need of a face; a false `draws` means no
+picture is ever measured. -/
 public def picWants (raws : Array Raw) : PicWants :=
   picWantsLevel false {} raws.toList
 
-/-- **The preamble as its own document.** What the font environment is a
-function of, run through the very fold the full elaboration runs
-(`elabDoc` over the preamble and an empty body), so the `\fonts`, `\page`
-and `\documentclass` a provisional face resolves from are the declarations
-the document itself settles on — class defaults, theme bundle and compat
-rewrites included — rather than a second reading of the same lines.
-
-Diagnostics are the full pass's; this one's are discarded, so nothing a
-reader sees is said twice. -/
+/-- The preamble elaborated as a document with an empty body, its diagnostics
+discarded. -/
 public def preambleDoc (file : String) (p : Prepared) : Doc :=
   let docIdx := p.raws.findIdx? fun r =>
     match r with
@@ -19613,17 +16282,13 @@ public def preambleDoc (file : String) (p : Prepared) : Doc :=
   ((elabDoc file raws p.picPre p.picSets p.picMacros).run
     { warnedUnknown := p.warned }).1.1
 
-/-- Synthetic recovery data may arrive without its producer's report. Name
-its supplied code and command without claiming a source, option shape, or
-advice that was never observed. Production recovery retains its real records
-in `SpanRecords.recoveryDiags` and completion replays those instead. -/
+/-- An unlocated report for a recovery that arrived without its producer's
+diagnostic. -/
 public def recoveryDiagnostic (item : Ir.Recovered) : Diag :=
   Diag.of item.code
     s!"{item.code.meaning}; content from '\\{item.command}' was kept"
     none (subject := some item.subject)
 
-/-- Accounting requires the code as well as the command identity: a
-configuration warning for a name cannot discharge that name's content loss. -/
 public def recoveryMatches (item : Ir.Recovered) (d : Diag) : Bool :=
   decide (d.kind = item.code) && d.subject == some item.subject
 
@@ -19635,11 +16300,8 @@ public def accountRecoveredItem (diags : Array Diag) (item : Ir.Recovered)
     if reports.isEmpty then diags.push (recoveryDiagnostic item)
     else diags ++ reports
 
-/-- The final log is accountable to the recovery census of the returned
-IR, including resumed completions. A missing report replays every matching
-producer record verbatim, preserving all sites, source spans and wording.
-A synthetic recovery with no producer evidence gets an explicitly unlocated
-report that makes no claim about its argument shape. -/
+/-- Accounts for each recovery the log misses with its producer's reports,
+or else an unlocated one. -/
 public def accountRecovered (items : Array Ir.Recovered) (diags : Array Diag)
     (observed : Array Diag := #[]) : Array Diag := Id.run do
   let mut diags := diags
@@ -19655,14 +16317,11 @@ public theorem recoveryDiagnostic_code_exact (item : Ir.Recovered) :
     (recoveryDiagnostic item).kind = item.code := by
   simp only [recoveryDiagnostic, Diag.of_record_exact]
 
-/-- The fallback cannot pretend to carry source evidence. -/
 public theorem recoveryDiagnostic_unlocated_exact (item : Ir.Recovered) :
     (recoveryDiagnostic item).span = none ∧
       (recoveryDiagnostic item).help = none := by
   simp [recoveryDiagnostic, Diag.of_record_exact]
 
-/-- When the producer evidence exists, accounting is exact replay. Every
-field is retained, including any additional fields the diagnostic gains. -/
 public theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
     (item : Ir.Recovered)
     (hmissing : diags.any (recoveryMatches item) = false)
@@ -19671,9 +16330,6 @@ public theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
       diags ++ observed.filter (recoveryMatches item) := by
   simp only [accountRecoveredItem, hmissing, hevidence, Bool.false_eq_true, ↓reduceIte]
 
-/-- The production command emitter always supplies the evidence needed
-for exact replay, for any source position, prior state and argument shape.
-This path cannot take the synthetic fallback. -/
 private theorem warnUnknownCmd_replay_exact (ctx : Ctx) (name text : String)
     (optionRun : Bool) (pos : Pos) (st : ESt) (diags : Array Diag)
     (hmissing : diags.any (recoveryMatches
@@ -19720,21 +16376,17 @@ public theorem accountRecovered_mem (items : Array Ir.Recovered) (diags observed
   rw [accountRecovered_run_exact, ← Array.foldl_toList]
   exact accountRecoveredFold_mem items.toList observed diags d h
 
-/-- The actual prepared-frontend tail, factored so its contract can name
-the returned document and log without unfolding the body elaborator. -/
+/-- Runs the document judges over an elaborated document and assembles its
+log and request spans. -/
 public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
     (doc : Doc) (table : Ir.RefTable) (report : PictureReportContext) (st : ESt) :
     Doc × Array Diag × ReqSpans :=
-  -- The contrast report (Core/Contrast.lean): every colour ships as the
-  -- document states it, and a pairing short of what its medium asks is
-  -- named once, at the expression and span that wrote it.
   let contrast := Contrast.docDiags doc
     (fun pal name c => colorSiteOf st.spans.colors name c
       (declarations := st.spans.colorDeclarations) (palette := some pal))
   let st := finishPictureKeys report doc p.picSets st
   let outline := Ir.outlineDiags doc
-  -- The file-image face only: boundary pictures are judged by the driver
-  -- after fulfilment (`Ir.picAltDiags`), where W0382's outcome is known.
+  -- File images only: the driver judges boundary pictures after fulfilment.
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
@@ -19764,36 +16416,29 @@ public theorem completePrepared_inputAttempts_exact (file : String) (p : Prepare
     (completePrepared file p earlier doc table report st).2.2.inputAttempts =
       p.inputAttempts := by rfl
 
-/-- Run the production declaration fold, retaining its continuation state.
-Boundary withdrawal reruns this fold with the new picture environment. -/
+/-- Runs the declaration fold over prepared input, keeping its state. -/
 public def preparedPreamble (file : String) (p : Prepared)
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : DocPreamble × ESt :=
-  -- One warn-once key set for the document, not one per pass: the rewrite
-  -- fires keys this walk also fires (`spec:overlay`), so the elaborator
-  -- starts from what the document has already been told, not from empty.
+  -- Starts from the rewrite's warn-once keys, so no warning is said twice.
   (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
     p.listingReplies).run { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
 
-/-- The actual block-entry state, after execution, the declaration fold,
-refused declarative bodies and class defaults. Withdrawal prepares this
-same boundary again with its changed picture environment. -/
+/-- The body plan and state after the declaration fold and class defaults. -/
 public def preparedBody (file : String) (p : Prepared)
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : DocBodyPlan × ESt :=
   let (preamble, initial) := preparedPreamble file p picMetric picWithdrawn
   (prepareDocBody file preamble).run initial
 
-/-- Finish a production preamble and run all prepared-document judges.
-This is the continuation used by `runPrepared`, including diagnostic
-attribution, picture accounting, the contrast report and request spans. -/
+/-- Finishes a preamble and runs the document judges. -/
 public def runPreamble (file : String) (p : Prepared) (earlier : Array Diag)
     (preamble : DocPreamble) (initial : ESt) : Doc × Array Diag × ReqSpans :=
   let ((doc, table, report), st) := (finishPreamble file preamble).run initial
   completePrepared file p earlier doc table report st
 
-/-- Elaborate prepared input against a measurement, with the boundary
-requests fulfilment withdrew (`picWithdrawn`; empty on a first pass). -/
+/-- Elaborates prepared input against a label metric, with the withdrawn
+boundary requests. -/
 public def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : Doc × Array Diag × ReqSpans :=
@@ -19801,8 +16446,6 @@ public def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #
   runPreamble file p earlier preamble st
 
 attribute [local irreducible] preparedPreamble prepareDocBody runDocBody completePrepared in
-/-- The prepared frontend executes its real block-entry plan and hands
-that run's document and state to the shared judges. -/
 public theorem runPrepared_body_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     runPrepared file p earlier metric withdrawn =
@@ -19811,9 +16454,6 @@ public theorem runPrepared_body_exact (file : String) (p : Prepared)
       completePrepared file p earlier doc table report st := by rfl
 
 attribute [local irreducible] preparedPreamble finishPreamble completePrepared in
-/-- The private body interpreter reaches the public document completion
-boundary. Proofs about that boundary need no unfolding of its recursive
-state machine. -/
 public theorem runPrepared_complete_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     ∃ doc table report st,
@@ -19827,8 +16467,6 @@ public theorem runPrepared_complete_exact (file : String) (p : Prepared)
       refine ⟨doc, table, report, st, ?_⟩
       simp only [runPrepared, hphase, runPreamble, hresult]
 
-/-- Input evidence is carried from the actual execution snapshot through
-every full elaboration and final diagnostic judge. -/
 public theorem runPrepared_inputAttempts_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     (runPrepared file p earlier metric withdrawn).2.2.inputAttempts = p.inputAttempts := by
@@ -19836,36 +16474,18 @@ public theorem runPrepared_inputAttempts_exact (file : String) (p : Prepared)
     runPrepared_complete_exact file p earlier metric withdrawn
   rw [h, completePrepared_inputAttempts_exact]
 
-/-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
-written for another engine compiles as written. Returns the request spans
-too, for the driver's missing-file and per-picture diagnostics. The
-unresolved-reference judge (`Ir.refDiags`) is not run here: the driver
-runs it after `Bib.apply`, over the very document the backends read, so
-the resolution gate (`pending_named`) is one statement over that tail;
-`runRaws`, the face that fulfils nothing, runs it itself.
-
-The prepare-and-run face, for every caller that reads a document once: the
-driver splits the two so a provisional face can be resolved between them. -/
+/-- Prepares and elaborates parsed input with its request spans, leaving
+unresolved references to the driver's judge. -/
 public def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     Doc × Array Diag × ReqSpans :=
   runPrepared file (prepare file raws) earlier picMetric
 
-/-- The span a reporting record holds for a key, for the judges. -/
 public def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :=
   (rs.find? (·.1 == key)).map (·.2)
 
-/-- The span-free face: what every caller that fulfils no file requests
-reads — with the unresolved-reference judge run over the elaborated
-document, since no bibliography resolution follows here. Fulfilling
-nothing, it has no boundary tool either, so it withdraws every request the
-rendered subset can stand in for (`ReqSpans.fallbacks`) and elaborates
-again, as the driver does on a machine with no tool and a cold cache
-(`Cli.Boundary.withdraw`): the document it returns is the page such a build
-ships, the subset's drawing with its refusals named, keyed under the
-picture — one by one here, where the driver folds them into the picture's
-one line (`Cli.Boundary.fold`). The first pass — the requests, stated from
-the document alone — is `runRawsSpanned`'s. -/
+/-- Runs a pass, reruns it with its fallback requests withdrawn when it has
+any, and judges unresolved references. -/
 public def finishPreparedRuns (pass : Array String → Doc × Array Diag × ReqSpans) :
     Doc × Array Diag :=
   let first := pass #[]
@@ -19877,8 +16497,6 @@ public def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag
     (picMetric : Ir.Pic.LabelMetric) : Doc × Array Diag :=
   finishPreparedRuns (fun withdrawn => runPrepared file p earlier picMetric withdrawn)
 
-/-- The actual frontend's declaration folds and complete continuation,
-once for each boundary-withdrawal environment. -/
 public theorem runPreparedFinal_preamble_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     runPreparedFinal file p earlier metric =
@@ -19886,14 +16504,12 @@ public theorem runPreparedFinal_preamble_exact (file : String) (p : Prepared)
         let phase := preparedPreamble file p metric withdrawn
         runPreamble file p earlier phase.1 phase.2) := by rfl
 
-/-- Elaborate parsed input on the span-free, file-free path. -/
+/-- Elaborates parsed input with no file request fulfilled. -/
 public def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
   runPreparedFinal file (prepare file raws) earlier picMetric
 
-/-- The same finalization for a surface whose file requests were fulfilled
-during execution. Both paths share boundary withdrawal and reference
-diagnostics over the document they return. -/
+/-- Elaborates a surface whose file requests execution already fulfilled. -/
 public def runExecuted (file : String) (executed : Compat.Executed) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
   runPreparedFinal file (prepareExecuted file executed) earlier picMetric
