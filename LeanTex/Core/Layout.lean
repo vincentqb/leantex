@@ -740,8 +740,8 @@ public theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
       (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _))))))),
       h.2.2.2, rfl, rfl, rfl⟩
 
-/-- The trim a page's own drawn cut marks declare, when the rules are
-exactly `cutMarks` of one trim on a page with no declared bleed. -/
+/-- The trim a `trimMarked` page with no declared bleed declares by
+drawing exactly `cutMarks` of one trim: its inset, gap and thickness. -/
 public def drawnTrim (spec : Ir.PageSpec) : Option (Sp × Sp × Sp) := do
   guard (spec.bleed == 0 && spec.trimMarked && spec.drawn.size == 8)
   let lead ← spec.drawn.foldl (fun m r =>
@@ -1335,7 +1335,6 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .text s => pushText st sty s
   | .label name => { st with toks := st.toks.push (.anchor name) }
   | .ref _ _ text _ => pushText st sty text
-  -- An unresolved citation sets as plain text; the elaborator has named it.
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
   -- Without a note apparatus (furniture, markers, captions, a card face) the body stays inline.
   | .footnote num body =>
@@ -1437,8 +1436,7 @@ private theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
   | none => simp [flattenOne, flatten, flattenList]
   | some p => obtain ⟨c, _⟩ := p; simp [flattenOne, flatten, flattenList]
 
-/-- Whether a token's ink names a leaf, a block or a
-note mark; a token with no run of its own passes. -/
+/-- Whether an attribution names a leaf, a block or a note mark. -/
 private def Attribution.named (a : Attribution) : Bool :=
   a matches .leaf _ | .block _ | .noteMark _
 
@@ -2711,7 +2709,6 @@ private def pushWeightKey (corners : Bool) (acc : Array (Nat × Nat × Bool)) (s
     let key := (sty.slot, w, sty.italic)
     if acc.contains key then acc else acc.push key
 
-/-- Does a text run set anything: a character other than white space? -/
 private def setsText (s : String) : Bool := s.any fun c => !c.isWhitespace
 
 mutual
@@ -3894,6 +3891,7 @@ public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     · cases h
       exact Int.not_le.mp (by assumption)
 
+/-- A font-boundary projection, not a rule about the IR's attachment geometry. -/
 public theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (metric : Math.CancelMetric)
@@ -4118,7 +4116,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       Ir.Color.black
     { acc with items := acc.items.push strut }
   | .img src spec =>
-    -- An entry that did not load keeps a placeholder square; the driver has named the failure.
+    -- An entry that failed to load keeps the requested size around a default square.
     let idx? := imgs.findRequest? (spec.request src)
     let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.size?) with
       | some wh => wh
@@ -6534,8 +6532,8 @@ private structure EdgeReach where
 private inductive RegionKind where
   | link (target : String)
   | surface (color : Ir.Color) (pad x w : Sp) (anchored : Bool)
-  /-- A rule a block template sets beside a box (`Ir.BlockEdge`), painted `x`..`x
-  + w` from the box's top to its last line's bottom; it spaces nothing. -/
+  /-- A rule a block template sets beside a box (`Ir.BlockEdge`), painted
+  `x`..`x + w` from the box's top to its last line's bottom; it spaces nothing. -/
   | edge (color : Ir.Color) (x w inset : Sp) (reach : Option EdgeReach)
 
 private structure RegionStart where
@@ -7072,8 +7070,8 @@ private def Spacing.Page.surfaceBottom (b : B) : Sp :=
     | .surface _ pad _ _ _ => total + pad
     | .link _ | .edge .. => total) 0
 
-/-- The floor of the text area on the page being built: `Geom.bodyBottom`,
-or `\footheight` above the paper on a frame page in beamer's text area. -/
+/-- The floor of the text area on the page being built: beamer's `\footheight` floor in its
+text area or above a footline, the paper's edge on a plain frame, else `Geom.bodyBottom`. -/
 private def Spacing.Page.bottom (b : B) : Sp :=
   match b.frameArea with
   | .text => frameFloor b.geom.pageH b.footGap b.footBox
@@ -7660,7 +7658,7 @@ public theorem frameBar_exact (pad strut depth : Int) (h : depth ≤ pad) :
   omega
 
 /-- How far below its text area a frame's ink may reach before the footline's:
-beamer's `\footheight` gap in its text area, nothing elsewhere. -/
+beamer's `\footheight` gap in its text area with no notes pending, else nothing. -/
 private def Spacing.Page.clearance (b : B) : Sp :=
   if b.notesH > 0 || !b.pendingNotes.isEmpty then 0 else
   match b.frameArea with
@@ -8126,6 +8124,7 @@ private def Spacing.Page.peerGap (b : B) (box : LineBox)
 public def reserveBelow (depth below reach : Sp) : Sp × Sp :=
   (max depth reach, max below reach)
 
+/-- A placement-coordinate fact of the artifact. -/
 public theorem reserveBelow_covers (depth below reach : Sp) :
     depth ≤ (reserveBelow depth below reach).1 ∧
     below ≤ (reserveBelow depth below reach).2 ∧
@@ -8133,6 +8132,8 @@ public theorem reserveBelow_covers (depth below reach : Sp) :
     reach ≤ (reserveBelow depth below reach).2 :=
   ⟨Int.le_max_left .., Int.le_max_left .., Int.le_max_right .., Int.le_max_right ..⟩
 
+/-- A placement-coordinate contract of the artifact: a rule
+after a completed box clears its whole painted reach. -/
 public theorem closed_box_rule_covers (y depth below reach skip : Int)
     (box : LineBox) (hskip : 0 ≤ skip) :
     y + reach ≤ y + skip +
@@ -8166,6 +8167,8 @@ public theorem texBoxTop_between (bs pd h : Int) :
   unfold texBoxTop
   omega
 
+/-- A placement-coordinate bound of the artifact, over
+the additive placement and distribution steps. -/
 public theorem frame_opening_paint_covers (header origin pd bs h size leftover : Int)
     (keys : Ir.FrameKeys) (valign : VAlign) (hheader : header ≤ origin) (hpd : 0 ≤ pd) :
     header + frameBodySkip true valign size ≤
@@ -8222,8 +8225,8 @@ private def Spacing.Page.anchorAt (fs : FontSet) (b : B) (y : Sp) : B :=
   { b with y := y, prevDepth := 0, prevBelow := b.strutBelow fs, prevBand := .text,
            lastInk := some (y, 0, 0) }
 
-/-- A titled frame's content opens one `\baselineskip` below the title box,
-as beamer's `\vskip-\parskip\vbox{}` opens it (beamerbaseframe.sty). -/
+/-- Open a frame's content as beamer's `\vskip-\parskip\vbox{}` does: an
+empty box below the title box or bar, the declared skip `g` pending. -/
 private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Option Sp) : B :=
   let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
   let opened := { b with y := if b.cur.lines.isEmpty then barBottom
@@ -8258,8 +8261,9 @@ private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : G
 zero rule or a fil, else none, as TeX discards glue at a page top. -/
 private def Spacing.Page.topKept (b : B) : Sp := if b.anchored || b.skip.fil then b.skip.width else 0
 
-/-- The fit-or-spill skeleton every committed band takes: commit when the
-band's overflow is within the page's shrink, else close the page and retry. -/
+/-- The fit-or-spill skeleton every committed band takes: commit on a
+fresh or blank page, within the page's shrink or under `noBreak`; else
+stand it overfull where the ladder allows, or close the page and retry. -/
 private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
     (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
     (notes : Array NoteBlock := #[]) : B :=
@@ -9687,6 +9691,8 @@ public def tableColWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     | some target => tableSpanFlexWidths colsep total fontSize cols nats spans bases
         (target.resolve total - tablePadding colsep cols.size padL padR)
 
+/-- Artifact geometry: nonempty spans stay inside the table's
+declared target whenever their minimum widths fit. -/
 public theorem table_flex_span_width_contract (colsep total fontSize : Int) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (padL padR : Bool)
     (target : Ir.TableTarget) (hs : spans.isEmpty = false)
@@ -10285,6 +10291,7 @@ public def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Se
   { w := width, height := band.1, depth := band.2
     boxHeight := ink.1, boxDepth := ink.2, ex := ex, axis, rule, script }
 
+/-- The backend projection of the two extent fields of `Ir.Pic.LabelInk`. -/
 public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
     (segs : Array Seg) :
     let m := measureLabelLine fs size width ex segs
@@ -12640,7 +12647,7 @@ private def collectBlock (r : Rd) (a : Acc)
       else if marks.contains (Ir.fitContinuesRole step) then .continues
       else .spill
     let a := { a with frameFit := fit }
-    -- Every frame but the title page takes beamer's text area (`frameAreaFor`).
+    -- With chrome allowed, every frame but the title page takes beamer's text area.
     let area := frameAreaFor a.footAllowed valign
     let a := collectFrameOpen a standout breakable area
     let r := frameReader r a standout area
@@ -12950,6 +12957,7 @@ public def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
   | some paint => underlinePieces paint (x + seg.advance)
       (subtract x (x + seg.advance) obs) x out
 
+/-- Native artifact geometry of the run and space painter, not a second reading of IR decoration. -/
 public theorem appendUnderline_exact (fs : FontSet) (size : Sp) (obs : List (Int × Int))
     (origin x : Int) (seg : Seg) (out : Array Seg)
     (hx : origin + (out.toList.map Seg.advance).sum = x) :
@@ -14529,8 +14537,8 @@ private structure StepSt where
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
-/-- A heading never ends a page: when its lines and what it keeps
-cannot stand within the page's shrink, the page closes before it. -/
+/-- Close the page before a heading whose lines and kept reserve cannot stand within the
+page's shrink, in flow or a breakable frame, outside a float replay and off a fresh page. -/
 private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
   if 0 < j.keepNext && b.frameBreak != some false && !b.noBreak &&
       !b.fresh &&
@@ -18619,7 +18627,6 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   -- The chrome footer draws only on slides that declare it and no `\runningfoot` overrides.
   let footAllowed := doc.chromeAllowed
-  -- article's default plain foot, unless a `\runningfoot` owns the band.
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
   -- The chrome footer's size is the footline's step (`Ir.footline`) and its colour a palette key.
   let footSize := Ir.scaleStep geom.fontSize Ir.footline.step
