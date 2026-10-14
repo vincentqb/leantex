@@ -11,7 +11,8 @@ namespace PictureContracts
 private def nodeStmtAt (name : String) (x y : Int) (body : List Picture.Tok := []) :
     Picture.Stmt :=
   .node #[.sym '(', .ident name, .sym ')', .ident "at",
-    .sym '(', .num x, .sym ',', .num y, .sym ')', .group body]
+    .sym '(', .num x (Picture.milliString x), .sym ',', .num y (Picture.milliString y), .sym ')',
+    .group body]
 
 private def relative (name target direction : String) : Picture.Stmt :=
   .node #[.sym '[', .ident direction, .sym '=', .ident "of", .ident target, .sym ']',
@@ -48,10 +49,10 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (labelText (Picture.nodeLabel cx [] [.math false [] none]).1 == "computed")
   let inputs := Picture.labelInputList
     [("value", .str "bound"), ("value", .str "shadowed"), ("unused", .str "unreferenced")]
-    #[] [.sym '[', .num (-1250), .group [.ctrl "value", .math true [] none],
+    #[] [.sym '[', .num (-1250) "-1.250", .group [.ctrl "value", .math true [] none],
       .ctrl "unbound", .other "parser-marker"]
   check "picture source census retains typed tokens and the selected declaration"
-    (inputs == #[.literal (.symbol '['), .literal (.number (-1250)),
+    (inputs == #[.literal (.symbol '['), .literal (.number "-1.250"),
       .substitution "value" (.str "bound"), .math true []])
   check "picture source census: no echoed controls, no unused declarations"
     (Picture.labelSources cx [("unused", .str "unreferenced")]

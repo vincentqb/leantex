@@ -26,8 +26,8 @@ braces as groups. -/
 public inductive Tok where
   | ctrl (name : String)
   | ident (s : String)
-  /-- A number literal in thousandths. -/
-  | num (milli : Int)
+  /-- A number literal in thousandths, and its spelling as written. -/
+  | num (milli : Int) (text : String)
   | sym (c : Char)
   | space
   | group (body : List Tok)
@@ -58,7 +58,7 @@ private def splitWord (acc : Array Tok) (s : String) : Array Tok := Id.run do
           else break
         let lit := String.ofList (cs.toList.drop i |>.take (k - i))
         match Decl.parseDecimal lit with
-        | some (m, sc) => out := out.push (.num (m * 1000 / sc))
+        | some (m, sc) => out := out.push (.num (m * 1000 / sc) lit)
         | none => out := out.push (.other s!"number '{lit}'")
         i := k
       else if c.isAlpha then
@@ -114,15 +114,15 @@ public def ofRaws (raws : Array Parse.Raw) : Array Tok :=
 public def ofSetting (setting : Span × Array Parse.Raw) : Array Tok :=
   ofRawsAt (fun p => some ⟨setting.1.file, p⟩) setting.2
 
-/-- A bound macro's value: a number in milli, a length in sp, or text (a pgfmath string or a list
-item's raw text). -/
+/-- A bound macro's value: a number in milli or a length in sp, each with the text pgf prints for
+it, or text (a pgfmath string or a list item's raw text). -/
 public inductive Val where
-  | num (m : Int)
-  | len (sp : Sp)
+  | num (m : Int) (text : String)
+  | len (sp : Sp) (text : String)
   | str (s : String)
   deriving Repr, BEq, Inhabited
 
-/-- A milli value as macro text: an integer without a point, else up to three decimals. -/
+/-- A milli value at three decimals at most, an integer without a point. -/
 public def milliString (m : Int) : String :=
   let neg := m < 0
   let n := m.natAbs
@@ -135,12 +135,47 @@ public def milliString (m : Int) : String :=
     let frs := ("".pushn '0' (3 - frs.length)) ++ frs
     s!"{sign}{ip}.{(frs.dropEndWhile (· == '0')).toString}"
 
-/-- A length as pgf prints a length macro: its points, then `pt`. -/
-public def lenString (sp : Sp) : String := sp.toPtString ++ "pt"
+/-- A dimension's points as TeX's `\the` prints them, the unit dropped (`print_scaled`, tex.web §103). -/
+public def texPoints (s : Sp) : String := Id.run do
+  let n := s.natAbs
+  let mut out := (if s < 0 then "-" else "") ++ toString (n / 65536) ++ "."
+  let mut r := 10 * (n % 65536) + 5
+  let mut delta := 10
+  for _ in [0:5] do
+    if delta > 65536 then r := r + 32768 - 50000
+    out := out.push (Nat.digitChar (r / 65536))
+    r := 10 * (r % 65536)
+    delta := delta * 10
+    if r ≤ delta then break
+  return out
+
+/-- The scaled points TeX reads from a decimal given in thousandths (`round_decimals`, tex.web §102). -/
+private def milliSp (m : Int) : Sp :=
+  let n := m.natAbs
+  let fr := n % 1000
+  let a := fr % 10 * 131072 / 10
+  let a := (a + fr / 10 % 10 * 131072) / 10
+  let a := (a + fr / 100 * 131072) / 10
+  let s : Int := (n / 1000 * 65536 + (a + 1) / 2 : Nat)
+  if m < 0 then -s else s
+
+/-- A number pgfmath computed, as it prints one: TeX's points of the dimension holding it. -/
+public def Val.computed (m : Int) : Val := .num m (texPoints (milliSp m))
+
+/-- A number pgffor's `...` computed, as it prints one: TeX's points with a trailing `.0` dropped. -/
+private def rangeItem (m : Int) : Val :=
+  let t := texPoints (milliSp m)
+  .num m (if t.endsWith ".0" then (t.dropEnd 2).toString else t)
+
+/-- A length as pgf prints a length macro: its points as TeX prints them, then `pt`. -/
+public def lenString (sp : Sp) : String := texPoints sp ++ "pt"
+
+/-- A length pgfmath computed, as a length macro prints it. -/
+public def Val.length (sp : Sp) : Val := .len sp (lenString sp)
 
 public def Val.text : Val → String
-  | .num m => milliString m
-  | .len sp => lenString sp
+  | .num _ t => t
+  | .len _ t => t
   | .str s => s
 
 /-- A literal like `0.5cm` as a length, or `none` for a font-relative or unknown unit. -/
@@ -161,7 +196,7 @@ public def spMilliPt (sp : Sp) : Int :=
 private def tokText : Tok → String
   | .ctrl n => s!"'\\{n}'"
   | .ident s => s!"'{s}'"
-  | .num m => s!"'{milliString m}'"
+  | .num _ t => s!"'{t}'"
   | .sym c => s!"'{c}'"
   | .space => "a space"
   | .group _ => "'{...}'"
@@ -207,15 +242,15 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
       i := i + 1
       match t with
       | .space => pure ()
-      | .num m =>
+      | .num m text =>
         match toks[i]? with
         | some (.ident u) =>
           match unitLen? m u with
           | some sp =>
             i := i + 1
-            out := out.push (.push (.len sp))
-          | none => out := out.push (.push (.num m))
-        | _ => out := out.push (.push (.num m))
+            out := out.push (.push (.len sp (text ++ u)))
+          | none => out := out.push (.push (.num m text))
+        | _ => out := out.push (.push (.num m text))
         expectOperand := false
       | .ctrl name =>
         match env.lookup name with
@@ -309,15 +344,15 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
   let mut stack : Array Val := #[]
   let q (v : Val) : Except String (Int × Bool) :=
     match v with
-    | .num m => .ok (m, false)
-    | .len sp => .ok (sp, true)
+    | .num m _ => .ok (m, false)
+    | .len sp _ => .ok (sp, true)
     | .str s => .error s!"'{s}' where a number is needed"
   -- Where either operand is a length both are, a unitless one read as points (pgfmath).
   let common (a b : Int × Bool) : Int × Int × Bool :=
     if a.2 || b.2 then
       ((if a.2 then a.1 else milliPt a.1), (if b.2 then b.1 else milliPt b.1), true)
     else (a.1, b.1, false)
-  let mk (v : Int) (isLen : Bool) : Val := if isLen then .len v else .num v
+  let mk (v : Int) (isLen : Bool) : Val := if isLen then .length v else .computed v
   for r in out do
     match r with
     | .push v => stack := stack.push v
@@ -354,12 +389,12 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
               stack := stack'.push (mk v (a.2 || b.2))
             | .fmax => stack := stack'.push (mk (max x y) l)
             | .fmin => stack := stack'.push (mk (min x y) l)
-            | .lt => stack := stack'.push (.num (if x < y then 1000 else 0))
-            | .gt => stack := stack'.push (.num (if x > y then 1000 else 0))
+            | .lt => stack := stack'.push (if x < y then .num 1000 "1" else .num 0 "0")
+            | .gt => stack := stack'.push (if x > y then .num 1000 "1" else .num 0 "0")
             | .div =>
               if b.1 == 0 then return .error "division by zero"
-              else if a.2 && !b.2 then stack := stack'.push (.len (a.1 * 1000 / b.1))
-              else stack := stack'.push (.num (x * 1000 / y))
+              else if a.2 && !b.2 then stack := stack'.push (.length (a.1 * 1000 / b.1))
+              else stack := stack'.push (.computed (x * 1000 / y))
             | _ => return .error "malformed expression"
           | .error e, _ | _, .error e => return .error e
         | none => return .error "operator missing an operand"
@@ -371,16 +406,16 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
 
 private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
   match evalExpr env toks with
-  | .ok (.num m) => .ok m
-  | .ok (.len sp) => .ok (spMilliPt sp)
+  | .ok (.num m _) => .ok m
+  | .ok (.len sp _) => .ok (spMilliPt sp)
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
   | .error e => .error e
 
 private def evalComp (env : List (String × Val)) (toks : Array Tok) :
     Except String (Int × Bool) :=
   match evalExpr env toks with
-  | .ok (.num m) => .ok (m, false)
-  | .ok (.len sp) => .ok (sp, true)
+  | .ok (.num m _) => .ok (m, false)
+  | .ok (.len sp _) => .ok (sp, true)
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
   | .error e => .error e
 
@@ -694,7 +729,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .other what => { (st.outside what) with mode := .skip }
     | .math _ _ _ => { (st.outside "math") with mode := .skip }
     | .ident s => { (st.outside s!"'{s}'") with mode := .skip }
-    | .num _ => { (st.outside "a bare number") with mode := .skip }
+    | .num _ _ => { (st.outside "a bare number") with mode := .skip }
     | .sym c => { (st.outside s!"'{c}'") with mode := .skip }
     | .group _ => { (st.outside "'{...}'") with mode := .skip }
   | .stmt kind acc =>
@@ -1023,12 +1058,12 @@ private def identPath : List Tok → Option String
 
 private def wordTok : Tok → Bool
   | .ident _ => true
-  | .num _ => true
+  | .num _ _ => true
   | _ => false
 
 private def keyTokText : Tok → Option String
   | .ident s => some s
-  | .num m => some (milliString m)
+  | .num _ t => some t
   | .space => some " "
   | .sym c => if c == '/' || c == ',' || c == '=' then none else some (String.singleton c)
   | .ctrl _ | .group _ | .math _ _ _ | .other _ => none
@@ -1313,18 +1348,18 @@ private def evalColor (cx : Cx) (env : List (String × Val)) (toks : Array Tok) 
     | .space => pure ()
     | .ident n => s := s ++ n
     | .sym '!' => s := s ++ "!"
-    | .num m =>
+    | .num m _ =>
       match pct m with
       | .ok p => s := s ++ p
       | .error e => return .error e
     | .ctrl n =>
       match env.lookup n with
-      | some (.num m) =>
+      | some (.num m _) =>
         match pct m with
         | .ok p => s := s ++ p
         | .error e => return .error e
       | some (.str v) => s := s ++ v
-      | some (.len _) => return .error s!"the length '\\{n}' in a colour"
+      | some (.len _ _) => return .error s!"the length '\\{n}' in a colour"
       | none => return .error s!"unknown macro '\\{n}' in a colour"
     | t => return .error s!"{tokText t} in a colour"
   match cx.pal.resolve s with
@@ -2047,7 +2082,7 @@ private def settle (t : Tok) (s : Sal) : Sal :=
   | .styleBody _, .space => s
   | .styleBody _, .group _ => s
   | .styleBody _, .ident _ => s
-  | .styleBody _, .num _ => s
+  | .styleBody _, .num _ _ => s
   | .styleBody _, .sym _ => s
   | .styleBody _, _ => (s.refuse "a text style whose argument is not a group").mode0
   | .text, _ => s
@@ -2140,13 +2175,13 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
       s.splice (salList cx env g { s.inner with consumeNocorr := true }) fun first last xs =>
         Ir.fontCmdInlines st (edges.1 && first, edges.2 && last) xs
     | .ident w => add s [.ident w] #[.text w]
-    | .num m => add s [.num m] #[.text (milliString m)]
+    | .num m t => add s [.num m t] #[.text t]
     | .sym c => add s [.sym c] #[.text (String.singleton c)]
     | _ => s
   | .text =>
     match t with
     | .ident w => s.str w
-    | .num m => s.str (milliString m)
+    | .num _ t => s.str t
     | .space => s.str " "
     | .sym c => s.str (String.singleton c)
     -- A group's content joins the line and its styles end with it; a size switch inside one is refused.
@@ -2398,17 +2433,17 @@ private theorem Sal.splice_from (P : Char → Prop) (s body : Sal)
   · intro s hs
     exact hs
 
-/-- A literal source token before any salvage decision, a number spelled by `milliString`. -/
+/-- A literal source token before any salvage decision, a number as it was spelled. -/
 public inductive LabelLiteral where
   | word (text : String)
-  | number (milli : Int)
+  | number (text : String)
   | symbol (char : Char)
   | space
   deriving Repr, BEq
 
 public def LabelLiteral.text : LabelLiteral → String
   | .word s => s
-  | .number m => milliString m
+  | .number t => t
   | .symbol c => String.singleton c
   | .space => " "
 
@@ -2435,7 +2470,7 @@ public def labelInputList (env : List (String × Val)) (acc : Array LabelInput) 
 public def labelInputOne (env : List (String × Val)) (acc : Array LabelInput) :
     Tok → Array LabelInput
   | .ident w => acc.push (.literal (.word w))
-  | .num m => acc.push (.literal (.number m))
+  | .num _ t => acc.push (.literal (.number t))
   | .sym c => acc.push (.literal (.symbol c))
   | .space => acc.push (.literal .space)
   | .ctrl n => match env.lookup n with
@@ -2498,7 +2533,7 @@ public def labelSource (cx : Cx) (env : List (String × Val)) (t : Tok) : String
 public theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok) :
     labelSource cx env t = match t with
       | .ident w => w
-      | .num m => milliString m
+      | .num _ t => t
       | .sym c => String.singleton c
       | .space => " "
       | .ctrl n => match env.lookup n with
@@ -2603,7 +2638,7 @@ private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String ×
       apply Sal.inlines_from P _ _ hs
       apply fontCmdInlines_from
       simpa [Ir.plainTextOne] using ht
-    | num m =>
+    | num m t =>
       apply Sal.inlines_from P _ _ hs
       apply fontCmdInlines_from
       simpa [Ir.plainTextOne] using ht
@@ -2615,7 +2650,7 @@ private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String ×
   | text =>
     cases t with
     | ident w => exact Sal.str_from P _ _ hs ht
-    | num m => exact Sal.str_from P _ _ hs ht
+    | num m t => exact Sal.str_from P _ _ hs ht
     | space => exact Sal.str_from P _ _ hs ht
     | sym c => exact Sal.str_from P _ _ hs ht
     | group g =>
@@ -2726,7 +2761,7 @@ public def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Colo
 
 private def readDim (toks : List Tok) : Except String Sp :=
   match toks with
-  | [.num m, .ident u] =>
+  | [.num m _, .ident u] =>
     match u with
     | "mm" => .ok (m * Dim.mm 10 / 10000)
     | "cm" => .ok (m * Dim.mm 10 / 1000)
@@ -2737,8 +2772,8 @@ private def readDim (toks : List Tok) : Except String Sp :=
 
 private def readNodeDim (em ex : Sp) (toks : List Tok) : Except String Sp :=
   match toks with
-  | [.num m, .ident "em"] => .ok (m * em / 1000)
-  | [.num m, .ident "ex"] => .ok (m * ex / 1000)
+  | [.num m _, .ident "em"] => .ok (m * em / 1000)
+  | [.num m _, .ident "ex"] => .ok (m * ex / 1000)
   | ts => readDim ts
 
 private def lineWidthStyles : List (String × Sp) :=
@@ -3000,7 +3035,7 @@ public theorem offset_mem (d : Dir) (s : Sp × Sp) :
 private def nameOfToks (ts : List Tok) : Option String :=
   let s := ts.foldl (fun acc t => acc ++ (match t with
     | .ident n => n
-    | .num m => milliString m
+    | .num _ t => t
     | .sym c => String.singleton c
     | _ => "")) ""
   if s.isEmpty then none else some s
@@ -3017,8 +3052,8 @@ private def readPlace (dist : Sp × Sp) (toks : List Tok) :
   let dir ← dirOf path
   match rest with
   | .ident "of" :: tail => (nameOfToks tail).map fun nm => (dir, nm, dist)
-  | .num m :: .ident u :: .ident "of" :: tail => do
-    let own ← (readDim [.num m, .ident u]).toOption
+  | .num m t :: .ident u :: .ident "of" :: tail => do
+    let own ← (readDim [.num m t, .ident u]).toOption
     let nm ← nameOfToks tail
     some (dir, nm, (own, own))
   | _ => none
@@ -3324,7 +3359,7 @@ private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
         | some v => expanded := expanded.push (.ident v.text)
         | none =>
           throw (.E0333, s!"in {site}, unknown macro '\\{n}' in a node name; {cost}")
-      | .ident _ | .num _ | .sym _ | .space => expanded := expanded.push t
+      | .ident _ | .num _ _ | .sym _ | .space => expanded := expanded.push t
       | .math _ _ _ | .group _ | .other _ =>
         throw (.W0334, s!"coordinate {tokText t} is outside the rendered \
 picture subset; {cost}")
@@ -5456,8 +5491,8 @@ private def treeStyle (cx : Cx) (name : String) (arg : Nat := 0) : Array (Array 
       let mut k := 0
       for _ in [0:body.size + 1] do
         if h : k < body.size then
-          if body[k] == .sym '#' && body[k + 1]? == some (.num 1000) then
-            out := out.push (.num ((arg : Int) * 1000))
+          if body[k] == .sym '#' && (body[k + 1]? matches some (.num 1000 _)) then
+            out := out.push (.num ((arg : Int) * 1000) (toString arg))
             k := k + 2
           else
             out := out.push body[k]
@@ -5552,6 +5587,15 @@ private inductive Item where
   | dots
   deriving Repr, BEq
 
+/-- A list item's text as written, a macro in it read as its text. -/
+private def itemText (env : List (String × Val)) (toks : Array Tok) : String :=
+  toks.foldl (fun acc tok => acc ++ (match tok with
+    | .ctrl n => ((env.lookup n).map Val.text).getD ("\\" ++ n)
+    | .ident s => s
+    | .num _ t => t
+    | .sym c => String.singleton c
+    | _ => "")) ""
+
 private def readItems (env : List (String × Val)) (toks : Array Tok) :
     Except String (Array Item) := Id.run do
   let mut out : Array Item := #[]
@@ -5565,12 +5609,15 @@ private def readItems (env : List (String × Val)) (toks : Array Tok) :
       let mut vs : Array Val := #[]
       for sub in splitTop part '/' do
         match evalExpr env sub with
+        -- pgffor binds an item's text as written, its value read where it is used.
+        | .ok (.num m _) => vs := vs.push (.num m (itemText env sub))
+        | .ok (.len sp _) => vs := vs.push (.len sp (itemText env sub))
         | .ok v => vs := vs.push v
         | .error e =>
           match sub.toList.filter (· != .space) with
           | name@(.ident _ :: rest) =>
             if rest.all (fun t => match t with
-                | .ident _ | .num _ | .sym '.' | .sym '-' | .sym '_' => true
+                | .ident _ | .num _ _ | .sym '.' | .sym '-' | .sym '_' => true
                 | _ => false) then
               vs := vs.push (.str ((nameOfToks name).getD ""))
             else return .error e
@@ -5589,14 +5636,14 @@ private def expandItems (items : Array Item) : Except String (Array (Array Val))
         i := i + 1
       | .dots =>
         let prev ← match out.back? with
-          | some #[Val.num a] => pure a
+          | some #[Val.num a _] => pure a
           | _ => return .error "'...' needs a number before it"
         let bound ← match items[i+1]? with
-          | some (.vals #[Val.num b]) => pure b
+          | some (.vals #[Val.num b _]) => pure b
           | _ => return .error "'...' needs a number bound after it"
         let step ← if out.size ≥ 2 then
             match out[out.size - 2]? with
-            | some #[Val.num p2] =>
+            | some #[Val.num p2 _] =>
               if prev - p2 == 0 then
                 return .error "a '...' range with a zero step never reaches its bound"
               else pure (prev - p2)
@@ -5608,7 +5655,7 @@ private def expandItems (items : Array Item) : Except String (Array (Array Val))
           match range (prev + step) step bound with
           | some vals =>
             for v in vals do
-              out := out.push #[.num v]
+              out := out.push #[rangeItem v]
             i := i + 2
           | none =>
             return .error s!"the range '{milliString prev}, ..., {milliString bound}' \
@@ -5619,7 +5666,7 @@ private def expandItems (items : Array Item) : Except String (Array (Array Val))
 private def bindVars (vars : Array String) (item : Array Val)
     (env : List (String × Val)) : List (String × Val) := Id.run do
   let mut out := env
-  let last := item.back?.getD (.num 0)
+  let last := item.back?.getD (.num 0 "0")
   for k in [0:vars.size] do
     if h : k < vars.size then
       out := (vars[k], (item[k]?).getD last) :: out
@@ -5999,7 +6046,7 @@ private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := 
       for t in [Tok.sym ']', .ident "at", .sym '(', .ctrl " extra x", .sym ',', .ctrl " extra y",
           .sym ')', .group text] do
         toks := toks.push t
-      let env' := (" extra x", Val.len pt.1) :: (" extra y", Val.len pt.2) :: env
+      let env' := (" extra x", Val.length pt.1) :: (" extra y", Val.length pt.2) :: env
       let bordersBefore := ev.borders.size
       ev := evalNode at0 env' toks ev
       unless ev.after.isEmpty do
@@ -6106,13 +6153,16 @@ rendered picture subset; the keys are dropped")
     -- Truncation toward zero, as `\pgfmathtruncatemacro` does; `Int` division floors a negative.
     let floorUnit (m : Int) : Int := if m ≥ 0 then m / 1000 * 1000 else -((-m) / 1000 * 1000)
     match evalExpr env expr, setMode with
-    | .ok (.num m), .plain => ((name, Val.num m) :: env, ev)
-    | .ok (.num m), .trunc => ((name, Val.num (floorUnit m)) :: env, ev)
+    | .ok (.num m t), .plain => ((name, Val.num m t) :: env, ev)
+    | .ok (.num m _), .trunc =>
+      ((name, Val.num (floorUnit m) (milliString (floorUnit m))) :: env, ev)
     -- A unitless length is points, as `\pgfmathsetlengthmacro` reads it.
-    | .ok (.num m), .length => ((name, Val.len (milliPt m)) :: env, ev)
-    | .ok (.len sp), .plain => ((name, Val.num (spMilliPt sp)) :: env, ev)
-    | .ok (.len sp), .trunc => ((name, Val.num (floorUnit (spMilliPt sp))) :: env, ev)
-    | .ok (.len sp), .length => ((name, Val.len sp) :: env, ev)
+    | .ok (.num m _), .length => ((name, Val.length (milliPt m)) :: env, ev)
+    | .ok (.len sp _), .plain => ((name, Val.num (spMilliPt sp) (texPoints sp)) :: env, ev)
+    | .ok (.len sp _), .trunc =>
+      let m := floorUnit (spMilliPt sp)
+      ((name, Val.num m (milliString m)) :: env, ev)
+    | .ok (.len sp _), .length => ((name, Val.length sp) :: env, ev)
     | .ok (.str s), .plain => ((name, Val.str s) :: env, ev)
     | .ok (.str s), .trunc =>
       (env, ev.diag (.E0333, s!"in '\\pgfmathtruncatemacro' of '\\{name}', '{s}' \
@@ -6275,7 +6325,7 @@ mutual
 private def substList (args : Array (List Tok)) (acc : Array Tok) :
     List Tok → Array Tok
   | [] => acc
-  | .sym '#' :: .num m :: rest =>
+  | .sym '#' :: .num m _ :: rest =>
     substList args (((args[(m / 1000 - 1).toNat]?).getD []).foldl Array.push acc) rest
   | t :: rest => substList args (acc.push (substTok args t)) rest
 
@@ -6283,7 +6333,7 @@ private def substTok (args : Array (List Tok)) : Tok → Tok
   | .group g => .group (substList args #[] g).toList
   | .ctrl n => .ctrl n
   | .ident s => .ident s
-  | .num m => .num m
+  | .num m t => .num m t
   | .sym c => .sym c
   | .space => .space
   | .math d b p => .math d b p
@@ -6366,7 +6416,7 @@ private def expandTok (tbl : List (String × Macro)) : Tok → Tok
   | .group g => .group (expandList tbl #[] g 0).toList
   | .ctrl n => .ctrl n
   | .ident s => .ident s
-  | .num m => .num m
+  | .num m t => .num m t
   | .sym c => .sym c
   | .space => .space
   | .math d b p => .math d b p
@@ -6389,7 +6439,7 @@ mutual
 private def refArityList (acc : Nat) (prevHash : Bool) : List Tok → Nat
   | [] => acc
   | .sym '#' :: rest => refArityList acc true rest
-  | .num m :: rest =>
+  | .num m _ :: rest =>
     refArityList (if prevHash then max acc (m / 1000).toNat else acc) false rest
   | t :: rest => refArityList (max acc (refArityTok t)) false rest
 
@@ -6397,7 +6447,7 @@ private def refArityTok : Tok → Nat
   | .group g => refArityList 0 false g
   | .ctrl _ => 0
   | .ident _ => 0
-  | .num _ => 0
+  | .num _ _ => 0
   | .sym _ => 0
   | .space => 0
   | .math _ _ _ => 0
@@ -6450,7 +6500,7 @@ private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : L
       | _ =>
         let nm := String.join (inner.toList.map fun (t : Tok) => match t with
           | .ident s => s
-          | .num m => milliString m
+          | .num _ t => t
           | .sym c => String.singleton c
           | _ => "")
         match nodes.lookup nm, splitAnchor nm with

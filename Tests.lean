@@ -735,6 +735,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   macroDelimiterScopeChecks ref oneFace
   packageOptionChecks ref oneFace
   picSiteChecks ref oneFace
+  picNumberTextChecks ref oneFace
   settleChecks ref
   quoteChecks ref oneFace
   kernelThmChecks ref

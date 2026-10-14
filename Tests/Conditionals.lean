@@ -321,6 +321,53 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       bdoc.pictureSrcs.any (fun p => hasStr p.2.body "Early") &&
       bdoc.pictureSrcs.any (fun p => hasStr p.2.body "Late"))
 
+/-- A picture's labels set the characters lualatex sets: a number written in a label or a list as
+written, and a pgfmath value as pgfmath spells it. -/
+def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pic (body : String) : String := "\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}\n\n"
+  let sets : List (String × String × String) :=
+    [("pgfmathsetmacro", "2*3", "6.0"), ("pgfmathsetmacro", "2.50", "2.50"),
+     ("pgfmathsetmacro", "-2", "-2.0"), ("pgfmathsetmacro", "(2.50)", "2.50"),
+     ("pgfmathsetmacro", "+2.50", "2.50"), ("pgfmathsetmacro", "0.5*4", "2.0"),
+     ("pgfmathsetmacro", "10/4", "2.5"), ("pgfmathsetmacro", "max(2.50,1)", "2.5"),
+     ("pgfmathsetmacro", "min(1,2)", "1.0"), ("pgfmathsetmacro", "2<3", "1"),
+     ("pgfmathsetmacro", "3<2", "0"), ("pgfmathsetmacro", "ifthenelse(1,2,3)", "2"),
+     ("pgfmathsetmacro", "2", "2"), ("pgfmathsetmacro", "02", "02"),
+     ("pgfmathsetmacro", "-0", "0.0"), ("pgfmathsetmacro", "2pt", "2.0"),
+     ("pgfmathsetmacro", "0-2", "-2.0"), ("pgfmathsetmacro", "100*100", "10000.0"),
+     ("pgfmathtruncatemacro", "-2.7", "-2"), ("pgfmathtruncatemacro", "2.50", "2"),
+     ("pgfmathsetlengthmacro", "2", "2.0pt"), ("pgfmathsetlengthmacro", "2.50", "2.5pt"),
+     ("pgfmathsetlengthmacro", "2pt*2", "4.0pt")]
+  let tag (k : Nat) : String := "K" ++ String.singleton (Char.ofNat (97 + k))
+  let setPics := String.join (sets.zipIdx.map fun ((cmd, expr, _), k) =>
+    pic ("\\" ++ cmd ++ "{\\v}{" ++ expr ++ "}\n\\node at (0,0) {" ++ tag k ++ "[\\v]};\n"))
+  let listPics :=
+    pic "\\foreach \\x in {-1,2*3,1.0,2.50} {\\node at (0,0) {La[\\x]};}\n" ++
+    pic "\\foreach \\x in {1.0,1.5,...,3.0} {\\node at (\\x,0) {Lb[\\x]};}\n" ++
+    pic "\\foreach \\x in {1,...,3} {\\pgfmathsetmacro{\\y}{\\x*2}\\node at (\\x,0) {Lc[\\y]};}\n" ++
+    pic "\\foreach \\x in {2.50} {\\pgfmathsetmacro{\\y}{\\x}\\node at (0,0) {Ld[\\y]};}\n" ++
+    pic "\\node at (0,0) {Le[2.50] Le[007] Le[1,000] Le[3.0] Le[.5] Le[3.14159] Le[0.0001]};\n" ++
+    pic "\\foreach \\x in {1pt,2.5cm} {\\node at (0,0) {Lf[\\x]};}\n" ++
+    pic "\\foreach \\x in {1pt} {\\pgfmathsetlengthmacro{\\y}{\\x}\\node at (0,0) {Lg[\\y]};}\n" ++
+    pic "\\foreach \\x in {1pt} {\\pgfmathsetmacro{\\y}{\\x}\\node at (0,0) {Lh[\\y]};}\n"
+  let text := censusText (censusOfSrc oneFace (dvDoc "\\pictures{ tool = none }\n" (setPics ++ listPics)))
+  for ((cmd, expr, want), k) in sets.zipIdx do
+    t s!"a label sets '\\{cmd}' of '{expr}' as pgfmath spells it, {want}"
+      (hasStr text (tag k ++ "[" ++ want ++ "]"))
+  for (label, want) in [("La", "-1"), ("La", "2*3"), ("La", "1.0"), ("La", "2.50"),
+      ("Lb", "1.0"), ("Lb", "1.5"), ("Lb", "2"), ("Lb", "2.5"), ("Lb", "3"),
+      ("Lc", "2.0"), ("Lc", "4.0"), ("Lc", "6.0"), ("Ld", "2.50"),
+      ("Le", "2.50"), ("Le", "007"), ("Le", "1,000"), ("Le", "3.0"), ("Le", ".5"),
+      ("Le", "3.14159"), ("Le", "0.0001"), ("Lf", "1pt"), ("Lf", "2.5cm"), ("Lg", "1.0pt"),
+      ("Lh", "1.0")] do
+    t s!"a label sets {want} where lualatex sets it" (hasStr text (label ++ "[" ++ want ++ "]"))
+  t "a dimension's points are spelled as TeX's \\the spells them"
+    ([1864679, 131072, 21845, 6554, -1, 0, 65535, 98304, 13108, -6554, 1073741823, 1, 32768,
+        100].map Picture.texPoints ==
+      ["28.45274", "2.0", "0.33333", "0.1", "-0.00002", "0.0", "0.99998", "1.5", "0.20001",
+        "-0.1", "16383.99998", "0.00002", "0.5", "0.00153"])
+
 /-- A definition no use reaches is decided against the state at the preamble's end and named as the
 definition's. -/
 def settleChecks (ref : IO.Ref (List String)) : IO Unit := do

@@ -97,9 +97,7 @@ private def srcListInto (acc : String) : List Tok → String
 private def srcOneInto (acc : String) : Tok → String
   | .ctrl n => acc ++ "\\" ++ n
   | .ident s => acc ++ s
-  | .num m =>
-    let digits := Picture.milliString m
-    acc ++ digits
+  | .num _ t => acc ++ t
   | .sym c => acc.push c
   | .space => acc ++ " "
   | .group body => srcListInto (acc ++ "{") body ++ "}"
@@ -271,16 +269,16 @@ private def absoluteSkipUnit (unit : String) : Bool :=
 
 private def absoluteSkipSyntax (ts : List Tok) : Bool :=
   match (trim ts).filter (· != .space) with
-  | [.num _, .ident unit]
-  | [.sym '-', .num _, .ident unit] => absoluteSkipUnit unit
+  | [.num _ _, .ident unit]
+  | [.sym '-', .num _ _, .ident unit] => absoluteSkipUnit unit
   | _ => false
 
 private def optionalGapPrefix (ts : List Tok) : Bool :=
   match (trim ts).filter (· != .space) with
   | [] => true
   | [.ctrl "vskip", .group body] => absoluteSkipSyntax body
-  | [.ctrl "vskip", .num _, .ident unit]
-  | [.ctrl "vskip", .sym '-', .num _, .ident unit] => absoluteSkipUnit unit
+  | [.ctrl "vskip", .num _ _, .ident unit]
+  | [.ctrl "vskip", .sym '-', .num _ _, .ident unit] => absoluteSkipUnit unit
   | _ => false
 
 /-- Only a final scoped arm inserting the datum it tests is an optional part. -/
@@ -301,7 +299,7 @@ private def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) :
   | [] => acc
   | .space :: rest => scanList fonts st acc rest
   | .group body :: rest => scanList fonts st (scanList fonts st acc body) rest
-  | .ctrl n :: .sym '=' :: .num _ :: rest =>
+  | .ctrl n :: .sym '=' :: .num _ _ :: rest =>
     if breakParams.contains n then scanList fonts st acc rest
     else scanList fonts st { acc with skipped := acc.skipped.push s!"\\{n}" } rest
   | .ctrl "ifx" :: .ctrl datum :: .ctrl "@empty" :: .ctrl "else" :: rest
@@ -318,11 +316,11 @@ private def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) :
     if acc.optionalArm && absoluteSkipSyntax body then
       scanList fonts st { acc with broke := true, before := some (srcList (trim body)) } rest
     else scanList fonts st { acc with words := true } rest
-  | .ctrl "vskip" :: n@(.num _) :: u@(.ident unit) :: rest =>
+  | .ctrl "vskip" :: n@(.num _ _) :: u@(.ident unit) :: rest =>
     if acc.optionalArm && absoluteSkipUnit unit then
       scanList fonts st { acc with broke := true, before := some (srcList [n, u]) } rest
     else scanList fonts st { acc with words := true } rest
-  | .ctrl "vskip" :: s@(.sym '-') :: n@(.num _) :: u@(.ident unit) :: rest =>
+  | .ctrl "vskip" :: s@(.sym '-') :: n@(.num _ _) :: u@(.ident unit) :: rest =>
     if acc.optionalArm && absoluteSkipUnit unit then
       scanList fonts st { acc with broke := true, before := some (srcList [s, n, u]) } rest
     else scanList fonts st { acc with words := true } rest
