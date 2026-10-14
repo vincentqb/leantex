@@ -54,19 +54,19 @@ para
 role display-veao
   center
     para
-      formula display "2 + 4 + \\cdots + 2n &= n(n+1) \\\\  f(x) &= x^2 - 1 \\\\  &= (x-1)(x+1)"
+      formula display "2 + 4 + \\cdots + 2n &= n(n+1) \\\\ f(x) &= x^2 - 1 \\\\ &= (x-1)(x+1)"
         ord:align[(|ord:2 bin:+ ord:4 bin:+ inner:⋯ bin:+ ord:2 ord:𝑛|ord:{} rel:= ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:))(|ord:𝑓 open:( ord:𝑥 close:)|ord:{} rel:= ord:𝑥^{ord:2} bin:− ord:1)(||ord:{} rel:= open:( ord:𝑥 bin:− ord:1 close:) open:( ord:𝑥 bin:+ ord:1 close:))]
 role display-veao
   center
     para
-      formula display "a + b = c \\\\  x^2 + y^2 = z^2"
+      formula display "a + b = c \\\\ x^2 + y^2 = z^2"
         ord:gather[(|ord:𝑎 bin:+ ord:𝑏 rel:= ord:𝑐)(|ord:𝑥^{ord:2} bin:+ ord:𝑦^{ord:2} rel:= ord:𝑧^{ord:2})]
 para
   text "A matrix is an array between grown delimiters, its cells in text style:"
 role display-vefo
   center
     para
-      formula display "M = \\left [ \\begin{array}{cc} 1 & x \\\\  x' & \\frac {1}{2}\\end{array} \\right ]"
+      formula display "M = \\left [ \\begin{array}{cc} 1 & x \\\\ x' & \\frac {1}{2}\\end{array} \\right ]"
         ord:𝑀 rel:= inner:left[{ord:array:cc[(|ord:1|ord:𝑥)(|ord:𝑥^{ord:′}|ord:frac{ord:1}{ord:2})]}right]
 para
   text "Accents place by the face’s attachment points: "

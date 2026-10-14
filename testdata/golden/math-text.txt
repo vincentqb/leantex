@@ -35,7 +35,7 @@ para
 role display-veao
   center
     para
-      formula display "\\textcolor {blue}{\\textbf {\\sum _k}} a_k &= b \\\\  &= \\text {\\textbf {bound} above}"
+      formula display "\\textcolor {blue}{\\textbf {\\sum _k}} a_k &= b \\\\ &= \\text {\\textbf {bound} above}"
         ord:align[(|ord:{ink:#0000FF ord:alpha:bf{op:lim:∑_{ord:𝑘}}} ord:𝑎_{ord:𝑘}|ord:{} rel:= ord:𝑏)(||ord:{} rel:= ord:"bound above")]
 para
   text "What the engine still does not model degrades to content: "

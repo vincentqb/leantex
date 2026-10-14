@@ -576,7 +576,7 @@ mutual
   | .space => " "
   | .par _ => " "
   | .sym c _ => String.ofList [c]
-  | .ctrl n _ => "\\" ++ n ++ " "
+  | .ctrl n _ => if n.length == 1 && !Lex.nameChar n.front then "\\" ++ n else "\\" ++ n ++ " "
   | .group body _ => "{" ++ rawSrc body ++ "}"
   | .math d body _ =>
     let inner := rawSrc body

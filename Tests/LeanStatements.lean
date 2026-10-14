@@ -123,9 +123,9 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   spells "Tide.dep_hyp" #["\\forall n\\in \\mathbb {N},", "(h:0<n)\\to {}", "\\operatorname {Fin.val}(",
     "\\operatorname {Fin.mk}(0,{}", "h))={}", "0"]
   spells "Tide.nested_dep" #["\\forall f\\in (\\forall n\\in \\mathbb {N},n>0\\to \\mathbb {N}),",
-    "(\\forall n\\in \\mathbb {N},(h:n>0)\\to f(n,h)=n)\\to {}", "f(1,{}", "\\operatorname {Nat.one\\_ pos})={}",
+    "(\\forall n\\in \\mathbb {N},(h:n>0)\\to f(n,h)=n)\\to {}", "f(1,{}", "\\operatorname {Nat.one\\_pos})={}",
     "1"]
-  spells "Tide.chars_len" #["\\operatorname {String.length}(\\text {\"a\\textasciitilde b\\textasciicircum c\\textbackslash \\textbackslash d\\textbackslash n\\textbackslash t\\textbackslash \"\\textbraceleft \\textbraceright \\textunderscore \\# \\textdollar \\% \\& \"})={}", "17"]
+  spells "Tide.chars_len" #["\\operatorname {String.length}(\\text {\"a\\textasciitilde b\\textasciicircum c\\textbackslash \\textbackslash d\\textbackslash n\\textbackslash t\\textbackslash \"\\textbraceleft \\textbraceright \\textunderscore \\#\\textdollar \\%\\&\"})={}", "17"]
   let exImplicit := app "Exists" [app "Nat" [], .lam "n" .explicit (app "Nat" [])
     (.pi "m" .implicit false (app "Nat" []) (app "LE.le" [app "Nat" [], app "instLENat" [], var 0, var 1]))]
   let exDecl : LeanFacts.Decl :=
@@ -172,7 +172,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\operatorname {g}((x\\mapsto x),y)")
   t "statements: a name mathematics cannot spell sets as text, subscript digits lower, TeX's own characters escaped"
     (texOf (var 0) ["x₁"] == "x_{1}" && texOf (var 0) ["«odd name»"] == "\\text {«odd name»}" &&
-      texOf (.apps (.str "a%b$c") []) [] == "\\text {\"a\\% b\\textdollar c\"}")
+      texOf (.apps (.str "a%b$c") []) [] == "\\text {\"a\\%b\\textdollar c\"}")
   t "statements: a string sets as Lean writes it, its quotes and control characters escaped"
     (texOf (.apps (.str "q\"\n\x01") []) [] ==
       "\\text {\"q\\textbackslash \"\\textbackslash n\\textbackslash x01\"}")
