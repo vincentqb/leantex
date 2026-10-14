@@ -12,6 +12,8 @@ import LeanTex.Core.BibStyle
 public import LeanTex.Core.BibText
 import LeanTex.Core.Data
 import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.LeanExport
+import LeanTex.Cli.Host
 
 /-! The driver's file frontend: the document's own bytes and the `\input`/`\include`,
 `\markdownInput`, local `.sty`, `.bib` and `\data` files it names, each read through one
@@ -326,9 +328,15 @@ public def readDocument (file : String) (bytes : ByteArray)
       if phases then phase "md" s!"{raws.size} top-level nodes" (← since t)
       return (raws, ds)
     | .code lang =>
-      let (raws, ds) := Surface.read (.code lang) file text
+      let asks := lang == .lean && (Code.showingOf lang text.toList.toArray).math
+      let (facts, factDiags) ← if asks then Host.runIO (LeanExport.factsFor file bytes text)
+        else pure (none, #[])
+      if phases && asks then
+        phase "lean" s!"{(facts.map (·.decls.size)).getD 0} declarations" (← since t)
+      let t ← IO.monoMsNow
+      let (raws, ds) := Surface.readCode lang file text facts
       if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)
-      return (raws, ds)
+      return (raws, ds ++ factDiags)
   let (raws, frontDiags) ← surface first.text true
   let t ← IO.monoMsNow
   let seeded (read : Encoding.FileText) (under : Option Encoding.Declared) : Encoding.Ledger :=

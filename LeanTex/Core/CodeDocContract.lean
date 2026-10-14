@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.CodeDoc
 public import LeanTex.Core.MdDesugarContract
 import all LeanTex.Core.CodeDoc
+import all LeanTex.Core.LeanStatement
 
 /-! # What a code file lowers into
 
@@ -12,12 +13,16 @@ namespace LeanTex.Core.Code
 
 open LeanTex.Core LeanTex.Core.Parse
 
-/-- Markdown's vocabulary, the preamble declarations a code file's title and directive take, and
-the document around its body. -/
+/-- Markdown's vocabulary, the preamble declarations a code file's title and directive take, the
+document around its body, and the formulas a Lean statement sets as, with the zero glue a line
+breaks at between them. -/
 @[expose] public def vocabulary : Md.Vocab :=
   { Md.vocabulary with
-    ctrls := Md.vocabulary.ctrls ++ ["title", "output", "theme"]
-    envs := Md.vocabulary.envs ++ ["document"] }
+    ctrls := Md.vocabulary.ctrls ++ ["title", "output", "theme", "hspace"]
+    envs := Md.vocabulary.envs ++ ["document", "flushleft"]
+    formulas := true
+    mathCtrls := LeanNotation.MathCtrl.all.map (·.name)
+    mathSyms := ['^', '_'] }
 
 private theorem admitsList_append (v : Md.Vocab) (a b : List Raw) :
     v.admitsList (a ++ b) = (v.admitsList a && v.admitsList b) := by
@@ -30,6 +35,12 @@ private theorem admitsList_iff (v : Md.Vocab) (l : List Raw) :
   induction l with
   | nil => simp [Md.Vocab.admitsList]
   | cons r rest ih => simp [Md.Vocab.admitsList, ih]
+
+private theorem mathAdmitsList_append (v : Md.Vocab) (a b : List Raw) :
+    v.mathAdmitsList (a ++ b) = (v.mathAdmitsList a && v.mathAdmitsList b) := by
+  induction a with
+  | nil => simp [Md.Vocab.mathAdmitsList]
+  | cons r rest ih => simp [Md.Vocab.mathAdmitsList, ih, Bool.and_assoc]
 
 mutual
 
@@ -48,7 +59,7 @@ private theorem mono_one : (r : Raw) → Md.vocabulary.admits r = true →
   | .group body _, h => by
     simp only [Md.Vocab.admits] at h ⊢
     exact mono_list body.toList h
-  | .math _ _ _, h => by simp [Md.Vocab.admits] at h
+  | .math _ _ _, h => by simp [Md.Vocab.admits, Md.vocabulary] at h
   | .env n body _, h => by
     simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem] at h ⊢
     exact ⟨by simp [vocabulary, h.1], mono_list body.toList h.2⟩
@@ -65,6 +76,34 @@ end
 
 mutual
 
+private theorem mathMap_one (f : Pos → Pos) : (r : Raw) →
+    vocabulary.mathAdmits (mapPos f r) = vocabulary.mathAdmits r
+  | .word _ _ => rfl
+  | .space => rfl
+  | .par _ => rfl
+  | .ctrl _ _ => rfl
+  | .sym _ _ => rfl
+  | .group body _ => by
+    simp only [mapPos, Md.Vocab.mathAdmits]
+    rw [mathMap_list f #[] body.toList]
+    simp [Md.Vocab.mathAdmitsList]
+  | .math _ _ _ => rfl
+  | .env _ _ _ => rfl
+  | .verb _ _ _ => rfl
+
+private theorem mathMap_list (f : Pos → Pos) (acc : Array Raw) : (l : List Raw) →
+    vocabulary.mathAdmitsList (mapPosList f acc l).toList =
+      (vocabulary.mathAdmitsList acc.toList && vocabulary.mathAdmitsList l)
+  | [] => by simp [mapPosList, Md.Vocab.mathAdmitsList]
+  | r :: rest => by
+    simp only [mapPosList]
+    rw [mathMap_list f (acc.push (mapPos f r)) rest]
+    simp [mathAdmitsList_append, Md.Vocab.mathAdmitsList, mathMap_one f r, Bool.and_assoc]
+
+end
+
+mutual
+
 private theorem mapPos_one (f : Pos → Pos) : (r : Raw) →
     vocabulary.admits (mapPos f r) = vocabulary.admits r
   | .word _ _ => rfl
@@ -76,7 +115,10 @@ private theorem mapPos_one (f : Pos → Pos) : (r : Raw) →
     simp only [mapPos, Md.Vocab.admits]
     rw [mapPos_list f #[] body.toList]
     simp [Md.Vocab.admitsList]
-  | .math _ _ _ => rfl
+  | .math _ body _ => by
+    simp only [mapPos, Md.Vocab.admits]
+    rw [mathMap_list f #[] body.toList]
+    simp [Md.Vocab.mathAdmitsList]
   | .env n body _ => by
     simp only [mapPos, Md.Vocab.admits]
     rw [mapPos_list f #[] body.toList]
@@ -183,34 +225,200 @@ private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
     exact retitle_adm _ hl r (by simpa [proseRaws] using hr)
   | false => exact h
 
+private theorem caret_sym : '^' ∈ vocabulary.mathSyms := by simp [vocabulary]
+
+private theorem under_sym : '_' ∈ vocabulary.mathSyms := by simp [vocabulary]
+
+mutual
+
+private theorem pushRaws_adm (pos : Pos) : (m : LeanNotation.Math) → (acc : Array Raw) →
+    vocabulary.mathAdmitsList acc.toList = true →
+    vocabulary.mathAdmitsList (LeanStatement.Math.pushRaws pos acc m).toList = true
+  | .word _, acc, h => by
+    simp [LeanStatement.Math.pushRaws, mathAdmitsList_append, h, Md.Vocab.mathAdmitsList,
+      Md.Vocab.mathAdmits]
+  | .ctrl c, acc, h => by
+    simp only [LeanStatement.Math.pushRaws, Array.toList_push, mathAdmitsList_append, h,
+      Md.Vocab.mathAdmitsList, Md.Vocab.mathAdmits, Bool.true_and, Bool.and_true,
+      List.contains_iff_mem]
+    exact List.mem_map.mpr ⟨c, LeanNotation.MathCtrl.mem_all c, rfl⟩
+  | .arg body, acc, h => by
+    have hb := listRaws_adm pos body #[] (by simp [Md.Vocab.mathAdmitsList])
+    simp [LeanStatement.Math.pushRaws, mathAdmitsList_append, h, Md.Vocab.mathAdmitsList,
+      Md.Vocab.mathAdmits, hb]
+  | .sup body, acc, h => by
+    have hb := listRaws_adm pos body #[] (by simp [Md.Vocab.mathAdmitsList])
+    simp [LeanStatement.Math.pushRaws, mathAdmitsList_append, h, Md.Vocab.mathAdmitsList,
+      Md.Vocab.mathAdmits, hb, caret_sym]
+  | .sub body, acc, h => by
+    have hb := listRaws_adm pos body #[] (by simp [Md.Vocab.mathAdmitsList])
+    simp [LeanStatement.Math.pushRaws, mathAdmitsList_append, h, Md.Vocab.mathAdmitsList,
+      Md.Vocab.mathAdmits, hb, under_sym]
+
+private theorem listRaws_adm (pos : Pos) : (l : List LeanNotation.Math) → (acc : Array Raw) →
+    vocabulary.mathAdmitsList acc.toList = true →
+    vocabulary.mathAdmitsList (LeanStatement.Math.listRaws pos acc l).toList = true
+  | [], _, h => by simpa [LeanStatement.Math.listRaws] using h
+  | m :: rest, acc, h => by
+    simp only [LeanStatement.Math.listRaws]
+    exact listRaws_adm pos rest _ (pushRaws_adm pos m acc h)
+
+end
+
+private theorem textRaws_adm' (s : String) (p : Pos) : Adm (Md.textRaws s p) := by
+  intro r hr
+  rcases Md.textRaws_covers _ _ r hr with rfl | ⟨w, q, rfl⟩ <;> rfl
+
+private theorem breakRaws_adm (pos : Pos) : Adm (breakRaws pos) := by
+  intro r hr
+  simp only [breakRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl
+  · simp [Md.Vocab.admits, vocabulary]
+  · exact adm_group _ _ (by intro x hx; simp at hx; subst hx; rfl)
+
+private theorem displayRaws_adm (d : LeanFacts.Decl)
+    (formulas : Array (Array LeanNotation.Math × Bool)) (pos : Pos) :
+    Adm (displayRaws d formulas pos) := by
+  have hopen : Adm #[.ctrl "textbf" pos, .group #[.word d.kind.label pos] pos,
+      .space, .word "(" pos, .ctrl "texttt" pos, .group (Md.textRaws d.name pos) pos] := by
+    intro r hr
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl
+    · simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
+    · simp [Md.Vocab.admits, Md.Vocab.admitsList]
+    · rfl
+    · rfl
+    · simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
+    · exact adm_group _ _ (textRaws_adm' _ _)
+  have hclose : Adm (if d.kind == .theorem && !d.proved then
+      #[.word "," pos, .space, .word "unproved)." pos] else #[.word ")." pos]) := by
+    split
+    · intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl | rfl <;> rfl
+    · intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr; rfl
+  have hhead := adm_append hopen hclose
+  have step : ∀ (st : Array Raw × Bool) (mn : Array LeanNotation.Math × Bool), Adm st.1 →
+      Adm (displayStep pos st mn).1 := by
+    intro st mn h
+    refine adm_push (adm_append h ?_) ?_
+    · split
+      · intro r hr; simp at hr; subst hr; rfl
+      · exact breakRaws_adm pos
+    · simp only [Md.Vocab.admits, Bool.and_eq_true]
+      exact ⟨rfl, by simpa using listRaws_adm pos mn.1.toList #[] (by simp [Md.Vocab.mathAdmitsList])⟩
+  have hfold : ∀ (l : List (Array LeanNotation.Math × Bool)) (st : Array Raw × Bool), Adm st.1 →
+      Adm (l.foldl (displayStep pos) st).1 := by
+    intro l
+    induction l with
+    | nil => intro st h; exact h
+    | cons m rest ih => intro st h; exact ih _ (step st m h)
+  have hbody := hfold formulas.toList (_, true) hhead
+  rw [Array.foldl_toList] at hbody
+  intro r hr
+  simp only [displayRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+  subst hr
+  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx =>
+    hbody x (by simpa using hx)⟩
+
+private theorem codeFor_adm (starts : Array Nat) (src : Array Char) (segs : List Seg)
+    (head stop : Nat × Nat) : Adm (codeFor starts src segs head stop) := by
+  intro r hr
+  unfold codeFor at hr
+  dsimp only at hr
+  split at hr
+  · split at hr
+    · simp at hr
+    · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
+  · simp at hr
+
+private theorem declPara_adm (facts : LeanFacts.Facts) (starts : Array Nat) (src : Array Char)
+    (segs : List Seg) (code wanted : Bool) (d : LeanFacts.Decl) :
+    Adm (declPara facts starts src segs code wanted d) := by
+  unfold declPara
+  split
+  · intro r hr; simp at hr
+  · split
+    · exact displayRaws_adm _ _ _
+    · split
+      · intro r hr; simp at hr
+      · exact codeFor_adm _ _ _ _ _
+
+private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Array Char)
+    (segs : List Seg) (showing : Showing) (facts : Option LeanFacts.Facts) :
+    ∀ p ∈ (statementsFor file starts src segs showing facts).1, Adm p := by
+  cases facts with
+  | none => intro p hp; simp [statementsFor] at hp
+  | some f =>
+    intro p hp
+    simp only [statementsFor, statementsOf, Array.mem_append, Array.mem_map] at hp
+    rcases hp with ⟨d, _, rfl⟩ | ⟨fl, _, rfl⟩
+    · exact declPara_adm _ _ _ _ _ _ _
+    · have hif : ∀ b : Bool, Adm (if b = true then codeFor starts src segs fl.head fl.stop
+          else #[]) := by
+        intro b
+        cases b
+        · intro r hr; simp at hr
+        · simpa using codeFor_adm starts src segs fl.head fl.stop
+      exact hif _
+
 private theorem pieceRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (opens : Bool) (piece : Piece) : Adm (pieceRaws lang file starts opens piece) := by
+    (page : PageSet) (hs : ∀ p ∈ page.stmts, Adm p)
+    (opens : Bool) (piece : Piece) : Adm (pieceRaws lang file starts page opens piece) := by
   cases piece with
   | code start code =>
-    intro r hr
-    simp only [pieceRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
-    subst hr
-    simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
+    simp only [pieceRaws]
+    split
+    · intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
+    · intro r hr; simp at hr
+  | prose seg =>
+    simp only [pieceRaws]
+    split
+    · exact proseRaws_adm lang file starts seg opens
+    · intro r hr; simp at hr
+  | statement i =>
+    simp only [pieceRaws, Array.getD_eq_getD_getElem?]
+    cases h : page.stmts[i]? with
+    | none => intro r hr; simp at hr
+    | some p => exact hs p (Array.mem_of_getElem? h)
+
+private theorem titleSource_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
+    (opens : Bool) (piece : Piece) : Adm (titleSource lang file starts opens piece) := by
+  cases piece with
   | prose seg => exact proseRaws_adm lang file starts seg opens
+  | code _ _ => intro r hr; simp [titleSource] at hr
+  | statement _ => intro r hr; simp [titleSource] at hr
 
 /-- What the fold over a file's pieces keeps: its body and its title inside the vocabulary. -/
 private def Inv (acc : Acc) : Prop := Adm acc.body ∧ ∀ t, acc.title = some t → Adm t
 
 private theorem pieceStep_inv (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (acc : Acc) (piece : Piece) (h : Inv acc) : Inv (pieceStep lang file starts acc piece) := by
-  have hp := pieceRaws_adm lang file starts (acc.opens piece) piece
-  obtain ⟨hbody, htitle⟩ := pieceStep_exact lang file starts acc piece
+    (page : PageSet) (hs : ∀ p ∈ page.stmts, Adm p)
+    (acc : Acc) (piece : Piece) (h : Inv acc) : Inv (pieceStep lang file starts page acc piece) := by
+  have hp := pieceRaws_adm lang file starts page hs (acc.opens piece) piece
+  have hsrc := titleSource_adm lang file starts (acc.opens piece) piece
+  obtain ⟨hbody, htitle⟩ := pieceStep_exact lang file starts page acc piece
   refine ⟨hbody ▸ adm_append h.1 hp, ?_⟩
   intro t ht
   rw [htitle] at ht
   split at ht
-  · exact openingHeading_adm _ (fun r hr => hp r (by simpa using hr)) t ht
+  · exact openingHeading_adm _ (fun r hr => hsrc r (by simpa using hr)) t ht
   · exact h.2 t ht
 
-private theorem foldl_inv (lang : Ir.CodeLang) (file : String) (starts : Array Nat) :
-    (l : List Piece) → (acc : Acc) → Inv acc → Inv (l.foldl (pieceStep lang file starts) acc)
+private theorem foldl_inv (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
+    (page : PageSet) (hs : ∀ p ∈ page.stmts, Adm p) :
+    (l : List Piece) → (acc : Acc) → Inv acc → Inv (l.foldl (pieceStep lang file starts page) acc)
   | [], _, h => h
-  | p :: rest, acc, h => foldl_inv lang file starts rest _ (pieceStep_inv lang file starts acc p h)
+  | p :: rest, acc, h =>
+    foldl_inv lang file starts page hs rest _ (pieceStep_inv lang file starts page hs acc p h)
 
 private theorem directive_adm (value : String) (p : Pos) : Adm (directiveRaws value p) := by
   have one : ∀ name v, name = "theme" ∨ name = "output" →
@@ -257,12 +465,18 @@ private theorem titleHeading_adm (t : Array Raw) (p : Pos) (h : Adm t) :
   · exact adm_group _ _ h
 
 /-- Everything a code file reads into stays inside the reader's declared vocabulary. -/
-public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String) :
-    ∀ r ∈ (read lang file text).1, vocabulary.admits r = true := by
-  have hacc : Inv (readPieces lang file text) := foldl_inv lang file _ _ {} ⟨by simp [Adm], by simp⟩
+public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
+    (facts : Option LeanFacts.Facts) :
+    ∀ r ∈ (read lang file text facts).1, vocabulary.admits r = true := by
+  have hplan : ∀ p ∈ (planOf lang file text facts).1.stmts, Adm p := by
+    simp only [planOf]
+    exact statementsFor_adm _ _ _ _ _ _
+  have hacc : Inv (readPieces lang file text (planOf lang file text facts).1
+      (planOf lang file text facts).2.1) :=
+    foldl_inv lang file _ _ hplan _ {} ⟨by simp [Adm], by simp⟩
   unfold read
   dsimp only
-  generalize readPieces lang file text = acc at hacc ⊢
+  generalize readPieces lang file text _ _ = acc at hacc ⊢
   have htitle := title_adm acc hacc _ (textRaws_adm (baseName file) {})
   refine adm_push (adm_append ?_ ?_) ?_
   · intro r hr
@@ -275,7 +489,7 @@ public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String) :
     · intro r hr; simp at hr
   · simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
     refine ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun r hr => ?_⟩
-    have hbody : Adm (if acc.title.isSome then acc.body
+    have hbody : Adm (if acc.titled then acc.body
         else Parse.headingRaws .title (acc.title.getD (Md.textRaws (baseName file) {})) {} ++
           acc.body) := by
       split

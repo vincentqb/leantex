@@ -21,6 +21,10 @@ public structure Vocab where
   envs : List String
   verbs : List String
   syms : List Char
+  /-- Whether a formula is admitted, and the controls and characters its raws may hold. -/
+  formulas : Bool := false
+  mathCtrls : List String := []
+  mathSyms : List Char := []
 
 /-- The vocabulary markdown lowers into. -/
 @[expose] public def vocabulary : Vocab where
@@ -43,11 +47,24 @@ mutual
   | .group body _ => v.admitsList body.toList
   | .env n body _ => v.envs.contains n && v.admitsList body.toList
   | .verb e _ _ => v.verbs.contains e
-  | .math _ _ _ => false
+  | .math _ body _ => v.formulas && v.mathAdmitsList body.toList
 
 @[expose] public def Vocab.admitsList (v : Vocab) : List Raw → Bool
   | [] => true
   | r :: rest => v.admits r && v.admitsList rest
+
+/-- Whether a formula's raw is one the vocabulary's formulas may hold, its children included. -/
+@[expose] public def Vocab.mathAdmits (v : Vocab) : Raw → Bool
+  | .word _ _ => true
+  | .space => true
+  | .ctrl n _ => v.mathCtrls.contains n
+  | .sym c _ => v.mathSyms.contains c
+  | .group body _ => v.mathAdmitsList body.toList
+  | .par _ | .math _ _ _ | .env _ _ _ | .verb _ _ _ => false
+
+@[expose] public def Vocab.mathAdmitsList (v : Vocab) : List Raw → Bool
+  | [] => true
+  | r :: rest => v.mathAdmits r && v.mathAdmitsList rest
 
 end
 

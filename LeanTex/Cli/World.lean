@@ -44,9 +44,9 @@ public structure Metadata where
   links : Nat
   deriving DecidableEq, Repr
 
-/-- One bounded tool run in a scratch directory of its own: `inputs` written there before
-the call and `outputs` read back after it, both relative to it; `env` changes the
-inherited environment. -/
+/-- One bounded tool run with a scratch directory of its own, `inputs` written there and `outputs`
+read back from it; `env` changes the inherited environment, and `cwd` runs the tool elsewhere,
+`<scratch>` in its arguments and environment naming the scratch directory. -/
 public structure ToolCall where
   tool : String
   args : Array String
@@ -56,6 +56,7 @@ public structure ToolCall where
   graceMs : Nat
   captureLimit : Nat
   env : Array (String × Option String) := #[]
+  cwd : Option String := none
   deriving DecidableEq
 
 /-- How a run ended, what it printed (lenient UTF-8, the scratch directory's name spelled

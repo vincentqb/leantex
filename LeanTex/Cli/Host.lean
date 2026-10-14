@@ -159,8 +159,10 @@ private def runCall (call : ToolCall) : BaseIO Ended := do
           let file := dir / name
           if let some parent := file.parent then IO.FS.createDirAll parent
           IO.FS.writeBinFile file bytes
-        let got ← RunBounded.runBounded call.tool call.args dir call.budgetMs call.graceMs
-          call.captureLimit call.env
+        let named (a : String) : String := a.replace "<scratch>" real.toString
+        let got ← RunBounded.runBounded call.tool (call.args.map named)
+          ((call.cwd.map System.FilePath.mk).getD dir) call.budgetMs call.graceMs
+          call.captureLimit (call.env.map fun (k, v) => (k, v.map named))
         let mut outputs := #[]
         for name in call.outputs do
           outputs := outputs.push (name, ← ownOutput dir real name)

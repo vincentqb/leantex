@@ -22,6 +22,7 @@ import Tests.Schemes
 import Tests.SvgRoute
 import scripts.Rung
 import Tests.MonoDefault
+import Tests.LeanStatements
 
 /-! The diagnostics audit: each code's decided verdict, the construct rung it aims at, and the pin
 that fails when the decision regresses; `scripts/diagaudit.lean` ratchets the codes no row binds. -/
@@ -120,6 +121,7 @@ def registry : List AuditRow :=
    ⟨.W0384, .divergence, .degraded, check% Tests.FrameFit.overhangChecks⟩,
    ⟨.W0306, .keep, .degraded, check% Tests.SeedPalette.failureChecks⟩,
    ⟨.W0308, .keep, .degraded, check% Tests.Schemes.dropChecks⟩,
+   ⟨.W0414, .keep, .degraded, check% Tests.LeanStatements.leanStatementChecks⟩,
    ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,

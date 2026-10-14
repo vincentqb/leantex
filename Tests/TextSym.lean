@@ -24,6 +24,10 @@ def textSymChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (d, ds) := elabStr (body s!"x\\{name}\{}y")
     t s!"text symbol \\{name} sets U+{String.ofList (Nat.toDigits 16 v.toNat)} between its neighbours"
       (ds.isEmpty && soleParaText d == some ("x" ++ String.ofList [v] ++ "y"))
+    let (f, fds) := elabStr (body s!"$\\text\{x\\{name}\{}y}$")
+    t s!"text symbol \\{name} sets U+{String.ofList (Nat.toDigits 16 v.toNat)} in a formula's text, as in text"
+      (fds.isEmpty && ((firstFormula f).map fun l => String.ofList (Math.MList.scalarsList #[] l).toList) ==
+        some ("x" ++ String.ofList [v] ++ "y"))
   for (acc, base, v) in TextSymData.composites do
     let b := if base.startsWith "\\" then Elab.accentBase (base.drop 1).toString else some base.front
     let mark := TextSymData.accents.lookup acc

@@ -374,6 +374,12 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0412 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "Alpha \\mintinline{pyhton}{x} omega.")
   -- A mid-grey ink on a mid-grey page: no tone of either reaches 7:1 on the other.
   | .W0308 => dvH (w := w) (dvDoc "\\palette{ bg = #767676, fg = #777777 }\n" "x")
+  -- A theorem whose statement Lean elaborated around a placeholder.
+  | .W0414 => (Surface.readCode .lean "t.lean"
+      "-- leantex: show = math, code\ntheorem t : True := trivial\n" (some
+      { lean := "4.34.1", errors := 0, binders := #[]
+        decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
+                     type := some (.apps (.const "sorryAx") []) }] })).2
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
@@ -1233,6 +1239,8 @@ def repeatFoldUnexercised : List (String × String) :=
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"
     ["W0006", "W0013", "W0378", "W0382", "W0391", "W0393", "W0394", "W0396", "W0601", "W0602",
      "W0603", "W0604", "W0605", "W0609", "W0701"] ++
+  unexercisedAs "one record per Lean declaration, which a file declares once"
+    ["W0414"] ++
   unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \
 font assembly's records are held by `weightSubstitutionRecordChecks`")
     ["W0366"] ++

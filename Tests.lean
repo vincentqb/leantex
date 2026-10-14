@@ -119,6 +119,7 @@ import Tests.MarkdownWarnings
 import Tests.MonoDefault
 import Tests.MarkdownCode
 import Tests.CodeDoc
+import Tests.LeanStatements
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
 import Tests.MarkdownTwin
@@ -338,6 +339,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownCode.markdownCodeChecks ref
   Tests.MarkdownCode.htmlCodeAtomChecks ref
   Tests.CodeDoc.codeDocChecks ref
+  Tests.LeanStatements.leanStatementChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref

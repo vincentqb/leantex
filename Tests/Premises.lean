@@ -10,6 +10,7 @@ import Tests.PictureAssets
 import Tests.World
 import Tests.MachineLoss
 import Tests.EngineCache
+import Tests.LeanStatements
 import scripts.LandCore
 
 /-! World premises: one row per assumption leantex makes of the runtime, the host and the programs
@@ -236,6 +237,13 @@ def registry : List Premise := [
     guards := [decl% ListingReply.decode, decl% ListingReply.lookup_contract]
     sites := [("LeanTex/Cli/ListingHighlight.lean", "fulfil")]
     owed := some "Compare the installed Pygments' classification of each corpus listing with the reference build's, token by token." },
+  { name := "lake", residue := .tool "lake", reach := .render
+    statement := "lake env lean, run from a Lean file's project under the toolchain elan picks there, elaborates the file's commands as that project's lean elaborates them but for Lean's frontend imported beside the file's own imports and the lakefile's options left unapplied, and LeanFacts.decode reads every answer whole before a statement reaches the IR."
+    guards := [decl% LeanFacts.decode]
+    sites := [("LeanTex/Cli/LeanExport.lean", "factsFor"), ("scripts/leanexport.lean", "regenerate")]
+    checks := [check% Tests.LeanStatements.leanStatementChecks]
+    scripts := ["scripts/leanexport.lean"]
+    owed := some "Set each statement of a project's files from the export and from the type the project's own build of the file gives, and require the two to match." },
   { name := "rsvg-convert", residue := .tool "rsvg-convert", reach := .fallback
     statement := "rsvg-convert draws the canonical spelling of a judged SVG whose import names a loss, to PDF or SVG, as librsvg draws it, and Image.probePdf, ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before an artifact holds it."
     guards := [decl% Image.probePdf, decl% HtmlDoc.emitClosed]
@@ -350,9 +358,9 @@ def registry : List Premise := [
 
 /-- Counts held in both directions: tool rows of render reach, unfalsifiable rows, rows owed a
 check. -/
-def renderToolBaseline : Nat := 2
+def renderToolBaseline : Nat := 3
 def uncheckedBaseline : Nat := 8
-def owedBaseline : Nat := 22
+def owedBaseline : Nat := 23
 
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]

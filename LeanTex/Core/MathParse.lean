@@ -5,6 +5,7 @@ public import LeanTex.Core.Math
 public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.MathSymData
+import LeanTex.Core.TextSymData
 import LeanTex.Core.Loop
 
 /-! The math surface: `$...$` bodies and alignment environments elaborated into `Math.MList`
@@ -286,9 +287,10 @@ private def bigCtrl : List (String × MathClass × Nat) :=
   [("big", 2), ("Big", 3), ("bigg", 4), ("Bigg", 5)].flatMap fun (n, s) =>
     [(n, .ord, s), (n ++ "l", .opening, s), (n ++ "r", .closing, s), (n ++ "m", .rel, s)]
 
-/-- Does the math model read the control word at all? -/
+/-- Does the math model read the control word at all? A text symbol it reads in a text group. -/
 public def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
+    || (TextSymData.symbols.lookup n).isSome
     || (cancelCtrl.lookup n).isSome
     || (bigCtrl.lookup n).isSome
     || (fracCmds.lookup n).isSome
@@ -816,7 +818,8 @@ private theorem parserNotes_append (a b : Array Note)
   · exact ha w hw
   · exact hb w hw
 
-/-- Read an upright-text alias's group: symbols contribute their scalar, styling a loss note. -/
+/-- Read an upright-text alias's group: symbols contribute their scalar, a text symbol its TU
+scalar as in text, styling a loss note. -/
 private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
     (notes0 : Array Note) : Except String (String × Nat × Array Note) := do
   let mut j := i + 1
@@ -863,7 +866,12 @@ private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
           | some w =>
             s := s ++ w
             j := afterCmd (j + 1)
-          | none => throw s!"\\{n} inside {tokName tok}"
+          | none =>
+            match TextSymData.symbols.lookup n with
+            | some c =>
+              s := s.push c
+              j := afterCmd (j + 1)
+            | none => throw s!"\\{n} inside {tokName tok}"
     | some t => throw s!"{tokName t} inside {tokName tok}"
     | none => throw "an unbalanced group"
   let some .closeGrp := toks[j]? | throw "an unbalanced group"

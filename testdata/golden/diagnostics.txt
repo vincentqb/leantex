@@ -877,6 +877,9 @@
 ⚠ [W0413] - \mint
   '\mint' within a line of text or an argument is set as inline code; LaTeX sets a display there, or cannot set it
   suggestion: write \mintinline{python}{…} for inline code, or put '\mint' on a line of its own for a display
+── W0414 (degraded) a Lean declaration's statement is not set as mathematics, Lean having given no faithful one; its code is set without it
+⚠ [W0414]
+  the statement of 't' did not elaborate in Lean; its code is set without it
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin
   the rendered subset draws this picture in part: '\pattern' is outside the rendered picture subset; not drawn

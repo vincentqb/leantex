@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.MdDesugar
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
+public import LeanTex.Core.LeanStatement
 import LeanTex.Core.Decl
 import LeanTex.Core.Hex
 
@@ -34,6 +35,9 @@ public inductive Kind where
   | directive
   /-- White space beside prose or a directive, or ending a code run, which ships nowhere. -/
   | blank
+  /-- Where a paragraph Lean's answer gives stands beside the code it is of, by its index; it
+  holds no character. -/
+  | statement (index : Nat)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- A cut a scanner makes: its kind and its character range. -/
@@ -66,6 +70,8 @@ public inductive Piece where
   | prose (seg : Seg)
   /-- A listing: where its first code run starts, and the code runs it joins, in source order. -/
   | code (start : Nat) (text : List Char)
+  /-- A paragraph Lean's answer gives, by its index: a statement, or code in a statement's place. -/
+  | statement (index : Nat)
   deriving Repr, BEq, Inhabited
 
 private inductive LeanMode where
@@ -104,7 +110,29 @@ public structure Acc where
   body : Array Raw := #[]
   diags : Array Diag := #[]
   title : Option (Array Raw) := none
+  /-- Whether the body holds the title heading its description opens on. -/
+  titled : Bool := false
   sawModule : Bool := false
+
+/-- A reading of a Lean file's declarations its page sets. -/
+public inductive View where
+  | code
+  | math
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- What a file's directive asks its page to show: its views in order, the declarations it
+selects, and each view name that names none. -/
+public structure Showing where
+  views : List View := [.code]
+  decls : Option (List String) := none
+  unknown : List String := []
+  deriving Repr, Inhabited
+
+/-- What a page sets from a file's pieces: each statement's paragraph by index, and whether it
+shows the file's code and documentation. -/
+public structure PageSet where
+  stmts : Array (Array Raw) := #[]
+  code : Bool := true
 
 /-- The kind a run's characters may carry: white space alone is blank, a directive is one line,
 and anything else is code. -/
@@ -114,6 +142,7 @@ and anything else is code. -/
   | .directive => if cs.all (· != '\n') then .directive else .code
   | .code => .code
   | .prose m st => .prose m st
+  | .statement i => if cs.isEmpty then .statement i else .code
 
 /-- The source cut into segments, each run taking its length from `base`; what no run takes is a
 final code segment. -/
@@ -134,11 +163,11 @@ public theorem segmentsFrom_source_exact (base : Nat) (rs : List Run) (cs : List
 
 public def Piece.code? : Piece → Option (List Char)
   | .code _ t => some t
-  | .prose _ => none
+  | .prose _ | .statement _ => none
 
 public def Piece.prose? : Piece → Option Seg
   | .prose s => some s
-  | .code _ _ => none
+  | .code _ _ | .statement _ => none
 
 /-- The open listing pushed as one piece, when it holds any code. -/
 @[expose] public def flush (out : Array Piece) : List Seg → Array Piece
@@ -153,6 +182,7 @@ where its `Stand` says. -/
     match s.kind with
     | .code => assembleGo out (pending ++ [s]) rest
     | .blank | .directive => assembleGo out pending rest
+    | .statement i => assembleGo ((flush out pending).push (.statement i)) [] rest
     | .prose _ .inPlace => assembleGo ((flush out pending).push (.prose s)) [] rest
     | .prose _ .aboveAll => assembleGo (out.push (.prose s)) pending rest
     | .prose _ .aboveRun =>
@@ -166,7 +196,7 @@ where its `Stand` says. -/
 @[expose] public def Seg.isCode (s : Seg) : Bool :=
   match s.kind with
   | .code => true
-  | .prose _ _ | .directive | .blank => false
+  | .prose _ _ | .directive | .blank | .statement _ => false
 
 /-- The characters of a sequence's code segments, in order. -/
 @[expose] public def codeOf (segs : List Seg) : List Char :=
@@ -186,6 +216,11 @@ private theorem push_prose_code (out : Array Piece) (s : Seg) :
       (out.toList.filterMap Piece.code?).flatten := by
   simp [Piece.code?]
 
+private theorem push_statement_code (out : Array Piece) (i : Nat) :
+    ((out.push (.statement i)).toList.filterMap Piece.code?).flatten =
+      (out.toList.filterMap Piece.code?).flatten := by
+  simp [Piece.code?]
+
 private theorem codeOf_code (s : Seg) (rest : List Seg) (h : s.kind = .code) :
     codeOf (s :: rest) = s.text ++ codeOf rest := by
   simp [codeOf, Seg.isCode, h]
@@ -201,7 +236,7 @@ private theorem assembleGo_code (out : Array Piece) (pending segs : List Seg) :
   | nil => simp [assembleGo, flush_code, codeOf]
   | cons s rest ih =>
     unfold assembleGo
-    rcases hk : s.kind with _ | ⟨m, st⟩ | _ | _
+    rcases hk : s.kind with _ | ⟨m, st⟩ | _ | _ | i
     · simp only [ih, codeOf_code s rest hk, List.flatMap_append, List.flatMap_cons,
         List.flatMap_nil, List.append_nil, List.append_assoc]
     · have ho := codeOf_other s rest (by simp [Seg.isCode, hk])
@@ -220,6 +255,8 @@ private theorem assembleGo_code (out : Array Piece) (pending segs : List Seg) :
           simp [List.append_assoc]
     · simp only [ih, codeOf_other s rest (by simp [Seg.isCode, hk])]
     · simp only [ih, codeOf_other s rest (by simp [Seg.isCode, hk])]
+    · simp only [ih, push_statement_code, flush_code, codeOf_other s rest (by simp [Seg.isCode, hk]),
+        List.flatMap_nil, List.append_nil]
 
 /-- The listings, in page order, hold exactly the code segments, in source order. -/
 public theorem assemble_code_exact (segs : List Seg) :
@@ -230,7 +267,7 @@ public theorem assemble_code_exact (segs : List Seg) :
 @[expose] public def Seg.isProse (s : Seg) : Bool :=
   match s.kind with
   | .prose _ _ => true
-  | .code | .directive | .blank => false
+  | .code | .directive | .blank | .statement _ => false
 
 private theorem assembleGo_prose (out : Array Piece) (pending segs : List Seg) :
     (assembleGo out pending segs).toList.filterMap Piece.prose? =
@@ -239,7 +276,7 @@ private theorem assembleGo_prose (out : Array Piece) (pending segs : List Seg) :
   | nil => simp [assembleGo, flush_prose]
   | cons s rest ih =>
     unfold assembleGo
-    rcases hk : s.kind with _ | ⟨m, st⟩ | _ | _
+    rcases hk : s.kind with _ | ⟨m, st⟩ | _ | _ | i
     · simp [ih, Seg.isProse, hk]
     · cases st with
       | inPlace => simp [ih, Seg.isProse, hk, flush_prose, Piece.prose?]
@@ -250,6 +287,7 @@ private theorem assembleGo_prose (out : Array Piece) (pending segs : List Seg) :
         · simp [ih, Seg.isProse, hk, flush_prose, Piece.prose?]
     · simp [ih, Seg.isProse, hk]
     · simp [ih, Seg.isProse, hk]
+    · simp [ih, Seg.isProse, hk, flush_prose, Piece.prose?]
 
 /-- The documentation comments, in page order, are the prose segments in source order. -/
 public theorem assemble_prose_exact (segs : List Seg) :
@@ -341,6 +379,43 @@ public def directive? (lang : Ir.CodeLang) (src : Array Char) : Option (Cut × S
     some (⟨.directive, lineStart + lead, stop⟩,
       (String.ofList (body.toList.drop marker.length)).trimAscii.toString)
   else none
+
+/-- A directive's entries by key, each bare entry continuing the key before it. -/
+public def keyedEntries (entries : List String) : List (String × List String) :=
+  (entries.foldl (fun (acc : Array (String × List String)) e =>
+    match Decl.splitEntry e with
+    | some (k, v) => acc.push (k, [v])
+    | none => match acc.back? with
+      | some (k, vs) => acc.pop.push (k, vs.concat e.trimAscii.toString)
+      | none => acc.push ("", [e.trimAscii.toString])) #[]).toList
+
+/-- The keys a directive takes for what its page shows, which no declaration reads. -/
+public def showKeys : List String := ["show", "decls"]
+
+/-- Whether a page shows the mathematics view. -/
+public def Showing.math (s : Showing) : Bool := s.views.contains .math
+
+public def Showing.code (s : Showing) : Bool := s.views.contains .code
+
+public def Showing.mathFirst (s : Showing) : Bool :=
+  match s.views with
+  | .math :: _ => true
+  | _ => false
+
+/-- What a file's directive asks its page to show: its `show` views, `code` where it names none a
+file of its language has, and its `decls`. -/
+public def showingOf (lang : Ir.CodeLang) (src : Array Char) : Showing :=
+  match directive? lang src with
+  | none => {}
+  | some (_, value) =>
+    let groups := keyedEntries (Decl.splitEntries value)
+    let named := ((groups.find? (·.1 == "show")).map (·.2)).getD []
+    let viewOf? (n : String) : Option View :=
+      if n == "code" then some .code else if n == "math" && lang == .lean then some .math else none
+    let views := (named.filterMap viewOf?).eraseDups
+    { views := if views.isEmpty then [.code] else views
+      decls := (groups.find? (·.1 == "decls")).map (·.2)
+      unknown := named.filter fun n => (viewOf? n).isNone }
 
 /-- The first line among a file's leading comments that spells a directive the reader does not
 read, past its first line or the line after `#!`. -/
@@ -461,6 +536,36 @@ private def leanHeaderLine (line : String) : Bool :=
     let lead := words.takeWhile (· ∈ ["public", "private", "meta", "noncomputable", "@[expose]"])
     ((words.drop lead.length).head?.map (["import", "section", "namespace", "open",
       "set_option", "universe", "variable"].contains ·)).getD false
+
+/-- The modules a Lean file's header imports, in order; `none` for a `prelude` file, whose
+statements elaborate without `Init`. -/
+public def leanImports? (text : String) : Option (Array String) := Id.run do
+  let src := text.toList.toArray
+  let mut out : Array String := #[]
+  let mut i := 0
+  let mut expectModule := false
+  for _ in [0:src.size + 1] do
+    if i ≥ src.size then break
+    let c := src.getD i ' '
+    if isWhite c then i := i + 1
+    else if c == '-' && at? src (i + 1) '-' then i := lineEnd src i
+    else if c == '/' && at? src (i + 1) '-' && !at? src (i + 2) '!' && !at? src (i + 2) '-' then
+      i := (leanBlockEnd src (i + 2)).getD src.size
+    else
+      let mut j := i
+      for _ in [i:src.size] do
+        if isWhite (src.getD j ' ') then break
+        j := j + 1
+      let word := String.ofList (src.extract i j).toList
+      i := j
+      if expectModule then
+        if word != "all" then
+          out := out.push word
+          expectModule := false
+      else if word == "prelude" then return none
+      else if word == "import" then expectModule := true
+      else if !["module", "public", "private", "meta"].contains word then break
+  return some out
 
 /-- Past the `»` closing a guillemet name opened at `i`, or past the `«` when none closes it. -/
 private def guillemetEnd (src : Array Char) (i : Nat) : Nat := Id.run do
@@ -766,6 +871,7 @@ private theorem guard_blank (k : Kind) (cs : List Char) (h : guard k cs = .blank
   | directive => simp only [guard] at h; split at h <;> simp_all
   | code => simp [guard] at h
   | prose m st => simp [guard] at h
+  | statement i => simp only [guard] at h; split at h <;> simp_all
 
 private theorem guard_directive (k : Kind) (cs : List Char) (h : guard k cs = .directive) :
     cs.all (· != '\n') := by
@@ -774,6 +880,7 @@ private theorem guard_directive (k : Kind) (cs : List Char) (h : guard k cs = .d
   | directive => simp only [guard] at h; split at h <;> simp_all
   | code => simp [guard] at h
   | prose m st => simp [guard] at h
+  | statement i => simp only [guard] at h; split at h <;> simp_all
 
 /-- A blank segment holds white space alone, so a page that ships none of it loses no code. -/
 public theorem segmentsOf_blank_white (lang : Ir.CodeLang) (text : String) :
@@ -987,7 +1094,10 @@ public def outputSource? (entries : List String) : Option String :=
 /-- The directive's entries as the declarations that take them: `theme` as `\theme`, the rest as
 one `\output`. -/
 public def directiveRaws (value : String) (p : Pos) : Array Raw :=
-  let entries := Decl.splitEntries value
+  let entries := (Decl.splitEntries value).foldl (fun (acc : Array String × Bool) e =>
+    match Decl.splitEntry e with
+    | some (k, _) => if showKeys.contains k then (acc.1, true) else (acc.1.push e, false)
+    | none => if acc.2 then acc else (acc.1.push e, false)) (#[], false) |>.1.toList
   let isTheme (e : String) : Bool := (Decl.splitEntry e).map (·.1) == some "theme"
   let themes := entries.filterMap fun e =>
     match Decl.splitEntry e with
@@ -1026,7 +1136,7 @@ public def baseName (file : String) : String :=
 @[expose] public def Seg.describesFile (s : Seg) : Bool :=
   match s.kind with
   | .prose true .aboveAll => true
-  | .prose _ _ | .code | .directive | .blank => false
+  | .prose _ _ | .code | .directive | .blank | .statement _ => false
 
 
 /-- A documentation comment through the markdown reader, at the place it stands; `opens` raises
@@ -1040,75 +1150,384 @@ the heading it opens on to the document's title. -/
   (if opens then (retitle raws.toList).toArray else raws,
     read.2.map fun d => { d with span := d.span.map fun sp => { sp with pos := prose.place sp.pos } })
 
-/-- What one piece adds to the body: a listing for code, the markdown reader's raws for prose. -/
+/-! ## Statements -/
+
+/-- A source offset from its line, from one, and its column, from zero. -/
+public def offsetOf (starts : Array Nat) (place : Nat × Nat) : Nat :=
+  starts.getD (place.1 - 1) 0 + place.2
+
+/-- Whether one place stands at or before another. -/
+private def atOrBefore (a b : Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)
+
+/-- Whether one declaration's range holds another's and is larger. -/
+private def holds (outer inner : LeanFacts.Decl) : Bool :=
+  atOrBefore outer.start inner.start && atOrBefore inner.stop outer.stop &&
+    (outer.start != inner.start || outer.stop != inner.stop)
+
+/-- One code segment cut at each of `cuts` (offsets, in order, inside it), a statement segment
+standing at each cut. -/
+@[expose] public def splitCode (start : Nat) (text : List Char) : List (Nat × Nat) → List Seg
+  | [] => if text.isEmpty then [] else [⟨.code, start, text⟩]
+  | (k, i) :: rest =>
+    let n := k - start
+    let before : List Seg := if (text.take n).isEmpty then [] else [⟨.code, start, text.take n⟩]
+    before ++ ⟨.statement i, start + n, []⟩ :: splitCode (start + n) (text.drop n) rest
+
+/-- Where a statement cuts a code segment: at the start of the line its declaration's code
+begins on, never before the segment. -/
+@[expose] public def cutAt (starts : Array Nat) (segStart off : Nat) : Nat :=
+  let p := max off segStart
+  max segStart (starts.getD ((lineCol starts p).1 - 1) 0)
+
+/-- The segments after `acc` with a statement segment at each anchor, an offset and a paragraph's
+index: a code segment cut at the start of the line the offset stands on, a statement due before
+another segment standing before it. -/
+@[expose] public def withStatementsGo (starts : Array Nat) (acc : Array Seg) :
+    List (Nat × Nat) → List Seg → Array Seg
+  | anchors, [] => acc ++ (anchors.map fun (off, i) => (⟨.statement i, off, []⟩ : Seg)).toArray
+  | anchors, s :: rest =>
+    match s.kind with
+    | .code =>
+      let here := anchors.takeWhile (·.1 < s.start + s.text.length)
+      let cuts := here.map fun (off, i) => (cutAt starts s.start off, i)
+      withStatementsGo starts (acc ++ (splitCode s.start s.text cuts).toArray)
+        (anchors.drop here.length) rest
+    | .prose _ _ | .directive | .blank | .statement _ =>
+      let due := anchors.takeWhile (·.1 ≤ s.start)
+      let stood := acc ++ (due.map fun (off, i) => (⟨.statement i, off, []⟩ : Seg)).toArray
+      withStatementsGo starts (stood.push s) (anchors.drop due.length) rest
+
+@[expose] public def withStatements (starts : Array Nat) (anchors : List (Nat × Nat))
+    (segs : List Seg) : List Seg :=
+  (withStatementsGo starts #[] anchors segs).toList
+
+private theorem codeOf_append (a b : List Seg) : codeOf (a ++ b) = codeOf a ++ codeOf b := by
+  simp [codeOf, List.filter_append, List.flatMap_append]
+
+private theorem drop_of_take_nil {n : Nat} {l : List Char} (h : (l.take n).isEmpty = true) :
+    l.drop n = l := by
+  calc l.drop n = l.take n ++ l.drop n := by rw [List.isEmpty_iff.mp h]; rfl
+    _ = l := List.take_append_drop _ _
+
+private theorem splitCode_text (start : Nat) (text : List Char) (cuts : List (Nat × Nat)) :
+    (splitCode start text cuts).flatMap Seg.text = text := by
+  induction cuts generalizing start text with
+  | nil =>
+    unfold splitCode
+    split
+    · rename_i h; simp [List.isEmpty_iff.mp h]
+    · simp
+  | cons c rest ih =>
+    obtain ⟨k, i⟩ := c
+    simp only [splitCode, List.flatMap_append, List.flatMap_cons, ih]
+    split
+    · rename_i h; simpa using drop_of_take_nil h
+    · simp
+
+private theorem splitCode_code (start : Nat) (text : List Char) (cuts : List (Nat × Nat)) :
+    codeOf (splitCode start text cuts) = text := by
+  induction cuts generalizing start text with
+  | nil =>
+    unfold splitCode
+    split
+    · rename_i h; simp [codeOf, List.isEmpty_iff.mp h]
+    · rw [codeOf_code _ [] rfl]; simp [codeOf]
+  | cons c rest ih =>
+    obtain ⟨k, i⟩ := c
+    simp only [splitCode]
+    rw [codeOf_append, codeOf_other _ _ (by simp [Seg.isCode]), ih]
+    split
+    · rename_i h; simpa [codeOf] using drop_of_take_nil h
+    · rw [codeOf_code _ [] rfl]; simp [codeOf]
+
+private theorem codeOf_statements (l : List (Nat × Nat)) :
+    codeOf (l.map fun (off, i) => (⟨.statement i, off, []⟩ : Seg)) = [] := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    obtain ⟨off, i⟩ := a
+    rw [List.map_cons, codeOf_other _ _ (by simp [Seg.isCode]), ih]
+
+private theorem withStatementsGo_code (starts : Array Nat) (acc : Array Seg)
+    (anchors : List (Nat × Nat)) (segs : List Seg) :
+    codeOf (withStatementsGo starts acc anchors segs).toList = codeOf acc.toList ++ codeOf segs := by
+  induction segs generalizing acc anchors with
+  | nil =>
+    simp only [withStatementsGo, Array.toList_append, codeOf_append, codeOf_statements]
+    simp [codeOf]
+  | cons s rest ih =>
+    unfold withStatementsGo
+    rcases hk : s.kind with _ | ⟨m, st⟩ | _ | _ | i
+    · simp only [ih, Array.toList_append, codeOf_append, splitCode_code, codeOf_code s rest hk,
+        List.append_assoc]
+    all_goals
+      simp only [ih, Array.toList_push, Array.toList_append, codeOf_append, codeOf_statements,
+        codeOf_other s rest (by simp [Seg.isCode, hk])]
+      simp [codeOf, Seg.isCode, hk]
+
+/-- Statements stand between listings and hold no code: the code the segments hold, in source
+order, is the code they held. -/
+public theorem withStatements_code_exact (starts : Array Nat) (anchors : List (Nat × Nat))
+    (segs : List Seg) : codeOf (withStatements starts anchors segs) = codeOf segs := by
+  unfold withStatements
+  rw [withStatementsGo_code]
+  simp [codeOf]
+
+/-- The page a file reads into, in order: its pieces, a statement at each anchor. -/
+@[expose] public def pagePieces (lang : Ir.CodeLang) (text : String) (anchors : List (Nat × Nat)) :
+    Array Piece :=
+  assemble (withStatements (lineStarts text.toList.toArray) anchors (segmentsOf lang text))
+
+/-- A page's code pieces hold exactly the file's code segments, in source order, whatever
+statements stand between them; a page that shows code sets each as one listing of it
+(`pieceRaws_code_exact`). -/
+public theorem pagePieces_code_exact (lang : Ir.CodeLang) (text : String)
+    (anchors : List (Nat × Nat)) :
+    ((pagePieces lang text anchors).toList.filterMap Piece.code?).flatten =
+      codeOf (segmentsOf lang text) := by
+  rw [pagePieces, assemble_code_exact, withStatements_code_exact]
+
+/-- A line free to break, and no space: zero glue. -/
+public def breakRaws (pos : Pos) : Array Raw := #[.ctrl "hspace" pos, .group #[.word "0pt" pos] pos]
+
+/-- One formula after a paragraph's raws, a word space before it where the one before asks for
+it, else a bare break; and whether the next asks for one. -/
+@[expose] public def displayStep (pos : Pos) (st : Array Raw × Bool)
+    (formula : Array LeanNotation.Math × Bool) : Array Raw × Bool :=
+  ((st.1.append (if st.2 then #[.space] else breakRaws pos)).push
+    (.math false (LeanStatement.Math.listRaws pos #[] formula.1.toList) pos), formula.2)
+
+/-- The paragraph a declaration's statement sets as, ragged right: its kind in bold, its name as
+code, marked when Lean holds a theorem unproved, then its formulas, each after a word space where
+the one before asks for it, else after a bare break. -/
+public def displayRaws (d : LeanFacts.Decl) (formulas : Array (Array LeanNotation.Math × Bool))
+    (pos : Pos) : Array Raw :=
+  let close : Array Raw := if d.kind == .theorem && !d.proved then
+      #[.word "," pos, .space, .word "unproved)." pos] else #[.word ")." pos]
+  let head : Array Raw := #[.ctrl "textbf" pos, .group #[.word d.kind.label pos] pos,
+    .space, .word "(" pos, .ctrl "texttt" pos, .group (Md.textRaws d.name pos) pos] ++ close
+  #[.env "flushleft" (formulas.foldl (displayStep pos) (head, true)).1 pos]
+
+/-- Why a declaration's statement is not set, when it is not. -/
+private def unset? (d : LeanFacts.Decl) : Option String :=
+  match d.type with
+  | none => some "is too large to set"
+  | some t => if t.elaborated then none else some "did not elaborate"
+
+/-- Where a place in the source stands as a diagnostic's position. -/
+private def posAt (place : Nat × Nat) : Pos := { line := place.1, col := place.2 + 1 }
+
+/-- Where a declaration's statement stands on the page: its source's first line and column. -/
+private def posOf (d : LeanFacts.Decl) : Pos := posAt d.start
+
+/-- The code characters a file's segments hold from offset `lo` up to `hi`, a last line end
+aside. -/
+public def codeWithin (segs : List Seg) (lo hi : Nat) : List Char :=
+  let code := (segs.filter Seg.isCode).flatMap fun s =>
+    (s.text.zipIdx s.start).filterMap fun (c, k) => if lo ≤ k && k < hi then some c else none
+  if code.getLast? == some '\n' then code.dropLast else code
+
+/-- The offset the first code character from `lo` up to `hi` stands at. -/
+public def firstCode? (segs : List Seg) (lo hi : Nat) : Option Nat :=
+  (segs.find? fun s => s.isCode && lo < s.start + s.text.length && s.start < hi).map
+    fun s => max lo s.start
+
+/-- The listing a declaration's code sets as in its statement's place: the code its lines hold,
+from the line its command opens on through its last, its documentation aside. -/
+public def codeFor (starts : Array Nat) (src : Array Char) (segs : List Seg)
+    (head stop : Nat × Nat) : Array Raw :=
+  let lo := starts.getD (head.1 - 1) 0
+  let hi := starts.getD stop.1 src.size
+  match firstCode? segs lo hi with
+  | some first =>
+    let code := codeWithin segs lo hi
+    if code.isEmpty then #[] else
+      #[listingRaw .lean (String.ofList code) { line := (lineCol starts first).1 - 1 }]
+  | none => #[]
+
+/-- What a page sets for one declaration Lean answered for, when it is chosen: its statement where
+Lean gave one, else, on a page that shows no code, its code in the statement's place. -/
+public def declPara (facts : LeanFacts.Facts) (starts : Array Nat) (src : Array Char)
+    (segs : List Seg) (code wanted : Bool) (d : LeanFacts.Decl) : Array Raw :=
+  if !wanted then #[] else
+    match d.type, unset? d with
+    | some t, none => displayRaws d (LeanStatement.statementMath facts d t) (posOf d)
+    | _, _ => if code then #[] else codeFor starts src segs d.head d.stop
+
+/-- Where a statement stands before its declaration's code: the line the command that writes it
+opens on, or the code after the documentation that line holds. -/
+private def beforeAnchor (starts : Array Nat) (segs : List Seg) (head : Nat × Nat) : Option Nat :=
+  let off := offsetOf starts head
+  (segs.find? fun s => s.isCode && off < s.start + s.text.length).map fun s => max off s.start
+
+/-- Where a statement stands after its declaration's code: the start of the line after it. -/
+private def afterAnchor (src : Array Char) (starts : Array Nat) (stop : Nat × Nat) : Nat :=
+  starts.getD stop.1 src.size
+
+/-- What Lean's answer gives a page: each declaration's paragraph by index, then each failed one's,
+the anchors of those set, and one note per statement asked for and not set, both in source order;
+a page that shows no code sets a declaration's code where its statement cannot stand. -/
+public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) (segs : List Seg)
+    (showing : Showing) (facts : LeanFacts.Facts) :
+    Array (Array Raw) × List (Nat × Nat) × Array Diag :=
+  let ds := facts.decls
+  let names (n : String) (named : String) : Bool := n == named || n.endsWith ("." ++ named)
+  let chosen (n : String) : Bool := match showing.decls with
+    | none => true
+    | some ns => ns.any (names n)
+  let wanted (d : LeanFacts.Decl) : Bool :=
+    (showing.decls.isSome || !ds.any (holds · d)) && chosen d.name
+  let code := showing.code
+  let paras := ds.map fun d => declPara facts starts src segs code (wanted d) d
+  let failedParas := facts.failed.map fun f =>
+    if chosen f.name && !code then codeFor starts src segs f.head f.stop else #[]
+  let anchorOf (head stop : Nat × Nat) : Option Nat :=
+    if showing.mathFirst then beforeAnchor starts segs head else some (afterAnchor src starts stop)
+  let anchors := ds.zipIdx.filterMap fun (d, i) =>
+    if wanted d && ((unset? d).isNone || !code) then (anchorOf d.head d.stop).map (·, i)
+    else none
+  let failedAnchors := facts.failed.zipIdx.filterMap fun (f, j) =>
+    if chosen f.name && !code then (anchorOf f.head f.stop).map (·, ds.size + j) else none
+  let instead := if code then "its code is set without it" else "its code is set in its place"
+  let insteadOfNone := if code then "its code is set without a statement"
+    else "its code is set in place of a statement"
+  let unsetNotes := ds.filterMap fun d =>
+    if wanted d then (unset? d).map fun why => (d.start,
+      Diag.of .W0414 s!"the statement of '{d.name}' {why} in Lean; {instead}"
+        (some ⟨file, posOf d⟩) (subject := some s!"lean:{d.name}"))
+    else none
+  let failedNotes := facts.failed.filterMap fun f =>
+    if chosen f.name then some (f.start,
+      Diag.of .W0414 s!"Lean added nothing for '{f.name}'; {insteadOfNone}"
+        (some ⟨file, posAt f.start⟩) (subject := some s!"lean:{f.name}"))
+    else none
+  let unnamed := ((showing.decls.getD []).filter fun n =>
+    !ds.any (names ·.name n) && !facts.failed.any (names ·.name n)).toArray.map fun n => ((1, 0),
+      Diag.of .W0414 s!"`decls` names '{n}', which Lean's answer does not hold; nothing is set \
+for it" (some ⟨file, {}⟩) (subject := some s!"lean:{n}"))
+  let notes := (unsetNotes ++ failedNotes ++ unnamed).qsort fun a b =>
+    a.1.1 < b.1.1 || (a.1.1 == b.1.1 && a.1.2 < b.1.2)
+  let all := anchors ++ failedAnchors
+  (paras ++ failedParas, (all.qsort (·.1 < ·.1)).toList, notes.map (·.2))
+
+/-- What a page sets from Lean's answer, when it has one. -/
+@[expose] public def statementsFor (file : String) (starts : Array Nat) (src : Array Char)
+    (segs : List Seg) (showing : Showing) :
+    Option LeanFacts.Facts → Array (Array Raw) × List (Nat × Nat) × Array Diag
+  | some f => statementsOf file starts src segs showing f
+  | none => (#[], [], #[])
+
+/-- What one piece adds to the body: a listing for code and the markdown reader's raws for prose,
+where the page shows them, and its paragraph for a statement. -/
 @[expose] public def pieceRaws (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
+    (page : PageSet) (opens : Bool) : Piece → Array Raw
+  | .code start code => if page.code then
+      #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }] else #[]
+  | .prose seg => if page.code then (proseRaws lang file starts seg opens).1 else #[]
+  | .statement i => page.stmts.getD i #[]
+
+/-- The raws a piece's title is read from: its prose's, whether or not the page shows it. -/
+@[expose] public def titleSource (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (opens : Bool) : Piece → Array Raw
-  | .code start code => #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }]
   | .prose seg => (proseRaws lang file starts seg opens).1
+  | .code _ _ | .statement _ => #[]
 
 /-- Whether a piece is the file's description the title is read from, given what came before. -/
 @[expose] public def Acc.opens (acc : Acc) : Piece → Bool
-  | .code _ _ => false
+  | .code _ _ | .statement _ => false
   | .prose seg => !acc.sawModule && seg.describesFile
 
 /-- One piece read into the body, the file's description opening on the document's title. -/
 @[expose] public def pieceStep (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (acc : Acc) (piece : Piece) : Acc :=
+    (page : PageSet) (acc : Acc) (piece : Piece) : Acc :=
   let opens := acc.opens piece
-  let (raws, diags) := match piece with
-    | .code _ _ => (pieceRaws lang file starts opens piece, #[])
+  let read := match piece with
     | .prose seg => proseRaws lang file starts seg opens
-  { body := acc.body ++ raws, diags := acc.diags ++ diags
-    title := if opens then openingHeading? raws.toList else acc.title
+    | .code _ _ | .statement _ => (#[], #[])
+  let raws := match piece with
+    | .prose _ => if page.code then read.1 else #[]
+    | .code _ _ | .statement _ => pieceRaws lang file starts page opens piece
+  let heading := if opens then openingHeading? read.1.toList else none
+  { body := acc.body ++ raws, diags := acc.diags ++ (if page.code then read.2 else #[])
+    title := if opens then heading else acc.title
+    titled := acc.titled || (page.code && heading.isSome)
     sawModule := acc.sawModule || opens }
 
-/-- One piece adds its raws to the body, and the title it opens on when it opens the document. -/
+/-- One piece adds its raws to the body, and the title its prose opens on when it opens the
+document. -/
 public theorem pieceStep_exact (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (acc : Acc) (p : Piece) :
-    (pieceStep lang file starts acc p).body = acc.body ++ pieceRaws lang file starts (acc.opens p) p ∧
-      (pieceStep lang file starts acc p).title = (if acc.opens p then
-        openingHeading? (pieceRaws lang file starts (acc.opens p) p).toList else acc.title) := by
-  cases p <;> exact ⟨rfl, rfl⟩
+    (page : PageSet) (acc : Acc) (p : Piece) :
+    (pieceStep lang file starts page acc p).body =
+        acc.body ++ pieceRaws lang file starts page (acc.opens p) p ∧
+      (pieceStep lang file starts page acc p).title = (if acc.opens p then
+        openingHeading? (titleSource lang file starts (acc.opens p) p).toList else acc.title) := by
+  cases p <;> exact ⟨rfl, by simp only [pieceStep, titleSource]; split <;> rfl⟩
 
-/-- A code file's pieces read in page order. -/
-@[expose] public def readPieces (lang : Ir.CodeLang) (file text : String) : Acc :=
-  (assemble (segmentsOf lang text)).toList.foldl (pieceStep lang file (lineStarts text.toList.toArray)) {}
+/-- A code file's pieces read in page order, statements standing at their anchors. -/
+@[expose] public def readPieces (lang : Ir.CodeLang) (file text : String)
+    (page : PageSet) (anchors : List (Nat × Nat)) : Acc :=
+  (pagePieces lang text anchors).toList.foldl
+    (pieceStep lang file (lineStarts text.toList.toArray) page) {}
 
-/-- A code piece adds its listing, holding its code exactly, whatever came before it. -/
+/-- A code piece adds its listing, holding its code exactly, wherever the page shows code. -/
 public theorem pieceRaws_code_exact (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (opens : Bool) (start : Nat) (code : List Char) :
-    pieceRaws lang file starts opens (.code start code) =
-      #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }] := rfl
+    (page : PageSet) (h : page.code = true) (opens : Bool) (start : Nat) (code : List Char) :
+    pieceRaws lang file starts page opens (.code start code) =
+      #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }] := by
+  simp [pieceRaws, h]
 
-private theorem foldl_body (lang : Ir.CodeLang) (file : String) (starts : Array Nat) :
+private theorem foldl_body (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
+    (page : PageSet) :
     ∀ (ps : List Piece) (acc : Acc), ∃ opens : List Bool, opens.length = ps.length ∧
-      (ps.foldl (pieceStep lang file starts) acc).body.toList =
-        acc.body.toList ++ (ps.zip opens).flatMap fun (p, o) => (pieceRaws lang file starts o p).toList
+      (ps.foldl (pieceStep lang file starts page) acc).body.toList =
+        acc.body.toList ++
+          (ps.zip opens).flatMap fun (p, o) => (pieceRaws lang file starts page o p).toList
   | [], acc => ⟨[], rfl, by simp⟩
   | p :: rest, acc => by
-    obtain ⟨opens, hlen, hbody⟩ := foldl_body lang file starts rest (pieceStep lang file starts acc p)
+    obtain ⟨opens, hlen, hbody⟩ :=
+      foldl_body lang file starts page rest (pieceStep lang file starts page acc p)
     refine ⟨acc.opens p :: opens, by simp [hlen], ?_⟩
     rw [List.foldl_cons, hbody]
-    simp [(pieceStep_exact lang file starts acc p).1, List.append_assoc]
+    simp [(pieceStep_exact lang file starts page acc p).1, List.append_assoc]
 
-/-- The body is the pieces' raws in page order, each piece adding `pieceRaws` under a flag
-saying whether it opens the document. -/
-public theorem readPieces_body_exact (lang : Ir.CodeLang) (file text : String) :
-    ∃ opens : List Bool, opens.length = (assemble (segmentsOf lang text)).size ∧
-      (readPieces lang file text).body.toList =
-        ((assemble (segmentsOf lang text)).toList.zip opens).flatMap fun (p, o) =>
-          (pieceRaws lang file (lineStarts text.toList.toArray) o p).toList := by
-  obtain ⟨opens, hlen, hbody⟩ :=
-    foldl_body lang file (lineStarts text.toList.toArray) (assemble (segmentsOf lang text)).toList {}
+/-- The body is the page's pieces' raws in page order, each piece adding `pieceRaws` under a
+flag saying whether it opens the document. -/
+public theorem readPieces_body_exact (lang : Ir.CodeLang) (file text : String)
+    (page : PageSet) (anchors : List (Nat × Nat)) :
+    ∃ opens : List Bool, opens.length = (pagePieces lang text anchors).size ∧
+      (readPieces lang file text page anchors).body.toList =
+        ((pagePieces lang text anchors).toList.zip opens).flatMap fun (p, o) =>
+          (pieceRaws lang file (lineStarts text.toList.toArray) page o p).toList := by
+  obtain ⟨opens, hlen, hbody⟩ := foldl_body lang file (lineStarts text.toList.toArray) page
+    (pagePieces lang text anchors).toList {}
   exact ⟨opens, by simpa using hlen, by simpa [readPieces] using hbody⟩
 
-/-- A code file read into the surface AST: its documentation comments through the markdown reader,
-its code as listings, its title and directive as the preamble's declarations, the file's name the
-title heading where no description opens on a heading. -/
-@[expose] public def read (lang : Ir.CodeLang) (file text : String) : Array Raw × Array Diag :=
+/-- What a page sets from a file and Lean's answer: what it shows, where each paragraph Lean's
+answer gives stands, and the notes; a page asked for mathematics Lean gave no answer for shows the
+file's code. -/
+@[expose] public def planOf (lang : Ir.CodeLang) (file text : String)
+    (facts : Option LeanFacts.Facts) : PageSet × List (Nat × Nat) × Array Diag :=
+  let src := text.toList.toArray
+  let showing := showingOf lang src
+  let answer := if showing.math then facts else none
+  let st := statementsFor file (lineStarts src) src (segmentsOf lang text) showing answer
+  ({ stmts := st.1, code := showing.code || answer.isNone }, st.2.1, st.2.2)
+
+/-- With no answer from Lean, a page shows the file's code, whatever its directive asks. -/
+public theorem planOf_unanswered_exact (lang : Ir.CodeLang) (file text : String) :
+    (planOf lang file text none).1.code = true := by
+  simp [planOf]
+
+/-- A code file read into the surface AST: documentation comments as markdown, code as listings,
+each statement beside its declaration's code as the views order them, the title and directive as
+the preamble's declarations, the file's name the title where no description opens on one. -/
+@[expose] public def read (lang : Ir.CodeLang) (file text : String)
+    (facts : Option LeanFacts.Facts := none) : Array Raw × Array Diag :=
   let src := text.toList.toArray
   let starts := lineStarts src
-  let acc := readPieces lang file text
+  let showing := showingOf lang src
+  let plan := planOf lang file text facts
+  let acc := readPieces lang file text plan.1 plan.2.1
   let origin : Pos := {}
   let directive := match directive? lang src with
     | some (cut, value) =>
@@ -1116,7 +1535,7 @@ title heading where no description opens on a heading. -/
       directiveRaws value { line, col }
     | none => #[]
   let titleRaws := acc.title.getD (Md.textRaws (baseName file) origin)
-  let body := if acc.title.isSome then acc.body
+  let body := if acc.titled then acc.body
     else Parse.headingRaws .title titleRaws origin ++ acc.body
   let preamble : Array Raw := #[.ctrl "title" origin, .group titleRaws origin] ++ directive
   let stray := (strayDirective? lang src).map fun off =>
@@ -1125,16 +1544,28 @@ title heading where no description opens on a heading. -/
 '#!'; this one stays as written" (some ⟨file, { line, col }⟩)
       (help := s!"move it to the file's first line, or the line after `#!`: `{directiveMarker lang} …`")
       (subject := some "code:directive")
-  (preamble.push (.env "document" body origin), acc.diags ++ stray.toArray)
+  let dirPos : Pos := match directive? lang src with
+    | some (cut, _) => let (line, col) := lineCol starts cut.start; { line, col }
+    | none => origin
+  let views := showing.unknown.toArray.map fun n =>
+    Diag.of .W0110 s!"`show` names '{n}', which is no view of this file; the page sets without it"
+      (some ⟨file, dirPos⟩) (help := "name `code`, or for a Lean file `math`")
+      (subject := some s!"code:show:{n}")
+  (preamble.push (.env "document" body origin), views ++ acc.diags ++ plan.2.2 ++ stray.toArray)
 
-/-- A code file's raws close on its document, whose body ends with its pieces' raws. -/
-public theorem read_body_exact (lang : Ir.CodeLang) (file text : String) :
-    ∃ head : Array Raw, (read lang file text).1.back? =
-      some (.env "document" (head ++ (readPieces lang file text).body) {}) := by
+private theorem ite_prefix (b : Bool) (x y : Array Raw) :
+    (if b = true then x else y ++ x) = (if b = true then #[] else y) ++ x := by
+  cases b <;> simp
+
+/-- A code file's raws close on its document, whose body ends with its pieces' raws under the
+page its plan sets. -/
+public theorem read_body_exact (lang : Ir.CodeLang) (file text : String)
+    (facts : Option LeanFacts.Facts) :
+    ∃ head : Array Raw, (read lang file text facts).1.back? =
+      some (.env "document" (head ++ (readPieces lang file text (planOf lang file text facts).1
+        (planOf lang file text facts).2.1).body) {}) := by
   unfold read
-  simp only [Array.back?_push]
-  split
-  · exact ⟨#[], by simp⟩
-  · exact ⟨_, rfl⟩
+  simp only [Array.back?_push, ite_prefix]
+  exact ⟨_, rfl⟩
 
 end LeanTex.Core.Code

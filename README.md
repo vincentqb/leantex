@@ -128,6 +128,34 @@ elsewhere among the leading comments is not read, and the run says so:
 # leantex: formats = pdf, html, theme = gemini
 ```
 
+A Lean file's directive may also say what its page shows: `show = math, code`
+sets each top-level declaration's statement as mathematics above its code,
+**Theorem** (`Tide.height_double`). ∀ rise, n ∈ ℕ, height(rise, 2 · n) =
+2 · height(rise, n); `show = code, math` sets it after the code, `show = math`
+sets the statements alone, and `decls = height, height_double` chooses which.
+The default is `show = code`, which never runs Lean. A statement is Lean's own:
+a small export that ships with leantex runs as `lake env lean` from the file's
+project (the nearest directory holding a lakefile, else the file's own), under
+the toolchain elan picks there, and elaborates the file command by command, as
+`lean` would with Lean's frontend imported beside the file's imports, so the
+file's `#eval` and macros run as they would under `lean`, and lake may write
+the project's manifest. Each elaborated type sets through one notation table
+(arithmetic, relations, logic, existence, ℕ ℤ ℚ ℝ ℂ and numerals), its
+outermost implicit and instance binders hidden unless their type is a
+proposition, which sets as a hypothesis, every implicit argument hidden, a
+string as Lean writes it, and every other constant upright by its name; a line
+may break after each operator of a statement's top level, between the names a
+quantifier binds, and after each comma of an application's arguments, with no
+change to the spacing. A theorem Lean holds unproved, or that rests on one, is
+marked so; a statement Lean elaborated around an error is not set, and a page
+that shows math alone sets that declaration's code in its place. Lean's whole
+answer is kept under `~/.cache/leantex/lean`, keyed by the file's bytes and
+path, the Lean the project runs, its manifest and lakefile, and the Lake trace
+of each module the file imports; a refusal of the export is kept the same way.
+When Lean gives no answer (no `lake` on PATH, packages not fetched, an import
+not built, four minutes passed) the page sets the code alone, whatever `show`
+asks, and the run says so once. The export reads Lean 4.24 and later.
+
 ## Fonts and themes
 
 Use installed `.ttf` or `.otf` fonts, or the faces of a `.ttc` or `.otc`
