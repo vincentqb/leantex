@@ -93,23 +93,15 @@ public theorem Node.labelFree_of_topOk {L : Type} (n : Node L) (h : n.topOk = tr
   | group _ _ _ kids => simpa [Node.topOk, Node.labelFree] using h
   | draw | use | stamp | image | words => rfl
 
+public theorem foldl_append_flatMap_exact {α β : Type} (f : α → Array β) (xs : Array α) :
+    xs.foldl (fun acc x => acc ++ f x) #[] = (xs.toList.flatMap fun x => (f x).toList).toArray := by
+  rw [show xs.foldl (fun acc x => acc ++ f x) #[] = xs.flatMap f from rfl]
+  apply Array.toList_inj.mp
+  simp
+
 public theorem Figure.steps_eq {L : Type} (fig : Figure L) :
-    fig.steps = (fig.nodes.toList.flatMap fun n => (fig.nodeSteps n).toList).toArray := by
-  unfold Figure.steps
-  rw [← Array.foldl_toList]
-  suffices h : ∀ (xs : List (Node L)) (acc : Array (Step L)),
-      xs.foldl (fun acc n => acc ++ fig.nodeSteps n) acc =
-        acc ++ (xs.flatMap fun n => (fig.nodeSteps n).toList).toArray by
-    simpa using h fig.nodes.toList #[]
-  intro xs
-  induction xs with
-  | nil => intro acc; simp
-  | cons n rest ih =>
-    intro acc
-    simp only [List.foldl_cons, List.flatMap_cons, ih, Array.append_assoc]
-    congr 1
-    apply Array.toList_inj.mp
-    simp
+    fig.steps = (fig.nodes.toList.flatMap fun n => (fig.nodeSteps n).toList).toArray :=
+  foldl_append_flatMap_exact _ _
 
 public theorem Figure.nodeSteps_mapLabels_exact {L L' : Type} (f : L → L') (fig : Figure L)
     (fig' : Figure L') (ho : fig'.outlines = fig.outlines) (hs : fig.symbols = #[])

@@ -8,6 +8,24 @@ namespace LeanTex.Core.Gfx
 
 open LeanTex.Core.Dim
 
+public theorem Geom.normal_rect_exact {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
+    (Geom.rect x y w h).normal = .rect x y w h := by
+  simp only [Geom.normal]
+  split
+  · rfl
+  · next hn => exact absurd hp hn
+
+public theorem Geom.normal_flat_exact {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
+    (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
+  simp only [Geom.normal]
+  split
+  · next hn => exact absurd hn hp
+  · rfl
+
+public theorem Ctx.enter_alphas_id (cx : Ctx) (xf : Affine) (clips : Array Clip) :
+    (cx.enter xf clips Alpha.opaque).alphas = cx.alphas := by
+  simp [Ctx.enter]
+
 public theorem Affine.apply_compose_exact (m n : Affine) (p : Rat × Rat) :
     (m.compose n).apply p = m.apply (n.apply p) := by
   cases m; cases n; cases p

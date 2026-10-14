@@ -1155,26 +1155,12 @@ private theorem geom_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.pl
   · simp only [hpl, ↓reduceIte] at hi
     simp [SState.geom, SFrame.place, hpl, hi, hp, Geom.mapIso_inv_id]
 
-private theorem normal_rect_pos {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
-    (Geom.rect x y w h).normal = .rect x y w h := by
-  simp only [Geom.normal]
-  split
-  · rfl
-  · next hn => exact absurd hp hn
-
-private theorem normal_rect_neg {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
-    (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
-  simp only [Geom.normal]
-  split
-  · next hn => exact absurd hn hp
-  · rfl
-
 private theorem normal_normal (g : Geom) : g.normal.normal = g.normal := by
   cases g with
   | rect x y w h =>
     by_cases hp : 0 < w ∧ 0 < h
-    · rw [normal_rect_pos hp, normal_rect_pos hp]
-    · rw [normal_rect_neg hp]; rfl
+    · rw [Geom.normal_rect_exact hp, Geom.normal_rect_exact hp]
+    · rw [Geom.normal_flat_exact hp]; rfl
   | ellipse cx cy rx ry => rfl
   | path subs => rfl
 
@@ -1221,7 +1207,7 @@ private theorem shape_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.p
       have hb := back (.rect x y w h)
       rw [hr] at hb ⊢
       simp only [SState.shapeGeom, hw, hh, and_self, ↓reduceIte, Bool.false_eq_true]
-      rw [hb, normal_rect_pos ⟨hw, hh⟩]
+      rw [hb, Geom.normal_rect_exact ⟨hw, hh⟩]
     · simp only [hc, ↓reduceIte]
       have hd : (Geom.rect x y w h).drawn d = .path #[Kit.rectPath x y w h] := by
         cases d with
@@ -1379,10 +1365,6 @@ private theorem cm_keeps (ss : SState) (m : Option Affine) :
     (ss.cm m).clips = ss.clips ∧ (ss.cm m).alphas = ss.alphas := by
   cases m <;> exact ⟨rfl, rfl⟩
 
-private theorem enter_alphas (cx : Ctx) (xf : Affine) (clips : Array Clip) :
-    (cx.enter xf clips Alpha.opaque).alphas = cx.alphas := by
-  simp [Ctx.enter]
-
 private theorem agrees_lift (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
     (h : Agrees place cx fr ss) (xf : Affine) (fr' : SFrame) (hfr : fr'.iso = none) :
     Agrees place (cx.enter xf #[] Alpha.opaque) fr' (ss.cm (some (fr.lift xf))) where
@@ -1390,7 +1372,7 @@ private theorem agrees_lift (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
   hiso := by simp [SState.cm, hfr]
   hctm := by rw [cm_lift_frameCtm place cx fr ss h xf]; rfl
   hclips := by simp [SState.cm, Ctx.enter, h.hclips]
-  halphas := by rw [enter_alphas]; simp [SState.cm, h.halphas]
+  halphas := by rw [Ctx.enter_alphas_id]; simp [SState.cm, h.halphas]
 
 private theorem read_nestClips (place : Iso) (fr : SFrame) (inner : Array El) (acc : Array Mark) :
     ∀ (rest : List Clip) (ss : SState), ss.place = place →
@@ -1643,24 +1625,6 @@ element the marks it paints, read with SVG's meaning at the root. -/
 @[expose] public def readSteps (place : Iso) (els : Array El) : Array (Step Html.Node) :=
   els.foldl (fun acc e => acc ++ readStep place e) #[]
 
-private theorem readSteps_eq (place : Iso) (els : Array El) :
-    readSteps place els = (els.toList.flatMap fun e => (readStep place e).toList).toArray := by
-  unfold readSteps
-  rw [← Array.foldl_toList]
-  suffices h : ∀ (xs : List El) (acc : Array (Step Html.Node)),
-      xs.foldl (fun acc e => acc ++ readStep place e) acc =
-        acc ++ (xs.flatMap fun e => (readStep place e).toList).toArray by
-    simpa using h els.toList #[]
-  intro xs
-  induction xs with
-  | nil => intro acc; simp
-  | cons e rest ih =>
-    intro acc
-    simp only [List.foldl_cons, List.flatMap_cons, ih, Array.append_assoc]
-    congr 1
-    apply Array.toList_inj.mp
-    simp
-
 mutual
 
 private theorem readOne_acc (ss : SState) (acc : Array Mark) :
@@ -1732,7 +1696,7 @@ public theorem steps_projects {L : Type} (labelEl : SFrame → L → Html.Node)
     intro n hn
     simp only [Figure.labelsTop, Bool.and_eq_true, Array.all_eq_true'] at h
     exact h.1 n (Array.mem_toList_iff.mp hn)
-  rw [readSteps_eq, Figure.steps_eq]
+  rw [readSteps, foldl_append_flatMap_exact, Figure.steps_eq]
   unfold tree
   rw [treeList_flatMap]
   apply Array.toList_inj.mp

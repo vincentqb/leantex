@@ -617,20 +617,6 @@ public theorem geomOf_geomOps_id (g : Geom) : geomOf (geomOps g.normal) = g.norm
   | ellipse cx cy rx ry => exact geomOf_path_id _
   | path subs => exact geomOf_path_id subs
 
-private theorem normal_rect_pos {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
-    (Geom.rect x y w h).normal = .rect x y w h := by
-  simp only [Geom.normal]
-  split
-  · rfl
-  · next hn => exact absurd hp hn
-
-private theorem normal_rect_neg {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
-    (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
-  simp only [Geom.normal]
-  split
-  · next hn => exact absurd hn hp
-  · rfl
-
 private theorem geomOf_geomOps_drawn (g : Geom) (d : Bool) :
     (geomOf (geomOps g)).drawn d = g.drawn d := by
   cases g with
@@ -650,8 +636,8 @@ private theorem drawn_drawn (g : Geom) (d : Bool) : (g.drawn d).drawn d = g.draw
     | false =>
       simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
       by_cases hp : 0 < w ∧ 0 < h
-      · rw [normal_rect_pos hp, normal_rect_pos hp]
-      · rw [normal_rect_neg hp]; rfl
+      · rw [Geom.normal_rect_exact hp, Geom.normal_rect_exact hp]
+      · rw [Geom.normal_flat_exact hp]; rfl
   | ellipse cx cy rx ry => cases d <;> rfl
   | path subs => cases d <;> rfl
 
@@ -664,10 +650,10 @@ private theorem drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     | false =>
       simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
       by_cases hp : 0 < w ∧ 0 < h
-      · rw [normal_rect_pos hp]
+      · rw [Geom.normal_rect_exact hp]
         simp only [Geom.mapIso, Iso.rect]
-        exact normal_rect_pos hp
-      · rw [normal_rect_neg hp]; rfl
+        exact Geom.normal_rect_exact hp
+      · rw [Geom.normal_flat_exact hp]; rfl
   | ellipse cx cy rx ry => cases d <;> rfl
   | path subs => cases d <;> rfl
 
@@ -680,8 +666,8 @@ private theorem geomOf_drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     | false =>
       simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
       by_cases hp : 0 < w ∧ 0 < h
-      · rw [normal_rect_pos hp]; rfl
-      · rw [normal_rect_neg hp]; exact geomOf_path_id _
+      · rw [Geom.normal_rect_exact hp]; rfl
+      · rw [Geom.normal_flat_exact hp]; exact geomOf_path_id _
   | ellipse cx cy rx ry => cases d <;> exact geomOf_path_id _
   | path subs => cases d <;> exact geomOf_path_id _
 
@@ -720,10 +706,10 @@ private theorem rect_translate_drawn (t : Iso) (ht : t.flipY = false) (x y w h :
   | false =>
     simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
     by_cases hp : 0 < w ∧ 0 < h
-    · rw [normal_rect_pos hp, normal_rect_pos hp]
+    · rw [Geom.normal_rect_exact hp, Geom.normal_rect_exact hp]
       have := Geom.mapIso_inv_id t (.rect x y w h)
       rwa [hr] at this
-    · rw [normal_rect_neg hp, normal_rect_neg hp]
+    · rw [Geom.normal_flat_exact hp, Geom.normal_flat_exact hp]
       simp only [Geom.mapIso, List.map_toArray, List.map_cons, List.map_nil, hback]
 
 private theorem readList_append (rs : RState) (acc : Array Mark) (a b : List ContentOp) :
@@ -918,10 +904,6 @@ private theorem cm_group_frameCtm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RS
   · next hx => simp only [RState.cm, h.hctm, hx, (Affine.compose_unit_id cx.ctm).1]
   · exact cm_lift_frameCtm place cx fr rs h xf
 
-private theorem enter_alphas (cx : Ctx) (xf : Affine) (clips : Array Clip) :
-    (cx.enter xf clips Alpha.opaque).alphas = cx.alphas := by
-  simp [Ctx.enter]
-
 private theorem cm_place (rs : RState) (m : Option Affine) : (rs.cm m).place = rs.place := by
   cases m <;> rfl
 
@@ -978,7 +960,7 @@ private theorem agrees_cm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     exact clips_agree place cx fr rs h xf m hm clips
   halphas := by
     show (rs.cm _).alphas = _
-    rw [(cm_keeps rs _).2.1, enter_alphas, h.halphas]
+    rw [(cm_keeps rs _).2.1, Ctx.enter_alphas_id, h.halphas]
   hca := by show (rs.cm _).ca = _; rw [(cm_keeps rs _).2.2.1, h.hca]
   hcA := by show (rs.cm _).cA = _; rw [(cm_keeps rs _).2.2.2.1, h.hcA]
   hpen := by show (rs.cm _).pen = _; rw [(cm_keeps rs _).2.2.2.2.2, h.hpen]
@@ -1014,7 +996,7 @@ private theorem agrees_plain (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
   hctm := by rw [h.hctm]; simp [Ctx.enter, (Affine.compose_unit_id cx.ctm).1]
   hbase := h.hbase
   hclips := by simp [Ctx.enter, h.hclips]
-  halphas := by rw [enter_alphas]; exact h.halphas
+  halphas := by rw [Ctx.enter_alphas_id]; exact h.halphas
   hca := h.hca
   hcA := h.hcA
   hpen := h.hpen
@@ -1029,7 +1011,7 @@ private theorem agrees_form (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     rw [cm_lift_frameCtm place cx fr rs h xf]; rfl
   hbase := enterForm_base _
   hclips := by simp [RState.enterForm, RState.cm, Ctx.enter, h.hclips]
-  halphas := by rw [enter_alphas]; simp [RState.enterForm, RState.cm, h.halphas]
+  halphas := by rw [Ctx.enter_alphas_id]; simp [RState.enterForm, RState.cm, h.halphas]
   hca := by simp [RState.enterForm, RState.cm, h.hca]
   hcA := by simp [RState.enterForm, RState.cm, h.hcA]
   hpen := by simp [RState.enterForm, RState.cm, h.hpen]
@@ -1312,24 +1294,6 @@ other operator the marks it paints, read with PDF's meaning at the page. -/
     Array (Step (Array TextOp)) :=
   ops.foldl (fun acc o => acc ++ readStep place o) #[]
 
-private theorem readSteps_eq (place : Iso) (ops : Array ContentOp) :
-    readSteps place ops = (ops.toList.flatMap fun o => (readStep place o).toList).toArray := by
-  unfold readSteps
-  rw [← Array.foldl_toList]
-  suffices h : ∀ (xs : List ContentOp) (acc : Array (Step (Array TextOp))),
-      xs.foldl (fun acc o => acc ++ readStep place o) acc =
-        acc ++ (xs.flatMap fun o => (readStep place o).toList).toArray by
-    simpa using h ops.toList #[]
-  intro xs
-  induction xs with
-  | nil => intro acc; simp
-  | cons o rest ih =>
-    intro acc
-    simp only [List.foldl_cons, List.flatMap_cons, ih, Array.append_assoc]
-    congr 1
-    apply Array.toList_inj.mp
-    simp
-
 mutual
 
 private theorem readOne_acc (rs : RState) (acc : Array Mark) :
@@ -1524,7 +1488,7 @@ public theorem steps_projects {L : Type} (ix : Request → Nat) (tx : L → Opti
     intro n hn
     simp only [Figure.labelsTop, Bool.and_eq_true, Array.all_eq_true'] at h
     exact h.1 n (Array.mem_toList_iff.mp hn)
-  rw [readSteps_eq, Figure.steps_eq]
+  rw [readSteps, foldl_append_flatMap_exact, Figure.steps_eq]
   unfold emit
   rw [emitList_flatMap]
   apply Array.toList_inj.mp
