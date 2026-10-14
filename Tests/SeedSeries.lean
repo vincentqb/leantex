@@ -68,7 +68,7 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"series, {label}: each of a chart of ten's picks is of the temperature the one before it was not"
         (((most.take 10).zip ((most.take 10).drop 1)).all fun (c, c') => warmOf c != warmOf c')
       t s!"series, {label}: no series stands in the disliked region"
-        (most.all fun c => !ContrastSolve.disliked c)
+        (most.all fun c => !dislikedBox c)
       t s!"series, {label}: each pair stands apart, and each but the first from the ink, for every reader"
         ((most.zipIdx.all fun (c, i) => most.zipIdx.all fun (c', j) =>
             i ≥ j || SeedSeries.apart c c') && (most.drop 1).all fun c => SeedSeries.apart c s.ink)

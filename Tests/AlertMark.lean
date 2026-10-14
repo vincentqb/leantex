@@ -69,7 +69,7 @@ def containerChecks (ref : IO.Ref (List String)) : IO Unit := do
             c.diagramMuted, c.mutedOnInverse, c.accentText, c.accentEdge, c.accentOnInverse, c.alert,
             c.alertBand, c.exampleBand] ++ c.exampleText.toList
           t s!"{at_}: no derived tone stands in the disliked region"
-            (derived.all fun x => declared.contains x || !ContrastSolve.disliked x)
+            (derived.all fun x => declared.contains x || !dislikedBox x)
 
 /-- The mark's ink on a line: every `.decoration .highlight` seg of the
 riders painted before the line, with its left edge and width. -/

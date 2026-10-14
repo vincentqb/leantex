@@ -496,7 +496,7 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let d := Ir.Design.ofPalette doc.palette
     let alert := Ir.Design.declared? doc.palette .alert
     let muted := Ir.Design.declared? doc.palette .muted
-    let floor := (doc.palette.seeded.map (·.targets.text)).getD 0
+    let floor := Ir.GroundDepth.decks.text
     match paints doc, alert with
     | [some kw, some nm, some lit, some cm, some err, some ink], some al =>
       let shipped : List (ListingHighlight.Role × Ir.Color) :=
@@ -520,7 +520,7 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
         (decide (0 < floor) && derived.all fun c =>
           let r := Contrast.contrastMilli c d.bg
           decide (floor ≤ r ∧ r < floor + 150) && edgeChroma c ≤ chromaOf c + Oklab.okJnd / 2 &&
-            !ContrastSolve.disliked c)
+            !dislikedBox c)
       t s!"seeded code, {label}: every coloured role stands apart from the ink and from every other"
         ((coloured.zipIdx.all fun (c, i) => coloured.zipIdx.all fun (c', j) =>
             i == j || CodeColor.roleGap * CodeColor.roleGap ≤ ContrastSolve.deltaEOkSq c c') &&
@@ -530,7 +530,7 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"seeded code, {label}: comments set in the quiet muted step, errors in the alert or the mark's hue"
         (some cm == muted && chromaOf cm < 2 * Oklab.okJnd &&
           (err == al && !marked || isDeclared .error ||
-            marked && err != ink && Oklab.okJnd ≤ chromaOf err && !ContrastSolve.disliked err))
+            marked && err != ink && Oklab.okJnd ≤ chromaOf err && !dislikedBox err))
       t s!"seeded code, {label}: a role its own key declares ships as declared"
         (declared.all fun (r, c) => shipped.lookup r == some c)
       t s!"seeded code, {label}: the web page sets each role in the PDF's colour"

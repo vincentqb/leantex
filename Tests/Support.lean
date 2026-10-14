@@ -1231,6 +1231,14 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
     | .image _ w _ => x := x + w
   return out
 
+/-- Material 3's disliked region as the box `scripts/dislike-oracle.lean` holds it in, stated here so
+a guard does not read the predicate it guards. -/
+def dislikedBox (c : Ir.Color) : Bool :=
+  let l := Oklab.labOf c
+  let h := Oklab.hueMilli l.a l.b
+  decide (86700 ≤ h) && decide (h ≤ 110400) &&
+    decide ((36 * 10 ^ 15) * (36 * 10 ^ 15) ≤ Oklab.chromaSq l) && decide (Contrast.luminance c ≤ 3343000)
+
 /-- The colour of the run setting exactly `word`, with the ground it stands on. -/
 def wordRun (lines : Array Layout.LineOut) (word : String) : Option (Ir.Color × Option Ir.Color) :=
   lines.findSome? fun l => l.segs.findSome? fun s => match s with
