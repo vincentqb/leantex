@@ -9,8 +9,8 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Option lists as LaTeX's keyval and `\@for` read them, and spellings keyval reads alike setting
-one page. -/
+/-- Option lists as kvsetkeys and `\@for` read them, and spellings they read alike setting one
+page. -/
 def keyValChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "keyval: a comma inside braces separates nothing"
@@ -38,13 +38,36 @@ def keyValChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "keyval: a raw entry keeps its value's braces" (KeyVal.rawEntry "a = {x}" == ("a", some "{x}"))
   t "keyval: a braced empty value is written, a missing one is not"
     (KeyVal.pair? "a={}" == some ("a", "") && KeyVal.pair? "a=" == none)
-  t "keyval: a value cut inside parentheses leaves unbalanced pieces"
+  t "keyval: a value cut inside parentheses leaves unbalanced pieces, braces aside"
     (KeyVal.unbalanced "draft)" && KeyVal.unbalanced "pdftitle=Results (part 1" &&
-      !KeyVal.unbalanced "pdftitle={Results (part 1, draft)}")
+      !KeyVal.unbalanced "pdftitle={Results (part 1, draft)}" &&
+      !KeyVal.unbalanced "pdfcreator={6\" ruler}")
   let titled := elabStr (dvDoc "\\hypersetup{pdftitle=Results (part 1, draft)}\n" "Words.")
   t "keyval: a comma inside parentheses ends a value, and the piece after it is named"
     (titled.1.info.title == some "Results (part 1" &&
-      titled.2.any fun d => d.code == "W0101" && hasStr d.message "draft)")
+      titled.2.any fun d => d.code == "W0101" && hasStr d.message "'draft)'")
+  t "keyval: a braced or uncut value with a lone delimiter is named nowhere"
+    ((elabStr (dvDoc "\\hypersetup{pdfcreator={Notes :-)}, pdfproducer=Tool (beta}\n"
+      "Words.")).2.all (·.code != "W0101"))
+  let listed := elabStr (dvDoc "\\usepackage{enumitem}\n\\setlist[itemize]{itemsep=9pt, label=(\\alph*, x)}\n" "Words.")
+  t "keyval: a list key cut inside parentheses names its piece"
+    (listed.2.any fun d => d.code == "W0101" && hasStr d.message "x)")
+  t "keyval: a blank icon label keeps the icon's own name"
+    ((elabStr (dvDoc "\\usepackage{fontawesome5}\n" "\\faIcon[label={}]{star}")).2.any
+      fun d => d.code == "W0110" && hasStr d.message "blank")
+  let metadata := elabStr ("\\DocumentMetadata{=x, lang=fr}\n" ++ dvDoc "" "Words.")
+  t "keyval: a metadata entry with an empty key is named whole"
+    (metadata.2.any fun d => d.code == "W0101" && hasStr d.message "=x")
+  t "keyval: a spaced frame option is the tight one"
+    ((elabStr (dvDeck "" "\\begin{frame}[fragile = true]Words.\\end{frame}")).2.all
+      fun d => !hasStr d.message "fragile")
+  t "keyval: a spaced covered fraction is the tight one"
+    ((elabStr (dvDeck "\\setbeamercovered{transparent = 30}\n" "Words.")).2.all
+      (·.code != "W0104"))
+  let quoted := docHtmlOf (elabStr (dvDoc "\\usepackage{tikz}\n"
+    "\\begin{tikzpicture}[alt={\"Whole\"}]\\draw (0,0) -- (1,1);\\end{tikzpicture}")).1
+  t "keyval: a picture's quoted alternative keeps its quotes"
+    (hasStr quoted "&quot;Whole&quot;")
   let lang (pre : String) := (elabStr (dvDoc pre "Words.")).1.info.language
   t "keyval: a braced metadata language is the bare one"
     (lang "\\DocumentMetadata{lang = {de-DE}}\n" == some "de-DE" &&
@@ -67,7 +90,19 @@ def keyValChecks (ref : IO.Ref (List String)) : IO Unit := do
         pair != page "\\usepackage[margin=2cm]{geometry}\n")
     t "keyval: an equal side pair is the symmetric margin"
       (page "\\usepackage[hmargin={2cm,2cm}]{geometry}\n" ==
-        page "\\usepackage[hmargin=2cm]{geometry}\n")
+        page "\\usepackage[hmargin=2cm]{geometry}\n" &&
+        page "\\usepackage[hmargin={2cm,2cm}]{geometry}\n" != page "")
+    t "keyval: a later margin overrides an earlier pair, in order"
+      (page "\\usepackage[hmargin={2cm,2cm},margin=1cm]{geometry}\n" ==
+        page "\\usepackage[margin=1cm]{geometry}\n")
+    t "keyval: a margin pair holding TeX arithmetic is named, and the page still ships"
+      ((elabStr (dvDoc "\\usepackage[margin={2cm,\\dimexpr 1in+2pt\\relax}]{geometry}\n"
+        "Words.")).2.all (·.severity != .error))
+    let a5 (cls : String) := shippedLinesOf fonts (elabStr (cls ++
+      "\\begin{document}\nWords in a paragraph.\n\\end{document}")).1
+    t "keyval: a spaced paper option is the tight one"
+      (a5 "\\documentclass[paper = a5]{scrartcl}\n" == a5 "\\documentclass[paper=a5]{scrartcl}\n" &&
+        a5 "\\documentclass[paper = a5]{scrartcl}\n" != a5 "\\documentclass{scrartcl}\n")
     let captioned (pre : String) := shippedLinesOf fonts (elabStr (dvDoc pre
       "\\begin{figure}\nx\n\\caption{An invented caption long enough to run past one line of \
 the measure, so that its margin moves where its words break.}\n\\end{figure}")).1

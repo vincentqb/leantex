@@ -55,8 +55,8 @@ private def closesAtEnd : List (List Char) → Nat → Bool
     else if a == ['}'] then depth > 1 && closesAtEnd rest (depth - 1)
     else closesAtEnd rest depth
 
-/-- Text trimmed, with the braces around the whole of it removed: a key or value as kvsetkeys and
-l3keys hand it on. -/
+/-- Text trimmed, with the braces around the whole of it removed: a value as kvsetkeys and l3keys
+hand it on, and a key as kvsetkeys does. -/
 public def unbrace (s : String) : String :=
   let t := s.trimAscii.toString
   match (texAtoms t.toList #[]).toList with
@@ -90,11 +90,23 @@ public def pair? (item : String) : Option (String × String) :=
   | (k, some v) => if k.isEmpty || v.isEmpty then none else some (unbrace k, unbrace v)
   | (_, none) => none
 
-/-- Whether an item's parentheses, brackets or double quotes fail to balance, as a piece of a value
-cut at a comma inside them does. -/
-public def unbalanced (item : String) : Bool :=
-  let count (c : Char) := (item.toList.filter (· == c)).length
-  count '(' != count ')' || count '[' != count ']' || count '"' % 2 == 1
+/-- Whether an item's parentheses, brackets or double quotes outside braces fail to balance, as a
+piece of a value cut at a comma inside them does. -/
+public def unbalanced (item : String) : Bool := Id.run do
+  let mut depth := 0
+  let mut paren : Int := 0
+  let mut bracket : Int := 0
+  let mut quotes := 0
+  for a in (texAtoms item.toList #[]).toList do
+    if a == ['{'] then depth := depth + 1
+    else if a == ['}'] then depth := depth - 1
+    else if depth == 0 then
+      if a == ['('] then paren := paren + 1
+      else if a == [')'] then paren := paren - 1
+      else if a == ['['] then bracket := bracket + 1
+      else if a == [']'] then bracket := bracket - 1
+      else if a == ['"'] then quotes := quotes + 1
+  return paren != 0 || bracket != 0 || quotes % 2 == 1
 
 private theorem intercalate_snoc_last {α : Type} (sep : List α) (c : List α) (x : α) :
     ∀ L : List (List α), sep.intercalate (L ++ [c ++ [x]]) = sep.intercalate (L ++ [c]) ++ [x]

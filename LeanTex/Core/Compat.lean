@@ -5190,10 +5190,13 @@ private def geometry (opts : String) (pos : Pos)
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
       else match k, (KeyVal.items v).toList with
-      | "hmargin", [l, r] => sides := sides ++ #[("left", lengthOfTeX l), ("right", lengthOfTeX r)]
-      | "vmargin", [t, b] => sides := sides ++ #[("top", lengthOfTeX t), ("bottom", lengthOfTeX b)]
-      | "margin", [h, w] =>
-        keys := keys ++ #[s!"hmargin = {lengthOfTeX h}", s!"vmargin = {lengthOfTeX w}"]
+      | "margin", a :: b :: _ | "hmargin", a :: b :: _ | "vmargin", a :: b :: _ =>
+        if a.startsWith "\\dimexpr" || b.startsWith "\\dimexpr" then
+          droppedExpr := droppedExpr.push s!"{k} = {v}"
+        else if k == "margin" then
+          keys := keys ++ #[s!"hmargin = {lengthOfTeX a}", s!"vmargin = {lengthOfTeX b}"]
+        else if lengthOfTeX a == lengthOfTeX b then keys := keys.push s!"{k} = {lengthOfTeX a}"
+        else dropped := dropped.push k
       | _, _ :: _ :: _ => dropped := dropped.push k
       | _, _ =>
         if ["margin", "vmargin", "hmargin", "width", "height",
@@ -5339,14 +5342,14 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut linked := false
   let mut cut : Array String := #[]
   for e in KeyVal.items opts do
-    let (k, v) := KeyVal.entry e
-    let v := v.getD ""
+    let (k, value) := KeyVal.entry e
+    let v := value.getD ""
     let metadata := ["title", "author", "subject", "keywords"].filter (k == "pdf" ++ ·)
     for m in metadata do keys := keys.push s!"{m} = \"{v}\""
     if let some l := links.read k v then
       links := l
       linked := true
-    else if metadata.isEmpty && KeyVal.unbalanced e then cut := cut.push e
+    else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
   if linked then write fun st => { st with links }
   unless cut.isEmpty do
     say .W0101 s!"hyperref keys without a native equivalent were dropped: \
@@ -6592,13 +6595,14 @@ native equivalent were dropped: {dropped}" pos
     let element := (opt.getD "itemize").trimAscii.toString
     let mut keys : Array String := #[]
     let mut marker : Option String := none
+    let mut dropped : Array String := #[]
     for e in KeyVal.items (rawSrc (args.getD 0 #[])) do
       match KeyVal.entry e with
       | ("leftmargin", some v) => keys := keys.push s!"indent = {lengthOfTeX v}"
       | ("itemsep", some v) => keys := keys.push s!"gap = {lengthOfTeX v}"
       | ("topsep", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
       | ("label", _) => marker := some ((KeyVal.rawEntry e).2.getD "")
-      | _ => pure ()
+      | _ => dropped := dropped.push e
     if let some m := marker then keys := keys.push s!"marker = {m}"
     if !Ir.styleableElements.contains element then
       say .W0111 s!"'\\setlist[{element}]' names no styleable element; ignored" pos
@@ -6606,11 +6610,14 @@ native equivalent were dropped: {dropped}" pos
 the engine draws")
       return some (#[], k)
     if keys.isEmpty then
-      let dropped := (rawSrc (args.getD 0 #[])).trimAscii.toString
-      unless dropped.isEmpty do
+      let whole := (rawSrc (args.getD 0 #[])).trimAscii.toString
+      unless whole.isEmpty do
         say .W0101 s!"'\\setlist[{element}]' entries without a native equivalent \
-were dropped: {dropped}" pos
+were dropped: {whole}" pos
       return some (#[], k)
+    unless dropped.isEmpty do
+      say .W0101 s!"'\\setlist[{element}]' entries without a native equivalent \
+were dropped: {String.intercalate ", " dropped.toList}" pos
     let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
     became s!"\\setlist[{element}]" native pos
     return some (← synthAt native pos, k)
@@ -7614,7 +7621,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let flow := ((Ir.DocClass.ofString? native).map (·.record.model == .flow)).getD true
     write fun st => { st with
       measureKnown := !flow, flowPage := flow,
-      titlepageReset := !(KeyVal.items (opt.getD "")).contains "twoside" }
+      titlepageReset := !(KeyVal.items (opt.getD "")).any fun o =>
+        KeyVal.entry o matches ("twoside", none) | ("twoside", some "true") }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""

@@ -3034,7 +3034,11 @@ private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
   if let some optSrc := labelSrc then
     for e in KeyVal.items (rawSrc optSrc) do
       match KeyVal.pair? e with
-      | some ("label", v) => label := some v
+      | some ("label", v) =>
+        if v.trimAscii.isEmpty then
+          warnOnce ctx ("faopt:" ++ e) .W0110
+            s!"'\\faIcon' option '{e}' is blank; the icon keeps its own text alternative" pos
+        else label := some v
       | _ =>
         warnOnce ctx ("faopt:" ++ e) .W0110
           s!"'\\faIcon' option '{e.trimAscii.toString}' is not modelled; ignored" pos
@@ -15357,11 +15361,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let classOpts := (KeyVal.items classOptions).toList
   page := classPageDefaults record classOpts page
   for o in classOpts do
-    if o == "twocolumn" then
+    if KeyVal.entry o matches ("twocolumn", none) | ("twocolumn", some "true") then
       diag ctx .W0356
         "class option 'twocolumn' asks for a two-column page; the text is set in one column"
         none
-    else if o == "draft" then
+    else if KeyVal.entry o matches ("draft", none) | ("draft", some "true") then
       diag ctx .W0356
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
         none
