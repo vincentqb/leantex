@@ -393,6 +393,10 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       (some { lean := "4.34.1", errors := 0, binders := #[]
               decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
                            type := some (.apps (.const "True") []) }] })).2
+  | .W0440 => dvE (w := w) (dvDoc "\\usepackage{colorspace}\n\\definespotcolor{ink}{Probe Ink}{0,.5,1,0}\n"
+      "\\textcolor{ink!50!black}{x}")
+  | .W0441 => dvE (w := w) (dvDoc "\\usepackage{colorspace}\n\\definespotcolor{one}{Probe Ink}{0,.5,1,0}\n"
+      "\\definespotcolor{two}{Probe Ink}{1,0,0,0}x")
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")

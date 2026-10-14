@@ -544,6 +544,8 @@ public structure ESt where
   complete. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
   spans : SpanRecords := {}
+  /-- The colorants the document declared, each with its first alternate. -/
+  inks : Array Ink := #[]
   alg : AlgSt := {}
 
 /-- The declared title datum, empty when undeclared. -/
@@ -1450,6 +1452,25 @@ private def noteFormulaReads (ctx : Ctx) (expanded : Array Parse.Raw) : EM Unit 
 private def sourceInline (ctx : Ctx) (pos : Pos) (inline : Inline) : Inline :=
   .located (ctx.sourceSpan pos) #[inline]
 
+/-- W0440 for each colour expression a picture's or a formula's source spells that mixes an ink
+away, and for each gradient a picture shades through an ink and another colour. -/
+private def noteLostInks (ctx : Ctx) (src : String) (pos : Pos)
+    (gradients : Array Gfx.Gradient := #[]) : EM Unit := do
+  for (e, i) in ctx.palette.lostInkExprs src do
+    modify fun st => { st with diags := st.diags.push (diagOf ctx .W0440
+      s!"'{e}' mixes the ink '{i.name}' with a colour other than the paper or its own tint; \
+it prints as a process colour" (some pos)
+      (help := "mix an ink only with the paper, as 'name!50'; a mix of two colours is a third")
+      (subject := some s!"ink:{i.name}")) }
+  for g in gradients do
+    if g.singleInk?.isNone then
+      if let some i := g.stops.findSome? fun s => s.color.ink?.map (·.1) then
+        modify fun st => { st with diags := st.diags.push (diagOf ctx .W0440
+          s!"a gradient shades the ink '{i.name}' into another colour; it prints as a process \
+colour" (some pos)
+          (help := "shade an ink only into the paper, as 'left color=name, right color=white'")
+          (subject := some s!"ink:{i.name}")) }
+
 /-- One formula: parsed into math atoms, or kept as its text content with a
 warning naming the construct it cannot model. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
@@ -1460,6 +1481,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     for note in notes do
       mathNote ctx note "" pos
     noteFormulaReads ctx expanded
+    noteLostInks ctx (Parse.rawSrc expanded) pos
     return sourceInline ctx pos (.formula display (Parse.rawSrc body) l)
   | .error what =>
     let src := Parse.rawSrc body
@@ -1477,6 +1499,7 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     for note in notes do
       mathNote ctx note s!"'\{{name}}': " pos
     noteFormulaReads ctx expanded
+    noteLostInks ctx (Parse.rawSrc expanded) pos
     if numbered then
       warnOnce ctx ("math:eqnum:" ++ name) .W0015
         s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
@@ -3614,6 +3637,23 @@ private inductive ColorRead where
   | missing
   | rejected
 
+/-- The one alternate a colorant has: its first declaration's, a later different one named. -/
+private def inkOnce (ctx : Ctx) (c : Color) (pos : Pos) : EM Color := do
+  match c.ink? with
+  | none => return c
+  | some (i, t) =>
+    match (← get).inks.find? (·.name == i.name) with
+    | some j =>
+      if j == i then return c
+      modify fun st => { st with diags := st.diags.push (diagOf ctx .W0441
+        s!"the ink '{i.name}' is declared again with another alternate; its first alternate stands"
+        (some pos) (help := "a colorant names one ink: give each ink its own colorant, as \\definespotcolor{name}{Other Ink}{c,m,y,k}")
+        (subject := some s!"ink:{i.name}")) }
+      return Color.ofInk j t
+    | none =>
+      modify fun st => { st with inks := st.inks.push i }
+      return c
+
 /-- The one door that parses and resolves a source colour, naming what it
 rejects. -/
 private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
@@ -3626,6 +3666,14 @@ private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
   if model.isNone then noteColorReads src
   match pal.resolveSource model src with
   | .ok (some c) =>
+    let c ← inkOnce ctx c pos
+    if model.isNone then
+      if let some i := pal.lostInk? src then
+        modify fun st => { st with diags := st.diags.push (diagOf ctx .W0440
+          s!"'{src.trimAscii.toString}' mixes the ink '{i.name}' with a colour other than the paper \
+or its own tint; it prints as a process colour" (some pos)
+          (help := "mix an ink only with the paper, as 'name!50'; a mix of two colours is a third")
+          (subject := some s!"ink:{i.name}")) }
     let token := if model.isNone then pal.refOf? label else none
     return .resolved c token
   | .ok none => return .missing
@@ -3857,6 +3905,7 @@ private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
     notePictureReads ctx body
     let (pic, _) := subsetPicture ctx body (← pictureSizeInForce)
+    noteLostInks ctx (Parse.rawSrc body) pos pic.gradients
     return some (← routePicture ctx body { pic with alt := alt } pos false)
   warnOnce ctx ("picture:inline:" ++ id) .W0334
     "a picture inside a line of text is not drawn: the rendered subset sets a \
@@ -8685,6 +8734,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   let (alt, body) := splitPictureAlt body pos
   notePictureReads ctx body
   let (pic, pdiags) := subsetPicture ctx body (← pictureSizeInForce)
+  noteLostInks ctx (Parse.rawSrc body) pos pic.gradients
   let pic := { pic with alt := alt }
   let id := Ir.picHash (← pictureSrcAt body).source
   -- premise: pictureRouteChecks — a routed picture's losses are never dropped

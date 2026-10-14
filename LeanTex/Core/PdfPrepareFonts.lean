@@ -120,9 +120,9 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
   · rw [hres.2] at hf
     apply False.elim
     apply kindOf_no_subtype_not_font _ ?_ ?_ hf
-    · rw [(resourcesDict_untyped_exact _ _ _ _ _).1]
+    · rw [(resourcesDict_untyped_exact _ _ _ _ _ _).1]
       simp
-    · exact (resourcesDict_untyped_exact _ _ _ _ _).2
+    · exact (resourcesDict_untyped_exact _ _ _ _ _ _).2
   · obtain ⟨⟨r, j⟩, _, heq⟩ := List.mem_map.mp hfig
     have hv := congrArg Prod.snd heq
     dsimp only at hv

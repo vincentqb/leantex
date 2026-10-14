@@ -39,7 +39,7 @@ public def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel", "animate", "markdown", "ulem", "tikz-cd"]
+   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace"]
 
 /-- Beamer's colour elements, each mapped onto the palette roles its `fg=` and
 `bg=` declare; an empty role is a side the engine names rather than drops. -/
@@ -5605,6 +5605,89 @@ private def modeledColorSource (model : Option String) (value : String) : String
   | some m => s!"{m.trimAscii.toString}({value})"
   | none => value
 
+/-- colorspace's `\definespotcolor{name}{colorant}[model]{values}`: the native `spot(...)` colour
+with its CMYK alternate as xcolor stores it, converted from the model as `cmyk:<model>` does. -/
+private def defineSpotColor (raws : Array Raw) (start : Nat) (pos : Pos) :
+    M (Option (Array Raw × Nat)) := do
+  let (names, j) := takeGroups raws start 2
+  let (model, j) := takeOpt raws j
+  let (vals, k) := takeGroups raws j 1
+  let (some n, some colorant, some v) := (names[0]?, names[1]?, vals[0]?)
+    | say .W0102 "'\\definespotcolor' needs a colour name, a colorant and its values; nothing \
+is defined" pos (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
+      return some (#[], k)
+  let n := (rawSrc n).trimAscii.toString
+  let flat := String.ofList ((rawSrc colorant).toList.map fun c => if c.isWhitespace then ' ' else c)
+  let ink := " ".intercalate ((flat.splitOn " ").filter (!·.isEmpty))
+  if ink.isEmpty || ink.contains '"' then
+    say .W0102 s!"'\\definespotcolor\{{n}}' names a colorant the PDF cannot carry; the colour \
+is not defined" pos (help := "name the colorant without double quotes, as \\definespotcolor{name}{Ink Name}{c,m,y,k}")
+    return some (#[], k)
+  let m := (model.map (·.trimAscii.toString)).getD "cmyk"
+  let alternate := match Decl.parseColorSpec (some m) (rawSrc v) with
+    | .ok spec => spec.cmykOf?
+    | .error _ => none
+  match alternate with
+  | some (c, mg, y, kk) =>
+    let modeled := s!"spot(\"{ink}\", cmyk({c.pdfUnit}, {mg.pdfUnit}, {y.pdfUnit}, {kk.pdfUnit}))"
+    became s!"\\definespotcolor\{{n}}" s!"\\palette\{ {n} = {modeled} }" pos
+    return some (← synthAt s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }" pos, k)
+  | none =>
+    say .W0102 s!"'\\definespotcolor\{{n}}' gives the alternate of '{ink}' in a model or values the \
+engine does not convert to CMYK; the colour is not defined" pos
+      (help := "give the alternate as '[cmyk]', '[rgb]', '[RGB]', '[HTML]' or '[gray]' values")
+    return some (#[], k)
+
+/-- One of colorspace's documented commands the engine carries no state for, its arguments read
+whole: the page's colour spaces are native, a DeviceN or ICC-based space and the overprint state
+are refused by name. -/
+private def colorspaceCommand (name : String) (raws : Array Raw) (start : Nat) (pos : Pos) :
+    M (Option (Array Raw × Nat)) := do
+  let j := start
+  match name with
+  | "definecolorspace" =>
+    let (args, k) := takeGroups raws (skipStar raws j) 3
+    if args.size < 3 then return none
+    say .W0104 s!"'\\definecolorspace\{{rawSrc (args.getD 0 #[])}}' declares a DeviceN or \
+ICC-based colour space; the engine paints each ink in its own separation; skipped" pos
+      (help := "declare each ink with \\definespotcolor")
+    return some (#[], k)
+  | "pagecolorspace" =>
+    let (args, k) := takeGroups raws j 1
+    if args.isEmpty then return none
+    discard "\\pagecolorspace" "every page lists each ink it paints" "pagecolorspace" pos
+    return some (#[], k)
+  | "resetpagecolorspace" =>
+    discard "\\resetpagecolorspace" "every page lists each ink it paints" "pagecolorspace" pos
+    return some (#[], j)
+  | "overprintstate" =>
+    let (args, k) := takeGroups raws j 1
+    if args.isEmpty then return none
+    say .W0104 "'\\overprintstate' sets the overprint state; the engine knocks out every \
+colour it paints; skipped" pos
+    return some (#[], k)
+  | "textoverprint" =>
+    let (_, j) := takeOpt raws j
+    let (args, k) := takeGroups raws j 1
+    let some body := args[0]? | return none
+    say .W0104 "'\\textoverprint' overprints its text; the engine knocks it out, and the \
+text is kept" pos
+    return some (#[Raw.group body pos], k)
+  | _ => return none
+
+/-- colorspace's options: the overprint mode and a Lab alternate's illuminant, which the engine
+has no state for. -/
+private def colorspaceOptions (opts : String) (pos : Pos) : M Unit := do
+  -- `opm=1` is the package's default, and an illuminant serves only the Lab alternate it refuses.
+  let given := (KeyVal.items opts).filter fun o =>
+    !o.isEmpty && o != "opm=1" && !o.startsWith "illuminant="
+  if given.isEmpty then
+    discard "\\usepackage{colorspace}" "the engine writes each ink's separation itself"
+      "usepackage:colorspace" pos
+  else
+    say .W0101 s!"colorspace options without a native equivalent were dropped: \
+{String.intercalate ", " given.toList}" pos
+
 /-- The marker for xcolor's global page-ground reset, unforgeable because `@` is
 no surface control-word character. -/
 public def pageColorResetMark : String := "@pagecolor-reset"
@@ -7337,6 +7420,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     out := out ++ (← geometry (opt.getD "") pos)
   else if p == "crop" then
     out := out ++ (← crop (opt.getD "") pos)
+  else if p == "colorspace" then
+    colorspaceOptions (opt.getD "") pos
   else if p == "beamerposter" then
     out := out ++ (← beamerposter (opt.getD "") pos)
   else if p == "parskip" then
@@ -7785,6 +7870,9 @@ face serves every language, so the binding is dropped" pos
       became s!"\\definecolor\{{n}}" native pos
       return some (← synthAt carried pos, k)
     else return none
+  | "definespotcolor" => defineSpotColor raws start pos
+  | "definecolorspace" | "pagecolorspace" | "resetpagecolorspace" | "overprintstate"
+  | "textoverprint" => colorspaceCommand name raws start pos
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then

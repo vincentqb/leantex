@@ -1604,7 +1604,14 @@ def reports : List Report := [
     pins := [thm% Land.turn_take_exact, thm% Land.turn_first_exact, thm% Land.turn_behind_mem,
       thm% Land.enter_arrivals_exact, thm% Land.leave_arrivals_exact]
     accept := ["the landing tool's five queue scenarios fail against the tool built at 1deee4be before the fix: three landings waiting behind a fourth land in the reverse of their arrival, the latest asking most often, a waiter behind one that was killed is refused, a later waiter asking more often lands before an earlier one, the first waiter is refused rather than waiting for the lock, and four waiters entering at one moment get no order; with the fix all five pass, and the first waiter takes the lock 0.2 s after the holder exits"]
-    state := .guarded "1deee4be" .before .author }
+    state := .guarded "1deee4be" .before .author },
+  { id := "R181", date := "2026-10-14"
+    what := "a print document's spot colour stopped the build: colorspace was skipped, its spot colour definition was an unknown command, and the colour named from it could not be read, so no ink reached the file a press reads"
+    pins := [check% Tests.SpotColor.checks]
+    accept := ["the guard's probe documents built by the engine at 3c258580 skip the package and its definition command and stop at an unreadable colour; built here, its twenty-seven assertions pass over the PDF bytes and the web page one document ships",
+      "the review's guards, added with its answer: a full tint in the boundary standalone, a colorant outside ASCII, a mix in a picture, a gradient and a formula, the rgb and gray alternates, the paper over an ink, a one-ink shading and a figure's ink read back, each failing on the branch's first cut",
+      "a private print document under lualatex and here: the separation's colorant and alternate as lualatex writes them, the ink painted at full tint on both faces; with its spot colour declared as a process colour instead, this tree and its parent write byte-identical PDF, and the two documents here show no visible difference on paper at 35 cm"]
+    state := .guarded "3c258580" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

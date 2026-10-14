@@ -157,6 +157,8 @@ public inductive ColorSpec where
   /-- CSS Color 4's `oklch(L C H)`: lightness as a fraction of 1, chroma in
   Oklab units, hue in degrees. -/
   | oklch (L C H : Int × Nat)
+  /-- `spot("name", cmyk(c, m, y, k))`: an ink by its colorant name and its CMYK alternate. -/
+  | spot (name : String) (c m y k : ColorComponent)
   deriving Repr, BEq
 
 /-- A specification as xcolor's definitions store it. -/
@@ -170,6 +172,41 @@ public def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
     .cmyk c.xcolorDefined m.xcolorDefined y.xcolorDefined k.xcolorDefined
   | .oklab L a b => .oklab L a b
   | .oklch L C H => .oklch L C H
+  | .spot n c m y k => .spot n c.xcolorDefined m.xcolorDefined y.xcolorDefined k.xcolorDefined
+
+/-- `1 - c`, at `c`'s scale. -/
+private def ColorComponent.complement (c : ColorComponent) : ColorComponent :=
+  { num := c.scale - min c.num c.scale, scale := c.scale }
+
+/-- `a - b`, floored at zero, at the product of their scales. -/
+private def ColorComponent.sub (a b : ColorComponent) : ColorComponent :=
+  { num := a.num * b.scale - b.num * a.scale, scale := a.scale * b.scale }
+
+private def ColorComponent.min (a b : ColorComponent) : ColorComponent :=
+  if a.num * b.scale ≤ b.num * a.scale then a else b
+
+/-- xcolor's RGB to CMYK (manual §6.3): cmy as the complements, black generation and undercolour
+removal at their defaults, `k` the least of them taken from each. -/
+private def rgbToCmyk (r g b : ColorComponent) :
+    ColorComponent × ColorComponent × ColorComponent × ColorComponent :=
+  let c := r.complement
+  let m := g.complement
+  let y := b.complement
+  let k := (c.min m).min y
+  (c.sub k, m.sub k, y.sub k, k)
+
+/-- The CMYK a definition converts into as xcolor's `cmyk:<model>` does, the model's own digits
+first passed through xcolor's storage; `none` for a model with no such conversion here. -/
+public def ColorSpec.cmykOf? : ColorSpec →
+    Option (ColorComponent × ColorComponent × ColorComponent × ColorComponent)
+  | .cmyk c m y k => some (c, m, y, k)
+  | .gray v => some (⟨0, 1⟩, ⟨0, 1⟩, ⟨0, 1⟩, v.complement)
+  | .rgbUnit r g b => some (rgbToCmyk r g b)
+  | .rgbByte r g b => some (rgbToCmyk r.xcolorRgbUnit g.xcolorRgbUnit b.xcolorRgbUnit)
+  | .html r g b =>
+    let unit (v : UInt8) : ColorComponent := ({ num := v.toNat, scale := 1 } : ColorComponent).xcolorRgbUnit
+    some (rgbToCmyk (unit r) (unit g) (unit b))
+  | .named _ | .oklab .. | .oklch .. | .spot .. => none
 
 /-- A signed decimal (mantissa, scale) at `Oklab.labOf`'s 10¹⁸ scale. -/
 private def okScaled (d : Int × Nat) : Int := d.1 * 10 ^ 18 / (d.2 : Int)
@@ -178,7 +215,7 @@ private def okScaled (d : Int × Nat) : Int := d.1 * 10 ^ 18 / (d.2 : Int)
 public def ColorSpec.okLab? : ColorSpec → Option Oklab.Lab
   | .oklab L a b => some { L := okScaled L, a := okScaled a, b := okScaled b }
   | .oklch L C H => some (Oklab.ofLch (okScaled L) (okScaled C) (H.1 * 1000 / (H.2 : Int)))
-  | .named _ | .html .. | .rgbByte .. | .rgbUnit .. | .gray _ | .cmyk .. => none
+  | .named _ | .html .. | .rgbByte .. | .rgbUnit .. | .gray _ | .cmyk .. | .spot .. => none
 
 /-- The marker of a modelled value that passed through
 xcolor's `\definecolor` storage. -/
@@ -359,10 +396,31 @@ private def parseOkColor (model value : String) : Except ColorSpecError ColorSpe
     let some H := parseDecimal h | return ← malformedColor model s!"'{y}' is not a hue in degrees"
     return .oklch L (← okComponent model x (4, 10) false) H
 
-/-- A no-model source: `#RGB`/`#RRGGBB`, `oklab()`, `oklch()`, the modelled
+/-- Whether a source spells the `spot(...)` form. -/
+private def spotSource (value : String) : Bool := value.startsWith "spot(" && value.endsWith ")"
+
+/-- `spot("name", cmyk(c, m, y, k))`: a quoted colorant name, then its alternate in CMYK. -/
+private def parseSpot (value : String) : Except ColorSpecError ColorSpec := do
+  let inner := ((value.drop "spot(".length).dropEnd 1).toString
+  let [nameSrc, altSrc] := splitEntries inner
+    | return ← malformedColor "spot" "expected a quoted colorant name and a cmyk(...) alternate"
+  let some name := (if nameSrc.startsWith "\"" && nameSrc.endsWith "\"" && nameSrc.length ≥ 2 then
+      some (String.ofList (nameSrc.toList.drop 1).dropLast).trimAscii.toString else none)
+    | return ← malformedColor "spot" s!"the colorant name {nameSrc} is not a quoted string"
+  if name.isEmpty || name.contains '"' then
+    return ← malformedColor "spot" "the colorant name is empty or holds a quote"
+  match wrappedColor altSrc with
+  | some ("cmyk", v) =>
+    match ← parseModeledColor "cmyk" v with
+    | .cmyk c m y k => return .spot name c m y k
+    | _ => malformedColor "spot" "the alternate is not a cmyk(...) colour"
+  | _ => malformedColor "spot" s!"the alternate {altSrc} is not a cmyk(...) colour"
+
+/-- A no-model source: `#RGB`/`#RRGGBB`, `oklab()`, `oklch()`, `spot()`, the modelled
 `MODEL(...)` carrier, or a named xcolor expression. -/
 private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :=
-  if value.startsWith "#" then
+  if spotSource value then parseSpot value
+  else if value.startsWith "#" then
     let hex := (value.drop 1).toString
     match hex.toList with
     | [r, g, b] =>
@@ -392,7 +450,8 @@ public def parseColorSpec (model : Option String) (raw : String) :
   | none =>
     if value.startsWith xcolorDefinitionPrefix then
       let source := (value.drop xcolorDefinitionPrefix.length).toString.trimAscii.toString
-      match wrappedColor source with
+      if spotSource source then (parseSpot source).map ColorSpec.xcolorDefined
+      else match wrappedColor source with
       | some (m, v) => (parseModeledColor m v).map ColorSpec.xcolorDefined
       | none => parsePlainColor source
     else parsePlainColor value
@@ -902,6 +961,7 @@ private def parseModeledValue (s : String) : Option Value :=
     (ColorSpec.oklab L a b).okLab?.map fun l => let c := Oklab.ofLab l; .color c.r c.g c.b
   | .ok (.oklch L C H) =>
     (ColorSpec.oklch L C H).okLab?.map fun l => let c := Oklab.ofLab l; .color c.r c.g c.b
+  | .ok (.spot _ c m y k) => some (.cmyk c.milli m.milli y.milli k.milli)
   | .ok (.named _) | .error _ => none
 
 /-- Whether `digits:digits` is a name, such as a slide stage `16:9`. -/
@@ -916,7 +976,7 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
   let s := raw.trimAscii.toString
   if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
     some (.str (String.ofList (s.toList.drop 1).dropLast))
-  else if s.startsWith "#" || (wrappedColor s).isSome then
+  else if s.startsWith "#" || (wrappedColor s).isSome || spotSource s then
     parseModeledValue s
   else if s.startsWith "{" && s.endsWith "}" && s.length ≥ 2 then
     -- Nested blocks stay opaque; the declaration decides whether it takes one.

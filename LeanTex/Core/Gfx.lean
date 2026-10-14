@@ -263,7 +263,7 @@ public structure Stop where
 
 public instance : BEq Stop where
   beq a b := a.offset == b.offset && a.color.r == b.color.r && a.color.g == b.color.g &&
-    a.color.b == b.color.b && a.color.cmyk == b.color.cmyk
+    a.color.b == b.color.b && a.color.cmyk == b.color.cmyk && a.color.ink? == b.color.ink?
 
 /-- A pad-spread gradient interpolated in sRGB-encoded components, `xf` mapping its own frame into
 the node's. -/
@@ -847,6 +847,18 @@ end
   Box.joinOpt (hullOf (Mark.inkBox rasterUnit) fig.marks)
     (hullOf (fun (p : Affine × L) => (labelBox p.2).map (Box.image p.1)) fig.labels)
 
+/-- The stops of a gradient. -/
+@[expose] public def Gradient.stops : Gradient → Array Stop
+  | .linear _ _ stops _ => stops
+  | .radial _ _ _ _ stops _ => stops
+
+/-- The one ink a gradient shades: every stop the paper or a tint of that ink, one of them the
+ink; `none` for any other gradient. -/
+public def Gradient.singleInk? (g : Gradient) : Option Ir.Ink := do
+  let i ← g.stops.findSome? fun s => s.color.ink?.map (·.1)
+  guard (g.stops.all fun s => s.color.isPaper || (s.color.ink?.map (·.1)) == some i)
+  return i
+
 /-- A gradient recoloured stop by stop. -/
 @[expose] public def Gradient.recolor (f : Ir.Color → Ir.Color) : Gradient → Gradient
   | .linear p0 p1 stops xf => .linear p0 p1 (stops.map fun s => { s with color := f s.color }) xf
@@ -885,6 +897,28 @@ mutual
     (acc : Array (Node L)) : List (Node L) → Array (Node L)
   | [] => acc
   | n :: rest => Node.recolorList f fl (acc.push (Node.recolorOne f fl n)) rest
+
+end
+
+/-- A paint's gradient, after `acc`. -/
+@[expose] public def paintGradients (acc : Array Gradient) : Option Paint → Array Gradient
+  | some (.gradient g) => acc.push g
+  | some (.solid _) | none => acc
+
+mutual
+
+-- conserves: none — answers the gradients a node paints, a read the PDF and judges share.
+/-- The gradients a node paints at every depth, in paint order. -/
+@[expose] public def Node.gradientsOne {L : Type} (acc : Array Gradient) : Node L → Array Gradient
+  | .draw _ fill st => paintGradients (paintGradients acc (fill.map (·.paint))) (st.map (·.paint))
+  | .group _ _ _ kids => Node.gradientsList acc kids.toList
+  | .stamp _ _ fill st => paintGradients (paintGradients acc (fill.map (·.paint))) (st.map (·.paint))
+  | .use _ _ | .image _ _ | .label _ | .words _ => acc
+
+@[expose] public def Node.gradientsList {L : Type} (acc : Array Gradient) :
+    List (Node L) → Array Gradient
+  | [] => acc
+  | n :: rest => Node.gradientsList (Node.gradientsOne acc n) rest
 
 end
 

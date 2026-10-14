@@ -953,6 +953,14 @@
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display
   suggestion: an unnumbered \[ ... \] sets it beside the formula
+── W0440 (degraded) a mix of an ink with a colour other than the paper or a tint of the ink; it prints as a process colour, the ink's alternate standing in for it
+⚠ [W0440] - \textcolor
+  'ink!50!black' mixes the ink 'Probe Ink' with a colour other than the paper or its own tint; it prints as a process colour
+  suggestion: mix an ink only with the paper, as 'name!50'; a mix of two colours is a third
+── W0441 (degraded) an ink declared again with another alternate; a colorant names one ink, and its first alternate stands
+⚠ [W0441] - \definespotcolor
+  the ink 'Probe Ink' is declared again with another alternate; its first alternate stands
+  suggestion: a colorant names one ink: give each ink its own colorant, as \definespotcolor{name}{Other Ink}{c,m,y,k}
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 ⚠ [W0601]
   image file not found: 'figures/plot.png'; a placeholder box holds its place

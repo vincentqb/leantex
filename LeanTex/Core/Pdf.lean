@@ -473,17 +473,27 @@ private def ratObj (p q : Int) : PdfRead.Obj :=
 private def rgbObj (c : Ir.Color) : PdfRead.Obj :=
   .arr #[ratObj c.r.toNat 255, ratObj c.g.toNat 255, ratObj c.b.toNat 255]
 
-private def interpObj (c0 c1 : Ir.Color) : PdfRead.Obj :=
-  .dict #[("FunctionType", .int 2), ("Domain", .arr #[.int 0, .int 1]), ("C0", rgbObj c0),
-    ("C1", rgbObj c1), ("N", .int 1)]
+/-- An ink's `/Separation` space: its colorant, the DeviceCMYK alternate, and the tint transform
+from paper at tint 0 to the alternate at tint 1 (ISO 32000-2 §8.6.6.4, §7.10.3). -/
+public def inkSpaceObj (i : Ir.Ink) : PdfRead.Obj :=
+  let part (v : Rat) : PdfRead.Obj := ratObj v.num v.den
+  .arr #[.name "Separation", .name i.pdfName, .name "DeviceCMYK",
+    .dict #[("FunctionType", .int 2), ("Domain", .arr #[.int 0, .int 1]),
+      ("C0", .arr #[.int 0, .int 0, .int 0, .int 0]),
+      ("C1", .arr #[part i.c, part i.m, part i.y, part i.k]), ("N", .int 1)]]
 
-/-- A stop list as a PDF function over [0, 1], padded at both ends: one interpolation per segment
-between distinct offsets, stitched (§7.10.4) when there are several. -/
-public def stopsFunctionObj (stops : Array Gfx.Stop) : PdfRead.Obj :=
+private def interpObj (comp : Ir.Color → PdfRead.Obj) (c0 c1 : Ir.Color) : PdfRead.Obj :=
+  .dict #[("FunctionType", .int 2), ("Domain", .arr #[.int 0, .int 1]), ("C0", comp c0),
+    ("C1", comp c1), ("N", .int 1)]
+
+/-- A stop list as a PDF function over [0, 1], each colour spelled by `comp`, padded at both ends:
+one interpolation per segment between distinct offsets, stitched (§7.10.4) when there are several. -/
+public def stopsFunctionObj (stops : Array Gfx.Stop) (comp : Ir.Color → PdfRead.Obj) :
+    PdfRead.Obj :=
   let black : Ir.Color := { r := 0, g := 0, b := 0 }
   match stops.toList with
-  | [] => interpObj black black
-  | [s] => interpObj s.color s.color
+  | [] => interpObj comp black black
+  | [s] => interpObj comp s.color s.color
   | first :: _ =>
     let last := stops.back?.getD first
     let pts : List (Nat × Ir.Color) :=
@@ -492,25 +502,34 @@ public def stopsFunctionObj (stops : Array Gfx.Stop) : PdfRead.Obj :=
         (if last.offset.val < 65536 then [(65536, last.color)] else [])
     let segs := (pts.zip (pts.drop 1)).filter fun (a, b) => a.1 < b.1
     match segs with
-    | [] => interpObj first.color first.color
-    | [(a, b)] => interpObj a.2 b.2
+    | [] => interpObj comp first.color first.color
+    | [(a, b)] => interpObj comp a.2 b.2
     | _ =>
       .dict #[("FunctionType", .int 3), ("Domain", .arr #[.int 0, .int 1]),
-        ("Functions", .arr (segs.map fun (a, b) => interpObj a.2 b.2).toArray),
+        ("Functions", .arr (segs.map fun (a, b) => interpObj comp a.2 b.2).toArray),
         ("Bounds", .arr ((segs.drop 1).map fun (a, _) => ratObj a.1 65536).toArray),
         ("Encode", .arr (segs.flatMap fun _ => [PdfRead.Obj.int 0, .int 1]).toArray)]
 
-/-- A gradient as a shading dictionary in its own frame (§8.7.4.5.3–4),
-padded at both ends as SVG pads. -/
-public def shadingObj : Gfx.Gradient → PdfRead.Obj
-  | .linear p0 p1 stops _ =>
-    .dict #[("ShadingType", .int 2), ("ColorSpace", .name "DeviceRGB"),
+/-- A stop's tint of the one ink its gradient shades, the paper's zero. -/
+private def tintObj (c : Ir.Color) : PdfRead.Obj :=
+  let t := (c.ink?.map (·.2)).getD 0
+  .arr #[ratObj t.num t.den]
+
+/-- A gradient as a shading dictionary in its own frame (§8.7.4.5.3–4), padded at both ends as SVG
+pads: through one ink's tints in its Separation space, any other in DeviceRGB. -/
+public def shadingObj (g : Gfx.Gradient) : PdfRead.Obj :=
+  let (space, fn) := match g.singleInk? with
+    | some i => (inkSpaceObj i, stopsFunctionObj g.stops tintObj)
+    | none => (PdfRead.Obj.name "DeviceRGB", stopsFunctionObj g.stops rgbObj)
+  match g with
+  | .linear p0 p1 _ _ =>
+    .dict #[("ShadingType", .int 2), ("ColorSpace", space),
       ("Coords", .arr #[ptObj p0.1, ptObj p0.2, ptObj p1.1, ptObj p1.2]),
-      ("Function", stopsFunctionObj stops), ("Extend", .arr #[.bool true, .bool true])]
-  | .radial c0 r0 c1 r1 stops _ =>
-    .dict #[("ShadingType", .int 3), ("ColorSpace", .name "DeviceRGB"),
+      ("Function", fn), ("Extend", .arr #[.bool true, .bool true])]
+  | .radial c0 r0 c1 r1 _ _ =>
+    .dict #[("ShadingType", .int 3), ("ColorSpace", space),
       ("Coords", .arr #[ptObj c0.1, ptObj c0.2, ptObj r0, ptObj c1.1, ptObj c1.2, ptObj r1]),
-      ("Function", stopsFunctionObj stops), ("Extend", .arr #[.bool true, .bool true])]
+      ("Function", fn), ("Extend", .arr #[.bool true, .bool true])]
 
 /-- An exact matrix as a PDF array: the linear part as is, the translation
 in points. -/
@@ -578,9 +597,10 @@ private def resourceGroup (key : String) (es : Array (String × PdfRead.Obj)) :
 
 /-- The one resources dictionary every page and figure form names (ISO 32000-2 §7.8.3). -/
 public def resourcesDict (fonts : PdfRead.Obj)
-    (xobjects extg patterns shadings : Array (String × PdfRead.Obj)) : PdfRead.Obj :=
+    (xobjects extg patterns shadings spaces : Array (String × PdfRead.Obj)) : PdfRead.Obj :=
   .dict (#[("Font", fonts)] ++ resourceGroup "XObject" xobjects ++ resourceGroup "ExtGState" extg ++
-    resourceGroup "Pattern" patterns ++ resourceGroup "Shading" shadings)
+    resourceGroup "Pattern" patterns ++ resourceGroup "Shading" shadings ++
+    resourceGroup "ColorSpace" spaces)
 
 private theorem resourceGroup_find_none (key k : String) (es : Array (String × PdfRead.Obj))
     (h : key ≠ k) : (resourceGroup key es).find? (·.1 == k) = none := by
@@ -588,18 +608,68 @@ private theorem resourceGroup_find_none (key k : String) (es : Array (String × 
   split <;> simp [h]
 
 public theorem resourcesDict_untyped_exact (fonts : PdfRead.Obj)
-    (xobjects extg patterns shadings : Array (String × PdfRead.Obj)) :
-    (resourcesDict fonts xobjects extg patterns shadings).get? "Type" = none ∧
-      (resourcesDict fonts xobjects extg patterns shadings).get? "Subtype" = none := by
+    (xobjects extg patterns shadings spaces : Array (String × PdfRead.Obj)) :
+    (resourcesDict fonts xobjects extg patterns shadings spaces).get? "Type" = none ∧
+      (resourcesDict fonts xobjects extg patterns shadings spaces).get? "Subtype" = none := by
   simp [resourcesDict, PdfRead.Obj.get?, Array.find?_append,
     resourceGroup_find_none _ _ _ (by decide : "XObject" ≠ "Type"),
     resourceGroup_find_none _ _ _ (by decide : "ExtGState" ≠ "Type"),
     resourceGroup_find_none _ _ _ (by decide : "Pattern" ≠ "Type"),
     resourceGroup_find_none _ _ _ (by decide : "Shading" ≠ "Type"),
+    resourceGroup_find_none _ _ _ (by decide : "ColorSpace" ≠ "Type"),
     resourceGroup_find_none _ _ _ (by decide : "XObject" ≠ "Subtype"),
     resourceGroup_find_none _ _ _ (by decide : "ExtGState" ≠ "Subtype"),
     resourceGroup_find_none _ _ _ (by decide : "Pattern" ≠ "Subtype"),
-    resourceGroup_find_none _ _ _ (by decide : "Shading" ≠ "Subtype")]
+    resourceGroup_find_none _ _ _ (by decide : "Shading" ≠ "Subtype"),
+    resourceGroup_find_none _ _ _ (by decide : "ColorSpace" ≠ "Subtype")]
+
+private def pushInk (acc : Array Ir.Ink) (c : Ir.Color) : Array Ir.Ink :=
+  match c.ink? with
+  | some (i, _) => if acc.any (·.name == i.name) then acc else acc.push i
+  | none => acc
+
+private def paintInks (acc : Array Ir.Ink) : Option PdfPaint → Array Ir.Ink
+  | some (.solid c) => pushInk acc c
+  | some (.pattern _ _) | none => acc
+
+mutual
+
+private def TextOp.inks : TextOp → Array Ir.Ink → Array Ir.Ink
+  | .color c, acc => pushInk acc c
+  | .marked _ body, acc => TextOp.inksList body.toList acc
+  | .scale _, acc | .move _ _, acc | .font _ _, acc | .show _, acc => acc
+
+private def TextOp.inksList : List TextOp → Array Ir.Ink → Array Ir.Ink
+  | [], acc => acc
+  | o :: rest, acc => TextOp.inksList rest (TextOp.inks o acc)
+
+end
+
+mutual
+
+private def ContentOp.inks : ContentOp → Array Ir.Ink → Array Ir.Ink
+  | .fill c _ _ _ _, acc => pushInk acc c
+  | .paint fl st _ _, acc => paintInks (paintInks acc (fl.map (·.paint))) (st.map (·.paint))
+  | .text ops, acc => TextOp.inksList ops.toList acc
+  | .marked _ body, acc | .group _ _ _ body, acc => ContentOp.inksList body.toList acc
+  | .xobject _ _ (.stamp fp sp _) body, acc =>
+    ContentOp.inksList body.toList (paintInks (paintInks acc fp) (sp.map (·.paint)))
+  | .xobject _ _ .symbol body, acc | .xobject _ _ .group body, acc
+  | .xobject _ _ (.raster _) body, acc => ContentOp.inksList body.toList acc
+  | .image .., acc | .imageMissing .., acc | .shade .., acc | .outline .., acc => acc
+
+private def ContentOp.inksList : List ContentOp → Array Ir.Ink → Array Ir.Ink
+  | [], acc => acc
+  | o :: rest, acc => ContentOp.inksList rest (ContentOp.inks o acc)
+
+end
+
+/-- Each ink the pages and the figure forms paint with, once by colorant, in first-paint order. -/
+public def docInks (ops : Array (Array ContentOp)) (figs : Array FigRes) : Array Ir.Ink :=
+  let pages := ops.foldl (fun acc o => ContentOp.inksList o.toList acc) #[]
+  figs.foldl (fun acc r => match r with
+    | .form _ body => ContentOp.inksList body.toList acc
+    | .extG .. | .pattern _ | .shading _ => acc) pages
 
 public theorem figDictObj_untyped_exact (r : FigRes) :
     ((figDictObj r).getD .null).get? "Type" ≠ some (.name "Font") ∧
@@ -1974,6 +2044,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let resources : PdfRead.Obj := resourcesDict fontResources
     (imgEntries ++ figEntries FigRes.isForm) (figEntries fun r => r.namePrefix == "GS")
     (figEntries fun r => r.namePrefix == "P") (figEntries fun r => r.namePrefix == "Sh")
+    ((docInks ops figs).map fun i => (i.resKey, inkSpaceObj i))
   let figDictObjs : List (Nat × PdfRead.Obj) := figDicts.toList.zipIdx.map fun (r, j) =>
     (t.figDictId j, (figDictObj (nameRes figs r)).getD .null)
   let pageDict (i : Nat) : PdfRead.Obj :=

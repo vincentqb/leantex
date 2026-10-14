@@ -325,7 +325,12 @@ body, the progress bar) reads the role it is bound to as the document leaves
 it.
 Colours may also be written as `oklch(L C H)` or `oklab(L a b)`, as CSS
 Color 4 spells them; one outside sRGB loses chroma at its own lightness and
-hue.
+hue. A spot colour, an ink a press prints from its own plate, is
+`spot("Ink Name", cmyk(c, m, y, k))`, or colorspace's
+`\definespotcolor{name}{Ink Name}{c,m,y,k}`: the PDF paints it in a
+Separation named by the ink, which a printer reads, over its CMYK
+alternate, which the web page previews. `name!30` is a 30% tint; a mix of
+an ink with anything but the paper prints as a process colour, named.
 
 To use the same palette under lualatex, export it as xcolor and beamer
 declarations:

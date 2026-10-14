@@ -1,0 +1,25 @@
+# source: colorspace manual v1.3 (Javier Bezos) — \definespotcolor with its optional
+# alternate model, \definecolorspace (mixed and iccbased), \pagecolorspace and
+# \resetpagecolorspace, \overprintstate and \textoverprint, and the package options
+# (illuminant=…, overprint, opm=0, opm=1, knockout). The alternate converts to CMYK
+# as xcolor's cmyk:<model> does; every page lists each ink it paints, so the page
+# colour-space commands are inert; opm=1 is the default and an illuminant serves only
+# the refused Lab alternate.
+pre impl \definespotcolor{c}{Probe Ink}{0,.5,1,0}
+pre impl \definespotcolor{c}{Probe Ink}[cmyk]{0,.5,1,0}
+pre impl \definespotcolor{c}{Probe Ink}[rgb]{1,.5,0}
+pre impl \definespotcolor{c}{Probe Ink}[gray]{.4}
+pre impl \definespotcolor{c}{Probe Ink}[HTML]{FF8000}
+pre refuse:W0102 \definespotcolor{c}{Probe Ink}[alt=lab]{50,20,30}
+pre refuse:W0104 \definecolorspace{m}{mixed}{cyan}
+pre refuse:W0104 \definecolorspace*{d}{iccbased}{probe.icc}
+pre inert:native-resources \pagecolorspace{}
+pre inert:native-resources \resetpagecolorspace
+body refuse:W0104 \overprintstate{1}
+body refuse:W0104 \textoverprint{x}
+body refuse:W0104 \textoverprint[1]{x}
+pre refuse:W0101 \usepackage[overprint]{colorspace}
+pre refuse:W0101 \usepackage[knockout]{colorspace}
+pre refuse:W0101 \usepackage[opm=0]{colorspace}
+pre inert:default \usepackage[opm=1]{colorspace}
+pre inert:lab-only \usepackage[illuminant=d65]{colorspace}

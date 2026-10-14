@@ -3267,15 +3267,15 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((outOf "marks = cut").pages.all fun p => p.fills.isEmpty)
   t "no marks ship undeclared"
     ((outOf "bleed = 3mm").pages.all fun p => p.fills.isEmpty)
-  t "registration ink follows the document's colour model"
-    (Ir.Color.registration true == Ir.Color.ofCmyk 1000 1000 1000 1000 &&
+  t "registration ink follows the document's colour model: the All colorant in print"
+    (Ir.Color.registration true == Ir.Color.ofInk Ir.Ink.all 1 &&
      Ir.Color.registration false == Ir.Color.black)
   t "an RGB document's marks paint plain black"
     ((outOf "bleed = 3mm, marks = cut").pages.all fun p =>
       p.fills.all fun f => f.color == Ir.Color.black)
-  t "a print document's marks paint in DeviceCMYK registration"
+  t "a print document's marks paint every plate, in the All separation"
     ((outOf "bleed = 3mm, marks = cut" "\\palette{ spot = cmyk(1, 0, 0, 0) }").pages.all
-      fun p => p.fills.all fun f => f.color.cmyk == some (1000, 1000, 1000, 1000))
+      fun p => p.fills.all fun f => (f.color.ink?.map (·.1.name)) == some "All")
   let grounded := src "bleed = 3mm" "\\palette{ bg = #F4EDE0 }"
   let g := Layout.Geom.ofPage (elabStr grounded).1.page
   t "a page ground covers the bleed strip, not only the trim"

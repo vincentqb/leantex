@@ -144,6 +144,8 @@ public inductive Space where
   | lossy (key : String) (n : Nat)
   /-- A space whose defining stream decodes past the reader's budget. -/
   | overBudget (key : String) (n : Nat)
+  /-- An ink's Separation over DeviceCMYK whose tint transform runs from paper to its alternate. -/
+  | separation (ink : Ir.Ink)
   deriving Inhabited
 
 public def Space.comps : Space → Nat
@@ -154,6 +156,7 @@ public def Space.comps : Space → Nat
   | .pattern _ => 0
   | .lossy _ n => n
   | .overBudget _ n => n
+  | .separation _ => 1
 
 /-- A component in [0, 1] as a byte, rounded to the nearest. -/
 public def byteOf (v : Rat) : UInt8 :=
@@ -227,6 +230,7 @@ public def deviceColor (sp : Space) (cs : Array Obj) : Ir.Color :=
   | .pattern _ => { r := 0, g := 0, b := 0 }
   | .lossy _ _ => { r := 128, g := 128, b := 128 }
   | .overBudget _ _ => { r := 128, g := 128, b := 128 }
+  | .separation i => Ir.Color.ofInk i (v 0)
 
 /-- An indexed space's palette as screen colours (§8.6.6.3), a CMYK base previewed. -/
 public def palette (base : Space) (hival : Nat) (lookup : ByteArray) : Array (UInt8 × UInt8 × UInt8) :=
@@ -260,6 +264,7 @@ public def Space.initial (sp : Space) : Array Obj :=
   | .pattern _ => #[]
   | .lossy _ n => Array.replicate n (.int 1)
   | .overBudget _ n => Array.replicate n (.int 1)
+  | .separation _ => #[.int 1]
 
 /-- What a fill or stroke paints with: a colour, or a pattern by its
 resource name, with the colour an uncoloured pattern paints in. -/
@@ -480,6 +485,24 @@ private def resolveSpace (cx : Ctx) (o : Obj) : Obj :=
     else ((resource cx "ColorSpace" n).bind fun r => (cx.doc.deref r).toOption).getD o
   else o
 
+/-- The ink a `/Separation` array names, when its alternate is DeviceCMYK and its tint transform
+the Type 2 function from paper at tint 0 to the alternate at tint 1 (§8.6.6.4, §7.10.3), as this
+engine and colorspace write one; the colorant read back from its name's UTF-8 bytes. -/
+private def separationInk (cx : Ctx) (xs : Array Obj) : Option Ir.Ink := do
+  let .name colorant ← xs[1]? | none
+  let .name "DeviceCMYK" ← xs[2]? | none
+  let fn ← (xs[3]?).bind fun x => (cx.doc.deref x).toOption
+  guard (((fn.get? "FunctionType").bind Obj.int?) == some 2 && ((fn.get? "N").bind Obj.int?) == some 1)
+  let nums (k : String) : Option (Array Rat) := match (fn.get? k).bind fun x => (cx.doc.deref x).toOption with
+    | some (.arr ys) => ys.mapM fun y => (cx.doc.deref y).toOption.bind ratOf
+    | _ => none
+  let c0 := (nums "C0").getD #[0, 0, 0, 0]
+  let c1 ← nums "C1"
+  guard (c0.size == 4 && c0.all (· == 0))
+  let [c, m, y, k] := c1.toList | none
+  let name ← String.fromUTF8? ⟨(colorant.toList.map fun ch => ch.toNat.toUInt8).toArray⟩
+  some { name, c, m, y, k }
+
 private def flatSpace (cx : Ctx) (o : Obj) : Space :=
   match o with
   | .name "DeviceGray" | .name "G" | .name "CalGray" => .gray
@@ -495,7 +518,7 @@ private def flatSpace (cx : Ctx) (o : Obj) : Space :=
       if n == 1 then .gray else if n == 4 then .cmyk else .rgb
     | some (.name "CalRGB") => .rgb
     | some (.name "CalGray") => .gray
-    | some (.name "Separation") => .lossy "separation" 1
+    | some (.name "Separation") => (separationInk cx xs).elim (.lossy "separation" 1) .separation
     | some (.name "DeviceN") =>
       let n := match (xs[1]?).bind fun x => (cx.doc.deref x).toOption with
         | some (.arr ns) => ns.size

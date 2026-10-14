@@ -82,7 +82,6 @@ example (doc : Ir.Doc) (diags : Array Diag) :
 
 example : True := by
   fail_if_success have := Ir.Color.cmykPreviewByte
-  fail_if_success have := Ir.Palette.resolve_go_model_exact
   fail_if_success have := Ir.fillOne
   fail_if_success have := Ir.fillList
   fail_if_success have := Ir.dumpSourcedGlue -- ir tier: helper privacy

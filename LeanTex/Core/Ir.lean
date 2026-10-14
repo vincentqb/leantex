@@ -16,6 +16,7 @@ public import LeanTex.Core.Oklab
 public import LeanTex.Core.SeedPalette
 public import LeanTex.Core.PaletteData
 import LeanTex.Core.Loop
+import LeanTex.Core.PdfLex
 import LeanTex.Core.ContrastSolve
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
@@ -225,9 +226,9 @@ public inductive Color.Model where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 public def Color.model (c : Color) : Color.Model :=
-  match c.cmyk with
-  | some _ => .cmyk
-  | none => .srgb
+  match c.cmyk, c.ink? with
+  | some _, _ | none, some _ => .cmyk
+  | none, none => .srgb
 
 /-- Thousandths as a PDF decimal: 830 ↦ "0.83". -/
 public def Color.pdfMilli (v : Nat) : String :=
@@ -271,6 +272,24 @@ public def Color.ofCmykSource (c m y k : Decl.ColorComponent) : Color :=
     pdfModel := some (.cmyk c.pdfUnit m.pdfUnit y.pdfUnit k.pdfUnit),
     cmyk := some (c.milli, m.milli, y.milli, k.milli) }
 
+/-- An exact fraction as a PDF decimal, at most nine places. -/
+public def Color.pdfRat (v : Rat) : String := Dim.ratString v.num v.den
+
+/-- An ink's colorant name as a PDF name's characters: one per byte of its UTF-8 encoding, which
+the name escape writes as those bytes (ISO 32000-2 §7.3.5). -/
+@[expose] public def Ink.pdfName (i : Ink) : String :=
+  String.ofList (i.name.toUTF8.toList.map fun b => Char.ofNat b.toNat)
+
+/-- The `/ColorSpace` resource key an ink's separation is named by on every page. -/
+@[expose] public def Ink.resKey (i : Ink) : String := "Ink." ++ i.pdfName
+
+/-- The `All` colorant at full tint on every plate (§8.6.6.4): the colour of printer's marks. -/
+@[expose] public def Ink.all : Ink := { name := "All", c := 1, m := 1, y := 1, k := 1 }
+
+/-- The xcolor name a boundary standalone gives an ink: its colorant name's bytes in hex. -/
+public def Ink.xcolorName (i : Ink) : String :=
+  i.name.toUTF8.toList.foldl (fun s b => s ++ Hex.byte false b) "ink@"
+
 /-- Components in 0–1 at three decimals, finer than 8-bit input. -/
 @[expose] public def Color.pdfComponents (c : Color) : String :=
   pdfMilli (milli c.r) ++ " " ++ pdfMilli (milli c.g) ++ " " ++ pdfMilli (milli c.b)
@@ -281,6 +300,7 @@ public def Color.pdfFill (c : Color) : String :=
   | some (.rgb r g b) => s!"{r} {g} {b} rg"
   | some (.gray v) => s!"{v} g"
   | some (.cmyk cy m y k) => s!"{cy} {m} {y} {k} k"
+  | some (.separation i t) => s!"/{PdfLex.escapeName i.resKey} cs {pdfRat t} scn"
   | none => match c.cmyk with
     | some (cy, m, y, k) =>
       s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} k"
@@ -292,6 +312,7 @@ public def Color.pdfStroke (c : Color) : String :=
   | some (.rgb r g b) => s!"{r} {g} {b} RG"
   | some (.gray v) => s!"{v} G"
   | some (.cmyk cy m y k) => s!"{cy} {m} {y} {k} K"
+  | some (.separation i t) => s!"/{PdfLex.escapeName i.resKey} CS {pdfRat t} SCN"
   | none => match c.cmyk with
     | some (cy, m, y, k) =>
       s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} K"
@@ -385,7 +406,7 @@ public theorem Color.milli_lt (a : UInt8) : milli a < 1001 := by
 /-- The colour printer's marks paint in: the `All` colorant, DeviceCMYK
 1,1,1,1, when the document declares print colours, else black. -/
 public def Color.registration (printModel : Bool) : Color :=
-  if printModel then Color.ofCmyk 1000 1000 1000 1000 else Color.black
+  if printModel then Color.ofInk Ink.all 1 else Color.black
 
 /-- Replace-on-redeclare: a later declaration of a key overrides, keeping one entry per key. -/
 public abbrev redeclare {κ α : Type} [BEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
@@ -1327,20 +1348,90 @@ private def Color.mixCmyk (a : Nat × Nat × Nat × Nat) (pct : Nat) (b : Color)
   Color.ofCmyk (mixStep a.1 q.1 pct) (mixStep a.2.1 q.2.1 pct)
     (mixStep a.2.2.1 q.2.2.1 pct) (mixStep a.2.2.2 q.2.2.2 pct)
 
-/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in `a`'s model. -/
+/-- An ink's tint mixed with `b`: over the paper or another tint of the ink it stays a tint of the
+ink, over anything else it is the process mix of its alternate. -/
+private def Color.mixInk (a : Color) (i : Ink) (t : Rat) (pct : Nat) (b : Color) : Color :=
+  let p : Rat := (pct : Rat) / 100
+  if 100 ≤ pct then a
+  else if b.isPaper then Color.ofInk i (t * p)
+  else match b.ink? with
+    | some (j, u) => if i == j then Color.ofInk i (t * p + u * (1 - p))
+      else mixCmyk (a.cmyk.getD (0, 0, 0, 0)) pct b
+    | none => mixCmyk (a.cmyk.getD (0, 0, 0, 0)) pct b
+
+/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in `a`'s model; the paper
+over an ink is a tint of the ink, as the ink over the paper is. -/
 public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
-  match a.cmyk with
-  | some q => mixCmyk q pct b
-  | none => mixSrgb a pct b
+  match a.ink?, b.ink? with
+  | some (i, t), _ => a.mixInk i t pct b
+  | none, some (j, u) =>
+    if a.isPaper then Color.ofInk j (u * (1 - (pct : Rat) / 100))
+    else match a.cmyk with
+      | some q => mixCmyk q pct b
+      | none => mixSrgb a pct b
+  | none, none => match a.cmyk with
+    | some q => mixCmyk q pct b
+    | none => mixSrgb a pct b
+
+private theorem Color.ofInk_model (i : Ink) (t : Rat) : (Color.ofInk i t).model = .cmyk := rfl
+
+private theorem Color.mixCmyk_model (q : Nat × Nat × Nat × Nat) (pct : Nat) (b : Color) :
+    (mixCmyk q pct b).model = .cmyk := rfl
 
 public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
-    (a.mix pct b).model = a.model := by
-  unfold Color.mix Color.model
-  cases a.cmyk <;> rfl
+    (a.mix pct b).model =
+      if a.ink?.isNone && a.isPaper && b.ink?.isSome then .cmyk else a.model := by
+  unfold Color.mix
+  cases hi : a.ink? with
+  | some it =>
+    obtain ⟨i, t⟩ := it
+    have ha : a.model = .cmyk := by
+      unfold Color.model; rw [hi]; cases a.cmyk <;> rfl
+    simp only [Option.isNone_some, Bool.false_and, Bool.false_eq_true, ↓reduceIte, ha]
+    simp only [Color.mixInk]
+    split
+    · exact ha
+    · split
+      · exact Color.ofInk_model _ _
+      · split
+        · split
+          · exact Color.ofInk_model _ _
+          · exact Color.mixCmyk_model _ _ _
+        · exact Color.mixCmyk_model _ _ _
+  | none =>
+    cases hb : b.ink? with
+    | some ju =>
+      obtain ⟨j, u⟩ := ju
+      simp only [Option.isNone_none, Option.isSome_some, Bool.true_and, Bool.and_true]
+      by_cases hp : a.isPaper = true
+      · simp only [hp, ↓reduceIte]
+        exact Color.ofInk_model _ _
+      · simp only [hp, Bool.false_eq_true, ↓reduceIte]
+        cases hc : a.cmyk with
+        | some q =>
+          have ha : a.model = .cmyk := by unfold Color.model; rw [hc]
+          rw [ha]
+          exact Color.mixCmyk_model _ _ _
+        | none =>
+          have ha : a.model = .srgb := by unfold Color.model; rw [hc, hi]
+          rw [ha]
+          rfl
+    | none =>
+      simp only [Option.isNone_none, Option.isSome_none, Bool.and_false, Bool.false_eq_true,
+        ↓reduceIte]
+      cases hc : a.cmyk with
+      | some q =>
+        have ha : a.model = .cmyk := by unfold Color.model; rw [hc]
+        rw [ha]
+        exact Color.mixCmyk_model _ _ _
+      | none =>
+        have ha : a.model = .srgb := by unfold Color.model; rw [hc, hi]
+        rw [ha]
+        rfl
 
-private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none) :
-    a.mix pct b = a.mixSrgb pct b := by
-  simp [Color.mix, h]
+private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none)
+    (hi : a.ink? = none) (hb : b.ink? = none) : a.mix pct b = a.mixSrgb pct b := by
+  simp [Color.mix, h, hi, hb]
 
 public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
@@ -1412,6 +1503,34 @@ public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
     | some c => go c rest
     | none => none
 
+/-- The first ink an expression names that its value does not paint with. -/
+public def Palette.lostInk? (p : Palette) (expr : String) : Option Ink := do
+  let c ← p.resolve expr
+  (bangParts [] expr.toList).findSome? fun a =>
+    if a.toNat?.isSome then none
+    else (p.atom a).bind fun x => x.ink?.bind fun (i, _) =>
+      if (c.ink?.map (·.1)) == some i then none else some i
+
+/-- Each colour expression a source spells that mixes an ink away, with that ink, once: the
+maximal runs of name characters and `!` that the palette resolves losing an ink. -/
+public def Palette.lostInkExprs (p : Palette) (src : String) : Array (String × Ink) :=
+  let exprChar (c : Char) : Bool := c.isAlphanum || c == '!' || c == '.' || c == '-' || c == '_'
+  let flush (cur : String) (acc : Array (String × Ink)) : Array (String × Ink) :=
+    if !cur.contains '!' || acc.any (·.1 == cur) then acc
+    else match p.lostInk? cur with
+      | some i => acc.push (cur, i)
+      | none => acc
+  let (cur, acc) := src.toList.foldl (init := ("", #[])) fun (cur, acc) c =>
+    if exprChar c then (cur.push c, acc) else ("", flush cur acc)
+  flush cur acc
+
+/-- An exact rational of a decimal component. -/
+private def ratOf (c : Decl.ColorComponent) : Rat := (c.num : Rat) / (max 1 c.scale : Nat)
+
+/-- The ink a `spot(...)` source declares, its alternate as written. -/
+public def Ink.ofSource (name : String) (c m y k : Decl.ColorComponent) : Ink :=
+  { name, c := ratOf c, m := ratOf m, y := ratOf y, k := ratOf k }
+
 /-- Resolve one typed colour specification to the `Color` both backends consume. -/
 public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .named expr => p.resolve expr
@@ -1420,6 +1539,7 @@ public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .rgbUnit r g b => some (Color.ofRgbUnit r g b)
   | .gray v => some (Color.ofGray v)
   | .cmyk c m y k => some (Color.ofCmykSource c m y k)
+  | .spot n c m y k => some (Color.ofInk (Ink.ofSource n c m y k) 1)
   | .oklab L a b => (Decl.ColorSpec.oklab L a b).okLab?.map Oklab.ofLab
   | .oklch L C H => (Decl.ColorSpec.oklch L C H).okLab?.map Oklab.ofLab
 
@@ -1436,44 +1556,6 @@ public theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
     p.resolveSpec (.gray x) = some (Color.ofGray x) ∧
     p.resolveSpec (.cmyk c m y k) = some (Color.ofCmykSource c m y k) := by
   exact ⟨rfl, rfl, rfl, rfl, rfl⟩
-
-private theorem Palette.resolve_go_model_exact (p : Palette) :
-    ∀ (parts : List String) (c c' : Color), Palette.resolve.go p c parts = some c' →
-      c'.model = c.model
-  | [], c, c', h => by
-    simp only [Palette.resolve.go, Option.some.injEq] at h
-    rw [h]
-  | [pctS], c, c', h => by
-    simp only [Palette.resolve.go] at h
-    split at h
-    · exact absurd h (by simp)
-    · split at h
-      · exact absurd h (by simp)
-      · simp only [Option.some.injEq] at h
-        rw [← h, Color.mix_model_exact]
-  | pctS :: name :: rest', c, c', h => by
-    simp only [Palette.resolve.go] at h
-    split at h
-    · exact absurd h (by simp)
-    · split at h
-      · exact absurd h (by simp)
-      · split at h
-        · have := Palette.resolve_go_model_exact p rest' _ _ h
-          rw [this, Color.mix_model_exact]
-        · exact absurd h (by simp)
-
-private theorem Palette.resolve_model_exact (p : Palette) (expr : String) (c : Color)
-    (h : p.resolve expr = some c) :
-    ∃ first rest a, bangParts [] expr.toList = first :: rest ∧
-      p.atom first = some a ∧ c.model = a.model := by
-  unfold Palette.resolve at h
-  split at h
-  · exact absurd h (by simp)
-  · rename_i first rest hparts
-    split at h
-    · rename_i a ha
-      exact ⟨first, rest, a, hparts, ha, Palette.resolve_go_model_exact p rest a c h⟩
-    · exact absurd h (by simp)
 
 /-- Font families a document asks for, as declared by `\fonts`. -/
 public structure FontSpec where
@@ -3108,6 +3190,12 @@ public structure Picture where
   /-- The alternative the author declared on the picture (`alt={...}` or `artifact`). -/
   alt : Alt := .undeclared
   deriving Repr, BEq, Inhabited
+
+/-- The gradients a picture's shapes paint, in paint order. -/
+@[expose] public def Picture.gradients (p : Picture) : Array Gfx.Gradient :=
+  p.shapes.foldl (init := #[]) fun acc sh => match sh with
+    | .ink n => Gfx.Node.gradientsOne acc n
+    | .label .. => acc
 
 @[expose] public def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
   { p with shapes := p.shapes.map (·.recolor f) }
@@ -13584,6 +13672,9 @@ public def colorDeclLine : String × Color → String
     | some (.rgb r g b) => s!"\\definecolor\{{n}}\{rgb}\{{r},{g},{b}}\n"
     | some (.gray v) => s!"\\definecolor\{{n}}\{gray}\{{v}}\n"
     | some (.cmyk cy m y k) => s!"\\definecolor\{{n}}\{cmyk}\{{cy},{m},{y},{k}}\n"
+    | some (.separation i t) =>
+      let tint := if t == 1 then "" else s!"!{Color.pdfRat (t * 100)}"
+      s!"\\colorlet\{{n}}\{{i.xcolorName}{tint}}\n"
     | none => match c.cmyk with
       | some (cy, m, y, k) =>
         s!"\\definecolor\{{n}}\{cmyk}\{{cmykPart cy},{cmykPart m},{cmykPart y},{cmykPart k}}\n"
@@ -13649,12 +13740,22 @@ per line. -/
 public def macroDeclLines (macros : Array (String × String)) : String :=
   macros.foldl (fun s p => s ++ p.2 ++ "\n") ""
 
+/-- Each distinct ink the colours paint with, declared once as colorspace declares it. -/
+public def inkDeclLines (colors : Array (String × Color)) : String :=
+  let inks := colors.foldl (init := (#[] : Array Ink)) fun acc (_, c) => match c.ink? with
+    | some (i, _) => if acc.any (·.name == i.name) then acc else acc.push i
+    | none => acc
+  if inks.isEmpty then "" else
+    inks.foldl (init := "\\usepackage{colorspace}\n") fun s i =>
+      s ++ s!"\\definespotcolor\{{i.xcolorName}}\{{i.name}}\
+\{{Color.pdfRat i.c},{Color.pdfRat i.m},{Color.pdfRat i.y},{Color.pdfRat i.k}}\n"
+
 /-- Wrap one picture body for the boundary as a `standalone` document carrying
 the preamble, font roles, palette roles and macros it needs. -/
 public def wrapStandalone (head preamble fonts : String) (colors : Array (String × Color))
     (shims : String) (macros : Array (String × String)) (switch : Option String)
     (src : PicSrc) : String :=
-  head ++ preamble ++ fonts ++
+  head ++ preamble ++ fonts ++ inkDeclLines colors ++
     colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ shims ++ macroDeclLines macros ++
     src.kind.docOpen switch ++ src.body ++ src.kind.docClose
 
@@ -13679,6 +13780,7 @@ public theorem wrapStandalone_picture_exact (preamble fonts : String)
     wrapStandalone "\\documentclass{standalone}\n\\usepackage{tikz}\n" preamble fonts colors ""
         macros none { kind := .picture, body } =
       "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
+        inkDeclLines colors ++
         colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ "" ++ macroDeclLines macros ++
         "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
         "\\end{tikzpicture}\n\\end{document}\n" := by
