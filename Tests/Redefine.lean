@@ -248,6 +248,70 @@ def globalCaptionSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
   check ref "a document's caption skips are owed the kernel's order (parked)"
     ((declared == objectBound) == globalCaptionSkipsOwed)
 
+/-- An environment definer in the body ships what `{}` in its place ships, an absent optional
+argument takes its definition's default, and a definition ends with its group, as lualatex sets
+each. -/
+def environScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String := dvDoc ("\\usepackage{environ}\n" ++ pre) body
+  let sets (src line : String) : Bool := hasStr (pageTextOf fonts src) line
+  let shipped (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp × String) × String :=
+    let (_, _, _, html) := sourceArtifacts fonts src
+    (shippedLines fonts src, html)
+  let para (definer : String → String) : String :=
+    s!"Alpha words.\n{definer "placeholder"}\nBravo words.\n\n" ++
+      s!"Charlie \\textbf\{delta {definer "placeholderb"} echo} foxtrot."
+  -- A definer testing for a trailing optional argument reads past the spaces after it.
+  let eaten := "Alpha words.\n{}Bravo words.\n\nCharlie \\textbf{delta {}echo} foxtrot."
+  let definers : List ((String → String) × Bool) := [
+    (fun n => s!"\\NewEnviron\{{n}}[2][Lead]\{#1 \\BODY\{} #2}", true),
+    (fun n => s!"\\RenewEnviron\{{n}}\{Other}[ Tail]", false),
+    (fun n => s!"\\newenvironment\{{n}}[1][Lead]\{(#1}\{)}", false),
+    (fun n => s!"\\renewenvironment*\{{n}}\{(}\{)}", false),
+    (fun n => s!"\\defineenv\{{n}}(a1: content) \{(} \{)}", false),
+    (fun n => s!"\\newtheorem\{{n}}\{Probe}", true),
+    (fun n => s!"\\newtheorem\{{n}}\{Probe}[section]", false),
+    (fun n => s!"\\newtheorem*\{{n}}\{Probe}", false)]
+  for (definer, eats) in definers do
+    let src := doc "\\usepackage{amsthm}\n" (para definer)
+    let ds := dvE src
+    t s!"a body definition ships the page without it: {definer "placeholder"}"
+      (shipped src == shipped (doc "\\usepackage{amsthm}\n" (if eats then eaten
+        else para fun _ => "{}")))
+    t s!"a body definition is one warning, no error: {definer "placeholder"}"
+      ((ds.filter (·.severity != .note)).all (·.code == "W0340") &&
+        ds.any (fun d => d.code == "W0340" && !d.demoted) && ds.all (·.severity != .error))
+  let inline := doc "" "Charlie \\textbf{delta \\newcommand{\\probecmd}{Probe words} echo} foxtrot."
+  t "a definition inside inline content sets nothing of itself"
+    (shipped inline == shipped (doc "" "Charlie \\textbf{delta {} echo} foxtrot.") &&
+      (dvE inline).any (·.code == "E0312"))
+  let defaults := doc ("\\NewEnviron{probeenv}[2][Edflt]{[#1/#2/\\BODY]}\n" ++
+      "\\newenvironment{probeold}[2][Odflt]{(#1/#2)}{}\n" ++
+      "\\NewEnviron{probehide}[1][Hdflt]{(#1)}\n" ++
+      "\\newenvironment{proberedef}[2][Rdflt]{(#1/#2)}{}\n" ++
+      "\\renewenvironment{proberedef}[2]{(#1/#2)}{}\n")
+    ("A \\begin{probeenv}{q}Inner\\end{probeenv} B\n\n" ++
+      "C \\begin{probeenv}[p]{q}Inner\\end{probeenv} D\n\n" ++
+      "E \\begin{probeold}{q}Inner\\end{probeold} F\n\n" ++
+      "G \\begin{probeold}[p]{q}Inner\\end{probeold} H\n\n" ++
+      "I \\begin{probehide}Hidden\\end{probehide} J\n\n" ++
+      "K \\begin{probehide}[g]Hidden\\end{probehide} L\n\n" ++
+      "M \\begin{proberedef}{q}{r}Inner\\end{proberedef} N\n\n" ++
+      "O \\begin{probeold}\n[s]{q}Inner\\end{probeold} P")
+  t "an absent optional argument takes its definition's default"
+    (sets defaults "A [Edflt/q/Inner]B" && sets defaults "E (Odflt/q)Inner F" &&
+      sets defaults "I (Hdflt)J")
+  t "a given optional argument stands in place of the default"
+    (sets defaults "C [p/q/Inner]D" && sets defaults "G (p/q)Inner H" && sets defaults "K (g)L")
+  t "a redefinition without a default leaves none" (sets defaults "M (q/r)Inner N")
+  t "an optional argument on the line after the begin is the argument"
+    (sets defaults "O (s/q)Inner P")
+  let grouped := doc ("\\NewEnviron{placeholder}{[\\BODY]}\n{\\RenewEnviron{placeholder}{}}\n" ++
+      "\\newenvironment{probeold}[1]{(#1)}{}\n{\\renewenvironment{probeold}[1][Gdflt]{(#1)}{}}\n")
+    ("Alpha \\begin{placeholder}Inner words\\end{placeholder} omega.\n\n" ++
+      "Beta \\begin{probeold}{q}Inner\\end{probeold} gamma.")
+  t "an environment definition inside a group ends with the group"
+    (sets grouped "Alpha [Inner words]omega." && sets grouped "Beta (q)Inner gamma.")
 
 /-- environ's `\NewEnviron` defines the environment it names, as the kernel spelling with the body
 at `\BODY`. -/

@@ -542,6 +542,8 @@ private structure St where
   /-- environ's environments whose code never places
   `\BODY`, with their argument signatures. -/
   discardEnvs : Array (String × String) := #[]
+  /-- The defaults of the environments whose first argument is optional. -/
+  envDefaults : Array (String × Array Raw) := #[]
   /-- The first of paracol's two column shares, in per mille. -/
   paracolRatio : Nat := 500
   /-- Inside a paracol flow, whose close splits its switching commands. -/
@@ -813,18 +815,20 @@ private def recordInputenc (options : String) : M Unit := do
 private theorem write_eq (f : St → St) :
     write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
 
-/-- Restores beamer's font and template definitions at a
-group or environment close. -/
-private def closeBeamerScope (saved : St) (result : α × St) : α × St :=
+/-- Restores the definitions a group or environment scopes at its close: beamer's fonts and
+templates, and the environments' discarded bodies and defaults. -/
+private def closeScope (saved : St) (result : α × St) : α × St :=
   (result.1, (write fun st => { st with
     beamerFonts := saved.beamerFonts
     beamerFootline := saved.beamerFootline
     beamerScopes := saved.beamerScopes
     beamerTemplates := saved.beamerTemplates
-    beamerTemplateDefs := saved.beamerTemplateDefs }) result.2 |>.2)
+    beamerTemplateDefs := saved.beamerTemplateDefs
+    discardEnvs := saved.discardEnvs
+    envDefaults := saved.envDefaults }) result.2 |>.2)
 
-private def withBeamerScope (act : M α) : M α := fun st =>
-  closeBeamerScope st (act st)
+private def withScope (act : M α) : M α := fun st =>
+  closeScope st (act st)
 
 /-- Enters the document body: `\normalsize` resets the size-owned lengths. -/
 private def openDocumentBody : M Unit :=
@@ -6273,6 +6277,34 @@ public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
 elaborator splits its begin half. -/
 public def environBodyMark : String := "@environ:BODY"
 
+/-- An environment definer in the document body, outside a macro's replacement text, named as
+ignored. -/
+private def refusedEnvDef (name : String) (pos : Pos) : M Bool := do
+  let st ← get
+  if !st.inDoc || st.inDef then return false
+  sayOnce ("ctrl:" ++ name ++ ":body") .W0340
+    "an environment definition in the document body is ignored" pos
+    (help := "define the environment in the preamble, before '\\begin{document}'")
+  return true
+
+/-- The environment defaults once `env` is defined with `dflt` as its optional argument's default,
+or with none. -/
+private def defaultsAfter (defaults : Array (String × Array Raw)) (env : String)
+    (dflt : Option (Array Raw)) : Array (String × Array Raw) :=
+  match dflt with
+  | some d => Ir.redeclare defaults env d
+  | none => defaults.filter (·.1 != env)
+
+/-- The optional argument an environment's use takes from its definition's default when the body
+gives none, read past spaces as `\@ifnextchar[` reads; nothing otherwise. -/
+private def envDefaultArg (defaults : Array (String × Array Raw)) (env : String)
+    (body : Array Raw) (pos : Pos) : Array Raw :=
+  match defaults.find? (·.1 == env) with
+  | some (_, d) =>
+    if body[skipSpaces body 0]? matches some (.sym '[' _) then #[]
+    else #[Raw.sym '[' pos] ++ d ++ #[Raw.sym ']' pos]
+  | none => #[]
+
 /-- The caption-skip declarations standing in front of a float's kernel core,
 when they are the whole begin body. -/
 private def floatCoreDecls (kind : String) : List Raw → Option (List (String × Array Raw))
@@ -7421,7 +7453,8 @@ the definition is skipped" pos
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
-    let (dflt, j) := takeOpt raws j
+    let (dflt, j) := takeRawOpt raws j
+    if ← refusedEnvDef name pos then return some (#[.group #[] pos], (takeGroups raws j 2).2)
     if name == "renewenvironment" && count.isNone && dflt.isNone then
       -- premise: captionScopeChecks — the float-core idiom reads as its native kind
       if let some (out, k) ← floatRedef? envName.trimAscii.toString raws j pos then
@@ -7433,15 +7466,36 @@ the definition is skipped" pos
     became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
     write fun st => { st with bodyNext := 2 }
     unless (← get).inDef do
-      write fun st =>
-        { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
+      write fun st => { st with
+        discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString)
+        envDefaults := defaultsAfter st.envDefaults envName.trimAscii.toString dflt }
     return some (← synthAt native pos, j)
+  | "newtheorem" =>
+    unless ← refusedEnvDef name pos do return none
+    let i := skipStar raws start
+    let (_, j) := takeGroups raws i 1
+    let (shared, j) := takeOpt raws j
+    let (_, j) := takeGroups raws j 1
+    -- A numbered definition without a shared counter tests for a numbering-within argument,
+    -- reading past spaces.
+    let k := if i != start || shared.isSome then j else match takeOpt raws j with
+      | (some _, k) => k
+      | (none, _) => skipSpaces raws j
+    return some (#[.group #[] pos], k)
   | "NewEnviron" | "RenewEnviron" =>
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
-    let (dflt, j) := takeOpt raws j
+    let (dflt, j) := takeRawOpt raws j
     let b := skipSpaces raws j
+    if ← refusedEnvDef name pos then
+      -- environ's test for a final code reads past the spaces after a definition without one.
+      let k := if raws[b]? matches some (.group _ _) then
+          match takeRawOpt raws (b + 1) with
+          | (some _, k) => k
+          | (none, _) => skipSpaces raws (b + 1)
+        else j
+      return some (#[.group #[] pos], k)
     let n := (count.bind String.toNat?).getD 0
     let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
       else String.ofList (List.replicate n 'm')
@@ -7454,13 +7508,11 @@ the definition is skipped" pos
           then " {code before \\BODY} {code after it}" else " {} {code}, its body discarded")) pos
         write fun st => { st with bodyNext := 1 }
         let env := envName.trimAscii.toString
-        let st ← get
-        unless st.inDef do
-          -- A redefinition in the body is refused (E0312), so the signature in force stays first.
-          let envs := if slot then st.discardEnvs.filter (·.1 != env)
-            else if st.inDoc then st.discardEnvs.push (env, spec)
-            else Ir.redeclare st.discardEnvs env spec
-          write fun st => { st with discardEnvs := envs }
+        unless (← get).inDef do
+          write fun st => { st with
+            discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
+              else Ir.redeclare st.discardEnvs env spec
+            envDefaults := defaultsAfter st.envDefaults env dflt }
         let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
         return some ((← synthAt native pos) ++ mark, j)
       else
@@ -10690,7 +10742,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
 
 /-- Descends into a group or environment. -/
 private def rewriteRaw (inBody : Bool) : Raw → M Raw
-  | .group body p => withBeamerScope do
+  | .group body p => withScope do
     if (← get).inPicture then
       return .group (← rewriteList inBody body #[] body.toList 0 0) p
     -- A group is a macro body when a definition announced one.
@@ -10732,7 +10784,7 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
       let body' ← rewriteList inBody body #[] body.toList 0 0
       write fun st => { st with file := saved }
       return .env n body' p
-    | none => withBeamerScope do
+    | none => withScope do
       if mathEnvs.contains n then
         return .env n body p
       -- premise: pictureBoundaryChecks — requests retain TeX commands
@@ -10795,6 +10847,7 @@ steps come from its body" p
           body' ++ close ++ restores) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment keeps only the arguments its signature reads.
+        let body := envDefaultArg (← get).envDefaults n body p ++ body
         let k := spec.foldl (fun k c =>
           if c == 'o' then (takeOpt body k).2 else (takeGroups body k 1).2) 0
         return .env n (body.extract 0 k) p
@@ -10804,7 +10857,8 @@ steps come from its body" p
         write fun st => { st with inList := st.inList || listEnvs.contains n,
                                   tableTop := tableEnvs.contains n, defTop := false,
                                   inParacol := n == "paracol", localLengths := #[] }
-        let body' ← rewriteList inBody body #[] body.toList 0 0
+        let body' := envDefaultArg st0.envDefaults n body p ++
+          (← rewriteList inBody body #[] body.toList 0 0)
         let restores := restoreLengths (← get).localLengths p
         write fun st => { st with lens := st0.lens, localLengths := st0.localLengths,
                                   inList := st0.inList,
@@ -11355,18 +11409,18 @@ public def RewriteCursor.enterDocument (cursor : RewriteCursor)
     raws := body
     state := (openDocumentBody cursor.state).2
     complete := fun result =>
-      let (raw, st) := closeBeamerScope cursor.state (closeDocumentBody pos result)
+      let (raw, st) := closeScope cursor.state (closeDocumentBody pos result)
       cursor.complete (rewriteList cursor.inBody cursor.raws (cursor.out.push raw)
         (cursor.raws.toList.drop (cursor.index + 1)) (cursor.index + 1) 0 st) }
 
 private theorem rewriteRaw_document_exact (inBody : Bool) (body : Array Raw)
     (pos : Pos) (st : St) (hp : st.inPicture = false) :
     rewriteRaw inBody (.env "document" body pos) st =
-      closeBeamerScope st
+      closeScope st
         (rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) pos st) := by
   rw [rewriteRaw]
   simp only [Parse.inputEnvFile?, String.startsWith_string_iff]
-  simp [withBeamerScope, closeBeamerScope, mathEnvs, pictureEnvs, hp,
+  simp [withScope, closeScope, mathEnvs, pictureEnvs, hp,
     bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure]
 
 private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
@@ -11383,12 +11437,12 @@ private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
   case x_4 => simp
   case x_5 => simp
   simp only [bind, StateT.bind, rewriteRaw_document_exact _ _ _ _ hp,
-    RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody, closeBeamerScope,
+    RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody, closeScope,
     closeDocumentBody, pushRewritten]
 
 private def closeLastDocument (cursor : RewriteCursor) (pos : Pos)
     (result : Array Raw × St) : Array Raw × St :=
-  let (raw, st) := closeBeamerScope cursor.state (closeDocumentBody pos result)
+  let (raw, st) := closeScope cursor.state (closeDocumentBody pos result)
   cursor.complete (cursor.out.push raw, st)
 
 private theorem rewriteCursor_last_document_exact (cursor : RewriteCursor)

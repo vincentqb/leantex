@@ -4336,6 +4336,46 @@ private def bindParam (p : Param) (v : Array Inline) (source : Unit → String)
   let bindings := bindings.push (p.name, some v)
   if p.code then bindings.push (p.name ++ " source", some #[.text (source ())]) else bindings
 
+/-- The index past the first `{...}` group at or after `k`, or `k` when none follows. -/
+private def pastGroupFrom (raws : Array Raw) (k : Nat) : Nat :=
+  (((List.range' k (raws.size - k)).find? fun j => raws[j]? matches some (.group _ _)).map
+    (· + 1)).getD k
+
+/-- The index past the operands of a `\define` or `\defineenv` from `i`: the name, the signature
+and the code groups, environ's one code and optional final code where its mark stands among them. -/
+private def definerEnd (raws : Array Raw) (name : String) (i : Nat) : Nat :=
+  let j := skipSpaces raws i
+  if name == "define" then
+    if raws[j]? matches some (.ctrl _ _) then pastGroupFrom raws (j + 1) else i
+  else if raws[j]? matches some (.group _ _) then
+    let k := pastGroupFrom raws (j + 1)
+    let marked := (raws.extract (j + 1) k).any fun r => match r with
+      | .ctrl n _ => n == Compat.environBodyMark
+      | _ => false
+    let f := skipSpaces raws k
+    if marked then
+      if raws[f]? matches some (.sym '[' _) then
+        ((closeBracketFrom raws (f + 1)).map (· + 1)).getD k
+      else k
+    else if raws[f]? matches some (.group _ _) then f + 1 else k
+  else i
+
+/-- A block-level command reached as inline content, named, and the index past what it takes: a
+definer's whole form, any other command's word alone. -/
+private def inlineBlockOnly (ctx : Ctx) (raws : Array Raw) (name : String) (i : Nat) (pos : Pos) :
+    EM { k : Nat // i + 1 ≤ k } := do
+  if name == "defineenv" then
+    warnOnce ctx "ctrl:defineenv:body" .W0340
+      "an environment definition in the document body is ignored" pos
+      (help := "define the environment in the preamble, before '\\begin{document}'")
+  else
+    diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
+      (help := "it is a block-level command: use it between paragraphs, " ++
+        "not inside inline content")
+  if name == "define" || name == "defineenv" then
+    return ⟨max (i + 1) (definerEnd raws name (i + 1)), Nat.le_max_left _ _⟩
+  return ⟨i + 1, Nat.le_refl _⟩
+
 mutual
 
 /-- Binds the parameters from index `k` on, returning the bindings and the
@@ -5388,10 +5428,12 @@ a side channel, never slide content" pos
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
   else if blockOnly.contains name then
-    diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
-      (help := "it is a block-level command: use it between paragraphs, " ++
-        "not inside inline content")
-    elabInlinesFrom ctx raws (i + 1) acc sb
+    let ⟨k, hge⟩ ← inlineBlockOnly ctx raws name i pos
+    have hadv : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+    -- A definer's place keeps the spaces around it apart, as `{}` does.
+    if name == "define" || name == "defineenv" then
+      elabInlinesFrom ctx raws k (flushText acc sb) ""
+    else elabInlinesFrom ctx raws k acc sb
   else if Compat.nativeReadCtrls.contains name ||
       (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
     -- A picture set line's groups address the picture machinery, not text.
