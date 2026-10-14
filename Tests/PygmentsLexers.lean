@@ -19,6 +19,7 @@ namespace PygmentsLexers
 
 def root : System.FilePath := "testdata/highlight/snippets"
 def recorded : System.FilePath := "testdata/highlight/pygments-tokens.json"
+def departures : System.FilePath := "testdata/highlight/pygments-departures.json"
 
 /-- A stream as the record spells it: start, type, text. -/
 abbrev Spelled := Array (Nat × String × String)
@@ -144,10 +145,25 @@ def heredocByPrefixes (s : Src) (p : Nat) : Option Nat := Id.run do
 
 end PygmentsLexers
 
-/-- The native lexers match Pygments' recorded streams for the invented snippets, token for
-token. -/
+/-- The native lexers match Pygments' recorded streams for the invented snippets, under the declared
+departures, token for token. -/
 def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
+  let declared ← match Json.parse (← IO.FS.readFile PygmentsLexers.departures) with
+    | .ok j => pure j
+    | .error e => do t s!"pygments lexers: the departures do not parse: {e}" false; return
+  t "pygments lexers: the lexer data were generated under the declared departures"
+    (declared.compress == PygmentsLexData.departures)
+  let suite ← IO.FS.readFile "Tests.lean"
+  let held := match declared with
+    | .obj lexers => lexers.toArray.all fun (_, states) => match states with
+      | .obj states => states.toArray.all fun (_, d) =>
+        match d.getObjValAs? String "check" with
+        | .ok name => !name.isEmpty && hasStr suite s!"  {name} ref\n"
+        | .error _ => false
+      | _ => false
+    | _ => false
+  t "pygments lexers: every departure names a check the suite runs" held
   let json ← match Json.parse (← IO.FS.readFile PygmentsLexers.recorded) with
     | .ok j => pure j
     | .error e => do t s!"pygments lexers: the record does not parse: {e}" false; return

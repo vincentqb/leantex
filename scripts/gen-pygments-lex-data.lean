@@ -186,15 +186,27 @@ def longest_semantics(key, rx, ws):
 
 
 def departure_rule(rx, *kinds):
-    """A declared rule as Pygments reads it: its abbreviations expanded, one standard type or one
-    per group."""
-    for full, short in abbrev:
-        rx = rx.replace(short, full)
-    re.compile(rx)
+    """A declared rule as Pygments reads it: `<lean-segment>` expanded, one standard type for the
+    match or one per group."""
+    if any(short in rx for _, short in abbrev if short != '<lean-segment>'):
+        raise SystemExit(f'a departure from {rx!r} abbreviates more than <lean-segment>')
+    rx = rx.replace('<lean-segment>', segment)
     types = [string_to_tokentype(k) for k in kinds]
     if not types or any(t not in STANDARD_TYPES for t in types):
         raise SystemExit(f'a departure from {rx!r} names no standard token type: {kinds!r}')
+    if len(types) > 1 and re.compile(rx).groups != len(types):
+        raise SystemExit(f'a departure from {rx!r} types {len(types)} groups it does not have')
     return rx, types[0] if len(types) == 1 else bygroups(*types)
+
+
+def unreached(rx, declared):
+    """The words a `\\b`-prefixed list holds that start on a non-word scalar, so that its prefix
+    holds only after a word, and no declared rule of their state reads whole."""
+    if not isinstance(rx, words) or rx.prefix != r'\b':
+        return []
+    reads = [re.compile(departure_rule(*r)[0]) for r in declared['rules']] if declared else []
+    return [w for w in rx.words if not re.match(r'\w', w)
+            and not any((m := d.match(w)) and m.end() == len(w) for d in reads)]
 
 
 departed = set()
@@ -206,15 +218,19 @@ def structure(cls, names):
         out.append(f'  state {state}')
         declared = departures.get(cls.__name__, {}).get(state)
         if declared is not None:
-            because = declared['because']
-            if not because or '\n' in because:
-                raise SystemExit(f'{cls.__name__} {state}: a departure names its reason in one line')
-            out.append(f'    departure because {because}')
+            because, check = declared['because'], declared['check']
+            if not because or '\n' in because or not check.isidentifier():
+                raise SystemExit(f'{cls.__name__} {state}: a departure names its reason in one '
+                                 'line and the check holding it')
+            out.append(f'    departure held by {check} because {because}')
             for r in declared['rules']:
                 rx, act = departure_rule(*r)
                 out.append(f'    departure {regex_text(rx)!r} {action(act)}')
             departed.add((cls.__name__, state))
         for i, r in enumerate(rules):
+            if not isinstance(r, (include, default)) and (lost := unreached(r[0], declared)):
+                raise SystemExit(f'{cls.__name__} {state} rule {i}: {lost!r} follow a \\b their '
+                                 'first scalar meets only after a word: declare a departure that reads them')
             if isinstance(r, include):
                 out.append(f'    include {r}')
             elif isinstance(r, default):
@@ -423,6 +439,8 @@ namespace LeanTex.Core.PygmentsLexData\n\n"
   data := data ++ s!"public def unicodeVersion : String := {strLit uniVersion}\n\n"
   data := data ++ "/-- SHA-256 of the rule structure in testdata/highlight/pygments-rules.txt. -/\n" ++
     s!"public def rulesDigest : String := {strLit digest}\n"
+  data := data ++ s!"\n/-- {departuresPath} as these data were generated under it, compressed. -/\n" ++
+    s!"public def departures : String :=\n  {strLit departures}\n"
   for (name, doc) in classDocs do
     let hex ← rangeHex (← field classes name) name
     data := data ++ s!"\n/-- {doc}\nRanges in 12 hex digits each, low then high, inclusive, ascending. -/\n" ++

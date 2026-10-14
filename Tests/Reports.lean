@@ -1567,10 +1567,10 @@ def reports : List Report := [
       "a presentation deck's two brand palettes regenerated and built under lualatex and leantex, PDF and HTML: the accent's text, the muted ink and the code on the paper within 0.03 of the deck's 3:1 floor, the code in one band, a yellow brand's alert in the ink on its mark in both engines and quieted on a covered step as each engine quiets its text, the series at least ΔEOK 0.07 apart for every simulated reader; one build's warnings unchanged, the other's gaining one state-contrast warning, a covered alert against its revealed form, which its accent shipped as given at the floor entails"]
     state := .guarded "52508293" .revert .author },
   { id := "R176", date := "2026-10-14"
-    what := "Lean's `#` commands set in a listing's ink at regular weight, in both artifacts: `#check`, `#eval`, `#print` and the rest, which Lean's own highlighter reads as keywords and the mirrored highlighter's keyword rule never reached, `#print`'s words with them, and `#exit`, which Lean reads as a proof hole"
+    what := "Lean's `#` commands set in a listing's ink at regular weight, in both artifacts: `#check`, `#eval`, `#print` and the rest, which Lean's own highlighter reads as keywords and the mirrored highlighter's keyword rule reached only after a word character, `#print`'s words with them, and `#exit`, which Lean highlights as it highlights a proof hole"
     pins := [check% hashCommandChecks]
     accept := ["the guard's twenty-eight assertions fail at 1d0b4eae before the fix: in both styles and both artifacts, every command and `#print`'s word in the ink at regular weight, and `#exit` in the ink; an array's `#[` and the names keep the ink before and after",
-      "a presentation deck's Lean listings built by this tree: each `#` command line sets its command, and a `#print` form's word, bold in the keyword colour in the PDF and in the keyword colour and weight `def` takes in HTML, and no page without such a line changes"]
+      "a presentation deck's Lean listings built by this tree and by its parent: only the pages holding `#` command lines change, each command and a `#print` form's word set bold in the keyword colour in the PDF and in the keyword colour and weight `def` takes in HTML, and no other HTML markup changes"]
     state := .guarded "1d0b4eae" .before .author }
 ]
 

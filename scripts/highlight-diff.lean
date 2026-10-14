@@ -1,7 +1,7 @@
 /-
 The native listing lexers against the installed Pygments release they mirror and its declared
 departures, over the snippets, seeded fuzz and `--docs` listings, by stream, scalar type and colour.
-Usage: lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--docs FILE...] | --record [--python P] | --selftest
+Usage: lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--without-departures] [--docs FILE...] | --record [--python P] | --selftest
 -/
 import LeanTex
 import LeanTex.Core.Highlight
@@ -623,8 +623,9 @@ structure Reply where
 
 def departuresPath : System.FilePath := "testdata/highlight/pygments-departures.json"
 
-/-- The declared departures, and each departing state's lexer, name, reason and rule count. -/
-def departures : IO (Json × Array (String × String × String × Nat)) := do
+/-- The declared departures, and a line naming each departing state, its rule count, the check
+holding it and its reason. -/
+def departures : IO (Json × Array String) := do
   let json ← match Json.parse (← IO.FS.readFile departuresPath) with
     | .ok j => pure j
     | .error e => die s!"{departuresPath} is not JSON: {e}"
@@ -633,9 +634,10 @@ def departures : IO (Json × Array (String × String × String × Nat)) := do
   for (lexer, states) in lexers.toArray do
     let .obj states := states | die s!"{departuresPath}: {lexer} is not an object of states"
     for (state, d) in states.toArray do
-      let because := (d.getObjValAs? String "because").toOption.getD ""
+      let field (k : String) := (d.getObjValAs? String k).toOption.getD ""
       let rules := ((d.getObjVal? "rules").toOption.bind (·.getArr?.toOption)).getD #[]
-      rows := rows.push (lexer, state, because, rules.size)
+      rows := rows.push
+        s!"{lexer} departs in {state} by {rules.size} declared rules, held by {field "check"}: {field "because"}"
   return (json, rows)
 
 def runPygments (python : String) (declared : Json) (cases : Array Case) : IO Reply := do
@@ -721,6 +723,7 @@ structure Opts where
   lexers : List Lexer := Lexer.all
   python : String := "python3"
   anyVersion : Bool := false
+  departed : Bool := true
   docs : List String := []
   shown : Nat := 3
 
@@ -737,6 +740,7 @@ def parse : List String → Opts → Except String Opts
     | none => .error s!"no native lexer is named {n}"
   | "--python" :: p :: rest, o => parse rest { o with python := p }
   | "--any-version" :: rest, o => parse rest { o with anyVersion := true }
+  | "--without-departures" :: rest, o => parse rest { o with departed := false }
   | "--docs" :: rest, o => .ok { o with docs := o.docs ++ rest }
   | a :: _, _ => .error s!"unknown argument {a}"
 
@@ -751,7 +755,8 @@ def main (args : List String) : IO UInt32 := do
   for l in o.lexers do
     cases := cases ++ fuzzCases l o.fuzz o.seed
   cases := cases ++ (← docCases o.docs).filter fun c => o.lexers.contains c.lexer
-  let (declared, departing) ← departures
+  let (declared, departing) ← if o.departed then departures
+    else pure (Json.mkObj [], #["the declared departures are left out"])
   let reply ← runPygments o.python declared cases
   if reply.version != PygmentsLexData.pygmentsVersion then
     if o.anyVersion then
@@ -760,8 +765,8 @@ def main (args : List String) : IO UInt32 := do
       die s!"Pygments {reply.version} answers, but the lexers mirror {PygmentsLexData.pygmentsVersion}: pass --python with an interpreter that imports {PygmentsLexData.pygmentsVersion}, or --any-version for a drift report"
   if reply.unicode != PygmentsLexData.unicodeVersion then
     IO.println s!"highlight-diff: this Python's Unicode is {reply.unicode} and the class tables' {PygmentsLexData.unicodeVersion}: scalars either version alone assigns may differ"
-  for (lexer, state, because, n) in departing do
-    IO.println s!"highlight-diff: {lexer} departs in {state} by {n} declared rules: {because}"
+  for line in departing do
+    IO.println s!"highlight-diff: {line}"
   let colourOf := fun (st k : String) => reply.colours.getD (st, k) "?"
   let mut tally : Std.HashMap (String × Lexer) (Nat × Nat × Nat × Nat) := {}
   let mut shown := 0

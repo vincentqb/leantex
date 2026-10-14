@@ -1,7 +1,8 @@
 {
   "Lean4Lexer": {
     "root": {
-      "because": "Pygments' \\b# never matches, and Lean's own highlighter reads these as keywords",
+      "because": "Pygments' \\b# matches only after a word character, and Lean's own highlighter reads # and a name as a keyword, #exit as sorry-like and #print's words as keywords",
+      "check": "hashCommandChecks",
       "rules": [
         ["(#print)(\\s+)(sig|axioms|equations|eqns)\\b", "Keyword.Namespace", "Text.Whitespace", "Keyword"],
         ["(#print)(\\s+)(tactic)(\\s+)(tags)\\b", "Keyword.Namespace", "Text.Whitespace", "Keyword", "Text.Whitespace", "Keyword"],

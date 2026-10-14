@@ -45,7 +45,7 @@ public def Lexer.pygmentsAlias : Lexer → String
 
 /-- The SHA-256 of the rule structure these lexers implement (`PygmentsLexData.rulesDigest`). -/
 public def mirrorsRules : String :=
-  "bf918c5d14c06fe7162c0141720eade1289ee69df4d403683880b739028bb4a8"
+  "0bbf4fdf0a3da758d25a525b787e7678cceed06c210a33e96ac2448e917fc0f9"
 
 /-- The raw token stream the mirrored Pygments lexer writes for the whole
 text, before any filter. -/

@@ -297,7 +297,9 @@ command setting its argument in that colour (`\SlideCodeKeywordTok`), and a
 token macros, with the style's colours only where the palette leaves a role
 open. Load it after `minted` and `xcolor` (beamer loads `xcolor` itself)
 and apply it with `\setminted{formatcom=\SlidePygments}`, so a lualatex build
-sets the colours leantex sets; leantex reads the palette itself and runs no
+sets the colours leantex sets, Lean's `#` commands aside: leantex reads them as
+Lean's own highlighter does, as keywords and `#exit` as an error, where
+Pygments reads them as names. leantex reads the palette itself and runs no
 `formatcom`, and reads the export without a warning where a document both
 engines build loads it. Such a document keeps `\palette[seeds]` for leantex,
 or names the exported colours under the code roles' own keys
