@@ -221,6 +221,55 @@ def pdfFigureFuzz : IO Unit := do
   | .ok imp => unless imp.figure.marks.isEmpty && imp.figure.losses.isEmpty do
       die "content a self-referring visibility expression hides is drawn or named"
   | .error e => die s!"a self-referring visibility expression refused whole: {e}"
+  -- Nesting past each limit: shown and named, or refused by name, never followed down.
+  let deepVe (ve : String) (extra : Array String) : ByteArray := fuzzPdf (#[
+    "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R \
+/Resources << /Properties << /MC0 5 0 R >> >> >>",
+    fuzzStream "/OC /MC0 BDC 0 0 5 5 re f EMC", s!"<< /Type /OCMD /VE {ve} >>",
+    "<< /Type /OCG /Name (Off) >>"] ++ extra)
+  let notChain : Array String := (Array.range 2000).map fun i =>
+    s!"[/Not {if i + 1 < 2000 then s!"{i + 8} 0 R" else "6 0 R"}]"
+  let deepCases : Array (String × ByteArray) := #[
+    ("a visibility expression nested a million levels",
+      deepVe (String.join (List.replicate 1000000 "[/Not ") ++ "6 0 R" ++
+        String.join (List.replicate 1000000 "]")) #[]),
+    ("a visibility expression nested two thousand references", deepVe "7 0 R" notChain)]
+  for (what, b) in deepCases do
+    let t0 ← IO.monoMsNow
+    match PdfGfx.importPage b with
+    | .ok imp =>
+      unless imp.figure.marks.size == 1 &&
+          imp.figure.losses.contains (.budget "visibility-expression-depth") do
+        die s!"{what}: not shown with its depth named"
+    | .error e => die s!"{what}: refused whole: {e}"
+    let ms := (← IO.monoMsNow) - t0
+    if ms > budget then die s!"{what}: one import took {ms} ms, over {budget}"
+  let formChain : ByteArray := fuzzPdf (#[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R \
+/Resources << /XObject << /X 5 0 R >> >> >>", fuzzStream "/X Do"] ++
+    (Array.range 20000).map fun i => fuzzStream "/X Do" s!"/Type /XObject /Subtype /Form \
+/BBox [0 0 50 50] /Resources << /XObject << /X {i + 6} 0 R >> >> ")
+  let t0 ← IO.monoMsNow
+  match PdfGfx.importPage formChain with
+  | .ok imp => unless imp.figure.losses.contains (.budget "form-recursion") do
+      die "twenty thousand nested forms are not named a recursion"
+  | .error e => die s!"twenty thousand nested forms refused whole: {e}"
+  let ms := (← IO.monoMsNow) - t0
+  if ms > budget then die s!"twenty thousand nested forms: one import took {ms} ms, over {budget}"
+  let deepObject : ByteArray := fuzzPdf #[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R /Resources 5 0 R >>",
+    fuzzStream "0 0 5 5 re f",
+    "<< /Spare " ++ String.join (List.replicate 1000000 "[") ++ "1" ++
+      String.join (List.replicate 1000000 "]") ++ " >>"]
+  match Image.probe deepObject with
+  | .error e => unless e == s!"malformed PDF: an object nests deeper than {PdfRead.copyDepthLimit} levels" do
+      die s!"an object nested a million levels refused for another reason: {e}"
+  | .ok _ => die "an object nested a million levels is copied"
+  if (PdfGfx.importPage deepObject).isOk then pure () else die "an unread deep object refuses the page"
   let tally ← IO.mkRef ({} : Tally)
   -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0

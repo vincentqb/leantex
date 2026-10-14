@@ -625,6 +625,77 @@ def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
         drawn (ocPdf ocp "5 0 R" "<< /Type /OCMD /OCGs [7 0 R] /P /AllOff >>" marked #[]) == some 1)
 
 open Tests.PdfNative in
+/-- A reading follows nesting as far as poppler does: a visibility expression fifty levels deep,
+a hundred nested forms and a copied object five hundred containers deep, and past each names its
+loss or refuses by name. -/
+def pdfNestingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let ocPdf (ve : String) (extra : Array String) : ByteArray := syntheticPdf (#[
+    "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
+      /Resources << /Properties << /MC0 5 0 R >> >> >>",
+    streamObj "/OC /MC0 BDC 0 0 10 10 re f EMC",
+    s!"<< /Type /OCMD /VE {ve} >>",
+    "<< /Type /OCG /Name (Off) >>"] ++ extra)
+  let nots (k : Nat) (inner : String) : String :=
+    String.join (List.replicate k "[/Not ") ++ inner ++ String.join (List.replicate k "]")
+  let chain (k : Nat) : Array String := (Array.range k).map fun i =>
+    s!"[/Not {if i + 1 < k then s!"{i + 8} 0 R" else "6 0 R"}]"
+  let drawn (pdf : ByteArray) : Option Nat := (PdfGfx.importPage pdf).toOption.map (·.figure.marks.size)
+  let deep : Gfx.Loss := .budget "visibility-expression-depth"
+  let malformed : Gfx.Loss := .property "malformed-visibility-expression"
+  let count (l : Gfx.Loss) (pdf : ByteArray) : Option Nat :=
+    (lossesOf pdf).toOption.map fun ls => (ls.filter (· == l)).size
+  let limit := PdfGfx.veDepthLimit
+  for (what, pdf) in [("direct", ocPdf (nots limit "6 0 R") #[]),
+      ("by reference", ocPdf "7 0 R" (chain limit))] do
+    t s!"nesting: an expression {limit} levels deep {what} decides"
+      (drawn pdf == some 0 && count deep pdf == some 0 && count malformed pdf == some 0)
+  for (what, pdf) in [("direct", ocPdf (nots (limit + 1) "6 0 R") #[]),
+      ("by reference", ocPdf "7 0 R" (chain (limit + 1))),
+      ("ten thousand levels deep", ocPdf (nots 10000 "6 0 R") #[])] do
+    t s!"nesting: an expression past {limit} levels {what} shows, its depth named once"
+      (drawn pdf == some 1 && count deep pdf == some 1 && count malformed pdf == some 0)
+  let decides := ocPdf s!"[/And 6 0 R {nots (limit + 1) "6 0 R"}]" #[]
+  t "nesting: an operand past the limit leaves a decided expression decided, naming nothing"
+    (drawn decides == some 0 && count deep decides == some 0)
+  let both := ocPdf s!"[/Or [/Xor 6 0 R] {nots (limit + 1) "6 0 R"}]" #[]
+  t "nesting: an expression undecided through a malformed part and a deep one names both"
+    (drawn both == some 1 && count deep both == some 1 && count malformed both == some 1)
+  let forms (k : Nat) : ByteArray := syntheticPdf (#[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
+      /Resources << /XObject << /X 5 0 R >> >> >>",
+    streamObj "/X Do"] ++ (Array.range k).map fun i =>
+      if i + 1 < k then
+        streamObj "/X Do" s!"/Type /XObject /Subtype /Form /BBox [0 0 100 50] \
+          /Resources << /XObject << /X {i + 6} 0 R >> >> "
+      else streamObj "0 0 10 10 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 50] ")
+  let recursion (pdf : ByteArray) : Option Nat := count (.budget "form-recursion") pdf
+  let enteredLimit := PdfGfx.enteredLimit
+  t s!"nesting: {enteredLimit} nested forms are drawn"
+    (drawn (forms enteredLimit) == some 1 && recursion (forms enteredLimit) == some 0)
+  t s!"nesting: a form nested past {enteredLimit} is not drawn, its recursion named"
+    (drawn (forms (enteredLimit + 1)) == some 0 && recursion (forms (enteredLimit + 1)) == some 1)
+  let nested (k : Nat) : ByteArray := syntheticPdf #[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R /Resources 5 0 R >>",
+    streamObj "0 0 10 10 re f",
+    s!"<< /Spare {String.join (List.replicate (k - 1) "[")}1{String.join (List.replicate (k - 1) "]")} >>"]
+  let copyLimit := PdfRead.copyDepthLimit
+  let refusal := s!"malformed PDF: an object nests deeper than {copyLimit} levels"
+  t s!"nesting: an object {copyLimit} containers deep is copied"
+    ((PdfRead.readForm (nested copyLimit)).isOk && (Image.probe (nested copyLimit)).isOk)
+  t s!"nesting: an object past {copyLimit} containers is refused by name, as a figure too"
+    ((match PdfRead.readForm (nested (copyLimit + 1)) with
+      | .error e => e == refusal
+      | .ok _ => false) &&
+     (match Image.probe (nested (copyLimit + 1)) with
+      | .error e => e == refusal
+      | .ok _ => false))
+
+open Tests.PdfNative in
 /-- The interpreter keeps PDF's meaning where it is subtle, and names the shadings the gradient
 model only approaches. -/
 def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do

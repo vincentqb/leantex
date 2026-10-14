@@ -1623,25 +1623,25 @@ theorem scan_render (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true)
     obtain ⟨w, hw, rfl⟩ := List.mem_map.mp ht
     rcases (opWordsList_ok ops.toList w hw).sep with h | h <;> simp [h] <;> decide
 
-theorem tokStep_val (cx : Ctx) (e : Entered cx.doc) (st : St) (o : Obj) :
+theorem tokStep_val (cx : Ctx) (e : Entered) (st : St) (o : Obj) :
     tokStep cx e st (.val o) = { st with ops := st.ops.push o } := rfl
 
-theorem tokStep_op (cx : Ctx) (e : Entered cx.doc) (st : St) (n : String) :
+theorem tokStep_op (cx : Ctx) (e : Entered) (st : St) (n : String) :
     tokStep cx e st (.op n) = { stepOp cx e n st with ops := #[] } := rfl
 
-theorem stepOp_rest (cx : Ctx) (e : Entered cx.doc) (st : St) (n : String) (hq : n ≠ "q") (hQ : n ≠ "Q") :
+theorem stepOp_rest (cx : Ctx) (e : Entered) (st : St) (n : String) (hq : n ≠ "q") (hQ : n ≠ "Q") :
     stepOp cx e n st = { stepRest cx e n st with saved := st.saved, level := st.level } := by
   rw [stepOp]
   have h1 : (n == "q") = false := by simpa using hq
   have h2 : (n == "Q") = false := by simpa using hQ
   simp only [h1, h2, Bool.false_eq_true, ↓reduceIte]
 
-theorem stepOp_q (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepOp_q (cx : Ctx) (e : Entered) (st : St) :
     stepOp cx e "q" st = { st with saved := st.saved.push (st.gs, st.frames.size), level := st.frames.size } := by
   rw [stepOp]
   simp
 
-theorem stepOp_Q (cx : Ctx) (e : Entered cx.doc) (st : St) (g : GState) (k : Nat)
+theorem stepOp_Q (cx : Ctx) (e : Entered) (st : St) (g : GState) (k : Nat)
     (h : st.saved.back? = some (g, k)) :
     stepOp cx e "Q" st = { st with gs := g, saved := st.saved.pop, frames := closeTo st.frames k, level := (st.saved.pop.back?.map (·.2)).getD 1 } := by
   rw [stepOp]
@@ -1653,93 +1653,93 @@ def spAt (st : St) (i : Nat) : Sp := (st.ops.filterMap spOf)[i]?.getD 0
 /-- The operands as numbers. -/
 def numAt (st : St) (i : Nat) : Rat := (st.ops.filterMap ratOf)[i]?.getD 0
 
-theorem stepRest_l (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_l (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "l" st = { st with path := st.path.push (.lineTo (spAt st 0) (spAt st 1)), cur := (spAt st 0, spAt st 1) } := by
   rw [stepRest]; rfl
 
-theorem stepRest_c (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_c (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "c" st = { st with path := st.path.push (.curveTo (spAt st 0) (spAt st 1) (spAt st 2)
       (spAt st 3) (spAt st 4) (spAt st 5)), cur := (spAt st 4, spAt st 5) } := by
   rw [stepRest]; rfl
 
-theorem stepRest_m (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_m (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "m" st = st.moveTo (spAt st 0, spAt st 1) := by
   rw [stepRest]; rfl
 
-theorem stepRest_h (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_h (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "h" st = { st with path := st.path.push .close, cur := st.start } := by
   rw [stepRest]
 
-theorem stepRest_re (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_re (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "re" st = { st with path := st.path.push (.rect (spAt st 0) (spAt st 1) (spAt st 2) (spAt st 3)), cur := (spAt st 0, spAt st 1), start := (spAt st 0, spAt st 1) } := by
   rw [stepRest]; rfl
 
-theorem stepRest_w (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_w (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "w" st = { st with gs := { st.gs with width := spAt st 0 } } := by
   rw [stepRest]; rfl
 
-theorem stepRest_J (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_J (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "J" st = { st with gs := { st.gs with
       cap := if numAt st 0 == 1 then .round else if numAt st 0 == 2 then .square else .butt } } := by
   rw [stepRest]; rfl
 
-theorem stepRest_j (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_j (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "j" st = { st with gs := { st.gs with
       join := if numAt st 0 == 1 then .round else if numAt st 0 == 2 then .bevel else .miter } } := by
   rw [stepRest]; rfl
 
-theorem stepRest_M (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_M (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "M" st = { st with gs := { st.gs with miter := numAt st 0 } } := by
   rw [stepRest]; rfl
 
-theorem stepRest_d (cx : Ctx) (e : Entered cx.doc) (st : St) (ds : Array Obj) (h : st.ops[0]? = some (.arr ds)) :
+theorem stepRest_d (cx : Ctx) (e : Entered) (st : St) (ds : Array Obj) (h : st.ops[0]? = some (.arr ds)) :
     stepRest cx e "d" st = { st with gs := { st.gs with dash := ds.filterMap spOf, phase := (st.ops[1]?.bind spOf).getD 0 } } := by
   rw [stepRest]
   simp only [St.op, h]
 
-theorem stepRest_rg (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_rg (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "rg" st = { st with gs := { st.gs with fillSpace := .rgb, fill := .color (deviceColor .rgb st.ops) } } := by
   rw [stepRest]
   simp
 
-theorem stepRest_RG (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_RG (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "RG" st = { st with gs := { st.gs with strokeSpace := .rgb, stroke := .color (deviceColor .rgb st.ops) } } := by
   rw [stepRest]
   simp
 
-theorem stepRest_W (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_W (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "W" st = { st with clip := some .nonzero } := by
   rw [stepRest]
 
-theorem stepRest_Wstar (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_Wstar (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "W*" st = { st with clip := some .evenOdd } := by
   rw [stepRest]
 
-theorem stepRest_n (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_n (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "n" st = paintPath cx st none false false := by
   rw [stepRest]
 
-theorem stepRest_S (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_S (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "S" st = paintPath cx st none true false := by
   rw [stepRest]
 
-theorem stepRest_f (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_f (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "f" st = paintWith cx e st (some .nonzero) false false := by
   rw [stepRest]
 
-theorem stepRest_fstar (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_fstar (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "f*" st = paintWith cx e st (some .evenOdd) false false := by
   rw [stepRest]
 
-theorem stepRest_B (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_B (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "B" st = paintWith cx e st (some .nonzero) true false := by
   rw [stepRest]
 
-theorem stepRest_Bstar (cx : Ctx) (e : Entered cx.doc) (st : St) :
+theorem stepRest_Bstar (cx : Ctx) (e : Entered) (st : St) :
     stepRest cx e "B*" st = paintWith cx e st (some .evenOdd) true false := by
   rw [stepRest]
 
-theorem stepRest_cm (cx : Ctx) (e : Entered cx.doc) (st : St) (m : Affine)
+theorem stepRest_cm (cx : Ctx) (e : Entered) (st : St) (m : Affine)
     (h : affineOf (st.ops.filterMap ratOf) = some m) :
     stepRest cx e "cm" st = st.concat m := by
   rw [stepRest]
@@ -1754,20 +1754,20 @@ theorem stepRest_cm (cx : Ctx) (e : Entered cx.doc) (st : St) (m : Affine)
   | .rect x y w h => .rect (qSp x) (qSp y) (qSp w) (qSp h)
 
 /-- Tokens read from `st` on. -/
-def run (cx : Ctx) (e : Entered cx.doc) (st : St) (ws : List Word) : St :=
+def run (cx : Ctx) (e : Entered) (st : St) (ws : List Word) : St :=
   (ws.map (·.tok)).foldl (tokStep cx e) st
 
-theorem run_append (cx : Ctx) (e : Entered cx.doc) (st : St) (a b : List Word) :
+theorem run_append (cx : Ctx) (e : Entered) (st : St) (a b : List Word) :
     run cx e st (a ++ b) = run cx e (run cx e st a) b := by
   simp [run, List.foldl_append]
 
-theorem run_nil (cx : Ctx) (e : Entered cx.doc) (st : St) : run cx e st [] = st := rfl
+theorem run_nil (cx : Ctx) (e : Entered) (st : St) : run cx e st [] = st := rfl
 
 theorem spAt_len2 (st : St) (x y : Sp) (h : st.ops = #[lenObj x, lenObj y]) :
     spAt st 0 = qSp x ∧ spAt st 1 = qSp y := by
   simp [spAt, h, spOf_lenObj]
 
-theorem run_pathWords (cx : Ctx) (e : Entered cx.doc) (st : St) (p : Pdf.PathOp) (hops : st.ops = #[]) :
+theorem run_pathWords (cx : Ctx) (e : Entered) (st : St) (p : Pdf.PathOp) (hops : st.ops = #[]) :
     ∃ c s, run cx e st (pathWords p) = { st with path := st.path.push (pathRead p), cur := c, start := s } := by
   cases p with
   | moveTo x y =>
@@ -1800,7 +1800,7 @@ theorem run_pathWords (cx : Ctx) (e : Entered cx.doc) (st : St) (p : Pdf.PathOp)
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_re]
     simp [hops, spAt, spOf_lenObj, pathRead]
 
-theorem run_colorWords_op (cx : Ctx) (e : Entered cx.doc) (st : St) (c : Ir.Color) (n : String)
+theorem run_colorWords_op (cx : Ctx) (e : Entered) (st : St) (c : Ir.Color) (n : String)
     (hq : n ≠ "q") (hQ : n ≠ "Q") (hops : st.ops = #[]) :
     run cx e st (colorWords c ++ [opW n]) =
       { stepRest cx e n { st with ops := #[milliObj (Ir.Color.milli c.r), milliObj (Ir.Color.milli c.g),
@@ -1810,7 +1810,7 @@ theorem run_colorWords_op (cx : Ctx) (e : Entered cx.doc) (st : St) (c : Ir.Colo
   rw [stepOp_rest _ _ _ _ hq hQ]
   simp [hops]
 
-theorem run_fillWords (cx : Ctx) (e : Entered cx.doc) (st : St) (f : Pdf.PaintFill) (hops : st.ops = #[]) :
+theorem run_fillWords (cx : Ctx) (e : Entered) (st : St) (f : Pdf.PaintFill) (hops : st.ops = #[]) :
     run cx e st (fillWords (some f)) =
       { st with gs := { st.gs with fillSpace := .rgb, fill := .color (colorRead (paintColor f.paint)) } } := by
   rw [fillWords, run_colorWords_op _ _ _ _ _ (by decide) (by decide) hops, stepRest_rg, deviceColor_milli]
@@ -1846,19 +1846,19 @@ theorem join_decode (j : Join) :
     (if ((joinNum j : Nat) : Rat) == 1 then Join.round else if ((joinNum j : Nat) : Rat) == 2 then .bevel else .miter) = j := by
   cases j <;> decide
 
-theorem run_one (cx : Ctx) (e : Entered cx.doc) (st : St) (o : Obj) (n : String) (hq : n ≠ "q") (hQ : n ≠ "Q")
+theorem run_one (cx : Ctx) (e : Entered) (st : St) (o : Obj) (n : String) (hq : n ≠ "q") (hQ : n ≠ "Q")
     (hops : st.ops = #[]) (w₁ w₂ : Word) (h₁ : w₁.tok = .val o) (h₂ : w₂.tok = .op n) :
     run cx e st [w₁, w₂] = { stepRest cx e n { st with ops := #[o] } with saved := st.saved, level := st.level, ops := #[] } := by
   simp only [run, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil, h₁, h₂, tokStep_val, tokStep_op]
   rw [stepOp_rest _ _ _ _ hq hQ]
   simp [hops]
 
-theorem run_width (cx : Ctx) (e : Entered cx.doc) (st : St) (w : Sp) (hops : st.ops = #[]) :
+theorem run_width (cx : Ctx) (e : Entered) (st : St) (w : Sp) (hops : st.ops = #[]) :
     run cx e st [lenW w, opW "w"] = { st with gs := { st.gs with width := qSp w } } := by
   rw [run_one cx e st (lenObj w) "w" (by decide) (by decide) hops _ _ rfl rfl, stepRest_w]
   simp [spAt, spOf_lenObj, hops]
 
-theorem run_capWords (cx : Ctx) (e : Entered cx.doc) (st : St) (c : Option Cap) (hops : st.ops = #[]) :
+theorem run_capWords (cx : Ctx) (e : Entered) (st : St) (c : Option Cap) (hops : st.ops = #[]) :
     run cx e st (capWords c) = { st with gs := { st.gs with cap := c.getD st.gs.cap } } := by
   cases c with
   | none => simp [capWords, run_nil]
@@ -1867,7 +1867,7 @@ theorem run_capWords (cx : Ctx) (e : Entered cx.doc) (st : St) (c : Option Cap) 
       numAt_int _ _ rfl, cap_decode]
     simp [hops]
 
-theorem run_joinWords (cx : Ctx) (e : Entered cx.doc) (st : St) (j : Option Join) (hops : st.ops = #[]) :
+theorem run_joinWords (cx : Ctx) (e : Entered) (st : St) (j : Option Join) (hops : st.ops = #[]) :
     run cx e st (joinWords j) = { st with gs := { st.gs with join := j.getD st.gs.join } } := by
   cases j with
   | none => simp [joinWords, run_nil]
@@ -1876,7 +1876,7 @@ theorem run_joinWords (cx : Ctx) (e : Entered cx.doc) (st : St) (j : Option Join
       numAt_int _ _ rfl, join_decode]
     simp [hops]
 
-theorem run_miterWords (cx : Ctx) (e : Entered cx.doc) (st : St) (m : Option Rat) (hops : st.ops = #[]) :
+theorem run_miterWords (cx : Ctx) (e : Entered) (st : St) (m : Option Rat) (hops : st.ops = #[]) :
     run cx e st (miterWords m) =
       { st with gs := { st.gs with miter := (m.map fun r => ratRead r.num r.den).getD st.gs.miter } } := by
   cases m with
@@ -1886,7 +1886,7 @@ theorem run_miterWords (cx : Ctx) (e : Entered cx.doc) (st : St) (m : Option Rat
       stepRest_M]
     simp [hops, numAt, ratOf_ratObj]
 
-theorem run_dashWords (cx : Ctx) (e : Entered cx.doc) (st : St) (dp : Option (Array Sp × Sp)) (hops : st.ops = #[]) :
+theorem run_dashWords (cx : Ctx) (e : Entered) (st : St) (dp : Option (Array Sp × Sp)) (hops : st.ops = #[]) :
     run cx e st (dashWords dp) =
       { st with gs := { st.gs with
           dash := (dp.map fun dp => dp.1.map qSp).getD st.gs.dash
@@ -1907,7 +1907,7 @@ theorem run_dashWords (cx : Ctx) (e : Entered cx.doc) (st : St) (dp : Option (Ar
       exact hf0
     simp [hops, hf, spOf_lenObj]
 
-theorem run_strokeWords (cx : Ctx) (e : Entered cx.doc) (st : St) (k : Pdf.PaintStroke) (hops : st.ops = #[]) :
+theorem run_strokeWords (cx : Ctx) (e : Entered) (st : St) (k : Pdf.PaintStroke) (hops : st.ops = #[]) :
     run cx e st (strokeWords (some k)) = { st with gs := strokeGs st.gs k } := by
   have es : strokeWords (some k) = (colorWords (paintColor k.paint) ++ [opW "RG"]) ++ [lenW k.width, opW "w"] ++
       capWords k.cap ++ joinWords k.join ++ miterWords k.miter ++ dashWords k.dash := by
@@ -2026,7 +2026,7 @@ structure Calm (st : St) : Prop where
   hidden : st.hidden = 0
   level : st.level = (st.saved.back?.map (·.2)).getD 1
 
-theorem run_paths (cx : Ctx) (e : Entered cx.doc) : ∀ (l : List Pdf.PathOp) (st : St), st.ops = #[] →
+theorem run_paths (cx : Ctx) (e : Entered) : ∀ (l : List Pdf.PathOp) (st : St), st.ops = #[] →
     ∃ c s, run cx e st (l.flatMap pathWords) = { st with path := st.path ++ (l.map pathRead).toArray, cur := c, start := s }
   | [], st, _ => ⟨st.cur, st.start, by simp [run_nil]⟩
   | p :: rest, st, hops => by
@@ -2040,12 +2040,12 @@ theorem run_paths (cx : Ctx) (e : Entered cx.doc) : ∀ (l : List Pdf.PathOp) (s
       simp
     rw [hp]
 
-theorem run_q (cx : Ctx) (e : Entered cx.doc) (st : St) (hops : st.ops = #[]) :
+theorem run_q (cx : Ctx) (e : Entered) (st : St) (hops : st.ops = #[]) :
     run cx e st [opW "q"] = { st with saved := st.saved.push (st.gs, st.frames.size), level := st.frames.size } := by
   simp only [run, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil, tokStep_op, stepOp_q]
   simp [hops]
 
-theorem run_Q (cx : Ctx) (e : Entered cx.doc) (st : St) (g : GState) (k : Nat) (hops : st.ops = #[])
+theorem run_Q (cx : Ctx) (e : Entered) (st : St) (g : GState) (k : Nat) (hops : st.ops = #[])
     (h : st.saved.back? = some (g, k)) :
     run cx e st [(opW "Q").nl] = { st with gs := g, saved := st.saved.pop, frames := closeTo st.frames k, level := (st.saved.pop.back?.map (·.2)).getD 1 } := by
   simp only [run, opW, Word.nl, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil, tokStep_op,
@@ -2071,7 +2071,7 @@ def drawRead (fl : Option Pdf.PaintFill) (sk : Option Pdf.PaintStroke) (segs : A
     Node Run :=
   .draw (stGeom (segs.map pathRead)) (fl.map fillRead) (sk.map strokeRead)
 
-theorem paintWith_color (cx : Ctx) (e : Entered cx.doc) (st : St) (fill : Option Rule) (stroke close : Bool)
+theorem paintWith_color (cx : Ctx) (e : Entered) (st : St) (fill : Option Rule) (stroke close : Bool)
     (c : Ir.Color) (h : st.gs.fill = .color c) :
     paintWith cx e st fill stroke close = paintPath cx st fill stroke close := by
   rw [paintWith]
@@ -2088,7 +2088,7 @@ def gsAfter (g : GState) (fl : Option Pdf.PaintFill) (sk : Option Pdf.PaintStrok
   | some k => strokeGs g1 k
   | none => g1
 
-theorem run_states (cx : Ctx) (e : Entered cx.doc) (st : St) (fl : Option Pdf.PaintFill)
+theorem run_states (cx : Ctx) (e : Entered) (st : St) (fl : Option Pdf.PaintFill)
     (sk : Option Pdf.PaintStroke) (hops : st.ops = #[]) :
     run cx e st (fillWords fl ++ strokeWords sk) = { st with gs := gsAfter st.gs fl sk } := by
   rw [run_append]
@@ -2109,7 +2109,7 @@ theorem run_states (cx : Ctx) (e : Entered cx.doc) (st : St) (fl : Option Pdf.Pa
 
 def ruleOf (f : Pdf.PaintFill) : Rule := if f.evenOdd then .evenOdd else .nonzero
 
-theorem run_paintOp (cx : Ctx) (e : Entered cx.doc) (st : St) (fl : Option Pdf.PaintFill)
+theorem run_paintOp (cx : Ctx) (e : Entered) (st : St) (fl : Option Pdf.PaintFill)
     (sk : Option Pdf.PaintStroke) (hfs : fl.isSome ∨ sk.isSome)
     (hcol : fl.isSome → ∃ c, st.gs.fill = .color c) :
     run cx e st [opW (Pdf.paintOp fl sk)] =
@@ -2178,7 +2178,7 @@ theorem pop_push_size (fs : Array Open) (T : Open) (h : fs.back? = some T) (x : 
   simp
   omega
 
-theorem run_paint (cx : Ctx) (e : Entered cx.doc) (st : St) (hc : Calm st) (T : Open)
+theorem run_paint (cx : Ctx) (e : Entered) (st : St) (hc : Calm st) (T : Open)
     (hT : st.frames.back? = some T) (fl : Option Pdf.PaintFill) (sk : Option Pdf.PaintStroke)
     (segs : Array Pdf.PathOp) (hfs : fl.isSome ∨ sk.isSome) (hsegs : segs ≠ #[]) :
     ∃ c s, run cx e st (paintWords fl sk segs) =
@@ -2223,7 +2223,7 @@ theorem run_paint (cx : Ctx) (e : Entered cx.doc) (st : St) (hc : Calm st) (T : 
   · obtain ⟨k, rfl⟩ := Option.isSome_iff_exists.mp hs
     exact ⟨_, gsAfter_stroke gs fl k⟩
 
-theorem run_endLine (cx : Ctx) (e : Entered cx.doc) (st : St) (ws : List Word) :
+theorem run_endLine (cx : Ctx) (e : Entered) (st : St) (ws : List Word) :
     run cx e st (endLine ws) = run cx e st ws := by
   simp only [run, endLine_tok]
 
@@ -2277,7 +2277,7 @@ theorem affineOf_cm (mm : Affine) :
       ratObj mm.f.num ((mm.f.den : Int) * spPerPt)] : Array Obj).filterMap ratOf) = some (readAffine mm) := by
   simp [affineOf, ratOf_ratObj, readAffine]
 
-theorem run_cmWords (cx : Ctx) (e : Entered cx.doc) (st : St) (mm : Affine) (hops : st.ops = #[])
+theorem run_cmWords (cx : Ctx) (e : Entered) (st : St) (mm : Affine) (hops : st.ops = #[])
     (hm : readAffine mm ≠ Affine.unit) (T : Open) (hT : st.frames.back? = some T) (hl : st.level = st.frames.size) :
     run cx e st (cmWords mm) = { st with
       gs := { st.gs with ctm := st.gs.ctm.compose (readAffine mm) }
@@ -2295,7 +2295,7 @@ theorem run_cmWords (cx : Ctx) (e : Entered cx.doc) (st : St) (mm : Affine) (hop
 def clipRead (c : Array Pdf.PathOp × Rule) : Clip :=
   { geom := stGeom (c.1.map pathRead), rule := c.2 }
 
-theorem run_clipWords (cx : Ctx) (e : Entered cx.doc) (st : St) (c : Array Pdf.PathOp × Rule)
+theorem run_clipWords (cx : Ctx) (e : Entered) (st : St) (c : Array Pdf.PathOp × Rule)
     (hops : st.ops = #[]) (hpath : st.path = #[]) (hclip : st.clip = none) (hne : c.1 ≠ #[]) :
     ∃ cu sa, run cx e st (clipWords c) =
       { st with frames := (st.addClip (clipRead c)).frames, cur := cu, start := sa } := by
@@ -2334,7 +2334,7 @@ theorem run_clipWords (cx : Ctx) (e : Entered cx.doc) (st : St) (c : Array Pdf.P
 /-- The state after a `q`. -/
 def St.saveQ (st : St) : St := { st with saved := st.saved.push (st.gs, st.frames.size), level := st.frames.size }
 
-theorem run_q' (cx : Ctx) (e : Entered cx.doc) (st : St) (hops : st.ops = #[]) :
+theorem run_q' (cx : Ctx) (e : Entered) (st : St) (hops : st.ops = #[]) :
     run cx e st [opW "q"] = st.saveQ := run_q cx e st hops
 
 theorem calm_saveQ (st : St) (hc : Calm st) : Calm st.saveQ :=
@@ -2350,7 +2350,7 @@ def ctmAfter (g : GState) : Option Affine → GState
   | some mm => { g with ctm := g.ctm.compose (readAffine mm) }
   | none => g
 
-theorem run_clips_fold (cx : Ctx) (e : Entered cx.doc) : ∀ (cs : List (Array Pdf.PathOp × Rule)) (st : St)
+theorem run_clips_fold (cx : Ctx) (e : Entered) : ∀ (cs : List (Array Pdf.PathOp × Rule)) (st : St)
     (F : Array Open) (G : Open), st.ops = #[] → st.path = #[] → st.clip = none → st.frames = F.push G →
     G.kids = #[] → st.frames.size > st.level → (∀ c ∈ cs, c.1 ≠ #[]) →
     ∃ cu sa, run cx e st (cs.flatMap clipWords) =
@@ -2377,7 +2377,7 @@ theorem run_clips_fold (cx : Ctx) (e : Entered cx.doc) : ∀ (cs : List (Array P
       apply Array.toList_inj.mp; simp
     simp only [hc]
 
-theorem run_header_plain (cx : Ctx) (e : Entered cx.doc) (st : St) (hops : st.ops = #[]) :
+theorem run_header_plain (cx : Ctx) (e : Entered) (st : St) (hops : st.ops = #[]) :
     run cx e st (endLine (headerWords none #[])) = st.saveQ := by
   rw [run_endLine]
   exact run_q cx e st hops
@@ -2386,7 +2386,7 @@ theorem headerWords_split (m : Option Affine) (clips : Array (Array Pdf.PathOp �
     headerWords m clips = [opW "q"] ++ (m.map cmWords).getD [] ++ clips.toList.flatMap clipWords := by
   simp [headerWords]
 
-theorem run_header_frame (cx : Ctx) (e : Entered cx.doc) (st : St) (hc : Calm st) (T : Open)
+theorem run_header_frame (cx : Ctx) (e : Entered) (st : St) (hc : Calm st) (T : Open)
     (hT : st.frames.back? = some T) (m : Option Affine) (clips : Array (Array Pdf.PathOp × Rule))
     (hm : m.all (fun mm => decide (readAffine mm ≠ Affine.unit)) = true) (hcl : clips.all (fun c => !c.1.isEmpty) = true)
     (hnon : m.isSome = true ∨ clips ≠ #[]) :
@@ -2544,7 +2544,7 @@ theorem calm_frames (st : St) (hc : Calm st) (fs : Array Open) (cu sa : Pt) :
 
 mutual
 
-theorem sim_op (cx : Ctx) (e : Entered cx.doc) : ∀ (o : Pdf.ContentOp) (st : St), opPlain o = true → Calm st →
+theorem sim_op (cx : Ctx) (e : Entered) : ∀ (o : Pdf.ContentOp) (st : St), opPlain o = true → Calm st →
     ∀ T, st.frames.back? = some T →
     ∃ cu sa, run cx e st (opWords o) =
       { st with frames := st.frames.pop.push { T with kids := T.kids ++ opRead o }, cur := cu, start := sa }
@@ -2615,7 +2615,7 @@ theorem sim_op (cx : Ctx) (e : Entered cx.doc) : ∀ (o : Pdf.ContentOp) (st : S
   | .imageMissing _ _ _ _, _, h, _, _, _ | .marked _ _, _, h, _, _, _ | .shade _ _, _, h, _, _, _
   | .outline _ _ _, _, h, _, _, _ | .xobject _ _ _ _, _, h, _, _, _ => by simp [opPlain] at h
 
-theorem sim_list (cx : Ctx) (e : Entered cx.doc) : ∀ (l : List Pdf.ContentOp) (st : St), opsPlain l = true →
+theorem sim_list (cx : Ctx) (e : Entered) : ∀ (l : List Pdf.ContentOp) (st : St), opsPlain l = true →
     Calm st → ∀ T, st.frames.back? = some T →
     ∃ cu sa, run cx e st (opWordsList l) =
       { st with frames := st.frames.pop.push { T with kids := T.kids ++ opsRead l }, cur := cu, start := sa }
@@ -2645,16 +2645,16 @@ theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain o
     let fig := readStream cx (Pdf.render ops).toUTF8
     fig.nodes = opsRead ops.toList ∧ fig.losses = #[] ∧ fig.outlines = #[] ∧ fig.symbols = #[] := by
   intro fig
-  have e0 : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
-  have hrun : runToks cx { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  have e0 : Entered := Entered.empty
+  have hrun : runToks cx Entered.empty
       (PdfContentLex.scan (Pdf.render ops).toUTF8) 0 (St.initial (GState.initial Affine.unit) Store.empty) =
-      run cx { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+      run cx Entered.empty
         (St.initial (GState.initial Affine.unit) Store.empty) (opWordsList ops.toList) := by
     rw [runToks_foldl, scan_render ops h, run]
     simp
-  obtain ⟨cu, sa, hs⟩ := sim_list cx { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  obtain ⟨cu, sa, hs⟩ := sim_list cx Entered.empty
     ops.toList _ h calm_initial { xf := Affine.unit, clips := #[], alpha := Alpha.opaque, kids := #[] } rfl
-  have hst : runToks cx { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  have hst : runToks cx Entered.empty
       (PdfContentLex.scan (Pdf.render ops).toUTF8) 0 (St.initial (GState.initial Affine.unit) Store.empty) =
       { St.initial (GState.initial Affine.unit) Store.empty with
         frames := #[{ xf := Affine.unit, clips := #[], alpha := Alpha.opaque, kids := opsRead ops.toList }]

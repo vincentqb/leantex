@@ -1680,11 +1680,25 @@ public def Doc.unrotated (r : Doc) (page : Page) : Except String Unit := do
   | 0 => pure ()
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
 
+/-- The deepest a copied object nests, container in container: poppler's parser reads five hundred
+levels and no deeper. -/
+public def copyDepthLimit : Nat := 500
+
+/-- Whether an object nests at most `n` containers deep. -/
+private def nestsWithin : Nat → Obj → Bool
+  | 0, .arr _ => false
+  | 0, .dict _ => false
+  | n + 1, .arr xs => xs.all (nestsWithin n)
+  | n + 1, .dict es => es.all fun e => nestsWithin n e.2
+  | _, _ => true
+
 private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     Except String (ByteArray × Array Chunk × Array XObjOut) := do
   let content ← r.content page
   let mut st : SerSt := {}
   let resObj := page.resources.getD (.dict #[])
+  let deep := s!"malformed PDF: an object nests deeper than {copyDepthLimit} levels"
+  unless nestsWithin copyDepthLimit resObj do throw deep
   let (st1, resChunks) := serObj st #[] resObj
   st := st1
   let mut objects : Array XObjOut := #[]
@@ -1695,6 +1709,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     let some orig := st.queue[qi]? | break
     qi := qi + 1
     let (v, raw?) ← r.get orig
+    unless nestsWithin copyDepthLimit v do throw deep
     match raw? with
     | none =>
       let (st', chunks) := serObj st #[] v

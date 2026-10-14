@@ -391,6 +391,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pdfFontChecks ref
   pdfInterpreterChecks ref
   pdfOptionalContentChecks ref
+  pdfNestingChecks ref
   pdfStateChecks ref
   pdfStreamLossChecks ref
   inflateZlibChecks ref

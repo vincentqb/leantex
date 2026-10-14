@@ -324,6 +324,13 @@ public structure Open where
   kids : Array (Node Run)
   deriving Inhabited
 
+/-- A visibility expression's value (§8.11.2.2): decided, or undecided through a malformed part or
+one nested past `veDepthLimit`. -/
+public inductive VeValue where
+  | decided (on : Bool)
+  | undecided (malformed deep : Bool)
+  deriving BEq, Inhabited
+
 /-- What the reading builds that outlives one stream: outlines, symbols, rasters, losses and read caches. -/
 public structure Store where
   outlines : Array (Array Subpath)
@@ -337,8 +344,8 @@ public structure Store where
   images : Std.HashMap String (Option Nat)
   /-- Whether optional content is hidden, by the object number its `/OC` names. -/
   oc : Std.HashMap Nat Bool
-  /-- The visibility expressions read, by object number, unknown where unreadable. -/
-  ve : Std.HashMap Nat (Option Bool)
+  /-- The visibility expressions read, by object number and nesting level. -/
+  ve : Std.HashMap (Nat × Nat) VeValue
   /-- How many font dictionaries read in place have been keyed; the next key is `directKeyBase` plus
   this count. -/
   direct : Nat
@@ -1024,49 +1031,32 @@ public def outlineOf (cmds : Array Ink.Cmd) : Array Subpath := Id.run do
   if let some s := cur then out := out.push { s with closed := true }
   return out
 
-/-- The distinct listed objects a reading entered on its path, which bounds form, glyph and pattern nesting. -/
-public structure Entered (d : Doc) where
-  list : List Nat
-  nodup : list.Nodup
-  listed : ∀ x ∈ list, x ∈ d.objectNumbers
+/-- The most objects a reading nests, form in form, cell in cell or glyph in glyph: poppler draws a
+hundred nested forms and no more. -/
+public def enteredLimit : Nat := 100
 
-private theorem nodup_length_le {l u : List Nat} (hn : l.Nodup) (hs : ∀ x ∈ l, x ∈ u) :
-    l.length ≤ u.length := by
-  induction l generalizing u with
-  | nil => simp
-  | cons x l ih =>
-    have hx : x ∈ u := hs x (by simp)
-    have hn' := List.nodup_cons.mp hn
-    have hsub : ∀ y ∈ l, y ∈ u.erase x := fun y hy => by
-      have hy' := hs y (by simp [hy])
-      have hne : y ≠ x := fun h => hn'.1 (h ▸ hy)
-      exact (List.mem_erase_of_ne hne).mpr hy'
-    have := ih hn'.2 hsub
-    rw [List.length_erase_of_mem hx] at this
-    have hpos : 0 < u.length := List.length_pos_of_mem hx
-    simp only [List.length_cons]
-    omega
+/-- The objects a reading entered on its path, at most `enteredLimit` of them. -/
+public structure Entered where
+  list : List Nat
+  bounded : list.length ≤ enteredLimit
+
+/-- The path of a reading that has entered nothing. -/
+public def Entered.empty : Entered := ⟨[], Nat.zero_le _⟩
 
 /-- How many more objects a reading may enter. -/
-public def Entered.room {d : Doc} (e : Entered d) : Nat := d.objectNumbers.length - e.list.length
+public def Entered.room (e : Entered) : Nat := enteredLimit - e.list.length
 
-public def Entered.push {d : Doc} (e : Entered d) (n : Nat) (hn : d.lists n = true)
-    (hf : n ∉ e.list) : Entered d :=
-  { list := n :: e.list, nodup := List.nodup_cons.mpr ⟨hf, e.nodup⟩
-    listed := fun x hx => by
-      rcases List.mem_cons.mp hx with rfl | h
-      · exact d.lists_mem x hn
-      · exact e.listed x h }
+public def Entered.push (e : Entered) (n : Nat) (h : e.list.length < enteredLimit) : Entered :=
+  ⟨n :: e.list, h⟩
 
-public theorem Entered.push_room_between {d : Doc} (e : Entered d) (n : Nat) (hn : d.lists n = true)
-    (hf : n ∉ e.list) : (e.push n hn hf).room < e.room := by
-  have hle := nodup_length_le (e.push n hn hf).nodup (e.push n hn hf).listed
-  simp only [Entered.room, Entered.push, List.length_cons] at hle ⊢
+public theorem Entered.push_room_between (e : Entered) (n : Nat) (h : e.list.length < enteredLimit) :
+    (e.push n h).room < e.room := by
+  simp only [Entered.room, Entered.push, List.length_cons]
   omega
 
-public theorem forms_between {d : Doc} (e : Entered d) :
-    e.list.length + e.room = d.objectNumbers.length ∧ e.room ≤ d.objectNumbers.length := by
-  have h := nodup_length_le e.nodup e.listed
+public theorem forms_between (e : Entered) :
+    e.list.length + e.room = enteredLimit ∧ e.room ≤ enteredLimit := by
+  have h := e.bounded
   unfold Entered.room
   omega
 
@@ -1413,70 +1403,104 @@ private def stateKey (gs : GState) : String :=
 {gs.dash}|{gs.phase}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
 {gs.hScale}|{gs.leading}|{gs.rise}|{gs.render}"
 
-/-- Visibility expressions read so far by object number, unknown where unreadable. -/
-private abbrev VeMemo := Std.HashMap Nat (Option Bool)
+/-- The deepest a visibility expression's operand is read, in levels below its top expression:
+poppler reads fifty and no deeper. -/
+public def veDepthLimit : Nat := 50
+
+/-- Visibility expressions read so far, by object number and the level each was read at. -/
+private abbrev VeMemo := Std.HashMap (Nat × Nat) VeValue
+
+private def VeValue.not : VeValue → VeValue
+  | .decided on => .decided !on
+  | .undecided malformed deep => .undecided malformed deep
+
+/-- The losses a visibility expression's value owes. -/
+private def VeValue.losses : VeValue → Array Loss
+  | .decided _ => #[]
+  | .undecided malformed deep =>
+    (if malformed then #[.property "malformed-visibility-expression"] else #[]) ++
+      (if deep then #[.budget "visibility-expression-depth"] else #[])
 
 mutual
 
-/-- A visibility expression's operand (§8.11.2.2): a group, on unless the configuration turns it
-off, or a nested expression, direct or by reference; unknown for anything else. -/
-private def veOperand (cx : Ctx) (cfg : OcConfig) (e : Entered cx.doc) (memo : VeMemo) :
-    Obj → Option Bool × VeMemo
-  | .ref n g =>
-    if cfg.off.contains n then (some false, memo)
-    else if let some v := memo.get? n then (v, memo)
-    else if h : cx.doc.lists n = true ∧ n ∉ e.list then
-      match (cx.doc.deref (.ref n g)).toOption.getD .null with
-      | .arr ⟨xs⟩ =>
-        let r := veList cx cfg (e.push n h.1 h.2) memo xs
-        (r.1, r.2.insert n r.1)
-      | d => (if d.get? "Type" == some (.name "OCG") then some true else none, memo)
-    else (none, memo)
-  | .arr ⟨xs⟩ => veList cx cfg e memo xs
-  | _ => (none, memo)
-termination_by o => (e.room, sizeOf o)
+/-- A visibility expression's operand at `level` (§8.11.2.2): a group, on unless the configuration
+turns it off, or a nested expression, direct or by reference; undecided for anything else, for an
+expression `path` is already reading, and past `veDepthLimit`. -/
+private def veOperand (cx : Ctx) (cfg : OcConfig) (level : Nat) (path : List Nat) (memo : VeMemo)
+    (o : Obj) : VeValue × VeMemo :=
+  if h : level ≤ veDepthLimit then
+    match o with
+    | .ref n g =>
+      if cfg.off.contains n then (.decided false, memo)
+      else if let some v := memo.get? (n, level) then (v, memo)
+      else if path.contains n then (.undecided true false, memo)
+      else
+        match (cx.doc.deref (.ref n g)).toOption.getD .null with
+        | .arr ⟨xs⟩ =>
+          let r := veList cx cfg level h (n :: path) memo xs
+          (r.1, r.2.insert (n, level) r.1)
+        | d => (if d.get? "Type" == some (.name "OCG") then .decided true else .undecided true false, memo)
+    | .arr ⟨xs⟩ => veList cx cfg level h path memo xs
+    | _ => (.undecided true false, memo)
+  else (.undecided false true, memo)
+termination_by (veDepthLimit + 1 - level, 1, sizeOf o)
+decreasing_by
+  all_goals simp_wf
+  all_goals
+    apply Prod.Lex.right
+    apply Prod.Lex.left
+    omega
+
+/-- A visibility expression's operator and operands at `level`: `Not` over one, `And` or `Or` over
+one or more, each a level deeper. -/
+private def veList (cx : Ctx) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
+    (path : List Nat) (memo : VeMemo) : List Obj → VeValue × VeMemo
+  | [.name "Not", x] =>
+    let r := veOperand cx cfg (level + 1) path memo x
+    (r.1.not, r.2)
+  | .name "And" :: x :: xs => veFold cx cfg level hl path true memo false false false (x :: xs)
+  | .name "Or" :: x :: xs => veFold cx cfg level hl path false memo false false false (x :: xs)
+  | _ => (.undecided true false, memo)
+termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
 decreasing_by
   all_goals simp_wf
   · apply Prod.Lex.left
-    exact Entered.push_room_between e _ _ _
-  · apply Prod.Lex.right
+    omega
+  all_goals
+    apply Prod.Lex.right
+    apply Prod.Lex.right
     omega
 
-/-- A visibility expression's operator and operands: `Not` over one, `And` or `Or` over one or more. -/
-private def veList (cx : Ctx) (cfg : OcConfig) (e : Entered cx.doc) (memo : VeMemo) :
-    List Obj → Option Bool × VeMemo
-  | [.name "Not", x] =>
-    let r := veOperand cx cfg e memo x
-    (r.1.map (!·), r.2)
-  | .name "And" :: x :: xs => veFold cx cfg e true memo false false (x :: xs)
-  | .name "Or" :: x :: xs => veFold cx cfg e false memo false false (x :: xs)
-  | _ => (none, memo)
-termination_by l => (e.room, sizeOf l)
-decreasing_by
-  all_goals simp_wf
-  all_goals apply Prod.Lex.right
-  all_goals omega
-
-/-- Operands joined by `And` (`all`) or `Or`, given whether earlier ones met its dominant value or an
-unknown; unknown only where an unreadable operand could decide. -/
-private def veFold (cx : Ctx) (cfg : OcConfig) (e : Entered cx.doc) (all : Bool) (memo : VeMemo)
-    (dominant unknown : Bool) : List Obj → Option Bool × VeMemo
-  | [] => (if dominant then some !all else if unknown then none else some all, memo)
+/-- Operands joined by `And` (`all`) or `Or`, given whether earlier ones met its dominant value and
+why earlier ones were undecided; undecided only where an undecided operand could decide. -/
+private def veFold (cx : Ctx) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
+    (path : List Nat) (all : Bool) (memo : VeMemo) (dominant malformed deep : Bool) :
+    List Obj → VeValue × VeMemo
+  | [] =>
+    (if dominant then .decided !all else if malformed || deep then .undecided malformed deep
+      else .decided all, memo)
   | x :: xs =>
-    let a := veOperand cx cfg e memo x
-    veFold cx cfg e all a.2 (dominant || a.1 == some !all) (unknown || a.1.isNone) xs
-termination_by l => (e.room, sizeOf l)
+    let a := veOperand cx cfg (level + 1) path memo x
+    match a.1 with
+    | .decided on => veFold cx cfg level hl path all a.2 (dominant || on == !all) malformed deep xs
+    | .undecided m d => veFold cx cfg level hl path all a.2 dominant (malformed || m) (deep || d) xs
+termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
 decreasing_by
   all_goals simp_wf
-  all_goals apply Prod.Lex.right
-  all_goals omega
+  · apply Prod.Lex.left
+    omega
+  all_goals
+    apply Prod.Lex.right
+    apply Prod.Lex.right
+    omega
 
 end
 
 /-- Whether a membership dictionary hides its content (§8.11.2.2), its visibility expression deciding
-in place of its groups and policy, and whether that expression has no readable value. -/
-private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) : (Bool × Bool) × VeMemo :=
-  if d.get? "Type" != some (.name "OCMD") then ((false, false), memo) else
+in place of its groups and policy, and the losses an expression it cannot decide owes. -/
+private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) :
+    (Bool × Array Loss) × VeMemo :=
+  if d.get? "Type" != some (.name "OCMD") then ((false, #[]), memo) else
   let held (x : Obj) : Option Nat := match x with
     | .ref k _ => if cfg.listed.contains k then some k else none
     | _ => none
@@ -1494,30 +1518,29 @@ private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) : (Boo
     else if pol == .name "AnyOff" then refs.all fun r => !cfg.off.contains r
     else if pol == .name "AllOff" then refs.any fun r => !cfg.off.contains r
     else refs.all cfg.off.contains
-  let e : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
   match (d.get? "VE").map cx.doc.deref with
-  | none | some (.ok .null) => ((byPolicy, false), memo)
+  | none | some (.ok .null) => ((byPolicy, #[]), memo)
   | some (.ok (.arr ⟨xs⟩)) =>
-    let r := veList cx cfg e memo xs
+    let r := veList cx cfg 0 (Nat.zero_le _) [] memo xs
     match r.1 with
-    | some on => ((!on, false), r.2)
-    | none => ((false, true), r.2)
-  | some _ => ((byPolicy, true), memo)
+    | .decided on => ((!on, #[]), r.2)
+    | v => ((false, v.losses), r.2)
+  | some _ => ((byPolicy, #[.property "malformed-visibility-expression"]), memo)
 
 /-- Whether optional content is hidden under the default configuration, a group or a membership
-dictionary deciding, and whether a visibility expression on the way has no readable value. -/
-private def ocOff (cx : Ctx) (memo : VeMemo) (o : Obj) : (Bool × Bool) × VeMemo :=
+dictionary deciding, and the losses a visibility expression on the way owes. -/
+private def ocOff (cx : Ctx) (memo : VeMemo) (o : Obj) : (Bool × Array Loss) × VeMemo :=
   match cx.oc with
-  | none => ((false, false), memo)
+  | none => ((false, #[]), memo)
   | some cfg =>
     match o with
     | .ref n _ =>
-      if cfg.off.contains n then ((true, false), memo)
+      if cfg.off.contains n then ((true, #[]), memo)
       else ocmdOff cx cfg memo ((cx.doc.deref o).toOption.getD .null)
     | _ => ocmdOff cx cfg memo o
 
-/-- Whether optional content is hidden, an object's verdict read once, a malformed visibility
-expression named. -/
+/-- Whether optional content is hidden, an object's verdict read once, each loss its visibility
+expression owes named once. -/
 private def St.ocHidden (cx : Ctx) (st : St) (o : Obj) : St × Bool :=
   let key : Option Nat := match o with
     | .ref n _ => some n
@@ -1526,8 +1549,7 @@ private def St.ocHidden (cx : Ctx) (st : St) (o : Obj) : St × Bool :=
   | some hidden => (st, hidden)
   | none =>
     let r := ocOff cx st.store.ve o
-    let store := { st.store with ve := r.2 }
-    let store := if r.1.2 then store.lose (.property "malformed-visibility-expression") else store
+    let store := r.1.2.foldl Store.lose { st.store with ve := r.2 }
     let store := match key with
       | some n => { store with oc := store.oc.insert n r.1.1 }
       | none => store
@@ -1743,7 +1765,7 @@ mutual
 
 /-- Reads a content stream's tokens from `i`: operands kept for the operator after them, operators
 read, inline images painted. -/
-public def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat) (st : St) : St :=
+public def runToks (cx : Ctx) (e : Entered) (toks : Array Tok) (i : Nat) (st : St) : St :=
   if h : i < toks.size then
     let st := match toks[i] with
       | .val o => { st with ops := st.ops.push o }
@@ -1753,7 +1775,7 @@ public def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat) 
   else st
 termination_by (e.room, 3, toks.size - i)
 
-private def stepOp (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : St :=
+private def stepOp (cx : Ctx) (e : Entered) (name : String) (st : St) : St :=
   if name == "q" then { st with saved := st.saved.push (st.gs, st.frames.size), level := st.frames.size }
   else if name == "Q" then
     match st.saved.back? with
@@ -1770,7 +1792,7 @@ private def stepOp (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : S
     { stepRest cx e name st with saved, level }
 termination_by (e.room, 2, 1)
 
-private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : St :=
+private def stepRest (cx : Ctx) (e : Entered) (name : String) (st : St) : St :=
   let n := st.nums
   let num (i : Nat) : Rat := n[i]?.getD 0
   let sps := st.ops.filterMap spOf
@@ -1936,7 +1958,7 @@ private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) :
     if st.compat > 0 then st else { st with store := st.store.lose (.operator other) }
 termination_by (e.room, 2, 0)
 
-private def paintWith (cx : Ctx) (e : Entered cx.doc) (st : St) (fill : Option Rule) (stroke : Bool)
+private def paintWith (cx : Ctx) (e : Entered) (st : St) (fill : Option Rule) (stroke : Bool)
     (close : Bool) : St :=
   match fill, st.gs.fill with
   | some _, .pattern name _ =>
@@ -1955,11 +1977,11 @@ private def paintWith (cx : Ctx) (e : Entered cx.doc) (st : St) (fill : Option R
   | _, _ => paintPath cx st fill stroke close
 termination_by (e.room, 1, 2)
 
-private def tileNodes (cx : Ctx) (e : Entered cx.doc) (st : St) (pat : Obj) (region : Geom) :
+private def tileNodes (cx : Ctx) (e : Entered) (st : St) (pat : Obj) (region : Geom) :
     St × Option (Array (Node Run)) :=
   match pat with
   | .ref pn _ =>
-    if h : cx.doc.lists pn = true ∧ pn ∉ e.list then
+    if h : cx.doc.lists pn = true ∧ pn ∉ e.list ∧ e.list.length < enteredLimit then
       match (cx.doc.stream pat).toOption.getD none with
       | none => (st, none)
       | some (pd, raw) =>
@@ -1987,7 +2009,7 @@ private def tileNodes (cx : Ctx) (e : Entered cx.doc) (st : St) (pat : Obj) (reg
               let cx' : Ctx := { cx with res, base := space }
               let store := st.store
               let st := { st with store := Store.empty }
-              let inner := runToks cx' (e.push pn h.1 h.2) (PdfContentLex.scan data) 0
+              let inner := runToks cx' (e.push pn h.2.2) (PdfContentLex.scan data) 0
                 (St.initial (GState.initial space) store)
               let bx0 := spOfRat (min (bb[0]?.getD 0) (bb[2]?.getD 0))
               let bx1 := spOfRat (max (bb[0]?.getD 0) (bb[2]?.getD 0))
@@ -2033,9 +2055,9 @@ termination_by (e.room, 0, 0)
 decreasing_by
   simp_wf
   apply Prod.Lex.left
-  exact Entered.push_room_between e _ _ _
+  exact Entered.push_room_between e _ _
 
-private def showArray (cx : Ctx) (e : Entered cx.doc) (items : List Obj) (st : St) : St :=
+private def showArray (cx : Ctx) (e : Entered) (items : List Obj) (st : St) : St :=
   match items with
   | [] => st
   | o :: rest =>
@@ -2051,7 +2073,7 @@ private def showArray (cx : Ctx) (e : Entered cx.doc) (items : List Obj) (st : S
 termination_by (e.room, 1, items.length + 1)
 
 /-- A string shown (§9.4.3): each code's glyph stamped at the pen and the pen advanced. -/
-public def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) : St :=
+public def showString (cx : Ctx) (e : Entered) (s : ByteArray) (st : St) : St :=
   let (loaded, fo) := fontOf cx st
   let st := { loaded with words := st.words, hidden := st.hidden }
   match fo with
@@ -2081,7 +2103,7 @@ public def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) 
       st.advance (((w / 1000) * st.gs.size + st.gs.charSpace + space) * st.gs.hScale)) st
 termination_by (e.room, 1, 0)
 
-private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (key : Nat)
+private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : Nat)
     (proc : String) (fm : Affine) (st : St) : St :=
   let inherited := { st.gs with ctm := Affine.unit, maskClip := none }
   let symKey := s!"t3|{key}|{proc}|{stateKey inherited}"
@@ -2100,7 +2122,7 @@ private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (
     | .type3 procs _ res =>
       match procs.find? (·.1 == proc) with
       | some (_, .ref pn _) =>
-        if h : cx.doc.lists pn = true ∧ pn ∉ e.list then
+        if h : cx.doc.lists pn = true ∧ pn ∉ e.list ∧ e.list.length < enteredLimit then
           match (cx.doc.stream (.ref pn 0)).toOption.getD none with
           | some (dict, raw) =>
             match PdfFilters.decode dict raw with
@@ -2117,7 +2139,7 @@ private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (
               let (stencil, store) : Option (Array Subpath) × Store := if isD1 then
                   let neutral := { inherited with fill := black, stroke := black, ca := Alpha.opaque
                                                   cA := Alpha.opaque, mask := Alpha.opaque }
-                  let inner := runToks cx' (e.push pn h.1 h.2) toks 0 (St.initial neutral store)
+                  let inner := runToks cx' (e.push pn h.2.2) toks 0 (St.initial neutral store)
                   (type3Stamp? true inner.finish, inner.store)
                 else (none, store)
               match stencil with
@@ -2130,7 +2152,7 @@ private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (
                   let store := { store with outlines := store.outlines.push subs }
                   place { st with store := { store with type3 := store.type3.insert (key, proc) (some r) } } r
               | none =>
-                let inner := runToks cx' (e.push pn h.1 h.2) toks 0 (St.initial inherited store)
+                let inner := runToks cx' (e.push pn h.2.2) toks 0 (St.initial inherited store)
                 let body := inner.finish
                 let store := inner.store
                 if body.isEmpty then
@@ -2155,9 +2177,9 @@ decreasing_by
   all_goals
     simp_wf
     apply Prod.Lex.left
-    exact Entered.push_room_between e _ _ _
+    exact Entered.push_room_between e _ _
 
-private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St) : St :=
+private def doXObject (cx : Ctx) (e : Entered) (xName : String) (st : St) : St :=
   match resource cx "XObject" xName with
   | some (.ref xn _) =>
     if st.hidden > 0 then st else
@@ -2184,7 +2206,7 @@ private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St)
           | .error l =>
             { st with store := { (st.store.lose l) with images := st.store.images.insert ikey none } }
       | some (.name "Form") =>
-        if h : cx.doc.lists xn = true ∧ xn ∉ e.list then
+        if h : cx.doc.lists xn = true ∧ xn ∉ e.list ∧ e.list.length < enteredLimit then
           let m := match (dict.get? "Matrix").bind fun x => (cx.doc.deref x).toOption with
             | some (.arr xs) => (affineOf (xs.filterMap fun x => (cx.doc.deref x).toOption.bind ratOf)).getD Affine.unit
             | _ => Affine.unit
@@ -2208,7 +2230,7 @@ private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St)
               let gs := if transparency then { gs with ca := Alpha.opaque, cA := Alpha.opaque, mask := Alpha.opaque } else gs
               let store := st.store
               let st := { st with store := Store.empty }
-              let inner := runToks cx' (e.push xn h.1 h.2) toks 0 (St.initial gs store)
+              let inner := runToks cx' (e.push xn h.2.2) toks 0 (St.initial gs store)
               let body := inner.finish
               let store := inner.store
               let clips := bboxClip dict cx.doc body store
@@ -2227,18 +2249,18 @@ termination_by (e.room, 1, 1)
 decreasing_by
   simp_wf
   apply Prod.Lex.left
-  exact Entered.push_room_between e _ _ _
+  exact Entered.push_room_between e _ _
 
 end
 
 /-- One token's reading, as `runToks` takes it. -/
-public def tokStep (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok) : St :=
+public def tokStep (cx : Ctx) (e : Entered) (st : St) (t : Tok) : St :=
   match t with
   | .val o => { st with ops := st.ops.push o }
   | .inline dict data => inlineImage cx { st with ops := #[] } dict data
   | .op name => { stepOp cx e name st with ops := #[] }
 
-private theorem runToks_foldl (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) :
+private theorem runToks_foldl (cx : Ctx) (e : Entered) (toks : Array Tok) :
     ∀ (i : Nat) (st : St), runToks cx e toks i st = (toks.toList.drop i).foldl (tokStep cx e) st := by
   intro i
   induction h : toks.size - i generalizing i with
@@ -2277,7 +2299,7 @@ private theorem inlineImage_saved (cx : Ctx) (st : St) (dict : Array (String × 
     · exact (emit_saved _ _).1
     · rfl
 
-private theorem tokStep_saved (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok)
+private theorem tokStep_saved (cx : Ctx) (e : Entered) (st : St) (t : Tok)
     (hq : t ≠ .op "q") (hQ : t ≠ .op "Q") : (tokStep cx e st t).saved = st.saved := by
   cases t with
   | val o => rfl
@@ -2301,7 +2323,7 @@ private theorem tokStep_saved (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok
   | .val _ :: ts, d => qDepth? ts d
   | .inline _ _ :: ts, d => qDepth? ts d
 
-private theorem foldl_saved (cx : Ctx) (e : Entered cx.doc) :
+private theorem foldl_saved (cx : Ctx) (e : Entered) :
     ∀ (ts : List Tok) (d d' : Nat) (st : St), d ≤ st.saved.size → qDepth? ts d = some d' →
       ∃ ext : List (GState × Nat),
         (ts.foldl (tokStep cx e) st).saved.toList = st.saved.toList.take (st.saved.size - d) ++ ext ∧
@@ -2379,14 +2401,14 @@ private theorem foldl_saved (cx : Ctx) (e : Entered cx.doc) :
       rw [hs] at he
       exact ⟨ext, he, hl⟩
 
-private theorem tokStep_Q (cx : Ctx) (e : Entered cx.doc) (st : St) (g : GState) (k : Nat)
+private theorem tokStep_Q (cx : Ctx) (e : Entered) (st : St) (g : GState) (k : Nat)
     (h : st.saved.back? = some (g, k)) :
     (tokStep cx e st (.op "Q")).gs = g ∧ (tokStep cx e st (.op "Q")).saved = st.saved.pop := by
   simp only [tokStep]
   rw [stepOp]
   simp [h]
 
-public theorem gsave_restore_id (cx : Ctx) (e : Entered cx.doc) (inner : List Tok)
+public theorem gsave_restore_id (cx : Ctx) (e : Entered) (inner : List Tok)
     (h : qDepth? inner 0 = some 0) (st : St) :
     let st' := runToks cx e (#[.op "q"] ++ inner.toArray ++ #[.op "Q"]) 0 st
     st'.gs = st.gs ∧ st'.saved = st.saved := by
@@ -2438,7 +2460,7 @@ private theorem fold_words (f : St → PdfFont.Code → St)
     · simp [hh]
     · simp [hh, String.join_cons, List.map_cons, String.append_assoc]
 
-public theorem words_exact (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) :
+public theorem words_exact (cx : Ctx) (e : Entered) (s : ByteArray) (st : St) :
     (showString cx e s st).words = st.words ++
       (match (fontOf cx st).2 with
        | none => ""
@@ -2498,7 +2520,7 @@ public structure Imported where
 /-- A content stream read as a figure from PDF's initial state, in `cx`'s box and clipped to it. -/
 public def readStream (cx : Ctx) (content : ByteArray) : Figure Run :=
   let toks := PdfContentLex.scan content
-  let e : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  let e := Entered.empty
   let st := runToks cx e toks 0 (St.initial (GState.initial Affine.unit) Store.empty)
   let s := st.store
   { box := cx.box, clipToBox := true, nodes := st.finish, outlines := s.outlines, symbols := s.symbols
