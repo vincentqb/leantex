@@ -193,8 +193,13 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
     (["LeanTex/Core/PygmentsLexData.lean", "LeanTex/Core/PygmentsStyleData.lean"].all fun p =>
       xs.any (·.1 == p))
   for (path, head) in xs do
+    t s!"pygments data: {path} names Pygments' licence, {GenData.pygmentsLicence}"
+      (hasStr head GenData.pygmentsLicence)
     t s!"pygments data: {path} comes from the release the generators read, {GenData.pygmentsRelease}"
       (hasStr head s!"Source: Pygments {GenData.pygmentsRelease}")
+  let licence ← try IO.FS.readFile GenData.pygmentsLicence catch _ => pure ""
+  t s!"pygments data: {GenData.pygmentsLicence} holds Pygments' BSD terms"
+    (hasStr licence "Redistribution and use in source and binary forms")
   let cases := ((json.getObjVal? "cases").toOption.bind (·.getArr?.toOption)).getD #[]
   let mut seen : Array String := #[]
   let mut lexers : Array Lexer := #[]
