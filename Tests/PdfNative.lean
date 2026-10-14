@@ -723,6 +723,36 @@ def pdfNestingChecks (ref : IO.Ref (List String)) : IO Unit := do
       cells (cellOrder (fill "A" ++ " " ++ fill "F")) == some 1 &&
       cells (cellOrder (fill "F" ++ " " ++ fill "A")) == some 1 && cells (cellOrder (fill "F")) == some 0 &&
       (drawn (cellOrder (fill "F"))).any (· > 0))
+  let type3 (procs : String) (charProcs : String) : String :=
+    s!"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] \
+      /CharProcs << {charProcs} >> /Encoding << /Type /Encoding /Differences [97 /a /b] >> \
+      /FirstChar 97 /LastChar 98 /Widths [1000 1000] {procs}>>"
+  let stamps := syntheticPdf #[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
+      /Resources << /Font << /T 5 0 R >> /XObject << /X 6 0 R >> >> >>",
+    streamObj "BT /T 10 Tf 0 0 Td (ab) Tj ET /X Do", type3 "" "/a 7 0 R /b 8 0 R",
+    streamObj "BT /T 10 Tf 0 20 Td (ab) Tj ET"
+      "/Type /XObject /Subtype /Form /BBox [0 0 100 50] /Resources << /Font << /T 5 0 R >> >> ",
+    streamObj "1000 0 0 0 800 800 d1 0 0 m 800 0 l 400 800 l h f",
+    streamObj "1000 0 0 0 800 800 d1 0 0 800 800 re f"]
+  t "nesting: a Type 3 glyph whose procedure enters nothing is read once for every depth"
+    ((PdfGfx.importPage stamps).toOption.map (·.figure.outlines.size) == some 2 && drawn stamps == some 4)
+  let glyphOrder (order : String) : ByteArray := syntheticPdf (#[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
+      /Resources << /Font << /T 5 0 R >> /XObject << /A 8 0 R >> >> >>",
+    streamObj order, type3 "/Resources << /XObject << /G 7 0 R >> >> " "/a 6 0 R /b 6 0 R",
+    streamObj "1000 0 d0 /G Do",
+    streamObj "0 0 10 10 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 50] "] ++
+    (Array.range (enteredLimit - 1)).map fun i =>
+      if i + 2 < enteredLimit then streamObj "/X Do" (formDict s!"/X {i + 9} 0 R")
+      else streamObj "BT /T 10 Tf 0 20 Td (a) Tj ET"
+        "/Type /XObject /Subtype /Form /BBox [0 0 100 50] /Resources << /Font << /T 5 0 R >> >> ")
+  let shown := "BT /T 10 Tf 0 0 Td (a) Tj ET"
+  for (what, order) in [("then near the top", "/A Do " ++ shown), ("after it is read near the top", shown ++ " /A Do")] do
+    t s!"nesting: a Type 3 glyph read at the limit {what} is read at each depth for itself"
+      (drawn (glyphOrder order) == some 1 && recursion (glyphOrder order) == some 1)
   let nested (k : Nat) : String :=
     s!"<< /Spare {String.join (List.replicate (k - 1) "[")}1{String.join (List.replicate (k - 1) "]")} >>"
   let nestedPdf (k : Nat) : ByteArray := syntheticPdf #[

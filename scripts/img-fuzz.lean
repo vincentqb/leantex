@@ -246,18 +246,27 @@ def pdfFigureFuzz : IO Unit := do
     | .error e => die s!"{what}: refused whole: {e}"
     let ms := (← IO.monoMsNow) - t0
     if ms > budget then die s!"{what}: one import took {ms} ms, over {budget}"
+  let wideGroup := deepVe ("[/Or" ++ String.join (List.replicate 2000 " 7 0 R") ++ "]")
+    #["<< /Type /OCG /Name (" ++ String.join (List.replicate 1000000 "x") ++ ") >>"]
+  let t0 ← IO.monoMsNow
+  match PdfGfx.importPage wideGroup with
+  | .ok imp => unless imp.figure.marks.size == 1 && imp.figure.losses.isEmpty do
+      die "an expression over one group two thousand times is not shown"
+  | .error e => die s!"an expression over one group two thousand times refused whole: {e}"
+  let ms := (← IO.monoMsNow) - t0
+  if ms > budget then die s!"an expression over one group two thousand times: one import took {ms} ms, over {budget}"
   let formChain : ByteArray := fuzzPdf (#[
     "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R \
 /Resources << /XObject << /X 5 0 R >> >> >>", fuzzStream "/X Do"] ++
     (Array.range 20000).map fun i => fuzzStream "/X Do" s!"/Type /XObject /Subtype /Form \
 /BBox [0 0 50 50] /Resources << /XObject << /X {i + 6} 0 R >> >> ")
-  let t0 ← IO.monoMsNow
+  let t2 ← IO.monoMsNow
   match PdfGfx.importPage formChain with
   | .ok imp => unless imp.figure.losses.contains (.budget "form-recursion") do
       die "twenty thousand nested forms are not named a recursion"
   | .error e => die s!"twenty thousand nested forms refused whole: {e}"
-  let ms := (← IO.monoMsNow) - t0
+  let ms := (← IO.monoMsNow) - t2
   if ms > budget then die s!"twenty thousand nested forms: one import took {ms} ms, over {budget}"
   let deepObject : ByteArray := fuzzPdf #[
     "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",

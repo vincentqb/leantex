@@ -346,7 +346,7 @@ public structure Store where
   losses : Array Loss
   fonts : Std.HashMap Nat PdfFont.Loaded
   glyphs : Std.HashMap (Nat × Nat) (Option Nat)
-  type3 : Std.HashMap (Nat × String × Nat) (Option (Bool × Nat))
+  type3 : Std.HashMap (Nat × String × Option Nat) (Option (Bool × Nat))
   forms : Std.HashMap String Nat
   images : Std.HashMap String (Option Nat)
   /-- Whether optional content is hidden, by the object number its `/OC` names. -/
@@ -356,11 +356,13 @@ public structure Store where
   /-- How many font dictionaries read in place have been keyed; the next key is `directKeyBase` plus
   this count. -/
   direct : Nat
+  /-- How many times a reading has asked to enter a form, a tiling cell or a Type 3 procedure. -/
+  asked : Nat
   deriving Inhabited
 
 public def Store.empty : Store :=
   { outlines := #[], symbols := #[], rasters := #[], losses := #[], fonts := {}, glyphs := {}
-    type3 := {}, forms := {}, images := {}, oc := {}, ve := {}, direct := 0 }
+    type3 := {}, forms := {}, images := {}, oc := {}, ve := {}, direct := 0, asked := 0 }
 
 /-- Where the keys of fonts read in place start: past any object number a PDF can hold (Annex C). -/
 public def directKeyBase : Nat := 2 ^ 32
@@ -1994,6 +1996,7 @@ private def tileNodes (cx : Ctx) (e : Entered) (st : St) (pat : Obj) (region : G
     St × Option (Array (Node Run)) :=
   match pat with
   | .ref pn _ =>
+    let st := { st with store := { st.store with asked := st.store.asked + 1 } }
     if h : cx.doc.lists pn = true ∧ pn ∉ e.list ∧ e.list.length < enteredLimit then
       match (cx.doc.stream pat).toOption.getD none with
       | none => (st, none)
@@ -2014,13 +2017,15 @@ private def tileNodes (cx : Ctx) (e : Entered) (st : St) (pat : Obj) (region : G
         | some invC, .ok (.bytes data) =>
           if bb.size != 4 || xs == 0 || ys == 0 then (st, none) else
           let q := invC.compose space
-          let key := s!"tile|{pn}|{e.list.length}"
-          let (st, k) := match st.store.forms.get? key with
+          let key := s!"tile|{pn}"
+          let deepKey := s!"tile|{pn}|d{e.list.length}"
+          let (st, k) := match (st.store.forms.get? key).orElse fun _ => st.store.forms.get? deepKey with
             | some k => (st, k)
             | none =>
               let res := ((pd.get? "Resources").bind fun x => (cx.doc.deref x).toOption).getD cx.res
               let cx' : Ctx := { cx with res, base := space }
               let store := st.store
+              let asked := store.asked
               let st := { st with store := Store.empty }
               let inner := runToks cx' (e.push pn h.2.2) (PdfContentLex.scan data) 0
                 (St.initial (GState.initial space) store)
@@ -2032,8 +2037,9 @@ private def tileNodes (cx : Ctx) (e : Entered) (st : St) (pat : Obj) (region : G
                 Alpha.opaque inner.finish]
               let store := inner.store
               let k := store.symbols.size
+              let slot := if store.asked == asked then key else deepKey
               ({ st with store := { store with symbols := store.symbols.push body
-                                               forms := store.forms.insert key k } }, k)
+                                               forms := store.forms.insert slot k } }, k)
           match Affine.inv? q, region.hull with
           | some invQ, some box =>
             let pb := Box.image invQ box
@@ -2118,15 +2124,18 @@ termination_by (e.room, 1, 0)
 
 private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : Nat)
     (proc : String) (fm : Affine) (st : St) : St :=
+  let st := { st with store := { st.store with asked := st.store.asked + 1 } }
   let inherited := { st.gs with ctm := Affine.unit, maskClip := none }
-  let symKey := s!"t3|{key}|{proc}|{e.list.length}|{stateKey inherited}"
+  let symKey (slot : Option Nat) : String := match slot with
+    | none => s!"t3|{key}|{proc}|{stateKey inherited}"
+    | some d => s!"t3|{key}|{proc}|d{d}|{stateKey inherited}"
   let place (st : St) (r : Bool × Nat) : St :=
     if r.1 then stampGlyph cx st r.2 fm .nonzero
     else st.emit (.use r.2 ((textFrame st).compose fm))
-  let first := st.store.type3.get? (key, proc, e.list.length)
-  let cached : Option (Option (Bool × Nat)) := match first with
-    | some (some (false, _)) => (st.store.forms.get? symKey).map fun k => some (false, k)
-    | some (some (true, _)) | some none | none => first
+  let first := ((st.store.type3.get? (key, proc, none)).map (none, ·)).orElse fun _ =>
+    (st.store.type3.get? (key, proc, some e.list.length)).map (some e.list.length, ·)
+  let cached : Option (Option (Bool × Nat)) := first.bind fun (slot, v) =>
+    if v.any (!·.1) then (st.store.forms.get? (symKey slot)).map fun k => some (false, k) else some v
   match cached with
   | some (some r) => place st r
   | some none => st
@@ -2148,6 +2157,7 @@ private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : N
               let black : Ink := .color { r := 0, g := 0, b := 0 }
               -- The store goes with each reading, held once.
               let store := st.store
+              let asked := store.asked
               let st := { st with store := Store.empty }
               let (stencil, store) : Option (Array Subpath) × Store := if isD1 then
                   let neutral := { inherited with fill := black, stroke := black, ca := Alpha.opaque
@@ -2155,32 +2165,36 @@ private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : N
                   let inner := runToks cx' (e.push pn h.2.2) toks 0 (St.initial neutral store)
                   (type3Stamp? true inner.finish, inner.store)
                 else (none, store)
+              let slotOf (store : Store) : Option Nat :=
+                if store.asked == asked then none else some e.list.length
               match stencil with
               | some subs =>
+                let slot := slotOf store
                 -- A procedure that paints nothing (a space) is a glyph with no ink.
                 if subs.isEmpty then
-                  { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) none } }
+                  { st with store := { store with type3 := store.type3.insert (key, proc, slot) none } }
                 else
                   let r : Bool × Nat := (true, store.outlines.size)
                   let store := { store with outlines := store.outlines.push subs }
-                  place { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) (some r) } } r
+                  place { st with store := { store with type3 := store.type3.insert (key, proc, slot) (some r) } } r
               | none =>
                 let inner := runToks cx' (e.push pn h.2.2) toks 0 (St.initial inherited store)
                 let body := inner.finish
                 let store := inner.store
+                let slot := slotOf store
                 if body.isEmpty then
-                  { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) none } }
+                  { st with store := { store with type3 := store.type3.insert (key, proc, slot) none } }
                 else
                   let r : Bool × Nat := (false, store.symbols.size)
                   let store := { store with symbols := store.symbols.push body
-                                            forms := store.forms.insert symKey store.symbols.size }
-                  place { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) (some r) } } r
+                                            forms := store.forms.insert (symKey slot) store.symbols.size }
+                  place { st with store := { store with type3 := store.type3.insert (key, proc, slot) (some r) } } r
             | .error err =>
               { st with store := { (st.store.lose
                   (PdfFont.undecoded "type3-procedure" (.font "type3-procedure") err)) with
-                    type3 := st.store.type3.insert (key, proc, e.list.length) none } }
+                    type3 := st.store.type3.insert (key, proc, none) none } }
             | _ => { st with store := { (st.store.lose (.font "type3-procedure")) with
-                       type3 := st.store.type3.insert (key, proc, e.list.length) none } }
+                       type3 := st.store.type3.insert (key, proc, none) none } }
           | none => st
         else { st with store := st.store.lose (.budget "type3-recursion") }
       | _ => st
@@ -2219,6 +2233,7 @@ private def doXObject (cx : Ctx) (e : Entered) (xName : String) (st : St) : St :
           | .error l =>
             { st with store := { (st.store.lose l) with images := st.store.images.insert ikey none } }
       | some (.name "Form") =>
+        let st := { st with store := { st.store with asked := st.store.asked + 1 } }
         if h : cx.doc.lists xn = true ∧ xn ∉ e.list ∧ e.list.length < enteredLimit then
           let m := match (dict.get? "Matrix").bind fun x => (cx.doc.deref x).toOption with
             | some (.arr xs) => (affineOf (xs.filterMap fun x => (cx.doc.deref x).toOption.bind ratOf)).getD Affine.unit
@@ -2228,8 +2243,9 @@ private def doXObject (cx : Ctx) (e : Entered) (xName : String) (st : St) : St :
           let st := if group.any (fun g => g.get? "K" == some (.bool true)) then
               { st with store := st.store.lose (.property "knockout") } else st
           let alpha := if transparency then st.gs.fillAlpha else Alpha.opaque
-          let key := s!"{xn}|{e.list.length}|{stateKey st.gs}"
-          match st.store.forms.get? key with
+          let key := s!"{xn}|{stateKey st.gs}"
+          let deepKey := s!"{xn}|d{e.list.length}|{stateKey st.gs}"
+          match (st.store.forms.get? key).orElse fun _ => st.store.forms.get? deepKey with
           | some k => st.emit (.group Affine.unit #[] alpha #[.use k m])
           | none =>
             let res := ((dict.get? "Resources").bind fun x => (cx.doc.deref x).toOption).getD cx.res
@@ -2242,15 +2258,17 @@ private def doXObject (cx : Ctx) (e : Entered) (xName : String) (st : St) : St :
               let gs := { st.gs with ctm, maskClip := none }
               let gs := if transparency then { gs with ca := Alpha.opaque, cA := Alpha.opaque, mask := Alpha.opaque } else gs
               let store := st.store
+              let asked := store.asked
               let st := { st with store := Store.empty }
               let inner := runToks cx' (e.push xn h.2.2) toks 0 (St.initial gs store)
               let body := inner.finish
               let store := inner.store
               let clips := bboxClip dict cx.doc body store
               let body := if clips.isEmpty then body else #[.group Affine.unit clips Alpha.opaque body]
-              -- The reading is kept as a symbol a later `Do` of this form with this state reuses.
+              -- A reading that asked to enter nothing is the same at every depth; any other, at its own.
               let k := store.symbols.size
-              let store := { store with symbols := store.symbols.push body, forms := store.forms.insert key k }
+              let slot := if store.asked == asked then key else deepKey
+              let store := { store with symbols := store.symbols.push body, forms := store.forms.insert slot k }
               { st with store } |>.emit (.group Affine.unit #[] alpha #[.use k m])
             | .error e =>
               { st with store := st.store.lose (PdfFont.undecoded "form-data" (.resource "form-data") e) }
