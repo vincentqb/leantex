@@ -542,26 +542,14 @@ public def fallbackRuns (fs : Font.FontSet) (pages : Array PageOut) : Nat :=
 
 /-! ## The HTML page -/
 
--- The stylesheets of a tree, in order: one walk over the elements with the
--- accumulator threaded, structurally through `List`.
-mutual
-
-def stylesList (acc : Array String) : List Html.Node → Array String
-  | [] => acc
-  | n :: rest => stylesList (stylesOne acc n) rest
-
-def stylesOne (acc : Array String) : Html.Node → Array String
-  | .style css => acc.push css
-  | .elem _ _ kids => stylesList acc kids.toList
-  | .text _ => acc
-  | .script _ _ => acc
-
-end
+/-- The stylesheets of a tree, in order. -/
+private def styles : Html.Walk Unit (Array String) where
+  style _ acc css := acc.push css
 
 /-- The font programs a page's stylesheets ship: the source of every
 `@font-face` rule, in order. -/
 public def fontSources (nodes : Array Html.Node) : Array String :=
-  (stylesList #[] nodes.toList).foldl (fun acc css =>
+  (styles.list () #[] nodes.toList).foldl (fun acc css =>
     ((css.splitOn "@font-face").drop 1).foldl (fun acc rule =>
       match ((rule.splitOn "}").headD "").splitOn "url(\"" with
       | _ :: src :: _ => acc.push ((src.splitOn "\")").headD "")
