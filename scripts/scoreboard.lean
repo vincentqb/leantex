@@ -4,6 +4,7 @@ against a revision, the deficit queue, and the reports.
 Usage: scoreboard [--check [--base <rev>] | --queue | --bench | --selftest | --key <dir>]
 -/
 import scripts.Board
+import scripts.GitGuard
 
 open Scoreboard
 
@@ -492,17 +493,6 @@ def baseArg (args : List String) : Option (Option String) :=
   | [_] => some none
   | _ :: rev :: _ => some (some rev)
 
-/-- The environment the harness runs git and the scoreboard under: a fresh install's, with
-no config and no variable naming another repository. -/
-def harnessEnv : Array (String × Option String) :=
-  #[("GIT_CONFIG_GLOBAL", some "/dev/null"), ("GIT_CONFIG_NOSYSTEM", some "1"),
-    ("GIT_TERMINAL_PROMPT", some "0")] ++
-  (#["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX",
-      "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_IMPLICIT_WORK_TREE",
-      "GIT_GRAFT_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE",
-      "GIT_SHALLOW_FILE"].map fun n => (n, (none : Option String)))
-
 /-- The tier every harness repository carries: a producer whose `--check` always exits 0,
 so the exit status is the base check's alone, over a raw baseline of two rows. -/
 def probeTier : String := "zz-probe"
@@ -511,6 +501,16 @@ def probeText : String := "# encoding: raw\nalpha\t5\nbravo\t3\n"
 
 /-- A producer whose `--check` passes whatever its baseline says. -/
 def trivialProducer : String := "def main (_ : List String) : IO UInt32 := pure 0\n"
+
+/-- A producer whose `--check` passes only when git refuses a network transport before
+connecting. -/
+def nonetProducer : String :=
+  "def main (_ : List String) : IO UInt32 := do\n" ++
+  "  let o ← IO.Process.output\n" ++
+  "    { cmd := \"git\", args := #[\"ls-remote\", \"https://127.0.0.1:9/probe.git\"]\n" ++
+  "      env := #[(\"http_proxy\", none), (\"https_proxy\", none), (\"HTTP_PROXY\", none),\n" ++
+  "        (\"HTTPS_PROXY\", none), (\"ALL_PROXY\", none), (\"all_proxy\", none)] }\n" ++
+  "  return if (o.stderr.splitOn \"transport 'https' not allowed\").length > 1 then 0 else 1\n"
 
 /-- One harness case: files committed at the base, the edit making the tree, the exit
 status `scoreboard --check --base <base>` must return, and lines its output must hold. -/
@@ -531,12 +531,9 @@ def swapIn (dir : System.FilePath) (path old new : String) : IO Unit := do
   unless containsSub s old do throw (IO.userError s!"{path} holds no '{old}'")
   IO.FS.writeFile (dir / path) (s.replace old new)
 
+/-- git in a harness repository through the guard (`hgitRun`): its output, or an error. -/
 def harnessGit (dir : System.FilePath) (args : Array String) : IO String := do
-  let o ← IO.Process.output
-    { cmd := "git"
-      args := #["-c", "user.name=probe", "-c", "user.email=probe@example.org",
-                "-c", "init.defaultBranch=main"] ++ args
-      cwd := some dir, env := harnessEnv }
+  let o ← hgitRun args dir.toString
   if o.exitCode != 0 then
     throw (IO.userError s!"git {String.intercalate " " args.toList} exited {o.exitCode}: \
 {o.stderr.trimAscii.toString}")
@@ -685,6 +682,13 @@ the base carries)"] },
      extra := [("testdata/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
      edit := fun d _ => IO.FS.removeDirAll (d / "testdata/scoreboard/zz-dir.tsv")
      exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] },
+   -- A producer the harness starts reaches git with no network transport.
+   { label := "a producer's git cannot use a network transport"
+     extra := [(tsvPath "zz-nonet", "# encoding: raw\nalpha\t1\n"),
+       (scriptPath "zz-nonet", nonetProducer)]
+     edit := fun _ _ => pure (), exit := 0
+     says := fun s => [s!"scoreboard: base={s} tier={probeTier} result=ok",
+       "scoreboard: tier=zz-nonet items=0 regressed=0 improved=0 result=ok"] },
    -- A replace ref swaps a blob, a tree or a commit; one case per kind of object the check reads.
    { label := "a replace ref swaps the base's blob for one already holding the fall"
      extra := []
@@ -776,10 +780,11 @@ base carries)"] },
      says := credits ["moved: bravo 3 → gone",
        "credited: # retired: bravo — an invented reason (spends the request the base carries)"] }]
 
-/-- Lay out one harness repository, commit the base, make the tree by the case's edit, and
-run the scoreboard under test there: `none` when it answered as the case says. -/
-def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
-  let dir ← IO.FS.createTempDir
+/-- Lay out one harness repository in `dir`, under the guarded root, commit the base, make the
+tree by the case's edit, and run the scoreboard under test there: `none` when it answered as
+the case says. -/
+def runCliCase (bin toolchain : String) (dir : System.FilePath) (c : CliCase) :
+    IO (Option String) := do
   try
     IO.FS.createDirAll (dir / baselineDir)
     IO.FS.createDirAll (dir / "scripts")
@@ -794,15 +799,16 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
     if c.baseRoot != baselineDir then
       if let some parent := (dir / c.baseRoot).parent then IO.FS.createDirAll parent
       IO.FS.rename (dir / baselineDir) (dir / c.baseRoot)
-    let _ ← harnessGit dir #["init", "-q", "."]
+    let _ ← harnessGit dir #["init", "-q", "-b", "main", "."]
+    let _ ← harnessGit dir #["config", "user.name", "probe"]
+    let _ ← harnessGit dir #["config", "user.email", "probe@example.org"]
     let _ ← harnessGit dir #["add", "-A"]
     let tree ← harnessGit dir #["write-tree"]
     let sha ← harnessGit dir #["commit-tree", tree, "-m", s!"harness base: {c.label}"]
     if c.baseRoot != baselineDir then
       IO.FS.rename (dir / c.baseRoot) (dir / baselineDir)
     c.edit dir sha
-    let o ← IO.Process.output
-      { cmd := bin, args := #["--check", "--base", sha], cwd := some dir, env := harnessEnv }
+    let o ← runToolRun bin dir.toString #["--check", "--base", sha] #[]
     let lines := (o.stdout.splitOn "\n").map (·.trimAscii.toString)
     let shown := String.intercalate "\n    " ((lines.filter (containsSub · "zz")).take 8)
     if o.exitCode != c.exit then
@@ -827,15 +833,16 @@ def selfBinary : IO (Except String String) := do
   return .error s!"the selftest drives its own binary and this process is {bin}; run the \
 compiled one: lake build scoreboard && .lake/build/bin/scoreboard --selftest"
 
-/-- Every case, in parallel, against this binary. -/
-def cliFailures : IO (Array String) := do
+/-- Every case, in parallel, against this binary, each in its own directory under `root`. -/
+def cliFailures (root : System.FilePath) : IO (Array String) := do
   let bin ← match ← selfBinary with
     | .ok b => pure b
     | .error e => return #[s!"cli: {e}"]
   let toolchain ← readFileOr "lean-toolchain"
   let mut tasks := #[]
-  for c in cliCases do
-    tasks := tasks.push (← IO.asTask (prio := .dedicated) (runCliCase bin toolchain c))
+  for (c, i) in cliCases.zipIdx do
+    tasks := tasks.push
+      (← IO.asTask (prio := .dedicated) (runCliCase bin toolchain (root / s!"case-{i}") c))
   let mut out := #[]
   for t in tasks do
     match ← IO.wait t with
@@ -867,7 +874,38 @@ def keyUnderHosts (dir : System.FilePath) : IO (Except String (String × String)
   finally
     IO.FS.removeDirAll host
 
-def selftest : IO UInt32 := do
+/-- This binary's `--selftest` with its scratch parent inside a checkout made under `root`:
+why it did not refuse to start or left the checkout or the parent changed; `none` when it held. -/
+def enclosedRootFailure (root : System.FilePath) : IO (Option String) := do
+  let bin ← match ← selfBinary with
+    | .ok b => pure b
+    | .error e => return some s!"enclosed root: {e}"
+  let victim := root / "victim"
+  IO.FS.createDirAll victim
+  let _ ← harnessGit victim #["init", "-q", "-b", "main", "."]
+  let _ ← harnessGit victim #["config", "user.name", "probe"]
+  let _ ← harnessGit victim #["config", "user.email", "probe@example.org"]
+  IO.FS.writeFile (victim / "base.txt") "base\n"
+  let _ ← harnessGit victim #["add", "base.txt"]
+  let _ ← harnessGit victim #["commit", "-qm", "Base"]
+  let inside := victim / "scratch"
+  IO.FS.createDirAll inside
+  let state : IO (String × String × String) := do
+    return (← harnessGit victim #["for-each-ref", "--format=%(objectname) %(refname)"],
+      ← harnessGit victim #["status", "--porcelain", "--untracked-files=all"],
+      ← IO.FS.readFile (victim / ".git" / "config"))
+  let before ← state
+  let o ← runToolRun bin victim.toString #["--selftest"]
+    #[("SCOREBOARD_SCRATCH_DIR", some inside.toString), ("SCOREBOARD_NESTED", some "1")]
+  let after ← state
+  let left := (← inside.readDir).size
+  let refused := containsSub (o.stdout ++ o.stderr) "is inside the checkout"
+  if o.exitCode == 2 && refused && before == after && left == 0 then return none
+  return some s!"enclosed root: exit {o.exitCode} refused={refused} left={left} \
+unchanged={before == after}"
+
+/-- The selftest's checks, every repository it makes under the guarded `root`. -/
+def selftestIn (root : System.FilePath) : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
   let no (why : String) (ok : Bool) : IO Unit := do
     unless ok do fails.modify (why :: ·)
@@ -1144,7 +1182,14 @@ the request the base carries)"])
   no "printable: everything else passes unchanged"
     (printable "alpha 5→4 — é, 字" == "alpha 5→4 — é, 字")
   -- The same check through `scoreboard --check --base` in throwaway repositories.
-  for why in ← cliFailures do no why false
+  for why in ← cliFailures root do no why false
+  let guarded ← try
+      let _ ← harnessGit root #["-c", "core.pager=cat", "--version"]
+      pure false
+    catch _ => pure true
+  no "harness: the cases' git runs through the guard, which refuses a global option" guarded
+  unless (← IO.getEnv "SCOREBOARD_NESTED").isSome do
+    if let some why ← enclosedRootFailure root then no why false
 
   -- What the aggregate decides before any producer runs.
   no "aggregate: an empty baseline is a fault" ((precheck "" true).map (·.1) == some "fault")
@@ -1316,6 +1361,21 @@ followed to the end, and the key)"
         IO.eprint (← readFileOr e)
       IO.FS.removeDirAll dir
   return (if bad == 0 then 0 else 1)
+
+/-- The selftest under a fresh scratch root no repository encloses, in `SCOREBOARD_SCRATCH_DIR`
+(else `/tmp`); exit 2 when none can be made. -/
+def selftest : IO UInt32 := do
+  let parent := (← IO.getEnv "SCOREBOARD_SCRATCH_DIR").getD "/tmp"
+  match ← guardRoot parent "scoreboard-selftest" with
+  | .error (.unmade p) =>
+    IO.eprintln s!"scoreboard: no fresh scratch root could be made under {p}"
+    return 2
+  | .error (.enclosed _ why) =>
+    IO.eprintln s!"scoreboard: {why}"
+    return 2
+  | .ok root =>
+    try selftestIn (System.FilePath.mk root) finally
+      try IO.FS.removeDirAll root catch _ => pure ()
 
 def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then return (← selftest)
