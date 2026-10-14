@@ -1,6 +1,7 @@
 /-
-The pre-commit gate: source conventions over the staged diff, a revision range (`--range`) or the
-tree (`--tree`), then lake build --wfail, lake test and lake lint unless `--conventions` is given.
+The pre-commit gate: source conventions over the staged diff, the lines and paths a revision range
+adds (`--range`) or the tree (`--tree`), then lake build --wfail, lake test and lake lint unless
+`--conventions` is given.
 -/
 
 import scripts.Gate
@@ -56,8 +57,8 @@ def mergeBaseMain : IO (Option String) := do
       if !b.isEmpty then return some b
   return none
 
-/-- Where a run reads its diff: the index (the hook), a revision range (CI), or no diff
-(`--tree`). -/
+/-- Where a run reads its diff: the index (the hook), a revision range (CI and the landing gate),
+which judges only what it adds, or no diff (`--tree`). -/
 inductive Source where
   | index
   | range (rev : String)
@@ -88,6 +89,15 @@ def parseSource : List String → Except String Source
         .error "--range needs a revision range, e.g. --range=origin/main...HEAD"
       else .ok (.range r)
     else parseSource rest
+
+/-- The revision a range's diff reads new text at, `none` for one revision, whose diff reads the
+working tree. -/
+def rangeTip (r : String) : Option String :=
+  match r.splitOn ".." with
+  | [_] => none
+  | parts =>
+    let t := String.ofList ((parts.getLastD "").toList.dropWhile (· == '.'))
+    some (if t.isEmpty then "HEAD" else t)
 
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
@@ -321,20 +331,21 @@ def unpushedRange : Array String := #["HEAD", "--not", "refs/remotes/origin/main
 
 /-- Where an unpushed commit adds a denylisted term in a line, a path or a blob, or names one in its
 message. -/
-def privacyCommits (m : Privacy.Matcher) : IO (Array String) := do
+def privacyCommits (m : Privacy.Matcher) (revs : Array String := unpushedRange) :
+    IO (Array String) := do
   let mergesFirst := "--diff-merges=first-parent"
   let patches ← gitBytes (#["-c", "core.quotePath=false", "log"] ++ pinnedPatch ++
-    #[mergesFirst, "-p", "--format=%x00%H"] ++ unpushedRange)
+    #[mergesFirst, "-p", "--format=%x00%H"] ++ revs)
   let paths ← gitBytes (#["log", "--format=%x00%H", "--name-only", "-z", "--diff-filter=ACR",
-    "-M", mergesFirst] ++ unpushedRange)
+    "-M", mergesFirst] ++ revs)
   let numstat ← git (#["log", "--format=%x00%H", "--numstat", "-z", "--no-renames",
-    "--diff-filter=AM", mergesFirst] ++ unpushedRange)
+    "--diff-filter=AM", mergesFirst] ++ revs)
   let binaries := (Privacy.logRecords numstat).filterMap fun (sha, row) =>
     (Privacy.blobRow row).bind fun p => if p.contains '\n' then none else some (sha, p)
   let blobs ← catBlobs (binaries.map fun (sha, p) => s!"{sha}:{p}")
   let found := m.commitFindings (Privacy.logPatchesOf patches) (Privacy.logRecordsOf paths)
     (binaries.zip blobs)
-  let log ← gitBytes (#["log", "-z", "--format=%H%n%B"] ++ unpushedRange)
+  let log ← gitBytes (#["log", "-z", "--format=%H%n%B"] ++ revs)
   return Privacy.uniq (found.append (m.messageFindingsOf log))
 
 /-- Where the staged tree and, outside the hook, each unpushed commit name a denylisted term, with
@@ -362,6 +373,21 @@ def privacyTree (m : Privacy.Matcher) : IO (Array String × Option String) := do
 which commits are unpushed is unknown and none was checked against it.
   Fix: git fetch origin, so refs/remotes/origin/main names what the remote holds, then re-run.")
   return (out.append (← privacyCommits m), none)
+
+/-- Where a range adds a denylisted term, in a line, a path or a blob, or one of its commits adds or
+names one. -/
+def privacyRange (m : Privacy.Matcher) (r : String) (diff : ByteArray) : IO (Array String) := do
+  let mut out := m.diffFindings diff ""
+  let names ← gitBytes #["diff", "--name-only", "-z", "--no-relative", "--diff-filter=ACR", "-M", r]
+  out := out.append (m.pathFindings (zPaths names) "" "its path")
+  let binaries := binaryPaths (← git #["diff", "--numstat", "-z", "--no-relative", "--no-renames",
+    "--diff-filter=AM", r])
+  if let some tip := rangeTip r then
+    let blobs ← catBlobs (binaries.map (tip ++ ":" ++ ·))
+    for (p, bs) in binaries.zip blobs do
+      out := out.append (m.blobFindings p bs "")
+    out := out.append (← privacyCommits m #[r])
+  return Privacy.uniq out
 
 def tokens (s : String) : List String :=
   (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
@@ -1833,15 +1859,6 @@ def docFindings (text : String) (added : Array Nat) : Array (Nat × String) := I
       if addedSet.contains ln then out := out.push (ln, s!"\"{mark}\"")
   return out.qsort (·.1 < ·.1)
 
-/-- The revision a range's diff reads new text at, `none` for one revision, whose diff reads the
-working tree. -/
-def rangeTip (r : String) : Option String :=
-  match r.splitOn ".." with
-  | [_] => none
-  | parts =>
-    let t := String.ofList ((parts.getLastD "").toList.dropWhile (· == '.'))
-    some (if t.isEmpty then "HEAD" else t)
-
 /-- A maintained Lean source, which the documentation rule reads. -/
 def docRuleFile (f : String) : Bool := f.endsWith ".lean" && !f.startsWith "testdata/"
 
@@ -3282,260 +3299,8 @@ def checkCompiledTree (env : Array (String × Option String) := #[])
       return code
   return 0
 
-def main (args : List String) : IO UInt32 := do
-  if args.contains "--selftest" then
-    return (← selftest)
-  let src ← match parseSource args with
-    | .ok s => pure s
-    | .error e =>
-      IO.eprintln s!"pre-commit: {e}"
-      return 1
-  let sel := src.diffSel
-  -- Only the hook may stop at an empty change list; a range still owes the whole-tree checks.
-  let staged ← match sel with
-    | none => pure ([] : List String)
-    | some s => pure (((← git (#["diff", "--name-only"] ++ s)).splitOn "\n").filter (!·.isEmpty))
-  if src == .index && staged.isEmpty then
-    return 0
-
-  -- Read first, so every message below passes through its masking.
-  let privacy ← denylist
-  let redact : String → String := fun msg => match privacy with
-    | some m => m.redact msg
-    | none => msg
-  let failed ← IO.mkRef false
-  let say (msg : String) : IO Unit := do
-    IO.eprintln (redact msg)
-    failed.set true
-
-  -- Over every staged file, before the relevance gate skips a commit with no source.
-  let fullDiffBytes ← match sel with
-    | none => pure ByteArray.empty
-    | some s => pinnedDiff s
-  let fullDiff := Privacy.textOfBytes fullDiffBytes
-  let bad := conflictMarkers fullDiff
-  if !bad.isEmpty then
-    let hits := String.intercalate "\n" (bad.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
-    say s!"pre-commit: merge-conflict marker in staged content:
-{hits}
-  Fix: resolve the conflict -- keep the side you mean, delete the marker
-  lines -- then re-stage the file."
-
-  let numstat ← match sel with
-    | none => pure ""
-    | some s => git (#["diff", "--numstat", "--diff-filter=A", "-z"] ++ s)
-  let faults := addedPathFaults numstat
-  if !faults.isEmpty then
-    let hits := String.intercalate "\n" (faults.toList.map fun (p, rule) => s!"  {p}: {rule}")
-    say s!"pre-commit: a staged added file is debris:
-{hits}
-  Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
-  never with -A or ."
-
-  -- From the index, so a staged addition is caught by its own commit.
-  let tracked ← git #["ls-files", "-z"]
-  let collisions := caseCollisions
-    ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray
-  if !collisions.isEmpty then
-    let hits := String.intercalate "\n" (collisions.toList.map fun (a, b) => s!"  {a}\n  {b}")
-    say s!"pre-commit: two tracked paths differ only by case:
-{hits}
-  Fix: rename one. A case-insensitive checkout keeps one of the two, and for
-  a Lean module the compiled .olean names collide as well."
-
-  -- The rule documents' shape and every section pointer, before the relevance gate.
-  let mut heads : List (String × List String) := []
-  for doc in sectionDocs do
-    if ← System.FilePath.pathExists doc then
-      let text ← IO.FS.readFile doc
-      heads := (doc, docHeadings text) :: heads
-      for fault in capFaults doc text do
-        say s!"pre-commit: {fault}.
-  A rule document is read whole at the start of every session, so it states
-  rules and names their checks (PRINCIPLES.md § Rules are checks).
-  Fix: fold the rule into the check it names, its contract into that check's
-  docstring, or carry an over-wide line onto the next."
-      for (n, l) in datedLines text do
-        say s!"pre-commit: {doc}:{n} dates a rule:
-  {l}
-  A rule states what holds; the day it was learned belongs to the commit that
-  learned it (PRINCIPLES.md § Rules are checks).
-  Fix: cut the date or the story; it belongs in the commit message."
-  if ← System.FilePath.pathExists hookPath then
-    let skipped ← hookSkippedDocs (← IO.FS.readFile hookPath)
-    unless skipped.isEmpty do
-      say s!"pre-commit: {hookPath} lets a commit touching only {String.intercalate " or " skipped} skip this gate:
-  its staged-name pattern must match every rule document, or the caps, the
-  dated-rule check and the pointer checks above never read an edit to one
-  until landing (PRINCIPLES.md § Rules are checks).
-  Fix: add the document to the `^(AGENTS|PRINCIPLES|THEOREMS)\\.md$` alternative."
-  let trackedPaths := ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray
-  let roots := vendoredRoots trackedPaths
-  let mut sources : Array (String × String) := #[]
-  for p in trackedPaths do
-    if (p.endsWith ".lean" || p.endsWith ".md") && !vendored roots p &&
-        (← System.FilePath.pathExists p) then
-      sources := sources.push (p, ← sourceText p)
-  let dangling := danglingSectionRefs heads sources
-  if !dangling.isEmpty then
-    let hits := String.intercalate "\n" (dangling.toList.map fun (f, n, r) => s!"  {f}:{n}: {r}")
-    say s!"pre-commit: a section pointer names no heading of its document:
-{hits}
-  A help text or a docstring defers to a rule by pointing at its section; the
-  pointer names a `## ` heading exactly and ends at punctuation.
-  Fix: point at the heading as it reads now, or restore the section."
-  let loose := looseRuleRefs (sources.filter fun (f, _) => !sectionDocs.contains f)
-  if !loose.isEmpty then
-    let hits := String.intercalate "\n" (loose.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
-    say s!"pre-commit: a comment points into a rule document by nickname or bare name:
-{hits}
-  A rule's address is its section, which the pointer check above holds to the
-  document; a nickname outlives the rule it named (PRINCIPLES.md § Rules are checks).
-  Fix: write `AGENTS.md{sectionMark} <heading>`, or the same into `PRINCIPLES.md`,
-  for the section the rule stands in now."
-
-  -- The hook reads added lines; a range or the tree reads every tracked text file.
-  let homeLines ← if src == .index then pure (addedLines fullDiff) else do
-    let (code, out, err) ← runBytes "git" #["grep", "-I", "-n", "-z", "-E", "/(home|Users)/"]
-    if code == 0 then pure (grepRecords (Privacy.textOfBytes out))
-    else if code == 1 then pure #[]
-    else
-      IO.eprintln s!"pre-commit: git grep failed:\n{Privacy.textOfBytes err}"
-      IO.Process.exit 1
-  let homeHits := homePathHits homeLines
-  if !homeHits.isEmpty then
-    -- The location and the kind of home, never the login after it.
-    let hits := String.intercalate "\n" (homeHits.toList.map fun (f, n, h) =>
-      s!"  {f}:{n}: {homeKind h}…")
-    say s!"pre-commit: a home directory path in a tracked text file:
-{hits}
-  A home directory names a person and a machine; neither belongs in this tree.
-  Fix: refer to the private reference corpus abstractly, write a placeholder,
-  or give the path relative to the repository."
-
-  -- The hook reads what the commit adds; a range or the tree reads the staged tree and unpushed
-  -- commits.
-  match privacy with
-  | none =>
-    IO.println "pre-commit: this clone keeps no info/private-terms in its git directory; \
-the privacy check is skipped."
-  | some m =>
-    let (hits, refused) ← if src == .index then pure ((← privacyStaged m fullDiffBytes), none)
-      else privacyTree m
-    if let some why := refused then say s!"pre-commit: {why}"
-    unless hits.isEmpty do
-      let scope := if src == .index then "in the staged changes"
-        else "in the staged tree or an unpushed commit"
-      say s!"pre-commit: a denylisted term {scope}, at:
-{String.intercalate "\n" hits.toList}
-  The local denylist (info/private-terms in the git common directory) holds
-  personal and private-document terms; none may enter the tree, a commit or
-  a commit message. The term is never printed, and a path holding it is
-  shown with that part as …; git ls-files or git show --stat names it.
-  Fix: replace the text with invented words that exercise the same property,
-  then re-stage. A term in an unpushed commit stays in what a push publishes
-  even after a later commit removes it: rewrite that commit (amend, or
-  squash it with the fix) before landing."
-
-  if src == .index && !staged.any relevant then
-    return (if ← failed.get then 1 else 0)
-
-  -- A range may span a bump commit, so this reads the index alone.
-  if src == .index && staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
-    say "pre-commit: lean-toolchain changed together with other files.
-  The toolchain tracks Lean's stable release, and a bump is deliberate and goes
-  in its own commit (AGENTS.md § Build and verify).
-  Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
-
-  if staged.any (·.startsWith "testdata/golden/") then
-    -- A golden travels with a source change anywhere on its branch.
-    let branchTouched ← do
-      match ← mergeBaseMain with
-      | some b =>
-        pure (((← git #["diff", "--name-only", b ++ "..HEAD"]).splitOn "\n").filter
-          (!·.isEmpty)).toArray
-      | none => pure #[]
-    if !staged.any goldenSource && !branchTouched.any goldenSource then
-      say "pre-commit: testdata/golden/** changed without a .lean or testdata/corpus/*.tex or *.md change.
-  Goldens are regenerated through the harness, never hand-edited (AGENTS.md § Build and verify).
-  Fix: revert the golden files, or regenerate with: lake exe Tests --update"
-
-  let diff ← match sel with
-    | none => pure ""
-    | some s => git (#["diff", "--no-color", "--unified=0"] ++ s ++ #["--", "*.lean"])
-  for (file, lns) in addedByFile diff do
-    for g in gates do
-      if g.applies file then
-        let bad := lns.filter g.flag
-        if !bad.isEmpty then
-          say s!"pre-commit: {g.what file}:
-{String.intercalate "\n" bad.toList}
-{g.help}"
-
-  let docAdded := (addedLines fullDiff).filter (docRuleFile ·.1)
-  let docFiles := Privacy.uniq (docAdded.map (·.1))
-  let tip := match src with
-    | .index => some ""
-    | .range r => rangeTip r
-    | .tree => none
-  let docTexts : Array (String × String) ← match tip with
-    | some rev => do
-      let blobs ← catBlobs (docFiles.map (rev ++ ":" ++ ·))
-      pure (docFiles.zip (blobs.map Privacy.textOfBytes))
-    | none => docFiles.filterMapM fun (f : String) => do
-      unless ← System.FilePath.pathExists f do return none
-      return some (f, ← sourceText f)
-  let docHits := docTexts.flatMap fun (f, text) =>
-    (docFindings text (docAdded.filterMap fun (g, n, _) => if g == f then some n else none)).map
-      fun (n, what) => s!"  {f}:{n}: {what}"
-  unless docHits.isEmpty do
-    say s!"pre-commit: a comment breaks the documentation rule:
-{String.intercalate "\n" docHits.toList}
-  A docstring or comment is one sentence at most, only where the name does not say it, and carries
-  no history, review, report id, date or commit hash (AGENTS.md § Lean rules).
-  Fix: cut it to the contract it states, three lines at most, put the story in the commit message,
-  and write a purpose as \"used for\"."
-
-  -- A warn-once key spells its namespace at the call: a literal holding ':', alone or opening a
-  -- concatenation.
-  let addedInCore : List String := Id.run do
-    let mut file := ""
-    let mut out : List String := []
-    for l in diff.splitOn "\n" do
-      if l.startsWith "+++ b/" then
-        file := (l.drop "+++ b/".length).toString
-      else if l.startsWith "+" && !l.startsWith "+++" && file.startsWith "LeanTex/" then
-        out := (l.drop 1).toString :: out
-    return out.reverse
-  let patSay := "say" ++ "Once "
-  let patWarn := "warn" ++ "Once "
-  let keyNamespaced (rest : String) : Bool :=
-    let r := rest.trimAscii.toString
-    let r := if r.startsWith "(" then ((r.drop 1).toString.trimAscii.toString) else r
-    r.startsWith "\"" && containsSub ((((r.drop 1).toString.splitOn "\"").headD "")) ":"
-  let onceCallFlat (l : String) : Bool := Id.run do
-    if containsSub l ("def say" ++ "Once") || containsSub l ("def warn" ++ "Once") then
-      return false
-    for pat in [patSay, patWarn] do
-      for rest in (l.splitOn pat).drop 1 do
-        -- warnOnce takes the context first; the key follows it
-        let rest := if pat == patWarn then
-            match rest.splitOn " " with
-            | _ :: rs => String.intercalate " " rs
-            | [] => rest
-          else rest
-        if !keyNamespaced rest then
-          return true
-    return false
-  let bad := addedInCore.filter onceCallFlat
-  if !bad.isEmpty then
-    say s!"pre-commit: warn-once call whose key is not visibly namespaced at the call site:
-{String.intercalate "\n" bad}
-  Keys share one flat store per module; spell the namespace where the call is —
-  a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
-  so two constructs of one name cannot silence each other, and this check can see it
-  (PRINCIPLES.md § One loss in one line)."
-
+/-- The checks that read the whole tree, since a pair they hold may land in different hunks. -/
+def wholeTreeChecks (say : String → IO Unit) : IO Unit := do
   -- Whole tree: an entry and its index file may land in different hunks.
   if (← System.FilePath.pathExists "LeanTex/Core/Compat.lean") then
     let compatSrc ← IO.FS.readFile "LeanTex/Core/Compat.lean"
@@ -3810,6 +3575,283 @@ the privacy check is skipped."
     unless ← System.FilePath.pathExists p do
       say s!"pre-commit: selftestFrameDebt names {p}, which is gone.
   Fix: delete its row (scripts/precommit.lean)."
+
+def main (args : List String) : IO UInt32 := do
+  if args.contains "--selftest" then
+    return (← selftest)
+  let src ← match parseSource args with
+    | .ok s => pure s
+    | .error e =>
+      IO.eprintln s!"pre-commit: {e}"
+      return 1
+  let sel := src.diffSel
+  let ranged := src matches .range _
+  -- Only the hook may stop at an empty change list; a range still owes its commits' privacy.
+  let staged ← match sel with
+    | none => pure ([] : List String)
+    | some s => pure (((← git (#["diff", "--name-only"] ++ s)).splitOn "\n").filter (!·.isEmpty))
+  if src == .index && staged.isEmpty then
+    return 0
+
+  -- Read first, so every message below passes through its masking.
+  let privacy ← denylist
+  let redact : String → String := fun msg => match privacy with
+    | some m => m.redact msg
+    | none => msg
+  let failed ← IO.mkRef false
+  let say (msg : String) : IO Unit := do
+    IO.eprintln (redact msg)
+    failed.set true
+
+  -- Over every staged file, before the relevance gate skips a commit with no source.
+  let fullDiffBytes ← match sel with
+    | none => pure ByteArray.empty
+    | some s => pinnedDiff s
+  let fullDiff := Privacy.textOfBytes fullDiffBytes
+  let bad := conflictMarkers fullDiff
+  if !bad.isEmpty then
+    let hits := String.intercalate "\n" (bad.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
+    say s!"pre-commit: merge-conflict marker in staged content:
+{hits}
+  Fix: resolve the conflict -- keep the side you mean, delete the marker
+  lines -- then re-stage the file."
+
+  let numstat ← match sel with
+    | none => pure ""
+    | some s => git (#["diff", "--numstat", "--diff-filter=A", "-z"] ++ s)
+  let faults := addedPathFaults numstat
+  if !faults.isEmpty then
+    let hits := String.intercalate "\n" (faults.toList.map fun (p, rule) => s!"  {p}: {rule}")
+    say s!"pre-commit: a staged added file is debris:
+{hits}
+  Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
+  never with -A or ."
+
+  -- From the index, so a staged addition is caught by its own commit.
+  let tracked ← git #["ls-files", "-z"]
+  let addedPaths ← match src with
+    | .range r => pure (zPaths (← gitBytes #["diff", "--name-only", "-z", "--no-relative",
+        "--diff-filter=ACR", "-M", r]))
+    | _ => pure #[]
+  let collisions := (caseCollisions ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray).filter
+    fun (a, b) => !ranged || addedPaths.contains a || addedPaths.contains b
+  if !collisions.isEmpty then
+    let hits := String.intercalate "\n" (collisions.toList.map fun (a, b) => s!"  {a}\n  {b}")
+    say s!"pre-commit: two tracked paths differ only by case:
+{hits}
+  Fix: rename one. A case-insensitive checkout keeps one of the two, and for
+  a Lean module the compiled .olean names collide as well."
+
+  -- The rule documents' shape and every section pointer, before the relevance gate; a range reads
+  -- the text at its tip and judges what it changes.
+  let tip := match src with
+    | .index => some ""
+    | .range r => rangeTip r
+    | .tree => none
+  let rangeTexts (paths : Array String) : IO (Array (String × String)) := do
+    match src, tip with
+    | .range _, some rev =>
+      let blobs ← catBlobs (paths.map (rev ++ ":" ++ ·))
+      pure ((paths.zip blobs).filterMap fun (f, b) =>
+        if b.isEmpty then none else some (f, Privacy.textOfBytes b))
+    | _, _ => paths.filterMapM fun (f : String) => do
+      unless ← System.FilePath.pathExists f do return none
+      return some (f, ← sourceText f)
+  let mut heads : List (String × List String) := []
+  for (doc, text) in ← rangeTexts sectionDocs.toArray do
+    heads := (doc, docHeadings text) :: heads
+    if !ranged || staged.contains doc then
+      for fault in capFaults doc text do
+        say s!"pre-commit: {fault}.
+  A rule document is read whole at the start of every session, so it states
+  rules and names their checks (PRINCIPLES.md § Rules are checks).
+  Fix: fold the rule into the check it names, its contract into that check's
+  docstring, or carry an over-wide line onto the next."
+      for (n, l) in datedLines text do
+        say s!"pre-commit: {doc}:{n} dates a rule:
+  {l}
+  A rule states what holds; the day it was learned belongs to the commit that
+  learned it (PRINCIPLES.md § Rules are checks).
+  Fix: cut the date or the story; it belongs in the commit message."
+  if (!ranged || staged.contains hookPath) && (← System.FilePath.pathExists hookPath) then
+    let skipped ← hookSkippedDocs (← IO.FS.readFile hookPath)
+    unless skipped.isEmpty do
+      say s!"pre-commit: {hookPath} lets a commit touching only {String.intercalate " or " skipped} skip this gate:
+  its staged-name pattern must match every rule document, or the caps, the
+  dated-rule check and the pointer checks above never read an edit to one
+  until landing (PRINCIPLES.md § Rules are checks).
+  Fix: add the document to the `^(AGENTS|PRINCIPLES|THEOREMS)\\.md$` alternative."
+  let trackedPaths := ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray
+  let roots := vendoredRoots trackedPaths
+  let prose := trackedPaths.filter fun p =>
+    (p.endsWith ".lean" || p.endsWith ".md") && !vendored roots p
+  let sources ← rangeTexts (if ranged then prose.filter (staged.contains ·) else prose)
+  let addedAt : Std.HashSet (String × Nat) :=
+    (addedLines fullDiff).foldl (fun acc (f, n, _) => acc.insert (f, n)) {}
+  let adds (f : String) (n : Nat) : Bool := !ranged || addedAt.contains (f, n)
+  let dangling := (danglingSectionRefs heads sources).filter fun (f, n, _) => adds f n
+  if !dangling.isEmpty then
+    let hits := String.intercalate "\n" (dangling.toList.map fun (f, n, r) => s!"  {f}:{n}: {r}")
+    say s!"pre-commit: a section pointer names no heading of its document:
+{hits}
+  A help text or a docstring defers to a rule by pointing at its section; the
+  pointer names a `## ` heading exactly and ends at punctuation.
+  Fix: point at the heading as it reads now, or restore the section."
+  let loose := (looseRuleRefs (sources.filter fun (f, _) => !sectionDocs.contains f)).filter
+    fun (f, n, _) => adds f n
+  if !loose.isEmpty then
+    let hits := String.intercalate "\n" (loose.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
+    say s!"pre-commit: a comment points into a rule document by nickname or bare name:
+{hits}
+  A rule's address is its section, which the pointer check above holds to the
+  document; a nickname outlives the rule it named (PRINCIPLES.md § Rules are checks).
+  Fix: write `AGENTS.md{sectionMark} <heading>`, or the same into `PRINCIPLES.md`,
+  for the section the rule stands in now."
+
+  -- The hook and a range read the lines they add; the tree reads every tracked text file.
+  let homeLines ← if src == .index || ranged then pure (addedLines fullDiff) else do
+    let (code, out, err) ← runBytes "git" #["grep", "-I", "-n", "-z", "-E", "/(home|Users)/"]
+    if code == 0 then pure (grepRecords (Privacy.textOfBytes out))
+    else if code == 1 then pure #[]
+    else
+      IO.eprintln s!"pre-commit: git grep failed:\n{Privacy.textOfBytes err}"
+      IO.Process.exit 1
+  let homeHits := homePathHits homeLines
+  if !homeHits.isEmpty then
+    -- The location and the kind of home, never the login after it.
+    let hits := String.intercalate "\n" (homeHits.toList.map fun (f, n, h) =>
+      s!"  {f}:{n}: {homeKind h}…")
+    say s!"pre-commit: a home directory path in a tracked text file:
+{hits}
+  A home directory names a person and a machine; neither belongs in this tree.
+  Fix: refer to the private reference corpus abstractly, write a placeholder,
+  or give the path relative to the repository."
+
+  -- The hook reads what the commit adds, a range what it adds and its commits, and the tree the
+  -- staged tree and unpushed commits.
+  match privacy with
+  | none =>
+    IO.println "pre-commit: this clone keeps no info/private-terms in its git directory; \
+the privacy check is skipped."
+  | some m =>
+    let (hits, refused) ← match src with
+      | .index => pure ((← privacyStaged m fullDiffBytes), none)
+      | .range r => pure ((← privacyRange m r fullDiffBytes), none)
+      | .tree => privacyTree m
+    if let some why := refused then say s!"pre-commit: {why}"
+    unless hits.isEmpty do
+      let scope := match src with
+        | .index => "in the staged changes"
+        | .range _ => "in what the range adds or one of its commits"
+        | .tree => "in the staged tree or an unpushed commit"
+      say s!"pre-commit: a denylisted term {scope}, at:
+{String.intercalate "\n" hits.toList}
+  The local denylist (info/private-terms in the git common directory) holds
+  personal and private-document terms; none may enter the tree, a commit or
+  a commit message. The term is never printed, and a path holding it is
+  shown with that part as …; git ls-files or git show --stat names it.
+  Fix: replace the text with invented words that exercise the same property,
+  then re-stage. A term in an unpushed commit stays in what a push publishes
+  even after a later commit removes it: rewrite that commit (amend, or
+  squash it with the fix) before landing."
+
+  if src == .index && !staged.any relevant then
+    return (if ← failed.get then 1 else 0)
+
+  -- A range may span a bump commit, so this reads the index alone.
+  if src == .index && staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
+    say "pre-commit: lean-toolchain changed together with other files.
+  The toolchain tracks Lean's stable release, and a bump is deliberate and goes
+  in its own commit (AGENTS.md § Build and verify).
+  Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
+
+  if staged.any (·.startsWith "testdata/golden/") then
+    -- A golden travels with a source change anywhere on its branch.
+    let branchTouched ← do
+      match ← mergeBaseMain with
+      | some b =>
+        pure (((← git #["diff", "--name-only", b ++ "..HEAD"]).splitOn "\n").filter
+          (!·.isEmpty)).toArray
+      | none => pure #[]
+    if !staged.any goldenSource && !branchTouched.any goldenSource then
+      say "pre-commit: testdata/golden/** changed without a .lean or testdata/corpus/*.tex or *.md change.
+  Goldens are regenerated through the harness, never hand-edited (AGENTS.md § Build and verify).
+  Fix: revert the golden files, or regenerate with: lake exe Tests --update"
+
+  let diff ← match sel with
+    | none => pure ""
+    | some s => git (#["diff", "--no-color", "--unified=0"] ++ s ++ #["--", "*.lean"])
+  for (file, lns) in addedByFile diff do
+    for g in gates do
+      if g.applies file then
+        let bad := lns.filter g.flag
+        if !bad.isEmpty then
+          say s!"pre-commit: {g.what file}:
+{String.intercalate "\n" bad.toList}
+{g.help}"
+
+  let docAdded := (addedLines fullDiff).filter (docRuleFile ·.1)
+  let docFiles := Privacy.uniq (docAdded.map (·.1))
+  let docTexts : Array (String × String) ← match tip with
+    | some rev => do
+      let blobs ← catBlobs (docFiles.map (rev ++ ":" ++ ·))
+      pure (docFiles.zip (blobs.map Privacy.textOfBytes))
+    | none => docFiles.filterMapM fun (f : String) => do
+      unless ← System.FilePath.pathExists f do return none
+      return some (f, ← sourceText f)
+  let docHits := docTexts.flatMap fun (f, text) =>
+    (docFindings text (docAdded.filterMap fun (g, n, _) => if g == f then some n else none)).map
+      fun (n, what) => s!"  {f}:{n}: {what}"
+  unless docHits.isEmpty do
+    say s!"pre-commit: a comment breaks the documentation rule:
+{String.intercalate "\n" docHits.toList}
+  A docstring or comment is one sentence at most, only where the name does not say it, and carries
+  no history, review, report id, date or commit hash (AGENTS.md § Lean rules).
+  Fix: cut it to the contract it states, three lines at most, put the story in the commit message,
+  and write a purpose as \"used for\"."
+
+  -- A warn-once key spells its namespace at the call: a literal holding ':', alone or opening a
+  -- concatenation.
+  let addedInCore : List String := Id.run do
+    let mut file := ""
+    let mut out : List String := []
+    for l in diff.splitOn "\n" do
+      if l.startsWith "+++ b/" then
+        file := (l.drop "+++ b/".length).toString
+      else if l.startsWith "+" && !l.startsWith "+++" && file.startsWith "LeanTex/" then
+        out := (l.drop 1).toString :: out
+    return out.reverse
+  let patSay := "say" ++ "Once "
+  let patWarn := "warn" ++ "Once "
+  let keyNamespaced (rest : String) : Bool :=
+    let r := rest.trimAscii.toString
+    let r := if r.startsWith "(" then ((r.drop 1).toString.trimAscii.toString) else r
+    r.startsWith "\"" && containsSub ((((r.drop 1).toString.splitOn "\"").headD "")) ":"
+  let onceCallFlat (l : String) : Bool := Id.run do
+    if containsSub l ("def say" ++ "Once") || containsSub l ("def warn" ++ "Once") then
+      return false
+    for pat in [patSay, patWarn] do
+      for rest in (l.splitOn pat).drop 1 do
+        -- warnOnce takes the context first; the key follows it
+        let rest := if pat == patWarn then
+            match rest.splitOn " " with
+            | _ :: rs => String.intercalate " " rs
+            | [] => rest
+          else rest
+        if !keyNamespaced rest then
+          return true
+    return false
+  let bad := addedInCore.filter onceCallFlat
+  if !bad.isEmpty then
+    say s!"pre-commit: warn-once call whose key is not visibly namespaced at the call site:
+{String.intercalate "\n" bad}
+  Keys share one flat store per module; spell the namespace where the call is —
+  a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
+  so two constructs of one name cannot silence each other, and this check can see it
+  (PRINCIPLES.md § One loss in one line)."
+
+  -- A range leaves the whole tree to lint: it judges only what it adds.
+  unless ranged do wholeTreeChecks say
 
   -- The lint driver runs these source checks alone; it owns the compiled checks.
   if args.contains "--conventions" then

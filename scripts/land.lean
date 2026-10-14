@@ -2033,10 +2033,10 @@ def indexReaderFailure (root : String) : IO (Option String) := do
 
 /-- A branch whose commit adds a comment telling history, made without the hook, fails the shipped
 conventions gate over a copy of the tracked files of the checkout under test, which a plain commit
-passes. -/
+passes though the base holds a fault only the whole tree shows. -/
 def scenarioNarrative (self root : String) : IO Outcome := do
   let label := "a commit telling history in a comment, made without the hook, fails the \
-conventions gate, and a plain one lands"
+conventions gate, and a plain one lands over a base faulted only as a whole tree"
   let fail (detail : String) : IO Outcome := pure { label, ok := false, detail }
   if let some why ← indexReaderFailure root then return ← fail why
   let bin := (System.FilePath.mk self).parent.getD "."
@@ -2058,6 +2058,9 @@ conventions gate, and a plain one lands"
   | .ok _ => pure ()
   IO.FS.createDirAll s!"{repo}/.lake/build/bin"
   let _ ← hrun "ln" #["-s", ← real precommit, s!"{repo}/.lake/build/bin/precommit"] none
+  -- One helper in two test files, which only the tree's reading of every test file finds.
+  for f in ["ScratchA", "ScratchB"] do
+    IO.FS.writeFile s!"{repo}/Tests/{f}.lean" "def scratchHelper : Nat := 0\n"
   hgitOk #["init", "-q", "-b", "main", "."] repo
   hgitOk #["config", "user.name", "Scratch"] repo
   hgitOk #["config", "user.email", "scratch@example.org"] repo
