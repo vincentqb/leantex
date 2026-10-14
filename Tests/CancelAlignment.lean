@@ -70,18 +70,9 @@ structure Witness where
   tip : Dim.Sp × Dim.Sp
   tail : Option (Dim.Sp × Dim.Sp)
   ink : InkBounds
-  originX : Dim.Sp
   fontGap : Dim.Sp
   glyphs : Array ShippedGlyph
   deriving Repr
-
-/-- Twice the signed distance from the target's vertical ink centre to the arrow tip, positive when
-the target is too high. -/
-def Witness.centreError2 (w : Witness) : Dim.Sp :=
-  w.ink.top + w.ink.bottom - 2 * w.tip.2
-
-/-- A diagnostic only, since the first source glyph may follow a glyphless prefix. -/
-def Witness.originGap (w : Witness) : Dim.Sp := w.originX - w.tip.1
 
 def Witness.direction (w : Witness) : Option (Dim.Sp × Dim.Sp) := do
   let tail ← w.tail
@@ -137,11 +128,10 @@ def measure (fonts : Font.FontSet) (out : Layout.Out) (target : String) :
   unless String.ofList (glyphs.toList.map (·.scalar)) == target do
     throw "target glyph census differs from the probe"
   let ink ← targetInk fonts glyphs
-  let some first := glyphs[0]? | throw "target origin is missing"
   let #[anchor] := all.filter (·.scalar == '𝑢') | throw "style witness is missing"
   let some font := fonts.fonts[anchor.face]? | throw "style face is missing"
   let some math := font.math | throw "style face lacks its MATH constants"
-  return { tip, tail := shaftTail polys, ink, originX := first.x, glyphs
+  return { tip, tail := shaftTail polys, ink, glyphs
            fontGap := math.overbarVerticalGap * anchor.size / (font.unitsPerEm : Int) }
 
 structure Probe where
@@ -569,7 +559,7 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
             | .ok m => m.ink == w.ink.shift dx dy && m.tip == w.tip && m.tail == w.tail)
   let sample : Witness := {
     tip := (0, 0), tail := some (-4, -3), ink := ⟨2, 2, 6, 5⟩
-    originX := 0, fontGap := 2, glyphs := #[] }
+    fontGap := 2, glyphs := #[] }
   for b in [⟨2, 2, 6, 5⟩, ⟨2, 2, 6, 3⟩] do
     let w := { sample with ink := b }
     check ref "cancel alignment judge: accepts either tight half-sp rounding boundary"

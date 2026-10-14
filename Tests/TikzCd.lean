@@ -17,8 +17,6 @@ def cdDisplaysOf (d : String) : List (String × String) :=
    ("equation*", "\\begin{equation*}" ++ d ++ "\\end{equation*}"),
    ("align*", "\\begin{align*}" ++ d ++ "\\end{align*}")]
 
-def cdDisplays : List (String × String) := cdDisplaysOf cdDiagram
-
 /-- The diagram with an arrow key the native reader does not draw (a hooked tail). -/
 def cdLossy : String :=
   "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"f\", hook] & \\mathrm{Beta} \\arrow{d}{g} " ++

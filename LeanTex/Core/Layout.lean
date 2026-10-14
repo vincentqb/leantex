@@ -8881,7 +8881,7 @@ public structure Spacing.Context where
   private pats : Option Hyphen.Patterns := none
   private fs : FontSet
   private styles : Ir.Styles := {}
-  /-- The caption positions the document declares (`Ir.captionPosOf`). -/
+  /-- The caption positions the document declares. -/
   private captionPos : Array (String × Ir.CaptionPos) := #[]
   /-- The document's main locale, in which generated class furniture is worded. -/
   private locale : Locale := Locale.en

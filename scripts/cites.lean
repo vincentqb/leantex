@@ -53,7 +53,6 @@ def citeForeign : List String :=
    "default_rule_thickness",   -- TeX's math fontdimen (TeXbook, Appendix G)
    "format_unencoded",         -- Pygments' LaTeX formatter pass (formatters/latex.py)
    "good_length",              -- zlib's deflate configuration field
-   "headless_shell",           -- Chrome's own binary name
    "min_crossrefs",            -- BibTeX's cross-reference threshold (btxdoc, bibtex.web)
    "mlist_to_hlist",           -- TeX's math-list conversion pass
    "normalise_string_sort",    -- biber's sort-string normaliser (Biber::Utils)

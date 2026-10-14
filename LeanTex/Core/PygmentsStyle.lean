@@ -147,11 +147,6 @@ public def Table.lookOf (t : Table) (k : Kind) : Look :=
 /-- Every type the table holds, the domain a contract over its colours ranges over. -/
 public def Table.kinds (t : Table) : List Kind := t.resolved.keys
 
-/-- The formatter's name for a standard type, as its `\PYG@tok@<name>` macro spells it. -/
-public def standardName? (k : Kind) : Option String :=
-  let path := if k.path.isEmpty then "Token" else "Token." ++ k.path
-  (PygmentsStyleData.standardTypes.find? (·.1 == path)).map (·.2)
-
 /-- Every standard type with its formatter macro name, in token order (`STANDARD_TYPES`). -/
 public def standardTypes : List (Kind × String) :=
   PygmentsStyleData.standardTypes.map fun (path, n) => (Kind.ofPygments path, n)

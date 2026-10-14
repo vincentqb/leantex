@@ -2957,19 +2957,6 @@ public def Feature.test : Feature → String
   | .scrollState => "(container-type: scroll-state)"
   | .has => "selector(:has(a))"
 
-/-- The sourced support note: engines and versions, from caniuse and MDN. -/
-public def Feature.support : Feature → String
-  | .viewTimeline =>
-    "Chromium 115+ (Jul 2023), Safari 26; Firefox release unsupported \
-(preview builds only; ESR 140 reports the feature false) — caniuse \
-mdn-css_properties_animation-timeline_view, read 2026-09-21"
-  | .scrollState =>
-    "Chromium 133+ (Feb 2025), no Firefox, no Safari — MDN scroll-state \
-container queries / caniuse, read 2026-09-20"
-  | .has =>
-    "Chromium 105+ (Aug 2022), Firefox 121+ (Dec 2023), Safari 15.4+ \
-(Mar 2022) — caniuse css-has, read 2026-09-20"
-
 /-- The property names whose meaning depends on the feature. -/
 public def Feature.dependsOnProps : Feature → List String
   | .viewTimeline => ["animation-timeline", "view-timeline", "animation-range"]
@@ -4503,15 +4490,6 @@ public def kernCssFor (features : Ir.Features) : String :=
   if features.kern then "  font-kerning: normal;\n" else ""
 
 public def kernCss : String := kernCssFor Ir.features
-
-/-- Whether a declared style paints a colour of its own outside the inline regions the document
-walk reads. -/
-public def styleColored (st : ElementStyle) : Bool :=
-  st.rule.isSome || st.separator.isSome || st.hover.isSome || st.focus.isSome ||
-    st.color.isSome ||
-    ((st.authorFont.getD #[]) :: st.slots.toList.flatMap (fun s =>
-      s.parts.toList.flatMap fun p => [p.content, p.font.getD #[]])).any
-      (Ir.foldInlines (fun a i => a || i matches .colored _ _ _) false)
 
 /-- Whether a loaded image can paint on the page's own ground. -/
 public def imageSeeThrough (en : Image.Loaded) : Bool :=
@@ -6925,8 +6903,6 @@ height: {decMilli (deckStageMilli h cfg.page.height)}dvh" ++
      else
       #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")] ++
         (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toPtString}pt")]))
-
-public def pictureSaid (pic : Ir.Pic.Picture) : String := pic.said
 
 /-- What a picture says to a reader: its alternative, else the figure word. -/
 public def pictureName (loc : Locale) (pic : Ir.Pic.Picture) : String :=

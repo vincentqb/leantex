@@ -224,12 +224,4 @@ def packageImportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       samePage name doc control
       t s!"package imports {name}: explicit TeX def replacement is recognised" (hasOnlyNotes ds)
 
-/-- Standalone entry for the focused gate, using only the shipped font. -/
-def packageImportFailures : IO (List String) := do
-  let some bytes ← findFont | throw <| IO.userError "shipped fixture font is missing"
-  let .ok font := Font.parse bytes | throw <| IO.userError "shipped fixture font is invalid"
-  let ref ← IO.mkRef ([] : List String)
-  packageImportChecks ref (oneFaceOf font)
-  ref.get
-
 end Tests

@@ -1512,8 +1512,4 @@ def hermeticHtmlKeys : IO (Except String Hermetic.CorpusKeys) := do
   try Hermetic.corpusKeys "testdata/corpus"
   catch e => return .error (toString e)
 
-/-- The HTML freshness key alone. -/
-def hermeticHtmlKey : IO (Except String String) := do
-  return (← hermeticHtmlKeys).map (·.html)
-
 end Scoreboard

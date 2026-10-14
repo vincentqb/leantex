@@ -908,10 +908,6 @@ public def displaySkipsFor (tokens : Tokens) (size : Sp) : DisplaySkips :=
     aboveShort := (tokens.find? displaySkipAboveShort).getD d.aboveShort
     belowShort := (tokens.find? displaySkipBelowShort).getD d.belowShort }
 
-public def displayAbove (tokens : Tokens) (size : Sp) : SymGlue := (displaySkipsFor tokens size).above
-
-public def displayBelow (tokens : Tokens) (size : Sp) : SymGlue := (displaySkipsFor tokens size).below
-
 private theorem displaySkips_default_exact :
     displaySkipsFor {} (Dim.pt 10) = displaySkipsTable 10 ∧
     displaySkipsFor {} (Dim.pt 11) = displaySkipsTable 11 ∧
@@ -1530,60 +1526,6 @@ private theorem Palette.resolve_model_exact (p : Palette) (expr : String) (c : C
     · rename_i a ha
       exact ⟨first, rest, a, hparts, ha, Palette.resolve_go_model_exact p rest a c h⟩
     · exact absurd h (by simp)
-
-/-- A two-colour mix as its parts, `a!P!b` or `a!P` over white; `none` for a
-bare name, a longer chain or a malformed expression. -/
-public def Palette.mixParts (p : Palette) (expr : String) : Option (Color × Nat × Color) :=
-  match bangParts [] expr.toList with
-  | [first, pctS] => (p.atom first).bind fun a => pctS.toNat?.bind fun pct =>
-      if pct > 100 then none else some (a, pct, Color.white)
-  | [first, pctS, second] => (p.atom first).bind fun a => pctS.toNat?.bind fun pct =>
-      if pct > 100 then none else (p.atom second).map fun b => (a, pct, b)
-  | _ => none
-
-/-- The mix expression with its weight replaced and its colours as written. -/
-public def mixReweighed (expr : String) (pct : Nat) : String :=
-  match bangParts [] expr.toList with
-  | first :: _ :: rest => String.intercalate "!" (first :: toString pct :: rest)
-  | parts => String.intercalate "!" parts
-
-public theorem Palette.mixParts_exact {p : Palette} {e : String} {a b : Color} {pct : Nat}
-    (h : p.mixParts e = some (a, pct, b)) : p.resolve e = some (a.mix pct b) := by
-  unfold Palette.mixParts at h
-  unfold Palette.resolve
-  split at h
-  · rename_i first pctS hparts
-    rw [hparts]
-    cases ha : p.atom first with
-    | none => simp [ha] at h
-    | some a0 =>
-      cases hp : pctS.toNat? with
-      | none => simp [ha, hp] at h
-      | some q =>
-        by_cases hq : q > 100
-        · simp [ha, hp, hq] at h
-        · simp only [ha, hp, hq, Option.bind_some, ite_false, Option.some.injEq,
-            Prod.mk.injEq] at h
-          obtain ⟨rfl, rfl, rfl⟩ := h
-          simp [Palette.resolve.go, hp, hq, ha]
-  · rename_i first pctS second hparts
-    rw [hparts]
-    cases ha : p.atom first with
-    | none => simp [ha] at h
-    | some a0 =>
-      cases hp : pctS.toNat? with
-      | none => simp [ha, hp] at h
-      | some q =>
-        by_cases hq : q > 100
-        · simp [ha, hp, hq] at h
-        · cases hb : p.atom second with
-          | none => simp [ha, hp, hb] at h
-          | some b0 =>
-            simp only [ha, hp, hq, hb, Option.bind_some, ite_false, Option.map_some,
-              Option.some.injEq, Prod.mk.injEq] at h
-            obtain ⟨rfl, rfl, rfl⟩ := h
-            simp [Palette.resolve.go, hp, hq, hb, ha]
-  · exact absurd h (by simp)
 
 /-- Font families a document asks for, as declared by `\fonts`. -/
 public structure FontSpec where
@@ -4445,10 +4387,6 @@ public theorem displayParts_location_exact (span : Span) (body : Array Inline) (
   simp only [displayParts]
   cases displayParts body.toList seen <;> simp [displayParts]
 
-/-- Whether this inline is a display formula, modelled or carried as source. -/
-public def Inline.isDisplayFormula (x : Inline) : Bool :=
-  displayParts [x] false == some true
-
 /-- The environments `\@trivlist` spaces with `\partopsep` in vertical mode: a
 list, a quote, and the kernel's theorem. -/
 public def Block.partopsepEnv : Block → Bool
@@ -5426,11 +5364,6 @@ public def CaptionPos.placedTop : CaptionPos → Bool → Bool
   | .top, _ => true
   | .bottom, _ => false
   | .auto, capAbove => capAbove
-
-/-- The position a float kind's captions are placed for: the kind's own
-declaration, else the document's, else `auto`. -/
-public def captionPosOf (decl : Array (String × CaptionPos)) (kind : FloatKind) : CaptionPos :=
-  (((decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == ""))).map (·.2)).getD .auto
 
 /-- The position a float kind's captions are placed for in a class's lineage,
 where the document declares none. -/
@@ -8829,19 +8762,6 @@ end
 public def navLinks (body : Array Block) : Array (String × String) :=
   navLinkList #[] body.toList
 
-/-- A step's range as the surface spells it: `step 2`, `step 2-3`, and
-`step 2-2` for `<2->`, `<2-3>`, and `<2>`. -/
-private def dumpStepRange (n : Nat) (last : Option Nat) : String :=
-  match last with
-  | some u => s!"step {n}-{u}"
-  | none => s!"step {n}"
-
-/-- An alternation's range, spelled as a step's is. -/
-private def dumpAltRange (n : Nat) (last : Option Nat) : String :=
-  match last with
-  | some u => s!"alt {n}-{u}"
-  | none => s!"alt {n}"
-
 /-- An overlay range for the dump: a single interval as a step's, a union by
 every declared interval. -/
 private def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
@@ -9846,11 +9766,6 @@ public theorem Design.sites_covers (pal : Palette) (s : Scheme) (r g : Role) (c 
              ground := (Design.at pal s .page).getD Color.white, need := r.row.need, scheme := s },
       List.mem_filterMap.mpr ⟨r, hmem, by simp [Design.site?, hg, hn, hp, hc, hgr]⟩, rfl, rfl⟩
 
-/-- The grounds body content flows on in a design, each once: the page, the
-standout inversion, a declared title page, a block body. -/
-@[expose] public def Design.regionGrounds (pal : Palette) (s : Scheme) : List Color :=
-  (((Design.sites pal s).filter (·.on.row.region)).map (·.ground)).eraseDups
-
 /-- One role property's declaration: a colour, or the role it aliases. -/
 public inductive CssDecl where
   | value (c : Color)
@@ -10825,10 +10740,6 @@ public def overlayRange (w : String) : Option OverlaySpec := do
 public theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
     altShowsFirst n last 1 = true :=
   OverlaySpec.showsFirst_id _
-
-/-- Single-interval projection of the shared reachability decision. -/
-public def altReachesOther (n : Nat) (last : Option Nat) (steps : Nat) : Bool :=
-  (OverlaySpec.mk n last []).reachesOther steps
 
 /-- Whether the group stored first is the one a pending step inks. -/
 public def altFirstWhenPending (n : Nat) (last : Option Nat) : Bool :=
@@ -13544,10 +13455,6 @@ private def imageSrcPush (out : Array String)
 /-- Every image source the inlines reference, in document order. -/
 public def imageSrcsInlines (out : Array String) (xs : Array Inline) : Array String :=
   foldInlines imageSrcPush out xs
-
-/-- The block face of `imageSrcsInlines`, reference list entries included. -/
-public def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
-  foldBlocks (fun out _ => out) imageSrcPush out xs
 
 /-- Every inline region a backend sets beside the body, as one list. -/
 public def furnitureInlines (doc : Doc) : Array (Array Inline) :=

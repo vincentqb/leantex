@@ -1117,12 +1117,6 @@ public def Src.isCidCff : Src → Bool
   | .glyfSrc .. => false
   | .opaque => false
 
-/-- How many glyphs a CFF holds; 0 for any other source. -/
-public def Src.cffGlyphCount : Src → Nat
-  | .cffSrc _ c => c.charStrings.size
-  | .glyfSrc .. => 0
-  | .opaque => 0
-
 /-- The glyph a CID names in a CID-keyed CFF: the charset entry holding it
 (Technical Note #5176 §13). -/
 public def Src.cidGlyph (s : Src) (cid : Nat) : Option Nat :=

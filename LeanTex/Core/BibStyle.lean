@@ -1626,7 +1626,7 @@ public def bblItems (o : BblOptions) (cvOf : String → FieldText) (p : CitePunc
       (none : Option String), ({} : FieldCache))) fun (acc, prev, cache) r =>
     let names := bblHeadNames o r.entry
     let dash := o.style == .authoryear && o.dashed && names.isSome && names == prev
-    let (out, cache) := renderBblCached o (cvOf r.key) r.entry
+    let (out, cache) := renderBbl o (cvOf r.key) r.entry
       (if o.style == .authoryear then r.extra else "") dash r.labelUl months cache
     (acc.push out, names, cache)).1
   listed.mapIdx fun i r =>

@@ -973,10 +973,6 @@ public def listingContract (pal : Palette) : Bool :=
           | some p => Listing.contract pal (some p.bg) style
           | none => true)
 
-public def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
-  paletteContract (th.realize .documents) th.reported &&
-    paletteContract (th.realize .decks) th.reported
-
 /-- Each text colour's cover is quieter than its active form and at least 3:1 from it
 (SC 1.4.11); a role in `reported` is held to quieting alone. -/
 public def coveredContract (pal : Palette) (reported : List Role := []) : Bool :=

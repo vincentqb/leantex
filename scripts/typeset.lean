@@ -392,12 +392,6 @@ def stTree : Struct.Tree :=
                   .node .paragraph #[.leaf 6 (.text "s")],
                   .node .code #[.leaf 7 (.text "c")]] }
 
-/-- A fixture of hand-built pages over `stTree`. -/
-def stFixture (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.PageOut)
-    (diags : Array Diag := #[]) (head : Array Html.Node := #[]) (opens : Array Nat := #[]) :
-    Fixture :=
-  { geom, fs, roles := leafRoles stTree, opens, pages, diags, head }
-
 /-- Does `s` contain `sub`? -/
 def mentions (s sub : String) : Bool := (s.splitOn sub).length > 1
 

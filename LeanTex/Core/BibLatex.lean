@@ -153,13 +153,6 @@ public def entryOptions (e : Entry) : List (String × String) :=
         | k :: rest => some (k.trimAscii.toString, ("=".intercalate rest).trimAscii.toString)
         | [] => none
 
-/-- The entry-scope options the engine applies. -/
-public def entryOptionKeys : List String :=
-  ["useprefix", "giveninits", "firstinits", "maxnames", "minnames", "maxbibnames", "minbibnames",
-   "maxcitenames", "mincitenames", "maxsortnames", "minsortnames", "maxitems", "minitems",
-   "useauthor", "useeditor", "usetranslator", "abbreviate", "isbn", "url", "doi", "eprint",
-   "skipbib", "skipbiblist", "skiplab", "dataonly"]
-
 /-- The options an entry is set under: the document's, with
 its `options` over them. -/
 public def BblOptions.forEntry (o : BblOptions) (e : Entry) : BblOptions :=
@@ -441,8 +434,7 @@ private def wrapped (brackets : Bool) (body : BM Unit) : BM Unit := do
   else
     modify fun t => { t with parens := depth, gap := none }
     putText (if sq then "]" else ")")
-    -- `\bibrightparen` is `)\midsentence`: what follows reads a letter
-    modify fun t => { t with sf := .letter }
+    midsentence
     endunit
 
 /-- One piece of a localized string: text, a punctuation command, or the
@@ -1448,9 +1440,6 @@ private def editorOthersStrg : BM Unit := do
     for f in cleared do clear f
   else editorstrg
 
-private def translatorstrg : BM Unit := do
-  bibstring (if ← plural "translator" then "translators" else "translator")
-
 private def translatorOthersStrg : BM Unit := do
   let base := if ← plural "translator" then "translators" else "translator"
   let (suffix, cleared) ← rolesOf "translator" false
@@ -2127,7 +2116,7 @@ private def finentry : BM Unit := do
 
 /-- One reference-list entry as biblatex's standard styles set it, with its
 field reports and the fields its driver read. -/
-public def renderBblCached (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : String)
+public def renderBbl (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : String)
     (dash : Bool) (labelUl : Option (String × Nat)) (months : Array String)
     (cache : FieldCache) : (Array Ir.Inline × FieldReport × List String) × FieldCache :=
   let run : BM Unit := do
@@ -2137,12 +2126,6 @@ public def renderBblCached (opts : BblOptions) (cv : FieldText) (e : Entry) (ext
     { e, opts := opts.forEntry e, cv, extra, dash, labelUl, months, labelDate := e.labelDate months }
   let (_, t) := (run.run ctx).run { cache }
   ((mergeTexts t.out, t.report, t.read), t.cache)
-
-public def renderBbl (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : String := "")
-    (dash : Bool := false) (labelUl : Option (String × Nat) := none)
-    (months : Array String := Locale.en.months) :
-    Array Ir.Inline × FieldReport × List String :=
-  (renderBblCached opts cv e extra dash labelUl months {}).1
 
 /-- What a field citation prints of an entry under
 biblatex's standard styles. -/

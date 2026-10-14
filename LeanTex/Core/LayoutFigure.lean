@@ -343,10 +343,6 @@ public theorem shapeFigure_text (fs : FontSet) (fig : Figure Run) :
     simp only [Function.comp_apply, shapeList]
     exact texts_shapeFrom fs _ _ 0 b.toList
 
-/-- Every store entry's vector figure shaped in the document's faces (`Image.Store.shaped`). -/
-public def shapeStore (fs : FontSet) (imgs : Image.Store) : Array (Option (Figure Shaped)) :=
-  imgs.entries.map fun en => en.vector.map fun fig => (shapeFigure fs fig).1
-
 /-- Every scalar the store's drawn figures set, joining the per-scalar fallback precompute. -/
 public def storeScalars (imgs : Image.Store) : Array Char :=
   imgs.entries.foldl (fun acc en => match en.vector with
@@ -381,11 +377,5 @@ public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
       let missing := notes.missing.map fun c => FigureLoss.svgGlyphDiag scope src (hex4 c.toNat)
       (out.push (some sh), diags ++ (fams ++ substs ++ missing).map (en.src, ·))
     | none => (out.push none, diags)) (#[], #[])
-
-/-- `shapeStoreNotesBy` without the sources. -/
-public def shapeStoreNotes (fs : FontSet) (imgs : Image.Store) :
-    Array (Option (Figure Shaped)) × Array Diag :=
-  let r := shapeStoreNotesBy fs imgs
-  (r.1, r.2.map (·.2))
 
 end LeanTex.Core.Layout

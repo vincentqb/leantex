@@ -441,8 +441,6 @@ structure ArtPage where
   content : ByteArray
   deriving Inhabited
 
-def ArtPage.mediaW (p : ArtPage) : Dim.Sp := p.media.2.2.1 - p.media.1
-
 def ArtPage.mediaH (p : ArtPage) : Dim.Sp := p.media.2.2.2 - p.media.2.1
 
 /-- A rectangle array read in sp, or the null rectangle. -/
@@ -1262,8 +1260,6 @@ def artPaintsFrom (role : String) (decls : String) : Bool :=
       (prop.trimAscii.toString == "background" ||
           prop.trimAscii.toString == "background-color") &&
         (hasStr value s!"var(--{role})" || hasStr value s!"var(--{role},")
-
-def artPaintsBand (decls : String) : Bool := artPaintsFrom artBandProp decls
 
 /-- An element as the tree carries it: its tag and its classes. -/
 abbrev ArtElem := String × Array String

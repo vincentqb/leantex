@@ -12830,11 +12830,6 @@ private def renderValue : Decl.Value → String
   | .cmyk c m y k => s!"cmyk({c}, {m}, {y}, {k})"
   | .glue g => Ir.dumpGlue g
 
-/-- Records one scalar setting, warning when it overwrites a different earlier
-value. -/
-private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit :=
-  modify fun st => applyEvent ctx st (.scalar decl key value pos)
-
 /-- The page's leading factor: the body's declared skip stretched by
 `\linespread`, composed at the end of each `\page` block. -/
 private def composeLeading (spec : PageSpec) : PageSpec :=

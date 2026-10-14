@@ -1728,25 +1728,6 @@ control word holds no space. -/
 public def alertMark (themed : Bool) : String :=
   if themed then "alert themed" else "alert plain"
 
-/-- A conditional alert, carrying its body once. -/
-public def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
-  #[.ctrl (alertMark themed) pos, spec, .group body pos]
-
-public theorem alertOverlay_exact (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
-    alertOverlay themed spec body pos =
-      #[.ctrl (alertMark themed) pos, spec, .group body pos] := by rfl
-
-public theorem alertOverlay_styled_exact (themed : Bool) (spec : Raw) (body : Array Raw)
-    (pos : Pos) :
-    (alertOverlay themed spec body pos)[0]? = some (.ctrl (alertMark themed) pos) := by rfl
-
-public theorem alertOverlay_plain_exact (themed : Bool) (spec : Raw) (body : Array Raw)
-    (pos : Pos) :
-    (alertOverlay themed spec body pos)[2]? = some (.group body pos) := by rfl
-
-public theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
-    (alertOverlay themed spec body pos)[1]? = some spec := by rfl
-
 /-- The boundary's set-line vocabulary, collected as written into the standalone
 while the boundary is open. -/
 public def boundaryCtrls : List String :=

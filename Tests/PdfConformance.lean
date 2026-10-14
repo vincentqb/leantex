@@ -298,10 +298,6 @@ def emittedFeaturesOf (text : ByteArray) : List Pdf.Feature :=
   featureSpellings.filterMap fun (f, spelling) =>
     if bytesContain text spelling then some f else none
 
-/-- The features a produced PDF reaches, by spelling. -/
-def emittedFeatures (pdf : ByteArray) : List Pdf.Feature :=
-  emittedFeaturesOf (pdfText pdf)
-
 mutual
 
 def objHasRef : Obj → Bool

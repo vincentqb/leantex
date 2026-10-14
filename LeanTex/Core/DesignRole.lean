@@ -226,7 +226,7 @@ public inductive Channel where
   deriving Repr, BEq, DecidableEq
 
 /-- One role's data: `ground` the role its ink is judged on, `noun` its element's name in a
-diagnostic, `region` whether body content flows on it, `judged` where its site is read. -/
+diagnostic, `judged` where its site is read. -/
 public structure Row where
   key : Option String
   css : String
@@ -238,7 +238,6 @@ public structure Row where
   beamer : List (String × Channel)
   exportName : Option String
   noun : Option String
-  region : Bool
 
 @[expose] public def Row.hex (r g b : UInt8) : Color := { r, g, b }
 
@@ -256,23 +255,22 @@ every screen scheme, which resolves against that scheme's own seeds. -/
 @[expose] public def Row.keyed (key : String) (need : Need) (ground : Option Role)
     (fallback : ClassRow → Scheme → Fallback) (judged : Judged) (beamer : List (String × Channel) := [])
     (presence : Presence := .always) (exportName : Option String := none)
-    (noun : Option String := none) (region : Bool := false) : Row :=
+    (noun : Option String := none) : Row :=
   { key := some key, css := key, need, ground, fallback, judged, presence, beamer, exportName,
-    noun, region }
+    noun }
 
 /-- An engine role no `\palette` key declares, named `--ltx-<css>` in CSS. -/
 @[expose] public def Row.engine (css : String) (need : Need) (ground : Option Role)
     (fallback : ClassRow → Scheme → Fallback) (judged : Judged) : Row :=
   { key := none, css, need, ground, fallback, judged, presence := .always, beamer := [],
-    exportName := none, noun := none, region := false }
+    exportName := none, noun := none }
 
 /-- A role a palette's seeds generate (`SeedPalette`): no `\palette` key, no
 default, named `--ltx-<css>` in CSS and `<export>` in a TeX export. -/
 @[expose] public def Row.generated (css : String) (need : Need) (ground : Option Role)
     (exportName : String) : Row :=
   { key := none, css, need, ground, fallback := Row.every .absent, judged := .uses,
-    presence := .always, beamer := [], exportName := some exportName, noun := none,
-    region := false }
+    presence := .always, beamer := [], exportName := some exportName, noun := none }
 
 /-- The candidates a bar's ink is chosen from: the page, then the ink. -/
 @[expose] public def Row.onBar (bar : Role) (unbarred : List Role) :
@@ -304,7 +302,7 @@ white paper. -/
 @[expose] public def Role.row : Role → Row
   | .page => keyed "bg" .decorative none (screen (.const Color.white) (.seeded .page))
       [("normal text", .bg), ("background canvas", .bg)] (exportName := some "Paper")
-      (region := true) (judged := .uses)
+      (judged := .uses)
   | .ink => keyed "fg" .text (some .page) (screen (.const Color.black) (.seeded .ink))
       [("normal text", .fg)] (exportName := some "Ink") (judged := .page)
   | .muted => keyed "muted" .text (some .page) mutedFallback
@@ -368,18 +366,18 @@ white paper. -/
   | .exampleBodyInk => keyed "examplebodyfg" .text (some .exampleBodyGround)
       (every (.first [.ink])) [("block body example", .fg)] (judged := .uses)
   | .blockBodyGround => keyed "blockbodybg" .decorative none (every (.first [.page]))
-      [("block body", .bg)] (noun := some "the block body") (region := true) (judged := .uses)
+      [("block body", .bg)] (noun := some "the block body") (judged := .uses)
   | .alertBodyGround => keyed "alertbodybg" .decorative none (every (.first [.page]))
-      [("block body alerted", .bg)] (noun := some "the block body") (region := true) (judged := .uses)
+      [("block body alerted", .bg)] (noun := some "the block body") (judged := .uses)
   | .exampleBodyGround => keyed "examplebodybg" .decorative none (every (.first [.page]))
-      [("block body example", .bg)] (noun := some "the block body") (region := true) (judged := .uses)
+      [("block body example", .bg)] (noun := some "the block body") (judged := .uses)
   | .standoutGround => keyed "standoutbg" .decorative none (every (.first [.printInk]))
-      [("standout", .bg)] (noun := some "the standout frame") (region := true) (judged := .uses)
+      [("standout", .bg)] (noun := some "the standout frame") (judged := .uses)
   | .standoutInk => keyed "standoutfg" .largeText (some .standoutGround)
       (every (.readable .standoutGround [.paper, .printInk] [.paper])) [("standout", .fg)]
       (noun := some "the standout frame") (judged := .element .standout)
   | .titlePageGround => keyed "titlepagebg" .decorative none (every .absent)
-      (noun := some "the title page") (region := true) (judged := .uses)
+      (noun := some "the title page") (judged := .uses)
   | .titlePageInk => keyed "titlepagefg" .text (some .titlePageGround)
       (onBar .titlePageGround []) (presence := .on .titlePageGround)
       (noun := some "the title page") (judged := .element .titlePage)
@@ -484,9 +482,6 @@ an author colour. -/
 
 public theorem Role.code?_ofCode (r : ListingHighlight.Role) : (Role.ofCode r).code? = some r := by
   cases r <;> rfl
-
-/-- The code roles, in registry order. -/
-@[expose] public def Role.codeRoles : List Role := ListingHighlight.Role.all.map Role.ofCode
 
 /-- The `\palette` key a code role's colour is declared under. -/
 @[expose] public def codeKey (r : ListingHighlight.Role) : String := (Role.ofCode r).row.key.getD ""

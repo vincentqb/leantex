@@ -79,11 +79,6 @@ def sniffBrowserImage (b : ByteArray) : Option String :=
   else if (Svg.judge b).toBool then some "svg"
   else none
 
-/-- Every `<img src>` a body emits, hidden or not, since a browser decodes an image under
-`aria-hidden` too. -/
-def a11yImgSrcs (body : Array Html.Node) : Array String :=
-  (elemAttrsList (· == "img") #[] body.toList).filterMap (HtmlDoc.attrOf? ·.2 "src")
-
 /-- Every deck stage of a body — a `section` carrying the `slide` or
 `section-page` class — as its `tabindex` and `aria-label`. -/
 def stageMarks (body : Array Html.Node) : Array (Option String × Option String) :=
