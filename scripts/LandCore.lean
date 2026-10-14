@@ -297,8 +297,8 @@ inductive Writes where
   /-- The landing queue's file in the common directory, rewritten whole under the queue's own
   lock. -/
   | queue
-  /-- The landing lock's owner record, and the gate tree a holder that died left, which
-  nothing uses once the kernel has released its lock. -/
+  /-- The landing lock's owner record, and the gate tree of a holder that died, whose gates'
+  results no run reads. -/
   | lockRecord
   deriving DecidableEq, Repr, Inhabited
 
@@ -1041,11 +1041,14 @@ structure Waiter where
 
 namespace Queue
 
-/-- Enter `w`: a name already waiting keeps its place and its arrival and takes `w`'s run and
-process; a name not waiting arrives last. -/
-def enter (q : List Waiter) (w : Waiter) : List Waiter :=
+/-- Enter `w`: a name waiting under another live run stays that run's; one waiting under a dead
+run keeps its place and its arrival and takes `w`'s run and process; a name not waiting arrives
+last. -/
+def enter (q : List Waiter) (live : Waiter → Bool) (w : Waiter) : List Waiter :=
   if q.any (·.name == w.name) then
-    q.map fun x => if x.name == w.name then { x with run := w.run, pid := w.pid } else x
+    q.map fun x =>
+      if x.name == w.name && (x.run == w.run || !live x) then { x with run := w.run, pid := w.pid }
+      else x
   else q ++ [w]
 
 /-- The queue without `name`. -/
@@ -1068,8 +1071,10 @@ inductive Turn where
   /-- Refuse with exit 2, the place kept: `head`, live, arrived first, and this run's name stands
   at `place`, counted from 1. -/
   | behind (place : Nat) (head : String)
-  /-- Refuse with exit 2: this run's name does not wait under this run, since it left or a later
-  run entered it. -/
+  /-- Refuse with exit 2: this run's name waits under another live run, `run`. -/
+  | held (run : String)
+  /-- Refuse with exit 2: this run's name waits under no live run but a dead one, or no longer
+  waits: it retired, or was made new. -/
   | gone
   deriving DecidableEq, Repr, Inhabited
 
@@ -1079,25 +1084,34 @@ def Queue.turn (q : List Waiter) (live : Waiter → Bool) (name run : String) (f
   match q.find? (·.name == name) with
   | none => .gone
   | some w =>
-    if w.run != run then .gone
+    if w.run != run then (if live w then .held w.run else .gone)
     else match (Queue.ahead q name).find? live with
       | some h => .behind ((Queue.ahead q name).length + 1) h.name
       | none => if free then .take else .wait
 
-/-- Where an ask for the lock writes: the queue, entered or left, and on a take the lock's
-record and the abandoned row of a holder that died. -/
-def Turn.writes : Turn → List Writes
-  | .take => [.queue, .lockRecord, .ledger]
-  | .wait => [.queue]
-  | .behind .. => [.queue]
-  | .gone => [.queue]
+/-- What writes the queue: an ask for the lock, decided as `t`, and a name dropped when its
+branch is retired or made new. -/
+inductive QueueOp where
+  | ask (t : Turn)
+  | drop
 
-/-- An ask for the lock writes only what its run owns, and no ref or worktree another party
+/-- Where a queue operation writes: the queue, entered or left, and on a take the lock's record
+and the abandoned row of a holder that died. -/
+def QueueOp.writes : QueueOp → List Writes
+  | .ask .take => [.queue, .lockRecord, .ledger]
+  | .ask .wait => [.queue]
+  | .ask (.behind ..) => [.queue]
+  | .ask (.held _) => [.queue]
+  | .ask .gone => [.queue]
+  | .drop => [.queue]
+
+/-- A queue operation writes only what its run owns, and no ref or worktree another party
 reads. -/
-theorem turn_writes_owned (s : State) (t : Turn) :
-    ∀ w ∈ t.writes, w.owned s = true ∧ w.shared = false := by
+theorem queueOp_writes_owned (s : State) (op : QueueOp) :
+    ∀ w ∈ op.writes, w.owned s = true ∧ w.shared = false := by
   intro w hw
-  cases t <;> simp only [Turn.writes, List.mem_cons, List.not_mem_nil, or_false] at hw
+  rcases op with (_ | _ | _ | _ | _) | _ <;>
+    simp only [QueueOp.writes, List.mem_cons, List.not_mem_nil, or_false] at hw
   all_goals first
     | (subst hw; exact ⟨rfl, rfl⟩)
     | (rcases hw with rfl | rfl | rfl <;> exact ⟨rfl, rfl⟩)
@@ -1116,11 +1130,14 @@ theorem turn_take_exact (q : List Waiter) (live : Waiter → Bool) (name run : S
   · rename_i w hw
     split
     · rename_i hr
-      simp only [reduceCtorEq, false_iff]
+      have hne : ¬ w.run = run := by simpa using hr
+      have hnt : (if live w = true then Turn.held w.run else Turn.gone) ≠ .take := by
+        split <;> simp
+      simp only [hnt, false_iff]
       rintro ⟨_, ⟨w', hw', hr'⟩, _⟩
       rw [hw] at hw'
       cases hw'
-      simp_all
+      exact hne hr'
     · rename_i hr
       have hr' : w.run = run := by simpa using hr
       split
@@ -1139,8 +1156,8 @@ theorem turn_take_exact (q : List Waiter) (live : Waiter → Bool) (name run : S
         · rintro ⟨hf, -, -⟩
           simp [hf]
 
-/-- **The first live waiter is never refused**: it waits while the lock is held and takes it
-once the lock is free. -/
+/-- **The first live waiter's turn is never a refusal**: it waits while the lock is held and
+takes it once the lock is free. -/
 theorem turn_first_exact (q : List Waiter) (live : Waiter → Bool) (name run : String)
     (free : Bool) (w : Waiter) (hw : q.find? (·.name == name) = some w) (hr : w.run = run)
     (hd : ∀ x ∈ Queue.ahead q name, live x = false) :
@@ -1149,7 +1166,8 @@ theorem turn_first_exact (q : List Waiter) (live : Waiter → Bool) (name run : 
     List.find?_eq_none.mpr fun x hx => by simp [hd x hx]
   simp [Queue.turn, hw, hr, hn]
 
-/-- A refusal names a live waiter that arrived first, and the refused run's place. -/
+/-- A refusal behind the queue names a live waiter that arrived first, and the refused run's
+place. -/
 theorem turn_behind_mem (q : List Waiter) (live : Waiter → Bool) (name run : String)
     (free : Bool) (p : Nat) (h : String) (ht : Queue.turn q live name run free = .behind p h) :
     ∃ x ∈ Queue.ahead q name, live x = true ∧ x.name = h
@@ -1158,7 +1176,7 @@ theorem turn_behind_mem (q : List Waiter) (live : Waiter → Bool) (name run : S
   split at ht
   · simp at ht
   · split at ht
-    · simp at ht
+    · split at ht <;> simp at ht
     · split at ht
       · rename_i x hx
         simp only [Turn.behind.injEq] at ht
@@ -1175,12 +1193,12 @@ theorem turn_free_exact (q : List Waiter) (live : Waiter → Bool) (name run : S
   split
   · rfl
   · split
-    · rfl
+    · split <;> rfl
     · split <;> rfl
 
 /-- **Entering keeps every waiter's place and arrival, and puts a name not waiting last.** -/
-theorem enter_arrivals_exact (q : List Waiter) (w : Waiter) :
-    Queue.arrivals (Queue.enter q w) =
+theorem enter_arrivals_exact (q : List Waiter) (live : Waiter → Bool) (w : Waiter) :
+    Queue.arrivals (Queue.enter q live w) =
       if q.any (·.name == w.name) then Queue.arrivals q
       else Queue.arrivals q ++ [(w.name, w.since)] := by
   unfold Queue.enter Queue.arrivals

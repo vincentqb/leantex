@@ -179,16 +179,20 @@ def mkEnv : IO (Except String Env) := do
 def rmQuiet (p : System.FilePath) : IO Unit := do
   try IO.FS.removeDirAll p catch _ => pure ()
 
-/-- Whether the run owning this directory still runs, by the lock it holds on `alive` for
-its whole life; a lock that cannot be tried reads as live. -/
-def runLive (d : System.FilePath) : IO Bool := do
-  if !(← (d / "alive").pathExists) then return false
+/-- Whether the run owning this directory still runs, by the exclusive lock it holds on `alive`
+for its whole life, tried shared so that two probes never read each other as it; `none` when
+the lock cannot be tried. -/
+def runProbe (d : System.FilePath) : IO (Option Bool) := do
+  if !(← (d / "alive").pathExists) then return some false
   try
     let h ← IO.FS.Handle.mk (d / "alive") .read
-    let got ← h.tryLock
+    let got ← h.tryLock (exclusive := false)
     if got then h.unlock
-    return !got
-  catch _ => return true
+    return some !got
+  catch _ => return none
+
+/-- `runProbe`, a lock that cannot be tried reading as live. -/
+def runLive (d : System.FilePath) : IO Bool := return (← runProbe d).getD true
 
 /-- Keep the newest run directories and drop the rest, never a live run's or this run's
 own, unregistering a dead run's gate tree first. -/
@@ -785,7 +789,8 @@ def queueLockPath (e : Env) : String := s!"{e.common}/land/queue.lock"
 
 /-- A name the queue holds: one a branch can carry, with no whitespace or control character. -/
 def queueable (name : String) : Bool :=
-  !name.isEmpty && name.all fun c => !c.isWhitespace && c.toNat ≥ 0x20 && c.toNat != 0x7f
+  !name.isEmpty && name.all fun c =>
+    !c.isWhitespace && c.toNat ≥ 0x20 && (c.toNat < 0x7f || c.toNat > 0x9f)
 
 def waiterLine (w : Waiter) : String :=
   s!"name={w.name} run={w.run} pid={w.pid} since={w.since}"
@@ -807,8 +812,12 @@ def queueOfText (txt : String) : List Waiter := Id.run do
       unless out.any (·.name == w.name) do out := out.push w
   return out.toList
 
+/-- The queue, empty when its file is absent; a file that cannot be read is an error, never an
+empty queue. -/
 def readQueueAt (common : String) : IO (List Waiter) := do
-  queueOfText <$> (try IO.FS.readFile s!"{common}/land/queue" catch _ => pure "")
+  let p := s!"{common}/land/queue"
+  if !(← System.FilePath.pathExists p) then return []
+  queueOfText <$> IO.FS.readFile p
 
 /-- Replace the queue file whole, by a rename, so a reader sees one queue or the next. -/
 def writeQueue (e : Env) (q : List Waiter) : IO Unit := do
@@ -816,9 +825,12 @@ def writeQueue (e : Env) (q : List Waiter) : IO Unit := do
   IO.FS.writeFile next (String.join (q.map (waiterLine · ++ "\n")))
   IO.FS.rename next (queuePath e)
 
-/-- Whether the run that entered a waiter still runs, by the lock it holds on its `alive` for
-its whole life, which a reused pid does not hold. -/
-def waiterLive (e : Env) (w : Waiter) : IO Bool := runLive s!"{e.common}/land/{w.run}"
+/-- Whether the run that entered a waiter still runs, by the lock on its `alive`, which a reused
+pid does not hold; a lock that cannot be tried reads as dead, so it cannot stall the queue. -/
+def waiterLiveAt (common : String) (w : Waiter) : IO Bool :=
+  return (← runProbe s!"{common}/land/{w.run}").getD false
+
+def waiterLive (e : Env) (w : Waiter) : IO Bool := waiterLiveAt e.common w
 
 /-- The pause between a waiting run's asks for its turn. -/
 def turnBeatMs : UInt32 := 500
@@ -828,23 +840,26 @@ retries are given. -/
 def turnBeats : Nat := 8 * 60 * 60 * 1000 / turnBeatMs.toNat
 
 /-- One ask for the lock under the queue's lock: enter or read the queue, decide this run's turn
-with the liveness of the waiters ahead, and on a take hold the landing lock and leave. -/
-def askTurn (e : Env) (queueH lockH : IO.FS.Handle) (me : Waiter) (enter : Bool) :
+with the waiters' liveness, and on a take hold the landing lock and leave; a run that `holds` no
+place decides as if last and writes nothing. -/
+def askTurn (e : Env) (queueH lockH : IO.FS.Handle) (me : Waiter) (enter holds : Bool) :
     IO (Turn × List Waiter) := do
   queueH.lock
   try
     let q0 ← readQueueAt e.common
-    let q := if enter then Queue.enter q0 me else q0
     let mut liveRuns : Array String := #[]
-    for w in Queue.ahead q me.name do
-      if ← waiterLive e w then liveRuns := liveRuns.push w.run
+    for w in q0 do
+      if w.run != me.run && (← waiterLive e w) then liveRuns := liveRuns.push w.run
     let live : Waiter → Bool := fun w => liveRuns.contains w.run
+    let q := if !enter then q0
+      else if holds then Queue.enter q0 live me
+      else Queue.enter (Queue.leave q0 me.name) live me
     let t ← match Queue.turn q live me.name me.run true with
       | .take => do
         if ← lockH.tryLock then pure Turn.take
         else pure (Queue.turn q live me.name me.run false)
       | t => pure t
-    let q' := if t == .take then Queue.leave q me.name else q
+    let q' := if !holds then q0 else if t == .take then Queue.leave q me.name else q
     if q' != q0 then writeQueue e q'
     return (t, q')
   finally
@@ -878,28 +893,31 @@ def holdLock (e : Env) (h : IO.FS.Handle) (name : String) (act : IO UInt32) : IO
 
 /-- One lock taker at a time, in arrival order among the live: the first live waiter waits for
 the lock and takes it once free, leaving the queue, and any other refuses with exit 2, keeping
-its place. -/
-def withTurn (e : Env) (name : String) (act : IO UInt32) : IO UInt32 := do
+its place; a taker that `holds` no place takes the lock only first and never waits. -/
+def withTurn (e : Env) (name : String) (act : IO UInt32) (holds : Bool := true) :
+    IO UInt32 := do
   IO.FS.createDirAll s!"{e.common}/land"
   let fail (step path why : String) : IO UInt32 := do
     say step "fail" [("path", path), ("why", why)]
     sayFinal .failed [("name", name), ("why", why)]
     return 3
+  let refuse (why : String) (kvs : List (String × String) := []) : IO UInt32 := do
+    say "queue" "fail" ([("name", name)] ++ kvs ++ [("why", why)])
+    sayFinal .refused [("name", name), ("why", why)]
+    return 2
   let some h ← try some <$> IO.FS.Handle.mk (lockPath e) .append catch _ => pure none
     | fail "lock" (lockPath e) "the lock file cannot be opened"
   let some qh ← try some <$> IO.FS.Handle.mk (queueLockPath e) .append catch _ => pure none
     | fail "queue" (queueLockPath e) "the queue's lock file cannot be opened"
   if !queueable name then
-    let why := s!"agent/{name} names no branch: it holds whitespace or a control character"
-    say "queue" "fail" [("name", name), ("why", why)]
-    sayFinal .refused [("name", name), ("why", why)]
-    return 2
+    return ← refuse s!"agent/{name} names no branch: it holds whitespace or a control character"
   let me : Waiter := { name, run := e.runId, pid := (← IO.Process.getPID).toNat, since := e.ts }
   let owner : IO String := do pure (trimWs (← try IO.FS.readFile (ownerPath e) catch _ => pure ""))
+  let busy := "another landing holds the lock"
   let t0 ← IO.monoMsNow
   let mut waiting := false
   for i in [0:turnBeats] do
-    let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0)))
+    let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0) holds))
       catch ex => pure (Except.error (toString ex))
     match asked with
     | .error why =>
@@ -910,6 +928,10 @@ def withTurn (e : Env) (name : String) (act : IO UInt32) : IO UInt32 := do
         ("waiters", toString q.length)]
       return ← holdLock e h name act
     | .ok (.wait, q) =>
+      if !holds then
+        say "lock" "fail" [("path", lockPath e), ("owner", ← owner)]
+        return ← refuse s!"{busy} ({← owner}), and {name} takes no place in the queue: ask \
+again once it is free"
       unless waiting do
         say "queue" "wait" [("position", toString ((Queue.ahead q name).length + 1)),
           ("waiters", toString q.length), ("holder", recField (← owner) "name")]
@@ -917,26 +939,23 @@ def withTurn (e : Env) (name : String) (act : IO UInt32) : IO UInt32 := do
         waiting := true
       IO.sleep turnBeatMs
     | .ok (.behind p hd, q) =>
-      let prev ← owner
       say "queue" "behind" [("position", toString p), ("head", hd),
         ("waiters", toString q.length)]
-      say "lock" "fail" [("path", lockPath e), ("owner", prev)]
-      sayFinal .refused [("name", name), ("why", s!"another landing holds the lock or is \
-first in the queue: agent/{name} keeps place {p}, behind {hd}; ask again to keep it")]
+      say "lock" "fail" [("path", lockPath e), ("owner", ← owner)]
+      let place := if holds then s!"agent/{name} keeps place {p}, behind {hd}; ask again to keep it"
+        else s!"{name} takes no place in the queue, behind {hd}; ask again once it is free"
+      sayFinal .refused [("name", name), ("why", s!"{busy} or is first in the queue: {place}")]
       return 2
+    | .ok (.held r, _) =>
+      return ← refuse s!"{busy} or waits for it: agent/{name} already waits for the lock in run \
+{r}; ask again once that run ends" [("run", r)]
     | .ok (.gone, _) =>
-      let why := s!"agent/{name} left the queue while this run waited: it retired, or a \
-later run entered it"
-      say "queue" "fail" [("name", name), ("why", why)]
-      sayFinal .refused [("name", name), ("why", why)]
-      return 2
-  let why := s!"another landing still holds the lock ({← owner}) after this run waited \
-{turnBeats * turnBeatMs.toNat / 60000} minutes first in the queue; ask again to keep the place"
-  say "queue" "fail" [("why", why)]
-  sayFinal .refused [("name", name), ("why", why)]
-  return 2
+      return ← refuse s!"agent/{name} left the queue while this run waited: it retired or was made \
+new (land new <name>)"
+  refuse s!"{busy} ({← owner}) after agent/{name} waited {turnBeats * turnBeatMs.toNat / 60000} \
+minutes first in the queue: it keeps its place; ask again to keep it"
 
-/-- Drop `name`'s waiter under the queue's lock, whether it was waiting. -/
+/-- Drop `name`'s waiter under the queue's lock (`QueueOp.drop`), whether it was waiting. -/
 def leaveQueue (e : Env) (name : String) : IO Bool := do
   try
     let qh ← IO.FS.Handle.mk (queueLockPath e) .append
@@ -1676,13 +1695,18 @@ def selftest : IO UInt32 := do
     , ("a waiter behind a live one keeps its place",
         Queue.turn q3 liveB "c" "rc" true == .behind 3 "b")
     , ("a dead first waiter is skipped", Queue.turn q3 liveB "b" "rb" true == .take)
-    , ("a name a later run entered is gone to the earlier",
-        Queue.turn q3 liveB "b" "rx" true == .gone)
+    , ("a name another live run waits under is held from this one",
+        Queue.turn q3 liveB "b" "rx" true == .held "rb")
+    , ("a name a dead run waited under, entered by no one, is gone",
+        Queue.turn q3 liveB "a" "rx" true == .gone)
     , ("entering again keeps the place and the arrival",
-        Queue.enter q3 { wtr "a" "ra2" 8 with since := "later" }
+        Queue.enter q3 liveB { wtr "a" "ra2" 8 with since := "later" }
           == [wtr "a" "ra2" 8, wtr "b" "rb", wtr "c" "rc"])
+    , ("entering under a name a live run waits under leaves that run's",
+        Queue.enter q3 liveB (wtr "b" "rx") == q3)
     , ("a new name arrives last",
-        (Queue.enter q3 (wtr "d" "rd")).map (·.name) == ["a", "b", "c", "d"]) ]
+        (Queue.enter q3 liveB (wtr "d" "rd")).map (·.name) == ["a", "b", "c", "d"])
+    , ("a name holding a C1 control character is not queued", !queueable "a\u0085b") ]
   for (why, ok) in queueCases do
     if ok then say "selftest" "ok" [("case", s!"queue: {why}")]
     else
@@ -2395,7 +2419,7 @@ def awaitQueued (s : Scratch) (name : String) : IO Bool :=
 /-- Wait until `name` is the first live waiter: entered, and waiting for the lock. -/
 def awaitHead (s : Scratch) (name : String) : IO Bool := awaitTrue do
   for w in ← queueOf s do
-    if ← runLive s!"{s.repo}/.git/land/{w.run}" then return w.name == name
+    if ← waiterLiveAt s!"{s.repo}/.git" w then return w.name == name
   return false
 
 /-- Hand the lock on: wait until `next` waits first in line, release `held`, and wait until `next`
@@ -2534,10 +2558,38 @@ def scenarioQueuePrompt (self root : String) : IO Outcome := do
   let (cw, ow) ← awaitRun tw
   return { label := "the first waiter takes the lock within seconds of its freeing and lands \
 with no next ask"
-         , ok := held && first && ch == 0 && took && ms ≤ 30000 && gated && cw == 0
+         , ok := held && first && ch == 0 && took && ms ≤ 20 * turnBeatMs.toNat && gated && cw == 0
              && says ow "step=queue result=wait" && says ow "result=landed"
          , detail := s!"held={held} first={first} holder={ch} took={took} \
 took-ms-after-holder-exit={ms} gated={gated} waiter={cw}" }
+
+/-- A check waits its turn like a landing, while a push takes no place: refused at once behind a
+waiting check, it publishes once the lock is free and no one waits. -/
+def scenarioQueueTurns (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/turns" "holder"
+  let remote ← addRemote s
+  addAgent s "checked"
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let tc ← landAsync self s.repo #["check", "checked"] (← holdGate s "checked")
+  let first ← awaitHead s "checked"
+  let (cp, op) ← landIn self s.repo #["push"] "t=true"
+  let q := (← queueOf s).map (·.name)
+  let refused := cp == 2 && says op "another landing holds the lock" && says op "takes no place"
+    && q == ["checked"]
+  let handed ← handOn s "holder" "checked"
+  release s "checked"
+  let (ch, _) ← awaitRun th
+  let (cc, oc) ← awaitRun tc
+  let landedTip ← revOf s.repo "refs/heads/main"
+  let (cp2, op2) ← landIn self s.repo #["push"] "t=true"
+  let onRemote ← revOf remote "refs/heads/main"
+  return { label := "a check waits its turn, and a push takes no place and never waits"
+         , ok := held && first && refused && handed && ch == 0 && cc == 0
+             && says oc "result=checked" && cp2 == 0 && says op2 "result=pushed"
+             && onRemote == landedTip
+         , detail := s!"held={held} check-first={first} push-refused={refused} queue={q} \
+handed={handed} holder={ch} check={cc} push={cp2} remote={onRemote} main={landedTip}" }
 
 /-- Four waiters enter at one moment: the queue holds each once in one order, each refusal
 names its own place behind the one head, and they land in that order. -/
@@ -2985,6 +3037,7 @@ def scratchSelftest : IO UInt32 := do
     , ("foreign", scenarioForeignGitDir), ("retain", scenarioRetention)
     , ("killed", scenarioKilled), ("fifo", scenarioQueueOrder), ("deadhead", scenarioQueueDeadHead)
     , ("repoll", scenarioQueueRepoll), ("prompt", scenarioQueuePrompt), ("ties", scenarioQueueTies)
+    , ("turns", scenarioQueueTurns)
     , ("ownerbefore", fun self root => scenarioOwnerCommitsBeforeRebase self root false)
     , ("ownerbefore-rebase", fun self root => scenarioOwnerCommitsBeforeRebase self root true)
     , ("ownerafter", scenarioOwnerCommitsAfterRebase), ("switchff", scenarioMainSwitchedAtMerge)
@@ -3058,7 +3111,7 @@ def main (argv : List String) : IO UInt32 := do
           pure c
         | .new n => retained (landNew env n)
         | .retire n => retained (landRetire env n)
-        | .push => retained (withTurn env "push" (landPush env))
+        | .push => retained (withTurn env "push" (landPush env) (holds := false))
         | .land n m p => retained (landing n m p)
       env.alive.unlock
       return code
