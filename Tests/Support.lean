@@ -7,7 +7,7 @@ public import LeanTex.Core.HtmlDoc
 public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic
 public import Tests.LightCss
-public import Tests.Check
+public import Tests.Support.Check
 
 public section
 
@@ -2203,7 +2203,7 @@ def artCssRules (css : String) : Array (Nat × String × String) :=
 /-- Every innermost declaration block, as its selector and declarations. -/
 def artCssBlocks (css : String) : Array (String × String) := (artCssRules css).map (·.2)
 
-/-- The blocks outside every at-rule: the light screen's rules. -/
+/-- The blocks outside every at-rule. -/
 def artTopCssBlocks (css : String) : Array (String × String) :=
   (artCssRules css).filterMap fun (d, b) => if d == 0 then some b else none
 
@@ -2212,7 +2212,7 @@ included. -/
 def cssBlocksFor (css sel : String) : List String :=
   ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
 
-/-- The value of the last declaration of `key` in a declaration list, the one the cascade keeps. -/
+/-- The value of the last declaration of `key` in a declaration list, `!important` unread. -/
 def cssProperty (decls key : String) : Option String := lastDecl (cssDecls decls) key
 
 /-- A selector list's top-level parts, a comma inside parentheses kept in its part. -/
@@ -2229,18 +2229,14 @@ def cssSelectorParts (sel : String) : List String := Id.run do
     else cur := cur.push c
   return (parts.push cur.trimAscii.toString).toList
 
-/-- The declarations of every top-level block for selector `sel` exactly, at-rules left out. -/
-def cssTopBlocksFor (css sel : String) : List String :=
-  ((artTopCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
-
-/-- The declarations of every rule for selector `sel` exactly that the light screen applies, in
-order, from a stylesheet or a page carrying one. -/
-def cssRulesOf (css sel : String) : List String :=
+/-- The declarations of every rule for selector `sel` exactly that every light screen applies,
+whatever it supports, in order, from a stylesheet or a page carrying one. -/
+def screenRulesOf (css sel : String) : List String :=
   ((sheetRules (styleText css)).toList.filter fun (conds, s, _) =>
     s == sel && conds.all (holdsIn .light ·)).map (·.2.2)
 
-/-- The declarations of the first rule for selector `sel` exactly that the light screen applies. -/
-def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
+/-- The first of `screenRulesOf`'s rules. -/
+def screenRuleOf (css sel : String) : Option String := (screenRulesOf css sel).head?
 
 /-- A length in sp as thousandths of a point, rounded to nearest. -/
 def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
@@ -2265,7 +2261,7 @@ def screenRootVars (css : String) : List (String × String) :=
 def tokenClassColors (css : String) : List (String × String) :=
   (sheetRules css).toList.flatMap fun (conds, sel, decls) =>
     if !conds.isEmpty || !sel.startsWith ":is(.tok-" then [] else
-    match (cssDecls decls).lookup "color" with
+    match cssProperty decls "color" with
     | some v => (((sel.drop 4).dropEnd 1).toString.splitOn ",").map fun c =>
         ((c.trimAscii.toString.drop 1).toString, v)
     | none => []
@@ -2382,11 +2378,7 @@ def slideStages (body : Array Html.Node) : Array Html.Node :=
 def stageGrows (stage : Html.Node) : Array String :=
   match stage with
   | .elem _ _ kids => kids.filterMap fun node => match node with
-    | .elem _ attrs _ =>
-      ((HtmlDoc.attrOf? attrs "style").getD "").splitOn ";" |>.findSome? fun d =>
-        match d.splitOn ":" with
-        | [k, v] => if k.trimAscii.toString == "flex-grow" then some v.trimAscii.toString else none
-        | _ => none
+    | .elem _ attrs _ => cssProperty ((HtmlDoc.attrOf? attrs "style").getD "") "flex-grow"
     | .text _ | .style _ | .script .. => none
   | .text _ | .style _ | .script .. => #[]
 
@@ -2447,6 +2439,14 @@ def readEm (em : Int) (s : String) : Option Int := do
   if !s.endsWith "em" then none else do
     let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
     return (n * em + (d : Int) / 2) / d
+
+/-- A node's offset in units of `em`, its MathML `lspace` plus its left margin; none when `lspace`
+is negative or the margins do not balance. -/
+def readOffset (em : Int) (node : Html.Node) : Option Int := do
+  let space ← readEm em (nodeAttr "lspace" node)
+  let left ← readEm em (nodeCss "margin-left" node)
+  let right ← readEm em (nodeCss "margin-right" node)
+  if space < 0 || left + right != 0 then none else some (space + left)
 
 /-- Every value the accepted elements declare for attribute `key`, in document order. -/
 def attrValuesOf (want : String → Bool) (key : String) (n : Html.Node) : Array String :=

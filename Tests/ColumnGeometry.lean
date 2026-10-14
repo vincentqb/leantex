@@ -20,11 +20,6 @@ private def columnGeomInk (out : Layout.Out) : Array ColumnGeomInk :=
     | #[.rule w _ _ _] => some ⟨i, line.x, line.y, w⟩
     | _ => none
 
-private def columnGeomProp (style key : String) : Option String :=
-  (style.splitOn ";").reverse.findSome? fun decl => do
-    let [name, value] := decl.splitOn ":" | none
-    if name.trimAscii.toString == key then some value.trimAscii.toString else none
-
 private def columnGeomAtom (s : String) (measure : Sp) : Option Sp := do
   if s == "0" then return 0
   let (number, unit) ←
@@ -93,9 +88,9 @@ private structure ColumnGeomRow where
 
 -- The browser's track arithmetic at the PDF's declared measure.
 private def columnGeomHtml (style : String) (measure : Sp) : Option ColumnGeomRow := do
-  if columnGeomProp style "display" != some "grid" then return ← none
-  let gap ← columnGeomLength ((columnGeomProp style "column-gap").getD "0pt") measure
-  let #[a, b] ← columnGeomTracks (← columnGeomProp style "grid-template-columns") | none
+  if cssProperty style "display" != some "grid" then return ← none
+  let gap ← columnGeomLength ((cssProperty style "column-gap").getD "0pt") measure
+  let #[a, b] ← columnGeomTracks (← cssProperty style "grid-template-columns") | none
   let (aw, af) ← columnGeomTrack a measure
   let (bw, bf) ← columnGeomTrack b measure
   let remaining := measure - gap - aw - bw
@@ -103,7 +98,7 @@ private def columnGeomHtml (style : String) (measure : Sp) : Option ColumnGeomRo
   if af + bf > 0 then
     let left := aw + remaining * af / (af + bf)
     return ⟨left, gap, measure - gap - left⟩
-  let justify := (columnGeomProp style "justify-content").getD "normal"
+  let justify := (cssProperty style "justify-content").getD "normal"
   if justify == "space-between" then return ⟨aw, gap + remaining, bw⟩
   if remaining == 0 || justify == "start" || justify == "normal" then
     return ⟨aw, gap, bw⟩

@@ -4807,7 +4807,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let cssR := treeCssList (treeCssList "" headR.toList) bodyR.toList
   t "the HTML title slide resolves the author's token, not re-pointed"
     ((titleSlideStylesList false #[] bodyR.toList).any (hasStr · "var(--ltx-c-probeRust") &&
-     !(cssRulesOf cssR "section.slide.title-page").any (hasStr · "--ltx-c-probeRust:"))
+     !(cssBlocksFor cssR "section.slide.title-page").any (hasStr · "--ltx-c-probeRust:"))
   -- Each slot's rule pins it as TikZ does: `at` a share of the stage, `anchor` the translate, shifts in body em.
   let tgDoc := (← elabFixture "titleground" (← fixtureText "testdata/corpus/titleground.tex")).1
   let (tgHead, tgBody, _) := HtmlDoc.emitTree {} tgDoc
@@ -4832,7 +4832,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      (3, "100", -Dim.mm 16 - outer, "100", -Dim.mm 14 - outer, "translate(-100%, -100%)"),
      (4, "100", -Dim.mm 16 - outer, "0", Dim.mm 14 + outer, "translate(-100%, -0%)")]
   for (i, lp, dx, tp, dy, tr) in want do
-    let decls := cssRuleOf tgCss s!"section.slide.title-page > .u-titlepage-slot-{i}"
+    let decls := screenRuleOf tgCss s!"section.slide.title-page > .u-titlepage-slot-{i}"
     t s!"slot {i}: its left is the page point's horizontal share plus its x shift"
       (((decls.bind (field · "left")).bind calcOf).any fun (p, s) => p == lp && near s dx)
     t s!"slot {i}: its top is the page point's vertical share plus its y shift"
@@ -4841,7 +4841,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       ((decls.bind (field · "transform")).any (· == tr))
   let tgPdfX := lineXOf (censusOf (coveredColorsOf tgDoc) (layoutOf oneFace tgDoc)) 0
     "A Placeholder Deck"
-  let tgRule := cssRuleOf tgCss "section.slide.title-page > .u-titlepage-slot-0"
+  let tgRule := screenRuleOf tgCss "section.slide.title-page > .u-titlepage-slot-0"
   t "the title's text edge is one place in both artifacts"
     (match tgPdfX, ((tgRule.bind (field · "left")).bind calcOf),
         ((tgRule.bind (field · "padding")).bind emSp) with
@@ -4903,7 +4903,7 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
   let css := treeCssList (treeCssList "" head.toList) body.toList
   for (i, tr) in [(0, "translate(-0%, -50%)"), (1, "translate(-0%, -100%)")] do
     t s!"optional metadata keeps title slot {i} pinned in the typed HTML output"
-      ((cssRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}").any fun rule =>
+      ((screenRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}").any fun rule =>
         hasStr rule "position: absolute" && hasStr rule tr)
   t "a supported optional title template has no arrangement loss"
     (ds.all fun d => d.code != "W0363" && d.code != "W0361")
@@ -4937,8 +4937,8 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
           baseline.any (cssStageLength style "line-height" · d.page.height))
       let cssD := treeCssList (treeCssList "" h.toList) b.toList
       t s!"title size* and named deck sizes share the stage basis on {aspect}/{leading}"
-        ((cssRulesOf cssD "main").any (cssStageLength · "font-size" d.page.fontSize d.page.height) &&
-         (cssRuleOf cssD ".size-large").any (hasStr · "em"))
+        ((screenRulesOf cssD "main").any (cssStageLength · "font-size" d.page.fontSize d.page.height) &&
+         (screenRuleOf cssD ".size-large").any (hasStr · "em"))
   t "control: the title-size declaration reaches the shipped page"
     (lineSizeOf (censusOf (coveredColorsOf docK) outK) 0 "Synthetic Heading" ==
       some (Dim.pt 28))
@@ -4966,8 +4966,8 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
     let cssN := treeCssList (treeCssList "" headN.toList) bodyN.toList
     t s!"optional fields retain the two HTML node pins: {subtitle}/{institute}"
       (([0, 1] : List Nat).all fun i =>
-        cssRuleOf cssN s!"section.slide.title-page > .u-titlepage-slot-{i}" ==
-        cssRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}")
+        screenRuleOf cssN s!"section.slide.title-page > .u-titlepage-slot-{i}" ==
+        screenRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}")
     unless institute.isEmpty do
       t "a populated institute and author form one bottom-anchored group"
         ((lineYOf cN 0 "A. Example").any (· > doc.page.height * 3 / 4) &&
@@ -5060,7 +5060,7 @@ def titleTemplateColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
          (lineYOf c 0 "Colour Sample").any (· > doc.page.height * 3 / 4) &&
          (elemStylesList #[] body.toList).any (fun (text, style) =>
            text == "Institute Sample" && hasStr style "var(--ltx-c-probeAccent") &&
-         (cssRuleOf (treeCssList (treeCssList "" head.toList) body.toList)
+         (screenRuleOf (treeCssList (treeCssList "" head.toList) body.toList)
            "section.slide.title-page > .u-titlepage-slot-1").any
            (hasStr · "translate(-0%, -100%)"))
       t s!"{label} title colour {expr} is read without a title loss"

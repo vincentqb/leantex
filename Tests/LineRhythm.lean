@@ -260,15 +260,9 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (banded (deck ("\\title{{\\LARGE " ++ longTitle ++ "}}\n\\author{Kilo Lima}\n")
       "\\begin{frame}\n\\titlepage\n\\end{frame}"))
 
-/-- The value the last `sel` rule of a stylesheet declares for `prop`, in source order. -/
+/-- The value the last light-screen `sel` rule of a stylesheet declares for `prop`. -/
 private def lastDeclared (css sel prop : String) : Option String :=
-  ((css.splitOn ("\n" ++ sel ++ " {")).drop 1).foldl (fun acc chunk =>
-    let body := (chunk.splitOn "}").head!
-    let found := (body.splitOn ";").findSome? fun d =>
-      match d.splitOn ":" with
-      | k :: v :: _ => if k.trimAscii.toString == prop then some v.trimAscii.toString else none
-      | _ => none
-    found.orElse fun _ => acc) none
+  (screenRulesOf css sel).reverse.findSome? (cssProperty · prop)
 
 /-- A deck's listing is the page's: on the stage a `pre` carries no padding and no ground. -/
 def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -746,15 +740,6 @@ private def cascadeMarginTop (t : CTree) (rules : Array (String × String)) (i :
           | none => some (s, v)
   return best.map (·.2)
 
-/-- The value a declaration block states for `prop`, no shorthand read. -/
-private def declOf (decls prop : String) : Option String :=
-  (decls.splitOn ";").foldl (fun acc d =>
-    match d.splitOn ":" with
-    | k :: v :: more =>
-      if k.trimAscii.toString == prop then some (":".intercalate (v :: more)).trimAscii.toString
-      else acc
-    | _ => acc) none
-
 /-- The value the cascade gives element `i` for an inherited `prop`: its own
 `style` first, then the matching rule of highest specificity, the later of
 equals, and where neither states one, its parent's. -/
@@ -765,10 +750,10 @@ private def cascadeInherited (t : CTree) (rules : Array (String × String)) (pro
     match at? with
     | none => return none
     | some j =>
-      if let some own := (t.attr? j "style").bind (declOf · prop) then return some own
+      if let some own := (t.attr? j "style").bind (cssProperty · prop) then return some own
       let mut best : Option ((Nat × Nat × Nat) × String) := none
       for (sel, decls) in rules do
-        if let some v := declOf decls prop then
+        if let some v := cssProperty decls prop then
           let matched := (cssSplit ',' sel).filter fun m => cssMatchChain 64 t none (cssChain m) j
           unless matched.isEmpty do
             let s := matched.foldl (fun b m =>
@@ -1109,7 +1094,7 @@ private def frameEdges (nodes : Array Html.Node) : Array (String × Bool × Bool
 sheet gives it an opening strut, a `::before` rule over it. -/
 private def frameStruts (nodes : Array Html.Node) (css : String) : Array (String × Bool) :=
   let t := CTree.of nodes
-  let rules := (cssRules css).filter fun (_, d) => (declOf d "content").isSome
+  let rules := (cssRules css).filter fun (_, d) => (cssProperty d "content").isSome
   let shown (i : Nat) : Bool := (i :: t.ancestors i).all fun j =>
     (t.attr? j "hidden").isNone && !["header", "footer", "aside"].contains (t.el j).tag
   let inSlide (i : Nat) : Bool := (t.ancestors i).any fun j =>

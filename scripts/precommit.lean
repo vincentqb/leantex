@@ -1788,6 +1788,10 @@ def rangeTip (r : String) : Option String :=
 /-- A maintained Lean source, which the documentation rule reads. -/
 def docRuleFile (f : String) : Bool := f.endsWith ".lean" && !f.startsWith "testdata/"
 
+/-- Whether a line of code writes a failure list itself: a check block's own `check`. -/
+def failureListWrite (code : String) : Bool :=
+  containsSub code ".modify (" && containsSub code " :: ·)"
+
 /-- The definition names of a source's code, qualified through its namespace, section and mutual
 scopes. -/
 def scopedDefNames (lines : Array String) : Array String := Id.run do
@@ -2349,6 +2353,10 @@ def selftest : IO UInt32 := do
   unless scopedDefNames #["namespace Tests", "def a := r\"\\\"", "def b := r#\"x\"y\"#",
       "def c := 3", "end Tests", "def top := 4"] == #["Tests.a", "Tests.b", "Tests.c", "top"] do
     fails.modify ("scopedDefNames: a raw string hid the code after it" :: ·)
+  unless failureListWrite "  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)" &&
+      failureListWrite "    unless ok do failures.modify (s!\"PDF: {name}\" :: ·)" &&
+      !failureListWrite "      calls.modify (· + 1)" && !failureListWrite "  check ref name ok" do
+    fails.modify ("failureListWrite: a failure-list write went unread, or a counter read as one" :: ·)
   unless (theoremNames "theorem foo.{u} : True\ntheorem append_chain₂ : True").toList.all
       (["foo", "append_chain₂"].contains ·) do
     fails.modify ("theoremNames misread a universe suffix or a subscript" :: ·)
@@ -3680,6 +3688,15 @@ the privacy check is skipped."
   A helper used by two check blocks moves to Tests/Support.lean the moment
   the second caller appears (AGENTS.md § Repository).
   Fix: keep one `{name}` in Tests/Support.lean and delete the copies."
+  for f in testFiles do
+    unless f == "Tests/Support/Check.lean" do
+      let lines := ((← IO.FS.readFile f).splitOn "\n").toArray
+      for (code, row) in (codeOnly lines).zipIdx do
+        if failureListWrite code then
+          say s!"pre-commit: {f}:{row + 1} writes a failure list itself.
+  A check block records through `check` or `failures` (Tests/Support/Check.lean), so every block
+  shares one way a check fails (AGENTS.md § Repository).
+  Fix: write `check ref name ok`, or `let t := check ref` for a block's own prefix."
 
   -- A tier producer's selftest is built on `Scoreboard.tierSelftest`.
   for f in (← System.FilePath.readDir "scripts") do

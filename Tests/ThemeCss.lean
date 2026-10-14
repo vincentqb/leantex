@@ -48,13 +48,13 @@ resolves. -/
 private def variables (inherited : Ir.Palette) (style : String) : Ir.Palette :=
   (List.range 4).foldl (fun vars _ => variablesPass vars style) inherited
 
-/-- The page's own light-scheme `:root` properties, top-level rules only. -/
+/-- The light screen's `:root` properties. -/
 private def rootVars (css : String) : Ir.Palette :=
-  variables {} (String.intercalate ";" (cssTopBlocksFor css ":root"))
+  variables {} (String.intercalate ";" ((screenRootVars css).reverse.map fun (k, v) => s!"{k}: {v}"))
 
 private def ruleColor (css selector key : String) (vars : Ir.Palette) :
     Option Ir.Color :=
-  (cssProperty (String.intercalate ";" (cssRulesOf css selector)) key).bind
+  (cssProperty (String.intercalate ";" (screenRulesOf css selector)) key).bind
     (colorValue vars)
 
 private def probe (pal : Ir.Palette) : Ir.Doc :=
@@ -128,7 +128,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
       (paints.all fun (_, bg) => colorValue vars bg == expected)
   let doc := probe empty
   t "theme CSS: an undeclared title ground stays unfilled"
-    ((cssRulesOf (sheet {} doc) "section.slide.title-page").all fun rule =>
+    ((screenRulesOf (sheet {} doc) "section.slide.title-page").all fun rule =>
       (cssProperty rule "background").isNone)
   let author := "section.slide.standout { background: #123456; color: #abcdef; }\n"
   let doc := { doc with output := { doc.output with stylesheet := some "author.css" } }
@@ -137,7 +137,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     (treeCssList "" head.toList |>.endsWith author)
   let bulma := sheet { css := .bulma } (probe empty)
   t "theme CSS: Bulma's default accent is the native contrast palette"
-    (cssProperty (String.intercalate ";" (cssTopBlocksFor bulma ":root")) "--bulma-primary" ==
+    ((screenRootVars bulma).lookup "--bulma-primary" ==
         some "var(--primary, var(--ltx-accent))" &&
       ruleColor bulma ":root" "--ltx-accent" empty == Ir.Design.at empty .light .focus)
 
@@ -208,8 +208,8 @@ mutual
       let inline := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
       let isStage := tag == "section" && (cls.splitOn " ").contains "slide"
       let rules := if isStage then
-          String.intercalate ";" (cssRulesOf css "section.slide, section.section-page") ++
-          ";" ++ String.intercalate ";" (cssRulesOf css
+          String.intercalate ";" (screenRulesOf css "section.slide, section.section-page") ++
+          ";" ++ String.intercalate ";" (screenRulesOf css
             (if (cls.splitOn " ").contains "standout" then "section.slide.standout"
              else if (cls.splitOn " ").contains "title-page" then "section.slide.title-page"
              else "section.slide"))
@@ -255,7 +255,7 @@ public def epochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
     let (head, body, hd) := HtmlDoc.emitTree {} doc
     let css := treeCssList "" head.toList
-    let root := variables {} (String.intercalate ";" (cssTopBlocksFor css ":root"))
+    let root := rootVars css
     let stages := stagePaints css root #[] body.toList
     check ref s!"theme epoch/{name}: clean authored source"
       (ds.all (·.severity == .note) && hd.all (·.severity == .note) &&

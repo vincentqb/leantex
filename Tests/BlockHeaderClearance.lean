@@ -53,10 +53,6 @@ private def headerBottom (page : Layout.PageOut) : Option Dim.Sp :=
   (page.fills.filter (·.color == headerColor)).foldl
     (fun edge fill => some (edge.map (max (fill.y + fill.h)) |>.getD (fill.y + fill.h))) none
 
-private def styleOf : Html.Node → String
-  | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "style").getD ""
-  | .text _ | .style _ | .script .. => ""
-
 private def participates : Html.Node → Bool
   | .elem "header" _ _ => false
   | node@(.elem _ attrs _) =>
@@ -130,7 +126,7 @@ private def winningMargin (css : String) (stage node : Html.Node)
         if next.1 > rank.1 || (next.1 == rank.1 && next.2 ≥ rank.2) then
           winner := some margin
           rank := next
-  return (marginTop (styleOf node)).or winner
+  return (marginTop (nodeAttr "style" node)).or winner
 
 private def openingMargin :=
   "calc(var(--frame-body-skip) + var(--frame-title-below, 0pt) + " ++
@@ -152,7 +148,7 @@ private def htmlOpeningClearance (css : String) (stage : Html.Node)
       return hasClass node "frame-body-start" &&
         (margin == some openingMargin ||
           (before == "0pt" && margin == some "var(--frame-body-skip)")) &&
-        (cssProperty (styleOf node) "--frame-body-before").getD "0pt" == before).getD false &&
+        (cssProperty (nodeAttr "style" node) "--frame-body-before").getD "0pt" == before).getD false &&
       (kids.filter (hasClass · "frame-body-start")).size == 1 &&
       !body.isEmpty &&
       cssStageLength ((HtmlDoc.attrOf? attrs "style").getD "")
@@ -225,7 +221,7 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
         check ref (name ++ ": epoch declaration remains a length on the opening box")
           ((elemNodesList (fun _ => true) #[] nodes.toList).any fun node =>
             hasClass node "frame-body-start" &&
-              cssProperty (styleOf node) "--clearancegap" == some length)
+              cssProperty (nodeAttr "style" node) "--clearancegap" == some length)
       let out := layoutOf fonts doc
       check ref (name ++ ": native paint includes the sourced gap")
         ((out.pages[0]?).any fun page => (paintedTop fonts page).any fun y =>
@@ -279,7 +275,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
           (!stages.isEmpty && stages.all fun stage => match stage with
             | .elem _ _ kids => ((kids.filter participates)[0]?).any fun node =>
                 hasClass node HtmlDoc.skipClass && hasClass node "frame-body-start" &&
-                ((cssProperty (styleOf node) "--skip").bind remMilliOf ==
+                ((cssProperty (nodeAttr "style" node) "--skip").bind remMilliOf ==
                   some (HtmlDoc.screenMilli doc.page.fontSize (Dim.pt 7) : Int))
             | .text _ | .style _ | .script .. => false)
       if kind == "leading-note" || kind == "note-before" then

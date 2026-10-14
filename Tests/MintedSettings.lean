@@ -102,7 +102,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "minted fontsize/tab/wrap: typed HTML declares settings without nested shrink"
     (pres.size == 1 && pres.any (MintedSettings.htmlSettings · "0.9" 3 true) &&
       hasStr css "font-family: var(--font-mono)" &&
-      (cssRulesOf css "code, pre").all (!hasStr · "font-size"))
+      (cssBlocksFor css "code, pre").all (!hasStr · "font-size"))
   t "minted default: inherits the body size" (hasSize (dvDoc "" (code "" "text" simple)) 10)
   t "minted auto: inherits a scoped named size"
     (hasSize (dvDoc "" ("{\\small\n" ++ code "fontsize=auto" "text" simple ++ "}")) 9)

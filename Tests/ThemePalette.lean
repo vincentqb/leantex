@@ -2,7 +2,7 @@ module
 
 import LeanTex.Core.SeedPalette
 import LeanTex.Core.Ir
-import Tests.Check
+import Tests.Support.Check
 
 open LeanTex.Core
 

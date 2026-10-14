@@ -102,7 +102,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let hjCss := (HtmlDoc.emit {} hjDoc).1
   let vars := screenRootVars hjCss
   let ruleColor (sel prop : String) : Option String :=
-    ((cssRulesOf hjCss sel).reverse.findSome? (cssProperty · prop)).bind fun v =>
+    ((screenRulesOf hjCss sel).reverse.findSome? (cssProperty · prop)).bind fun v =>
       ((v.splitOn " ").getLast?).bind (chaseCssValue vars)
   for (sel, prop, role, what) in [("body", "background", Ir.Role.page, "page"),
       ("body", "color", .ink, "text"), ("pre", "background", .codeSurface, "code ground"),

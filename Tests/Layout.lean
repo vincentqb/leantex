@@ -570,14 +570,14 @@ def boxSideHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (page, _) := HtmlDoc.emit {} doc
   for (cls, h) in [("centered", Ir.HAlign.center), ("ragged", .left), ("ragged-right", .right),
       ("column", .left)] do
-    let decls := (cssRuleOf page ("." ++ cls)).getD ""
+    let decls := (screenRuleOf page ("." ++ cls)).getD ""
     t s!"the .{cls} scope declares its side's box placement"
       (hasStr decls s!"text-align: {h.align};" &&
         hasStr decls s!"--ltx-box-left: {(HtmlDoc.boxMargins h).1};" &&
         hasStr decls s!"--ltx-box-right: {(HtmlDoc.boxMargins h).2};" &&
         hasStr decls s!"--ltx-box-justify: {HtmlDoc.boxJustify h};")
   t "a table reads its scope's box margins"
-    (((cssRuleOf page "table").getD "").trimAscii.toString ==
+    (((screenRuleOf page "table").getD "").trimAscii.toString ==
       "margin-left: var(--ltx-box-left, 0); margin-right: var(--ltx-box-right, auto);")
   let styles := (elemAttrsList (· == "div") #[] (HtmlDoc.emitTree {} doc).2.1.toList).filterMap
     fun (_, attrs) => if HtmlDoc.classTokens attrs == ["columns"]
@@ -618,13 +618,13 @@ def headlineSideChecks (ref : IO.Ref (List String)) : IO Unit := do
   let right := poster "\\logoright{Right Mark}"
   let page := css right
   t "a centred band lays its matter between two equal flexible tracks"
-    (hasStr ((cssRuleOf page "body > header.headline").getD "")
+    (hasStr ((screenRuleOf page "body > header.headline").getD "")
       "grid-template-columns: 1fr auto 1fr;" &&
-     hasStr ((cssRuleOf page "body > header.headline > .headline-matter").getD "")
+     hasStr ((screenRuleOf page "body > header.headline > .headline-matter").getD "")
       "grid-area: 1 / 2;" &&
-     hasStr ((cssRuleOf page "body > header.headline > .headline-logo:first-child").getD "")
+     hasStr ((screenRuleOf page "body > header.headline > .headline-logo:first-child").getD "")
       "grid-area: 1 / 1;" &&
-     hasStr ((cssRuleOf page "body > header.headline > .headline-matter ~ .headline-logo").getD "")
+     hasStr ((screenRuleOf page "body > header.headline > .headline-matter ~ .headline-logo").getD "")
       "grid-area: 1 / 3;")
   let order (d : Ir.Doc) : List String :=
     match (HtmlDoc.emitTree {} d).2.1.toList.find? fun n => match n with
@@ -640,7 +640,7 @@ def headlineSideChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (side, align) in [("left", "left"), ("right", "right")] do
     let d := poster ("\\style{titlepage}{ align = " ++ side ++ " }\\logoright{Right Mark}")
     t s!"a band declared {side} sets its matter {align} beside the logos"
-      (hasStr ((cssRuleOf (css d) "body > header.headline .headline-matter").getD "")
+      (hasStr ((screenRuleOf (css d) "body > header.headline .headline-matter").getD "")
         s!"flex: 1; text-align: {align};")
 
 /-- `\centering` centres the rest of its scope, as a declaration. -/

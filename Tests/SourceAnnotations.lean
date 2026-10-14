@@ -5,7 +5,7 @@ public import LeanTex.Core.Struct
 public import LeanTex.Core.Contrast
 public import LeanTex.Core.MarkdownDoc
 public import LeanTex.Core.HtmlDoc
-public import Tests.Check
+import Tests.Support.Check
 
 public section
 

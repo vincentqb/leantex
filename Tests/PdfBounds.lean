@@ -3,7 +3,7 @@ module
 public import LeanTex.Core.PdfWriteContract
 public import LeanTex.Core.PdfCensus
 public import LeanTex.Cli.DriverDiag
-public import Tests.Check
+import Tests.Support.Check
 
 public section
 

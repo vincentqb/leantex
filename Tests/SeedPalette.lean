@@ -226,9 +226,10 @@ private def substVars (vars : List (String × String)) (v : String) : String := 
     | _ => break
   return cur
 
-/-- A page's light-screen rules outside its root table, their `var()` references read through it. -/
+/-- A page's top-level rules outside its root table, their `var()` references read through the light
+screen's. -/
 private def resolvedRules (html : String) : List (String × String) :=
-  let css := ((html.splitOn "<style>").getD 1 "").splitOn "</style>" |>.headD ""
+  let css := styleText html
   let vars := screenRootVars html
   (artTopCssBlocks css).toList.filterMap fun (sel, decls) =>
     if sel == ":root" then none else some (sel, substVars vars decls)

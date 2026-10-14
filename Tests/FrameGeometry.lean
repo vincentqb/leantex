@@ -275,14 +275,9 @@ def nestedFillChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"nested fill {name}: the web stage grows by its spacers and the fills the deck reads"
       ((stagesOf doc).size == 1 && (stagesOf doc).all (stageGrows · == grows))
 
-/-- The last declaration of `key` on an element's style attribute: the one
-CSS applies. -/
+/-- The last declaration of `key` on an element's style attribute. -/
 private def styleLast (attrs : Array (String × String)) (key : String) : Option String :=
-  (((HtmlDoc.attrOf? attrs "style").getD "").splitOn ";").foldl (fun acc d =>
-    match d.splitOn ":" with
-    | k :: rest => if k.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString
-      else acc
-    | [] => acc) none
+  cssProperty ((HtmlDoc.attrOf? attrs "style").getD "") key
 
 /-- An element's `flex-grow`, zero where it declares none. -/
 private def growOf : Html.Node → Nat

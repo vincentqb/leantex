@@ -178,13 +178,10 @@ mutual
     | node :: rest => listStyles (nodeStyles acc node) rest
 end
 
-/-- The `margin-top` of the gap sheet's first rule whose selector holds every fragment. -/
+/-- The `margin-top` of the gap sheet's first `:where(` rule whose selector holds every fragment. -/
 private def ruleValue (sheet : String) (frags : List String) : Option String :=
-  (sheet.splitOn "\n").findSome? fun l =>
-    if l.startsWith ":where(" && frags.all (hasStr l ·) then
-      match l.splitOn "{ margin-top: " with
-      | [_, v] => some ((v.splitOn ";").headD "")
-      | _ => none
+  (artCssBlocks sheet).findSome? fun (sel, decls) =>
+    if sel.startsWith ":where(" && frags.all (hasStr sel ·) then cssProperty decls "margin-top"
     else none
 
 /-- The browser twin: the same insets and skips as CSS on the typed tree. -/

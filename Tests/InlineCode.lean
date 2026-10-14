@@ -196,8 +196,8 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (codes.all fun c => (strongTexts c).contains "def" && (paintedTexts c).contains "def" &&
       hasStr (spaced (ownText c)) "probe(arg)")
   t "inline code html: no stylesheet rule sizes code"
-    ((cssRulesOf css "code, pre").all (!hasStr · "font-size") && !hasStr css "0.925em" &&
-      (cssRulesOf css "pre > code").isEmpty)
+    ((cssBlocksFor css "code, pre").all (!hasStr · "font-size") && !hasStr css "0.925em" &&
+      (cssBlocksFor css "pre > code").isEmpty)
   for (label, src, outer, want) in [
       ("bold", "\\textbf{Bold \\mintinline{python}{def probe(arg)}}", "Bold",
         fun (g : Glyph) => mono g && bold g && !italic g),

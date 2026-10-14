@@ -89,7 +89,7 @@ def tableSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           cells.size == wants.size && (cells.zip wants).all fun (got, want) => got == some want)
       t s!"table side {kind} {scope}: each side class's rule declares its side"
         ([("bt-left", "left"), ("bt-center", "center"), ("bt-right", "right")].all fun (cls, side) =>
-          (cssRuleOf page s!"table.booktabs td.{cls}, table.booktabs th.{cls}").any
+          (screenRuleOf page s!"table.booktabs td.{cls}, table.booktabs th.{cls}").any
             (hasStr · s!"text-align: {side};"))
       let c := censusOf #[] (layoutOf oneFace doc)
       let x (s : String) := lineXOf c 0 s
@@ -165,7 +165,7 @@ def tableLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       let (doc, _) := elabStr src
       let (page, _) := HtmlDoc.emit {} doc
       t s!"table leading {kind} {name}: the formal table declares the print leading"
-        (hasStr ((cssRuleOf page "table.booktabs").getD "") s!"line-height: {factor};")
+        (hasStr ((screenRuleOf page "table.booktabs").getD "") s!"line-height: {factor};")
       let geom := Layout.Geom.ofPage doc.page
       let c := censusOf #[] (layoutOf oneFace doc)
       let pitch := Ir.leadingFor geom.fontSize geom.leading

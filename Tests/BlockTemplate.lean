@@ -1258,11 +1258,11 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (kids.filter fun k => k matches .elem "header" _ _).size
   check ref s!"block template HTML: the untitled block sets no header ({headers})"
     (headers == #[1, 1, 0, 1, 1])
-  let titleRule := cssRuleOf sheet "section.block-shaped.block-block > header::before"
+  let titleRule := screenRuleOf sheet "section.block-shaped.block-block > header::before"
   check ref s!"block template HTML: the title's rule is .3em wide in its colour ({titleRule})"
     (titleRule.any fun r => hasStr r "width: 0.3em" && hasStr r "#2e8b57" &&
       hasStr r "left: calc(0rem - 0.6em - 0.3em)")
-  let rightRule := cssRuleOf sheet "section.block-shaped.block-alert > header::after"
+  let rightRule := screenRuleOf sheet "section.block-shaped.block-alert > header::after"
   check ref s!"block template HTML: the alerted title's rule stands on the right ({rightRule})"
     (rightRule.any fun r => hasStr r "right: calc(" && hasStr r "position: absolute")
   check ref "block template HTML: a shaped block's body keeps the page's paragraph skip"
@@ -1284,7 +1284,7 @@ private def projectionChecks (ref : IO.Ref (List String)) : IO Unit := do
           | some n => s!"var({n.property}, {HtmlDoc.cssColor e.color})"
           | none => HtmlDoc.cssColor e.color
         check ref s!"block template {name} {kind.name}: the stylesheet draws the page's rule"
-          ((cssRuleOf css (box ++ pseudo)).any fun r =>
+          ((screenRuleOf css (box ++ pseudo)).any fun r =>
             hasStr r s!"width: {HtmlDoc.blockShapeLength doc e.width};" &&
               hasStr r s!"background: {paint};")
         check ref s!"block template {name} {kind.name}: the page reads the rule's palette entry"
@@ -1592,7 +1592,7 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   let riseOf (rule : String) : Dim.Sp := (lastStageTerm rule "padding-top" doc.page.height).getD 0
   for (kind, pseudo, page, color, lead, title, next) in kinds do
     let sel := s!"section.block-shaped.block-{kind.name} > header"
-    let rule := (cssRuleOf sheet s!"{sel}::{pseudo}").getD ""
+    let rule := (screenRuleOf sheet s!"{sel}::{pseudo}").getD ""
     let p : Layout.PageOut := out.pages[page]?.getD {}
     let bars := titleBars fonts p color
     check ref s!"{name} HTML {kind.name}: the page's rules ship ({bars.size})" (!bars.isEmpty)
@@ -1609,7 +1609,7 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
           s!"({box - b - bottom} against {bar.y + bar.h - last.y})")
           (((box - b - bottom) - (bar.y + bar.h - last.y)).natAbs ≤ tol)
       | _, _ => check ref s!"{name} HTML {kind.name}: the rule's offsets read ({rule})" false
-    let pad := ((cssRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
+    let pad := ((screenRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
     let room := (lastStageTerm pad "padding-bottom" doc.page.height).getD 0
     match distance out page lead title, distance plain page lead title,
         distance out page title next, distance plain page title next with
@@ -1621,8 +1621,8 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     | _, _, _, _ => check ref s!"{name} HTML {kind.name}: the boxed probe's lines ship" false
   for (kind, page, prev, title) in broken do
     let sel := s!"section.block-shaped.block-{kind.name} > header"
-    let pad := ((cssRulesOf sheet s!"{sel}:has(br)").find? (hasStr · "padding-top")).getD
-      (((cssRulesOf sheet sel).find? (hasStr · "padding-top")).getD "")
+    let pad := ((screenRulesOf sheet s!"{sel}:has(br)").find? (hasStr · "padding-top")).getD
+      (((screenRulesOf sheet sel).find? (hasStr · "padding-top")).getD "")
     match distance out page prev title, distance plain page prev title with
     | some a, some a' =>
       check ref s!"{name} HTML {kind.name}: a broken title's header rises as the page's ({riseOf pad} against {a - a'})"
@@ -1657,8 +1657,8 @@ private def capitalHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
   let (head, body, _) := HtmlDoc.emitTree cfg doc
   let sheet := treeCssList "" (head.toList ++ body.toList)
   let sel := "section.block-shaped.block-example > header"
-  let pad := ((cssRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
-  let boxRule := (cssRuleOf sheet s!"{sel}::after").getD ""
+  let pad := ((screenRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
+  let boxRule := (screenRuleOf sheet s!"{sel}::after").getD ""
   match lastStageTerm pad "padding-top" doc.page.height, lastStageTerm boxRule "top" doc.page.height with
   | some rise, some top =>
     check ref s!"capitals HTML: the box's rule stands from the box's top, the rise above it ({top} against {rise})"
@@ -1728,16 +1728,16 @@ private def htmlSkipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sheet := treeCssList "" (head.toList ++ body.toList)
   let len (pt : Nat) : String := HtmlDoc.blockShapeLength doc { width := .ofSp (Dim.pt pt) }
   let peer := "var(--parskip, 0.725rem)"
-  let plain := cssRuleOf sheet "section.block-shaped.block-block"
+  let plain := screenRuleOf sheet "section.block-shaped.block-block"
   check ref s!"block skips HTML: the section stands the template's skips above and below ({plain})"
     (plain.any fun r => hasStr r s!"padding-top: {len 6};" && hasStr r s!"padding-bottom: {len 3};")
-  let header := cssRuleOf sheet "section.block-shaped.block-block > header"
+  let header := screenRuleOf sheet "section.block-shaped.block-block > header"
   check ref s!"block skips HTML: the header stands the skip below the title ({header})"
     (header.any fun r => hasStr r s!"padding-bottom: {len 4};")
-  let bare := cssRuleOf sheet "section.block-shaped.block-block:not(:has(> header))"
+  let bare := screenRuleOf sheet "section.block-shaped.block-block:not(:has(> header))"
   check ref s!"block skips HTML: an untitled block stands its own arm's skips ({bare})"
     (bare.any fun r => hasStr r s!"padding-top: calc({len 11} + {peer});")
-  let whole := cssRuleOf sheet "section.block-shaped.block-alert:not(:has(> header))"
+  let whole := screenRuleOf sheet "section.block-shaped.block-alert:not(:has(> header))"
   check ref s!"block skips HTML: an untitled body opening its box stands the arm's skip inside it ({whole})"
     (whole.any fun r => hasStr r s!"padding-top: calc({len 12} + {peer} + {len 3} + {peer});")
   check ref "block skips HTML: no default block margin stands around a templated block"
@@ -1748,7 +1748,7 @@ private def htmlSkipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (head2, body2, _) := HtmlDoc.emitTree {} doc2
   let sheet2 := treeCssList "" (head2.toList ++ body2.toList)
   check ref "block skips HTML: a bigger skip above the title is a bigger padding"
-    ((cssRuleOf sheet2 "section.block-shaped.block-block").any fun r =>
+    ((screenRuleOf sheet2 "section.block-shaped.block-block").any fun r =>
       hasStr r s!"padding-top: {len 12};")
 
 /-- The HTML sets an empty title box as TeX does: strut-tall beside its rules where strutted,
@@ -1758,14 +1758,14 @@ private def emptyBoxHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let sheet := treeCssList "" (head.toList ++ body.toList)
   for (kind, strut) in [("block", Dim.pt 14), ("example", Dim.pt 11)] do
-    let box := (cssRuleOf sheet s!"section.block-shaped.block-{kind} > header:empty").getD ""
+    let box := (screenRuleOf sheet s!"section.block-shaped.block-{kind} > header:empty").getD ""
     check ref s!"empty title box HTML {kind}: the box is its title font's strut tall ({box})"
       (hasStr box "box-sizing: content-box;" && cssStageLength box "min-height" strut doc.page.height)
-  let bare := (cssRuleOf sheet "section.block-shaped.block-alert > header:empty").getD ""
+  let bare := (screenRuleOf sheet "section.block-shaped.block-alert > header:empty").getD ""
   check ref s!"empty title box HTML alert: an unstrutted box holds no paragraph ({bare})"
     (hasStr bare "box-sizing: content-box;" && hasStr bare "min-height: 1lh;" &&
       hasStr bare "padding-top: var(--parskip, 0.725rem);")
-  let rule := (cssRuleOf sheet "section.block-shaped.block-alert > header:empty::after").getD ""
+  let rule := (screenRuleOf sheet "section.block-shaped.block-alert > header:empty::after").getD ""
   check ref s!"empty title box HTML alert: a box of no height has no rule beside it ({rule})"
     (hasStr rule "content: none;")
   let empties := (shapedSections body).flatMap fun kids => kids.filterMap fun k => match k with
@@ -1776,13 +1776,13 @@ private def emptyBoxHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (plain, _) := Elab.run "block-template-plainempty.tex" plainEmptySource
   let (phead, pbody, _) := HtmlDoc.emitTree {} plain
   let psheet := treeCssList "" (phead.toList ++ pbody.toList)
-  let titled := (cssRuleOf psheet "section.block-shaped.block-block > header").getD ""
+  let titled := (screenRuleOf psheet "section.block-shaped.block-block > header").getD ""
   check ref s!"unboxed title HTML: the title spends its line's paragraph skip once ({titled})"
     (hasStr titled "padding-top: calc(var(--parskip, 0.725rem) + 0rem);")
-  let none := (cssRuleOf psheet "section.block-shaped.block-block > header:empty").getD ""
+  let none := (screenRuleOf psheet "section.block-shaped.block-block > header:empty").getD ""
   check ref s!"unboxed title HTML: an empty unstrutted title is no line ({none})"
     (hasStr none "min-height: 0rem;" && hasStr none "padding-top: 0rem;")
-  let struts := (cssRuleOf psheet "section.block-shaped.block-alert > header:empty").getD ""
+  let struts := (screenRuleOf psheet "section.block-shaped.block-alert > header:empty").getD ""
   check ref s!"unboxed title HTML: an empty strutted title is its struts' line ({struts})"
     (cssStageLength struts "min-height" (Dim.pt 14) plain.page.height &&
       hasStr struts "padding-top: var(--parskip, 0.725rem);")
@@ -2204,14 +2204,14 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   let (head, body, _) := HtmlDoc.emitTree cfg doc
   let sheet := treeCssList "" (head.toList ++ body.toList)
   let sel := "section.block-shaped.block-block"
-  let rule := (cssRuleOf sheet s!"{sel}::before").getD ""
+  let rule := (screenRuleOf sheet s!"{sel}::before").getD ""
   check ref s!"whole bar HTML: the section draws the rule ({rule})"
     (hasStr rule "position: absolute" && hasStr rule "var(--block-last-below, " &&
       hasStr rule "width: 0.3em" && hasStr rule "left: calc(0rem - 0.6em - 0.3em)")
   check ref "whole bar HTML: the header draws no rule of its own"
-    ((cssRuleOf sheet s!"{sel} > header::before").isNone)
+    (cssBlocksFor sheet s!"{sel} > header::before").isEmpty
   check ref "whole bar HTML: an untitled block draws none"
-    ((cssRuleOf sheet s!"{sel}:not(:has(> header))::before").any (hasStr · "content: none"))
+    ((screenRuleOf sheet s!"{sel}:not(:has(> header))::before").any (hasStr · "content: none"))
   let place := Layout.blockTitleRule geom fs doc.styles .block
     (.lines Ir.BlockMetric.halfLeading.neg Ir.BlockMetric.halfLeading)
   let (_, out, _) := layout fs "wholebar" wholeBarSource

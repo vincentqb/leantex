@@ -1,5 +1,5 @@
 import LeanTex.Core.PdfReadProof
-import Tests.Check
+import Tests.Support.Check
 
 open LeanTex.Core
 

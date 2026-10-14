@@ -199,7 +199,7 @@ private def overlays (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
   let css := treeCssList "" a.head.toList
   check ref s!"{name}: HTML cover palette and fraction"
     (hasStr css "--ltx-c-deckBlue: #1c5070" && hasStr css "--ltx-c-deckRust: #7a321d" &&
-      (cssRuleOf css
+      (screenRuleOf css
         "html[data-deck-script] [data-snapped=\"2\"] .step-set:not([data-steps~=\"2\"])").any
         (hasStr · "opacity: 22%"))
   let alts (text : String) := es.filter fun n => cls n "alt" && nodeTextOne "" n == text

@@ -6,7 +6,7 @@ public import LeanTex.Core.MdDesugar
 public import LeanTex.Cli.Render
 public import Lean.Data.Json
 public import LeanTex.Core.Nfc
-public import Tests.Check
+import Tests.Support.Check
 
 public section
 

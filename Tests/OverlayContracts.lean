@@ -49,22 +49,16 @@ private def overlayBoundaryContractChecks (ref : IO.Ref (List String)) (fonts : 
         t (here ++ s!": step {k} emitted stylesheet matches its finite carrier " ++ selector)
           (rules.any fun rule => rule.1 == selector && !rule.2.isEmpty)
 
-private def contractDecl (decls key : String) : Option String :=
-  (decls.splitOn ";").findSome? fun decl =>
-    match decl.splitOn ":" with
-    | [k, v] => if k.trimAscii.toString == key then some v.trimAscii.toString else none
-    | _ => none
-
 private def contractRule (rules : Array (String × String)) (selector key : String) :
     Option String := do
   let (_, decls) ← rules.find? (·.1 == selector)
-  contractDecl decls key
+  cssProperty decls key
 
 private def contractIsRule (rules : Array (String × String))
     (scope compound key : String) : Option String := do
   let (_, decls) ← rules.find? fun (sel, _) =>
     sel.startsWith (scope ++ ":is(") && hasStr sel compound
-  contractDecl decls key
+  cssProperty decls key
 
 private def contractPercent (value : String) : Option Nat := do
   if !value.endsWith "%" then none else (value.dropEnd 1).toString.toNat?
@@ -122,7 +116,7 @@ private def contractReset (rules : Array (String × String)) (k : Nat)
     (if isEnd then " > .step-end" else "")
   let (_, decls) ← rules.find? fun (sel, _) =>
     sel == target || sel.startsWith (target ++ ", ") || sel.endsWith (", " ++ target)
-  let value ← contractDecl decls "opacity"
+  let value ← cssProperty decls "opacity"
   contractPercent value
 
 private structure ContractLeaf where

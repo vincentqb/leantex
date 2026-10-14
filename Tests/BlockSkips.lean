@@ -210,12 +210,6 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   check ref s!"block skips: a centred block's space after \\vspace\{12pt} adds, 12 pt, got {(moved 2).map spMilli}"
     (moved 2 == some (Dim.pt 12))
 
-/-- A declaration's value in an inline style. -/
-private def styleDecl (style name : String) : Option String :=
-  (style.splitOn ";").findSome? fun decl => do
-    let [n, value] := decl.splitOn ":" | none
-    if n.trimAscii.toString == name then some value.trimAscii.toString else none
-
 /-- A skip spelled through a register LaTeX keeps, with lualatex's moves in thousandths of a TeX
 point at `\parskip` 0 and 4 pt. -/
 private def registerMoves : List (String × Int × Int) :=
@@ -257,19 +251,19 @@ private def registerChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
 /-- A skip box's natural width in milli-rem, read off its style's `--skip`; nothing declared is
 zero. -/
 private def boxMilli (style : String) : Option Int :=
-  match styleDecl style "--skip" with
+  match cssProperty style "--skip" with
   | some value => remMilliOf value
   | none => if style.trimAscii.isEmpty then some 0 else none
 
 /-- The box's extent where no sheet reaches it: a positive skip's height or a negative one's bottom
 margin, as its `--skip`, and no other margin. -/
 private def boxExtentInline (style : String) : Bool :=
-  match styleDecl style "--skip" with
+  match cssProperty style "--skip" with
   | none => style.trimAscii.isEmpty
   | some len =>
     if len.startsWith "-" then
-      styleDecl style "margin-bottom" == some len && (styleDecl style "height").isNone
-    else styleDecl style "height" == some len && !hasStr style "margin"
+      cssProperty style "margin-bottom" == some len && (cssProperty style "height").isNone
+    else cssProperty style "height" == some len && !hasStr style "margin"
 
 private def hasClassTok (attrs : Array (String × String)) (c : String) : Bool :=
   ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains c
@@ -312,7 +306,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (head, _, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" (head.toList ++ body.toList)
   check ref "block skips HTML: a skip box is as tall as its skip and pays the frame's \\vskip-\\parskip"
-    ((cssRuleOf css ".vskip").any fun d =>
+    ((screenRuleOf css ".vskip").any fun d =>
       hasStr d "display: flow-root" && hasStr d "height: max(0rem, var(--skip, 0rem))" &&
         hasStr d "--frame-body-before: calc(0rem - var(--parskip, 0rem))")
   check ref "block skips HTML: a negative skip is the box's bottom margin, its only own margin"

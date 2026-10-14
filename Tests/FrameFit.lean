@@ -184,14 +184,12 @@ def squeezeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "squeeze: the declared and the shrunk frame's stages carry the squeeze class"
     (classes.map (hasStr · "squeeze") == #[true, true, false])
   let css := treeCssList "" head.toList
-  let rules := (css.splitOn "}").filterMap fun chunk => match chunk.splitOn "{" with
-    | [sel, decls] => some (sel, decls)
-    | _ => none
+  let rules := artCssBlocks css
   t "squeeze: the sheet sets a squeezed frame's items with no gap between them"
     (rules.any fun (sel, decls) =>
       hasStr sel "section.slide.squeeze li + li" && hasStr decls "margin-top: calc(0.000rem")
   t "squeeze: a trivlist in a squeezed frame's item takes the squeeze's half point"
-    ((cssRulesOf css
+    ((screenRulesOf css
       "section.slide.squeeze li, section.slide.squeeze dd, section.slide.squeeze blockquote").any
       (hasStr · s!"--{Ir.trivlistSkipName}:"))
 

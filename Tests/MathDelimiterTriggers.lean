@@ -4,7 +4,7 @@ public import LeanTex.Core.Compat
 import LeanTex.Cli.FontAssembly
 import LeanTex.Cli.FontDiscovery
 import all LeanTex.Cli.Driver
-public import Tests.Check
+import Tests.Support.Check
 
 open LeanTex.Core
 

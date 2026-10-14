@@ -3,7 +3,7 @@ module
 public import LeanTex.Core.PdfRead
 public import LeanTex.Core.PdfNameProof
 public import LeanTex.Core.PdfStringProof
-public import Tests.Check
+import Tests.Support.Check
 
 public section
 

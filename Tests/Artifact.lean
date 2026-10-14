@@ -1653,8 +1653,7 @@ def artVarIn (decls : String) (name : String) : Option String :=
     | [k, v] => if k.trimAscii.toString == s!"--{name}" then some v.trimAscii.toString else none
     | _ => none).getLast?
 
-/-- The last value the stylesheet's top-level `:root` blocks give a custom property: the light
-screen's. -/
+/-- The last value the stylesheet's top-level `:root` blocks give a custom property. -/
 def artRootVar (css : String) (name : String) : Option String :=
   ((artTopCssBlocks css).filterMap fun (sel, decls) =>
     if sel == ":root" then artVarIn decls name else none).back?

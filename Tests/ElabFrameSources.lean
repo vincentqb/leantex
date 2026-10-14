@@ -21,7 +21,7 @@ def elabFrameSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let first : Pos := { line := 7, col := 3, command := some "\\begin" }
   let second : Pos := { line := 19, col := 5, command := some "\\begin" }
   let ctx : Elab.Ctx := { file := "frames.tex", slides := true }
-  let check (name : String) (body : Array Raw) (expected : Array (Nat × Span)) := do
+  let sites (name : String) (body : Array Raw) (expected : Array (Nat × Span)) := do
     let (blocks, st) ← pure ((Elab.elabBlocks ctx body).run {})
     t (name ++ ": exact opening sites") (exactSites st.spans.frames.sites expected)
     t (name ++ ": every recorded index is a surviving top-level frame")
@@ -29,26 +29,26 @@ def elabFrameSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .frame .. => true
         | _ => false)
     t (name ++ ": scope restores its caller's base") st.spans.frames.base.isNone
-  check "frame source: identical empty frames"
+  sites "frame source: identical empty frames"
     #[frameAt first, frameAt second]
     #[(0, ⟨ctx.file, first⟩), (1, ⟨ctx.file, second⟩)]
-  check "frame source: group splice after a paragraph"
+  sites "frame source: group splice after a paragraph"
     #[frameAt first, .word "Body" {}, .par {}, .group #[frameAt second] {}]
     #[(0, ⟨ctx.file, first⟩), (2, ⟨ctx.file, second⟩)]
-  check "frame source: included file owns its opening"
+  sites "frame source: included file owns its opening"
     #[frameAt first, .env (Parse.inputEnv "chapter.tex") #[frameAt second] {}]
     #[(0, ⟨ctx.file, first⟩), (1, ⟨"chapter.tex", second⟩)]
-  check "frame source: unknown wrapper keeps its body"
+  sites "frame source: unknown wrapper keeps its body"
     #[.env "zzwrapper" #[frameAt first] {}, frameAt second]
     #[(0, ⟨ctx.file, first⟩), (1, ⟨ctx.file, second⟩)]
-  check "frame source: numbering scope splices its body"
+  sites "frame source: numbering scope splices its body"
     #[.env "appendices" #[frameAt first] {}, frameAt second]
     #[(0, ⟨ctx.file, first⟩), (1, ⟨ctx.file, second⟩)]
-  check "frame source: retained wrapper cannot leave a stale top-level site"
+  sites "frame source: retained wrapper cannot leave a stale top-level site"
     #[.env "quote" #[frameAt first] {}, frameAt second]
     #[(1, ⟨ctx.file, second⟩)]
   let owned := { first with origins := [{ id := 41, name := "framepair" }] }
-  check "frame source: a closed macro role owns its frame"
+  sites "frame source: a closed macro role owns its frame"
     #[frameAt owned, frameAt second]
     #[(1, ⟨ctx.file, second⟩)]
   let call : Pos :=

@@ -1,7 +1,7 @@
 module
 
 public import LeanTex.Core.TitleContract
-public import Tests.Check
+import Tests.Support.Check
 
 public section
 

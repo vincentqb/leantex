@@ -2,7 +2,7 @@ module
 
 public import LeanTex.Core.Elab
 public import LeanTex.Core.PictureCensus
-public import Tests.Check
+import Tests.Support.Check
 
 public section
 

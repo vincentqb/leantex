@@ -35,21 +35,11 @@ private def pdfGround (doc : Ir.Doc) (out : Layout.Out) (i : Nat) : Option Ir.Co
 private def linePlaces (out : Layout.Out) : Array (String × Dim.Sp × Dim.Sp) :=
   out.pages.flatMap (·.lines) |>.filter (! ·.furniture) |>.map fun l => (lineText l, l.x, l.y)
 
-private def declarations (style : String) : List (String × String) :=
-  (style.splitOn ";").filterMap fun decl =>
-    match decl.splitOn ":" with
-    | key :: value :: more =>
-      some (key.trimAscii.toString, (String.intercalate ":" (value :: more)).trimAscii.toString)
-    | _ => none
-
 /-- The shipped stylesheet's top-level rules, selector and declarations, in order, at-rules
 excluded. -/
 private def topRules (head : Array Html.Node) : List (String × List (String × String)) :=
   head.toList.flatMap fun node => match node with
-    | .style css => (css.splitOn "}").filterMap fun chunk =>
-        match chunk.splitOn "{" with
-        | [sel, body] => some (sel.trimAscii.toString, declarations body)
-        | _ => none
+    | .style css => (artTopCssBlocks css).toList.map fun (sel, body) => (sel, cssDecls body)
     | _ => []
 
 private def rootVariables (head : Array Html.Node) : List (String × String) :=
@@ -107,7 +97,7 @@ mutual
     | .text text => out.push { text := text.trimAscii.toString, color, lang, classes, tags }
     | .elem tag attrs kids =>
       let style := ((attrs.find? (·.1 == "style")).map (·.2)).getD ""
-      let decls := declarations style
+      let decls := cssDecls style
       let vars := decls.foldl (fun vars (k, v) =>
         if k.startsWith "--" then (k, v) :: vars else vars) vars
       let own := ((attrs.find? (·.1 == "class")).map (·.2)).getD ""

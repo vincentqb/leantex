@@ -50,14 +50,6 @@ private def cancelHeadPlaced (rule : Nat) (box : Html.Node) : Bool :=
     !hasStr css "offset-" && !hasStr css "transform" &&
     (nodeKids head).isEmpty
 
-/-- A CSS margin carries a signed offset; MathML lspace stays nonnegative and the balancing margin
-keeps the attachment advance zero. -/
-private def cancelReadOffset (em : Int) (node : Html.Node) : Option Int := do
-  let space ← readEm em (nodeAttr "lspace" node)
-  let left ← readEm em (nodeCss "margin-left" node)
-  let right ← readEm em (nodeCss "margin-right" node)
-  if space < 0 || left + right != 0 then none else some (space + left)
-
 private def cancelTag : Html.Node → String
   | .elem tag _ _ => tag
   | _ => ""
@@ -99,9 +91,9 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
         (MathMl.nodeChars #[] v) != #['7'] then none else do
       if [b, v].any (fun n => nodeAttr "width" n != "0" ||
           nodeAttr "height" n != "0" || nodeAttr "depth" n != "0") then none else do
-        let bx ← cancelReadOffset em b
+        let bx ← readOffset em b
         let by_ ← readEm em (nodeAttr "voffset" b)
-        let vx ← cancelReadOffset em v
+        let vx ← readOffset em v
         let vy ← readEm em (nodeAttr "voffset" v)
         let target ← (nodeKids v)[0]?
         let overlay ← (nodeKids node)[2]?
@@ -114,7 +106,7 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
             !(nodeCss "top" svg).isEmpty || nodeCss "vertical-align" svg != "baseline" ||
             nodeCss "overflow" svg != "visible" ||
             nodeAttr "preserveAspectRatio" svg != "none" then none else do
-          let ox ← cancelReadOffset em overlay
+          let ox ← readOffset em overlay
           let oy ← readEm em (nodeAttr "voffset" overlay)
           let sw ← readEm em (nodeCss "width" svg)
           let sh ← readEm em (nodeCss "height" svg)

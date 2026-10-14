@@ -12,9 +12,6 @@ namespace Tests.RegressionDiagrams
 private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifact) :
     IO Unit := do
   let t := fun name => check ref ("route-note: " ++ name)
-  let attr := fun (n : Html.Node) key => match n with
-    | .elem _ attrs _ => (HtmlDoc.attrOf? attrs key).getD ""
-    | _ => ""
   let chars := fun n => String.ofList (MathMl.nodeChars #[] n).toList
   let lines := bodyLines a.out
   let paths := a.out.pages.flatMap pageDraws
@@ -22,11 +19,11 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
     | .rect x y w h => some (x, y, w, h)
     | _ => none
   let pictures := (elemNodesList (· == "svg") #[] a.body.toList).filter fun n =>
-    attr n "class" == "picture"
+    nodeAttr "class" n == "picture"
   t "one native diagram with four station borders" (rects.size == 4)
   t "one typed SVG picture" (pictures.size == 1)
   for svg in pictures do
-    t "picture preserves visible overflow" (attr svg "overflow" == "visible")
+    t "picture preserves visible overflow" (nodeAttr "overflow" svg == "visible")
     let labels := elemNodesOne (· == "foreignObject") #[] svg
     t "all four labels retain their own carriers" (labels.size == 4)
     for (native, leaves, schema) in #[
@@ -84,17 +81,17 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
       return n * 65536 / (d : Int)
     let svgPaths := elemNodesOne (· == "path") #[] svg
     let svgShafts := svgPaths.filterMap fun n => do
-      if attr n "fill" != "none" then none else
-        match (attr n "d").splitOn " " |>.filter (· != "") with
+      if nodeAttr "fill" n != "none" then none else
+        match (nodeAttr "d" n).splitOn " " |>.filter (· != "") with
         | ["M", x, y, "L", u, v] =>
-          return (attr n "stroke", (← pt? x), (← pt? y), (← pt? u), (← pt? v))
+          return (nodeAttr "stroke" n, (← pt? x), (← pt? y), (← pt? u), (← pt? v))
         | _ => none
     -- pgf's `to` head is two curves through the apex, so its apex, then its wings.
     let svgHeads := svgPaths.filterMap fun n => do
-      if attr n "stroke-linecap" != "round" then none else
-        match ((attr n "d").replace "," " ").splitOn " " |>.filter (· != "") with
+      if nodeAttr "stroke-linecap" n != "round" then none else
+        match ((nodeAttr "d" n).replace "," " ").splitOn " " |>.filter (· != "") with
         | ["M", u, v, "C", _, _, _, _, x, y, "C", _, _, _, _, w, z] =>
-          return (attr n "stroke", (← pt? x), (← pt? y),
+          return (nodeAttr "stroke" n, (← pt? x), (← pt? y),
             (← pt? u), (← pt? v), (← pt? w), (← pt? z))
         | _ => none
     let nativeShafts := paths.filterMap fun (g, _, st) => do
@@ -140,7 +137,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
   let reductions := lines.filter fun l => lineText l false == "𝑢+𝑥√𝑦0𝑔+𝑣"
   t "the complete reduction ships once" (reductions.size == 1)
   let cancels := (elemNodesList (· == "mpadded") #[] a.body.toList).filter fun n =>
-    attr n "data-cancel-metric" == "measured"
+    nodeAttr "data-cancel-metric" n == "measured"
   t "HTML cancellation receives measured placement" (cancels.size == 1)
   t "HTML never substitutes the unmeasured cancellation fallback"
     (!(elemAttrsList (fun _ => true) #[] a.body.toList).any fun (_, attrs) =>
@@ -173,35 +170,20 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
           let anchor ← glyphs.find? (·.scalar == '𝑢')
           let first ← w.glyphs[0]?
           let em := anchor.size
-          let readEm := fun s => do
-            if s == "0" then return 0
-            if !s.endsWith "em" then none else do
-              let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
-              return (n * em + (d : Int) / 2) / d
-          let css := fun n key =>
-            ((attr n "style").splitOn ";").findSome? fun decl => do
-              match decl.splitOn ":" with
-              | [k, v] => if k.trimAscii.toString == key then
-                  some v.trimAscii.toString else none
-              | _ => none
-          let offset := fun n => do
-            let space ← readEm (attr n "lspace")
-            let left ← readEm (← css n "margin-left")
-            let right ← readEm (← css n "margin-right")
-            if space < 0 || left + right != 0 then none else some (space + left)
+          let css := fun n key => cssProperty (nodeAttr "style" n) key
           let .elem _ _ #[_, value, overlay] := cancel | none
-          let vx ← offset value
-          let vy ← readEm (attr value "voffset")
-          let ox ← offset overlay
-          let oy ← readEm (attr overlay "voffset")
+          let vx ← readOffset em value
+          let vy ← readEm em (nodeAttr "voffset" value)
+          let ox ← readOffset em overlay
+          let oy ← readEm em (nodeAttr "voffset" overlay)
           let #[svg] := elemNodesOne (· == "svg") #[] overlay | none
           let [x0, y0, width, height] ←
-            ((attr svg "viewBox").splitOn " ").mapM String.toInt? | none
-          let sw ← readEm (← css svg "width")
-          let sh ← readEm (← css svg "height")
+            ((nodeAttr "viewBox" svg).splitOn " ").mapM String.toInt? | none
+          let sw ← readEm em (← css svg "width")
+          let sh ← readEm em (← css svg "height")
           if width ≤ 0 || height ≤ 0 || sw ≤ 0 || sh ≤ 0 then none else do
             let painted ← (elemNodesOne (· == "polygon") #[] svg).mapM fun poly =>
-              (((attr poly "points").splitOn " ").mapM fun (p : String) => do
+              (((nodeAttr "points" poly).splitOn " ").mapM fun (p : String) => do
                 let [x, y] := p.splitOn "," | none
                 let px ← x.toInt?
                 let py ← y.toInt?
@@ -211,8 +193,8 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
             -- Em spellings, viewport scaling and integer division add at most six unit roundings.
             let eps := (6 * ((em + 1999999) / 2000000 + 1)).toNat
             return chars value == "0𝑔" &&
-              ["width", "height", "depth"].all (fun k => attr value k == "0") &&
-              attr svg "preserveAspectRatio" == "none" &&
+              ["width", "height", "depth"].all (fun k => nodeAttr k value == "0") &&
+              nodeAttr "preserveAspectRatio" svg == "none" &&
               css svg "vertical-align" == some "baseline" &&
               (tip.1 - vx - (w.tip.1 - first.x)).natAbs ≤ eps &&
               (tip.2 - vy - (w.tip.2 + first.y)).natAbs ≤ eps

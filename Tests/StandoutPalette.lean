@@ -48,7 +48,7 @@ private def variables (old : List (String × String)) (style : String) :
   (declarations style).foldl (fun vars (key, value) =>
     if key.startsWith "--" then (key, value) :: vars else vars) old
 
-/-- The light screen's `:root` table, top-level rules alone. -/
+/-- The light screen's `:root` table. -/
 private def rootVariables (head : Array Html.Node) : List (String × String) :=
   screenRootVars (head.foldl (fun css node => match node with
     | .style s => css ++ s
