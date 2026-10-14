@@ -25,15 +25,17 @@ private theorem reads_payload (payload : ByteArray) (h : payload.size < 256 ^ 4)
   simpa only [readPayload, payloadBytes] using this
 
 /-- The slot format: its magic, and a payload behind its size. -/
-public def format : KeyedRecord.Format ByteArray where
+@[expose] public def format : KeyedRecord.Format ByteArray where
   magic := "LTSLOT1\n".toUTF8
   write := payloadBytes
   read := readPayload
   Fits payload := payload.size < 256 ^ 4
-  reads := reads_payload
+  reads := by exact reads_payload
+  fits payload := decide (payload.size < 256 ^ 4)
+  fits_sound _ := by exact of_decide_eq_true
 
 /-- A payload as a cache stores it under its key. -/
-public def encode (key : Array String) (payload : ByteArray) : ByteArray :=
+@[expose] public def encode (key : Array String) (payload : ByteArray) : ByteArray :=
   KeyedRecord.encode format key payload
 
 /-- A stored payload read back with its key; `none` for anything else — a
@@ -50,13 +52,12 @@ public def lookup (key : Array String) (bytes : ByteArray) : Option ByteArray :=
   KeyedRecord.Bounded format key payload
 
 /-- `Bounded`, decided: what a cache checks before it stores. -/
-public def storable (key : Array String) (payload : ByteArray) : Bool :=
-  KeyedRecord.storable format key payload (decide (payload.size < 256 ^ 4))
+@[expose] public def storable (key : Array String) (payload : ByteArray) : Bool :=
+  KeyedRecord.storable format key payload
 
 public theorem storable_bounded (key : Array String) (payload : ByteArray)
     (h : storable key payload = true) : Bounded key payload :=
-  KeyedRecord.storable_bounded format key payload _
-    (fun hf => (of_decide_eq_true hf : payload.size < 256 ^ 4)) h
+  KeyedRecord.storable_bounded format key payload h
 
 public theorem decode_encode_id (key : Array String) (payload : ByteArray)
     (h : Bounded key payload) : decode (encode key payload) = some (key, payload) :=

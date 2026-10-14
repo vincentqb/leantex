@@ -3,6 +3,8 @@ module
 public import LeanTex.Cli.ImageAssets
 public import Tests.Support
 public import LeanTex.Cli.RunBounded
+import LeanTex.Core.SlotRecord
+import LeanTex.Core.FigureFace
 
 public section
 
@@ -82,5 +84,24 @@ def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match thrown with
       | .error e => e.toString == (IO.userError "synthetic producer error").toString
       | .ok _ => false)
+
+/-- The cache records' bytes, pinned: a slot and the two kinds of face answer encode as they always
+have, so a cache written by one build reads in the next. -/
+def cacheRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let hex (b : ByteArray) : String := b.foldl (init := "") fun s x =>
+    s ++ (if x < 16 then "0" else "") ++ String.ofList (Nat.toDigits 16 x.toNat)
+  t "cache records: a slot's bytes" (hex (LeanTex.Core.SlotRecord.encode #["a", "bc"] ⟨#[1, 2, 3]⟩) ==
+    "4c54534c4f54310a85f9f7007e8bad890000001600000002000000016100000002626300000003010203")
+  t "cache records: an empty slot's bytes" (hex (LeanTex.Core.SlotRecord.encode #[] .empty) ==
+    "4c54534c4f54310aa8c7f832281a39c5000000080000000000000000")
+  t "cache records: a refused face's bytes"
+    (hex (LeanTex.Core.FigureFace.encode #["k"] (.error "why")) ==
+      "4c5446414345320aa461188c3315caa70000001100000001000000016b0000000003776879")
+  t "cache records: a drawn face's bytes"
+    (hex (LeanTex.Core.FigureFace.encode #["k1", "k2"]
+      (.ok { losses := #[.element "e", .font "f", .budget "b"], face := ⟨#[9, 8]⟩, words := "w" })) ==
+      "4c5446414345320a4f2bb7609540b0ac0000003200000002000000026b31000000026b32010000000300000000016506" ++
+      "00000001660700000001620000000209080000000177")
 
 end Tests

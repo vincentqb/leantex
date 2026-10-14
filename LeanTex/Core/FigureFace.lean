@@ -168,7 +168,7 @@ private theorem reads_answer (a : Answer) (h : AnswerBounded a) :
     simpa only [answerBytes, ByteArray.append_assoc] using this
 
 /-- `AnswerBounded`, decided. -/
-public def answerFits : Answer → Bool
+@[expose] public def answerFits : Answer → Bool
   | .error why => decide (why.toUTF8.size < 256 ^ 4)
   | .ok d =>
     decide (d.losses.size < 256 ^ 4) && decide (d.face.size < 256 ^ 4) &&
@@ -186,15 +186,17 @@ private theorem answerFits_bounded (a : Answer) (h : answerFits a = true) : Answ
     simpa using hl i hi
 
 /-- The face cache's format: its magic, and an answer's record. -/
-public def format : KeyedRecord.Format Answer where
+@[expose] public def format : KeyedRecord.Format Answer where
   magic := "LTFACE2\n".toUTF8
   write := answerBytes
   read := readAnswer
   Fits := AnswerBounded
-  reads := reads_answer
+  reads := by exact reads_answer
+  fits := answerFits
+  fits_sound := by exact answerFits_bounded
 
 /-- An answer as the cache stores it under its key. -/
-public def encode (key : Array String) (a : Answer) : ByteArray := KeyedRecord.encode format key a
+@[expose] public def encode (key : Array String) (a : Answer) : ByteArray := KeyedRecord.encode format key a
 
 /-- A slot read for a key: the answer stored under that very key, else a miss. -/
 public def lookup (key : Array String) (bytes : ByteArray) : Option Answer :=
@@ -205,12 +207,12 @@ public def lookup (key : Array String) (bytes : ByteArray) : Option Answer :=
   KeyedRecord.Bounded format key a
 
 /-- `Bounded`, decided: what the cache checks before it stores. -/
-public def storable (key : Array String) (a : Answer) : Bool :=
-  KeyedRecord.storable format key a (answerFits a)
+@[expose] public def storable (key : Array String) (a : Answer) : Bool :=
+  KeyedRecord.storable format key a
 
 public theorem storable_bounded (key : Array String) (a : Answer) (h : storable key a = true) :
     Bounded key a :=
-  KeyedRecord.storable_bounded format key a _ (answerFits_bounded a) h
+  KeyedRecord.storable_bounded format key a h
 
 public theorem lookup_exact (key : Array String) (a : Answer) (h : Bounded key a) :
     lookup key (encode key a) = some a ∧ ∀ key', key' ≠ key → lookup key' (encode key a) = none :=

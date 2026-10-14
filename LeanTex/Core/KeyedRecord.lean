@@ -11,13 +11,15 @@ namespace LeanTex.Core.KeyedRecord
 open LeanTex.Core
 
 /-- A record kind: the file's first bytes, and its value's codec with the bound under which the
-value reads back. -/
+value reads back, decided by `fits`. -/
 public structure Format (α : Type) where
   magic : ByteArray
   write : α → ByteArray
   read : Binary.Reader α
   Fits : α → Prop
   reads : ∀ a, Fits a → Binary.Reads read a (write a)
+  fits : α → Bool
+  fits_sound : ∀ a, fits a = true → Fits a
 
 variable {α : Type} (F : Format α)
 
@@ -32,7 +34,7 @@ public def readBody : Binary.Reader (Array String × α) := do
   let a ← F.read
   return (key, a)
 
-/-- A body's checksum. -/
+/-- A body's FNV-64 checksum. -/
 @[expose] public def checksum (b : ByteArray) : Nat := (Flate.fnv64 Flate.fnvOffset b).toNat
 
 /-- A value as a cache stores it under its key: magic, the body's checksum and size, the body. -/
@@ -64,16 +66,16 @@ bits. -/
   (body F key a).size < 256 ^ 4 ∧ key.size < 256 ^ 4 ∧ (∀ s ∈ key, s.toUTF8.size < 256 ^ 4) ∧
     F.Fits a
 
-/-- The record's own bounds decided, beside a decision of the value's. -/
-public def storable (key : Array String) (a : α) (fits : Bool) : Bool :=
+/-- `Bounded`, decided: what a cache checks before it stores. -/
+@[expose] public def storable (key : Array String) (a : α) : Bool :=
   decide ((body F key a).size < 256 ^ 4) && decide (key.size < 256 ^ 4) &&
-    key.all (fun s => decide (s.toUTF8.size < 256 ^ 4)) && fits
+    key.all (fun s => decide (s.toUTF8.size < 256 ^ 4)) && F.fits a
 
-public theorem storable_bounded (key : Array String) (a : α) (fits : Bool)
-    (hf : fits = true → F.Fits a) (h : storable F key a fits = true) : Bounded F key a := by
+public theorem storable_bounded (key : Array String) (a : α) (h : storable F key a = true) :
+    Bounded F key a := by
   simp only [storable, Bool.and_eq_true, decide_eq_true_eq, Array.all_eq_true] at h
   obtain ⟨⟨⟨hb, hk⟩, hs⟩, ha⟩ := h
-  refine ⟨hb, hk, fun s hm => ?_, hf ha⟩
+  refine ⟨hb, hk, fun s hm => ?_, F.fits_sound a ha⟩
   obtain ⟨i, hi, rfl⟩ := Array.getElem_of_mem hm
   simpa using hs i hi
 

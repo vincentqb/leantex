@@ -1798,7 +1798,7 @@ public def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
 /-- The xref stream's own dictionary, as `bytes` spells it. -/
 public def WriteMeasurement.xrefDictText (m : WriteMeasurement) (t : ObjTable) : String :=
   let idA := Flate.hex16 (Flate.fnv64 Flate.fnvOffset m.body)
-  let idB := Flate.hex16 (Flate.fnv64 Flate.fnvPrime m.body)
+  let idB := Flate.hex16 (Flate.fnv64 Flate.secondSeed m.body)
   s!"/Type /XRef /Size {t.size} /W [1 {m.widths.first} {m.widths.second}] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
 
 /-- Finishes a measurement: its xref, and `startxref` naming the byte after its body. -/
@@ -1838,7 +1838,7 @@ public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
       let w := Xref.widthsOf entries
       let xrefRows := Xref.encode w entries
       let idA := Flate.hex16 (Flate.fnv64 Flate.fnvOffset body)
-      let idB := Flate.hex16 (Flate.fnv64 Flate.fnvPrime body)
+      let idB := Flate.hex16 (Flate.fnv64 Flate.secondSeed body)
       let dict := s!"/Type /XRef /Size {p.table.size} /W [1 {w.first} {w.second}] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
       let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
       out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := by rfl

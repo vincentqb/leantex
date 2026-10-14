@@ -2,6 +2,8 @@ module
 
 import LeanTex.Cli.ConvCache
 import LeanTex.Cli.Compression
+import LeanTex.Core.FigureFace
+import LeanTex.Core.SlotRecord
 
 /-! Cache clients use complete outcomes and source-ordered compression jobs.
 Tool probing and persistence helpers remain behind that boundary. -/
@@ -72,5 +74,7 @@ example : True := by
   fail_if_success have := Compression.deflateAtPath
   fail_if_success have := Compression.mapCached
   trivial
+
+example : LeanTex.Core.SlotRecord.format.Fits ⟨#[1]⟩ := show 1 < 256 ^ 4 by decide
 
 end Tests.CacheInterface

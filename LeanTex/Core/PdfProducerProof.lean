@@ -18,7 +18,7 @@ public def WriteMeasurement.xrefDict (m : WriteMeasurement) (t : ObjTable) : Obj
   let filtered := decide (z.size < m.xrefPayload.size)
   xrefStreamDict t.size t.infoId m.widths
     (Flate.fnv64 Flate.fnvOffset m.body)
-    (Flate.fnv64 Flate.fnvPrime m.body) filtered
+    (Flate.fnv64 Flate.secondSeed m.body) filtered
     (if z.size < m.xrefPayload.size then z.size else m.xrefPayload.size)
 
 public theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : ObjTable) :
@@ -50,7 +50,7 @@ public theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTa
   let z := Flate.deflate m.xrefPayload
   have fields := xrefStreamDict_fields_exact t.size t.infoId m.widths
     (Flate.fnv64 Flate.fnvOffset m.body)
-    (Flate.fnv64 Flate.fnvPrime m.body)
+    (Flate.fnv64 Flate.secondSeed m.body)
     (decide (z.size < m.xrefPayload.size))
     (if z.size < m.xrefPayload.size then z.size else m.xrefPayload.size)
   have hd : (m.xrefDict t).Representable := xrefStreamDict_representable_exact ..
@@ -101,7 +101,7 @@ public theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBou
   rw [hm.2.1]
   have fields := xrefStreamDict_fields_exact p.table.size p.table.infoId p.measure.widths
     (Flate.fnv64 Flate.fnvOffset p.measure.body)
-    (Flate.fnv64 Flate.fnvPrime p.measure.body)
+    (Flate.fnv64 Flate.secondSeed p.measure.body)
     (decide ((Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size))
     (if (Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size
       then (Flate.deflate p.measure.xrefPayload).size else p.measure.xrefPayload.size)

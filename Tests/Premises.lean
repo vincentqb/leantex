@@ -121,7 +121,7 @@ def registry : List Premise := [
     statement := "Renaming a staged file onto its destination within one directory replaces the destination atomically for every reader, so a cache file AtomicFile publishes is read whole or not at all, and an answer whose envelope fails its content key, or a slot whose body fails its checksum, reads as a miss."
     transfers := [thm% ConvCache.refusal_replays_exact, thm% SlotRecord.decode_encode_id]
     sites := [("LeanTex/Cli/AtomicFile.lean", "write"), ("LeanTex/Cli/ConvCache.lean", "decode"),
-      ("LeanTex/Cli/PlanCache.lean", "decodeCached"), ("LeanTex/Core/SlotRecord.lean", "decode")]
+      ("LeanTex/Cli/PlanCache.lean", "decodeCached"), ("LeanTex/Core/KeyedRecord.lean", "checked")]
     checks := [check% Tests.toolMemoChecks] },
   { name := "content-keys", residue := .host "cache inputs", reach := .render
     statement := "No two inputs one cache meets share a content key, though Flate.contentKey is two FNV-1a passes from two seeds, a 128-bit key that resists no chosen collision."
@@ -131,7 +131,7 @@ def registry : List Premise := [
   { name := "cache-trust", residue := .host "cache directory", reach := .render
     statement := "Every file under the cache directory was written by a leantex build of the same user, since an answer whose envelope checks is served, and the envelope is a checksum anyone can compute, a slot's key among what it covers."
     sites := [("LeanTex/Cli/FontDiscovery.lean", "cacheDir"), ("LeanTex/Cli/ConvCache.lean", "decode"),
-      ("LeanTex/Cli/PictureAssets.lean", "previous"), ("LeanTex/Core/SlotRecord.lean", "lookup")]
+      ("LeanTex/Cli/PictureAssets.lean", "previous"), ("LeanTex/Core/KeyedRecord.lean", "lookup")]
     unchecked := some "A checksum anyone can compute cannot tell a planted answer from a written one, and the driver reads no owner or mode of the directory that holds it." },
   { name := "exec-failure", residue := .host "process", reach := .render
     statement := "A command the runtime cannot execute exits 255 with the single stderr line `could not execute external process` and the quoted command, a working directory it cannot enter exits 255 with `could not change directory to` and the directory, a child a signal ended exits 128 plus the signal, and a program a shell cannot find, or whose dynamic loader cannot start it, exits 127."

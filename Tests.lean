@@ -938,6 +938,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.engineWatchChecks ref
   Tests.browserFaceBatchChecks ref
   Tests.cacheIdentityChecks ref
+  Tests.cacheRecordChecks ref
   Tests.pictureAssetsChecks ref
   Tests.toolMemoChecks ref
   Tests.World.checks ref

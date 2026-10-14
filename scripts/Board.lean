@@ -763,23 +763,13 @@ def deficits (t : Tsv) : Array (String × Int) := Id.run do
 def readFileOr (p : String) : IO String := do
   if ← System.FilePath.pathExists p then IO.FS.readFile p else return ""
 
+open LeanTex.Core in
 /-- A content key over named byte blobs (FNV-1a, 64-bit, hex), names and order included,
 which ties a tier measured elsewhere to the artifact it measured. -/
-def contentKey (blobs : Array (String × ByteArray)) : String := Id.run do
-  let mut h : UInt64 := 0xcbf29ce484222325
-  let prime : UInt64 := 0x100000001b3
-  for (name, bytes) in blobs do
-    for c in name.toUTF8 do
-      h := (h ^^^ c.toUInt64) * prime
-    h := (h ^^^ 0xff) * prime
-    for b in bytes do
-      h := (h ^^^ b.toUInt64) * prime
-  let digits := "0123456789abcdef".toList.toArray
-  let mut out := ""
-  for i in [0:16] do
-    let nib := ((h >>> (60 - 4 * i.toUInt64)) &&& 0xf).toNat
-    out := out.push (digits[nib]!)
-  return out
+def contentKey (blobs : Array (String × ByteArray)) : String :=
+  let h := blobs.foldl (init := Flate.fnvOffset) fun h (name, bytes) =>
+    Flate.fnv64 ((Flate.fnv64 h name.toUTF8 ^^^ 0xff) * Flate.fnvPrime) bytes
+  (Flate.hex16 h).toLower
 
 private def rotr (x n : UInt32) : UInt32 := (x >>> n) ||| (x <<< (32 - n))
 
