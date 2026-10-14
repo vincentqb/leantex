@@ -8,19 +8,47 @@ namespace LeanTex.Core.Gfx
 
 open LeanTex.Core.Dim
 
-public theorem Geom.normal_rect_exact {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
+public theorem Geom.normal_rect_id {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
     (Geom.rect x y w h).normal = .rect x y w h := by
   simp only [Geom.normal]
   split
   · rfl
   · next hn => exact absurd hp hn
 
-public theorem Geom.normal_flat_exact {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
+public theorem Geom.normal_degenerate_exact {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
     (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
   simp only [Geom.normal]
   split
   · next hn => exact absurd hn hp
   · rfl
+
+public theorem Geom.normal_fixed_point (g : Geom) : g.normal.normal = g.normal := by
+  cases g with
+  | rect x y w h =>
+    by_cases hp : 0 < w ∧ 0 < h
+    · rw [Geom.normal_rect_id hp, Geom.normal_rect_id hp]
+    · rw [Geom.normal_degenerate_exact hp]; rfl
+  | ellipse cx cy rx ry => rfl
+  | path subs => rfl
+
+/-- A walk threading its accumulator through a list reads a concatenation in two legs. -/
+public theorem walk_append_exact {α β : Type} (F : β → List α → β) (g : β → α → β)
+    (hnil : ∀ acc, F acc [] = acc) (hcons : ∀ acc x xs, F acc (x :: xs) = F (g acc x) xs)
+    (acc : β) (a b : List α) : F acc (a ++ b) = F (F acc a) b := by
+  induction a generalizing acc with
+  | nil => rw [List.nil_append, hnil]
+  | cons x rest ih => rw [List.cons_append, hcons, hcons, ih]
+
+/-- A walk whose step appends what it reads alone is the flatMap of those readings. -/
+public theorem walk_flatMap_exact {α β : Type} (F : Array β → List α → Array β)
+    (g : Array β → α → Array β) (hnil : ∀ acc, F acc [] = acc)
+    (hcons : ∀ acc x xs, F acc (x :: xs) = F (g acc x) xs) (hacc : ∀ acc x, g acc x = acc ++ g #[] x) :
+    ∀ (l : List α) (acc : Array β), F acc l = acc ++ (l.flatMap fun x => (g #[] x).toList).toArray
+  | [], acc => by simp [hnil]
+  | x :: rest, acc => by
+    rw [hcons, walk_flatMap_exact F g hnil hcons hacc rest, hacc]
+    apply Array.toList_inj.mp
+    simp
 
 public theorem Ctx.enter_alphas_id (cx : Ctx) (xf : Affine) (clips : Array Clip) :
     (cx.enter xf clips Alpha.opaque).alphas = cx.alphas := by
@@ -177,10 +205,8 @@ public theorem Box.image_monotone (m : Affine) {a b : Box} (h : Box.le a b)
 public theorem Node.marksList_append {L : Type} (outlines : Array (Array Subpath)) (cx : Ctx)
     (acc : Array Mark) (a b : List (Node L)) :
     Node.marksList outlines cx acc (a ++ b) =
-      Node.marksList outlines cx (Node.marksList outlines cx acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons n rest ih => simp [Node.marksList, ih]
+      Node.marksList outlines cx (Node.marksList outlines cx acc a) b :=
+  walk_append_exact _ (Node.marksOne outlines cx) (fun _ => rfl) (fun _ _ _ => rfl) acc a b
 
 mutual
 
@@ -391,10 +417,8 @@ public theorem Node.recolorList_acc {L : Type} (f : Ir.Color → Ir.Color) (fl :
 
 public theorem Node.wordsList_append {L : Type} (text : L → String) (acc : Array String)
     (a b : List (Node L)) :
-    Node.wordsList text acc (a ++ b) = Node.wordsList text (Node.wordsList text acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons n rest ih => exact ih _
+    Node.wordsList text acc (a ++ b) = Node.wordsList text (Node.wordsList text acc a) b :=
+  walk_append_exact _ (Node.wordsOne text) (fun _ => rfl) (fun _ _ _ => rfl) acc a b
 
 private theorem Node.quantizeList_append {L : Type} (ql : L → L) (a b : List (Node L)) :
     Node.quantizeList ql #[] (a ++ b) = Node.quantizeList ql #[] a ++ Node.quantizeList ql #[] b := by

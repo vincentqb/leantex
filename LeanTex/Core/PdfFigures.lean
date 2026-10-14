@@ -318,10 +318,8 @@ private theorem nameList_acc (t : Array FigRes) (acc : Array ContentOp) (xs : Li
     simp
 
 private theorem readList_append (rs : GfxPdf.RState) (acc : Array Mark) (a b : List ContentOp) :
-    GfxPdf.readList rs acc (a ++ b) = GfxPdf.readList rs (GfxPdf.readList rs acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons o rest ih => exact ih _
+    GfxPdf.readList rs acc (a ++ b) = GfxPdf.readList rs (GfxPdf.readList rs acc a) b :=
+  walk_append_exact _ (GfxPdf.readOne rs) (fun _ => rfl) (fun _ _ _ => rfl) acc a b
 
 private theorem readPaint_name (t : Array FigRes) (rs : GfxPdf.RState) (p : PdfPaint) :
     GfxPdf.readPaint rs (namePaint t p) = GfxPdf.readPaint rs p := by

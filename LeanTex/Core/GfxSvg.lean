@@ -1155,18 +1155,9 @@ private theorem geom_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.pl
   · simp only [hpl, ↓reduceIte] at hi
     simp [SState.geom, SFrame.place, hpl, hi, hp, Geom.mapIso_inv_id]
 
-private theorem normal_normal (g : Geom) : g.normal.normal = g.normal := by
-  cases g with
-  | rect x y w h =>
-    by_cases hp : 0 < w ∧ 0 < h
-    · rw [Geom.normal_rect_exact hp, Geom.normal_rect_exact hp]
-    · rw [Geom.normal_flat_exact hp]; rfl
-  | ellipse cx cy rx ry => rfl
-  | path subs => rfl
-
 private theorem clipGeom_normal (g : Geom) : (clipGeom g).normal = g.normal := by
   cases g with
-  | rect x y w h => exact normal_normal (.rect x y w h)
+  | rect x y w h => exact Geom.normal_fixed_point (.rect x y w h)
   | ellipse cx cy rx ry => rfl
   | path subs => rfl
 
@@ -1207,7 +1198,7 @@ private theorem shape_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.p
       have hb := back (.rect x y w h)
       rw [hr] at hb ⊢
       simp only [SState.shapeGeom, hw, hh, and_self, ↓reduceIte, Bool.false_eq_true]
-      rw [hb, Geom.normal_rect_exact ⟨hw, hh⟩]
+      rw [hb, Geom.normal_rect_id ⟨hw, hh⟩]
     · simp only [hc, ↓reduceIte]
       have hd : (Geom.rect x y w h).drawn d = .path #[Kit.rectPath x y w h] := by
         cases d with
@@ -1450,10 +1441,8 @@ private theorem read_group (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.pl
   rfl
 
 private theorem readList_append (ss : SState) (acc : Array Mark) (a b : List El) :
-    readList ss acc (a ++ b) = readList ss (readList ss acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons o rest ih => simp [readList, ih]
+    readList ss acc (a ++ b) = readList ss (readList ss acc a) b :=
+  walk_append_exact _ (readOne ss) (fun _ => rfl) (fun _ _ _ => rfl) acc a b
 
 mutual
 
@@ -1654,26 +1643,17 @@ end
 
 private theorem readList_flatMap (ss : SState) (l : List El) :
     readList ss #[] l = (l.flatMap fun e => (readOne ss #[] e).toList).toArray := by
-  induction l with
-  | nil => simp [readList]
-  | cons e rest ih =>
-    simp only [readList, List.flatMap_cons]
-    rw [readList_acc, ih]
-    apply Array.toList_inj.mp
-    simp
+  rw [walk_flatMap_exact (readList ss) (readOne ss) (fun _ => rfl) (fun _ _ _ => rfl)
+    (readOne_acc ss) l #[], Array.empty_append]
 
 private theorem treeList_flatMap {L : Type} (labelEl : SFrame → L → Html.Node)
     (outlines : Array (Array Subpath)) (rasters : Array RasterRef) (bodies : Array (Array El))
     (fr : SFrame) (xs : List (Node L)) :
     treeList labelEl outlines rasters bodies fr #[] xs =
       (xs.flatMap fun n => (treeOne labelEl outlines rasters bodies fr #[] n).toList).toArray := by
-  induction xs with
-  | nil => simp [treeList]
-  | cons n rest ih =>
-    simp only [treeList, List.flatMap_cons]
-    rw [treeList_acc, ih]
-    apply Array.toList_inj.mp
-    simp
+  rw [walk_flatMap_exact (treeList labelEl outlines rasters bodies fr)
+    (treeOne labelEl outlines rasters bodies fr) (fun _ => rfl) (fun _ _ _ => rfl)
+    (treeOne_acc labelEl outlines rasters bodies fr) xs #[], Array.empty_append]
 
 private theorem treeOne_noRaw {L : Type} (labelEl : SFrame → L → Html.Node)
     (outlines : Array (Array Subpath)) (rasters : Array RasterRef) (bodies : Array (Array El))

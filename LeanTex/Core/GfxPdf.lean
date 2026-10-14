@@ -628,19 +628,6 @@ private theorem geomOf_geomOps_drawn (g : Geom) (d : Bool) :
     cases d <;> rfl
   | path subs => rw [geomOf_path_id]
 
-private theorem drawn_drawn (g : Geom) (d : Bool) : (g.drawn d).drawn d = g.drawn d := by
-  cases g with
-  | rect x y w h =>
-    cases d with
-    | true => rfl
-    | false =>
-      simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
-      by_cases hp : 0 < w ∧ 0 < h
-      · rw [Geom.normal_rect_exact hp, Geom.normal_rect_exact hp]
-      · rw [Geom.normal_flat_exact hp]; rfl
-  | ellipse cx cy rx ry => cases d <;> rfl
-  | path subs => cases d <;> rfl
-
 private theorem drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     ((g.drawn d).mapIso t).drawn d = (g.drawn d).mapIso t := by
   cases g with
@@ -650,10 +637,10 @@ private theorem drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     | false =>
       simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
       by_cases hp : 0 < w ∧ 0 < h
-      · rw [Geom.normal_rect_exact hp]
+      · rw [Geom.normal_rect_id hp]
         simp only [Geom.mapIso, Iso.rect]
-        exact Geom.normal_rect_exact hp
-      · rw [Geom.normal_flat_exact hp]; rfl
+        exact Geom.normal_rect_id hp
+      · rw [Geom.normal_degenerate_exact hp]; rfl
   | ellipse cx cy rx ry => cases d <;> rfl
   | path subs => cases d <;> rfl
 
@@ -666,8 +653,8 @@ private theorem geomOf_drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
     | false =>
       simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
       by_cases hp : 0 < w ∧ 0 < h
-      · rw [Geom.normal_rect_exact hp]; rfl
-      · rw [Geom.normal_flat_exact hp]; exact geomOf_path_id _
+      · rw [Geom.normal_rect_id hp]; rfl
+      · rw [Geom.normal_degenerate_exact hp]; exact geomOf_path_id _
   | ellipse cx cy rx ry => cases d <;> exact geomOf_path_id _
   | path subs => cases d <;> exact geomOf_path_id _
 
@@ -706,17 +693,15 @@ private theorem rect_translate_drawn (t : Iso) (ht : t.flipY = false) (x y w h :
   | false =>
     simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
     by_cases hp : 0 < w ∧ 0 < h
-    · rw [Geom.normal_rect_exact hp, Geom.normal_rect_exact hp]
+    · rw [Geom.normal_rect_id hp, Geom.normal_rect_id hp]
       have := Geom.mapIso_inv_id t (.rect x y w h)
       rwa [hr] at this
-    · rw [Geom.normal_flat_exact hp, Geom.normal_flat_exact hp]
+    · rw [Geom.normal_degenerate_exact hp, Geom.normal_degenerate_exact hp]
       simp only [Geom.mapIso, List.map_toArray, List.map_cons, List.map_nil, hback]
 
 private theorem readList_append (rs : RState) (acc : Array Mark) (a b : List ContentOp) :
-    readList rs acc (a ++ b) = readList rs (readList rs acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons o rest ih => simp [readList, ih]
+    readList rs acc (a ++ b) = readList rs (readList rs acc a) b :=
+  walk_append_exact _ (readOne rs) (fun _ => rfl) (fun _ _ _ => rfl) acc a b
 
 mutual
 
@@ -798,9 +783,6 @@ private theorem geom_agree (place : Iso) (fr : Frame) (rs : RState) (hp : rs.pla
 
 private theorem cm_some_frameCtm (rs : RState) (m : Affine) :
     (rs.cm (some m)).frameCtm = rs.userCtm.compose m := rfl
-
-private theorem cm_some_userCtm (rs : RState) (m : Affine) :
-    (rs.cm (some m)).userCtm = rs.userCtm.compose m := rfl
 
 private theorem cm_lift_frameCtm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) :
@@ -1330,26 +1312,17 @@ end
 
 private theorem readList_flatMap (rs : RState) (l : List ContentOp) :
     readList rs #[] l = (l.flatMap fun o => (readOne rs #[] o).toList).toArray := by
-  induction l with
-  | nil => simp [readList]
-  | cons o rest ih =>
-    simp only [readList, List.flatMap_cons]
-    rw [readList_acc, ih]
-    apply Array.toList_inj.mp
-    simp
+  rw [walk_flatMap_exact (readList rs) (readOne rs) (fun _ => rfl) (fun _ _ _ => rfl)
+    (readOne_acc rs) l #[], Array.empty_append]
 
 public theorem emitList_flatMap {L : Type} (ix : Request → Nat)
     (labelOps : Frame → L → Array ContentOp) (outlines : Array (Array Subpath))
     (bodyOps : Array (Array ContentOp)) (fr : Frame) (xs : List (Node L)) :
     emitList ix labelOps outlines bodyOps fr #[] xs =
       (xs.flatMap fun n => (emitOne ix labelOps outlines bodyOps fr #[] n).toList).toArray := by
-  induction xs with
-  | nil => simp [emitList]
-  | cons n rest ih =>
-    simp only [emitList, List.flatMap_cons]
-    rw [emitList_acc, ih]
-    apply Array.toList_inj.mp
-    simp
+  rw [walk_flatMap_exact (emitList ix labelOps outlines bodyOps fr)
+    (emitOne ix labelOps outlines bodyOps fr) (fun _ => rfl) (fun _ _ _ => rfl)
+    (emitOne_acc ix labelOps outlines bodyOps fr) xs #[], Array.empty_append]
 
 private theorem textGroup?_of_body (m : Option Affine) (gs : Option ExtG)
     (clips : Array (Array PathOp × Rule)) (body : Array ContentOp)

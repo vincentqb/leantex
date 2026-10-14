@@ -10,17 +10,6 @@ namespace LeanTex.Core.Gfx
 
 open LeanTex.Core LeanTex.Core.Dim
 
-private theorem expandList_append {L : Type} (done : Array (Array (Node L))) (bound : Nat)
-    (a b : List (Node L)) :
-    Node.expandList done bound #[] (a ++ b) =
-      Node.expandList done bound #[] a ++ Node.expandList done bound #[] b := by
-  induction a with
-  | nil => simp [Node.expandList]
-  | cons n rest ih =>
-    simp only [List.cons_append, Node.expandList]
-    rw [Node.expandList_acc, ih, Node.expandList_acc done bound (Node.expandOne done bound #[] n) rest,
-      Array.append_assoc]
-
 mutual
 
 public theorem Node.dropLabelsOne_acc {L : Type} (acc : Array (Node Empty)) (n : Node L) :
@@ -38,101 +27,9 @@ public theorem Node.dropLabelsList_acc {L : Type} (acc : Array (Node Empty)) (xs
 
 end
 
-private theorem dropLabelsList_append {L : Type} (a b : List (Node L)) :
-    Node.dropLabelsList #[] (a ++ b) = Node.dropLabelsList #[] a ++ Node.dropLabelsList #[] b := by
-  induction a with
-  | nil => simp [Node.dropLabelsList]
-  | cons n rest ih =>
-    simp only [List.cons_append, Node.dropLabelsList]
-    rw [Node.dropLabelsList_acc, ih, Node.dropLabelsList_acc (Node.dropLabelsOne #[] n) rest,
-      Array.append_assoc]
-
-/-- A node list map that keeps every use and group, their transforms by `xf` and clips by `cl`. -/
-private structure KeepsUses {L L' : Type} (M : List (Node L) → Array (Node L')) (xf : Affine → Affine)
-    (cl : Array Clip → Array Clip) : Prop where
-  nil : M [] = #[]
-  append : ∀ a b, M a ++ M b = M (a ++ b)
-  group : ∀ x c α kids, M [.group x c α kids] = #[.group (xf x) (cl c) α (M kids.toList)]
-  use : ∀ k x, M [.use k x] = #[.use k (xf x)]
-  noClips : cl #[] = #[]
-  draw : ∀ D b g fl st, Node.expandList D b #[] (M [.draw g fl st]).toList = M [.draw g fl st]
-  stamp : ∀ D b o x fl st,
-    Node.expandList D b #[] (M [.stamp o x fl st]).toList = M [.stamp o x fl st]
-  image : ∀ D b k x, Node.expandList D b #[] (M [.image k x]).toList = M [.image k x]
-  label : ∀ D b l, Node.expandList D b #[] (M [.label l]).toList = M [.label l]
-  words : ∀ D b s, Node.expandList D b #[] (M [.words s]).toList = M [.words s]
-
-section Keeps
-
-variable {L L' : Type} {M : List (Node L) → Array (Node L')} {xf : Affine → Affine}
-  {cl : Array Clip → Array Clip}
-
-mutual
-
-private theorem expand_keeps_one (h : KeepsUses M xf cl) (done : Array (Array (Node L))) (bound : Nat) :
-    ∀ n : Node L,
-      Node.expandList (done.map (M ·.toList)) bound #[] (M [n]).toList =
-        M (Node.expandOne done bound #[] n).toList
-  | .draw g fl st => by rw [h.draw]; rfl
-  | .group x c α kids => by
-    rw [h.group]
-    simp only [Node.expandOne, Node.expandList, Array.push_empty]
-    rw [h.group, expand_keeps_list h done bound kids.toList]
-  | .use k x => by
-    rw [h.use]
-    simp only [Node.expandOne, Node.expandList, Array.getElem?_map, Array.push_empty]
-    split
-    · cases done[k]? with
-      | none => simp [h.nil]
-      | some b => simp [h.group, h.noClips]
-    · simp [h.nil]
-  | .stamp o x fl st => by rw [h.stamp]; rfl
-  | .image k x => by rw [h.image]; rfl
-  | .label l => by rw [h.label]; rfl
-  | .words s => by rw [h.words]; rfl
-
-private theorem expand_keeps_list (h : KeepsUses M xf cl) (done : Array (Array (Node L))) (bound : Nat) :
-    ∀ xs : List (Node L),
-      Node.expandList (done.map (M ·.toList)) bound #[] (M xs).toList =
-        M (Node.expandList done bound #[] xs).toList
-  | [] => by simp [h.nil, Node.expandList]
-  | n :: rest => by
-    rw [show n :: rest = [n] ++ rest from rfl, ← h.append, Array.toList_append, expandList_append,
-      expand_keeps_one h done bound n, expand_keeps_list h done bound rest, List.singleton_append,
-      Node.expandList, Node.expandList_acc done bound (Node.expandOne done bound #[] n) rest,
-      Array.toList_append, ← h.append]
-
-end
-
-/-- A figure whose nodes and symbols are mapped by `M` expands to the mapped expansion. -/
-private theorem expanded_keeps (h : KeepsUses M xf cl) (fig : Figure L) (fig' : Figure L')
-    (hn : fig'.nodes = M fig.nodes.toList) (hs : fig'.symbols = fig.symbols.map (M ·.toList)) :
-    fig'.expanded = M fig.expanded.toList := by
-  have hb : fig'.bodies = fig.bodies.map (M ·.toList) := by
-    unfold Figure.bodies
-    rw [hs, Array.foldl_map]
-    suffices hl : ∀ (l : List (Array (Node L))) (done : Array (Array (Node L))),
-        l.foldl (fun d (sym : Array (Node L)) =>
-            d.push (Node.expandList d d.size #[] (M sym.toList).toList)) (done.map (M ·.toList)) =
-          (l.foldl (fun d (sym : Array (Node L)) =>
-            d.push (Node.expandList d d.size #[] sym.toList)) done).map (M ·.toList) by
-      simpa [Array.foldl_toList] using hl fig.symbols.toList #[]
-    intro l
-    induction l with
-    | nil => intro done; rfl
-    | cons sym rest ih =>
-      intro done
-      simp only [List.foldl_cons]
-      rw [← ih, Array.size_map, expand_keeps_list h done done.size sym.toList, Array.map_push]
-  unfold Figure.expanded
-  rw [hb, Array.size_map, hn]
-  exact expand_keeps_list h fig.bodies fig.bodies.size fig.nodes.toList
-
-end Keeps
-
 private theorem dropKeeps {L : Type} : KeepsUses (L := L) (Node.dropLabelsList #[]) id id where
   nil := rfl
-  append a b := (dropLabelsList_append a b).symm
+  cons _ rest := (Node.dropLabelsList_acc _ rest).symm
   group _ _ _ _ := rfl
   use _ _ := rfl
   noClips := rfl
@@ -203,81 +100,47 @@ public theorem picture_marks_agree (ix : GfxPdf.Request → Nat) (pdfPlace svgPl
     | some t => simp [GfxPdf.readList, GfxPdf.readOne, GfxPdf.textGroup]
   rw [GfxPdf.marks_projects ix _ hl pdfPlace _, ofPictureKeyed_marks_exact, GfxSvg.marks_projects]
 
-mutual
+section Words
 
-private theorem words_recolor_one {L : Type} (text : L → String) (f : Ir.Color → Ir.Color)
-    (fl : L → L) (hfl : ∀ l, text (fl l) = text l) :
-    ∀ (n : Node L) (acc : Array String),
-      Node.wordsOne text acc (Node.recolorOne f fl n) = Node.wordsOne text acc n
-  | .draw _ _ _, _ => rfl
-  | .group _ _ _ kids, acc => words_recolor_list text f fl hfl kids.toList acc
-  | .use _ _, _ => rfl
-  | .stamp _ _ _ _, _ => rfl
-  | .image _ _, _ => rfl
-  | .label l, acc => by simp [Node.recolorOne, Node.wordsOne, hfl]
-  | .words _, _ => rfl
-
-private theorem words_recolor_list {L : Type} (text : L → String) (f : Ir.Color → Ir.Color)
-    (fl : L → L) (hfl : ∀ l, text (fl l) = text l) :
-    ∀ (xs : List (Node L)) (acc : Array String),
-      Node.wordsList text acc (Node.recolorList f fl #[] xs).toList = Node.wordsList text acc xs
-  | [], _ => rfl
-  | n :: rest, acc => by
-    simp only [Node.recolorList]
-    rw [Node.recolorList_acc, Array.toList_append, Node.wordsList_append]
-    simp only [Array.toList_push, List.nil_append, Node.wordsList]
-    rw [words_recolor_one text f fl hfl n acc, words_recolor_list text f fl hfl rest]
-
-end
+variable {L : Type} {M : List (Node L) → Array (Node L)} {xf : Affine → Affine}
+  {cl : Array Clip → Array Clip}
 
 mutual
 
-private theorem words_quantize_one {L : Type} (text : L → String) (ql : L → L)
-    (hql : ∀ l, text (ql l) = text l) :
+private theorem words_keeps_one (h : KeepsUses M xf cl) (text : L → String)
+    (hleaf : ∀ n acc, (∀ x c α kids, n ≠ .group x c α kids) →
+      Node.wordsList text acc (M [n]).toList = Node.wordsOne text acc n) :
     ∀ (n : Node L) (acc : Array String),
-      Node.wordsOne text acc (Node.quantizeOne ql n) = Node.wordsOne text acc n
-  | .draw _ _ _, _ => rfl
-  | .group _ _ _ kids, acc => words_quantize_list text ql hql kids.toList acc
-  | .use _ _, _ => rfl
-  | .stamp _ _ _ _, _ => rfl
-  | .image _ _, _ => rfl
-  | .label l, acc => by simp [Node.quantizeOne, Node.wordsOne, hql]
-  | .words _, _ => rfl
+      Node.wordsList text acc (M [n]).toList = Node.wordsOne text acc n
+  | .group x c α kids, acc => by
+    rw [h.group]
+    exact words_keeps_list h text hleaf kids.toList acc
+  | .draw g fl st, acc => hleaf _ acc (fun _ _ _ _ h => by cases h)
+  | .use k x, acc => hleaf _ acc (fun _ _ _ _ h => by cases h)
+  | .stamp o x fl st, acc => hleaf _ acc (fun _ _ _ _ h => by cases h)
+  | .image k x, acc => hleaf _ acc (fun _ _ _ _ h => by cases h)
+  | .label l, acc => hleaf _ acc (fun _ _ _ _ h => by cases h)
+  | .words s, acc => hleaf _ acc (fun _ _ _ _ h => by cases h)
 
-private theorem words_quantize_list {L : Type} (text : L → String) (ql : L → L)
-    (hql : ∀ l, text (ql l) = text l) :
+private theorem words_keeps_list (h : KeepsUses M xf cl) (text : L → String)
+    (hleaf : ∀ n acc, (∀ x c α kids, n ≠ .group x c α kids) →
+      Node.wordsList text acc (M [n]).toList = Node.wordsOne text acc n) :
     ∀ (xs : List (Node L)) (acc : Array String),
-      Node.wordsList text acc (Node.quantizeList ql #[] xs).toList = Node.wordsList text acc xs
-  | [], _ => rfl
+      Node.wordsList text acc (M xs).toList = Node.wordsList text acc xs
+  | [], _ => by rw [h.nil]
   | n :: rest, acc => by
-    simp only [Node.quantizeList]
-    rw [Node.quantizeList_acc, Array.toList_append, Node.wordsList_append]
-    simp only [Array.toList_push, List.nil_append, Node.wordsList]
-    rw [words_quantize_one text ql hql n acc, words_quantize_list text ql hql rest]
+    rw [← h.cons, Array.toList_append, Node.wordsList_append, words_keeps_one h text hleaf n acc,
+      words_keeps_list h text hleaf rest]
+    rfl
 
 end
 
-private theorem recolorList_append {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
-    (a b : List (Node L)) :
-    Node.recolorList f fl #[] (a ++ b) = Node.recolorList f fl #[] a ++ Node.recolorList f fl #[] b := by
-  induction a with
-  | nil => simp [Node.recolorList]
-  | cons n rest ih =>
-    simp only [List.cons_append, Node.recolorList]
-    rw [Node.recolorList_acc, ih, Node.recolorList_acc _ _ (#[].push _) rest, Array.append_assoc]
-
-private theorem quantizeList_append' {L : Type} (ql : L → L) (a b : List (Node L)) :
-    Node.quantizeList ql #[] (a ++ b) = Node.quantizeList ql #[] a ++ Node.quantizeList ql #[] b := by
-  induction a with
-  | nil => simp [Node.quantizeList]
-  | cons n rest ih =>
-    simp only [List.cons_append, Node.quantizeList]
-    rw [Node.quantizeList_acc, ih, Node.quantizeList_acc _ (#[].push _) rest, Array.append_assoc]
+end Words
 
 private theorem recolorKeeps {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L) :
     KeepsUses (Node.recolorList f fl #[]) id id where
   nil := rfl
-  append a b := (recolorList_append f fl a b).symm
+  cons _ rest := (Node.recolorList_acc f fl _ rest).symm
   group _ _ _ _ := rfl
   use _ _ := rfl
   noClips := rfl
@@ -290,7 +153,7 @@ private theorem recolorKeeps {L : Type} (f : Ir.Color → Ir.Color) (fl : L → 
 private theorem quantizeKeeps {L : Type} (ql : L → L) :
     KeepsUses (Node.quantizeList ql #[]) Affine.quantize (·.map Clip.quantize) where
   nil := rfl
-  append a b := (quantizeList_append' ql a b).symm
+  cons _ rest := (Node.quantizeList_acc ql _ rest).symm
   group _ _ _ _ := rfl
   use _ _ := rfl
   noClips := by simp
@@ -306,9 +169,19 @@ public theorem Figure.said_text {L : Type} (text : L → String) (f : Ir.Color �
       Ir.Conserves (Figure.said text) (Figure.quantize ql) := by
   refine ⟨fun fig => ?_, fun fig => ?_⟩
   · simp only [Figure.said]
-    rw [expanded_keeps (recolorKeeps f fl) fig (fig.recolor f fl) rfl rfl, words_recolor_list text f fl hfl]
+    rw [expanded_keeps (recolorKeeps f fl) fig (fig.recolor f fl) rfl rfl,
+      words_keeps_list (recolorKeeps f fl) text (fun n acc hn => by
+        cases n <;>
+          first
+          | exact absurd rfl (hn _ _ _ _)
+          | simp [Node.recolorList, Node.recolorOne, Node.wordsList, Node.wordsOne, hfl])]
   · simp only [Figure.said]
-    rw [expanded_keeps (quantizeKeeps ql) fig (fig.quantize ql) rfl rfl, words_quantize_list text ql hql]
+    rw [expanded_keeps (quantizeKeeps ql) fig (fig.quantize ql) rfl rfl,
+      words_keeps_list (quantizeKeeps ql) text (fun n acc hn => by
+        cases n <;>
+          first
+          | exact absurd rfl (hn _ _ _ _)
+          | simp [Node.quantizeList, Node.quantizeOne, Node.wordsList, Node.wordsOne, hql])]
 
 private theorem flatMap_labelsBy_single {L α : Type} (g : L → α) (xs : Array (Step L)) :
     xs.flatMap (Step.labelsBy fun l => #[g l]) = xs.map (Step.mapLabel g) := by

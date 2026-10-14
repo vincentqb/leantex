@@ -22,39 +22,136 @@ public theorem Node.mapLabelsList_map {L L' : Type} (f : L → L') (acc : Array 
   | nil => simp [Node.mapLabelsList]
   | cons x rest ih => simp [Node.mapLabelsList, ih]
 
+private theorem expandList_append {L : Type} (done : Array (Array (Node L))) (bound : Nat)
+    (a b : List (Node L)) :
+    Node.expandList done bound #[] (a ++ b) =
+      Node.expandList done bound #[] a ++ Node.expandList done bound #[] b := by
+  induction a with
+  | nil => simp [Node.expandList]
+  | cons n rest ih =>
+    simp only [List.cons_append, Node.expandList]
+    rw [Node.expandList_acc, ih, Node.expandList_acc done bound (Node.expandOne done bound #[] n) rest,
+      Array.append_assoc]
+
+/-- A node list map that keeps every use and group, their transforms by `xf` and clips by `cl`. -/
+public structure KeepsUses {L L' : Type} (M : List (Node L) → Array (Node L')) (xf : Affine → Affine)
+    (cl : Array Clip → Array Clip) : Prop where
+  nil : M [] = #[]
+  cons : ∀ n rest, M [n] ++ M rest = M (n :: rest)
+  group : ∀ x c α kids, M [.group x c α kids] = #[.group (xf x) (cl c) α (M kids.toList)]
+  use : ∀ k x, M [.use k x] = #[.use k (xf x)]
+  noClips : cl #[] = #[]
+  draw : ∀ D b g fl st, Node.expandList D b #[] (M [.draw g fl st]).toList = M [.draw g fl st]
+  stamp : ∀ D b o x fl st,
+    Node.expandList D b #[] (M [.stamp o x fl st]).toList = M [.stamp o x fl st]
+  image : ∀ D b k x, Node.expandList D b #[] (M [.image k x]).toList = M [.image k x]
+  label : ∀ D b l, Node.expandList D b #[] (M [.label l]).toList = M [.label l]
+  words : ∀ D b s, Node.expandList D b #[] (M [.words s]).toList = M [.words s]
+
+section Keeps
+
+variable {L L' : Type} {M : List (Node L) → Array (Node L')} {xf : Affine → Affine}
+  {cl : Array Clip → Array Clip}
+
+public theorem KeepsUses.append (h : KeepsUses M xf cl) (a b : List (Node L)) :
+    M a ++ M b = M (a ++ b) := by
+  induction a with
+  | nil => simp [h.nil]
+  | cons n rest ih =>
+    rw [List.cons_append, ← h.cons n (rest ++ b), ← h.cons n rest, Array.append_assoc, ih]
+
 mutual
 
-public theorem Node.expandOne_mapLabels {L L' : Type} (f : L → L') :
+public theorem expand_keeps_one (h : KeepsUses M xf cl) (done : Array (Array (Node L))) (bound : Nat) :
     ∀ n : Node L,
-      Node.expandOne (#[] : Array (Array (Node L'))) 0 #[] (n.mapLabelsOne f) =
-        (Node.expandOne (#[] : Array (Array (Node L))) 0 #[] n).map (Node.mapLabelsOne f)
-  | .draw g fl st => by simp [Node.mapLabelsOne, Node.expandOne]
-  | .group xf clips alpha kids => by
-    simp only [Node.mapLabelsOne, Node.expandOne, Node.mapLabelsList_map, Array.toList_append,
-      List.nil_append, Array.push_empty, Array.map_singleton]
-    rw [Node.expandList_mapLabels f kids.toList]
-    have h : ∀ a : Array (Node L), (a.toList.map (Node.mapLabelsOne f)).toArray =
-        a.map (Node.mapLabelsOne f) := fun a => by
-      apply Array.toList_inj.mp
-      simp
-    simp [h]
-  | .use k xf => by simp [Node.mapLabelsOne, Node.expandOne]
-  | .stamp o xf fl st => by simp [Node.mapLabelsOne, Node.expandOne]
-  | .image k xf => by simp [Node.mapLabelsOne, Node.expandOne]
-  | .label l => by simp [Node.mapLabelsOne, Node.expandOne]
-  | .words w => by simp [Node.mapLabelsOne, Node.expandOne]
+      Node.expandList (done.map (M ·.toList)) bound #[] (M [n]).toList =
+        M (Node.expandOne done bound #[] n).toList
+  | .draw g fl st => by rw [h.draw]; rfl
+  | .group x c α kids => by
+    rw [h.group]
+    simp only [Node.expandOne, Node.expandList, Array.push_empty]
+    rw [h.group, expand_keeps_list h done bound kids.toList]
+  | .use k x => by
+    rw [h.use]
+    simp only [Node.expandOne, Node.expandList, Array.getElem?_map, Array.push_empty]
+    split
+    · cases done[k]? with
+      | none => simp [h.nil]
+      | some b => simp [h.group, h.noClips]
+    · simp [h.nil]
+  | .stamp o x fl st => by rw [h.stamp]; rfl
+  | .image k x => by rw [h.image]; rfl
+  | .label l => by rw [h.label]; rfl
+  | .words s => by rw [h.words]; rfl
 
-public theorem Node.expandList_mapLabels {L L' : Type} (f : L → L') :
+public theorem expand_keeps_list (h : KeepsUses M xf cl) (done : Array (Array (Node L))) (bound : Nat) :
     ∀ xs : List (Node L),
-      Node.expandList (#[] : Array (Array (Node L'))) 0 #[] (xs.map (Node.mapLabelsOne f)) =
-        (Node.expandList (#[] : Array (Array (Node L))) 0 #[] xs).map (Node.mapLabelsOne f)
-  | [] => by simp [Node.expandList]
+      Node.expandList (done.map (M ·.toList)) bound #[] (M xs).toList =
+        M (Node.expandList done bound #[] xs).toList
+  | [] => by simp [h.nil, Node.expandList]
   | n :: rest => by
-    simp only [List.map_cons, Node.expandList]
-    rw [Node.expandList_acc, Node.expandList_acc (#[] : Array (Array (Node L))),
-      Node.expandOne_mapLabels f n, Node.expandList_mapLabels f rest, Array.map_append]
+    rw [show n :: rest = [n] ++ rest from rfl, ← h.append _ _, Array.toList_append, expandList_append,
+      expand_keeps_one h done bound n, expand_keeps_list h done bound rest, List.singleton_append,
+      Node.expandList, Node.expandList_acc done bound (Node.expandOne done bound #[] n) rest,
+      Array.toList_append, ← h.append _ _]
 
 end
+
+/-- A figure whose nodes and symbols are mapped by `M` expands to the mapped expansion. -/
+public theorem expanded_keeps (h : KeepsUses M xf cl) (fig : Figure L) (fig' : Figure L')
+    (hn : fig'.nodes = M fig.nodes.toList) (hs : fig'.symbols = fig.symbols.map (M ·.toList)) :
+    fig'.expanded = M fig.expanded.toList := by
+  have hb : fig'.bodies = fig.bodies.map (M ·.toList) := by
+    unfold Figure.bodies
+    rw [hs, Array.foldl_map]
+    suffices hl : ∀ (l : List (Array (Node L))) (done : Array (Array (Node L))),
+        l.foldl (fun d (sym : Array (Node L)) =>
+            d.push (Node.expandList d d.size #[] (M sym.toList).toList)) (done.map (M ·.toList)) =
+          (l.foldl (fun d (sym : Array (Node L)) =>
+            d.push (Node.expandList d d.size #[] sym.toList)) done).map (M ·.toList) by
+      simpa [Array.foldl_toList] using hl fig.symbols.toList #[]
+    intro l
+    induction l with
+    | nil => intro done; rfl
+    | cons sym rest ih =>
+      intro done
+      simp only [List.foldl_cons]
+      rw [← ih, Array.size_map, expand_keeps_list h done done.size sym.toList, Array.map_push]
+  unfold Figure.expanded
+  rw [hb, Array.size_map, hn]
+  exact expand_keeps_list h fig.bodies fig.bodies.size fig.nodes.toList
+
+end Keeps
+
+private theorem mapLabelsKeeps {L L' : Type} (f : L → L') :
+    KeepsUses (Node.mapLabelsList f #[]) id id where
+  nil := rfl
+  cons n rest := by simp [Node.mapLabelsList_map]
+  group _ _ _ _ := rfl
+  use _ _ := rfl
+  noClips := rfl
+  draw _ _ _ _ _ := rfl
+  stamp _ _ _ _ _ _ := rfl
+  image _ _ _ _ := rfl
+  label _ _ _ := rfl
+  words _ _ _ := rfl
+
+public theorem Node.expandList_mapLabels {L L' : Type} (f : L → L') (xs : List (Node L)) :
+    Node.expandList (#[] : Array (Array (Node L'))) 0 #[] (xs.map (Node.mapLabelsOne f)) =
+      (Node.expandList (#[] : Array (Array (Node L))) 0 #[] xs).map (Node.mapLabelsOne f) := by
+  have h := expand_keeps_list (mapLabelsKeeps f) #[] 0 xs
+  simp only [Array.map_empty, Node.mapLabelsList_map, Array.empty_append] at h
+  rw [h]
+  apply Array.toList_inj.mp
+  simp
+
+public theorem Node.expandOne_mapLabels {L L' : Type} (f : L → L') (n : Node L) :
+    Node.expandOne (#[] : Array (Array (Node L'))) 0 #[] (n.mapLabelsOne f) =
+      (Node.expandOne (#[] : Array (Array (Node L))) 0 #[] n).map (Node.mapLabelsOne f) := by
+  have h := Node.expandList_mapLabels f [n]
+  simp only [List.map_cons, List.map_nil, Node.expandList] at h
+  rw [Node.expandOne_acc, Node.expandOne_acc (#[] : Array (Array (Node L)))] at h
+  simpa using h
 
 mutual
 
