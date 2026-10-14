@@ -254,7 +254,7 @@ def registry : List Premise := [
       ("scripts/svg-check.lean", decl% Tests.svgTerminalBoundaryChecks)]
     scripts := ["scripts/svg-diff.lean"] },
   { name := "pdftocairo", residue := .tool "pdftocairo", reach := .render
-    statement := "pdftocairo renders the selected page of a PDF to SVG as Poppler draws it, and ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before the HTML holds it."
+    statement := "pdftocairo renders the selected page of a PDF, its optional content as PdfRead.ocAsCopied declares it, to SVG as Poppler draws it, and ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before the HTML holds it."
     guards := [decl% HtmlDoc.emitClosed]
     sites := [("LeanTex/Cli/ImageAssets.lean", "pdfSvg"), ("LeanTex/Cli/ImageAssets.lean", "picFace")]
     checks := [check% htmlContainedSvgColorChecks]

@@ -1192,6 +1192,29 @@ def exactSpan (a b : Span) : Bool :=
 /-- Whether a site is exactly `expected`, provenance included. -/
 def sameSource (actual : Option Span) (expected : Span) : Bool := actual.any (exactSpan · expected)
 
+/-- How many of a raw RGB raster's pixels, Poppler's PPM, are exactly each colour, read on pixel
+boundaries. -/
+def ppmCounts (file : System.FilePath) (colours : Array (UInt8 × UInt8 × UInt8)) :
+    IO (Array Nat) := do
+  let bytes ← IO.FS.readBinFile file
+  let mut start := 0
+  let mut lines := 0
+  for i in [:bytes.size] do
+    if bytes[i]?.getD 0 == 10 then lines := lines + 1
+    if lines == 3 then
+      start := i + 1
+      break
+  let header := (String.fromUTF8? (bytes.extract 0 start)).getD ""
+  unless header.startsWith "P6\n" && header.endsWith "\n255\n" &&
+      start > 0 && (bytes.size - start) % 3 == 0 do
+    throw <| IO.userError "the raster oracle requires Poppler's raw RGB PPM"
+  let mut counts := colours.map fun _ => 0
+  for i in [start:bytes.size:3] do
+    let px := (bytes[i]?.getD 0, bytes[i + 1]?.getD 0, bytes[i + 2]?.getD 0)
+    for (c, k) in colours.zipIdx do
+      if px == c then counts := counts.set! k (counts[k]?.getD 0 + 1)
+  return counts
+
 /-- A diagnostic's words and its site's particulars, as its log line shows them. -/
 def diagWords (d : Diag) : String := d.message ++ (d.detail.map ("\n" ++ ·)).getD ""
 

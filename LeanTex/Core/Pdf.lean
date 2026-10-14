@@ -291,26 +291,36 @@ public def markedEntry (structTreeRoot : Nat) : Array (String × PdfRead.Obj) :=
 private def viewerEntry : Array (String × PdfRead.Obj) :=
   #[("ViewerPreferences", .dict #[("DisplayDocTitle", .bool true)])]
 
-/-- The label a copied figure's layers stand under: the file as its document names it, and its page
-as an RFC 8118 fragment when not the first. -/
-public def ocLabel (src : String) (page : Nat) : String :=
-  if page == 1 then src else s!"{src}#page={page}"
+/-- The labels copied figures' layers stand under: each file's name without its directories or a
+boundary picture's kind, its page as an RFC 8118 fragment when not the first, and a repeat numbered. -/
+public def ocLabels (figs : Array (String × Nat)) : Array String := Id.run do
+  let mut raws : Array String := #[]
+  let mut out : Array String := #[]
+  for (src, page) in figs do
+    let name := if src.startsWith Ir.picSrcPrefix then "picture" else (src.splitOn "/").getLast?.getD src
+    let label := if page == 1 then name else s!"{name}#page={page}"
+    let seen := raws.count label
+    raws := raws.push label
+    out := out.push (if seen == 0 then label else s!"{label} ({seen + 1})")
+  return out
 
 /-- The copied figures' optional content (§8.11.4) as one default configuration: each figure's
-groups from its copied graph's base, those its own turns off, and each figure's groups under its
-label in the layers' order; nothing where no figure carries a configuration. -/
+groups from its copied graph's base, those its own turns off, locks or sets as radio buttons, and
+each figure's groups under its label in the layers' order; nothing where no figure carries one. -/
 public def ocEntries (figs : Array (String × Nat × PdfRead.FormOc)) :
     Array (String × PdfRead.Obj) :=
   let refsFrom (base : Nat) (ls : Array Nat) : Array PdfRead.Obj :=
     ls.map fun l => .ref (base + l) 0
+  let all (pick : PdfRead.FormOc → Array Nat) : PdfRead.Obj :=
+    .arr (figs.flatMap fun (_, base, oc) => refsFrom base (pick oc))
   let order := figs.filterMap fun (label, base, oc) =>
     if oc.groups.isEmpty then none
     else some (PdfRead.Obj.arr (#[litObj (pdfTextString label)] ++ refsFrom base oc.groups))
+  let radio := figs.flatMap fun (_, base, oc) => oc.radio.map fun set => .arr (refsFrom base set)
   if figs.isEmpty then #[] else
-  #[("OCProperties", .dict #[
-    ("OCGs", .arr (figs.flatMap fun (_, base, oc) => refsFrom base oc.groups)),
+  #[("OCProperties", .dict #[("OCGs", all (·.groups)),
     ("D", .dict #[("Name", litObj (pdfTextString "Default")), ("Order", .arr order),
-      ("OFF", .arr (figs.flatMap fun (_, base, oc) => refsFrom base oc.off))])])]
+      ("OFF", all (·.off)), ("RBGroups", .arr radio), ("Locked", all (·.locked))])])]
 
 /-- The document catalog (ISO 32000-2 §7.7.2) as a typed object. -/
 public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
@@ -1905,11 +1915,14 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let t := objTable keep imgs usedImgs np nOut es.size (figDictCount figs) (figFormCount figs)
 
   let outlineRoot := if nOut == 0 then none else some t.outlineRootId
-  let ocFigs : Array (String × Nat × PdfRead.FormOc) := usedImgs.zipIdx.filterMap fun (k, n) => do
-    let en ← imgs.get? k
-    let f ← (← en.info).form
-    return (ocLabel en.src f.val.page, ← (t.formBases[n]?).join, ← f.val.oc)
-  let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot (ocEntries ocFigs)
+  let ocFigs : Array ((String × Nat) × Nat × PdfRead.FormOc) :=
+    usedImgs.zipIdx.filterMap fun (k, n) => do
+      let en ← imgs.get? k
+      let f ← (← en.info).form
+      return ((en.src, f.val.page), ← (t.formBases[n]?).join, ← f.val.oc)
+  let ocNamed := (ocLabels (ocFigs.map (·.1))).zip (ocFigs.map (·.2))
+  let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
+    (ocEntries (ocNamed.map fun (l, base, oc) => (l, base, oc)))
   let pagesObj : PdfRead.Obj := .dict
     #[("Type", .name "Pages"),
       ("Kids", .arr ((Array.range np).map fun i => .ref (t.pageId i) 0)),

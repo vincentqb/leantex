@@ -130,13 +130,15 @@ private def finishSvg (tool : String) (stretch : Bool) (bytes : ByteArray) :
     throw s!"{tool} produced unexpected SVG root attributes"
   return (head ++ pdfSvgRoot ++ body).toUTF8
 
-/-- Convert one captured input; a failed spawn, a nonzero exit or absent output is an
-error, whatever file a failed process left. -/
+/-- Convert one captured input, a PDF with its optional content as its copy declares it
+(`PdfRead.ocAsCopied`); a failed spawn, a nonzero exit or absent output is an error, whatever file
+a failed process left. -/
 private def convertResult (op : Op) (bytes : ByteArray)
     (runner : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none)
     (fontIndependent : Bool := true) :
     IO ConvCache.Result := do
   let spec := op.spec
+  let bytes := if spec.inputExt == "pdf" then PdfRead.ocAsCopied bytes else bytes
   let eligible := runner.isNone && (spec.inputExt != "pdf" ||
     (PdfCensus.census bytes).toOption.any (·.fontsEmbedded))
   let runTool := runner.getD RunBounded.output

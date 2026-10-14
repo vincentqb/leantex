@@ -13,26 +13,10 @@ the driver starts. -/
 
 namespace Tests
 
-/-- The red and black pixels of Poppler's raw RGB raster, read on pixel boundaries. -/
+/-- The red and blue pixels of Poppler's raw RGB raster. -/
 private def terminalInk (file : System.FilePath) : IO (Nat × Nat) := do
-  let bytes ← IO.FS.readBinFile file
-  let mut start := 0
-  let mut lines := 0
-  for i in [:bytes.size] do
-    if bytes[i]! == 10 then lines := lines + 1
-    if lines == 3 then
-      start := i + 1
-      break
-  let header := String.fromUTF8! (bytes.extract 0 start)
-  unless header.startsWith "P6\n" && header.endsWith "\n255\n" &&
-      start > 0 && (bytes.size - start) % 3 == 0 do
-    throw <| IO.userError "the raster oracle requires Poppler's raw RGB PPM"
-  let mut red := 0
-  let mut blue := 0
-  for i in [start:bytes.size:3] do
-    if bytes[i]! == 255 && bytes[i + 1]! == 0 && bytes[i + 2]! == 0 then red := red + 1
-    if bytes[i]! == 0 && bytes[i + 1]! == 0 && bytes[i + 2]! == 255 then blue := blue + 1
-  return (red, blue)
+  let counts ← ppmCounts file #[(255, 0, 0), (0, 0, 255)]
+  return (counts[0]?.getD 0, counts[1]?.getD 0)
 
 /-- Both artifacts from two SVGs alone: the moving square's PDF and print face paint its end pose,
 the browser the unchanged animation. -/

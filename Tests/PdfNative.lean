@@ -1195,28 +1195,22 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "figures: a font whose CID-to-glyph map is the identity behind a reference names no loss"
     (!names (composite "/Identity") (.font "cidtogid-unreadable"))
 
-/-- How many of a raw RGB raster's pixels, Poppler's PPM, are exactly each colour. -/
-private def ppmCounts (file : System.FilePath) (colours : Array (UInt8 × UInt8 × UInt8)) :
-    IO (Array Nat) := do
-  let bytes ← IO.FS.readBinFile file
-  let mut start := 0
-  let mut lines := 0
-  for i in [:bytes.size] do
-    if bytes[i]?.getD 0 == 10 then lines := lines + 1
-    if lines == 3 then
-      start := i + 1
-      break
-  let mut counts := colours.map fun _ => 0
-  for i in [start:bytes.size:3] do
-    let px := (bytes[i]?.getD 0, bytes[i + 1]?.getD 0, bytes[i + 2]?.getD 0)
-    for (c, k) in colours.zipIdx do
-      if px == c then counts := counts.set! k (counts[k]?.getD 0 + 1)
-  return counts
+mutual
+/-- The fill attributes of an XML tree's elements, in document order. -/
+private def xmlFills (acc : Array String) : Xml.Node → Array String
+  | .elem _ attrs kids =>
+    xmlFillsList ((attrs.filter (·.1 == "fill")).foldl (fun a (_, v) => a.push v) acc) kids.toList
+  | .text _ => acc
+
+private def xmlFillsList (acc : Array String) : List Xml.Node → Array String
+  | [] => acc
+  | n :: rest => xmlFillsList (xmlFills acc n) rest
+end
 
 open Tests.PdfNative in
-/-- The PDF shows what the HTML faces show of figures with optional content: their configurations
-merged in the catalog, same-named groups apart under each figure's label, and a figure without one
-shown whole. -/
+/-- The PDF shows what the HTML faces show of figures with optional content, and the converter is
+handed what the copy declares: configurations merged in the catalog, same-named groups apart under
+each figure's label, membership dictionaries read as the engine reads them. -/
 def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
@@ -1239,44 +1233,89 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let unconfigured := page "<< /Type /Catalog /Pages 2 0 R >>" "<< /Properties << /m1 5 0 R >> >>"
     "/OC /m1 BDC 1 0.5 0 rg 0 0 100 100 re f EMC"
     #["<< /Type /OCMD /OCGs [6 0 R] /P /AnyOn >>", "<< /Type /OCG /Name (Loose) >>"]
-  let colours : Array (UInt8 × UInt8 × UInt8) :=
-    #[(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 0, 255), (0, 255, 255), (255, 128, 0)]
-  let shown : Array Bool := #[true, false, false, false, true, true]
+  -- One cell per membership: a listed group on; no group, an unlisted one and a missing object, of
+  -- no effect; the off group through an indirect array and beside an unlisted one, hidden.
+  let edges (lossy : Bool) : ByteArray := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << \
+      /OCGs [5 0 R 6 0 R] /D << /Order [5 0 R 6 0 R] /OFF [7 0 R 6 0 R] >> >> >>"
+    ("<< /Properties << /s 5 0 R /e 8 0 R /u 9 0 R /m 10 0 R /i 11 0 R /x 12 0 R >>" ++
+      (if lossy then " /XObject << /K 14 0 R >> >>" else " >>"))
+    ("/OC /s BDC 1 1 0 rg 0 0 16 100 re f EMC /OC /e BDC 0.5 0 1 rg 20 0 16 100 re f EMC \
+      /OC /u BDC 0 0.5 0.5 rg 40 0 16 100 re f EMC /OC /m BDC 0.5 0.5 0 rg 60 0 16 100 re f EMC \
+      /OC /i BDC 1 0 0.5 rg 80 0 16 46 re f EMC /OC /x BDC 0 0.5 1 rg 80 54 16 46 re f EMC" ++
+      (if lossy then " /K Do" else ""))
+    #["<< /Type /OCG /Name (Shown) >>", "<< /Type /OCG /Name (Hidden) >>",
+      "<< /Type /OCG /Name (Loose) >>", "<< /Type /OCMD /OCGs [] /P /AnyOn >>",
+      "<< /Type /OCMD /OCGs [7 0 R] /P /AnyOff >>", "<< /Type /OCMD /OCGs [99 0 R] /P /AnyOn >>",
+      "<< /Type /OCMD /OCGs 13 0 R /P /AnyOn >>", "<< /Type /OCMD /OCGs [6 0 R 7 0 R] /P /AnyOn >>",
+      "[6 0 R]", streamObj "0.5 g 2 2 4 4 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
+        /Group << /S /Transparency /K true >> "]
+  let noReach := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R] \
+      /D << /OFF [5 0 R] >> >> >>" "<< /Properties << /m 6 0 R >> >>"
+    "/OC /m BDC 0 0 1 rg 0 0 100 100 re f EMC"
+    #["<< /Type /OCG /Name (Unused) >>", "<< /Type /OCMD /OCGs [7 0 R] /P /AnyOn >>",
+      "<< /Type /OCG /Name (Loose) >>"]
+  let cells : Array ((UInt8 × UInt8 × UInt8) × Bool) := #[
+    ((255, 0, 0), true), ((0, 0, 255), false), ((0, 255, 0), false), ((255, 0, 255), false),
+    ((0, 255, 255), true), ((255, 128, 0), true), ((255, 255, 0), true), ((128, 0, 255), true),
+    ((0, 128, 128), true), ((128, 128, 0), true), ((255, 0, 128), false), ((0, 128, 255), false)]
+  let edgeCells := cells.extract 6 cells.size
   t "optional content: the copier keeps a configured figure's groups and drops an unconfigured one's"
     ((PdfRead.readForm layers).toOption.any (fun f => f.val.oc.any fun oc =>
         oc.groups.size == 2 && oc.off.size == 1 && oc.groups.contains (oc.off[0]?.getD 99)) &&
       (PdfRead.readForm unconfigured).toOption.any fun f =>
         f.val.oc.isNone && f.val.objects.size == 1)
+  t "optional content: the converter's input reads back with the copy's configuration and dictionaries"
+    ((PdfRead.Doc.ofBytes (PdfRead.ocAsCopied (edges true))).toOption.any (fun d =>
+        (d.ocConfig.any fun c => c.groups == #[5, 6] && c.off.toList == [6]) &&
+        (d.get 8).toOption.any (·.1 == .dict #[]) && (d.get 12).toOption.any fun (v, _) =>
+          v.get? "OCGs" == some (.arr #[.ref 6 0])) &&
+      PdfRead.ocAsCopied unconfigured == unconfigured)
   IO.FS.withTempDir fun dir => do
+    let tools := dir / "bin"
+    IO.FS.createDirAll tools
+    let build (src out : System.FilePath) : IO UInt32 := do
+      let r ← IO.Process.output {
+        cmd := binary.toString, args := #[src.toString, "-o", out.toString]
+        env := #[("PATH", some tools.toString), ("LEANTEX_FONT", some font.toString),
+          ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+      return r.exitCode
+    let raster (pdf : System.FilePath) (colours : Array (UInt8 × UInt8 × UInt8)) : IO (Array Nat) := do
+      let stem := pdf.fileStem.getD "page" ++ "-page"
+      let r ← IO.Process.output {
+        cmd := "pdftoppm", args := #["-r", "72", pdf.toString, (dir / stem).toString] }
+      unless r.exitCode == 0 do return colours.map fun _ => 0
+      let mut counts := colours.map fun _ => 0
+      for e in ← dir.readDir do
+        if e.fileName.startsWith stem && e.fileName.endsWith ".ppm" then
+          counts := (counts.zip (← ppmCounts e.path colours)).map fun (a, b) => a + b
+      return counts
+    let agrees (counts : Array Nat) (want : Array ((UInt8 × UInt8 × UInt8) × Bool)) : Bool :=
+      counts.size == want.size && (counts.zip want).all fun (n, _, on) => (n > 0) == on
     IO.FS.writeBinFile (dir / "layers.pdf") layers
     IO.FS.writeBinFile (dir / "same-names.pdf") sameNames
     IO.FS.writeBinFile (dir / "unconfigured.pdf") unconfigured
-    IO.FS.writeFile (dir / "doc.tex") (String.intercalate "\n" [
-      "\\documentclass{article}", "\\begin{document}",
-      "\\includegraphics[width=100pt,alt={An invented layered figure}]{layers.pdf}", "",
-      "\\includegraphics[width=100pt,alt={A second layered figure}]{same-names.pdf}", "",
-      "\\includegraphics[width=100pt,alt={A figure with no configuration}]{unconfigured.pdf}",
-      "\\end{document}", ""])
+    IO.FS.writeBinFile (dir / "edges.pdf") (edges false)
+    IO.FS.writeBinFile (dir / "lossy.pdf") (edges true)
+    IO.FS.writeBinFile (dir / "no-reach.pdf") noReach
+    let doc (figures : List String) : String := String.intercalate "\n" (["\\documentclass{article}",
+      "\\begin{document}"] ++ figures.map (fun f =>
+        s!"\\includegraphics[width=100pt,alt=\{An invented figure}{f}\n") ++ ["\\end{document}", ""])
+    IO.FS.writeFile (dir / "doc.tex") (doc ["]{layers.pdf}", ",page=1]{layers.pdf}", "]{same-names.pdf}",
+      "]{unconfigured.pdf}", "]{edges.pdf}"])
     for ext in ["pdf", "html"] do
-      let r ← IO.Process.output {
-        cmd := binary.toString, args := #[(dir / "doc.tex").toString, "-o", (dir / s!"doc.{ext}").toString]
-        env := #[("LEANTEX_FONT", some font.toString), ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
-      t s!"optional content: the layered document builds its {ext} (exit {r.exitCode})" (r.exitCode == 0)
-    let raster ← IO.Process.output {
-      cmd := "pdftoppm", args := #["-r", "36", "-singlefile", (dir / "doc.pdf").toString,
-        (dir / "page").toString] }
-    t "optional content: the shipped PDF renders" (raster.exitCode == 0)
-    let counts ← if raster.exitCode == 0 then ppmCounts (dir / "page.ppm") colours
-      else pure (colours.map fun _ => 0)
-    t s!"optional content: the PDF shows exactly the layers each figure's configuration shows ({counts})"
-      ((counts.zip shown).all fun (n, on) => (n > 0) == on)
+      let code ← build (dir / "doc.tex") (dir / s!"doc.{ext}")
+      t s!"optional content: the layered document builds its {ext} with nothing on PATH (exit {code})"
+        (code == 0)
+    let counts ← raster (dir / "doc.pdf") (cells.map (·.1))
+    t s!"optional content: the PDF shows exactly the cells each figure's configuration shows ({counts})"
+      (agrees counts cells)
     let html ← IO.FS.readFile (dir / "doc.html")
-    let faces : Array String := (((html.splitOn "data:image/svg+xml;base64,").drop 1).filterMap
-      fun rest => (Svg.unbase64 ((rest.splitOn "\"")[0]?.getD "")).bind String.fromUTF8?).toArray
+    let faces : Array (Array String) := (((html.splitOn "data:image/svg+xml;base64,").drop 1).filterMap
+      fun rest => (Svg.unbase64 ((rest.splitOn "\"")[0]?.getD "")).bind fun b =>
+        (Xml.parse b).toOption.map (xmlFills #[])).toArray
     let fill (c : UInt8 × UInt8 × UInt8) : String := (Ir.Color.css { r := c.1, g := c.2.1, b := c.2.2 })
-    let inFaces (c : UInt8 × UInt8 × UInt8) : Bool := faces.any fun f => hasStr f (fill c)
-    t s!"optional content: the HTML faces show exactly the same layers ({faces.size} faces)"
-      (faces.size == 3 && (colours.zip shown).all fun (c, on) => inFaces c == on)
+    t s!"optional content: the HTML faces' trees fill exactly the same cells ({faces.size} faces)"
+      (faces.size ≥ 4 && cells.all fun (c, on) => faces.any (·.contains (fill c)) == on)
     let shipped := (PdfRead.Doc.ofBytes (← IO.FS.readBinFile (dir / "doc.pdf"))).toOption
     let deref (o : PdfRead.Obj) : PdfRead.Obj :=
       (shipped.bind fun d => (d.deref o).toOption).getD .null
@@ -1293,9 +1332,31 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
             | _ => none)
         | _ => none
       | _ => none
-    t s!"optional content: each figure's same-named groups stand under its own label ({labelled})"
+    t s!"optional content: each figure's groups stand under its own label ({labelled})"
       (labelled == #[("(layers.pdf)", #["(Layer 1)", "(Layer 2)"]),
-        ("(same-names.pdf)", #["(Layer 1)", "(Layer 2)"])])
+        ("(layers.pdf \\(2\\))", #["(Layer 1)", "(Layer 2)"]),
+        ("(same-names.pdf)", #["(Layer 1)", "(Layer 2)"]), ("(edges.pdf)", #["(Shown)", "(Hidden)"])])
+    IO.FS.writeFile (dir / "alone.tex") (doc ["]{no-reach.pdf}"])
+    let code ← build (dir / "alone.tex") (dir / "alone.pdf")
+    let alone := (PdfRead.Doc.ofBytes (← IO.FS.readBinFile (dir / "alone.pdf"))).toOption
+    let declared := alone.any fun d => (d.get d.root).toOption.any fun (cat, _) =>
+      (cat.get? "OCProperties").isSome
+    let blue ← raster (dir / "alone.pdf") #[(0, 0, 255)]
+    t s!"optional content: a figure reaching no listed group ships no configuration and shows whole \
+(exit {code}, {blue})" (code == 0 && !declared && blue.all (· > 0))
+    let handed := dir / "handed.pdf"
+    IO.FS.writeFile (tools / "pdftocairo") ("#!/bin/sh\nif [ \"$1\" = -v ]; then printf '%s\\n' \
+'synthetic converter 1' >&2; exit 0; fi\nfor last; do input=$prev; prev=$last; done\n/bin/cp \"$input\" " ++
+      shQuote handed.toString ++ "\nprintf '%s' '<svg xmlns=\"http://www.w3.org/2000/svg\" \
+viewBox=\"0 0 10 10\"/>' > \"$last\"\n")
+    let mode ← IO.Process.output { cmd := "chmod", args := #["+x", (tools / "pdftocairo").toString] }
+    unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the stand-in converter"
+    IO.FS.writeFile (dir / "lossy.tex") (doc ["]{lossy.pdf}"])
+    let code ← build (dir / "lossy.tex") (dir / "lossy.html")
+    let counts ← if ← handed.pathExists then raster handed (edgeCells.map (·.1))
+      else pure (edgeCells.map fun _ => 0)
+    t s!"optional content: the converter is handed a lossy figure's page showing what its copy shows \
+(exit {code}, {counts})" (code == 0 && agrees counts edgeCells)
 
 open Tests.PdfNative in
 /-- PDF figures ship native web faces with no converter on the machine, and `\figures{ convert =

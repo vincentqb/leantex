@@ -1510,22 +1510,13 @@ in place of its groups and policy, and the losses an expression it cannot decide
 private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) :
     (Bool × Array Loss) × VeMemo :=
   if d.get? "Type" != some (.name "OCMD") then ((false, #[]), memo) else
-  let held (x : Obj) : Option Nat := match x with
-    | .ref k _ => if cfg.listed.contains k then some k else none
-    | _ => none
-  -- `OCGs` is one group's reference or an array of them (§8.11.2.2).
-  let refs : Array Nat := match d.get? "OCGs" with
-    | some (.ref m g) => match (cx.doc.deref (.ref m g)).toOption with
-      | some (.arr xs) => xs.filterMap held
-      | _ => (held (.ref m g)).toArray
-    | some (.arr xs) => xs.filterMap held
-    | _ => #[]
-  let pol := (d.get? "P").getD (.name "AnyOn")
+  let refs := cx.doc.ocmdGroups cfg d
+  let pol := PdfRead.ocmdPolicy d
   let byPolicy : Bool :=
     if refs.isEmpty then false
-    else if pol == .name "AllOn" then refs.any cfg.off.contains
-    else if pol == .name "AnyOff" then refs.all fun r => !cfg.off.contains r
-    else if pol == .name "AllOff" then refs.any fun r => !cfg.off.contains r
+    else if pol == "AllOn" then refs.any cfg.off.contains
+    else if pol == "AnyOff" then refs.all fun r => !cfg.off.contains r
+    else if pol == "AllOff" then refs.any fun r => !cfg.off.contains r
     else refs.all cfg.off.contains
   match (d.get? "VE").map cx.doc.deref with
   | none | some (.ok .null) => ((byPolicy, #[]), memo)

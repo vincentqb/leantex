@@ -1414,35 +1414,68 @@ public def trailer (b : ByteArray) : Except String Obj := do
   return x.trailer.getD (.dict #[])
 
 /-- A document's optional content configuration (§8.11.4): the groups it lists as dictionaries, in
-its order, and of those the ones its default configuration turns off. -/
+its order, those its default configuration turns off, and its radio-button sets and locked groups
+among them. -/
 public structure OcConfig where
   groups : Array Nat
   listed : Std.HashSet Nat
   off : Std.HashSet Nat
+  radio : Array (Array Nat)
+  locked : Array Nat
 
-/-- The default configuration (§8.11.4.3): the groups `/OCGs` lists as dictionaries, those its
-`/OFF` names, or under a base state of `OFF` all but those its `/ON` names; none without one. -/
+/-- The default configuration (§8.11.4.3): the groups `/OCGs` lists as dictionaries, off those its
+`/OFF` names, or under a base state of `OFF` all but those its `/ON` names and then its `/OFF`;
+none without one. -/
 public def Doc.ocConfig (doc : Doc) : Option OcConfig := do
   let field (o : Obj) (k : String) : Option Obj := (doc.field o k).toOption.getD none
-  let refs (o : Option Obj) : Array Nat := match o with
-    | some (.arr xs) => xs.filterMap fun x => match x with
+  let refsIn (o : Obj) : Array Nat := match o with
+    | .arr xs => xs.filterMap fun x => match x with
       | .ref n _ => some n
       | _ => none
     | _ => #[]
+  let refs (o : Option Obj) : Array Nat := (o.map refsIn).getD #[]
   let (cat, _) ← (doc.get doc.root).toOption
   let ocp ← field cat "OCProperties"
   let ocgs ← field ocp "OCGs"
   let dflt ← field ocp "D"
   guard (ocgs matches .arr _ && dflt matches .dict _)
-  let groups := (refs (some ocgs)).foldl (fun acc n =>
-    if !acc.contains n && (doc.deref (.ref n 0)).toOption matches some (.dict _) then acc.push n
-    else acc) #[]
-  let listed := Std.HashSet.ofArray groups
+  let (groups, listed) := (refs (some ocgs)).foldl (fun (acc, seen) n =>
+    if !seen.contains n && (doc.deref (.ref n 0)).toOption matches some (.dict _) then
+      (acc.push n, seen.insert n)
+    else (acc, seen)) ((#[] : Array Nat), ({} : Std.HashSet Nat))
   let off := (refs (field dflt "OFF")).filter listed.contains
+  let radio := match field dflt "RBGroups" with
+    | some (.arr sets) => sets.map fun set =>
+      (refsIn ((doc.deref set).toOption.getD .null)).filter listed.contains
+    | _ => #[]
+  let locked := (refs (field dflt "Locked")).filter listed.contains
   if field dflt "BaseState" == some (.name "OFF") then
     let on := Std.HashSet.ofArray (refs (field dflt "ON"))
-    return { groups, listed, off := Std.HashSet.ofArray ((groups.filter fun n => !on.contains n) ++ off) }
-  return { groups, listed, off := Std.HashSet.ofArray off }
+    return { groups, listed, radio, locked
+             off := Std.HashSet.ofArray ((groups.filter fun n => !on.contains n) ++ off) }
+  return { groups, listed, off := Std.HashSet.ofArray off, radio, locked }
+
+/-- The listed groups a membership dictionary's `/OCGs` names (§8.11.2.2): one group's reference
+or an array of them, direct or by reference, unlisted and missing entries ignored. -/
+public def Doc.ocmdGroups (doc : Doc) (cfg : OcConfig) (d : Obj) : Array Nat :=
+  let held (x : Obj) : Option Nat := match x with
+    | .ref k _ => if cfg.listed.contains k then some k else none
+    | _ => none
+  match d.get? "OCGs" with
+  | some (.ref m g) => match (doc.deref (.ref m g)).toOption with
+    | some (.arr xs) => xs.filterMap held
+    | _ => (held (.ref m g)).toArray
+  | some (.arr xs) => xs.filterMap held
+  | _ => #[]
+
+/-- A membership dictionary's visibility policy (§8.11.2.2): `AllOn`, `AnyOff` or `AllOff` where
+`/P` names it, else `AnyOn`. -/
+public def ocmdPolicy (d : Obj) : String :=
+  match d.get? "P" with
+  | some (.name "AllOn") => "AllOn"
+  | some (.name "AnyOff") => "AnyOff"
+  | some (.name "AllOff") => "AllOff"
+  | _ => "AnyOn"
 
 /-- A page selected by its physical, one-based position in `/Kids` order. -/
 public inductive PageSelection where
@@ -1583,16 +1616,51 @@ private def nameOut (n : String) : String := Id.run do
       out := out ++ String.ofList ['#', Hex.spell true (v / 16), Hex.spell true v]
   return out
 
-/-- Whether a copy drops an optional content dictionary's meaning, writing it as an empty dictionary:
-a group the source's configuration does not list, or under no configuration any group or
-membership dictionary, none of which can decide visibility there. -/
-private def ocDropped (cfg : Option OcConfig) (num : Option Nat) : Obj → Bool
+/-- A copied dictionary as the engine reads its source's optional content: a listed group kept, a
+membership dictionary under a configuration kept with only its listed groups, its policy and an
+array expression, any other group or membership dictionary emptied; whether one was kept. -/
+private def ocNormDict (doc : Doc) (cfg : Option OcConfig) (num : Option Nat)
+    (es : Array (String × Obj)) (kept : Bool) : Obj × Bool :=
+  let d : Obj := .dict es
+  match d.get? "Type", cfg with
+  | some (.name "OCG"), _ =>
+    if cfg.any fun c => num.any c.listed.contains then (d, kept) else (.dict #[], false)
+  | some (.name "OCMD"), none => (.dict #[], false)
+  | some (.name "OCMD"), some c =>
+    let groups := doc.ocmdGroups c d
+    let ve := (d.get? "VE").filter fun v => (doc.deref v).toOption matches some (.arr _)
+    if groups.isEmpty && ve.isNone then (.dict #[], false)
+    else (.dict (#[("Type", .name "OCMD"), ("OCGs", .arr (groups.map fun n => .ref n 0)),
+      ("P", .name (ocmdPolicy d))] ++ (ve.map fun v => #[("VE", v)]).getD #[]), true)
+  | _, _ => (d, kept)
+
+mutual
+/-- A copied value with its optional content dictionaries read as `ocNormDict` reads them, at every
+depth, `num` the object's own number; whether a membership dictionary was kept. -/
+private def ocNorm (doc : Doc) (cfg : Option OcConfig) (num : Option Nat) : Obj → Obj × Bool
+  | .arr xs =>
+    let (ys, kept) := ocNormList doc cfg #[] false xs.toList
+    (.arr ys, kept)
   | .dict es =>
-    match ((es.find? (·.1 == "Type")).map (·.2) : Option Obj) with
-    | some (.name "OCG") => !(cfg.any fun c => num.any c.listed.contains)
-    | some (.name "OCMD") => cfg.isNone
-    | _ => false
-  | _ => false
+    let (es, kept) := ocNormPairs doc cfg #[] false es.toList
+    ocNormDict doc cfg num es kept
+  | o => (o, false)
+
+private def ocNormList (doc : Doc) (cfg : Option OcConfig) (acc : Array Obj) (kept : Bool) :
+    List Obj → Array Obj × Bool
+  | [] => (acc, kept)
+  | x :: rest =>
+    let (y, k) := ocNorm doc cfg none x
+    ocNormList doc cfg (acc.push y) (kept || k) rest
+
+private def ocNormPairs (doc : Doc) (cfg : Option OcConfig) (acc : Array (String × Obj))
+    (kept : Bool) : List (String × Obj) → Array (String × Obj) × Bool
+  | [] => (acc, kept)
+  | (k, v) :: rest =>
+    let (w, kk) := ocNorm doc cfg none v
+    ocNormPairs doc cfg (acc.push (k, w)) (kept || kk) rest
+end
+
 
 /-- What the serializer still owes, in order: an object between two texts, or a text. -/
 private inductive SerWork where
@@ -1679,10 +1747,13 @@ private def serObj (st : SerSt) (out : Array Chunk) (o : Obj) : SerSt × Array C
   serWork st out [.obj "" o ""]
 
 /-- A copied page's optional content: the groups its source's configuration lists, in its order,
-and those it turns off, each the local index of its copied object. -/
+those it turns off, and its radio-button sets and locked groups, each a copied object's local
+index. -/
 public structure FormOc where
   groups : Array Nat
   off : Array Nat
+  radio : Array (Array Nat)
+  locked : Array Nat
   deriving Inhabited
 
 /-- A selected page ready to embed: its one-based number, its box in sp, its decoded content, its
@@ -1709,12 +1780,13 @@ private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
     | .ref l => l < n
     | .bytes _ => true
 
-/-- Every hole in the copied graph, and every group the configuration names, points into
-`objects`. -/
+/-- Every hole in the copied graph points into `objects`, and every group the configuration names
+is one of its groups there. -/
 public def Form.wf (f : Form) : Bool :=
   chunksWf f.objects.size f.resources &&
   f.objects.all (fun o => chunksWf f.objects.size o.chunks) &&
-  f.oc.all fun oc => (oc.groups ++ oc.off).all (· < f.objects.size)
+  f.oc.all fun oc => oc.groups.all (· < f.objects.size) &&
+    (oc.off ++ oc.locked ++ oc.radio.flatten).all oc.groups.contains
 
 public theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
   f.property
@@ -1770,7 +1842,8 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
   let content ← r.content page
   let cfg := r.ocConfig
   let mut st : SerSt := {}
-  let resObj := page.resources.getD (.dict #[])
+  let (resObj, keptRes) := ocNorm r cfg none (page.resources.getD (.dict #[]))
+  let mut kept := keptRes
   let (st1, resChunks) := serObj st #[] resObj
   st := st1
   let mut objects : Array XObjOut := #[]
@@ -1783,7 +1856,8 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     let (v, raw?) ← r.get orig
     match raw? with
     | none =>
-      let v := if ocDropped cfg (some orig) v then .dict #[] else v
+      let (v, k) := ocNorm r cfg (some orig) v
+      kept := kept || k
       let (st', chunks) := serObj st #[] v
       st := st'
       objects := objects.push { chunks }
@@ -1792,15 +1866,19 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
       let es : Array (String × Obj) := match v with
         | .dict es => es.filter (fun kv => kv.1 != "Length")
         | _ => #[]
-      let (st', chunks) := serObj st #[]
-        (.dict (es.push ("Length", .int raw.size)))
+      let (d, k) := ocNorm r cfg (some orig) (.dict (es.push ("Length", .int raw.size)))
+      kept := kept || k
+      let (st', chunks) := serObj st #[] d
       st := st'
       objects := objects.push { chunks, stream := some raw }
   if qi < st.queue.size then
     throw "malformed PDF: the resource graph is larger than the file"
-  let oc := cfg.map fun c =>
-    let groups := c.groups.filterMap st.assign.get?
-    { groups, off := (c.groups.filter c.off.contains).filterMap st.assign.get? : FormOc }
+  let oc := cfg.bind fun c =>
+    let copied (ns : Array Nat) : Array Nat := ns.filterMap st.assign.get?
+    let groups := copied c.groups
+    if groups.isEmpty && !kept then none
+    else some { groups, off := copied (c.groups.filter c.off.contains)
+                radio := (c.radio.map copied).filter (·.size > 1), locked := copied c.locked }
   return (content, resChunks, objects, oc)
 
 /-- A selected page of a PDF read into an embeddable form, page 1 by default; anything the reader
@@ -1850,5 +1928,54 @@ public theorem readForm_box_exact (b : ByteArray) (sel : PageSelection) (f : { f
               subst h
               exact ⟨d, sp.1, sp.2, rfl, by simp [Doc.page, hs], by simp [hb]⟩
             · simp at h
+
+/-- An object's generation as its header spells it, zero in an object stream. -/
+private def Doc.genOf (d : Doc) (num : Nat) : Nat :=
+  match d.locs.get? num with
+  | some (.direct off) => ((parseUInt d.bytes (skipWs d.bytes off)).bind fun (_, i) =>
+      (parseUInt d.bytes (skipWs d.bytes i)).map (·.1)).getD 0
+  | _ => 0
+
+/-- The file with an incremental update (§7.5.6) declaring its optional content as its copy reads
+it: its configuration's groups, those it turns off, and every dictionary `ocNorm` rewrites; the
+bytes unchanged where the catalog declares none, the file is encrypted or it does not read. -/
+public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
+  let .ok r := Doc.ofBytes b | return b
+  let .ok (.dict cat, _) := r.get r.root | return b
+  let .ok start := readStartxref b | return b
+  if !(cat.any (·.1 == "OCProperties")) || (r.trailer.get? "Encrypt").isSome then return b
+  let cfg := r.ocConfig
+  let refOf (n : Nat) : Obj := .ref n (r.genOf n)
+  let ocp : Array (String × Obj) := (cfg.map fun c => #[("OCProperties", Obj.dict #[
+    ("OCGs", .arr (c.groups.map refOf)),
+    ("D", .dict #[("OFF", .arr ((c.groups.filter c.off.contains).map refOf))])])]).getD #[]
+  let mut objs : Array (Nat × Obj × Option ByteArray) :=
+    #[(r.root, .dict (cat.filter (·.1 != "OCProperties") ++ ocp), none)]
+  for n in r.objectNumbers.mergeSort (fun a c => decide (a ≤ c)) do
+    if n == r.root then continue
+    let .ok (v, raw?) := r.get n | continue
+    let w := (ocNorm r cfg (some n) v).1
+    if w == v then continue
+    let w : Obj := match raw?, w with
+      | some raw, .dict es => .dict ((es.filter (·.1 != "Length")).push ("Length", .int raw.size))
+      | _, w => w
+    objs := objs.push (n, w, raw?)
+  let digits (width v : Nat) : String :=
+    let spelled := toString v
+    "".pushn '0' (width - spelled.length) ++ spelled
+  let mut out := b.push 10
+  let mut rows := ""
+  for (n, v, raw?) in objs do
+    rows := rows ++ s!"{n} 1\n{digits 10 out.size} {digits 5 (r.genOf n)} n \n"
+    out := out ++ s!"{n} {r.genOf n} obj\n".toUTF8 ++ v.render
+    if let some raw := raw? then
+      out := out ++ "\nstream\n".toUTF8 ++ raw ++ "\nendstream".toUTF8
+    out := out ++ "\nendobj\n".toUTF8
+  let size := objs.foldl (fun m (n, _) => max m (n + 1))
+    (((r.trailer.get? "Size").bind Obj.int?).getD 0).toNat
+  let trailer : Obj := .dict (#[("Size", .int size), ("Root", refOf r.root), ("Prev", .int start)] ++
+    #["Info", "ID"].filterMap fun k => (r.trailer.get? k).map (k, ·))
+  return out ++ s!"xref\n{rows}trailer\n".toUTF8 ++ trailer.render ++
+    s!"\nstartxref\n{out.size}\n%%EOF\n".toUTF8
 
 end LeanTex.Core.PdfRead
