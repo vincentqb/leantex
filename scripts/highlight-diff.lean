@@ -6,6 +6,8 @@ Usage: lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--
 import LeanTex
 import LeanTex.Core.Highlight
 import Lean.Data.Json
+import scripts.GenData
+import Tests.Rand
 
 open LeanTex.Core
 open LeanTex.Core.Highlight
@@ -25,22 +27,7 @@ import shutil
 import sys
 import unicodedata
 
-try:
-    import pygments
-except ModuleNotFoundError as error:
-    if error.name != 'pygments':
-        raise
-    launcher = shutil.which('latexminted')
-    if launcher is None:
-        raise SystemExit('no Pygments: no installed module and no latexminted launcher')
-    wheels = sorted(pathlib.Path(launcher).resolve().parent.glob('pygments-*.whl'))
-    if len(wheels) != 1:
-        raise SystemExit('no Pygments: expected one wheel beside latexminted')
-    sys.path.insert(0, str(wheels[0]))
-    import pygments
-import pygments.plugin
-pygments.plugin.iter_entry_points = lambda group: ()
-from pygments.lexer import bygroups, inherit
+"# ++ GenData.pygmentsLoader ++ r#"from pygments.lexer import bygroups, inherit
 from pygments.lexers._mapping import LEXERS
 from pygments.lexers.lean import Lean4Lexer
 from pygments.styles import get_style_by_name
@@ -223,15 +210,7 @@ def showToks (src : Array Char) (ts : Array Tok) (around : Nat) : String := Id.r
       out := out ++ s!"    {a}-{b} {k} \"{escape text}\"\n"
   return out
 
-def nextRand (s : UInt64) : UInt64 × UInt64 :=
-  let x := s ^^^ (s >>> 12)
-  let x := x ^^^ (x <<< 25)
-  let x := x ^^^ (x >>> 27)
-  (x, x * 2685821657736338717)
-
-def pick (seed : UInt64) (bound : Nat) : Nat × UInt64 :=
-  let (s, v) := nextRand seed
-  ((v % UInt64.ofNat (max bound 1)).toNat, s)
+def pick (seed : UInt64) (bound : Nat) : Nat × UInt64 := rand seed (max bound 1)
 
 def fragments : Lexer → Array String
   | .lean4 =>

@@ -5,18 +5,11 @@ Usage: lake build ScriptsModules && lake env lean --run scripts/pdffig-diff.lean
 -/
 import LeanTex
 import scripts.RasterJudge
+import scripts.Board
 
 open LeanTex.Core LeanTex.Cli
 
 namespace PdfFigDiff
-
-def dir : String := "testdata/pdf-native"
-
-/-- The fixtures the report reads, in a fixed order. -/
-def fixtures : Array String :=
-  #["cairo-chart.pdf", "geometry-dialect.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf",
-    "lualatex-strokedtext.pdf", "lualatex-text.pdf", "matplotlib-dialect.pdf", "print-dialect.pdf",
-    "text-dialect.pdf"]
 
 def tool (cmd : String) (args : Array String) : IO IO.Process.Output := do
   match ← runTool cmd args with
@@ -263,8 +256,8 @@ def main (args : List String) : IO UInt32 := do
   let work ← IO.FS.createTempDir
   IO.println s!"pdffig-diff: {version}; DSSIM at {dssimScale}, {rasterDpi} dpi"
   let mut failed := 0
-  for name in fixtures do
-    let pdf : System.FilePath := (← IO.FS.realPath (dir ++ "/" ++ name))
+  for name in Scoreboard.pdfNativeFixtures do
+    let pdf : System.FilePath := (← IO.FS.realPath (Scoreboard.pdfNativeDir ++ "/" ++ name))
     let stem := (name.takeWhile (· != '.')).toString
     let imp ← match PdfGfx.importPage (← IO.FS.readBinFile pdf) with
       | .ok imp => pure imp

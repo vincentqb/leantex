@@ -3,15 +3,14 @@ Regenerate LeanTex/Core/CollateData.lean: the Unicode::Collate::Locale tailoring
 by, as `Collate`'s weight rows, and biber's `%LOCALE_MAP`, read from the host through perl.
 Usage: lake env lean --run scripts/gen-collate-data.lean [path/to/Biber/Constants.pm]
 -/
+import scripts.GenData
 
 import Std.Data.HashMap
 import LeanTex.Core.Hex
 
 open LeanTex.Core
 
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
+open GenData
 
 /-- The first copyright line of the default table Unicode::Collate reads
 (`Unicode/Collate/allkeys.txt` on perl's `@INC`), as its header states it. -/

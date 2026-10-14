@@ -3,13 +3,11 @@ Regenerate LeanTex/Core/PygmentsStyleData.lean and testdata/oracles/pygments-sty
 installed Pygments, refusing a style word the painter does not carry.
 Usage: lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>]
 -/
+import scripts.GenData
 import Lean.Data.Json
 
+open GenData
 open Lean (Json)
-
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
 
 def styles : List String := ["default", "friendly"]
 
@@ -22,22 +20,7 @@ import re
 import shutil
 import sys
 
-try:
-    import pygments
-except ModuleNotFoundError as error:
-    if error.name != 'pygments':
-        raise
-    launcher = shutil.which('latexminted')
-    if launcher is None:
-        raise SystemExit('no Pygments: no installed module and no latexminted launcher')
-    wheels = sorted(pathlib.Path(launcher).resolve().parent.glob('pygments-*.whl'))
-    if len(wheels) != 1:
-        raise SystemExit('no Pygments: expected one wheel beside latexminted')
-    sys.path.insert(0, str(wheels[0]))
-    import pygments
-import pygments.plugin
-pygments.plugin.iter_entry_points = lambda group: ()
-from pygments.formatters.latex import LatexFormatter
+"# ++ GenData.pygmentsLoader ++ r#"from pygments.formatters.latex import LatexFormatter
 from pygments.styles import get_style_by_name
 from pygments.token import STANDARD_TYPES
 

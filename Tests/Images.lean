@@ -9,13 +9,6 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 /-! Image checks: the probe and the planner, the alpha split, colour-key transparency, and the
 plan's own contract. -/
 
-/-- The colour-key ranges a plan carries, empty when none. -/
-def planKey (pl : Image.Plan) : Array Nat :=
-  match pl.alpha with
-  | .colorKey ks => ks
-  | .opaque => #[]
-  | .soft _ _ => #[]
-
 /-- The soft-mask plane a plan carries, empty when none. -/
 def planSoft (pl : Image.Plan) : ByteArray :=
   match pl.alpha with

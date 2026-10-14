@@ -3,13 +3,12 @@ Regenerate LeanTex/Core/WhatwgEncodingData.lean from testdata/vendor/whatwg-enco
 any line, pointer or label it cannot read exactly once.
 Usage: lake env lean --run scripts/gen-whatwg-encoding-data.lean [--check]
 -/
+import scripts.GenData
 import Lean.Data.Json
 
-open Lean
+open GenData
 
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
+open Lean
 
 def dir : System.FilePath := "testdata/vendor/whatwg-encoding"
 def target : System.FilePath := "LeanTex/Core/WhatwgEncodingData.lean"

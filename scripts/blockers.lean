@@ -7,7 +7,7 @@ import LeanTex
 import scripts.Board
 
 open LeanTex.Core
-open Scoreboard (sha256Hex Entry pinnedEntry parsePins)
+open Scoreboard (sha256Hex Entry pinnedEntry parsePins namesLeantex insideCheckout)
 
 def blockersPath : String := "testdata/coverage/blockers.tsv"
 
@@ -105,13 +105,6 @@ def Owner.isPublic : Owner → Bool
   | .primitive | .kernel | .cls _ | .pkg _ => true
   | .document | .nonpublic | .unattributed => false
 
-/-- Whether this `lakefile.toml` declares the package `leantex`, read as a key and a
-value. -/
-def namesLeantex (lakefile : String) : Bool :=
-  (lakefile.splitOn "\n").any fun l =>
-    let t := String.ofList (l.toList.filter (!·.isWhitespace))
-    t == "name=\"leantex\"" || t == "name='leantex'"
-
 /-- An output the caller named, placed in a directory checked to lie outside every leantex
 checkout; `Dest.of?` is its one constructor. -/
 structure Dest where
@@ -129,15 +122,8 @@ def Dest.of? (out : String) : IO (Except String Dest) := do
   let parent := if parent.isEmpty then "." else parent
   let some dir ← realPath? parent
     | return .error s!"{out}: its directory does not exist"
-  let mut cur : System.FilePath := dir
-  for _ in [0:4096] do
-    let lf := cur / "lakefile.toml"
-    if ← lf.pathExists then
-      if namesLeantex (← orElse (IO.FS.readFile lf) "") then
-        return .error s!"{out}: inside a leantex checkout; write it outside every checkout"
-    match cur.parent with
-    | some p => if p == cur then break else cur := p
-    | none => break
+  if ← insideCheckout dir then
+    return .error s!"{out}: inside a leantex checkout; write it outside every checkout"
   return .ok ⟨dir, name⟩
 
 /-- Write an output, or a sibling of it (`suffix`), as a new file in the checked directory

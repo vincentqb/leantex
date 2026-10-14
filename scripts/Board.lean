@@ -1059,6 +1059,55 @@ def parsePins (file text : String) : Except String (Array Entry) := Id.run do
       return .error s!"{file}:{n}: not `<sha256>  <path>`; every entry carries its pin"
   return .ok out
 
+/-- Where a vendored directory stops holding upstream's bytes: a pinned file whose bytes are not
+its pin's or that is gone, and a file neither a pin nor `own` names. -/
+def sumFaults (dir : String) (own : List String) : IO (Array String) := do
+  let sums := dir ++ "/SHA256SUMS"
+  let entries ← match parsePins sums (← readFileOr sums) with
+    | .ok es => pure es
+    | .error e => return #[e]
+  let mut faults : Array String := #[]
+  for e in entries do
+    let p := dir ++ "/" ++ e.path
+    if e.path.startsWith "/" || (e.path.splitOn "..").length > 1 then
+      faults := faults.push s!"{sums}: '{e.path}' leaves the directory"
+    else if !(← System.FilePath.pathExists p) then
+      faults := faults.push s!"{p}: pinned in {sums}, and absent"
+    else if sha256Hex (← IO.FS.readBinFile p) != e.pin then
+      faults := faults.push s!"{p}: not the bytes its pin in {sums} names"
+  for f in ← System.FilePath.walkDir dir do
+    unless ← f.isDir do
+      let rel := (f.toString.drop (dir.length + 1)).toString
+      unless own.contains rel || entries.any (·.path == rel) do
+        faults := faults.push s!"{f}: in the directory, and pinned by no line of {sums}"
+  return faults
+
+/-- Whether this `lakefile.toml` declares the package `leantex`, read as a key and a value. -/
+def namesLeantex (lakefile : String) : Bool :=
+  (lakefile.splitOn "\n").any fun l =>
+    let t := String.ofList (l.toList.filter (!·.isWhitespace))
+    t == "name=\"leantex\"" || t == "name='leantex'"
+
+/-- Whether the resolved directory `dir`, or a directory above it, is a leantex checkout. -/
+def insideCheckout (dir : System.FilePath) : IO Bool := do
+  let mut cur := dir
+  for _ in [0:4096] do
+    let lf := cur / "lakefile.toml"
+    if ← lf.pathExists then
+      if namesLeantex ((← (IO.FS.readFile lf).toBaseIO).toOption.getD "") then return true
+    match cur.parent with
+    | some p => if p == cur then break else cur := p
+    | none => break
+  return false
+
+def pdfNativeDir : String := "testdata/pdf-native"
+
+/-- The committed native PDF fixtures, in a fixed order. -/
+def pdfNativeFixtures : Array String :=
+  #["cairo-chart.pdf", "geometry-dialect.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf",
+    "lualatex-strokedtext.pdf", "lualatex-text.pdf", "matplotlib-dialect.pdf", "print-dialect.pdf",
+    "text-dialect.pdf"]
+
 /-- The three modes every tier producer shares: no argument regenerates the baseline,
 writing a fall only where a committed request authorises it; `--check` compares and writes
 nothing, an absent or empty baseline a fault; `--selftest` runs the tier's predicates. -/

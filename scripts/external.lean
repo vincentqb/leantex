@@ -5,6 +5,7 @@ Usage: lake env lean --run scripts/external.lean [--check | --selftest | --repor
 -/
 import LeanTex
 import scripts.Board
+import scripts.RasterJudge
 import Lean.Data.Json
 
 open LeanTex.Core LeanTex.Cli Scoreboard Lean
@@ -70,31 +71,8 @@ def unknownsIn (ds : Array Diag) : Array String := Id.run do
 upstream's, pinned in `SHA256SUMS`. -/
 def ownFiles : List String := ["SHA256SUMS", "documents.txt", "PROVENANCE.txt"]
 
-/-- Where the corpus directory stops holding upstream's bytes, read both ways: a pinned
-file whose bytes differ or are gone, and a file no pin names. -/
-def sumFaults (root : String) : IO (Array String) := do
-  let sums := root ++ "/SHA256SUMS"
-  let entries ← match parsePins sums (← readFileOr sums) with
-    | .ok es => pure es
-    | .error e => return #[e]
-  let mut faults : Array String := #[]
-  for e in entries do
-    let p := root ++ "/" ++ e.path
-    if e.path.startsWith "/" || (e.path.splitOn "..").length > 1 then
-      faults := faults.push s!"{sums}: '{e.path}' leaves the corpus directory"
-    else if !(← System.FilePath.pathExists p) then
-      faults := faults.push s!"{p}: pinned in {sums}, and absent"
-    else if sha256Hex (← IO.FS.readBinFile p) != e.pin then
-      faults := faults.push s!"{p}: not the bytes its pin in {sums} names"
-  for f in ← System.FilePath.walkDir root do
-    unless ← f.isDir do
-      let rel := (f.toString.drop (root.length + 1)).toString
-      unless ownFiles.contains rel || entries.any (·.path == rel) do
-        faults := faults.push s!"{f}: in the corpus directory, and pinned by no line of {sums}"
-  return faults
-
 def measureTier : IO (Array String × Array Row) := do
-  let faults ← sumFaults corpusDir
+  let faults ← sumFaults corpusDir ownFiles
   unless faults.isEmpty do
     throw (IO.userError s!"external: {faults.size} fault(s) in the vendored bytes:\n  \
 {"\n  ".intercalate faults.toList}")
@@ -113,38 +91,6 @@ under -halt-on-error when it was imported (testdata/external/flashtex/PROVENANCE
     "# value: elaboration alone, through the driver's input splice — 2 no error and no \
 unknown construct (W0301/W0302), 1 no error, 0 an error",
     s!"# counts: {at2} at 2, {at1} at 1, {docs.size - at2 - at1} at 0"], rows)
-
-/-- An 8-bit grey raster: `pdftoppm -gray`'s binary PGM. -/
-structure Gray where
-  w : Nat
-  h : Nat
-  px : ByteArray
-deriving Inhabited
-
-def isSpace (b : UInt8) : Bool := b == 32 || b == 9 || b == 10 || b == 13
-
-/-- A binary PGM, `max = 255` only, as `pdftoppm -gray` writes it. -/
-def Gray.parse (b : ByteArray) : Option Gray := Id.run do
-  if b.size < 3 || b[0]! != 80 || b[1]! != 53 then return none
-  let mut i := 2
-  let mut nums : Array Nat := #[]
-  for _ in [0:b.size] do
-    if nums.size == 3 || i ≥ b.size then break
-    if b[i]! == 35 then
-      while i < b.size && b[i]! != 10 do i := i + 1
-    else if isSpace b[i]! then i := i + 1
-    else if 48 ≤ b[i]! && b[i]! ≤ 57 then
-      let mut n := 0
-      while i < b.size && 48 ≤ b[i]! && b[i]! ≤ 57 do
-        n := n * 10 + (b[i]! - 48).toNat
-        i := i + 1
-      nums := nums.push n
-    else return none
-  let #[w, h, mx] := nums | return none
-  if mx != 255 || i ≥ b.size || !isSpace b[i]! then return none
-  let start := i + 1
-  if b.size < start + w * h then return none
-  return some { w, h, px := b.extract start (start + w * h) }
 
 /-- Root-mean-square grey difference in thousandths of full scale, both
 rasters padded to the larger with white. -/
@@ -437,27 +383,13 @@ def measureOne (bin root work : String) (n : Nat) (d : Doc) : IO Measure := do
     census := porcelainDiags lt.out
     unknowns := unknownsIn eds, alone := standing eds }
 
-/-- Whether this `lakefile.toml` declares the package `leantex`. -/
-def namesLeantex (lakefile : String) : Bool :=
-  (lakefile.splitOn "\n").any fun l =>
-    let t := String.ofList (l.toList.filter (!·.isWhitespace))
-    t == "name=\"leantex\"" || t == "name='leantex'"
-
 /-- A work directory is refused when it, or any directory above it, is a leantex checkout;
 it must exist, so it can be resolved. -/
 def outsideCheckouts (dir : String) : IO (Except String String) := do
   let real ← try pure (some (← IO.FS.realPath dir).toString) catch _ => pure none
   let some real := real | return .error s!"{dir}: does not exist"
-  let mut cur : System.FilePath := real
-  for _ in [0:4096] do
-    let lf := cur / "lakefile.toml"
-    if ← lf.pathExists then
-      let t ← try IO.FS.readFile lf catch _ => pure ""
-      if namesLeantex t then
-        return .error s!"{dir}: inside a leantex checkout; build outside every checkout"
-    match cur.parent with
-    | some p => if p == cur then break else cur := p
-    | none => break
+  if ← insideCheckout real then
+    return .error s!"{dir}: inside a leantex checkout; build outside every checkout"
   return .ok real
 
 def tsvLine (xs : List String) : String := String.intercalate "\t" xs ++ "\n"
@@ -757,20 +689,20 @@ Mono\" }\nx")
     let sums := pinnedEntry (sha256Hex "alpha\n".toUTF8) "a.tex" ++ "\n" ++
       pinnedEntry (sha256Hex "beta\n".toUTF8) "sub/b.tex" ++ "\n"
     put "SHA256SUMS" sums
-    expect "the pinned bytes verify" (← sumFaults root).isEmpty
+    expect "the pinned bytes verify" (← sumFaults root ownFiles).isEmpty
     put "sub/b.tex" "betb\n"
-    expect "one changed byte is a fault" ((← sumFaults root).size == 1)
+    expect "one changed byte is a fault" ((← sumFaults root ownFiles).size == 1)
     put "sub/b.tex" "beta\n"
     put "sub/c.tex" "gamma\n"
-    expect "a file no pin names is a fault" ((← sumFaults root).size == 1)
+    expect "a file no pin names is a fault" ((← sumFaults root ownFiles).size == 1)
     IO.FS.removeFile (root ++ "/sub/c.tex")
     IO.FS.removeFile (root ++ "/a.tex")
-    expect "a pinned file gone is a fault" ((← sumFaults root).size == 1)
+    expect "a pinned file gone is a fault" ((← sumFaults root ownFiles).size == 1)
     put "a.tex" "alpha\n"
     put "SHA256SUMS" (sums ++ pinnedEntry (sha256Hex "x".toUTF8) "../x.tex" ++ "\n")
-    expect "a pin leaving the directory is a fault" ((← sumFaults root).size == 1)
+    expect "a pin leaving the directory is a fault" ((← sumFaults root ownFiles).size == 1)
     put "SHA256SUMS" (sums ++ "a.tex\n")
-    expect "a line that is no pin is a fault" ((← sumFaults root).size == 1)
+    expect "a line that is no pin is a fault" ((← sumFaults root ownFiles).size == 1)
 
 end External
 

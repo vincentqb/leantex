@@ -88,15 +88,6 @@ def score (bytes : ByteArray) : Nat :=
   | .lossy i => if !i.fig.marks.isEmpty || !i.fig.labels.isEmpty then 1 else 0
   | .refused _ => 0
 
-/-- The invented figures the tier reads: every SVG under `testdata/svg` and
-`testdata/corpus/figures`, in name order. -/
-def fixtureFiles : IO (Array System.FilePath) := do
-  let mut out : Array System.FilePath := #[]
-  for dir in ["testdata/svg", "testdata/corpus/figures"] do
-    for e in (← System.FilePath.readDir dir).qsort (·.fileName < ·.fileName) do
-      if e.fileName.endsWith ".svg" then out := out.push e.path
-  return out
-
 def measureTier : IO (Array String × Array Row) := do
   let drawing := String.fromUTF8! (svgDocument svgRedSquare)
   let admitted := svgBoundaryAdmitted.filter fun (_, b) => (Svg.judge (svgDocument b)).toBool
@@ -111,7 +102,7 @@ def measureTier : IO (Array String × Array Row) := do
     match pose (doc b) true, pose (doc e) false with
     | .ok a, .ok z => a == z
     | _, _ => false
-  let files ← fixtureFiles
+  let files ← svgFixtureFiles
   let fonts ← Tests.threeRoleFonts
   let mut exact := 0
   let mut text := 0

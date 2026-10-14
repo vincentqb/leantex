@@ -228,7 +228,7 @@ def registry : List Premise := [
   { name := "kpsewhich", residue := .oracle "kpsewhich", reach := .oracle
     statement := "kpsewhich prints, for --show-path=.otf and --show-path=.ttf, the directories where lualatex finds fonts, which the TeX font report holds the engine's own directories to, and names the files of the TeX tree the generators read."
     sites := [("scripts/texfonts-report.lean", "kpsewhichRoots"), ("scripts/gen-hyphen-data.lean", "main"),
-      ("scripts/gen-bibstrings-data.lean", "locate")]
+      ("scripts/GenData.lean", "locate")]
     tools := ["kpsewhich"]
     owed := some "Compare kpsewhich's font directories with the directories lualatex opens a font from." },
   { name := "python3", residue := .tool "python3", reach := .render

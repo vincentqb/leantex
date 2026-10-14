@@ -4,6 +4,7 @@ invented matrix: room within [0.40, 2.50], the value right of and above the stri
 Usage: lake build leantex && lake env lean --run scripts/cancel-diff.lean [--report | --selftest]
 -/
 import LeanTex
+import scripts.ToolDump
 
 open LeanTex.Core
 
@@ -15,21 +16,6 @@ structure WordBox where
   x1 : Int
   y1 : Int
   deriving Repr, BEq, Inhabited
-
-def attrOf (line attr : String) : Option String := do
-  let after ← (line.splitOn (attr ++ "=\""))[1]?
-  (after.splitOn "\"").head?
-
-/-- A decimal string of points to micro-points. -/
-def microPt (s : String) : Option Int := do
-  let (mantissa, scale) ← Decl.parseDecimal s
-  return mantissa * 1000000 / (scale : Int)
-
-/-- The text between `>` and `</word>`, entities decoded. -/
-def wordText (line : String) : String :=
-  let after := String.intercalate ">" ((line.splitOn ">").drop 1)
-  let body := (after.splitOn "</word>").headD ""
-  (((body.replace "&lt;" "<").replace "&gt;" ">").replace "&amp;" "&").trimAscii.toString
 
 /-- Every non-empty word box in a Poppler `-bbox` dump; cancel.sty's rules surface as
 empty words and are dropped. -/
@@ -45,12 +31,6 @@ def parseWords (xml : String) : Array WordBox := Id.run do
         unless t.isEmpty do out := out.push { text := t, x0, y0, x1, y1 }
       | _, _, _, _ => pure ()
   return out
-
-def pointMicro (v : Int) : String :=
-  let sign := if v < 0 then "-" else ""
-  let n := v.natAbs
-  let frac := toString (n % 1000000)
-  s!"{sign}{n / 1000000}.{String.ofList (List.replicate (6 - frac.length) '0')}{frac}"
 
 /-- The mathematical-italic scalar an ASCII letter maps to in math mode (italic h at
 U+210E); a digit stays itself. -/
@@ -133,13 +113,6 @@ def leanSource (fontDir : String) (c : Case) (room : Bool) : String :=
 def runTool (cmd : String) (args : Array String) (cwd : System.FilePath) :
     IO IO.Process.Output := do
   IO.Process.output { cmd, args, cwd }
-
-def version (cmd : String) (args : Array String) (cwd : System.FilePath) : IO String := do
-  try
-    let out ← IO.Process.output { cmd, args, cwd }
-    if out.exitCode == 0 then return ((out.stdout ++ out.stderr).splitOn "\n").headD "?"
-    return "unavailable"
-  catch _ => return "unavailable"
 
 /-- The three glyph boxes a case exposes: the struck content, the value (`\cancelto`), and
 the following atom; `none` when Poppler could not isolate exactly the expected words. -/
@@ -224,14 +197,14 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.createDirAll work
   let fontDir := (root / "testdata" / "corpus" / "fonts").toString
   for (cmd, probe) in [("lualatex", #["--version"]), ("pdftotext", #["-v"])] do
-    if (← version cmd probe root) == "unavailable" then
+    if (← toolVersion cmd probe root) == "unavailable" then
       IO.eprintln s!"cancel-diff: {cmd} not available — untested"
       return 2
   IO.println "cancel-diff: cancellation placement, LuaLaTeX (cancel.sty) vs leantex"
   IO.println "  shared face: FiraMath / Fira Sans (repository corpus)"
   IO.println "  room: [0.40, 2.50] × positive reference; 0–2pt when reference adds none"
-  IO.println s!"  lualatex: {← version "lualatex" #["--version"] root}"
-  IO.println s!"  poppler:  {← version "pdftotext" #["-v"] root}"
+  IO.println s!"  lualatex: {← toolVersion "lualatex" #["--version"] root}"
+  IO.println s!"  poppler:  {← toolVersion "pdftotext" #["-v"] root}"
 
   let measure (tag : String) (c : Case) (room : Bool)
       (src : String) (buildLua : Bool) : IO (Option Boxes) := do

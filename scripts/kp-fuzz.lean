@@ -4,22 +4,16 @@ minimum.
 Usage: lake env lean --run scripts/kp-fuzz.lean [iterations]
 -/
 import LeanTex
+import Tests.Rand
 
 open LeanTex.Core LeanTex.Core.Layout
-
-/-- xorshift64*: deterministic, dependency-free. -/
-private def nextRand (s : UInt64) : UInt64 × UInt64 :=
-  let x := s ^^^ (s >>> 12)
-  let x := x ^^^ (x <<< 25)
-  let x := x ^^^ (x >>> 27)
-  (x, x * 2685821657736338717)
 
 private structure Gen where
   seed : UInt64
 
 private def Gen.next (g : Gen) (bound : Nat) : Nat × Gen :=
-  let (s, v) := nextRand g.seed
-  ((v % UInt64.ofNat bound).toNat, { seed := s })
+  let (v, s) := rand g.seed bound
+  (v, { seed := s })
 
 /-- A random paragraph's items: boxes separated by glue, occasional flagged hyphen
 penalties and forced breaks, each box one glyph from a pool spanning the protrusion

@@ -4,38 +4,22 @@ SVG reader, anchored by the pristine fixtures' known answers.
 Usage: lake build imgFuzz && .lake/build/bin/imgFuzz
 -/
 import LeanTex
+import Tests.Support
 
 open LeanTex.Core
-
-def nextRand (s : UInt64) : UInt64 × UInt64 :=
-  let s := s ^^^ (s >>> 12)
-  let s := s ^^^ (s <<< 25)
-  let s := s ^^^ (s >>> 27)
-  (s, s * 2685821657736338717)
-
-def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
-  let (s, v) := nextRand s
-  (v.toNat % bound, s)
 
 def die (msg : String) : IO Unit := do
   IO.eprintln s!"img-fuzz: FAIL {msg}"
   IO.Process.exit 1
 
 -- Synthetic PNGs (structure only, CRCs zero; the probe never checks them).
-def be32 (n : Nat) : List UInt8 :=
-  [UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
-   UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
-
-def chunk (tag : String) (data : List UInt8) : List UInt8 :=
-  be32 data.length ++ (tag.toList.map fun c => UInt8.ofNat c.toNat) ++ data ++ [0, 0, 0, 0]
-
 def pngOf (bd ct : Nat) (extra : List UInt8) : ByteArray :=
   ⟨([137, 80, 78, 71, 13, 10, 26, 10] ++
-    chunk "IHDR" (be32 4 ++ be32 4 ++ [UInt8.ofNat bd, UInt8.ofNat ct, 0, 0, 0]) ++
-    extra ++ chunk "IDAT" [0, 1, 2, 3] ++ chunk "IEND" []).toArray⟩
+    pngChunk "IHDR" (be32 4 ++ be32 4 ++ [UInt8.ofNat bd, UInt8.ofNat ct, 0, 0, 0]) ++
+    extra ++ pngChunk "IDAT" [0, 1, 2, 3] ++ pngChunk "IEND" []).toArray⟩
 
 def keyedPng (bd ct : Nat) (plte trns : List UInt8) : ByteArray :=
-  pngOf bd ct ((if plte.isEmpty then [] else chunk "PLTE" plte) ++ chunk "tRNS" trns)
+  pngOf bd ct ((if plte.isEmpty then [] else pngChunk "PLTE" plte) ++ pngChunk "tRNS" trns)
 
 -- Synthetic JPEG headers: SOI, the given segments, SOF0, SOS.
 def jpegSeg (m : Nat) (payload : List UInt8) : List UInt8 :=
@@ -57,12 +41,6 @@ def iccApp2 (seq count : Nat) (data : List UInt8) : List UInt8 :=
 
 def plan (b : ByteArray) : Except String Image.Plan :=
   Image.probe b >>= Image.plan Image.PlanParams.default
-
-def keyOf (pl : Image.Plan) : Array Nat :=
-  match pl.alpha with
-  | .colorKey ks => ks
-  | .opaque => #[]
-  | .soft _ _ => #[]
 
 /-- The longest one import of a fuzzed input may take, in milliseconds: two seconds, or
 five times the slowest fixture's own import when longer. -/
@@ -575,10 +553,10 @@ def main : IO Unit := do
   let keyedGray := keyedPng 4 0 [] [0, 15]
   let partialIdx := keyedPng 8 3 [0, 0, 0, 255, 255, 255, 255, 0, 0] [0, 128, 255]
   let profile : List UInt8 := (List.range 40).map fun k => UInt8.ofNat (k * 7 % 256)
-  let iccpPng := pngOf 8 2 (chunk "iCCP" ([0x69, 0x63, 0x63, 0, 0] ++
+  let iccpPng := pngOf 8 2 (pngChunk "iCCP" ([0x69, 0x63, 0x63, 0, 0] ++
     (Flate.deflateStored ⟨profile.toArray⟩).toList))
-  let ancillaryPng := pngOf 8 0 (chunk "sRGB" [0] ++ chunk "gAMA" (be32 45455) ++
-    chunk "cHRM" ((List.range 8).flatMap fun k => be32 (k + 1)))
+  let ancillaryPng := pngOf 8 0 (pngChunk "sRGB" [0] ++ pngChunk "gAMA" (be32 45455) ++
+    pngChunk "cHRM" ((List.range 8).flatMap fun k => be32 (k + 1)))
   let exifJpg := jpegOf (exifApp1 6)
   let iccJpg := jpegOf (iccApp2 2 2 [4, 5, 6] ++ iccApp2 1 2 [1, 2, 3])
   let le24 (n : Nat) : List UInt8 :=
@@ -597,16 +575,16 @@ def main : IO Unit := do
   -- Anchors: pristine files plan to their recorded sizes, synthetics to their exact answers.
   match plan keyedIdx with
   | .ok pl =>
-    unless keyOf pl == #[1, 2] do die s!"keyed indexed png planned to mask {keyOf pl}"
+    unless planKey pl == #[1, 2] do die s!"keyed indexed png planned to mask {planKey pl}"
   | .error e => die s!"keyed indexed png refused: {e}"
   match plan keyedRgb with
   | .ok pl =>
-    unless keyOf pl == #[1, 1, 2, 2, 3, 3] do
-      die s!"keyed rgb png planned to mask {keyOf pl}"
+    unless planKey pl == #[1, 1, 2, 2, 3, 3] do
+      die s!"keyed rgb png planned to mask {planKey pl}"
   | .error e => die s!"keyed rgb png refused: {e}"
   match plan keyedGray with
   | .ok pl =>
-    unless keyOf pl == #[15, 15] do die s!"keyed grey png planned to mask {keyOf pl}"
+    unless planKey pl == #[15, 15] do die s!"keyed grey png planned to mask {planKey pl}"
   | .error e => die s!"keyed grey png refused: {e}"
   if (plan partialIdx).isOk then die "partial indexed transparency embedded opaque"
   if (plan keyed16).isOk then die "16-bit colour key embedded (readers drop it)"

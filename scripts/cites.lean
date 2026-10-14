@@ -344,14 +344,6 @@ def ownerShaped (s : String) : Bool :=
   | c :: rest => c.isLower && rest.all fun d => d.isLower || d.isDigit || d == '-'
   | [] => false
 
-/-- Does `lit` occur in `cs` at `i`? -/
-def litAtArr (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
-  let mut k := i
-  for c in lit.toList do
-    if cs[k]? != some c then return false
-    k := k + 1
-  return true
-
 /-- What one unit says about its checks: its pins, whether it carries a check marker of
 its own (an owed group or `(review)`), and the owners of owed groups that name no pin. -/
 structure BlockScan where
@@ -393,10 +385,10 @@ def blockPins (text : String) : BlockScan := Id.run do
         skip := skip - 1
         continue
       let c := cs[i]?.getD ' '
-      if litAtArr cs i "(review)" then
+      if litAt cs i "(review)" then
         marked := true
         skip := "(review)".length - 1
-      else if litAtArr cs i "owed (" then
+      else if litAt cs i "owed (" then
         let start := i + "owed (".length
         let name := String.ofList ((cs.extract start cs.size).toList.takeWhile (· != ')'))
         if ownerShaped name && cs[start + name.length]? == some ')' then

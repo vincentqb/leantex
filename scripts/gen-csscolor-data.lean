@@ -3,10 +3,9 @@ Regenerate LeanTex/Core/CssColorData.lean from the vendored CSS named-colour tab
 (testdata/vendor/color-name/index.js), refusing a line of any other shape.
 Usage: lake env lean --run scripts/gen-csscolor-data.lean [--check]
 -/
+import scripts.GenData
 
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
+open GenData
 
 def source : System.FilePath := "testdata/vendor/color-name/index.js"
 def target : System.FilePath := "LeanTex/Core/CssColorData.lean"

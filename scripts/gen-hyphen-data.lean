@@ -3,6 +3,9 @@ Regenerate LeanTex/Core/HyphenData*.lean from the hyph-utf8 pattern files (locat
 kpsewhich without a source), one `langs` row per language.
 Usage: lake env lean --run scripts/gen-hyphen-data.lean [source] [--lang en|fr] [--output path]
 -/
+import scripts.GenData
+
+open GenData
 
 structure LangSpec where
   lang : String
@@ -59,20 +62,6 @@ hyphenmins: left 2, right 2
 -/
 " }]
 
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
-
-def defaultSource (file : String) : IO String := do
-  let out ← try
-    IO.Process.output { cmd := "kpsewhich", args := #[file] }
-  catch _ =>
-    die s!"kpsewhich not found; pass the path to {file}"
-  let path := out.stdout.trimAscii.toString
-  if out.exitCode != 0 || path.isEmpty then
-    die s!"kpsewhich could not find {file}"
-  return path
-
 /-- The whitespace-separated words of the `\command{ … }` block, comments stripped. -/
 def block (text command : String) : IO (List String) := do
   let marker := "\\" ++ command ++ "{"
@@ -115,7 +104,7 @@ def main (args : List String) : IO UInt32 := do
   let outPath := (output).getD spec.output
   let sourcePath ← match source with
     | some p => pure p
-    | none => defaultSource spec.source
+    | none => locate spec.source s!"pass the path to {spec.source}"
   let text ← IO.FS.readFile sourcePath
   let patterns ← block text "patterns"
   let exceptions ← block text "hyphenation"

@@ -48,14 +48,6 @@ def svgNativeBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .error r => hasStr r.message "DTD declarations and external entities"
       | .ok _ => false)
 
-/-- The invented figures under `testdata/svg` and `testdata/corpus/figures`, in name order. -/
-def svgFixtureFiles : IO (Array System.FilePath) := do
-  let mut out : Array System.FilePath := #[]
-  for dir in ["testdata/svg", "testdata/corpus/figures"] do
-    for e in (← System.FilePath.readDir dir).qsort (·.fileName < ·.fileName) do
-      if e.fileName.endsWith ".svg" then out := out.push e.path
-  return out
-
 /-- A tree written by the canonical writer reads back as it stands, for every construct the writer
 spells. -/
 def xmlRoundTripChecks (ref : IO.Ref (List String)) : IO Unit := do

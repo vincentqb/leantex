@@ -3,13 +3,11 @@ Regenerate LeanTex/Core/PygmentsLexData.lean and testdata/highlight's rules and 
 installed Pygments and the departures testdata/highlight/pygments-departures.json declares.
 Usage: lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>]
 -/
+import scripts.GenData
 import Lean.Data.Json
 
+open GenData
 open Lean (Json)
-
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
 
 /-- The constant bridge program, run isolated (`-I`) so no working directory, user site or
 PYTHONPATH reaches the import. -/
@@ -22,22 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-try:
-    import pygments
-except ModuleNotFoundError as error:
-    if error.name != 'pygments':
-        raise
-    launcher = shutil.which('latexminted')
-    if launcher is None:
-        raise SystemExit('no Pygments: no installed module and no latexminted launcher')
-    wheels = sorted(pathlib.Path(launcher).resolve().parent.glob('pygments-*.whl'))
-    if len(wheels) != 1:
-        raise SystemExit('no Pygments: expected one wheel beside latexminted')
-    sys.path.insert(0, str(wheels[0]))
-    import pygments
-import pygments.plugin
-pygments.plugin.iter_entry_points = lambda group: ()
-from pygments.lexer import bygroups, combined, default, include, words
+"# ++ GenData.pygmentsLoader ++ r#"from pygments.lexer import bygroups, combined, default, include, words
 from pygments.lexers._mapping import LEXERS
 from pygments.lexers.lean import Lean4Lexer
 from pygments.lexers.python import PythonLexer

@@ -8,6 +8,7 @@ import LeanTex.Core.SvgPoster
 import LeanTex.Core.LayoutFigure
 import LeanTex.Core.SvgImport
 import LeanTex.Core.FigureOutline
+import Tests.Support
 
 open LeanTex.Core
 
@@ -75,13 +76,6 @@ def hostFacesIn (dir : System.FilePath) : IO (Except String Font.FontSet) := do
 
 def hostFaces : IO (Except String Font.FontSet) := do
   hostFacesIn ((← IO.getEnv "LEANTEX_DIFF_FONTS").getD "/usr/share/fonts/dejavu")
-
-def fixtureFiles : IO (Array System.FilePath) := do
-  let mut out : Array System.FilePath := #[]
-  for dir in ["testdata/svg", "testdata/corpus/figures"] do
-    for e in (← System.FilePath.readDir dir).qsort (·.fileName < ·.fileName) do
-      if e.fileName.endsWith ".svg" then out := out.push e.path
-  return out
 
 /-- The width every drawing is shown at, in CSS pixels. -/
 def rasterWidth : Nat := 800
@@ -194,7 +188,7 @@ def measureAll (host shipped : Font.FontSet)
   IO.FS.withTempDir fun dir => do
     let mut jobs : Array (System.FilePath × System.FilePath × Nat) := #[]
     let mut figs : Array (String × String × Bool) := #[]
-    for f in ← fixtureFiles do
+    for f in ← svgFixtureFiles do
       let name := f.fileName.getD f.toString
       let tag := (name.dropEnd 4).toString
       let bytes ← IO.FS.readBinFile f

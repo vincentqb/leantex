@@ -3,21 +3,10 @@ Regenerate LeanTex/Core/MathSymData.lean: the math symbols fontmath.ltx, amsfont
 declare, each with its declaring file's class and unicode-math's scalar.
 Usage: lake env lean --run scripts/gen-mathsym-data.lean
 -/
+import scripts.GenData
 import Std.Data.HashMap
 
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
-
-def locate (file : String) : IO String := do
-  let out ← try
-    IO.Process.output { cmd := "kpsewhich", args := #[file] }
-  catch _ =>
-    die s!"kpsewhich not found; it locates {file}"
-  let path := out.stdout.trimAscii.toString
-  if out.exitCode != 0 || path.isEmpty then
-    die s!"kpsewhich could not find {file}"
-  return path
+open GenData
 
 /-- Legacy names unicode-math spells differently, `(package name, unicode-math name)`,
 each judged by unicode-math's description of the target glyph. -/
@@ -36,16 +25,6 @@ def packages : List String := ["amsfonts", "amssymb"]
 /-- Kernel commands unicode-math lists as symbols that take an argument in LaTeX, which
 the parser reads structurally. -/
 def kernelConstructs : List String := ["sqrt"]
-
-/-- A line with its TeX comment removed. -/
-def uncomment (line : String) : String := Id.run do
-  let mut out := ""
-  let mut prev := ' '
-  for c in line.toList do
-    if c == '%' && prev != '\\' then return out
-    out := out.push c
-    prev := c
-  return out
 
 /-- The first `n` brace groups at the start of `s`, whitespace between
 them skipped; fewer when anything else comes first. -/

@@ -10,6 +10,7 @@ import LeanTex.Core.GfxSvg
 import LeanTex.Core.HtmlResource
 import LeanTex.Core.Oklab
 import LeanTex.Core.Image
+import LeanTex.Core.PngEncode
 import scripts.RasterJudge
 import Tests.Support
 
@@ -43,34 +44,12 @@ def figure (w h : Int) (nodes : Array (Node Empty)) (symbols : Array (Array (Nod
   { box := ((0, 0), (pt w, pt h)), clipToBox := false, nodes, outlines, symbols, rasters
     title := none, losses := #[] }
 
-/-- The CRC-32 table PNG chunks use (ISO/IEC 15948 §5.3). -/
-def crcTable : Array UInt32 := Id.run do
-  let mut t : Array UInt32 := #[]
-  for n in [0:256] do
-    let mut c : UInt32 := n.toUInt32
-    for _ in [0:8] do
-      c := if c &&& 1 == 1 then (0xEDB88320 : UInt32) ^^^ (c >>> 1) else c >>> 1
-    t := t.push c
-  return t
-
-def crc32 (b : ByteArray) : UInt32 := Id.run do
-  let mut c : UInt32 := 0xFFFFFFFF
-  for x in b.data do
-    c := (crcTable[((c ^^^ x.toUInt32) &&& 0xFF).toNat]?.getD 0) ^^^ (c >>> 8)
-  return c ^^^ 0xFFFFFFFF
-
-def be32 (n : UInt32) : ByteArray :=
-  ⟨#[(n >>> 24).toUInt8, (n >>> 16).toUInt8, (n >>> 8).toUInt8, n.toUInt8]⟩
-
-def chunk (kind : String) (data : ByteArray) : ByteArray :=
-  let body := kind.toUTF8 ++ data
-  be32 data.size.toUInt32 ++ body ++ be32 (crc32 body)
-
 def checkerPng : ByteArray :=
-  let sig : ByteArray := ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩
-  let ihdr := be32 2 ++ be32 2 ++ ⟨#[8, 2, 0, 0, 0]⟩
+  let ihdr := PngEncode.be32 2 ++ PngEncode.be32 2 ++ ⟨#[8, 2, 0, 0, 0]⟩
   let rows : ByteArray := ⟨#[0, 220, 30, 30, 30, 60, 200, 0, 30, 60, 200, 220, 30, 30]⟩
-  sig ++ chunk "IHDR" ihdr ++ chunk "IDAT" (Flate.deflate rows) ++ chunk "IEND" ByteArray.empty
+  PngEncode.signature ++ PngEncode.chunk PngEncode.tagIHDR ihdr ++
+    PngEncode.chunk PngEncode.tagIDAT (Flate.deflate rows) ++
+    PngEncode.chunk PngEncode.tagIEND ByteArray.empty
 
 def checker : Raster := { bytes := checkerPng, jpeg := false, pxW := 2, pxH := 2, smooth := false }
 

@@ -14,6 +14,14 @@ def hasWord (line word : String) : Bool :=
 def containsSub (line pat : String) : Bool :=
   (line.splitOn pat).length > 1
 
+/-- Does `lit` occur in `cs` at index `i`? -/
+def litAt (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
+  let mut k := i
+  for c in lit.toList do
+    if cs[k]? != some c then return false
+    k := k + 1
+  return true
+
 /-- The line with string-literal content removed, escapes honoured; a literal a multi-line
 string leaves open strips to the line's end, and a char literal holding a double quote
 reads as opening one. -/

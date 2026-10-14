@@ -4,18 +4,9 @@ PDF-writer bytes, and refuses and reads exactly what zlib does but the Adler-32 
 Usage: lake build && lake env lean --run scripts/flate-fuzz.lean
 -/
 import LeanTex
+import Tests.Rand
 
 open LeanTex.Core
-
-def nextRand (s : UInt64) : UInt64 × UInt64 :=
-  let s := s ^^^ (s >>> 12)
-  let s := s ^^^ (s <<< 25)
-  let s := s ^^^ (s >>> 27)
-  (s, s * 2685821657736338717)
-
-def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
-  let (s, v) := nextRand s
-  (v.toNat % bound, s)
 
 def die (msg : String) : IO Unit := do
   IO.eprintln s!"flate-fuzz: FAIL {msg}"

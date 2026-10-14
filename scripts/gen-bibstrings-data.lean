@@ -3,53 +3,9 @@ Regenerate LeanTex/Core/BibStringsData.lean from english.lbx's bibliography stri
 kpsewhich).
 Usage: lake env lean --run scripts/gen-bibstrings-data.lean
 -/
+import scripts.GenData
 
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
-
-def locate (file : String) : IO String := do
-  let out ← try
-    IO.Process.output { cmd := "kpsewhich", args := #[file] }
-  catch _ =>
-    die s!"kpsewhich not found; it locates {file}"
-  let path := out.stdout.trimAscii.toString
-  if out.exitCode != 0 || path.isEmpty then
-    die s!"kpsewhich could not find {file}"
-  return path
-
-/-- The file with every TeX comment removed, its lines kept. -/
-def uncommented (text : String) : String := Id.run do
-  let mut out := ""
-  for line in text.splitOn "\n" do
-    let mut prev := ' '
-    for c in line.toList do
-      if c == '%' && prev != '\\' then break
-      out := out.push c
-      prev := c
-    out := out.push '\n'
-  return out
-
-/-- The balanced group opening at `cs[i]`: its body and the index after it. -/
-def groupAt (cs : Array Char) (i : Nat) : Option (String × Nat) := Id.run do
-  if cs[i]? != some '{' then return none
-  let mut depth := 0
-  let mut body := ""
-  let mut j := i
-  for _ in [0:cs.size] do
-    match cs[j]? with
-    | some c =>
-      if c == '{' then
-        depth := depth + 1
-        if depth > 1 then body := body.push c
-      else if c == '}' then
-        depth := depth - 1
-        if depth == 0 then return some (body, j + 1)
-        body := body.push c
-      else body := body.push c
-      j := j + 1
-    | none => return none
-  return none
+open GenData
 
 def skipJunk (cs : Array Char) (i : Nat) : Nat := Id.run do
   let mut j := i

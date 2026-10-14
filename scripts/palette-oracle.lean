@@ -15,29 +15,6 @@ def root : String := "testdata/external/palettes"
 /-- The files this repository wrote beside the vendored ones. -/
 def ownFiles : List String := ["SHA256SUMS", "PROVENANCE.txt"]
 
-/-- Where a vendored directory stops holding upstream's bytes: a pinned file
-whose bytes are not its pin's or that is gone, and a file no pin names. -/
-def sumFaults (dir : String) : IO (Array String) := do
-  let sums := dir ++ "/SHA256SUMS"
-  let entries ← match parsePins sums (← readFileOr sums) with
-    | .ok es => pure es
-    | .error e => return #[e]
-  let mut faults : Array String := #[]
-  for e in entries do
-    let p := dir ++ "/" ++ e.path
-    if e.path.startsWith "/" || (e.path.splitOn "..").length > 1 then
-      faults := faults.push s!"{sums}: '{e.path}' leaves the directory"
-    else if !(← System.FilePath.pathExists p) then
-      faults := faults.push s!"{p}: pinned in {sums}, and absent"
-    else if sha256Hex (← IO.FS.readBinFile p) != e.pin then
-      faults := faults.push s!"{p}: not the bytes its pin in {sums} names"
-  for f in ← System.FilePath.walkDir dir do
-    unless ← f.isDir do
-      let rel := (f.toString.drop (dir.length + 1)).toString
-      unless ownFiles.contains rel || entries.any (·.path == rel) do
-        faults := faults.push s!"{f}: in the directory, and pinned by no line of {sums}"
-  return faults
-
 /-- A scale: its name and its steps' colours, by step name. -/
 structure Scale where
   name : String
@@ -147,7 +124,7 @@ def gateMargin : Int × Nat := Id.run do
 def measureTier : IO (Array String × Array Row) := do
   let mut faults : Array String := #[]
   for dir in [root ++ "/radix", root ++ "/tailwind"] do
-    faults := faults ++ (← sumFaults dir)
+    faults := faults ++ (← sumFaults dir ownFiles)
   unless faults.isEmpty do
     for f in faults do IO.eprintln s!"palette-oracle: {f}"
     return (#[], #[])

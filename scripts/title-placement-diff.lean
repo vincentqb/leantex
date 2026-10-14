@@ -4,6 +4,7 @@ baselines within 0.25 pt by Ghostscript's txtwrite.
 Usage: lake build leantex && lake env lean --run scripts/title-placement-diff.lean [--selftest]
 -/
 import LeanTex
+import scripts.ToolDump
 
 open LeanTex.Core
 
@@ -23,19 +24,6 @@ structure WordBox where
 
 def lineNames : List String :=
   ["TITLEALPHA", "SUBTITLEBETA", "AUTHORGAMMA", "INSTITUTEDELTA"]
-
-def attrOf (line attr : String) : Option String := do
-  let after ← (line.splitOn (attr ++ "=\""))[1]?
-  (after.splitOn "\"").head?
-
-def fixedMicro (s : String) : Option Int := do
-  let (mantissa, scale) ← Decl.parseDecimal s
-  return mantissa * 1000000 / (scale : Int)
-
-def wordText (line : String) : String :=
-  let after := String.intercalate ">" ((line.splitOn ">").drop 1)
-  let body := (after.splitOn "</word>").headD ""
-  ((body.replace "&amp;" "&").replace "&lt;" "<").replace "&gt;" ">"
 
 def parseGhost (xml : String) : Array GhostLine := Id.run do
   let mut out : Array GhostLine := #[]
@@ -62,8 +50,8 @@ def parsePoppler (xml : String) : Array WordBox := Id.run do
   for raw in xml.splitOn "\n" do
     let line := raw.trimAscii.toString
     if line.startsWith "<word " then
-      match (attrOf line "xMin").bind fixedMicro, (attrOf line "yMin").bind fixedMicro,
-          (attrOf line "xMax").bind fixedMicro, (attrOf line "yMax").bind fixedMicro with
+      match (attrOf line "xMin").bind microPt, (attrOf line "yMin").bind microPt,
+          (attrOf line "xMax").bind microPt, (attrOf line "yMax").bind microPt with
       | some x0, some y0, some x1, some y1 =>
         out := out.push { text := wordText line, x0u := x0, y0u := y0, x1u := x1, y1u := y1 }
       | _, _, _, _ => pure ()
@@ -74,15 +62,6 @@ def runTool (cmd : String) (args : Array String) (cwd : System.FilePath) : IO IO
   if out.exitCode != 0 then
     throw (IO.userError s!"{cmd} exited {out.exitCode}: {(out.stdout ++ out.stderr).trimAscii.toString}")
   return out
-
-def firstLine (s : String) : String := (s.splitOn "\n").headD "unknown"
-
-def version (cmd : String) (args : Array String) (cwd : System.FilePath) : IO String := do
-  try
-    let out ← IO.Process.output { cmd := cmd, args := args, cwd := cwd }
-    if out.exitCode == 0 then return firstLine (out.stdout ++ out.stderr)
-    return "unavailable"
-  catch _ => return "unavailable"
 
 def common (fontDir : String) : String :=
   "\\documentclass[aspectratio=169]{beamer}\n" ++
@@ -139,12 +118,6 @@ def point20 (v : Int) : String :=
   let n := v.natAbs
   s!"{sign}{n / 20}.{(n % 20) * 5 / 10}{(n % 20) * 5 % 10}"
 
-def pointMicro (v : Int) : String :=
-  let sign := if v < 0 then "-" else ""
-  let n := v.natAbs
-  let frac := toString (n % 1000000)
-  s!"{sign}{n / 1000000}.{String.ofList (List.replicate (6 - frac.length) '0')}{frac}"
-
 def selftest : IO UInt32 := do
   let ghost := "<page>\n<span bbox=\"10 20 30 20\" font=\"F\" size=\"10\">\n" ++
     "<char bbox=\"10 20 15 20\" c=\"A\"/>\n<char bbox=\"15 20 20 20\" c=\"B\"/>\n</span>\n</page>"
@@ -176,15 +149,15 @@ def main (args : List String) : IO UInt32 := do
   let tools := [("lualatex", #["--version"]), ("gs", #["--version"]),
     ("pdftotext", #["-v"]), ("pdftoppm", #["-v"]), ("magick", #["-version"])]
   for (cmd, probe) in tools do
-    if (← version cmd probe root) == "unavailable" then
+    if (← toolVersion cmd probe root) == "unavailable" then
       IO.eprintln s!"title-placement-diff: {cmd} not available — untested"
       return 2
   IO.println "title-placement-diff: synthetic LuaLaTeX/leantex title placement"
   IO.println "  baseline bound: 0.25 pt (5 units on Ghostscript's 1440-dpi grid)"
-  IO.println s!"  lualatex: {← version "lualatex" #["--version"] root}"
-  IO.println s!"  ghostscript: {← version "gs" #["--version"] root}"
-  IO.println s!"  poppler: {← version "pdftotext" #["-v"] root}"
-  IO.println s!"  imagemagick: {← version "magick" #["-version"] root}"
+  IO.println s!"  lualatex: {← toolVersion "lualatex" #["--version"] root}"
+  IO.println s!"  ghostscript: {← toolVersion "gs" #["--version"] root}"
+  IO.println s!"  poppler: {← toolVersion "pdftotext" #["-v"] root}"
+  IO.println s!"  imagemagick: {← toolVersion "magick" #["-version"] root}"
   let mut failed := false
   let mut worst : Int := 0
   for (name, source) in [("compound", compoundTemplate fontDir), ("split", splitTemplate fontDir)] do

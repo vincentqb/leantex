@@ -1,4 +1,7 @@
+import scripts.GenData
 import Std.Data.HashMap
+
+open GenData
 
 /-
 Regenerate LeanTex/Core/LocaleData.lean from babel's locale ini files (via kpsewhich) and the
@@ -24,10 +27,6 @@ fields are read from cleveref.sty v0.21.4 (2018/03/27), also LPPL 1.3;
 the generator carries that table, cited beside it.
 -/
 "
-
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
 
 def findIni (lang : String) : IO String := do
   let out ← try

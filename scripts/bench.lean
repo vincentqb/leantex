@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import LeanTex.Cli.ConvCache
 import LeanTex.Core.Image
+import LeanTex.Core.PngEncode
 
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
@@ -601,27 +602,11 @@ def toolVersions : IO (Array (String × String)) := do
     versions := versions.push (tool, version)
   return versions
 
-def be32 (n : Nat) : ByteArray :=
-  ⟨#[UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
-    UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]⟩
-
--- PNG CRC-32 (ISO/IEC 15948 Annex D), so the browser accepts the fixture too.
-def crc32 (bytes : ByteArray) : UInt32 := Id.run do
-  let mut crc : UInt32 := 0xffffffff
-  for byte in bytes do
-    crc := crc ^^^ byte.toUInt32
-    for _ in [:8] do
-      crc := (crc >>> 1) ^^^ (if crc &&& 1 == 1 then 0xedb88320 else 0)
-  return crc ^^^ 0xffffffff
-
-def pngChunk (tag : String) (data : ByteArray) : ByteArray :=
-  let payload := tag.toUTF8 ++ data
-  be32 data.size ++ payload ++ be32 (crc32 payload).toNat
-
 def png (width height : Nat) (compressed : ByteArray) : ByteArray :=
-  ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩ ++
-    pngChunk "IHDR" (be32 width ++ be32 height ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
-    pngChunk "IDAT" compressed ++ pngChunk "IEND" ByteArray.empty
+  PngEncode.signature ++
+    PngEncode.chunk PngEncode.tagIHDR
+      (PngEncode.be32 width ++ PngEncode.be32 height ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
+    PngEncode.chunk PngEncode.tagIDAT compressed ++ PngEncode.chunk PngEncode.tagIEND ByteArray.empty
 
 /-- Two same-sized RGBA fixtures under one filename, so a colour change must invalidate
 alpha decoding by content. -/
@@ -744,7 +729,7 @@ def selftest : IO Unit := do
   require (answers files != answers #[("imgs/grid.img", "changed answer")] &&
     answers files != answers #[("imgs/grid.img", "answer"), ("convs/new.answer", "new")])
     "answer judge hid changed or added content answers"
-  require (crc32 "123456789".toUTF8 == 0xcbf43926) "PNG CRC test vector"
+  require (PngEncode.crc32 "123456789".toUTF8 == 0xcbf43926) "PNG CRC test vector"
   for edit in [false, true] do
     let png ← checked (Image.decode (raster edit))
     require (png.pxW == 128 && png.pxH == 80 && png.losses.isEmpty) "RGBA fixture dimensions/losses"

@@ -10,6 +10,7 @@ public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic
 public import Tests.LightCss
 public import Tests.Support.Check
+public import Tests.Rand
 
 public section
 
@@ -116,6 +117,14 @@ def svgPublishedAsset (html : String) (_output : System.FilePath)
   unless mime == "image/svg+xml" do
     throw <| IO.userError "expected an embedded SVG reference"
   return (href, data)
+
+/-- The invented figures under `testdata/svg` and `testdata/corpus/figures`, in name order. -/
+def svgFixtureFiles : IO (Array System.FilePath) := do
+  let mut out : Array System.FilePath := #[]
+  for dir in ["testdata/svg", "testdata/corpus/figures"] do
+    for e in (← System.FilePath.readDir dir).qsort (·.fileName < ·.fileName) do
+      if e.fileName.endsWith ".svg" then out := out.push e.path
+  return out
 
 /-- A PDF of the given objects' bytes, numbered from 1 with the first the catalog, under a classic
 cross-reference table. -/
@@ -235,6 +244,13 @@ def pngSigBytes : List UInt8 := [137, 80, 78, 71, 13, 10, 26, 10]
 
 def mkPng (chunks : List UInt8) : ByteArray := bytes (pngSigBytes ++ chunks)
 
+/-- The colour-key ranges a plan carries, empty when none. -/
+def planKey (pl : Image.Plan) : Array Nat :=
+  match pl.alpha with
+  | .colorKey ks => ks
+  | .opaque => #[]
+  | .soft _ _ => #[]
+
 /-- Does `needle` occur verbatim inside `hay`? -/
 def containsBytes (hay needle : ByteArray) : Bool := Id.run do
   if needle.size == 0 || hay.size < needle.size then return false
@@ -246,18 +262,6 @@ def containsBytes (hay needle : ByteArray) : Bool := Id.run do
         break
     if ok then return true
   return false
-
-/-- xorshift64*: the next state and the output value. -/
-def nextRand (s : UInt64) : UInt64 × UInt64 :=
-  let x := s ^^^ (s >>> 12)
-  let x := x ^^^ (x <<< 25)
-  let x := x ^^^ (x >>> 27)
-  (x, x * 2685821657736338717)
-
-/-- A value below `bound`, threading the state. -/
-def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
-  let (s', v) := nextRand s
-  ((v % UInt64.ofNat bound).toNat, s')
 
 def toks (s : String) : List Lex.Tok :=
   ((Lex.lex "t" s).1.map (·.tok)).toList

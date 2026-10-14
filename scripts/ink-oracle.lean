@@ -5,6 +5,7 @@ Usage: lake build TestsModules && lake env lean --run scripts/ink-oracle.lean [-
 -/
 import LeanTex.Cli.FontDiscovery
 import Tests.Artifact
+import scripts.ToolDump
 
 open LeanTex.Core LeanTex.Cli
 
@@ -18,39 +19,8 @@ structure PopWord where
   text : String
   deriving Repr, Inhabited
 
-/-- The value of `attr="…"` in a tag, as text. -/
-def attrOf (line attr : String) : Option String := do
-  let after ← (line.splitOn (attr ++ "=\""))[1]?
-  (after.splitOn "\"")[0]?
-
-/-- A decimal number as a `Float`, sign and fraction only, the shape `pdftotext -bbox`
-writes. -/
-def parseFloat (s : String) : Option Float := do
-  let (neg, body) := match s.toList with
-    | '-' :: rest => (true, rest)
-    | '+' :: rest => (false, rest)
-    | cs => (false, cs)
-  let parts := (String.ofList body).splitOn "."
-  let ip ← (parts[0]?).bind String.toNat?
-  let frac : Float ← match parts[1]? with
-    | none => pure 0.0
-    | some f =>
-      if f.isEmpty then pure 0.0
-      else do
-        let d ← f.toNat?
-        pure ((Float.ofNat d) / (Float.ofNat (10 ^ f.length)))
-  let v := (Float.ofNat ip) + frac
-  return if neg then -v else v
-
 def floatAttr (line attr : String) : Option Float :=
   (attrOf line attr).bind parseFloat
-
-/-- The text between `>` and `</word>`, with the three XML entities the
-tool emits decoded. -/
-def wordText (line : String) : String :=
-  let afterTag := String.intercalate ">" ((line.splitOn ">").drop 1)
-  let body := ((afterTag.splitOn "</word>")[0]?).getD ""
-  ((body.replace "&amp;" "&").replace "&lt;" "<").replace "&gt;" ">"
 
 /-- One page of `pdftotext -bbox`: its declared height and its words. -/
 structure PopPage where

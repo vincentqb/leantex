@@ -2,11 +2,50 @@
 The raster judge the picture oracles share: a tool runner reporting a missing tool as `none`,
 Playwright's Chrome binaries, and ImageMagick's DSSIM at the calibrated scale and tolerance.
 -/
+import scripts.ToolDump
 
 def runTool (cmd : String) (args : Array String) : IO (Option IO.Process.Output) := do
   try
     pure (some (← IO.Process.output { cmd, args }))
   catch _ => pure none
+
+/-- A grayscale raster: width, height, one byte per pixel, 0 black; `pdftoppm -gray`'s binary PGM. -/
+structure Gray where
+  w : Nat
+  h : Nat
+  px : ByteArray
+deriving Inhabited
+
+/-- The pixel at `(x, y)`, white outside the raster. -/
+def Gray.at (g : Gray) (x y : Nat) : Nat :=
+  if x < g.w && y < g.h then (g.px.get! (y * g.w + x)).toNat else 255
+
+/-- A binary PGM (`P5`, maximum 255) as `pdftoppm -gray` writes it. -/
+def Gray.parse (b : ByteArray) : Option Gray := Id.run do
+  let isWs (c : UInt8) : Bool := c == 32 || c == 10 || c == 13 || c == 9
+  let mut fields : Array String := #[]
+  let mut cur := ""
+  let mut i := 0
+  for _ in [0:b.size + 1] do
+    if fields.size == 4 then break
+    if h : i < b.size then
+      let c := b[i]
+      i := i + 1
+      if isWs c then
+        unless cur.isEmpty do
+          fields := fields.push cur
+          cur := ""
+      else cur := cur.push (Char.ofNat c.toNat)
+    else break
+  match fields.toList with
+  | ["P5", ws, hs, "255"] =>
+    match ws.toNat?, hs.toNat? with
+    | some w, some h =>
+      if i + w * h ≤ b.size && w > 0 && h > 0 then
+        return some { w, h, px := b.extract i (i + w * h) }
+      else return none
+    | _, _ => return none
+  | _ => return none
 
 /-- The raster judgement's resolution, for Poppler, PDFium and pdf.js alike. -/
 def rasterDpi : Nat := 100
@@ -39,24 +78,6 @@ def findChrome : IO (Option (String × String)) := do
       if out.exitCode == 0 then
         return some (c, ((out.stdout.trimAscii.toString.splitOn "\n").headD "").trimAscii.toString)
   return none
-
-/-- A decimal as ImageMagick prints it (`0.0197563`, `1.2e-05`), or none. -/
-def parseFloat (s : String) : Option Float := do
-  let s := s.trimAscii.toString
-  let (mant, exp) := match s.splitOn "e" with
-    | [m, e] => (m, e.toInt?.getD 0)
-    | _ => (s, 0)
-  let neg := mant.startsWith "-"
-  let mant := if neg then (mant.drop 1).toString else mant
-  let (ip, fp) := match mant.splitOn "." with
-    | [i, f] => (i, f)
-    | [i] => (i, "")
-    | _ => ("", "")
-  let i ← if ip.isEmpty then some 0 else ip.toNat?
-  let f ← if fp.isEmpty then some 0 else fp.toNat?
-  let v : Float := Float.ofNat i + Float.ofNat f / Float.ofNat (10 ^ fp.length)
-  let v := if exp ≥ 0 then v * Float.ofNat (10 ^ exp.toNat) else v / Float.ofNat (10 ^ (-exp).toNat)
-  return if neg then -v else v
 
 /-- `WxH` of a PNG, by `magick identify`. -/
 def pngGeometry (png : String) : IO (Option String) := do

@@ -10,14 +10,6 @@ open LeanTex.Core Scoreboard
 
 namespace PdfNative
 
-def dir : String := "testdata/pdf-native"
-
-/-- The tier's items: the committed fixtures, in a fixed order. -/
-def fixtures : Array String :=
-  #["cairo-chart.pdf", "geometry-dialect.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf",
-    "lualatex-strokedtext.pdf", "lualatex-text.pdf", "matplotlib-dialect.pdf", "print-dialect.pdf",
-    "text-dialect.pdf"]
-
 /-- One PDF's value: the importer's verdict on page 1. -/
 def value (pdf : ByteArray) : Int :=
   match PdfGfx.importPage pdf with
@@ -149,16 +141,16 @@ BT 0.6 0.8 -0.8 0.6 150 20 Tm /F1 14 Tf (abba) Tj ET",
 
 /-- The fixture's pins: `SHA256SUMS`, each line `<hash>  <file>`. -/
 def pinFaults : IO (Array String) := do
-  let sums := dir ++ "/SHA256SUMS"
+  let sums := pdfNativeDir ++ "/SHA256SUMS"
   let entries ← match parsePins sums (← readFileOr sums) with
     | .ok es => pure es
     | .error e => return #[e]
   let mut faults : Array String := #[]
-  for f in fixtures do
+  for f in pdfNativeFixtures do
     match entries.find? (·.path == f) with
     | none => faults := faults.push s!"{sums}: no pin for {f}"
     | some e =>
-      let p := dir ++ "/" ++ f
+      let p := pdfNativeDir ++ "/" ++ f
       if !(← System.FilePath.pathExists p) then faults := faults.push s!"{p}: pinned, and absent"
       else if sha256Hex (← IO.FS.readBinFile p) != e.pin then
         faults := faults.push s!"{p}: not the bytes its pin in {sums} names"
@@ -171,8 +163,8 @@ def measureTier : IO (Array String × Array Row) := do
     return (#[], #[])
   let mut rows : Array Row := #[]
   let mut counts := #[0, 0, 0]
-  for f in fixtures do
-    let v := value (← IO.FS.readBinFile (dir ++ "/" ++ f))
+  for f in pdfNativeFixtures do
+    let v := value (← IO.FS.readBinFile (pdfNativeDir ++ "/" ++ f))
     counts := counts.modify v.toNat (· + 1)
     rows := rows.push { item := f, value := v }
   return (#[
@@ -184,16 +176,16 @@ named, 0 refused; the structural half (equality with the other importer's readin
     s!"# counts: {counts[2]!} at 2, {counts[1]!} at 1, {counts[0]!} at 0"], rows)
 
 def selftest : IO UInt32 := tierSelftest "pdf-native" fun expect => do
-  let committed ← IO.FS.readBinFile (dir ++ "/matplotlib-dialect.pdf")
+  let committed ← IO.FS.readBinFile (pdfNativeDir ++ "/matplotlib-dialect.pdf")
   expect "the hand-written fixture is the file this script writes (--fixtures)"
     (committed == matplotlibDialect)
-  let printed ← IO.FS.readBinFile (dir ++ "/print-dialect.pdf")
+  let printed ← IO.FS.readBinFile (pdfNativeDir ++ "/print-dialect.pdf")
   expect "the hand-written print fixture is the file this script writes (--fixtures)"
     (printed == printDialect)
-  let shaped ← IO.FS.readBinFile (dir ++ "/geometry-dialect.pdf")
+  let shaped ← IO.FS.readBinFile (pdfNativeDir ++ "/geometry-dialect.pdf")
   expect "the hand-written geometry fixture is the file this script writes (--fixtures)"
     (shaped == geometryDialect)
-  let texted ← IO.FS.readBinFile (dir ++ "/text-dialect.pdf")
+  let texted ← IO.FS.readBinFile (pdfNativeDir ++ "/text-dialect.pdf")
   expect "the hand-written text fixture is the file this script writes (--fixtures)"
     (texted == textDialect)
   expect "every fixture is pinned" (← pinFaults).isEmpty
@@ -212,11 +204,11 @@ end PdfNative
 def main (args : List String) : IO UInt32 := do
   match args with
   | ["--fixtures"] =>
-    IO.FS.writeBinFile (PdfNative.dir ++ "/matplotlib-dialect.pdf") PdfNative.matplotlibDialect
-    IO.FS.writeBinFile (PdfNative.dir ++ "/print-dialect.pdf") PdfNative.printDialect
-    IO.FS.writeBinFile (PdfNative.dir ++ "/geometry-dialect.pdf") PdfNative.geometryDialect
-    IO.FS.writeBinFile (PdfNative.dir ++ "/text-dialect.pdf") PdfNative.textDialect
-    IO.println s!"wrote {PdfNative.dir}/matplotlib-dialect.pdf, print-dialect.pdf, geometry-dialect.pdf \
+    IO.FS.writeBinFile (pdfNativeDir ++ "/matplotlib-dialect.pdf") PdfNative.matplotlibDialect
+    IO.FS.writeBinFile (pdfNativeDir ++ "/print-dialect.pdf") PdfNative.printDialect
+    IO.FS.writeBinFile (pdfNativeDir ++ "/geometry-dialect.pdf") PdfNative.geometryDialect
+    IO.FS.writeBinFile (pdfNativeDir ++ "/text-dialect.pdf") PdfNative.textDialect
+    IO.println s!"wrote {pdfNativeDir}/matplotlib-dialect.pdf, print-dialect.pdf, geometry-dialect.pdf \
 and text-dialect.pdf"
     return 0
   | _ => tierMain "pdf-native" .raw PdfNative.measureTier PdfNative.selftest args

@@ -5,43 +5,7 @@ Usage: lake build leantex && lake env lean --run scripts/tikz-diff.lean [--selft
 -/
 import LeanTex
 import scripts.TikzProbes
-
-/-- A grayscale raster: width, height, one byte per pixel, 0 black. -/
-structure Gray where
-  w : Nat
-  h : Nat
-  px : ByteArray
-
-/-- The pixel at `(x, y)`, white outside the raster. -/
-def Gray.at (g : Gray) (x y : Nat) : Nat :=
-  if x < g.w && y < g.h then (g.px.get! (y * g.w + x)).toNat else 255
-
-/-- A binary PGM (`P5`, maximum 255) as `pdftoppm -gray` writes it. -/
-def parsePgm (b : ByteArray) : Option Gray := Id.run do
-  let isWs (c : UInt8) : Bool := c == 32 || c == 10 || c == 13 || c == 9
-  let mut fields : Array String := #[]
-  let mut cur := ""
-  let mut i := 0
-  for _ in [0:b.size + 1] do
-    if fields.size == 4 then break
-    if h : i < b.size then
-      let c := b[i]
-      i := i + 1
-      if isWs c then
-        unless cur.isEmpty do
-          fields := fields.push cur
-          cur := ""
-      else cur := cur.push (Char.ofNat c.toNat)
-    else break
-  match fields.toList with
-  | ["P5", ws, hs, "255"] =>
-    match ws.toNat?, hs.toNat? with
-    | some w, some h =>
-      if i + w * h ≤ b.size && w > 0 && h > 0 then
-        return some { w, h, px := b.extract i (i + w * h) }
-      else return none
-    | _, _ => return none
-  | _ => return none
+import scripts.RasterJudge
 
 /-- The ink's bounding box, pixels darker than three quarters of the scale, as inclusive
 `(x0, y0, x1, y1)`; `none` for a blank raster. -/
@@ -126,7 +90,7 @@ def rasterOf (dir : System.FilePath) (stem : String) : IO (Option Gray) := do
     return none
   let path := dir / (stem ++ "-1.pgm")
   unless ← path.pathExists do return none
-  let some g := parsePgm (← IO.FS.readBinFile path) | return none
+  let some g := Gray.parse (← IO.FS.readBinFile path) | return none
   return (inkBox g).map (crop g)
 
 def report : IO UInt32 := do
@@ -180,11 +144,11 @@ def selftest : IO UInt32 := do
   failed := failed + (← check "box: a wider ink differs" (!boxSame dark wide))
   let pgm := "P5\n2 2\n255\n".toUTF8 ++ ByteArray.mk #[0, 255, 255, 0]
   failed := failed + (← check "pgm: reads a raster pdftoppm writes"
-    ((parsePgm pgm).map (fun g => g.w == 2 && g.h == 2 && g.px == ByteArray.mk #[0, 255, 255, 0])
+    ((Gray.parse pgm).map (fun g => g.w == 2 && g.h == 2 && g.px == ByteArray.mk #[0, 255, 255, 0])
       == some true))
   failed := failed + (← check "pgm: refuses a short one"
-    (parsePgm ("P5\n2 2\n255\n".toUTF8 ++ ByteArray.mk #[0, 255])).isNone)
-  failed := failed + (← check "pgm: refuses another format" (parsePgm "P6\n1 1\n255\nabc".toUTF8).isNone)
+    (Gray.parse ("P5\n2 2\n255\n".toUTF8 ++ ByteArray.mk #[0, 255])).isNone)
+  failed := failed + (← check "pgm: refuses another format" (Gray.parse "P6\n1 1\n255\nabc".toUTF8).isNone)
   failed := failed + (← check "ink: a blank raster has none" (inkBox (ofRows [[255, 255]])).isNone)
   failed := failed + (← check "crop: to the ink alone"
     ((inkBox inner).map (fun b => (crop inner b).w == 4 && (crop inner b).h == 4) == some true))

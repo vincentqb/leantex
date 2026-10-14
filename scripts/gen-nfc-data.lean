@@ -1,4 +1,7 @@
+import scripts.GenData
 import Std.Data.HashMap
+
+open GenData
 
 /-
 Regenerate LeanTex/Core/NfcData.lean from UnicodeData.txt (TeX Live's `unicode-data`, found with
@@ -33,20 +36,6 @@ licence: UNICODE LICENSE V3 (Unicode data files); see
 https://www.unicode.org/license.txt
 -/
 "
-
-def die (msg : String) : IO α := do
-  IO.eprintln msg
-  IO.Process.exit 1
-
-def defaultSource : IO String := do
-  let out ← try
-    IO.Process.output { cmd := "kpsewhich", args := #["UnicodeData.txt"] }
-  catch _ =>
-    die "kpsewhich not found; pass the path to UnicodeData.txt"
-  let path := out.stdout.trimAscii.toString
-  if out.exitCode != 0 || path.isEmpty then
-    die "kpsewhich could not find UnicodeData.txt"
-  return path
 
 /-- The listed composition exclusions of CompositionExclusions.txt as of Unicode 3.2,
 frozen by stability policy; later additions are derived below too. -/
@@ -112,7 +101,7 @@ def main (args : List String) : IO UInt32 := do
     | a :: more => source := some a; rest := more
   let sourcePath ← match source with
     | some p => pure p
-    | none => defaultSource
+    | none => locate "UnicodeData.txt" "pass the path to UnicodeData.txt"
   let text ← IO.FS.readFile sourcePath
   let mut ccc : Array (Nat × Nat) := #[]
   let mut canon : Std.HashMap Nat (List Nat) := {}

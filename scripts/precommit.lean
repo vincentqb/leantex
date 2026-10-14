@@ -195,14 +195,6 @@ def homeAllowed : List String := ["linuxbrew"]
 /-- A character that can continue a path or host segment. -/
 def segChar (c : Char) : Bool := c.isAlphanum || c == '_' || c == '.' || c == '-'
 
-/-- Does `lit` occur in `cs` at index `i`? -/
-def litAt (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
-  let mut k := i
-  for c in lit.toList do
-    if cs[k]? != some c then return false
-    k := k + 1
-  return true
-
 /-- The segment starting at index `j`: the run of segment characters. -/
 def segAt (cs : Array Char) (j : Nat) : String := Id.run do
   let mut out := ""
