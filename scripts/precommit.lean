@@ -1000,6 +1000,12 @@ def scaleStepRespell (l : String) : Bool :=
   let t := stripLineComment (stripStrings l)
   containsSub t "sizeScale.lookup" && containsSub t ".getD"
 
+/-- A hexadecimal digit table or a digit-letter range, spelled outside `Hex`. -/
+def hexRespell (l : String) : Bool :=
+  let t := stripLineComment l
+  containsSub t "0123456789abcdef" || containsSub t "0123456789ABCDEF" ||
+    containsSub t "≤ 'f'" || containsSub t "≤ 'F'"
+
 /-- A statement-initial `modify` or `set` in Compat, legal only inside `compatStateDoors`. -/
 def bareStateMutation (l : String) : Bool :=
   let t := (((stripLineComment (stripStrings l)).trimAscii).toString.takeWhile isWordChar).toString
@@ -1375,6 +1381,13 @@ def gates : List Gate := [
   (AGENTS.md § Layout and design).
   Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
   is not a page claim says so on the line: `{irTierMark} <why>`." },
+  { applies := fun f => f.startsWith "LeanTex/" && f != "LeanTex/Core/Hex.lean"
+    flag := hexRespell
+    what := fun f => s!"a hexadecimal digit table or digit-letter range spelled in {f}"
+    help := "  LeanTex/Core/Hex.lean reads and spells every hexadecimal digit the
+  engine handles.
+  Fix: read through Hex.val?, Hex.digit?, Hex.caseDigit or Hex.value?, and
+  spell through Hex.spell, Hex.digits, Hex.byte or Hex.scalar." },
   { applies := fun f => f.startsWith "LeanTex/" && f != "LeanTex/Core/Ir.lean"
     flag := scaleStepRespell
     what := fun f => s!"the size-step formula re-spelled (`sizeScale.lookup … getD`) in {f}"
@@ -2251,6 +2264,13 @@ def selftest : IO UInt32 := do
   siteCase "a knob hoisted into a local is not seen"
     ["  if picTool0.isNone then",
      "    say .W0334 s!\"picture key '{k}' is not read\" pos"] none
+
+  expect "hexRespell" hexRespell [
+    ("  let digits := \"0123456789abcdef\".toList", true),
+    ("    c.isDigit || ('a' ≤ c && c ≤ 'f')", true),
+    ("    ('A' ≤ c && c ≤ 'F')", true),
+    ("  let d := Hex.digit? c", false),
+    ("  -- a 0123456789abcdef table in a comment", false)]
 
   expect "scaleStepRespell" scaleStepRespell [
 

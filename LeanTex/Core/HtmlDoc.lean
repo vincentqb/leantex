@@ -317,7 +317,7 @@ public def schemeVarTexts (schemes : List Ir.Scheme) (name : String) :
   let texts ← parts.foldlM (fun (acc : Array (Option String)) p =>
     if p == "none" then some (acc.push none)
     else if p.length == 1 && p.all Char.isDigit then acc[p.toNat!]?.map acc.push
-    else if p.length == 6 && p.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) then
+    else if p.length == 6 && p.all (Hex.caseDigit false) then
       some (acc.push (some ("#" ++ p)))
     else none) #[]
   return schemes.zip texts.toList
@@ -2387,17 +2387,14 @@ private def paletteVar (n : Ir.ColorRef) (c : Ir.Color) : String :=
 public def paletteVars (p : Ir.Palette) : List String :=
   p.entries.toList.map fun (n, c) => paletteVar n c
 
-private theorem byte_length (u : Bool) (x : UInt8) : (Hex.byte u x).toList.length = 2 := by
-  simp [Hex.byte, Hex.digits, Hex.digitList]
-
 public theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
     a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
   have hl := congrArg String.toList h
   simp only [cssColor, Color.css, Color.hex, ↓reduceIte, String.toList_append,
     List.append_assoc] at hl
   have hl := List.append_cancel_left hl
-  obtain ⟨hr, hl⟩ := List.append_inj hl (by rw [byte_length, byte_length])
-  obtain ⟨hg, hb⟩ := List.append_inj hl (by rw [byte_length, byte_length])
+  obtain ⟨hr, hl⟩ := List.append_inj hl (by rw [Hex.byte_length_exact, Hex.byte_length_exact])
+  obtain ⟨hg, hb⟩ := List.append_inj hl (by rw [Hex.byte_length_exact, Hex.byte_length_exact])
   exact ⟨Hex.byte_inj false _ _ (String.ext hr), Hex.byte_inj false _ _ (String.ext hg),
     Hex.byte_inj false _ _ (String.ext hb)⟩
 

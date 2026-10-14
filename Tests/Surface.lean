@@ -2108,6 +2108,9 @@ def hexChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "hex reads both cases" ("09afAF".toList.map Hex.digit? == [some 0, some 9, some 10, some 15,
     some 10, some 15])
   t "hex refuses a non-digit" (Hex.digit? 'g' == none && Hex.value? "1g".toList == none)
+  t "hex refuses a non-ASCII digit or letter" (Hex.digit? '٣' == none && Hex.digit? 'Ａ' == none)
+  t "hex reads one case where asked" (Hex.caseDigit true 'F' && !Hex.caseDigit true 'f' &&
+    Hex.caseDigit false 'f' && !Hex.caseDigit false 'F' && Hex.caseDigit true '7')
   t "hex reads an empty run as zero" (Hex.value? [] == some 0)
   t "hex reads a run" (Hex.value? "10FFFF".toList == some 0x10FFFF)
   t "hex cuts a width to its last digits" (Hex.digits true 2 0x1AB == "AB")

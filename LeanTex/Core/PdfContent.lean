@@ -1740,10 +1740,10 @@ public theorem gidHex_inj {g₁ g₂ : Nat} (h₁ : g₁ < 65536) (h₂ : g₂ <
   rw [gidHex_toList, gidHex_toList] at hl
   simp only [List.cons.injEq, and_true] at hl
   obtain ⟨e1, e2, e3, e4⟩ := hl
-  have := Hex.spell_eq_mod e1
-  have := Hex.spell_eq_mod e2
-  have := Hex.spell_eq_mod e3
-  have := Hex.spell_eq_mod e4
+  have := Hex.spell_inj e1
+  have := Hex.spell_inj e2
+  have := Hex.spell_inj e3
+  have := Hex.spell_inj e4
   omega
 
 private theorem join_cons (a : String) (as : List String) :

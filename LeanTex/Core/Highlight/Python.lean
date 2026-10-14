@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Highlight.Scan
 import LeanTex.Core.PygmentsLexData
+import LeanTex.Core.Hex
 
 /-! Pygments' `PythonLexer` (pygments/lexers/python.py) rule for rule, mirroring
 testdata/highlight/pygments-rules.txt. A port of BSD-licensed code: Pygments' licence is
@@ -162,7 +163,7 @@ private def number (s : Src) (p : Nat) : Option (Nat × String) := Id.run do
       else none
     if let some r := radix 'o' 'O' (fun c => '0' ≤ c && c ≤ '7') Ty.numberOct then return some r
     if let some r := radix 'b' 'B' (fun c => c == '0' || c == '1') Ty.numberBin then return some r
-    if let some r := radix 'x' 'X' Char.isHexDigit Ty.numberHex then return some r
+    if let some r := radix 'x' 'X' (fun c => (Hex.digit? c).isSome) Ty.numberHex then return some r
   return (digitPart s p).map (·, Ty.numberInteger)
 
 /-- `!=|==|<<|>>|:=|[-~+/*%=<>&^|.]`. -/
@@ -382,7 +383,7 @@ private def fromimport (ix : Ix) (m : M) : Option M := Id.run do
 
 private def hex (s : Src) (i n : Nat) : Bool := Id.run do
   for k in [0:n] do
-    if !s.sat (i + k) Char.isHexDigit then return false
+    if !s.sat (i + k) (fun c => (Hex.digit? c).isSome) then return false
   return true
 
 /-- `stringescape`'s pattern: `\N{…}`, `\uXXXX`, `\UXXXXXXXX`. -/

@@ -93,7 +93,7 @@ public def names (_ : Unit) : Array String :=
 public def dataFaults (_ : Unit) : Array String := Id.run do
   let mut out : Array String := #[]
   for (n, idx) in WhatwgEncodingData.singleByte do
-    unless idx.length == 512 && idx.all fun c => c.isDigit || ('A' ≤ c && c ≤ 'F') do
+    unless idx.length == 512 && idx.all (Hex.caseDigit true) do
       out := out.push s!"{n}: an index of {idx.length} characters, not 128 scalars"
     if (scalarsOf idx).any fun s => 0xD800 ≤ s && s ≤ 0xDFFF then
       out := out.push s!"{n}: an index maps a byte to a surrogate"

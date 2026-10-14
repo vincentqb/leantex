@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Highlight.Scan
 import LeanTex.Core.PygmentsLexData
+import LeanTex.Core.Hex
 import Std.Data.HashMap
 
 /-! Pygments' `BashLexer` (pygments/lexers/shell.py) rule for rule, mirroring
@@ -337,7 +338,7 @@ private def math (ix : Ix) (m : M) : Option M := Id.run do
       if s.sat (d + 1) based then return some (m.tok p (s.run (d + 1) based) Ty.number)
       if !s.is (d + 1) ' ' then return some (m.tok p (d + 1) Ty.number)
   if s.is p '0' && (s.is (p + 1) 'x' || s.is (p + 1) 'X') then
-    let hexish (c : Char) := digitChar c || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')
+    let hexish (c : Char) := digitChar c || (Hex.digit? c).isSome
     if s.sat (p + 2) hexish then return some (m.tok p (s.run (p + 2) hexish) Ty.number)
   if s.digit p then return some (m.tok p (s.run p digitChar) Ty.number)
   if s.sat p asciiStart then return some (m.tok p (s.run (p + 1) wordChar) Ty.nameVariable)
