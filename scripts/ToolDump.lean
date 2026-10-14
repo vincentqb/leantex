@@ -39,12 +39,21 @@ def pointMicro (v : Int) : String :=
   let frac := toString (n % 1000000)
   s!"{sign}{n / 1000000}.{String.ofList (List.replicate (6 - frac.length) '0')}{frac}"
 
-/-- A decimal as the tools print it (`0.0197563`, `+12.5`, `1.2e-05`); none for any other text. -/
+/-- A run of decimal digits as a number, none when anything else stands in it. -/
+def digitsNat? (s : String) : Option Nat :=
+  if s.all Char.isDigit then some (s.foldl (fun n c => 10 * n + (c.toNat - 48)) 0) else none
+
+/-- A decimal as the tools print it (`0.0197563`, `+12.5`, `1.2e-05`, `1.2e+05`); none for any other
+text. -/
 def parseFloat (s : String) : Option Float := do
   let s := s.trimAscii.toString
   let (mant, exp) ← match s.splitOn "e" with
-    | [m, e] => e.toInt?.map (m, ·)
-    | [m] => some (m, 0)
+    | [m, e] =>
+      let (en, ed) := if e.startsWith "-" then (true, (e.drop 1).toString)
+        else if e.startsWith "+" then (false, (e.drop 1).toString) else (false, e)
+      if ed.isEmpty then none
+      else (digitsNat? ed).map fun d => (m, if en then -(d : Int) else (d : Int))
+    | [m] => some (m, (0 : Int))
     | _ => none
   let neg := mant.startsWith "-"
   let mant := if neg || mant.startsWith "+" then (mant.drop 1).toString else mant
@@ -53,8 +62,8 @@ def parseFloat (s : String) : Option Float := do
     | [i] => some (i, "")
     | _ => none
   if ip.isEmpty && fp.isEmpty then none
-  let i ← if ip.isEmpty then some 0 else ip.toNat?
-  let f ← if fp.isEmpty then some 0 else fp.toNat?
+  let i ← digitsNat? ip
+  let f ← digitsNat? fp
   let v : Float := Float.ofNat i + Float.ofNat f / Float.ofNat (10 ^ fp.length)
   let v := if exp ≥ 0 then v * Float.ofNat (10 ^ exp.toNat) else v / Float.ofNat (10 ^ (-exp).toNat)
   return if neg then -v else v

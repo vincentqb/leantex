@@ -1,7 +1,7 @@
 /-
 The external tier: each vendored flashtex document elaborated in-process, 2 clean, 1 with an
 unknown construct, 0 with an error; `--report` also builds with lualatex.
-Usage: lake env lean --run scripts/external.lean [--check | --selftest | --report <work> [<list>]]
+Usage: lake build ScriptsModules && lake env lean --run scripts/external.lean [--check | --selftest | --report <work> [<list>]]
 -/
 import LeanTex
 import scripts.Board

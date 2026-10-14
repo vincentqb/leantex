@@ -1,7 +1,7 @@
 /-
 Picture differential: each tikz-native probe drawn by the engine and by LuaLaTeX, rasterized and
 read by ink box, pixel share and exact bytes; a report.
-Usage: lake build leantex && lake env lean --run scripts/tikz-diff.lean [--selftest]
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/tikz-diff.lean [--selftest]
 -/
 import LeanTex
 import scripts.TikzProbes

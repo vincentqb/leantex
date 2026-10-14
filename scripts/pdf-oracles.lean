@@ -1,7 +1,7 @@
 /-
 The PDF reader and validator oracle: every corpus fixture's PDF judged by the host's readers and
 veraPDF into testdata/oracles/reader-matrix.txt; a missing tool writes `untested`.
-Usage: lake build TestsModules leantex && lake env lean --run scripts/pdf-oracles.lean
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/pdf-oracles.lean
 -/
 import LeanTex.Cli.FontDiscovery
 import Lean.Data.Json

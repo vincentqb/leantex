@@ -124,6 +124,14 @@ def selftest : IO UInt32 := do
   unless inkLetters "Ab&c d-e" == "abcde" do bad := bad.push "inkLetters"
   unless inkLetters "ba" == inkLetters "ab" do bad := bad.push "inkLetters order-insensitive"
   unless (parseBbox "<doc></doc>").isEmpty do bad := bad.push "empty doc"
+  let numbers : List (String × Float) := [("0.0197563", 0.0197563), ("1.2e-05", 0.000012),
+    ("1.2e+05", 120000.0), ("-12.5", -12.5), ("+3", 3.0), ("72.000000", 72.0), ("1.", 1.0),
+    (".5", 0.5)]
+  for (text, v) in numbers do
+    unless (parseFloat text).any (fun x => Float.abs (x - v) ≤ 1e-9 * max 1.0 (Float.abs v)) do
+      bad := bad.push s!"parseFloat {text}: {parseFloat text}"
+  for text in ["", ".", "-", "a.b.c", "1e", "1e2.5", "1_000", "0.1_5", "1e1_0", "e5"] do
+    unless parseFloat text == none do bad := bad.push s!"parseFloat refuses {text.quote}"
   if bad.isEmpty then
     IO.println "ink-oracle --selftest: all passed"
     return 0
