@@ -4477,8 +4477,8 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"h4, h5, h6 \{ font-size: {scaleSize "normalsize" "em"}; }\n" ++
   -- hyphenation follows the declared language; a ragged or unhyphenated page hyphenates nothing
   s!"p \{ hyphens: {if autoHyphens doc.page then "auto" else "manual"}; }\n" ++
-  -- markdown inline code may break rather than overflow its line, as its page breaks it
-  (if doc.surface == .markdown then
+  -- inline code outside tex may break rather than overflow its line, as its page breaks it
+  (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   listIndentCss doc.docClass.record.lists ++
   (if figureWords then figureWordsRule else "") ++

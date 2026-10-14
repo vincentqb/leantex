@@ -299,6 +299,12 @@ def elabMd (s : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown "t.md" s
   Elab.runRaws "t.md" raws ds
 
+/-- A code file's source elaborated as `leantex <file>` reads it, its language from `file`'s
+extension. -/
+def elabCode (file src : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read (Ir.Surface.ofPath file) file src
+  Elab.runRaws file raws ds
+
 /-- How a witness runs: its source as written or transformed (`rep`), with or without its locations
 (`located`). -/
 structure WitnessRun where
@@ -488,6 +494,20 @@ def mdGoldenNames : List String :=
   ["md-code", "md-emphasis", "md-headings", "md-images", "md-links", "md-lists",
    "md-quotes", "md-readme", "md-rules", "md-table"]
 
+/-- The golden set's code fixtures: `testdata/corpus/<n>.<ext>`, read by the code-file reader
+their extension selects. -/
+def codeGoldenNames : List (String × Ir.CodeLang) :=
+  [("code-lean", .lean), ("code-python", .python), ("code-bash", .bash)]
+
+/-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
+def inkMarkupExempt : List (String × List Char) :=
+  -- Code ships as written: an f-string's or an expansion's braces and a raw docstring's backslash.
+  [("code-python", ['{', '}', '\\']), ("code-bash", ['{', '}'])]
+
+/-- The markup characters a fixture may ship as ink (`inkMarkupExempt`). -/
+def inkMarkupAllowed (n : String) : List Char :=
+  ((inkMarkupExempt.find? (·.1 == n)).map (·.2)).getD []
+
 /-- The golden set: every fixture `runGoldens` elaborates and `censusTable` must carry a row for. -/
 def goldenNames : List String :=
   ["affine-lengths", "paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
@@ -509,7 +529,7 @@ def goldenNames : List String :=
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
    "md-include", "md-include-deck", "palette-seeds", "alert-mark"] ++
-  mdGoldenNames
+  mdGoldenNames ++ codeGoldenNames.map (·.1)
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
 def tikzPicture (body : String) : String :=
@@ -765,8 +785,8 @@ def entryResolve (es : Array PdfRead.Entry) (obj : PdfRead.Obj) : Option PdfRead
 /-- A fixture file's text as the driver's decoding door reads it. -/
 def fixtureText (path : String) : IO String := do
   let bytes ← IO.FS.readBinFile path
-  return if path.endsWith ".md" then (Encoding.readMarkdown path bytes).text
-    else (Encoding.readDocument path bytes).1.text
+  return if Ir.Surface.ofPath path == .tex then (Encoding.readDocument path bytes).1.text
+    else (Encoding.readMarkdown path bytes).text
 
 /-- A source whose file includes are fulfilled before elaboration, `file` setting the input
 directory. -/
@@ -857,12 +877,17 @@ def bibBuild (src : String) (bibs : Array (String × String)) : Ir.Doc × Array 
 
 /-- A golden fixture's source file under `testdata/corpus`, with its surface's extension. -/
 def goldenFile (n : String) : String :=
-  s!"testdata/corpus/{n}.{if mdGoldenNames.contains n then "md" else "tex"}"
+  let ext := match codeGoldenNames.lookup n with
+    | some lang => lang.extension
+    | none => if mdGoldenNames.contains n then "md" else "tex"
+  s!"testdata/corpus/{n}.{ext}"
 
 /-- A golden fixture elaborated through its own surface's reader. -/
 def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
   let src ← fixtureText (goldenFile n)
-  if mdGoldenNames.contains n then
+  if let some lang := codeGoldenNames.lookup n then
+    return elabCode s!"{n}.{lang.extension}" src
+  else if mdGoldenNames.contains n then
     let file := s!"{n}.md"
     let (raws, ds) := Md.read file src
     return Elab.runRaws file raws ds
@@ -878,9 +903,9 @@ def corpusTwinDocs : IO (Array (String × Ir.Doc)) := do
   for n in names.qsort (· < ·) do
     let (d, _) ← elabFixture n (← fixtureText s!"testdata/corpus/{n}.tex")
     out := out.push (s!"testdata/corpus/{n}.tex", d)
-  for n in mdGoldenNames do
+  for n in mdGoldenNames ++ codeGoldenNames.map (·.1) do
     let (d, _) ← goldenDoc n
-    out := out.push (s!"testdata/corpus/{n}.md", d)
+    out := out.push (goldenFile n, d)
   return out
 
 def firstDiff (expected actual : String) : String := Id.run do

@@ -163,6 +163,13 @@ end
 /-- The flattened text of inline content, as an `alt` attribute carries it. -/
 private def inlText (xs : Array Inl) : String := inlTextList "" xs.toList
 
+/-- An empty group, TeX's own end of a command's arguments, when `rs` opens on a word an
+overlay-aware command before it would read as its `<…>` selector. -/
+@[expose] public def selectorGuard (rs : Array Raw) (p : Pos) : Array Raw :=
+  match rs[0]? with
+  | some (Raw.word w _) => if w.startsWith "<" then #[.group #[] p] else #[]
+  | _ => #[]
+
 mutual
 
 private def inlRaws (file : String) : Inl → Array Raw × Array Diag
@@ -218,7 +225,10 @@ private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
   | [] => (out, ds)
   | x :: rest =>
     let (rs, ds') := inlRaws file x
-    inlListRaws file (out ++ rs) (ds ++ ds') rest
+    let guard := match out.back? with
+      | some (.group _ p) => selectorGuard rs p
+      | _ => #[]
+    inlListRaws file (out ++ guard ++ rs) (ds ++ ds') rest
 
 end
 
@@ -406,14 +416,15 @@ private def itemsRaws (file : String) (out : Array Raw) (ds : Array Diag) :
   | [], _ => (out, ds)
   | it :: rest, p =>
     let (rs, ds') := blkListRaws file #[] #[] it.toList
-    itemsRaws file ((out.push (.ctrl "item" p)) ++ rs) (ds ++ ds') rest p
+    itemsRaws file ((out.push (.ctrl "item" p)) ++ selectorGuard rs p ++ rs) (ds ++ ds') rest p
 
 end
 
 /-- The whole document: markdown source to the surface AST, with the reader's
 own diagnostics carrying `.md` spans. -/
-public def desugar (file : String) (input : String) : Array Raw × Array Diag :=
-  let (bs, ds) := blocks file input
+public def desugar (file : String) (input : String) (dialect : Dialect := .document) :
+    Array Raw × Array Diag :=
+  let (bs, ds) := blocksIn dialect file input
   let (rs, ds') := blkListRaws file #[] #[] bs.toList
   (rs, ds ++ ds')
 

@@ -1,0 +1,9 @@
+# The shell cases' leading comment blocks, written and reviewed by hand: case, start, stop, text.
+# A case with no block is its name and -. Read by scripts/codedoc.lean, which fails a stale row.
+sh-blank-before.sh	21	50	A block after a blank line.
+sh-directive.sh	36	68	The block after the directive.
+sh-hash-in-code.sh	-
+sh-indented.sh	12	88	An indented comment line.\n  Its continuation, indented after the marker.
+sh-no-block.sh	-
+sh-no-shebang.sh	0	66	A block on the first line, with no shebang.\nIt continues here.
+sh-shebang-block.sh	10	73	Water the beds\n\nA leading comment block after the shebang.

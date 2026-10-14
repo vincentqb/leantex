@@ -588,7 +588,7 @@ private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
   have hmem : Raw.ctrl n p ∈ (Md.desugar f t).1 := by
     rw [Array.back?_eq_getElem?] at hback
     exact Array.mem_of_getElem? hback
-  have hadm := Md.desugar_vocabulary_mem f t _ hmem
+  have hadm := Md.desugar_vocabulary_mem f t .document _ hmem
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 

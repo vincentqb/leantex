@@ -1,5 +1,7 @@
 module
 
+public import LeanTex.Core.SurfaceKind
+
 namespace LeanTex.Cli
 
 /-- Which backends to run. -/
@@ -76,6 +78,13 @@ private def colorMode : String → Option ColorMode
   | "always" => some .always
   | "never" => some .never
   | _ => none
+
+/-- The extensions a document may end in, as a refusal lists them. -/
+public def inputKinds : String :=
+  match (LeanTex.Core.Ir.Surface.inputExtensions.map ("." ++ ·)).reverse with
+  | [] => ""
+  | [one] => one
+  | last :: rest => ", ".intercalate rest.reverse ++ " or " ++ last
 
 public def parse (argv : List String) : Except String Config := do
   let mut cfg : Config := { cmd := .help }
@@ -165,10 +174,10 @@ public def parse (argv : List String) : Except String Config := do
             | "themes" => cmd := some .themes
             | "build" | "dump" => wantsFile := some a
             | _ =>
-              if a.endsWith ".tex" || a.endsWith ".md" then
+              if (LeanTex.Core.Ir.Surface.ofInput? a).isSome then
                 cmd := some (.build a)
               else if a.toList.contains '.' || a.toList.contains '/' then
-                throw s!"'{a}' is not a .tex or .md document"
+                throw s!"'{a}' is not a document leantex reads: {inputKinds}"
               else
                 throw s!"unknown command '{a}'"
   if cfg.quiet && cfg.verbosity > 0 then
@@ -249,7 +258,7 @@ public def exitFor (errors assertFailures warnings : Nat) (werror : Bool) : UInt
   else 0
 
 public def helpText : String :=
-  "leantex — compile a .tex document to PDF or HTML, fast, with no setup
+  "leantex — compile a .tex, .md or code file to PDF or HTML, fast, with no setup
 
 usage: leantex <file> [flags] · leantex <command> [args]
 
@@ -258,6 +267,7 @@ examples:
   leantex doc.tex -o out.html     the output name picks the backend
   leantex doc.tex -o build/       write build/doc.pdf
   leantex doc.tex --watch         rebuild on every change
+  leantex Foo.lean -o Foo.html    a .md, .lean, .py or .sh file reads as a document too
 
 a document declares what to build — \\output{ formats = pdf, html } — so
 the command line stays bare: flags say where output lands and how the run

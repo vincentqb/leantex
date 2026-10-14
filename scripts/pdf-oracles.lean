@@ -68,7 +68,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let pick := if spec.mono.isNone then
-      FontDb.monoPick (doc.surface != .markdown) (spec.body.isSome || spec.sans.isSome) faces
+      FontDb.monoPick (doc.surface == .tex) (spec.body.isSome || spec.sans.isSome) faces
         (some family)
     else none
   let famOf (slot : Nat) : String := match slot with

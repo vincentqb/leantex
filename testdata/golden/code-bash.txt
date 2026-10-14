@@ -1,0 +1,18 @@
+class article
+page 612x792 vmargin 72 hmargin 114
+meta title "code-bash.sh"
+section* 0
+  text "code-bash.sh"
+para
+  text "Rinse the cache"
+para
+  text "An invented script for the code-file reader’s golden fixture. Its leading comment block reads as prose above the code."
+verbatim language bash
+  "#!/usr/bin/env bash"
+  "set -eu"
+  ""
+  "cache=\"${TMPDIR:-/tmp}/rinse\"  # a trailing comment stays in the code"
+  "mkdir -p \"$cache\""
+  "echo \"rinsed $cache\""
+-- diagnostics
+(none)

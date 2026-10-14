@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
+public import LeanTex.Core.SurfaceKind
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.Decl
@@ -158,20 +159,10 @@ public def articleTextBlock : Sp := pt 312
 family within 75 to 85 characters per line. -/
 public def markdownTextBlock : Sp := pt 384
 
-/-- The surface a document or an included file is written in. -/
-public inductive Surface where
-  | tex
-  | markdown
-  deriving Repr, BEq, DecidableEq, Inhabited
-
-/-- `.md` reads as markdown, everything else as tex. -/
-public def Surface.ofPath (file : String) : Surface :=
-  if file.endsWith ".md" then .markdown else .tex
-
 /-- The text block an undeclared flow page takes on this surface. -/
 public def Surface.textBlock : Surface → Sp
   | .tex => articleTextBlock
-  | .markdown => markdownTextBlock
+  | .markdown | .code _ => markdownTextBlock
 
 /-- Beamer's default slides stage, 128×96 mm. -/
 @[expose] public def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
@@ -4161,10 +4152,10 @@ public def fvextraLineOverlap : Sp := Dim.pt 1 / 4
 public def listingBreakIndent : Sp := pt 20
 
 /-- What a listing sets with before its own keys: LaTeX's defaults on tex;
-`\footnotesize`, wrapped whitespace first, on markdown. -/
+`\footnotesize`, wrapped whitespace first, on markdown and code files. -/
 public def Surface.listing : Surface → ListingSpec
   | .tex => {}
-  | .markdown =>
+  | .markdown | .code _ =>
     { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent
       wrapAt := .whitespaceFirst }
 
@@ -6759,9 +6750,9 @@ calibration reads fluently; declare \
       safeMargin := some (Dim.mm 10) }
 
 /-- A document's class defaults: its class's colour row and ground depth, the
-web's row for a markdown source. -/
+web's row for a source that is not tex. -/
 @[expose] public def DocClass.classColors (c : DocClass) (surface : Surface) : ClassColors :=
-  { row := if surface == .markdown then .web else c.record.colorRow
+  { row := if surface == .tex then c.record.colorRow else .web
     depth := c.record.groundDepth }
 
 public theorem poster_model_face : (DocClass.poster).record.model = .face := by rfl

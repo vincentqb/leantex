@@ -1,7 +1,8 @@
 # leantex
 
-A document engine written in Lean 4. Compile TeX or Markdown to PDF 2.0
-or self-contained HTML on Linux and macOS.
+A document engine written in Lean 4. Compile TeX, Markdown, or a Lean,
+Python or shell source file to PDF 2.0 or self-contained HTML on Linux and
+macOS.
 
 ## Install
 
@@ -25,6 +26,7 @@ elan downloads the Lean version pinned by the repository.
 leantex document.tex                     # PDF beside the source
 leantex document.tex -o document.html    # HTML with embedded assets
 leantex document.md -o document.pdf      # Markdown input
+leantex Module.lean -o Module.html       # A Lean, Python or shell file
 leantex document.tex --watch             # Rebuild on changes
 ```
 
@@ -91,6 +93,40 @@ builds, as long as one of its fonts has a glyph for U+FFFD.
 
 See the [example documents](testdata/corpus) and
 [package compatibility index](testdata/compat-index) for supported syntax.
+
+## Code files
+
+A `.lean`, `.py` or `.sh` file reads as a document: its documentation
+comments are prose, read as Markdown, and the code between them sets as
+listings in the file's language, comments included, every code line exactly
+as written; the blank lines around a listing ship nowhere.
+
+- **Lean:** a `/-! … -/` module doc and a `/-- … -/` docstring that open a
+  line are prose. A module doc with only lines that declare nothing before it
+  (the header's `module`, `prelude` and `import` lines, and `section`,
+  `namespace`, `open`, `set_option`, `universe` or `variable` lines) stands
+  above them, as the file's description; any other doc comment stands where
+  it is, a docstring above its declaration. An indented docstring, such as a
+  structure field's, stays in the code, as do `--` and `/- … -/` comments.
+- **Python:** the module docstring and each `def` and `class` docstring
+  written as one string literal alone on its lines are prose, read as Python
+  reads them (escapes, but for `\N{…}`, then `inspect.cleandoc`), a doctest
+  (a `>>>` line through the next blank line) as code. The module docstring
+  stands above the code before it, and a definition's docstring above its
+  decorators and header, whose body follows in the same listing.
+- **Shell:** the leading `#` comment block, after the `#!` line, is prose
+  above the script.
+
+A file's description that opens on a heading gives the document its title;
+otherwise the file's name is the title, shown as the page's first heading.
+The first line, or the line after `#!`, may hold a directive taking
+`\output`'s keys and `theme`, in the file's own comment syntax; a directive
+elsewhere among the leading comments is not read, and the run says so:
+
+```python
+#!/usr/bin/env python3
+# leantex: formats = pdf, html, theme = gemini
+```
 
 ## Fonts and themes
 

@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Lex
 public import LeanTex.Core.MdDesugar
+public import LeanTex.Core.CodeDoc
 
 /-! # One door per surface
 
@@ -24,6 +25,7 @@ namespace Surface
     let (raws, parseDs) := Parse.parse file toks
     (raws, lexDs ++ parseDs)
   | .markdown, file, text => Md.read file text
+  | .code lang, file, text => Code.read lang file text
 
 public theorem read_tex_exact (file text : String) :
     read .tex file text =

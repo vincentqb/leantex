@@ -65,7 +65,7 @@ public def monoDefaultOf (doc : Ir.Doc) (faces : Array FontDb.Face) (docDirs : L
     Option FontDb.MonoPick × Bool :=
   let textFamily := textFamilyIn doc faces
   -- premise: monoDefaultChecks — the default monospace follows the scan and the shipped faces
-  let tex := doc.surface != .markdown
+  let tex := doc.surface == .tex
   let declaredText := doc.fonts.body.isSome || doc.fonts.sans.isSome
   let own := ownFaces faces docDirs
   let wantsMono := doc.fonts.mono.isNone && (SlotLoss.slotsUsed doc).contains 2
@@ -100,7 +100,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     else spec
   let slides := doc.docClass == Ir.DocClass.slides
   let textFamily := textFamilyIn doc faces
-  let tex := doc.surface != .markdown
+  let tex := doc.surface == .tex
   let own := ownFaces faces docDirs
   let (pick, monoOwn) := monoDefaultOf doc faces docDirs
   let spec := match pick with

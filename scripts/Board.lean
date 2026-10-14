@@ -651,7 +651,7 @@ def field (line key : String) : Option String :=
 /-- The tiers the scoreboard expects; a name here missing its baseline or producer is a
 fault. -/
 def declaredTiers : List String :=
-  ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
+  ["codedoc", "commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
    "htmla11y", "htmlreader", "mdtwin", "palette-oracle", "parity", "pdf-native", "purity",
    "rhythm", "schemes", "svg-native", "tikz-native", "typeset"]
 
@@ -1437,15 +1437,17 @@ that reads a document's header before the document is built. -/
 def doorText (path : System.FilePath) : IO String := do
   let bytes ← IO.FS.readBinFile path
   let file := path.toString
-  return if file.endsWith ".md" then (LeanTex.Core.Encoding.readMarkdown file bytes).text
-    else (LeanTex.Core.Encoding.readDocument file bytes).1.text
+  return if LeanTex.Core.Ir.Surface.ofPath file == .tex
+    then (LeanTex.Core.Encoding.readDocument file bytes).1.text
+    else (LeanTex.Core.Encoding.readMarkdown file bytes).text
 
-/-- The corpus's documents in name order: every top-level `.tex` and `.md` file not
-declared excluded. -/
+/-- The corpus's documents in name order: every top-level file a surface reads, not declared
+excluded. -/
 def corpusDocs (corpus : System.FilePath) : IO (Array (String × System.FilePath)) := do
   let mut out : Array (String × System.FilePath) := #[]
   for e in ← corpus.readDir do
-    let some ext := [".tex", ".md"].find? (e.fileName.endsWith ·) | continue
+    let some ext := (LeanTex.Core.Ir.Surface.inputExtensions.map ("." ++ ·)).find?
+      (e.fileName.endsWith ·) | continue
     if ← e.path.isDir then continue
     if declaresExcluded (← doorText e.path) then continue
     out := out.push ((e.fileName.dropEnd ext.length).toString, e.path)

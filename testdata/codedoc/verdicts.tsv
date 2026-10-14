@@ -1,0 +1,43 @@
+# One row per case in testdata/codedoc/cases: case, verdict, note.
+# verdicts: match | divergence | owed. Written only by scripts/codedoc.lean.
+lean-attributes.lean	match	
+lean-docstrings.lean	match	
+lean-field-docs.lean	match	
+lean-guillemets.lean	match	
+lean-indented.lean	divergence	
+lean-interpolated.lean	match	
+lean-module-doc.lean	match	
+lean-mutual.lean	match	
+lean-nested-comment.lean	match	
+lean-open-in.lean	match	
+lean-same-line.lean	match	
+lean-second-module-doc.lean	match	
+lean-strings.lean	match	
+lean-syntax-doc.lean	match	
+lean-where-doc.lean	match	
+py-async.py	match	
+py-comments-before.py	match	
+py-concatenated.py	owed	reader 0 comments, parser 1
+py-decorated.py	match	
+py-fstring-first.py	match	
+py-fstring-nested.py	match	
+py-fstring-spec.py	match	
+py-lambda-header.py	match	
+py-module.py	match	
+py-multiline-header.py	match	
+py-named-escape.py	owed	reader 1 comments, parser 1
+py-nested.py	match	
+py-not-first.py	match	
+py-one-line.py	match	
+py-parenthesized.py	owed	reader 0 comments, parser 1
+py-raw-escapes.py	match	
+py-same-line.py	owed	reader 0 comments, parser 1
+py-shebang.py	match	
+py-single-quoted.py	match	
+sh-blank-before.sh	match	
+sh-directive.sh	match	
+sh-hash-in-code.sh	match	
+sh-indented.sh	match	
+sh-no-block.sh	match	
+sh-no-shebang.sh	match	
+sh-shebang-block.sh	match	

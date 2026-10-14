@@ -1352,12 +1352,69 @@ def censusRows7 :
           | .underline | .lineThrough => false).map (·.2.1)
         decide (3 ≤ (ys.toList.eraseDups).length)).getD false)])]
 
+/-- Whether `a` ships above `b` on page 0. -/
+def shipsAbove (c : Array CensusPage) (a b : String) : Bool :=
+  match lineYOf c 0 a, lineYOf c 0 b with
+  | some ya, some yb => decide (ya < yb)
+  | _, _ => false
+
+/-- Whether `b` ships on the line right after `a`'s on page 0. -/
+def shipsNext (c : Array CensusPage) (a b : String) : Bool :=
+  match c[0]? with
+  | some p =>
+    match p.lines.findIdx? (hasStr ·.text a) with
+    | some i => (p.lines[i + 1]?.map (hasStr ·.text b)).getD false
+    | none => false
+  | none => false
+
+/-- The code fixtures' census rows: prose where its comment stands or above the code it
+documents, the code every character, no comment delimiter of the prose and no directive. -/
+def censusCodeRows :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("code-lean", fun _ c => [
+    ("one page", c.size == 1),
+    ("the module doc's heading ships first, as the title", shipsAbove c "Tide tables" "Every name"),
+    ("the first module doc stands above the block comment before it",
+      shipsAbove c "What the page shows" "Aninventedmodule"),
+    ("a docstring stands right above its declaration's code",
+      shipsNext c "The heights, in centimetres" "defabove(mark:Nat)"),
+    ("the code keeps its line comment, its string's markers and its nested block comment",
+      hasStr (censusInk c) "--alinecommentstaysinthecode" &&
+        hasStr (censusInk c) "\"a/--notadoc-/b\"" && hasStr (censusInk c) "/-nested-/"),
+    ("an indented field docstring stays in the code",
+      hasStr (censusInk c) "/--Afield'sdocstringisindentedandstaysinthecode.-/"),
+    ("no prose ships its comment delimiters, and the directive ships nowhere",
+      !hasStr (censusInk c) "/-!" && !hasStr (censusInk c) "/--Theheights" &&
+        !hasStr (censusInk c) "leantex:")]),
+  ("code-python", fun _ c => [
+    ("one page", c.size == 1),
+    ("the file's name ships first, as its title", shipsAbove c "code-python.py" "Kettle timings."),
+    ("the module docstring stands above the line before it", shipsAbove c "Kettle timings." "#!/usr"),
+    ("a docstring stands above its def, and the def's body follows its header",
+      shipsNext c "Return the minutes" "defminutes(litres:float)->float:" &&
+        shipsNext c "defminutes(litres:float)" "return2.5*litres+0.5"),
+    ("a decorated def's prose stands above its decorator, and a raw docstring keeps its backslash",
+      shipsNext c "Round up; a raw docstring keeps \\d" "@functools.lru_cache(maxsize=None)"),
+    ("a method's docstring stands above its header, which keeps its indentation",
+      shipsNext c "Describe the kettle" "deflabel(self)->str:"),
+    ("the code keeps its comment and its f-string, and no docstring quote ships",
+      hasStr (censusInk c) "#acommentstaysinthecode" &&
+        hasStr (censusInk c) "f\"{self.capacity}litres\"" && !hasStr (censusInk c) "\"\"\"")]),
+  ("code-bash", fun _ c => [
+    ("one page", c.size == 1),
+    ("the file's name ships first, as its title", shipsAbove c "code-bash.sh" "Rinse the cache"),
+    ("the leading comment block stands above the line before it", shipsAbove c "Rinse the cache" "#!/usr"),
+    ("the code after the block joins the line before it in one listing",
+      shipsNext c "#!/usr/bin/envbash" "set-eu"),
+    ("the block ships without its comment markers, the code with its own",
+      !hasStr (censusText c) "# Rinse" && hasStr (censusInk c) "#atrailingcommentstaysinthecode")])]
+
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/
 def censusParts :
     List (List (String × (Layout.Geom → Array CensusPage → List (String × Bool)))) :=
   [censusRows0, censusRows1, censusRows2, censusRows3, censusRows4, censusRows5,
-    censusRows6, censusRows7, censusMdRows]
+    censusRows6, censusRows7, censusMdRows, censusCodeRows]
 
 def censusPartRows : Nat := 16
 
@@ -1395,13 +1452,13 @@ def declaresExcluded (text : String) : Bool :=
     if l.startsWith "%" then (l.drop 1).toString.trimAscii.toString else l
   hasStr (" ".intercalate header) corpusExcludeMarker
 
-/-- The top-level `.tex` and `.md` files under `testdata/corpus`: the entries a golden run could
+/-- The top-level files under `testdata/corpus` a surface reads: the entries a golden run could
 draw from. -/
 def corpusDocs : IO (Array String) := do
   let dir : System.FilePath := "testdata/corpus"
   let mut out := #[]
   for entry in (← dir.readDir).map (·.fileName) |>.qsort (· < ·) do
-    unless entry.endsWith ".tex" || entry.endsWith ".md" do continue
+    unless (Ir.Surface.ofInput? entry).isSome do continue
     unless (← (dir / entry).isDir) do
       out := out.push entry
   return out
@@ -1433,13 +1490,10 @@ elaborates without complaint — promote it"
     check ref s!"golden {n}: both {n}.md and {n}.tex exist, and the golden set reads only the .md"
       (!(← (dir / s!"{n}.tex").pathExists))
 
-/-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
-def inkMarkupExempt : List (String × List Char) := []
-
 /-- No page of any golden fixture ships a LaTeX markup character as ink. -/
 def inkMarkupChecks (ref : IO.Ref (List String)) (n : String)
     (c : Array CensusPage) : IO Unit := do
-  let allowed := ((inkMarkupExempt.find? (·.1 == n)).map (·.2)).getD []
+  let allowed := inkMarkupAllowed n
   let text := censusText c
   for ch in inkMarkupWatch do
     unless allowed.contains ch do

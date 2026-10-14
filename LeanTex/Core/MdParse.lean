@@ -9,7 +9,7 @@ import Std.Data.HashMap
 
 /-! The markdown reader: strict CommonMark with GFM tables into an md AST
 carrying `.md` spans, refusing raw HTML outside a closed vocabulary, indented
-code and lazy continuation (E0390). -/
+code and lazy continuation (E0390), and a code file's documentation's dialect. -/
 
 namespace LeanTex.Core.Md
 
@@ -54,6 +54,13 @@ public inductive Blk where
   deriving Repr, BEq
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
+
+/-- Which markdown a reader reads: a document's strict dialect, or a code file's documentation,
+where an indented block is code, a lazy line continues its paragraph and HTML is literal text. -/
+public inductive Dialect where
+  | document
+  | docstring
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 def isSpaceOrTab (c : Char) : Bool := c == ' ' || c == '\t'
 
@@ -1253,7 +1260,7 @@ theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p 
 
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
-def scanInlines (file : String) (c : Chars) :
+def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
     Array ITok × Array BPair × Array Diag := Id.run do
   let mut toks : Array ITok := #[]
   let mut pairs : Array BPair := #[]
@@ -1317,6 +1324,10 @@ def scanInlines (file : String) (c : Chars) :
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
+          if dialect == .docstring then
+            pending := pending.push '<'
+            i := i + 1
+            continue
           -- Only a complete tag (§6.6) is raw HTML; anything else is literal text.
           let (r, m) := htmlInlineAt file c.cs i p hmemo
           hmemo := m
@@ -1583,8 +1594,9 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
   return acc
 
 /-- Inline structure for one stretch of text, in three passes. -/
-def inlines (file : String) (c : Chars) : Array Inl × Array Diag :=
-  let (toks, bpairs, diags) := scanInlines file c
+def inlines (file : String) (c : Chars) (dialect : Dialect := .document) :
+    Array Inl × Array Diag :=
+  let (toks, bpairs, diags) := scanInlines file c dialect
   let (reg, nRegions) := regions toks bpairs
   let (epairs, leftover) := matchEmphasis toks reg nRegions
   (buildInlines toks bpairs epairs leftover, diags)
@@ -1729,14 +1741,14 @@ def tableCells (c : Chars) : Array Chars := Id.run do
 
 /-- A row's cells as inline content, exactly `n` of them: a missing cell is
 empty and an excess one dropped. -/
-def tableRow (file : String) (n : Nat) (cells : Array Chars) :
+def tableRow (file : String) (n : Nat) (cells : Array Chars) (dialect : Dialect := .document) :
     Array (Array Inl) × Array Diag := Id.run do
   let mut row : Array (Array Inl) := #[]
   let mut diags : Array Diag := #[]
   for k in [0:n] do
     match cells[k]? with
     | some c =>
-      let (inl, ds) := inlines file c
+      let (inl, ds) := inlines file c dialect
       row := row.push inl
       diags := diags ++ ds
     | none => row := row.push #[]
@@ -1844,6 +1856,8 @@ private inductive Leaf where
   /-- An open table: its rows so far, each read into its cells. -/
   | table (aligns : Array TableAlign) (header : Array (Array Inl))
       (rows : Array (Array (Array Inl))) (pos : Pos)
+  /-- An open indented code block of the docstring dialect: its lines, indent removed. -/
+  | indented (lines : Array String) (pos : Pos)
   deriving Inhabited
 
 private def Leaf.isPara : Leaf → Bool
@@ -1884,8 +1898,21 @@ interrupt a paragraph. -/
 private def startsAnyBlock (cs : Array Char) (i : Nat) : Bool :=
   interrupts cs i || (bulletAt cs i).isSome || (orderedAt cs i).isSome
 
-/-- Blocks for one markdown document, and the diagnostics the reader raised. -/
-public def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run do
+/-- An indented code line with its block's four columns of indent removed. -/
+private def indentedLine (cs : Array Char) (i col : Nat) : String :=
+  match consumeIndent cs i col 4 with
+  | some (k, c2) => String.ofList (List.replicate (c2 - col - 4) ' ') ++ sliceStr cs k cs.size
+  | none => ""
+
+/-- A closed indented code block, its trailing blank lines dropped. -/
+private def indentedBlock (lines : Array String) (pos : Pos) : Blk :=
+  let kept := (lines.toList.reverse.dropWhile (·.trimAscii.isEmpty)).reverse
+  .code "" (kept.foldl (fun s l => s ++ l ++ "\n") "") pos
+
+/-- Blocks for one markdown text in a dialect, and the diagnostics the reader raised. -/
+public def blocksIn (dialect : Dialect) (file : String) (input : String) :
+    Array Blk × Array Diag := Id.run do
+  let doc := dialect == .document
   let lines := splitLines input
   let mut frames : Array Frame := #[]
   let mut acc : Array Blk := #[]
@@ -1958,6 +1985,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
           leaf := .fenced fch flen finfo fpos find
             (flines.push (sliceStr rest strip rest.size))
         continue
+    | .indented ilines ipos =>
+      if ok && (isBlankFrom cs i || (indentAt cs i col).2 ≥ 4) then
+        leaf := .indented (ilines.push (if isBlankFrom cs i then "" else indentedLine cs i col)) ipos
+        continue
+      acc := acc.push (indentedBlock ilines ipos)
+      leaf := .none
     | .html e =>
       -- The refused block ends with its container, at a blank line, or on its end literal's line.
       if !ok then
@@ -1987,14 +2020,23 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       fun l a fallback =>
         match l with
         | .para pls =>
-          let (inl, ds) := inlines file (charsOf pls)
+          let (inl, ds) := inlines file (charsOf pls) dialect
           (a.push (.para inl ((pls[0]?.map (·.2)).getD fallback)), ds)
         | .table aligns header rows p => (a.push (.table aligns header rows p), #[])
         | _ => (a, #[])
     -- An unmatched container under an open paragraph is lazy when the line starts no block.
     let (jl, indl) := indentAt cs i col
     if !ok && leaf.isPara && !blank && !(indl < 4 && startsAnyBlock cs jl) then
-      diags := diags.push (refuse file .lazyContinuation lpos)
+      if doc then diags := diags.push (refuse file .lazyContinuation lpos)
+      else
+        leaf := match leaf with
+          | .para pls => .para (pls.push (sliceStr cs jl cs.size, { line := ln.no, col := jl + 1 }))
+          | .none => .none
+          | .fenced ch len info p ind ls => .fenced ch len info p ind ls
+          | .html e => .html e
+          | .comment p => .comment p
+          | .table aligns header rows p => .table aligns header rows p
+          | .indented ls p => .indented ls p
       continue
     if !ok then
       let (a, ds) := closePara leaf acc lpos
@@ -2126,7 +2168,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         acc := acc.push (.table aligns header rows tpos)
         leaf := .none
       else
-        let (row, ds) := tableRow file aligns.size cells
+        let (row, ds) := tableRow file aligns.size cells dialect
         diags := diags ++ ds
         leaf := .table aligns header (rows.push row) tpos
         sawBlank := false
@@ -2144,13 +2186,13 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
           | _, _ => Option.none
       | _ => Option.none
     -- An HTML block of condition 7 is paragraph text under an open paragraph.
-    let htmlStart : Option HtmlEnd :=
+    let htmlStart : Option HtmlEnd := if !doc then Option.none else
       (htmlBlockKind cs j).bind fun (e, interrupts) =>
         if leaf.isPara && !interrupts then Option.none else some e
     -- premise: htmlTwinChecks — every spelling of `open` ships the element open
-    let detailsTag := (tagAt cs j).filter fun t => detailsOpen t && isBlankFrom cs t.stop
+    let detailsTag := (tagAt cs j).filter fun t => doc && detailsOpen t && isBlankFrom cs t.stop
     let opensDetails := detailsTag.isSome
-    let closesDetails := (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
+    let closesDetails := doc && (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
     let inDetails := frames.back?.map Frame.kind == some .disclosure
     let summaryLine := inDetails && !leaf.isPara && acc.isEmpty
       && (frames.back?.bind Frame.summary).isNone && !(frames.back?.any (·.refused))
@@ -2159,7 +2201,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     if summaryLine && summary.isNone && ind < 4 && blockTagStartsAt cs j "summary" then
       frames := frames.modify (frames.size - 1) fun f => { f with refused := true }
     if ind ≥ 4 && !leaf.isPara then
-      diags := diags.push (refuse file .indentedCode lpos)
+      if doc then diags := diags.push (refuse file .indentedCode lpos)
+      else
+        let (a, ds) := closePara leaf acc lpos
+        acc := a
+        diags := diags ++ ds
+        leaf := .indented #[indentedLine cs i col] lpos
     else if ind ≥ 4 && leaf.isPara then
       -- Four spaces under an open paragraph is continuation text, not a block start.
       leaf := .para (match leaf with
@@ -2201,7 +2248,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
           rstrip (String.ofList (raw.toList.take (raw.length - hashes)))
         else raw
       let (inl, ds2) := inlines file
-        (charsOfOne (body.trimAscii.toString) { line := ln.no, col := k + 1 })
+        (charsOfOne (body.trimAscii.toString) { line := ln.no, col := k + 1 }) dialect
       acc := acc.push (.heading level inl lpos)
       diags := diags ++ ds2
     else if leaf.isPara && (setextAt cs j).isSome then
@@ -2209,7 +2256,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       let level := (setextAt cs j).getD 1
       match leaf with
       | .para pls =>
-        let (inl, ds) := inlines file (charsOf pls)
+        let (inl, ds) := inlines file (charsOf pls) dialect
         acc := acc.push (.heading level inl ((pls[0]?.map (·.2)).getD lpos))
         diags := diags ++ ds
       | _ => pure ()
@@ -2245,7 +2292,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         leaf := if htmlEndsIn cs j e then .none else .html e
     else if let some (before, hp, cells, aligns) := tableStart then
       let (a, ds) := closePara (if before.isEmpty then .none else .para before) acc lpos
-      let (header, ds2) := tableRow file aligns.size cells
+      let (header, ds2) := tableRow file aligns.size cells dialect
       acc := a
       diags := diags ++ ds ++ ds2
       leaf := .table aligns header #[] hp
@@ -2261,11 +2308,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     blankAfterSummary := none
   match leaf with
   | .para pls =>
-    let (inl, ds) := inlines file (charsOf pls)
+    let (inl, ds) := inlines file (charsOf pls) dialect
     acc := acc.push (.para inl ((pls[0]?.map (·.2)).getD {}))
     diags := diags ++ ds
   | .fenced _ _ finfo fpos _ flines =>
     acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
+  | .indented ilines ipos => acc := acc.push (indentedBlock ilines ipos)
   | .table aligns header rows p => acc := acc.push (.table aligns header rows p)
   | .html _ => pure ()
   | .comment _ => pure ()
@@ -2276,5 +2324,9 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     acc := a
     if let some d := d then diags := diags.push d
   return (acc, diags)
+
+/-- Blocks for one markdown document, and the diagnostics the reader raised. -/
+public def blocks (file : String) (input : String) : Array Blk × Array Diag :=
+  blocksIn .document file input
 
 end LeanTex.Core.Md

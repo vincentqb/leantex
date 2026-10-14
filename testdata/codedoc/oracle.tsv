@@ -1,0 +1,53 @@
+# Each case's documentation comments as its language's own parser finds them: case, start, stop, text. Written only by scripts/codedoc.lean.
+# parsers: Python 3.15.0; Lean (version 4.34.1, x86_64-unknown-linux-gnu, commit 5045d0056413266e57c625dcd7c365b10e377c52, Release)
+lean-attributes.lean	22	54	 A doc above an attribute. 
+lean-docstrings.lean	0	31	 The oil a lantern holds. 
+lean-docstrings.lean	52	95	 Burning takes one unit\n    per hour. 
+lean-field-docs.lean	-
+lean-guillemets.lean	40	76	 A doc after a guillemet name. 
+lean-indented.lean	18	41	 An indented doc. 
+lean-interpolated.lean	69	111	 A doc after an interpolated string. 
+lean-module-doc.lean	0	47	 # Lanterns\n\nA module doc opens the file. 
+lean-mutual.lean	7	38	 Whether a count is even. 
+lean-mutual.lean	98	128	 Whether a count is odd. 
+lean-nested-comment.lean	99	131	 After the comment, a doc. 
+lean-open-in.lean	31	79	 A wick's length, in a section of its own. 
+lean-open-in.lean	151	177	 Two layers of `in`. 
+lean-same-line.lean	0	43	 A doc on the declaration's own line. 
+lean-second-module-doc.lean	0	19	 # First part 
+lean-second-module-doc.lean	41	96	 ## Second part\n\nProse in the middle of the file. 
+lean-strings.lean	123	156	 The doc after the strings. 
+lean-syntax-doc.lean	0	37	 A doc on a syntax declaration. 
+lean-syntax-doc.lean	60	84	 A doc on a macro. 
+lean-where-doc.lean	-
+py-async.py	39	74	Fetch a seed catalogue entry.
+py-comments-before.py	35	77	The module docstring after comments.
+py-comments-before.py	134	170	The docstring after a comment.
+py-concatenated.py	18	55	Two literals make one docstring.
+py-decorated.py	103	141	Return the spacing between rows.
+py-fstring-first.py	-
+py-fstring-nested.py	77	136	A docstring after f-strings holding their own quotes.
+py-fstring-spec.py	85	151	A docstring after format specs, one with a field of its own.
+py-lambda-header.py	41	99	A docstring after a header holding a lambda's colon.
+py-module.py	0	56	Seed packets.\n\nA module docstring opens the file.
+py-module.py	91	132	Return the depth a seed is sown at.
+py-multiline-header.py	70	113	Arrange the beds in rows and columns.
+py-named-escape.py	18	64	A named escape: • marks a list.
+py-nested.py	19	39	A planter box.
+py-nested.py	94	118	Water the planter.
+py-nested.py	172	209	One drip of the inner function.
+py-not-first.py	-
+py-one-line.py	57	102	A docstring after one-line definitions.
+py-parenthesized.py	20	48	A parenthesized docstring.
+py-raw-escapes.py	26	76	A raw docstring keeps \\d and \\n as written.
+py-raw-escapes.py	120	189	An escaped docstring reads A, a tab:    , and a backslash: \\.
+py-same-line.py	14	50	A docstring on the def's own line.
+py-shebang.py	47	110	A module docstring after the shebang and the coding line.
+py-single-quoted.py	17	45	A single-quoted docstring.
+sh-blank-before.sh	21	50	A block after a blank line.
+sh-directive.sh	36	68	The block after the directive.
+sh-hash-in-code.sh	-
+sh-indented.sh	12	88	An indented comment line.\n  Its continuation, indented after the marker.
+sh-no-block.sh	-
+sh-no-shebang.sh	0	66	A block on the first line, with no shebang.\nIt continues here.
+sh-shebang-block.sh	10	73	Water the beds\n\nA leading comment block after the shebang.

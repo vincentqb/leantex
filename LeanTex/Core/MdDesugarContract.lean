@@ -103,6 +103,17 @@ private theorem heading_mem (level : Ir.HeadingLevel) (p : Pos) :
   simp only [Vocab.admits, Bool.or_eq_true]
   exact Or.inr (List.contains_iff_mem.mpr (bridged_mem level))
 
+private theorem selectorGuard_adm (rs : Array Raw) (p : Pos) : Adm (selectorGuard rs p) := by
+  unfold selectorGuard
+  split
+  · split
+    · intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      exact adm_group _ _ adm_empty
+    · exact adm_empty
+  · exact adm_empty
+
 mutual
 
 private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x).1
@@ -197,7 +208,10 @@ private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Arra
   | [], _, _, h => by simpa [inlListRaws] using h
   | x :: rest, out, ds, h => by
     simp only [inlListRaws]
-    exact inlListRaws_adm file rest _ _ (adm_append h (inlRaws_adm file x))
+    refine inlListRaws_adm file rest _ _ (adm_append (adm_append h ?_) (inlRaws_adm file x))
+    split
+    · exact selectorGuard_adm _ _
+    · exact adm_empty
 
 end
 
@@ -366,14 +380,14 @@ private theorem itemsRaws_adm (file : String) : (l : List (Array Blk)) → (p : 
   | [], _, _, _, h => by simpa [itemsRaws] using h
   | it :: rest, p, out, ds, h => by
     simp only [itemsRaws]
-    exact itemsRaws_adm file rest p _ _ (adm_append
-      (adm_push h (ctrl_mem _ _ (by simp [vocabulary])))
+    exact itemsRaws_adm file rest p _ _ (adm_append (adm_append
+      (adm_push h (ctrl_mem _ _ (by simp [vocabulary]))) (selectorGuard_adm _ _))
       (blkListRaws_adm file it.toList #[] #[] adm_empty))
 
 end
 
-public theorem desugar_vocabulary_mem (file input : String) :
-    ∀ r ∈ (desugar file input).1, vocabulary.admits r = true := by
+public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document) :
+    ∀ r ∈ (desugar file input dialect).1, vocabulary.admits r = true := by
   unfold desugar
   exact blkListRaws_adm file _ #[] #[] adm_empty
 

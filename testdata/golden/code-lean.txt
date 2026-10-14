@@ -1,0 +1,53 @@
+class article
+page 612x792 vmargin 72 hmargin 114
+meta title "Tide tables"
+output formats pdf,html
+section* 0
+  text "Tide tables"
+para
+  text "Every name here is invented. A "
+  styled emph
+    italicCorr maybe
+    text "tide"
+  italicCorr maybe
+  text " is a list of water heights, and the module keeps the heights that rise above a mark."
+section* 1
+  text "What the page shows"
+para
+  text "Documentation comments read as markdown; the code between them sets as listings, its line comments and block comments included."
+verbatim language lean4
+  "/-"
+  "An invented module for the code-file reader's golden fixture."
+  "-/"
+  "namespace Tides"
+para
+  text "The heights, in centimetres, above "
+  styled mono
+    italicCorr maybe
+    text "mark"
+  text "."
+verbatim language lean4
+  "def above (mark : Nat) (heights : List Nat) : List Nat :="
+  "  heights.filter (· > mark) -- a line comment stays in the code"
+para
+  text "A string can hold comment markers and still be code."
+verbatim language lean4
+  "def markers : String := \"a /-- not a doc -/ b\""
+  ""
+  "/- A plain block comment, /- nested -/, stays in the code. -/"
+  "def spring : Nat := 3"
+para
+  text "Keeping the heights above a mark keeps no more than it was given."
+verbatim language lean4
+  "theorem above_length (mark : Nat) (hs : List Nat) :"
+  "    (above mark hs).length ≤ hs.length :="
+  "  List.length_filter_le _ _"
+  ""
+  "structure Gauge where"
+  "  /-- A field's docstring is indented and stays in the code. -/"
+  "  depth : Nat"
+  "  deriving Repr"
+  ""
+  "end Tides"
+-- diagnostics
+(none)

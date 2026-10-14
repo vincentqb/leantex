@@ -9447,7 +9447,7 @@ private def collectPara (r : Rd) (a : Acc)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
     (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
     (inserted : Bool := false) (background : Sp := 0)
-    (urlBreaks : Bool := r.surface == .markdown)
+    (urlBreaks : Bool := r.surface != .tex)
     (texBox : Option TexBox := none) : Acc :=
   let texBox := texBox.orElse fun _ => a.boxOpener
   let a := { a.flushGap r with boxOpener := none }
@@ -9595,7 +9595,7 @@ private def collectPara (r : Rd) (a : Acc)
       rowStrut := rowStrut
       background := background
       -- premise: markdownWarningChecks — a markdown hard break declares no line (no W0386).
-      declaresLines := r.surface != .markdown }) }
+      declaresLines := r.surface == .tex }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base,
 relating to the stroke weight of the text it cuts (Hochuli). -/
@@ -18239,7 +18239,7 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
       (leaf := leaf) (span := span)).SourceBound n := by
   have hn := itemsOfInlines_plainNotes r.pats r.geom.fontSize r.xHeight r.fs
     ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground
-       urlBreaks := r.surface == .markdown } : TextStyle)
+       urlBreaks := r.surface != .tex } : TextStyle)
     xs (a.flushGap r).hyphCache (LeafCtr.of leaf span xs) r.imgs
     ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
     r.geom.textHeight true r.geom.scale r.step r.roleMetrics r.steps hp
@@ -18500,7 +18500,7 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
         inkCensus ((Spacing.Paragraph.items j).toList.flatMap Item.boxChars) =
           inkCensus (Ir.plainText xs).toList) := by
   let style : TextStyle := { color := (Spacing.Pending.fg (a.flushGap r)), ground := (Spacing.Pending.ground (a.flushGap r))
-                             urlBreaks := Spacing.Context.surface r == .markdown }
+                             urlBreaks := Spacing.Context.surface r != .tex }
   have hn := itemsOfInlines_plainNotes (Spacing.Context.pats r) (Spacing.Context.geom r).fontSize (Spacing.Context.xHeight r) (Spacing.Context.fs r)
     style xs (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Spacing.Context.imgs r)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))

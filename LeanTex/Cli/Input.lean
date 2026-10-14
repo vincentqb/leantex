@@ -306,10 +306,10 @@ hears each stage's name, detail and milliseconds. -/
 public def readDocument (file : String) (bytes : ByteArray)
     (phase : String → String → Nat → IO Unit := fun _ _ _ => pure ()) : IO Source := do
   let since (t : Nat) : IO Nat := do return (← IO.monoMsNow) - t
-  let markdown := Ir.Surface.ofPath file == .markdown
+  let tex := Ir.Surface.ofPath file == .tex
   let t ← IO.monoMsNow
-  let (first, guess) := if markdown then (Encoding.readMarkdown file bytes, none)
-    else Encoding.readDocument file bytes
+  let (first, guess) := if tex then Encoding.readDocument file bytes
+    else (Encoding.readMarkdown file bytes, none)
   phase "decode" s!"{first.text.utf8ByteSize} bytes of text" (← since t)
   let surface (text : String) (phases : Bool) : IO (Array Parse.Raw × Array Diag) := do
     let t ← IO.monoMsNow
@@ -325,10 +325,14 @@ public def readDocument (file : String) (bytes : ByteArray)
       let (raws, ds) := Surface.read .markdown file text
       if phases then phase "md" s!"{raws.size} top-level nodes" (← since t)
       return (raws, ds)
+    | .code lang =>
+      let (raws, ds) := Surface.read (.code lang) file text
+      if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)
+      return (raws, ds)
   let (raws, frontDiags) ← surface first.text true
   let t ← IO.monoMsNow
   let seeded (read : Encoding.FileText) (under : Option Encoding.Declared) : Encoding.Ledger :=
-    if markdown then {} else { reads := #[read.read file under] }
+    if tex then { reads := #[read.read file under] } else {}
   let (executed, log) ← executeWith file raws { guess, ledger := seeded first guess }
   let settled := log.ledger.declared
   let firstReads := log.reads

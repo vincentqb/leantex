@@ -1,0 +1,49 @@
+class article
+page 612x792 vmargin 72 hmargin 114
+meta title "code-python.py"
+section* 0
+  text "code-python.py"
+para
+  text "Kettle timings."
+para
+  text "An invented module for the code-file reader’s golden fixture: the module docstring stands above the code, and each docstring above its definition."
+verbatim language python
+  "#!/usr/bin/env python3"
+  "import functools"
+  "import math"
+para
+  text "Return the minutes a kettle takes to boil "
+  styled mono
+    italicCorr maybe
+    text "litres"
+  italicCorr maybe
+  text " of water."
+verbatim language python
+  "def minutes(litres: float) -> float:"
+  "    return 2.5 * litres + 0.5"
+para
+  text "Round up; a raw docstring keeps \\d as written."
+verbatim language python
+  "@functools.lru_cache(maxsize=None)"
+  "def rounded(value: float) -> int:"
+  "    return math.ceil(value)"
+para
+  text "A kettle with a "
+  styled emph
+    italicCorr maybe
+    text "capacity"
+  text "."
+para
+  text "Its methods are invented too."
+verbatim language python
+  "class Kettle:"
+  "    def __init__(self, capacity: float) -> None:"
+  "        self.capacity = capacity"
+para
+  text "Describe the kettle in one line."
+verbatim language python
+  "    def label(self) -> str:"
+  "        # a comment stays in the code"
+  "        return f\"{self.capacity} litres\""
+-- diagnostics
+(none)

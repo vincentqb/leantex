@@ -603,6 +603,16 @@ structure ArtReading where
   accounted : Bool
   deriving Inhabited
 
+/-- Every markup character but the `allowed` ones a page ships as ink. -/
+def artMarkupOffences (r : ArtReading) (allowed : List Char) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for h : i in [0:r.pages.size] do
+    for run in r.pages[i].runs do
+      for c in inkMarkupWatch.filter (!allowed.contains ·) do
+        if run.text.any (· == c) then
+          out := out.push s!"p{i + 1} ships '{c}' as ink: {run.text}"
+  return out
+
 /-- Every way a reading breaks one claim, each naming the page, the box and the ink; the gate and
 the offence ratchet both read it. -/
 def artOffences (r : ArtReading) : ArtProp → Array String
@@ -661,14 +671,7 @@ def artOffences (r : ArtReading) : ArtProp → Array String
               out := out.push s!"p{i + 1} {b.kind} {rect.render} stands outside \
 {r.area.render} and inside a band"
     return out
-  | .markupInk => Id.run do
-    let mut out : Array String := #[]
-    for h : i in [0:r.pages.size] do
-      for run in r.pages[i].runs do
-        for c in inkMarkupWatch do
-          if run.text.any (· == c) then
-            out := out.push s!"p{i + 1} ships '{c}' as ink: {run.text}"
-    return out
+  | .markupInk => artMarkupOffences r []
   | .pageBytes => Id.run do
     let mut out : Array String := #[]
     for h : i in [1:r.pages.size] do
@@ -1148,7 +1151,9 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
               t s!"artifact {n}: {fn} embeds whole only when its pages paint every glyph \
 it draws: {spared.take 5}" spared.isEmpty
       for prop in artProps do
-        let offs := artOffences rd prop
+        let offs := match prop with
+          | .markupInk => artMarkupOffences rd (inkMarkupAllowed n)
+          | p => artOffences rd p
         if artKnownOffences.any fun (f, q, _) => f == n && q == prop then
           t s!"artifact {n}: the recorded offence against {prop.name} no longer \
 fires — delete its row from artKnownOffences" (!offs.isEmpty)

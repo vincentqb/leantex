@@ -7,6 +7,7 @@ adds (`--range`) or the tree (`--tree`), then lake build --wfail, lake test and 
 import scripts.Gate
 import scripts.Privacy
 import LeanTex.Core.DesignRole
+import LeanTex.Core.SurfaceKind
 
 open Privacy (addedLines addedRuns splitFirst)
 
@@ -486,10 +487,10 @@ def tempRootOutsideHost (l : String) : Bool :=
 def ioInCore (l : String) : Bool :=
   ["IO", "BaseIO", "EIO", "unsafeBaseIO", "unsafeIO", "unsafeEIO"].any (bannedWord · l)
 
-/-- The surface modules: tex's lexer, parser, elaborator and compatibility layer, and markdown's
-reader and desugaring. -/
+/-- The surface modules: tex's lexer, parser, elaborator and compatibility layer, markdown's reader
+and desugaring, and the code-file reader. -/
 def surfaceMods : List String :=
-  ["Lex", "Parse", "Elab", "Compat", "MdParse", "MdDesugar", "Md"]
+  ["Lex", "Parse", "Elab", "Compat", "MdParse", "MdDesugar", "Md", "CodeDoc", "Code"]
 
 /-- The surface door and the names that read through it; naming the door's type reads the IR. -/
 def doorModule : String := "LeanTex.Core.Surface"
@@ -967,11 +968,11 @@ def driverConfigReads : List String :=
   ["cmd", "verbosity", "quiet", "porcelain", "color", "output", "watch",
    "bestEffort", "werror", "fontDirs", "mathBoundary", "effectiveEmit"]
 
-/-- A change a golden's regeneration may travel with: Lean source, or a `.tex` or `.md` fixture
+/-- A change a golden's regeneration may travel with: Lean source, or a fixture a surface reads
 under `testdata/corpus`. -/
 def goldenSource (f : String) : Bool :=
   f.endsWith ".lean" ||
-    (f.startsWith "testdata/corpus/" && (f.endsWith ".tex" || f.endsWith ".md"))
+    (f.startsWith "testdata/corpus/" && (LeanTex.Core.Ir.Surface.ofInput? f).isSome)
 
 /-- A `cfg.<name>` read whose field is not on `driverConfigReads`, comments and strings aside. -/
 def undeclaredConfigRead (l : String) : Bool := Id.run do
@@ -2174,6 +2175,8 @@ def selftest : IO UInt32 := do
     ("Tests/Census.lean", true),
     ("testdata/corpus/md-table.md", true),
     ("testdata/corpus/tables.tex", true),
+    ("testdata/corpus/code-python.py", true),
+    ("testdata/corpus/code-bash.sh", true),
     ("testdata/golden/md-table.txt", false),
     ("testdata/typeset/md-report.md", false)]
 

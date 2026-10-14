@@ -22,6 +22,8 @@ public import LeanTex.Core.Parse
 public import LeanTex.Core.MdParse
 public import LeanTex.Core.MdDesugar
 public import LeanTex.Core.MdDesugarContract
+public import LeanTex.Core.CodeDoc
+public import LeanTex.Core.CodeDocContract
 public import LeanTex.Core.Surface
 public import LeanTex.Core.Color
 public import LeanTex.Core.Math
