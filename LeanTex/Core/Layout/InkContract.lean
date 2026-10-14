@@ -25,7 +25,7 @@ public theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geo
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
     (ink : Ir.Pic.LabelInk)
-    (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
     (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
@@ -112,7 +112,7 @@ public theorem labelLine_outlines_covers (fs : FontSet) (imgs : Image.Store) (ge
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
     (ink : Ir.Pic.LabelInk)
-    (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hk : labelGlyphUnknown fs size segs = false)
     (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign) :
     let box := Ir.Pic.labelGlyphBox x y align ink
@@ -154,7 +154,7 @@ public theorem labelLine_reserved_covers (fs : FontSet) (imgs : Image.Store) (ge
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
     (ink : Ir.Pic.LabelInk)
-    (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hk : labelGlyphUnknown fs size segs = false)
     (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
     (hr : labelReserveCovers (Ir.Pic.labelGlyphBox x y align ink)
@@ -179,9 +179,9 @@ public def LabelCovered (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (lines : Array LineOut) : Prop :=
   (labelTextBlank content = true ∧
-    labelInk fs imgs geom xHeight leaf content color scale = none) ∨
+    (labelResult fs imgs geom xHeight leaf content color scale).line? = none) ∨
     ∃ segs size ink,
-      labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink) ∧
+      (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink) ∧
       (labelResult fs imgs geom xHeight leaf content color scale).lineCount ≤ 1 ∧
       labelLine place x y align ink segs size leaf ∈ lines ∧
       let box := pictureLabelBox fs imgs geom xHeight x y content scale align
@@ -235,7 +235,7 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
     simp [emitLabel, finishLabel, hl, he, hd]
   | some p =>
     rcases p with ⟨segs, size, ink⟩
-    have hp : labelInk fs imgs geom xHeight leaf content color scale =
+    have hp : (labelResult fs imgs geom xHeight leaf content color scale).line? =
         some (segs, size, ink) := hl
     by_cases hn : 1 < (labelResult fs imgs geom xHeight leaf content color scale).lineCount
     · right
@@ -300,7 +300,7 @@ public theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
-    (hl : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (hl : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hu : labelGlyphUnknown fs size segs = true) :
     ∃ d ∈ (emitLabel fs imgs geom xHeight leaf place x y content color scale align).diags,
       d.kind = .W0394 ∧ d.subject = some (Ir.plainText content) := by
@@ -321,7 +321,7 @@ public theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.St
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
-    (hl : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (hl : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hu : labelGlyphUnknown fs size segs = true) :
     ∃ d ∈ (emitLabel fs imgs geom xHeight leaf place x y content color scale align).diags,
       d.kind = .W0394 ∧ d.subject = some (Ir.plainText content) ∧
@@ -503,7 +503,7 @@ public theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.St
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ pic.shapes)
     (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
-    (hl : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (hl : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
     (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)

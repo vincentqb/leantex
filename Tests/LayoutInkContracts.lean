@@ -268,13 +268,34 @@ def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font.Fo
       pageRequests.all fun r => pageObservations.any fun o =>
         decide (Layout.LabelAudit.Matches r o) && !o.known)
 
+/-- Every collected picture's labels are requested under an origin no other picture shares, inside
+nested columns and across overlay steps, and each request matches exactly one shipped label. -/
+def pictureOriginChecks (record : String → Bool → IO Unit) (fs : Font.FontSet) : IO Unit := do
+  let pic (word : String) := s!"\\begin\{tikzpicture}\\node at (0,0) \{{word}};\\end\{tikzpicture}\n"
+  let column (body : String) := "\\column{.5\\textwidth}\n" ++ body
+  let columns (cols : List String) :=
+    "\\begin{columns}\n" ++ String.join (cols.map column) ++ "\\end{columns}\n"
+  let (doc, _) := elabStr (beamerDeck ""
+    [("", pic "Alpha" ++ columns [pic "Bravo" ++ columns [pic "Charlie", pic "Delta"], pic "Echo"] ++
+        pic "Foxtrot"),
+     ("", s!"\\only<1>\{{pic "Golf"}}\n\\only<2>\{{pic "Hotel"}}")])
+  let geom := Layout.Geom.ofPage doc.page
+  let requests := Layout.labelRequests geom fs none doc
+  let observations := Layout.labelObservations fs (Layout.run geom fs none doc).pages
+  record "picture origins: every collected picture's labels stand under an origin of their own"
+    (requests.size == 8 && (requests.map (·.origin)).toList.eraseDups.length == requests.size)
+  record "picture origins: each request matches exactly one shipped label"
+    (requests.all fun r =>
+      (observations.filter fun o => decide (Layout.LabelAudit.Matches r o)).size == 1)
+
 /-- Load the committed fonts and run the shipped-page and guard checks. -/
 def fixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let load (name : String) : IO Font.Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => return f
     | .error e => throw (IO.userError e)
-  layoutInkChecks (check ref) (← load "SourceSerifPro-Regular.otf")
-    (← load "FiraSans-Regular.otf")
+  let sans ← load "FiraSans-Regular.otf"
+  layoutInkChecks (check ref) (← load "SourceSerifPro-Regular.otf") sans
+  pictureOriginChecks (check ref) (oneFaceOf sans)
 
 end Tests.LayoutInkContracts
