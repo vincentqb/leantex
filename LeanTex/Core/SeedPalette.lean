@@ -166,14 +166,10 @@ private def warmOf (c : Color) : Option (Int × Int) :=
   let l := labOf c
   some (hueMilli l.a l.b, l.L)
 
-/-- How far from the grey's lightness a tint's or an ink's boundary is
-looked for first, at `labOf`'s scale: 0.06 of the axis. -/
-private def guessSpan : Int := 6 * 10 ^ 16
-
 /-- The step a quantized answer is moved by toward the passing side when
 quantizing took it across the boundary: a 2⁻¹⁰ of the axis, about a quarter
 of an 8-bit step. -/
-private def nudge : Int := 10 ^ 18 / 1024
+private def nudge : Int := lightTop / 1024
 
 /-- The lightness where the candidate's luminance meets `want` (10⁻⁷ units), by the secant
 method. -/
@@ -184,7 +180,7 @@ private def secant (lum : Int → Int) (want : Int) (guess : Int) : Int := Id.ru
   let mut yb := lum b
   for _ in [0:6] do
     if yb == ya || (yb - want).natAbs ≤ 20 then break
-    let next := max 0 (min (10 ^ 18) (b - (yb - want) * (b - a) / (yb - ya)))
+    let next := max 0 (min lightTop (b - (yb - want) * (b - a) / (yb - ya)))
     a := b
     ya := yb
     b := next
@@ -210,7 +206,7 @@ page toward the ink's side, looked for first beside the grey at that
 contrast. -/
 private def solveGround (fam : Family) (page : Color) (dark : Bool) (target : Nat) : Option Color :=
   let lp := (labOf page).L
-  let far : Int := if dark then 10 ^ 18 else 0
+  let far : Int := if dark then lightTop else 0
   let want := ContrastSolve.luminanceAt page target dark
   search (fam.tint lp) want (!dark) (fun c => decide (target ≤ contrastMilli c page)) lp far
     (ContrastSolve.greyLightness want)
@@ -218,7 +214,7 @@ private def solveGround (fam : Family) (page : Color) (dark : Bool) (target : Na
 /-- The quietest tone meeting `target` on every ground, searched from white (`light`) or black. -/
 private def solveInk (raw : Int → Okl) (grounds : List Color) (target : Nat) (light : Bool) :
     Option Color :=
-  let (f, p) : Int × Int := if light then (10 ^ 18, 0) else (0, 10 ^ 18)
+  let (f, p) : Int × Int := if light then (lightTop, 0) else (0, lightTop)
   let wants := grounds.map fun g => ContrastSolve.luminanceAt g target (!light)
   let want := if light then wants.foldl min 10000000 else wants.foldl max 0
   let guess := ContrastSolve.greyLightness want

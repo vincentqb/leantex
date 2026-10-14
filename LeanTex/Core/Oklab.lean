@@ -181,6 +181,9 @@ public def chromaSq (l : Lab) : Int := l.a * l.a + l.b * l.b
 /-- One just-noticeable difference at `labOf`'s scale: ΔEOK 0.02 (CSS Color 4 §14.2.1). -/
 public def okJnd : Nat := 2 * 10 ^ 16
 
+/-- The top of `labOf`'s lightness axis. -/
+public def lightTop : Int := 10 ^ 18
+
 public theorem labOf_achromatic (c : Color) (hg : c.g = c.r) (hb : c.b = c.r) :
     (labOf c).a = 0 ∧ (labOf c).b = 0 := by
   simp only [labOf, labOfLinear, hg, hb]
@@ -385,7 +388,7 @@ public theorem Okl.gamutMap_id (o : Okl) (h : o.inGamut = true) :
 /-- An Oklab value as CSS Color 4 ships it in sRGB: white or black past either end, else
 mapped and quantized. -/
 public def ofLab (lab : Lab) : Color :=
-  (Okl.gamutMap { L := max 0 (min (10 ^ 18) lab.L), a := lab.a, b := lab.b, f := fracOne }).toColor
+  (Okl.gamutMap { L := max 0 (min lightTop lab.L), a := lab.a, b := lab.b, f := fracOne }).toColor
 
 /-- Millidegrees as the CORDIC's 2⁻³⁰ radians. -/
 private def radOf (milliDeg : Int) : Int := milliDeg * Gfx.Trig.pi / 180000

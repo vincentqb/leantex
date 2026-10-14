@@ -32,24 +32,29 @@ public theorem bisect_contract (pass : Int → Bool) :
       · exact bisect_contract pass fuel _ _ ‹_›
       · exact bisect_contract pass fuel _ _ h
 
-/-- The passing side of the boundary nearest a guess: bisected within `guess ± span` where that
-bracket straddles it, else over the whole axis. -/
-public def bisectNear (pass : Int → Bool) (fuel : Nat) (f p guess span : Int) : Int :=
-  let dir : Int := if p < f then -1 else 1
-  let a := guess - dir * span
-  let b := guess + dir * span
-  if !pass a && pass b then bisect pass fuel a b else bisect pass (fuel + 8) f p
+/-- The passing lightness nearest a failing `from_` on either side of it, bisected at most `fuel`
+times toward each end of the axis that passes; a tie goes to the lighter side when `lighter`. -/
+public def nearestPass (pass : Int → Bool) (fuel : Nat) (from_ : Int) (lighter : Bool) :
+    Option Int :=
+  let down := if pass 0 then some (bisect pass fuel from_ 0) else none
+  let up := if pass Oklab.lightTop then some (bisect pass fuel from_ Oklab.lightTop) else none
+  match down, up with
+  | some d, some u =>
+    some (if lighter then (if u - from_ ≤ from_ - d then u else d)
+      else if from_ - d ≤ u - from_ then d else u)
+  | some d, none => some d
+  | none, some u => some u
+  | none, none => none
 
-public theorem bisectNear_contract (pass : Int → Bool) (fuel : Nat) (f p guess span : Int)
-    (hp : pass p = true) : pass (bisectNear pass fuel f p guess span) = true := by
-  unfold bisectNear
-  dsimp only
-  split <;> split
-  all_goals first
-    | exact bisect_contract pass (fuel + 8) f p hp
-    | (rename_i h
-       simp only [Bool.and_eq_true] at h
-       exact bisect_contract pass fuel _ _ h.2)
+public theorem nearestPass_contract {pass : Int → Bool} {fuel : Nat} {from_ : Int}
+    {lighter : Bool} {L : Int} (h : nearestPass pass fuel from_ lighter = some L) :
+    pass L = true := by
+  have hb := bisect_contract pass fuel from_
+  unfold nearestPass at h
+  by_cases h0 : pass 0 = true <;> by_cases h1 : pass Oklab.lightTop = true <;>
+    simp only [h0, h1, ite_true, ite_false, Bool.false_eq_true, Option.some.injEq,
+      reduceCtorEq] at h <;> (try split at h) <;> (try split at h) <;>
+    first | (subst h; exact hb _ h0) | (subst h; exact hb _ h1)
 
 /-- The Oklab lightness of the grey whose WCAG luminance is `y` (10⁻⁷), at `labOf`'s scale. -/
 public def greyLightness (y : Nat) : Int := (Oklab.icbrt (min y 10000000 * 10 ^ 11) : Int) * 10 ^ 12
@@ -64,24 +69,13 @@ public def luminanceAt (ground : Color) (target : Nat) (lighter : Bool) : Nat :=
 private def realizeCand (lab : Oklab.Lab) (f : Nat) (L : Int) : Color :=
   (Oklab.Okl.toGamut { L, a := lab.a, b := lab.b, f := f * Oklab.fracOne / 100 }).toColor
 
-/-- The `labOf` lightness of pure white, the top of the searched axis. -/
-private def realizeLMax : Int := 10 ^ 18
-
 /-- The passing lightness nearest `L0` at one chroma fraction, both directions searched; `none`
 when neither end passes. -/
 private def realizeFrom (req : Nat) (ground : Color) (lab : Oklab.Lab) (f : Nat) (L0 : Int) :
     Option Color :=
   let pass := fun L => decide (req ≤ contrastMilli (realizeCand lab f L) ground)
   if pass L0 then some (realizeCand lab f L0)
-  else
-    let up := if pass realizeLMax then some (bisect pass 60 L0 realizeLMax) else none
-    let down := if pass 0 then some (bisect pass 60 L0 0) else none
-    match up, down with
-    | some u, some d =>
-      some (realizeCand lab f (if u - L0 ≤ L0 - d then u else d))
-    | some u, none => some (realizeCand lab f u)
-    | none, some d => some (realizeCand lab f d)
-    | none, none => none
+  else (nearestPass pass 60 L0 (lighter := true)).map (realizeCand lab f)
 
 /-- The nearest passing lightness at one chroma fraction, from the colour's own. -/
 private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab) (f : Nat) : Option Color :=
@@ -123,7 +117,8 @@ private theorem realizeFrom_cand {req : Nat} {ground : Color} {lab : Oklab.Lab} 
   dsimp only at h
   split at h
   · cases h; exact ⟨_, rfl⟩
-  · split at h <;> (try cases h) <;> exact ⟨_, rfl⟩
+  · obtain ⟨L, _, rfl⟩ := Option.map_eq_some_iff.mp h
+    exact ⟨L, rfl⟩
 
 private theorem realizeAt_cand {req : Nat} {ground : Color} {lab : Oklab.Lab} {f : Nat}
     {c : Color} (h : realizeAt req ground lab f = some c) : ∃ L, c = realizeCand lab f L :=
@@ -166,7 +161,7 @@ public def deltaEOkSq (c c' : Color) : Int := Oklab.distSq (Oklab.labOf c) (Okla
 /-- The `labOf` lightness a colour takes over another page: as far from it as from its own, on
 its far side. -/
 public def reflectL (home page c : Color) : Int :=
-  max 0 (min realizeLMax ((Oklab.labOf page).L + ((Oklab.labOf home).L - (Oklab.labOf c).L)))
+  max 0 (min Oklab.lightTop ((Oklab.labOf page).L + ((Oklab.labOf home).L - (Oklab.labOf c).L)))
 
 /-- A colour carried to a page of the other polarity: its lightness reflected, its hue and
 chroma held, brought into the gamut. -/
@@ -255,7 +250,7 @@ private def lightFirst (grounds : List Color) : Bool :=
 sets the tone, the gamut the chroma (Material 3's tonal rule at Leonardo's contrast target). -/
 public def bandL (req : Nat) (grounds : List Color) (h : Int) : Int :=
   let pass (L : Int) : Bool := (clearing req grounds (edgeAt h L)).isSome
-  if lightFirst grounds then bisect pass 60 (10 ^ 18) 0 else bisect pass 60 0 (10 ^ 18)
+  if lightFirst grounds then bisect pass 60 Oklab.lightTop 0 else bisect pass 60 0 Oklab.lightTop
 
 /-- Hue `h`'s tone at the floor `req` on every ground, so hues at one floor share a lightness band
 as Solarized's accents do (https://ethanschoonover.com/solarized/). -/

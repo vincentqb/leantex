@@ -84,25 +84,6 @@ private def openHue : List (Int × Int) → Option (Int × Int)
 /-- The colour at Oklab lightness `L` and chromatic coordinates `(a, b)`. -/
 private def lab (a b L : Int) : Color := Oklab.toColorOfLab { L, a, b }
 
-/-- Binary search between a failing lightness and a passing one, returning the passing side. -/
-private def bisect (pass : Int → Bool) : Nat → Int → Int → Int
-  | 0, _, p => p
-  | n + 1, f, p =>
-    let mid := (f + p) / 2
-    if mid == f || mid == p then p
-    else if pass mid then bisect pass n f mid else bisect pass n mid p
-
-/-- The lightness nearest `from_` at which `pass` holds, on either side, to
-2⁻¹⁴ of the axis: a sixtieth of an 8-bit channel step. -/
-private def nearestPass (pass : Int → Bool) (from_ : Int) : Option Int :=
-  let down := if pass 0 then some (bisect pass 14 from_ 0) else none
-  let up := if pass (10 ^ 18) then some (bisect pass 14 from_ (10 ^ 18)) else none
-  match down, up with
-  | some d, some u => some (if from_ - d ≤ u - from_ then d else u)
-  | some d, none => some d
-  | none, some u => some u
-  | none, none => none
-
 /-- A hue's tone on a set of grounds: the lightness nearest the first ground's clearing `req` on
 every one, its chroma reduced where none does. -/
 public def toneOn (req : Nat) (grounds : List Color) (v : Int × Int) : Option Color :=
@@ -111,21 +92,17 @@ public def toneOn (req : Nat) (grounds : List Color) (v : Int × Int) : Option C
   ([4, 3, 2, 1, 0] : List Int).findSome? fun q =>
     let a := q * v.1 / 4
     let b := q * v.2 / 4
-    (nearestPass (fun L => clears (lab a b L)) from_).bind
-      fun L => if clears (lab a b L) then some (lab a b L) else none
+    -- 14 halvings settle a lightness to 2⁻¹⁴ of the axis, about a sixty-fourth of an 8-bit step.
+    (ContrastSolve.nearestPass (fun L => clears (lab a b L)) 14 from_ (lighter := false)).map
+      (lab a b)
 
 public theorem toneOn_contract {req : Nat} {grounds : List Color} {c : Color} {v : Int × Int}
     (h : toneOn req grounds v = some c) : ∀ g ∈ grounds, req ≤ Contrast.contrastMilli c g := by
   unfold toneOn at h
   obtain ⟨q, _, hq⟩ := List.exists_of_findSome?_eq_some h
-  simp only [Option.bind_eq_some_iff] at hq
-  obtain ⟨L, _, hL⟩ := hq
-  split at hL
-  · rename_i hc
-    cases hL
-    intro g hg
-    exact of_decide_eq_true (List.all_eq_true.mp hc g hg)
-  · cases hL
+  obtain ⟨L, hL, rfl⟩ := Option.map_eq_some_iff.mp hq
+  intro g hg
+  exact of_decide_eq_true (List.all_eq_true.mp (ContrastSolve.nearestPass_contract hL) g hg)
 
 /-- A hue's tone on one ground. -/
 public def tone (req : Nat) (ground : Color) (v : Int × Int) : Option Color :=
