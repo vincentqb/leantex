@@ -125,22 +125,8 @@ def conflictMarker (l : String) : Bool :=
       | some c => c.isWhitespace
 
 /-- The added lines of a unified diff that carry a conflict marker, with file and new-file line. -/
-def conflictMarkers (diff : String) : Array (String × Nat × String) := Id.run do
-  let mut out : Array (String × Nat × String) := #[]
-  let mut file := ""
-  let mut line := 0
-  for l in diff.splitOn "\n" do
-    if l.startsWith "+++ " then
-      file := if l.startsWith "+++ b/" then (l.drop "+++ b/".length).toString else ""
-    else if l.startsWith "@@" then
-      -- @@ -a,b +c,d @@ — the next added line is new-file line c
-      let plus := ((l.splitOn "+").getD 1 "").takeWhile Char.isDigit
-      line := (plus.toString.toNat?).getD 0
-    else if l.startsWith "+" then
-      if !file.isEmpty && conflictMarker ((l.drop 1).toString) then
-        out := out.push (file, line, (l.drop 1).toString)
-      line := line + 1
-  return out
+def conflictMarkers (diff : String) : Array (String × Nat × String) :=
+  (addedLines diff).filter (conflictMarker ·.2.2)
 
 /-- A path spelled only in ASCII letters, digits, `.`, `_`, `/` and `-`, which shells and git pass
 unquoted. -/
@@ -494,7 +480,7 @@ def kwDemotedAssign : String := "demo" ++ "ted :="
 
 /-- A literal demotion, which only Diag.lean may write, strings and comments aside. -/
 def demotedAssign (l : String) : Bool :=
-  containsSub (stripLineComment (stripStrings l)) kwDemotedAssign
+  containsSub (stripComments (stripLiterals l)) kwDemotedAssign
 
 /-- The module an import line names, at any visibility, or `none` for a line that is no import. -/
 def importedModule (t : String) : Option String :=
@@ -535,7 +521,7 @@ def isVarToken (w : String) : Bool :=
 
 /-- The pattern and right-hand side of a line-leading match arm with exactly one `=>`. -/
 def armParts (l : String) : Option (List String × List String) :=
-  let t := (stripLineComment l).trimAscii.toString
+  let t := (stripComments l).trimAscii.toString
   if !t.startsWith "|" then none
   else match (t.drop 1).toString.splitOn "=>" with
     | [pat, rhs] => some (tokens pat, tokens rhs)
@@ -595,7 +581,7 @@ def openedNames (t : String) : List String :=
 /-- A backend reaching into a surface: an import, an `open`, a qualified use or a door read,
 comments aside. -/
 def surfaceReach (l : String) : Bool :=
-  let l := stripLineComment l
+  let l := stripComments l
   let t := l.trimAscii.toString
   (importedModule t).any (fun m => surfaceModules.contains m || m == doorModule)
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
@@ -609,7 +595,7 @@ def judgeFiles : List String :=
 
 /-- A judge reaching into the writer: an import, an `open` or a qualified use of `Pdf`. -/
 def writerReach (l : String) : Bool :=
-  let l := stripLineComment l
+  let l := stripComments l
   let t := l.trimAscii.toString
   importedModule t == some "LeanTex.Core.Pdf"
     || (t.startsWith "open " && hasWord t "Pdf")
@@ -617,7 +603,7 @@ def writerReach (l : String) : Bool :=
 
 /-- HTML built by concatenating a tag string, `"<" ++ …`. -/
 def tagStringEmit (l : String) : Bool :=
-  ((stripLineComment l).splitOn "\"<\"").drop 1 |>.any fun rest =>
+  ((stripComments l).splitOn "\"<\"").drop 1 |>.any fun rest =>
     rest.trimAscii.toString.startsWith patAppend
 
 /-- The backends `tagStringEmit` does not judge: the typed tree's renderer and the markdown twin,
@@ -633,15 +619,15 @@ def hasCall (line pat : String) : Bool :=
 
 /-- A host font scan in a test, where only `FontDiscovery.scanRoots [testFonts]` is hermetic. -/
 def fontScanInTest (l : String) : Bool :=
-  hasCall (stripLineComment (stripStrings l)) "FontDiscovery.scan"
+  hasCall (stripComments (stripLiterals l)) "FontDiscovery.scan"
 
 /-- A document's file read as text past the decoding door, by `IO.FS.readFile`. -/
 def undecodedRead (l : String) : Bool :=
-  hasCall (stripLineComment (stripStrings l)) "IO.FS.readFile"
+  hasCall (stripComments (stripLiterals l)) "IO.FS.readFile"
 
 /-- A file's text read past the decoding door and handed to a reader on the same line. -/
 def undecodedFixture (l : String) : Bool :=
-  let code := stripLineComment (stripStrings l)
+  let code := stripComments (stripLiterals l)
   hasCall code "IO.FS.readFile" &&
     ["Lex.lex", "Md.read", "Surface.read", "Elab.run", "Elab.runRaws", "elabFixture",
       "elabInputSrc"].any (hasCall code ·)
@@ -649,7 +635,7 @@ def undecodedFixture (l : String) : Bool :=
 /-- A harness restating the driver's front end instead of calling `Input.readDocument`,
 line-local. -/
 def frontEndRestated (l : String) : Bool :=
-  let code := stripLineComment (stripStrings l)
+  let code := stripComments (stripLiterals l)
   hasCall code "Input.expandInputs" || hasCall code "Input.resolveData" ||
     hasCall code "Elab.executeInputs" || undecodedFixture l
 
@@ -659,7 +645,7 @@ def irTierMark : String := "-- ir tier:"
 
 /-- An IR dump in a test without its stated tier. -/
 def irDumpUnmarked (l : String) : Bool :=
-  containsSub (stripLineComment (stripStrings l)) "Ir.dump" && !containsSub l irTierMark
+  containsSub (stripComments (stripLiterals l)) "Ir.dump" && !containsSub l irTierMark
 
 /-- The heartbeat option, composed so this file's own diff never spells it. -/
 def kwMaxHeartbeats : String := "maxHeart" ++ "beats"
@@ -670,7 +656,7 @@ def defaultHeartbeats : Nat := 200000
 /-- Any heartbeat setting but the bare option set, alone on its line, to a nonzero literal under the
 default. -/
 def heartbeatRaise (l : String) : Bool :=
-  match (stripLineComment (stripStrings l)).splitOn kwMaxHeartbeats with
+  match (stripComments (stripLiterals l)).splitOn kwMaxHeartbeats with
   | [_] => false
   | [before, after] =>
     !(before.endsWith "set_option " &&
@@ -693,7 +679,7 @@ def wildcardThrough (l : String) : Bool :=
 def bangCount (ls : Array String) : Nat := Id.run do
   let mut n := 0
   for l in ls do
-    n := n + ((stripLineComment (stripStrings l)).splitOn "]!").length - 1
+    n := n + ((stripComments (stripLiterals l)).splitOn "]!").length - 1
   return n
 
 /-- The frozen per-file `]!` counts of the LeanTex/ tree; a commit may lower a row, never raise
@@ -712,8 +698,7 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/MathParse.lean", 1),
   ("LeanTex/Core/Pdf.lean", 8)]
 
-/-- The line's string-literal contents, one space where each literal opens: the complement of
-`stripStrings`. -/
+/-- The line's string text, one space where each literal opens, lexed alone. -/
 def stringsOnly (l : String) : String :=
   (lexView l (· == .strText) (· == .litOpen))[0]?.getD ""
 
@@ -733,7 +718,7 @@ def sectionDocs : List String := ["AGENTS.md", "PRINCIPLES.md", "THEOREMS.md"]
 /-- A repo-internal reference in a string literal: `PLAN.md`, a rule document, a `LeanTex/` path or
 a milestone token. -/
 def repoRefInString (l : String) : Bool :=
-  let s := stringsOnly (stripLineComment l)
+  let s := stringsOnly (stripComments l)
   containsSub s "PLAN.md" || sectionDocs.any (containsSub s ·) ||
     containsSub s "LeanTex/" || milestoneTok s
 
@@ -905,7 +890,7 @@ def goldenSource (f : String) : Bool :=
 
 /-- A `cfg.<name>` read whose field is not on `driverConfigReads`, comments and strings aside. -/
 def undeclaredConfigRead (l : String) : Bool := Id.run do
-  let t := stripLineComment (stripStrings l)
+  let t := stripComments (stripLiterals l)
   let parts := t.splitOn "cfg."
   let mut pre := parts.headD ""
   for p in parts.tail do
@@ -922,14 +907,14 @@ def undeclaredConfigRead (l : String) : Bool := Id.run do
 /-- A class judged by its name string, `docClass.name == …`, which the compiler cannot keep
 exhaustive. -/
 def classNameCompare (l : String) : Bool :=
-  containsSub (stripLineComment (stripStrings l)) "docClass.name =="
+  containsSub (stripComments (stripLiterals l)) "docClass.name =="
 
 /-- The quoted names of the `nativePackages` list block in a Compat source. -/
 def nativePackagesOf (src : String) : Array String := Id.run do
   let mut out : Array String := #[]
   let mut inside := false
   for l in src.splitOn "\n" do
-    if (stripLineComment l).startsWith "def nativePackages" then
+    if (stripComments l).startsWith "def nativePackages" then
       inside := true
     else if inside then
       let mut parts := (l.splitOn "\"")
@@ -937,14 +922,14 @@ def nativePackagesOf (src : String) : Array String := Id.run do
       for p in parts do
         if quoted then out := out.push p
         quoted := !quoted
-      if containsSub (stripLineComment (stripStrings l)) "]" then
+      if containsSub (stripComments (stripLiterals l)) "]" then
         inside := false
   return out
 
 /-- A local copy of Support's `hasStr`: a function-shaped `let` comparing a `splitOn` count against
 one. -/
 def splitOnIdiom (l : String) : Bool :=
-  let t := ((stripLineComment l).trimAscii).toString
+  let t := ((stripComments l).trimAscii).toString
   t.startsWith "let " && containsSub t ".splitOn " &&
     (containsSub t ".length > 1" || containsSub t ".length ≥ 2")
 
@@ -953,7 +938,7 @@ def sealNames (lines : Array String) : List String × List String := Id.run do
   let mut sl : List String := []
   let mut ul : List String := []
   for l in lines do
-    let t := (((stripLineComment l).trimAscii).toString)
+    let t := (((stripComments l).trimAscii).toString)
     if t.startsWith "unseal " then
       for w in tokens ((t.drop 7).toString) do ul := w :: ul
     else if t.startsWith "seal " then
@@ -971,18 +956,18 @@ def sealAllow : List String := ["noteDefs"]
 
 /-- The size-step formula, `sizeScale.lookup … getD`, spelled outside `Ir.scaleStepIn`. -/
 def scaleStepRespell (l : String) : Bool :=
-  let t := stripLineComment (stripStrings l)
+  let t := stripComments (stripLiterals l)
   containsSub t "sizeScale.lookup" && containsSub t ".getD"
 
 /-- A hexadecimal digit table or a digit-letter range, spelled outside `Hex`. -/
 def hexRespell (l : String) : Bool :=
-  let t := stripLineComment l
+  let t := stripComments l
   containsSub t "0123456789abcdef" || containsSub t "0123456789ABCDEF" ||
     containsSub t "≤ 'f'" || containsSub t "≤ 'F'"
 
 /-- A statement-initial `modify` or `set` in Compat, legal only inside `compatStateDoors`. -/
 def bareStateMutation (l : String) : Bool :=
-  let t := (((stripLineComment (stripStrings l)).trimAscii).toString.takeWhile isWordChar).toString
+  let t := (((stripComments (stripLiterals l)).trimAscii).toString.takeWhile isWordChar).toString
   t == "modify" || t == "set"
 
 /-- The Compat definitions a `modify` or `set` may stand in. -/
@@ -1006,14 +991,14 @@ def indentOf (l : String) : Nat := (l.toList.takeWhile (· == ' ')).length
 /-- The condition of a conditional opening at line `i`, through up to four continuation lines to its
 `then` or `do`, with the line it ends on. -/
 def condSpan (lines : Array String) (i : Nat) : Option (String × Nat) := Id.run do
-  let l := stripLineComment (lines[i]?.getD "")
+  let l := stripComments (lines[i]?.getD "")
   unless hasWord l "if" || hasWord l "unless" do return none
   let mut cond := l
   let mut j := i
   for _ in [0:4] do
     if hasWord cond "then" || hasWord cond "do" then break
     j := j + 1
-    cond := cond ++ " " ++ stripLineComment (lines[j]?.getD "")
+    cond := cond ++ " " ++ stripComments (lines[j]?.getD "")
   return some (cond, j)
 
 /-- The block a conditional opens and the forty lines after it. -/
@@ -1027,12 +1012,12 @@ def premiseBlock (lines : Array String) (i j : Nat) : String × String := Id.run
     let t := lk.trimAscii.toString
     if !t.isEmpty && indentOf lk ≤ ind then break
     if !t.isEmpty then
-      let piece := stripLineComment lk
+      let piece := stripComments lk
       body := body ++ "\n" ++ piece
     k := k + 1
   let mut after := ""
   for d in [0:40] do
-    let piece := stripLineComment (lines[k + d]?.getD "")
+    let piece := stripComments (lines[k + d]?.getD "")
     after := after ++ "\n" ++ piece
   return (body, after)
 
@@ -1051,7 +1036,7 @@ def PremiseKind.what : PremiseKind → String
 
 /-- A demotion whose value is computed rather than written (`demote := f x`). -/
 def computedDemote (l : String) : Bool :=
-  ((stripLineComment (stripStrings l)).splitOn "demote := ").drop 1 |>.any fun rest =>
+  ((stripComments (stripLiterals l)).splitOn "demote := ").drop 1 |>.any fun rest =>
     let w := (rest.trimAscii.toString.takeWhile isWordChar).toString
     !w.isEmpty && w != "true" && w != "false"
 
@@ -1074,7 +1059,7 @@ def premiseMark : String := "premise:"
 
 /-- A marker's text after its first `mark`, strings aside, cut at a block comment's close. -/
 def markerText (mark l : String) : String :=
-  let after := mark.intercalate (((stripStrings l).splitOn mark).drop 1)
+  let after := mark.intercalate (((stripLiterals l).splitOn mark).drop 1)
   (after.splitOn "-/").headD after
 
 /-- The pin and reason a marker line carries, `some (none, why)` for the refusal, `none` for a
@@ -1114,7 +1099,7 @@ def pinResolves (theorems : Std.HashSet String) (counts : Std.HashMap String Nat
 
 /-- Does the line carry a marker: a comment, or a line of one, opening with `mark`? -/
 def markerLine (mark l : String) : Bool :=
-  let s := stripStrings l
+  let s := stripLiterals l
   let opens (t : String) : Bool :=
     (t.dropWhile (fun c => c == '-' || c == '!' || c.isWhitespace)).toString.startsWith mark
   s.trimAscii.toString.startsWith mark || ((s.splitOn "--").drop 1).any opens ||
@@ -1205,7 +1190,7 @@ vendor .sty's own macro names stay full warnings under --werror" },
 /-- Does the code hold an elapsed `ms`, `elapsed`, `spent` or `…Ms` to a numeral, with neither
 `hangGuardMs` nor `hostMarginMs` named? -/
 def clockBound (l : String) : Bool := Id.run do
-  let t := stripLineComment (stripStrings l)
+  let t := stripComments (stripLiterals l)
   if containsSub t "hangGuardMs" || containsSub t "hostMarginMs" then return false
   let cs := t.toList.toArray
   let elapsedName (w : String) : Bool :=
@@ -1227,7 +1212,7 @@ def childRunOwners : List String :=
 
 /-- Does the code run a child through `RunBounded` itself rather than `childRun`? -/
 def childRunBypass (l : String) : Bool :=
-  let t := stripLineComment (stripStrings l)
+  let t := stripComments (stripLiterals l)
   hasWord t "runBounded" || containsSub t "RunBounded.output {" || containsSub t "RunBounded.output ("
 
 /-- One staged-diff check: the files it reads, the line predicate, the headline and the fix
@@ -1876,13 +1861,13 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
 /-- The selftests a tier producer frames by hand: those its `--selftest` reaches whose body is no
 `tierSelftest` application. -/
 def selfFramed (lines : Array String) : Array String := Id.run do
-  let code := lines.map fun l => stripLineComment (stripStrings l)
+  let code := lines.map fun l => stripComments (stripLiterals l)
   unless code.any (containsSub · "tierMain") do return #[]
   let mut reached : Array String := #[]
   for (l, c) in lines.zip code do
     let args := " ".intercalate ((c.splitOn "tierMain").drop 1)
     let target := " ".intercalate (((l.splitOn "\"--selftest\"").drop 1).map
-      (stripLineComment ∘ stripStrings))
+      (stripComments ∘ stripLiterals))
     for w in (args ++ " " ++ target).split (fun ch => !(isWordChar ch || ch == '.')) do
       reached := reached.push ((w.toString.splitOn ".").getLastD "")
   let mut out : Array String := #[]
@@ -1906,7 +1891,7 @@ def roleKeyNames : List String := LeanTex.Core.Ir.Role.all.filterMap (·.row.key
 /-- A colour role read by its key string, through the palette's role view, or by a raw role lookup,
 comments aside. -/
 def roleReadLine (l : String) : Bool :=
-  let t := stripLineComment l
+  let t := stripComments l
   (roleKeyNames.any fun k =>
     ["find? ", "declareKey ", "ofKey ", "ofKey? ", "contains "].any (fun door =>
       containsSub t (door ++ "\"" ++ k ++ "\"")) ||
@@ -1976,7 +1961,7 @@ def roleRowWildcards (lines : Array String) : Array Nat := Id.run do
   for i in [0:lines.size] do
     let l := lines[i]!
     if let some n := topLevelDefName l then inRow := n == "Role.row"
-    if inRow && (stripLineComment l).trimAscii.toString.startsWith "| _ " then
+    if inRow && (stripComments l).trimAscii.toString.startsWith "| _ " then
       out := out.push i
   return out
 
@@ -2462,6 +2447,38 @@ def selftest : IO UInt32 := do
     def c := \"five\\\n  six\" /- seven /- eight -/ nine -/\n"
   unless leanProse src == #[" one", " two", "  three ", " four", "", " seven  eight  nine ", ""] do
     fails.modify (s!"leanProse: {leanProse src}" :: ·)
+  -- Readings the shared lexer gives where the scanners it replaced misread.
+  expect "ioInCore through a quote's literal" ioInCore [
+    ("  if c == '\"' then IO.println s", true),
+    ("  let b := !'\"'.isWhitespace; IO.println b", true),
+    ("  let b := !r#\"a\"b\"#.isEmpty; IO.println b", true)]
+  expect "identityArm past a block comment" identityArm [("  | other => other /- passes -/", true)]
+  expect "repoRefInString past a string's dashes" repoRefInString [
+    ("  (help := \"run with --tree; see PLAN.md\")", true),
+    -- A stated blind spot: a line closing a string an earlier line opened reads its comment as text.
+    ("    the content is dropped\" pos -- see LeanTex/Core/Elab.lean", true)]
+  expect "bannedWord in a block comment or raw string" (bannedWord kwPartial) [
+    ("def x := 1 /- not " ++ kwPartial ++ " -/", false),
+    ("  let s := r#\"a \"" ++ kwPartial ++ "\" b\"#", false)]
+  expect "walkEntry after a one-line docstring" (fun l => (walkEntry l).isSome)
+    [("/-- d -/ def w (xs : Array Block) : Array Block := xs", true)]
+  unless codeOnly #["def q := '\"'", "def r := 1"] == #["def q :=  ", "def r := 1"] do
+    fails.modify (s!"codeOnly: a quote's literal: {codeOnly #["def q := '\"'", "def r := 1"]}" :: ·)
+  unless codeOnly #["xs[i]'h'"] == #["xs[i]'h'"] do
+    fails.modify (s!"codeOnly: an index proof's quote: {codeOnly #["xs[i]'h'"]}" :: ·)
+  unless leanProse "def s := r#\"a\"--b\"#" == #[""] do
+    fails.modify (s!"leanProse: a raw string's dashes: {leanProse "def s := r#\"a\"--b\"#"}" :: ·)
+  unless lexView "def s := \"a\\\n   b\"" (· == .strText) == #["a", "b"] do
+    fails.modify ("lexView: a gap's indentation read as text" :: ·)
+  unless stringsOnly "  let s := \"a\\" == " a" do
+    fails.modify (s!"stringsOnly: a trailing gap: {stringsOnly "  let s := \"a\\"}" :: ·)
+  -- A stated blind spot: an interpolation's nested string reads as closing its string.
+  unless stripComments "  let t := s!\"{g \"--\"} x\"" == "  let t := s!\"{g \"" do
+    fails.modify ("stripComments: an interpolation's nested string" :: ·)
+  let plusPlus := "diff --git a/x.lean b/x.lean\n--- a/x.lean\n+++ b/x.lean\n@@ -0,0 +1,2 @@\n\
+    +first\n+++ b/y.lean\n"
+  unless addedByFile plusPlus == #[("x.lean", #["first", "++ b/y.lean"])] do
+    fails.modify ("addedByFile: an added line beginning ++ b/ read as a file header" :: ·)
   expect "narrativeMarks" (fun l => !(narrativeMarks l).isEmpty) [
     ("fixes the gap (R149)", true),
     ("measured on 2026-09-19", true),
@@ -3322,7 +3339,7 @@ def wholeTreeChecks (say : String → IO Unit) : IO Unit := do
       -- A def handed to a fold reads one node while the fold recurses, so its catch-all is no hole.
       let folds := ["foldInlines", "foldBlocks", "mapInline", "mapBlock"]
       let leafNames : Array String := lines.foldl (fun acc l =>
-        let t := stripLineComment l
+        let t := stripComments l
         match folds.find? (fun fd => hasWord t fd) with
         | none => acc
         | some fd =>
@@ -3335,7 +3352,7 @@ def wholeTreeChecks (say : String → IO Unit) : IO Unit := do
       let mut sigOpen := false
       for i in [0:lines.size] do
         let l := lines[i]!
-        let t := stripLineComment l
+        let t := stripComments l
         if let some n := topLevelDefName l then
           cur := n
           curWalk := hasWord t "Inline" || hasWord t "Block"
@@ -3639,7 +3656,7 @@ the privacy check is skipped."
 
   let diff ← match sel with
     | none => pure ""
-    | some s => git (#["diff", "--no-color", "--unified=0"] ++ s ++ #["--", "*.lean"])
+    | some s => Privacy.textOfBytes <$> pinnedDiff (s ++ #["--", "*.lean"])
   for (file, lns) in addedByFile diff do
     for g in gates do
       if g.applies file then
@@ -3671,15 +3688,8 @@ the privacy check is skipped."
 
   -- A warn-once key spells its namespace at the call: a literal holding ':', alone or opening a
   -- concatenation.
-  let addedInCore : List String := Id.run do
-    let mut file := ""
-    let mut out : List String := []
-    for l in diff.splitOn "\n" do
-      if l.startsWith "+++ b/" then
-        file := (l.drop "+++ b/".length).toString
-      else if l.startsWith "+" && !l.startsWith "+++" && file.startsWith "LeanTex/" then
-        out := (l.drop 1).toString :: out
-    return out.reverse
+  let addedInCore : List String := ((addedLines diff).filterMap fun (f, _, l) =>
+    if f.startsWith "LeanTex/" then some l else none).toList
   let patSay := "say" ++ "Once "
   let patWarn := "warn" ++ "Once "
   let keyNamespaced (rest : String) : Bool :=
