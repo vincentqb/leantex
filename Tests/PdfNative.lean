@@ -1510,11 +1510,11 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
       t s!"native faces: {name}'s page embeds the engine's own drawing, byte for byte"
         ((faceOf pdf stretch).any fun face => (html.splitOn face).length ≥ 2)
     let (_, _, chartHtml) ← build (dir / "figure.tex") (dir / "figure-words.html")
-    let wordsOpen := "<span class=\"" ++ HtmlDoc.figureWordsClass ++ "\" aria-hidden=\"true\">"
+    let wordsOpen := "<span class=\"" ++ HtmlDoc.figureWordsClass ++ "\" aria-hidden=\"true\" style=\"" ++
+      HtmlDoc.visuallyHidden ++ "\">"
     let carried := ((chartHtml.splitOn wordsOpen)[1]?.map fun rest => (rest.splitOn "</span>")[0]?.getD "").getD ""
     t s!"native faces: an include's words ride beside its face, hidden from sight and assistive technology ({carried})"
-      ((carried.splitOn "invented chart").length ≥ 2 && (chartHtml.splitOn "alt=\"An invented chart\"").length ≥ 2 &&
-        (chartHtml.splitOn ("." ++ HtmlDoc.figureWordsClass ++ " {")).length == 2)
+      ((carried.splitOn "invented chart").length ≥ 2 && (chartHtml.splitOn "alt=\"An invented chart\"").length ≥ 2)
     IO.FS.writeFile (dir / "nameless.tex") (String.intercalate "\n" [
       "\\documentclass{article}", "\\begin{document}", "\\includegraphics{chart.pdf}", "\\end{document}", ""])
     let (code, records, namelessHtml) ← build (dir / "nameless.tex") (dir / "nameless.html")

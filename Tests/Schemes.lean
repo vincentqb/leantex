@@ -254,6 +254,11 @@ def printChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :=
     t s!"print colours: {path} paints what its PDF paints under more contrast: {more.toList}"
       more.isEmpty
   t s!"print colours: the corpus's pages ship print ({pages})" (pages ≥ 50)
+  let shown := (paintedList [] [] (some "#123456") false #[]
+    [Html.elem "span" #[Html.text "hidden"] #[("style", HtmlDoc.visuallyHidden)],
+     Html.elem "span" #[Html.text "shown"]]).map fun (_, _, _, s, _) => s
+  t s!"print colours: a box clipped to nothing paints nothing, and its unclipped twin paints: {shown}"
+    (shown == #["shown"])
 
 /-- On the dark screen every colour a text states reads at 4.5:1 or more on the page; the
 offences. -/

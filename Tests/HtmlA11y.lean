@@ -388,86 +388,106 @@ def typesetTitles (doc : Ir.Doc) : Array String :=
 def bodyH1Count (doc : Ir.Doc) : Nat :=
   ((Ir.headingLevels (Ir.keepFor "html" doc.body)).filter (· == .h1)).size
 
-/-- Every page names itself with a level-one heading: a titled page's is its title, the one its
-body or headline sets or else the declared one out of sight; a titled deck hands exactly that
-one, its frame titles staying at theirs; and an untitled page is given none of its own. -/
+/-- The title a page's opening banner names out of sight: a `header` taken out of flow and clipped
+to nothing, holding one level-one heading kept on one line. -/
+def hiddenBanner? (body : Array Html.Node) : Option String :=
+  let decls (attrs : Array (String × String)) := cssDecls ((HtmlDoc.attrOf? attrs "style").getD "")
+  match (body[0]? : Option Html.Node) with
+  | some (.elem "header" attrs kids) =>
+    match kids.toList with
+    | [Html.Node.elem "h1" hattrs hkids] =>
+      if lastDecl (decls attrs) "position" == some "absolute" &&
+          lastDecl (decls attrs) "clip-path" == some "inset(50%)" &&
+          lastDecl (decls hattrs) "white-space" == some "nowrap"
+      then some (nodeTextList "" hkids.toList) else none
+    | _ => none
+  | _ => none
+
+/-- A titled page names itself by the title it sets, else its own rank-one heading, else its
+declared title out of sight, a titled deck by exactly one h1 above its h2 frame titles; an untitled
+page is given none. -/
 def pageTitleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let names (doc : Ir.Doc) (title text : String) : Bool :=
-    spacedText text == spacedText title || (typesetTitles doc).contains (spacedText text)
-  -- the page opens on the banner holding the title out of sight
-  let banner (body : Array Html.Node) (title : String) : Bool :=
-    (body[0]?.map (Html.render · 0)) == some (Html.render (HtmlDoc.pageTitleNode title) 0)
   let mut titled := 0
   let mut unset := 0
   for n in goldenNames do
     let (doc, _, _, body, _) ← a11yCorpusPage n
-    let h1s := handedH1s body
+    let h1s := (handedH1s body).map (spacedText ·.2)
+    let typeset := typesetTitles doc
+    let own := bodyH1Count doc
+    let banner := hiddenBanner? body
     match doc.info.title.filter HtmlDoc.nonBlank with
     | some title =>
       titled := titled + 1
-      t s!"page title {n}: the titled page has its h1 ({h1s.map (·.2)})"
-        (h1s.any fun (_, s) => names doc title s)
-      if doc.docClass.record.model == .frame then
-        t s!"page title {n}: a titled deck hands exactly one h1, its title ({h1s.map (·.2)})"
-          (h1s.size == 1 && h1s.all fun (_, s) => names doc title s)
-      if (HtmlDoc.unsetTitle? { doc with body := Ir.keepFor "html" doc.body }).isSome then
+      let naming (s : String) : Bool := s == spacedText title || typeset.contains s
+      let set := typeset.size + (if doc.headline.isSome then 1 else 0)
+      if 0 < set then
+        t s!"page title {n}: the title it sets is the page's one h1 naming it ({h1s})"
+          (banner.isNone && h1s.size == set + own && (h1s.filter naming).size == set)
+      else if 0 < own then
+        t s!"page title {n}: a page with a level-one heading of its own is given no other ({h1s})"
+          (banner.isNone && h1s.size == own)
+      else
         unset := unset + 1
-        t s!"page title {n}: a title the page does not set is its h1 out of sight"
-          (banner body title && h1s.any (·.2 == title))
+        t s!"page title {n}: a title the page does not set is its one h1, out of sight ({h1s})"
+          (banner == some title && h1s == #[spacedText title])
+      if doc.docClass.record.model == .frame && own == 0 then
+        t s!"page title {n}: a titled deck hands exactly one h1, its title ({h1s})"
+          (h1s.size == 1 && h1s.all naming)
     | none =>
-      t s!"page title {n}: an untitled page is given no h1 ({h1s.map (·.2)})"
-        (h1s.size == bodyH1Count doc)
+      t s!"page title {n}: an untitled page is given no h1 ({h1s})" (banner.isNone && h1s.size == own)
   t s!"page title: the corpus ships titled pages ({titled})" (0 < titled)
   t s!"page title: the corpus ships titles its pages do not set ({unset})" (0 < unset)
-  let bodyOf (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
-  let handed (src : String) : Array (Array (String × String) × String) := handedH1s (bodyOf src)
-  let hidden (src : String) (title : String) : Bool :=
-    (handed src).map (·.2) == #[title] && banner (bodyOf src) title
+  let bodyOf (doc : Ir.Doc) : Array Html.Node := (HtmlDoc.emitTree {} doc).2.1
+  let page (src : String) : Array Html.Node := bodyOf (elabStr src).1
+  let named (body : Array Html.Node) : Array String := (handedH1s body).map (·.2)
   let frame := "\\begin{frame}{A First Frame}\nx\n\\end{frame}"
   let titleDecl := "\\title{An Invented Deck}\n"
+  let unsetDeck := page (dvDeck titleDecl frame)
+  let setDeck := page (dvDeck titleDecl ("\\maketitle\n" ++ frame))
   t s!"page title: a titled deck with no title frame hands its title once, out of sight: \
-{(handed (dvDeck titleDecl frame)).map (·.2)}"
-    (hidden (dvDeck titleDecl frame) "An Invented Deck")
-  let set (src : String) (title : String) : Bool :=
-    (handed src).map (·.2) == #[title] && !banner (bodyOf src) title
-  t s!"page title: a deck's title frame carries its title as the one h1: \
-{(handed (dvDeck titleDecl ("\\maketitle\n" ++ frame))).map (·.2)}"
-    (set (dvDeck titleDecl ("\\maketitle\n" ++ frame)) "An Invented Deck")
+{named unsetDeck}"
+    (named unsetDeck == #["An Invented Deck"] && hiddenBanner? unsetDeck == some "An Invented Deck")
+  t s!"page title: a deck's title frame carries its title as the one h1: {named setDeck}"
+    (named setDeck == #["An Invented Deck"] && (hiddenBanner? setDeck).isNone)
   let tags (ns : Array Html.Node) : List String := (ns.filterMap fun (k : Html.Node) =>
     match k with
     | .elem tag _ _ => some tag
     | _ => none).toList
-  for (src, opening) in [(dvDeck titleDecl frame, ["header", "main"]),
-      (dvDeck titleDecl ("\\maketitle\n" ++ frame), ["main"])] do
-    let (_, deckBody, _) := HtmlDoc.emitTree {} (elabStr src).1
+  for deckBody in [unsetDeck, setDeck] do
     let heads := (elemNodesList (· == "header") #[] (slideStages deckBody).toList).map
       fun h => match h with
         | .elem _ _ kids => tags kids
         | _ => []
     t s!"page title: a frame title stays an h2 beside the deck's title: {heads}"
       (heads == #[["h2"]])
-    t s!"page title: a title no frame sets stands in the page's banner, and only then: \
-{tags deckBody}"
-      ((tags deckBody).take opening.length == opening)
+  let unsetArticle := page (dvDoc "\\title{An Invented Study}\n" "\\section{Opening}\nx")
   t "page title: a titled article that sets no title hands it out of sight"
-    (hidden (dvDoc "\\title{An Invented Study}\n" "\\section{Opening}\nx") "An Invented Study")
+    (named unsetArticle == #["An Invented Study"] &&
+      hiddenBanner? unsetArticle == some "An Invented Study")
+  let setArticle := page (dvDoc "\\title{An Invented Study}\n" "\\maketitle\n\\section{Opening}\nx")
   t "page title: a titled article's set title is its one h1"
-    (set (dvDoc "\\title{An Invented Study}\n" "\\maketitle\n\\section{Opening}\nx")
-      "An Invented Study")
+    (named setArticle == #["An Invented Study"] && (hiddenBanner? setArticle).isNone)
+  let declared := page (dvDoc "\\pdfmeta{ title = \"An Invented Record\" }\n" "x")
   t "page title: a declared metadata title names the page"
-    (hidden (dvDoc "\\pdfmeta{ title = \"An Invented Record\" }\n" "x") "An Invented Record")
+    (named declared == #["An Invented Record"] && hiddenBanner? declared == some "An Invented Record")
   t "page title: an untitled article and an untitled deck are given no h1"
-    ((handed (dvDoc "" "\\section{Opening}\nx")).isEmpty && (handed (dvDeck "" frame)).isEmpty)
+    ((named (page (dvDoc "" "\\section{Opening}\nx"))).isEmpty &&
+      (named (page (dvDeck "" frame))).isEmpty)
   t "page title: a blank title declares none"
-    ((handed (dvDoc "\\title{}\n" "x")).isEmpty &&
-      (handed (dvDoc "\\pdfmeta{ title = \" \" }\n" "x")).isEmpty)
+    ((named (page (dvDoc "\\title{}\n" "x"))).isEmpty &&
+      (named (page (dvDoc "\\pdfmeta{ title = \" \" }\n" "x"))).isEmpty)
+  let poster := page ("\\documentclass{poster}\n\\title{An Invented Band}\n\\begin{document}\n" ++
+    "\\begin{frame}\nx\n\\end{frame}\n\\end{document}")
   t "page title: a poster's headline title is its one h1"
-    (set ("\\documentclass{poster}\n\\title{An Invented Band}\n\\begin{document}\n" ++
-      "\\begin{frame}\nx\n\\end{frame}\n\\end{document}") "An Invented Band")
+    (named poster == #["An Invented Band"] && (hiddenBanner? poster).isNone)
+  let note := (elabMd "# An Invented Note\n\nx\n").1
   t "page title: an untitled markdown page keeps its own level-one heading alone"
-    ((handedH1s (HtmlDoc.emitTree {} (elabMd "# An Invented Note\n\nx\n").1).2.1).map (·.2) ==
-      #["An Invented Note"])
+    (named (bodyOf note) == #["An Invented Note"])
+  let titledNote := bodyOf { note with info := { note.info with title := some "An Invented Study" } }
+  t s!"page title: a titled page with a level-one heading of its own is given no second: \
+{named titledNote}"
+    (named titledNote == #["An Invented Note"] && (hiddenBanner? titledNote).isNone)
 
 /-- The painted request census reads the scalar census's regions: the formulas the math face is
 requested for ask exactly the scalars `Layout.docMathScalars` holds. -/

@@ -4435,21 +4435,19 @@ public def lineThroughThicknessCss : String := s!"{Ir.lineThroughThickness.toPtS
 
 public def figureWordsClass : String := "figure-words"
 
-/-- A figure's words as the page carries them, out of sight and out of the accessibility tree. -/
-public def figureWordsNode (words : String) : Node :=
-  Html.elem "span" #[Html.text words] #[("class", figureWordsClass), ("aria-hidden", "true")]
-
-/-- Out of flow and clipped to nothing: WCAG technique C7's visually hidden pattern. -/
+/-- Out of flow and clipped to nothing, its text on one line: WCAG technique C7's visually hidden
+pattern. -/
 public def visuallyHidden : String :=
   "position: absolute; width: 1px; height: 1px; overflow: hidden; \
 clip-path: inset(50%); white-space: nowrap;"
 
-public def figureWordsRule : String :=
-  s!".{figureWordsClass} \{ {visuallyHidden} }\n"
+/-- A figure's words as the page carries them, out of sight and out of the accessibility tree. -/
+public def figureWordsNode (words : String) : Node :=
+  Html.elem "span" #[Html.text words]
+    #[("class", figureWordsClass), ("aria-hidden", "true"), ("style", visuallyHidden)]
 
 /-- The base stylesheet's rules, after its custom properties. -/
-public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords : Bool := false) :
-    String :=
+public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   let tl := tableLengthFallback doc
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
@@ -4484,7 +4482,6 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   listIndentCss doc.docClass.record.lists ++
-  (if figureWords then figureWordsRule else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
   -- the class-default list marks per nesting level, as classes.dtx sets them
   "ul { list-style-type: disc; }\n" ++
@@ -4690,7 +4687,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   schemeBlocks cfg.tables cfg.floor roles cfg.codeRoot ++ epochVars ++
   lineageLevelRules doc ++
-  rules.getD (baseRules doc pairs (cfg.imgs.entries.any (!·.webWords.isEmpty)))
+  rules.getD (baseRules doc pairs)
 
 private def styleClass : Style → String
   | .bold => "b"
@@ -7916,11 +7913,13 @@ public def schemeRules (cfg : Config) : String :=
 
 /-- The banner naming a page by a title it does not set, out of sight and out of flow. -/
 public def pageTitleNode (title : String) : Node :=
-  Html.elem "header" #[Html.elem "h1" #[Html.text title]] #[("style", visuallyHidden)]
+  Html.elem "header" #[Html.elem "h1" #[Html.text title] #[("style", visuallyHidden)]]
+    #[("style", visuallyHidden)]
 
-/-- The declared title a page names itself by when neither its body nor its headline sets one. -/
-public def unsetTitle? (doc : Doc) : Option String :=
-  if doc.headline.isSome || (Ir.headingLevels doc.body).contains .title then none
+/-- The declared title naming a page with no level-one heading of its own, its body kept for HTML. -/
+private def unsetTitle? (doc : Doc) : Option String :=
+  let levels := Ir.headingLevels doc.body
+  if doc.headline.isSome || levels.contains .title || levels.contains .h1 then none
   else doc.info.title.filter nonBlank
 
 /-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
@@ -8293,7 +8292,7 @@ one in the article class"
     let pairs := carrierPairs body
     let theme := themeCss doc cssCfg.blockTitleRule cssCfg.literal
     let tokens := tokenRules doc
-    let base := baseRules doc pairs (cssCfg.imgs.entries.any (!·.webWords.isEmpty)) ++
+    let base := baseRules doc pairs ++
       schemeRules cssCfg ++ tokens
     let rules := base ++ "\n" ++ theme ++ styled
     let (bodyReads, bodyDecls) := nodeRefs.list () (#[], #[]) body.toList
