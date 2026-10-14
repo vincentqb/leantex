@@ -34,7 +34,7 @@ private def sets : Thunk Sets := Thunk.mk fun _ =>
 private abbrev M := Machine St
 
 /-- The text, the end of each `[\w']` run, which `[~?][a-z][\w']*:` reads before its colon, and of
-each `\s` run, which `#print`'s forms read before their words. -/
+each `\s` run, which a command's lead and `#print`'s forms read before a `#` or a word. -/
 private structure Ix where
   s : Src
   label : Table Nat
@@ -105,12 +105,28 @@ private def expression (ix : Ix) (m : M) : Option M := Id.run do
   if p < s.size then return some (m.tok p (p + 1) Ty.nameBuiltinPseudo)
   return none
 
-/-- The departure testdata/highlight/pygments-departures.json declares for `root`, in its order:
-`#print`'s forms, `#exit`, and `#` before a name segment. -/
-private def hashCommand (ix : Ix) (m : M) : Option M := Id.run do
+/-- Where a command starts, the departure testdata/highlight/pygments-departures.json declares for
+`root`: white space from the text's start or a line break, then blanks, before a `#`; or `in` and its
+white space before one. -/
+private def commandLead (ix : Ix) (m : M) : Option M := Id.run do
   let s := ix.s
   let p := m.pos
-  if !s.is p '#' then return none
+  let e := if s.space p then ix.space.read p else p
+  if s.is e '#' then
+    let mut q := e
+    for _ in [p:e] do
+      if q > p && (s.is (q - 1) ' ' || s.is (q - 1) '\t') then q := q - 1 else break
+    if q == 0 || (q > p && s.is (q - 1) '\n') then return some (m.tok p e Ty.whitespace)
+  if s.boundary p && s.lit p #['i', 'n'] then
+    let w := ix.space.read (p + 2)
+    if s.is w '#' then return some ((m.tok p (p + 2) Ty.keyword).tok (p + 2) w Ty.whitespace)
+  return none
+
+/-- The commands the departure's rules read after their lead, in its order: `#print`'s forms,
+`#exit`, and `#` before a name segment. -/
+private def command (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
+  let p := m.pos
   let print := #['#', 'p', 'r', 'i', 'n', 't']
   let tactic := #['t', 'a', 'c', 't', 'i', 'c']
   let tags := #['t', 'a', 'g', 's']
@@ -136,7 +152,7 @@ private def root (ix : Ix) (m : M) : Option M := Id.run do
   let s := ix.s
   let p := m.pos
   let t := sets.get
-  if let some m' := hashCommand ix m then return some m'
+  if let some m' := (commandLead ix m).bind (command ix) then return some m'
   if s.boundary p then
     if let some e := t.keywordNamespace.longest s p s.boundary then
       return some (m.tok p e Ty.keywordNamespace)

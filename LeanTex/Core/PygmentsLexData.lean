@@ -23,11 +23,11 @@ public def pythonVersion : String := "3.13.14"
 public def unicodeVersion : String := "15.1.0"
 
 /-- SHA-256 of the rule structure in testdata/highlight/pygments-rules.txt. -/
-public def rulesDigest : String := "0bbf4fdf0a3da758d25a525b787e7678cceed06c210a33e96ac2448e917fc0f9"
+public def rulesDigest : String := "1ca28dd6305bb697b5b89d50953c485282e1c4ff37bc6db1eee875aae611ebc3"
 
 /-- testdata/highlight/pygments-departures.json as these data were generated under it, compressed. -/
 public def departures : String :=
-  "{\"Lean4Lexer\":{\"root\":{\"because\":\"Pygments' \\\\b# matches only after a word character, and Lean's own highlighter reads # and a name as a keyword, #exit as sorry-like and #print's words as keywords\",\"check\":\"hashCommandChecks\",\"rules\":[[\"(#print)(\\\\s+)(sig|axioms|equations|eqns)\\\\b\",\"Keyword.Namespace\",\"Text.Whitespace\",\"Keyword\"],[\"(#print)(\\\\s+)(tactic)(\\\\s+)(tags)\\\\b\",\"Keyword.Namespace\",\"Text.Whitespace\",\"Keyword\",\"Text.Whitespace\",\"Keyword\"],[\"#exit\\\\b\",\"Generic.Error\"],[\"#<lean-segment>\",\"Keyword.Namespace\"]]}}}"
+  "{\"Lean4Lexer\":{\"root\":{\"because\":\"Pygments' \\\\b# matches only after a word character, and Lean's own highlighter reads # and a name where a command starts, a line's first token or after in, as a keyword, #exit as sorry-like and #print's words as keywords\",\"check\":\"hashCommandChecks\",\"rules\":[[\"(?:((?:\\\\A|\\\\s*\\\\n)[ \\\\t]*)|\\\\b(in)(\\\\s*))(#print)(\\\\s+)(sig|axioms|equations|eqns)\\\\b\",\"Text.Whitespace\",\"Keyword\",\"Text.Whitespace\",\"Keyword.Namespace\",\"Text.Whitespace\",\"Keyword\"],[\"(?:((?:\\\\A|\\\\s*\\\\n)[ \\\\t]*)|\\\\b(in)(\\\\s*))(#print)(\\\\s+)(tactic)(\\\\s+)(tags)\\\\b\",\"Text.Whitespace\",\"Keyword\",\"Text.Whitespace\",\"Keyword.Namespace\",\"Text.Whitespace\",\"Keyword\",\"Text.Whitespace\",\"Keyword\"],[\"(?:((?:\\\\A|\\\\s*\\\\n)[ \\\\t]*)|\\\\b(in)(\\\\s*))(#exit)\\\\b\",\"Text.Whitespace\",\"Keyword\",\"Text.Whitespace\",\"Generic.Error\"],[\"(?:((?:\\\\A|\\\\s*\\\\n)[ \\\\t]*)|\\\\b(in)(\\\\s*))(#<lean-segment>)\",\"Text.Whitespace\",\"Keyword\",\"Text.Whitespace\",\"Keyword.Namespace\"]]}}}"
 
 /-- `\w`: Python's `re` word characters, what `\b` divides on.
 Ranges in 12 hex digits each, low then high, inclusive, ascending. -/

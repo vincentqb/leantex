@@ -20,11 +20,11 @@ lexer Lean4Lexer
     "[~?][a-z][\\w\\']*:" Token.Name.Variable
     '\\S' Token.Name.Builtin.Pseudo
   state root
-    departure held by hashCommandChecks because Pygments' \b# matches only after a word character, and Lean's own highlighter reads # and a name as a keyword, #exit as sorry-like and #print's words as keywords
-    departure '(#print)(\\s+)(sig|axioms|equations|eqns)\\b' bygroups(Token.Keyword.Namespace, Token.Text.Whitespace, Token.Keyword)
-    departure '(#print)(\\s+)(tactic)(\\s+)(tags)\\b' bygroups(Token.Keyword.Namespace, Token.Text.Whitespace, Token.Keyword, Token.Text.Whitespace, Token.Keyword)
-    departure '#exit\\b' Token.Generic.Error
-    departure '#<lean-segment>' Token.Keyword.Namespace
+    departure held by hashCommandChecks because Pygments' \b# matches only after a word character, and Lean's own highlighter reads # and a name where a command starts, a line's first token or after in, as a keyword, #exit as sorry-like and #print's words as keywords
+    departure '(?:((?:\\A|\\s*\\n)[ \\t]*)|\\b(in)(\\s*))(#print)(\\s+)(sig|axioms|equations|eqns)\\b' bygroups(Token.Text.Whitespace, Token.Keyword, Token.Text.Whitespace, Token.Keyword.Namespace, Token.Text.Whitespace, Token.Keyword)
+    departure '(?:((?:\\A|\\s*\\n)[ \\t]*)|\\b(in)(\\s*))(#print)(\\s+)(tactic)(\\s+)(tags)\\b' bygroups(Token.Text.Whitespace, Token.Keyword, Token.Text.Whitespace, Token.Keyword.Namespace, Token.Text.Whitespace, Token.Keyword, Token.Text.Whitespace, Token.Keyword)
+    departure '(?:((?:\\A|\\s*\\n)[ \\t]*)|\\b(in)(\\s*))(#exit)\\b' bygroups(Token.Text.Whitespace, Token.Keyword, Token.Text.Whitespace, Token.Generic.Error)
+    departure '(?:((?:\\A|\\s*\\n)[ \\t]*)|\\b(in)(\\s*))(#<lean-segment>)' bygroups(Token.Text.Whitespace, Token.Keyword, Token.Text.Whitespace, Token.Keyword.Namespace)
     words(lean4KeywordNamespace, prefix='\\b', suffix='\\b') Token.Keyword.Namespace
     words(lean4Keyword, prefix='\\b', suffix='\\b') Token.Keyword
     '@\\[' Token.Keyword.Declaration -> attribute

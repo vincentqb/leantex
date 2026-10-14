@@ -235,7 +235,8 @@ def fragments : Lexer → Array String
       "]'h", "] !", "]]!", "#exit", "#exit'", "#exit!", "#exit_x", "x#exit", "#guard_msgs",
       "#eval!", "#[", "#λ", "#α", "#1", "# x", "#print sig", "#print axioms", "#print equations",
       "#print eqns", "#print tactic tags", "#print tactic", "#print  axiomsx", "#print\naxioms",
-      "#printx", "sig", "axioms", "tactic", "tags", "eqns"]
+      "#printx", "sig", "axioms", "tactic", "tags", "eqns", "\n  #check", "\n\t#eval", " in #check",
+      "in#check", "in #[", " #s", "(#s)", ":= #α", "\n#exit", "  #", "\n #[", "x in\n#check"]
   | .python =>
     #["def ", "class ", "import ", "from ", " as ", "@decorator", "@", "#", "# comment",
       "#!/usr/bin/env python", "#!", "\\", "\\\n", "\n", "\n", "    ", " ", "\t", "r", "R",
@@ -439,7 +440,8 @@ def leanPart (d : Draw) : Draw :=
       "\n", "--"])).oneOf #["-/", ""]
   | 5 => (d.oneOf #["@[", "@[simp", "@[inline]"]).times 2 (fun d =>
       d.oneOf #["x", ",", "]", " ", "def", "inline"])
-  | 6 => ((d.oneOf #["#print", "#exit", "#eval", "#", "x#", "#print "]).oneOf #["", " ", "  ", "\n",
+  | 6 => (((d.oneOf #["", " ", "\n", "\n  ", "\n\t", "in ", " in ", "in", "x in\n", "(", ":= "]).oneOf
+      #["#print", "#exit", "#eval", "#", "x#", "#print ", "#s", "#α"]).oneOf #["", " ", "  ", "\n",
       "\t"]).times 2 (fun d => d.oneOf #["sig", "axioms", "equations", "eqns", "tactic", "tags",
       "tactic tags", "x", "'", "!", "[", "_", "λ", "α", " "])
   | _ => d.oneOf #["#eval", "x#eval", "#check", "sorry", "sorry'", "admit", "Type", "Typeα",

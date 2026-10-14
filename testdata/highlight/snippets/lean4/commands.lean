@@ -17,5 +17,14 @@
   axioms Nat.mul_comm
 #where
 #version
-x#exit #exit' #exit_named
+  #check Nat.zero
+	#eval 3
+open Nat in #check succ
+set_option pp.all true in
+#check 1
+def size (s : Finset Nat) : Nat := #s
+example (s : Finset Nat) : (#s) ≤ #s + 1 := by omega
+example : Cardinal := #α
+for x in #[1, 2] do pure ()
+x#exit #exit' #exit_named in#check
 #exit

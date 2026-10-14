@@ -126,10 +126,12 @@ def holeDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
   elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
     ("\\begin{minted}{lean4}\n" ++ holeSource ++ "\n\\end{minted}"))
 
-/-- An invented Lean listing of `#` commands, a `#print` form, `#exit` and an array. -/
+/-- An invented Lean listing of `#` commands where a command starts, a `#print` form, `#exit`, an
+array, and `#` notations in terms. -/
 def hashSource : String :=
   "#check Nat.succ\n#eval 2 + 2\n#guard 1 + 1 == 2\n#print axioms Nat.add_comm\n#exit\n#[1, 2]\n" ++
-    "#guard_msgs in"
+    "#guard_msgs in\n  #reduce 3 * 3\nopen Foo in #check x\ndef size (s : Finset Nat) : Nat := #s\n" ++
+    "example (s : Finset Nat) : (#s) = size s := rfl\nexample : Cardinal := #α"
 
 def hashDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
   elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
@@ -264,8 +266,8 @@ def codePaints (fonts : Font.FontSet) (doc : Ir.Doc) :
     (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c)
 
 /-- Lean's `#` commands set as Lean's own highlighter reads them, in both artifacts: each command
-and `#print`'s word in the keyword role's colour and weight, `#exit` in the error role's, and an
-array's `#[` and the names in the ink. -/
+where a command starts and `#print`'s word in the keyword role's colour and weight, `#exit` in the
+error role's, and an array's `#[`, the names and a term's `#` notation in the ink. -/
 def hashCommandChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "hash commands: the serif faces load"
@@ -275,26 +277,28 @@ def hashCommandChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ds.all (·.severity != .error))
     let (laid, typed) := codePaints fonts doc
     let fg := (Ir.Design.ofDoc doc).fg
-    let pdf (context word : String) :=
-      onePaint (ShellHighlight.namePaint? hashSource context word 0 laid)
-    let html (context word : String) :=
-      onePaint (ShellHighlight.namePaint? hashSource context word 0 typed)
-    let sets (role : ListingHighlight.Role) (kind : Kind) (context word : String) : IO Unit := do
+    let sets (role : ListingHighlight.Role) (kind : Kind) (context word : String) (skip : Nat) :
+        IO Unit := do
       let (bold, italic) := role.weights
       let ink := Listing.ink doc.palette none kind (style := style)
-      t s!"hash commands {style.name}: PDF sets {word} in the {role.word} role's ink and weight"
-        (kind.role == role && pdf context word == some (faceOf bold italic, ink.getD fg))
-      t s!"hash commands {style.name}: typed HTML sets {word} in the {role.word} role's ink and weight"
-        ((html context word).any fun p =>
+      let pdf := onePaint (ShellHighlight.namePaint? hashSource context word skip laid)
+      let html := onePaint (ShellHighlight.namePaint? hashSource context word skip typed)
+      t s!"hash commands {style.name}: PDF sets {word} in {context} in the {role.word} role's ink and weight"
+        (kind.role == role && pdf == some (faceOf bold italic, ink.getD fg))
+      t s!"hash commands {style.name}: typed HTML sets {word} in {context} in the {role.word} role's ink and weight"
+        (html.any fun p =>
           p.bold == bold && p.italic == italic && !p.underline && match ink with
             | some c => p.color.any (hasStr · (HtmlDoc.cssColor c))
             | none => p.color.isNone)
-    for (context, word) in [("#check", "#check"), ("#eval", "#eval"), ("#guard 1", "#guard"),
-        ("#print", "#print"), ("axioms", "axioms"), ("#guard_msgs", "#guard_msgs")] do
-      sets .keyword .keyword context word
-    sets .error .genericError "#exit" "#exit"
-    for word in ["#[", "Nat.add_comm"] do
-      sets .ink .text word word
+    for (context, word, skip) in [("#check Nat", "#check", 0), ("#eval", "#eval", 0),
+        ("#guard 1", "#guard", 0), ("#print", "#print", 0), ("axioms", "axioms", 0),
+        ("#guard_msgs", "#guard_msgs", 0), ("#reduce", "#reduce", 0),
+        ("in #check x", "#check", 2)] do
+      sets .keyword .keyword context word skip
+    sets .error .genericError "#exit" "#exit" 0
+    for (context, word, skip) in [("#[", "#[", 0), ("Nat.add_comm", "Nat.add_comm", 0),
+        (":= #s", "#s", 2), ("(#s)", "#s", 1), ("#α", "#α", 0)] do
+      sets .ink .text context word skip
 
 /-- The code roles: every token type's role by its parent chain, each role's colour from the palette
 by the stated rule or the style, one colour and weight per role, in both artifacts. -/
