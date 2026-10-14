@@ -982,6 +982,9 @@ def listingGrowth (n : Nat) : IO Unit := do
   let (bigElab, bigLayout) ← listingElabMs n 8000
   growthBound "8000 / 2000 lines" smallElab bigElab
   growthBound "layout, 8000 / 2000 lines" smallLayout bigLayout
+  let (farElab, farLayout) ← listingElabMs n 32000
+  growthBound "32000 / 8000 lines" bigElab farElab
+  growthBound "layout, 32000 / 8000 lines" bigLayout farLayout
   for ((lang, what, small), (_, _, big)) in (adversarialListings 2000).zip (adversarialListings 8000) do
     let (smallElab, smallLayout) ← listingPhasesMs n s!"{lang} {what}, 2000 scale" lang small
     let (bigElab, bigLayout) ← listingPhasesMs n s!"{lang} {what}, 8000 scale" lang big

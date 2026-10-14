@@ -304,7 +304,7 @@ def pygmentsLinearChecks (ref : IO.Ref (List String)) : IO Unit := do
       seed := s2
       let s := Src.ofString text
       for start in [0:s.size + 1] do
-        if matcher s start s.size != PygmentsLexers.backtrack s s.size re start some then
+        if matcher.run s start s.size != PygmentsLexers.backtrack s s.size re start some then
           if reMiss.isNone then reMiss := some n
   t s!"pygments lexers: a compiled pattern matches as backtracking does (first miss: pattern {reMiss})"
     reMiss.isNone

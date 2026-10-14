@@ -188,8 +188,28 @@ public theorem dependentBoundary : False := exportedBoundary
 "
   (_, failures) ← (expect "transitive-axiom consumer did not compile"
     (axiomConsumer.exitCode == 0)).run failures
+  let hoisted ← probe "Hoisted" "module
+private def shiftBy (n : Nat) : Nat → Nat :=
+  let m := n + 1
+  fun k => m + k
+private def offsetBy (n : Nat) : Nat → Nat :=
+  let m := n + 1
+  Nat.add m
+"
+  (_, failures) ← (expect "returned-function fixture did not compile"
+    (hoisted.exitCode == 0)).run failures
+  let structured ← probe "Structured" "module
+public structure Shift where
+  amount : Nat
+public def Shift.of (n : Nat) : Shift :=
+  let m := n + 1
+  ⟨m⟩
+public def Shift.apply (s : Shift) (k : Nat) : Nat := s.amount + k
+"
+  (_, failures) ← (expect "structure fixture did not compile"
+    (structured.exitCode == 0)).run failures
   let allFixtures := #["Valid", "Hyphenated-Module", "Visible", "Hidden", "Foreign", "Foundation",
-    "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Unimported"]
+    "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Hoisted", "Structured", "Unimported"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
       ("hyphenated compiled module", #["Valid", "Hyphenated-Module"],
@@ -199,6 +219,7 @@ public theorem dependentBoundary : False := exportedBoundary
       ("unused private project axiom", #["Foreign"], #["Foreign"], false),
       ("transitive unfinished proof", #["Consumer"], #["Consumer"], false),
       ("transitive project axiom", #["AxiomConsumer"], #["AxiomConsumer"], false),
+      ("bindings returned as a structure", #["Structured"], #["Structured"], true),
       ("empty manifest", #["Valid"], #[], false),
       ("duplicate manifest", #["Valid"], #["Valid", "Valid"], false),
       ("missing module", #["Valid"], #["Unimported"], false)] do
@@ -210,6 +231,13 @@ public theorem dependentBoundary : False := exportedBoundary
     let out ← compile file #["-R", dir.toString] (some dir)
     (_, failures) ← (expect label ((out.exitCode == 0) == okay)).run failures
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
+  let hoistedAudit := dir / "HoistedAudit.lean"
+  IO.FS.writeFile hoistedAudit (wrapper dir #["Hoisted"] allFixtures)
+  let hoistedOut ← compile hoistedAudit #["-R", dir.toString] (some dir)
+  for decl in ["shiftBy", "offsetBy"] do
+    (_, failures) ← (expect s!"the audit missed a let before a returned function: {decl}"
+      (hoistedOut.exitCode != 0 && (hoistedOut.stdout ++ hoistedOut.stderr).contains
+        s!"{decl} binds a let before the function it returns")).run failures
   -- A failed compiler is an audit result; cost order differs from job order, so misplacement shows.
   let batchCases := #[("Valid", true), ("Foundation", true), ("Hidden", false)]
   let batched ← auditBatch batchCases (·.1.length) fun index (name, _) => do

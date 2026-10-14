@@ -165,10 +165,12 @@ public def labInGamut (lab : Lab) : Bool :=
   let ok (v : Int) : Bool := decide (0 ≤ v) && decide (v ≤ 10000000)
   ok r && ok g && ok b
 
+/-- The cover of a colour over a surface given in Oklab: `f`% of its own Oklab value. -/
+public def coverOver (f : Nat) (bg : Lab) (c : Color) : Color :=
+  toColor (labMix f (labOf c) bg)
+
 /-- The cover of a colour: `f`% of its own Oklab value over the surface. -/
-public def cover (f : Nat) (bg : Color) : Color → Color :=
-  let bgLab := labOf bg
-  fun c => toColor (labMix f (labOf c) bgLab)
+public def cover (f : Nat) (bg c : Color) : Color := coverOver f (labOf bg) c
 
 example : cover 38 Color.white Color.black == { r := 0x86, g := 0x86, b := 0x86 } := by
   rw [Color.beq_screen_exact]

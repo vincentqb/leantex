@@ -925,16 +925,24 @@ public def ParagraphBreaks.Splits (p : ParagraphBreaks) (k : Nat) : Prop :=
   k ∈ p.chosen ∧ (∃ stop ∈ p.forced.pop, k < stop) ∧
     k ∉ p.forced ∧ k ∉ p.endFills
 
-/-- Whether a break splits an authored segment, as `Splits`
-reads a chosen one, reading the forced ends once. -/
-public def ParagraphBreaks.splitAt (p : ParagraphBreaks) : Nat → Bool :=
-  let top := p.forced.pop.foldl max 0
-  let ends : Std.HashSet Nat := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList)
-  fun k => decide (k < top) && !ends.contains k
+/-- A paragraph's forced ends, read once: the last interior one, and every break that ends
+a segment. -/
+public structure SegmentEnds where
+  top : Nat
+  ends : Std.HashSet Nat
+
+public def ParagraphBreaks.segmentEnds (p : ParagraphBreaks) : SegmentEnds :=
+  { top := p.forced.pop.foldl max 0
+    ends := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList) }
+
+/-- Whether a break splits an authored segment, as `Splits` reads a chosen one. -/
+public def SegmentEnds.splits (e : SegmentEnds) (k : Nat) : Bool :=
+  decide (k < e.top) && !e.ends.contains k
 
 /-- The chosen breaks that split an authored segment. -/
 public def ParagraphBreaks.reflows (p : ParagraphBreaks) : Array Nat :=
-  p.chosen.filter p.splitAt
+  let e := p.segmentEnds
+  p.chosen.filter e.splits
 
 private theorem lt_foldl_max (k : Nat) : ∀ (l : List Nat) (acc : Nat),
     k < l.foldl max acc ↔ k < acc ∨ ∃ x ∈ l, k < x := by
@@ -962,10 +970,10 @@ public theorem ParagraphBreaks.reflows_mem (p : ParagraphBreaks) (k : Nat) :
   have htop : k < p.forced.pop.foldl max 0 ↔ ∃ stop ∈ p.forced.pop, k < stop := by
     rw [← Array.foldl_toList, lt_foldl_max]
     simp only [Nat.not_lt_zero, false_or, Array.mem_def]
-  simp only [ParagraphBreaks.reflows, ParagraphBreaks.splitAt, ParagraphBreaks.Splits,
-    Array.mem_filter, Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq, htop,
-    Std.HashSet.contains_ofList, List.contains_append, Bool.or_eq_false_iff,
-    Array.contains_toList, Array.contains_eq_mem, decide_eq_false_iff_not]
+  simp only [ParagraphBreaks.reflows, ParagraphBreaks.segmentEnds, SegmentEnds.splits,
+    ParagraphBreaks.Splits, Array.mem_filter, Bool.and_eq_true, Bool.not_eq_true',
+    decide_eq_true_eq, htop, Std.HashSet.contains_ofList, List.contains_append,
+    Bool.or_eq_false_iff, Array.contains_toList, Array.contains_eq_mem, decide_eq_false_iff_not]
 
 public def ReflowsNamed (paragraphs : Array ParagraphBreaks) (diags : Array Diag) : Prop :=
   ∀ p ∈ paragraphs, ∀ k, p.Splits k →
@@ -13553,7 +13561,7 @@ public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Na
     apply Array.eq_empty_of_size_eq_zero
     simp only [Array.size_pop, Array.size_extract]
     omega
-  simp [ParagraphBreaks.splitAt, hpop]
+  simp [ParagraphBreaks.segmentEnds, SegmentEnds.splits, hpop]
 
 /-- The places a re-flow's detail names: line and column, the
 file where it differs, the first three and how many more. -/
@@ -13655,8 +13663,7 @@ private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (firs
 each such line with its rank, first item, lines and overruns. -/
 private def reflowWalk (j : ParaJob) (p : ParagraphBreaks) : Array Bool × Array ReflowedLine :=
   Id.run do
-  let split := p.splitAt
-  let ends : Std.HashSet Nat := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList)
+  let e := p.segmentEnds
   let mut marks : Array Bool := Array.replicate (j.items.size + 1) false
   let mut out : Array ReflowedLine := #[]
   let mut cur : Option ReflowedLine := none
@@ -13664,7 +13671,7 @@ private def reflowWalk (j : ParaJob) (p : ParagraphBreaks) : Array Bool × Array
   let mut prev := 0
   let mut first := true
   for brk in p.chosen do
-    if split brk || (!first && split prev) then
+    if e.splits brk || (!first && e.splits prev) then
       marks := marks.set! brk true
       let start := j.lineStart first prev
       let line := cur.getD { ordinal := ordinal }
@@ -13678,11 +13685,11 @@ private def reflowWalk (j : ParaJob) (p : ParagraphBreaks) : Array Bool × Array
                                excess := excess }
           { line with over := line.over.push o }
         | none => line
-      if split brk then cur := some line
+      if e.splits brk then cur := some line
       else
         out := out.push line
         cur := none
-    if ends.contains brk then ordinal := ordinal + 1
+    if e.ends.contains brk then ordinal := ordinal + 1
     prev := brk
     first := false
   if let some line := cur then out := out.push line

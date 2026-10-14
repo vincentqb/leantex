@@ -561,13 +561,17 @@ public def labelText (geom : Geom) (remap : Array Nat) (widths : Array (Array In
 
 /-- The label setter of a page: the text of each key its held lines carry,
 or nothing on a page that routes none. -/
+public structure LabelSetter where
+  text : (Nat × Nat) → Option (Array TextOp)
+
+/-- A page's label setter, its held lines read once. -/
 public def pageLabels (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
-    (Nat × Nat) → Option (Array TextOp) :=
+    LabelSetter :=
   let keys := inkLabelKeys page.inks
   let route := routesLabels page.inks
-  if route then labelText geom remap widths imgMap tags (page.lines.toList.filter (heldBy route keys))
-  else fun _ => none
+  let held := page.lines.toList.filter (heldBy route keys)
+  ⟨if route then labelText geom remap widths imgMap tags held else fun _ => none⟩
 
 /-- A picture's ink as operators in the page's PDF space, each label set where its node stands. -/
 @[expose] public def inkPaint (geom : Geom) (ix : GfxPdf.Request → Nat)
@@ -773,7 +777,7 @@ public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array I
     (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
-  let paths := inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags page.inks
+  let paths := inkGroups geom ix (pageLabels geom remap widths imgMap tags page).text tags page.inks
   let st := (bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }
   let images := st.images.map (imageOp ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
@@ -788,7 +792,8 @@ public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Ar
     (figs : Array (Option FigForm)) (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
-  let paths := page.inks.flatMap (inkPaint geom ix (pageLabels geom remap widths imgMap tags page))
+  let paths :=
+    page.inks.flatMap (inkPaint geom ix (pageLabels geom remap widths imgMap tags page).text)
   let st := (bodyLines page).foldl (stepLinePlain geom remap imgMap tags) { widths }
   let images := st.images.map (imageOpPlain ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
@@ -2610,7 +2615,7 @@ private theorem labelText_plain (geom : Geom) (remap : Array Nat) (widths : Arra
 
 private theorem pageLabels_setter (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
-    ∀ k ∈ page.inks, InkSetter (pageLabels geom remap widths imgMap tags page) k := by
+    ∀ k ∈ page.inks, InkSetter (pageLabels geom remap widths imgMap tags page).text k := by
   intro k hk
   unfold pageLabels
   by_cases hr : routesLabels page.inks = true
@@ -2684,14 +2689,14 @@ public theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array
     runsOf (contentOps geom remap widths imgMap tags ix figs page) =
       paintRuns page ++ figureRuns figs page := by
   have hset := pageLabels_setter geom remap widths imgMap tags page
-  have hpaths : (inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags
+  have hpaths : (inkGroups geom ix (pageLabels geom remap widths imgMap tags page).text tags
       page.inks).toList.flatMap ContentOp.runs =
         (if routesLabels page.inks then (inkLabelKeys page.inks).flatMap fun k =>
           ((page.lines.toList.filter (heldBy (routesLabels page.inks) (inkLabelKeys page.inks))).filter
             (·.labelKey? == some k)).flatMap Layout.LineOut.glyphRuns
          else []) := by
-    have h1 := runsOf_inkOps (inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags
-      page.inks)
+    have h1 := runsOf_inkOps
+      (inkGroups geom ix (pageLabels geom remap widths imgMap tags page).text tags page.inks)
     unfold runsOf inkOps at h1
     rw [List.toList_toArray] at h1
     rw [← h1, inkGroups_ink geom ix _ tags page.inks hset, List.flatMap_assoc]

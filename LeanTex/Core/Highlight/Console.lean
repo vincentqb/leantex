@@ -93,11 +93,14 @@ private def Prog.firstEnd (g : Prog) (s : Src) (start lim : Nat) : Option Nat :=
     ways := next
   return found
 
-/-- `r` compiled once: where `re.match` ends a match of it at `start` in a
-text ending at `lim`, first in priority order. -/
-public def Re.matcher (r : Re) : Src → Nat → Nat → Option Nat :=
+/-- A pattern compiled once: `run s start lim` is where `re.match` ends a match of it at
+`start` in a text ending at `lim`, first in priority order. -/
+public structure Matcher where
+  run : Src → Nat → Nat → Option Nat
+
+public def Re.matcher (r : Re) : Matcher :=
   let g := Prog.of r
-  fun s start lim => g.firstEnd s start lim
+  ⟨g.firstEnd⟩
 
 private def lit (c : Char) : Re := .cls (· == c)
 private def plus (p : Char → Bool) : Re := .seq (.cls p) (.star p true)

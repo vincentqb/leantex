@@ -10728,7 +10728,7 @@ public structure Cover where
 /-- Covering: the per-colour cover at the design's fraction toward its
 surface, and the plain cover for runs with no colour. -/
 public def Design.cover (d : Design) : Cover :=
-  let of := Oklab.cover d.coveredFraction d.bg
+  let of := Oklab.coverOver d.coveredFraction (Oklab.labOf d.bg)
   { plain := d.covered.getD (of d.fg), of := of }
 
 /-- One component of a numbered overlay: a number, a closed range or an open range. -/
