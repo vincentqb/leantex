@@ -298,10 +298,22 @@ def addedNames (sel : Array String) : IO (Array String) := do
   return zPaths (← gitBytes (#["diff", "--name-only", "-z", "--no-relative", "--diff-filter=ACR",
     "-M"] ++ sel))
 
-/-- Where the staged changes add a denylisted term, in a line, a path or a blob, located and never
-quoted. -/
+/-- The citation's places' texts as a diff's new side holds them, which `Privacy.excused` reads:
+the objects `pre` and their paths name (`:` the index, `<rev>:` a tree), else the working
+tree's files. -/
+def citedTexts (pre : Option String) : IO (Array (String × String)) := do
+  let cited := Privacy.citationPlaces.map (·.1)
+  match pre with
+  | some p => return cited.zip ((← catBlobs (cited.map (p ++ ·))).map Privacy.textOfBytes)
+  | none => cited.filterMapM fun (f : String) => do
+      let path := System.FilePath.mk f
+      unless ← path.pathExists do return none
+      return some (f, Privacy.textOfBytes (← IO.FS.readBinFile path))
+
+/-- Where the staged changes add a denylisted term, in a line the citation's staged text does not
+excuse (`Privacy.excused`), a path or a blob, located and never quoted. -/
 def privacyStaged (m : Privacy.Matcher) (diff : ByteArray) : IO (Array String) := do
-  let mut out := m.diffFindings diff ""
+  let mut out := m.diffFindings diff "" (← citedTexts (some ":"))
   out := out.append (m.pathFindings (← addedNames #["--cached"]) "" "its path")
   let binaries := binaryPaths (← git #["diff", "--cached", "--numstat", "-z", "--no-relative",
     "--no-renames", "--diff-filter=AM"])
@@ -317,13 +329,16 @@ def hookVar : String := "LEANTEX_PRECOMMIT_HOOK"
 `refs/remotes/origin/main`. -/
 def unpushedRange : Array String := #["HEAD", "--not", "refs/remotes/origin/main"]
 
-/-- Where a commit among `revs`, the unpushed ones unless named, adds a denylisted term in a line, a
-path or a blob, or names one in its message. -/
+/-- Where a commit among `revs`, the unpushed ones unless named, adds a denylisted term in a line
+its citation's text does not excuse (`Privacy.excused`), a path or a blob, or names one in its
+message. -/
 def privacyCommits (m : Privacy.Matcher) (revs : Array String := unpushedRange) :
     IO (Array String) := do
   let mergesFirst := "--diff-merges=first-parent"
-  let patches ← gitBytes (#["-c", "core.quotePath=false", "log"] ++ pinnedPatch ++
-    #[mergesFirst, "-p", "--format=%x00%H"] ++ revs)
+  let patches := Privacy.logPatchesOf (← gitBytes (#["-c", "core.quotePath=false", "log"] ++
+    pinnedPatch ++ #[mergesFirst, "-p", "--format=%x00%H"] ++ revs))
+  let cited := Privacy.citedIn patches
+  let texts ← catBlobs (cited.map fun (sha, p) => s!"{sha}:{p}")
   let paths ← gitBytes (#["log", "--format=%x00%H", "--name-only", "-z", "--diff-filter=ACR",
     "-M", mergesFirst] ++ revs)
   let numstat ← git (#["log", "--format=%x00%H", "--numstat", "-z", "--no-renames",
@@ -331,8 +346,8 @@ def privacyCommits (m : Privacy.Matcher) (revs : Array String := unpushedRange) 
   let binaries := (Privacy.logRecords numstat).filterMap fun (sha, row) =>
     (Privacy.blobRow row).bind fun p => if p.contains '\n' then none else some (sha, p)
   let blobs ← catBlobs (binaries.map fun (sha, p) => s!"{sha}:{p}")
-  let found := m.commitFindings (Privacy.logPatchesOf patches) (Privacy.logRecordsOf paths)
-    (binaries.zip blobs)
+  let found := m.commitFindings patches (Privacy.logRecordsOf paths) (binaries.zip blobs)
+    (cited.zip (texts.map Privacy.textOfBytes))
   let log ← gitBytes (#["log", "-z", "--format=%H%n%B"] ++ revs)
   return Privacy.uniq (found.append (m.messageFindingsOf log))
 
@@ -371,10 +386,10 @@ def rangeCommits (r : String) : Array String :=
   | some (a, b) => #[b, "--not", a]
   | none => #[r]
 
-/-- Where a range adds a denylisted term, in a line, a path or a blob, or one of its commits adds or
-names one. -/
+/-- Where a range adds a denylisted term, in a line the citation's text at its tip does not excuse
+(`Privacy.excused`), a path or a blob, or one of its commits adds or names one. -/
 def privacyRange (m : Privacy.Matcher) (r : String) (diff : ByteArray) : IO (Array String) := do
-  let mut out := m.diffFindings diff ""
+  let mut out := m.diffFindings diff "" (← citedTexts ((rangeTip r).map (· ++ ":")))
   out := out.append (m.pathFindings (← addedNames #[r]) "" "its path")
   let binaries := binaryPaths (← git #["diff", "--numstat", "-z", "--no-relative", "--no-renames",
     "--diff-filter=AM", r])
@@ -3629,9 +3644,10 @@ the privacy check is skipped."
       say s!"pre-commit: a denylisted term {scope}, at:
 {String.intercalate "\n" hits.toList}
   The local denylist (info/private-terms in the git common directory) holds
-  personal and private-document terms; none may enter the tree, a commit or
-  a commit message. The term is never printed, and a path holding it is
-  shown with that part as …; git ls-files or git show --stat names it.
+  personal and private-document terms; none may enter a commit message, nor
+  the tree or a commit outside the citation's places (Privacy.citationPlaces).
+  The term is never printed, and a path holding it is shown with that part
+  as …; git ls-files or git show --stat names it.
   Fix: replace the text with invented words that exercise the same property,
   then re-stage. A term in an unpushed commit stays in what a push publishes
   even after a later commit removes it: rewrite that commit (amend, or

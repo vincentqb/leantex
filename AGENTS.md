@@ -9,6 +9,7 @@ what these leave open: read it before designing.
 - Nothing personal or private enters the repository or a commit message: no names, initials, emails,
   career facts, a private document's text, topic, palette, font, spacing or path (`homePathHits`);
   acceptance runs locally on the private corpus, named abstractly, never in CI (review).
+- Only CITATION.cff and README.md's citation hold the author's name and repo URL (`excused`).
 - The denylist, info/private-terms in git's common directory (format: `scripts/Privacy.lean`), is
   never committed, printed or quoted; the gates read what a commit adds, the tree and each unpushed
   commit and its message, naming a location, never the term (`privacyTree`, `privacyGateChecks`).
@@ -31,9 +32,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   is `git config core.hooksPath scripts/hooks` (`scripts/precommit.lean`), `land check` runs the
   landing gates (`scripts/land.lean`); one gate table is owed (U29): `scripts/Gates.lean`.
 - The harness is Lean (`scripts/*.lean`; lake env lean --run rebuilds nothing: build a script's
-  imports first) but for the hook's trampoline. Lake runs the extra linters, missingDocs off
-  (`lakefile.toml`); the hook and land build --wfail (`defaultGates`); goldens move only with a
-  source, via lake exe Tests --update (`goldenSource`).
+  imports first) but for the hook's trampoline. The hook and land build --wfail (`defaultGates`);
+  goldens move only with a source, via lake exe Tests --update (`goldenSource`).
 - Run an area's oracle on touching it, evidence, not a gate (review):
   - line breaking: `scripts/kp-fuzz.lean`; hyphenation: `scripts/hyphen-diff.lean`
   - Elab's preamble apply sites: `scripts/compose-fuzz.lean`; Oklab: `scripts/oklab-roundtrip.lean`
@@ -171,8 +171,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 
 - Write the invariant first: before code, what a new kind of thing owes; before a fix, the one whose
   absence allowed it, a theorem or a test failing before and passing after; fix to it, not the
-  symptom; a lesson that generalises becomes a rule here or a hook check (review; `reportChecks` for
-  reports); a test helper two check blocks share lives in `Tests/Support.lean` (`scopedDefNames`).
+  symptom; a lesson that generalises becomes a rule here or a hook check (review); a test helper
+  two check blocks share lives in `Tests/Support.lean` (`scopedDefNames`).
 - Commit each verified unit with an imperative subject; never push unasked; land only through land,
   which moves main to exactly the gated sha, the next unit starting with land new
   (`step_writes_owned`, `trace_pinned`, `step_barred_exact`); report repository state from the

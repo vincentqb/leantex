@@ -187,37 +187,43 @@ def Matcher.opening (m : Matcher) (c : Char) : Array Nat :=
 def Matcher.maxWords (m : Matcher) : Nat :=
   m.terms.foldl (fun n t => max n t.words.size) 0
 
-/-- Whether `t` stands at index `i` of `s`: its words in order, case-folded unless it
-keeps case, each at most `gapMax` scalars that are no letter or digit after the one
+/-- Where `t` stands at index `i` of `s`, the index past it: its words in order, case-folded
+unless it keeps case, each at most `gapMax` scalars that are no letter or digit after the one
 before, and a word's close after the last; the caller judges the open. -/
-def standsAt (s : Array Char) (i : Nat) (t : Term) : Bool := Id.run do
+def standsTo (s : Array Char) (i : Nat) (t : Term) : Option Nat := Id.run do
   let mut j := i
   for (w, k) in t.words.zipIdx do
     if k > 0 then
       for _ in [0:gapMax] do
         if j < s.size && !wordChar (charAt s j) then j := j + 1 else break
-    if s.size < j + w.size then return false
+    if s.size < j + w.size then return none
     for want in w do
       let got := charAt s j
-      if (if t.cased then got else lowerOf got) != want then return false
+      if (if t.cased then got else lowerOf got) != want then return none
       j := j + 1
-  return closesAt s j
+  return if closesAt s j then some j else none
 
-/-- The 1-based lines of one folded reading on which a term opens as a whole word,
-ascending, once per hit. -/
-def Matcher.linesIn (m : Matcher) (f : Folded) : Array Nat := Id.run do
+/-- The 1-based first and last lines of each hit of one folded reading, in order of its opening:
+a term opening as a whole word, the one reaching farthest where several do. -/
+def Matcher.spansIn (m : Matcher) (f : Folded) : Array (Nat × Nat) := Id.run do
   let s := f.chars
-  let mut out : Array Nat := #[]
+  let mut out : Array (Nat × Nat) := #[]
   for i in [0:s.size] do
     if opensAt s i then
       let c := charAt s i
       let lc := lowerOf c
-      let stands := fun (k : Nat) => match m.terms[k]? with
-        | some t => standsAt s i t
-        | none => false
-      if (m.opening lc).any stands || (lc != c && (m.opening c).any stands) then
-        out := out.push (f.lineOf i)
+      let reach := fun (far : Option Nat) (k : Nat) =>
+        match (m.terms[k]?).bind (standsTo s i) with
+        | some j => some (max j (far.getD j))
+        | none => far
+      let far := (m.opening lc).foldl reach none
+      let far := if lc != c then (m.opening c).foldl reach far else far
+      if let some j := far then out := out.push (f.lineOf i, f.lineOf (j - 1))
   return out
+
+/-- The 1-based lines of one folded reading on which a term opens as a whole word,
+ascending, once per hit. -/
+def Matcher.linesIn (m : Matcher) (f : Folded) : Array Nat := (m.spansIn f).map (·.1)
 
 /-- The number spelled by `cs[i, j)` in base 16 (or 10), when every scalar
 there is a digit of that base and the span is not empty. -/
@@ -468,16 +474,22 @@ def readingsOf (cs : Array Char) : Array (Array Char) :=
   let withTex := if tex then #[cs, texReading cs] else #[cs]
   if esc then withTex.push (texReading (escapeReading cs)) else withTex
 
-/-- The 1-based lines of a text, as scalars, on which a term stands in any
-reading. -/
-def Matcher.charLines (m : Matcher) (cs : Array Char) : Array Nat :=
+/-- The 1-based first and last lines of each hit of a text, as scalars, in any reading. -/
+def Matcher.charSpans (m : Matcher) (cs : Array Char) : Array (Nat × Nat) :=
   if m.terms.isEmpty then #[] else
-    ascendingUnique ((readingsOf cs).foldl (fun acc r => acc.append (m.linesIn (fold r))) #[])
+    (readingsOf cs).foldl (fun acc r => acc.append (m.spansIn (fold r))) #[]
+
+/-- The 1-based lines of a text, as scalars, on which a term stands in any
+reading, but for the hits `excuse` takes by their first and last lines. -/
+def Matcher.charLines (m : Matcher) (cs : Array Char)
+    (excuse : Nat × Nat → Bool := fun _ => false) : Array Nat :=
+  ascendingUnique (((m.charSpans cs).filter (!excuse ·)).map (·.1))
 
 /-- The 1-based lines of a text on which a term stands, in any reading,
-ascending and without repeats. -/
-def Matcher.textLines (m : Matcher) (s : String) : Array Nat :=
-  m.charLines (s.foldl (fun a c => a.push c) (Array.mkEmpty s.utf8ByteSize))
+ascending and without repeats, but for the hits `excuse` takes. -/
+def Matcher.textLines (m : Matcher) (s : String)
+    (excuse : Nat × Nat → Bool := fun _ => false) : Array Nat :=
+  m.charLines (s.foldl (fun a c => a.push c) (Array.mkEmpty s.utf8ByteSize)) excuse
 
 /-- Does a text name a term anywhere, in any reading? -/
 def Matcher.hits (m : Matcher) (s : String) : Bool := !(m.textLines s).isEmpty
@@ -886,11 +898,14 @@ structure Hits where
 
 def Hits.any (h : Hits) : Bool := h.binary || !h.lines.isEmpty
 
-def Matcher.blobHits (m : Matcher) (bs : ByteArray) : Hits :=
+/-- The hits of one blob, but for a line's hit `excuse` takes in the reading it stands in. -/
+def Matcher.blobHits (m : Matcher) (bs : ByteArray)
+    (excuse : String → Nat × Nat → Bool := fun _ _ => false) : Hits :=
   if m.terms.isEmpty then { lines := #[], binary := false } else
     let zero := hasZero bs
     let lines := if zero then #[] else
-      ascendingUnique ((segmentReadings bs).foldl (fun acc r => acc.append (m.textLines r)) #[])
+      ascendingUnique ((segmentReadings bs).foldl
+        (fun acc r => acc.append (m.textLines r (excuse r))) #[])
     let raw := zero && (!(m.linesIn (fold (utf8Lenient bs))).isEmpty
       || !(m.linesIn (fold (cp1252NonZero bs))).isEmpty)
     { lines, binary := raw || (decodedReadings bs).any fun r => !(m.charLines r).isEmpty }
@@ -1057,28 +1072,104 @@ def splitFirst (s sep : String) : Option (String × String) :=
   | a :: rest@(_ :: _) => some (a, sep.intercalate rest)
   | _ => none
 
+/-! The citation, the one text that may name the author: places by location, never by term. -/
+
+/-- A part of a file the citation stands in: all of it, or the lines inside the fenced block that
+three backticks and one info string, exactly, open on the first non-blank line after one `## `
+heading, both outside any other fence. -/
+inductive Place where
+  | whole
+  | fenced (heading info : String)
+
+/-- The citation's places, where a hit is excused (AGENTS.md § Privacy). -/
+def citationPlaces : Array (String × Place) :=
+  #[("CITATION.cff", .whole), ("README.md", .fenced "Cite" "bibtex")]
+
+/-- The fence run a line opens with (CommonMark 0.31.2 §4.5): after at most three spaces, three
+or more backticks or tildes, with their count and what follows them. -/
+def fenceRun (l : String) : Option (Char × Nat × String) :=
+  let cs := l.toList
+  let ind := (cs.takeWhile (· == ' ')).length
+  match cs.drop ind with
+  | c :: rest =>
+    let n := (rest.takeWhile (· == c)).length + 1
+    if ind ≤ 3 && (c == '`' || c == '~') && 3 ≤ n then
+      some (c, n, String.ofList (rest.drop (n - 1)))
+    else none
+  | [] => none
+
+/-- Does the line close a fence of this character and length, as CommonMark closes one? -/
+def closesFence (f : Char × Nat) (l : String) : Bool :=
+  match fenceRun l with
+  | some (c, n, rest) => c == f.1 && f.2 ≤ n && rest.all fun ch => ch == ' ' || ch == '\t'
+  | none => false
+
+/-- The first and last 1-based lines of `text` a place covers; none for a fenced block that is
+missing, empty or never closed. -/
+def Place.span (p : Place) (text : String) : Option (Nat × Nat) := Id.run do
+  let lines := text.splitOn "\n"
+  match p with
+  | .whole => return some (1, lines.length)
+  | .fenced heading info =>
+    let mut fence : Option (Char × Nat) := none
+    let mut opened : Option Nat := none
+    let mut headed := false
+    for (l, k) in lines.zipIdx do
+      if let some a := opened then
+        if closesFence ('`', 3) l then return (if a + 1 < k then some (a + 2, k) else none)
+      else if let some f := fence then
+        if closesFence f l then fence := none
+      else if headed && l == "```" ++ info then opened := some k
+      else
+        if let some (c, n, rest) := fenceRun l then
+          if c == '~' || !rest.contains '`' then fence := some (c, n)
+        unless l.trimAscii.isEmpty do headed := l == "## " ++ heading
+    return none
+
+/-- Is a hit on lines `span` of `text`, held at `path`, excused: every line of it inside the
+citation's place there. -/
+def excused (path text : String) (span : Nat × Nat) : Bool :=
+  match citationPlaces.find? (·.1 == path) with
+  | some (_, p) => (p.span text).any fun (lo, hi) => lo ≤ span.1 && span.2 ≤ hi
+  | none => false
+
+/-- The commits and paths whose patches add lines to a citation place's file, each once: the
+texts the commit scan reads. -/
+def citedIn (patches : Array (String × String)) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  for (sha, patch) in patches do
+    for (file, _, _) in addedLines patch do
+      if citationPlaces.any (·.1 == file) && !out.contains (sha, file) then
+        out := out.push (sha, file)
+  return out
+
 /-! The gate's findings over what git answered, each naming where a term stands, never the
 term. -/
 
-/-- Findings in a diff's added lines: each run of consecutive added lines
-of one file, read as one text so a wrapped phrase is one phrase. -/
-def Matcher.addedFindings (m : Matcher) (diff : String) (lead : String) : Array String := Id.run do
+/-- Findings in a diff's added lines: each run of consecutive added lines of one file, read as
+one text so a wrapped phrase is one phrase, but for a hit `excused` in the file's new text that
+`texts` holds. -/
+def Matcher.addedFindings (m : Matcher) (diff : String) (lead : String)
+    (texts : Array (String × String) := #[]) : Array String := Id.run do
   let mut out : Array String := #[]
   for (file, start, text) in addedRuns (addedLines diff) do
-    for n in m.textLines text do
+    let excuse := fun (span : Nat × Nat) => (texts.find? (·.1 == file)).any fun (_, t) =>
+      excused file t (start + span.1 - 1, start + span.2 - 1)
+    for n in m.textLines text excuse do
       out := out.push s!"  {lead}{m.maskPath file}:{start + n - 1}"
   return out
 
 /-- Findings in the added lines of a diff given as bytes: those of each of
 its readings (`segmentReadings`), each finding once. -/
-def Matcher.diffFindings (m : Matcher) (diff : ByteArray) (lead : String) : Array String :=
-  uniq ((segmentReadings diff).foldl (fun acc r => acc.append (m.addedFindings r lead)) #[])
+def Matcher.diffFindings (m : Matcher) (diff : ByteArray) (lead : String)
+    (texts : Array (String × String) := #[]) : Array String :=
+  uniq ((segmentReadings diff).foldl (fun acc r => acc.append (m.addedFindings r lead texts)) #[])
 
-/-- Findings in one blob's content at `path`: its lines, or its binary
-content. -/
+/-- Findings in one blob's content at `path`: its lines, but for a hit `excused` there, or its
+binary content. -/
 def Matcher.blobFindings (m : Matcher) (path : String) (bs : ByteArray) (lead : String) :
     Array String := Id.run do
-  let h := m.blobHits bs
+  let h := m.blobHits bs (excused path)
   let mut out : Array String := #[]
   for n in h.lines do
     out := out.push s!"  {lead}{m.maskPath path}:{n}"
@@ -1094,15 +1185,16 @@ def Matcher.pathFindings (m : Matcher) (paths : Array String) (lead what : Strin
 /-- The commit a finding names: its sha, short. -/
 def commitLead (sha : String) : String := s!"commit {(sha.take 12).toString}: "
 
-/-- Findings in unpushed commits from git's answers: each commit's patch (`logPatches`),
-added paths (`logRecords` of `--name-only`) and added or changed binary blobs; a term
-added and later removed is still found, as a landing would publish it. -/
+/-- Findings in unpushed commits from git's answers: each commit's patch (`logPatches`) against
+its own `texts`, added paths (`logRecords` of `--name-only`) and added or changed binary blobs;
+a term added and later removed is still found, as a landing would publish it. -/
 def Matcher.commitFindings (m : Matcher) (patches : Array (String × String))
-    (paths : Array (String × String)) (blobs : Array ((String × String) × ByteArray)) :
-    Array String := Id.run do
+    (paths : Array (String × String)) (blobs : Array ((String × String) × ByteArray))
+    (texts : Array ((String × String) × String) := #[]) : Array String := Id.run do
   let mut out : Array String := #[]
   for (sha, patch) in patches do
-    out := out.append (m.addedFindings patch (commitLead sha))
+    let own := texts.filterMap fun ((h, p), t) => if h == sha then some (p, t) else none
+    out := out.append (m.addedFindings patch (commitLead sha) own)
   for (sha, p) in paths do
     if m.pathHit p then out := out.push s!"  {commitLead sha}{m.maskPath p} (a path it adds)"
   for ((sha, p), bs) in blobs do

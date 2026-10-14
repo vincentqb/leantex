@@ -175,8 +175,8 @@ def privacyMatcherChecks (ref : IO.Ref (List String)) : IO Unit := do
       Nfc.decompose '\u01D6' == #['u', '\u0308', '\u0304'] &&
       Nfc.combiningClass '\u0301' == 230 && Nfc.combiningClass 'a' == 0)
 
-/-- The privacy gate over invented git answers: diff headers, per-commit log records, printed
-findings and their masking. -/
+/-- The privacy gate over invented git answers: diff headers, per-commit log records, the
+citation's places, printed findings and their masking. -/
 def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := check ref s!"privacy gate: {name}" ok
   let m := Privacy.Matcher.ofTerms (Privacy.parseTerms "Zorblax\nQuintel Varn\n")
@@ -265,7 +265,62 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
       Privacy.blobRow "4\t0" == none)
   t "findings are read once each, in the order first seen"
     (Privacy.uniq #["b", "a", "b", "c", "a"] == #["b", "a", "c"] && Privacy.uniq #[] == #[])
-  let printed := found ++ msgs ++ staged ++
+  let readme := "# Tool\n\n## Install\n\nZorblax\n\n## Cite\n\n```bibtex\n@software{x,\n" ++
+    "  author = {Zorblax},\n}\n```\n\n```bibtex\nZorblax\n```\n\n```sh\nZorblax\n```\n\n" ++
+    "## Licence\n\nZorblax\n"
+  let cff := "cff-version: 1.2.0\ntitle: tool\nauthors:\n  - family-names: Zorblax\n"
+  let tree (p text : String) : Array String := m.blobFindings p text.toUTF8 ""
+  let cited := tree "CITATION.cff" cff ++ tree "README.md" readme
+  t "a term passes in CITATION.cff and in the BibTeX block opening README.md's Cite alone"
+    (cited == #["  README.md:5", "  README.md:16", "  README.md:20", "  README.md:25"])
+  t "the citation's text read at any other path is found, docs/guide.md included"
+    (tree "docs/guide.md" readme == #["  docs/guide.md:5", "  docs/guide.md:11",
+        "  docs/guide.md:16", "  docs/guide.md:20", "  docs/guide.md:25"] &&
+      tree "docs/CITATION.cff" cff == #["  docs/CITATION.cff:4"])
+  t "a block under another heading, after text, unclosed, unlabelled or fenced excuses nothing"
+    (tree "README.md" "## Install\n\n```bibtex\nZorblax\n```\n" == #["  README.md:4"] &&
+      tree "README.md" "## Cite\n\nText.\n\n```bibtex\nZorblax\n```\n" == #["  README.md:6"] &&
+      tree "README.md" "## Cite\n\n```bibtex\nZorblax\n" == #["  README.md:4"] &&
+      tree "README.md" "## Cite\n\n```\nZorblax\n```\n" == #["  README.md:4"] &&
+      tree "README.md" "```sh\n## Cite\n\n```bibtex\nZorblax\n```\n" == #["  README.md:5"] &&
+      tree "README.md" "~~~\n## Cite\n\n```bibtex\nZorblax\n```\n~~~\n" == #["  README.md:5"])
+  t "the block ends where CommonMark closes it"
+    (tree "README.md" "## Cite\n\n```bibtex\nZorblax\n````\nZorblax\n```\n" == #["  README.md:6"] &&
+      tree "README.md" "## Cite\n\n```bibtex\nZorblax\n   ```\nZorblax\n" == #["  README.md:6"])
+  t "a phrase wrapped inside the block passes, and one reaching past its fence is found"
+    (tree "README.md" "## Cite\n\n```bibtex\nQuintel\nVarn\n```\n" == #[] &&
+      tree "README.md" "## Cite\n\n```bibtex\nQuintel\n```\nVarn\n" == #["  README.md:4"])
+  let readmeDiff := "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n" ++
+    "@@ -0,0 +9,5 @@\n+```bibtex\n+@software{x,\n+  author = {Zorblax},\n+}\n+```\n" ++
+    "@@ -0,0 +25 @@\n+Zorblax\n"
+  let citeDiff := readmeDiff ++
+    "diff --git a/CITATION.cff b/CITATION.cff\nnew file mode 100644\n--- /dev/null\n" ++
+    "+++ b/CITATION.cff\n@@ -0,0 +1,4 @@\n+cff-version: 1.2.0\n+title: tool\n+authors:\n" ++
+    "+  - family-names: Zorblax\n" ++
+    "diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n" ++
+    "@@ -0,0 +3 @@\n+  author = {Zorblax},\n"
+  let hook := m.diffFindings citeDiff.toUTF8 "" #[("README.md", readme), ("CITATION.cff", cff)]
+  t "the hook's scan excuses an added line only by its citation place's staged text"
+    (hook == #["  README.md:25", "  docs/guide.md:3"] &&
+      m.diffFindings citeDiff.toUTF8 "" == #["  README.md:11", "  README.md:25",
+        "  CITATION.cff:4", "  docs/guide.md:3"] &&
+      m.diffFindings citeDiff.toUTF8 ""
+          #[("README.md", readme.replace "## Cite" "## Notes"), ("CITATION.cff", cff)] ==
+        #["  README.md:11", "  README.md:25", "  docs/guide.md:3"])
+  let citePatches := #[(shaA, citeDiff), (shaB, readmeDiff)]
+  let commits := m.commitFindings citePatches #[] #[]
+    #[((shaA, "README.md"), readme), ((shaA, "CITATION.cff"), cff)]
+  t "the commit scan excuses a line only by its own commit's text of the citation place"
+    (commits == #[s!"{leadA}README.md:25", s!"{leadA}docs/guide.md:3", s!"{leadB}README.md:11",
+        s!"{leadB}README.md:25"] &&
+      Privacy.citedIn citePatches ==
+        #[(shaA, "README.md"), (shaA, "CITATION.cff"), (shaB, "README.md")])
+  let citeMsgs := m.messageFindings (shaA ++ "\nAdd the citation\n\n" ++ readme) ++
+    m.messageFindings (shaA ++ "\n" ++ cff)
+  t "a commit message is read whole, the citation's text in it included"
+    (citeMsgs.contains s!"{leadA}its message, line 13" &&
+      citeMsgs.contains s!"{leadA}its message, line 4")
+  let printed := found ++ msgs ++ staged ++ cited ++ hook ++ commits ++ citeMsgs ++
     #[m.maskPath "testdata/zorblax/notes.md", m.redact "x Zorblax y"]
   t "no finding and no masked text names a term"
     (printed.all fun f => !m.hits f)

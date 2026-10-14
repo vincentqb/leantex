@@ -21,7 +21,7 @@ public def maxCount : Nat := 16
 /-- The nearest two series may stand, ΔEOK at `labOf`'s scale: two JNDs, a declared reading. -/
 public def minGap : Int := 2 * okJnd
 
-/-- `minGap` as the README spells it, in hundredths of a unit of ΔEOK. -/
+/-- `minGap` as docs/guide.md spells it, in hundredths of a unit of ΔEOK. -/
 private def minGapText : String :=
   let c := minGap / 10 ^ 16
   s!"ΔEOK 0.{if c < 10 then "0" else ""}{c}"

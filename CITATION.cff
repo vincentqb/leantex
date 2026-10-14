@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: leantex
+abstract: A document engine written in Lean 4.
+license: Apache-2.0
+authors:
+  - family-names: Quenneville-Bélair
+    given-names: Vincent
+repository-code: https://github.com/vincentqb/leantex
+preferred-citation:
+  type: software
+  title: leantex
+  authors:
+    - family-names: Quenneville-Bélair
+      given-names: Vincent
+  notes: A document engine written in Lean 4
+  year: 2026
+  url: https://github.com/vincentqb/leantex
