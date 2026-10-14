@@ -446,12 +446,9 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Theme.builtin.all fun th => (deckBundle th).entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
-/-- How far apart every coloured code role stands from the ink and from every other: five JNDs, a
-declared reading. -/
-def codeGap : Int := 5 * (Oklab.okJnd : Int)
 
 /-- A generated palette's code is complete and vivid: keywords, names and literals a quarter turn
-apart in one band at the text floor, `codeGap` apart, comments quiet, alike in both artifacts and
+apart in one band at the text floor, `CodeColor.roleGap` apart, comments quiet, alike in both artifacts and
 the TeX export. -/
 def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -526,8 +523,8 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
             !ContrastSolve.disliked c)
       t s!"seeded code, {label}: every coloured role stands apart from the ink and from every other"
         ((coloured.zipIdx.all fun (c, i) => coloured.zipIdx.all fun (c', j) =>
-            i == j || c == c' || codeGap * codeGap ≤ ContrastSolve.deltaEOkSq c c') &&
-          coloured.all fun c => codeGap * codeGap ≤ ContrastSolve.deltaEOkSq c ink)
+            i == j || CodeColor.roleGap * CodeColor.roleGap ≤ ContrastSolve.deltaEOkSq c c') &&
+          coloured.all fun c => CodeColor.roleGap * CodeColor.roleGap ≤ ContrastSolve.deltaEOkSq c ink)
       -- Where the alert is the ink on a mark, errors take the mark's hue at the floor.
       let marked := (Ir.Design.declared? doc.palette .alertMark).isSome
       t s!"seeded code, {label}: comments set in the quiet muted step, errors in the alert or the mark's hue"

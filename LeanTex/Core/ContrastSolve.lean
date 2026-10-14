@@ -287,21 +287,33 @@ darkening yellow turns. -/
 public def clearHue (h : Int) : Int :=
   if dislikedLo ≤ h ∧ h ≤ dislikedHi then dislikedLo - 1000 else h
 
-/-- Hue `h`'s band tone at `req`, or, where it stands in the disliked region,
-the band tone of the hue just past its warm edge (`clearHue`). -/
+/-- Hue `h`'s band tone at `req`, or, where it stands in the disliked region, the band tone of the
+hue just past its warm edge (`clearHue`), kept only where it stands outside the region. -/
 public def bandClear (req : Nat) (grounds : List Color) (h : Int) : Option Color :=
-  (bandOn req grounds h).bind fun c => if disliked c then bandOn req grounds (clearHue h) else some c
+  (bandOn req grounds h).bind fun c =>
+    if disliked c then (bandOn req grounds (clearHue h)).filter (!disliked ·) else some c
 
-/-- **A cleared band tone clears what it was asked to on every ground.** -/
+/-- **A cleared band tone clears what it was asked to on every ground and is not disliked.** -/
 public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {c : Color}
-    (hv : bandClear req grounds h = some c) : ∀ g ∈ grounds, req ≤ contrastMilli c g := by
+    (hv : bandClear req grounds h = some c) :
+    (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ disliked c = false := by
   unfold bandClear at hv
   cases hb : bandOn req grounds h with
   | none => simp [hb] at hv
   | some c0 =>
     simp only [hb, Option.bind_some] at hv
     split at hv
-    · exact bandOn_contract hv
-    · cases hv; exact bandOn_contract hb
+    · cases hc : bandOn req grounds (clearHue h) with
+      | none => simp [hc] at hv
+      | some c1 =>
+        rw [hc, Option.filter_some] at hv
+        split at hv
+        · rename_i hk
+          cases hv
+          exact ⟨bandOn_contract hc, by simpa using hk⟩
+        · cases hv
+    · rename_i hd
+      cases hv
+      exact ⟨bandOn_contract hb, by simpa using hd⟩
 
 end LeanTex.Core.ContrastSolve

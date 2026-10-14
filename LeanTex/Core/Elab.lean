@@ -3734,6 +3734,13 @@ private def coloredRun (ctx : Ctx) (c : Color) (ref : Option ColorRef) (body : A
   | some g => ctx.palette.groundRun g (.colored c ref body)
   | none => .colored c ref body
 
+/-- Whether an alert in `c` sets on the mark `m`: a generated mark stands under the generated alert
+only, and not on a ground the accent reads on as text, where the alert takes its tone there. -/
+private def marksAlert (ctx : Ctx) (c m : Color) : Bool :=
+  ctx.palette.seeded.all fun st =>
+    st.colors.alertMark != some m ||
+      (st.colors.alert == c && !(ctx.ground.any fun g => decide (Contrast.aaText ≤ Contrast.contrastMilli m g)))
+
 /-- The inlines a font command or `\alert` sets around an elaborated body. -/
 private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
     (edges : Bool × Bool) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
@@ -3746,7 +3753,9 @@ private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
     recordColorSpan ctx "alert" c true pos
     match Ir.Design.declared? ctx.palette .alertMark with
     | some m =>
-      return #[.decorated (.highlight m (some (.role .alertMark))) #[.colored c (some (.role .alert)) inner]]
+      if marksAlert ctx c m then
+        return #[.decorated (.highlight m (some (.role .alertMark))) #[.colored c (some (.role .alert)) inner]]
+      else return #[coloredRun ctx c (some (.role .alert)) inner]
     | none => return #[coloredRun ctx c (some (.role .alert)) inner]
   | none =>
     warnPaletteMiss ctx "alert" pos

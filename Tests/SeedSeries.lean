@@ -30,7 +30,7 @@ private def leastGap (series : List Ir.Color) (n : Nat) : Nat :=
         min m (Nat.sqrt (Oklab.distSq (Oklab.labIn v c) (Oklab.labIn v c')).toNat)) m
     else m) m) (10 ^ 30)
 
-/-- Whether a colour's hue is warm, within a quarter turn of vermilion's. -/
+/-- Whether a colour's hue is warm, within a quarter turn of OKLCH 40°, as the generator reads it. -/
 private def warmOf (c : Ir.Color) : Bool :=
   let l := Oklab.labOf c
   let d := (Oklab.hueMilli l.a l.b - 40000) % 360000

@@ -135,7 +135,7 @@ def gateMargin : Int × Nat := Id.run do
   let mut least : Int := 1000000
   let mut made := 0
   for s in matrix do
-    for d in [Ir.GroundDepth.documents, .decks] do
+    for d in Ir.GroundDepth.all do
       let t := s.targets d
       if let .ok g := SeedPalette.generate s t then
         made := made + 1
@@ -170,7 +170,7 @@ def measureTier : IO (Array String × Array Row) := do
       (if rskip.isEmpty then "" else s!", generating none from {", ".intercalate rskip}"),
     s!"# tailwind: {tailwind.length} palettes, v4.3.3; scored {tailwind.length - tskip.length}" ++
       (if tskip.isEmpty then "" else s!", generating none from {", ".intercalate tskip}"),
-    s!"# gates: {made} palettes from the invented matrix at both depths"]
+    s!"# gates: {made} palettes from the invented matrix at each depth"]
   return (extra, rows)
 
 def selftest : IO UInt32 := tierSelftest "palette-oracle" fun no => do

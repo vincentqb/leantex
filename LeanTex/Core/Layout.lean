@@ -13051,7 +13051,17 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
     | .poly _ _ => pure ()
   return out
 
-/-- A placed line's marks: a `.decoration` seg under each marked run and space, a gap elsewhere. -/
+/-- A mark pushed onto a line's marks, joined to the one before it where one paint sets both, so a
+stretch of a mark is one rectangle and no seam shows between its runs. -/
+private def pushMark (out : Array Seg) (c : Color) (w t r : Sp) : Array Seg :=
+  match out.back? with
+  | some (.decoration (.highlight c' none) w' t' r' p') =>
+    if c' == c && t' == t && r' == r && p' == c then
+      out.pop.push (.decoration (.highlight c none) (w' + w) t r c)
+    else out.push (.decoration (.highlight c none) w t r c)
+  | _ => out.push (.decoration (.highlight c none) w t r c)
+
+/-- A placed line's marks: a `.decoration` seg under each marked stretch, a gap elsewhere. -/
 private def markSegs (segs : Array Seg) : Array Seg := Id.run do
   unless segs.any (fun s => match s with
       | .run _ _ _ _ _ _ _ decorations _ _ _ => decorations.highlight.isSome
@@ -13063,15 +13073,11 @@ private def markSegs (segs : Array Seg) : Array Seg := Id.run do
     match seg with
     | .run _ _ _ w _ _ _ decorations _ _ _ =>
       match decorations.highlight with
-      | some paint =>
-        out := out.push (Seg.decoration (.highlight paint.color none) w paint.thickness paint.raise
-          paint.color)
+      | some paint => out := pushMark out paint.color w paint.thickness paint.raise
       | none => out := out.push (Seg.gap w false)
     | .decoratedGap w _ decorations =>
       match decorations.highlight with
-      | some paint =>
-        out := out.push (Seg.decoration (.highlight paint.color none) w paint.thickness paint.raise
-          paint.color)
+      | some paint => out := pushMark out paint.color w paint.thickness paint.raise
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
     | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
@@ -13087,9 +13093,10 @@ public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
                 note := l.note, furniture := l.furniture }
 
-/-- A placed line's mark rider, painted under it, banded as the decoration riders are. -/
+/-- A placed line's mark rider, painted under it, banded as the decoration riders are; a picture's
+label sets none, as the web page's SVG label sets none. -/
 public def markRiders (l : LineOut) : Array LineOut :=
-  #[markSegs l.segs].filterMap fun paint =>
+  #[if l.pictureLabel.isSome then #[] else markSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
                 note := l.note, furniture := l.furniture }
@@ -13315,6 +13322,23 @@ private theorem decorationRiders_noGlyph (fs : FontSet) (l : LineOut) :
   · cases Option.some.inj hr
     exact hg
 
+private theorem pushMark_noGlyph (out : Array Seg) (c : Color) (w t r : Sp)
+    (hout : ∀ s ∈ out, s.NoGlyph) : ∀ s ∈ pushMark out c w t r, s.NoGlyph := by
+  have push (t : Seg) (ht : t.NoGlyph) (xs : Array Seg) (hxs : ∀ s ∈ xs, s.NoGlyph) :
+      ∀ s ∈ xs.push t, s.NoGlyph := by
+    intro s hs
+    rcases Array.mem_push.mp hs with hs | rfl
+    · exact hxs s hs
+    · exact ht
+  have popped : ∀ s ∈ out.pop, s.NoGlyph := fun s hs =>
+    hout s (Array.mem_def.mpr (List.dropLast_subset _ (by simpa using Array.mem_def.mp hs)))
+  unfold pushMark
+  split
+  · split
+    · exact push _ (by trivial) _ popped
+    · exact push _ (by trivial) _ hout
+  · exact push _ (by trivial) _ hout
+
 private theorem markSegs_noGlyph (segs : Array Seg) :
     ∀ s ∈ markSegs segs, s.NoGlyph := by
   unfold markSegs
@@ -13330,11 +13354,13 @@ private theorem markSegs_noGlyph (segs : Array Seg) :
         · exact ht
       cases seg with
       | run fi c link w glyphs sz leading decorations raise ground attr =>
-        cases hp : decorations.highlight <;>
-          simp only [hp, Id.run, ForInStep.value] <;> exact push _ True.intro
+        cases hp : decorations.highlight with
+        | none => simp only [hp, Id.run, ForInStep.value]; exact push _ True.intro
+        | some paint => simp only [hp, Id.run, ForInStep.value]; exact pushMark_noGlyph out _ _ _ _ hout
       | decoratedGap w word decorations =>
-        cases hp : decorations.highlight <;>
-          simp only [hp, Id.run, ForInStep.value] <;> exact push _ True.intro
+        cases hp : decorations.highlight with
+        | none => simp only [hp, Id.run, ForInStep.value]; exact push _ True.intro
+        | some paint => simp only [hp, Id.run, ForInStep.value]; exact pushMark_noGlyph out _ _ _ _ hout
       | gap w word | decoration kind w thickness raise color | rule w thickness raise color
         | image store w height => exact push _ True.intro
       | poly pts color => exact hout
@@ -13347,7 +13373,9 @@ private theorem markRiders_noGlyph (l : LineOut) :
   have hg : ∀ s ∈ paint, s.NoGlyph := by
     simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hp
     rcases hp with rfl
-    exact markSegs_noGlyph l.segs
+    split
+    · simp
+    · exact markSegs_noGlyph l.segs
   split at hr
   · simp at hr
   · cases Option.some.inj hr
@@ -20166,6 +20194,7 @@ private structure LineRise (a b : LineOut) : Prop where
   size : a.size = b.size
   note : a.note = b.note
   furniture : a.furniture = b.furniture
+  pictureLabel : a.pictureLabel = b.pictureLabel
   baseline : a.y ≤ b.y
 
 private inductive LinesRise : List LineOut → List LineOut → Prop
@@ -20175,7 +20204,7 @@ private inductive LinesRise : List LineOut → List LineOut → Prop
 private theorem LinesRise.refl (ls : List LineOut) : LinesRise ls ls := by
   induction ls with
   | nil => exact .nil
-  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, Int.le_refl _⟩ ih
+  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, rfl, Int.le_refl _⟩ ih
 
 private theorem LinesRise.append {as bs cs ds : List LineOut}
     (h : LinesRise as bs) (h' : LinesRise cs ds) :
@@ -20275,7 +20304,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
       Spacing.Page.commit, Array.back?_push, Option.any_some]
   · simpa only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Int.add_zero] using hy
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Array.toList_push]
-    exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, hy⟩ .nil)
+    exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, rfl, hy⟩ .nil)
   · exact h.pages
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit,
       h.regions]
@@ -20423,11 +20452,14 @@ private theorem paintLines_toList (fs : FontSet) (lines : Array LineOut) :
 private theorem marks_rise {a b : LineOut} (h : LineRise a b) :
     LinesRise (markRiders a).toList (markRiders b).toList := by
   simp only [markRiders, Array.toList_filterMap,
-    List.filterMap_cons, List.filterMap_nil, h.segs, h.size]
-  by_cases hm : (markSegs b.segs).isEmpty = true
-  all_goals simp only [hm, ite_true]
-  · exact .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil
+    List.filterMap_cons, List.filterMap_nil, h.segs, h.size, h.pictureLabel]
+  by_cases hp : b.pictureLabel.isSome = true
+  · simp only [hp, ite_true, Array.isEmpty_empty]
+    exact .nil
+  · by_cases hm : (markSegs b.segs).isEmpty = true
+    all_goals simp only [hp, hm, ite_true, Bool.false_eq_true, ite_false]
+    · exact .nil
+    · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
 
 private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
     LinesRise (decorationRiders fs a).toList (decorationRiders fs b).toList := by
@@ -20437,10 +20469,10 @@ private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
     by_cases ht : (lineThroughSegs b.segs).isEmpty = true
   all_goals simp only [hu, ht, ite_true]
   · exact .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩
-      (.cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil)
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩
+      (.cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil)
 
 private theorem paint_rise (fs : FontSet) {as bs : List LineOut}
     (h : LinesRise as bs) :

@@ -37,7 +37,8 @@ private def viewSq (v w : List Lab) : Int :=
 public def apart (c c' : Color) : Bool :=
   Vision.all.all fun v => decide (minGap * minGap ≤ distSq (labIn v c) (labIn v c'))
 
-/-- Whether a hue is warm, within a quarter turn of vermilion's OKLCH 40°: magentas through yellow. -/
+/-- Whether a hue is warm, within a quarter turn of OKLCH 40°, between sRGB red's 29° and Okabe and
+Ito's vermilion's 47.5°: magentas through yellow. -/
 private def warmHue (h : Int) : Bool :=
   let d := (h - 40000) % 360000
   decide (min d (360000 - d) < 90000)
@@ -53,10 +54,11 @@ private def pureRed (h : Int) : Bool :=
   let d := (h - 29200) % 360000
   decide (min d (360000 - d) < 7500)
 
-/-- Whether a hue is a yellow-green, from the disliked region's warm edge to OKLCH 150°: the hues
-Okabe and Ito's palette leaves between its yellow and its bluish green. -/
-private def yellowGreen (h : Int) : Bool :=
-  decide (ContrastSolve.dislikedLo ≤ h ∧ h ≤ 150000)
+/-- Whether a hue is a yellow-green CUD avoids, to OKLCH 150°, from the disliked region's warm edge
+on a light page, where a yellow dark enough to stand out is an olive, and from its cool edge on a
+dark one. -/
+private def yellowGreen (dark : Bool) (h : Int) : Bool :=
+  decide ((if dark then ContrastSolve.dislikedHi else ContrastSolve.dislikedLo) ≤ h ∧ h ≤ 150000)
 
 /-- The tones a hue offers, in steps of 0.10 lightness away from the paper from its floor band, so
 neighbours of one temperature part by lightness (Okabe & Ito). -/
@@ -73,7 +75,7 @@ private def candidates (s : SeedPalette.Seeds) (t : SeedPalette.Targets) : Array
   let away : Int := if s.dark then 10 ^ 17 else -(10 ^ 17)
   (List.range (360000 / hueStep)).foldl (fun acc k =>
     let h := (h0 + (hueStep * k : Nat)) % 360000
-    if pureRed h || yellowGreen h then acc
+    if pureRed h || yellowGreen s.dark h then acc
     else
       let L0 := ContrastSolve.bandL t.edge [s.paper] h
       toneSteps.foldl (fun acc j =>

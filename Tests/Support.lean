@@ -1231,6 +1231,13 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
     | .image _ w _ => x := x + w
   return out
 
+/-- The colour of the run setting exactly `word`, with the ground it stands on. -/
+def wordRun (lines : Array Layout.LineOut) (word : String) : Option (Ir.Color × Option Ir.Color) :=
+  lines.findSome? fun l => l.segs.findSome? fun s => match s with
+    | .run _ c _ _ gs _ _ _ _ ground _ =>
+      if String.ofList (gs.map (·.2.1)).toList == word then some (c, ground) else none
+    | _ => none
+
 /-- Whether a shipped line sets any glyph. -/
 def hasGlyphRun (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with

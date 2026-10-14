@@ -153,6 +153,10 @@ public def codeFloor (pal : Palette) (ground : Color) : Nat :=
   | some st => if ground == st.seeds.ink then st.targets.inverse else st.targets.text
   | none => Contrast.aaText
 
+/-- How far a seeded palette's coloured code roles stand from the ink and from each other at least:
+five JNDs of ΔEOK, the declared distinction the seeded code test holds them to. -/
+public def roleGap : Int := 5 * Oklab.okJnd
+
 /-- What the rule reads a role's colour from the palette as. -/
 public inductive Derived where
   /-- A palette role the rule reads. -/

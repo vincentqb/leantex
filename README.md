@@ -212,13 +212,18 @@ paper, text stands at 6.5:1 and every other colour 0.10 above WCAG 2.2's
 ratios. No colour the seeds derive is one of the dark yellow-greens Material
 3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone
 below 65). A darkening amber turns toward orange, at most 20°, where that
-keeps it out of them; any other hue holds. An accent whose own tone at its
-text floor would be one of them, or keep less than half its colour — a
-yellow on white — serves the page as a container instead, as Material's
-Fidelity scheme keeps a brand colour: it never sets as text, and `\alert`
-sets in the ink on a mark of the accent itself, which both the PDF and the
-page paint behind the text and break with it across lines. The mark is the
-`alertmark` role, which any palette may declare. `blocks = tonal` (the
+keeps it out of them, and a tone that would still stand among them moves
+just past their warm edge; any other hue holds. An accent whose own tone at
+its text floor would be one of them, or keep less than half its colour — a
+yellow on white — serves the page as a container instead, where the ink
+reads on it at 7.1:1, the more-contrast scheme's text target, so one mark
+serves every light scheme, as Material's Fidelity scheme keeps a brand
+colour: it never sets as text, and `\alert` sets in the ink on a mark of the
+accent itself, which both the PDF and the page paint behind the text and
+break with it across lines; on a ground the accent reads on, such as the
+standout frame, the alert sets in the accent instead, and an alert the
+document declares sets in its own colour. The mark is the `alertmark` role,
+which any palette may declare. `blocks = tonal` (the
 default) sets block titles in the ink on a tinted band over a lighter body;
 `blocks = strong` sets them on the ink over an accent wash. An `alert`, an
 `example` or a `neutral` seed may be named too. A deck's and a poster's
@@ -269,7 +274,9 @@ where the accent serves as a container) and binds beamer's `normal text`,
 `background canvas`, `footline`, `page number in head/foot`, `alerted text`,
 six block elements, `progress bar` and `title separator` to them.
 Use `SlideAccent` for decoration and `SlideAccentText` for text on
-`SlidePaper` or `SlideSurface`; `SlideAccentEdge` for essential strokes;
+`SlidePaper`: the text tones meet their floor on the paper, so a TeX build
+sets them on a block's fill below it by the fill's ratio, where leantex sets
+each run's family tone there; `SlideAccentEdge` for essential strokes;
 `SlideAccentOnDark` for text on `SlideInk`; and, where `SlideAlertMark` is
 defined, set an alert on it (lua-ul's `\highLight[alertmark]`), as leantex
 does: the export names the mark `alertmark` too, which leantex reads as the
@@ -300,7 +307,8 @@ Add `--series N`, from 1 to 16, to export colours for a chart's N series,
 `SlideAccentText`, which is `SlideAlert`, so a chart's subject stands in the
 colour of the page's alerts (the ink, where the accent serves as a
 container). Each next one is, of every hue at its tone at the marks' floor
-and three steps beyond it, away from the yellow-greens and pure red, the one
+and three steps beyond it, away from the yellow-greens (on a light paper
+the yellows too, olives at a mark's floor) and pure red, the one
 farthest from every series before it and from the ink as
 the nearest of four readers sees it — typical vision and simulated
 protanopia, deuteranopia and tritanopia (Machado, Oliveira and Fernandes,

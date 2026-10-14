@@ -1339,9 +1339,11 @@ def censusRows7 :
     ("pages", c.size == 1),
     ("the alerted words ship", pageHas c 0 "marked"),
     ("the alert's mark ships in the accent, under the short alert and each line of the long one",
-      (c[0]?.map fun p => decide (3 ≤ (p.decorations.filter fun d => match d.1 with
-        | .highlight col _ => col == Ir.Color.ofHtml 0xFA 0xCC 0x15
-        | .underline | .lineThrough => false).size)).getD false)])]
+      (c[0]?.map fun p =>
+        let ys := (p.decorations.filter fun d => match d.1 with
+          | .highlight col _ => col == Ir.Color.ofHtml 0xFA 0xCC 0x15
+          | .underline | .lineThrough => false).map (·.2.1)
+        decide (3 ≤ (ys.toList.eraseDups).length)).getD false)])]
 
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/

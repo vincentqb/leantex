@@ -33,12 +33,20 @@ def seeds : List (String × SeedPalette.Seeds) := [
     { ink := Ir.Color.ofHtml 0x1C 0x19 0x17, paper := Ir.Color.white,
       accent := Ir.Color.ofHtml 0xF0 0x6E 0x00 })]
 
-/-- Every colour a light palette generates stands at its floor on the paper, at either depth: the
-seed where it meets the floor, else within `floorSlack` of it, a container accent setting no text. -/
+/-- Every colour a light palette generates stands at its floor on the paper, at each depth: the
+seed where it meets the floor, else within `floorSlack` of it, a container accent setting no text,
+and every coloured role `CodeColor.roleGap` from the ink. -/
 def floorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
+  t "floor: each class names its depth, a poster a deck's grounds under a document's text floor"
+    (Ir.DocClass.slides.record.groundDepth == .decks &&
+      Ir.DocClass.article.record.groundDepth == .documents &&
+      Ir.DocClass.poster.record.groundDepth == .posters &&
+      Ir.GroundDepth.posters.body == Ir.GroundDepth.decks.body && Ir.GroundDepth.posters.text == 4500)
+  let apart (x y : Ir.Color) : Bool :=
+    decide (CodeColor.roleGap * CodeColor.roleGap ≤ ContrastSolve.deltaEOkSq x y)
   for (depth, d, text) in [("a deck", Ir.GroundDepth.decks, 3000),
-      ("a document", Ir.GroundDepth.documents, 4500)] do
+      ("a document", Ir.GroundDepth.documents, 4500), ("a poster", Ir.GroundDepth.posters, 4500)] do
     for (label, s) in seeds do
       match SeedPalette.generate s (s.targets d) with
       | .error f => t s!"floor, {depth}, {label}: generates, not fail at {reprStr f.role}" false
@@ -52,8 +60,10 @@ def floorChecks (ref : IO.Ref (List String)) : IO Unit := do
           if floor ≤ Contrast.contrastMilli s.accent s.paper then some s.accent else none
         if s.container (s.targets d) then
           t s!"floor, {depth}, {label}: the accent serves as a container, marking the alert"
-            (c.alertMark == some s.accent && c.alert == s.ink)
+            (c.alertMark == some s.accent && c.alert == s.ink && c.alertMark.all (apart · s.ink))
         else
+          t s!"floor, {depth}, {label}: the accent's text tone stands apart from the ink"
+            (apart c.accentText s.ink)
           t s!"floor, {depth}, {label}: the accent's text tone stands at the text floor on the paper"
             (at_ text (seedAt text) c.accentText && (seedAt text).all (· == c.accentText))
           t s!"floor, {depth}, {label}: the alert is the accent's text tone" (c.alert == c.accentText)
@@ -63,5 +73,28 @@ def floorChecks (ref : IO.Ref (List String)) : IO Unit := do
           (at_ text none c.muted)
         t s!"floor, {depth}, {label}: the diagram's muted tone stands at the marks' floor"
           (at_ 3000 none c.diagramMuted)
+
+/-- A run a light page's fill holds stands at its floor on that fill, its family's tone there,
+where the paper's tones meet the floor on the paper alone (`SeedPalette.facing`). -/
+def fillChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet | failures ref "fill: the serif faces load"
+  let (doc, ds) := elabStr (dvDeck
+    "\\palette[seeds]{ ink = #1C1917, paper = #FFFFFF, accent = #F06E00 }\n"
+    ("\\begin{frame}\n\\begin{block}{A block}\nAn \\alert{alerted} word and a " ++
+      "\\textcolor{muted}{quiet} one.\n\\end{block}\nA \\alert{paper} word.\n\\end{frame}"))
+  t "fill: the report finds no pairing short" (ds.all (·.code != "W0315"))
+  match doc.palette.seeded with
+  | none => t "fill: the deck is seeded" false
+  | some st =>
+    let surface := st.colors.surface
+    t "fill: the block's body stands on a fill darker than the paper"
+      (decide (Contrast.contrastMilli Ir.Color.black surface < Contrast.contrastMilli Ir.Color.black st.seeds.paper))
+    let lines := allLines (layoutOf fonts doc)
+    for w in ["alerted", "quiet"] do
+      t s!"fill: the {w} run stands at the deck's floor on the block's fill"
+        ((wordRun lines w).any fun (c, _) => decide (st.targets.text ≤ Contrast.contrastMilli c surface))
+    t "fill: on the paper the alert ships the accent itself, which meets the floor there"
+      ((wordRun lines "paper").any (·.1 == st.seeds.accent))
 
 end Tests.PaletteFloor

@@ -12,12 +12,16 @@ alert sets in the ink on a mark of the accent in both artifacts. -/
 
 namespace Tests.AlertMark
 
-/-- Invented seeds: a yellow accent on white, which serves as a container,
-and three that keep their colour as text. -/
+def yellow : Ir.Color := Ir.Color.ofHtml 0xFA 0xCC 0x15
+
+/-- Invented seeds, each with whether its accent serves as a container: yellows that do, accents
+that keep their colour as text, and yellows whose alert, example or ink rules a mark out. -/
 def seeds : List (String × SeedPalette.Seeds × Bool) := [
   ("a yellow accent on white",
-    { ink := Ir.Color.black, paper := Ir.Color.white, accent := Ir.Color.ofHtml 0xFA 0xCC 0x15 },
-    true),
+    { ink := Ir.Color.black, paper := Ir.Color.white, accent := yellow }, true),
+  ("a pure yellow with a yellow example",
+    { ink := Ir.Color.black, paper := Ir.Color.white, accent := Ir.Color.ofHtml 0xFF 0xFF 0x00,
+      exampleColor := some (Ir.Color.ofHtml 0xE5 0xE5 0x00) }, true),
   ("an orange accent",
     { ink := Ir.Color.ofHtml 0x2B 0x24 0x40, paper := Ir.Color.white,
       accent := Ir.Color.ofHtml 0xE8 0x5D 0x2A }, false),
@@ -26,35 +30,46 @@ def seeds : List (String × SeedPalette.Seeds × Bool) := [
       accent := Ir.Color.ofHtml 0x0D 0x94 0x88 }, false),
   ("an amber accent on a dark paper",
     { ink := Ir.Color.ofHtml 0xF4 0xF1 0xEA, paper := Ir.Color.ofHtml 0x1B 0x24 0x30,
-      accent := Ir.Color.ofHtml 0xF2 0xA5 0x41 }, false)]
+      accent := Ir.Color.ofHtml 0xF2 0xA5 0x41 }, false),
+  ("a mustard meeting a deck's floor as given",
+    { ink := Ir.Color.ofHtml 0x1C 0x19 0x17, paper := Ir.Color.white,
+      accent := Ir.Color.ofHtml 0xA6 0x8A 0x00 }, false),
+  ("a yellow under a grey ink too faint on it to mark",
+    { ink := Ir.Color.ofHtml 0x44 0x44 0x44, paper := Ir.Color.white, accent := yellow }, false),
+  ("a lemon beside a declared alert of its hue",
+    { ink := Ir.Color.black, paper := Ir.Color.white, accent := Ir.Color.ofHtml 0xF0 0xE4 0x42,
+      alert := some (Ir.Color.ofHtml 0xCC 0xCC 0x00) }, false)]
 
-/-- A container accent marks text and never sets as text, at either depth: the alert is the ink on
-the accent's mark at 4.5:1, any other accent ships no mark, and no derived tone is disliked. -/
+/-- A container accent marks text and never sets as text, at either depth and in each light scheme
+alike: the alert is the ink on the accent's mark at `markInk`, any other accent ships no mark, and
+no tone the generator derives is disliked. -/
 def containerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (label, s, want) in seeds do
     for (depth, d) in [("a deck", Ir.GroundDepth.decks), ("a document", Ir.GroundDepth.documents)] do
-      let tg := s.targets d
-      t s!"container, {label}, {depth}: the accent serves as a container exactly where owed"
-        (s.container tg == want)
-      match SeedPalette.generate s tg with
-      | .error f => t s!"container, {label}, {depth}: generates, not fail at {reprStr f.role}" false
-      | .ok g =>
-        let c := g.colors
-        if want then
-          t s!"container, {label}, {depth}: the alert sets in the ink on a mark of the accent"
-            (c.alert == s.ink && c.alertMark == some s.accent)
-          t s!"container, {label}, {depth}: the accent never sets as text or an edge on the page"
-            (c.accentText == s.ink && c.accentEdge == s.ink && c.alertBand == s.ink)
-          t s!"container, {label}, {depth}: the ink reads on the mark at 4.5:1"
-            (Contrast.aaText ≤ Contrast.contrastMilli s.ink s.accent)
-        else
-          t s!"container, {label}, {depth}: no mark" c.alertMark.isNone
-        let derived := [c.surface, c.surfaceStrong, c.rule, c.accentWash, c.accentSoft, c.muted,
-          c.diagramMuted, c.mutedOnInverse, c.accentText, c.accentEdge, c.accentOnInverse, c.alert,
-          c.alertBand, c.exampleBand] ++ c.exampleText.toList
-        t s!"container, {label}, {depth}: no derived tone stands in the disliked region"
-          (derived.all fun x => x == s.accent || x == s.ink || !ContrastSolve.disliked x)
+      for (scheme, tg) in [("", s.targets d), (" asking more", (s.targets d).more)] do
+        let at_ := s!"container, {label}, {depth}{scheme}"
+        t s!"{at_}: the accent serves as a container exactly where owed" (s.container tg == want)
+        match SeedPalette.generate s tg with
+        | .error f => t s!"{at_}: generates, not fail at {reprStr f.role}" false
+        | .ok g =>
+          let c := g.colors
+          if want then
+            t s!"{at_}: the alert sets in the ink on a mark of the accent"
+              (c.alert == s.ink && c.alertMark == some s.accent)
+            t s!"{at_}: the accent never sets as text or an edge on the page"
+              (c.accentText == s.ink && c.accentEdge == s.ink && c.alertBand == s.ink)
+            t s!"{at_}: the ink reads on the mark in every light scheme"
+              (SeedPalette.markInk ≤ Contrast.contrastMilli s.ink s.accent &&
+                tg.text ≤ SeedPalette.markInk)
+          else
+            t s!"{at_}: no mark" c.alertMark.isNone
+          let declared := [s.ink, s.accent] ++ s.alert.toList ++ s.exampleColor.toList
+          let derived := [c.surface, c.surfaceStrong, c.rule, c.accentWash, c.accentSoft, c.muted,
+            c.diagramMuted, c.mutedOnInverse, c.accentText, c.accentEdge, c.accentOnInverse, c.alert,
+            c.alertBand, c.exampleBand] ++ c.exampleText.toList
+          t s!"{at_}: no derived tone stands in the disliked region"
+            (derived.all fun x => declared.contains x || !ContrastSolve.disliked x)
 
 /-- The mark's ink on a line: every `.decoration .highlight` seg of the
 riders painted before the line, with its left edge and width. -/
@@ -76,19 +91,31 @@ private def marksBefore (lines : Array Layout.LineOut) (i : Nat) :
       | .poly _ _ => pure ()
   return out
 
-/-- An alert on a container accent ships on its mark in both artifacts: under its runs before the
-line's text in the PDF, as a `mark` in the HTML, and under each line a long alert breaks onto. -/
+/-- The marks under the line setting `word`, or none where no line sets it. -/
+private def marksUnder (lines : Array Layout.LineOut) (word : String) :
+    Option (Array (Ir.Color × Dim.Sp × Dim.Sp)) :=
+  (lines.findIdx? fun l => hasStr (lineText l) word).map (marksBefore lines)
+
+/-- Every highlight seg a laid-out document ships. -/
+private def highlightSegs (out : Layout.Out) : Array Ir.Color :=
+  (allLines out).flatMap fun l => l.segs.filterMap fun s => match s with
+    | .decoration (.highlight _ _) _ _ _ c => some c
+    | _ => none
+
+def seedsLine : String := "\\palette[seeds]{ ink = #000000, paper = #FFFFFF, accent = #FACC15 }\n"
+
+/-- An alert on a container accent ships on its mark in both artifacts: one mark under each line's
+stretch of it, painted before the page's text object in the PDF, and a styled span in the HTML. -/
 def markChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "mark: the serif faces load"
-  let accent := Ir.Color.ofHtml 0xFA 0xCC 0x15
-  let pre := "\\palette[seeds]{ ink = #000000, paper = #FFFFFF, accent = #FACC15 }\n"
-  let (doc, ds) := elabStr (dvDeck pre
+  let (doc, ds) := elabStr (dvDeck seedsLine
     "\\begin{frame}\nPlain words and \\alert{marked words} close.\n\\end{frame}")
   t s!"mark: the deck elaborates clean ({(ds.filter (·.severity != .note)).map (·.code)})"
     (ds.all (·.severity == .note))
   t "mark: the report finds no pairing short" (ds.all (·.code != "W0315"))
-  let lines := allLines (layoutOf fonts doc)
+  let out := layoutOf fonts doc
+  let lines := allLines out
   match lines.findIdx? (fun l => hasStr (lineText l) "marked") with
   | none => t "mark: the alerted line ships" false
   | some i =>
@@ -99,43 +126,48 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
       let mut x := lines[i]!.x
       for seg in lines[i]!.segs do
         match seg with
-        | .run _ _ _ w _ _ _ _ _ ground _ => out := out.push (x, w, ground == some accent); x := x + w
+        | .run _ _ _ w _ _ _ _ _ ground _ => out := out.push (x, w, ground == some yellow); x := x + w
         | .gap w _ | .decoratedGap w _ _ | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ =>
           x := x + w
         | .poly _ _ => pure ()
       return out
     let covered (x w : Dim.Sp) : Bool := marks.any fun (_, mx, mw) => mx ≤ x && x + w ≤ mx + mw
-    t s!"mark: a mark in the accent is painted before the alerted line ({marks.size})"
-      (!marks.isEmpty && marks.all (·.1 == accent))
+    t s!"mark: one mark in the accent, the alert's whole stretch, is painted before its line ({marks.size})"
+      (marks.size == 1 && marks.all (·.1 == yellow))
     t "mark: the mark spans the alerted runs and no other"
       ((grounded.filter (·.2.2)).size == 2 && grounded.all fun (x, w, onMark) => covered x w == onMark)
     t "mark: the alerted runs set in the ink on the mark"
-      (lines[i]!.segs.all fun s => match s with
-        | .run _ c _ _ gs _ _ _ _ ground _ =>
-          !(String.ofList (gs.map (·.2.1)).toList == "marked") || (c == Ir.Color.black && ground == some accent)
-        | _ => true)
+      (wordRun lines "marked" == some (Ir.Color.black, some yellow))
+  let geom := Layout.Geom.ofPage doc.page
+  let stream := match (Pdf.pageStreams geom fonts out.pages)[0]? with
+    | some b => String.fromUTF8! b
+    | none => ""
+  t "mark: the PDF paints the mark before its page's text object"
+    (match stream.splitOn yellow.pdfFill with
+     | before :: _ :: _ => !hasStr before "BT\n" && hasStr stream "BT\n"
+     | _ => false)
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
-  let marksHtml := elemNodesList (· == "mark") #[] body.toList
-  t "mark: the web page sets the alert in a mark"
-    (marksHtml.size == 1 && marksHtml.all fun n => nodeTextOne "" n == "marked words")
-  t "mark: the mark's background is the alert's mark"
-    (marksHtml.all fun n => match n with
-      | .elem _ attrs _ => attrs.any fun (k, v) => k == "style" && hasStr v "background-color" &&
-          hasStr v (Ir.ColorRef.role .alertMark).property
-      | _ => false)
+  let spans := (elemNodesList (· == "span") #[] body.toList).filter fun n => match n with
+    | .elem _ attrs _ => attrs.any fun (k, v) => k == "style" && hasStr v "background-color" &&
+        hasStr v (Ir.ColorRef.role .alertMark).property
+    | _ => false
+  t "mark: the web page sets the alert on a span whose background is the alert's mark"
+    (spans.size == 1 && spans.all fun n => nodeTextOne "" n == "marked words")
+  t "mark: the web page ships no mark element, whose highlight role an alert does not have"
+    (elemNodesList (· == "mark") #[] body.toList).isEmpty
   t "mark: the stylesheet declares the alert's mark" (hasStr css ((Ir.ColorRef.role .alertMark).property ++ ":"))
   -- A long alert in a narrow box breaks with its mark.
   let long := "\\begin{frame}\n\\begin{minipage}{3cm}\n\\alert{a long alerted sentence that " ++
     "must break across lines}\n\\end{minipage}\n\\end{frame}"
-  let (ldoc, _) := elabStr (dvDeck pre long)
+  let (ldoc, _) := elabStr (dvDeck seedsLine long)
   let llines := allLines (layoutOf fonts ldoc)
   let set := (List.range llines.size).filter fun i =>
     let tx := lineText llines[i]!
     hasStr tx "alerted" || hasStr tx "break" || hasStr tx "lines"
   t s!"mark: a long alert sets on more than one line ({set.length})" (set.length ≥ 2)
-  t "mark: each line the alert sets on has its own mark"
-    (set.all fun i => !(marksBefore llines i).isEmpty)
+  t "mark: each line the alert sets on has one mark of its own"
+    (set.all fun i => (marksBefore llines i).size == 1)
   -- A TeX build names the mark as an xcolor colour of its key, which both
   -- engines read: leantex as the role.
   let (xdoc, _) := elabStr (dvDeck ("\\usepackage{xcolor}\n\\palette{ alert = #1C1917 }\n" ++
@@ -145,8 +177,51 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.Design.declared? xdoc.palette .alertMark == some (Ir.Color.ofHtml 0xFF 0xEE 0x00))
   let xlines := allLines (layoutOf fonts xdoc)
   t "mark: and the alert sets on it"
-    (match xlines.findIdx? (fun l => hasStr (lineText l) "marked") with
-     | some i => (marksBefore xlines i).any (·.1 == Ir.Color.ofHtml 0xFF 0xEE 0x00)
-     | none => false)
+    ((marksUnder xlines "marked").any fun ms => ms.any (·.1 == Ir.Color.ofHtml 0xFF 0xEE 0x00))
+
+/-- Where an alert's mark stands and where not: not on a ground the accent reads on, where the alert
+takes the accent; not under an alert declared after the seeds; quieted on a covered step and only on
+the steps an overlay alerts; never under a picture's label; and an alert short on its mark reported. -/
+def placeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet | failures ref "mark place: the serif faces load"
+  let (sdoc, _) := elabStr (dvDeck seedsLine
+    "\\begin{frame}[standout]\nA \\alert{standout} word.\n\\end{frame}")
+  let sout := layoutOf fonts sdoc
+  t "mark place: on the ink, an alert sets with no mark" (highlightSegs sout).isEmpty
+  t "mark place: and its run is the accent on the ink"
+    ((wordRun (allLines sout) "standout").any fun (c, _) => c == yellow)
+  let red := Ir.Color.ofHtml 0xDC 0x26 0x26
+  let (rdoc, _) := elabStr (dvDeck (seedsLine ++ "\\palette{ alert = #DC2626 }\n")
+    "\\begin{frame}\nA \\alert{declared} word.\n\\end{frame}")
+  let rout := layoutOf fonts rdoc
+  t "mark place: an alert the document declares after the seeds sets in its own colour, unmarked"
+    ((highlightSegs rout).isEmpty && (wordRun (allLines rout) "declared").any (·.1 == red))
+  let pageMarks (out : Layout.Out) (k : Nat) (word : String) : Option (Array Ir.Color) :=
+    (out.pages[k]?.bind fun p => marksUnder p.lines word).map (·.map (·.1))
+  let (cdoc, _) := elabStr (dvDeck seedsLine
+    "\\begin{frame}\nFirst.\n\n\\uncover<2>{A \\alert{covered} word.}\n\\end{frame}")
+  let cout := layoutOf fonts cdoc
+  t "mark place: a covered step's mark is quieted with the text it stands behind"
+    ((pageMarks cout 0 "covered").all fun ms => ms.all (· != yellow))
+  t "mark place: and the step that reveals it shows the accent"
+    ((pageMarks cout 1 "covered").any fun ms => !ms.isEmpty && ms.all (· == yellow))
+  let (odoc, _) := elabStr (dvDeck seedsLine
+    "\\begin{frame}\nAn \\alert<2>{overlaid} word.\n\n\\uncover<2>{Then.}\n\\end{frame}")
+  let oout := layoutOf fonts odoc
+  t "mark place: an alert an overlay selects is marked on its step only"
+    ((pageMarks oout 0 "overlaid").any (·.isEmpty) &&
+      (pageMarks oout 1 "overlaid").any fun ms => !ms.isEmpty && ms.all (· == yellow))
+  let (pdoc, _) := elabStr (dvDeck (seedsLine ++ "\\usepackage{tikz}\n")
+    "\\begin{frame}\n\\begin{tikzpicture}\n\\node[fill=black!10] {\\alert{label}};\n\\end{tikzpicture}\n\\end{frame}")
+  t "mark place: a picture's label ships no mark, as its web page's SVG label sets none"
+    (highlightSegs (layoutOf fonts pdoc)).isEmpty
+  let judged (mark : String) : Array Diag :=
+    (elabStr (dvDeck ("\\usepackage{xcolor}\n\\palette{ alert = #1C1917 }\n" ++ mark)
+      "\\begin{frame}\nWords and \\alert{marked words}.\n\\end{frame}")).2
+  t "mark place: an alert that does not read on a declared mark is reported"
+    ((judged "\\definecolor{alertmark}{HTML}{3A3A3A}\n").any (·.code == "W0315"))
+  t "mark place: and one that reads on it is not"
+    ((judged "\\definecolor{alertmark}{HTML}{FFEE00}\n").all (·.code != "W0315"))
 
 end Tests.AlertMark

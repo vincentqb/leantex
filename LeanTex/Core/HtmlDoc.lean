@@ -5388,10 +5388,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     match kind with
     | .underline => acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
     | .lineThrough => acc.push (Html.elem "s" (inlineNodesInto cfg #[] body.toList))
-    -- an inline background breaks with its text across lines, as the PDF's mark does
+    -- a span's background breaks with its text across lines, as the PDF's mark does, and keeps the
+    -- alert's own semantics, which `mark`'s highlight role would replace
     | .highlight c name =>
-      acc.push (Html.elem "mark" (inlineNodesInto cfg #[] body.toList)
-        #[("style", "background-color: " ++ cfg.paint name c ++ "; color: inherit")])
+      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+        #[("style", "background-color: " ++ cfg.paint name c)])
   | .onSteps spec body =>
     acc.push (overlayNode "span" cfg.overlaySteps spec (inlineNodesInto cfg #[] body.toList))
   | .altSteps spec firstPage otherPage =>
