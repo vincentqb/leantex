@@ -1589,6 +1589,14 @@ def reports : List Report := [
     what := "Mathlib's prefix notations `#s` and `#α` set as bold keywords in a listing, in both artifacts, where Lean's own highlighter, keying on the atom, reads a bare `#` before a name: the `#` command rule read `#` and a name anywhere, not only where a command starts"
     pins := [check% hashCommandChecks]
     accept := ["twelve of the guard's new assertions fail at 9bed5b00 before the fix: `#s` after `:=` and in parentheses, and `#α`, set bold in the keyword ink in both styles and both artifacts; a command indented after a line break, one after `in` on its line and one indented on the line after `in` keep the keyword before and after"]
+    state := .guarded "9bed5b00" .before .author },
+  { id := "R179", date := "2026-10-14"
+    what := "a web page whose document declares a title it does not set named itself with no level-one heading, the title reaching only the window's name: a deck declaring its title with no title frame, and every document declaring its title only as metadata, handed assistive technology a page with no title heading, and three corpus pages declaring no title at all entered the accessibility tier below its cap"
+    pins := [check% pageTitleChecks, .tier "htmla11y" "diagram-shapes.h1",
+      .tier "htmla11y" "palette-seeds.h1", .tier "htmla11y" "alert-mark.h1"]
+    accept := ["thirty-two of the guard's assertions fail at 9bed5b00 before the fix, the guard and the names it reads added: thirteen titled corpus pages, two of them decks, hand assistive technology no level-one heading, and a titled deck with no title frame, a titled article setting no title and a declared metadata title name no page, no banner opening the deck",
+      "the sixteen corpus pages the fix changes, the three now declaring titles among them, differ from their parent's HTML by the banner alone, show no visible difference on screen at arm's length and print the same sheets; no corpus PDF changes but those three, by their metadata title alone, each the same on paper",
+      "the accessibility tier's level-one heading items rise to its cap on the sixteen pages, the three lowered among them"]
     state := .guarded "9bed5b00" .before .author }
 ]
 

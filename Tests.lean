@@ -424,6 +424,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlSourcedGapChecks ref
   htmlInternalTokenChecks ref
   htmlA11yChecks ref
+  pageTitleChecks ref
   htmlMathChecks ref
 
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font

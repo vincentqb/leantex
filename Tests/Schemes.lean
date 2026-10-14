@@ -165,6 +165,8 @@ def paintedOne (classes : List (String × String)) (vars : List (String × Strin
     let cls := ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
     let vars := styleVars style ++ vars
     let decls := cssDecls style
+    -- clipped to nothing, an element paints nothing
+    if lastDecl decls "clip-path" == some "inset(50%)" then acc else
     let color := ((cls.splitOn " ").findSome? (classes.lookup ·)).orElse fun _ =>
       ((lastDecl decls "color").filter (!inherits ·)).orElse fun _ => color
     -- A picture stands on its own plate on a dark screen (the stylesheet's `svg.picture` rule), its labels with it.

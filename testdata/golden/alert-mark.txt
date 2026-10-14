@@ -42,6 +42,7 @@ token separatorgap 800/1000em
 token authorgap 500/1000em
 token institutegap 1000/1000em
 chrome footer right framenumber
+meta title "A Marked Accent"
 frame
   title
     text "A Marked Frame"
@@ -58,5 +59,5 @@ frame
           color alert #1C1917
             text "A longer alert that the narrow box breaks across its lines."
 -- diagnostics
-note[N0100] 11:17 '\alert' → the alert colour
-note[N0100] 14:1 '\alert' → the alert colour
+note[N0100] 13:17 '\alert' → the alert colour
+note[N0100] 16:1 '\alert' → the alert colour

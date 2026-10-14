@@ -43,6 +43,7 @@ token separatorgap 800/1000em
 token authorgap 500/1000em
 token institutegap 1000/1000em
 chrome footer right framenumber
+meta title "A Seeded Palette"
 frame
   title
     text "Seeded "
@@ -72,4 +73,4 @@ frame
     "    return \"synthetic\" + str(n + 1)"
 -- diagnostics
 note[N0100] 7:1 '\usepackage{minted}' → nothing: the engine does this itself
-note[N0100] 14:22 '\alert' → the alert colour
+note[N0100] 16:22 '\alert' → the alert colour

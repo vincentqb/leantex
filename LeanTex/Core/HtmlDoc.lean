@@ -4440,9 +4440,12 @@ public def figureWordsNode (words : String) : Node :=
   Html.elem "span" #[Html.text words] #[("class", figureWordsClass), ("aria-hidden", "true")]
 
 /-- Out of flow and clipped to nothing: WCAG technique C7's visually hidden pattern. -/
+public def visuallyHidden : String :=
+  "position: absolute; width: 1px; height: 1px; overflow: hidden; \
+clip-path: inset(50%); white-space: nowrap;"
+
 public def figureWordsRule : String :=
-  s!".{figureWordsClass} \{ position: absolute; width: 1px; height: 1px; overflow: hidden; \
-clip-path: inset(50%); white-space: nowrap; }\n"
+  s!".{figureWordsClass} \{ {visuallyHidden} }\n"
 
 /-- The base stylesheet's rules, after its custom properties. -/
 public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords : Bool := false) :
@@ -7911,6 +7914,15 @@ public def schemeRules (cfg : Config) : String :=
      "}\n"
    else "")
 
+/-- The banner naming a page by a title it does not set, out of sight and out of flow. -/
+public def pageTitleNode (title : String) : Node :=
+  Html.elem "header" #[Html.elem "h1" #[Html.text title]] #[("style", visuallyHidden)]
+
+/-- The declared title a page names itself by when neither its body nor its headline sets one. -/
+public def unsetTitle? (doc : Doc) : Option String :=
+  if doc.headline.isSome || (Ir.headingLevels doc.body).contains .title then none
+  else doc.info.title.filter nonBlank
+
 /-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
 private def emitTreeCore (cfg : Config) (doc : Doc)
     (styles : (Ir.Color → String) → String × Array Diag) :
@@ -8223,7 +8235,7 @@ retitle the frames apart, or link to the numbered anchor")
           slot doc.logoRight)
         #[("class", "headline")]]
     | none => #[]
-  let mut body : Array Node := headerNode ++ #[main]
+  let mut body : Array Node := headerNode ++ (unsetTitle? doc).toArray.map pageTitleNode ++ #[main]
   -- the progress hairline reads the base bar, never a section-only override
   if doc.docClass == .slides && (Design.ofDoc doc).progress.isSome then
     body := body.push (Html.elem "div" #[]
