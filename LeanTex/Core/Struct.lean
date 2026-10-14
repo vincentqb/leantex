@@ -301,6 +301,124 @@ public def foldNode (f : NodeFold α) (acc : α) : Node → α
 
 end
 
+/-- A node's fold: entered, then its content read when the fold descends into its kind. -/
+private def NodeFold.node (f : NodeFold α) (acc : α) (kind : Kind) (content : α → α) : α :=
+  match f.descends kind with
+  | true => content (f.enter acc kind)
+  | false => f.enter acc kind
+
+/-- An IR census as its walk's functions, one for each position `blockRaw` reads. -/
+private structure Census (α : Type) where
+  inline : α → Inline → α
+  inlines : α → List Inline → α
+  block : α → Block → α
+  blocks : α → List Block → α
+  items : α → List (Array Block) → α
+  cols : α → List (BoxWidth × Array Block) → α
+  rows : α → List (Array (Array Inline)) → α
+  cells : α → List (Array Inline) → α
+  bib : α → List BibItem → α
+  alg : α → List AlgLine → α
+
+/-- What `F` reads over a title or caption region's node, absent when the content is empty. -/
+private def Census.region (G : Census α) (F : NodeFold α) (kind : Kind) (a : α) (xs : Array Inline) : α :=
+  if xs.isEmpty then a else F.node a kind (G.inlines · xs.toList)
+
+/-- `G` is the census `F` reads off `blockRaw`'s tree: one equation per IR constructor and list
+position the tree reads. -/
+private structure Sim (F : NodeFold α) (G : Census α) : Prop where
+  inlinesNil : ∀ a, G.inlines a [] = a
+  inlinesCons : ∀ a x xs, G.inlines a (x :: xs) = G.inlines (G.inline a x) xs
+  iText : ∀ a s, G.inline a (.text s) = F.leaf a 0 (.text s)
+  iMath : ∀ a d src, G.inline a (.math d src) = F.node a .formula (F.leaf · 0 (.text (mathFloor src)))
+  iFormula : ∀ a d src body,
+    G.inline a (.formula d src body) = F.node a .formula (F.leaf · 0 (.text (formulaFloor body)))
+  iLang : ∀ a tag body,
+    G.inline a (.styled (.lang tag) body) = F.node a (.span tag) (G.inlines · body.toList)
+  iStyled : ∀ a s body, (∀ tag, s ≠ .lang tag) → G.inline a (.styled s body) = G.inlines a body.toList
+  iColored : ∀ a c n body, G.inline a (.colored c n body) = G.inlines a body.toList
+  iLocated : ∀ a n body, G.inline a (.located n body) = G.inlines a body.toList
+  iRole : ∀ a n body, G.inline a (.role n body) = G.inlines a body.toList
+  iLink : ∀ a url body, G.inline a (.link url body) = F.node a (.link url) (G.inlines · body.toList)
+  iLabel : ∀ a key, G.inline a (.label key) = a
+  iRef : ∀ a key form text target,
+    G.inline a (.ref key form text target) = F.node a (.reference target) (F.leaf · 0 (.text text))
+  iDecorated : ∀ a k body, G.inline a (.decorated k body) = G.inlines a body.toList
+  iFill : ∀ a, G.inline a .fill = a
+  iHspace : ∀ a g keep, G.inline a (.hspace g keep) = a
+  iRule : ∀ a w h r, G.inline a (.rule w h r) = F.node a .artifact id
+  iPageNumber : ∀ a, G.inline a .pageNumber = a
+  iPageCount : ∀ a, G.inline a .pageCount = a
+  iLinebreak : ∀ a e, G.inline a (.linebreak e) = F.leaf a 0 .linebreak
+  iStrut : ∀ a h, G.inline a (.strut h) = a
+  iItalicCorr : ∀ a m, G.inline a (.italicCorr m) = a
+  iOnSteps : ∀ a spec body, G.inline a (.onSteps spec body) = G.inlines a body.toList
+  iAltSteps : ∀ a spec x y, G.inline a (.altSteps spec x y) = G.inlines (G.inlines a x.toList) y.toList
+  iImage : ∀ a src size alt, G.inline a (.image src size alt) = F.leaf a 0 (.image src alt)
+  iIcon : ∀ a sc label, G.inline a (.icon sc label) = F.leaf a 0 (.text label)
+  iCite : ∀ a tx keys, G.inline a (.cite tx keys) = F.leaf a 0 (.text (citeMarks keys))
+  iFootnote : ∀ a n body, G.inline a (.footnote n body) = F.node a .note (G.inlines · body.toList)
+  cellsNil : ∀ a, G.cells a [] = a
+  cellsCons : ∀ a c rest, G.cells a (c :: rest) = G.cells (F.node a .cell (G.inlines · c.toList)) rest
+  rowsNil : ∀ a, G.rows a [] = a
+  rowsCons : ∀ a r rest, G.rows a (r :: rest) = G.rows (F.node a .row (G.cells · r.toList)) rest
+  bibNil : ∀ a, G.bib a [] = a
+  bibCons : ∀ a it rest,
+    G.bib a (it :: rest) = G.bib (F.node a .bibEntry (G.inlines · it.content.toList)) rest
+  algNil : ∀ a, G.alg a [] = a
+  algCons : ∀ a l rest, G.alg a (l :: rest) = G.alg (match l.comment with
+    | some c => G.inlines (G.inlines a l.content.toList) c.toList
+    | none => G.inlines a l.content.toList) rest
+  blocksNil : ∀ a, G.blocks a [] = a
+  blocksCons : ∀ a b bs, G.blocks a (b :: bs) = G.blocks (G.block a b) bs
+  itemsNil : ∀ a, G.items a [] = a
+  itemsCons : ∀ a item rest, G.items a (item :: rest) =
+    G.items (F.node a .item fun a => F.node (F.node a .label id) .body (G.blocks · item.toList)) rest
+  colsNil : ∀ a, G.cols a [] = a
+  colsCons : ∀ a w body rest, G.cols a ((w, body) :: rest) = G.cols (G.blocks a body.toList) rest
+  bPara : ∀ a c, G.block a (.para c) = F.node a .paragraph (G.inlines · c.toList)
+  bSection : ∀ a level st num title,
+    G.block a (.section level st num title) = F.node a (.heading level) (G.inlines · title.toList)
+  bList : ∀ a o items, G.block a (.list o items) = F.node a (.list o) (G.items · items.toList)
+  bCenter : ∀ a body, G.block a (.center body) = G.blocks a body.toList
+  bRagged : ∀ a fl body, G.block a (.ragged fl body) = G.blocks a body.toList
+  bSpaced : ∀ a g body, G.block a (.spaced g body) = G.blocks a body.toList
+  bRole : ∀ a n body, G.block a (.role n body) = G.blocks a body.toList
+  bLink : ∀ a t body, G.block a (.link t body) = F.node a (.link t) (G.blocks · body.toList)
+  bQuote : ∀ a body, G.block a (.quote body) = F.node a .quote (G.blocks · body.toList)
+  bAbstract : ∀ a body, G.block a (.abstract body) = F.node a .section (G.blocks · body.toList)
+  bTitled : ∀ a k title body, G.block a (.titled k title body) =
+    F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
+  bDisclosure : ∀ a title e body, G.block a (.disclosure title e body) =
+    F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
+  bEquation : ∀ a num c, G.block a (.equation num c) =
+    F.node a .formula fun a => F.node (G.inlines a c.toList) .label (G.inlines · num.toList)
+  bVerbatim : ∀ a cov content spec, G.block a (.verbatim cov content spec) = match spec.caption with
+    | some (_, cap) => F.node a .figure fun a =>
+      F.node (F.node a .caption (F.leaf · 0 (.text (plainText cap)))) .code (F.leaf · 0 (.text content))
+    | none => F.node a .code (F.leaf · 0 (.text content))
+  bAlgorithm : ∀ a n s lines, G.block a (.algorithm n s lines) = F.node a .code (G.alg · lines.toList)
+  bColumns : ∀ a cols, G.block a (.columns cols) = G.cols a cols.toList
+  bOnSteps : ∀ a spec body, G.block a (.onSteps spec body) = G.blocks a body.toList
+  bAltSteps : ∀ a spec x y, G.block a (.altSteps spec x y) = G.blocks (G.blocks a x.toList) y.toList
+  bNote : ∀ a body, G.block a (.note body) = F.node a .aside (G.blocks · body.toList)
+  bOnly : ∀ a t body, G.block a (.only t body) = G.blocks a body.toList
+  bNav : ∀ a spec body, G.block a (.nav spec body) = F.node a .nav (G.blocks · body.toList)
+  bLogo : ∀ a c, G.block a (.logo c) = F.node a .artifact (G.inlines · c.toList)
+  bPagebreak : ∀ a, G.block a .pagebreak = a
+  bFrame : ∀ a title st v br body, G.block a (.frame title st v br body) =
+    F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
+  bFramefoot : ∀ a c, G.block a (.framefoot c) = F.node a .artifact (G.inlines · c.toList)
+  bSetPalette : ∀ a p, G.block a (.setPalette p) = a
+  bSetTokens : ∀ a t, G.block a (.setTokens t) = a
+  bRule : ∀ a c n th, G.block a (.rule c n th) = a
+  bPicture : ∀ a pic, G.block a (.picture pic) = F.leaf a 0 (.picture pic.alternative)
+  bTable : ∀ a cols pl pr rows rules spans,
+    G.block a (.table cols pl pr rows rules spans) = F.node a .table (G.rows · rows.toList)
+  bFloat : ∀ a k n ca body cap, G.block a (.float k n ca body cap) =
+    F.node a .figure fun a => G.blocks (G.region F .caption a cap) body.toList
+  bBibliography : ∀ a src st items, G.block a (.bibliography src st items) = G.bib a items.toList
+
 public theorem foldNodeList_nil_exact (f : NodeFold α) (acc : α) : foldNodeList f acc [] = acc := by rfl
 
 public theorem foldNodeList_cons_exact (f : NodeFold α) (acc : α) (n : Node) (rest : List Node) :
@@ -315,15 +433,8 @@ public theorem foldNode_node_exact (f : NodeFold α) (acc : α) (kind : Kind) (k
         | true => foldNodeList f (f.enter acc kind) kids.toList
         | false => f.enter acc kind := by rfl
 
-/-- A node's fold: entered, then its content read when the fold descends into its kind. -/
-private def NodeFold.node (f : NodeFold α) (acc : α) (kind : Kind) (content : α → α) : α :=
-  match f.descends kind with
-  | true => content (f.enter acc kind)
-  | false => f.enter acc kind
-
 private theorem foldNode_node (f : NodeFold α) (acc : α) (kind : Kind) (kids : Array Node) :
     foldNode f acc (.node kind kids) = f.node acc kind (foldNodeList f · kids.toList) := rfl
-
 
 theorem foldNodeList_append (f : NodeFold α) (acc : α) (a b : List Node) :
     foldNodeList f acc (a ++ b) = foldNodeList f (foldNodeList f acc a) b := by
@@ -449,7 +560,6 @@ def altPicPush (out : Array (Option String × Alt)) (b : Block) :
 public def irAlts (bs : Array Block) : Array (Option String × Alt) :=
   foldBlocks altPicPush altPush #[] bs
 
-
 public theorem leavesList_nil_exact (out : Array (Nat × Leaf)) : leavesList out [] = out := by rfl
 
 public theorem leavesList_cons_exact (out : Array (Nat × Leaf)) (n : Node) (rest : List Node) :
@@ -461,8 +571,6 @@ public theorem leavesOne_leaf_exact (out : Array (Nat × Leaf)) (id : Nat) (l : 
 public theorem leavesOne_node_exact (out : Array (Nat × Leaf)) (kind : Kind) (kids : Array Node) :
     leavesOne out (.node kind kids) = leavesList out kids.toList := by rfl
 
-public theorem leaves_eq_exact (ns : Array Node) : leaves ns = leavesList #[] ns.toList := by rfl
-
 public theorem headingsList_nil_exact (out : Array Ir.HeadingLevel) : headingsList out [] = out := by rfl
 
 public theorem headingsList_cons_exact (out : Array Ir.HeadingLevel) (n : Node) (rest : List Node) :
@@ -470,7 +578,6 @@ public theorem headingsList_cons_exact (out : Array Ir.HeadingLevel) (n : Node) 
 
 public theorem headingsOne_leaf_exact (out : Array Ir.HeadingLevel) (id : Nat) (l : Leaf) :
     headingsOne out (.leaf id l) = out := by rfl
-
 
 public theorem headingsOne_heading_exact (out : Array Ir.HeadingLevel) (level : Ir.HeadingLevel) (kids : Array Node) :
     headingsOne out (.node (.heading level) kids) = headingsList (out.push level) kids.toList := by
@@ -505,130 +612,20 @@ public theorem leavesList_snoc (out : Array (Nat × Leaf)) (l : List Node) (n : 
     leavesList out (l ++ [n]) = leavesOne (leavesList out l) n := by
   exact foldNodeList_snoc leavesFold out l n
 
-/-- An IR census as its walk's functions, one for each position `blockRaw` reads. -/
-private structure Census (α : Type) where
-  inline : α → Inline → α
-  inlines : α → List Inline → α
-  block : α → Block → α
-  blocks : α → List Block → α
-  items : α → List (Array Block) → α
-  cols : α → List (BoxWidth × Array Block) → α
-  rows : α → List (Array (Array Inline)) → α
-  cells : α → List (Array Inline) → α
-  bib : α → List BibItem → α
-  alg : α → List AlgLine → α
-
-/-- What `F` reads over a title or caption region's node, which empty content does not get. -/
-private def Census.region (G : Census α) (F : NodeFold α) (kind : Kind) (a : α) (xs : Array Inline) : α :=
-  if xs.isEmpty then a else F.node a kind (G.inlines · xs.toList)
-
-/-- `G` is the census `F` reads off `blockRaw`'s tree: one equation for each IR constructor. -/
-private structure Sim (F : NodeFold α) (G : Census α) : Prop where
-  inlinesNil : ∀ a, G.inlines a [] = a
-  inlinesCons : ∀ a x xs, G.inlines a (x :: xs) = G.inlines (G.inline a x) xs
-  iText : ∀ a s, G.inline a (.text s) = F.leaf a 0 (.text s)
-  iMath : ∀ a d src, G.inline a (.math d src) = F.node a .formula (F.leaf · 0 (.text (mathFloor src)))
-  iFormula : ∀ a d src body,
-    G.inline a (.formula d src body) = F.node a .formula (F.leaf · 0 (.text (formulaFloor body)))
-  iLang : ∀ a tag body,
-    G.inline a (.styled (.lang tag) body) = F.node a (.span tag) (G.inlines · body.toList)
-  iStyled : ∀ a s body, (∀ tag, s ≠ .lang tag) → G.inline a (.styled s body) = G.inlines a body.toList
-  iColored : ∀ a c n body, G.inline a (.colored c n body) = G.inlines a body.toList
-  iLocated : ∀ a n body, G.inline a (.located n body) = G.inlines a body.toList
-  iRole : ∀ a n body, G.inline a (.role n body) = G.inlines a body.toList
-  iLink : ∀ a url body, G.inline a (.link url body) = F.node a (.link url) (G.inlines · body.toList)
-  iLabel : ∀ a key, G.inline a (.label key) = a
-  iRef : ∀ a key form text target,
-    G.inline a (.ref key form text target) = F.node a (.reference target) (F.leaf · 0 (.text text))
-  iDecorated : ∀ a k body, G.inline a (.decorated k body) = G.inlines a body.toList
-  iFill : ∀ a, G.inline a .fill = a
-  iHspace : ∀ a g keep, G.inline a (.hspace g keep) = a
-  iRule : ∀ a w h r, G.inline a (.rule w h r) = F.node a .artifact id
-  iPageNumber : ∀ a, G.inline a .pageNumber = a
-  iPageCount : ∀ a, G.inline a .pageCount = a
-  iLinebreak : ∀ a e, G.inline a (.linebreak e) = F.leaf a 0 .linebreak
-  iStrut : ∀ a h, G.inline a (.strut h) = a
-  iItalicCorr : ∀ a m, G.inline a (.italicCorr m) = a
-  iOnSteps : ∀ a spec body, G.inline a (.onSteps spec body) = G.inlines a body.toList
-  iAltSteps : ∀ a spec x y, G.inline a (.altSteps spec x y) = G.inlines (G.inlines a x.toList) y.toList
-  iImage : ∀ a src size alt, G.inline a (.image src size alt) = F.leaf a 0 (.image src alt)
-  iIcon : ∀ a sc label, G.inline a (.icon sc label) = F.leaf a 0 (.text label)
-  iCite : ∀ a tx keys, G.inline a (.cite tx keys) = F.leaf a 0 (.text (citeMarks keys))
-  iFootnote : ∀ a n body, G.inline a (.footnote n body) = F.node a .note (G.inlines · body.toList)
-  cellsNil : ∀ a, G.cells a [] = a
-  cellsCons : ∀ a c rest, G.cells a (c :: rest) = G.cells (F.node a .cell (G.inlines · c.toList)) rest
-  rowsNil : ∀ a, G.rows a [] = a
-  rowsCons : ∀ a r rest, G.rows a (r :: rest) = G.rows (F.node a .row (G.cells · r.toList)) rest
-  bibNil : ∀ a, G.bib a [] = a
-  bibCons : ∀ a it rest,
-    G.bib a (it :: rest) = G.bib (F.node a .bibEntry (G.inlines · it.content.toList)) rest
-  algNil : ∀ a, G.alg a [] = a
-  algCons : ∀ a l rest, G.alg a (l :: rest) = G.alg (match l.comment with
-    | some c => G.inlines (G.inlines a l.content.toList) c.toList
-    | none => G.inlines a l.content.toList) rest
-  blocksNil : ∀ a, G.blocks a [] = a
-  blocksCons : ∀ a b bs, G.blocks a (b :: bs) = G.blocks (G.block a b) bs
-  itemsNil : ∀ a, G.items a [] = a
-  itemsCons : ∀ a item rest, G.items a (item :: rest) =
-    G.items (F.node a .item fun a => F.node (F.node a .label id) .body (G.blocks · item.toList)) rest
-  colsNil : ∀ a, G.cols a [] = a
-  colsCons : ∀ a w body rest, G.cols a ((w, body) :: rest) = G.cols (G.blocks a body.toList) rest
-  bPara : ∀ a c, G.block a (.para c) = F.node a .paragraph (G.inlines · c.toList)
-  bSection : ∀ a level st num title,
-    G.block a (.section level st num title) = F.node a (.heading level) (G.inlines · title.toList)
-  bList : ∀ a o items, G.block a (.list o items) = F.node a (.list o) (G.items · items.toList)
-  bCenter : ∀ a body, G.block a (.center body) = G.blocks a body.toList
-  bRagged : ∀ a fl body, G.block a (.ragged fl body) = G.blocks a body.toList
-  bSpaced : ∀ a g body, G.block a (.spaced g body) = G.blocks a body.toList
-  bRole : ∀ a n body, G.block a (.role n body) = G.blocks a body.toList
-  bLink : ∀ a t body, G.block a (.link t body) = F.node a (.link t) (G.blocks · body.toList)
-  bQuote : ∀ a body, G.block a (.quote body) = F.node a .quote (G.blocks · body.toList)
-  bAbstract : ∀ a body, G.block a (.abstract body) = F.node a .section (G.blocks · body.toList)
-  bTitled : ∀ a k title body, G.block a (.titled k title body) =
-    F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
-  bDisclosure : ∀ a title e body, G.block a (.disclosure title e body) =
-    F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
-  bEquation : ∀ a num c, G.block a (.equation num c) =
-    F.node a .formula fun a => F.node (G.inlines a c.toList) .label (G.inlines · num.toList)
-  bVerbatim : ∀ a cov content spec, G.block a (.verbatim cov content spec) = match spec.caption with
-    | some (_, cap) => F.node a .figure fun a =>
-      F.node (F.node a .caption (F.leaf · 0 (.text (plainText cap)))) .code (F.leaf · 0 (.text content))
-    | none => F.node a .code (F.leaf · 0 (.text content))
-  bAlgorithm : ∀ a n s lines, G.block a (.algorithm n s lines) = F.node a .code (G.alg · lines.toList)
-  bColumns : ∀ a cols, G.block a (.columns cols) = G.cols a cols.toList
-  bOnSteps : ∀ a spec body, G.block a (.onSteps spec body) = G.blocks a body.toList
-  bAltSteps : ∀ a spec x y, G.block a (.altSteps spec x y) = G.blocks (G.blocks a x.toList) y.toList
-  bNote : ∀ a body, G.block a (.note body) = F.node a .aside (G.blocks · body.toList)
-  bOnly : ∀ a t body, G.block a (.only t body) = G.blocks a body.toList
-  bNav : ∀ a spec body, G.block a (.nav spec body) = F.node a .nav (G.blocks · body.toList)
-  bLogo : ∀ a c, G.block a (.logo c) = F.node a .artifact (G.inlines · c.toList)
-  bPagebreak : ∀ a, G.block a .pagebreak = a
-  bFrame : ∀ a title st v br body, G.block a (.frame title st v br body) =
-    F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
-  bFramefoot : ∀ a c, G.block a (.framefoot c) = F.node a .artifact (G.inlines · c.toList)
-  bSetPalette : ∀ a p, G.block a (.setPalette p) = a
-  bSetTokens : ∀ a t, G.block a (.setTokens t) = a
-  bRule : ∀ a c n th, G.block a (.rule c n th) = a
-  bPicture : ∀ a pic, G.block a (.picture pic) = F.leaf a 0 (.picture pic.alternative)
-  bTable : ∀ a cols pl pr rows rules spans,
-    G.block a (.table cols pl pr rows rules spans) = F.node a .table (G.rows · rows.toList)
-  bFloat : ∀ a k n ca body cap, G.block a (.float k n ca body cap) =
-    F.node a .figure fun a => G.blocks (G.region F .caption a cap) body.toList
-  bBibliography : ∀ a src st items, G.block a (.bibliography src st items) = G.bib a items.toList
-
 section Simulation
 
 variable {α : Type} {F : NodeFold α} {G : Census α}
 
 mutual
 
-private theorem inlinesRaw_sim (h : Sim F G) (a : α) (out : Array Node) (xs : List Inline) :
+private theorem inlinesRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (xs : List Inline) :
     foldNodeList F a (inlinesRaw out xs).toList = G.inlines (foldNodeList F a out.toList) xs := by
   match xs with
   | [] => exact (h.inlinesNil _).symm
-  | x :: rest => rw [inlinesRaw, inlinesRaw_sim h a _ rest, inlineRaw_sim h a out x, h.inlinesCons]
+  | x :: rest =>
+    rw [inlinesRaw, inlinesRaw_fold_exact h a _ rest, inlineRaw_fold_exact h a out x, h.inlinesCons]
 
-private theorem inlineRaw_sim (h : Sim F G) (a : α) (out : Array Node) (x : Inline) :
+private theorem inlineRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (x : Inline) :
     foldNodeList F a (inlineRaw out x).toList = G.inline (foldNodeList F a out.toList) x := by
   match x with
   | .text s => simp only [inlineRaw, foldNodeList_push, h.iText]; rfl
@@ -638,19 +635,19 @@ private theorem inlineRaw_sim (h : Sim F G) (a : α) (out : Array Node) (x : Inl
     match style with
     | .lang tag =>
       simp only [inlineRaw, foldNodeList_push, foldNode_node, h.iLang]
-      exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_sim h a' #[] body.toList)
+      exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] body.toList)
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
     | .medium | .series _ | .upright | .family _ | .size _ | .fontSize _ _ =>
-      exact (inlinesRaw_sim h a out body.toList).trans (h.iStyled _ _ _ (by intro _ e; cases e)).symm
-  | .colored c n body => rw [h.iColored]; exact inlinesRaw_sim h a out body.toList
-  | .located n body => rw [h.iLocated]; exact inlinesRaw_sim h a out body.toList
-  | .role n body => rw [h.iRole]; exact inlinesRaw_sim h a out body.toList
+      exact (inlinesRaw_fold_exact h a out body.toList).trans (h.iStyled _ _ _ (by intro _ e; cases e)).symm
+  | .colored c n body => rw [h.iColored]; exact inlinesRaw_fold_exact h a out body.toList
+  | .located n body => rw [h.iLocated]; exact inlinesRaw_fold_exact h a out body.toList
+  | .role n body => rw [h.iRole]; exact inlinesRaw_fold_exact h a out body.toList
   | .link url body =>
     simp only [inlineRaw, foldNodeList_push, foldNode_node, h.iLink]
-    exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_sim h a' #[] body.toList)
+    exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] body.toList)
   | .label key => rw [h.iLabel]; rfl
   | .ref key form text target => simp only [inlineRaw, foldNodeList_push, h.iRef]; rfl
-  | .decorated k body => rw [h.iDecorated]; exact inlinesRaw_sim h a out body.toList
+  | .decorated k body => rw [h.iDecorated]; exact inlinesRaw_fold_exact h a out body.toList
   | .fill => rw [h.iFill]; rfl
   | .hspace g keep => rw [h.iHspace]; rfl
   | .rule w hh r => simp only [inlineRaw, foldNodeList_push, h.iRule]; rfl
@@ -659,184 +656,187 @@ private theorem inlineRaw_sim (h : Sim F G) (a : α) (out : Array Node) (x : Inl
   | .linebreak e => simp only [inlineRaw, foldNodeList_push, h.iLinebreak]; rfl
   | .strut hh => rw [h.iStrut]; rfl
   | .italicCorr m => rw [h.iItalicCorr]; rfl
-  | .onSteps spec body => rw [h.iOnSteps]; exact inlinesRaw_sim h a out body.toList
+  | .onSteps spec body => rw [h.iOnSteps]; exact inlinesRaw_fold_exact h a out body.toList
   | .altSteps spec x y =>
-    rw [h.iAltSteps, ← inlinesRaw_sim h a out x.toList]
-    exact inlinesRaw_sim h a (inlinesRaw out x.toList) y.toList
+    rw [h.iAltSteps, ← inlinesRaw_fold_exact h a out x.toList]
+    exact inlinesRaw_fold_exact h a (inlinesRaw out x.toList) y.toList
   | .image src size alt => simp only [inlineRaw, foldNodeList_push, h.iImage]; rfl
   | .icon sc label => simp only [inlineRaw, foldNodeList_push, h.iIcon]; rfl
   | .cite tx keys => simp only [inlineRaw, foldNodeList_push, h.iCite]; rfl
   | .footnote n body =>
     simp only [inlineRaw, foldNodeList_push, foldNode_node, h.iFootnote]
-    exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_sim h a' #[] body.toList)
+    exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] body.toList)
 
 end
 
-private theorem inlinesNode_sim (h : Sim F G) (a : α) (kind : Kind) (xs : Array Inline) :
+private theorem inlinesNode_fold_exact (h : Sim F G) (a : α) (kind : Kind) (xs : Array Inline) :
     foldNode F a (.node kind (inlinesRaw #[] xs.toList)) = F.node a kind (G.inlines · xs.toList) :=
-  congrArg (F.node _ _) (funext fun a' => inlinesRaw_sim h a' #[] xs.toList)
+  congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] xs.toList)
 
-private theorem regionRaw_sim (h : Sim F G) (a : α) (kind : Kind) (xs : Array Inline) :
+private theorem regionRaw_fold_exact (h : Sim F G) (a : α) (kind : Kind) (xs : Array Inline) :
     foldNodeList F a (if xs.isEmpty then #[] else #[.node kind (inlinesRaw #[] xs.toList)]).toList =
       G.region F kind a xs := by
   unfold Census.region
   split
   · rfl
-  · exact inlinesNode_sim h a kind xs
+  · exact inlinesNode_fold_exact h a kind xs
 
-private theorem cellsRaw_sim (h : Sim F G) (a : α) (out : Array Node) (cells : List (Array Inline)) :
+private theorem cellsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (cells : List (Array Inline)) :
     foldNodeList F a (cellsRaw out cells).toList = G.cells (foldNodeList F a out.toList) cells := by
   induction cells generalizing out with
   | nil => exact (h.cellsNil _).symm
-  | cons c rest ih => rw [cellsRaw, ih, foldNodeList_push, inlinesNode_sim h, h.cellsCons]
+  | cons c rest ih => rw [cellsRaw, ih, foldNodeList_push, inlinesNode_fold_exact h, h.cellsCons]
 
-private theorem rowsRaw_sim (h : Sim F G) (a : α) (out : Array Node) (rows : List (Array (Array Inline))) :
+private theorem rowsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node)
+    (rows : List (Array (Array Inline))) :
     foldNodeList F a (rowsRaw out rows).toList = G.rows (foldNodeList F a out.toList) rows := by
   induction rows generalizing out with
   | nil => exact (h.rowsNil _).symm
   | cons r rest ih =>
     rw [rowsRaw, ih, foldNodeList_push, foldNode_node, h.rowsCons]
     exact congrArg (G.rows · rest)
-      (congrArg (F.node _ _) (funext fun a' => cellsRaw_sim h a' #[] r.toList))
+      (congrArg (F.node _ _) (funext fun a' => cellsRaw_fold_exact h a' #[] r.toList))
 
-private theorem bibRaw_sim (h : Sim F G) (a : α) (out : Array Node) (items : List BibItem) :
+private theorem bibRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (items : List BibItem) :
     foldNodeList F a (bibRaw out items).toList = G.bib (foldNodeList F a out.toList) items := by
   induction items generalizing out with
   | nil => exact (h.bibNil _).symm
-  | cons it rest ih => rw [bibRaw, ih, foldNodeList_push, inlinesNode_sim h, h.bibCons]
+  | cons it rest ih => rw [bibRaw, ih, foldNodeList_push, inlinesNode_fold_exact h, h.bibCons]
 
-private theorem algRaw_sim (h : Sim F G) (a : α) (out : Array Node) (lines : List AlgLine) :
+private theorem algRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (lines : List AlgLine) :
     foldNodeList F a (algRaw out lines).toList = G.alg (foldNodeList F a out.toList) lines := by
   induction lines generalizing out with
   | nil => exact (h.algNil _).symm
   | cons l rest ih =>
     rw [algRaw, ih, h.algCons]
-    cases l.comment <;> simp only [inlinesRaw_sim h]
+    cases l.comment <;> simp only [inlinesRaw_fold_exact h]
 
 mutual
 
-private theorem blocksRaw_sim (h : Sim F G) (a : α) (out : Array Node) (bs : List Block) :
+private theorem blocksRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (bs : List Block) :
     foldNodeList F a (blocksRaw out bs).toList = G.blocks (foldNodeList F a out.toList) bs := by
   match bs with
   | [] => exact (h.blocksNil _).symm
-  | b :: rest => rw [blocksRaw, blocksRaw_sim h a _ rest, blockRaw_sim h a out b, h.blocksCons]
+  | b :: rest =>
+    rw [blocksRaw, blocksRaw_fold_exact h a _ rest, blockRaw_fold_exact h a out b, h.blocksCons]
 
-private theorem blockRaw_sim (h : Sim F G) (a : α) (out : Array Node) (b : Block) :
+private theorem blockRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (b : Block) :
     foldNodeList F a (blockRaw out b).toList = G.block (foldNodeList F a out.toList) b := by
   match b with
-  | .para c => rw [blockRaw, foldNodeList_push, inlinesNode_sim h, h.bPara]
-  | .section level st num title => rw [blockRaw, foldNodeList_push, inlinesNode_sim h, h.bSection]
+  | .para c => rw [blockRaw, foldNodeList_push, inlinesNode_fold_exact h, h.bPara]
+  | .section level st num title => rw [blockRaw, foldNodeList_push, inlinesNode_fold_exact h, h.bSection]
   | .list o items =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bList]
-    exact congrArg (F.node _ _) (funext fun a' => itemsRaw_sim h a' #[] items.toList)
-  | .center body => rw [h.bCenter]; exact blocksRaw_sim h a out body.toList
-  | .ragged fl body => rw [h.bRagged]; exact blocksRaw_sim h a out body.toList
-  | .spaced g body => rw [h.bSpaced]; exact blocksRaw_sim h a out body.toList
-  | .role n body => rw [h.bRole]; exact blocksRaw_sim h a out body.toList
+    exact congrArg (F.node _ _) (funext fun a' => itemsRaw_fold_exact h a' #[] items.toList)
+  | .center body => rw [h.bCenter]; exact blocksRaw_fold_exact h a out body.toList
+  | .ragged fl body => rw [h.bRagged]; exact blocksRaw_fold_exact h a out body.toList
+  | .spaced g body => rw [h.bSpaced]; exact blocksRaw_fold_exact h a out body.toList
+  | .role n body => rw [h.bRole]; exact blocksRaw_fold_exact h a out body.toList
   | .link t body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bLink]
-    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_sim h a' #[] body.toList)
+    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
   | .quote body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bQuote]
-    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_sim h a' #[] body.toList)
+    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
   | .abstract body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bAbstract]
-    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_sim h a' #[] body.toList)
+    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
   | .titled k title body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bTitled]
     exact congrArg (F.node _ _) (funext fun a' => by
-      rw [blocksRaw_sim h a' (titleRaw title) body.toList, titleRaw, regionRaw_sim h])
+      rw [blocksRaw_fold_exact h a' (titleRaw title) body.toList, titleRaw, regionRaw_fold_exact h])
   | .disclosure title e body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bDisclosure]
     exact congrArg (F.node _ _) (funext fun a' => by
-      rw [blocksRaw_sim h a' (titleRaw title) body.toList, titleRaw, regionRaw_sim h])
+      rw [blocksRaw_fold_exact h a' (titleRaw title) body.toList, titleRaw, regionRaw_fold_exact h])
   | .equation num c =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bEquation]
     exact congrArg (F.node _ _) (funext fun a' => by
-      rw [foldNodeList_push, inlinesNode_sim h, inlinesRaw_sim h a' #[] c.toList]; rfl)
+      rw [foldNodeList_push, inlinesNode_fold_exact h, inlinesRaw_fold_exact h a' #[] c.toList]; rfl)
   | .verbatim cov content spec =>
     rw [h.bVerbatim]
     simp only [blockRaw]
     split <;> simp only [foldNodeList_push] <;> rfl
   | .algorithm n s lines =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bAlgorithm]
-    exact congrArg (F.node _ _) (funext fun a' => algRaw_sim h a' #[] lines.toList)
-  | .columns cols => rw [h.bColumns]; exact colsRaw_sim h a out cols.toList
-  | .onSteps spec body => rw [h.bOnSteps]; exact blocksRaw_sim h a out body.toList
+    exact congrArg (F.node _ _) (funext fun a' => algRaw_fold_exact h a' #[] lines.toList)
+  | .columns cols => rw [h.bColumns]; exact colsRaw_fold_exact h a out cols.toList
+  | .onSteps spec body => rw [h.bOnSteps]; exact blocksRaw_fold_exact h a out body.toList
   | .altSteps spec x y =>
-    rw [h.bAltSteps, ← blocksRaw_sim h a out x.toList]
-    exact blocksRaw_sim h a (blocksRaw out x.toList) y.toList
+    rw [h.bAltSteps, ← blocksRaw_fold_exact h a out x.toList]
+    exact blocksRaw_fold_exact h a (blocksRaw out x.toList) y.toList
   | .note body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bNote]
-    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_sim h a' #[] body.toList)
-  | .only t body => rw [h.bOnly]; exact blocksRaw_sim h a out body.toList
+    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
+  | .only t body => rw [h.bOnly]; exact blocksRaw_fold_exact h a out body.toList
   | .nav spec body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bNav]
-    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_sim h a' #[] body.toList)
-  | .logo c => rw [blockRaw, foldNodeList_push, inlinesNode_sim h, h.bLogo]
+    exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
+  | .logo c => rw [blockRaw, foldNodeList_push, inlinesNode_fold_exact h, h.bLogo]
   | .pagebreak => rw [h.bPagebreak]; rfl
   | .frame title st v br body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bFrame]
     exact congrArg (F.node _ _) (funext fun a' => by
-      rw [blocksRaw_sim h a' (titleRaw title) body.toList, titleRaw, regionRaw_sim h])
-  | .framefoot c => rw [blockRaw, foldNodeList_push, inlinesNode_sim h, h.bFramefoot]
+      rw [blocksRaw_fold_exact h a' (titleRaw title) body.toList, titleRaw, regionRaw_fold_exact h])
+  | .framefoot c => rw [blockRaw, foldNodeList_push, inlinesNode_fold_exact h, h.bFramefoot]
   | .setPalette p => rw [h.bSetPalette]; rfl
   | .setTokens t => rw [h.bSetTokens]; rfl
   | .rule c n th => rw [h.bRule]; rfl
   | .picture pic => rw [blockRaw, foldNodeList_push, h.bPicture]; rfl
   | .table cols pl pr rows rules spans =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bTable]
-    exact congrArg (F.node _ _) (funext fun a' => rowsRaw_sim h a' #[] rows.toList)
+    exact congrArg (F.node _ _) (funext fun a' => rowsRaw_fold_exact h a' #[] rows.toList)
   | .float k n ca body cap =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bFloat]
     exact congrArg (F.node _ _) (funext fun a' => by
-      rw [blocksRaw_sim h a' (captionRaw cap) body.toList, captionRaw, regionRaw_sim h])
-  | .bibliography src st items => rw [h.bBibliography]; exact bibRaw_sim h a out items.toList
+      rw [blocksRaw_fold_exact h a' (captionRaw cap) body.toList, captionRaw, regionRaw_fold_exact h])
+  | .bibliography src st items => rw [h.bBibliography]; exact bibRaw_fold_exact h a out items.toList
 
-private theorem itemsRaw_sim (h : Sim F G) (a : α) (out : Array Node) (items : List (Array Block)) :
+private theorem itemsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (items : List (Array Block)) :
     foldNodeList F a (itemsRaw out items).toList = G.items (foldNodeList F a out.toList) items := by
   match items with
   | [] => exact (h.itemsNil _).symm
   | item :: rest =>
-    rw [itemsRaw, itemsRaw_sim h a _ rest, foldNodeList_push, foldNode_node, h.itemsCons]
+    rw [itemsRaw, itemsRaw_fold_exact h a _ rest, foldNodeList_push, foldNode_node, h.itemsCons]
     exact congrArg (G.items · rest) (congrArg (F.node _ _) (funext fun a' =>
-      congrArg (F.node _ _) (funext fun a'' => blocksRaw_sim h a'' #[] item.toList)))
+      congrArg (F.node _ _) (funext fun a'' => blocksRaw_fold_exact h a'' #[] item.toList)))
 
-private theorem colsRaw_sim (h : Sim F G) (a : α) (out : Array Node)
+private theorem colsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node)
     (cols : List (BoxWidth × Array Block)) :
     foldNodeList F a (colsRaw out cols).toList = G.cols (foldNodeList F a out.toList) cols := by
   match cols with
   | [] => exact (h.colsNil _).symm
-  | (w, body) :: rest => rw [colsRaw, colsRaw_sim h a _ rest, blocksRaw_sim h, h.colsCons]
+  | (w, body) :: rest => rw [colsRaw, colsRaw_fold_exact h a _ rest, blocksRaw_fold_exact h, h.colsCons]
 
 end
 
 mutual
 
-private theorem numberList_fold (hl : ∀ a i j l, F.leaf a i l = F.leaf a j l) (a : α) (k : Nat)
+private theorem numberList_fold_exact (hl : ∀ a i j l, F.leaf a i l = F.leaf a j l) (a : α) (k : Nat)
     (out : Array Node) (ns : List Node) :
     foldNodeList F a (numberList k out ns).1.toList = foldNodeList F (foldNodeList F a out.toList) ns := by
   match ns with
   | [] => rfl
   | n :: rest =>
-    rw [numberList, foldNodeList_cons_exact, numberList_fold hl a _ _ rest, foldNodeList_push,
-      numberOne_fold hl]
+    rw [numberList, foldNodeList_cons_exact, numberList_fold_exact hl a _ _ rest, foldNodeList_push,
+      numberOne_fold_exact hl]
 
-private theorem numberOne_fold (hl : ∀ a i j l, F.leaf a i l = F.leaf a j l) (a : α) (k : Nat) (n : Node) :
+private theorem numberOne_fold_exact (hl : ∀ a i j l, F.leaf a i l = F.leaf a j l) (a : α) (k : Nat)
+    (n : Node) :
     foldNode F a (numberOne k n).1 = foldNode F a n := by
   match n with
   | .leaf id l => exact hl a k id l
   | .node kind kids =>
     simp only [numberOne, foldNode_node]
-    exact congrArg (F.node _ _) (funext fun a' => numberList_fold hl a' k #[] kids.toList)
+    exact congrArg (F.node _ _) (funext fun a' => numberList_fold_exact hl a' k #[] kids.toList)
 
 end
 
 /-- The census `F` reads off a numbered block sequence, when `F` reads no leaf's id. -/
-private theorem ofBlocks_sim (h : Sim F G) (hl : ∀ a i j l, F.leaf a i l = F.leaf a j l) (a : α)
+private theorem ofBlocks_fold_exact (h : Sim F G) (hl : ∀ a i j l, F.leaf a i l = F.leaf a j l) (a : α)
     (bs : Array Block) : foldNodeList F a (ofBlocks bs).toList = G.blocks a bs.toList := by
   unfold ofBlocks number
-  rw [numberList_fold hl, blocksRaw_sim h]
+  rw [numberList_fold_exact hl, blocksRaw_fold_exact h]
   rfl
 
 end Simulation
@@ -900,28 +900,24 @@ private theorem altsSim : Sim altsFold altsCensus := by
 
 public theorem number_text (k : Nat) : Conserves leafText (number k) := by
   intro ns
-  exact numberList_fold (F := leafTextFold) (fun _ _ _ _ => rfl) "" k #[] ns.toList
+  exact numberList_fold_exact (F := leafTextFold) (fun _ _ _ _ => rfl) "" k #[] ns.toList
 
 public theorem structTree_text (bs : Array Block) : leafText (ofBlocks bs) = blocksText bs :=
-  ofBlocks_sim textSim (fun _ _ _ _ => rfl) "" bs
+  ofBlocks_fold_exact textSim (fun _ _ _ _ => rfl) "" bs
 
 public theorem ofDoc_text (doc : Doc) : (ofDoc doc).text = blocksText doc.body := by
   exact structTree_text doc.body
 
 public theorem structTree_headings_covers (bs : Array Block) :
     headings (ofBlocks bs) = headingLevels bs :=
-  ofBlocks_sim headingsSim (fun _ _ _ _ => rfl) #[] bs
+  ofBlocks_fold_exact headingsSim (fun _ _ _ _ => rfl) #[] bs
 
 public theorem structTree_alts_covers (bs : Array Block) : alts (ofBlocks bs) = irAlts bs :=
-  ofBlocks_sim altsSim (fun _ _ _ _ => rfl) #[] bs
+  ofBlocks_fold_exact altsSim (fun _ _ _ _ => rfl) #[] bs
 
 public theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
     leavesList out ns = out ++ leavesList #[] ns :=
   foldNodeList_acc leavesAppends out ns
-
-theorem leavesOne_acc (out : Array (Nat × Leaf)) (n : Node) :
-    leavesOne out n = out ++ leavesOne #[] n :=
-  foldNode_acc leavesAppends out n
 
 theorem numberList_acc (k : Nat) (out : Array Node) (ns : List Node) :
     (numberList k out ns).1 = out ++ (numberList k #[] ns).1
@@ -982,7 +978,7 @@ end
 public theorem structTree_leaves_id (bs : Array Block) :
     (leaves (ofBlocks bs)).toList.map Prod.fst = List.range (leaves (ofBlocks bs)).size := by
   unfold ofBlocks number
-  rw [leaves_eq_exact]
+  unfold leaves
   obtain ⟨h, _⟩ := numberList_id 0 (blocksRaw #[] bs.toList).toList
   rw [List.range_eq_range', h]
   congr 1
