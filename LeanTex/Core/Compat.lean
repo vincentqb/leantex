@@ -5647,12 +5647,7 @@ private def mentionsBody : List Raw → Bool
   | .math _ body _ :: rest => mentionsBody body.toList || mentionsBody rest
   | _ :: rest => mentionsBody rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
-     omega)
+decreasing_by raws_dec
 
 /-- The code before and after environ's `\BODY` placed once at a definition's
 top level; `none` otherwise. -/

@@ -19,6 +19,17 @@ public inductive Raw where
   | verb (env : String) (s : String) (pos : Pos)
   deriving Repr, BEq, Inhabited
 
+/-- Discharges a walk's termination goals: an array a constructor holds is smaller than it. -/
+macro "raws_dec" : tactic =>
+  `(tactic| (
+    all_goals simp_wf
+    all_goals try omega
+    all_goals
+      (have hb : ∀ {α : Type} [SizeOf α] (a : Array α), sizeOf a = 1 + sizeOf a.toList :=
+        fun _ => rfl
+       (try simp only [hb])
+       omega)))
+
 /-- The control name of a native heading for surface readers, unforgeable
 because it holds a space. -/
 public def headingControl : Ir.HeadingLevel → String

@@ -49,10 +49,7 @@ private def refsList (file : String) (out : Array (String × Span)) :
     refsList file (refsList innerFile out body.toList) rest
   | _ :: rest => refsList file out rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- Every `.bib` source the document's `\data` declarations name, first appearance first, with
 its declaration span. -/
@@ -75,10 +72,7 @@ private def hasDataList : List Raw → Bool
     hasDataList body.toList || hasDataList rest
   | _ :: rest => hasDataList rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- Does the document declare any `\data` at all? -/
 public def hasData (raws : Array Raw) : Bool :=
