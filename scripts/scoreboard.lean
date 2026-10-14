@@ -682,12 +682,10 @@ the base carries)"] },
      extra := [("testdata/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
      edit := fun d _ => IO.FS.removeDirAll (d / "testdata/scoreboard/zz-dir.tsv")
      exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] },
-   -- The binary under test runs only where the guard allows: a remote the run did not make stops it.
    { label := "the binary under test does not start beside a remote the run did not make"
      extra := []
      edit := fun d _ => discard <| harnessGit d #["remote", "add", "origin", "https://example.org/probe.git"]
      exit := 126, says := fun _ => [] },
-   -- A producer the harness starts reaches git with no network transport.
    { label := "a producer's git cannot use a network transport"
      extra := [(tsvPath "zz-nonet", "# encoding: raw\nalpha\t1\n"),
        (scriptPath "zz-nonet", nonetProducer)]

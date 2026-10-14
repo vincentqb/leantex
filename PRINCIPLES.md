@@ -105,7 +105,7 @@ row of n against 4n (`quadraticPrepend`, `scripts/bench.lean`, `scripts/doccost.
 
 An external or derived answer is cached whole (`envelope_replay_exact`), keyed by all it depends on:
 bytes, recipe, tool identity, font environment, the engine's own implementation (owed (U68)).
-Refusals are cached, an attempt with no evidence the tool ran is not (`record?_some_exact`,
+Refusals are cached, an attempt that reached no verdict is not (`record?_some_exact`,
 `inconclusive_retried_exact`), and a warm slot answers as the fresh attempt did
 (`refusal_replays_exact`, `replay_record_exact`, `versionStep_changed_exact`); a warm replay starts
 no tool (owed (U25)), and a run ships each resource once (owed (U03): `shipFaces_nodup`).

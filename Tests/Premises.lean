@@ -176,7 +176,7 @@ def registry : List Premise := [
     sites := [("LeanTex/Cli/World.lean", "version"), ("LeanTex/Cli/ToolProbe.lean", "identify")]
     owed := some "Start each tool the engine asks a version of by its bare name and by its resolved path, and require the same first line." },
   { name := "tool-exits", residue := .host "tools", reach := .render
-    statement := "No converter or picture tool the engine runs exits 126 or above for a verdict of its own, as pdftocairo documents, rsvg-convert shows and lualatex ends a refused document with 1, so ImageAssets.runChecked and PicCache.outcome read 126 and 127 as a run that never started and 128 and above as an attempt that reached no verdict, and remember neither."
+    statement := "No converter or picture tool the engine runs exits 126 or above for a verdict of its own, as pdftocairo documents, rsvg-convert shows and lualatex ends a refused document with 1, so ImageAssets.runChecked reads 126 and 127 as a run that never started and 128 and above as an attempt that reached no verdict, PicCache.outcome reads every exit of 126 or above as no verdict, and neither remembers one."
     transfers := [thm% ConvCache.record?_some_exact]
     sites := [("LeanTex/Cli/ImageAssets.lean", "runChecked"), ("LeanTex/Cli/PicCache.lean", "outcome")]
     owed := some "Run each converter and picture tool on malformed and missing input, and require every exit below 126." },

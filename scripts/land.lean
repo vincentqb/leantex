@@ -1914,7 +1914,7 @@ of them makes a run, takes the lock or writes the ledger"
 main={before}->{after}" }
 
 /-- The regular files a git index (versions 2 to 4, SHA-1 names) holds at stage 0, in order, each
-with whether it is executable; `none` for bytes that do not read as one. -/
+with whether it is executable; `none` for bytes that do not read as one, or a split index. -/
 def indexFiles (b : ByteArray) : Option (Array (String × Bool)) := Id.run do
   let byte (i : Nat) : Nat := (b[i]?.getD 0).toNat
   let u16 (i : Nat) : Nat := byte i * 256 + byte (i + 1)
@@ -1951,10 +1951,15 @@ def indexFiles (b : ByteArray) : Option (Array (String × Bool)) := Id.run do
     let suffix := b.extract p nul
     let path := if version != 4 then suffix else prev.extract 0 (prev.size - strip) ++ suffix
     let some name := String.fromUTF8? path | return none
+    if name.isEmpty then return none
     if (flags >>> 12) &&& 3 == 0 && mode &&& 0xF000 == 0x8000 then
       out := out.push (name, mode &&& 0o111 != 0)
     prev := path
     pos := if version == 4 then nul + 1 else pos + (nul - pos + 8) / 8 * 8
+  for _ in [0:b.size] do
+    if pos + 28 > b.size then break
+    if b.extract pos (pos + 4) == "link".toUTF8 then return none
+    pos := pos + 8 + u32 (pos + 4)
   return some out
 
 /-- The index of the checkout at `tree`, whose `.git` is a directory or names one. -/
@@ -1968,14 +1973,16 @@ def indexOf (tree : System.FilePath) : IO ByteArray := do
   IO.FS.readBinFile (dir / "index")
 
 /-- Copy the regular files the index of `src` stages into `dst`, keeping their executable bit; a
-path that is no longer a regular file is skipped. -/
+path that is no longer a regular file inside `src` is skipped. -/
 def copyTracked (src dst : System.FilePath) : IO (Except String Nat) := do
   let some files := indexFiles (← indexOf src) | return .error s!"the index of {src} does not read"
+  let root ← IO.FS.realPath src
   let mut n := 0
   for (path, exec) in files do
     let from_ := src / path
     let md? ← try some <$> from_.symlinkMetadata catch _ => pure none
     unless md?.any (·.type == .file) do continue
+    unless (← IO.FS.realPath from_) == root / path do continue
     let target := dst / path
     if let some parent := target.parent then IO.FS.createDirAll parent
     IO.FS.writeBinFile target (← IO.FS.readBinFile from_)
@@ -1985,23 +1992,43 @@ def copyTracked (src dst : System.FilePath) : IO (Except String Nat) := do
     n := n + 1
   return .ok n
 
-/-- `indexFiles` against git's own listing of an index it wrote, in versions 2 and 4: regular and
-executable files, a symlink, a nested and a non-ASCII name. -/
+/-- The regular files `git ls-files -s -z` lists at stage 0 in `repo`, each with whether it is
+executable. -/
+def gitStagedFiles (repo : String) : IO (Array (String × Bool)) := do
+  let o ← hgitRun #["ls-files", "-s", "-z"] repo
+  if o.exitCode != 0 then throw (IO.userError s!"fixture: git ls-files exited {o.exitCode}")
+  return ((o.stdout.splitOn "\x00").filterMap fun e =>
+    match e.splitOn "\t" with
+    | [head, path] =>
+      match wsSplit head with
+      | [mode, _, "0"] =>
+        if mode == "100644" then some (path, false) else if mode == "100755" then some (path, true)
+        else none
+      | _ => none
+    | _ => none).toArray
+
+/-- `indexFiles` against git's own listing of an index git wrote in versions 2, 3 and 4, over names
+sharing prefixes, one past 128 bytes, a non-ASCII and an executable one, a symlink, and an entry
+with extended flags. -/
 def indexReaderFailure (root : String) : IO (Option String) := do
   let repo := s!"{root}/narrative/index-oracle"
-  IO.FS.createDirAll s!"{repo}/sub/deeper"
+  let long := "sub/abc/" ++ String.ofList (List.replicate 130 'q') ++ ".txt"
+  IO.FS.createDirAll s!"{repo}/sub/abc"
   hgitOk #["init", "-q", "-b", "main", "."] repo
-  IO.FS.writeFile s!"{repo}/plain.txt" "plain\n"
+  for f in ["plain.txt", "sub/a.lean", "sub/ab.lean", "sub/abc/x.lean", long, "z-é.lean"] do
+    IO.FS.writeFile s!"{repo}/{f}" s!"{f}\n"
   writeExe s!"{repo}/run.sh" "#!/bin/sh\nexit 0\n"
-  IO.FS.writeFile s!"{repo}/sub/deeper/nested-é.lean" "def nested : Nat := 3\n"
   let _ ← hrun "ln" #["-s", "plain.txt", s!"{repo}/link.txt"] none
   hgitOk #["add", "-A"] repo
-  let want := #[("plain.txt", false), ("run.sh", true), ("sub/deeper/nested-é.lean", false)]
-  for v in ["2", "4"] do
+  let want ← gitStagedFiles repo
+  unless want.size == 7 && want.any (·.2) do
+    return some s!"git staged {repr want}"
+  for v in ["2", "3", "4"] do
+    if v == "3" then hgitOk #["update-index", "--skip-worktree", "sub/ab.lean"] repo
     hgitOk #["update-index", "--index-version", v] repo
     let got := indexFiles (← IO.FS.readBinFile s!"{repo}/.git/index")
     unless got == some want do
-      return some s!"index v{v} read as {repr got}, wanted {repr want}"
+      return some s!"index v{v} read as {repr got}, git lists {repr want}"
   return none
 
 /-- A branch whose commit adds a comment telling history, made without the hook, fails the shipped

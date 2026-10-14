@@ -7206,7 +7206,7 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a failing exit whose log says nothing usable names the code"
     (PicCache.outcome (.exited 1) false (.says "") == .refused "exit code 1")
   t "a failing exit that left no log at all is no answer about the request"
-    (PicCache.outcome (.exited 127) false .absent == .inconclusive "exit code 127")
+    (PicCache.outcome (.exited 3) false .absent == .inconclusive "exit code 3")
   t "a budget overrun is no answer about the request"
     (PicCache.outcome (.overran 120) false .absent ==
       .inconclusive "no result within 120 s; killed")

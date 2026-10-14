@@ -7,7 +7,6 @@ import scripts.LandCore
 
 open Land
 
-/-- Whitespace trim, spelled locally so the harness depends on nothing. -/
 def trimWs (s : String) : String :=
   let cs := s.toList.dropWhile (·.isWhitespace)
   String.ofList (cs.reverse.dropWhile (·.isWhitespace)).reverse
