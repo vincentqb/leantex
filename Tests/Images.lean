@@ -753,11 +753,8 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Image.probe jp2).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.jpx, 4, 3))
   t "probe sizes a raw J2K codestream from SIZ"
     ((Image.probe j2k).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.jpx, 8, 5))
-  t "plan refuses JPEG 2000 by name under every permission"
-    (refusedNaming jp2 "JPEG 2000" && refusedNaming j2k "JPEG 2000" &&
-     (match planOf jp2 { default with jpxPermitted := true } with
-      | .error e => e.startsWith "JPEG 2000"
-      | .ok _ => false))
+  t "plan refuses JPEG 2000 by name"
+    (refusedNaming jp2 "JPEG 2000" && refusedNaming j2k "JPEG 2000")
   t "a foreign signature is still the old refusal"
     (match Image.probe (bytes [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) with
      | .error e => hasStr e "unrecognised signature"
@@ -788,35 +785,47 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match planOf rgbaPng { default with softMaskPermitted := false } with
      | .error e => hasStr e "soft mask"
      | .ok _ => false)
+  let png16 := mkPng (chunk "IHDR" (ihdr 2 2 16 0 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" [])
   t "a depth over the declared limit refuses the pass-through"
-    (match planOf (mkPng (chunk "IHDR" (ihdr 2 2 16 0 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" []))
-        { default with maxBpc := 8 } with
+    (match planOf png16 { default with maxBpc := 8 } with
      | .error e => hasStr e "16 bits"
      | .ok _ => false)
-  t "the default limit passes 16-bit samples through"
-    ((planOf (mkPng (chunk "IHDR" (ihdr 2 2 16 0 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" []))).isOk)
+  t "the default limit passes 16-bit samples through" ((planOf png16).isOk)
   let params : List Image.PlanParams := Id.run do
     let mut out : List Image.PlanParams := []
-    for j in [false, true] do
-      for sm in [false, true] do
-        for bpc in [8, 16, 4294967295] do
-          for pol in [Image.IccPolicy.dropWithDiag, .carry] do
-            out := { jpxPermitted := j, softMaskPermitted := sm, maxBpc := bpc, iccPolicy := pol } :: out
+    for sm in [false, true] do
+      for bpc in [8, 16, 4294967295] do
+        for pol in [Image.IccPolicy.dropWithDiag, .carry] do
+          out := { softMaskPermitted := sm, maxBpc := bpc, iccPolicy := pol } :: out
     return out
-  t "params serialize injectively over the product (24 records)"
-    (params.length == 24 && params.all fun a => params.all fun b =>
+  t "params serialize injectively over the product (12 records)"
+    (params.length == 12 && params.all fun a => params.all fun b =>
       (a.serialize == b.serialize) == (a == b))
-  t "params serialize fixed-width" (params.all fun p => p.serialize.size == 7)
-  t "two policies key two cache paths"
-    (default.key != ({ default with iccPolicy := .carry } : Image.PlanParams).key &&
-     default.key.length == 14)
+  t "params serialize fixed-width" (params.all fun p => p.serialize.size == 6)
+  let samePlan (x y : Image.Plan) : Bool :=
+    x.pxW == y.pxW && x.pxH == y.pxH && x.dpiX == y.dpiX && x.dpiY == y.dpiY &&
+      x.bitDepth == y.bitDepth && x.color == y.color && x.filter == y.filter && x.data == y.data &&
+      x.alpha == y.alpha && x.recoded == y.recoded && x.losses == y.losses &&
+      x.orientation == y.orientation && x.form.isNone == y.form.isNone
+  let differs (a b : Except String Image.Plan) : Bool :=
+    match a, b with
+    | .ok x, .ok y => !samePlan x y
+    | .error e, .error f => e != f
+    | _, _ => true
+  -- Each row reads its own field alone, so a field with no row is an unused binder.
+  let flips : Image.PlanParams → List (String × Image.PlanParams × ByteArray)
+    | p@⟨sm, bpc, pol⟩ =>
+      [("softMaskPermitted", { p with softMaskPermitted := !sm }, rgbaPng),
+       ("maxBpc", { p with maxBpc := if bpc == 8 then 16 else 8 }, png16),
+       ("iccPolicy", { p with iccPolicy := if pol == .carry then .dropWithDiag else .carry },
+        pngIccp)]
+  for (field, q, src) in flips default do
+    t s!"the plan parameter {field} decides a plan the key distinguishes"
+      (differs (planOf src default) (planOf src q) && default.key != q.key)
+  t "the key spells the six serialized bytes" (default.key.length == 12)
   let rt (pl : Image.Plan) : Bool :=
     match Image.decodeBin (Image.encodeBin pl) with
-    | some back => back.pxW == pl.pxW && back.pxH == pl.pxH && back.dpiX == pl.dpiX &&
-        back.dpiY == pl.dpiY && back.bitDepth == pl.bitDepth && back.color == pl.color &&
-        back.filter == pl.filter && back.data == pl.data && back.alpha == pl.alpha &&
-        back.recoded == pl.recoded && back.losses == pl.losses &&
-        back.orientation == pl.orientation && back.form.isNone
+    | some back => samePlan back pl && back.form.isNone
     | none => false
   let base : Image.Plan :=
     { pxW := 3, pxH := 2, dpiX := 150, dpiY := 96, bitDepth := 4, data := bytes [9, 8, 7],

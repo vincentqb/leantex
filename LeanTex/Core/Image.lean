@@ -1121,9 +1121,6 @@ public inductive IccPolicy where
   deriving Repr, DecidableEq, Inhabited
 
 public structure PlanParams where
-  /-- Whether a JPEG 2000 codestream may pass through as `/JPXDecode`; the planner refuses one
-  under either value, and only the serialized key carries it. -/
-  jpxPermitted : Bool := false
   /-- Whether a plan may carry a soft mask; when not, the alpha arm refuses rather than flattening. -/
   softMaskPermitted : Bool := true
   /-- The deepest sample a pass-through may declare; deeper refuses. -/
@@ -1133,9 +1130,9 @@ public structure PlanParams where
 
 public def PlanParams.default : PlanParams := {}
 
-/-- Fixed-width bytes: two flags, `maxBpc` as u32, the policy tag. -/
+/-- Fixed-width bytes: the soft-mask flag, `maxBpc` as u32, the policy tag. -/
 public def PlanParams.serialize (p : PlanParams) : ByteArray :=
-  ⟨#[cond p.jpxPermitted 1 0, cond p.softMaskPermitted 1 0,
+  ⟨#[cond p.softMaskPermitted 1 0,
      UInt8.ofNat (p.maxBpc / 16777216 % 256), UInt8.ofNat (p.maxBpc / 65536 % 256),
      UInt8.ofNat (p.maxBpc / 256 % 256), UInt8.ofNat (p.maxBpc % 256),
      match p.iccPolicy with | .dropWithDiag => 0 | .carry => 1]⟩
@@ -1148,22 +1145,22 @@ private theorem ofNat_inj_of_lt (x y : Nat) (hx : x < 256) (hy : y < 256)
 public theorem planParams_serialize_inj (a b : PlanParams)
     (ha : a.maxBpc < 4294967296) (hb : b.maxBpc < 4294967296)
     (h : a.serialize = b.serialize) : a = b := by
-  obtain ⟨aj, as_, am, ai⟩ := a
-  obtain ⟨bj, bs, bm, bi⟩ := b
+  obtain ⟨as_, am, ai⟩ := a
+  obtain ⟨bs, bm, bi⟩ := b
   simp only at ha hb
   have hm : am = bm := by
     unfold PlanParams.serialize at h
     simp only [ByteArray.mk.injEq] at h
     have h := List.toArray_inj h
     simp only [List.cons.injEq, and_true] at h
-    obtain ⟨-, -, h3, h4, h5, h6, -⟩ := h
+    obtain ⟨-, h1, h2, h3, h4, -⟩ := h
+    have e1 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h1
+    have e2 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h2
     have e3 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h3
     have e4 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h4
-    have e5 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h5
-    have e6 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h6
     omega
   subst hm
-  cases aj <;> cases bj <;> cases as_ <;> cases bs <;> cases ai <;> cases bi <;>
+  cases as_ <;> cases bs <;> cases ai <;> cases bi <;>
     simp_all [PlanParams.serialize]
 
 /-- The cache-key segment: the serialization in hex. -/
@@ -1180,7 +1177,8 @@ private def unembeddableMsg (f : Format) : String :=
 re-export as PNG or JPEG"
 
 private def jpxRefusedMsg : String :=
-  Format.jpx.name ++ " images are not passed through yet; re-export as PNG or JPEG"
+  Format.jpx.name ++ " images are not embedded, since most web browsers cannot show them; \
+re-export as PNG or JPEG"
 
 private def iccDropped (p : PlanParams) (s : Source) (space : Space) : Bool :=
   s.icc.size != 0 && (p.iccPolicy matches .dropWithDiag || space matches .indexed)
