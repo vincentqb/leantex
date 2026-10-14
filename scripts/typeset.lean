@@ -287,7 +287,7 @@ def segText : Layout.Seg → String
   | .decoratedGap w word _ => s!"gap({w.toPtString}{if word then ", word" else ""}, decorated)"
   | .decoration _ w _ _ _ => s!"decoration({w.toPtString})"
   | .rule w t _ _ => s!"rule({w.toPtString} × {t.toPtString})"
-  | .image _ w h => s!"image({w.toPtString} × {h.toPtString})"
+  | .image _ w h _ => s!"image({w.toPtString} × {h.toPtString})"
   | .poly pts _ => s!"poly({pts.size} points)"
 
 /-- Build one fixture by its item name. -/

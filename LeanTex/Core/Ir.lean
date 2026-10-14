@@ -2528,8 +2528,8 @@ public inductive Inline where
   /-- TeX's italic correction, `\/`; `maybe` is ltfntcmd's `\maybe@ic`, made
   only where the face in force is upright. -/
   | italicCorr (maybe : Bool)
-  /-- Overlay content crisp exactly on the selector's steps (`\uncover<2>`,
-  `<2->`, `<2-3>`, `<1,4>`), dimmed elsewhere, never hidden. -/
+  /-- Overlay content crisp exactly on the selector's steps (`\uncover<2>`, `<2->`, `<2-3>`,
+  `<1,4>`), elsewhere dimmed, or invisible in its place where `spec.invisible`. -/
   | onSteps (spec : OverlaySpec) (body : Array Inline)
   /-- Overlay alternation (`\alt<2>{a}{b}`): exactly one of the two groups is
   inked per step page, stored in page order. -/
@@ -10655,13 +10655,6 @@ public def Design.cover (d : Design) : Cover :=
   let of := Oklab.cover d.coveredFraction d.bg
   { plain := d.covered.getD (of d.fg), of := of }
 
-/-- The paint of invisible overlay content, its CMYK rider outside every document's range: layout
-places it and ships none of it (`Layout.dropInvisible`). -/
-public def Color.invisible : Color := { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
-
-/-- The cover of invisible overlay content: every colour the invisible paint. -/
-public def Cover.invisible : Cover := { plain := Color.invisible, of := fun _ => Color.invisible }
-
 /-- One component of a numbered overlay: a number, a closed range or an open range. -/
 private def overlayInterval (w : String) : Option (Nat × Option Nat) := do
   match w.trimAscii.toString.splitOn "-" with
@@ -10899,10 +10892,10 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
+  -- Invisible content brings no cover of its own: layout keeps its place and ships none of it.
   | .onSteps spec body =>
-    if spec.invisible && spec.pending k then
-      .onSteps spec (dimBlockList Cover.invisible k true #[] body.toList)
-    else .onSteps spec (dimBlockList cover k (pending || spec.pending k) #[] body.toList)
+    .onSteps spec (dimBlockList cover k (pending || (!spec.invisible && spec.pending k)) #[]
+      body.toList)
   | .altSteps spec firstPage otherPage =>
     .altSteps spec (dimBlockList cover k pending #[] firstPage.toList)
       (dimBlockList cover k pending #[] otherPage.toList)
@@ -11003,10 +10996,7 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .decorated kind body => .decorated (kind.dimmed cover pending) (dimInlineList cover k pending #[] body.toList)
   -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
-    if spec.invisible && spec.pending k then
-      .onSteps spec #[.colored Cover.invisible.plain none
-        (dimInlineList Cover.invisible k true #[] body.toList)]
-    else if !pending && spec.pending k then
+    if !spec.invisible && !pending && spec.pending k then
       .onSteps spec #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
     else .onSteps spec (dimInlineList cover k pending #[] body.toList)
   | .altSteps spec firstPage otherPage =>
@@ -12022,14 +12012,11 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .onSteps spec body =>
     rw [dimInline]
-    by_cases hv : (spec.invisible && spec.pending k) = true
-    · simp [hv, plainTextOne, plainTextList,
-        dimInlineList_text Cover.invisible k true body.toList #[]]
-    · by_cases h : (!pending && spec.pending k) = true
-      · simp [hv, h, plainTextOne, plainTextList,
-          dimInlineList_text cover k true body.toList #[]]
-      · simp [hv, h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
-          plainTextList]
+    by_cases h : (!spec.invisible && !pending && spec.pending k) = true
+    · simp [h, plainTextOne, plainTextList,
+        dimInlineList_text cover k true body.toList #[]]
+    · simp [h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
+        plainTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending firstPage.toList #[],
@@ -12180,12 +12167,9 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
     simp [blockTextOne, dimColumns_text cover k pending cols.toList #[] acc, blockTextColumns]
   | .onSteps spec body =>
     rw [dimBlock]
-    by_cases hv : (spec.invisible && spec.pending k) = true
-    · simp [hv, blockTextOne, dimBlockList_text Cover.invisible k true body.toList #[] acc,
-        blockTextList]
-    · simp [hv, blockTextOne,
-        dimBlockList_text cover k (pending || spec.pending k) body.toList #[] acc,
-        blockTextList]
+    simp [blockTextOne,
+      dimBlockList_text cover k (pending || (!spec.invisible && spec.pending k)) body.toList #[]
+        acc, blockTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending firstPage.toList #[],

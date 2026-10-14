@@ -436,83 +436,186 @@ end Tests
 
 namespace Tests
 
-/-- A segment's width where it inks: a run, an image, a rule, a decoration or a decorated gap. -/
-private def inkWidth? : Layout.Seg → Option Dim.Sp
-  | .run _ _ _ w .. => some w
-  | .image _ w _ => some w
-  | .rule w .. => some w
-  | .decoration _ w .. => some w
-  | .decoratedGap w .. => some w
-  | .gap .. | .poly .. => none
+/-- Where the argument a hidden step drops stands on the page that shows it. -/
+private inductive ArgRegion where
+  /-- The lines strictly between the line holding `above` and the line holding `below`, and the
+  fills, pictures and links between their baselines. -/
+  | lines (above below : String)
+  /-- The segments at the baseline of the line holding both, between the end of the run holding
+  `before` and the start of the run holding `after`. -/
+  | segs (before after : String)
+  | images
 
-/-- Does `page` stand every line of `covered`, each segment the same, or where `covered` inks a
-gap as wide, and its polygons none? -/
-private def standsInkless (page covered : Layout.PageOut) : Bool :=
-  page.lines.size == covered.lines.size &&
-    (page.lines.zip covered.lines).all fun (a, c) =>
-      let segs := c.segs.filter fun s => !(s matches .poly ..)
-      (a.x, a.y, a.size, a.setWidth) == (c.x, c.y, c.size, c.setWidth) &&
-        a.segs.size == segs.size &&
-        (a.segs.zip segs).all fun (x, y) =>
-          segMark x == segMark y || (match x, inkWidth? y with
-            | .gap w _, some wy => w == wy
-            | _, _ => false)
+private def segText (s : Layout.Seg) : String := String.ofList s.glyphChars
 
-/-- Off its steps `\visible`'s argument is invisible and keeps its space: every such step's page
-is the page `\uncover` ships there with the argument's ink gone, a gap as wide in its place, and
-every other step's the same page; `\onslide+` is `\visible`. -/
-def overlayVisibleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+private def lineIdxOf (p : Layout.PageOut) (w : String) : Option Nat :=
+  p.lines.findIdx? fun l => hasStr (lineText l) w
+
+/-- Each segment's pen x on its line. -/
+private def segPens (l : Layout.LineOut) : Array Dim.Sp :=
+  (l.segs.foldl (fun (acc : Array Dim.Sp × Dim.Sp) sg => (acc.1.push acc.2, acc.2 + sg.advance))
+    (#[], l.x)).1
+
+/-- Per line, which of the page's segments stand in the argument's region. -/
+private def regionMask (p : Layout.PageOut) : ArgRegion → Array (Array Bool)
+  | .lines above below =>
+    match lineIdxOf p above, lineIdxOf p below with
+    | some a, some b => p.lines.mapIdx fun i l => l.segs.map fun _ => a < i && i < b
+    | _, _ => p.lines.map fun l => l.segs.map fun _ => false
+  | .segs before after =>
+    let span? := p.lines.findSome? fun l =>
+      match l.segs.findIdx? (fun sg => hasStr (segText sg) before),
+          l.segs.findIdx? (fun sg => hasStr (segText sg) after) with
+      | some a, some b =>
+        let pens := segPens l
+        some (l.y, pens.getD a 0 + (l.segs.getD a default).advance, pens.getD b 0)
+      | _, _ => none
+    p.lines.map fun l => match span? with
+      | some (y, x0, x1) =>
+        if l.y != y then l.segs.map fun _ => false
+        else (segPens l).zipWith (fun x sg => x0 ≤ x && x + sg.advance ≤ x1) l.segs
+      | none => l.segs.map fun _ => false
+  | .images => p.lines.map fun l => l.segs.map fun s => s matches .image ..
+
+/-- The baselines a `.lines` region stands between. -/
+private def regionBand (p : Layout.PageOut) : ArgRegion → Option (Dim.Sp × Dim.Sp)
+  | .lines above below => do
+    let a ← p.lines[← lineIdxOf p above]?
+    let b ← p.lines[← lineIdxOf p below]?
+    pure (a.y, b.y)
+  | .segs .. | .images => none
+
+private def fillIn (band : Option (Dim.Sp × Dim.Sp)) (f : Layout.Fill) : Bool :=
+  band.any fun (top, bot) => top ≤ f.y && f.y + f.h ≤ bot
+
+private def inkIn (band : Option (Dim.Sp × Dim.Sp)) (k : Layout.InkOut) : Bool :=
+  band.any fun (top, bot) =>
+    top ≤ k.place.dy && k.place.dy ≤ bot && k.claims.all fun b => top ≤ b.1.2 && b.2.2 ≤ bot
+
+private def linkIn (band : Option (Dim.Sp × Dim.Sp)) (r : Layout.LinkRect) : Bool :=
+  band.any fun (top, bot) => top ≤ r.y && r.y + r.h ≤ bot
+
+private def segInks : Layout.Seg → Bool
+  | .gap .. => false
+  | .decoratedGap _ _ d => d.underline.isSome || d.lineThrough.isSome
+  | .run .. | .decoration .. | .rule .. | .image .. | .poly .. => true
+
+private def lineGeom (l : Layout.LineOut) : String :=
+  reprStr (l.x, l.y, l.size, l.setWidth, l.hang, l.expand, l.furniture, l.note, l.regionExtent,
+    l.lastBase)
+
+private def inkMark (k : Layout.InkOut) : String := reprStr (k.fig, k.place)
+
+/-- Does the hidden step's line stand where the shown one does, segment by segment as wide, the
+region's ink a gap and its polygons gone, and everything else as the shown line inks it? -/
+private def lineHides (h s : Layout.LineOut) (mask : Array Bool) : Bool :=
+  let kept := (s.segs.zip mask).filter fun (sg, inR) => !(inR && sg matches .poly ..)
+  lineGeom h == lineGeom s && h.segs.size == kept.size &&
+    (h.segs.zip kept).all fun (hs, ss, inR) =>
+      if inR && segInks ss then (match hs with | .gap w _ => w == ss.advance | _ => false)
+      else segMark hs == segMark ss
+
+/-- The region the shown page inks, so a check over it is not vacuous. -/
+private def regionInks (s : Layout.PageOut) (r : ArgRegion) : Bool :=
+  let band := regionBand s r
+  ((s.lines.zip (regionMask s r)).any fun (l, m) =>
+      (l.segs.zip m).any fun (sg, inR) => inR && segInks sg) ||
+    s.fills.any (fillIn band) || s.inks.any (inkIn band)
+
+/-- Off its steps `\visible`'s argument keeps its place and ships no ink, the page showing it held
+to its every line, segment, fill and picture outside the argument; `\onslide+` is `\visible`. -/
+def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let fonts ← mathSetOf fonts
-  -- label, body with `\CMD` for the command, the argument's words, the words beside it, the
-  -- frame's steps and the steps where the argument is hidden
-  let cases : List (String × String × List String × List String × Nat × List Nat) :=
-    [("inline", "Lead words \\CMD<2>{Hidden phrase} tail words.", ["Hidden", "phrase"],
-       ["Lead", "tail"], 2, [1]),
-     ("a paragraph", "Top line.\n\n\\CMD<2>{Middle phrase.}\n\nBottom line.",
-       ["Middle", "phrase"], ["Top", "Bottom"], 2, [1]),
-     ("a list", "\\CMD<2>{\\begin{itemize}\\item Hidden one\\item Hidden two\\end{itemize}}\n\n" ++
-       "After the list.", ["Hidden", "one", "two", "•"], ["After", "list"], 2, [1]),
-     ("a formula", "Lead words \\CMD<2>{$q^2$} tail words.", ["𝑞"], ["Lead", "tail"], 2, [1]),
-     ("a display", "Lead words.\n\\CMD<2>{\\[ q + 2 \\]}\nTail words.", ["𝑞", "+"],
-       ["Lead", "Tail"], 2, [1]),
-     ("a colour", "Lead words \\CMD<2>{\\textcolor{red}{Red phrase}} tail words.", ["Red", "phrase"],
-       ["Lead", "tail"], 2, [1]),
-     ("a link", "Lead words \\CMD<2>{\\href{https://example.org}{Link phrase}} tail words.",
-       ["Link", "phrase"], ["Lead", "tail"], 2, [1]),
-     ("an image", "Lead words \\CMD<2>{\\includegraphics[width=1cm]{absent.png}} tail words.", [],
-       ["Lead", "tail"], 2, [1]),
-     ("an open selector", "Lead words \\CMD<2->{Hidden phrase} tail \\uncover<3>{words.}",
-       ["Hidden", "phrase"], ["Lead", "tail"], 3, [1]),
-     ("inside a cover", "\\uncover<3>{Outer \\CMD<2>{Hidden} words}", ["Hidden"], ["Outer", "words"],
-       3, [1, 3]),
-     ("the rest of its group", "Lead words {\\CMD<2> Hidden phrase} tail words.",
-       ["Hidden", "phrase"], ["Lead", "tail"], 2, [1])]
-  for (label, body, absent, present, steps, hiddenAt) in cases do
-    let label := "visible, " ++ label
+  let some serif ← serifFacesSet | t "visible: the serif faces load" false
+  let faceSets := [("", ← mathSetOf oneFace), (" in a kerned serif", serif)]
+  let above := "Above words."
+  let below := "Below words."
+  let own (arg : String) : String × String :=
+    (above ++ "\n\n\\CMD<2>{" ++ arg ++ "}\n\n" ++ below, above ++ "\n\n" ++ arg ++ "\n\n" ++ below)
+  let inl (arg : String) : String × String :=
+    ("Lead \\CMD<2>{" ++ arg ++ "} tail words.", "Lead " ++ arg ++ " tail words.")
+  let lines := ArgRegion.lines "Above" "Below"
+  let segs := ArgRegion.segs "Lead" "tail"
+  -- label, body spelling the command `\CMD`, the body with the argument bare, the argument's
+  -- region, the frame's steps and the steps it hides on
+  let cases : List (String × (String × String) × ArgRegion × Nat × List Nat) :=
+    [("a paragraph", own "Middle phrase.", lines, 2, [1]),
+     ("an image alone", own "\\includegraphics[width=2cm]{absent.png}", lines, 2, [1]),
+     ("a list", own "\\begin{itemize}\\item Bullet one\\item Bullet two\\end{itemize}", lines, 2, [1]),
+     ("a description", own "\\begin{description}\\item[Term] Defining words.\\end{description}",
+       lines, 2, [1]),
+     ("a ruled table", own "\\begin{tabular}{|l|r|}\\hline Cell a & Cell b\\\\\\hline\\end{tabular}",
+       lines, 2, [1]),
+     ("a booktabs table",
+       own "\\begin{tabular}{ll}\\toprule Head & Head\\\\\\midrule Cell & Cell\\\\\\bottomrule\\end{tabular}",
+       lines, 2, [1]),
+     ("a numbered equation", own "\\begin{equation} q + r = s \\end{equation}", lines, 2, [1]),
+     ("a figure", own
+       "\\begin{figure}\\includegraphics[width=2cm]{absent.png}\\caption{Caption words.}\\end{figure}",
+       lines, 2, [1]),
+     ("a listing", own "\\begin{lstlisting}[language=Python]\ndef f(q):\n    return \"s\"\n\\end{lstlisting}",
+       lines, 2, [1]),
+     ("a bibliography",
+       own "\\begin{thebibliography}{9}\\bibitem{k} Some Writer. \\emph{Some Title}.\\end{thebibliography}",
+       lines, 2, [1]),
+     ("a shaded picture", own ("\\begin{tikzpicture}\\shade[left color=blue,right color=green] " ++
+       "(0,0) rectangle (2,1);\\fill[red] (3,0.5) circle (0.5);\\end{tikzpicture}"), lines, 2, [1]),
+     ("a block", own "\\begin{block}{Block title}Block words.\\end{block}", lines, 2, [1]),
+     ("a theorem", own "\\begin{theorem}Theorem words.\\end{theorem}", lines, 2, [1]),
+     ("an image in a node", own
+       "\\begin{tikzpicture}\\node {\\includegraphics[width=1cm]{absent.png}};\\end{tikzpicture}",
+       lines, 2, [1]),
+     ("a block link", own "\\href{https://example.org}{Para one.\n\nPara two.}", lines, 2, [1]),
+     ("inline text", inl "Hidden phrase", segs, 2, [1]),
+     ("colour boundaries", inl "AV\\textcolor{red}{AV}\\textcolor{blue}{AVAV}AV", segs, 2, [1]),
+     ("ligatures across colours", inl "f\\textcolor{red}{i}f\\textcolor{red}{f}\\textcolor{blue}{l}",
+       segs, 2, [1]),
+     ("a formula", inl "$\\sqrt{q^2} + \\frac{a}{b}$", segs, 2, [1]),
+     ("an inline image", inl "\\includegraphics[height=1ex]{absent.png}", segs, 2, [1]),
+     ("a rule", inl "\\rule{1em}{1ex}", segs, 2, [1]),
+     ("a link", inl "\\href{https://example.org}{Link phrase}", segs, 2, [1]),
+     ("an underline", inl "\\underline{Under phrase}", segs, 2, [1]),
+     ("normal type", inl "\\textnormal{Plain phrase} and {\\normalfont plain words}", segs, 2, [1]),
+     ("a footnote mark", inl "Noted\\footnote{Note words.}", segs, 2, [1]),
+     ("an open selector", ("Lead \\CMD<2->{Hidden phrase} tail \\uncover<3>{words.}",
+       "Lead Hidden phrase tail \\uncover<3>{words.}"), segs, 3, [1]),
+     ("inside a cover", ("\\uncover<3>{Lead \\CMD<2>{Hidden} tail words.}",
+       "\\uncover<3>{Lead Hidden tail words.}"), segs, 3, [1, 3])]
+  for (faces, fonts) in faceSets do
+  for (label, (body, bare), region, steps, hiddenAt) in cases do
+    let label := "visible, " ++ label ++ faces
     let spell (cmd : String) : String :=
       deck169Frame (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
-    let vdoc := (elabStr (spell "visible")).1
-    let vout := layoutOf fonts vdoc
-    let uout := layoutOf fonts (elabStr (spell "uncover")).1
-    let pout := layoutOf fonts (elabStr (spell "onslide+")).1
-    let census := censusOf (coveredColorsOf vdoc) vout
-    t (label ++ ": one page per step") (vout.pages.size == steps && uout.pages.size == steps)
-    t (label ++ ": onslide+ is visible") (pout.pages.map pageMarks == vout.pages.map pageMarks)
-    for k in [1:steps + 1] do
-      match vout.pages[k - 1]?, uout.pages[k - 1]? with
-      | some v, some u =>
+    let vis := (fittedOf fonts (elabStr (spell "visible")).1).out
+    let plus := (fittedOf fonts (elabStr (spell "onslide+")).1).out
+    let shown := (fittedOf fonts (elabStr (deck169Frame bare)).1).out
+    t (label ++ ": one page per step") (vis.pages.size == steps)
+    t (label ++ ": onslide+ ships visible's pages")
+      (plus.pages.map pageMarks == vis.pages.map pageMarks &&
+        plus.pages.map (·.links) == vis.pages.map (·.links))
+    for k in [1:vis.pages.size + 1] do
+      let idx := if shown.pages.size == vis.pages.size then k - 1 else 0
+      match vis.pages[k - 1]?, shown.pages[idx]? with
+      | some h, some s =>
         if hiddenAt.contains k then
-          t (label ++ s!": step {k} stands uncover's page, ink a gap as wide")
-            (standsInkless v u)
-          t (label ++ s!": step {k} ships none of the argument and all beside it")
-            ((census[k - 1]?).any fun page =>
-              absent.all (fun w => !hasStr page.text w && !hasStr page.covered w) &&
-                present.all (fun w => hasStr page.text w || hasStr page.covered w))
-          t (label ++ s!": step {k} ships no image")
-            (v.lines.all fun l => l.segs.all fun s => !(s matches .image ..))
+          let band := regionBand s region
+          let mask := regionMask s region
+          t (label ++ s!": step {k}'s argument inks the page showing it") (regionInks s region)
+          t (label ++ s!": step {k} stands every line where the page showing the argument does, " ++
+              "the argument's ink a gap as wide")
+            (h.lines.size == s.lines.size &&
+              (h.lines.zip s.lines).zipIdx.all fun ((hl, sl), i) =>
+                lineHides hl sl (mask[i]?.getD #[]))
+          t (label ++ s!": step {k} ships that page's fills outside the argument and none inside")
+            (h.fills.map reprStr == (s.fills.filter (!fillIn band ·)).map reprStr)
+          t (label ++ s!": step {k} ships that page's pictures outside the argument and none inside")
+            (h.inks.map inkMark == (s.inks.filter (!inkIn band ·)).map inkMark)
+          t (label ++ s!": step {k} ships that page's links outside the argument and none inside")
+            (h.links == s.links.filter (!linkIn band ·))
         else
-          t (label ++ s!": step {k} is uncover's page") (pageMarks v == pageMarks u)
+          t (label ++ s!": step {k} is the page showing the argument")
+            (pageMarks h == pageMarks s && h.inks.map inkMark == s.inks.map inkMark &&
+              h.links == s.links)
       | _, _ => t (label ++ s!": step {k} ships") false
 
 end Tests

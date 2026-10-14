@@ -87,3 +87,33 @@ def fontSizeAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "{\\fontsize{\\wd\\strutbox}{14pt}\\selectfont Alpha}")
   t "register fontsize arithmetic is refused by name"
     (register.any fun d => d.code == "E0331" && hasStr d.message "register")
+
+/-- The face index, size, colour, link and underline of the shipped run whose glyphs spell `w`. -/
+private def runLook (out : Layout.Out) (w : String) :
+    Option (Nat × Dim.Sp × Ir.Color × Option String × Bool) :=
+  (bodyLines out).findSome? fun l => l.segs.findSome? fun s => match s with
+    | .run idx c link _ gs size _ d _ _ _ =>
+      if String.ofList (gs.toList.map (·.2.1)) == w then some (idx, size, c, link, d.underline)
+      else none
+    | _ => none
+
+/-- `\normalfont` resets family, series and shape and keeps the size, colour, link and underline in
+force, as lualatex sets `\textnormal` under `\small`, `\textbf`, `\textcolor` and `\textit`. -/
+def normalFontChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet | t "normal font: the serif faces load" false
+  let out := layoutOf fonts (elabStr (dvDoc "\\usepackage{xcolor}\n"
+    ("{\\small Aa \\textnormal{Bb}} \\textbf{Cc \\textnormal{Dd}} " ++
+      "\\textcolor{red}{Ee \\textnormal{Ff}} \\textit{Gg {\\normalfont Hh}} " ++
+      "\\href{https://example.org}{Ii \\textnormal{Jj}} \\underline{Kk \\textnormal{Ll}}"))).1
+  let look := runLook out
+  let same (a b : String) (f : Nat × Dim.Sp × Ir.Color × Option String × Bool → String) : Bool :=
+    match look a, look b with
+    | some x, some y => f x == f y
+    | _, _ => false
+  t "normal font keeps the size in force" (same "Aa" "Bb" fun (_, sz, _) => reprStr sz)
+  t "normal font sets the series medium" ((look "Dd").map (·.1) == some 0 && (look "Cc").map (·.1) == some 1)
+  t "normal font keeps the colour in force" (same "Ee" "Ff" fun (_, _, c, _) => reprStr c)
+  t "normal font sets the shape upright" ((look "Hh").map (·.1) == some 0 && (look "Gg").map (·.1) == some 2)
+  t "normal font keeps the link in force" (same "Ii" "Jj" fun (_, _, _, l, _) => reprStr l)
+  t "normal font keeps the underline in force" (same "Kk" "Ll" fun (_, _, _, _, u) => toString u)

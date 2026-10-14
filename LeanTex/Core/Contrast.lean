@@ -125,7 +125,7 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }
   | .medium => { cx with bold := false }
   | .series w => { cx with bold := w.isBold }
-  | .normal => { cx with size := cx.base, bold := false }
+  | .normal => { cx with bold := false }
   | .size n => match sizeScale.lookup n with
     | some k => { cx with size := cx.base * k / 1000 }
     | none => cx

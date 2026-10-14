@@ -884,6 +884,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   hspaceAffineChecks ref oneFace
   inlineRuleChecks ref oneFace
   fontSizeAffineChecks ref oneFace
+  normalFontChecks ref
   linkColorChecks ref oneFace
 
 /-- The world premises' blocks: the runtime's process boundary, the toolchain's spawners, and the

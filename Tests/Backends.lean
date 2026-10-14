@@ -1910,7 +1910,7 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     for p in out.pages do
       for l in p.lines do
         for s in l.segs do
-          if let .image idx w h := s then acc := acc.push (idx, w, h)
+          if let .image idx w h _ := s then acc := acc.push (idx, w, h)
     return acc
   t "pdf figure places at the declared width"
     (match inf?, segs with
@@ -2636,9 +2636,9 @@ def contentOpsTextPage : Layout.PageOut := {
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(53, 'd')] (Dim.pt 12) (Dim.pt (-3)) ] },
     { x := Dim.pt 10, y := Dim.pt 80, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
         .rule (Dim.pt 40) (Dim.pt 1) (Dim.pt 2) contentOpsRed,
-        .image (some 0) (Dim.pt 20) (Dim.pt 15),
-        .image (some 1) (Dim.pt 20) (Dim.pt 15),
-        .image none (Dim.pt 10) (Dim.pt 5),
+        .image (some 0) (Dim.pt 20) (Dim.pt 15) true,
+        .image (some 1) (Dim.pt 20) (Dim.pt 15) true,
+        .image none (Dim.pt 10) (Dim.pt 5) true,
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(54, 'e')],
         .rule (Dim.pt 10) (Dim.pt 2) 0 Ir.Color.black ] } ],
   fills := #[{ x := 0, y := 0, w := Dim.pt 200, h := Dim.pt 100, color := contentOpsGrey },
@@ -2990,7 +2990,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
 def featurePlacingPages : Array Layout.PageOut :=
   #[{ lines := #[
     { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 10, setWidth := Dim.pt 100,
-      segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15)] }] }]
+      segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15) true] }] }]
 
 /-- The typed feature census: the registry is closed and one-to-one, each row is decided by its
 shape, and over the corpus the unemitted features stay unreached and the bookkeeping ones are always
@@ -3128,7 +3128,7 @@ def artifactFurnitureExpected : String :=
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-    | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+    | .image _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .gap _ _ | .decoratedGap _ _ _ | .poly _ _ => false
 
 /-- The artifact count a page owes, read from `Layout.PageOut` and the leaf tags rather than the
@@ -3139,11 +3139,11 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
       match s with
       -- the layout block holds the rules and the polygons alike
       | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ => acc + 1
-      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ | .decoratedGap _ _ _ => acc
+      | .image _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ | .decoratedGap _ _ _ => acc
   let images := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
-      | .image _ _ _ => acc + 1
+      | .image _ _ _ _ => acc + 1
       | .rule _ _ _ _ | .decoration _ _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _
       | .gap _ _ | .decoratedGap _ _ _ | .poly _ _ => acc
   let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>

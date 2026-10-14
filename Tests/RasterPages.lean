@@ -81,7 +81,7 @@ private def rasterWrapper (fs : Font.FontSet) (p : Image.Plan) : ByteArray :=
   let imgs : Image.Store := { entries := #[{ src := "invented-raster", info := some p }] }
   let line : Layout.LineOut := {
     x := pt 10, y := pt 20, size := pt 12, setWidth := p.width,
-    segs := #[.image (some 0) p.width p.height] }
+    segs := #[.image (some 0) p.width p.height true] }
   Pdf.write { pageW := pt 100, pageH := pt 100 } fs #[{ lines := #[line] }] (imgs := imgs)
 
 private def rasterImageDict (e : PdfRead.Entry) (color : String) : Bool :=

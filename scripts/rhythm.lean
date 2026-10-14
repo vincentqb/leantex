@@ -256,7 +256,7 @@ def ofOut (out : Layout.Out) : Array MPage :=
         | .gap _ _ | .decoratedGap _ _ _ => text := text.push ' '
         | .rule _ th raise _ | .decoration _ _ th raise _ =>
           marks := marks.push (l.y - raise - th, l.y - raise)
-        | .image _ _ h => marks := marks.push (l.y - h, l.y)
+        | .image _ _ h _ => marks := marks.push (l.y - h, l.y)
         | .poly pts _ =>
           if let some (_, y) := pts[0]? then
             let bounds := pts.foldl (fun (t, b) (_, y) =>

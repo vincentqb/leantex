@@ -76,7 +76,7 @@ def svgNativePdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let out := layoutOf fs doc (imgs := imgs)
   check ref "native SVG PDF: the page places the drawn figure by its store entry"
     (out.pages.any fun p => p.lines.any fun l => l.segs.any fun s => match s with
-      | .image (some 0) _ _ => true
+      | .image (some 0) _ _ _ => true
       | _ => false)
   let ops := Pdf.pageOps (Layout.Geom.ofPage doc.page) fs out.pages imgs
   let keep := Pdf.keepFaces fs out.pages imgs.shaped

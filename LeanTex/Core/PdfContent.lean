@@ -456,7 +456,7 @@ private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize 
               marks := if kind.isMark then st.marks.push r else st.marks, x := st.x + w }
   | .poly pts color =>
     { st with polys := st.polys.push (color, pts.map fun (px, py) => (st.x + px, ypdf + py)) }
-  | .image idx w h =>
+  | .image idx w h _ =>
     { st with images := st.images.push { x := st.x, y := ypdf, w, h,
                                          res := idx.bind fun k => imgMap[k]?.getD none,
                                          origin := og, store := idx },
@@ -538,7 +538,7 @@ public def _root_.LeanTex.Core.Layout.Seg.withoutGlyphs : Seg → Seg
   | .decoratedGap w word decs => .decoratedGap w word decs
   | .decoration kind w t raise color => .decoration kind w t raise color
   | .rule w t raise color => .rule w t raise color
-  | .image store w h => .image store w h
+  | .image store w h i => .image store w h i
   | .poly pts color => .poly pts color
 
 /-- A line with its glyphs taken out, its rules, images and polygons kept. -/
@@ -998,7 +998,7 @@ public def segRuns : Seg → List (Array Nat)
   | .run _ _ _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then [] else [glyphs.map (·.1)]
   | .gap _ _ | .decoratedGap _ _ _ => []
   | .rule _ _ _ _ | .decoration _ _ _ _ _ => []
-  | .image _ _ _ => []
+  | .image _ _ _ _ => []
   | .poly _ _ => []
 
 /-- The shipped glyph census of a page: every run's glyphs, line by line in segment order. -/
@@ -1483,7 +1483,7 @@ private theorem foldl_lines_items (geom : Geom) (remap : Array Nat) (imgMap : Ar
 
 /-- The store index an image segment places, as a one-entry list. -/
 public def segStores : Seg → List (Option Nat)
-  | .image idx _ _ => [idx]
+  | .image idx _ _ _ => [idx]
   | .run .. | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .poly .. => []
 
 /-- Every image a page's lines place, by store index, in order. -/
@@ -1527,7 +1527,7 @@ private theorem stepSeg_stores (remap : Array Nat) (imgMap : Array (Option Nat))
     (og : Origin) (st : TextSt) (seg : Seg) :
     (stepSeg remap imgMap ls y og st seg).stores = st.stores ++ segStores seg := by
   cases seg with
-  | image idx w h => simp [stepSeg, TextSt.stores, segStores]
+  | image idx w h _ => simp [stepSeg, TextSt.stores, segStores]
   | run => simp [stepSeg, TextSt.stores, segStores, stepRun_images]
   | rule | decoration | gap | decoratedGap | poly => simp [stepSeg, TextSt.stores, segStores]
 

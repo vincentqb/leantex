@@ -501,9 +501,9 @@ public inductive Item where
   | decoratedGlue (g : Glue) (decorations : Decorations (Option DecorationRule))
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
-  /-- An unbreakable image box `w` wide standing `h` above the baseline;
-  `store` indexes the `Image.Store`, and `none` places a placeholder. -/
-  | img (store : Option Nat) (w : Sp) (h : Sp)
+  /-- An unbreakable image box `w` wide standing `h` above the baseline; `store` indexes the
+  `Image.Store`, `none` places a placeholder, and `ink` false ships nothing in its box. -/
+  | img (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool)
   /-- A horizontal rule `w` wide and `thickness` tall, its
   bottom at the baseline plus `raise`; never a breakpoint. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
@@ -561,8 +561,8 @@ public inductive Seg where
   /-- A horizontal rule `w` wide and `thickness` thick, on the baseline plus `raise`. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
   /-- An image box standing `h` up from the baseline; `store` indexes the backends'
-  `Image.Store`, and an entry that did not load renders as a placeholder. -/
-  | image (store : Option Nat) (w : Sp) (h : Sp)
+  `Image.Store`, an entry that did not load renders as a placeholder, and `ink` false ships nothing. -/
+  | image (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool)
   /-- A filled polygon with no width, its points from the pen position and the baseline, y up. -/
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
@@ -600,6 +600,8 @@ public structure LineOut where
   /-- How far below its own baseline the line's last baseline
   stands; nonzero only for a display alignment's rows. -/
   lastBase : Sp := 0
+  /-- Placed by hidden overlay content: the line keeps its place and ships no ink. -/
+  hidden : Bool := false
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text, its top-left
@@ -991,6 +993,13 @@ public def ReflowsNamed (paragraphs : Array ParagraphBreaks) (diags : Array Diag
   ∀ p ∈ paragraphs, ∀ k, p.Splits k →
     ∃ d ∈ diags, d.code = "W0386" ∧ d.subject = some p.subject
 
+/-- Which of a page's fills, pictures and links hidden overlay content placed, by index. -/
+public structure PageHidden where
+  fills : Array Nat := #[]
+  inks : Array Nat := #[]
+  links : Array Nat := #[]
+  deriving Repr, Inhabited
+
 public structure PageOut where
   /-- The shared logical folio and running style at shipment. -/
   pageState : Ir.PageState := {}
@@ -1020,6 +1029,8 @@ public structure PageOut where
   fils : Nat := 0
   /-- The bottom edge of the page-top chrome bar, when one painted. -/
   band : Option Sp := none
+  /-- What hidden overlay content placed, which keeps its place and ships nothing (`shipped`). -/
+  hidden : PageHidden := {}
   deriving Repr, Inhabited
 
 /-- A page that shows nothing: no line, no fill and no
@@ -1060,36 +1071,63 @@ public structure Out where
   /-- The document outline, one entry per unpinned-nav link in document order. -/
   outline : Array OutlineEntry := #[]
 
-/-- Is a colour the invisible paint (`Ir.Color.invisible`)? -/
-@[expose] public def invisiblePaint (c : Ir.Color) : Bool := c == Ir.Color.invisible
+/-- The paint of ink that keeps its place and ships nothing, its CMYK rider outside every
+document's range. -/
+@[expose] public def hiddenPaint : Ir.Color :=
+  { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
 
-/-- A segment as it ships: ink in the invisible paint a gap as wide, its polygon nothing. -/
-@[expose] public def Seg.shipped : Seg → Option Seg
-  | .run f c l w gs sz m d r g a =>
-    some (if invisiblePaint c then .gap w false else .run f c l w gs sz m d r g a)
-  | .decoration k w t r c => some (if invisiblePaint c then .gap w false else .decoration k w t r c)
-  | .rule w t r c => some (if invisiblePaint c then .gap w false else .rule w t r c)
-  | .poly pts c => if invisiblePaint c then none else some (.poly pts c)
+/-- Is a decoration band painted in the hidden paint? -/
+@[expose] public def hiddenRule (r : Option DecorationRule) : Bool := r.any (·.color == hiddenPaint)
+
+/-- Does a segment carry ink that ships nothing? -/
+@[expose] public def Seg.hides : Seg → Bool
+  | .run _ c .. | .decoration _ _ _ _ c | .rule _ _ _ c | .poly _ c => c == hiddenPaint
+  | .decoratedGap _ _ d =>
+    hiddenRule d.underline || hiddenRule d.lineThrough || hiddenRule d.highlight
+  | .gap .. => false
+  | .image _ _ _ ink => !ink
+
+/-- A segment repainted to ship nothing, its kind and box kept. -/
+@[expose] public def Seg.hide : Seg → Seg
+  | .run f _ l w gs sz m d r g a => .run f hiddenPaint l w gs sz m d r g a
+  | .decoration k w t r _ => .decoration k w t r hiddenPaint
+  | .rule w t r _ => .rule w t r hiddenPaint
+  | .poly pts _ => .poly pts hiddenPaint
   | .decoratedGap w word d =>
-    some (if d.underline.any (invisiblePaint ·.color) || d.lineThrough.any (invisiblePaint ·.color)
-      then .gap w word else .decoratedGap w word d)
+    .decoratedGap w word { underline := d.underline.map ({ · with color := hiddenPaint })
+                           lineThrough := d.lineThrough.map ({ · with color := hiddenPaint })
+                           highlight := d.highlight.map ({ · with color := hiddenPaint }) }
+  | .gap w word => .gap w word
+  | .image s w h _ => .image s w h false
+
+/-- A segment as it ships: hidden ink a gap as wide, a hidden polygon nothing. -/
+@[expose] public def Seg.shipped (s : Seg) : Option Seg :=
+  if !s.hides then some s else
+  match s with
+  | .poly .. => none
+  | .decoratedGap w word d =>
+    let kept : Decorations (Option DecorationRule) :=
+      { underline := if hiddenRule d.underline then none else d.underline
+        lineThrough := if hiddenRule d.lineThrough then none else d.lineThrough
+        highlight := if hiddenRule d.highlight then none else d.highlight }
+    some (if kept.underline.isNone && kept.lineThrough.isNone && kept.highlight.isNone then
+      .gap w word else .decoratedGap w word kept)
   | .gap w word => some (.gap w word)
-  | .image s w h => some (.image s w h)
+  | .run _ _ _ w .. | .decoration _ w .. | .rule w .. | .image _ w .. => some (.gap w false)
 
-/-- Does a placed picture paint only the invisible paint? -/
-@[expose] public def InkOut.inksNothing (k : InkOut) : Bool :=
-  let paints := k.fig.marks.toList.flatMap fun m => match m with
-    | .paint _ _ fl st _ _ => (fl.map (·.paint)).toList ++ (st.map (·.paint)).toList
-    | .raster .. | .shading .. => []
-  !paints.isEmpty && paints.all fun p => match p with
-    | .solid c => invisiblePaint c
-    | .gradient _ => false
+/-- The elements whose index `drop` does not list. -/
+@[expose] public def keepUnlisted {α : Type} (xs : Array α) (drop : Array Nat) : Array α :=
+  if drop.isEmpty then xs else (xs.zipIdx.filter fun (_, i) => !drop.contains i).map (·.1)
 
-/-- A page as it ships: invisible overlay content keeps its place and ships no ink. -/
+/-- A page as it ships: hidden content keeps its place and ships no ink. -/
 @[expose] public def PageOut.shipped (p : PageOut) : PageOut :=
-  { p with lines := p.lines.map fun l => { l with segs := l.segs.filterMap Seg.shipped }
-           fills := p.fills.filter (!invisiblePaint ·.color)
-           inks := p.inks.filter (!·.inksNothing) }
+  { p with
+    lines := p.lines.map fun l =>
+      { l with segs := (if l.hidden then l.segs.map Seg.hide else l.segs).filterMap Seg.shipped }
+    fills := keepUnlisted p.fills p.hidden.fills
+    inks := keepUnlisted p.inks p.hidden.inks
+    links := keepUnlisted p.links p.hidden.links
+    hidden := {} }
 
 public structure TextStyle where
   slot : Nat := 0
@@ -1125,7 +1163,13 @@ public structure TextStyle where
   /-- Whether a typewriter run in a narrowing table cell breaks
   as a browser breaks a cell's code (`cellCodeBreak`). -/
   cellCode : Bool := false
+  /-- Inside invisible overlay content (`Ir.OverlaySpec.invisible`) on a step it does not show. -/
+  hidden : Bool := false
   deriving Repr, BEq, Inhabited
+
+/-- The paint the style's ink takes: its colour, or the hidden paint inside hidden content. -/
+@[expose] public def TextStyle.paint (sty : TextStyle) : Ir.Color :=
+  if sty.hidden then hiddenPaint else sty.color
 
 /-- Where a run of this style may end a line after a
 character, unhyphenated, given its neighbours in the word. -/
@@ -1137,7 +1181,7 @@ private def TextStyle.explicitBreak (sty : TextStyle) :
 
 /-- Snapshot the command-entry properties ulem uses for a through-line. -/
 private def TextStyle.decorationSource (sty : TextStyle) : DecorationSource :=
-  { slot := sty.slot, weight := sty.weight, italic := sty.italic, color := sty.color,
+  { slot := sty.slot, weight := sty.weight, italic := sty.italic, color := sty.paint,
     scale := sty.scale, fontSize := sty.fontSize }
 
 private inductive Tk where
@@ -1152,8 +1196,8 @@ private inductive Tk where
   /-- A strut: zero width, this much height above the baseline. -/
   | strut (height : SymGlue)
   | brk (extra : SymGlue)
-  /-- An image reference, resolved against the store when items are built; `ink` false for one
-  in invisible overlay content, which keeps its box and ships nothing. -/
+  /-- An image reference, resolved against the store when items are built; `ink` false keeps its
+  box and ships nothing. -/
   | img (src : String) (spec : Image.Spec) (ink : Bool)
   /-- An elaborated formula, set by `itemsOfInlines` as one unbreakable run attributed `attr`. -/
   | formula (display : Bool) (style : TextStyle) (body : Math.MList) (attr : Attribution)
@@ -1329,7 +1373,8 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
   | .series w => { sty with weight := w }
   -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
   | .upright => { sty with italic := false, smallcaps := false }
-  | .normal => {}
+  -- `\normalfont` resets family, series and shape (fntguide §4.2), never size or colour.
+  | .normal => { sty with slot := 0, weight := .m, italic := false, smallcaps := false }
   | .lang tag => { sty with lang := some tag }
   | .size n => match ladder.lookup n with
     | some k => { sty with scale := k, fontSize := none, leading := none, step := some n }
@@ -1377,7 +1422,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     let (attr, ctr) := st.ctr.take
     { st with toks := st.toks.push (.icon sty c attr), ctr := ctr }
   | .image src spec _ =>
-    { st with toks := st.toks.push (.img src spec (sty.color != Ir.Color.invisible)),
+    { st with toks := st.toks.push (.img src spec !sty.hidden),
               ctr := st.ctr.skip 1 }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
@@ -1433,10 +1478,13 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
     | .highlight c _ =>
       flatten mathOk noteOk st
         { sty with decorations :=
-            { sty.decorations with highlight := some (c, sty.decorationSource) }
+            { sty.decorations with highlight := some (if sty.hidden then hiddenPaint else c,
+                sty.decorationSource) }
                    ground := some c } body
-  -- The PDF dims pending content by recolouring copies before layout; a step is pure grouping.
-  | .onSteps _ body => flatten mathOk noteOk st sty body
+  -- The PDF dims pending content by recolouring copies before layout, and hides invisible content here.
+  | .onSteps spec body =>
+    flatten mathOk noteOk st
+      (if spec.invisible && spec.pending st.step then { sty with hidden := true } else sty) body
   | .altSteps spec firstPage otherPage =>
     -- The counter steps over the group the page does not ink, so the inked one keeps `Struct`'s id.
     if spec.showsFirst st.step then
@@ -1700,7 +1748,7 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .decorated kind body =>
     cases kind <;> exact flatten_attr_covers mathOk noteOk st _ body h
-  | .onSteps _ body => exact flatten_attr_covers mathOk noteOk st sty body h
+  | .onSteps _ body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .altSteps _ firstPage otherPage =>
     simp only [flattenOne]
     split
@@ -3100,7 +3148,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
       if !paintOnly || paints then
         for (x, y) in pts do
           bounds := add bounds ⟨pen + x, y, pen + x, y⟩
-    | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ => pure ()
+    | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ _ => pure ()
   return bounds
 
 /-- Measured attachment ink, without the baseline or nonpainting spacing items. -/
@@ -3123,7 +3171,7 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
     | .glue g => .glue g
     | .decoratedGlue g r => .decoratedGlue g r
     | .pen w c f i col g => .pen w c f i col g
-    | .img s w h => .img s w h
+    | .img s w h i => .img s w h i
 
 /-- The zero-size rule a display alignment leaves at its
 last row's baseline, which `LineOut.lastBase` reads. -/
@@ -3459,9 +3507,9 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   if pad == 0 && width == g.advance then assembled else
     #[mathKern e size pad] ++ assembled ++ #[mathKern e size (width - pad - g.advance)]
 
-/-- A colour switch inside invisible content keeps the invisible paint. -/
-private def keepInvisible (cur c : Ir.Color) : Ir.Color :=
-  if cur == Ir.Color.invisible then cur else c
+/-- A colour switch inside hidden content keeps the hidden paint. -/
+private def keepHidden (cur c : Ir.Color) : Ir.Color :=
+  if cur == hiddenPaint then cur else c
 
 mutual
 
@@ -3472,7 +3520,7 @@ private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .nil => acc
   | .cons (.ink c _) rest =>
     -- A colour switch is no atom, so the spacing walk keeps the atom before it.
-    layMathTail { e with color := keepInvisible e.color c } st raise cls prev acc rest
+    layMathTail { e with color := keepHidden e.color c } st raise cls prev acc rest
   | .cons x rest =>
     match x.classOf with
     | none =>
@@ -3707,7 +3755,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .cancel mark spec value body =>
     -- cancel.sty boxes its argument in the current style (`\mathpalette`).
     let (bItems, m1) := layMathTail e st 0 (Math.degrade body.classes) none (#[], acc.2) body
-    let ink := keepInvisible e.color ((spec.color.map (·.1)).getD e.color)
+    let ink := keepHidden e.color ((spec.color.map (·.1)).getD e.color)
     let (vItems, m2) := layMathTail { e with color := ink } (spec.size.style st) 0
       (Math.degrade value.classes) none (#[], m1) value
     (acc.1 ++ cancelAssemble e st raise mark spec ink bItems vItems, m2)
@@ -3776,7 +3824,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
       gs := gs.push g
       w := w + g.2.2
     | none => miss := miss.push (idx, c)
-  return (.box w idx sty.color sty.link gs markSize {} decorations raise sty.ground attr, miss)
+  return (.box w idx sty.paint sty.link gs markSize {} decorations raise sty.ground attr, miss)
 
 /-- The token fold's state: what the walk has built and, in
 `dropped`, `substs` and `unstyled`, what it lost or substituted. -/
@@ -4038,7 +4086,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     -- A typewriter run never hyphenates: LaTeX's typewriter `\hyphenchar` is −1 (t1cmtt.fd).
     let wordPats := if sty.slot == 2 then none else patsOf pats sty.lang
     let (ws, m, s, c', offsets, sources, sites) :=
-      wordItems wordPats (sty.lang.getD "") sty.explicitBreak sz leading idx sty.color
+      wordItems wordPats (sty.lang.getD "") sty.explicitBreak sz leading idx sty.paint
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners origins acc.origins
     -- Read first and written inside the one update, so the items array is written in place.
@@ -4073,7 +4121,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           (glyphOf sz (fs.get fb) c).map (fb, ·)
     match hit with
     | some (fb, g) =>
-      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz {leading} decorations 0
+      let box : Item := .box g.2.2 fb sty.paint sty.link #[g] sz {leading} decorations 0
         sty.ground attr
       { acc with items := acc.items.push box }
     | none =>
@@ -4099,7 +4147,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
       let (runSize, leading) := sty.metrics size xHeight textW textH
       let e := { MathEnv.forRun fs idx font consts around runSize with
-        color := sty.color
+        color := sty.paint
         link := sty.link
         decorations := sty.resolvedDecorations size xHeight textW textH fs
         leading := leading
@@ -4136,7 +4184,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let g := interword sz (fs.get idx)
     let after := if acc.wordEnd == acc.items.size then spaceKern fs true acc.items.back? else 0
     let g := { g with width := g.width + after }
-    let item := Item.ofDecoratedGlue g decorations (fs.get idx) sz sty.color
+    let item := Item.ofDecoratedGlue g decorations (fs.get idx) sz sty.paint
     { acc with items := acc.items.push item }
   | .fill =>
     -- Stretchable but not a legal breakpoint on its own.
@@ -4153,7 +4201,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       else acc.items
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
     let font := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
-    let item := Item.ofDecoratedGlue glue decorations font sz sty.color
+    let item := Item.ofDecoratedGlue glue decorations font sz sty.paint
     { acc with items := items.push item }
   | .rule sty width height raise =>
     let values := MeasureValues.horizontal textW textH
@@ -4162,7 +4210,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let w := width.resolveWidth values fs xh
     let h := height.resolveWidth values fs xh
     let r := raise.resolveWidth values fs xh
-    let item : Item := .rule (max 0 w) (max 0 h) r sty.color
+    let item : Item := .rule (max 0 w) (max 0 h) r sty.paint
     { acc with items := acc.items.push item }
   | .corr maybe sty => correctItalic fs maybe sty acc
   | .strut g =>
@@ -4182,10 +4230,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           spec.height.isNone && w > textW && w > 0 then
         (textW, textW * h / w)
       else (w, h)
-    -- An invisible image is a rule of its box in the invisible paint, which ships as a gap.
-    let item : Item := if ink then .img idx? (max 0 w) (max 0 h)
-      else .rule (max 0 w) (max 0 h) 0 Ir.Color.invisible
-    { acc with items := acc.items.push item }
+    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h) ink) }
   | .brk extra =>
     let items := acc.items.push (.glue { fil := true, parfill := true })
     let extras :=
@@ -4568,7 +4613,7 @@ private theorem itemsOfTok_none_chars (size xHeight : Sp)
     have hw := wordItems_none_chars (sty.lang.getD "") sty.explicitBreak
       (sty.metrics size xHeight textW textH).1
       (sty.metrics size xHeight textW textH).2
-      (fs.lookup sty.slot sty.weight.css sty.italic) sty.color sty.ground sty.link
+      (fs.lookup sty.slot sty.weight.css sty.italic) sty.paint sty.ground sty.link
       (sty.resolvedDecorations size xHeight textW textH fs) false attr fs
       (fs.get (fs.lookup sty.slot sty.weight.css sty.italic)) cs
       acc.dropped acc.substs acc.cache owners origins acc.origins hc.1 hc.2
@@ -4968,7 +5013,7 @@ public def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   | some (.glue _) | some (.decoratedGlue _ _) =>
     match items[j-1]? with
     | some (.box _ _ _ _ _ _ _ _ _ _ _) => j > 0
-    | some (.img _ _ _) => j > 0
+    | some (.img _ _ _ _) => j > 0
     | some (.rule _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
@@ -5106,7 +5151,7 @@ public def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
     match items[k]! with
     | .box w _ _ _ _ _ _ _ _ _ _ =>
       m := { m with natural := m.natural + w, boxW := m.boxW + w }
-    | .img _ w _ => m := { m with natural := m.natural + w }
+    | .img _ w _ _ => m := { m with natural := m.natural + w }
     | .rule w _ _ _ => m := { m with natural := m.natural + w }
     | .poly _ _ => pure ()
     | .glue g | .decoratedGlue g _ => m := { m with
@@ -5216,7 +5261,7 @@ public def kpSums (items : Array Item) : KpSums := Id.run do
   for k in [0:n] do
     let (dw, dst, dsh, dfil, db) : Sp × Sp × Sp × Nat × Sp := match items[k]! with
       | .box w _ _ _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
-      | .img _ w _ => (w, 0, 0, 0, 0)
+      | .img _ w _ _ => (w, 0, 0, 0, 0)
       | .rule w _ _ _ => (w, 0, 0, 0, 0)
       | .poly _ _ => (0, 0, 0, 0, 0)
       | .glue g | .decoratedGlue g _ =>
@@ -6342,8 +6387,8 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
       segs := setWordBox segs f offset w fontIdx color link glyphs size leading
         decorations raise ground attr
       width := width + expandSpan f offset w
-    | .img idx w h =>
-      segs := segs.push (.image idx w h)
+    | .img idx w h ink =>
+      segs := segs.push (.image idx w h ink)
       width := width + w
     | .rule w thickness raise color =>
       segs := segs.push (.rule w thickness raise color)
@@ -6560,10 +6605,15 @@ private inductive RegionKind where
   /-- A rule a block template sets beside a box (`Ir.BlockEdge`), painted
   `x`..`x + w` from the box's top to its last line's bottom; it spaces nothing. -/
   | edge (color : Ir.Color) (x w inset : Sp) (reach : Option EdgeReach)
+  /-- Invisible overlay content on a step it does not show: what it places keeps its place and
+  ships nothing. -/
+  | hidden
 
 private structure RegionStart where
   kind : RegionKind
   depth : Nat
+  /-- Whether the region is hidden or opened inside a hidden one. -/
+  hidden : Bool := false
   begun : Bool := false
   /-- Whether the fragment holds the region's opening. -/
   first : Bool := true
@@ -6603,6 +6653,7 @@ private def BaseAnchor.y (a : BaseAnchor) (lines : Array LineOut) (inks : Array 
 private structure RegionSpan where
   kind : RegionKind
   depth : Nat
+  hidden : Bool := false
   first : Bool
   /-- Glue inside the box after its last line, which a TeX box keeps. -/
   tail : Sp := 0
@@ -6617,7 +6668,7 @@ private structure RegionSpan where
 
 private def RegionStart.close (s : RegionStart) (p : PageOut) (tail : Sp := 0)
     (base : Option Sp := none) : RegionSpan :=
-  { kind := s.kind, depth := s.depth, first := s.first, tail := tail
+  { kind := s.kind, depth := s.depth, hidden := s.hidden, first := s.first, tail := tail
     lineStart := s.lines, lineEnd := p.lines.size
     fillStart := s.fills, fillEnd := p.fills.size
     inkStart := s.inks, inkEnd := p.inks.size
@@ -6652,7 +6703,7 @@ private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option Region
     | .rule w thickness raise _ | .decoration _ w thickness raise _ =>
       out := addRegionBox out x (l.y - raise - thickness) (x + w) (l.y - raise)
       x := x + w
-    | .image _ w h =>
+    | .image _ w h _ =>
       out := addRegionBox out x (l.y - h) (x + w) l.y
       x := x + w
     | .poly pts _ =>
@@ -6684,7 +6735,7 @@ private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
   | .link target => (s.box lines fills inks).map fun b =>
       { x := b.x0, y := b.y0, w := max 0 (b.x1 - b.x0), h := max 0 (b.y1 - b.y0),
         target := target }
-  | .surface _ _ _ _ _ | .edge .. => none
+  | .surface _ _ _ _ _ | .edge .. | .hidden => none
 
 /-- Where a rule reaching by its box's lines stands, its
 top and bottom; nothing where that leaves no room. -/
@@ -6749,7 +6800,7 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     (fills : Array Fill) (inks : Array InkOut)
     (children : Array (RegionSpan × Fill) := #[]) : Option Fill :=
   match s.kind with
-  | .link _ => none
+  | .link _ | .hidden => none
   | .surface color pad x w anchored =>
     -- The body's part of a rule inside the box stands in a box of no size and grows it nowhere.
     let box := children.foldl (fun box (child, f) =>
@@ -7088,12 +7139,12 @@ line's font; a fresh fragment owes its top inset once. -/
 private def Spacing.Page.surfaceTop (b : B) : Sp :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + if s.begun then 0 else pad
-    | .link _ | .edge .. => total) 0
+    | .link _ | .edge .. | .hidden => total) 0
 
 private def Spacing.Page.surfaceBottom (b : B) : Sp :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + pad
-    | .link _ | .edge .. => total) 0
+    | .link _ | .edge .. | .hidden => total) 0
 
 /-- The floor of the text area on the page being built: beamer's `\footheight` floor in its
 text area or above a footline, the paper's edge on a plain frame, else `Geom.bodyBottom`. -/
@@ -7406,6 +7457,27 @@ private def Spacing.Page.neededOverrun (b : B) : Array (FrameOrigin × Sp) :=
     else b.needs
   | _, _ => b.needs
 
+/-- The page indices hidden regions own: their body fills and pictures, and the links and surface
+fills of every region inside one, `fillBase` fills standing before the surfaces. -/
+private def pageHidden (spans : Array RegionSpan) (lines : Array LineOut) (bodyFills : Array Fill)
+    (inks : Array InkOut) (fillBase : Nat) : PageHidden := Id.run do
+  if !spans.any (·.hidden) then return {}
+  let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse
+  let mut out : PageHidden := {}
+  for ((s, _), i) in surfaces.zipIdx do
+    if s.hidden then out := { out with fills := out.fills.push (fillBase + i) }
+  let mut link := 0
+  for s in spans do
+    if (s.linkRect lines bodyFills inks).isSome then
+      if s.hidden then out := { out with links := out.links.push link }
+      link := link + 1
+  for s in spans do
+    if s.kind matches .hidden then
+      for i in [s.fillStart:s.fillEnd] do
+        out := { out with fills := out.fills.push (fillBase + surfaces.size + i) }
+      for i in [s.inkStart:s.inkEnd] do out := { out with inks := out.inks.push i }
+  return out
+
 /-- Close the current page: an overflow within shrink is set to fit, the leftover is distributed,
 `owed` is the pending glue the content keeps, and `flush` sets a `\flushbottom` break. -/
 private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
@@ -7477,6 +7549,8 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   let links := spans.filterMap fun span => span.linkRect lines bodyFills inks
   -- Outer grounds precede inner ones; all precede the content they enclose.
   let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse.map (·.2)
+  let hidden := pageHidden spans lines bodyFills inks
+    (if (effectivePageGround b.pageBg b.docBg).isSome then 1 else 0)
   let fills := surfaces ++ bodyFills ++ footerFills
   let fills := match effectivePageGround b.pageBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
@@ -7489,7 +7563,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
                                    frameArea := b.frameArea,
                                    footLook := b.curFootLook,
                                    frame := b.curFrame, frameOrigin := b.curFrameOrigin,
-                                   fils := pageFils, band := b.curBand },
+                                   fils := pageFils, band := b.curBand, hidden := hidden },
            cur := {}, curBand := none, pageState := b.pageState.ship,
            shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[],
            fillStretchAbove := #[], inkStretchAbove := #[],
@@ -7863,6 +7937,9 @@ private theorem spillPage_frame_projects (b : B) (over : Sp) :
     repeat' split
     all_goals exact ⟨rfl, rfl, rfl⟩
 
+/-- Whether a hidden region is open on the page being built. -/
+private def Spacing.Page.hiding (b : B) : Bool := b.openRegions.any (·.kind matches .hidden)
+
 /-- The rider door: content joining the open page with no vertical negotiation,
 a line sharing the last baseline, and fills and inks painting behind. -/
 private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
@@ -7870,7 +7947,7 @@ private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
     (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
   let b := match line with
     | some l =>
-      { b with cur := { b.cur with lines := b.cur.lines.push l },
+      { b with cur := { b.cur with lines := b.cur.lines.push { l with hidden := l.hidden || b.hiding } },
                shrinkAbove := b.shrinkAbove.push
                  (shrink.getD (b.shrinkAbove.back?.getD 0))
                stretchAbove := b.stretchAbove.push b.pageStretch
@@ -7900,7 +7977,8 @@ private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
   let stretch := if consume then b.pageStretch + b.skip.stretch else 0
   -- A consumed skip's fil counts at the page top too: `\vspace*{\fill}` survives the break.
   let fils := b.pageFils + (if b.skip.fil then 1 else 0)
-  let line := { line with anchors := b.pendingAnchors ++ line.anchors }
+  let line := { line with anchors := b.pendingAnchors ++ line.anchors
+                          hidden := line.hidden || b.hiding }
   { b with cur := { b.cur with lines := b.cur.lines.push line }
            openRegions := b.openRegions.map fun s => { s with begun := true }
            pendingAnchors := #[]
@@ -7938,8 +8016,86 @@ public def Seg.advance : Seg → Sp
   | .decoratedGap w _ _ => w
   | .decoration _ w _ _ _ => w
   | .rule w .. => w
-  | .image _ w _ => w
+  | .image _ w _ _ => w
   | .poly _ _ => 0
+
+/-- Shipping keeps a segment's advance: hidden ink a gap as wide, a hidden polygon none. -/
+public theorem Seg.shipped_advance_exact (s : Seg) :
+    ((Seg.shipped s).map Seg.advance).getD 0 = s.advance := by
+  cases h : s.hides
+  · simp [Seg.shipped, h]
+  · cases s with
+    | decoratedGap w word d =>
+      simp only [Seg.shipped, h, Bool.not_true, Bool.false_eq_true, ↓reduceIte, Option.map_some,
+        Option.getD_some]
+      exact (apply_ite Seg.advance _ _ _).trans (ite_self w)
+    | _ => simp_all [Seg.shipped, Seg.advance, Seg.hides]
+
+/-- No segment ships hidden ink. -/
+public theorem Seg.shipped_hides_exact (s s' : Seg) (h : Seg.shipped s = some s') :
+    s'.hides = false := by
+  cases hh : s.hides
+  · simp only [Seg.shipped, hh, Bool.not_false, ↓reduceIte, Option.some.injEq] at h
+    exact h ▸ hh
+  · cases s with
+    | decoratedGap w word d =>
+      simp only [Seg.shipped, hh, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+        Option.some.injEq] at h
+      subst h
+      rw [apply_ite Seg.hides]
+      have hu : hiddenRule (if hiddenRule d.underline then none else d.underline) = false := by
+        cases hd : hiddenRule d.underline <;> simp_all [hiddenRule]
+      have hl : hiddenRule (if hiddenRule d.lineThrough then none else d.lineThrough) = false := by
+        cases hd : hiddenRule d.lineThrough <;> simp_all [hiddenRule]
+      simp only [Seg.hides, hu, hl, Bool.or_false, ite_self]
+    | _ =>
+      simp only [Seg.shipped, hh, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+        Option.some.injEq, reduceCtorEq] at h
+      all_goals (subst h; rfl)
+
+/-- A segment carrying no hidden ink ships as it stands. -/
+public theorem Seg.shipped_id (s : Seg) (h : s.hides = false) : Seg.shipped s = some s := by
+  simp [Seg.shipped, h]
+
+/-- Repainting keeps a segment's advance. -/
+public theorem Seg.hide_advance_exact (s : Seg) : s.hide.advance = s.advance := by
+  cases s <;> rfl
+
+private theorem shipped_advance_sum (segs : List Seg) :
+    ((segs.filterMap Seg.shipped).map Seg.advance).sum = (segs.map Seg.advance).sum := by
+  induction segs with
+  | nil => rfl
+  | cons s rest ih =>
+    have h := Seg.shipped_advance_exact s
+    cases hs : Seg.shipped s with
+    | none =>
+      simp only [hs, Option.map_none, Option.getD_none] at h
+      simp [hs, ih, ← h]
+    | some s' =>
+      simp only [hs, Option.map_some, Option.getD_some] at h
+      simp [hs, ih, h]
+
+/-- A shipped page stands every line where it stood, its segments as wide in all. -/
+public theorem PageOut.shipped_lines_exact (p : PageOut) :
+    p.shipped.lines.map (fun l => (l.x, l.y, l.size, l.setWidth, (l.segs.toList.map Seg.advance).sum)) =
+      p.lines.map (fun l => (l.x, l.y, l.size, l.setWidth, (l.segs.toList.map Seg.advance).sum)) := by
+  simp only [PageOut.shipped, Array.map_map]
+  congr 1
+  funext l
+  simp only [Function.comp_apply, Prod.mk.injEq, true_and]
+  rw [Array.toList_filterMap, shipped_advance_sum]
+  split
+  · simp [Array.toList_map, List.map_map, Function.comp_def, Seg.hide_advance_exact]
+  · rfl
+
+/-- No line of a shipped page carries hidden ink. -/
+public theorem PageOut.shipped_hides_exact (p : PageOut) :
+    ∀ l ∈ p.shipped.lines, ∀ s ∈ l.segs, s.hides = false := by
+  intro l hl s hs
+  simp only [PageOut.shipped, Array.mem_map] at hl
+  obtain ⟨l0, _, rfl⟩ := hl
+  obtain ⟨s0, _, h⟩ := Array.mem_filterMap.mp hs
+  exact Seg.shipped_hides_exact s0 s h
 
 /-- A run emptied of its glyph payload, every metric field kept. -/
 public def Seg.stripGlyphs : Seg → Seg
@@ -7949,7 +8105,7 @@ public def Seg.stripGlyphs : Seg → Seg
   | .decoratedGap w word paint => .decoratedGap w word paint
   | .decoration kind w t r c => .decoration kind w t r c
   | .rule w t r c => .rule w t r c
-  | .image s w h => .image s w h
+  | .image s w h i => .image s w h i
   | .poly pts c => .poly pts c
 
 /-- Whether a segment contributes a text strut. -/
@@ -8034,7 +8190,7 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat) (lead :
       mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
         scaledAt sz font font.inkAscent.toNat + max 0 raise,
         scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
-  | .image _ _ h => mergeLineBox acc ⟨h, 0, h, 0⟩
+  | .image _ _ h _ => mergeLineBox acc ⟨h, 0, h, 0⟩
   | .rule _ t r _ | .decoration _ _ t r _ =>
     mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
   | .poly pts _ =>
@@ -8103,7 +8259,7 @@ public def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
       glyphs.foldl (fun (acc : Sp × Sp) (g, _) =>
         let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
         (max acc.1 (sc hi + raise), max acc.2 (-(sc lo) - raise))) acc
-    | .image _ _ h => (max acc.1 h, acc.2)
+    | .image _ _ h _ => (max acc.1 h, acc.2)
     | .rule _ t r _ | .decoration _ _ t r _ =>
       (max acc.1 (r + t), max acc.2 (-r))
     | .poly pts _ =>
@@ -8978,9 +9134,6 @@ public structure Spacing.Context where
   /-- Inside an overlay step this page does not show, the cover a colour resolved
   here takes, as beamer's `\opaqueness` covers a covered step's colours. -/
   private covering : Option Ir.Cover := none
-  /-- Inside an invisible overlay step this page does not show: every colour resolved here is the
-  invisible paint (`Ir.Cover.invisible`). -/
-  private hidden : Bool := false
   /-- The surface the document was written in (`Ir.Doc.surface`). -/
   private surface : Ir.Surface := .tex
 
@@ -9089,17 +9242,22 @@ private def Spacing.Context.parskip (r : Rd) : Glue := r.resolve r.geom.parskip
 
 /-- A colour resolved at layout, as the step being collected shows it. -/
 private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
-  if r.hidden then Ir.Color.invisible else
   match r.covering with
   | some cover => cover.of c
   | none => c
 
-/-- The context a pending overlay step's content is collected in: hidden for an invisible one,
-covered otherwise. -/
+/-- Whether an overlay carrier's content is invisible on the step being collected. -/
+private def Spacing.Context.hides (r : Rd) (spec : Ir.OverlaySpec) : Bool :=
+  spec.invisible && spec.pending r.step
+
+/-- The context a pending overlay step's content is collected in: covered unless it hides. -/
 private def Spacing.Context.pendingStep (r : Rd) (spec : Ir.OverlaySpec) : Rd :=
-  if !spec.pending r.step then r
-  else if spec.invisible then { r with hidden := true }
-  else { r with covering := r.cover }
+  if spec.pending r.step && !spec.invisible then { r with covering := r.cover } else r
+
+/-- Open a hidden region: what the walk collects until it closes keeps its place and ships nothing. -/
+private def Spacing.Pending.openHidden (a : Acc) : Acc := { a with ops := a.ops.push (.regionOpen .hidden) }
+
+private def Spacing.Pending.closeHidden (a : Acc) : Acc := { a with ops := a.ops.push .regionClose }
 
 /-- A list level's `\leftmargin` at `\@listdepth` `lv`: the
 document's own, else the class's, else the engine's indent. -/
@@ -9564,7 +9722,7 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .box bw .. => w + bw
     | .glue g | .decoratedGlue g _ => w + g.width
     | .pen .. => w
-    | .img _ bw _ => w + bw
+    | .img _ bw _ _ => w + bw
     | .rule bw .. => w + bw
     | .poly .. => w) 0
 
@@ -9591,7 +9749,7 @@ private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
   let mut run : Sp := 0
   for it in items do
     match it with
-    | .box bw .. | .img _ bw _ | .rule bw .. => run := run + bw
+    | .box bw .. | .img _ bw _ _ | .rule bw .. => run := run + bw
     | .glue g | .decoratedGlue g _ => run := run + g.width
     | .pen _ cost .. =>
       if cost ≤ forcedCost then
@@ -9841,7 +9999,7 @@ private def itemsMinWidth (items : Array Item) : Sp := Id.run do
   for it in items do
     match it with
     | .box w .. => run := run + w
-    | .img _ w _ => run := run + w
+    | .img _ w _ _ => run := run + w
     | .rule w .. => run := run + w
     | .glue _ | .decoratedGlue _ _ =>
       widest := max widest run
@@ -10267,7 +10425,7 @@ public def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg
       let font := fs.get idx
       let sz := if sz == 0 then size else sz
       glyphs.foldl (fun acc (g, _) => growExtent acc (glyphVExtent font sz raise g)) acc
-    | .image _ _ h => (max acc.1 h, acc.2)
+    | .image _ _ h _ => (max acc.1 h, acc.2)
     | .rule _ t raise _ | .decoration _ _ t raise _ =>
       growExtent acc (raise + t, -raise)
     | .poly pts _ => pts.foldl (fun acc (_, y) => growExtent acc (y, -y)) acc
@@ -10473,7 +10631,7 @@ public def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Boo
   | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
     glyphs.any fun g =>
       (GlyphBounds.glyph (fs.get idx) (if sz == 0 then size else sz) raise g.1).unresolved
-  | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+  | .image _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false
 
 /-- Read each painted run in its own face, size and raise against the producer's reserve. -/
@@ -10490,7 +10648,7 @@ public def observeLabel (fs : FontSet) (line : LineOut) (stamp : LabelAudit.Stam
           | some (lo, hi) =>
             decide (hi * size / (font.unitsPerEm : Int) + raise ≤ stamp.above ∧
               (-lo) * size / (font.unitsPerEm : Int) - raise ≤ stamp.below)
-      | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+      | .image _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
         | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => true }
 
 /-- The label census over the final page lines, after placement and furniture. -/
@@ -12302,7 +12460,9 @@ private def collectCentered (r : Rd) (a : Acc)
   -- An overlay carrier is grouping, as `collectBlock` reads it: what it
   -- shows on this step centres as the scope's own blocks do.
   | .onSteps spec inner :: rest =>
-    let a := collectCentered (r.pendingStep spec) a inner.toList indent false
+    let a := if r.hides spec then
+        (collectCentered r a.openHidden inner.toList indent false).closeHidden
+      else collectCentered (r.pendingStep spec) a inner.toList indent false
     collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
   | .altSteps spec firstPage otherPage :: rest =>
     let a := if spec.showsFirst r.step then
@@ -12611,7 +12771,8 @@ private def collectBlock (r : Rd) (a : Acc)
     collectBlocks r a body indent
   | .onSteps spec body =>
     -- Dimming was painted into the colours before layout; what resolves here takes the cover.
-    collectBlocks (r.pendingStep spec) a body indent
+    if r.hides spec then (collectBlocks r a.openHidden body indent).closeHidden
+    else collectBlocks (r.pendingStep spec) a body indent
   | .altSteps spec firstPage otherPage =>
     -- The counter steps over the group this page does not ink, so the inked one keeps its tree id.
     if spec.showsFirst r.step then
@@ -12980,7 +13141,7 @@ public def Seg.underlineRule (fs : FontSet) (lineSize : Sp) : Seg → Option Dec
   | .run fontIdx color _ _ _ size _ decorations _ _ _ =>
     (decorations.resolve (fs.get fontIdx) (if size == 0 then lineSize else size) color).underline
   | .decoratedGap _ _ decorations => decorations.underline
-  | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ | .poly _ _ => none
+  | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ _ | .poly _ _ => none
 
 /-- Append a segment's skip-ink paint, its full advance kept as gaps between the surviving spans. -/
 public def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
@@ -13042,7 +13203,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     match seg with
     | .gap w _ | .decoratedGap w _ _ => x := x + w
     | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-    | .image _ w _ => x := x + w
+    | .image _ w _ _ => x := x + w
     | .poly _ _ => pure ()
     | .run fontIdx _ _ w glyphs size _ _ _ _ _ =>
       let font := fs.get fontIdx
@@ -13086,7 +13247,7 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
     | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
-    | .image _ w _ => out := out.push (.gap w false)
+    | .image _ w _ _ => out := out.push (.gap w false)
     | .poly _ _ => pure ()
   return out
 
@@ -13120,7 +13281,7 @@ private def markSegs (segs : Array Seg) : Array Seg := Id.run do
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
     | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
-    | .image _ w _ => out := out.push (.gap w false)
+    | .image _ w _ _ => out := out.push (.gap w false)
     | .poly _ _ => pure ()
   return out
 
@@ -13130,7 +13291,7 @@ public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
   #[underlineSegs fs l.size l.segs, lineThroughSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
-                note := l.note, furniture := l.furniture }
+                note := l.note, furniture := l.furniture, hidden := l.hidden }
 
 /-- A placed line's mark rider, painted under it, banded as the decoration riders are; a picture's
 label sets none, as the web page's SVG label sets none. -/
@@ -13138,7 +13299,7 @@ public def markRiders (l : LineOut) : Array LineOut :=
   #[if l.pictureLabel.isSome then #[] else markSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
-                note := l.note, furniture := l.furniture }
+                note := l.note, furniture := l.furniture, hidden := l.hidden }
 
 @[simp] public theorem markRiders_uncounted (l : LineOut) :
     ∀ r ∈ markRiders l, r.counted = false := by
@@ -14980,6 +15141,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- An anchored box owes no inset above its opening fragment.
     let start : RegionStart :=
       { kind := kind, depth := b.openRegions.size
+        hidden := kind matches .hidden || b.openRegions.any (·.hidden)
         begun := kind matches .surface _ _ _ _ true
         lines := b.cur.lines.size,
         fills := b.cur.fills.size, inks := b.cur.inks.size }
@@ -16071,7 +16233,12 @@ private def mergeColumnPage (g : Geom) (a b : PageOut) : PageOut :=
     | none => 0
   { a with lines := a.lines ++ b.lines, inks := a.inks ++ b.inks
            links := a.links ++ b.links
-           fills := b.fills.extract 0 ground ++ a.fills ++ b.fills.extract ground b.fills.size }
+           fills := b.fills.extract 0 ground ++ a.fills ++ b.fills.extract ground b.fills.size
+           hidden :=
+             { fills := a.hidden.fills.map (ground + ·) ++
+                 b.hidden.fills.map fun i => if i < ground then i else a.fills.size + i
+               inks := a.hidden.inks ++ b.hidden.inks.map (a.inks.size + ·)
+               links := a.hidden.links ++ b.hidden.links.map (a.links.size + ·) } }
 
 private def mergeColumnPages (g : Geom) (first : Nat)
     (a b : Array PageOut) : Array PageOut :=
@@ -17807,7 +17974,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
             let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
             -- A glyph run's size stands in for its ascent, the band centring's only estimate.
             let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
-              | .image _ _ h => max m h
+              | .image _ _ h _ => max m h
               | .run _ _ _ _ _ size _ _ raise _ _ => max m (size + raise)
               | _ => m
             let x := if left then geom.hmargin else geom.pageW - geom.hmargin - w
@@ -20531,7 +20698,7 @@ public def textInk : Seg → List Char
     (String.ofList (glyphs.toList.map (·.2.1))).toList.filter fun c =>
       !(c.isWhitespace || c == ' ' || c == '\u00a0' || c == '\u00ad')
   | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
-    | .image _ _ _ | .poly _ _ => []
+    | .image _ _ _ _ | .poly _ _ => []
 
 public def inkLine (l : LineOut) : Bool :=
   !l.furniture && !l.note && l.segs.toList.flatMap textInk != []

@@ -45,7 +45,7 @@ public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
       for seg in l.segs do
         match seg with
         | .gap w _ | .decoratedGap w _ _ => x := x + w
-        | .image _ w h =>
+        | .image _ w h _ =>
           unless l.furniture do
             worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
               x (x + w) (l.y - h) l.y worstAt

@@ -3795,7 +3795,7 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
       | .run _ _ _ w _ _ _ _ _ _ _ => w
       | .gap w _ | .decoratedGap w _ _ => w
       | .rule w _ _ _ | .decoration _ w _ _ _ => w
-      | .image _ w _ => w
+      | .image _ w _ _ => w
       | .poly _ _ => 0
   return out
 
@@ -5516,7 +5516,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let out := layoutOf oneFace fitDoc (imgs := store)
   let geom := Layout.Geom.ofPage fitDoc.page
   let widths := (allLines out).flatMap (·.segs.filterMap fun s => match s with
-    | .image _ w _ => some w
+    | .image _ w _ _ => some w
     | _ => none)
   t "an unsized boundary picture wider than the measure fits it exactly"
     (widths == #[geom.textWidth])
@@ -5529,7 +5529,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let imgOut := layoutOf oneFace imgDoc (imgs := imgStore)
   t "an ordinary wide image keeps its natural size and the overfull is named"
     (((allLines imgOut).flatMap (·.segs.filterMap fun s => match s with
-        | .image _ w _ => some w
+        | .image _ w _ _ => some w
         | _ => none)) == #[Dim.pt 2000] &&
      imgOut.diags.any (·.code == "W0005"))
 

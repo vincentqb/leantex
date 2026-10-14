@@ -140,7 +140,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a column image of width textwidth spans exactly the column"
     ((iOut.pages.flatMap (·.lines)).any fun l => l.segs.any fun s =>
       match s with
-      | .image _ w _ => w == colW
+      | .image _ w _ _ => w == colW
       | _ => false)
   t "a column image never lands past the left margin"
     ((iOut.pages.flatMap (·.lines)).all fun l => l.x ≥ iGeom.hmargin)
@@ -432,7 +432,7 @@ def altWalkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let out := layoutOf oneFace idoc (imgs := store)
   let imgSegs := out.pages.flatMap fun p => p.lines.flatMap fun l =>
     l.segs.filterMap fun s => match s with
-      | .image store _ _ => some store
+      | .image store _ _ _ => some store
       | _ => none
   t "the shipped pages place no unexplained placeholder"
     (!imgSegs.isEmpty && imgSegs.all (·.isSome))
@@ -2477,7 +2477,7 @@ def deckLogoChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let lout := layoutOf oneFace ldoc
     let boxOn (p : Layout.PageOut) : Bool := p.lines.any fun l =>
       l.furniture && l.segs.any fun sg => match sg with
-        | .image _ _ _ => true
+        | .image _ _ _ _ => true
         | _ => false
     t s!"{th.name}: the logo is requested once, its box on exactly the declared frame's page"
       (Ir.imageRefs ldoc == #["nope/absent.png"] &&

@@ -3439,7 +3439,7 @@ private def stepHideRule (k : Nat) : DeckRule :=
       .lit "\"] .step-hide:not([data-steps~=\"", .num k, .lit "\"])"]
     decls := [("visibility", "hidden")] }
 
-/-- `stepHideRule`'s reduced-motion counterpart. -/
+/-- `stepHideRule`'s reduced-motion counterpart: a stepped frame is one page there, every step shown. -/
 private def stepHideGuard : DeckRule :=
   { selector := [.lit "html[data-deck-script] [data-snapped] .step-hide[data-steps]"]
     decls := [("visibility", "visible")]
@@ -3757,9 +3757,11 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
         · exact fun o ho => Or.inl (List.mem_singleton.mp ho)
       · cases h2
 
-/-- Whether the rule's selector carries the deck script's own `[data-deck-script]` marker. -/
+/-- Whether the rule's selector opens on the deck script's `html[data-deck-script]` and never negates it. -/
 public def scriptGated (r : DeckRule) : Bool :=
-  (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s "[data-deck-script]"
+  let lits := r.selector.flatMap SelChunk.lits
+  (lits.head?.any fun s => "html[data-deck-script]".toList.isPrefixOf s.toList) &&
+    lits.all fun s => !hasFrag s ":not([data-deck-script])"
 
 public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
@@ -3772,7 +3774,7 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- A rule hiding what a step carries stands on the deck script's snap state, so no floor hides it. -/
+/-- A rule hiding what a step carries opens on the deck script's attribute, so no floor hides it. -/
 public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(r.decls.contains ("visibility", "hidden")) || scriptGated r) = true :=
@@ -6307,7 +6309,7 @@ public def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
   | .sans => { f with slot := 1 }
   | .roman => { f with slot := 0 }
   | .family s => { f with slot := s }
-  | .normal => {}
+  | .normal => { f with italic := false, slot := 0, smallcaps := false }
   | .lang tag => { f with lang := some tag }
   | .size n => { f with size := some n }
   | .fontSize _ _ => f

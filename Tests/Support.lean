@@ -1112,7 +1112,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
           ruleSegs := ruleSegs.push (l.y, th)
           decorations := decorations.push (kind, l.y, w, th, raise, color)
         -- an image is decorative ink to the text census, like a rule
-        | .image k w _ =>
+        | .image k w _ _ =>
           px := px + w
           images := images + 1
           if let some fig := k.bind fun i => (imgs.shaped[i]?).join then
@@ -1310,7 +1310,7 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
     | .gap w _ | .decoratedGap w _ _ => x := x + w
     | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
-    | .image _ w _ => x := x + w
+    | .image _ w _ _ => x := x + w
   return out
 
 /-- Material 3's disliked region as the box `scripts/dislike-oracle.lean` holds it in, stated here so
@@ -1710,11 +1710,12 @@ first. -/
 def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
     (pats : Option Hyphen.Patterns := none)
-    (imgs : Image.Store := {}) : Layout.Out :=
+    (imgs : Image.Store := {}) (ship : Bool := true) : Layout.Out :=
   let family := fonts.math.bind (fonts.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let (doc, alphaDiags) := Ir.resolveMathAlphas fonts.mathAlphabets family doc
   let out := Layout.run geom fonts pats doc imgs
-  { out with pages := out.pages.map Layout.PageOut.shipped, diags := alphaDiags ++ out.diags }
+  { out with pages := if ship then out.pages.map Layout.PageOut.shipped else out.pages
+             diags := alphaDiags ++ out.diags }
 
 /-- A document set through the overflow ladder (`Layout.runFitted`), resolved as `layoutOf` resolves
 it. -/
@@ -1839,7 +1840,7 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
     | .gap w _ | .decoratedGap w _ _ => x := x + w
     | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
-    | .image _ w _ => x := x + w
+    | .image _ w _ _ => x := x + w
   return out
 
 /-- A body glyph's shipped position and paint, independent of run segmentation and leaf
@@ -1881,7 +1882,7 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
             dx := dx + advance
           x := x + width
         | .gap width _ | .decoratedGap width _ _ | .rule width _ _ _
-          | .decoration _ width _ _ _ | .image _ width _ => x := x + width
+          | .decoration _ width _ _ _ | .image _ width _ _ => x := x + width
         | .poly _ _ => pure ()
   return acc
 
@@ -1961,7 +1962,7 @@ def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.
   for seg in line.segs do
     match seg with
     | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
-    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ =>
+    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ =>
       pen := pen + w
     | .poly points _ => polys := polys.push (pen, points)
   return polys
@@ -1984,7 +1985,7 @@ def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
       unless glyphs.isEmpty do
         out := out ++ pending
         pending := #[]
-    | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ | .image _ _ _ => pure ()
+    | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ | .image _ _ _ _ => pure ()
   return out
 
 /-- Painted inline rules on shipped body pages. -/
