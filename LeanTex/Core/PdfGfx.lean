@@ -912,10 +912,14 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
       return { bytes := PngEncode.encodeIdat
                  { width := w, height := h, bitDepth := 8, colorType := colorType.getD 2 } raw
                jpeg := false, pxW := w, pxH := h, smooth }
-    if (match dict.get? "Mask" with | some (.arr _) => bpc != 8 | _ => false) then
-      throw "color-key-mask"
-    let alpha := alpha.orElse fun _ => match dict.get? "Mask" with
-      | some (.arr ranges) =>
+    let maskStream := (dict.get? "Mask").bind fun m => (cx.doc.stream m).toOption.getD none
+    let maskRanges : Option (Array Obj) := match maskStream,
+        (dict.get? "Mask").bind fun m => (cx.doc.deref m).toOption with
+      | none, some (.arr xs) => some xs
+      | _, _ => none
+    if maskRanges.isSome && bpc != 8 then throw "color-key-mask"
+    let alpha := alpha.orElse fun _ => match maskRanges, maskStream with
+      | some ranges, _ =>
         -- §8.9.6.4: a pixel whose every component lies in its range is masked.
         let rs := ranges.filterMap fun x => (cx.doc.deref x).toOption.bind Obj.int?
         let comps := sp.comps
@@ -932,21 +936,19 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
                 if v < lo j || v > hi j then inRange := false
               out := out.push (if inRange then 0 else 255)
           return out
-      | some m => match (cx.doc.stream m).toOption.getD none with
-        | some (md, mraw) =>
-          match PdfFilters.decode md mraw with
-          | .ok (.bytes mdata) =>
-            -- §8.9.6.3: a stencil mask's 0 samples paint, under its own decoding.
-            let mw := ((md.get? "Width").bind Obj.int?).getD 0 |>.toNat
-            let mh := ((md.get? "Height").bind Obj.int?).getD 0 |>.toNat
-            let inverted := match md.get? "Decode" with
-              | some (.arr xs) => (xs[0]?.bind ratOf) == some 1
-              | _ => false
-            grayResampled w h mw mh 1 mdata (if inverted then #[0, 1] else #[1, 0])
-          | _ => none
+      | none, some (md, mraw) =>
+        match PdfFilters.decode md mraw with
+        | .ok (.bytes mdata) =>
+          -- §8.9.6.3: a stencil mask's 0 samples paint, under its own decoding.
+          let mw := ((md.get? "Width").bind Obj.int?).getD 0 |>.toNat
+          let mh := ((md.get? "Height").bind Obj.int?).getD 0 |>.toNat
+          let inverted := match md.get? "Decode" with
+            | some (.arr xs) => (xs[0]?.bind ratOf) == some 1
+            | _ => false
+          grayResampled w h mw mh 1 mdata (if inverted then #[0, 1] else #[1, 0])
         | _ => none
-      | _ => none
-    if (dict.get? "Mask").any (· matches .ref _ _) && alpha.isNone then throw "mask-image"
+      | none, none => none
+    if maskStream.isSome && alpha.isNone then throw "mask-image"
     let some px := imagePixels sp w h bpc data decode (if isMask then fill else none) alpha
       | throw "image-samples"
     return { bytes := PngEncode.encode px.header px.rows px.palette, jpeg := false, pxW := w, pxH := h, smooth }

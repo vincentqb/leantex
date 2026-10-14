@@ -493,10 +493,12 @@ public def loadComposite (d : Doc) (font : Obj) : Loaded := Id.run do
       | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-unreadable"))
     | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-missing"))
   let (gidOf, gidLoss) : Option ByteArray × Array Gfx.Loss := match entry d cidFont "CIDToGIDMap" with
-    | none | some (.name _) => (none, #[])
+    | none => (none, #[])
     | some o => match streamBytes d o with
       | some b => (some b, #[])
-      | none => (none, #[.font "cidtogid-unreadable"])
+      | none =>
+        if ((d.stream o).toOption.getD none).isSome then (none, #[.font "cidtogid-unreadable"])
+        else (none, #[])
   let isCff := match program with
     | .ink src _ => src.isCidCff
     | _ => false

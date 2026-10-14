@@ -926,6 +926,10 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
       (decoded (filter ["RL"]) (bytes [0xFB, 0x41, 0x80]) 6).isSome &&
       (decoded (filter ["Fl"]) (Flate.deflate ⟨Array.replicate 32 0⟩) 31).isNone &&
       (decoded (filter ["Fl"]) (Flate.deflate ⟨Array.replicate 32 0⟩) 32).isSome)
+  let lzw := bytes [0x80, 0x10, 0x60, 0x50, 0x38, 0x24, 0x04]
+  t "filters: LZW stops at the chain's cap"
+    ((decoded (filter ["LZW"]) lzw 9).isNone &&
+      decoded (filter ["LZW"]) lzw 10 == some ⟨Array.replicate 10 65⟩)
   let broken := streamObj "x~>" "/Filter /ASCII85Decode "
   let image (mask : String) := statePdf "<< /XObject << /I1 5 0 R >> >>" "q 20 0 0 10 10 10 cm /I1 Do Q"
     #[streamObj "AB" "/Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray \
@@ -935,6 +939,11 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "figures: an image whose mask stream decodes is drawn with no loss" (lossesOf (image "") == .ok #[])
   t "figures: an image whose mask stream does not decode is named"
     (lossesOf (image "/Filter /ASCII85Decode ") == .ok #[.resource "mask-image"])
+  let keyed := statePdf "<< /XObject << /I1 5 0 R >> >>" "q 20 0 0 10 10 10 cm /I1 Do Q"
+    #[streamObj "AB" "/Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray \
+        /BitsPerComponent 8 /Mask 6 0 R ", "[65 65]"]
+  t "figures: an image whose colour-key mask stands behind a reference is drawn with no loss"
+    (lossesOf keyed == .ok #[])
   let indexed (lookup : String) := statePdf "<< /XObject << /I1 5 0 R >> >>"
     "q 20 0 0 10 10 10 cm /I1 Do Q"
     #[streamObj "\x00\x01" "/Type /XObject /Subtype /Image /Width 2 /Height 1 \
@@ -966,6 +975,8 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!names (composite (streamObj "\x00\x00\x00\x01")) (.font "cidtogid-unreadable"))
   t "figures: a font whose CID-to-glyph stream does not decode is named"
     (names (composite broken) (.font "cidtogid-unreadable"))
+  t "figures: a font whose CID-to-glyph map is the identity behind a reference names no loss"
+    (!names (composite "/Identity") (.font "cidtogid-unreadable"))
 
 open Tests.PdfNative in
 /-- PDF figures ship native web faces with no converter on the machine, and `\figures{ convert =

@@ -179,8 +179,8 @@ private def applyOne (name : String) (p : Option Obj) (data : ByteArray) (cap : 
   | "Crypt" => return .refused "crypt"
   | other => return .refused s!"filter-{other}"
 
-/-- A stream's data through its filter chain (§7.4), each filter with its parameters and its output
-capped at `cap` bytes; a filter after `DCTDecode` is refused. -/
+/-- A stream's data through its filter chain (§7.4), each filter with its parameters and each
+expanding filter's output capped at `cap` bytes; a filter after `DCTDecode` is refused. -/
 public def decodeCapped (dict : Obj) (raw : ByteArray) (cap : Nat) : Except String Decoded := do
   let get (k abbr : String) : Option Obj := (dict.get? k).orElse fun _ => dict.get? abbr
   let names : Array String := match get "Filter" "F" with
