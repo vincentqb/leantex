@@ -6,6 +6,7 @@
 \tl_new:N \l__leantex_decls_tl
 \tl_new:N \l__leantex_proofs_tl
 \tl_new:N \l__leantex_link_tl
+\bool_new:N \l__leantex_phrased_bool
 \keys_define:nn { leantex }
   {
     show .tl_set:N = \l__leantex_show_tl ,
@@ -15,8 +16,12 @@
     code .code:n = \tl_put_right:Nn \l__leantex_show_tl { , code } ,
     math .code:n = \tl_put_right:Nn \l__leantex_show_tl { , math } ,
     unknown .code:n =
-      \PackageWarning { leantex }
-        { \token_to_str:N \inputlean \c_space_tl has ~ no ~ option ~ '\l_keys_key_str' ~ (ignored) } ,
+      \str_if_eq:eeTF { \str_range:Nnn \l_keys_key_str { 1 } { 7 } } { phrase. }
+        { \bool_set_true:N \l__leantex_phrased_bool }
+        {
+          \PackageWarning { leantex }
+            { \token_to_str:N \inputlean \c_space_tl has ~ no ~ option ~ '\l_keys_key_str' ~ (ignored) }
+        } ,
   }
 \NewDocumentCommand \inputlean { O{} m }
   {
@@ -25,6 +30,7 @@
     \tl_clear:N \l__leantex_decls_tl
     \tl_set:Nn \l__leantex_proofs_tl { show }
     \tl_clear:N \l__leantex_link_tl
+    \bool_set_false:N \l__leantex_phrased_bool
     \keys_set:nn { leantex } { #1 }
     \bool_if:nF
       {
@@ -32,11 +38,13 @@
         && \tl_if_empty_p:N \l__leantex_decls_tl
         && \str_if_eq_p:Vn \l__leantex_proofs_tl { show }
         && \tl_if_empty_p:N \l__leantex_link_tl
+        && ! \l__leantex_phrased_bool
       }
       {
         \PackageWarning { leantex }
           { \token_to_str:N \inputlean { #2 } ~ sets ~ the ~ whole ~ file ~ as ~ code; ~
-            statements, ~ chosen ~ declarations, ~ folded ~ proofs ~ and ~ links ~ need ~ leantex }
+            statements, ~ phrases, ~ chosen ~ declarations, ~ folded ~ proofs ~ and ~ links ~ need ~
+            leantex }
       }
     \inputminted [ breaklines ] { lean4 } { #2 }
     \group_end:

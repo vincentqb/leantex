@@ -318,15 +318,16 @@ public inductive Chunk where
   | formula (math : Array Math)
   deriving Inhabited
 
-/-- A statement's top level: its explicit quantifiers, each hypothesis an implication takes or a
-binder marks as a proposition, an existential's head, then the formulas of its conclusion, a
-connective looser than an arrow, after one, parenthesized; implicit binders hide on the `spine`. -/
+/-- A statement's top level: its quantifiers, each hypothesis an implication, a proposition's or an
+instance's binder takes, an existential's head, then its conclusion's formulas, a looser connective
+after an arrow parenthesized; on the `spine` an implicit binder the rest reads hides. -/
 public def chunksOf (lk : Lookup) (ctx : List String) (afterArrow spine : Bool) : Term → List Chunk
   | .pi n b prop ty body =>
     let hyp := render lk ctx ty
     if prop && body.reads 0 then
       .formula (opEnd ((named n hyp).push (.ctrl .to))) :: chunksOf lk (n :: ctx) true spine body
-    else if spine && !prop && !b.shows then chunksOf lk (n :: ctx) afterArrow spine body
+    else if spine && !prop && (b == .implicit || b == .strict) && body.reads 0 then
+      chunksOf lk (n :: ctx) afterArrow spine body
     else if prop || b == .inst || !body.reads 0 then
       let rest := chunksOf lk (n :: ctx) true spine body
       ((endWith (opEnd #[.ctrl .to]) (piecesAt hyp 26)).map Chunk.formula).append rest

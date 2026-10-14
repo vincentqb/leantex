@@ -445,11 +445,6 @@ public def Showing.statements (s : Showing) : Bool := s.math || s.prose
 public def Showing.around (s : Showing) : List View × List View :=
   (s.views.takeWhile (· != .code), (s.views.dropWhile (· != .code)).filter (· != .code))
 
-/-- A directive value with the double quotes around it removed. -/
-private def unquote (v : String) : String :=
-  if v.length ≥ 2 && v.startsWith "\"" && v.endsWith "\"" then ((v.drop 1).dropEnd 1).toString
-  else v
-
 /-- A value with its surrounding quotes or braces taken off. -/
 public def unwrapValue (v : String) : String :=
   let t := v.trimAscii.toString
@@ -489,7 +484,7 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
     written := groups.map (·.1)
     phrases := groups.filterMap fun (k, vs) =>
       if k.startsWith phraseKey then
-        some ((k.drop phraseKey.length).toString, unquote (", ".intercalate vs))
+        some ((k.drop phraseKey.length).toString, unwrapValue (", ".intercalate vs))
       else none }
 
 /-- What a file's directive asks its page to show. -/
@@ -1529,8 +1524,8 @@ anchor. -/
     (withFolds folds (segmentsOf lang text)))
 
 /-- A page's code pieces hold exactly its segments' code, in source order, whatever statements
-stand between them, which with no fold is the file's code; a page that shows code sets each as one
-listing of it (`pieceRaws_code_exact`). -/
+stand between them, which with no fold is the file's code; a page that shows code sets each one
+holding more than white space as one listing of it (`pieceRaws_code_exact`). -/
 public theorem pagePieces_code_exact (lang : Ir.CodeLang) (text : String) (folds : List ProofFold)
     (anchors : List (Nat × Nat)) :
     ((pagePieces lang text folds anchors).toList.filterMap Piece.code?).flatten =
@@ -1715,8 +1710,9 @@ phrase is not used", "write the constant's name as a statement uses it after `ph
   | .twice => (s!"'phrase.{name}' gives its constant a second phrase; the first stands",
     "keep one `phrase.` entry for each constant")
   | .shape => (s!"'phrase.{name}' is no template the prose view reads; its constant is set as \
-mathematics", "number its slots `#1`, `#2`, … once each, write no comma or parenthesis, and open \
-it with a word, or a slot then a word, the grammar keeps for itself none of, as `if`, `and`, `both`")
+mathematics", "number its slots `#1`, `#2`, … once each, write no comma, parenthesis, brace or \
+quote, and open it with a word, or a slot then a word, the grammar keeps for itself none of, as \
+`if`, `and`, `both`")
   | .arity _ _ => (s!"the slots of 'phrase.{name}' are not its constant's explicit arguments; its \
 constant is set as mathematics", "write one slot `#k` for the k-th explicit argument, for each")
   | .clash => (s!"the words of 'phrase.{name}' open as another template's do; its constant is \
@@ -1995,7 +1991,7 @@ public def foldRaws (starts : Array Nat) (src : Array Char) (f : ProofFold) : Ar
 where the page shows them, and its paragraph for a statement. -/
 @[expose] public def pieceRaws (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (page : PageSet) (opens : Bool) : Piece → Array Raw
-  | .code start code => if page.code then
+  | .code start code => if page.code && code.any (!isWhite ·) then
       #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }] else #[]
   | .prose seg => if page.code then (proseRaws lang file starts seg opens).1 else #[]
   | .statement i => page.stmts.getD i #[]
@@ -2043,12 +2039,21 @@ public theorem pieceStep_exact (lang : Ir.CodeLang) (file : String) (starts : Ar
   (pagePieces lang text page.folds anchors).toList.foldl
     (pieceStep lang file (lineStarts text.toList.toArray) page) {}
 
-/-- A code piece adds its listing, holding its code exactly, wherever the page shows code. -/
+/-- A code piece holding more than white space adds its listing, holding its code exactly, wherever
+the page shows code. -/
 public theorem pieceRaws_code_exact (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (page : PageSet) (h : page.code = true) (opens : Bool) (start : Nat) (code : List Char) :
+    (page : PageSet) (h : page.code = true) (opens : Bool) (start : Nat) (code : List Char)
+    (hw : code.any (!isWhite ·) = true) :
     pieceRaws lang file starts page opens (.code start code) =
       #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }] := by
-  simp [pieceRaws, h]
+  simp [pieceRaws, h, hw]
+
+/-- A code piece of white space alone sets nothing, so no listing on a page is empty. -/
+public theorem pieceRaws_white_exact (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
+    (page : PageSet) (opens : Bool) (start : Nat) (code : List Char)
+    (hw : code.any (!isWhite ·) = false) :
+    pieceRaws lang file starts page opens (.code start code) = #[] := by
+  simp [pieceRaws, hw]
 
 private theorem foldl_body (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (page : PageSet) :
@@ -2134,7 +2139,8 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     let valueless := showKeys.contains k
     let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
     Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
-      (help := if valueless then s!"write `{k} = …`" else "its options are show, decls, proofs and link")
+      (help := if valueless then s!"write `{k} = …`"
+        else "name `show`, `decls`, `proofs`, `link` or a `phrase.` entry")
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \
@@ -2144,7 +2150,10 @@ it" (some request) (help := "name `code`, `math` or `prose`") (subject := some s
   let wrap (raws : Array Raw) : Array Raw := #[.env (Parse.inputEnv file) raws request.pos]
   let whole : List Seg := [⟨.code, 0, text.toList⟩]
   match (if showing.asks || showing.decls.isSome then facts else none) with
-  | none => (wrap (listingAt starts 0 text.toList), notes)
+  | none =>
+    let unsaid := (declaredFor .lean showing none).refused.map fun (name, r) =>
+      refusalNote request.file request.pos name r
+    (wrap (listingAt starts 0 text.toList), notes ++ unsaid)
   | some f =>
     let stated := if showing.statements then some f else none
     let first := (stated.map fun f => 2 * f.decls.size + f.failed.size).getD 0

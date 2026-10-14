@@ -199,6 +199,31 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((proseOf eqFacts core (theoremAt "Tide.again" 1 shadowed) shadowed).toOption.map
       (showToks leafWord ∘ render) ==
       some "for every natural number a, for every natural number a, a is equal to a")
+  let leafTex (l : Leaf) : String :=
+    " ".intercalate (l.map fun m => Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList))
+  let relFacts := factsWith (eqBinders.push ("LE.le", #[.implicit, .implicit, .explicit, .explicit]))
+  let sayTex (ty : LeanFacts.Term) : Option String :=
+    (proseOf relFacts core (theoremAt "Tide.t" 1 ty) ty).toOption.map (showToks leafTex ∘ render)
+  let typeSort : LeanFacts.Term := .apps (.sort "1") []
+  let app (c : String) (args : List LeanFacts.Term) : LeanFacts.Term := .apps (.const c) args
+  let var (i : Nat) : LeanFacts.Term := .apps (.bvar i) []
+  let natT := app "Nat" []
+  t "prose: an instance binder at the top is a hypothesis, as below it"
+    (sayTex (.pi "α" .explicit false typeSort (.pi "inst" .inst false (app "Inhabited" [var 0])
+        (app "Nonempty" [var 1]))) ==
+      some "for every type α, if \\operatorname {Inhabited}(α), then \\operatorname {Nonempty}(α)")
+  t "prose: an implicit binder the rest of the statement never names is said, not hidden"
+    (sayTex (.pi "α" .implicit false typeSort (.pi "a" .implicit false (var 0)
+        (app "Nonempty" [var 1]))) == some "for every element a of α, \\operatorname {Nonempty}(α)" &&
+      sayTex (.pi "x" .implicit false (app "Empty" []) (app "False" [])) ==
+        some "for every element x of \\operatorname {Empty}, \\operatorname {False}")
+  t "prose: inside an existential an implicit binder is a quantifier and an instance one a hypothesis"
+    (sayTex (app "Exists" [natT, .lam "n" .explicit natT (.pi "m" .implicit false natT
+        (app "LE.le" [natT, app "instLENat" [], var 0, var 1]))]) ==
+        some "there is a natural number n such that for every natural number m, m is at most n" &&
+      sayTex (app "Exists" [typeSort, .lam "α" .explicit typeSort (.pi "inst" .inst false
+        (app "Inhabited" [var 0]) (app "Nonempty" [var 1]))]) ==
+        some "there is a type α such that if \\operatorname {Inhabited}(α), then \\operatorname {Nonempty}(α)")
   -- Every note's words, under a long name, as the voice lint holds a witness's.
   let long : LeanFacts.Decl := theoremAt "Tide.inhabited_nonempty" 1 (selfEq 0)
   let notes := ([.unknown, .ambiguous, .twice, .shape, .arity 1 2, .clash, .connective, .unused,
@@ -372,6 +397,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((unshownDs.filter (·.kind == .W0416)).map (·.subject) == #[some "code:phrase:height"] &&
       (pyDs.filter (·.kind == .W0416)).map (·.subject) == #[some "code:phrase:x"])
   t "prose: a directive's phrases reach no output declaration"
-    ((Code.directiveRaws "show = prose, phrase.height = \"the height of #1\", formats = pdf" {}).size == 2)
+    (Parse.rawSrc (Code.directiveRaws "show = prose, phrase.height = \"the height of #1\", formats = pdf" {}) ==
+      "\\output {formats = pdf}")
 
 end Tests.LeanProse

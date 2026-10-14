@@ -62,6 +62,21 @@ def gitWorld (files : List (String × ByteArray)) (commit path status : Option S
   | .writeAtomic _ _ => .ok ()
   | .createDirAll _ => .ok ()
 
+/-- The bodies of a markdown text's fenced blocks, in order. -/
+def fenceBodies (text : String) : List String := Id.run do
+  let mut out : Array String := #[]
+  let mut body : Option String := none
+  for line in text.splitOn "\n" do
+    if (line.dropWhile (· == ' ')).startsWith "```" then
+      match body with
+      | some b =>
+        out := out.push b
+        body := none
+      | none => body := some ""
+    else
+      body := body.map (· ++ line)
+  return out.toList
+
 def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src ← fixtureText leanFixture
@@ -371,9 +386,37 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((spokenLines.findIdx? fun (_, l) => l.startsWith "Theorem (Tide.le_or_gt). For").any fun i =>
       ((spokenLines.extract (i + 1) spokenLines.size).filter (·.1)).any fun (_, l) =>
         (l.splitOn "theorem le_or_gt").length == 2)
+  let (_, onlyPhraseDs) := docOf (incl "phrase.Tide.depth = {the depth after #1 steps}" none)
+  let (_, quotedDs) := docOf (incl "show = prose, phrase.Tide.height = {\"the height of #1 and #2\"}"
+    (some facts))
+  t "views: an inclusion that says nothing in words names its phrases, and a phrase holding a quote is refused"
+    (onlyPhraseDs.any (fun d => d.kind == .W0416 && d.span == some request) &&
+      quotedDs.any fun d => d.kind == .W0416 && d.subject == some "code:phrase:Tide.height")
   let (_, phrasedDs) := docOf (incl "show = prose, phrase.zz = \"#1 is void\"" (some facts))
   t s!"views: an inclusion's phrase is refused at the request that declares it ({phrasedDs.map (·.subject)})"
     (phrasedDs.any fun d => d.kind == .W0416 && d.span == some request)
+  let mut blankBoxes : Array String := #[]
+  for views in ["math, code", "code, math", "math, code, prose", "prose, code, math", "code, prose",
+      "math, prose, code", "math, code, prose, proofs = collapse", "math, code, prose, proofs = remove",
+      "prose, code, math, proofs = collapse", "code, math, proofs = remove"] do
+    let (page, _) := readWith s!"show = {views}"
+    let pres := Tests.CodeDoc.elemTexts "pre" page
+    let fences := fenceBodies (MarkdownDoc.emit page)
+    if pres.isEmpty || pres.any (·.all Code.isWhite) || fences.any (·.all Code.isWhite) then
+      blankBoxes := blankBoxes.push views
+  t s!"views: no page listing, on the web page or in the twin, holds white space alone ({blankBoxes})"
+    blankBoxes.isEmpty
+  let braced := "show = {prose}, phrase.Tide.height = {the height after #2 steps of #1}"
+  let (raws, _) := Md.desugar "d.md"
+    "::: {.lean file=\"F.lean\" show=\"prose\" phrase.Tide.height=\"the height after #2 steps of #1\"}\n:::\n"
+  let (phrased, phrasedTakenDs) := docOf (incl braced (some facts))
+  let phrasedLines := codePageLines fonts phrased
+  t s!"views: a phrase a division or a braced inclusion declares is taken, its braces not its words ({Parse.rawSrc raws})"
+    (Parse.rawSrc raws == s!"\\inputlean [{braced}]\{F.lean}" &&
+      !phrasedTakenDs.any (·.kind == .W0416) &&
+      phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1) &&
+      !phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1 &&
+        l.any fun c => c == '{' || c == '}'))
   let (strange, strangeDs) := docOf (incl "caption = x, proofs = folded" none)
   let strangeNotes := strangeDs.filter fun (d : Diag) => d.kind == .W0110
   t "views: an inclusion names, at its request, a key no option has and a value no mode has, and includes the file whole"

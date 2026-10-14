@@ -1293,14 +1293,15 @@ public def both {β γ δ : Type} (a : Except Unsaid β) (b : Except Unsaid γ) 
 
 /-- A proposition said in words, or why it cannot be: a binder whose type is a proposition as a
 hypothesis, an instance one too, and any other as a quantifier, but for the implicit binders of
-the statement's top, under `top`, which hide. -/
+the statement's top, under `top`, that the rest reads, which hide. -/
 public def stmtOf (lk : LeanStatement.Lookup) (tb : Table) (top : Bool) (ctx : List String) :
     LeanFacts.Term → Except Unsaid (Stmt Leaf)
   | .pi n b prop ty body =>
     if prop then
       if body.reads 0 then .error (.named n)
       else both (stmtOf lk tb false ctx ty) (stmtOf lk tb top (n :: ctx) body) .imp
-    else if top && !b.shows then stmtOf lk tb top (n :: ctx) body
+    else if top && (b == .implicit || b == .strict) && body.reads 0 then
+      stmtOf lk tb top (n :: ctx) body
     else if b == .inst then both (stmtOf lk tb false ctx ty) (stmtOf lk tb top (n :: ctx) body) .imp
     else (stmtOf lk tb top (n :: ctx) body).map (forAll (nounOf lk ctx ty) (nameLeaf n))
   | .apps (.const "Exists") [_, .lam n _ dom body] =>
@@ -1340,10 +1341,10 @@ public def Table.with (tb : Table) (c : String) (t : Template) : Table :=
 /-- The constants the grammar says in its own words. -/
 public def connectives : List String := ["Exists", "And", "Or", "Iff", "Not"]
 
-/-- Whether a template's words hold none of the punctuation a page joins to its neighbours. -/
+/-- Whether a template's words hold no comma, parenthesis, brace or quote. -/
 private def plainWords (t : Template) : Bool :=
   t.parts.all fun
-    | .word w => !w.any fun c => c == ',' || c == '(' || c == ')'
+    | .word w => !w.any fun c => c == ',' || c == '(' || c == ')' || c == '{' || c == '}' || c == '"'
     | .slot _ => true
 
 /-- The constant a declared phrase names and its template, or why it is refused before a table

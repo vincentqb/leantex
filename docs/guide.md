@@ -101,56 +101,57 @@ elsewhere among the leading comments is not read, and the run says so:
 
 A Lean file's directive may also say what its page shows: `show = math, code`
 sets each top-level declaration's statement as mathematics above its code,
-**Theorem** (`Tide.height_double`). ∀ rise, n ∈ ℕ, height(rise, 2 · n) =
-2 · height(rise, n); `show = code, math` sets it after the code, `show = math`
-sets the statements alone, and `decls = height, height_double` chooses which.
-The default is `show = code`, which never runs Lean. A statement is Lean's own:
-a small export that ships with leantex runs as `lake env lean` from the file's
+**Theorem** (`Tide.height_double`). ∀ rise, n ∈ ℕ, height(rise, 2 · n) = 2 ·
+height(rise, n); `show = code, math` sets it after the code, `show = math` sets
+the statements alone, and `decls = height, height_double` chooses which. The
+default is `show = code`, which never runs Lean. A statement is Lean's own: a
+small export that ships with leantex runs as `lake env lean` from the file's
 project (the nearest directory holding a lakefile, else the file's own), under
 the toolchain elan picks there, and elaborates the file command by command, as
 `lean` would with Lean's frontend imported beside the file's imports, so the
-file's `#eval` and macros run as they would under `lean`, and lake may write
-the project's manifest. Each elaborated type sets through one notation table
-(arithmetic, relations, logic, existence, ℕ ℤ ℚ ℝ ℂ and numerals), its
-outermost implicit and instance binders hidden unless their type is a
-proposition, which sets as a hypothesis, every implicit argument hidden, a
-string as Lean writes it, and every other constant upright by its name; a line
-may break after each operator of a statement's top level, between the names a
-quantifier binds, and after each comma of an application's arguments, with no
-change to the spacing. A theorem Lean holds unproved, or that rests on one, is
-marked so; a statement Lean elaborated around an error is not set, and a page
-that shows math alone sets that declaration's code in its place. Lean's whole
-answer is kept under `~/.cache/leantex/lean`, keyed by the file's bytes and
-path, the Lean the project runs, its manifest and lakefile, and the Lake trace
-of each module the file imports; a refusal of the export is kept the same way.
-When Lean gives no answer (no `lake` on PATH, packages not fetched, an import
-not built, four minutes passed) the page sets the code alone, whatever `show`
-asks, and the run says so once. The export reads Lean 4.24 and later.
+file's `#eval` and macros run as they would under `lean`, and lake may write the
+project's manifest. Each elaborated type sets through one notation table
+(arithmetic, relations, logic, existence, ℕ ℤ ℚ ℝ ℂ and numerals), each
+outermost implicit binder the rest of the statement refers to hidden, an
+instance binder and a binder whose type is a proposition set as hypotheses,
+every implicit argument hidden, a string as Lean writes it, and every other
+constant upright by its name; a line may break after each operator of a
+statement's top level, between the names a quantifier binds, and after each
+comma of an application's arguments, with no change to the spacing. A theorem
+Lean holds unproved, or that rests on one, is marked so; a statement Lean
+elaborated around an error is not set, and a page that shows math alone sets
+that declaration's code in its place. Lean's whole answer is kept under
+`~/.cache/leantex/lean`, keyed by the file's bytes and path, the Lean the
+project runs, its manifest and lakefile, and the Lake trace of each module the
+file imports; a refusal of the export is kept the same way. When Lean gives no
+answer (no `lake` on PATH, packages not fetched, an import not built, four
+minutes passed) the page sets the code alone, whatever `show` asks, and the run
+says so once. The export reads Lean 4.24 and later.
 
 `show = prose` says each statement in words instead, its terms as formulas:
 **Theorem** (`Tide.le_or_gt`). For all natural numbers a and b, either a is at
-most b or b is less than a. An explicit binder reads as a quantifier over its
-type's noun (natural number, integer, rational, real or complex number,
-proposition, type, else an element of the type), consecutive ones over one
-noun as one, plural; a binder whose type is a proposition, or an instance one
-below the top, as a hypothesis, `if …, then …`; `∃` as there is; `∧ ∨ ↔ ¬` as
-both … and, either … or, if and only if, and it is not the case that;
-`= ≠ < ≤ > ≥ ∣ ∈` as is equal to, is not equal to, is less than, is at most,
-is greater than, is at least, divides and is an element of; every other
-proposition stays a formula, and parentheses group what the words do not. The
-words parse back to the statement they say, implicit arguments hidden as in the
-math view. A declaration whose type is no proposition, or a statement the words
-cannot say (a hypothesis the rest names, a `let`), is set as mathematics, once
-on a page that also shows the math view, and the run says so. A directive may
-give a constant its own words, `#k` standing for its k-th explicit argument:
+most b or b is less than a. A binder reads as a quantifier over its type's noun
+(natural number, integer, rational, real or complex number, proposition, type,
+else an element of the type), but an outermost implicit one the rest refers to,
+which hides, consecutive ones over one noun as one, plural; a binder whose type
+is a proposition, or an instance one, as a hypothesis, `if …, then …`; `∃` as
+there is; `∧ ∨ ↔ ¬` as both … and, either … or, if and only if, and it is not
+the case that; `= ≠ < ≤ > ≥ ∣ ∈` as is equal to, is not equal to, is less than,
+is at most, is greater than, is at least, divides and is an element of; every
+other proposition stays a formula, and parentheses group what the words do not.
+The words parse back to the statement they say, implicit arguments hidden as in
+the math view. A declaration whose type is no proposition, or a statement the
+words cannot say (a hypothesis the rest names, a `let`), is set as mathematics,
+once on a page that also shows the math view, and the run says so. A directive
+may give a constant its own words, `#k` standing for its k-th explicit argument:
 `phrase.Tide.height = "the height after #2 steps of #1"` says its terms, and a
 phrase that opens with a slot, `phrase.Calm = "#1 is calm"`, its propositions,
-each in place of the core wording of its kind. The run names each phrase it
-does not take (for no constant, or several, a second for one constant, for a
-connective, with other slots than the explicit arguments, with a comma or a
-parenthesis, or words that would not read back) and each no sentence on the
-page uses, as on a page that says nothing in words. Views combine in the order
-given, as `show = prose, code`, `show = code, prose` or
+each in place of the core wording of its kind. The run names each phrase it does
+not take (for no constant, or several, a second for one constant, for a
+connective, with other slots than the explicit arguments, with a comma, a
+parenthesis, a brace or a quote, or words that would not read back) and each no
+sentence on the page uses, as on a page that says nothing in words. Views
+combine in the order given, as `show = prose, code`, `show = code, prose` or
 `show = math, prose, code`.
 
 Two more options shape a Lean file's page. `proofs = collapse` folds each
@@ -184,7 +185,8 @@ option the whole file is one listing, as `\inputminted{lean4}{Tide.lean}`
 sets it. Showing math or folding or removing proofs asks the file's
 project's Lean, as above, and sets the whole file with each statement at its
 declaration; `decls` sets only the declarations it names (theorems,
-definitions and axioms), each with its views in order. An included file's
+definitions and axioms), each with its views in order; `phrase.` entries
+give constants their words there as a directive's do. An included file's
 documentation comments are code, as its source has them.
 
 ## Fonts and themes

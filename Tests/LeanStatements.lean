@@ -110,7 +110,8 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   spells "Tide.pow_succ'" #["\\forall a,{}", "n\\in \\mathbb {N},", "a^{n+1}={}", "a^{n}\\cdot {}", "a"]
   spells "Tide.div_mod" #["\\forall a,{}", "b\\in \\mathbb {N},", "b\\cdot {}", "(a/b)+{}", "a\\bmod {}",
     "b={}", "a"]
-  spells "Tide.total" #["\\operatorname {total}:", "α\\to {}", "\\operatorname {List}(α)\\to {}", "α"]
+  spells "Tide.total" #["\\operatorname {total}:", "\\operatorname {Add}(α)\\to {}", "α\\to {}",
+    "\\operatorname {List}(α)\\to {}", "α"]
   spells "Tide.strict_hyp" #["(\\forall n\\in \\mathbb {N},n=0)\\to {}", "\\operatorname {False}"]
   spells "Tide.imp_iff" #["\\forall p,{}", "q\\in \\operatorname {Prop},", "p\\to {}", "(q\\leftrightarrow q)"]
   spells "Tide.depth_val" #["\\operatorname {depth}={}", "7"]
@@ -137,6 +138,20 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((LeanStatement.statementMath facts exDecl exImplicit).map fun (m, _) =>
         Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList)) ==
       #["\\exists n\\in \\mathbb {N},", "\\forall m\\in \\mathbb {N},", "m\\leq {}", "n"])
+  let mathOf (ty : LeanFacts.Term) : Array String :=
+    (LeanStatement.statementMath facts { exDecl with type := some ty } ty).map fun (m, _) =>
+      Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList)
+  let typeSort : LeanFacts.Term := .apps (.sort "1") []
+  t "statements: an instance binder at the top is a hypothesis, never hidden"
+    (mathOf (.pi "α" .explicit false typeSort (.pi "inst" .inst false (app "Inhabited" [var 0])
+        (app "Nonempty" [var 1]))) ==
+      #["\\forall α\\in \\operatorname {Type},", "\\operatorname {Inhabited}(α)\\to {}",
+        "\\operatorname {Nonempty}(α)"])
+  t "statements: an implicit binder the rest of the statement never names is shown, not hidden"
+    (mathOf (.pi "α" .implicit false typeSort (.pi "a" .implicit false (var 0)
+        (app "Nonempty" [var 1]))) == #["α\\to {}", "\\operatorname {Nonempty}(α)"] &&
+      mathOf (.pi "x" .implicit false (app "Empty" []) (app "False" [])) ==
+        #["\\operatorname {Empty}\\to {}", "\\operatorname {False}"])
   t "statements: membership sets its element first, a constant outside the table by its name"
     ((formulasOf facts "Tide.mem_cons").toList.drop 2 == ["x\\in {}", "\\operatorname {List.cons}(x,{}", "xs)"])
   t "statements: a word space follows a quantifier's head and a definition's name alone"
