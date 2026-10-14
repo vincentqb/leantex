@@ -419,7 +419,7 @@ def landedFromRow (e : Env) (ctr : IO.Ref Nat) (name tip mainTip : String) :
   | none => return some ("", "", false)
   | some row =>
     let b := (jsonField row "branch").getD ""
-    let g := (jsonField row "gated").getD ""
+    let g := (jsonField row "tip").getD ((jsonField row "gated").getD "")
     if !isSha b || !isSha g || b == g then return some ("", "", false)
     let r ← git e ctr "pre-branch" #["merge-base", "--is-ancestor", b, tip] (some e.mainWt)
     if r.code != 0 then return some ("", "", false)
@@ -441,6 +441,20 @@ def landedTipOf (e : Env) (ctr : IO.Ref Nat) (name tip : String) : IO String := 
     if b != tip || !isSha g then return ""
     let r ← git e ctr "pre" #["merge-base", "--is-ancestor", g, "main"] (some e.mainWt)
     return (if r.code == 0 then g else "")
+
+/-- The last `landed` row of a branch `main` already holds, unmoved since: the branch reads at
+the commit that row landed it as, or at the tip it read, and `main` holds that commit. -/
+def alreadyLanded (e : Env) (name : String) : IO (Option String) := do
+  let ctr ← IO.mkRef 0
+  match ← lastVerdict e "landed" (some name) with
+  | none => return none
+  | some row =>
+    let t := (jsonField row "tip").getD ""
+    let b := (jsonField row "branch").getD ""
+    let cur ← revParse e ctr "pre" s!"refs/heads/agent/{name}" (some e.mainWt)
+    if !isSha t || !isSha cur || (cur != t && cur != b) then return none
+    let r ← git e ctr "pre" #["merge-base", "--is-ancestor", t, "refs/heads/main"] (some e.mainWt)
+    return if r.code == 0 then some row else none
 
 /-- The gate tree: a detached worktree this run makes in its own run directory, which
 nothing else writes. -/
@@ -507,17 +521,218 @@ def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip tip : S
   if r.code != 0 then return .gateFail idx head clean
   return .gateOk idx head clean
 
+/-- The landing lock, and the record of who holds it. -/
+def lockPath (e : Env) : String := s!"{e.common}/land/landing.lock"
+def ownerPath (e : Env) : String := s!"{e.common}/land/landing.owner"
+
+/-- A `key=value` field of an owner record; empty when absent. -/
+def recField (rec key : String) : String :=
+  match (wsSplit rec).find? (·.startsWith s!"{key}=") with
+  | some w => (w.drop (key.length + 1)).toString
+  | none => ""
+
+/-- The landing queue, one waiter a line in arrival order, and the lock its readers and writers
+take. -/
+def queuePath (e : Env) : String := s!"{e.common}/land/queue"
+def queueLockPath (e : Env) : String := s!"{e.common}/land/queue.lock"
+
+/-- A name the queue holds: one a branch can carry, with no whitespace or control character. -/
+def queueable (name : String) : Bool :=
+  !name.isEmpty && name.all fun c =>
+    !c.isWhitespace && c.toNat ≥ 0x20 && (c.toNat < 0x7f || c.toNat > 0x9f)
+
+def waiterLine (w : Waiter) : String :=
+  s!"name={w.name} run={w.run} pid={w.pid} since={w.since} fare={w.fare} train={w.train}"
+
+/-- A run id the queue may name: one a run directory can carry, naming no path. -/
+def runName (r : String) : Bool := queueable r && !r.contains '/' && !r.startsWith "."
+
+/-- A queue line read back, or nothing for one that is not a waiter's, a run naming a path
+among them. -/
+def waiterOfLine? (l : String) : Option Waiter := do
+  let name := recField l "name"
+  let run := recField l "run"
+  let train := recField l "train"
+  let pid ← (recField l "pid").toNat?
+  if !queueable name || !runName run || !(train.isEmpty || runName train) then none
+  else some { name, run, pid, since := recField l "since", fare := recField l "fare", train }
+
+/-- The queue a file holds, a line that is not a waiter's dropped, and a name's later lines. -/
+def queueOfText (txt : String) : List Waiter := Id.run do
+  let mut out : Array Waiter := #[]
+  for l in txt.splitOn "\n" do
+    if let some w := waiterOfLine? l then
+      unless out.any (·.name == w.name) do out := out.push w
+  return out.toList
+
+/-- The queue, empty when its file is absent; a file that cannot be read is an error, never an
+empty queue. -/
+def readQueueAt (common : String) : IO (List Waiter) := do
+  let p := s!"{common}/land/queue"
+  if !(← System.FilePath.pathExists p) then return []
+  queueOfText <$> IO.FS.readFile p
+
+/-- Replace the queue file whole, by a rename, so a reader sees one queue or the next. -/
+def writeQueue (e : Env) (q : List Waiter) : IO Unit := do
+  let next := s!"{queuePath e}.next"
+  IO.FS.writeFile next (String.join (q.map (waiterLine · ++ "\n")))
+  IO.FS.rename next (queuePath e)
+
+/-- Whether a run still runs, by the lock on its `alive`, which a reused pid does not hold; a
+lock that cannot be tried reads as dead, so it cannot stall the queue. -/
+def runLiveAt (common run : String) : IO Bool :=
+  return (← runProbe s!"{common}/land/{run}").getD false
+
+def waiterLiveAt (common : String) (w : Waiter) : IO Bool := runLiveAt common w.run
+
+def waiterLive (e : Env) (w : Waiter) : IO Bool := waiterLiveAt e.common w
+
+/-- The pause between a waiting run's asks for its turn. -/
+def turnBeatMs : UInt32 := 500
+
+/-- The asks a waiting run makes before it refuses: eight hours of beats, the span a landing's
+retries are given. -/
+def turnBeats : Nat := 8 * 60 * 60 * 1000 / turnBeatMs.toNat
+
+/-- Settle a train's riders under the queue's lock: the landed and the refused leave, the rest
+wait again in their places. -/
+def settleRiders (e : Env) (gone stay : List String) : IO Unit := do
+  if gone.isEmpty && stay.isEmpty then return
+  try
+    let qh ← IO.FS.Handle.mk (queueLockPath e) .append
+    qh.lock
+    try
+      let q ← readQueueAt e.common
+      let q' := Queue.alight (q.filter fun w => !gone.contains w.name) stay
+      if q' != q then writeQueue e q'
+    finally qh.unlock
+  catch ex => say "queue" "fail" [("why", s!"the riders' places could not be settled: {ex}")]
+
+/-- A branch as the pre-checks read it: its worktree, how far ahead and behind `main`, whether
+the worktree is clean, its tip, and what an earlier landing of it read and landed as. -/
+structure BranchRead where
+  wt : String
+  ahead : Nat
+  behind : Nat
+  clean : Bool
+  tip : Sha
+  landedFrom : Sha
+  landedAs : Sha
+  landedOnMain : Bool
+
+/-- Read `agent/<name>` for the pre-checks, under the step's name in the porcelain; `.error` for
+output that does not parse. -/
+def readAgent (e : Env) (ctr : IO.Ref Nat) (step name : String) (mainTip : Sha) :
+    IO (Except String (Except BranchMiss BranchRead)) := do
+  let r ← git e ctr step #["show-ref", "--verify", "--quiet", s!"refs/heads/agent/{name}"]
+  if r.code != 0 then
+    say step "fail" [("branch", s!"agent/{name}"), ("present", "no")]
+    return .ok (.error .noBranch)
+  match ← worktreeOf e ctr step name with
+  | none =>
+    say step "fail" [("branch", s!"agent/{name}"), ("worktree", "none")]
+    return .ok (.error .noWorktree)
+  | some p =>
+    let rc ← git e ctr step #["rev-list", "--left-right", "--count", s!"main...agent/{name}"] (some p)
+    if rc.code != 0 then return .error "git rev-list --count"
+    match wsSplit rc.out with
+    | [b, a] =>
+      match b.toNat?, a.toNat? with
+      | some behind, some ahead =>
+        match ← statusClean e ctr step p with
+        | none => return .error "git status in the branch worktree"
+        | some clean =>
+          let tip ← revParse e ctr step s!"refs/heads/agent/{name}" (some p)
+          let row ← if isSha tip then landedFromRow e ctr name tip mainTip
+            else pure (some ("", "", false))
+          match row with
+          | none => return .error "git merge-base --is-ancestor for the landed commit"
+          | some (landedFrom, landedAs, onMain) =>
+            let barred := landedBars landedFrom onMain
+            say step (if ahead > 0 && clean && !barred then "ok" else "fail")
+              ([("worktree", p), ("ahead", toString ahead), ("behind", toString behind),
+                ("dirty", if clean then "no" else "yes"), ("tip", if tip.isEmpty then "?" else tip)]
+               ++ (if landedFrom.isEmpty then []
+                   else [("landed-from", landedFrom), ("landed-as", landedAs),
+                     ("landed-on-main", if onMain then "yes" else "no")]))
+            return .ok (.ok { wt := p, ahead, behind, clean, tip, landedFrom, landedAs, landedOnMain := onMain })
+      | _, _ => return .error "rev-list counts are not numbers"
+    | other => return .error s!"rev-list counts: {other.length} fields"
+
+/-- Rebase the gate tree from exactly `tip` onto exactly `onto`, a tip containing the base kept as
+it is: the tree read back, its head and whether it is clean and detached, or the unmerged paths of
+a rebase that failed and was aborted. -/
+def rebaseTree (e : Env) (ctr : IO.Ref Nat) (step : String) (tip onto : Sha) :
+    IO (Except (Array String) (Sha × Bool)) := do
+  -- A tip containing the base keeps its merges; else only the captured sha is replayed.
+  let tree := treePath e
+  let contains ← git e ctr s!"{step}-base" #["merge-base", "--is-ancestor", onto, tip] (some tree)
+  -- premise: scenarioMergedTip — the reviewed tip, tree and ancestry land unchanged
+  let r ← if contains.code == 0 then
+      git e ctr step #["checkout", "--detach", tip] (some tree)
+    else if contains.code == 1 then
+      git e ctr step #["rebase", "--no-update-refs", "--no-autosquash", "--no-autostash", onto, tip]
+        (some tree)
+    else pure contains
+  if r.code == 0 then
+    let head ← revParse e ctr step "HEAD" (some tree)
+    let clean? ← statusClean e ctr step tree
+    let onRef ← git e ctr step #["symbolic-ref", "--quiet", "HEAD"] (some tree)
+    let detached := onRef.code != 0
+    let ok := clean? == some true && detached && (contains.code != 0 || head == tip)
+    say step (if ok && isSha head then "ok" else "fail")
+      [("from", tip), ("onto", onto), ("tip", if head.isEmpty then "?" else head),
+       ("dirty", if clean? == some true then "no" else "yes"),
+       ("detached", if detached then "yes" else "no"),
+       ("mode", if contains.code == 0 then "preserve" else "replay")]
+    return .ok (head, ok)
+  -- A failed rebase: the unmerged paths for the refusal, then an abort.
+  let ru ← git e ctr step #["diff", "--name-only", "--diff-filter=U"] (some tree)
+  let files := (ru.out.splitOn "\n").map trimWs |>.filter (!·.isEmpty)
+  if ← midRebase e ctr s!"{step}-abort" tree then
+    let _ ← git e ctr s!"{step}-abort" #["rebase", "--abort"] (some tree)
+    pure ()
+  say step "fail" [("from", tip), ("onto", onto),
+    ("conflict", if files.isEmpty then "none" else String.intercalate "," files)]
+  return .error files.toArray
+
+/-- List a change's two net forms for the comparison: the branch's own, from its fork point with
+`newBase` to `oldTip`, and the rebase's, from `newBase` to `newTip`; `.error` when git cannot. -/
+def netListings (e : Env) (ctr : IO.Ref Nat) (step : String) (oldTip newBase newTip : Sha) :
+    IO (Except String (String × String)) := do
+  -- The branch's change from its fork point with the new base, through plumbing.
+  let rf ← git e ctr step #["merge-base", newBase, oldTip] (some e.mainWt)
+  let fork := trimWs rf.out
+  if rf.code != 0 || !isSha fork then return .error "git merge-base for the net comparison"
+  let listing (a b : String) : Array String :=
+    #["diff-tree", "-r", "-p", "--no-color", "--no-ext-diff", "--no-textconv",
+      "--no-renames", "--binary", "-U0", a, b]
+  let rb ← git e ctr step (listing fork oldTip) (some e.mainWt)
+  let ra ← git e ctr step (listing newBase newTip) (some e.mainWt)
+  if rb.code != 0 || ra.code != 0 then return .error "git diff-tree for the net comparison"
+  -- Where either listing is not UTF-8, both are read through one one-to-one spelling.
+  let (before, after) := if rb.exact && ra.exact then (rb.out, ra.out)
+    else (spelledText rb.bytes, spelledText ra.bytes)
+  let drift := netDrift (netOf before) (netOf after)
+  say step (if drift.isEmpty then "ok" else "fail")
+    ([("fork", fork), ("base", newBase), ("files", toString (netOf before).size)]
+      ++ (if drift.isEmpty then [] else [("drift", String.intercalate "," drift.toList)]))
+  return .ok (before, after)
+
 /-- The landing loop: feed the core one observation per action until it halts; `treeLive`
 lets the caller's `finally` remove a tree an exception left. -/
 def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : String)
-    (mode : Mode) (wantPush : Bool) (gates : Array Gate) (gateset : String) : IO UInt32 := do
+    (mode : Mode) (wantPush : Bool) (gates : Array Gate) (gateset : String)
+    (riders : List String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   let plan : Array GateSpec := planOf gates
-  let mut st := State.init name mode plan wantPush
+  let mut st := State.init name mode plan wantPush riders.toArray
   let mut act : Act := .probeMain
   let mut wt : String := ""
-  say "run" "ok" [("id", e.runId), ("dir", e.runDir), ("mode",
+  let mut riderWts : Array (String × String) := #[]
+  say "run" "ok" ([("id", e.runId), ("dir", e.runDir), ("mode",
     if mode == .check then "check" else "land"), ("gateset", gateset)]
+    ++ (if riders.isEmpty then [] else [("riders", String.intercalate "," riders)]))
   while true do
     let obs : Obs ← match act with
       | .probeMain => do
@@ -533,107 +748,71 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
              ("tip", if tip.isEmpty then "?" else tip)]
           pure (.mainStatus onMain clean tip)
       | .probeBranch => do
-        let r ← git e ctr "pre-branch"
-          #["show-ref", "--verify", "--quiet", s!"refs/heads/agent/{name}"]
-        if r.code != 0 then
-          say "pre-branch" "fail" [("branch", s!"agent/{name}"), ("present", "no")]
-          pure (.branchAbsent .noBranch)
-        else match ← worktreeOf e ctr "pre-branch" name with
-        | none =>
-          say "pre-branch" "fail" [("branch", s!"agent/{name}"), ("worktree", "none")]
-          pure (.branchAbsent .noWorktree)
-        | some p => do
-          wt := p
-          let rc ← git e ctr "pre-branch"
-            #["rev-list", "--left-right", "--count", s!"main...agent/{name}"] (some p)
-          if rc.code != 0 then
-            pure (.garbled "git rev-list --count")
-          else
-            match wsSplit rc.out with
-            | [b, a] =>
-              match b.toNat?, a.toNat? with
-              | some behind, some ahead => do
-                let clean? ← statusClean e ctr "pre-branch" p
-                match clean? with
-                | none => pure (.garbled "git status in the branch worktree")
-                | some clean => do
-                  let tip ← revParse e ctr "pre-branch" s!"refs/heads/agent/{name}" (some p)
-                  let row ← if isSha tip then landedFromRow e ctr name tip st.prevMainTip
-                    else pure (some ("", "", false))
-                  match row with
-                  | none => pure (.garbled "git merge-base --is-ancestor for the landed commit")
-                  | some (landedFrom, landedAs, onMain) => do
-                    let barred := landedBars landedFrom onMain
-                    say "pre-branch" (if ahead > 0 && clean && !barred then "ok" else "fail")
-                      ([("worktree", p), ("ahead", toString ahead),
-                       ("behind", toString behind),
-                       ("dirty", if clean then "no" else "yes"),
-                       ("tip", if tip.isEmpty then "?" else tip)]
-                       ++ (if landedFrom.isEmpty then []
-                           else [("landed-from", landedFrom), ("landed-as", landedAs),
-                             ("landed-on-main", if onMain then "yes" else "no")]))
-                    pure (.branchStatus ahead behind clean tip landedFrom landedAs onMain)
-              | _, _ => pure (.garbled "rev-list counts are not numbers")
-            | other => pure (.garbled s!"rev-list counts: {other.length} fields")
+        match ← readAgent e ctr "pre-branch" name st.prevMainTip with
+        | .error what => pure (.garbled what)
+        | .ok (.error m) => pure (.branchAbsent m)
+        | .ok (.ok b) =>
+          wt := b.wt
+          pure (.branchStatus b.ahead b.behind b.clean b.tip b.landedFrom b.landedAs b.landedOnMain)
+      | .probeRider i n => do
+        match ← readAgent e ctr "rider-pre" n st.prevMainTip with
+        | .error what => pure (.garbled what)
+        | .ok (.error m) => pure (.riderAbsent i m)
+        | .ok (.ok b) =>
+          riderWts := riderWts.push (n, b.wt)
+          pure (.riderStatus i b.ahead b.clean b.tip b.landedFrom b.landedAs b.landedOnMain)
       | .rebase tip onto => do
-        -- A tip containing the base keeps its merges; else only the captured sha is replayed.
-        let tree := treePath e
-        let contains ← git e ctr "rebase-base" #["merge-base", "--is-ancestor", onto, tip]
-          (some tree)
-        -- premise: scenarioMergedTip — the reviewed tip, tree and ancestry land unchanged
-        let r ← if contains.code == 0 then
-            git e ctr "rebase" #["checkout", "--detach", tip] (some tree)
-          else if contains.code == 1 then
-            git e ctr "rebase"
-              #["rebase", "--no-update-refs", "--no-autosquash", "--no-autostash", onto, tip]
-              (some tree)
-          else pure contains
-        if r.code == 0 then
-          let head ← revParse e ctr "rebase" "HEAD" (some tree)
-          let clean? ← statusClean e ctr "rebase" tree
-          let onRef ← git e ctr "rebase" #["symbolic-ref", "--quiet", "HEAD"] (some tree)
-          let detached := onRef.code != 0
-          let ok := clean? == some true && detached && (contains.code != 0 || head == tip)
-          say "rebase" (if ok && isSha head then "ok" else "fail")
-            [("from", tip), ("onto", onto), ("tip", if head.isEmpty then "?" else head),
-             ("dirty", if clean? == some true then "no" else "yes"),
-             ("detached", if detached then "yes" else "no"),
-             ("mode", if contains.code == 0 then "preserve" else "replay")]
-          pure (.rebaseOk head ok)
-        else
-          -- A failed rebase: the unmerged paths for the refusal, then an abort.
-          let ru ← git e ctr "rebase" #["diff", "--name-only", "--diff-filter=U"] (some tree)
-          let files := (ru.out.splitOn "\n").map trimWs |>.filter (!·.isEmpty)
-          if ← midRebase e ctr "rebase-abort" tree then
-            let _ ← git e ctr "rebase-abort" #["rebase", "--abort"] (some tree)
-            pure ()
-          say "rebase" "fail"
-            [("from", tip), ("onto", onto),
-             ("conflict", if files.isEmpty then "none" else String.intercalate "," files)]
-          pure (.rebaseFailed files.toArray)
+        match ← rebaseTree e ctr "rebase" tip onto with
+        | .ok (head, ok) => pure (.rebaseOk head ok)
+        | .error files => pure (.rebaseFailed files)
+      | .rebaseRider i tip onto => do
+        match ← rebaseTree e ctr "rider-rebase" tip onto with
+        | .ok (head, ok) => pure (.riderRebaseOk i head ok)
+        | .error files => pure (.riderRebaseFailed i files)
       | .netDiff oldTip newBase newTip => do
-        -- The branch's change from its fork point with the new base, through plumbing.
-        let rf ← git e ctr "net" #["merge-base", newBase, oldTip] (some e.mainWt)
-        let fork := trimWs rf.out
-        if rf.code != 0 || !isSha fork then
-          pure (.garbled "git merge-base for the net comparison")
-        else
-          let listing (a b : String) : Array String :=
-            #["diff-tree", "-r", "-p", "--no-color", "--no-ext-diff", "--no-textconv",
-              "--no-renames", "--binary", "-U0", a, b]
-          let rb ← git e ctr "net" (listing fork oldTip) (some e.mainWt)
-          let ra ← git e ctr "net" (listing newBase newTip) (some e.mainWt)
-          if rb.code != 0 || ra.code != 0 then
-            pure (.garbled "git diff-tree for the net comparison")
-          else
-            -- Where either listing is not UTF-8, both are read through one one-to-one spelling.
-            let (before, after) := if rb.exact && ra.exact then (rb.out, ra.out)
-              else (spelledText rb.bytes, spelledText ra.bytes)
-            let drift := netDrift (netOf before) (netOf after)
-            say "net" (if drift.isEmpty then "ok" else "fail")
-              ([("fork", fork), ("base", newBase), ("files", toString (netOf before).size)]
-                ++ (if drift.isEmpty then [] else [("drift", String.intercalate "," drift.toList)]))
-            pure (.netDiffs before after)
+        match ← netListings e ctr "net" oldTip newBase newTip with
+        | .ok (before, after) => pure (.netDiffs before after)
+        | .error what => pure (.garbled what)
+      | .netRider i oldTip newBase newTip => do
+        match ← netListings e ctr "rider-net" oldTip newBase newTip with
+        | .ok (before, after) => pure (.riderNetDiffs i before after)
+        | .error what => pure (.garbled what)
+      | .recheckRiders => do
+        let mut tips : Array Sha := #[]
+        for r in st.riders do
+          let t ← if r.standing == .riding then
+              revParse e ctr "riders-recheck" s!"refs/heads/agent/{r.name}" (some e.mainWt)
+            else pure ""
+          if r.standing == .riding then
+            say "riders-recheck" (if t == r.tip then "ok" else "fail")
+              [("name", r.name), ("tip", if t.isEmpty then "?" else t), ("read", r.tip)]
+          tips := tips.push t
+        pure (.ridersRead tips)
+      | .retree tip => do
+        let tree := treePath e
+        let r ← git e ctr "retree" #["checkout", "--detach", tip] (some tree)
+        let (head, clean) ← readTree e ctr "retree"
+        let ok := r.code == 0 && head == tip && clean
+        say "retree" (if ok then "ok" else "fail")
+          [("tip", tip), ("head", if head.isEmpty then "?" else head),
+           ("dirty", if clean then "no" else "yes")]
+        pure (.retreed head clean)
+      | .moveBranch n old new => do
+        let w := if n == name then some wt else (riderWts.find? (·.1 == n)).map (·.2)
+        let moved ← match w with
+          | none => pure false
+          | some p => do
+            let onBranch ← headIs e ctr "move" p s!"refs/heads/agent/{n}"
+            let at_ ← revParse e ctr "move" s!"refs/heads/agent/{n}" (some p)
+            let clean ← statusClean e ctr "move" p
+            if onBranch && at_ == old && clean == some true then
+              let r ← git e ctr "move" #["reset", "--keep", new] (some p)
+              let after ← revParse e ctr "move" s!"refs/heads/agent/{n}" (some p)
+              pure (r.code == 0 && after == new)
+            else pure false
+        say "move" (if moved then "ok" else "fail")
+          [("name", n), ("from", old), ("to", new)]
+        pure (.branchMoved moved)
       | .makeTree tip => do
         treeLive.set true
         let seed ← makeTree e ctr wt tip
@@ -702,15 +881,24 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         pure (.mainTip mt)
       | .writeLanded => do
         let t1 ← IO.monoMsNow
-        let ok ← writeLedger e
-          [("ts", e.ts), ("run", e.runId), ("name", name),
-           ("verdict", "landed"), ("tip", st.mainAt), ("gated", st.gatedTip),
-           ("prev", st.prevMainTip), ("branch", st.branchTip),
+        -- One row per member, each naming the commit it landed as, the train's top last.
+        let landedRiders := st.riders.toList.filter (·.standing == .landed)
+        let train := if landedRiders.isEmpty then [] else [("train", e.runId)]
+        let row (n tip branch : String) : List (String × String) :=
+          [("ts", e.ts), ("run", e.runId), ("name", n),
+           ("verdict", "landed"), ("tip", tip), ("gated", st.gatedTip),
+           ("prev", st.prevMainTip), ("branch", branch),
            ("gates", String.intercalate "," (st.gates.toList.map (·.name))),
            ("skipped", String.intercalate "," st.skipped.toList),
-           ("pushed", if wantPush then "pending" else "no"),
-           ("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)]
-        say "ledger" (if ok then "ok" else "fail") [("file", ledgerPath e)]
+           ("pushed", if wantPush then "pending" else "no")] ++ train
+          ++ [("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)]
+        let mut ok ← writeLedger e (row name (if landedRiders.isEmpty then st.mainAt else st.headTip)
+          st.branchTip)
+        for r in landedRiders do
+          ok := ok && (← writeLedger e (row r.name r.rebased r.tip))
+        say "ledger" (if ok then "ok" else "fail")
+          ([("file", ledgerPath e)] ++ (if landedRiders.isEmpty then []
+            else [("members", toString (landedRiders.length + 1))]))
         pure (if ok then .ledgerOk else .ledgerFail)
       | .push tip => do
         -- The gated tip, by sha, to the remote's `main`, never forced.
@@ -753,6 +941,22 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         let ok ← writeLedger e (base ++ [("verdict", v.name), ("why", why),
           ("gated", st.gatedTip), ("branch", st.branchTip)] ++ tail)
         if !ok then say "ledger" "fail" [("row", v.name)]
+      -- Each rider's verdict before its place is settled, so its own run reads it there.
+      for r in st.riders do
+        match r.standing with
+        | .refused rwhy =>
+          let ok ← writeLedger e ([("ts", e.ts), ("run", e.runId), ("name", r.name),
+            ("verdict", "refused"), ("why", rwhy), ("branch", r.tip), ("train", e.runId)] ++ tail)
+          say "rider" "refused" [("name", r.name), ("why", rwhy),
+            ("ledger", if ok then "ok" else "fail")]
+        | .landed => say "rider" "landed" [("name", r.name), ("tip", r.rebased)]
+        | _ => say "rider" "stays" [("name", r.name)]
+      settleRiders e (st.riders.toList.filterMap fun r => match r.standing with
+          | .landed | .refused _ => some r.name
+          | _ => none)
+        (st.riders.toList.filterMap fun r => match r.standing with
+          | .landed | .refused _ => none
+          | _ => some r.name)
       sayFinal v <|
         [("name", name), ("gateset", gateset), ("gates", toString st.gates.size),
          ("skipped", toString st.skipped.size), ("ms", toString (t1 - t0))]
@@ -764,107 +968,59 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
     | _ => pure ()
   return 3
 
-/-- One landing run, the gate tree removed on every path out. -/
+/-- One landing run with its riders, the gate tree removed on every path out. -/
 def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
-    (gates : Array Gate) (gateset : String) : IO UInt32 := do
+    (gates : Array Gate) (gateset : String) (riders : List String) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   let treeLive ← IO.mkRef false
-  try landLoop e ctr treeLive name mode wantPush gates gateset
+  try landLoop e ctr treeLive name mode wantPush gates gateset riders
   finally
     if ← treeLive.get then removeTree e ctr
 
-/-- The landing lock, and the record of who holds it. -/
-def lockPath (e : Env) : String := s!"{e.common}/land/landing.lock"
-def ownerPath (e : Env) : String := s!"{e.common}/land/landing.owner"
-
-/-- A `key=value` field of an owner record; empty when absent. -/
-def recField (rec key : String) : String :=
-  match (wsSplit rec).find? (·.startsWith s!"{key}=") with
-  | some w => (w.drop (key.length + 1)).toString
-  | none => ""
-
-/-- The landing queue, one waiter a line in arrival order, and the lock its readers and writers
-take. -/
-def queuePath (e : Env) : String := s!"{e.common}/land/queue"
-def queueLockPath (e : Env) : String := s!"{e.common}/land/queue.lock"
-
-/-- A name the queue holds: one a branch can carry, with no whitespace or control character. -/
-def queueable (name : String) : Bool :=
-  !name.isEmpty && name.all fun c =>
-    !c.isWhitespace && c.toNat ≥ 0x20 && (c.toNat < 0x7f || c.toNat > 0x9f)
-
-def waiterLine (w : Waiter) : String :=
-  s!"name={w.name} run={w.run} pid={w.pid} since={w.since}"
-
-/-- A queue line read back, or nothing for one that is not a waiter's, a run naming a path
-among them. -/
-def waiterOfLine? (l : String) : Option Waiter := do
-  let name := recField l "name"
-  let run := recField l "run"
-  let pid ← (recField l "pid").toNat?
-  if !queueable name || !queueable run || run.contains '/' || run.startsWith "." then none
-  else some { name, run, pid, since := recField l "since" }
-
-/-- The queue a file holds, a line that is not a waiter's dropped, and a name's later lines. -/
-def queueOfText (txt : String) : List Waiter := Id.run do
-  let mut out : Array Waiter := #[]
-  for l in txt.splitOn "\n" do
-    if let some w := waiterOfLine? l then
-      unless out.any (·.name == w.name) do out := out.push w
-  return out.toList
-
-/-- The queue, empty when its file is absent; a file that cannot be read is an error, never an
-empty queue. -/
-def readQueueAt (common : String) : IO (List Waiter) := do
-  let p := s!"{common}/land/queue"
-  if !(← System.FilePath.pathExists p) then return []
-  queueOfText <$> IO.FS.readFile p
-
-/-- Replace the queue file whole, by a rename, so a reader sees one queue or the next. -/
-def writeQueue (e : Env) (q : List Waiter) : IO Unit := do
-  let next := s!"{queuePath e}.next"
-  IO.FS.writeFile next (String.join (q.map (waiterLine · ++ "\n")))
-  IO.FS.rename next (queuePath e)
-
-/-- Whether the run that entered a waiter still runs, by the lock on its `alive`, which a reused
-pid does not hold; a lock that cannot be tried reads as dead, so it cannot stall the queue. -/
-def waiterLiveAt (common : String) (w : Waiter) : IO Bool :=
-  return (← runProbe s!"{common}/land/{w.run}").getD false
-
-def waiterLive (e : Env) (w : Waiter) : IO Bool := waiterLiveAt e.common w
-
-/-- The pause between a waiting run's asks for its turn. -/
-def turnBeatMs : UInt32 := 500
-
-/-- The asks a waiting run makes before it refuses: eight hours of beats, the span a landing's
-retries are given. -/
-def turnBeats : Nat := 8 * 60 * 60 * 1000 / turnBeatMs.toNat
-
 /-- One ask for the lock under the queue's lock: enter or read the queue, decide this run's turn
-with the waiters' liveness, and on a take hold the landing lock and leave; a run that `holds` no
-place decides as if last and writes nothing. -/
-def askTurn (e : Env) (queueH lockH : IO.FS.Handle) (me : Waiter) (enter holds : Bool) :
-    IO (Turn × List Waiter) := do
+with the runs' liveness and a train's `reach`, and on a take hold the landing lock, leave and
+board the riders; a run that `holds` no place decides as if last and writes nothing. -/
+def askTurn (e : Env) (queueH lockH : IO.FS.Handle) (me : Waiter) (enter holds : Bool)
+    (reach : Nat) : IO (Turn × List Waiter) := do
   queueH.lock
   try
     let q0 ← readQueueAt e.common
     let mut liveRuns : Array String := #[]
-    for w in q0 do
-      if w.run != me.run && (← waiterLive e w) then liveRuns := liveRuns.push w.run
-    let live : Waiter → Bool := fun w => liveRuns.contains w.run
+    for r in (q0.map (·.run) ++ q0.map (·.train)).eraseDups do
+      if !r.isEmpty && r != me.run && (← runLiveAt e.common r) then liveRuns := liveRuns.push r
+    let live : String → Bool := (liveRuns.contains ·)
     let q := if !enter then q0
       else if holds then Queue.enter q0 live me
       else Queue.enter (Queue.leave q0 me.name) live me
-    let t ← match Queue.turn q live me.name me.run true with
-      | .take => do
-        if ← lockH.tryLock then pure Turn.take
-        else pure (Queue.turn q live me.name me.run false)
+    let t ← match Queue.turn q live me.name me.run true reach with
+      | .take rs => do
+        if ← lockH.tryLock then pure (Turn.take rs)
+        else pure (Queue.turn q live me.name me.run false reach)
       | t => pure t
-    let q' := if !holds then q0 else if t == .take then Queue.leave q me.name else q
+    let q' := if !holds then q0 else match t with
+      | .take rs => Queue.board (Queue.leave q me.name) rs me.run
+      | _ => q
     if q' != q0 then writeQueue e q'
     return (t, q')
   finally
     queueH.unlock
+
+/-- The most branches a train takes in this repository: `land.trainCap` in its local config,
+else `trainCap`. -/
+def trainReach (e : Env) : IO Nat := do
+  let ctr ← IO.mkRef 0
+  let r ← git e ctr "queue" #["config", "--local", "--get", "land.trainCap"]
+  return (if r.code == 0 then (trimWs r.out).toNat? else none).getD trainCap |>.max 1
+
+/-- A gate list's fare: a digest of its gates, which a train's riders share with its head. -/
+def fareOf (gates : Array Gate) : String := Id.run do
+  let text := String.intercalate ";" (gates.toList.map fun g =>
+    g.name ++ "=" ++ String.intercalate " " (g.cmd :: g.args.toList))
+  let mut h : UInt64 := 14695981039346656037
+  for b in text.toUTF8.toList do
+    h := (h ^^^ b.toUInt64) * 1099511628211
+  let hex := String.ofList (Nat.toDigits 16 h.toNat)
+  return String.ofList (List.replicate (16 - hex.length) '0') ++ hex
 
 /-- Hold the landing lock for `act`: a record found from a holder that died is marked
 `abandoned` and its gate tree removed, this run's record written, and both released after. -/
@@ -892,11 +1048,17 @@ def holdLock (e : Env) (h : IO.FS.Handle) (name : String) (act : IO UInt32) : IO
   h.unlock
   return r
 
-/-- One lock taker at a time, in arrival order among the live: the first live waiter waits for
-the lock and takes it once free, leaving the queue, and any other refuses with exit 2, keeping
-its place; a taker that `holds` no place takes the lock only first and never waits. -/
-def withTurn (e : Env) (name : String) (act : IO UInt32) (holds : Bool := true) :
-    IO UInt32 := do
+/-- The verdict a train's run recorded for a rider, by name and run: its last row there. -/
+def riderVerdict (e : Env) (name train : String) : IO (Option String) := do
+  match ← lastLedger e name with
+  | some row => return if jsonField row "run" == some train then some row else none
+  | none => return none
+
+/-- One lock taker at a time, in arrival order among the live: the first takes the lock once free
+with its riders, one in a train's reach waits, one beyond refuses with exit 2 keeping its place, a
+rider waits for its train's verdict, and a taker that `holds` no place never waits. -/
+def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO UInt32)
+    (holds : Bool := true) : IO UInt32 := do
   IO.FS.createDirAll s!"{e.common}/land"
   let fail (step path why : String) : IO UInt32 := do
     say step "fail" [("path", path), ("why", why)]
@@ -912,32 +1074,43 @@ def withTurn (e : Env) (name : String) (act : IO UInt32) (holds : Bool := true) 
     | fail "queue" (queueLockPath e) "the queue's lock file cannot be opened"
   if !queueable name then
     return ← refuse s!"agent/{name} names no branch: it holds whitespace or a control character"
-  let me : Waiter := { name, run := e.runId, pid := (← IO.Process.getPID).toNat, since := e.ts }
+  let reach ← trainReach e
+  let me : Waiter :=
+    { name, run := e.runId, pid := (← IO.Process.getPID).toNat, since := e.ts, fare, train := "" }
   let owner : IO String := do pure (trimWs (← try IO.FS.readFile (ownerPath e) catch _ => pure ""))
   let busy := "another landing holds the lock"
   let t0 ← IO.monoMsNow
-  let mut waiting := false
+  let mut said : Option Turn := none
+  let mut rode : Option String := none
   for i in [0:turnBeats] do
-    let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0) holds))
+    let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0) holds reach))
       catch ex => pure (Except.error (toString ex))
     match asked with
     | .error why =>
       h.unlock
       return ← fail "queue" (queuePath e) s!"the queue could not be read or written: {why}"
-    | .ok (.take, q) =>
-      say "queue" "ok" [("waited-ms", toString ((← IO.monoMsNow) - t0)),
+    | .ok (.take rs, q) =>
+      say "queue" "ok" ([("waited-ms", toString ((← IO.monoMsNow) - t0)),
         ("waiters", toString q.length)]
-      return ← holdLock e h name act
+        ++ (if rs.isEmpty then [] else [("riders", String.intercalate "," rs)]))
+      return ← holdLock e h name (act rs)
     | .ok (.wait, q) =>
       if !holds then
         say "lock" "fail" [("path", lockPath e), ("owner", ← owner)]
         return ← refuse s!"{busy} ({← owner}), and {name} takes no place in the queue: ask \
 again once it is free"
-      unless waiting do
+      unless said == some .wait do
         say "queue" "wait" [("position", toString ((Queue.ahead q name).length + 1)),
           ("waiters", toString q.length), ("holder", recField (← owner) "name")]
         (← IO.getStdout).flush
-        waiting := true
+        said := some .wait
+      IO.sleep turnBeatMs
+    | .ok (.rides t, _) =>
+      unless said == some (.rides t) do
+        say "queue" "ride" [("train", t), ("head", recField (← owner) "name")]
+        (← IO.getStdout).flush
+        said := some (.rides t)
+      rode := some t
       IO.sleep turnBeatMs
     | .ok (.behind p hd, q) =>
       say "queue" "behind" [("position", toString p), ("head", hd),
@@ -951,10 +1124,20 @@ again once it is free"
       return ← refuse s!"{busy} or waits for it: agent/{name} already waits for the lock in run \
 {r}; ask again once that run ends" [("run", r)]
     | .ok (.gone, _) =>
-      return ← refuse s!"agent/{name} left the queue while this run waited: it retired or was made \
-new (land new <name>)"
+      if let some t := rode then
+        if let some row ← riderVerdict e name t then
+          let fld (k : String) := (jsonField row k).getD ""
+          if fld "verdict" == "landed" then
+            sayFinal .landed [("name", name), ("train", t), ("tip", fld "tip"),
+              ("gated", fld "gated")]
+            return 0
+          if fld "verdict" == "refused" then
+            sayFinal .refused [("name", name), ("train", t), ("why", fld "why")]
+            return 2
+      return ← refuse s!"agent/{name} left the queue while this run waited: it landed, retired \
+or was made new (land new <name>)"
   refuse s!"{busy} ({← owner}) after agent/{name} waited {turnBeats * turnBeatMs.toNat / 60000} \
-minutes first in the queue: it keeps its place; ask again to keep it"
+minutes in the queue: it keeps its place; ask again to keep it"
 
 /-- Drop `name`'s waiter under the queue's lock (`QueueOp.drop`), whether it was waiting. -/
 def leaveQueue (e : Env) (name : String) : IO Bool := do
@@ -1675,11 +1858,15 @@ def selftest : IO UInt32 := do
     say "selftest" "fail" [("case", "ledger escaping"), ("why", "a control byte survived")]
   else say "selftest" "ok" [("case", "ledger escaping")]
   -- The queue's file and its decisions, which the scenarios reach only through processes.
-  let wtr (n r : String) (p : Nat := 7) : Waiter := ⟨n, r, p, "2026-10-14T00:00:00Z"⟩
-  let ws := [wtr "a" "20261014T000000000000000-11" 11, wtr "b-2" "20261014T000000000000001-22" 22]
+  let wtr (n r : String) (p : Nat := 7) (fare : String := "") (train : String := "") : Waiter :=
+    ⟨n, r, p, "2026-10-14T00:00:00Z", fare, train⟩
+  let ws := [wtr "a" "20261014T000000000000000-11" 11,
+    wtr "b-2" "20261014T000000000000001-22" 22 "f00d" "20261014T000000000000000-11"]
   let txt := String.join (ws.map (waiterLine · ++ "\n"))
   let q3 := [wtr "a" "ra", wtr "b" "rb", wtr "c" "rc"]
-  let liveB : Waiter → Bool := (·.run == "rb")
+  let liveB : String → Bool := (· == "rb")
+  let all : String → Bool := fun _ => true
+  let qf := [wtr "a" "ra" 7 "f", wtr "b" "rb" 7 "f", wtr "c" "rc" 7 "f", wtr "d" "rd" 7 "g"]
   let queueCases : List (String × Bool) :=
     [ ("the queue's lines read back as the waiters written", queueOfText txt == ws)
     , ("a line that is not a waiter's is dropped",
@@ -1688,18 +1875,18 @@ def selftest : IO UInt32 := do
         queueOfText (txt ++ waiterLine (wtr "a" "r9") ++ "\n") == ws)
     , ("a run naming a path is no waiter",
         (waiterOfLine? "name=a run=../x pid=1 since=t").isNone
-          && (waiterOfLine? "name=a run=x/y pid=1 since=t").isNone)
+          && (waiterOfLine? "name=a run=x/y pid=1 since=t").isNone
+          && (waiterOfLine? "name=a run=x pid=1 since=t train=../y").isNone)
     , ("a name holding a space is not queued", !queueable "a b" && queueable "a-b")
-    , ("the first waiter takes a free lock", Queue.turn q3 (fun _ => true) "a" "ra" true == .take)
-    , ("the first waiter waits on a held one",
-        Queue.turn q3 (fun _ => true) "a" "ra" false == .wait)
+    , ("the first waiter takes a free lock", Queue.turn q3 all "a" "ra" true 1 == .take [])
+    , ("the first waiter waits on a held one", Queue.turn q3 all "a" "ra" false 1 == .wait)
     , ("a waiter behind a live one keeps its place",
-        Queue.turn q3 liveB "c" "rc" true == .behind 3 "b")
-    , ("a dead first waiter is skipped", Queue.turn q3 liveB "b" "rb" true == .take)
+        Queue.turn q3 liveB "c" "rc" true 1 == .behind 3 "b")
+    , ("a dead first waiter is skipped", Queue.turn q3 liveB "b" "rb" true 1 == .take [])
     , ("a name another live run waits under is held from this one",
-        Queue.turn q3 liveB "b" "rx" true == .held "rb")
+        Queue.turn q3 liveB "b" "rx" true 1 == .held "rb")
     , ("a name a dead run waited under, entered by no one, is gone",
-        Queue.turn q3 liveB "a" "rx" true == .gone)
+        Queue.turn q3 liveB "a" "rx" true 1 == .gone)
     , ("entering again keeps the place and the arrival",
         Queue.enter q3 liveB { wtr "a" "ra2" 8 with since := "later" }
           == [wtr "a" "ra2" 8, wtr "b" "rb", wtr "c" "rc"])
@@ -1707,7 +1894,31 @@ def selftest : IO UInt32 := do
         Queue.enter q3 liveB (wtr "b" "rx") == q3)
     , ("a new name arrives last",
         (Queue.enter q3 liveB (wtr "d" "rd")).map (·.name) == ["a", "b", "c", "d"])
-    , ("a name holding a C1 control character is not queued", !queueable "a\u0085b") ]
+    , ("a name holding a C1 control character is not queued", !queueable "a\u0085b")
+    , ("a head takes the live waiters behind it under its fare as riders",
+        Queue.turn qf all "a" "ra" true 4 == .take ["b", "c"])
+    , ("a train takes a train's worth at most",
+        Queue.turn qf all "a" "ra" true 2 == .take ["b"])
+    , ("a dead waiter rides no train", Queue.turn qf (· != "rb") "a" "ra" true 4 == .take ["c"])
+    , ("a waiter within a train's reach waits", Queue.turn qf all "c" "rc" true 4 == .wait)
+    , ("a waiter past a train's reach is refused",
+        Queue.turn qf all "c" "rc" true 2 == .behind 3 "a")
+    , ("a head riding no train takes no riders",
+        Queue.turn ((qf.take 1).map ({ · with fare := "" }) ++ qf.drop 1) all "a" "ra" true 4
+          == .take [])
+    , ("a rider of a live train waits for its verdict",
+        Queue.turn (Queue.board qf ["b"] "rt") (fun r => r != "rx") "b" "rb" true 4 == .rides "rt")
+    , ("a rider of a dead train waits again in its place",
+        Queue.turn (Queue.board qf ["b"] "rt") (· != "rt") "b" "rb" false 4 == .wait)
+    , ("a train's riders are no waiters ahead",
+        Queue.turn (Queue.board qf ["b", "c"] "rt") all "d" "rd" true 2 == .wait
+          && Queue.turn qf all "d" "rd" true 2 == .behind 4 "a")
+    , ("a gate list's fare is a digest of its gates",
+        fareOf #[{ name := "t", cmd := "true", args := #[] }]
+          == fareOf #[{ name := "t", cmd := "true", args := #[] }]
+        && fareOf #[{ name := "t", cmd := "true", args := #[] }]
+          != fareOf #[{ name := "t", cmd := "false", args := #[] }]
+        && (fareOf #[]).length == 16) ]
   for (why, ok) in queueCases do
     if ok then say "selftest" "ok" [("case", s!"queue: {why}")]
     else
@@ -2444,6 +2655,7 @@ landing ends only once the next waiter in arrival order waits first in line, and
 the order they arrived. -/
 def scenarioQueueOrder (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/fifo" "holder"
+  hgitOk #["config", "--local", "land.trainCap", "1"] s.repo
   let names := ["first", "second", "third"]
   for n in names do addAgent s n
   let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
@@ -2470,6 +2682,7 @@ contenders={codes} main={order}" }
 the lock when it frees, and the dead one keeps its place, listed dead. -/
 def scenarioQueueDeadHead (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/deadhead" "holder"
+  hgitOk #["config", "--local", "land.trainCap", "1"] s.repo
   for n in ["dead", "next"] do addAgent s n
   let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
   let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
@@ -2506,6 +2719,7 @@ retire={cr} after-retire={retired}" }
 and lands before the later, which asks more often. -/
 def scenarioQueueRepoll (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/repoll" "holder"
+  hgitOk #["config", "--local", "land.trainCap", "1"] s.repo
   for n in ["head", "early", "late"] do addAgent s n
   let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
   let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
@@ -2542,6 +2756,7 @@ queue={q1.map (·.name)}->{q2.map (·.name)} holder={ch} others={codes} main={or
 lands with no next ask. -/
 def scenarioQueuePrompt (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/prompt" "holder"
+  hgitOk #["config", "--local", "land.trainCap", "1"] s.repo
   addAgent s "waiter"
   let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
   let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
@@ -2564,10 +2779,182 @@ with no next ask"
          , detail := s!"held={held} first={first} holder={ch} took={took} \
 took-ms-after-holder-exit={ms} gated={gated} waiter={cw}" }
 
+/-- A gate list whose one gate, shared by a train's members, counts its runs in `gate-runs`, runs
+`body`, then holds the lock until it takes the `release-<label>` that appears, five minutes at
+most, and passes as `body` did. -/
+def trainGate (s : Scratch) (label : String) (body : String := "true") : IO String := do
+  writeExe s!"{s.root}/{label}.sh" s!"#!/bin/sh\necho run >> {s.root}/gate-runs\n({body}); st=$?\n\
+touch {s.root}/held-{label}\ni=0\nwhile [ ! -e {s.root}/release-{label} ] && [ $i -lt 3000 ]; do \
+sleep 0.1; i=$((i+1)); done\nrm -f {s.root}/held-{label} {s.root}/release-{label}\nexit $st\n"
+  return s!"{label}={s.root}/{label}.sh"
+
+/-- How many times the scratch's train gate ran. -/
+def gateRuns (s : Scratch) : IO Nat := do
+  let t ← try IO.FS.readFile s!"{s.root}/gate-runs" catch _ => pure ""
+  return ((t.splitOn "\n").filter (· == "run")).length
+
+/-- A holder holds the lock while `names` wait, each asking once under one gate list: the head
+takes the rest as riders, and the scenario releases the holder, then each gate run of the train
+as it starts, `runs` at most; the members' exits and outputs. -/
+def runTrain (self : String) (s : Scratch) (names : List String) (gates : String)
+    (runs : Nat := 1) : IO (Bool × List (Nat × String)) := do
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let mut tasks : List Pending := []
+  let mut queued := held
+  for n in names do
+    tasks := tasks ++ [← landAsync self s.repo #[n] gates]
+    queued := queued && (← awaitQueued s n)
+  let first ← awaitHead s (names.headD "")
+  -- Every member waits, live, before the lock frees.
+  let waiting ← awaitTrue do
+    let q ← queueOf s
+    let mut all := true
+    for n in names do
+      all := all && (← match q.find? (·.name == n) with
+        | some w => waiterLiveAt s!"{s.repo}/.git" w
+        | none => pure false)
+    return all
+  release s "holder"
+  let label := (gates.splitOn "=").headD ""
+  for _ in [0:runs] do
+    unless ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-{label}") do break
+    release s label
+    let _ ← awaitTrue do return !(← System.FilePath.pathExists s!"{s.root}/release-{label}")
+  let (ch, _) ← awaitRun th
+  let outs ← tasks.mapM awaitRun
+  return (queued && first && waiting && ch == 0, outs)
+
+/-- Three branches waiting behind a landing land in one run: one gate run on the train's tip,
+main over all three in arrival order, each branch moved to its commit there, which main holds,
+each rider told it landed in that run, and each retires. -/
+def scenarioTrainThree (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/train3" "holder"
+  let remote ← addRemote s
+  let names := ["first", "second", "third"]
+  for n in names do addAgent s n
+  let (ready, outs) ← runTrain self s names (← trainGate s "train")
+  let (cp, op) ← landIn self s.repo #["push"] "t=true"
+  let published := cp == 0 && says op "result=pushed"
+    && (← revOf remote "refs/heads/main") == (← revOf s.repo "refs/heads/main")
+  let order ← mainSubjects s.repo
+  let runs ← gateRuns s
+  let run := match (((outs.headD (0, "")).2.splitOn "step=run result=ok id=").drop 1).head? with
+    | some rest => (wsSplit rest).headD ""
+    | none => ""
+  let told := (outs.drop 1).all fun (c, o) => c == 0 && says o "result=landed"
+    && saysField o "train" run
+  let mut moved := true
+  for n in names do
+    let tip ← revOf s.repo s!"refs/heads/agent/{n}"
+    let (anc, _) ← hgit #["merge-base", "--is-ancestor", tip, "refs/heads/main"] s.repo
+    moved := moved && anc == 0
+  let mut retired := true
+  for n in names do
+    let (c, _) ← landIn self s.repo #["retire", n] "t=true"
+    retired := retired && c == 0
+  return { label := "three waiting branches land in one gate run, each moved to its commit on \
+main, each rider told so, the train published, and each retires"
+         , ok := ready && (outs.headD (0, "")).1 == 0 && told && runs == 1 && moved && retired
+             && published
+             && order == ["Base", "Add holder"] ++ names.map (s!"Add {·}") && !run.isEmpty
+         , detail := s!"ready={ready} exits={outs.map (·.1)} told={told} gate-runs={runs} \
+moved={moved} retired={retired} published={published} main={order} run={run}" }
+
+/-- The middle of three branches conflicts with the first: it alone leaves the train, refused as
+a conflict is, its branch untouched and its place gone, and the others land in one run. -/
+def scenarioTrainConflict (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/trainconf" "holder"
+  let names := ["first", "middle", "last"]
+  for n in names do addAgent s n
+  for (n, body) in [("first", "first"), ("middle", "middle")] do
+    IO.FS.writeFile s!"{s.root}/lt-{n}/shared.txt" s!"{body}\n"
+    hgitOk #["add", "shared.txt"] s!"{s.root}/lt-{n}"
+    hgitOk #["commit", "-qm", s!"{n} writes shared"] s!"{s.root}/lt-{n}"
+  let mid ← revOf s.repo "refs/heads/agent/middle"
+  let (ready, outs) ← runTrain self s names (← trainGate s "train")
+  let order ← mainSubjects s.repo
+  let midAfter ← revOf s.repo "refs/heads/agent/middle"
+  let (cm, om) := outs.getD 1 (0, "")
+  let q := (← queueOf s).map (·.name)
+  return { label := "a middle member that conflicts leaves the train refused, and the others land"
+         , ok := ready && (outs.headD (0, "")).1 == 0 && cm == 2
+             && says om "rebase conflict: shared.txt" && (outs.getD 2 (0, "")).1 == 0
+             && midAfter == mid && !q.contains "middle" && (← gateRuns s) == 1
+             && order == ["Base", "Add holder", "Add first", "first writes shared", "Add last"]
+         , detail := s!"ready={ready} exits={outs.map (·.1)} middle={mid}->{midAfter} queue={q} \
+main={order}" }
+
+/-- A gate that fails on the second branch's file turns the train red: the head alone is gated
+again and lands, and the others stay queued in their order, the second failing alone after and
+the third landing. -/
+def scenarioTrainRed (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/trainred" "holder"
+  let names := ["first", "second", "third"]
+  for n in names do addAgent s n
+  let gates ← trainGate s "train" "test ! -e second.txt"
+  let (ready, outs) ← runTrain self s names gates 5
+  let order ← mainSubjects s.repo
+  let o1 := (outs.headD (0, "")).2
+  return { label := "a red train falls back to its head alone, and the rest stay queued in order"
+         , ok := ready && (outs.headD (0, "")).1 == 0 && says o1 "step=retree result=ok"
+             && (outs.getD 1 (0, "")).1 == 1 && (outs.getD 2 (0, "")).1 == 0
+             && order == ["Base", "Add holder", "Add first", "Add third"]
+         , detail := s!"ready={ready} exits={outs.map (·.1)} gate-runs={← gateRuns s} main={order}" }
+
+/-- The last of three branches moves while the train is gated: it leaves the train and stays
+queued, the two before it are gated again and land, and it lands after with its new commit. -/
+def scenarioTrainMoved (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/trainmoved" "holder"
+  let names := ["first", "second", "third"]
+  for n in names do addAgent s n
+  let wt := s!"{s.root}/lt-third"
+  let body := s!"if [ ! -e {s.root}/moved ]; then touch {s.root}/moved; \
+git -C {wt} commit -q --allow-empty -m \"third moves\"; fi"
+  let (ready, outs) ← runTrain self s names (← trainGate s "train" body) 3
+  let order ← mainSubjects s.repo
+  let o1 := (outs.headD (0, "")).2
+  return { label := "a member that moves during the gates leaves the train, the rest land, and it \
+lands after with its new commit"
+         , ok := ready && outs.all (·.1 == 0) && says o1 "step=riders-recheck result=fail"
+             && order == ["Base", "Add holder", "Add first", "Add second", "Add third", "third moves"]
+         , detail := s!"ready={ready} exits={outs.map (·.1)} gate-runs={← gateRuns s} main={order}" }
+
+/-- A land built before the queue, which takes the lock without asking it, holds the lock and
+lands a commit while a train waits: the train waits, then lands on top of it. -/
+def scenarioTrainPreQueue (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/prequeue" "holder"
+  let names := ["first", "second"]
+  for n in names do addAgent s n
+  IO.FS.createDirAll s!"{s.repo}/.git/land"
+  let lock ← IO.FS.Handle.mk s!"{s.repo}/.git/land/landing.lock" .append
+  lock.lock
+  let gates ← trainGate s "train"
+  let mut tasks : List Pending := []
+  for n in names do
+    tasks := tasks ++ [← landAsync self s.repo #[n] gates]
+    let _ ← awaitQueued s n
+  let first ← awaitHead s "first"
+  -- The old land's own landing, as it would make it while holding the lock.
+  IO.FS.writeFile s!"{s.repo}/old.txt" "old\n"
+  hgitOk #["add", "old.txt"] s.repo
+  hgitOk #["commit", "-qm", "An old land's landing"] s.repo
+  lock.unlock
+  let started ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-train")
+  release s "train"
+  let outs ← tasks.mapM awaitRun
+  let order ← mainSubjects s.repo
+  return { label := "a land that ignores the queue takes the lock out of turn, and the train lands \
+on top of its landing"
+         , ok := first && started && outs.all (·.1 == 0) && (← gateRuns s) == 1
+             && order == ["Base", "An old land's landing", "Add first", "Add second"]
+         , detail := s!"first={first} started={started} exits={outs.map (·.1)} main={order}" }
+
 /-- A check waits its turn like a landing, while a push takes no place: refused at once behind a
 waiting check, it publishes once the lock is free and no one waits. -/
 def scenarioQueueTurns (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/turns" "holder"
+  hgitOk #["config", "--local", "land.trainCap", "1"] s.repo
   let remote ← addRemote s
   addAgent s "checked"
   let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
@@ -2596,6 +2983,7 @@ handed={handed} holder={ch} check={cc} push={cp2} remote={onRemote} main={landed
 names its own place behind the one head, and they land in that order. -/
 def scenarioQueueTies (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/ties" "holder"
+  hgitOk #["config", "--local", "land.trainCap", "1"] s.repo
   let names := ["tie-a", "tie-b", "tie-c", "tie-d"]
   for n in names do addAgent s n
   let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
@@ -2740,8 +3128,8 @@ def scenarioLsRemoteDecoy (self root : String) : IO Outcome := do
              && says ledger "\"verdict\":\"pushed\""
          , detail := s!"exit={code} remote={onRemote} gated={tip}" }
 
-/-- `main` moved, so the branch lands as rebased copies; a second landing of the unmoved
-branch refuses. -/
+/-- `main` moved, so the branch lands as rebased copies; asking again to land the unmoved branch
+answers that `main` holds it, landing nothing. -/
 def scenarioRelandRefused (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/reland" "reland"
   IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
@@ -2753,14 +3141,14 @@ def scenarioRelandRefused (self root : String) : IO Outcome := do
   let bAfter ← revOf s.repo "refs/heads/agent/reland"
   let (c2, out2) ← landIn self s.repo #["reland"] "t=true"
   let main2 ← revOf s.repo "refs/heads/main"
-  return { label := "a rebased landing leaves the branch alone, and landing it again refuses"
-         , ok := c1 == 0 && bAfter == bTip && main1 != bTip && c2 == 2 && main2 == main1
-             && says out2 "already landed"
+  return { label := "a rebased landing leaves the branch alone, and asking again answers it landed"
+         , ok := c1 == 0 && bAfter == bTip && main1 != bTip && c2 == 0 && main2 == main1
+             && says out2 "result=landed" && says out2 "already=yes"
          , detail := s!"first={c1} second={c2} branch={bTip}->{bAfter} main={main1}->{main2}" }
 
 /-- `main` put back past a landing: the unmoved branch lands again, and after another undo
-so does a continued one; while `main` holds the landing, both are refused and sent to a
-new branch. -/
+so does a continued one; while `main` holds the landing, the unmoved branch is answered landed
+and the continued one is refused and sent to a new branch. -/
 def scenarioMainPutBack (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/putback" "own"
   IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
@@ -2778,7 +3166,7 @@ def scenarioMainPutBack (self root : String) : IO Outcome := do
   let (c2, _) ← landIn self s.repo #["own"] "t=true"
   let own2 ← onMain "own.txt"
   let g2 ← revOf s.repo "refs/heads/main"
-  -- `main` holds that landing: both branches are refused and pointed at a new one.
+  -- `main` holds that landing: the unmoved branch is answered landed, the continued one sent on.
   let (c3, out3) ← landIn self s.repo #["own"] "t=true"
   IO.FS.writeFile s!"{s.wt}/next.txt" "next\n"
   hgitOk #["add", "next.txt"] s.wt
@@ -2795,7 +3183,7 @@ def scenarioMainPutBack (self root : String) : IO Outcome := do
   let pointed (out : String) : Bool := says out "land new <name>" && !says out "git rebase"
   return { label := "main put back after a rebased landing: the branch lands again, and a \
 continued branch is not told to drop what main lacks"
-         , ok := c1 == 0 && g1 != bTip && c2 == 0 && own2 && c3 == 2 && pointed out3
+         , ok := c1 == 0 && g1 != bTip && c2 == 0 && own2 && c3 == 0 && says out3 "already=yes"
              && c4 == 2 && pointed out4 && g4 == g2 && c5 == 0 && own5 && next5
              && bAfter == nTip
          , detail := s!"land={c1} put-back-land={c2} own-on-main={own2} again={c3} \
@@ -3039,6 +3427,9 @@ def scratchSelftest : IO UInt32 := do
     , ("killed", scenarioKilled), ("fifo", scenarioQueueOrder), ("deadhead", scenarioQueueDeadHead)
     , ("repoll", scenarioQueueRepoll), ("prompt", scenarioQueuePrompt), ("ties", scenarioQueueTies)
     , ("turns", scenarioQueueTurns)
+    , ("train3", scenarioTrainThree), ("trainconf", scenarioTrainConflict)
+    , ("trainred", scenarioTrainRed), ("trainmoved", scenarioTrainMoved)
+    , ("prequeue", scenarioTrainPreQueue)
     , ("ownerbefore", fun self root => scenarioOwnerCommitsBeforeRebase self root false)
     , ("ownerbefore-rebase", fun self root => scenarioOwnerCommitsBeforeRebase self root true)
     , ("ownerafter", scenarioOwnerCommitsAfterRebase), ("switchff", scenarioMainSwitchedAtMerge)
@@ -3095,12 +3486,20 @@ def main (argv : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"land: {e}"; return 3
     | .ok env =>
       let landing (n : String) (m : Mode) (p : Bool) : IO UInt32 := do
+        if m == .land && !p then
+          if let some row ← alreadyLanded env n then
+            let f (k : String) := (jsonField row k).getD ""
+            say "pre" "ok" [("branch", s!"agent/{n}"), ("landed", f "tip"), ("run", f "run")]
+            sayFinal .landed [("name", n), ("run", f "run"), ("tip", f "tip"),
+              ("gated", f "gated"), ("already", "yes")]
+            return 0
         match ← resolveGates env with
         | .error why =>
           say "gateset" "fail" [("why", why)]
           sayFinal .refused [("name", n), ("why", why)]
           return 2
-        | .ok (gs, gateset) => withTurn env n (landRun env n m p gs gateset)
+        | .ok (gs, gateset) =>
+          withTurn env n (if m == .land && !p then fareOf gs else "") (landRun env n m p gs gateset)
       let retained (act : IO UInt32) : IO UInt32 := do
         retainRuns env 50
         act
@@ -3112,7 +3511,7 @@ def main (argv : List String) : IO UInt32 := do
           pure c
         | .new n => retained (landNew env n)
         | .retire n => retained (landRetire env n)
-        | .push => retained (withTurn env "push" (landPush env) (holds := false))
+        | .push => retained (withTurn env "push" "" (fun _ => landPush env) (holds := false))
         | .land n m p => retained (landing n m p)
       env.alive.unlock
       return code
