@@ -71,7 +71,7 @@ def Source.diffSel : Source → Option (Array String)
   | .range r => some #[r]
   | .tree => none
 
-/-- The source the arguments name; a `--range` without a revision is an error. -/
+/-- The source the arguments name; a `--range` naming no revision range (`..`) is an error. -/
 def parseSource : List String → Except String Source
   | [] => .ok .index
   | a :: rest =>
@@ -383,6 +383,15 @@ which commits are unpushed is unknown and none was checked against it.
   Fix: git fetch origin, so refs/remotes/origin/main names what the remote holds, then re-run.")
   return (out.append (← privacyCommits m), none)
 
+/-- The commits a range's diff reads, its tip's and not its base's, as `git log` arguments. -/
+def rangeCommits (r : String) : Array String :=
+  let ends (sep : String) : Option (String × String) := match r.splitOn sep with
+    | [a, b] => some (if a.isEmpty then "HEAD" else a, if b.isEmpty then "HEAD" else b)
+    | _ => none
+  match ends "..." <|> ends ".." with
+  | some (a, b) => #[b, "--not", a]
+  | none => #[r]
+
 /-- Where a range adds a denylisted term, in a line, a path or a blob, or one of its commits adds or
 names one. -/
 def privacyRange (m : Privacy.Matcher) (r : String) (diff : ByteArray) : IO (Array String) := do
@@ -394,7 +403,7 @@ def privacyRange (m : Privacy.Matcher) (r : String) (diff : ByteArray) : IO (Arr
     let blobs ← catBlobs (binaries.map (tip ++ ":" ++ ·))
     for (p, bs) in binaries.zip blobs do
       out := out.append (m.blobFindings p bs "")
-    out := out.append (← privacyCommits m #[r])
+    out := out.append (← privacyCommits m (rangeCommits r))
   return Privacy.uniq out
 
 def tokens (s : String) : List String :=
@@ -779,6 +788,15 @@ def datedStory (l : String) : Bool := Id.run do
         && digit (i + 8) && digit (i + 9) then
       return true
   return false
+
+/-- A rule document's text, its bytes read leniently, and the finding they owe when they are not
+UTF-8. -/
+def ruleDocText (doc : String) (bytes : ByteArray) : String × Option String :=
+  match String.fromUTF8? bytes with
+  | some text => (text, none)
+  | none => (Privacy.textOfBytes bytes, some s!"pre-commit: {doc} is not UTF-8.
+  A rule document is read whole as text at the start of every session.
+  Fix: write it in UTF-8.")
 
 /-- Each cap of `caps` the document exceeds; a document with no row is uncapped. -/
 def capFaults (doc text : String) (caps : List DocCap := ruleDocCaps) : Array String := Id.run do
@@ -2535,6 +2553,13 @@ def selftest : IO UInt32 := do
     fails.modify ("caseCollisions: different children conceal a directory collision" :: ·)
   if !(caseCollisions #["scripts/land.lean", "scripts/LandCore.lean", "scripts/lands.lean"]).isEmpty then
     fails.modify ("caseCollisions: fired on distinct names" :: ·)
+  unless rangeCommits "main...tip" == #["tip", "--not", "main"] &&
+      rangeCommits "a..b" == #["b", "--not", "a"] && rangeCommits "a.." == #["HEAD", "--not", "a"] do
+    fails.modify ("rangeCommits: a range's commits are its tip's, not its base's" :: ·)
+  unless (ruleDocText "AGENTS.md" ⟨#[0x23, 0xFF]⟩).2.isSome &&
+      ruleDocText "AGENTS.md" "## Rules\n".toUTF8 == ("## Rules\n", none) &&
+      (docHeadings (ruleDocText "AGENTS.md" ⟨"## Rules\n".toUTF8.data.push 0xFF⟩).1) == ["Rules"] do
+    fails.modify ("ruleDocText: a rule document's encoding fault, and its headings kept" :: ·)
   let cased := caseCollisions #["Tests/Parser.lean", "tests/Extra.md", "README.md", "readme.md",
     "A/b.lean", "a/c.lean"]
   let touched := collisionsTouching #["tests/Extra.md", "readme.md"] cased
@@ -3643,23 +3668,24 @@ def main (args : List String) : IO UInt32 := do
   Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
   never with -A or ."
 
-  -- A range reads its tip; the hook and the tree read the index and the working files.
+  -- A range reads its tip's tree; the hook and the tree read the index and the working files.
   let tip := match src with
     | .index => some ""
     | .range r => rangeTip r
     | .tree => none
-  let judgedBytes (paths : Array String) : IO (Array (String × ByteArray)) := do
-    match src, tip with
-    | .range _, some rev =>
-      let blobs ← catBlobs (paths.map (rev ++ ":" ++ ·))
-      pure ((paths.zip blobs).filter fun (_, b) => !b.isEmpty)
-    | _, _ => paths.filterMapM fun (f : String) => do
-      unless ← System.FilePath.pathExists f do return none
-      return some (f, ← IO.FS.readBinFile f)
-  -- From the index, so a staged addition is caught by its own commit.
   let tracked ← match src, tip with
     | .range _, some rev => git #["ls-tree", "-r", "-z", "--name-only", "--full-tree", rev]
     | _, _ => git #["ls-files", "-z"]
+  let atTip : Std.HashSet String := ((tracked.splitOn "\x00").filter (!·.isEmpty)).foldl
+    (·.insert ·) {}
+  let judgedBytes (paths : Array String) : IO (Array (String × ByteArray)) := do
+    match src, tip with
+    | .range _, some rev =>
+      let present := paths.filter atTip.contains
+      pure (present.zip (← catBlobs (present.map (rev ++ ":" ++ ·))))
+    | _, _ => paths.filterMapM fun (f : String) => do
+      unless ← System.FilePath.pathExists f do return none
+      return some (f, ← IO.FS.readBinFile f)
   let addedPaths ← match src with
     | .range r => addedNames #[r]
     | _ => pure #[]
@@ -3676,10 +3702,8 @@ def main (args : List String) : IO UInt32 := do
   -- what it changes.
   let mut heads : List (String × List String) := []
   for (doc, bytes) in ← judgedBytes sectionDocs.toArray do
-    let some text := String.fromUTF8? bytes
-      | say s!"pre-commit: {doc} is not UTF-8.
-  A rule document is read whole as text at the start of every session.
-  Fix: write it in UTF-8."
+    let (text, encoding) := ruleDocText doc bytes
+    if let some fault := encoding then say fault
     heads := (doc, docHeadings text) :: heads
     if !ranged || staged.contains doc then
       for fault in capFaults doc text do
@@ -3706,7 +3730,8 @@ def main (args : List String) : IO UInt32 := do
   let roots := vendoredRoots trackedPaths
   let prose := trackedPaths.filter fun p =>
     (p.endsWith ".lean" || p.endsWith ".md") && !vendored roots p
-  let sources := (← judgedBytes (if ranged then prose.filter (staged.contains ·) else prose)).map
+  let addedFiles := Privacy.uniq ((addedLines fullDiff).map (·.1))
+  let sources := (← judgedBytes (if ranged then prose.filter (addedFiles.contains ·) else prose)).map
     fun (f, b) => (f, Privacy.textOfBytes b)
   let addedAt : Std.HashSet (String × Nat) :=
     (addedLines fullDiff).foldl (fun acc (f, n, _) => acc.insert (f, n)) {}
