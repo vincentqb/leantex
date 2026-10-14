@@ -287,10 +287,11 @@ def parseGates (spec : String) : Except GateSpecError (Array Gate) := do
   return out
 
 /-- The gates every landing runs, in order, in the gate-list syntax, `{main}` standing for
-the sha of `main` the run read; none may be absent, and `--wfail` fails a build on any
-warning. -/
+the sha of `main` the run read and `{tip}` for the gated tip; none may be absent, and
+`--wfail` fails a build on any warning. -/
 def defaultGates : List String := [
   "build=lake build --wfail LeanTex leantex Tests precommit proofcheck lint cites land scoreboard",
+  "conventions=.lake/build/bin/precommit --range {main}...{tip} --conventions",
   "test=lake test",
   "lint=lake lint",
   "land-selftest=.lake/build/bin/land --selftest",
@@ -479,14 +480,20 @@ def removeTree (e : Env) (ctr : IO.Ref Nat) : IO Unit := do
     [("path", tree), ("gone", if gone then "yes" else "no"),
      ("listed", if listed then "yes" else "no")]
 
-/-- Run one gate in the gate tree, reading the tree back before and after it; `{main}`
-becomes `mainTip`. -/
-def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip : Sha) : IO Obs := do
+/-- A gate's arguments with `{main}` and `{tip}` spelled as the shas of `main` the run read
+and of the gated tip. -/
+def gateArgs (mainTip tip : Sha) (args : Array String) : Array String :=
+  args.map fun a => (a.replace "{main}" mainTip).replace "{tip}" tip
+
+/-- Run one gate in the gate tree, reading the tree back before and after it, its arguments
+spelled by `gateArgs`. -/
+def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip tip : Sha) :
+    IO Obs := do
   let tree := treePath e
   let step := s!"gate-{g.name}"
   let (hb, cb) ← readTree e ctr step
   let cmd := if g.cmd.startsWith "." then s!"{tree}/{g.cmd}" else g.cmd
-  let args := g.args.map fun a => if a == "{main}" then mainTip else a
+  let args := gateArgs mainTip tip g.args
   let r ← sh e ctr step cmd args (some tree)
   let (ha, ca) ← readTree e ctr step
   -- The tree as read around the gate: the head both reads agree on, and clean only if both were.
@@ -634,7 +641,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         match gates[i]? with
         | none => pure (.garbled s!"no gate at index {i}")
         | some gd => do
-          let o ← runGate e ctr gd i st.prevMainTip
+          let o ← runGate e ctr gd i st.prevMainTip st.gatedTip
           let tail (head : Sha) (clean : Bool) : List (String × String) :=
             [("idx", toString i), ("head", if head.isEmpty then "?" else head),
              ("dirty", if clean then "no" else "yes")]
@@ -1454,24 +1461,35 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail" [("case", "the shipped gate list parses, one gate per line"),
       ("why", e.why)]
-  -- Every source area shares the strict build, then the test and lint drivers.
+  -- Every source area shares the strict build, the added lines' conventions, then the test and
+  -- lint drivers.
   let grouped : Bool := match gateList.toList with
-    | build :: test :: lint :: _ =>
+    | build :: conventions :: test :: lint :: _ =>
       build.cmd == "lake" && build.args[0]? == some "build"
         && build.args.contains "--wfail"
         && #["LeanTex", "leantex", "Tests", "precommit",
             "proofcheck", "lint", "cites", "land", "scoreboard"].all
           (build.args.contains ·)
+        && conventions.name == "conventions"
         && test.cmd == "lake" && test.args == #["test"]
         && lint.cmd == "lake" && lint.args == #["lint"]
         && (gateList.filter fun g => g.cmd == "lake" && g.args[0]? == some "build").size == 1
     | _ => false
   if grouped then
-    say "selftest" "ok" [("case", "strict maintained-source build, then test and lint")]
+    say "selftest" "ok" [("case", "strict maintained-source build, conventions, test and lint")]
   else
     bad := bad + 1
     say "selftest" "fail"
-      [("case", "strict maintained-source build, then test and lint")]
+      [("case", "strict maintained-source build, conventions, test and lint")]
+  let conventions := gateList.filter (·.name == "conventions")
+  if conventions.size == 1 && conventions[0]!.cmd == ".lake/build/bin/precommit" &&
+      conventions[0]!.args == #["--range", "{main}...{tip}", "--conventions"] &&
+      gateArgs "m" "t" conventions[0]!.args == #["--range", "m...t", "--conventions"] &&
+      gateArgs "m" "t" #["--base", "{main}"] == #["--base", "m"] then
+    say "selftest" "ok" [("case", "the conventions gate reads the lines the landing adds")]
+  else
+    bad := bad + 1
+    say "selftest" "fail" [("case", "the conventions gate reads the lines the landing adds")]
   let baseline := gateList.filter (·.name == "scoreboard-base")
   if baseline.size == 1 &&
       baseline[0]!.cmd == ".lake/build/bin/scoreboard" &&
@@ -1893,6 +1911,62 @@ of them makes a run, takes the lock or writes the ledger"
          , ok := wrong.isEmpty && !made && before == after
          , detail := s!"wrong=[{String.intercalate "; " wrong.toList}] land-dir={made} \
 main={before}->{after}" }
+
+/-- Copy every file under `src` but `.git` and `.lake` into `dst` at its relative path. -/
+def copySources (src dst : System.FilePath) : IO Unit := do
+  let skip (p : System.FilePath) : Bool := p.fileName == some ".git" || p.fileName == some ".lake"
+  for p in ← src.walkDir (fun d => pure !(skip d)) do
+    if skip p || (← p.isDir) then continue
+    let rel := (p.toString.drop (src.toString.length + 1)).toString
+    let target := dst / rel
+    if let some parent := target.parent then IO.FS.createDirAll parent
+    IO.FS.writeBinFile target (← IO.FS.readBinFile p)
+
+/-- A branch whose commit adds a comment telling history, made without the hook, fails the
+shipped conventions gate over a copy of the tree under test, while a clean commit lands. -/
+def scenarioNarrative (self root : String) : IO Outcome := do
+  let label := "a commit telling history in a comment, made without the hook, fails the \
+conventions gate, and a clean one lands"
+  let bin := (System.FilePath.mk self).parent.getD "."
+  let tree := ((bin.parent.bind (·.parent)).bind (·.parent)).getD "."
+  let some g := gateList.find? (·.name == "conventions")
+    | return { label, ok := false, detail := "the shipped list has no conventions gate" }
+  let spec := s!"{g.name}={bin / "precommit"} {String.intercalate " " g.args.toList}"
+  let repo := s!"{root}/narrative/repo"
+  IO.FS.createDirAll repo
+  copySources tree repo
+  hgitOk #["init", "-q", "-b", "main", "."] repo
+  hgitOk #["config", "user.name", "Scratch"] repo
+  hgitOk #["config", "user.email", "scratch@example.org"] repo
+  hgitOk #["config", "--local", "land.allowGateOverride", "true"] repo
+  hgitOk #["add", "-A"] repo
+  hgitOk #["commit", "-qm", "Base"] repo
+  let branch (name file text : String) : IO Unit := do
+    let wt := s!"{root}/narrative/lt-{name}"
+    hgitOk #["worktree", "add", "-q", "-b", s!"agent/{name}", wt, "main"] repo
+    IO.FS.writeFile s!"{wt}/{file}" text
+    hgitOk #["add", file] wt
+    hgitOk #["commit", "-qm", s!"Add {file}"] wt
+  branch "told" "Told.lean" "-- Previously this file used to hold a parser.\ndef told : Nat := 2\n"
+  branch "plain" "Plain.lean" "def plain : Nat := 1\n"
+  let before ← revOf repo "refs/heads/main"
+  let (told, toldOut) ← landIn self repo #["told"] spec
+  let afterTold ← revOf repo "refs/heads/main"
+  let (plain, _) ← landIn self repo #["plain"] spec
+  let afterPlain ← revOf repo "refs/heads/main"
+  let plainTip ← revOf repo "refs/heads/agent/plain"
+  let runDir := ((toldOut.splitOn "\n").find? (·.startsWith "land: step=run ")).bind fun l =>
+    ((wsSplit l).find? (·.startsWith "dir=")).map fun w => (w.drop "dir=".length).toString
+  let log ← match runDir with
+    | some d => try IO.FS.readFile s!"{d}/gate-conventions.log" catch _ => pure ""
+    | none => pure ""
+  let refused := says toldOut "step=gate-conventions result=fail" &&
+    says log "Told.lean:1: \"Previously\""
+  return { label
+         , ok := told == 1 && refused && afterTold == before && plain == 0
+             && afterPlain == plainTip
+         , detail := s!"told={told} refused={refused} main={before}->{afterTold}->{afterPlain} \
+plain={plain} plain-tip={plainTip}" }
 
 /-- A landing started with `GIT_DIR` naming another repository lands the one its working
 directory names and writes nothing into the other. -/
@@ -2367,7 +2441,8 @@ def scratchSelftest : IO UInt32 := do
     , ("putback", scenarioMainPutBack)
     , ("retireb", scenarioRetireRebased), ("pushlater", scenarioPushLater)
     , ("pushungated", scenarioPushUngated), ("guard", scenarioGuardRefuses)
-    , ("nonet", scenarioNoNetwork) ] ++ (if nested then [] else starting)
+    , ("nonet", scenarioNoNetwork), ("narrative", scenarioNarrative) ]
+    ++ (if nested then [] else starting)
   let mut outcomes : Array Outcome := #[]
   for (key, sc) in scenarios do
     -- A fixture that could not be built fails its scenario, named, and the rest still run.
