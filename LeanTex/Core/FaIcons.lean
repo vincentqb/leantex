@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.FaData
+import LeanTex.Core.Hex
 public import Std.Data.HashMap
 
 namespace LeanTex.Core.FaIcons
@@ -14,19 +15,10 @@ public structure Entry where
   label : String
   deriving Repr, BEq, Inhabited
 
-private def parseHex (s : String) : Nat :=
-  s.foldl (fun n c =>
-    let d :=
-      if c.isDigit then c.toNat - '0'.toNat
-      else if 'A' ≤ c && c ≤ 'F' then c.toNat - 'A'.toNat + 10
-      else if 'a' ≤ c && c ≤ 'f' then c.toNat - 'a'.toNat + 10
-      else 0
-    n * 16 + d) 0
-
 private def parseLine (line : String) : Option Entry :=
   match line.splitOn "|" with
-  | [m, name, hex, label] =>
-    let n := parseHex hex
+  | [m, name, hex, label] => do
+    let n ← Hex.value? hex.toList
     if h : Nat.isValidChar n then
       some { macroName := m, name, scalar := Char.ofNatAux n h, label }
     else

@@ -628,8 +628,7 @@ def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(ds "\\theme{moloch}\\palette{ alert = #112233 }").any (·.code == "W0348"))
   let molochAlert := (Ir.Design.declared? (deckBundle Theme.moloch) .alert).getD .black
   t "a declaration the theme agrees with replaces nothing"
-    (!(ds ("\\palette{ alert = #" ++ Ir.Color.hexByte molochAlert.r ++ Ir.Color.hexByte molochAlert.g ++
-      Ir.Color.hexByte molochAlert.b ++ " }\\theme{moloch}")).any (·.code == "W0348"))
+    (!(ds ("\\palette{ alert = #" ++ molochAlert.hex (hash := false) ++ " }\\theme{moloch}")).any (·.code == "W0348"))
   t "a second theme replacing the first theme's values is silent"
     (!(ds "\\theme{plain}\\theme{moloch}").any (·.code == "W0348"))
   t "a replaced chrome slot is named as its slot"
@@ -1486,8 +1485,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     Ir.Color.black)
   t "a decorative entry at the mix's value keeps it low: no re-weighting, no warning"
     (let src := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
-      "\\palette[decorative]{ dim = #" ++ Ir.Color.hexByte mixed.r ++
-      Ir.Color.hexByte mixed.g ++ Ir.Color.hexByte mixed.b ++ " }" ++
+      "\\palette[decorative]{ dim = " ++ mixed.hex ++ " }" ++
       "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}"
      !(warnCodes src).contains "W0315")
   t "covered is exempt by role"

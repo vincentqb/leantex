@@ -9,9 +9,7 @@ open LeanTex.Core
 
 def path : String := "LeanTex/Core/PaletteData.lean"
 
-def hex (v : UInt8) : String :=
-  let digits := Ir.Color.hexByte v
-  "0x" ++ digits
+def hex (v : UInt8) : String := s!"0x{Hex.byte true v}"
 
 def color (c : Ir.Color) : String :=
   s!"\{ r := {hex c.r}, g := {hex c.g}, b := {hex c.b} }"

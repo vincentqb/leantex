@@ -7,6 +7,7 @@ found as its words in order in any reading (`readingsOf`); a hit names its place
 -/
 
 public import LeanTex.Core.Nfc
+import LeanTex.Core.Hex
 public import LeanTex.Core.Flate.BlockStream
 public import Std.Data.HashMap
 public import Std.Data.HashSet
@@ -218,13 +219,6 @@ def Matcher.linesIn (m : Matcher) (f : Folded) : Array Nat := Id.run do
         out := out.push (f.lineOf i)
   return out
 
-/-- The value of one hexadecimal digit. -/
-def hexVal (c : Char) : Option Nat :=
-  if c.isDigit then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else none
-
 /-- The number spelled by `cs[i, j)` in base 16 (or 10), when every scalar
 there is a digit of that base and the span is not empty. -/
 def numberAt (cs : Array Char) (i j : Nat) (hex : Bool) : Option Nat := Id.run do
@@ -232,7 +226,7 @@ def numberAt (cs : Array Char) (i j : Nat) (hex : Bool) : Option Nat := Id.run d
   let mut v := 0
   for k in [i:j] do
     let c := charAt cs k
-    let d := if hex then hexVal c
+    let d := if hex then Hex.digit? c
       else if c.isDigit then some (c.toNat - '0'.toNat) else none
     match d with
     | some d => v := v * (if hex then 16 else 10) + d
@@ -721,7 +715,7 @@ def pdfHex (bs : ByteArray) (i : Nat) : Option (ByteArray × Nat) := Id.run do
       if let some h := high then out := out.push (h * 16).toUInt8
       return some (out, j)
     if b == 32 || b == 9 || b == 10 || b == 13 || b == 12 || b == 0 then continue
-    match hexVal (Char.ofNat b.toNat) with
+    match Hex.val? b.toNat with
     | some v =>
       match high with
       | some h =>

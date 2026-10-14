@@ -5,6 +5,7 @@ import LeanTex.Core.Flate.BitPacking
 import LeanTex.Core.Flate.BitWriter
 import LeanTex.Core.Flate.Progress
 import LeanTex.Core.Flate.TokenSymbols
+import LeanTex.Core.Hex
 
 namespace LeanTex.Core.Flate
 
@@ -297,14 +298,7 @@ public def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
   return h
 
 /-- Sixteen hex digits of a 64-bit hash. -/
-public def hex16 (x : UInt64) : String := Id.run do
-  let digits := "0123456789ABCDEF".toList.toArray
-  let mut s := ""
-  let mut v := x
-  for _ in [0:16] do
-    s := String.ofList [digits[(v % 16).toNat]?.getD '0'] ++ s
-    v := v / 16
-  return s
+public def hex16 (x : UInt64) : String := Hex.digits true 16 x.toNat
 
 /-- A 128-bit content key: two independent FNV-64 passes as 32 hex digits. -/
 public def contentKey (b : ByteArray) : String :=

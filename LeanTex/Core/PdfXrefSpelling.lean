@@ -14,35 +14,13 @@ open PdfLex PdfRead
 /-! The typed dictionary and exact byte spelling of the writer's xref stream. -/
 
 private def HexChars (s : String) : Prop :=
-  ∀ c ∈ s.toList, hexVal c.toNat ≠ none ∧ c.toNat < 128
-
-private theorem hex_digit (n : Nat) :
-    hexVal ("0123456789ABCDEF".toList.toArray[n]?.getD '0').toNat ≠ none ∧
-    ("0123456789ABCDEF".toList.toArray[n]?.getD '0').toNat < 128 := by
-  cases h : "0123456789ABCDEF".toList.toArray[n]? with
-  | none => decide
-  | some c =>
-    have hm := Array.mem_of_getElem? h
-    change c ∈ #['0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'] at hm
-    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hm
-    rcases hm with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> decide
+  ∀ c ∈ s.toList, Hex.val? c.toNat ≠ none ∧ c.toNat < 128
 
 private theorem hex16_chars (x : UInt64) : HexChars (Flate.hex16 x) := by
-  unfold Flate.hex16
-  apply Loop.bind_of_inv (P := fun s : String × UInt64 => HexChars s.1)
-  · apply Loop.forIn_range_inv (P := fun s : String × UInt64 => HexChars s.1)
-    · intro c hc
-      simp at hc
-    · intro i hlo hhi s hs
-      change HexChars (String.ofList [_] ++ s.1)
-      intro c hc
-      simp only [String.toList_append, String.toList_ofList, List.mem_append,
-        List.mem_singleton] at hc
-      rcases hc with rfl | hc
-      · exact hex_digit _
-      · exact hs c hc
-  · intro s hs
-    exact hs
+  intro c hc
+  simp only [Flate.hex16, Hex.digits, String.toList_ofList] at hc
+  obtain ⟨k, rfl⟩ := Hex.mem_digitList hc
+  exact ⟨by simp [Hex.val?_spell], Hex.spell_ascii true k⟩
 
 public theorem hex16_string_exact (x : UInt64) :
     (Obj.str (("<" ++ Flate.hex16 x ++ ">").toUTF8)).Representable := by
@@ -111,6 +89,7 @@ public theorem xrefStreamDict_representable_exact (count info : Nat) (w : Xref.W
   all_goals first | exact Obj.Representable.int _ | exact hex16_string_exact _
 
 set_option maxRecDepth 4096 in
+attribute [local irreducible] Flate.hex16 in
 public theorem xrefStreamDict_render_exact (count info : Nat) (w : Xref.Widths)
     (idA idB : UInt64) (filtered : Bool) (len : Nat) :
     (xrefStreamDict count info w idA idB filtered len).render =

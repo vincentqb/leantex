@@ -4,6 +4,7 @@ public import LeanTex.Cli.World
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import all Init.System.ST
+import LeanTex.Core.Hex
 
 /-! The one interpreter of `World`'s questions: a `BaseIO` action whose every `IO.Error`
 is reply data, with sorted listings, reads refused for anything but a regular file, and
@@ -90,8 +91,7 @@ public def describe : IO.Error → String
   | .resourceExhausted .. => "the system ran out of a resource it needs, such as space"
   | e => ((toString e).splitOn "\n").headD (toString e)
 
-private def hex (bytes : ByteArray) : String :=
-  bytes.foldl (fun s b => s ++ (if b < 16 then "0" else "") ++ String.ofList (Nat.toDigits 16 b.toNat)) ""
+private def hex (bytes : ByteArray) : String := bytes.foldl (· ++ LeanTex.Core.Hex.byte false ·) ""
 
 /-- A fresh, empty directory only this user can enter, under the scratch root's real path;
 `IO.FS.createTempDir` instead crashes where no directory can be made. -/

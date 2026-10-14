@@ -59,7 +59,6 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
       if let (some name, some color) := (r.row.exportName, SeedPalette.Colors.role seeds colors r) then
         check ref s!"theme palette exports {name}'s generated RGB"
           (declarations.contains ("\\definecolor{sample" ++ name ++ "}{HTML}{" ++
-            Ir.Color.hexByte color.r ++ Ir.Color.hexByte color.g ++
-            Ir.Color.hexByte color.b ++ "}"))
+            color.hex (hash := false) ++ "}"))
 
 end Tests.ThemePalette

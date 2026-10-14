@@ -21,7 +21,7 @@ open PdfLex
 public inductive Obj.StringSpelling : List Nat → Prop
   | literal {cs} : LiteralBody cs → StringSpelling (40 :: cs ++ [41])
   | hex {cs} :
-      (∀ c ∈ cs, hexVal c ≠ none ∨ isWs c = true) →
+      (∀ c ∈ cs, Hex.val? c ≠ none ∨ isWs c = true) →
       StringSpelling (60 :: cs ++ [62])
 
 /-- The objects the round trip holds for, defined syntactically. -/

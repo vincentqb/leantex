@@ -4,6 +4,10 @@ PROVENANCE.txt), the PDF encodings with ISO 32000-2 Annex D.2's readings.
 Usage: lake env lean --run scripts/gen-glyphlist-data.lean
 -/
 
+import LeanTex.Core.Hex
+
+open LeanTex.Core
+
 def die (msg : String) : IO α := do
   IO.eprintln msg
   IO.Process.exit 1
@@ -11,15 +15,6 @@ def die (msg : String) : IO α := do
 def dir : System.FilePath := "testdata/vendor/glyphlist"
 
 def output : System.FilePath := "LeanTex/Core/GlyphListData.lean"
-
-def hexDigit (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
-  else none
-
-def hexValue (s : String) : Option Nat :=
-  s.toList.foldl (fun acc c => do let a ← acc; let d ← hexDigit c; pure (a * 16 + d)) (some 0)
 
 /-- The vendored sums, checked with `sha256sum -c` from the directory. -/
 def checkSums : IO Unit := do
@@ -36,7 +31,8 @@ def aglRows (text : String) : IO (Array String) := do
     match line.splitOn ";" with
     | [name, scalars] =>
       for s in scalars.splitOn " " do
-        unless s.length == 4 && (hexValue s).isSome do die s!"glyphlist: bad scalar in '{line}'"
+        unless s.length == 4 && (Hex.value? s.toList).isSome do
+          die s!"glyphlist: bad scalar in '{line}'"
       rows := rows.push s!"{name};{scalars}"
     | _ => die s!"glyphlist: unexpected row '{line}'"
   return rows
@@ -70,11 +66,11 @@ def pyScalar (lit : String) : Option Nat :=
   | ['\'', '\\', '\'', '\''] => some 39
   | '\'' :: '\\' :: 'x' :: rest =>
     match rest with
-    | [a, b, '\''] => hexValue (String.ofList [a, b])
+    | [a, b, '\''] => Hex.value? [a, b]
     | _ => none
   | '\'' :: '\\' :: 'u' :: rest =>
     match rest with
-    | [a, b, c, d, '\''] => hexValue (String.ofList [a, b, c, d])
+    | [a, b, c, d, '\''] => Hex.value? [a, b, c, d]
     | _ => none
   | _ => none
 

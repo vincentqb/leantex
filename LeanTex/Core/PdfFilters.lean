@@ -32,7 +32,7 @@ public def asciiHex (b : ByteArray) : ByteArray := Id.run do
   for c in b do
     let c := c.toNat
     if c == 62 then break
-    match PdfLex.hexVal c with
+    match Hex.val? c with
     | some v =>
       match hi with
       | some h =>

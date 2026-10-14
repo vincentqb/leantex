@@ -52,7 +52,7 @@ private def dictionaryString : Rejected :=
         have hc : [60,62] = cs := List.append_cancel_right (List.cons.inj he).2
         subst cs
         have hh := hb 60 (by simp)
-        simp [hexVal,isWs] at hh⟩
+        simp [Hex.val?,isWs] at hh⟩
 
 private def rejected : List (String × Rejected) := [
   ("non-numeric real prefix", badReal "a." (by decide)),

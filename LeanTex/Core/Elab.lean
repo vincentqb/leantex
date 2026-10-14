@@ -12442,7 +12442,7 @@ private def renderValue : Decl.Value → String
   | .int n => toString n
   | .ident s => s
   | .block src => "{" ++ src ++ "}"
-  | .color r g b => s!"#{Color.hexByte r}{Color.hexByte g}{Color.hexByte b}"
+  | .color r g b => ({ r, g, b } : Color).hex
   | .cmyk c m y k => s!"cmyk({c}, {m}, {y}, {k})"
   | .glue g => Ir.dumpGlue g
 

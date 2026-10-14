@@ -259,6 +259,6 @@ public theorem apart_exact {c c' : Color} (h : apart c c' = true) :
 public def declarations (stem : String) (series : List Color) : String :=
   String.join (series.zipIdx.map fun (c, i) =>
     "\\definecolor{" ++ stem ++ "Series" ++ toString (i + 1) ++ "}{HTML}{" ++
-      Color.hexByte c.r ++ Color.hexByte c.g ++ Color.hexByte c.b ++ "}\n")
+      c.hex (hash := false) ++ "}\n")
 
 end LeanTex.Core.SeedSeries

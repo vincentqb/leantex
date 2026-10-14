@@ -803,8 +803,7 @@ public def declarations (stem : String) (st : SeedState) : String :=
   let defs := String.join (Ir.Role.all.filterMap fun r => do
     let n ← r.row.exportName
     let c ← Colors.role st.seeds st.colors r
-    pure ("\\definecolor{" ++ stem ++ n ++ "}{HTML}{" ++ Color.hexByte c.r ++ Color.hexByte c.g ++
-      Color.hexByte c.b ++ "}\n"))
+    pure ("\\definecolor{" ++ stem ++ n ++ "}{HTML}{" ++ c.hex (hash := false) ++ "}\n"))
   -- the mark under its role's key too, which both engines read (`Ir.Role.ofXcolor?`)
   let mark := match st.colors.alertMark, Ir.Role.alertMark.row.key, Ir.Role.alertMark.row.exportName with
     | some _, some key, some n => "\\colorlet{" ++ key ++ "}{" ++ stem ++ n ++ "}\n"

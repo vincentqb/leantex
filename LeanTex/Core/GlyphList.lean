@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.GlyphListData
 public import Std.Data.HashMap
+import LeanTex.Core.Hex
 
 /-! Glyph names and the PDF's standard encodings (ISO 32000-2 §9.6.5–9.6.6): codes to names or
 scalars, and names to scalars through the Adobe Glyph List, read from `GlyphListData`. -/
@@ -14,21 +15,14 @@ public def aglMap : Thunk (Std.HashMap String (Array Char)) := Thunk.mk fun _ =>
   for row in GlyphListData.agl.splitOn "\n" do
     match row.splitOn ";" with
     | [name, scalars] =>
-      let cs := (scalars.splitOn " ").filterMap fun h =>
-        (h.toList.foldl (fun acc c => acc.bind fun a =>
-          (if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
-           else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
-           else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87) else none).map (a * 16 + ·))
-          (some 0)).map Char.ofNat
+      let cs := (scalars.splitOn " ").filterMap fun h => (Hex.value? h.toList).map Char.ofNat
       unless m.contains name do m := m.insert name cs.toArray
     | _ => pure ()
   return m
 
-/-- `n` uppercase hexadecimal digits as a number, or `none`. -/
+/-- Upper-case hexadecimal digits as a number, as a `uni` or `u` name must spell them. -/
 private def upperHex (s : List Char) : Option Nat :=
-  s.foldl (fun acc c => acc.bind fun a =>
-    (if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
-     else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55) else none).map (a * 16 + ·)) (some 0)
+  if s.any Char.isLower then none else Hex.value? s
 
 /-- A scalar a `uni`/`u` name may spell: not a surrogate, inside Unicode. -/
 private def scalarOk (v : Nat) : Bool := v < 0xD800 || (0xDFFF < v && v ≤ 0x10FFFF)

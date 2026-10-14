@@ -65,25 +65,13 @@ public def pdf17Role (s : String) : Option String :=
   else if s.startsWith "H" && ((s.drop 1).toString.toNat?.any (6 < ·)) then some "H6"
   else none
 
-private def hex4 (n : Nat) : String :=
-  String.ofList [hexDigit (n / 4096), hexDigit (n / 256), hexDigit (n / 16), hexDigit n]
-
 private def utf16Hex (c : Char) : String :=
   let n := c.toNat
   if n < 0x10000 then
-    hex4 n
+    Hex.digits true 4 n
   else
     let v := n - 0x10000
-    hex4 (0xD800 + v / 1024) ++ hex4 (0xDC00 + v % 1024)
-
-private def pdfName (s : String) : String := Id.run do
-  let mut out := ""
-  for c in s.toList do
-    if c.isAlphanum || c == '-' || c == '.' then
-      out := out.push c
-    else
-      out := out ++ "#" ++ String.ofList [hexDigit (c.toNat / 16), hexDigit c.toNat]
-  return if out == "" then "Embedded" else out
+    Hex.digits true 4 (0xD800 + v / 1024) ++ Hex.digits true 4 (0xDC00 + v % 1024)
 
 private def litObj (s : String) : PdfRead.Obj := .str s.toUTF8
 
@@ -228,7 +216,7 @@ endcodespacerange
     remaining := remaining.drop 100
     s := s ++ s!"{chunk.length} beginbfchar\n"
     for (g, c) in chunk do
-      s := s ++ s!"<{hex4 g}> <{utf16Hex c}>\n"
+      s := s ++ s!"<{Hex.digits true 4 g}> <{utf16Hex c}>\n"
     s := s ++ "endbfchar\n"
   s := s ++ "endcmap
 CMapName currentdict /CMap defineresource pop
@@ -2082,8 +2070,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           | .indexed palette => Id.run do
             let mut hex := ""
             for byte in palette do
-              hex := hex.push (hexDigit (byte.toNat / 16))
-              hex := hex.push (hexDigit byte.toNat)
+              hex := hex ++ Hex.byte true byte
             return s!"[/Indexed /DeviceRGB {palette.size / 3 - 1} <{hex}>]"
           | .iccBased n _ => deviceOf n
         let filter := match inf.filter with

@@ -40,12 +40,6 @@ public theorem named?_mem (s : String) (v : Nat × Nat × Nat) (h : named? s = s
     simp only [hf, Option.map_some, Option.some.injEq] at h
     exact ⟨row.1, by rw [← h]; exact Array.mem_of_find?_eq_some hf⟩
 
-private def hexDigit (c : Char) : Option Nat :=
-  if c.isDigit then some (c.toNat - 48)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
-  else none
-
 private def byte (n : Nat) : UInt8 := (min n 255).toUInt8
 
 /-- An alpha byte in thousandths, rounded. -/
@@ -54,7 +48,7 @@ private def byte (n : Nat) : UInt8 := (min n 255).toUInt8
 /-- `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`. -/
 public def hex? (s : String) : Option Value := do
   let cs := s.toList
-  let ds ← (cs.drop 1).mapM hexDigit
+  let ds ← (cs.drop 1).mapM Hex.digit?
   if cs.head? != some '#' then none
   match ds with
   | [r, g, b] => some { color := { r := byte (r * 17), g := byte (g * 17), b := byte (b * 17) }, alpha := 1000 }

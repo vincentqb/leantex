@@ -690,8 +690,7 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 theorem backend_rgb_exact (c : Ir.Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     HtmlDoc.cssColor c =
-        "#" ++ Ir.Color.hexByte c.r false ++ Ir.Color.hexByte c.g false ++
-          Ir.Color.hexByte c.b false ∧
+        "#" ++ Hex.byte false c.r ++ Hex.byte false c.g ++ Hex.byte false c.b ∧
       c.pdfFill = Ir.Color.pdfMilli (Ir.Color.milli c.r) ++ " " ++
         Ir.Color.pdfMilli (Ir.Color.milli c.g) ++ " " ++
         Ir.Color.pdfMilli (Ir.Color.milli c.b) ++ " rg" :=

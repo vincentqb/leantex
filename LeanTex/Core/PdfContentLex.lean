@@ -211,7 +211,7 @@ public def strBytes? (o : Obj) : Option ByteArray :=
       let mut out := ByteArray.empty
       let mut hi : Option Nat := none
       for k in [1:raw.size - 1] do
-        match hexVal ((raw[k]?.map UInt8.toNat).getD 0) with
+        match Hex.val? ((raw[k]?.map UInt8.toNat).getD 0) with
         | some v =>
           match hi with
           | some h =>

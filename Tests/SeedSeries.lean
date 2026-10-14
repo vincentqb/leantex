@@ -83,7 +83,7 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
       let decls := SeedSeries.declarations "Probe" most
       t s!"series, {label}: the export names every series in order"
         (most.zipIdx.all fun (c, i) => hasStr decls ("\\definecolor{ProbeSeries" ++ toString (i + 1) ++
-          "}{HTML}{" ++ Ir.Color.hexByte c.r ++ Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b ++ "}"))
+          "}{HTML}{" ++ c.hex (hash := false) ++ "}"))
   let s : SeedPalette.Seeds :=
     { ink := Ir.Color.ofHtml 0x2B 0x24 0x40, paper := white, accent := Ir.Color.ofHtml 0xE8 0x5D 0x2A }
   t "series: a count of none is refused" (generated s 0 |>.toOption).isNone

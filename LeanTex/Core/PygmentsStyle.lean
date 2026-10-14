@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Color
+import LeanTex.Core.CssColor
 public import LeanTex.Core.ListingHighlight
 import LeanTex.Core.PygmentsStyleData
 public import Std.Data.HashMap
@@ -47,23 +48,8 @@ public structure Look where
   box : Option Box := none
   deriving Repr, BEq, Inhabited
 
-/-- `#rgb` or `#rrggbb`, the spellings the generator admits. -/
-public def hexColor? (s : String) : Option Color :=
-  let digits := s.toList.drop 1
-  let value (cs : List Char) : Option Nat := cs.foldlM (init := 0) fun n c =>
-    if c.isDigit then some (n * 16 + (c.toNat - '0'.toNat))
-    else if 'a' ≤ c.toLower && c.toLower ≤ 'f' then some (n * 16 + (c.toLower.toNat - 'a'.toNat + 10))
-    else none
-  let full := match digits with
-    | [r, g, b] => some [r, r, g, g, b, b]
-    | ds => if ds.length == 6 then some ds else none
-  if s.toList.head? != some '#' then none else do
-    let ds ← full
-    let v ← value ds
-    some { r := (v / 65536).toUInt8, g := (v / 256 % 256).toUInt8, b := (v % 256).toUInt8 }
-
 private def optColor? (s : String) : Option (Option Color) :=
-  if s.isEmpty then some none else (hexColor? s).map some
+  if s.isEmpty then some none else (CssColor.hex? s).map (some ·.color)
 
 /-- A declaration's words, in order; `none` for a word the painter does not
 carry, which the generator refuses before it reaches the data. -/
@@ -83,7 +69,7 @@ public def parseDecl? (text : String) : Option Decl :=
         (optColor? (word.drop 3).toString).map fun c => { d with bgcolor := some c }
       else if word.startsWith "border:" then
         (optColor? (word.drop 7).toString).map fun c => { d with border := some c }
-      else (hexColor? word).map fun c => { d with color := some c }
+      else (CssColor.hex? word).map fun v => { d with color := some v.color }
 
 /-- One inheritance step: `k`'s resolved style from its parent's. -/
 public def Resolved.step (parent : Resolved) (k : Kind) (d : Decl) : Resolved :=

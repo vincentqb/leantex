@@ -1,5 +1,7 @@
 module
 
+public import LeanTex.Core.Hex
+
 namespace LeanTex.Core.Ir
 
 /-! The colour value, in a leaf module so a formula can carry one. -/
@@ -32,16 +34,11 @@ public theorem Color.beq_screen_exact (a b : Color) :
 
 @[expose] public def Color.white : Color := { r := 255, g := 255, b := 255 }
 
-/-- One byte as two hex digits, uppercase unless `upper` is false. -/
-@[expose] public def Color.hexByte (v : UInt8) (upper : Bool := true) : String :=
-  let d := (if upper then "0123456789ABCDEF" else "0123456789abcdef").toList
-  String.ofList [d.getD (v.toNat / 16) '0', d.getD (v.toNat % 16) '0']
+/-- The colour as six hex digits, upper-case and behind `#` unless asked otherwise. -/
+@[expose] public def Color.hex (c : Color) (hash upper : Bool := true) : String :=
+  (if hash then "#" else "") ++ Hex.byte upper c.r ++ Hex.byte upper c.g ++ Hex.byte upper c.b
 
 /-- The colour as CSS serializes it: `#rrggbb`, lowercase. -/
-@[expose] public def Color.css (c : Color) : String :=
-  let r := Color.hexByte c.r false
-  let g := Color.hexByte c.g false
-  let b := Color.hexByte c.b false
-  "#" ++ r ++ g ++ b
+@[expose] public def Color.css (c : Color) : String := c.hex (upper := false)
 
 end LeanTex.Core.Ir

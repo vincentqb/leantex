@@ -1554,14 +1554,13 @@ private def pushStr (out : Array Chunk) (s : String) : Array Chunk :=
   out.push (.bytes s.toUTF8)
 
 private def nameOut (n : String) : String := Id.run do
-  let hexDigit (v : Nat) : Char := ("0123456789ABCDEF".toList[v % 16]?).getD '0'
   let mut out := "/"
   for c in n.toList do
     let v := c.toNat
     if 33 ≤ v && v ≤ 126 && !isDelim v && v != 35 then
       out := out.push c
     else
-      out := out ++ String.ofList ['#', hexDigit (v / 16), hexDigit v]
+      out := out ++ String.ofList ['#', Hex.spell true (v / 16), Hex.spell true v]
   return out
 
 mutual

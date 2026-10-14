@@ -4241,7 +4241,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   for (idx, c) in acc.dropped do
     let source := glyphOrigin acc.origins .E0405 idx c
     diags := diags.push (Diag.of .E0405
-      s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
+      s!"'{(fs.get idx).family}' has no glyph for U+{Hex.scalar c.toNat}"
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some .skipped)
@@ -4251,15 +4251,15 @@ with \\allow{E0405}"))
     let source := glyphOrigin acc.origins .W0009 idx c
     -- One loss per face and scalar, counted at every site it recurs.
     diags := diags.push (Diag.of .W0009
-      s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
+      s!"'{(fs.get idx).family}' has no glyph for U+{Hex.scalar c.toNat}"
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
-      (subject := some s!"glyph:{(fs.get idx).family}:U+{hex c.toNat}"))
+      (subject := some s!"glyph:{(fs.get idx).family}:U+{Hex.scalar c.toNat}"))
   for (idx, c, a, base) in acc.unstyled do
     let source := glyphOrigin acc.origins .W0016 idx c
     diags := diags.push (Diag.of .W0016
-      s!"'{(fs.get idx).family}' has no {a.styleLabel} glyph for U+{hex c.toNat}"
+      s!"'{(fs.get idx).family}' has no {a.styleLabel} glyph for U+{Hex.scalar c.toNat}"
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some (.replacedBy s!"the base letter '{base}'"))
@@ -4267,17 +4267,6 @@ with \\allow{E0405}"))
       (subject := some ("math-alpha:" ++ a.name)))
   return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets,
     acc.anchors, acc.itemSources)
-where
-  hex (n : Nat) : String := Id.run do
-    let ds := "0123456789ABCDEF".toList
-    let mut s := ""
-    let mut n := n
-    for _ in [0:8] do
-      s := String.ofList [ds[n % 16]!] ++ s
-      n := n / 16
-      if n == 0 then break
-    let pad := if s.length < 4 then "".pushn '0' (4 - s.length) else ""
-    return pad ++ s
 
 private def PlainInlines (xs : Array Inline) : Prop :=
   ∀ x ∈ xs, ∃ s, x = .text s

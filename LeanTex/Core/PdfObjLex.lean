@@ -40,13 +40,13 @@ theorem readToken_literal {b raw : ByteArray} {i : Nat} {cs : List Nat}
 
 theorem readToken_hex {b raw : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b i (octets raw))
-    (hc : ∀ c ∈ cs, hexVal c ≠ none ∨ isWs c = true)
+    (hc : ∀ c ∈ cs, Hex.val? c ≠ none ∨ isWs c = true)
     (hr : octets raw = 60 :: cs ++ [62]) :
     readToken b i = .ok (.value (.str raw), i+raw.size) := by
   have hp : ∀ c ∈ cs, c ≠ 60 ∧ c ≠ 62 ∧ c ≠ 256 := by
     intro c hm
     have hh := hc c hm
-    refine ⟨?_,?_,?_⟩ <;> intro he <;> subst c <;> simp [hexVal,isWs] at hh
+    refine ⟨?_,?_,?_⟩ <;> intro he <;> subst c <;> simp [Hex.val?,isWs] at hh
   have hsize : raw.size = cs.length+2 := by
     simpa using congrArg List.length hr
   have hx := h.extract_exact

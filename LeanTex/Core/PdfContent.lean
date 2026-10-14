@@ -12,15 +12,9 @@ namespace LeanTex.Core.Pdf
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Layout
 
-/-- One hexadecimal digit of `n`'s low nibble, upper case. -/
-public def hexDigit (n : Nat) : Char :=
-  match n % 16 with
-  | 0 => '0' | 1 => '1' | 2 => '2' | 3 => '3' | 4 => '4' | 5 => '5' | 6 => '6' | 7 => '7'
-  | 8 => '8' | 9 => '9' | 10 => 'A' | 11 => 'B' | 12 => 'C' | 13 => 'D' | 14 => 'E' | _ => 'F'
-
 private def pushGid (acc : String) (g : Nat) : String :=
-  (((acc.push (hexDigit (g / 4096))).push (hexDigit (g / 256))).push (hexDigit (g / 16))).push
-    (hexDigit g)
+  (((acc.push (Hex.spell true (g / 4096))).push (Hex.spell true (g / 256))).push
+    (Hex.spell true (g / 16))).push (Hex.spell true g)
 
 public def gidHex (g : Nat) : String := pushGid "" g
 
@@ -1735,19 +1729,9 @@ private theorem numberMarks_runs_list (ops : Array ContentOp) :
   rw [ContentOp.numberList_runs]
   simp
 
-private theorem hexDigit_inj : ∀ a, a < 16 → ∀ b, b < 16 → hexDigit a = hexDigit b → a = b := by
-  decide
-
-private theorem hexDigit_mod (a : Nat) : hexDigit a = hexDigit (a % 16) := by
-  simp [hexDigit]
-
-private theorem hexDigit_eq_mod {a b : Nat} (h : hexDigit a = hexDigit b) : a % 16 = b % 16 := by
-  rw [hexDigit_mod a, hexDigit_mod b] at h
-  exact hexDigit_inj _ (Nat.mod_lt _ (by decide)) _ (Nat.mod_lt _ (by decide)) h
-
 private theorem gidHex_toList (g : Nat) :
-    (gidHex g).toList
-      = [hexDigit (g / 4096), hexDigit (g / 256), hexDigit (g / 16), hexDigit g] := by
+    (gidHex g).toList = [Hex.spell true (g / 4096), Hex.spell true (g / 256),
+      Hex.spell true (g / 16), Hex.spell true g] := by
   simp [gidHex, pushGid, String.toList_push]
 
 public theorem gidHex_inj {g₁ g₂ : Nat} (h₁ : g₁ < 65536) (h₂ : g₂ < 65536)
@@ -1756,10 +1740,10 @@ public theorem gidHex_inj {g₁ g₂ : Nat} (h₁ : g₁ < 65536) (h₂ : g₂ <
   rw [gidHex_toList, gidHex_toList] at hl
   simp only [List.cons.injEq, and_true] at hl
   obtain ⟨e1, e2, e3, e4⟩ := hl
-  have := hexDigit_eq_mod e1
-  have := hexDigit_eq_mod e2
-  have := hexDigit_eq_mod e3
-  have := hexDigit_eq_mod e4
+  have := Hex.spell_eq_mod e1
+  have := Hex.spell_eq_mod e2
+  have := Hex.spell_eq_mod e3
+  have := Hex.spell_eq_mod e4
   omega
 
 private theorem join_cons (a : String) (as : List String) :

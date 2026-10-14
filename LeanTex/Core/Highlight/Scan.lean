@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.PygmentsLexData
+import LeanTex.Core.Hex
 
 /-! What the native lexers share: the text, the Unicode classes their patterns name, word lists
 and the raw token stream. Each lexer mirrors one Pygments `RegexLexer` (pygments/lexer.py,
@@ -74,17 +75,13 @@ private structure Classes where
   pyStart : Array UInt32
   pyRest : Array UInt32
 
-/-- A hex digit's value, for the generator's `[0-9a-f]`. -/
-private def nib (b : UInt8) : UInt32 :=
-  if b ≤ 0x39 then b.toUInt32 - 0x30 else b.toUInt32 - 0x57
-
 private def hexRanges (s : String) : Array UInt32 := Id.run do
   let bs := s.toUTF8
   let mut out : Array UInt32 := Array.mkEmpty (bs.size / 6)
   for i in [0:bs.size / 6] do
     let mut v : UInt32 := 0
     for k in [0:6] do
-      v := v * 16 + nib (bs[i * 6 + k]?.getD 0x30)
+      v := v * 16 + ((Hex.val? (bs[i * 6 + k]?.getD 0x30).toNat).getD 0).toUInt32
     out := out.push v
   return out
 

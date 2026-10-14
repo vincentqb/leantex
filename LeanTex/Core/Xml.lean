@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.WhatwgEncoding
+public import LeanTex.Core.Hex
 import Std.Data.HashSet
 
 /-! A total reader and canonical writer of the XML 1.0 an SVG file is written in; what could
@@ -162,24 +163,18 @@ public def readName (bud : Budget) (b : ByteArray) (i : Nat) : Except Refusal (S
   if j - i > bud.name then throw (.budget "name length")
   return (slice b i j, j)
 
-@[expose] public def hexVal (c : Nat) : Option Nat :=
-  if 48 ≤ c && c ≤ 57 then some (c - 48)
-  else if 97 ≤ c && c ≤ 102 then some (c - 87)
-  else if 65 ≤ c && c ≤ 70 then some (c - 55)
-  else none
-
 /-- A character or entity reference at `i`, with its end; only the predefined entities are read (§4.6). -/
 public def readReference (b : ByteArray) (i : Nat) : Except Refusal (Char × Nat) := do
   if at? b (i + 1) == 35 then
     let hex := at? b (i + 2) == 120
     let d0 := if hex then i + 3 else i + 2
-    let j := scanWhile b (fun c => if hex then (hexVal c).isSome else 48 ≤ c && c ≤ 57) d0
+    let j := scanWhile b (fun c => if hex then (Hex.val? c).isSome else 48 ≤ c && c ≤ 57) d0
     if j == d0 || at? b j != 59 then throw (.syntax i "a malformed character reference")
     if j - d0 > 8 then throw (.syntax i "a character reference out of range")
     let v := Id.run do
       let mut v := 0
       for k in [d0:j] do
-        v := v * (if hex then 16 else 10) + ((hexVal (at? b k)).getD 0)
+        v := v * (if hex then 16 else 10) + ((Hex.val? (at? b k)).getD 0)
       return v
     unless xmlChar v do throw (.syntax i "a character reference to a character XML does not admit")
     return (Char.ofNat v, j + 1)

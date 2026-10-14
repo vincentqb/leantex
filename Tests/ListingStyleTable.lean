@@ -33,7 +33,7 @@ def twoDp (v : UInt8) : String :=
 def texRgb (c : Ir.Color) : String := s!"{twoDp c.r},{twoDp c.g},{twoDp c.b}"
 
 def hexCell : Option Ir.Color → String
-  | some c => Ir.Color.hexByte c.r ++ Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b
+  | some c => c.hex (hash := false)
   | none => "-"
 
 def bit (b : Bool) : String := if b then "1" else "0"
@@ -677,7 +677,7 @@ def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
       match (brushes.get r).ink with
       | some c =>
         t s!"code export {style.name}: the {repr r} role's colour is the one the page ships"
-          (hasStr tex s!"\\definecolor\{{CodeExport.colorName "Probe" r}}\{HTML}\{{Ir.Color.hexByte c.r}{Ir.Color.hexByte c.g}{Ir.Color.hexByte c.b}}")
+          (hasStr tex s!"\\definecolor\{{CodeExport.colorName "Probe" r}}\{HTML}\{{c.hex (hash := false)}}")
       | none =>
         t s!"code export {style.name}: the {repr r} role defines no colour of its own"
           (!hasStr tex s!"\\definecolor\{{CodeExport.colorName "Probe" r}}")

@@ -342,8 +342,7 @@ public def cffNameGlyph (src : Ink.Src) (n : String) : Option Nat :=
   (src.nameGlyph n).orElse fun _ =>
     match (GlyphList.nameText n).map String.toList with
     | some [ch] =>
-      let hex := String.ofList ((Nat.toDigits 16 ch.toNat).map Char.toUpper)
-      let hex4 := "".pushn '0' (4 - hex.length) ++ hex
+      let hex4 := Hex.scalar ch.toNat
       (if ch.toNat < 0x10000 then src.nameGlyph ("uni" ++ hex4) else none).orElse fun _ =>
         src.nameGlyph ("u" ++ hex4)
     | _ => none

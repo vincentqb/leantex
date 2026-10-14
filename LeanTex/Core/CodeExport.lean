@@ -23,9 +23,6 @@ colour, what the formatter's `\PYG@tc` runs. -/
 public def commandName (stem : String) (r : ListingHighlight.Role) : String :=
   colorName stem r ++ "Tok"
 
-private def hexOf (c : Color) : String :=
-  Color.hexByte c.r ++ Color.hexByte c.g ++ Color.hexByte c.b
-
 /-- One type's macro as the formatter writes one, every setting stated. -/
 private def macroText (stem : String) (brushes : RoleTable Listing.Brush) (k : Kind) : String :=
   let r := k.role
@@ -54,7 +51,7 @@ public def texDeclarations (stem : String) (pal : Palette) (style : Ir.ListingSt
       if let some c := (brushes.get r).ink then
         let name := colorName stem r
         let command := commandName stem r
-        defs := defs ++ "\\definecolor{" ++ name ++ "}{HTML}{" ++ hexOf c ++ "}\n" ++
+        defs := defs ++ "\\definecolor{" ++ name ++ "}{HTML}{" ++ c.hex (hash := false) ++ "}\n" ++
           "\\newcommand\\" ++ command ++ "[1]{\\textcolor{" ++ name ++ "}{#1}}\n"
     let mut body := ""
     for (k, name) in PygmentsStyle.standardTypes do

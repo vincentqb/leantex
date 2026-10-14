@@ -3,6 +3,7 @@ module
 import Std.Data.HashMap
 import Std.Data.HashSet
 import LeanTex.Core.NfcData
+import LeanTex.Core.Hex
 
 /-! Canonical normalization to NFC (UAX #15 §9), applied at input so composed forms reach the
 fonts' cmaps; tables from the generated `NfcData`. -/
@@ -21,16 +22,11 @@ private structure Tables where
   /-- The lowercase half of every case pair. -/
   lowered : HashSet UInt32
 
-/-- A hex digit's value. -/
-private def nib (b : UInt8) : Nat :=
-  let n := b.toNat
-  if n ≤ 0x39 then n - 0x30 else n - 0x57
-
 /-- A fixed-width hex field read by byte offset; a short read reads as zero. -/
 private def field (bs : ByteArray) (start width : Nat) : Nat := Id.run do
   let mut v := 0
   for k in [0:width] do
-    v := v * 16 + nib (bs[start + k]?.getD 0)
+    v := v * 16 + (Hex.val? (bs[start + k]?.getD 0).toNat).getD 0
   return v
 
 private def load (_ : Unit) : Tables := Id.run do

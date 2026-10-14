@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Oklab
+import LeanTex.Core.Hex
 
 namespace LeanTex.Core.Decl
 
@@ -191,12 +192,6 @@ public inductive ColorSpecError where
 case-sensitive spellings. -/
 public def colorModelNames : List String := ["HTML", "RGB", "rgb", "gray", "cmyk"]
 
-private def hexDigit? (c : Char) : Option Nat :=
-  if c.isDigit then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else none
-
 public def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
 
@@ -296,7 +291,7 @@ private def rgbComponent (model src : String) : Except ColorSpecError ColorCompo
     return { num := m.toNat, scale := scale }
 
 private def htmlBytes (value : String) : Except ColorSpecError (UInt8 × UInt8 × UInt8) := do
-  let digits ← match value.toList.mapM hexDigit? with
+  let digits ← match value.toList.mapM Hex.digit? with
     | some ds => pure ds
     | none => malformedColor "HTML" "expected six hexadecimal digits"
   match digits with
@@ -378,7 +373,7 @@ private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :
     let hex := (value.drop 1).toString
     match hex.toList with
     | [r, g, b] =>
-      match [r, g, b].mapM hexDigit? with
+      match [r, g, b].mapM Hex.digit? with
       | some [rv, gv, bv] =>
         .ok (.html (UInt8.ofNat (rv * 17)) (UInt8.ofNat (gv * 17))
           (UInt8.ofNat (bv * 17)))

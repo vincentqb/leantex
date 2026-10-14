@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Diag
+import LeanTex.Core.Hex
 
 namespace LeanTex.Cli.Render
 
@@ -40,8 +41,7 @@ private def humanText (newline : String) (s : String) : String :=
     | '\u2029' => acc ++ "\\u2029"
     | c =>
       if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
-        let hex := String.ofList (Nat.toDigits 16 c.toNat)
-        acc ++ "\\x" ++ (if hex.length < 2 then "0" else "") ++ hex
+        acc ++ "\\x" ++ Hex.digits false 2 c.toNat
       else if bidiControl c then pushEscape acc c
       else acc.push c
 
@@ -133,8 +133,7 @@ private def jsonEscape (s : String) : String :=
     | '\u2029' => acc ++ "\\u2029"
     | c =>
       if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
-        let hex := "0123456789abcdef".toList
-        acc ++ "\\u00" ++ String.ofList [hex[c.toNat >>> 4]!, hex[c.toNat &&& 0xF]!]
+        acc ++ "\\u00" ++ Hex.digits false 2 c.toNat
       else if bidiControl c then pushEscape acc c
       else
         acc.push c

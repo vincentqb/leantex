@@ -1023,7 +1023,7 @@ public def unpercent (s : String) : ByteArray := Id.run do
     if i ≥ b.size then break
     let c := (Xml.at? b i).toUInt8
     if c == 37 then
-      match Xml.hexVal (Xml.at? b (i + 1)), Xml.hexVal (Xml.at? b (i + 2)) with
+      match Hex.val? (Xml.at? b (i + 1)), Hex.val? (Xml.at? b (i + 2)) with
       | some h, some l =>
         out := out.push (h * 16 + l).toUInt8
         i := i + 3

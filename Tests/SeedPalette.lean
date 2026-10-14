@@ -250,11 +250,11 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
       if let some name := r.row.exportName then
         if let some c := LeanTex.Core.SeedPalette.Colors.role st.seeds st.colors r then
           let native := (Ir.Design.at nd.palette .print r).map fun n =>
-            Ir.Color.hexByte n.r ++ Ir.Color.hexByte n.g ++ Ir.Color.hexByte n.b
+            n.hex (hash := false)
           t s!"export {style.name}: {name} is the native build's print {name}"
-            (hasStr decls ("\\definecolor{seed" ++ name ++ "}{HTML}{" ++ Ir.Color.hexByte c.r ++
-              Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b ++ "}") &&
-              native == some (Ir.Color.hexByte c.r ++ Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b))
+            (hasStr decls ("\\definecolor{seed" ++ name ++ "}{HTML}{" ++ c.hex (hash := false) ++
+              "}") &&
+              native == some (c.hex (hash := false)))
     let channels := LeanTex.Core.SeedPalette.beamerChannels st
     let written := LeanTex.Core.SeedPalette.beamerDeclarations "seed" st
     t s!"export {style.name}: the include binds every block element"
@@ -267,7 +267,7 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
           let native := (BeamerColor.channelRole element ch).bind (Ir.Design.at nd.palette .print)
           let declared := match r.row.exportName, exported with
             | some n, some c => hasStr decls ("\\definecolor{seed" ++ n ++ "}{HTML}{" ++
-                Ir.Color.hexByte c.r ++ Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b ++ "}") &&
+                c.hex (hash := false) ++ "}") &&
                 hasStr written ("\\setbeamercolor{" ++ element ++ "}{")
             | _, _ => false
           t s!"export {style.name}: '{element}' {label} is the native build's print colour"

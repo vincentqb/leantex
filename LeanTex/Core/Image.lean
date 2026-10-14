@@ -1159,13 +1159,7 @@ public theorem planParams_serialize_inj (a b : PlanParams)
     simp_all [PlanParams.serialize]
 
 /-- The cache-key segment: the serialization in hex. -/
-public def PlanParams.key (p : PlanParams) : String := Id.run do
-  let digits := "0123456789ABCDEF".toList.toArray
-  let mut s := ""
-  for byte in p.serialize do
-    s := s.push (digits[byte.toNat / 16]?.getD '0')
-    s := s.push (digits[byte.toNat % 16]?.getD '0')
-  return s
+public def PlanParams.key (p : PlanParams) : String := p.serialize.foldl (· ++ Hex.byte true ·) ""
 
 private def unembeddableMsg (f : Format) : String :=
   f.name ++ " images cannot be embedded in a PDF (no PDF filter decodes the format); \

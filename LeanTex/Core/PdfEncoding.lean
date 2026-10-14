@@ -32,11 +32,11 @@ private theorem literalTail_sound (cs : List Nat) (h : literalTail cs = true) :
 private def hexTail : List Nat → Bool
   | [] => false
   | 62 :: [] => true
-  | c :: cs => ((hexVal c).isSome || isWs c) && hexTail cs
+  | c :: cs => ((Hex.val? c).isSome || isWs c) && hexTail cs
 
 private theorem hexTail_sound (cs : List Nat) (h : hexTail cs = true) :
     ∃ body, cs = body ++ [62] ∧
-      ∀ c ∈ body, hexVal c ≠ none ∨ isWs c = true := by
+      ∀ c ∈ body, Hex.val? c ≠ none ∨ isWs c = true := by
   fun_induction hexTail cs with
   | case1 => simp at h
   | case2 => exact ⟨[], rfl, by simp⟩

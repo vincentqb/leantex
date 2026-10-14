@@ -23,9 +23,6 @@ public def ratioString (milli : Nat) : String :=
   let frac := (milli % 1000) / 10
   s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
 
-private def hexOf (c : Color) : String :=
-  s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-
 /-- One coloured text occurrence, judged against the palette in force where it stands. -/
 private structure Use where
   name : Option ColorRef
@@ -504,7 +501,7 @@ private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site
       (s!"the declared page keeps the defaulted ink, below the contrast WCAG 2.2 asks of " ++
         clause)
       (span := (site pal (some onKey) st.ground).map (·.2))
-      (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
+      (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req}")
       (help := some ("a declared surface chooses its ink: declare " ++
         "\\palette{ " ++ key ++ " = ... }" ++ " beside " ++ onKey))
   else match r.row.noun with
@@ -512,13 +509,13 @@ private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site
       Diag.of .W0345
         (s!"{noun} pairs its ink and ground below the contrast WCAG 2.2 asks of " ++ clause)
         (span := span) (subject := some (inkKey key st.ink st.ground))
-        (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
+        (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req}")
     | none =>
       Diag.of .W0315
         (s!"text coloured '{key}' reads on the page below the contrast WCAG 2.2 asks of " ++
           clause)
         (span := span) (subject := some (inkKey key st.ink st.ground))
-        (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
+        (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req}")
 
 /-- Judge one shipped design site; only a failing site no earlier epoch reported speaks. -/
 private def judgeSite (site : ColorSite) (stage : Bool) (s : Array Diag × Array Site) :
@@ -632,7 +629,7 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
       let (g, on) := p.useGround v f surface role
       let gate := requiredIn s (if u.large then .largeText else .text)
       if contrastMilli c g < gate then
-        out := push out { name := .color (hexOf u.color), on, ratio := contrastMilli c g, gate }
+        out := push out { name := .color u.color.hex, on, ratio := contrastMilli c g, gate }
   for (r, p) in sites do
     let v := ((views.find? (·.1 == p)).map (·.2.1)).getD p
     if let some st := Design.site? v s r then
@@ -745,7 +742,7 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
               "WCAG 2.2 asks of a state change (SC 1.4.11)")
             (span := origin.map (·.2))
             (subject := some s!"covered:{nm}")
-            (detail := some (s!"{hexOf covered} against {hexOf active}: " ++
+            (detail := some (s!"{covered.hex} against {active.hex}: " ++
               s!"{ratioString milli}, below {ratioString aaNonText}"))
             (help := coverHelp)]
         else #[]
@@ -821,12 +818,12 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
       let label := match u.styleName, spelled with
         | some st, _ => s!"by the '{st}' highlighting style"
         | none, some e => s!"'{e}'"
-        | none, none => s!"'{hexOf u.color}'"
+        | none, none => s!"'{u.color.hex}'"
       let s := s.pairing dup key u.site
-        (inkKey (spelled.getD (hexOf u.color)) u.color u.surface)
+        (inkKey (spelled.getD u.color.hex) u.color u.surface)
         (s!"text coloured {label} reads on {u.groundName.getD "the page"} below the contrast " ++
           s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-        (s!"{hexOf u.color} on {hexOf u.surface}: {ratioString assessment.ratio}, " ++
+        (s!"{u.color.hex} on {u.surface.hex}: {ratioString assessment.ratio}, " ++
           s!"below {ratioString threshold}")
         (origin.map (·.2))
       { s with done := done }

@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.Nfc
+import LeanTex.Core.Hex
 import LeanTex.Core.CollateData
 public import Std.Data.HashMap
 
@@ -24,21 +25,16 @@ public structure Elem where
   tertiary : UInt32
   deriving BEq, Repr, Inhabited
 
-private def hexNat (s : String) : Option Nat :=
-  s.toList.foldl (init := some 0) fun acc c => acc.bind fun n =>
-    if '0' ≤ c && c ≤ '9' then some (n * 16 + (c.toNat - '0'.toNat))
-    else if 'A' ≤ c && c ≤ 'F' then some (n * 16 + (c.toNat - 'A'.toNat + 10))
-    else none
-
 /-- One generated row, `XXXX+YYYY=p.s.t,p.s.t` (`CollateData`): the
 characters it weighs and its elements, when it reads. -/
 public def decodeEntry (row : String) : Option (String × Array Elem) := do
   let [cps, ces] := row.splitOn "=" | none
-  let chars ← (cps.splitOn "+").mapM fun h => (hexNat h).map Char.ofNat
+  let chars ← (cps.splitOn "+").mapM fun h => (Hex.value? h.toList).map Char.ofNat
   let elems ← (ces.splitOn ",").filter (!·.isEmpty) |>.mapM fun ce => do
     let [p, s, t] := ce.splitOn "." | none
-    pure { primary := UInt32.ofNat (← hexNat p), secondary := UInt32.ofNat (← hexNat s)
-           tertiary := UInt32.ofNat (← hexNat t) }
+    pure { primary := UInt32.ofNat (← Hex.value? p.toList)
+           secondary := UInt32.ofNat (← Hex.value? s.toList)
+           tertiary := UInt32.ofNat (← Hex.value? t.toList) }
   if chars.isEmpty then none else some (String.ofList chars, elems.toArray)
 
 /-- The rows of a space-separated generated table. -/
@@ -59,7 +55,7 @@ private def letterTable : Thunk (Std.HashMap UInt32 (Array Elem)) :=
 private def markTable : Thunk (Std.HashMap UInt32 UInt32) :=
   Thunk.mk fun _ => (rowsOf CollateData.markWeights).foldl (init := {}) fun m row =>
     match row.splitOn "=" with
-    | [c, w] => match hexNat c, hexNat w with
+    | [c, w] => match Hex.value? c.toList, Hex.value? w.toList with
       | some c, some w => m.insert (UInt32.ofNat c) (UInt32.ofNat w)
       | _, _ => m
     | _ => m

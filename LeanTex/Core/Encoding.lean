@@ -4,6 +4,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Utf8
 public import LeanTex.Core.EncodingOption
 import LeanTex.Core.EncodingData
+import LeanTex.Core.Hex
 
 /-! The decoding door: a file's bytes as text, by its byte-order mark, UTF-8, or the encoding a
 `\usepackage[...]{inputenc}` declares (honoured as pdfLaTeX honours it, where lualatex ignores it),
@@ -418,9 +419,7 @@ private def posAfter (text : String) : Pos :=
     else if c == '\r' then (acc.1.next true, true)
     else (acc.1.next false, false)) ({}, false)).1
 
-private def hexByte (b : UInt8) : String :=
-  let digit (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (55 + n)
-  String.ofList ['0', 'x', digit (b.toNat / 16), digit (b.toNat % 16)]
+private def hexByte (b : UInt8) : String := s!"0x{Hex.byte true b}"
 
 /-- The bytes of a run, spelled for a message. -/
 private def hexRun (bytes : ByteArray) (o n : Nat) : String :=

@@ -72,12 +72,6 @@ def scanContent (b : ByteArray) : Array CTok :=
     | .op n => acc.push (.op n)
     | .inline d _ => (ctOfEntries (acc.push (.op "BI")) d.toList).push (.op "ID") |>.push (.op "EI")) #[]
 
-private def artHexNibble (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
-  else none
-
 /-- A hexadecimal string read as two-byte codes: the CIDs an Identity-H
 string spells (§9.7.4.2), and the code units a `/ToUnicode` value
 spells. -/
@@ -87,7 +81,7 @@ def artCodes (digits : String) : Array Nat := Id.run do
   let mut i := 0
   for _ in [0:cs.size + 1] do
     if cs.size < i + 4 then break
-    let nib (k : Nat) : Nat := (artHexNibble (cs[k]!)).getD 0
+    let nib (k : Nat) : Nat := (Hex.digit? cs[k]!).getD 0
     out := out.push ((((nib i) * 16 + nib (i + 1)) * 16 + nib (i + 2)) * 16 + nib (i + 3))
     i := i + 4
   return out

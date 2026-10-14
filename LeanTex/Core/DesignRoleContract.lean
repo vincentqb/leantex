@@ -63,27 +63,22 @@ public theorem Role.ofKey?_key_exact (r : Role) (k : String) (h : r.row.key = so
     rw [hk] at he
     simp only [Option.map_some, Role.key_inj he h]
 
-private def hexValue (c : Char) : Option Nat :=
-  ("0123456789abcdef".toList.idxOf? c)
-
-private theorem hexValue_digit : ∀ d < 16, hexValue (hexDigit d) = some d := by
-  decide
-
 private def unesc : List Char → Option (List Char)
   | [] => some []
   | c :: rest =>
     if c == '_' then
       match rest with
       | a :: b :: c' :: d :: e :: f :: rest' => do
-        let n := (← hexValue a) * 1048576 + (← hexValue b) * 65536 + (← hexValue c') * 4096 +
-          (← hexValue d) * 256 + (← hexValue e) * 16 + (← hexValue f)
+        let n := (← Hex.digit? a) * 1048576 + (← Hex.digit? b) * 65536 + (← Hex.digit? c') * 4096 +
+          (← Hex.digit? d) * 256 + (← Hex.digit? e) * 16 + (← Hex.digit? f)
         (Char.ofNat n :: ·) <$> unesc rest'
       | _ => none
     else if c.isAlphanum then (c :: ·) <$> unesc rest else none
 
 private theorem hex6_value (n : Nat) (h : n < 16777216) :
-    (n / 1048576 % 16) * 1048576 + (n / 65536 % 16) * 65536 + (n / 4096 % 16) * 4096 +
-      (n / 256 % 16) * 256 + (n / 16 % 16) * 16 + n % 16 = n := by
+    (n / 16 / 16 / 16 / 16 / 16 % 16) * 1048576 + (n / 16 / 16 / 16 / 16 % 16) * 65536 +
+      (n / 16 / 16 / 16 % 16) * 4096 + (n / 16 / 16 % 16) * 256 + (n / 16 % 16) * 16 +
+        n % 16 = n := by
   omega
 
 private theorem unesc_escChar (c : Char) (rest : List Char) :
@@ -104,10 +99,10 @@ private theorem unesc_escChar (c : Char) (rest : List Char) :
       simp only [UInt32.isValidChar, Nat.isValidChar] at hv
       show c.val.toNat < 16777216
       omega
-    simp only [hc, Bool.false_eq_true, ite_false, hex6, List.cons_append, List.nil_append]
-    simp only [unesc, beq_self_eq_true, ite_true,
-      hexValue_digit _ (Nat.mod_lt _ (by decide)), Option.bind_eq_bind, Option.bind_some,
-      hex6_value c.toNat hlt, Char.ofNat_toNat]
+    simp only [hc, Bool.false_eq_true, ite_false, Hex.digitList, List.cons_append,
+      List.nil_append]
+    simp only [unesc, beq_self_eq_true, ite_true, Hex.digit?, Hex.val?_spell,
+      Option.bind_eq_bind, Option.bind_some, hex6_value c.toNat hlt, Char.ofNat_toNat]
 
 private theorem unesc_escape (l : List Char) : unesc (l.flatMap escChar) = some l := by
   induction l with

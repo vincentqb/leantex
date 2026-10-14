@@ -5,6 +5,9 @@ Usage: lake env lean --run scripts/gen-collate-data.lean [path/to/Biber/Constant
 -/
 
 import Std.Data.HashMap
+import LeanTex.Core.Hex
+
+open LeanTex.Core
 
 def die (msg : String) : IO α := do
   IO.eprintln msg
@@ -65,13 +68,6 @@ def run (cmd : String) (args : Array String) : IO String := do
     catch _ => die s!"{cmd} not found"
   if out.exitCode != 0 then die s!"{cmd} failed: {out.stderr}"
   return out.stdout
-
-def hexVal (s : String) : Option Nat :=
-  s.toList.foldl (init := some 0) fun acc c => acc.bind fun n =>
-    if '0' ≤ c && c ≤ '9' then some (n * 16 + (c.toNat - '0'.toNat))
-    else if 'A' ≤ c && c ≤ 'F' then some (n * 16 + (c.toNat - 'A'.toNat + 10))
-    else if 'a' ≤ c && c ≤ 'f' then some (n * 16 + (c.toNat - 'a'.toNat + 10))
-    else none
 
 def hex (n : Nat) : String := String.ofList (Nat.toDigits 16 n) |>.toUpper
 
@@ -164,7 +160,7 @@ def parseCEs (s : String) : Array CE := Id.run do
     let body := (body.drop 1).toString
     match body.splitOn "." with
     | [p, s, t] =>
-      match hexVal p, hexVal s, hexVal t with
+      match Hex.value? p.toList, Hex.value? s.toList, Hex.value? t.toList with
       | some p, some s, some t => out := out.push { p, s, t }
       | _, _, _ => pure ()
     | _ => pure ()
@@ -181,11 +177,11 @@ def main (args : List String) : IO UInt32 := do
     | ["VERSION", v, d] => version := s!"Unicode::Collate::Locale {v}, DUCET {d}"
     | ["LOCALEPM", p] => pmPath := p
     | ["LETTER", c, ces] =>
-      match hexVal c with
+      match Hex.value? c.toList with
       | some c => letters := letters.push (c, parseCEs ("[." ++ "][.".intercalate (ces.splitOn ",") ++ "]"))
       | none => pure ()
     | ["MARK", m, s] =>
-      match hexVal m, hexVal s with
+      match Hex.value? m.toList, Hex.value? s.toList with
       | some m, some s => marks := marks.push (m, s)
       | _, _ => pure ()
     | _ => pure ()
@@ -215,7 +211,8 @@ def main (args : List String) : IO UInt32 := do
       let l := ((l.splitOn "#").headD "").trimAscii.toString
       match l.splitOn ";" with
       | [cps, ces] =>
-        let cps := ((cps.trimAscii.toString.splitOn " ").filter (!·.isEmpty)).filterMap hexVal
+        let cps := ((cps.trimAscii.toString.splitOn " ").filter (!·.isEmpty)).filterMap
+          (Hex.value? ·.toList)
         if cps.isEmpty then none else some (cps, parseCEs ces)
       | _ => none
     if entries.isEmpty then return (tailored.push (f, bw, ""), outside)

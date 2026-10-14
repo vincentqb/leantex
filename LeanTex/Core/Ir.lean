@@ -1151,8 +1151,7 @@ public theorem rhythm_table_exact (size : Sp) :
 /-- The key a pairing is reported under: its name, colour and ground, as its
 contrast warning's `subject`. -/
 public def inkKey (role : String) (declared ground : Color) : String :=
-  let hex (c : Color) := s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-  s!"{role}:{hex declared}@{hex ground}"
+  s!"{role}:{declared.hex}@{ground.hex}"
 
 /-- The colours a document and its bundles declare, in declaration order:
 author colours and roles, one kind each. -/
@@ -2827,12 +2826,8 @@ in an arrow tip filled in the stroke's colour. -/
       | some t => #[.draw (.path #[tipSubpath t]) (some (solidFill stroke.color)) none]
       | none => #[]))
 
-/-- A colour as the IR goldens spell it. -/
-private def hexDump (c : Color) : String :=
-  s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-
 private def paintDumpOf : Gfx.Paint → String
-  | .solid c => hexDump c
+  | .solid c => c.hex
   | .gradient (.linear _ _ stops _) => s!"linear({stops.size} stops)"
   | .gradient (.radial _ _ _ _ stops _) => s!"radial({stops.size} stops)"
 
@@ -8731,7 +8726,7 @@ private def dumpMathItem (acc : String) (x : Math.MItem) : String :=
     let acc := acc ++ s!"{cls.label}:" ++ (if lim then "lim:" else "")
     dumpMathSub (dumpMathSup (dumpMathNucleus acc nuc) sup) sub
   | .space mu => acc ++ s!"mu:{mu}"
-  | .ink c n => acc ++ s!"ink:#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+  | .ink c n => acc ++ s!"ink:{c.hex}"
       ++ (match n with | some n => s!"({n.key})" | none => "")
 
 private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
@@ -8791,7 +8786,7 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
       | .sup => " Smaller"
     let opts := (if spec.thick then " thick" else "") ++ (if spec.room then "" else " overlap")
       ++ size ++ (match spec.color with
-        | some (c, _) => s!" #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+        | some (c, _) => s!" {c.hex}"
         | none => "")
     let acc := (dumpMathList (acc ++ tag ++ (if opts.isEmpty then "" else s!"[{(opts.drop 1).toString}]") ++ "{")
       body).push '}'
@@ -8855,8 +8850,8 @@ private def dumpInline (ind : String) (x : Inline) : String :=
   | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
   | .colored c name body =>
     let tag := match name with
-      | some n => s!"{n.key} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-      | none => s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+      | some n => s!"{n.key} {c.hex}"
+      | none => c.hex
     s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
   | .located _ body => dumpInlines ind body
   | .role n body =>
@@ -9089,7 +9084,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
       | none => "") ++
     (match spec.ground with
       | some (c, ref) => " ground " ++ ((ref.map (·.key ++ " ")).getD "") ++
-          s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+          c.hex
       | none => "") ++ "\n" ++
     (match spec.caption with
       | some (_, cap) => s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") cap
@@ -9119,7 +9114,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
   | .setPalette pal =>
     s!"{ind}setPalette\n" ++
     String.join (pal.entries.toList.map fun (n, c) =>
-      s!"{ind}  {n.key} = #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n")
+      s!"{ind}  {n.key} = {c.hex}\n")
   | .setTokens tk =>
     s!"{ind}setTokens\n" ++
     String.join (tk.entries.toList.map fun (n, g) =>
@@ -9128,7 +9123,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
   | .rule color name thickness =>
     let nm := match name with
       | some n => s!" {n.key}"
-      | none => s!" #{Color.hexByte color.r}{Color.hexByte color.g}{Color.hexByte color.b}"
+      | none => s!" {color.hex}"
     s!"{ind}rule{nm} {dumpSourcedGlue thickness}\n"
   | .picture pic =>
     let boxS := fun (b : Pic.Box) =>
@@ -9152,7 +9147,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
           | .south => " south"
           | .north => " north"
         s!"{ind}  label {x.toPtString} {y.toPtString} \
-#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}{alS}\n" ++
+{c.hex} {sc}{alS}\n" ++
         dumpInlines (ind ++ "    ") content)
   | .table cols padL padR rows rules spans =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
@@ -13586,14 +13581,7 @@ public def picInlineKey (id : String) : String := "picture:inline:" ++ id
 /-- FNV-1a with two seeds, 32 hex digits: a content hash over a picture body
 or a wrapped request. -/
 public def picHash (s : String) : String := Id.run do
-  let hex (x : UInt64) : String := Id.run do
-    let digits := "0123456789abcdef".toList
-    let mut out := ""
-    let mut v := x
-    for _ in [0:16] do
-      out := String.ofList [(digits[(v % 16).toNat]?.getD '0')] ++ out
-      v := v / 16
-    return out
+  let hex (x : UInt64) : String := Hex.digits false 16 x.toNat
   let fnv (seed : UInt64) : UInt64 := Id.run do
     let mut h := seed
     for byte in s.toUTF8 do
@@ -16884,7 +16872,7 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
       fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
     let mark := if doc.palette.decorative.contains n then " decorative" else ""
-    s!"palette {n.key} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}{mark}\n") ++
+    s!"palette {n.key} {c.hex}{mark}\n") ++
     (match doc.palette.coveredFraction with
      | some f => s!"palette covered {f}%\n"
      | none => "")

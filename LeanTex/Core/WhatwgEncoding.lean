@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.WhatwgEncodingData
+import LeanTex.Core.Hex
 
 /-! The WHATWG Encoding Standard's labels and the decoders an XML document needs: UTF-16, the
 legacy single-byte encodings and `x-user-defined`, over `WhatwgEncodingData`. -/
@@ -16,17 +17,13 @@ public def lookup (label : String) : Option String :=
 public def singleByteIndex? (name : String) : Option String :=
   (WhatwgEncodingData.singleByte.find? (·.1 == name)).map (·.2)
 
-/-- A hexadecimal digit's value. -/
-@[inline] private def hexVal (c : Char) : Nat :=
-  if c.isDigit then c.toNat - 48 else if 'A' ≤ c && c ≤ 'F' then c.toNat - 55
-  else if 'a' ≤ c && c ≤ 'f' then c.toNat - 87 else 0
-
 /-- An index's 128 scalars, byte 0x80 first; 0 where the index has no pointer. -/
 public def scalarsOf (index : String) : Array UInt32 := Id.run do
   let cs := index.toList.toArray
   let mut out : Array UInt32 := Array.mkEmpty 128
   for k in [0:128] do
-    let v := (List.range 4).foldl (fun acc j => acc * 16 + hexVal (cs[4 * k + j]?.getD '0')) 0
+    let v := (List.range 4).foldl
+      (fun acc j => acc * 16 + (Hex.digit? (cs[4 * k + j]?.getD '0')).getD 0) 0
     out := out.push v.toUInt32
   return out
 

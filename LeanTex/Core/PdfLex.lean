@@ -1,6 +1,7 @@
 module
 
 import Init.Data.ByteArray.Basic
+public import LeanTex.Core.Hex
 
 namespace LeanTex.Core.PdfLex
 
@@ -64,12 +65,6 @@ public def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat :=
     some (i+bytes.size)
   else none
 
-@[expose] public def hexVal (c : Nat) : Option Nat :=
-  if 48 ≤ c && c ≤ 57 then some (c - 48)
-  else if 65 ≤ c && c ≤ 70 then some (c - 55)
-  else if 97 ≤ c && c ≤ 102 then some (c - 87)
-  else none
-
 structure LiteralState where
   pos : Nat
   depth : Nat
@@ -105,7 +100,7 @@ def nameStep (b : ByteArray) (s : TextState) : ForInStep TextState :=
   let c := at? b s.pos
   if c == 256 || isWs c || isDelim c then .done s
   else if c == 35 then
-    match hexVal (at? b (s.pos + 1)), hexVal (at? b (s.pos + 2)) with
+    match Hex.val? (at? b (s.pos + 1)), Hex.val? (at? b (s.pos + 2)) with
     | some h, some l => .yield ⟨s.pos + 3, s.text.push (Char.ofNat (h * 16 + l))⟩
     | _, _ => .yield ⟨s.pos + 1, s.text.push '#'⟩
   else .yield ⟨s.pos + 1, s.text.push (Char.ofNat c)⟩
@@ -140,11 +135,6 @@ public def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
       return (gen, k + 1)
   none
 
-/-- A nibble as its uppercase hex digit. -/
-def hexChar (n : Nat) : Char :=
-  let d := n % 16
-  if d < 10 then Char.ofNat (48 + d) else Char.ofNat (55 + d)
-
 /-- A name's byte escape (§7.3.5); an empty name becomes `Embedded`, and each character keeps its low byte. -/
 public def escapeName (s : String) : String := Id.run do
   let mut out := ""
@@ -152,7 +142,7 @@ public def escapeName (s : String) : String := Id.run do
     if c.isAlphanum || c == '-' || c == '.' then
       out := out.push c
     else
-      out := out ++ "#" ++ String.ofList [hexChar (c.toNat / 16), hexChar c.toNat]
+      out := out ++ "#" ++ String.ofList [Hex.spell true (c.toNat / 16), Hex.spell true c.toNat]
   return if out == "" then "Embedded" else out
 
 end LeanTex.Core.PdfLex

@@ -351,11 +351,6 @@ public def storeScalars (imgs : Image.Store) : Array Char :=
       runs.foldl (fun acc r => r.text.toList.foldl (fun a c => if a.contains c then a else a.push c) acc) acc
     | none => acc) #[]
 
-/-- A code point in at least four upper-case hex digits, as the glyph diagnostics spell it. -/
-private def hex4 (n : Nat) : String :=
-  let s := String.ofList ((Nat.toDigits 16 n).map Char.toUpper)
-  (if s.length < 4 then "".pushn '0' (4 - s.length) else "") ++ s
-
 /-- Every store entry's figure shaped, with one diagnostic per unanswered
 family (N0026), substitution (W0009) and uncovered scalar (W0609). -/
 public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
@@ -370,11 +365,12 @@ public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
       let scope := FigureSvg.drawingShipsIn fig en.moving
       let fams := notes.families.map fun f => FigureLoss.svgFontDiag scope src f sans
       let substs := notes.substs.map fun (idx, c, fb) =>
-        Diag.of .W0009 s!"'{(fs.get idx).family}' has no glyph for U+{hex4 c.toNat}"
+        Diag.of .W0009 s!"'{(fs.get idx).family}' has no glyph for U+{Hex.scalar c.toNat}"
           (output := scope)
           (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
-          (subject := some s!"svg:glyph:{src}:{hex4 c.toNat}")
-      let missing := notes.missing.map fun c => FigureLoss.svgGlyphDiag scope src (hex4 c.toNat)
+          (subject := some s!"svg:glyph:{src}:{Hex.scalar c.toNat}")
+      let missing := notes.missing.map fun c =>
+        FigureLoss.svgGlyphDiag scope src (Hex.scalar c.toNat)
       (out.push (some sh), diags ++ (fams ++ substs ++ missing).map (en.src, ·))
     | none => (out.push none, diags)) (#[], #[])
 

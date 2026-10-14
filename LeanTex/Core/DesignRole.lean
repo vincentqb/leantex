@@ -500,17 +500,10 @@ public theorem Role.code?_ofCode (r : ListingHighlight.Role) : (Role.ofCode r).c
 /-- The `\palette` key a code role's colour is declared under. -/
 @[expose] public def codeKey (r : ListingHighlight.Role) : String := (Role.ofCode r).row.key.getD ""
 
-private def hexDigit (d : Nat) : Char :=
-  "0123456789abcdef".toList.getD d '0'
-
-/-- A scalar as six hex digits: every Unicode scalar fits (below 0x110000). -/
-private def hex6 (n : Nat) : List Char :=
-  [hexDigit (n / 1048576 % 16), hexDigit (n / 65536 % 16), hexDigit (n / 4096 % 16),
-   hexDigit (n / 256 % 16), hexDigit (n / 16 % 16), hexDigit (n % 16)]
-
-/-- An ASCII letter or digit as itself, any other character as `_` and six hex digits. -/
+/-- An ASCII letter or digit as itself, any other character as `_` and six hex digits, which hold
+every Unicode scalar. -/
 private def escChar (c : Char) : List Char :=
-  if c.isAlphanum then [c] else '_' :: hex6 c.toNat
+  if c.isAlphanum then [c] else '_' :: Hex.digitList false 6 c.toNat
 
 public def cssEscape (s : String) : String := String.ofList (s.toList.flatMap escChar)
 

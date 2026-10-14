@@ -10,22 +10,10 @@ private theorem char_byte_exact (n : Nat) (h : n < 256) : (Char.ofNat n).toNat =
   have hv : n.isValidChar := Or.inl (by omega)
   simp only [Char.ofNat, dite_eq_left hv, Char.ofNatAux, Char.toNat, UInt32.toNat, BitVec.toNat_ofNatLT]
 
-private theorem hexChar_nat (n : Nat) : (hexChar n).toNat = if n%16<10 then 48+n%16 else 55+n%16 := by
-  unfold hexChar
-  dsimp only
+private theorem hexChar_nat (n : Nat) :
+    (Hex.spell true n).toNat = if n%16<10 then 48+n%16 else 55+n%16 := by
+  simp only [Hex.spell, ↓reduceIte]
   split <;> apply char_byte_exact <;> omega
-
-private theorem hexChar_value (n : Nat) : hexVal (hexChar n).toNat = some (n%16) := by
-  rw [hexChar_nat]
-  have hm := Nat.mod_lt n (by omega : 0<16)
-  by_cases hn : n%16<10
-  · rw [ite_eq_left hn]
-    simp only [hexVal, show (48 ≤ 48+n%16 && 48+n%16 ≤ 57) = true by simp; omega, ↓reduceIte]
-    simp only [Nat.add_sub_cancel_left]
-  · rw [ite_eq_right hn]
-    simp only [hexVal, show (48 ≤ 55+n%16 && 55+n%16 ≤ 57) = false by simp; omega,
-      show (65 ≤ 55+n%16 && 55+n%16 ≤ 70) = true by simp; omega, ↓reduceIte]
-    simp only [Bool.false_eq_true, ↓reduceIte, Nat.add_sub_cancel_left]
 
 private theorem keep_char (c : Char) (h : (c.isAlphanum || c == '-' || c == '.') = true) :
     c.toNat < 128 ∧ isWs c.toNat = false ∧ isDelim c.toNat = false ∧ c.toNat ≠ 35 := by
@@ -45,7 +33,7 @@ private theorem keep_char (c : Char) (h : (c.isAlphanum || c == '-' || c == '.')
 /-- The ISO 32000-2 §7.3.5 escaping of one name character. -/
 public def nameChars (c : Char) : List Char :=
   if c.isAlphanum || c == '-' || c == '.' then [c]
-  else ['#', hexChar (c.toNat / 16), hexChar c.toNat]
+  else ['#', Hex.spell true (c.toNat / 16), Hex.spell true c.toNat]
 
 public theorem nameChars_nonempty (c : Char) : (nameChars c).length > 0 := by
   unfold nameChars
@@ -65,7 +53,7 @@ public theorem nameChars_ascii (c : Char) : ∀ d ∈ nameChars c, d.toNat < 128
 
 private theorem escapeLoop (cs : List Char) (out : String) :
     (forIn cs out (fun c out => if c.isAlphanum || c == '-' || c == '.' then pure (.yield (out.push c))
-      else pure (.yield (out ++ "#" ++ String.ofList [hexChar (c.toNat / 16), hexChar c.toNat]))) : Id String).run
+      else pure (.yield (out ++ "#" ++ String.ofList [Hex.spell true (c.toNat / 16), Hex.spell true c.toNat]))) : Id String).run
       = out ++ String.ofList (cs.flatMap nameChars) := by
   induction cs generalizing out with
   | nil => simp
@@ -118,8 +106,8 @@ private theorem nameStep_exact {b : ByteArray} {i : Nat} (c : Char)
       have hdiv : c.toNat / 16 < 16 := Nat.div_lt_of_lt_mul hc
       rw [Nat.mod_eq_of_lt hdiv]
       omega
-    have h2' : at? b (i+2) = (hexChar c.toNat).toNat := by simpa [Nat.add_assoc] using h2
-    simp [nameStep, h0, h1, h2', isWs, isDelim, hexChar_value, hv]
+    have h2' : at? b (i+2) = (Hex.spell true c.toNat).toNat := by simpa [Nat.add_assoc] using h2
+    simp [nameStep, h0, h1, h2', isWs, isDelim, Hex.val?_spell, hv]
 
 private theorem nameSteps_stops {b : ByteArray} {i : Nat} {cs : List Char}
     (h : Span b i ((cs.flatMap nameChars).map Char.toNat))

@@ -2391,47 +2391,19 @@ private def paletteVar (n : Ir.ColorRef) (c : Ir.Color) : String :=
 public def paletteVars (p : Ir.Palette) : List String :=
   p.entries.toList.map fun (n, c) => paletteVar n c
 
-private theorem hexDigit_inj :
-    ∀ i < 16, ∀ j < 16,
-      "0123456789abcdef".toList.getD i '0' = "0123456789abcdef".toList.getD j '0' →
-        i = j := by
-  decide
-
-private theorem hexByte_inj (a b : UInt8)
-    (h : Color.hexByte a false = Color.hexByte b false) : a = b := by
-  have hl := congrArg String.toList h
-  simp only [Color.hexByte, Bool.false_eq_true, ite_false, String.toList_ofList,
-    List.cons.injEq, and_true] at hl
-  have ha : a.toNat < 256 := a.toNat_lt
-  have hb : b.toNat < 256 := b.toNat_lt
-  have hdiv := hexDigit_inj (a.toNat / 16) (by omega) (b.toNat / 16) (by omega) hl.1
-  have hmod := hexDigit_inj (a.toNat % 16) (by omega) (b.toNat % 16) (by omega) hl.2
-  have : a.toNat = b.toNat := by omega
-  exact UInt8.toNat_inj.mp this
+private theorem byte_length (u : Bool) (x : UInt8) : (Hex.byte u x).toList.length = 2 := by
+  simp [Hex.byte, Hex.digits, Hex.digitList]
 
 public theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
     a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
   have hl := congrArg String.toList h
-  simp only [cssColor, Color.css, Color.hexByte, Bool.false_eq_true, ite_false,
-    String.toList_append, String.toList_ofList,
-    List.cons_append, List.nil_append, List.append_assoc] at hl
-  have hl6 := List.append_cancel_left hl
-  simp only [List.cons.injEq, and_true] at hl6
-  obtain ⟨hr1, hr2, hg1, hg2, hb1, hb2⟩ := hl6
-  have har : a.r.toNat < 256 := a.r.toNat_lt
-  have hag : a.g.toNat < 256 := a.g.toNat_lt
-  have hab : a.b.toNat < 256 := a.b.toNat_lt
-  have hbr : b.r.toNat < 256 := b.r.toNat_lt
-  have hbg : b.g.toNat < 256 := b.g.toNat_lt
-  have hbb : b.b.toNat < 256 := b.b.toNat_lt
-  have er1 := hexDigit_inj _ (by omega) _ (by omega) hr1
-  have er2 := hexDigit_inj _ (by omega) _ (by omega) hr2
-  have eg1 := hexDigit_inj _ (by omega) _ (by omega) hg1
-  have eg2 := hexDigit_inj _ (by omega) _ (by omega) hg2
-  have eb1 := hexDigit_inj _ (by omega) _ (by omega) hb1
-  have eb2 := hexDigit_inj _ (by omega) _ (by omega) hb2
-  exact ⟨UInt8.toNat_inj.mp (by omega), UInt8.toNat_inj.mp (by omega),
-    UInt8.toNat_inj.mp (by omega)⟩
+  simp only [cssColor, Color.css, Color.hex, ↓reduceIte, String.toList_append,
+    List.append_assoc] at hl
+  have hl := List.append_cancel_left hl
+  obtain ⟨hr, hl⟩ := List.append_inj hl (by rw [byte_length, byte_length])
+  obtain ⟨hg, hb⟩ := List.append_inj hl (by rw [byte_length, byte_length])
+  exact ⟨Hex.byte_inj false _ _ (String.ext hr), Hex.byte_inj false _ _ (String.ext hg),
+    Hex.byte_inj false _ _ (String.ext hb)⟩
 
 public theorem role_use_is_palette_dependent (p : Ir.Palette) (r : Ir.ColorRef)
     (c₁ c₂ : Ir.Color) (hne : (c₁.r, c₁.g, c₁.b) ≠ (c₂.r, c₂.g, c₂.b)) :

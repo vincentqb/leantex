@@ -188,8 +188,7 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let (out, html, ds) := build pre
     t s!"beamer colors: {name} paints the resolved foreground"
       (lineHasColor out "Heading" expected)
-    let hex := Ir.Color.hexByte expected.r ++ Ir.Color.hexByte expected.g ++
-      Ir.Color.hexByte expected.b
+    let hex := expected.hex (hash := false)
     t s!"beamer colors: {name} reaches the HTML header color use"
       ((treeCssOne "" html).contains ("--ltx-frametitlefg: #" ++ hex.toLower) &&
         (treeCssOne "" html).contains "var(--ltx-frametitlefg")

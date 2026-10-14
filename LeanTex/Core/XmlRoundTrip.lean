@@ -345,8 +345,8 @@ private theorem runLen_append (pred : Nat → Bool) (a rest : List Char) (ha : �
     rw [ih (fun d hd => ha d (by simp [hd]))]
 
 private theorem refValue_fold (R : List Char) (hl : Ascii R) (d0 m : Nat) (v : Nat) (hm : d0 + m ≤ R.length) :
-    List.foldl (fun v k => v * 10 + (hexVal (at? (bytesOf R) k)).getD 0) v (List.range' d0 m) =
-      List.foldl (fun v (ch : Char) => v * 10 + (hexVal ch.toNat).getD 0) v ((R.drop d0).take m) := by
+    List.foldl (fun v k => v * 10 + (Hex.val? (at? (bytesOf R) k)).getD 0) v (List.range' d0 m) =
+      List.foldl (fun v (ch : Char) => v * 10 + (Hex.val? ch.toNat).getD 0) v ((R.drop d0).take m) := by
   induction m generalizing d0 v with
   | zero => simp
   | succ m ih =>
@@ -356,14 +356,14 @@ private theorem refValue_fold (R : List Char) (hl : Ascii R) (d0 m : Nat) (v : N
     rw [at?_bytesOf R d0 hl, List.getElem?_eq_getElem hd]
     simp
 
-private theorem hexVal_digit (d : Char) (h : 48 ≤ d.toNat ∧ d.toNat ≤ 57) : (hexVal d.toNat).getD 0 = d.toNat - 48 := by
-  unfold hexVal
+private theorem hexVal_digit (d : Char) (h : 48 ≤ d.toNat ∧ d.toNat ≤ 57) : (Hex.val? d.toNat).getD 0 = d.toNat - 48 := by
+  unfold Hex.val?
   simp [h.1, h.2]
 
 private theorem fold_digits_value (n : Nat) :
-    List.foldl (fun v (ch : Char) => v * 10 + (hexVal ch.toNat).getD 0) 0 (Nat.toDigits 10 n) = n := by
+    List.foldl (fun v (ch : Char) => v * 10 + (Hex.val? ch.toNat).getD 0) 0 (Nat.toDigits 10 n) = n := by
   have heq : ∀ (l : List Char) (v : Nat), (∀ d ∈ l, 48 ≤ d.toNat ∧ d.toNat ≤ 57) →
-      List.foldl (fun v (ch : Char) => v * 10 + (hexVal ch.toNat).getD 0) v l =
+      List.foldl (fun v (ch : Char) => v * 10 + (Hex.val? ch.toNat).getD 0) v l =
         List.foldl (fun v (d : Char) => v * 10 + (d.toNat - 48)) v l := by
     intro l
     induction l with
@@ -415,17 +415,17 @@ private theorem readReference_ref (R : List Char) (hl : Ascii R) (i : Nat) (c : 
     simp only [xmlChar, Bool.or_eq_true, beq_iff_eq, Bool.and_eq_true, decide_eq_true_eq] at hc
     omega
   have hval : (forIn [i + 2 : i + 2 + (Nat.toDigits 10 c.toNat).length] 0 fun k (v : Nat) =>
-      (pure (ForInStep.yield (v * 10 + (hexVal (at? (bytesOf R) k)).getD 0)) : Id (ForInStep Nat))).run =
+      (pure (ForInStep.yield (v * 10 + (Hex.val? (at? (bytesOf R) k)).getD 0)) : Id (ForInStep Nat))).run =
       c.toNat := by
     rw [Std.Legacy.Range.forIn_eq_forIn_range']
     have hsz : ([i + 2 : i + 2 + (Nat.toDigits 10 c.toNat).length] : Std.Legacy.Range).size =
         (Nat.toDigits 10 c.toNat).length := by simp [Std.Legacy.Range.size]
     rw [hsz]
     have := List.idRun_forIn_yield_eq_foldl (List.range' (i + 2) (Nat.toDigits 10 c.toNat).length 1)
-      (fun k v => (pure (v * 10 + (hexVal (at? (bytesOf R) k)).getD 0) : Id Nat)) 0
+      (fun k v => (pure (v * 10 + (Hex.val? (at? (bytesOf R) k)).getD 0) : Id Nat)) 0
     simp only at this ⊢
-    rw [show (fun k (v : Nat) => (pure (ForInStep.yield (v * 10 + (hexVal (at? (bytesOf R) k)).getD 0)) :
-        Id (ForInStep Nat))) = (fun k v => ForInStep.yield <$> (pure (v * 10 + (hexVal (at? (bytesOf R) k)).getD 0) :
+    rw [show (fun k (v : Nat) => (pure (ForInStep.yield (v * 10 + (Hex.val? (at? (bytesOf R) k)).getD 0)) :
+        Id (ForInStep Nat))) = (fun k v => ForInStep.yield <$> (pure (v * 10 + (Hex.val? (at? (bytesOf R) k)).getD 0) :
         Id Nat)) from rfl, this]
     simp only [Id.run_pure]
     have hfit : i + 2 + (Nat.toDigits 10 c.toNat).length ≤ R.length := by
