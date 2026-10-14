@@ -979,9 +979,6 @@ public structure Cx where
   xf : Gfx.Affine := Gfx.Affine.unit
   /-- Whether the document loads arrows.meta, which makes `To` its Computer Modern arrow. -/
   metaArrows : Bool := false
-  /-- A node's text with the document's definitions of TikZ's installed commands applied, as TikZ
-  restores them there (`\tikz@uninstallcommands`). -/
-  nodeText : List Tok → List Tok := id
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared scale. -/
 public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
@@ -3666,7 +3663,7 @@ is dropped")
 is dropped")
     | .ident "node" :: .ident "contents" :: .sym '=' :: rest =>
       let g : List Tok := if let [.group inner] := rest then inner else rest
-      let (ls, ds) := nodeLabel cx env (cx.nodeText g)
+      let (ls, ds) := nodeLabel cx env g
       contents := some ls
       ev := ds.foldl Ev.diag ev
     | .ident "anchor" :: .sym '=' :: rest =>
@@ -3736,7 +3733,7 @@ fits the rest")
         .error (.W0334, s!"'\\node' continues with {tokText ts[i+1]}, \
 outside the rendered picture subset; the label is not drawn")
       else
-        .ok (nodeLabel cx env (cx.nodeText body))
+        .ok (nodeLabel cx env body)
     | _ =>
       match contents with
       | some c => .ok (c, #[])
@@ -4732,7 +4729,7 @@ is outside the rendered picture subset; the lines stay centred")
 the rendered picture subset; the option is dropped")
     match ts[i]? with
     | some (.group body) =>
-      let (lines, mdiags) := nodeLabel cx env (cx.nodeText body)
+      let (lines, mdiags) := nodeLabel cx env body
       ev := mdiags.foldl Ev.diag ev
       let lines := fontLines mstyles lines
       let em := cx.bodySize * (factor : Int) / 1000
@@ -5644,10 +5641,11 @@ private def readItems (env : List (String × Val)) (toks : Array Tok) :
       pure ()
     else
       let mut vs : Array Val := #[]
-      for rawSub in splitTop rawPart '/' do
+      for (rawSub, k) in (splitTop rawPart '/').zipIdx do
         let sub := rawSub.filter (· != .space)
         -- pgffor binds the item's text past its leading spaces; its value is read where it is used.
-        let text := itemText env (rawSub.toList.dropWhile (· == .space)).toArray
+        let text := itemText env (if k == 0 then (rawSub.toList.dropWhile (· == .space)).toArray
+          else rawSub)
         match evalExpr env sub with
         | .ok (.num m _) => vs := vs.push (.num m text)
         | .ok (.len sp _) => vs := vs.push (.len sp text)
@@ -6525,16 +6523,6 @@ private def macroTable (ladder : List (String × Nat)) (declStyles : List (Strin
       if let some m := readMacro line then out := (n, m) :: out
   return out
 
-/-- The document's definitions of TikZ's installed commands, which TikZ restores inside node text. -/
-private def nodeMacroTable (names : Array (String × String)) (ts : Array Tok) :
-    List (String × Macro) := Id.run do
-  let bound := boundNames ts
-  let mut out : List (String × Macro) := []
-  for (n, line) in names do
-    if TikzCommands.installed.contains n && !bound.contains n then
-      if let some m := readMacro line then out := (n, m) :: out
-  return out
-
 private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : List Tok) :
     Except String Sp :=
   let toks := if let [.group body] := toks then body.filter (· != Tok.space) else toks
@@ -6579,7 +6567,6 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRawsAt locate raws
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
-  let nodeTable := nodeMacroTable macros raw
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map ofSetting)
   let mut dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
@@ -6675,8 +6662,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    bodySize := bodySize
                    decls := outerDecls
                    ink := ink0.getD Ir.Color.black
-                   parseGap := st.bad.any fun d => d.1 == .W0334
-                   nodeText := fun ts => (expandMacros nodeTable ts.toArray).toList }
+                   parseGap := st.bad.any fun d => d.1 == .W0334 }
   let ev := evalFixed cx st.out.toList
   let mut unread : Array PDiag := #[]
   let mut baseline : Option Sp := none

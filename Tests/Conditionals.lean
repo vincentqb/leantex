@@ -296,17 +296,29 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (!red.isEmpty && !blue.isEmpty && (strokes "" line).all installed.contains &&
       installed.all fun p => !red.contains p && !blue.contains p)
   let nodeText := censusText (censusOfSrc oneFace (dvDoc
-    "\\pictures{ tool = none }\n\\newcommand{\\pic}{Picx}\n\\newcommand{\\graph}[1]{Gr#1}\n"
-    (pic "\\node at (0,0) {Ub[\\pic] Uc[\\graph{y}]};\n")))
+    ("\\pictures{ tool = none }\n\\newcommand{\\pic}{Picx}\n\\newcommand{\\graph}[1]{Gr#1}\n" ++
+      "\\newcommand{\\matrix}{Mfirst}\n\\renewcommand{\\matrix}{Msecond}\n")
+    (pic "\\node at (0,0) {Ub[\\pic] Uc[\\graph{y}] Ud[\\matrix]};\n" ++
+      "\n\\renewcommand{\\pic}{Picy}\n" ++ pic "\\node at (0,0) {Ue[\\pic]};\n")))
   t "a document's definitions of commands TikZ installs reach a node's text, where TikZ restores them"
-    (hasStr nodeText "Ub[Picx]" && hasStr nodeText "Uc[Gry]")
+    (hasStr nodeText "Ub[Picx]" && hasStr nodeText "Uc[Gry]" && hasStr nodeText "Ud[Msecond]" &&
+      hasStr nodeText "Ue[Picy]")
+  let (rdoc, _) := elabStr (dvDoc "\\newcommand{\\matrix}{Mfirst}\n\\renewcommand{\\matrix}{Msecond}\n"
+    "\\begin{tikzpicture}\\draw (0,0) parabola (1,1) node {Uf[\\matrix]};\\end{tikzpicture}")
+  t "a boundary picture's node text carries the definition in force where the picture stands"
+    (rdoc.pictureSrcs.any fun p => hasStr p.2.body "Uf[Msecond]")
   let provided := censusText (censusOfSrc oneFace (dvDoc
-    ("\\pictures{ tool = none }\n\\providecommand{\\pgfmathsetmacro}[2]{\\def#1{#2}}\n" ++
+    ("\\usepackage{tikz}\n\\pictures{ tool = none }\n\\providecommand{\\pgfmathsetmacro}[2]{\\def#1{#2}}\n" ++
       "\\providecommand{\\foreach}{}\n")
     (pic ("\\pgfmathsetmacro{\\va}{2*3}\\node at (0,0) {Pa[\\va]};\n" ++
       "\\foreach \\x in {1,2} {\\node at (\\x,1) {Pb[\\x]};}\n"))))
   t "a document's \\providecommand of a command pgf defines when it loads leaves pgf's"
     (hasStr provided "Pa[6.0]" && hasStr provided "Pb[1]" && hasStr provided "Pb[2]")
+  let unloaded := censusText (censusOfSrc oneFace (dvDoc
+    "\\providecommand{\\foreach}{Fz}\n\\providecommand{\\pgfmathsetmacro}[2]{Sm[#1][#2]}\n"
+    "Text \\foreach{} here \\pgfmathsetmacro{a}{b}."))
+  t "with no pgf package loaded, a document's \\providecommand of pgf's commands defines them"
+    (hasStr unloaded "Fz" && hasStr unloaded "Sm[a][b]")
   t "a document's redefinition of a command TikZ does not install reaches its picture"
     (strokes "\\renewcommand{\\textcolor}[2]{#2}\n" ("\\textcolor{red}{" ++ line ++ "}\n") ==
       strokes "" line && strokes "" ("\\textcolor{red}{" ++ line ++ "}\n") != strokes "" line)
@@ -377,7 +389,8 @@ def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     pic "\\foreach \\x in {-1} {\\pgfmathsetmacro{\\y}{(\\x)}\\node at (0,0) {Ll[\\y]};}\n" ++
     pic "\\foreach \\x in {-2,...,0} {\\pgfmathsetmacro{\\y}{\\x}\\node at (\\x,0) {Lm[\\y]};}\n" ++
     pic "\\pgfmathsetmacro{\\va}{010}\\pgfmathsetmacro{\\vb}{\\va*1}\\node at (0,0) {Ln[\\va][\\vb]};\n" ++
-    pic "\\foreach \\x in {1 + 1} {\\node at (0,0) {Lo[\\x]};}\n"
+    pic "\\foreach \\x in {1 + 1} {\\node at (0,0) {Lo[\\x]};}\n" ++
+    pic "\\foreach \\x/\\y in {1 / 2, 3/ 4 } {\\node at (\\x,0) {Lq[\\x][\\y]};}\n"
   let text := censusText (censusOfSrc oneFace (dvDoc "\\pictures{ tool = none }\n" (setPics ++ listPics)))
   for ((cmd, expr, want), k) in sets.zipIdx do
     t s!"a label sets '\\{cmd}' of '{expr}' as pgfmath spells it, {want}"
@@ -389,7 +402,7 @@ def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       ("Le", "3.14159"), ("Le", "0.0001"), ("Lf", "1pt"), ("Lf", "2.5cm"), ("Lg", "1.0pt"),
       ("Lh", "1.0"), ("Li", "6.0"), ("Li", "1"), ("Li", "2"), ("Li", "-1.0"), ("Lj", "6.0"),
       ("Lk", "-2.0"), ("Ll", "-1.0"), ("Lm", "-2.0"), ("Lm", "-1.0"), ("Lm", "0"),
-      ("Ln", "010][8.0"), ("Lo", "1 + 1")] do
+      ("Ln", "010][8.0"), ("Lo", "1 + 1"), ("Lq", "1 ][ 2"), ("Lq", "3][ 4 ")] do
     t s!"a label sets {want} where lualatex sets it" (hasStr text (label ++ "[" ++ want ++ "]"))
   t "a dimension's points are spelled as TeX's \\the spells them"
     ([1864679, 131072, 21845, 6554, -1, 0, 65535, 98304, 13108, -6554, 1073741823, 1, 32768,

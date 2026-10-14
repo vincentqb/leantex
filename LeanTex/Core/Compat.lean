@@ -2677,6 +2677,10 @@ public def InputContext.admitLocalPackage (context : InputContext)
     admitPackage name (PackageImports.literalOptions options) passed pos context.state
   (options, { state })
 
+/-- Whether a package that loads pgf's loop and arithmetic has been loaded. -/
+private def LoadSet.pgf (s : LoadSet) : Bool :=
+  s.pkgs.any fun (p, _) => ["tikz", "pgf", "pgfplots", "pgffor", "pgfmath", "tikz-cd"].contains p
+
 /-- One package load: the first load of a name stands. -/
 private def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
   if s.pkgs.any (·.1 == p) then s else { s with pkgs := s.pkgs.push (p, os) }
@@ -3727,7 +3731,8 @@ private def condList [Monad m]
       let provide := n == "providecommand" || n == "ProvideDocumentCommand"
       if let some m := bound then
         -- premise: Tests.xparseIgnoredOperandsChecks — ignored operands change no artifact
-        if provide && (st.binds.contains m || st.provideKeeps.contains m) then
+        if provide && (st.binds.contains m || st.provideKeeps.contains m ||
+            (TikzCommands.pgfDefined.contains m && st.loads.pgf)) then
           if let some sh := definerShape raws i n then
             let why := if st.binds.contains m then
                 s!"'\\{m}' is already defined and the existing definition is kept"
@@ -4044,8 +4049,11 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
         (subject := some ("tcolorbox:" ++ name))
       return some { raws := #[], stop, tail, box := some .refused }
   let inPic := st.inPicture
+  -- TikZ restores a document's meanings of its commands in a group of text, one holding no statement.
   let own := st.picBound.contains n || st.provideKeeps.contains n ||
-    (inPic && TikzCommands.walkOwned.contains n)
+    (inPic && TikzCommands.walkOwned.contains n && raws.any fun r => match r with
+      | .word w _ => w.contains ';'
+      | _ => false)
   match condValueOf st.binds n with
   | some (some v) =>
     -- premise: Tests.macroDefaultChecks — optional selection changes both artifacts

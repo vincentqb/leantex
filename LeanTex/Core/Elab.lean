@@ -5869,8 +5869,7 @@ public def builtinEnvNames : List String :=
 /-- The names the engine defines before the document, which a document's `\providecommand` leaves
 as they are. -/
 private def providedNames : List String :=
-  renderedBuiltins ++ structuralNames ++ TikzCommands.pgfDefined ++
-    builtinEnvNames.map Tcolorbox.bindingName
+  renderedBuiltins ++ structuralNames ++ builtinEnvNames.map Tcolorbox.bindingName
 
 private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
   p.width - 2 * p.hmargin
