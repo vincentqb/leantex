@@ -412,11 +412,6 @@ def blockPins (text : String) : BlockScan := Id.run do
         owner := none
   return { pins, marked, bareOwed := closeOwed owner pinned bare }
 
-/-- The `## ` headings of a document, in order. -/
-def headingsOf (text : String) : List String :=
-  (text.splitOn "\n").filterMap fun l =>
-    if l.startsWith "## " then some (l.drop 3).toString.trimAscii.toString else none
-
 /-- One finding about a rule document. -/
 structure DocFault where
   file : String
@@ -835,8 +830,8 @@ def selftest : IO UInt32 := do
     fails.modify (s!"judgeDoc: a term list owed checks, faults at {termFaults}" :: ·)
   unless docIdents doc == #["held_x", "absent_x", "twin_x", "type_x"] do
     fails.modify (s!"docIdents: {docIdents doc}" :: ·)
-  unless headingsOf doc == ["Rules"] do
-    fails.modify (s!"headingsOf: {headingsOf doc}" :: ·)
+  unless docHeadings doc == ["Rules"] do
+    fails.modify (s!"docHeadings: {docHeadings doc}" :: ·)
   unless docPinCounts doc == (5, 1) do
     fails.modify (s!"docPinCounts: {docPinCounts doc}, want 5 held and 1 owed" :: ·)
   -- The bare owed count is held both ways.

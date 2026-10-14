@@ -458,20 +458,12 @@ def ctorDefault (l : String) : Bool :=
   let t := (l.drop 1).toString.trimAscii.toString
   t.startsWith "|" && hasBinderDefault t
 
-/-- Added lines of one unified diff, attributed to their file. -/
-def addedByFile (diff : String) : Array (String × Array String) := Id.run do
-  let mut out : Array (String × Array String) := #[]
-  let mut cur : Option String := none
-  let mut lines : Array String := #[]
-  for l in diff.splitOn "\n" do
-    if l.startsWith "+++ b/" then
-      if let some f := cur then out := out.push (f, lines)
-      cur := some (l.drop "+++ b/".length).toString
-      lines := #[]
-    else if l.startsWith "+" && !l.startsWith "+++" then
-      lines := lines.push (l.drop 1).toString
-  if let some f := cur then out := out.push (f, lines)
-  return out
+/-- Added lines of one unified=0 diff, grouped by their file in diff order. -/
+def addedByFile (diff : String) : Array (String × Array String) :=
+  (addedLines diff).foldl (fun out (f, _, l) =>
+    match out.back? with
+    | some (g, ls) => if g == f then out.pop.push (g, ls.push l) else out.push (f, #[l])
+    | none => out.push (f, #[l])) #[]
 
 /-- The modules that consume the IR and never reach back into a surface. -/
 def backendFiles : List String :=
@@ -720,23 +712,10 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/MathParse.lean", 1),
   ("LeanTex/Core/Pdf.lean", 8)]
 
-/-- The line's string-literal contents, concatenated: the complement of `stripStrings`. -/
-def stringsOnly (l : String) : String := Id.run do
-  let mut out := ""
-  let mut inStr := false
-  let mut esc := false
-  for c in l.toList do
-    if inStr then
-      if esc then
-        esc := false
-        out := out.push c
-      else if c == '\\' then esc := true
-      else if c == '"' then inStr := false
-      else out := out.push c
-    else if c == '"' then
-      inStr := true
-      out := out.push ' '
-  return out
+/-- The line's string-literal contents, one space where each literal opens: the complement of
+`stripStrings`. -/
+def stringsOnly (l : String) : String :=
+  (lexView l (· == .strText) (· == .litOpen))[0]?.getD ""
 
 /-- A milestone token (`M6`, `M8`, …). -/
 def milestoneTok (s : String) : Bool := Id.run do
@@ -829,11 +808,6 @@ def sectionRefs (l : String) : Array (String × String) := Id.run do
       out := out.push (doc, if rest.startsWith " " then h else "")
   return out
 
-/-- The `## ` headings of a markdown document. -/
-def docHeadings (text : String) : List String :=
-  (text.splitOn "\n").filterMap fun l =>
-    if l.startsWith "## " then some (l.drop 3).toString.trimAscii.toString else none
-
 /-- Every section pointer in `files` naming no heading of its document, located. -/
 def danglingSectionRefs (heads : List (String × List String))
     (files : Array (String × String)) : Array (String × Nat × String) := Id.run do
@@ -873,52 +847,7 @@ def hookSkippedDocs (hook : String) : IO (List String) := do
 
 /-- The prose of a Lean source, one entry per line: its comments and docstrings, code and strings
 left out. -/
-def leanProse (text : String) : Array String := Id.run do
-  let cs := text.toList.toArray
-  let charAt (k : Nat) : Char := cs[k]?.getD ' '
-  let mut out : Array String := #[]
-  let mut cur := ""
-  let mut depth := 0
-  let mut lineComment := false
-  let mut inString := false
-  let mut skip := 0
-  for i in [0:cs.size] do
-    if skip > 0 then
-      skip := skip - 1
-      continue
-    let c := charAt i
-    if c == '\n' then
-      out := out.push cur
-      cur := ""
-      lineComment := false
-    else if lineComment then
-      cur := cur.push c
-    else if depth > 0 then
-      if c == '/' && charAt (i + 1) == '-' then
-        depth := depth + 1
-        skip := 1
-      else if c == '-' && charAt (i + 1) == '/' then
-        depth := depth - 1
-        skip := 1
-      else
-        cur := cur.push c
-    else if inString then
-      if c == '\\' && charAt (i + 1) != '\n' then skip := 1
-      else if c == '"' then inString := false
-    else if c == '"' then
-      inString := true
-    else if c == '\'' && charAt (i + 2) == '\'' then
-      skip := 2
-    else if c == '\'' && charAt (i + 1) == '\\' && charAt (i + 3) == '\'' then
-      skip := 3
-    else if c == '-' && charAt (i + 1) == '-' then
-      lineComment := true
-      skip := 1
-    else if c == '/' && charAt (i + 1) == '-' then
-      depth := 1
-      skip := if charAt (i + 2) == '-' || charAt (i + 2) == '!' then 2 else 1
-  out := out.push cur
-  return out
+def leanProse (text : String) : Array String := lexView text (· == .prose)
 
 /-- The prose of a markdown file, one entry per line: fenced code blanked. -/
 def mdProse (text : String) : Array String := Id.run do
@@ -1547,61 +1476,10 @@ def topLevelDefName (l : String) : Option String :=
     if n.isEmpty then none else some n
   else none
 
-/-- Each line's code, string literals and comments blanked across lines. -/
-def codeOnly (lines : Array String) : Array String := Id.run do
-  let mut depth := 0
-  let mut inStr := false
-  let mut esc := false
-  let mut raw : Option Nat := none
-  let mut out := #[]
-  for line in lines do
-    let cs := line.toList.toArray
-    let mut code := ""
-    let mut i := 0
-    while i < cs.size do
-      let c := cs[i]?.getD ' '
-      let next := cs[i + 1]?.getD ' '
-      let hashes (k : Nat) : Nat := ((cs.extract k cs.size).toList.takeWhile (· == '#')).length
-      if let some h := raw then
-        if c == '"' && hashes (i + 1) ≥ h then
-          raw := none
-          i := i + 1 + h
-        else i := i + 1
-      else if depth > 0 then
-        if c == '/' && next == '-' then
-          depth := depth + 1
-          i := i + 2
-        else if c == '-' && next == '/' then
-          depth := depth - 1
-          i := i + 2
-        else i := i + 1
-      else if inStr then
-        if esc then esc := false
-        else if c == '\\' then esc := true
-        else if c == '"' then inStr := false
-        i := i + 1
-      else if c == '-' && next == '-' then break
-      else if c == '/' && next == '-' then
-        depth := 1
-        code := code.push ' '
-        i := i + 2
-      else if c == '"' then
-        inStr := true
-        code := code.push ' '
-        i := i + 1
-      else if c == 'r' && !(i > 0 && isWordChar (cs[i - 1]?.getD ' ')) &&
-          cs[i + 1 + hashes (i + 1)]? == some '"' then
-        raw := some (hashes (i + 1))
-        code := code.push ' '
-        i := i + 2 + hashes (i + 1)
-      else if c == '\'' && cs[i + 2]? == some '\'' then
-        code := code.push ' '
-        i := i + 3
-      else
-        code := code.push c
-        i := i + 1
-    out := out.push code
-  return out
+/-- Each line's code, literals and comments blanked across lines: one space where a literal or a
+block comment opens. -/
+def codeOnly (lines : Array String) : Array String :=
+  lexView ("\n".intercalate lines.toList) (· == .code) fun k => k == .litOpen || k == .blockOpen
 
 /-- A comment of a Lean source: the line it opens on and the prose of each line it spans. -/
 structure CommentBlock where
@@ -1612,26 +1490,19 @@ structure CommentBlock where
 /-- The comments of a Lean source: each block comment, and each run of lines holding only a line
 comment; a line comment after code stands alone. -/
 def commentBlocks (text : String) : Array CommentBlock := Id.run do
-  let cs := text.toList.toArray
-  let charAt (k : Nat) : Char := cs[k]?.getD ' '
   let mut out : Array CommentBlock := #[]
   let mut run : Option CommentBlock := none
   let mut block : CommentBlock := default
   let mut prose := ""
   let mut line := 1
-  let mut depth := 0
-  let mut lineComment := false
+  let mut inBlock := false
+  let mut inLine := false
   let mut trailing := false
-  let mut inString := false
   let mut code := false
-  let mut skip := 0
-  for i in [0:cs.size + 1] do
-    if skip > 0 then
-      skip := skip - 1
-      continue
-    let c := cs[i]?.getD '\n'
-    if c == '\n' then
-      if lineComment then
+  for (c, k) in lexClasses text ++ #[('\n', .newline)] do
+    match k with
+    | .newline =>
+      if inLine then
         let one : CommentBlock := { first := line, lines := #[(line, prose)] }
         if trailing then out := out.push one
         else
@@ -1643,50 +1514,34 @@ def commentBlocks (text : String) : Array CommentBlock := Id.run do
               out := out.push r
               run := some one
           | none => run := some one
-        lineComment := false
-        prose := ""
-      else if depth > 0 then
+        inLine := false
+      else if inBlock then
         block := { block with lines := block.lines.push (line, prose) }
-        prose := ""
+      prose := ""
       line := line + 1
       code := false
-    else if lineComment then
-      prose := prose.push c
-    else if depth > 0 then
-      if c == '/' && charAt (i + 1) == '-' then
-        depth := depth + 1
-        skip := 1
-      else if c == '-' && charAt (i + 1) == '/' then
-        depth := depth - 1
-        skip := 1
-        if depth == 0 then
-          out := out.push { block with lines := block.lines.push (line, prose) }
-          prose := ""
-          code := true
-      else prose := prose.push c
-    else if inString then
-      if c == '\\' && charAt (i + 1) != '\n' then skip := 1
-      else if c == '"' then inString := false
-    else if c == '-' && charAt (i + 1) == '-' then
-      lineComment := true
+    | .lineOpen =>
+      inLine := true
       trailing := code
-      skip := 1
-    else if c == '/' && charAt (i + 1) == '-' then
+    | .blockOpen =>
       if let some r := run then out := out.push r
       run := none
-      depth := 1
+      inBlock := true
       block := { first := line, lines := #[] }
-      skip := if charAt (i + 2) == '-' || charAt (i + 2) == '!' then 2 else 1
-    else if !c.isWhitespace then
-      if !code then
+    | .blockClose =>
+      out := out.push { block with lines := block.lines.push (line, prose) }
+      prose := ""
+      inBlock := false
+      code := true
+    | .prose => prose := prose.push c
+    | .mark => pure ()
+    | .code | .litOpen | .lit | .strText =>
+      if !c.isWhitespace && !code then
         if let some r := run then out := out.push r
         run := none
-      code := true
-      if c == '"' then inString := true
-      else if c == '\'' && charAt (i + 2) == '\'' then skip := 2
-      else if c == '\'' && charAt (i + 1) == '\\' && charAt (i + 3) == '\'' then skip := 3
+        code := true
   if let some r := run then out := out.push r
-  if depth > 0 then out := out.push block
+  if inBlock then out := out.push block
   return out
 
 /-- The words that mark a licence or generated-file header. -/
@@ -1971,50 +1826,12 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
         n == d ++ f || n.startsWith (d ++ f ++ "."))
   let mut owner := ""
   let mut diags : List String := []
-  let mut depth := 0
-  let mut inStr := false
-  let mut esc := false
+  let codes := codeOnly lines
+  let texts := lexView ("\n".intercalate lines.toList) (· == .strText)
   let mut out := #[]
-  for (line, row) in lines.zipIdx do
-    let cs := line.toList.toArray
-    let mut code := ""
-    let mut text := ""
-    let mut i := 0
-    while i < cs.size do
-      let c := cs[i]?.getD ' '
-      let next := cs[i + 1]?.getD ' '
-      if depth > 0 then
-        if c == '/' && next == '-' then
-          depth := depth + 1
-          i := i + 2
-        else if c == '-' && next == '/' then
-          depth := depth - 1
-          i := i + 2
-        else i := i + 1
-      else if inStr then
-        if esc then
-          esc := false
-          text := text.push c
-        else if c == '\\' then esc := true
-        else if c == '"' then inStr := false
-        else text := text.push c
-        i := i + 1
-      else if c == '-' && next == '-' then break
-      else if c == '/' && next == '-' then
-        depth := 1
-        code := code.push ' '
-        i := i + 2
-      else if c == '"' then
-        inStr := true
-        code := code.push ' '
-        i := i + 1
-      -- A quote character literal must not open a multiline string.
-      else if c == '\'' && cs[i + 2]? == some '\'' then
-        code := code.push ' '
-        i := i + 3
-      else
-        code := code.push c
-        i := i + 1
+  for row in [0:lines.size] do
+    let code := codes[row]?.getD ""
+    let text := texts[row]?.getD ""
     if code.trimAscii.isEmpty && text.trimAscii.isEmpty then continue
     if let some n := topLevelDefName code then
       owner := n
