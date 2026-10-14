@@ -9664,8 +9664,8 @@ bounded pass over a work stack. -/
 private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
     (pos : Pos) : EM (Array Ir.AlgLine × Bool × Bool) := do
   let mut kws : Array (String × AlgKwDef) := (← get).alg.kws
-  -- algorithm2e.sty's own `\SetKw{KwTo}{to}`.
-  kws := kws.push ("KwTo", .word #[.word "to" pos])
+  -- algorithm2e.sty's own `\SetKw{KwTo}{to}`, unless the document's stands.
+  unless kws.any (·.1 == "KwTo") do kws := kws.push ("KwTo", .word #[.word "to" pos])
   let mut stack : Array AlgTok := body.reverse.map AlgTok.raw
   let mut segs : Array AlgSeg := #[]
   let mut depth : Nat := 0
@@ -9713,10 +9713,16 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
           match g1, g2 with
           | some (nm, _), some (val, _) =>
             let key := (Parse.rawSrc nm).trimAscii.toString
-            if name == "SetKw" then kws := kws.push (key, .word val)
-            else if name == "SetKwFunction" then kws := kws.push (key, .func val)
-            else if name == "SetKwData" then kws := kws.push (key, .data val)
-            else kws := kws.push (key, .io (Ir.plainText (← elabInlines ctx val)))
+            -- The lines before a redefinition keep the keywords they were written under.
+            segs := segs.map fun s => { s with
+              content := algSubstList kws #[] s.content.toList
+              comment := s.comment.map fun c => algSubstList kws #[] c.toList }
+            cur := algSubstList kws #[] cur.toList
+            curComment := curComment.map fun c => algSubstList kws #[] c.toList
+            if name == "SetKw" then kws := Ir.redeclare kws key (.word val)
+            else if name == "SetKwFunction" then kws := Ir.redeclare kws key (.func val)
+            else if name == "SetKwData" then kws := Ir.redeclare kws key (.data val)
+            else kws := Ir.redeclare kws key (.io (Ir.plainText (← elabInlines ctx val)))
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs its \{name}\{text} groups" p
         else if let some (o, hasEnd) :=
@@ -14445,7 +14451,7 @@ its declared layout" pos
         else if name == "SetKwFunction" then pure (.func val)
         else if name == "SetKwData" then pure (.data val)
         else pure (.io (Ir.plainText (← elabInlines s.ctx val)))
-      modify fun st => { st with alg := { st.alg with kws := st.alg.kws.push (key, kd) } }
+      modify fun st => { st with alg := { st.alg with kws := Ir.redeclare st.alg.kws key kd } }
       return s
     | none =>
       diag s.ctx .E0304 s!"'\\{name}' needs two groups: the name, then its text" pos

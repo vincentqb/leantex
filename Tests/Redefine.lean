@@ -301,6 +301,22 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "a redefinition placing BODY places the body again"
     (sets (doc "\\NewEnviron{placeholder}{}\n\\RenewEnviron{placeholder}{\\BODY}\n" use)
       "Middle words")
+  let redefined := doc
+    "\\NewEnviron{placeholder}[1]{[#1]}\n\\RenewEnviron{placeholder}[2]{[#1|#2]}\n"
+    "Before \\begin{placeholder}{alpha}{beta}Hidden words\\end{placeholder} after."
+  t "a discarding redefinition reads the arguments its own signature takes"
+    (sets redefined "Before [alpha|beta]after." && !hasStr (pageTextOf fonts redefined) "Hidden")
+  let unrun (redef : String) : String := doc
+    s!"\\NewEnviron\{placeholder}[1]\{[#1]}\n\\newcommand\{\\unused}\{{redef}}\n"
+    "Before \\begin{placeholder}{alpha}{beta}Hidden words\\end{placeholder} after."
+  t "a redefinition in a definition never run leaves the environment as it stands"
+    (sets (unrun "\\RenewEnviron{placeholder}[2]{[x|y]}") "Before [alpha]after." &&
+      sets (unrun "\\renewenvironment{placeholder}{(}{)}") "Before [alpha]after.")
+  let run := doc ("\\newenvironment{placeholder}{}{}\n" ++
+    "\\newcommand{\\hide}{\\RenewEnviron{placeholder}{}}\\hide\n") use
+  t "a redefinition in a definition that is run takes effect where it runs"
+    (!hasStr (pageTextOf fonts run) "Middle words" &&
+      !((dvE run).any fun d => ["W0104", "W0301", "W0302"].contains d.code))
   let finalOnly := doc "\\NewEnviron{placeholder}{Lead words}[ Tail words]\n"
     "Alpha words.\n\n\\begin{placeholder}Hidden words\\end{placeholder}\n\nBravo words."
   t "a final code with a BODY-less code ends the environment, body hidden"
@@ -320,6 +336,22 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (!((dvE src).any (·.severity == .error)) &&
         sets src "Lead Inner words Middle words Tail words")
 
+
+/-- algorithm2e's `\SetKw` family: a later definition of a keyword wins, as the package's does. -/
+def algKeywordChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String := dvDoc ("\\usepackage[ruled]{algorithm2e}\n" ++ pre)
+    s!"\\begin\{algorithm}\n{body}\\end\{algorithm}"
+  let sets (src line : String) : Bool := hasStr (pageTextOf fonts src) line
+  t "a preamble keyword defined twice sets its later word"
+    (sets (doc "\\SetKw{Probe}{first}\n\\SetKw{Probe}{second}\n" "\\Probe alpha\\;\n")
+      "second alpha;")
+  t "a keyword redefined partway sets each line under the definition in force there"
+    (sets (doc "" ("\\SetKw{Probe}{first}\n\\Probe alpha\\;\n\\SetKw{Probe}{second}\n" ++
+      "\\Probe beta\\;\n")) "first alpha;second beta;")
+  t "an algorithm's own keywords replace the package's and its earlier ones"
+    (sets (doc "" ("\\SetKw{KwTo}{until}\n\\SetKw{Probe}{first}\n\\SetKw{Probe}{second}\n" ++
+      "\\Probe alpha \\KwTo beta\\;\n")) "second alpha until beta;")
 
 /-- The judge of `abstractSkipsOwed`: the page under two declared heading gaps. -/
 def abstractSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do

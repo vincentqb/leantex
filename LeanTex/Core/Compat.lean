@@ -2572,7 +2572,8 @@ private def condNoExpand : List String :=
 /-- The definers whose operands the pass reads as a
 definition rather than as content. -/
 private def condDefiners : List String :=
-  definesNext ++ ["newenvironment", "renewenvironment", "newtcolorbox", "renewtcolorbox"]
+  definesNext ++ ["newenvironment", "renewenvironment", "NewEnviron", "RenewEnviron",
+    "newtcolorbox", "renewtcolorbox"]
 
 /-- Is `n` the setter of a declared flag (`\Xtrue`, `\Xfalse`)? -/
 private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :=
@@ -2978,6 +2979,14 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     let b2 := skipSpaces raws (b1 + 1)
     unless raws[b2]? matches some (.group _ _) do return none
     return some { stop := b2 + 1, bodies := [b1, b2] }
+  if d == "NewEnviron" || d == "RenewEnviron" then
+    let j := starred (i + 1)
+    unless raws[j]? matches some (.group _ _) do return none
+    let (_, k1) := takeOpt raws (j + 1)
+    let (_, k2) := takeOpt raws k1
+    let b := skipSpaces raws k2
+    unless raws[b]? matches some (.group _ _) do return none
+    return some { stop := (takeOpt raws (b + 1)).2, bodies := [b] }
   if d == "NewDocumentCommand" || d == "RenewDocumentCommand" ||
       d == "ProvideDocumentCommand" || d == "DeclareDocumentCommand" then
     let j := skipSpaces raws (i + 1)
@@ -6746,7 +6755,9 @@ the definition is skipped" pos
     let native := s!"\\defineenv\{{envName}}({signature spec})"
     became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
     write fun st => { st with bodyNext := 2 }
-    write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
+    unless (← get).inDef do
+      write fun st =>
+        { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
     return some (← synthAt native pos, j)
   | "NewEnviron" | "RenewEnviron" =>
     let (args, j) := takeGroups raws (skipStar raws start) 1
@@ -6765,9 +6776,14 @@ the definition is skipped" pos
         became s!"\\{name}\{{envName}}" (native ++ (if slot
           then " {code before \\BODY} {code after it}" else " {} {code}, its body discarded")) pos
         write fun st => { st with bodyNext := 1 }
-        write fun st => { st with discardEnvs := if slot
-          then st.discardEnvs.filter (·.1 != envName.trimAscii.toString)
-          else st.discardEnvs.push (envName.trimAscii.toString, spec) }
+        let env := envName.trimAscii.toString
+        let st ← get
+        unless st.inDef do
+          -- A redefinition in the body is refused (E0312), so the signature in force stays first.
+          let envs := if slot then st.discardEnvs.filter (·.1 != env)
+            else if st.inDoc then st.discardEnvs.push (env, spec)
+            else Ir.redeclare st.discardEnvs env spec
+          write fun st => { st with discardEnvs := envs }
         let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
         return some ((← synthAt native pos) ++ mark, j)
       else
