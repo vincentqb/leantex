@@ -272,7 +272,7 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks pygmentsLinearChecks
   svgAssetChecks svgToolChecks
   shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks codeRoleChecks codeExportChecks
-  seededCodeChecks definitionNameChecks
+  seededCodeChecks definitionNameChecks hashCommandChecks
   publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
@@ -344,6 +344,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   shellHighlightChecks ref
   listingProviderChecks ref
   listingStyleTableChecks ref
+  hashCommandChecks ref
   codeRoleChecks ref
   seededCodeChecks ref
   codeExportChecks ref

@@ -8,7 +8,8 @@ import LeanTex.Core.Highlight.Console
 import LeanTex.Core.PygmentsLexData
 
 /-! The native listing lexers: Pygments' own for the languages documents write, mirrored rule for
-rule from one release (`PygmentsLexData.pygmentsVersion`), with no Python on the render path. -/
+rule from one release (`PygmentsLexData.pygmentsVersion`) under the departures
+testdata/highlight/pygments-departures.json declares, with no Python on the render path. -/
 namespace LeanTex.Core.Highlight
 
 public inductive Lexer where
@@ -44,7 +45,7 @@ public def Lexer.pygmentsAlias : Lexer → String
 
 /-- The SHA-256 of the rule structure these lexers implement (`PygmentsLexData.rulesDigest`). -/
 public def mirrorsRules : String :=
-  "b84faed2c9d54c80a464be2a057f2bf7700eb9c4e64fa56e1f800bd032ca3256"
+  "bf918c5d14c06fe7162c0141720eade1289ee69df4d403683880b739028bb4a8"
 
 /-- The raw token stream the mirrored Pygments lexer writes for the whole
 text, before any filter. -/

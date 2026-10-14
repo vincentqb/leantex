@@ -1,6 +1,6 @@
 /-
 Regenerate LeanTex/Core/PygmentsLexData.lean and testdata/highlight's rules and licence from an
-installed Pygments: the native lexers' data and their rules' digest.
+installed Pygments and the departures testdata/highlight/pygments-departures.json declares.
 Usage: lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>]
 -/
 import Lean.Data.Json
@@ -37,12 +37,14 @@ except ModuleNotFoundError as error:
     import pygments
 import pygments.plugin
 pygments.plugin.iter_entry_points = lambda group: ()
-from pygments.lexer import combined, default, include, words
+from pygments.lexer import bygroups, combined, default, include, words
 from pygments.lexers._mapping import LEXERS
 from pygments.lexers.lean import Lean4Lexer
 from pygments.lexers.python import PythonLexer
 from pygments.lexers.shell import BashLexer, BashSessionLexer
-from pygments.token import _TokenType
+from pygments.token import STANDARD_TYPES, _TokenType, string_to_tokentype
+
+departures = json.loads(sys.argv[1])
 
 
 def ranges(pred):
@@ -183,10 +185,35 @@ def longest_semantics(key, rx, ws):
                     raise SystemExit(f'{key}: {text!r} at {at} matches {got!r}, not the longest admitted {want!r}')
 
 
+def departure_rule(rx, *kinds):
+    """A declared rule as Pygments reads it: its abbreviations expanded, one standard type or one
+    per group."""
+    for full, short in abbrev:
+        rx = rx.replace(short, full)
+    re.compile(rx)
+    types = [string_to_tokentype(k) for k in kinds]
+    if not types or any(t not in STANDARD_TYPES for t in types):
+        raise SystemExit(f'a departure from {rx!r} names no standard token type: {kinds!r}')
+    return rx, types[0] if len(types) == 1 else bygroups(*types)
+
+
+departed = set()
+
+
 def structure(cls, names):
     out = [f'lexer {cls.__name__}']
     for state, rules in cls.tokens.items():
         out.append(f'  state {state}')
+        declared = departures.get(cls.__name__, {}).get(state)
+        if declared is not None:
+            because = declared['because']
+            if not because or '\n' in because:
+                raise SystemExit(f'{cls.__name__} {state}: a departure names its reason in one line')
+            out.append(f'    departure because {because}')
+            for r in declared['rules']:
+                rx, act = departure_rule(*r)
+                out.append(f'    departure {regex_text(rx)!r} {action(act)}')
+            departed.add((cls.__name__, state))
         for i, r in enumerate(rules):
             if isinstance(r, include):
                 out.append(f'    include {r}')
@@ -229,6 +256,9 @@ text.append(f'  ps2 {BashSessionLexer._ps2!r}')
 text.append(f'  venv {BashSessionLexer._venv.pattern!r}')
 text.append(f'  bare-continuation {BashSessionLexer._bare_continuation!r}')
 rules = '\n'.join(text) + '\n'
+stray = {(lexer, state) for lexer, states in departures.items() for state in states} - departed
+if stray:
+    raise SystemExit(f'departures name states no mirrored lexer has: {sorted(stray)!r}')
 
 aliases = {}
 for lexer in ('Lean4Lexer', 'PythonLexer', 'BashLexer', 'BashSessionLexer', 'TextLexer'):
@@ -350,12 +380,17 @@ def aliasDocs : List (String × String) :=
 def arrayLit (xs : Array String) : String :=
   "#[" ++ ", ".intercalate (xs.toList.map strLit) ++ "]"
 
+def departuresPath : System.FilePath := "testdata/highlight/pygments-departures.json"
+
 def main (args : List String) : IO UInt32 := do
   let python := match args with
     | ["--python", p] => p
     | _ => "python3"
+  let departures ← match Json.parse (← IO.FS.readFile departuresPath) with
+    | .ok j => pure j.compress
+    | .error e => die s!"{departuresPath} is not JSON: {e}"
   let out ← try
-    IO.Process.output { cmd := python, args := #["-I", "-B", "-c", bridge] }
+    IO.Process.output { cmd := python, args := #["-I", "-B", "-c", bridge, departures] }
   catch e => die s!"{python} did not start: {e}"
   if out.exitCode != 0 then
     die s!"{python} could not read Pygments' lexers:\n{out.stderr}"
@@ -378,7 +413,8 @@ Source: Pygments " ++ version ++ " under Python " ++ pyVersion ++ " (Unicode " +
 the word lists its Lean 4, Python and Bash lexers match, the character\n\
 classes their patterns name, and the registry aliases that select them.\n\
 This module carries only data: the native lexers in LeanTex/Core/Highlight/\n\
-read it, and the suite holds them to Pygments' own token streams in\n\
+read it, and the suite holds them to Pygments' token streams, under the\n\
+departures testdata/highlight/pygments-departures.json declares, in\n\
 testdata/highlight/pygments-tokens.json. Pygments is BSD-licensed; its\n\
 licence is testdata/highlight/LICENSE-Pygments.\n-/\n\n\
 namespace LeanTex.Core.PygmentsLexData\n\n"
@@ -405,6 +441,8 @@ namespace LeanTex.Core.PygmentsLexData\n\n"
   IO.FS.writeFile "testdata/highlight/LICENSE-Pygments" licence
   IO.FS.writeFile "testdata/highlight/pygments-rules.txt"
     ("# generated by scripts/gen-pygments-lex-data.lean — do not hand-edit\n# Pygments " ++
-      version ++ ": the rules the native lexers mirror, word lists and large classes named.\n" ++ rules)
+      version ++ ": the rules the native lexers mirror, word lists and large classes named;\n" ++
+      "# a departure line is " ++ departuresPath.toString ++ "'s, tried before its state's own.\n" ++
+      rules)
   IO.println s!"wrote LeanTex/Core/PygmentsLexData.lean, testdata/highlight/pygments-rules.txt and its licence from Pygments {version} (rules {digest})"
   return 0

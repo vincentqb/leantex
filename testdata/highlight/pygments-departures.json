@@ -1,0 +1,13 @@
+{
+  "Lean4Lexer": {
+    "root": {
+      "because": "Pygments' \\b# never matches, and Lean's own highlighter reads these as keywords",
+      "rules": [
+        ["(#print)(\\s+)(sig|axioms|equations|eqns)\\b", "Keyword.Namespace", "Text.Whitespace", "Keyword"],
+        ["(#print)(\\s+)(tactic)(\\s+)(tags)\\b", "Keyword.Namespace", "Text.Whitespace", "Keyword", "Text.Whitespace", "Keyword"],
+        ["#exit\\b", "Generic.Error"],
+        ["#<lean-segment>", "Keyword.Namespace"]
+      ]
+    }
+  }
+}

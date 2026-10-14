@@ -178,6 +178,9 @@ public def ofString (s : String) : Src :=
 public def boundary (s : Src) (i : Nat) : Bool :=
   (i > 0 && s.word (i - 1)) != s.word i
 
+/-- `\b` as a pattern's continuation: `i` where it holds. -/
+public def boundaryAt (s : Src) (i : Nat) : Option Nat := if s.boundary i then some i else none
+
 /-- `^` under `re.MULTILINE`. -/
 @[inline] public def lineStart (s : Src) (i : Nat) : Bool := i == 0 || s.is (i - 1) '\n'
 

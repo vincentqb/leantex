@@ -150,7 +150,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
   mathDiagnosticOriginChecks mathDelimiterTriggerChecks mathDollarSurfaceChecks
   diagnosticProducerOriginChecks diagnosticAggregationOriginChecks diagnosticPipelineOriginChecks
-  listDeclarationChecks stringConditionalChecks codeRoleChecks seededCodeChecks definitionNameChecks)
+  listDeclarationChecks stringConditionalChecks codeRoleChecks seededCodeChecks definitionNameChecks
+  hashCommandChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
@@ -1564,7 +1565,13 @@ def reports : List Report := [
       "the review's guards: thirty assertions fail with its answer's behaviour reverted onto the recorded commit — a tone both of whose hues are disliked kept at its own hue, the container decided at each scheme's text target with the ink at 4.5:1 on its mark, a mark under every alert the palette marks, one per run and space, and the web page's mark element: a lemon, a pure yellow's example and a mustard derive disliked tones; a container falls away in the scheme asking more contrast, and a mark stands under an ink too faint on it; an alert is marked on the ink and after the document redeclares it; and a long alert's lines are marked run by run",
       "the second review's guards: twenty-four assertions fail with its answer's behaviour reverted onto 93b09d91 — no cleared tone on a dark page or ground, the accent on the ink solved unfiltered, the seeds carried to the other polarity as reflected, a dark page's tints at the accent's own hue, and the other polarity's view keeping the mark: an olive on a dark page and yellows carried to one fail to generate; a carried accent, a gold's and a dark mustard's text on the ink and a cleared hue asking more stand in the disliked region; a dark band's alert takes no tone; and a deck asking a dark scheme ships no transparent mark there",
       "a presentation deck's two brand palettes regenerated and built under lualatex and leantex, PDF and HTML: the accent's text, the muted ink and the code on the paper within 0.03 of the deck's 3:1 floor, the code in one band, a yellow brand's alert in the ink on its mark in both engines and quieted on a covered step as each engine quiets its text, the series at least ΔEOK 0.07 apart for every simulated reader; one build's warnings unchanged, the other's gaining one state-contrast warning, a covered alert against its revealed form, which its accent shipped as given at the floor entails"]
-    state := .guarded "52508293" .revert .author }
+    state := .guarded "52508293" .revert .author },
+  { id := "R176", date := "2026-10-14"
+    what := "Lean's `#` commands set in a listing's ink at regular weight, in both artifacts: `#check`, `#eval`, `#print` and the rest, which Lean's own highlighter reads as keywords and the mirrored highlighter's keyword rule never reached, `#print`'s words with them, and `#exit`, which Lean reads as a proof hole"
+    pins := [check% hashCommandChecks]
+    accept := ["the guard's twenty-eight assertions fail at 1d0b4eae before the fix: in both styles and both artifacts, every command and `#print`'s word in the ink at regular weight, and `#exit` in the ink; an array's `#[` and the names keep the ink before and after",
+      "a presentation deck's Lean listings built by this tree: each `#` command line sets its command, and a `#print` form's word, bold in the keyword colour in the PDF and in the keyword colour and weight `def` takes in HTML, and no page without such a line changes"]
+    state := .guarded "1d0b4eae" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

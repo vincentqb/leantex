@@ -202,8 +202,6 @@ private def stringStart (s : Src) (p : Nat) : Option (Nat × Esc × Quote × Nat
     if let some x := opening (p + 1) .b then return some x
   return none
 
-private def boundaryAt (s : Src) (e : Nat) : Option Nat := if s.boundary e then some e else none
-
 private def expr (s : Src) (m : M) : Option M := Id.run do
   let p := m.pos
   let t := sets.get
@@ -214,7 +212,7 @@ private def expr (s : Src) (m : M) : Option M := Id.run do
   if let some (e, k) := number s p then return some (m.tok p e k)
   if let some e := operatorEnd s p then return some (m.tok p e Ty.operator)
   if s.sat p (fun c => "]{}:(),;[".contains c) then return some (m.tok p (p + 1) Ty.punctuation)
-  if let some e := firstAlt t.operatorWords s p (boundaryAt s) then
+  if let some e := firstAlt t.operatorWords s p s.boundaryAt then
     return some (m.tok p e Ty.operatorWord)
   if let some e := t.exprKeywords.longest s p s.boundary then return some (m.tok p e Ty.keyword)
   if let some e := t.constants.longest s p s.boundary then
@@ -222,7 +220,7 @@ private def expr (s : Src) (m : M) : Option M := Id.run do
   if !(p > 0 && s.is (p - 1) '.') then
     if let some e := t.builtins.longest s p s.boundary then
       return some (m.tok p e Ty.nameBuiltin)
-    if let some e := firstAlt t.pseudo s p (boundaryAt s) then
+    if let some e := firstAlt t.pseudo s p s.boundaryAt then
       return some (m.tok p e Ty.nameBuiltinPseudo)
     if let some e := t.exceptions.longest s p s.boundary then
       return some (m.tok p e Ty.nameException)

@@ -19,6 +19,8 @@ private structure Sets where
   errorWords : WordSet
   operators : WordSet
   punctuation : WordSet
+  /-- The words `#print`'s forms read before a name (Lean/Parser/Command.lean). -/
+  printWords : Array (Array Char)
 
 private def sets : Thunk Sets := Thunk.mk fun _ =>
   { keywordNamespace := .of PygmentsLexData.lean4KeywordNamespace
@@ -26,16 +28,20 @@ private def sets : Thunk Sets := Thunk.mk fun _ =>
     keywordType := .of PygmentsLexData.lean4KeywordType
     errorWords := .of PygmentsLexData.lean4ErrorWords
     operators := .of PygmentsLexData.lean4Operators
-    punctuation := .of PygmentsLexData.lean4Punctuation }
+    punctuation := .of PygmentsLexData.lean4Punctuation
+    printWords := alternatives #["sig", "axioms", "equations", "eqns"] }
 
 private abbrev M := Machine St
 
-/-- The text, and the end of each `[\w']` run, which `[~?][a-z][\w']*:` reads before its colon. -/
+/-- The text, the end of each `[\w']` run, which `[~?][a-z][\w']*:` reads before its colon, and of
+each `\s` run, which `#print`'s forms read before their words. -/
 private structure Ix where
   s : Src
   label : Table Nat
+  space : Table Nat
 
-private def Ix.of (s : Src) : Ix := { s, label := s.runs fun c => wordChar c || c == '\'' }
+private def Ix.of (s : Src) : Ix :=
+  { s, label := s.runs fun c => wordChar c || c == '\'', space := s.runs spaceChar }
 
 /-- A name segment, by the Lean 4 lexer's name pattern. -/
 private def segmentEnd (s : Src) (i : Nat) : Option Nat :=
@@ -99,10 +105,38 @@ private def expression (ix : Ix) (m : M) : Option M := Id.run do
   if p < s.size then return some (m.tok p (p + 1) Ty.nameBuiltinPseudo)
   return none
 
+/-- The departure testdata/highlight/pygments-departures.json declares for `root`, in its order:
+`#print`'s forms, `#exit`, and `#` before a name segment. -/
+private def hashCommand (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
+  let p := m.pos
+  if !s.is p '#' then return none
+  let print := #['#', 'p', 'r', 'i', 'n', 't']
+  let tactic := #['t', 'a', 'c', 't', 'i', 'c']
+  let tags := #['t', 'a', 'g', 's']
+  let exit := #['#', 'e', 'x', 'i', 't']
+  if s.lit p print then
+    let e := p + print.size
+    let w := ix.space.read e
+    if w > e then
+      let lead := (m.tok p e Ty.keywordNamespace).tok e w Ty.whitespace
+      if let some f := firstAlt sets.get.printWords s w s.boundaryAt then
+        return some (lead.tok w f Ty.keyword)
+      if s.lit w tactic then
+        let a := w + tactic.size
+        let b := ix.space.read a
+        if b > a && s.lit b tags && s.boundary (b + tags.size) then
+          return some (((lead.tok w a Ty.keyword).tok a b Ty.whitespace).tok b (b + tags.size)
+            Ty.keyword)
+  if s.lit p exit && s.boundary (p + exit.size) then
+    return some (m.tok p (p + exit.size) Ty.genericError)
+  return (segmentEnd s (p + 1)).map fun e => m.tok p e Ty.keywordNamespace
+
 private def root (ix : Ix) (m : M) : Option M := Id.run do
   let s := ix.s
   let p := m.pos
   let t := sets.get
+  if let some m' := hashCommand ix m then return some m'
   if s.boundary p then
     if let some e := t.keywordNamespace.longest s p s.boundary then
       return some (m.tok p e Ty.keywordNamespace)

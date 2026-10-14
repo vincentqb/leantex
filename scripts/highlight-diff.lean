@@ -1,6 +1,6 @@
 /-
-The native listing lexers against the installed Pygments release they mirror, over the snippets,
-seeded fuzz and `--docs` listings, by token stream, scalar type and colour.
+The native listing lexers against the installed Pygments release they mirror and its declared
+departures, over the snippets, seeded fuzz and `--docs` listings, by stream, scalar type and colour.
 Usage: lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--docs FILE...] | --record [--python P] | --selftest
 -/
 import LeanTex
@@ -15,8 +15,9 @@ def die (msg : String) : IO α := do
   IO.eprintln s!"highlight-diff: {msg}"
   IO.Process.exit 2
 
-/-- The constant bridge program, run isolated (`-I`): the batch names registry aliases and
-sources, and the reply is each source's token stream and every type's colour per style. -/
+/-- The constant bridge program, run isolated (`-I`): the batch names registry aliases, sources and
+the declared departures, and the reply is each source's token stream under them and every type's
+colour per style. -/
 def bridge : String := r#"import importlib
 import json
 import pathlib
@@ -39,7 +40,9 @@ except ModuleNotFoundError as error:
     import pygments
 import pygments.plugin
 pygments.plugin.iter_entry_points = lambda group: ()
+from pygments.lexer import bygroups, inherit
 from pygments.lexers._mapping import LEXERS
+from pygments.lexers.lean import Lean4Lexer
 from pygments.styles import get_style_by_name
 from pygments.token import STANDARD_TYPES, string_to_tokentype
 
@@ -48,13 +51,33 @@ with open(sys.argv[1], encoding='utf-8') as stream:
 lexers = {}
 
 
+def departed(cls):
+    # Declared rules go first in their state; `inherit` keeps Pygments' own after them.
+    states = batch['departures'].get(cls.__name__, {})
+    if not states:
+        return cls
+
+    def rule(rx, *kinds):
+        types = [string_to_tokentype(k) for k in kinds]
+        if not types or any(t not in STANDARD_TYPES for t in types):
+            raise SystemExit(f'a departure from {rx!r} names no standard token type')
+        return (rx.replace('<lean-segment>', Lean4Lexer._name_segment),
+                types[0] if len(types) == 1 else bygroups(*types))
+
+    for state in states:
+        if state not in cls.tokens:
+            raise SystemExit(f'{cls.__name__} has no state {state!r} to depart in')
+    return type(cls.__name__, (cls,), {'tokens': {
+        state: [rule(*r) for r in d['rules']] + [inherit] for state, d in states.items()}})
+
+
 def lexer_for(alias):
     if alias not in lexers:
         selected = next(((name, entry) for name, entry in LEXERS.items() if alias in entry[2]), None)
         if selected is None:
             raise SystemExit(f'no lexer for {alias!r}')
         name, entry = selected
-        lexers[alias] = getattr(importlib.import_module(entry[0]), name)(
+        lexers[alias] = departed(getattr(importlib.import_module(entry[0]), name))(
             stripnl=False, stripall=False, ensurenl=False, tabsize=0)
     return lexers[alias]
 
@@ -209,7 +232,10 @@ def fragments : Lexer → Array String
       "match", "do", "let", "if", "then", "else", "by", "at", "calc", "show", "from",
       "obtain", "namespace", "end", "open", "instance", "structure", "inductive", "xs[i]!",
       "⁻¹", "▸", "⦃", "⦄", "↦", "⌞", "⬝", "٣", "x.٣", "]!", "]?", "]'", "xs[0]?", "a[i]'h",
-      "]'h", "] !", "]]!"]
+      "]'h", "] !", "]]!", "#exit", "#exit'", "#exit!", "#exit_x", "x#exit", "#guard_msgs",
+      "#eval!", "#[", "#λ", "#α", "#1", "# x", "#print sig", "#print axioms", "#print equations",
+      "#print eqns", "#print tactic tags", "#print tactic", "#print  axiomsx", "#print\naxioms",
+      "#printx", "sig", "axioms", "tactic", "tags", "eqns"]
   | .python =>
     #["def ", "class ", "import ", "from ", " as ", "@decorator", "@", "#", "# comment",
       "#!/usr/bin/env python", "#!", "\\", "\\\n", "\n", "\n", "    ", " ", "\t", "r", "R",
@@ -250,7 +276,7 @@ def fragments : Lexer → Array String
 
 /-- The scalars a language's patterns divide on, for texts drawn scalar by scalar. -/
 def alphabet : Lexer → String
-  | .lean4 => "abxyzT_'!?.0123456789eE+-\"\\n/-`@[]{}()~:=<>|&λΠΣα₁ℕ→⟨⟩ \n\t"
+  | .lean4 => "abxyzT_'!?.0123456789eE+-\"\\n/-`@[]{}()~:=<>|&λΠΣα₁ℕ→⟨⟩ \n\t#"
   | .python => "\"'{}%:!.[]()<>=^,-+ #0123456789xXeEjoObBrRfFtTuUNsadgn_\\\n\t@*hlL"
   | .bash => "$\"'`(){}[]<>|&;=#:-+*/\\\nabefinortuxEOF019_ \t!?@"
   | .console => "$#%> ()[]@:~/\\\nabuserhost019 \t-|❯"
@@ -402,7 +428,7 @@ def consoleLine (d : Draw) : Draw :=
   d.add "\n"
 
 def leanPart (d : Draw) : Draw :=
-  let (k, d) := d.nat 7
+  let (k, d) := d.nat 8
   match k with
   | 0 => d.oneOf #["1", "12", "1.", "1.5", "1.5e3", "1.5E-2", "1.e", "1.5e+", "x.1", "٣", "٣.٤", "0x1"]
   | 1 => (d.oneOf #["`", "``"]).oneOf #["a", "A.b", "a.b.c", "a.", "λ", "x'.y", "1", ""]
@@ -413,6 +439,9 @@ def leanPart (d : Draw) : Draw :=
       "\n", "--"])).oneOf #["-/", ""]
   | 5 => (d.oneOf #["@[", "@[simp", "@[inline]"]).times 2 (fun d =>
       d.oneOf #["x", ",", "]", " ", "def", "inline"])
+  | 6 => ((d.oneOf #["#print", "#exit", "#eval", "#", "x#", "#print "]).oneOf #["", " ", "  ", "\n",
+      "\t"]).times 2 (fun d => d.oneOf #["sig", "axioms", "equations", "eqns", "tactic", "tags",
+      "tactic tags", "x", "'", "!", "[", "_", "λ", "α", " "])
   | _ => d.oneOf #["#eval", "x#eval", "#check", "sorry", "sorry'", "admit", "Type", "Typeα",
       "xs[i]!", "xs[i]?", "xs[i]'h", "]!", "]?", "]'", "@[a]!",
       "Sort*", "λ", "Π", "Σ", "α", "πx", "ℕ", "𝒜x", "x₁", "aⁿ", "_x", "x!", "x?", "def", "fun",
@@ -592,12 +621,30 @@ structure Reply where
   answers : Array (Array Tok × Bool)
   colours : Std.HashMap (String × String) String
 
-def runPygments (python : String) (cases : Array Case) : IO Reply := do
+def departuresPath : System.FilePath := "testdata/highlight/pygments-departures.json"
+
+/-- The declared departures, and each departing state's lexer, name, reason and rule count. -/
+def departures : IO (Json × Array (String × String × String × Nat)) := do
+  let json ← match Json.parse (← IO.FS.readFile departuresPath) with
+    | .ok j => pure j
+    | .error e => die s!"{departuresPath} is not JSON: {e}"
+  let .obj lexers := json | die s!"{departuresPath} is not an object of lexers"
+  let mut rows := #[]
+  for (lexer, states) in lexers.toArray do
+    let .obj states := states | die s!"{departuresPath}: {lexer} is not an object of states"
+    for (state, d) in states.toArray do
+      let because := (d.getObjValAs? String "because").toOption.getD ""
+      let rules := ((d.getObjVal? "rules").toOption.bind (·.getArr?.toOption)).getD #[]
+      rows := rows.push (lexer, state, because, rules.size)
+  return (json, rows)
+
+def runPygments (python : String) (declared : Json) (cases : Array Case) : IO Reply := do
   let batch := Json.mkObj [
     ("requests", Json.arr (cases.map fun c =>
       Json.mkObj [("alias", Json.str (pygmentsName c)), ("source", Json.str c.source)])),
     ("styles", Json.arr (styles.toArray.map Json.str)),
-    ("types", Json.arr (nativeTypes.toArray.map Json.str))]
+    ("types", Json.arr (nativeTypes.toArray.map Json.str)),
+    ("departures", declared)]
   IO.FS.withTempDir fun dir => do
     let input := dir / "batch.json"
     IO.FS.writeFile input batch.compress
@@ -648,7 +695,7 @@ def jsonStr (s : String) : String := (Json.str s).compress
 
 def record (python : String) : IO UInt32 := do
   let cases ← snippetCases
-  let reply ← runPygments python cases
+  let reply ← runPygments python (← departures).1 cases
   if reply.version != PygmentsLexData.pygmentsVersion then
     die s!"Pygments {reply.version} answers, but the lexers mirror {PygmentsLexData.pygmentsVersion}: record with --python naming an interpreter that imports it"
   let mut out := "{\n  \"pygments\": " ++ jsonStr reply.version ++ ",\n  \"python\": " ++
@@ -704,7 +751,8 @@ def main (args : List String) : IO UInt32 := do
   for l in o.lexers do
     cases := cases ++ fuzzCases l o.fuzz o.seed
   cases := cases ++ (← docCases o.docs).filter fun c => o.lexers.contains c.lexer
-  let reply ← runPygments o.python cases
+  let (declared, departing) ← departures
+  let reply ← runPygments o.python declared cases
   if reply.version != PygmentsLexData.pygmentsVersion then
     if o.anyVersion then
       IO.println s!"highlight-diff: Pygments {reply.version} answers and the lexers mirror {PygmentsLexData.pygmentsVersion}: the differences below are a drift report"
@@ -712,6 +760,8 @@ def main (args : List String) : IO UInt32 := do
       die s!"Pygments {reply.version} answers, but the lexers mirror {PygmentsLexData.pygmentsVersion}: pass --python with an interpreter that imports {PygmentsLexData.pygmentsVersion}, or --any-version for a drift report"
   if reply.unicode != PygmentsLexData.unicodeVersion then
     IO.println s!"highlight-diff: this Python's Unicode is {reply.unicode} and the class tables' {PygmentsLexData.unicodeVersion}: scalars either version alone assigns may differ"
+  for (lexer, state, because, n) in departing do
+    IO.println s!"highlight-diff: {lexer} departs in {state} by {n} declared rules: {because}"
   let colourOf := fun (st k : String) => reply.colours.getD (st, k) "?"
   let mut tally : Std.HashMap (String × Lexer) (Nat × Nat × Nat × Nat) := {}
   let mut shown := 0

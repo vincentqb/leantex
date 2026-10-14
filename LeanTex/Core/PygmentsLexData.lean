@@ -8,7 +8,8 @@ Source: Pygments 2.21.0 under Python 3.13.14 (Unicode 15.1.0):
 the word lists its Lean 4, Python and Bash lexers match, the character
 classes their patterns name, and the registry aliases that select them.
 This module carries only data: the native lexers in LeanTex/Core/Highlight/
-read it, and the suite holds them to Pygments' own token streams in
+read it, and the suite holds them to Pygments' token streams, under the
+departures testdata/highlight/pygments-departures.json declares, in
 testdata/highlight/pygments-tokens.json. Pygments is BSD-licensed; its
 licence is testdata/highlight/LICENSE-Pygments.
 -/
@@ -22,7 +23,7 @@ public def pythonVersion : String := "3.13.14"
 public def unicodeVersion : String := "15.1.0"
 
 /-- SHA-256 of the rule structure in testdata/highlight/pygments-rules.txt. -/
-public def rulesDigest : String := "b84faed2c9d54c80a464be2a057f2bf7700eb9c4e64fa56e1f800bd032ca3256"
+public def rulesDigest : String := "bf918c5d14c06fe7162c0141720eade1289ee69df4d403683880b739028bb4a8"
 
 /-- `\w`: Python's `re` word characters, what `\b` divides on.
 Ranges in 12 hex digits each, low then high, inclusive, ascending. -/

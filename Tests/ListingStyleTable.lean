@@ -126,6 +126,15 @@ def holeDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
   elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
     ("\\begin{minted}{lean4}\n" ++ holeSource ++ "\n\\end{minted}"))
 
+/-- An invented Lean listing of `#` commands, a `#print` form, the end of input and an array. -/
+def hashSource : String :=
+  "#check Nat.succ\n#eval 2 + 2\n#guard 1 + 1 == 2\n#print axioms Nat.add_comm\n#exit\n#[1, 2]\n" ++
+    "#guard_msgs in"
+
+def hashDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
+  elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
+    ("\\begin{minted}{lean4}\n" ++ hashSource ++ "\n\\end{minted}"))
+
 /-- Invented listings that define a function and a class and use them, one per language, beside a
 builtin and a parameter. -/
 def defsPython : String :=
@@ -253,6 +262,43 @@ def codePaints (fonts : Font.FontSet) (doc : Ir.Doc) :
   (((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
       ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color)),
     (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c)
+
+/-- Lean's `#` commands set as Lean's own highlighter reads them, in both artifacts: each command
+and `#print`'s word in the keyword role's colour and weight, `#exit` in the error role's, and an
+array's `#[` and the names in the ink. -/
+def hashCommandChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet | failures ref "hash commands: the serif faces load"
+  for style in Ir.ListingStyle.all do
+    let (doc, ds) := hashDoc style
+    t s!"hash commands {style.name}: the minted listing elaborates clean"
+      (ds.all (·.severity != .error))
+    let (laid, typed) := codePaints fonts doc
+    let fg := (Ir.Design.ofDoc doc).fg
+    let some keyword := Listing.ink doc.palette none .keyword (style := style)
+      | failures ref s!"hash commands {style.name}: the style gives Keyword no ink"
+    let some error := Listing.ink doc.palette none .genericError (style := style)
+      | failures ref s!"hash commands {style.name}: the style gives Generic.Error no ink"
+    let pdf (context word : String) :=
+      onePaint (ShellHighlight.namePaint? hashSource context word 0 laid)
+    let html (context word : String) :=
+      onePaint (ShellHighlight.namePaint? hashSource context word 0 typed)
+    let shows (c : Ir.Color) (p : HtmlPaint) := p.color.any (hasStr · (HtmlDoc.cssColor c))
+    for (context, word) in [("#check", "#check"), ("#eval", "#eval"), ("#guard 1", "#guard"),
+        ("#print", "#print"), ("axioms", "axioms"), ("#guard_msgs", "#guard_msgs")] do
+      t s!"hash commands {style.name}: PDF sets {word} bold in the keyword ink"
+        (pdf context word == some (1, keyword))
+      t s!"hash commands {style.name}: typed HTML sets {word} strong in the keyword ink"
+        ((html context word).any fun p => p.bold && !p.italic && shows keyword p)
+    t s!"hash commands {style.name}: PDF sets #exit in the error ink, regular weight"
+      (pdf "#exit" "#exit" == some (0, error))
+    t s!"hash commands {style.name}: typed HTML sets #exit in the error ink, not strong"
+      ((html "#exit" "#exit").any fun p => !p.bold && shows error p)
+    for word in ["#[", "Nat.add_comm"] do
+      t s!"hash commands {style.name}: PDF sets {word} in the ink, regular weight"
+        (pdf word word == some (0, fg))
+      t s!"hash commands {style.name}: typed HTML sets {word} in the ink, not strong"
+        ((html word word).any fun p => !p.bold && p.color.isNone)
 
 /-- The code roles: every token type's role by its parent chain, each role's colour from the palette
 by the stated rule or the style, one colour and weight per role, in both artifacts. -/
