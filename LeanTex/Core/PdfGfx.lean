@@ -324,20 +324,6 @@ public structure Open where
   kids : Array (Node Run)
   deriving Inhabited
 
-/-- Why a visibility expression is undecided: a malformed part, one nested past `veDepthLimit`, or
-both. -/
-public inductive VeWhy where
-  | malformed
-  | deep
-  | both
-  deriving BEq, Inhabited
-
-/-- A visibility expression's value (§8.11.2.2): decided, or undecided and why. -/
-public inductive VeValue where
-  | decided (on : Bool)
-  | undecided (why : VeWhy)
-  deriving BEq, Inhabited
-
 /-- What the reading builds that outlives one stream: outlines, symbols, rasters, losses and read caches. -/
 public structure Store where
   outlines : Array (Array Subpath)
@@ -352,7 +338,7 @@ public structure Store where
   /-- Whether optional content is hidden, by the object number its `/OC` names. -/
   oc : Std.HashMap Nat Bool
   /-- The visibility expressions read, by object number and nesting level. -/
-  ve : Std.HashMap (Nat × Nat) VeValue
+  ve : PdfRead.VeMemo
   /-- How many font dictionaries read in place have been keyed; the next key is `directKeyBase` plus
   this count. -/
   direct : Nat
@@ -1406,109 +1392,17 @@ private def stateKey (gs : GState) : String :=
 {gs.dash}|{gs.phase}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
 {gs.hScale}|{gs.leading}|{gs.rise}|{gs.render}"
 
-/-- The deepest a visibility expression's operand is read, in levels below its top expression:
-poppler reads fifty and no deeper. -/
-public def veDepthLimit : Nat := 50
-
-/-- Visibility expressions read so far, by object number and the level each was read at. -/
-private abbrev VeMemo := Std.HashMap (Nat × Nat) VeValue
-
-private def VeWhy.join (a b : VeWhy) : VeWhy := if a == b then a else .both
-
-private def VeValue.not : VeValue → VeValue
-  | .decided on => .decided !on
-  | .undecided why => .undecided why
-
 /-- The losses a visibility expression's value owes. -/
-private def VeValue.losses : VeValue → Array Loss
+private def veLosses : PdfRead.VeValue → Array Loss
   | .decided _ => #[]
   | .undecided .malformed => #[.property "malformed-visibility-expression"]
   | .undecided .deep => #[.budget "visibility-expression-depth"]
   | .undecided .both => #[.property "malformed-visibility-expression", .budget "visibility-expression-depth"]
 
-mutual
-
-/-- A visibility expression's operand at `level` (§8.11.2.2): a group, on unless the configuration
-turns it off, or a nested expression, direct or by reference; undecided for anything else, for an
-expression `path` is already reading, and past `veDepthLimit`. -/
-private def veOperand (cx : Ctx) (cfg : OcConfig) (level : Nat) (path : List Nat) (memo : VeMemo)
-    (o : Obj) : VeValue × VeMemo :=
-  if h : level ≤ veDepthLimit then
-    match o with
-    | .ref n g =>
-      if cfg.off.contains n then (.decided false, memo)
-      else if let some v := memo.get? (n, level) then (v, memo)
-      else if path.contains n then (.undecided .malformed, memo)
-      else
-        match (cx.doc.deref (.ref n g)).toOption.getD .null with
-        | .arr ⟨xs⟩ =>
-          let r := veList cx cfg level h (n :: path) memo xs
-          (r.1, r.2.insert (n, level) r.1)
-        | d =>
-          let v : VeValue :=
-            if d.get? "Type" == some (.name "OCG") then .decided true else .undecided .malformed
-          (v, memo.insert (n, level) v)
-    | .arr ⟨xs⟩ => veList cx cfg level h path memo xs
-    | _ => (.undecided .malformed, memo)
-  else (.undecided .deep, memo)
-termination_by (veDepthLimit + 1 - level, 1, sizeOf o)
-decreasing_by
-  all_goals simp_wf
-  all_goals
-    apply Prod.Lex.right
-    apply Prod.Lex.left
-    omega
-
-/-- A visibility expression's operator and operands at `level`: `Not` over one, `And` or `Or` over
-one or more, each a level deeper. -/
-private def veList (cx : Ctx) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
-    (path : List Nat) (memo : VeMemo) : List Obj → VeValue × VeMemo
-  | [.name "Not", x] =>
-    let r := veOperand cx cfg (level + 1) path memo x
-    (r.1.not, r.2)
-  | .name "And" :: x :: xs => veFold cx cfg level hl path true memo false none (x :: xs)
-  | .name "Or" :: x :: xs => veFold cx cfg level hl path false memo false none (x :: xs)
-  | _ => (.undecided .malformed, memo)
-termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
-decreasing_by
-  all_goals simp_wf
-  · apply Prod.Lex.left
-    omega
-  all_goals
-    apply Prod.Lex.right
-    apply Prod.Lex.right
-    omega
-
-/-- Operands joined by `And` (`all`) or `Or`, given whether earlier ones met its dominant value and
-why earlier ones were undecided; undecided only where an undecided operand could decide. -/
-private def veFold (cx : Ctx) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
-    (path : List Nat) (all : Bool) (memo : VeMemo) (dominant : Bool) (why : Option VeWhy) :
-    List Obj → VeValue × VeMemo
-  | [] =>
-    (if dominant then .decided !all else match why with
-      | some w => .undecided w
-      | none => .decided all, memo)
-  | x :: xs =>
-    let a := veOperand cx cfg (level + 1) path memo x
-    match a.1 with
-    | .decided on => veFold cx cfg level hl path all a.2 (dominant || on == !all) why xs
-    | .undecided w => veFold cx cfg level hl path all a.2 dominant (some ((why.map w.join).getD w)) xs
-termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
-decreasing_by
-  all_goals simp_wf
-  · apply Prod.Lex.left
-    omega
-  all_goals
-    apply Prod.Lex.right
-    apply Prod.Lex.right
-    omega
-
-end
-
 /-- Whether a membership dictionary hides its content (§8.11.2.2), its visibility expression deciding
 in place of its groups and policy, and the losses an expression it cannot decide owes. -/
-private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) :
-    (Bool × Array Loss) × VeMemo :=
+private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : PdfRead.VeMemo) (d : Obj) :
+    (Bool × Array Loss) × PdfRead.VeMemo :=
   if d.get? "Type" != some (.name "OCMD") then ((false, #[]), memo) else
   let refs := (cx.doc.ocmdGroups cfg d).map (·.1)
   let pol := PdfRead.ocmdPolicy d
@@ -1521,15 +1415,15 @@ private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) :
   match (d.get? "VE").map cx.doc.deref with
   | none | some (.ok .null) => ((byPolicy, #[]), memo)
   | some (.ok (.arr ⟨xs⟩)) =>
-    let r := veList cx cfg 0 (Nat.zero_le _) [] memo xs
-    match r.1 with
+    let r := cx.doc.veList cfg 0 (Nat.zero_le _) [] memo xs
+    match r.1.value with
     | .decided on => ((!on, #[]), r.2)
-    | v => ((false, v.losses), r.2)
+    | v => ((false, veLosses v), r.2)
   | some _ => ((byPolicy, #[.property "malformed-visibility-expression"]), memo)
 
 /-- Whether optional content is hidden under the default configuration, a group or a membership
 dictionary deciding, and the losses a visibility expression on the way owes. -/
-private def ocOff (cx : Ctx) (memo : VeMemo) (o : Obj) : (Bool × Array Loss) × VeMemo :=
+private def ocOff (cx : Ctx) (memo : PdfRead.VeMemo) (o : Obj) : (Bool × Array Loss) × PdfRead.VeMemo :=
   match cx.oc with
   | none => ((false, #[]), memo)
   | some cfg =>

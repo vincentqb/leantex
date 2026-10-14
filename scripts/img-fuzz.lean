@@ -257,6 +257,23 @@ def pdfFigureFuzz : IO Unit := do
   unless (PdfGfx.importPage deepObject).isOk do die "an unread deep object refuses the page"
   let ms := (← IO.monoMsNow) - t1
   if ms > budget then die s!"an object nested a million levels: copied and read in {ms} ms, over {budget}"
+  -- A configured page, its copy and the converter's update, at any depth.
+  let deepConfigured : ByteArray := fuzzPdf #[
+    "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R /Resources 5 0 R >>",
+    fuzzStream "/OC /M BDC 0 0 5 5 re f EMC",
+    "<< /Spare " ++ String.join (List.replicate 1000000 "[") ++ "<< /Type /OCMD /OCGs [6 0 R] >>" ++
+      String.join (List.replicate 1000000 "]") ++ " /Properties << /M 7 0 R >> >>",
+    "<< /Type /OCG /Name (Off) >>", "<< /Type /OCMD /OCGs [6 0 R] >>"]
+  for (what, b) in deepCases.push ("a configured page holding an object nested a million levels",
+      deepConfigured) do
+    let t0 ← IO.monoMsNow
+    if let .error e := Image.probe b then die s!"{what}: not copied: {e}"
+    unless (PdfRead.Doc.ofBytes (PdfRead.ocAsCopied b)).isOk do
+      die s!"{what}: the converter's update does not read"
+    let ms := (← IO.monoMsNow) - t0
+    if ms > budget then die s!"{what}: copied and updated in {ms} ms, over {budget}"
   let tally ← IO.mkRef ({} : Tally)
   -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0

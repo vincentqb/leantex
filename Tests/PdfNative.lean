@@ -647,7 +647,7 @@ def pdfNestingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let malformed : Gfx.Loss := .property "malformed-visibility-expression"
   let count (l : Gfx.Loss) (pdf : ByteArray) : Option Nat :=
     (lossesOf pdf).toOption.map fun ls => (ls.filter (· == l)).size
-  let limit := PdfGfx.veDepthLimit
+  let limit := PdfRead.veDepthLimit
   for (what, pdf) in [("direct", ocPdf (nots limit "6 0 R") #[]),
       ("by reference", ocPdf "7 0 R" (chain limit))] do
     t s!"nesting: an expression {limit} levels deep {what} decides"
@@ -1280,6 +1280,20 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     "<< /Type /OCMD /OCGs [6 1 R 7 1 R] /P /AnyOff >>",
     streamObj "0.5 g 2 2 4 4 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
       /Group << /S /Transparency /K true >> "]
+  -- One cell per expression: listed groups deciding shown and hidden; an unlisted group, a missing
+  -- object and a malformed operator, read as the engine reads them; an unlisted group beside groups.
+  let expressions := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] \
+      /D << /OFF [6 0 R] >> >> >>"
+    "<< /Properties << /a 8 0 R /b 9 0 R /c 10 0 R /d 11 0 R /e 12 0 R /f 13 0 R >> >>"
+    "/OC /a BDC 1 0 0 rg 0 0 14 100 re f EMC /OC /b BDC 0 0 1 rg 17 0 14 100 re f EMC \
+      /OC /c BDC 0 1 0 rg 34 0 14 100 re f EMC /OC /d BDC 0 1 1 rg 51 0 14 100 re f EMC \
+      /OC /e BDC 1 1 0 rg 68 0 14 100 re f EMC /OC /f BDC 1 0 1 rg 85 0 14 100 re f EMC" ""
+    #["<< /Type /OCG /Name (On) >>", "<< /Type /OCG /Name (Off) >>", "<< /Type /OCG /Name (Loose) >>",
+      "<< /Type /OCMD /VE [/And 5 0 R [/Not 6 0 R]] >>", "<< /Type /OCMD /VE [/Or 6 0 R [/Not 5 0 R]] >>",
+      "<< /Type /OCMD /VE [/Not 7 0 R] >>", "<< /Type /OCMD /VE [/Not 40 0 R] >>",
+      "<< /Type /OCMD /VE [/Not] >>", "<< /Type /OCMD /OCGs [7 0 R] /VE [/And 5 0 R [/Not 7 0 R]] >>"]
+  let veCells : Array ((UInt8 × UInt8 × UInt8) × Bool) := #[((255, 0, 0), true), ((0, 0, 255), false),
+    ((0, 255, 0), false), ((0, 255, 255), true), ((255, 255, 0), true), ((255, 0, 255), false)]
   let cells : Array ((UInt8 × UInt8 × UInt8) × Bool) := #[
     ((255, 0, 0), true), ((0, 0, 255), false), ((0, 255, 0), false), ((255, 0, 255), false),
     ((0, 255, 255), true), ((255, 128, 0), true), ((255, 255, 0), true), ((128, 0, 255), true),
@@ -1385,6 +1399,49 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     let blue ← raster (dir / "alone.pdf") #[(0, 0, 255)]
     t s!"optional content: a figure reaching no listed group ships no configuration and shows whole \
 (exit {code}, {blue})" (code == 0 && !declared && blue.all (· > 0))
+    IO.FS.writeBinFile (dir / "expression-cells.pdf") expressions
+    IO.FS.writeFile (dir / "expressions.tex") (doc ["]{expression-cells.pdf}"])
+    for ext in ["pdf", "html"] do
+      let code ← build (dir / "expressions.tex") (dir / s!"expressions.{ext}")
+      t s!"optional content: the expressions document builds its {ext} (exit {code})" (code == 0)
+    let veCounts ← raster (dir / "expressions.pdf") (veCells.map (·.1))
+    let veHtml ← IO.FS.readFile (dir / "expressions.html")
+    let veFaces : Array (Array String) := (((veHtml.splitOn "data:image/svg+xml;base64,").drop 1).filterMap
+      fun rest => (Svg.unbase64 ((rest.splitOn "\"")[0]?.getD "")).bind fun b =>
+        (Xml.parse b).toOption.map (xmlFills #[])).toArray
+    t s!"optional content: the PDF and the face show each expression's cell as the engine reads it \
+({veCounts}, {veFaces.size} faces)" (agrees veCounts veCells && veFaces.size == 1 &&
+        veCells.all fun (c, on) => veFaces.any (·.contains (fill c)) == on)
+    let veShipped := (PdfRead.Doc.ofBytes (← IO.FS.readBinFile (dir / "expressions.pdf"))).toOption
+    let listedRefs : Array Nat := (veShipped.bind fun d => (d.get d.root).toOption.bind fun (cat, _) =>
+      ((cat.get? "OCProperties").bind fun o => (d.deref o).toOption.bind (·.get? "OCGs")).bind fun o =>
+        match (d.deref o).toOption with
+        | some (.arr xs) => some (xs.filterMap fun x => match x with
+          | .ref n _ => some n
+          | _ => none)
+        | _ => none).getD #[]
+    let operandsListed : Bool := veShipped.any fun d => d.locs.keys.all fun n =>
+      match (d.get n).toOption with
+      | some (v, _) =>
+        if v.get? "Type" != some (.name "OCMD") then true else Id.run do
+          let mut work : List (PdfRead.Obj × Nat) := ((v.get? "VE").map fun ve => [(ve, 0)]).getD []
+          for _ in [0:10000] do
+            match work with
+            | [] => break
+            | (o, k) :: rest =>
+              work := rest
+              match o with
+              | .name _ => pure ()
+              | .arr xs => work := xs.toList.map (·, k + 1) ++ work
+              | .ref m _ =>
+                match (d.deref o).toOption with
+                | some (.arr xs) => if k < 60 then work := (.arr xs, k + 1) :: work else return false
+                | _ => if !listedRefs.contains m then return false
+              | _ => return false
+          return work.isEmpty
+      | none => true
+    t s!"optional content: every shipped expression's operand is a listed group ({listedRefs.size} listed)"
+      (listedRefs.size ≥ 2 && operandsListed)
     let handed := dir / "handed.pdf"
     IO.FS.writeFile (tools / "pdftocairo") ("#!/bin/sh\nif [ \"$1\" = -v ]; then printf '%s\\n' \
 'synthetic converter 1' >&2; exit 0; fi\nfor last; do input=$prev; prev=$last; done\n/bin/cp \"$input\" " ++

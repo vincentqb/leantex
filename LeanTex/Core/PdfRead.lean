@@ -1478,6 +1478,130 @@ public def ocmdPolicy (d : Obj) : String :=
   | some (.name "AllOff") => "AllOff"
   | _ => "AnyOn"
 
+/-- An object's generation as its header spells it, zero in an object stream. -/
+private def Doc.genOf (d : Doc) (num : Nat) : Nat :=
+  match d.locs.get? num with
+  | some (.direct off) => ((parseUInt d.bytes (skipWs d.bytes off)).bind fun (_, i) =>
+      (parseUInt d.bytes (skipWs d.bytes i)).map (·.1)).getD 0
+  | _ => 0
+
+/-- Why a visibility expression is undecided: a malformed part, one nested past `veDepthLimit`, or
+both. -/
+public inductive VeWhy where
+  | malformed
+  | deep
+  | both
+  deriving BEq, Inhabited
+
+/-- A visibility expression's value (§8.11.2.2): decided, or undecided and why. -/
+public inductive VeValue where
+  | decided (on : Bool)
+  | undecided (why : VeWhy)
+  deriving BEq, Inhabited
+
+/-- A visibility expression as read: its value, and whether each operand it reached is a listed
+group. -/
+public structure VeRead where
+  value : VeValue
+  listed : Bool
+  deriving Inhabited
+
+/-- The deepest a visibility expression's operand is read, in levels below its top expression:
+poppler reads fifty and no deeper. -/
+public def veDepthLimit : Nat := 50
+
+/-- Visibility expressions read so far, by object number and the level each was read at. -/
+public abbrev VeMemo := Std.HashMap (Nat × Nat) VeRead
+
+private def VeWhy.join (a b : VeWhy) : VeWhy := if a == b then a else .both
+
+private def VeValue.not : VeValue → VeValue
+  | .decided on => .decided !on
+  | .undecided why => .undecided why
+
+mutual
+
+/-- A visibility expression's operand at `level` (§8.11.2.2): a group, on unless the configuration
+turns it off, or a nested expression, direct or by reference; undecided for anything else, for an
+expression `path` is already reading, and past `veDepthLimit`. -/
+public def Doc.veOperand (doc : Doc) (cfg : OcConfig) (level : Nat) (path : List Nat)
+    (memo : VeMemo) (o : Obj) : VeRead × VeMemo :=
+  if h : level ≤ veDepthLimit then
+    match o with
+    | .ref n g =>
+      if cfg.off.contains n then (⟨.decided false, true⟩, memo)
+      else if let some v := memo.get? (n, level) then (v, memo)
+      else if path.contains n then (⟨.undecided .malformed, false⟩, memo)
+      else
+        match (doc.deref (.ref n g)).toOption.getD .null with
+        | .arr ⟨xs⟩ =>
+          let r := doc.veList cfg level h (n :: path) memo xs
+          (r.1, r.2.insert (n, level) r.1)
+        | d =>
+          let v : VeRead := if d.get? "Type" == some (.name "OCG") then
+              ⟨.decided true, cfg.listed.contains n⟩
+            else ⟨.undecided .malformed, false⟩
+          (v, memo.insert (n, level) v)
+    | .arr ⟨xs⟩ => doc.veList cfg level h path memo xs
+    | _ => (⟨.undecided .malformed, false⟩, memo)
+  else (⟨.undecided .deep, false⟩, memo)
+termination_by (veDepthLimit + 1 - level, 1, sizeOf o)
+decreasing_by
+  all_goals simp_wf
+  all_goals
+    apply Prod.Lex.right
+    apply Prod.Lex.left
+    omega
+
+/-- A visibility expression's operator and operands at `level`: `Not` over one, `And` or `Or` over
+one or more, each a level deeper. -/
+public def Doc.veList (doc : Doc) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
+    (path : List Nat) (memo : VeMemo) : List Obj → VeRead × VeMemo
+  | [.name "Not", x] =>
+    let r := doc.veOperand cfg (level + 1) path memo x
+    (⟨r.1.value.not, r.1.listed⟩, r.2)
+  | .name "And" :: x :: xs => doc.veFold cfg level hl path true memo false none true (x :: xs)
+  | .name "Or" :: x :: xs => doc.veFold cfg level hl path false memo false none true (x :: xs)
+  | _ => (⟨.undecided .malformed, false⟩, memo)
+termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
+decreasing_by
+  all_goals simp_wf
+  · apply Prod.Lex.left
+    omega
+  all_goals
+    apply Prod.Lex.right
+    apply Prod.Lex.right
+    omega
+
+/-- Operands joined by `And` (`all`) or `Or`, given whether earlier ones met its dominant value, why
+earlier ones were undecided and whether each was a listed group; undecided only where an undecided
+operand could decide. -/
+public def Doc.veFold (doc : Doc) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
+    (path : List Nat) (all : Bool) (memo : VeMemo) (dominant : Bool) (why : Option VeWhy)
+    (listed : Bool) : List Obj → VeRead × VeMemo
+  | [] =>
+    (⟨if dominant then .decided !all else match why with
+      | some w => .undecided w
+      | none => .decided all, listed⟩, memo)
+  | x :: xs =>
+    let a := doc.veOperand cfg (level + 1) path memo x
+    let listed := listed && a.1.listed
+    match a.1.value with
+    | .decided on => doc.veFold cfg level hl path all a.2 (dominant || on == !all) why listed xs
+    | .undecided w =>
+      doc.veFold cfg level hl path all a.2 dominant (some ((why.map w.join).getD w)) listed xs
+termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
+decreasing_by
+  all_goals simp_wf
+  · apply Prod.Lex.left
+    omega
+  all_goals
+    apply Prod.Lex.right
+    apply Prod.Lex.right
+    omega
+
+end
+
 /-- A page selected by its physical, one-based position in `/Kids` order. -/
 public inductive PageSelection where
   | first
@@ -1596,13 +1720,21 @@ public structure XObjOut where
 private structure SerSt where
   assign : Std.HashMap Nat Nat := {}
   queue : Array Nat := #[]
+  /-- The generation each copied number's first reference spells. -/
+  gens : Std.HashMap Nat Nat := {}
+  /-- The number of the object whose serialization begins next. -/
+  top : Option Nat := none
+  /-- Whether a membership dictionary was kept. -/
+  kept : Bool := false
+  /-- Whether an optional content dictionary was written otherwise than its source spells it. -/
+  changed : Bool := false
 
 private def SerSt.localOf (st : SerSt) (num : Nat) : SerSt × Nat :=
   match st.assign.get? num with
   | some l => (st, l)
   | none =>
     let l := st.queue.size
-    ({ assign := st.assign.insert num l, queue := st.queue.push num }, l)
+    ({ st with assign := st.assign.insert num l, queue := st.queue.push num }, l)
 
 private def pushStr (out : Array Chunk) (s : String) : Array Chunk :=
   if s.isEmpty then out else out.push (.bytes s.toUTF8)
@@ -1617,53 +1749,46 @@ private def nameOut (n : String) : String := Id.run do
       out := out ++ String.ofList ['#', Hex.spell true (v / 16), Hex.spell true v]
   return out
 
-/-- A copied dictionary as the engine reads its source's optional content: a listed group with only
-its type and name, a membership dictionary under a configuration with only its listed groups, policy
-and array expression, any other group or membership dictionary emptied; whether one was kept. -/
-private def ocNormDict (doc : Doc) (cfg : Option OcConfig) (num : Option Nat)
-    (es : Array (String × Obj)) (kept : Bool) : Obj × Bool :=
-  let d : Obj := .dict es
+/-- How a copy writes a dictionary as the engine reads its source's optional content. -/
+private inductive OcCopy where
+  /-- A listed group, its type and name kept. -/
+  | group
+  /-- Nothing left to decide: an empty dictionary. -/
+  | empty
+  /-- A membership dictionary's listed groups and policy, where any, and whether its expression,
+  every operand a listed group, is kept. -/
+  | ocmd (groups : Array (Nat × Nat)) (policy : String) (ve : Bool)
+  /-- A membership dictionary its source decides hidden, over a listed group and its state where
+  the configuration lists one. -/
+  | hidden (group : Option ((Nat × Nat) × Bool))
+
+/-- The source keys a copy keeps verbatim. -/
+private def OcCopy.keeps : OcCopy → String → Bool
+  | .group, k => k == "Type" || k == "Name"
+  | .ocmd _ _ ve, k => ve && k == "VE"
+  | .empty, _ => false
+  | .hidden _, _ => false
+
+/-- How a copy writes a dictionary as the engine reads its source's optional content, `num` its own
+object number; none for a dictionary that is neither a group nor a membership dictionary. -/
+private def ocCopy (doc : Doc) (cfg : Option OcConfig) (num : Option Nat) (es : List (String × Obj)) :
+    Option OcCopy :=
+  let d : Obj := .dict ⟨es⟩
   match d.get? "Type", cfg with
   | some (.name "OCG"), _ =>
-    if cfg.any fun c => num.any c.listed.contains then
-      (.dict (es.filter fun (k, _) => k == "Type" || k == "Name"), kept)
-    else (.dict #[], false)
-  | some (.name "OCMD"), none => (.dict #[], false)
+    some (if cfg.any fun c => num.any c.listed.contains then .group else .empty)
+  | some (.name "OCMD"), none => some .empty
   | some (.name "OCMD"), some c =>
     let groups := doc.ocmdGroups c d
-    let ve := (d.get? "VE").filter fun v => (doc.deref v).toOption matches some (.arr _)
-    if groups.isEmpty && ve.isNone then (.dict #[], false)
-    else (.dict (#[("Type", .name "OCMD"), ("OCGs", .arr (groups.map fun (n, g) => .ref n g)),
-      ("P", .name (ocmdPolicy d))] ++ (ve.map fun v => #[("VE", v)]).getD #[]), true)
-  | _, _ => (d, kept)
-
-mutual
-/-- A copied value with its optional content dictionaries read as `ocNormDict` reads them, at every
-depth, `num` the object's own number; whether a membership dictionary was kept. -/
-private def ocNorm (doc : Doc) (cfg : Option OcConfig) (num : Option Nat) : Obj → Obj × Bool
-  | .arr xs =>
-    let (ys, kept) := ocNormList doc cfg #[] false xs.toList
-    (.arr ys, kept)
-  | .dict es =>
-    let (es, kept) := ocNormPairs doc cfg #[] false es.toList
-    ocNormDict doc cfg num es kept
-  | o => (o, false)
-
-private def ocNormList (doc : Doc) (cfg : Option OcConfig) (acc : Array Obj) (kept : Bool) :
-    List Obj → Array Obj × Bool
-  | [] => (acc, kept)
-  | x :: rest =>
-    let (y, k) := ocNorm doc cfg none x
-    ocNormList doc cfg (acc.push y) (kept || k) rest
-
-private def ocNormPairs (doc : Doc) (cfg : Option OcConfig) (acc : Array (String × Obj))
-    (kept : Bool) : List (String × Obj) → Array (String × Obj) × Bool
-  | [] => (acc, kept)
-  | (k, v) :: rest =>
-    let (w, kk) := ocNorm doc cfg none v
-    ocNormPairs doc cfg (acc.push (k, w)) (kept || kk) rest
-end
-
+    match (d.get? "VE").map doc.deref with
+    | some (.ok (.arr ⟨xs⟩)) =>
+      let read := (doc.veList c 0 (Nat.zero_le _) [] {} xs).1
+      if read.listed then some (.ocmd groups (ocmdPolicy d) true)
+      else if read.value == .decided false then
+        some (.hidden (c.groups[0]?.map fun g => ((g, doc.genOf g), !c.off.contains g)))
+      else some .empty
+    | _ => some (if groups.isEmpty then .empty else .ocmd groups (ocmdPolicy d) false)
+  | _, _ => none
 
 /-- What the serializer still owes, in order: an object between two texts, or a text. -/
 private inductive SerWork where
@@ -1677,19 +1802,25 @@ private noncomputable def SerWork.size : SerWork → Nat
 /-- An array's elements as owed work, each followed by a space. -/
 private def SerWork.items (xs : List Obj) : List SerWork := xs.map (SerWork.obj "" · " ")
 
-/-- A dictionary's entries as owed work, each value after its key and followed by a space. -/
-private def SerWork.entries (es : List (String × Obj)) : List SerWork :=
-  es.map fun e => SerWork.obj (nameOut e.1 ++ " ") e.2 " "
+/-- A dictionary's entries `keep` keeps as owed work, each value after its key and followed by a
+space. -/
+private def SerWork.entries (keep : String → Bool) (es : List (String × Obj)) : List SerWork :=
+  es.map fun e => if keep e.1 then SerWork.obj (nameOut e.1 ++ " ") e.2 " " else .text ""
 
 private theorem items_size_exact (xs : List Obj) :
     ((SerWork.items xs).map SerWork.size).sum = (xs.map sizeOf).sum ∧
       (SerWork.items xs).length = xs.length := by
   simp [SerWork.items, SerWork.size, Function.comp_def]
 
-private theorem entries_size_exact (es : List (String × Obj)) :
-    ((SerWork.entries es).map SerWork.size).sum = (es.map fun e => sizeOf e.2).sum ∧
-      (SerWork.entries es).length = es.length := by
-  simp [SerWork.entries, SerWork.size, Function.comp_def]
+private theorem entries_size_between (keep : String → Bool) (es : List (String × Obj)) :
+    ((SerWork.entries keep es).map SerWork.size).sum ≤ (es.map fun e => sizeOf e.2).sum ∧
+      (SerWork.entries keep es).length = es.length := by
+  induction es with
+  | nil => simp [SerWork.entries]
+  | cons e es ih =>
+    by_cases hk : keep e.1 = true <;>
+      simp only [SerWork.entries, List.map_cons, List.sum_cons, List.length_cons, hk, ite_true,
+        Bool.false_eq_true, ite_false, SerWork.size] at ih ⊢ <;> omega
 
 private theorem sizeOf_objs_exact (xs : List Obj) :
     (xs.map sizeOf).sum + xs.length + 1 = sizeOf xs := by
@@ -1709,27 +1840,65 @@ private theorem sizeOf_entries_between (es : List (String × Obj)) :
       Prod.mk.sizeOf_spec]
     omega
 
+/-- A reference's hole in the copied graph's local numbering, its generation kept. -/
+private def SerSt.hole (st : SerSt) (out : Array Chunk) (num gen : Nat) : SerSt × Array Chunk :=
+  let (st, l) := st.localOf num
+  ({ st with gens := if st.gens.contains num then st.gens else st.gens.insert num gen },
+    out.push (.ref l))
+
+/-- A copy's own spelling of an optional content dictionary's entries before those it keeps. -/
+private def OcCopy.write (c : OcCopy) (st : SerSt) (out : Array Chunk) : SerSt × Array Chunk :=
+  let refs (st : SerSt) (out : Array Chunk) (gs : Array (Nat × Nat)) : SerSt × Array Chunk :=
+    gs.foldl (fun (st, out) (n, g) => let (st, out) := st.hole out n g; (st, pushStr out " "))
+      (st, pushStr out "[ ")
+  match c with
+  | .group | .empty => (st, out)
+  | .ocmd groups policy _ =>
+    let out := pushStr out "/Type /OCMD "
+    if groups.isEmpty then (st, out) else
+    let (st, out) := refs st (pushStr out "/OCGs ") groups
+    (st, pushStr out s!"] /P {nameOut policy} ")
+  | .hidden none => (st, pushStr out "/Type /OCMD /OCGs [ ] /P /AnyOn ")
+  | .hidden (some ((n, g), on)) =>
+    let (st, out) := refs st (pushStr out "/Type /OCMD /OCGs ") #[(n, g)]
+    let (st, out) := st.hole (pushStr out s!"] /P {if on then "/AllOff" else "/AllOn"} /VE [ /And ")
+      n g
+    let (st, out) := st.hole (pushStr out " [ /Not ") n g
+    (st, pushStr out " ] ] ")
+
 /-- Serializes the owed work with an explicit stack, so an object's nesting never deepens the call
-stack. -/
-private def serWork (st : SerSt) (out : Array Chunk) : List SerWork → SerSt × Array Chunk
+stack, each dictionary written as the engine reads its optional content (`ocCopy`). -/
+private def serWork (doc : Doc) (cfg : Option OcConfig) (st : SerSt) (out : Array Chunk) :
+    List SerWork → SerSt × Array Chunk
   | [] => (st, out)
-  | .text s :: rest => serWork st (pushStr out s) rest
+  | .text s :: rest => serWork doc cfg st (pushStr out s) rest
   | .obj before o after :: rest =>
     let out := pushStr out before
+    let num := st.top
+    let st := { st with top := none }
     match o with
-    | .null => serWork st (pushStr (pushStr out "null") after) rest
-    | .bool true => serWork st (pushStr (pushStr out "true") after) rest
-    | .bool false => serWork st (pushStr (pushStr out "false") after) rest
-    | .int n => serWork st (pushStr (pushStr out (toString n)) after) rest
-    | .real raw => serWork st (pushStr (pushStr out raw) after) rest
-    | .str raw => serWork st (pushStr (out.push (.bytes raw)) after) rest
-    | .name n => serWork st (pushStr (pushStr out (nameOut n)) after) rest
-    | .arr ⟨xs⟩ => serWork st (pushStr out "[ ") (SerWork.items xs ++ .text ("]" ++ after) :: rest)
+    | .null => serWork doc cfg st (pushStr (pushStr out "null") after) rest
+    | .bool true => serWork doc cfg st (pushStr (pushStr out "true") after) rest
+    | .bool false => serWork doc cfg st (pushStr (pushStr out "false") after) rest
+    | .int n => serWork doc cfg st (pushStr (pushStr out (toString n)) after) rest
+    | .real raw => serWork doc cfg st (pushStr (pushStr out raw) after) rest
+    | .str raw => serWork doc cfg st (pushStr (out.push (.bytes raw)) after) rest
+    | .name n => serWork doc cfg st (pushStr (pushStr out (nameOut n)) after) rest
+    | .arr ⟨xs⟩ =>
+      serWork doc cfg st (pushStr out "[ ") (SerWork.items xs ++ .text ("]" ++ after) :: rest)
     | .dict ⟨es⟩ =>
-      serWork st (pushStr out "<< ") (SerWork.entries es ++ .text (">>" ++ after) :: rest)
-    | .ref num _ =>
-      let (st, l) := st.localOf num
-      serWork st (pushStr (out.push (.ref l)) after) rest
+      match ocCopy doc cfg num es with
+      | none =>
+        serWork doc cfg st (pushStr out "<< ")
+          (SerWork.entries (fun _ => true) es ++ .text (">>" ++ after) :: rest)
+      | some c =>
+        let st := { st with kept := st.kept || (c matches .ocmd ..) || (c matches .hidden _)
+                            changed := st.changed || !(c matches .group) || es.any (!c.keeps ·.1) }
+        let (st, out) := c.write st (pushStr out "<< ")
+        serWork doc cfg st out (SerWork.entries c.keeps es ++ .text (">>" ++ after) :: rest)
+    | .ref num g =>
+      let (st, out) := st.hole out num g
+      serWork doc cfg st (pushStr out after) rest
 termination_by work => 2 * (work.map SerWork.size).sum + work.length
 decreasing_by
   all_goals simp only [List.map_cons, List.map_append, List.sum_cons, List.sum_append,
@@ -1740,14 +1909,20 @@ decreasing_by
        have h2 := sizeOf_objs_exact xs
        simp only [Obj.arr.sizeOf_spec, Array.mk.sizeOf_spec]
        omega)
-    | (have h1 := entries_size_exact es
+    | (have h1 := entries_size_between (fun _ => true) es
+       have h2 := sizeOf_entries_between es
+       simp only [Obj.dict.sizeOf_spec, Array.mk.sizeOf_spec]
+       omega)
+    | (have h1 := entries_size_between c.keeps es
        have h2 := sizeOf_entries_between es
        simp only [Obj.dict.sizeOf_spec, Array.mk.sizeOf_spec]
        omega)
 
-/-- An object's serialization, its references holes into the copied graph's local numbering. -/
-private def serObj (st : SerSt) (out : Array Chunk) (o : Obj) : SerSt × Array Chunk :=
-  serWork st out [.obj "" o ""]
+/-- An object's serialization, its references holes into the copied graph's local numbering, each
+dictionary written as the engine reads its optional content, `num` the object's own number. -/
+private def serObj (doc : Doc) (cfg : Option OcConfig) (st : SerSt) (out : Array Chunk)
+    (num : Option Nat) (o : Obj) : SerSt × Array Chunk :=
+  serWork doc cfg { st with top := num } out [.obj "" o ""]
 
 /-- A copied page's optional content: the groups its source's configuration lists, in its order,
 those it turns off, and its radio-button sets and locked groups, each a copied object's local
@@ -1845,9 +2020,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
   let content ← r.content page
   let cfg := r.ocConfig
   let mut st : SerSt := {}
-  let (resObj, keptRes) := ocNorm r cfg none (page.resources.getD (.dict #[]))
-  let mut kept := keptRes
-  let (st1, resChunks) := serObj st #[] resObj
+  let (st1, resChunks) := serObj r cfg st #[] none (page.resources.getD (.dict #[]))
   st := st1
   let mut objects : Array XObjOut := #[]
   let mut qi := 0
@@ -1859,9 +2032,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     let (v, raw?) ← r.get orig
     match raw? with
     | none =>
-      let (v, k) := ocNorm r cfg (some orig) v
-      kept := kept || k
-      let (st', chunks) := serObj st #[] v
+      let (st', chunks) := serObj r cfg st #[] (some orig) v
       st := st'
       objects := objects.push { chunks }
     | some raw =>
@@ -1869,9 +2040,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
       let es : Array (String × Obj) := match v with
         | .dict es => es.filter (fun kv => kv.1 != "Length")
         | _ => #[]
-      let (d, k) := ocNorm r cfg (some orig) (.dict (es.push ("Length", .int raw.size)))
-      kept := kept || k
-      let (st', chunks) := serObj st #[] d
+      let (st', chunks) := serObj r cfg st #[] (some orig) (.dict (es.push ("Length", .int raw.size)))
       st := st'
       objects := objects.push { chunks, stream := some raw }
   if qi < st.queue.size then
@@ -1879,7 +2048,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
   let oc := cfg.bind fun c =>
     let copied (ns : Array Nat) : Array Nat := ns.filterMap st.assign.get?
     let groups := copied c.groups
-    if groups.isEmpty && !kept then none
+    if groups.isEmpty && !st.kept then none
     else some { groups, off := copied (c.groups.filter c.off.contains)
                 radio := (c.radio.map copied).filter (·.size > 1), locked := copied c.locked }
   return (content, resChunks, objects, oc)
@@ -1932,16 +2101,9 @@ public theorem readForm_box_exact (b : ByteArray) (sel : PageSelection) (f : { f
               exact ⟨d, sp.1, sp.2, rfl, by simp [Doc.page, hs], by simp [hb]⟩
             · simp at h
 
-/-- An object's generation as its header spells it, zero in an object stream. -/
-private def Doc.genOf (d : Doc) (num : Nat) : Nat :=
-  match d.locs.get? num with
-  | some (.direct off) => ((parseUInt d.bytes (skipWs d.bytes off)).bind fun (_, i) =>
-      (parseUInt d.bytes (skipWs d.bytes i)).map (·.1)).getD 0
-  | _ => 0
-
 /-- The file with an incremental update (§7.5.6) declaring its optional content as its copy reads
-it: the configuration's groups and those it turns off, each dictionary `ocNorm` rewrites, no page
-annotation; unchanged where the catalog declares none, encrypted or unreadable. -/
+it: the configuration's groups and those it turns off, each dictionary a copy rewrites (`ocCopy`), no
+page annotation; unchanged where the catalog declares none, encrypted or unreadable. -/
 public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
   let .ok r := Doc.ofBytes b | return b
   let .ok (.dict cat, _) := r.get r.root | return b
@@ -1952,19 +2114,26 @@ public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
   let ocp : Array (String × Obj) := (cfg.map fun c => #[("OCProperties", Obj.dict #[
     ("OCGs", .arr (c.groups.map refOf)),
     ("D", .dict #[("OFF", .arr ((c.groups.filter c.off.contains).map refOf))])])]).getD #[]
-  let mut objs : Array (Nat × Obj × Option ByteArray) :=
-    #[(r.root, .dict (cat.filter (·.1 != "OCProperties") ++ ocp), none)]
-  for n in r.objectNumbers.mergeSort (fun a c => decide (a ≤ c)) do
+  let spelled (num : Option Nat) (o : Obj) : SerSt × ByteArray :=
+    let (st, chunks) := serObj r cfg {} #[] num o
+    (st, chunks.foldl (fun acc c => match c with
+      | .bytes x => acc ++ x
+      | .ref l =>
+        let n := st.queue[l]?.getD 0
+        acc ++ s!"{n} {st.gens.getD n 0} R".toUTF8) ByteArray.empty)
+  let mut objs : Array (Nat × ByteArray × Option ByteArray) :=
+    #[(r.root, (spelled (some r.root) (.dict (cat.filter (·.1 != "OCProperties") ++ ocp))).2, none)]
+  for n in r.locs.keys.mergeSort (fun a c => decide (a ≤ c)) do
     if n == r.root then continue
     let .ok (v, raw?) := r.get n | continue
-    let normal := (ocNorm r cfg (some n) v).1
-    let annotated := normal.get? "Type" == some (.name "Page") && (normal.get? "Annots").isSome
-    if normal == v && !annotated then continue
+    let annotated := v.get? "Type" == some (.name "Page") && (v.get? "Annots").isSome
     let keep (k : String) : Bool := !(k == "Annots" && annotated) && !(k == "Length" && raw?.isSome)
-    let w : Obj := if let .dict es := normal then
+    let v : Obj := if let .dict es := v then
         .dict (es.filter (keep ·.1) ++ (raw?.map fun raw => #[("Length", Obj.int raw.size)]).getD #[])
-      else normal
-    objs := objs.push (n, w, raw?)
+      else v
+    let (st, bytes) := spelled (some n) v
+    if !st.changed && !annotated then continue
+    objs := objs.push (n, bytes, raw?)
   let digits (width v : Nat) : String :=
     let spelled := toString v
     "".pushn '0' (width - spelled.length) ++ spelled
@@ -1972,7 +2141,7 @@ public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
   let mut rows := ""
   for (n, v, raw?) in objs do
     rows := rows ++ s!"{n} 1\n{digits 10 out.size} {digits 5 (r.genOf n)} n \n"
-    out := out ++ s!"{n} {r.genOf n} obj\n".toUTF8 ++ v.render
+    out := out ++ s!"{n} {r.genOf n} obj\n".toUTF8 ++ v
     if let some raw := raw? then
       out := out ++ "\nstream\n".toUTF8 ++ raw ++ "\nendstream".toUTF8
     out := out ++ "\nendobj\n".toUTF8
@@ -1980,7 +2149,7 @@ public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
     (((r.trailer.get? "Size").bind Obj.int?).getD 0).toNat
   let trailer : Obj := .dict (#[("Size", .int size), ("Root", refOf r.root), ("Prev", .int start)] ++
     #["Info", "ID"].filterMap fun k => (r.trailer.get? k).map (k, ·))
-  return out ++ s!"xref\n{rows}trailer\n".toUTF8 ++ trailer.render ++
+  return out ++ s!"xref\n{rows}trailer\n".toUTF8 ++ (spelled none trailer).2 ++
     s!"\nstartxref\n{out.size}\n%%EOF\n".toUTF8
 
 end LeanTex.Core.PdfRead
