@@ -6,6 +6,7 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 import LeanTex.Core.GfxAffine
 import LeanTex.Core.TikzCommands
+import LeanTex.Core.KeyVal
 
 /-! The rendered `tikzpicture` and `tikzcd` subsets, evaluated at elaboration into concrete shapes:
 statements, pgfmath arithmetic, loops, colours, paths and nodes. -/
@@ -613,20 +614,23 @@ private structure PSt where
   scopeOpts : Array Tok := #[]
   declNames : List String := []
 
+/-- A `[` at `i` and its options up to the first `]` after it, which does not nest: the options,
+and the index past that `]` where one follows. -/
+private def bracketAt (ts : Array Tok) (i : Nat) : Option (Array Tok × Option Nat) :=
+  if ts[i]? == some (.sym '[') then
+    match (ts.extract (i + 1) ts.size).findIdx? (· == .sym ']') with
+    | some k => some (ts.extract (i + 1) (i + 1 + k), some (i + 2 + k))
+    | none => some (ts.extract (i + 1) ts.size, none)
+  else none
+
 private def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
   let mut head := 0
   for _ in [0:acc.size + 1] do
     if acc[head]? == some .space then head := head + 1 else break
   let mut pre : Array Tok := #[]
-  if acc[head]? == some (.sym '[') then
-    let mut j := head
-    for _ in [head:acc.size + 1] do
-      if h : j < acc.size then
-        pre := pre.push acc[j]
-        j := j + 1
-        if acc[j - 1]? == some (.sym ']') then break
-      else break
-    head := j
+  if let some (inner, past) := bracketAt acc head then
+    pre := #[.sym '['] ++ inner ++ (if past.isSome then #[.sym ']'] else #[])
+    head := past.getD acc.size
   let mut slices : Array (Array Tok) := #[]
   let mut cur : Array Tok := #[]
   let mut depth := 0
@@ -1012,21 +1016,9 @@ public def Cx.axisAligned (cx : Cx) : Bool := cx.xf.b == 0 && cx.xf.c == 0
 public def Cx.compSp (cx : Cx) (v : Int × Bool) : Sp :=
   if v.2 then v.1 * cx.scale / 1000 else cx.toSp v.1
 
-private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) := Id.run do
-  let mut out : Array (Array Tok) := #[]
-  let mut cur : Array Tok := #[]
-  let mut depth := 0
-  for t in toks do
-    match t with
-    | .sym '(' => depth := depth + 1; cur := cur.push t
-    | .sym ')' => depth := depth - 1; cur := cur.push t
-    | .sym c =>
-      if c == sep && depth == 0 then
-        out := out.push cur
-        cur := #[]
-      else cur := cur.push t
-    | _ => cur := cur.push t
-  return out.push cur
+private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) :=
+  KeyVal.splitTopAt (· matches .sym '(') (· matches .sym ')')
+    (fun | .sym c => c == sep | _ => false) toks.toList
 
 private def expandBody (styles : List (String × Array Tok)) (g : List Tok) :
     Array Tok := Id.run do
@@ -1936,10 +1928,10 @@ rendered picture subset; {cost}")
 private def fillIsRect (toks : Array Tok) : Bool := Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
-  if ts[0]? == some (.sym '[') then
-    match ts.toList.findIdx? (· == .sym ']') with
-    | some j => i := j + 1
-    | none => return true
+  match bracketAt ts 0 with
+  | some (_, some k) => i := k
+  | some (_, none) => return true
+  | none => pure ()
   match readCoordBody ts i with
   | .error _ => return true
   | .ok (_, i1) =>
@@ -1955,21 +1947,13 @@ private def evalFill (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
   let ts := toks.filter (· != .space)
   let mut i := 0
   let mut color := cx.ink
-  if ts[0]? == some (.sym '[') then
-    let mut j := 1
-    let mut inner : Array Tok := #[]
-    for _ in [1:ts.size + 1] do
-      if h : j < ts.size then
-        if ts[j] == .sym ']' then break
-        inner := inner.push ts[j]
-        j := j + 1
-      else break
-    unless ts[j]? == some (.sym ']') do
-      return .error (.E0333, "'\\fill' options miss their ']'; the shape is not drawn")
+  if let some (inner, close) := bracketAt ts 0 then
+    let some k := close
+      | return .error (.E0333, "'\\fill' options miss their ']'; the shape is not drawn")
     match evalColor cx env inner with
     | .ok c => color := c
     | .error e => return .error (.E0333, s!"{e}; the shape is not drawn")
-    i := j + 1
+    i := k
   match readRect cx env ts i "'\\fill'" "the shape is not drawn" with
   | .ok (x0, y0, x1, y1) => return .ok (.rect x0 y0 (x1 - x0) (y1 - y0) color)
   | .error d => return .error d
@@ -3101,13 +3085,11 @@ private def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok)
 
 private def fillBracketIsKeys (cx : Cx) (env : List (String × Val)) (toks : Array Tok) : Bool :=
   let ts := toks.filter (· != .space)
-  if ts[0]? != some (.sym '[') then false else
-  match ts.toList.findIdx? (· == .sym ']') with
-  | none => false
-  | some j =>
-    let inner := ts.extract 1 j
+  match bracketAt ts 0 with
+  | some (inner, some _) =>
     inner.contains (.sym '=') || inner.contains (.sym ',') ||
       ((evalColor cx env inner) matches .error _ && readsPathOpt cx.styles inner)
+  | _ => false
 
 private def readsNodeOpt (opt : Array Tok) : Bool :=
   if (readPlace (0, 0) opt.toList).isSome then true
@@ -4193,16 +4175,8 @@ private def readArc (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i :
   let len (t : Array Tok) : Except PDiag Sp := do
     let v ← (evalComp env t).mapError err
     return cx.compSp v
-  if ts[i]? == some (.sym '[') then
-    let mut j := i + 1
-    let mut inner : Array Tok := #[]
-    for _ in [i+1:ts.size + 1] do
-      if h : j < ts.size then
-        if ts[j] == .sym ']' then break
-        inner := inner.push ts[j]
-        j := j + 1
-      else break
-    unless ts[j]? == some (.sym ']') do throw (err "the options miss their ']'")
+  if let some (inner, close) := bracketAt ts i then
+    let some past := close | throw (err "the options miss their ']'")
     let mut sa : Option Int := none
     let mut ea : Option Int := none
     let mut da : Option Int := none
@@ -4228,7 +4202,7 @@ the path is not drawn")
       | none, some b, some d => pure (b - d, b)
       | _, _, _ => throw (err "two of its start, end and delta angles are needed")
     match rx.orElse (fun _ => ry), ry.orElse (fun _ => rx) with
-    | some a, some b => return (s0, e0, a, b, j + 1)
+    | some a, some b => return (s0, e0, a, b, past)
     | _, _ => throw (err "no radius is given")
   let (inner, next) ← (readCoordBody ts i).mapError err
   match (splitTop inner ':').toList with
@@ -4337,16 +4311,8 @@ private def rectLoop (cx : Cx) (a c : Sp × Sp) : Array Ir.Pic.PathSeg :=
 private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
     Except PDiag (Sp × Sp × Nat) := do
   let err (e : String) : PDiag := (.E0333, s!"in a 'circle' radius, {e}; the path is not drawn")
-  if ts[i]? == some (.sym '[') then
-    let mut j := i + 1
-    let mut inner : Array Tok := #[]
-    for _ in [i+1:ts.size + 1] do
-      if h : j < ts.size then
-        if ts[j] == .sym ']' then break
-        inner := inner.push ts[j]
-        j := j + 1
-      else break
-    unless ts[j]? == some (.sym ']') do throw (err "the options miss their ']'")
+  if let some (inner, close) := bracketAt ts i then
+    let some past := close | throw (err "the options miss their ']'")
     let mut rx : Option Sp := none
     let mut ry : Option Sp := none
     for opt in splitTop inner ',' do
@@ -4361,7 +4327,7 @@ private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i
       else throw (.W0334, s!"'circle' option '{key}' is outside the rendered picture \
 subset; the path is not drawn")
     match rx.orElse (fun _ => ry), ry.orElse (fun _ => rx) with
-    | some a, some b => return (a, b, j + 1)
+    | some a, some b => return (a, b, past)
     | _, _ => throw (err "no radius is given")
   let (inner, next) ← (readCoordBody ts i).mapError err
   match inner.toList.findIdx? (· == .ident "and") with
@@ -4642,19 +4608,11 @@ the rendered picture subset; the keys are dropped")
     let mut mseps : Array (String × List Tok) := #[]
     let mut mtext : Ir.Pic.LabelAlign := .center
     let mut mopts : Array (Array Tok) := cx.everyText
-    if ts[i]? == some (.sym '[') then
-      let mut j := i + 1
-      let mut inner : Array Tok := #[]
-      for _ in [i+1:ts.size + 1] do
-        if h2 : j < ts.size then
-          if ts[j] == .sym ']' then break
-          inner := inner.push ts[j]
-          j := j + 1
-        else break
-      unless ts[j]? == some (.sym ']') do
-        return .error (ev.diag (.E0333, "an edge node's options miss their ']'; the \
+    if let some (inner, close) := bracketAt ts i then
+      let some past := close
+        | return .error (ev.diag (.E0333, "an edge node's options miss their ']'; the \
 edge is not drawn"))
-      i := j + 1
+      i := past
       mopts := mopts ++ expandOpts cx.styles inner
     for opt in mopts do
       match opt.toList with
@@ -4764,19 +4722,11 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut autoLeft := true
   let mut toSpec : ToSpec := {}
   let mut own : Array (Array Tok) := #[]
-  if ts[0]? == some (.sym '[') then
-    let mut j := 1
-    let mut inner : Array Tok := #[]
-    for _ in [1:ts.size + 1] do
-      if h : j < ts.size then
-        if ts[j] == .sym ']' then break
-        inner := inner.push ts[j]
-        j := j + 1
-      else break
-    unless ts[j]? == some (.sym ']') do
-      return ev.diag (.E0333, "'\\draw' options miss their ']'; the edge is not drawn")
+  if let some (inner, close) := bracketAt ts 0 then
+    let some past := close
+      | return ev.diag (.E0333, "'\\draw' options miss their ']'; the edge is not drawn")
     own := expandOpts cx.styles inner
-    i := j + 1
+    i := past
   ev := { ev with readOpts := true }
   let (gOuter, pOuter) := outerRead (readsPathOpt cx.styles) cx.global cx.opts
   for opt in mergeOpts gOuter pOuter cx.everyPath own do
@@ -4944,19 +4894,11 @@ rendered picture subset; the option is dropped")
         -- `edge` is `to` with `every edge`'s `draw` in force.
         if ts[i]? == some (.ident "edge") then strokes := true
         i := i + 1
-        if ts[i]? == some (.sym '[') then
-          let mut j := i + 1
-          let mut inner : Array Tok := #[]
-          for _ in [i+1:ts.size + 1] do
-            if h2 : j < ts.size then
-              if ts[j] == .sym ']' then break
-              inner := inner.push ts[j]
-              j := j + 1
-            else break
-          unless ts[j]? == some (.sym ']') do
-            return ev.diag (.E0333, "'to' options miss their ']'; the edge is \
+        if let some (inner, close) := bracketAt ts i then
+          let some past := close
+            | return ev.diag (.E0333, "'to' options miss their ']'; the edge is \
 not drawn")
-          i := j + 1
+          i := past
           let mut spec := toSpec
           for opt in expandOpts cx.styles inner do
             match spec.read env opt with
@@ -5978,9 +5920,9 @@ private def readExtra (env : List (String × Val)) (spec : List Tok) :
     | _ => spec
   let ts := ts.dropWhile (· == .space)
   let (opts, rest) : List Tok × List Tok :=
-    if ts.head? == some (.sym '[') then
-      ((ts.drop 1).takeWhile (· != .sym ']'), ((ts.drop 1).dropWhile (· != .sym ']')).drop 1)
-    else ([], ts)
+    match bracketAt ts.toArray 0 with
+    | some (inner, past) => (inner.toList, ts.drop (past.getD ts.length))
+    | none => ([], ts)
   let (pos, text) : List Tok × List Tok :=
     match rest.findIdx? (· == .sym ':') with
     | some k => (rest.take k, rest.drop (k + 1))
@@ -6551,62 +6493,54 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   let mut i := 0
   for _ in [0:toks.size] do
     if toks[i]? == some .space then i := i + 1 else break
-  if toks[i]? == some (.sym '[') then
-    let mut j := i + 1
-    let mut inner : Array Tok := #[]
-    for _ in [i+1:toks.size + 1] do
-      if h : j < toks.size then
-        if toks[j] == .sym ']' then break
-        inner := inner.push toks[j]
-        j := j + 1
-      else break
-    if toks[j]? == some (.sym ']') then
-      i := j + 1
-      for opt in splitTop inner ',' do
-        let entry := opt.toList.filter (· != .space)
-        match readOneDef styles entry with
-        | some s => styles := s
+  match bracketAt toks i with
+  | some (inner, some past) =>
+    i := past
+    for opt in splitTop inner ',' do
+      let entry := opt.toList.filter (· != .space)
+      match readOneDef styles entry with
+      | some s => styles := s
+      | none =>
+      match entry with
+      | .ident "scale" :: .sym '=' :: rest =>
+        match evalNum [] rest.toArray with
+        | .ok m =>
+          if m ≤ 0 then
+            diags := diags.push (.E0333, "'scale' must be positive; it is ignored")
+          else scale := m
+        | .error e => diags := diags.push (.E0333, s!"in 'scale=', {e}; it is ignored")
+      -- `transform shape`: nodes take the picture's scale (pgf manual §25.4).
+      | [.ident "transform", .ident "shape"] => transformShape := true
+      | [.ident "baseline"] => baselineSpec := some []
+      | .ident "baseline" :: .sym '=' :: rest => baselineSpec := some rest
+      | .ident "node" :: .ident "distance" :: rest =>
+        match readNodeDistance (.ident "node" :: .ident "distance" :: rest) with
+        | some d => dist := d
         | none =>
-        match entry with
-        | .ident "scale" :: .sym '=' :: rest =>
-          match evalNum [] rest.toArray with
-          | .ok m =>
-            if m ≤ 0 then
-              diags := diags.push (.E0333, "'scale' must be positive; it is ignored")
-            else scale := m
-          | .error e => diags := diags.push (.E0333, s!"in 'scale=', {e}; it is ignored")
-        -- `transform shape`: nodes take the picture's scale (pgf manual §25.4).
-        | [.ident "transform", .ident "shape"] => transformShape := true
-        | [.ident "baseline"] => baselineSpec := some []
-        | .ident "baseline" :: .sym '=' :: rest => baselineSpec := some rest
-        | .ident "node" :: .ident "distance" :: rest =>
-          match readNodeDistance (.ident "node" :: .ident "distance" :: rest) with
-          | some d => dist := d
-          | none =>
-            diags := diags.push (.E0333, "in 'node distance', a length like \
+          diags := diags.push (.E0333, "in 'node distance', a length like \
 '1cm' (or '1cm and 2cm') is needed; it is ignored")
-        -- A bare name that resolves is a style applied in the picture's own scope.
-        | [.ident n] =>
-          match styles.lookup n with
-          | some bundle => inherited := inherited ++ splitTop bundle ','
-          | none =>
-            if readsOpt styles #[.ident n] then inherited := inherited.push #[.ident n]
-            else match evalColor probe [] #[.ident n] with
-              | .ok c => ink0 := some c
-              | .error _ => diags := diags.push (outsideOpt [.ident n])
-        | [] => pure ()
-        | .ident "color" :: .sym '=' :: rest =>
-          match evalColor probe [] rest.toArray with
-          | .ok c => ink0 := some c
-          | .error e => diags := diags.push (.E0333, s!"in the picture's 'color=', {e}; it is ignored")
-        | o :: rest =>
-          if readsOpt styles (o :: rest).toArray then
-            inherited := inherited.push (o :: rest).toArray
-          else match evalColor probe [] (o :: rest).toArray with
+      -- A bare name that resolves is a style applied in the picture's own scope.
+      | [.ident n] =>
+        match styles.lookup n with
+        | some bundle => inherited := inherited ++ splitTop bundle ','
+        | none =>
+          if readsOpt styles #[.ident n] then inherited := inherited.push #[.ident n]
+          else match evalColor probe [] #[.ident n] with
             | .ok c => ink0 := some c
-            | .error _ => diags := diags.push (outsideOpt (o :: rest))
-    else
-      diags := diags.push (.E0333, "the picture's options miss their ']'")
+            | .error _ => diags := diags.push (outsideOpt [.ident n])
+      | [] => pure ()
+      | .ident "color" :: .sym '=' :: rest =>
+        match evalColor probe [] rest.toArray with
+        | .ok c => ink0 := some c
+        | .error e => diags := diags.push (.E0333, s!"in the picture's 'color=', {e}; it is ignored")
+      | o :: rest =>
+        if readsOpt styles (o :: rest).toArray then
+          inherited := inherited.push (o :: rest).toArray
+        else match evalColor probe [] (o :: rest).toArray with
+          | .ok c => ink0 := some c
+          | .error _ => diags := diags.push (outsideOpt (o :: rest))
+  | some (_, none) => diags := diags.push (.E0333, "the picture's options miss their ']'")
+  | none => pure ()
   -- `\selectfont` selects what the declarations before it chose.
   let declNames := "selectfont" :: ladder.map (·.1) ++ declStyles.map (·.1)
   let st := (parseList (toks.toList.drop i) { declNames }).drain
@@ -6643,7 +6577,7 @@ edge stands on the line")
   for opt in inherited do
     match opt.toList with
     | [] => pure ()
-    | o :: _ =>
+    | _ :: _ =>
       if !readsOpt styles opt then unread := unread.push (outsideOpt opt.toList)
       else unless ev.readOpts do
         unread := unread.push (.W0334, s!"picture option {optName opt.toList} reached no path \
@@ -6701,26 +6635,8 @@ structure Arrow where
   labels : Array Label := #[]
   deriving Inhabited
 
-private def trimRaws (rs : Array Parse.Raw) : Array Parse.Raw :=
-  let a := rs.toList.dropWhile (· matches .space)
-  (a.reverse.dropWhile (· matches .space)).reverse.toArray
-
-private def splitEntries (raws : Array Parse.Raw) : Array (Array Parse.Raw) := Id.run do
-  let mut out : Array (Array Parse.Raw) := #[]
-  let mut cur : Array Parse.Raw := #[]
-  for r in raws do
-    match r with
-    | .word s p =>
-      let mut first := true
-      for piece in s.splitOn "," do
-        unless first do
-          out := out.push (trimRaws cur)
-          cur := #[]
-        first := false
-        unless piece.isEmpty do cur := cur.push (.word piece p)
-    | r => cur := cur.push r
-  out := out.push (trimRaws cur)
-  return out.filter (!·.isEmpty)
+private def splitEntries (raws : Array Parse.Raw) : Array (Array Parse.Raw) :=
+  ((Parse.rawEntries raws).map Parse.trimSpace).filter (!·.isEmpty)
 
 private def readBracket (raws : Array Parse.Raw) (i : Nat) : Option (Array Parse.Raw × Nat) := Id.run do
   unless raws[i]? matches some (.sym '[' _) do return none
@@ -6860,7 +6776,7 @@ private def splitCell (raws : Array Parse.Raw) : Array Parse.Raw × Array Arrow 
     | some r =>
       content := content.push r
       i := i + 1
-  return (trimRaws content, arrows)
+  return (Parse.trimSpace content, arrows)
 
 private def splitRows (raws : Array Parse.Raw) (amp : Bool) : Array (Array (Array Parse.Raw)) := Id.run do
   let mut rows : Array (Array (Array Parse.Raw)) := #[]
@@ -6880,7 +6796,7 @@ private def splitRows (raws : Array Parse.Raw) (amp : Bool) : Array (Array (Arra
       cell := #[]
     else cell := cell.push r
   let last := row.push cell
-  unless last.all (fun c => (trimRaws c).isEmpty) do rows := rows.push last
+  unless last.all (fun c => (Parse.trimSpace c).isEmpty) do rows := rows.push last
   return rows
 
 /-- Every row as wide as the widest, short rows padded with empty cells: the

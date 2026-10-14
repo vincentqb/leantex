@@ -4,6 +4,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Oklab
 import LeanTex.Core.Hex
+import LeanTex.Core.KeyVal
 
 namespace LeanTex.Core.Decl
 
@@ -195,34 +196,26 @@ public def colorModelNames : List String := ["HTML", "RGB", "rgb", "gray", "cmyk
 public def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
 
+/-- A declaration's text as its atoms: a quoted string whole, every other character alone. -/
+private def quoteAtoms : List Char → Array (List Char) → Array (List Char)
+  | [], acc => acc
+  | '"' :: rest, acc =>
+    let body := rest.takeWhile (· != '"')
+    let closed := body.length < rest.length
+    quoteAtoms (rest.drop (body.length + 1))
+      (acc.push ('"' :: body ++ if closed then ['"'] else []))
+  | c :: rest, acc => quoteAtoms rest (acc.push [c])
+termination_by l => l.length
+decreasing_by all_goals simp only [List.length_cons, List.length_drop]; omega
+
 /-- Splits on commas outside braces, brackets, parentheses and quotes. -/
-public def splitEntries (s : String) : List String := Id.run do
-  let mut out : List String := []
-  let mut cur := ""
-  let mut depth := 0
-  let mut inStr := false
-  for c in s.toList do
-    if inStr then
-      cur := cur.push c
-      if c == '"' then inStr := false
-    else if c == '"' then
-      cur := cur.push c
-      inStr := true
-    else if c == '{' || c == '[' || c == '(' then
-      depth := depth + 1
-      cur := cur.push c
-    else if c == '}' || c == ']' || c == ')' then
-      depth := depth - 1
-      cur := cur.push c
-    else if c == ',' && depth == 0 then
-      out := out ++ [cur]
-      cur := ""
-    else
-      cur := cur.push c
-  out := out ++ [cur]
-  return out.filterMap fun e =>
-    let t := e.trimAscii.toString
-    if t.isEmpty then none else some t
+public def splitEntries (s : String) : List String :=
+  let opens (a : List Char) : Bool := a == ['{'] || a == ['['] || a == ['(']
+  let closes (a : List Char) : Bool := a == ['}'] || a == [']'] || a == [')']
+  ((KeyVal.splitTopAt opens closes (· == [',']) (quoteAtoms s.toList #[]).toList).toList.filterMap
+    fun e =>
+      let t := (String.ofList (e.toList.flatMap id)).trimAscii.toString
+      if t.isEmpty then none else some t)
 
 /-- Decimal literal as mantissa and scale: "0.5" ↦ (5, 10). -/
 public def parseDecimal (s : String) : Option (Int × Nat) := Id.run do

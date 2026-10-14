@@ -3792,23 +3792,6 @@ seal imageArm
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 
-/-- A picture's option run split at its top-level commas, each entry keeping
-its spaces so the run rebuilds as written. -/
-private def pictureOptEntries (opts : Array Raw) : Array (Array Raw) := Id.run do
-  let mut out : Array (Array Raw) := #[]
-  let mut cur : Array Raw := #[]
-  for r in opts do
-    match r with
-    | .word s p =>
-      let pieces := s.splitOn ","
-      for piece in pieces, i in [0:pieces.length] do
-        if i > 0 then
-          out := out.push cur
-          cur := #[]
-        if !piece.isEmpty then cur := cur.push (.word piece p)
-    | r => cur := cur.push r
-  return out.push cur
-
 /-- Takes latex-lab-tikz's `alt` and `artifact` keys out of a picture's
 option run, leaving the body as written without them. -/
 private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Raw := Id.run do
@@ -3821,7 +3804,7 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
   let mut lead : Option (Array Raw) := none
   let leadOf (e : Array Raw) : Array Raw := (e.toList.takeWhile (· matches .space)).toArray
   let bodyOf (e : Array Raw) : Array Raw := (e.toList.dropWhile (· matches .space)).toArray
-  for e in pictureOptEntries opts do
+  for e in Parse.rawEntries opts do
     let text := (rawSrc e).trimAscii.toString
     let key := ((text.splitOn "=").headD "").trimAscii.toString
     if key == "artifact" then
@@ -4268,7 +4251,7 @@ it is set as inline code" pos
     | none => pure none
   inlineCodeOf ctx lang lines o
 
-seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
+seal splitPictureAlt subsetPicture routePicture inlinePicture
 seal inlineVerbatim
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 seal theCounterLevel? sectionLevel
@@ -5440,7 +5423,7 @@ unseal imageArm
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
-unseal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
+unseal splitPictureAlt subsetPicture routePicture inlinePicture
 unseal inlineVerbatim
 unseal theCounterLevel? sectionLevel
 unseal inlineGroup
@@ -14981,27 +14964,22 @@ private def xparseDefiner? (raws : Array Raw) (i : Nat) :
       s!"\\DeclareDocumentCommand\{\\{name}}\{{rawSrc sig}}\{{rawSrc body}}"), k + 1)
   | _, _ => none
 
+/-- The control at `i` and the first group within `reach` raws after it: the control's name, the
+raws between, the group's body and the index past it. -/
+private def definerHead? (raws : Array Raw) (i reach : Nat) :
+    Option (String × Array Raw × Array Raw × Nat) := do
+  let some (.ctrl name _) := raws[i]? | none
+  let k ← (List.range' (i + 1) (min raws.size (i + reach) - (i + 1))).find? fun k =>
+    raws[k]? matches some (.group _ _)
+  let some (.group body _) := raws[k]? | none
+  return (name, raws.extract (i + 1) k, body, k + 1)
+
 /-- One TeX definer, its parameter text kept verbatim; the body group must
 follow within 16 elements. -/
 private def texDefiner? (head : String) (raws : Array Raw) (i : Nat) :
-    Option ((String × String) × Nat) := Id.run do
-  match raws[i]? with
-  | some (.ctrl name _) =>
-    let lim := min raws.size (i + 17)
-    let mut k := i + 1
-    let mut found := false
-    for _ in [i + 1:lim] do
-      if raws[k]? matches some (.group _ _) then
-        found := true
-        break
-      k := k + 1
-    if !found then return none
-    match raws[k]? with
-    | some (.group body _) =>
-      let params := rawSrc (raws.extract (i + 1) k)
-      return some ((name, s!"\\{head}\\{name}{params}\{{rawSrc body}}"), k + 1)
-    | _ => return none
-  | _ => return none
+    Option ((String × String) × Nat) := do
+  let (name, params, body, next) ← definerHead? raws i 17
+  return ((name, s!"\\{head}\\{name}{rawSrc params}\{{rawSrc body}}"), next)
 
 /-- `\DeclareMathOperator` and its starred form, re-emitted through
 `\operatorname` and guarded as a LaTeX definer is. -/
@@ -15033,31 +15011,16 @@ private def lengthDefiner? (raws : Array Raw) (i : Nat) :
 /-- The native `\define \name(sig) {body}`, re-emitted as a LaTeX definer
 whose arity is the signature's parameter count. -/
 private def nativeDefiner? (raws : Array Raw) (i : Nat) :
-    Option ((String × String) × Nat) := Id.run do
-  match raws[i]? with
-  | some (.ctrl name _) =>
-    let lim := min raws.size (i + 33)
-    let mut k := i + 1
-    let mut found := false
-    for _ in [i + 1:lim] do
-      if raws[k]? matches some (.group _ _) then
-        found := true
-        break
-      k := k + 1
-    if !found then return none
-    match raws[k]? with
-    | some (.group body _) =>
-      let sig := rawSrc (raws.extract (i + 1) k)
-      let entries := (sig.splitOn ",").filter fun e => e.toList.any Char.isAlpha
-      let spec :=
-        if entries.isEmpty then ""
-        else if ((entries.headD "").splitOn "?").length > 1 then s!"[{entries.length}][]"
-        else s!"[{entries.length}]"
-      let line := s!"\\providecommand\{\\{name}}\{}\
+    Option ((String × String) × Nat) := do
+  let (name, sig, body, next) ← definerHead? raws i 33
+  let entries := ((rawSrc sig).splitOn ",").filter fun e => e.toList.any Char.isAlpha
+  let spec :=
+    if entries.isEmpty then ""
+    else if ((entries.headD "").splitOn "?").length > 1 then s!"[{entries.length}][]"
+    else s!"[{entries.length}]"
+  let line := s!"\\providecommand\{\\{name}}\{}\
 \\renewcommand\{\\{name}}{spec}\{{rawSrc body}}"
-      return some ((name, line), k + 1)
-    | _ => return none
-  | _ => return none
+  return ((name, line), next)
 
 mutual
 

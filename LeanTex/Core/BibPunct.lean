@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Ir
+import LeanTex.Core.KeyVal
 
 /-! natbib's citation punctuation, read where a document declares it. -/
 
@@ -122,19 +123,7 @@ private def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × 
 
 /-- The items of a `\setcitestyle` list, split at commas
 outside braces, kept as written. -/
-public def citeItems (src : String) : Array String := Id.run do
-  let mut out : Array String := #[]
-  let mut cur := ""
-  let mut depth : Int := 0
-  for c in src.toList do
-    if c == ',' && depth == 0 then
-      out := out.push cur
-      cur := ""
-    else
-      if c == '{' then depth := depth + 1
-      else if c == '}' then depth := depth - 1
-      cur := cur.push c
-  return (out.push cur).filter (!·.isEmpty)
+public def citeItems (src : String) : Array String := (KeyVal.split src).filter (!·.isEmpty)
 
 /-- natbib's package options in its own declaration order, each as the
 declarations it executes. -/

@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 import LeanTex.Core.Picture
+import LeanTex.Core.KeyVal
 
 /-! The reader of beamer's `title page` template in its full-bleed shape, an overlay `tikzpicture`
 of a page fill and pinned nodes, read as source into the engine's own title-page declarations. -/
@@ -111,22 +112,10 @@ private def srcList (ts : List Tok) : String := srcListInto "" ts
 private def srcOne (t : Tok) : String := srcOneInto "" t
 
 /-- Split at a top-level symbol, brackets and parentheses nesting. -/
-private def splitTop (c : Char) (ts : List Tok) : List (List Tok) := Id.run do
-  let mut out : Array (List Tok) := #[]
-  let mut cur : Array Tok := #[]
-  let mut depth : Nat := 0
-  for t in ts do
-    match t with
-    | .sym d =>
-      if d == c && depth == 0 then
-        out := out.push cur.toList
-        cur := #[]
-      else
-        if d == '[' || d == '(' then depth := depth + 1
-        if (d == ']' || d == ')') && depth > 0 then depth := depth - 1
-        cur := cur.push t
-    | _ => cur := cur.push t
-  return (out.push cur.toList).toList
+private def splitTop (c : Char) (ts : List Tok) : List (List Tok) :=
+  ((KeyVal.splitTopAt (fun | .sym '[' | .sym '(' => true | _ => false)
+    (fun | .sym ']' | .sym ')' => true | _ => false) (fun | .sym d => d == c | _ => false)
+    ts).map (·.toList)).toList
 
 /-- A bracketed run at the head: its inside and what follows it. -/
 private def takeBracket (lo hi : Char) (ts : List Tok) : Option (List Tok × List Tok) :=

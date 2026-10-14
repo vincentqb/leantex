@@ -5,6 +5,7 @@ public import LeanTex.Core.LocaleData
 public import LeanTex.Core.BibAccent
 public import Std.Data.HashMap
 import LeanTex.Core.Nfc
+import LeanTex.Core.KeyVal
 
 /-! BibTeX bibliography files parsed in the pure core, with
 their value text and name parts. -/
@@ -554,61 +555,23 @@ public structure Name where
   useprefix : Option Bool := none
   deriving Repr, BEq, Inhabited
 
-/-- A value split on a depth-0 separator word, brace groups opaque. -/
-private def splitTop (v : String) (isSep : Array Char → Nat → Option Nat) :
-    Array String := Id.run do
-  let cs := v.toList.toArray
-  let mut out : Array String := #[]
-  let mut cur := ""
-  let mut depth := 0
-  let mut i := 0
-  for _ in [0:cs.size + 1] do
-    if h : i < cs.size then
-      let c := cs[i]
-      if c == '{' then
-        depth := depth + 1
-        cur := cur.push c
-        i := i + 1
-      else if c == '}' then
-        depth := depth - 1
-        cur := cur.push c
-        i := i + 1
-      else if depth == 0 then
-        match isSep cs i with
-        | some j =>
-          out := out.push cur
-          cur := ""
-          i := j
-        | none =>
-          cur := cur.push c
-          i := i + 1
-      else
-        cur := cur.push c
-        i := i + 1
-    else break
-  return out.push cur
-
-private def andAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
-  if h : i < cs.size then
-    unless isWs cs[i] do return none
-  else return none
-  let j := skipWs cs i
-  let la (k : Nat) (want : Char) : Bool :=
-    if h : k < cs.size then cs[k].toLower == want else false
-  if la j 'a' && la (j + 1) 'n' && la (j + 2) 'd' then
-    if h : j + 3 < cs.size then
-      if isWs cs[j + 3] then return some (skipWs cs (j + 3))
-  return none
-
-private def commaAt (cs : Array Char) (i : Nat) : Option Nat :=
-  if h : i < cs.size then
-    if cs[i] == ',' then some (i + 1) else none
-  else none
+/-- The length of the name separator a suffix starts with: white space, `and` in any case, white
+space; 0 where it starts with none. -/
+private def andLen (l : List Char) : Nat :=
+  let lead := (l.takeWhile isWs).length
+  match l.drop lead with
+  | a :: n :: d :: rest =>
+    let trail := (rest.takeWhile isWs).length
+    if lead > 0 && trail > 0 && a.toLower == 'a' && n.toLower == 'n' && d.toLower == 'd' then
+      lead + 3 + trail
+    else 0
+  | _ => 0
 
 /-- The names of an `author` field, in order: split on `and`
 at brace depth 0. -/
 public def splitNames (v : String) : Array String :=
-  (splitTop v andAt).map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  ((KeyVal.splitTopWith (· == '{') (· == '}') andLen v.toList).map
+    (String.ofList ·.toList |>.trimAscii.toString)).filter (!·.isEmpty)
 
 /-- The name parts biber's extended name format spells out. -/
 private def xnameParts : List String := ["family", "given", "prefix", "suffix"]
@@ -618,7 +581,7 @@ items split at commas outside braces. -/
 public def parseNameX? (s : String) : Option Name := Id.run do
   let mut n : Name := {}
   let mut extended := false
-  for item in splitTop s commaAt do
+  for item in KeyVal.split s do
     match item.splitOn "=" with
     | k :: v :: rest =>
       let key := k.trimAscii.toString.toLower

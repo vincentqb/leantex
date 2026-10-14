@@ -28,37 +28,10 @@ public structure Lowered where
   unsupported : Array String
   deriving Repr
 
-private def trim (rs : Array Raw) : Array Raw :=
-  (rs.toList.dropWhile (· matches .space)).reverse.dropWhile
-    (· matches .space) |>.reverse.toArray
-
 private def value (rs : Array Raw) : Array Raw :=
-  match (trim rs).toList with
+  match (trimSpace rs).toList with
   | [.group body _] => body
-  | _ => trim rs
-
-/-- pgfkeys' entries, split at unbraced commas. -/
-private def entries (rs : Array Raw) : Array (Array Raw) := Id.run do
-  let mut out := #[]
-  let mut current := #[]
-  for r in rs do
-    match r with
-    | .word s p =>
-      let mut p := p
-      let mut first := true
-      for part in s.splitOn "," do
-        unless first do
-          out := out.push current
-          current := #[]
-          p := p.next false
-        unless part.isEmpty do current := current.push (.word part p)
-        p := { p with col := p.col + part.length }
-        first := false
-    | .sym ',' _ =>
-      out := out.push current
-      current := #[]
-    | _ => current := current.push r
-  return out.push current
+  | _ => trimSpace rs
 
 /-- A key and its value, split at the first unbraced equals sign. -/
 private def entry (rs : Array Raw) : String × Array Raw := Id.run do
@@ -107,7 +80,7 @@ private def gap? (rs : Array Raw) : Option String :=
 `colupper`/`coltext`, `coltitle`, `before`/`after skip`, last write winning. -/
 private def settings (options : Array Raw) : Settings := Id.run do
   let mut s : Settings := {}
-  for raw in entries options do
+  for raw in rawEntries options do
     if (rawSrc raw).isEmpty then continue
     let (key, v) := entry raw
     match key with

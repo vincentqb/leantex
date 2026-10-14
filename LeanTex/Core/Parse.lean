@@ -532,6 +532,34 @@ termination_by raws.size - i
 public theorem skipSpaces_ge (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raws i := by
   fun_induction skipSpaces raws i <;> omega
 
+/-- A raw run without its leading and trailing spaces. -/
+public def trimSpace (rs : Array Raw) : Array Raw :=
+  ((rs.toList.dropWhile (· matches .space)).reverse.dropWhile (· matches .space)).reverse.toArray
+
+/-- A raw run cut at its commas outside groups, inside words and standing alone; each word piece
+stands at its own column, and empty pieces are dropped. -/
+public def rawEntries (rs : Array Raw) : Array (Array Raw) := Id.run do
+  let mut out := #[]
+  let mut current := #[]
+  for r in rs do
+    match r with
+    | .word s p =>
+      let mut p := p
+      let mut first := true
+      for part in s.splitOn "," do
+        unless first do
+          out := out.push current
+          current := #[]
+          p := p.next false
+        unless part.isEmpty do current := current.push (.word part p)
+        p := { p with col := p.col + part.length }
+        first := false
+    | .sym ',' _ =>
+      out := out.push current
+      current := #[]
+    | _ => current := current.push r
+  return out.push current
+
 mutual
 
 @[expose] public def rawSrc (raws : Array Raw) : String :=
