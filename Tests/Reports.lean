@@ -5,7 +5,6 @@ import Tests.DeclaredColors
 import Tests.ColorNames
 import LeanTex.Core.ControlContract
 import Tests.Surface
-import Tests.Backends
 import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
@@ -1578,7 +1577,7 @@ def reports : List Report := [
     pins := [check% anchorIdChecks, check% fontDiagChecks, check% keyedLookupChecks,
       check% contrastChecks, check% underlineChecks]
     accept := ["with the checks' process held stopped six seconds of every 6.1, the checks as 8127ac12 wrote them fail: in three rounds the anchor claim three times at about 12,250 ms against 1,500, the contrast judge twice and the float merge and the failing pairing once each at about 6,050 ms against 1,500, 800 and 400; with the stall's phase drawn at random, the families check nine times in 240 runs at about 6,030 ms against 200, and the glyph ink check once in 300 runs stopped 0.6 s of every 0.61, at 606 ms against 500; the hang guards replacing them pass in every run",
-      "the claims stand as bench rows judged by their growth over four times the input: anchors 12.9 against a bound of 32, since each claim probes the ids before it, families 4.3, the float merge 4.0, the contrast judge 4.0 over legible runs and over one failing pairing, and a glyph ink decode costs 1,108 memoized reads"]
+      "the claims stand as bench rows, compiled, judged by their growth over four times the input: anchors 13.0 to 13.4 against a bound of 32, since each claim probes the ids before it, families 4.4, the float merge 5.2 to 6.0 over 400,000 keys, the contrast judge 4.1 to 4.2 over legible runs and 4.0 to 4.1 over one failing pairing's uses, and a glyph ink decode costs about 1,390 memoized reads"]
     state := .guarded "8127ac12" .before .author }
 ]
 

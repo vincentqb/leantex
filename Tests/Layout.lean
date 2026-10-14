@@ -1314,7 +1314,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     inkReads := inkReads + (font.inkAt (gidOf 'q')).size
   let inkMs := (← IO.monoMsNow) - t0
   t "100000 repeated glyph ink reads each read the glyph's one interval" (inkReads == 100000)
-  t s!"hang guard: 100000 repeated glyph ink reads within {hangGuardMs 5} ms"
+  t s!"hang guard: 100000 repeated glyph ink reads within {hangGuardMs 5} ms ({inkMs} ms)"
     (inkMs < hangGuardMs 5)
   let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
     layoutOf fs (Elab.run "t" src).1 geom

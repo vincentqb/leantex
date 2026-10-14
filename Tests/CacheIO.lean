@@ -71,7 +71,7 @@ def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
         "import Tests.CacheIO\n\
          def main (args : List String) : IO UInt32 := Tests.runCacheCwdChild args\n"
       let result ← RunBounded.runBounded lean.toString
-        #["--run", driver.toString, cwd.toString, stage] cwd 10000 100
+        #["--run", driver.toString, cwd.toString, stage] cwd (hangGuardMs 1200) 100
         (env := #[("PATH", some bin.toString), ("LEAN_PATH", some leanPath),
           ("XDG_CACHE_HOME", some (dir / "cache").toString)])
       check ref s!"cache identity/{stage}: isolated IO contracts\n{result.out}{result.err}"

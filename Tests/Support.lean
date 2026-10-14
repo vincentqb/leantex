@@ -527,7 +527,7 @@ spawning it and making and removing its scratch directory, before a check
 reads the run as one its budget did not end. -/
 def hostMarginMs : Nat := 60000
 
-/-- A wall-clock bound only a hang passes: twenty times a run's typical time, and `hostMarginMs`
+/-- A wall-clock bound only a hang exceeds: twenty times a run's typical time, and `hostMarginMs`
 beside it. -/
 def hangGuardMs (typicalMs : Nat) : Nat := 20 * typicalMs + hostMarginMs
 
@@ -598,7 +598,8 @@ root. -/
 def paletteScript (args : Array String) : IO RunBounded.Ended := do
   let (lean, leanPath) ← leanChild "the palette script's checks"
   let dir ← IO.FS.realPath (← IO.currentDir)
-  RunBounded.runBounded lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir 120000 100
+  RunBounded.runBounded lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir
+    (hangGuardMs 3000) 100
     (env := #[("LEAN_PATH", some leanPath)])
 
 /-- The most chroma the gamut holds at a colour's own lightness and hue, at

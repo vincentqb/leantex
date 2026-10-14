@@ -57,7 +57,8 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Consumed before the clock is read again: a pure `let` floats to its first use.
   t "families dedupes" (fams'.size == 1000)
   let ms := (← IO.monoMsNow) - t0
-  t s!"hang guard: families of {many.size} faces within {hangGuardMs 5} ms" (ms < hangGuardMs 5)
+  t s!"hang guard: families of {many.size} faces within {hangGuardMs 5} ms ({ms} ms)"
+    (ms < hangGuardMs 5)
   let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
     subfamily := "Light", weight := 300 }
   let lightIt : FontDb.Face := { light with

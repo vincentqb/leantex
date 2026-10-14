@@ -1228,6 +1228,29 @@ vendor .sty's own macro names stay full warnings under --werror" },
     pin := none
     why := "the same proxy, at the preamble's unknown-command and refused-set sites" }]
 
+/-- Does the code hold an elapsed `ms`, `elapsed`, `spent` or `…Ms` to a numeral, or a same-line
+`runBounded` budget to one, with neither `hangGuardMs` nor `hostMarginMs` named? -/
+def clockBound (l : String) : Bool := Id.run do
+  let t := stripLineComment (stripStrings l)
+  if containsSub t "hangGuardMs" || containsSub t "hostMarginMs" then return false
+  let cs := t.toList.toArray
+  let elapsedName (w : String) : Bool :=
+    w == "ms" || w == "elapsed" || w == "spent" ||
+      (w.endsWith "Ms" && w.length > 2 && ((w.toList.head?.map Char.isLower).getD false))
+  for i in [0:cs.size] do
+    let c := cs[i]!
+    if c == '<' || c == '>' || c == '≤' || c == '≥' then
+      let after := (String.ofList ((cs.toList.drop (i + 1)).dropWhile (· == '='))).trimAsciiStart
+      let before := (String.ofList (cs.toList.take i)).trimAsciiEnd.toString
+      let word := String.ofList (before.toList.reverse.takeWhile isWordChar).reverse
+      if elapsedName word && ((after.toString.toList.head?.map Char.isDigit).getD false) then
+        return true
+  if containsSub t "runBounded" then
+    let ws := (t.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
+    for (a, b) in ws.zip (ws.drop 1) do
+      if a.length ≥ 3 && a.all Char.isDigit && !b.isEmpty && b.all Char.isDigit then return true
+  return false
+
 /-- One staged-diff check: the files it reads, the line predicate, the headline and the fix
 paragraph. -/
 structure Gate where
@@ -1237,6 +1260,15 @@ structure Gate where
   help : String
 
 def gates : List Gate := [
+  { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
+    flag := clockBound
+    what := fun f => s!"a check decided by a fixed wall-clock bound in {f}"
+    help := "  A test's clock measures the host as much as the code, so a bound deciding a
+  check is a hang guard: `hangGuardMs` of the run's typical time, or a budget and
+  `hostMarginMs`, labelled as one. A claim about growth or speed is a bench row,
+  never a lake-test check (AGENTS.md § Build and verify).
+  Fix: assert the count the claim rests on where the code exposes it, else time it
+  in scripts/bench.lean and keep a labelled `hangGuardMs` guard." },
   { applies := (·.startsWith "LeanTex/")
     flag := classNameCompare
     what := fun f => s!"a class judged by its name string (`docClass.name ==`) in {f}"
@@ -2692,6 +2724,21 @@ def selftest : IO UInt32 := do
     ("    Host.withScratch fun work => do", false),
     ("  -- IO.FS.withTempDir crashes here", false),
     ("  let note := \"withTempDir\"", false)]
+
+  expect "clockBound" clockBound [
+    ("    (sharedMs < 1500)", true),
+    ("  t s!\"families is linear ({ms} ms for {many.size} faces)\" (ms < 200)", true),
+    ("    (inkReads == 100000 && inkMs < 500)", true),
+    ("      check ref \"bounded\" (elapsed <= 2000)", true),
+    ("  t \"answered in time\" (spent ≤ 4000)", true),
+    ("    let r ← RunBounded.runBounded lean.toString #[\"--run\"] dir 30000 100", true),
+    ("    (sharedMs < hangGuardMs 250)", false),
+    ("  t \"within the budget\" (ms ≤ budget + grace + hostMarginMs)", false),
+    ("    let r ← RunBounded.runBounded lean.toString #[\"--run\"] dir (hangGuardMs 900) 100", false),
+    ("  while !finished && (← IO.monoMsNow) < deadline do", false),
+    ("  t \"few items\" (items < 3)", false),
+    ("  -- the old check read (ms < 200)", false),
+    ("  t \"(ms < 200) names the old bound\" true", false)]
 
   expect "ioInCore" ioInCore [
     ("def scan (roots : List String) : IO (Array Face) := do", true),

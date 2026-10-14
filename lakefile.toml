@@ -89,3 +89,7 @@ root = "scripts.visualdiff"
 [[lean_exe]]
 name = "land"
 root = "scripts.land"
+
+[[lean_exe]]
+name = "passBench"
+root = "scripts.passbench"

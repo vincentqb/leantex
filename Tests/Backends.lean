@@ -3845,5 +3845,5 @@ def anchorIdChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"all {n} same-titled sections ship an anchor"
     (hasStr big s!"id=\"topic-{n}\"" && hasStr big "id=\"topic\"")
   let sharedMs := (← IO.monoMsNow) - t0
-  t s!"hang guard: {n} same-titled sections claim their anchors within {hangGuardMs 250} ms"
+  t s!"hang guard: {n} same-titled sections claim their anchors within {hangGuardMs 250} ms ({sharedMs} ms)"
     (sharedMs < hangGuardMs 250)

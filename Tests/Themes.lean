@@ -1647,7 +1647,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Consumed before the clock is read again, since a pure `let` floats to its first use.
   t "20,000 legible coloured runs are judged silently" judged.isEmpty
   let judgeMs := (← IO.monoMsNow) - t0
-  t s!"hang guard: the contrast judge over 20000 coloured runs within {hangGuardMs 50} ms"
+  t s!"hang guard: the contrast judge over 20000 coloured runs within {hangGuardMs 50} ms ({judgeMs} ms)"
     (judgeMs < hangGuardMs 50)
   let washedNotes (uses : Nat) : Array String :=
     ((elabStr ("\\documentclass{article}\\palette{ washed = #888888 }" ++
@@ -1668,7 +1668,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((paleJudged.filter (·.severity == .warning)).size == 1 &&
       (Diag.tallySites paleJudged).any fun d => d.severity == .warning && d.sites == 3000)
   let paleMs := (← IO.monoMsNow) - t1
-  t s!"hang guard: 3000 uses of one failing pairing judged within {hangGuardMs 30} ms"
+  t s!"hang guard: 3000 uses of one failing pairing judged within {hangGuardMs 30} ms ({paleMs} ms)"
     (paleMs < hangGuardMs 30)
 
   for th in Theme.builtin do

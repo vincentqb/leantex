@@ -7412,7 +7412,7 @@ def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
     (merged.size == n && merged[7]? == some ("k7", some { num := "7", kind := some .figure })
       && merged[n - 1]? == some (s!"k{n - 1}", some { num := toString (n - 1), kind := some .figure }))
   let mergeMs := (← IO.monoMsNow) - t0
-  t s!"hang guard: the float merge of {n} labels and {n} rows within {hangGuardMs 50} ms"
+  t s!"hang guard: the float merge of {n} labels and {n} rows within {hangGuardMs 50} ms ({mergeMs} ms)"
     (mergeMs < hangGuardMs 50)
   let dup := (elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\section{A}\\label{k}\\section{B}\\label{k}\\end{document}")).2
