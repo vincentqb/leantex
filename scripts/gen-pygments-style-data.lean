@@ -1,7 +1,7 @@
 /-
-Regenerate LeanTex/Core/PygmentsStyleData.lean and testdata/oracles/pygments-styles.tsv from an
-installed Pygments, refusing a style word the painter does not carry.
-Usage: lake build scripts.GenData && lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>]
+Regenerate LeanTex/Core/PygmentsStyleData.lean and testdata/oracles/pygments-styles.tsv from Pygments
+`GenData.pygmentsRelease`, refusing a style word the painter does not carry.
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>] | --selftest
 -/
 import scripts.GenData
 import Lean.Data.Json
@@ -20,7 +20,7 @@ import re
 import shutil
 import sys
 
-"# ++ GenData.pygmentsLoader ++ r#"from pygments.formatters.latex import LatexFormatter
+"# ++ GenData.pygmentsPinned ++ r#"from pygments.formatters.latex import LatexFormatter
 from pygments.styles import get_style_by_name
 from pygments.token import STANDARD_TYPES
 
@@ -102,9 +102,11 @@ def field (j : Json) (key : String) : IO String := do
   | _ => die s!"the Pygments answer has no '{key}' in {j.compress}"
 
 def main (args : List String) : IO UInt32 := do
-  let python := match args with
-    | ["--python", p] => p
-    | _ => "python3"
+  if args == ["--selftest"] then return ← pinSelftest "gen-pygments-style-data" bridge
+  let python ← match args with
+    | [] => pure "python3"
+    | ["--python", p] => pure p
+    | _ => die "usage: gen-pygments-style-data [--python <interpreter>] | --selftest"
   let out ← try
     IO.Process.output { cmd := python, args := #["-I", "-B", "-c", bridge] ++ styles.toArray }
   catch e => die s!"{python} did not start: {e}"
