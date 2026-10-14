@@ -901,6 +901,73 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
           near p (mkRat 1 4))
 
 open Tests.PdfNative in
+/-- Each filter's output stops at the cap its chain passes, and a figure names the loss of a stream
+that does not decode: an image's mask, an indexed lookup, a ToUnicode map and a CID-to-glyph map. -/
+def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let filter (names : List String) : PdfRead.Obj :=
+    .dict #[("Filter", .arr (names.map PdfRead.Obj.name).toArray)]
+  let decoded (dict : PdfRead.Obj) (raw : ByteArray) (cap : Nat) : Option ByteArray :=
+    match PdfFilters.decodeCapped dict raw cap with
+    | .ok (.bytes b) => some b
+    | _ => none
+  let zs := "zzzzz~>".toUTF8
+  t "filters: ASCII85 past its cap is refused" ((decoded (filter ["A85"]) zs 19).isNone)
+  t "filters: ASCII85 up to its cap decodes"
+    (decoded (filter ["A85"]) zs 20 == some ⟨Array.replicate 20 0⟩)
+  t "filters: an ASCII85 final group past the cap is refused"
+    ((decoded (filter ["A85"]) "zzzz9jq~>".toUTF8 17).isNone &&
+      (decoded (filter ["A85"]) "zzzz9jq~>".toUTF8 18).isSome)
+  t "filters: the chain passes its cap to ASCII85 after another filter"
+    ((decoded (filter ["AHx", "A85"]) "7A7A7A7A7A7E3E>".toUTF8 19).isNone &&
+      (decoded (filter ["AHx", "A85"]) "7A7A7A7A7A7E3E>".toUTF8 20).isSome)
+  t "filters: run-length and Flate stop at the chain's cap"
+    ((decoded (filter ["RL"]) (bytes [0xFB, 0x41, 0x80]) 5).isNone &&
+      (decoded (filter ["RL"]) (bytes [0xFB, 0x41, 0x80]) 6).isSome &&
+      (decoded (filter ["Fl"]) (Flate.deflate ⟨Array.replicate 32 0⟩) 31).isNone &&
+      (decoded (filter ["Fl"]) (Flate.deflate ⟨Array.replicate 32 0⟩) 32).isSome)
+  let broken := streamObj "x~>" "/Filter /ASCII85Decode "
+  let image (mask : String) := statePdf "<< /XObject << /I1 5 0 R >> >>" "q 20 0 0 10 10 10 cm /I1 Do Q"
+    #[streamObj "AB" "/Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray \
+        /BitsPerComponent 8 /Mask 6 0 R ",
+      streamObj "?" s!"/Type /XObject /Subtype /Image /Width 2 /Height 1 /ImageMask true \
+        /BitsPerComponent 1 {mask}"]
+  t "figures: an image whose mask stream decodes is drawn with no loss" (lossesOf (image "") == .ok #[])
+  t "figures: an image whose mask stream does not decode is named"
+    (lossesOf (image "/Filter /ASCII85Decode ") == .ok #[.resource "mask-image"])
+  let indexed (lookup : String) := statePdf "<< /XObject << /I1 5 0 R >> >>"
+    "q 20 0 0 10 10 10 cm /I1 Do Q"
+    #[streamObj "\x00\x01" "/Type /XObject /Subtype /Image /Width 2 /Height 1 \
+        /ColorSpace [/Indexed /DeviceRGB 1 6 0 R] /BitsPerComponent 8 ", lookup]
+  t "figures: an indexed image whose lookup stream decodes is drawn with no loss"
+    (lossesOf (indexed (streamObj "\x00\x00\x7F\x7F\x00\x00")) == .ok #[])
+  let palette := (PdfGfx.importPage (indexed "<00007F7F0000>")).toOption.any fun imp =>
+    imp.figure.rasters.any fun r => bytesContain r.bytes "PLTE\x00\x00\x7F\x7F\x00\x00"
+  t "figures: an indexed image reads a lookup string standing as its own object"
+    (lossesOf (indexed "<00007F7F0000>") == .ok #[] && palette)
+  t "figures: an indexed image whose lookup stream does not decode is named"
+    (lossesOf (indexed broken) == .ok #[.resource "indexed-lookup"])
+  let simple (toUnicode : String) := statePdf "<< /Font << /F1 5 0 R >> >>"
+    "BT /F1 12 Tf 10 10 Td (A) Tj ET"
+    #["<< /Type /Font /Subtype /TrueType /BaseFont /Placeholder /ToUnicode 6 0 R >>", toUnicode]
+  let names (pdf : ByteArray) (l : Gfx.Loss) : Bool := (lossesOf pdf).toOption.any (·.contains l)
+  t "figures: a font whose ToUnicode stream decodes names no ToUnicode loss"
+    (!names (simple (streamObj "")) (.font "tounicode-unreadable"))
+  t "figures: a font whose ToUnicode stream does not decode is named"
+    (names (simple broken) (.font "tounicode-unreadable"))
+  let composite (gidMap : String) := statePdf "<< /Font << /F1 5 0 R >> >>"
+    "BT /F1 12 Tf 10 10 Td <0001> Tj ET"
+    #["<< /Type /Font /Subtype /Type0 /BaseFont /Placeholder /Encoding /Identity-H \
+        /DescendantFonts [6 0 R] >>",
+      "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Placeholder /FontDescriptor 7 0 R \
+        /CIDToGIDMap 8 0 R >>",
+      "<< /Type /FontDescriptor /FontName /Placeholder /Flags 32 >>", gidMap]
+  t "figures: a font whose CID-to-glyph stream decodes names no CID-to-glyph loss"
+    (!names (composite (streamObj "\x00\x00\x00\x01")) (.font "cidtogid-unreadable"))
+  t "figures: a font whose CID-to-glyph stream does not decode is named"
+    (names (composite broken) (.font "cidtogid-unreadable"))
+
+open Tests.PdfNative in
 /-- PDF figures ship native web faces with no converter on the machine, and `\figures{ convert =
 none }` never runs the converter. -/
 def nativeFigureBuildChecks (ref : IO.Ref (List String)) : IO Unit := do

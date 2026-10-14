@@ -5,7 +5,7 @@ import LeanTex.Core.PdfRead
 import LeanTex.Core.Flate
 
 /-! The stream filters of ISO 32000-2 §7.4 a figure's streams may name, chained in order, the
-run-length, LZW and Flate outputs capped at `PdfRead.maxDecoded`. -/
+ASCII85, run-length, LZW and Flate outputs capped at `PdfRead.maxDecoded`. -/
 
 namespace LeanTex.Core.PdfFilters
 
@@ -44,7 +44,7 @@ public def asciiHex (b : ByteArray) : ByteArray := Id.run do
   return out
 
 /-- ASCII85Decode (§7.4.3): five base-85 digits to four bytes, `z` for four zeros, up to `~>`. -/
-public def ascii85 (b : ByteArray) : Except String ByteArray := Id.run do
+public def ascii85 (b : ByteArray) (cap : Nat) : Except String ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut group : Array Nat := #[]
   let flush (out : ByteArray) (g : Array Nat) : ByteArray :=
@@ -67,8 +67,10 @@ public def ascii85 (b : ByteArray) : Except String ByteArray := Id.run do
         group := #[]
     else if PdfLex.isWs c then pure ()
     else return .error "malformed ASCII85 data: an unexpected character"
+    if out.size > cap then return .error "an ASCII85 stream decodes past the size limit"
   if group.size == 1 then return .error "malformed ASCII85 data: a final group of one digit"
   if group.size > 1 then out := flush out group
+  if out.size > cap then return .error "an ASCII85 stream decodes past the size limit"
   return .ok out
 
 /-- RunLengthDecode (§7.4.5): a length byte copies `n + 1` bytes or repeats one `257 − n` times; 128 ends. -/
@@ -160,11 +162,11 @@ private def unpredict (p : Option Obj) (data : ByteArray) : Except String ByteAr
     return ← Flate.pngUnfilter data rows rowBytes bpp
   throw s!"stream predictor {pred} is not supported"
 
-private def applyOne (name : String) (p : Option Obj) (data : ByteArray) : Except String Decoded := do
-  let cap := PdfRead.maxDecoded
+private def applyOne (name : String) (p : Option Obj) (data : ByteArray) (cap : Nat) :
+    Except String Decoded := do
   match filterName name with
   | "ASCIIHexDecode" => return .bytes (asciiHex data)
-  | "ASCII85Decode" => return .bytes (← ascii85 data)
+  | "ASCII85Decode" => return .bytes (← ascii85 data cap)
   | "RunLengthDecode" => return .bytes (← runLength data cap)
   | "LZWDecode" => return .bytes (← unpredict p (← lzw data (parm p "EarlyChange" 1 != 0) cap))
   | "FlateDecode" =>
@@ -177,9 +179,9 @@ private def applyOne (name : String) (p : Option Obj) (data : ByteArray) : Excep
   | "Crypt" => return .refused "crypt"
   | other => return .refused s!"filter-{other}"
 
-/-- A stream's data through its filter chain (§7.4), each filter with its parameters; a filter after
-`DCTDecode` is refused. -/
-public def decode (dict : Obj) (raw : ByteArray) : Except String Decoded := do
+/-- A stream's data through its filter chain (§7.4), each filter with its parameters and its output
+capped at `cap` bytes; a filter after `DCTDecode` is refused. -/
+public def decodeCapped (dict : Obj) (raw : ByteArray) (cap : Nat) : Except String Decoded := do
   let get (k abbr : String) : Option Obj := (dict.get? k).orElse fun _ => dict.get? abbr
   let names : Array String := match get "Filter" "F" with
     | some (.name n) => #[n]
@@ -196,9 +198,13 @@ public def decode (dict : Obj) (raw : ByteArray) : Except String Decoded := do
   let mut cur : Decoded := .bytes raw
   for h : i in [0:names.size] do
     match cur with
-    | .bytes data => cur ← applyOne names[i] (parms[i]?.getD none) data
+    | .bytes data => cur ← applyOne names[i] (parms[i]?.getD none) data cap
     | .dct _ => return .refused "filter-after-dct"
     | .refused f => return .refused f
   return cur
+
+/-- A stream's data through its filter chain, capped at `PdfRead.maxDecoded`. -/
+public def decode (dict : Obj) (raw : ByteArray) : Except String Decoded :=
+  decodeCapped dict raw PdfRead.maxDecoded
 
 end LeanTex.Core.PdfFilters

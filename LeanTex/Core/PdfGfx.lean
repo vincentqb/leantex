@@ -552,10 +552,11 @@ public def spaceOf (cx : Ctx) (o : Obj) : Space :=
     | some (.name "Indexed") | some (.name "I") =>
       let base := flatSpace cx (resolveSpace cx ((xs[1]?).getD (.name "DeviceRGB")))
       let hival := (((xs[2]?).bind fun x => (cx.doc.deref x).toOption).bind Obj.int?).getD 0
-      let lookup : ByteArray := match (xs[3]?).getD .null with
-        | .str s => (PdfContentLex.strBytes? (.str s)).getD ByteArray.empty
-        | other => (PdfFont.streamBytes cx.doc other).getD ByteArray.empty
-      .indexed base hival.toNat lookup
+      let table := (xs[3]?).getD .null
+      match ((cx.doc.deref table).toOption.bind PdfContentLex.strBytes?).orElse
+          fun _ => PdfFont.streamBytes cx.doc table with
+      | some lookup => .indexed base hival.toNat lookup
+      | none => .lossy "indexed-lookup" 1
     | some (.name "Pattern") => .pattern ((xs[1]?).map fun b => flatSpace cx (resolveSpace cx b))
     | _ => flatSpace cx (.arr xs)
   | o => flatSpace cx o
@@ -945,6 +946,7 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
           | _ => none
         | _ => none
       | _ => none
+    if (dict.get? "Mask").any (· matches .ref _ _) && alpha.isNone then throw "mask-image"
     let some px := imagePixels sp w h bpc data decode (if isMask then fill else none) alpha
       | throw "image-samples"
     return { bytes := PngEncode.encode px.header px.rows px.palette, jpeg := false, pxW := w, pxH := h, smooth }

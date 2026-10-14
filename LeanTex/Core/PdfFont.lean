@@ -348,6 +348,16 @@ public def cffNameGlyph (src : Ink.Src) (n : String) : Option Nat :=
         src.nameGlyph ("u" ++ hex4)
     | _ => none
 
+/-- A font's ToUnicode mappings, and the loss when its stream does not decode. -/
+private def toUnicodeOf (d : Doc) (font : Obj) : Std.HashMap Nat String × Array Gfx.Loss :=
+  match entry d font "ToUnicode" with
+  | some o => match streamBytes d o with
+    | some b => (toUnicode b, #[])
+    | none =>
+      if ((d.stream o).toOption.getD none).isSome then ({}, #[.font "tounicode-unreadable"])
+      else ({}, #[])
+  | none => ({}, #[])
+
 /-- A simple font read for drawing (§9.6): each code's glyph, width and text. -/
 public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
   let subtype := match (d.field font "Subtype").toOption.getD none with
@@ -360,11 +370,7 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
     match diffs.findRev? (·.1 == c) with
     | some (_, n) => some n
     | none => base.map (·.name c)
-  let uni : Std.HashMap Nat String := match entry d font "ToUnicode" with
-    | some o => match streamBytes d o with
-      | some b => toUnicode b
-      | none => {}
-    | none => {}
+  let (uni, uniLoss) := toUnicodeOf d font
   let widths := simpleWidths d font desc
   let textOf (named : Nat → Option String) (c : Nat) : String :=
     match uni.get? c with
@@ -391,7 +397,7 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
     let glyphs := (Array.range 256).map fun c =>
       (named c).bind fun n => if procs.any (·.1 == n) then some (GlyphRef.proc n) else none
     return { program := .type3 procs matrix res, codes := .simple glyphs widths ((Array.range 256).map (textOf named))
-             losses := #[] }
+             losses := uniLoss }
   let (program, loss, sfnt?) := programOf d desc
   match program, sfnt? with
   | .ink _ _, some b =>
@@ -420,7 +426,8 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
         else byUnicode.orElse fun _ => bySymbol.orElse fun _ => byMac
       let g := g.orElse fun _ => (postName c).bind fun n => if n.isEmpty then none else post.get? n
       some (GlyphRef.gid (g.getD 0))
-    return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named)), losses := loss.toArray }
+    return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named))
+             losses := loss.toArray ++ uniLoss }
   | .ink src _, none =>
     let glyph (c : Nat) : Option Nat :=
       match explicit c with
@@ -429,12 +436,13 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
     let named (c : Nat) : Option String :=
       (explicit c).orElse fun _ => (glyph c).bind src.glyphName
     let glyphs := (Array.range 256).map fun c => (glyph c).map GlyphRef.gid
-    return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named)), losses := loss.toArray }
+    return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named))
+             losses := loss.toArray ++ uniLoss }
   | _, _ =>
     let named (c : Nat) : Option String :=
       (explicit c).orElse fun _ => if isSym then none else some (GlyphList.standardName c)
     return { program, codes := .simple (Array.replicate 256 none) widths ((Array.range 256).map (textOf named))
-             losses := loss.toArray }
+             losses := loss.toArray ++ uniLoss }
 
 private def cidWidths (d : Doc) (cidFont : Obj) : Std.HashMap Nat Rat := Id.run do
   let mut m : Std.HashMap Nat Rat := {}
@@ -484,20 +492,19 @@ public def loadComposite (d : Doc) (font : Obj) : Loaded := Id.run do
         (if sp.isEmpty then identity else sp, cs, vert, none)
       | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-unreadable"))
     | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-missing"))
-  let gidOf : Option ByteArray := (entry d cidFont "CIDToGIDMap").bind fun o => match o with
-    | .name _ => none
-    | o => streamBytes d o
+  let (gidOf, gidLoss) : Option ByteArray × Array Gfx.Loss := match entry d cidFont "CIDToGIDMap" with
+    | none | some (.name _) => (none, #[])
+    | some o => match streamBytes d o with
+      | some b => (some b, #[])
+      | none => (none, #[.font "cidtogid-unreadable"])
   let isCff := match program with
     | .ink src _ => src.isCidCff
     | _ => false
   let dw := (((d.field cidFont "DW").toOption.getD none).bind num?).getD 1000
-  let text : Std.HashMap Nat String := match entry d font "ToUnicode" with
-    | some o => match streamBytes d o with
-      | some b => toUnicode b
-      | none => {}
-    | none => {}
+  let (text, uniLoss) := toUnicodeOf d font
   return { program, codes := .composite space cids gidOf isCff (cidWidths d cidFont) dw text vertical
-           losses := loss.toArray ++ cmapLoss.toArray ++ (if vertical then #[.font "vertical"] else #[]) }
+           losses := loss.toArray ++ cmapLoss.toArray ++ gidLoss ++ uniLoss ++
+             (if vertical then #[.font "vertical"] else #[]) }
 
 /-- A font dictionary read for drawing, by its subtype. -/
 public def load (d : Doc) (font : Obj) : Loaded :=
