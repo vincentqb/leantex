@@ -467,8 +467,8 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let key (k : String) (r : ListingHighlight.Role) (c : Ir.Color) :
       String × List (ListingHighlight.Role × Ir.Color) :=
     (s!"\\palette\{ {k} = {c.css} }\n", [(r, c)])
-  -- A quarter turn, less the rounding of 8-bit colours; and less too the
-  -- disliked region's width and a degree, where a slot moves out of it.
+  -- A quarter turn, less the rounding of 8-bit colours; and, from the error's hue, less too the
+  -- disliked region's width and two degrees, where a slot moves out of it.
   let quarter : Int := 88000
   let moved : Int := 64000
   for (label, seeds, (more, declared), inkHue, spread) in [
@@ -511,9 +511,11 @@ def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
           kw != lit)
       t s!"seeded code, {label}: each derived one shows a hue"
         (derived.all fun c => Oklab.okJnd ≤ chromaOf c)
-      let apart := (derived ++ [err]).zipIdx
-      t s!"seeded code, {label}: the derived hues stand a quarter turn apart, and from the error's"
-        (apart.all fun (c, i) => apart.all fun (c', j) => i == j || spread ≤ hueGap (hueOf c) (hueOf c'))
+      let apart := derived.zipIdx
+      t s!"seeded code, {label}: the derived hues stand a quarter turn apart"
+        (apart.all fun (c, i) => apart.all fun (c', j) => i == j || quarter ≤ hueGap (hueOf c) (hueOf c'))
+      t s!"seeded code, {label}: the derived hues stand from the error's at least the spread its slots allow"
+        (derived.all fun c => spread ≤ hueGap (hueOf c) (hueOf err))
       t s!"seeded code, {label}: a derived hue stands an eighth of a turn from a declared one"
         (derived.all fun c => held.all fun c' => 43000 ≤ hueGap (hueOf c) (hueOf c'))
       t s!"seeded code, {label}: each derived one stands at the text floor on the paper, on the gamut's edge, out of the disliked region"

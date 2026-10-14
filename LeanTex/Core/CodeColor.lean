@@ -263,6 +263,16 @@ private def nearestSlot (slots : List Int) (h : Int) : Option Int :=
 private def vivid (floor : Nat) (grounds : List Color) (h : Int) : Derived :=
   (ContrastSolve.bandClear floor grounds h).elim .ink .color
 
+/-- A slot's hue, or where it stands among the disliked region's hues, the region's edge two degrees
+out on the side farther from the other roles' hues, so three roles stay a quarter turn apart. -/
+private def placed (h : Int) (others : List Int) : Int :=
+  if ContrastSolve.dislikedLo ≤ h ∧ h ≤ ContrastSolve.dislikedHi then
+    let warm := ContrastSolve.dislikedLo - 2000
+    let cool := ContrastSolve.dislikedHi + 2000
+    let far (x : Int) : Int := others.foldl (fun m o => min m (hueDist x o)) 360000
+    if far warm < far cool then cool else warm
+  else h
+
 /-- The literal, keywords and names under seeds, at the band tones of the slots a quarter turn
 on from the error's hue (its key's, the alert's, the mark's, else the ink's). -/
 private def seededPlan (p : Reads) (grounds : List Color) (floor : Nat)
@@ -291,9 +301,12 @@ private def seededPlan (p : Reads) (grounds : List Color) (floor : Nat)
     let lit := if p.ex.isSome || (declared .literal).isSome then none else free.head?
     let free := free.filter (some · != lit)
     let name := if (declared .name).isSome then none else free.head?
-    let derived (h : Option Int) : Derived := if p.fg.isSome then h.elim .ink (vivid floor grounds) else .none
+    let taken := [keyword, lit, name].filterMap id ++ held
+    let derived (h : Option Int) : Derived :=
+      if p.fg.isSome then h.elim .ink fun h => vivid floor grounds (placed h (taken.filter (· != h)))
+      else .none
     ((match p.ex, lit with
-      | none, some h => vivid floor grounds h
+      | none, some h => vivid floor grounds (placed h (taken.filter (· != h)))
       | _, _ => literal.1), derived keyword, derived name)
 
 /-- The quietest tone of the ink's hue that reads as text on every ground, else the ink. -/
@@ -350,7 +363,7 @@ private theorem seededPlan_keywords_none {p : Reads} {grounds : List Color} {flo
     simp only [hf, Option.isSome_some, ite_true] at h
     split at h
     · rcases h with h | h <;> simp at h
-    · rcases h with h | h <;> exact elim_ink_ne_none _ _ (vivid_ne_none floor grounds) h
+    · rcases h with h | h <;> exact elim_ink_ne_none _ _ (fun _ => vivid_ne_none floor grounds _) h
 
 private theorem seededPlan_literal_none {p : Reads} {grounds : List Color} {floor : Nat}
     {l : Derived × Option (Int × Int)} {declared : ListingHighlight.Role → Option Color}
