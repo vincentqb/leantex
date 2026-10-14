@@ -96,4 +96,92 @@ public def unbalanced (item : String) : Bool :=
   let count (c : Char) := (item.toList.filter (· == c)).length
   count '(' != count ')' || count '[' != count ']' || count '"' % 2 == 1
 
+private theorem intercalate_snoc_last {α : Type} (sep : List α) (c : List α) (x : α) :
+    ∀ L : List (List α), sep.intercalate (L ++ [c ++ [x]]) = sep.intercalate (L ++ [c]) ++ [x]
+  | [] => by simp [List.intercalate_singleton]
+  | l :: L => by
+    rw [List.cons_append, List.cons_append,
+      List.intercalate_cons_of_ne_nil (by simp), List.intercalate_cons_of_ne_nil (by simp),
+      intercalate_snoc_last sep c x L]
+    simp only [List.append_assoc]
+
+private theorem intercalate_snoc_empty {α : Type} (sep : List α) (c : List α) :
+    ∀ L : List (List α), sep.intercalate (L ++ [c] ++ [[]]) = sep.intercalate (L ++ [c]) ++ sep
+  | [] => by simp [List.intercalate_cons_cons, List.intercalate_singleton]
+  | l :: L => by
+    rw [List.cons_append, List.cons_append,
+      List.intercalate_cons_of_ne_nil (by simp), List.intercalate_cons_of_ne_nil (by simp),
+      intercalate_snoc_empty sep c L]
+    simp only [List.append_assoc]
+
+private theorem splitGo_join {α : Type} [BEq α] [LawfulBEq α] (opens closes : α → Bool) (s : α)
+    (l : List α) (depth : Nat) (cur : Array α) (out : Array (Array α)) :
+    [s].intercalate ((splitGo opens closes (fun | x :: _ => if x == s then 1 else 0 | [] => 0)
+        l depth cur out).toList.map Array.toList) =
+      [s].intercalate ((out.push cur).toList.map Array.toList) ++ l := by
+  fun_induction splitGo opens closes (fun | x :: _ => if x == s then 1 else 0 | [] => 0)
+    l depth cur out with
+  | case1 => simp
+  | case2 x rest depth cur out _ ih =>
+    rw [ih]
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
+    rw [intercalate_snoc_last]
+    simp
+  | case3 x rest depth cur out _ _ ih =>
+    rw [ih]
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
+    rw [intercalate_snoc_last]
+    simp
+  | case4 x rest depth cur out _ _ hsep ih =>
+    have hx : x = s := by
+      cases hxs : x == s with
+      | true => exact eq_of_beq hxs
+      | false => simp [hxs] at hsep
+    subst hx
+    rw [ih]
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, beq_self_eq_true,
+      ↓reduceIte, Nat.sub_self, List.drop_zero]
+    rw [intercalate_snoc_empty]
+    simp
+  | case5 x rest depth cur out _ _ _ ih =>
+    rw [ih]
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
+    rw [intercalate_snoc_last]
+    simp
+
+/-- Joined at the separator element, the pieces `splitTopAt` cuts are the list it cut. -/
+public theorem splitTopAt_join_id {α : Type} [BEq α] [LawfulBEq α] (opens closes : α → Bool)
+    (s : α) (xs : List α) :
+    [s].intercalate ((splitTopAt opens closes (· == s) xs).toList.map Array.toList) = xs := by
+  unfold splitTopAt splitTopWith
+  rw [splitGo_join]
+  simp
+
+private theorem texAtoms_flatten (cs : List Char) (acc : Array (List Char)) :
+    (texAtoms cs acc).toList.flatten = acc.toList.flatten ++ cs := by
+  fun_induction texAtoms cs acc with
+  | case1 acc => simp
+  | case2 c rest acc ih => rw [ih]; simp
+  | case3 c rest acc _ ih => rw [ih]; simp
+
+private theorem flatten_intercalate (a : List Char) :
+    ∀ segs : List (List (List Char)),
+      ([a].intercalate segs).flatten = a.intercalate (segs.map List.flatten)
+  | [] => by simp
+  | [x] => by simp [List.intercalate_singleton]
+  | x :: y :: rest => by
+    rw [List.intercalate_cons_cons, List.map_cons, List.map_cons, List.intercalate_cons_cons,
+      ← List.map_cons, ← flatten_intercalate a (y :: rest)]
+    simp
+
+/-- Joined at their commas, the items `split` cuts are the text it cut. -/
+public theorem split_join_id (s : String) :
+    [','].intercalate ((split s).toList.map String.toList) = s.toList := by
+  have h := splitTopAt_join_id (· == ['{']) (· == ['}']) [','] (texAtoms s.toList #[]).toList
+  have hf := congrArg List.flatten h
+  rw [flatten_intercalate, texAtoms_flatten] at hf
+  simp only [split, splitTeX, Array.toList_map, List.map_map, Function.comp_def,
+    String.toList_ofList, List.flatMap_id]
+  simpa [List.map_map, Function.comp_def] using hf
+
 end LeanTex.Core.KeyVal

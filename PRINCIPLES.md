@@ -66,7 +66,7 @@ Generic structure, specific semantics: one traversal per tree type, with identit
 census laws proved once; one command and environment registry with argument signatures; one
 key=value reader; one counter model; one cache protocol. A predicate projects the registry,
 never a hand-kept mirror (`Ir.mapInlines_text`, `Ir.mapBlocks_text`; owed (U92); owed (U20):
-`KeyVal.parse_unbraced_comma_exact`).
+`KeyVal.split_unbraced_exact`).
 
 ## A canvas fits and a flow breaks
 
