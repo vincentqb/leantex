@@ -819,6 +819,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   animatedFacesChecks ref oneFace
   pdfPageSelectionChecks ref
   pdfReadObjectsChecks ref
+  pdfXrefRowsChecks ref
   rasterPageChecks ref oneFace
   imageRowChecks ref oneFace
   colorKeyChecks ref oneFace

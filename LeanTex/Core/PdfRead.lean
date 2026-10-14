@@ -348,6 +348,58 @@ public theorem readXrefSubsection_row_exact (data : ByteArray)
   | zero => simp [readXrefSubsection]
   | succ count ih => simp only [readXrefSubsection_succ, ih, Nat.add_assoc]
 
+/-- A subsection read in two parts: its first `a` rows, then the rest from where they end. -/
+private theorem readXrefSubsection_add (data : ByteArray) (w0 w1 w2 start a b row0 : Nat)
+    (x0 : Xref) :
+    readXrefSubsection data w0 w1 w2 start (a + b) row0 x0 =
+      readXrefSubsection data w0 w1 w2 (start + a) b (row0 + a)
+        (readXrefSubsection data w0 w1 w2 start a row0 x0).1 := by
+  induction b with
+  | zero =>
+    have hr := readXrefSubsection_row_exact data w0 w1 w2 start a row0 x0
+    have hz (s r : Nat) (x : Xref) : readXrefSubsection data w0 w1 w2 s 0 r x = (x, r) := by
+      simp [readXrefSubsection]
+    rw [Nat.add_zero, hz]
+    exact Prod.ext rfl hr
+  | succ b ih =>
+    rw [← Nat.add_assoc, readXrefSubsection_succ, readXrefSubsection_succ, ih]
+    simp only [readXrefSubsection_row_exact, Nat.add_assoc]
+
+/-- Rows from `row0` on, past the data, change nothing a subsection reads. -/
+private theorem readXrefSubsection_past (data : ByteArray) (w0 w1 w2 start count row0 : Nat)
+    (x0 : Xref) (hw : 0 < w0 + w1 + w2) (hr : data.size / (w0 + w1 + w2) ≤ row0) :
+    (readXrefSubsection data w0 w1 w2 start count row0 x0).1 = x0 := by
+  induction count with
+  | zero => simp [readXrefSubsection]
+  | succ count ih =>
+    rw [readXrefSubsection_succ]
+    have hrow := readXrefSubsection_row_exact data w0 w1 w2 start count row0 x0
+    have hlt : data.size < (data.size / (w0 + w1 + w2) + 1) * (w0 + w1 + w2) :=
+      (Nat.div_lt_iff_lt_mul hw).mp (Nat.lt_succ_self _)
+    have hgt : ¬ ((row0 + count) * (w0 + w1 + w2) + (w0 + w1 + w2) ≤ data.size) := by
+      intro hle
+      have hm : (data.size / (w0 + w1 + w2) + 1) * (w0 + w1 + w2) ≤
+          (row0 + count) * (w0 + w1 + w2) + (w0 + w1 + w2) := by
+        rw [← Nat.add_one_mul]
+        exact Nat.mul_le_mul_right _ (by omega)
+      exact absurd (Nat.lt_of_lt_of_le hlt hm) (Nat.not_lt.mpr hle)
+    simp only [hrow, readXrefRow, hgt, ↓reduceIte, ih]
+
+/-- A subsection read only as far as its data holds rows reads what reading it whole reads. -/
+private theorem readXrefSubsection_clamp (data : ByteArray) (w0 w1 w2 start count row0 : Nat)
+    (x0 : Xref) (hw : 0 < w0 + w1 + w2) :
+    (readXrefSubsection data w0 w1 w2 start (min count (data.size / (w0 + w1 + w2) - row0)) row0
+      x0).1 = (readXrefSubsection data w0 w1 w2 start count row0 x0).1 := by
+  by_cases hc : count ≤ data.size / (w0 + w1 + w2) - row0
+  · rw [Nat.min_eq_left hc]
+  · rw [Nat.min_eq_right (by omega)]
+    obtain ⟨j, hj⟩ : ∃ j, count = (data.size / (w0 + w1 + w2) - row0) + j :=
+      ⟨count - (data.size / (w0 + w1 + w2) - row0), by omega⟩
+    have hle : data.size / (w0 + w1 + w2) ≤ row0 + (data.size / (w0 + w1 + w2) - row0) := by omega
+    rw [hj, readXrefSubsection_add, readXrefSubsection_past data w0 w1 w2
+      (start + (data.size / (w0 + w1 + w2) - row0)) j
+      (row0 + (data.size / (w0 + w1 + w2) - row0)) _ hw hle]
+
 public theorem readXrefSubsection_locations_exact (w : Pdf.Xref.Widths)
     (es : Array Pdf.Xref.Entry)
     (hf : ∀ e ∈ es, e.Fits w) (count : Nat) (hc : count ≤ es.size)
@@ -538,9 +590,8 @@ private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
   for p in [0:index.size / 2] do
     let start := ((index[2 * p]?).getD 0).toNat
     let count := ((index[2 * p + 1]?).getD 0).toNat
-    let (x',row') := readXrefSubsection data w0 w1 w2 start count row x
-    x := x'
-    row := row'
+    x := (readXrefSubsection data w0 w1 w2 start (min count (data.size / rowW - row)) row x).1
+    row := row + count
   let prev := ((dict.get? "Prev").bind Obj.int?).map (·.toNat)
   return (x, prev)
 
@@ -651,7 +702,9 @@ private theorem readStreamSection_span_exact {b : ByteArray} {i : Nat}
     bind, pure]
   simp only [Id.run, List.length_cons, List.length_nil, Nat.reduceAdd, Nat.reduceDiv,
     List.range', List.forIn_cons, List.forIn_nil, pure, bind, Except.bind, Except.pure]
-  rfl
+  show Except.ok ((readXrefSubsection data 1 w.first w.second 0
+      (min count (data.size / (1 + w.first + w.second) - 0)) 0 (x0.seen dict)).1, none) = _
+  rw [readXrefSubsection_clamp data 1 w.first w.second 0 count 0 (x0.seen dict) (by omega)]
 
 private theorem readXrefFrom_stream_exact (b : ByteArray) (off : Nat) (x : Xref)
     (hn : keywordAt b (skipWs b off) "xref" = none)

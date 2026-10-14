@@ -303,3 +303,40 @@ def pdfReadObjectsChecks (ref : IO.Ref (List String)) : IO Unit := do
       let bytes := objectPdf ((bodies.set! 6 value.toUTF8).set! 4 "7 0 R".toUTF8) packs
       t s!"refuses malformed contents {value}, compressed={compressed}"
         (objectErrorIs (PdfRead.readForm bytes) error)
+
+/-- A cross-reference stream is read only as far as its data holds rows, whatever its /Size or
+/Index declares, and reads every other object as the same file declaring only those rows does. -/
+def pdfXrefRowsChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let objects := #["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << >> >>",
+    streamObj "0 0 1 rg 0 0 50 50 re f"]
+  let mut body := "%PDF-1.7\n".toUTF8
+  let mut rows := ByteArray.mk #[0, 0, 0, 0]
+  for (o, i) in objects.zipIdx do
+    rows := rows ++ ByteArray.mk #[1, UInt8.ofNat (body.size / 256), UInt8.ofNat (body.size % 256), 0]
+    body := body ++ s!"{i + 1} 0 obj\n{o}\nendobj\n".toUTF8
+  let xrefAt := body.size
+  rows := rows ++ ByteArray.mk #[1, UInt8.ofNat (xrefAt / 256), UInt8.ofNat (xrefAt % 256), 0]
+  -- Both spellings of a declaration have one length, so the files hold their objects at one offset.
+  let file (decl : String) : ByteArray := body ++ s!"5 0 obj\n<< /Type /XRef /W [1 2 1] {decl} \
+    /Root 1 0 R /Length {rows.size} >>\nstream\n".toUTF8 ++ rows ++
+    s!"\nendstream\nendobj\nstartxref\n{xrefAt}\n%%EOF\n".toUTF8
+  let declared ← IO.mkRef (10 ^ 11)
+  let huge := toString (← declared.get)
+  let six := "".pushn '0' (huge.length - 1) ++ "6"
+  let none0 := "".pushn '0' (huge.length - 1) ++ "0"
+  for (what, big, small) in [
+      (s!"/Size {huge}", s!"/Size {huge}", s!"/Size {six}"),
+      ("an /Index overrunning before a later subsection", s!"/Size {huge} /Index [0 {huge} {huge} 5]",
+        s!"/Size {six} /Index [0 {six} {six} {none0}]")] do
+    let t0 ← IO.monoMsNow
+    let read ← IO.lazyPure fun _ => PdfRead.Doc.ofBytes (file big)
+    let ms := (← IO.monoMsNow) - t0
+    let whole := (PdfRead.Doc.ofBytes (file small)).toOption
+    check ref s!"cross-reference rows: {what} reads its six rows as the file declaring six does ({ms} ms)"
+      (match read.toOption, whole with
+        | some d, some e => d.objectCount == 5 && e.objectCount == 5 && (d.page .first).isOk &&
+          d.lists 5 && e.lists 5 && [0, 1, 2, 3, 4, 6].all fun n =>
+            (d.get n).toOption.map (·.1) == (e.get n).toOption.map (·.1)
+        | _, _ => false)
+    check ref s!"hang guard: {what} reads within {hangGuardMs 5} ms ({ms} ms)" (ms < hangGuardMs 5)
