@@ -1,6 +1,7 @@
 /-
 The raster judge the picture oracles share: a tool runner reporting a missing tool as `none`,
-Playwright's Chrome binaries, and ImageMagick's DSSIM at the calibrated scale and tolerance.
+the grey raster `pdftoppm -gray` writes, Playwright's Chrome binaries, and ImageMagick's DSSIM at
+the calibrated scale and tolerance.
 -/
 import scripts.ToolDump
 

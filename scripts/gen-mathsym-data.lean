@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/MathSymData.lean: the math symbols fontmath.ltx, amsfonts and amssymb
 declare, each with its declaring file's class and unicode-math's scalar.
-Usage: lake env lean --run scripts/gen-mathsym-data.lean
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-mathsym-data.lean
 -/
 import scripts.GenData
 import Std.Data.HashMap

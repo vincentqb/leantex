@@ -1,7 +1,7 @@
 /-
 Randomized differential test: the pruned Knuth-Plass DP's demerits equal the brute-force
 minimum.
-Usage: lake env lean --run scripts/kp-fuzz.lean [iterations]
+Usage: lake build ScriptsModules && lake env lean --run scripts/kp-fuzz.lean [iterations]
 -/
 import LeanTex
 import Tests.Support.Rand

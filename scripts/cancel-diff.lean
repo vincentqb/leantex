@@ -1,7 +1,7 @@
 /-
 LuaLaTeX (cancel.sty over FiraMath) against leantex placement for `\cancel`/`\cancelto` over an
 invented matrix: room within [0.40, 2.50], the value right of and above the strike.
-Usage: lake build leantex && lake env lean --run scripts/cancel-diff.lean [--report | --selftest]
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/cancel-diff.lean [--report | --selftest]
 -/
 import LeanTex
 import scripts.ToolDump

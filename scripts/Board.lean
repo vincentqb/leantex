@@ -1,6 +1,7 @@
 /-
 The scoreboard core: tier baselines (`testdata/scoreboard/<tier>.tsv`), their parser and
-validator, and the one ratchet every tier's `--check` and the base check apply.
+validator, and the one ratchet every tier's `--check` and the base check apply; with the vendored
+pins' faults, the checkout walk and the native PDF fixtures the tiers share.
 -/
 import LeanTex.Cli.FontDiscovery
 import LeanTex

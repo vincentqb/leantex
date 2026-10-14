@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/PygmentsLexData.lean and testdata/highlight's rules and licence from an
 installed Pygments and the departures testdata/highlight/pygments-departures.json declares.
-Usage: lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>]
 -/
 import scripts.GenData
 import Lean.Data.Json

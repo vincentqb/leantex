@@ -101,8 +101,8 @@ def rmsePermille (a b : Gray) : Nat := Id.run do
   let mut sum : UInt64 := 0
   for y in [0:h] do
     for x in [0:w] do
-      let pa : UInt64 := if x < a.w && y < a.h then a.px[y * a.w + x]!.toUInt64 else 255
-      let pb : UInt64 := if x < b.w && y < b.h then b.px[y * b.w + x]!.toUInt64 else 255
+      let pa := (a.at x y).toUInt64
+      let pb := (b.at x y).toUInt64
       let d := if pa ≥ pb then pa - pb else pb - pa
       sum := sum + d * d
   let r := Float.sqrt (sum.toFloat / (w * h).toFloat) / 255.0 * 1000.0

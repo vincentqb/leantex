@@ -152,8 +152,7 @@ def veraFailures (xml : String) : Array String × String := Id.run do
     let t := l.trimAscii.toString
     if t.startsWith "<details " then summary := t
     if t.startsWith "<rule " && hasStr t "status=\"failed\"" then
-      let attr (k : String) : String :=
-        (((t.splitOn (k ++ "=\"")).drop 1).head?.bind fun r => (r.splitOn "\"").head?).getD "?"
+      let attr (k : String) : String := (attrOf t k).getD "?"
       let id := s!"{attr "clause"}-{attr "testNumber"}"
       unless ids.contains id do ids := ids.push id
   return (ids.qsort (· < ·), summary)

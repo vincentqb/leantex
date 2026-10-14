@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/EncodingData.lean: bytes 0x80–0xFF of the inputenc encodings the engine
 reads, as iconv decodes them, Apple's table overriding glibc's at two bytes (`ownerRows`).
-Usage: lake env lean --run scripts/gen-encoding-data.lean
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-encoding-data.lean
 -/
 import scripts.GenData
 

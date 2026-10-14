@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/TextSymData.lean: the text symbols and accents lualatex sets under TU,
 from tuenc.def and latex.ltx (via kpsewhich).
-Usage: lake env lean --run scripts/gen-textsym-data.lean
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-textsym-data.lean
 -/
 import scripts.GenData
 

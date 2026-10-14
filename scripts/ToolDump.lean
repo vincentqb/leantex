@@ -4,8 +4,8 @@ import LeanTex.Core.Decl
 
 public section
 
-/-! A reference tool's version line and readers of the XML text dumps the oracles' tools write
-(`pdftotext -bbox`, Ghostscript's `txtwrite`). -/
+/-! A reference tool's version line, readers of the oracles' tool output (the XML text dumps of
+`pdftotext -bbox` and Ghostscript's `txtwrite`, ImageMagick's decimals) and point conversions. -/
 
 /-- The first line a tool prints for `args`, or `unavailable` when it cannot run or fails. -/
 def toolVersion (cmd : String) (args : Array String) (cwd : System.FilePath) : IO String := do
@@ -20,8 +20,8 @@ def attrOf (line attr : String) : Option String := do
   let after ← (line.splitOn (attr ++ "=\""))[1]?
   (after.splitOn "\"").head?
 
-/-- The text between `>` and `</word>`, the three XML entities the tools emit decoded, `&amp;`
-last. -/
+/-- The text between `>` and `</word>`, the three XML entities the tools emit decoded with `&amp;`
+last, trimmed. -/
 def wordText (line : String) : String :=
   let after := String.intercalate ">" ((line.splitOn ">").drop 1)
   let body := (after.splitOn "</word>").headD ""
@@ -39,18 +39,20 @@ def pointMicro (v : Int) : String :=
   let frac := toString (n % 1000000)
   s!"{sign}{n / 1000000}.{String.ofList (List.replicate (6 - frac.length) '0')}{frac}"
 
-/-- A decimal as the tools print it (`0.0197563`, `+12.5`, `1.2e-05`), or none. -/
+/-- A decimal as the tools print it (`0.0197563`, `+12.5`, `1.2e-05`); none for any other text. -/
 def parseFloat (s : String) : Option Float := do
   let s := s.trimAscii.toString
-  let (mant, exp) := match s.splitOn "e" with
-    | [m, e] => (m, e.toInt?.getD 0)
-    | _ => (s, 0)
+  let (mant, exp) ← match s.splitOn "e" with
+    | [m, e] => e.toInt?.map (m, ·)
+    | [m] => some (m, 0)
+    | _ => none
   let neg := mant.startsWith "-"
   let mant := if neg || mant.startsWith "+" then (mant.drop 1).toString else mant
-  let (ip, fp) := match mant.splitOn "." with
-    | [i, f] => (i, f)
-    | [i] => (i, "")
-    | _ => ("", "")
+  let (ip, fp) ← match mant.splitOn "." with
+    | [i, f] => some (i, f)
+    | [i] => some (i, "")
+    | _ => none
+  if ip.isEmpty && fp.isEmpty then none
   let i ← if ip.isEmpty then some 0 else ip.toNat?
   let f ← if fp.isEmpty then some 0 else fp.toNat?
   let v : Float := Float.ofNat i + Float.ofNat f / Float.ofNat (10 ^ fp.length)

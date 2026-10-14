@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/BibStringsData.lean from english.lbx's bibliography strings (via
 kpsewhich).
-Usage: lake env lean --run scripts/gen-bibstrings-data.lean
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-bibstrings-data.lean
 -/
 import scripts.GenData
 

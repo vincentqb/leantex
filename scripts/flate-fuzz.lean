@@ -1,7 +1,7 @@
 /-
 Fuzz the codec against python3's zlib: inflate inverts deflate on random, adversarial, fixture and
 PDF-writer bytes, and refuses and reads exactly what zlib does but the Adler-32 trailer.
-Usage: lake build && lake env lean --run scripts/flate-fuzz.lean
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/flate-fuzz.lean
 -/
 import LeanTex
 import Tests.Support.Rand

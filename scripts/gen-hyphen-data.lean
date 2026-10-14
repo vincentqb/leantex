@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/HyphenData*.lean from the hyph-utf8 pattern files (located through
 kpsewhich without a source), one `langs` row per language.
-Usage: lake env lean --run scripts/gen-hyphen-data.lean [source] [--lang en|fr] [--output path]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-hyphen-data.lean [source] [--lang en|fr] [--output path]
 -/
 import scripts.GenData
 

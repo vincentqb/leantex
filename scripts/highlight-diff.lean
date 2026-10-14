@@ -1,7 +1,7 @@
 /-
 The native listing lexers against the installed Pygments release they mirror and its declared
 departures, over the snippets, seeded fuzz and `--docs` listings, by stream, scalar type and colour.
-Usage: lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--without-departures] [--docs FILE...] | --record [--python P] | --selftest
+Usage: lake build ScriptsModules && lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--without-departures] [--docs FILE...] | --record [--python P] | --selftest
 -/
 import LeanTex
 import LeanTex.Core.Highlight

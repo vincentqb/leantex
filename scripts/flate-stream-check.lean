@@ -1,8 +1,9 @@
 import LeanTex.Core.Flate
 import LeanTex.Core.Flate.DecodeLoop
+import Tests.Support.Rand
 
 /-! Compression regression check against Python's zlib, both directions and every block kind.
-Usage: lake env lean --run scripts/flate-stream-check.lean -/
+Usage: lake build ScriptsModules && lake env lean --run scripts/flate-stream-check.lean -/
 
 open LeanTex.Core
 
@@ -42,10 +43,9 @@ private def samples : Array (String × ByteArray) := Id.run do
   for size in #[17, 258, 1025, 32767, 32768, 65535, 65536] do
     let mut bytes := ByteArray.emptyWithCapacity size
     for _ in [0:size] do
-      seed := seed ^^^ (seed >>> 12)
-      seed := seed ^^^ (seed <<< 25)
-      seed := seed ^^^ (seed >>> 27)
-      bytes := bytes.push (seed * 2685821657736338717).toUInt8
+      let (next, word) := nextRand seed
+      seed := next
+      bytes := bytes.push word.toUInt8
     cases := cases.push (s!"random-{size}", bytes)
   return cases
 

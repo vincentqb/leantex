@@ -6,7 +6,7 @@ open GenData
 /-
 Regenerate LeanTex/Core/LocaleData.lean from babel's locale ini files (via kpsewhich) and the
 tables below.
-Usage: lake env lean --run scripts/gen-locale-data.lean [--output path]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-locale-data.lean [--output path]
 -/
 
 def notice : String := "/-
@@ -28,15 +28,7 @@ the generator carries that table, cited beside it.
 -/
 "
 
-def findIni (lang : String) : IO String := do
-  let out ← try
-    IO.Process.output { cmd := "kpsewhich", args := #[s!"babel-{lang}.ini"] }
-  catch _ =>
-    die "kpsewhich not found"
-  let path := out.stdout.trimAscii.toString
-  if out.exitCode != 0 || path.isEmpty then
-    die s!"kpsewhich could not find babel-{lang}.ini"
-  return path
+def findIni (lang : String) : IO String := locate s!"babel-{lang}.ini"
 
 structure IniLocale where
   tag : String := ""

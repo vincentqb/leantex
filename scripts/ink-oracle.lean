@@ -1,7 +1,7 @@
 /-
 The ink oracle: Poppler's ink extent, text and off-page verdict per corpus page against
 `readArtifact`'s; without Poppler it reports `untested` and exits 0, a disagreement exits 1.
-Usage: lake build TestsModules && lake env lean --run scripts/ink-oracle.lean [--selftest]
+Usage: lake build ScriptsModules && lake env lean --run scripts/ink-oracle.lean [--selftest]
 -/
 import LeanTex.Cli.FontDiscovery
 import Tests.Artifact

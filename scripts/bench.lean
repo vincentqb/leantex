@@ -2,11 +2,12 @@ import Lean.Data.Json
 import LeanTex.Cli.ConvCache
 import LeanTex.Core.Image
 import LeanTex.Core.PngEncode
+import Tests.Support.Rand
 
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --decode-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --decode-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -628,10 +629,9 @@ def compressedRaster (side : Nat) (edited : Bool) : ByteArray := Id.run do
     raw := raw.push 0
     for x in [:side] do
       for c in [:4] do
-        seed := seed ^^^ (seed >>> 12)
-        seed := seed ^^^ (seed <<< 25)
-        seed := seed ^^^ (seed >>> 27)
-        let value := (seed * 2685821657736338717).toUInt8
+        let (next, word) := nextRand seed
+        seed := next
+        let value := word.toUInt8
         let value := if c == 3 then 128 + value % 128 else value % 32
         raw := raw.push (if edited && x == 0 && y == 0 && c == 0 then value ^^^ 16 else value)
   return png side side (Flate.deflate raw)

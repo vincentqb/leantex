@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/WhatwgEncodingData.lean from testdata/vendor/whatwg-encoding, refusing
 any line, pointer or label it cannot read exactly once.
-Usage: lake env lean --run scripts/gen-whatwg-encoding-data.lean [--check]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-whatwg-encoding-data.lean [--check]
 -/
 import scripts.GenData
 import Lean.Data.Json

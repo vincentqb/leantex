@@ -1,7 +1,7 @@
 /-
 Title-page placement differential: two invented beamer templates by LuaLaTeX and leantex,
 baselines within 0.25 pt by Ghostscript's txtwrite.
-Usage: lake build leantex && lake env lean --run scripts/title-placement-diff.lean [--selftest]
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/title-placement-diff.lean [--selftest]
 -/
 import LeanTex
 import scripts.ToolDump

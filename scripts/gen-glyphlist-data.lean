@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/GlyphListData.lean from testdata/vendor/glyphlist (see its
 PROVENANCE.txt), the PDF encodings with ISO 32000-2 Annex D.2's readings.
-Usage: lake env lean --run scripts/gen-glyphlist-data.lean
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-glyphlist-data.lean
 -/
 import scripts.GenData
 import LeanTex.Core.Hex

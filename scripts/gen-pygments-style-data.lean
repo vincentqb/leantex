@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/PygmentsStyleData.lean and testdata/oracles/pygments-styles.tsv from an
 installed Pygments, refusing a style word the painter does not carry.
-Usage: lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-pygments-style-data.lean [--python <interpreter>]
 -/
 import scripts.GenData
 import Lean.Data.Json

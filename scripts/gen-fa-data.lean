@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/FaData.lean from fontawesome5-mapping.def (CTAN, LPPL 1.3c) and Font
 Awesome's icons.json (CC BY 4.0), whose `label` is an icon's default text alternative.
-Usage: lake env lean --run scripts/gen-fa-data.lean <fontawesome5-mapping.def> <icons.json>
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-fa-data.lean <fontawesome5-mapping.def> <icons.json>
 -/
 import scripts.GenData
 import Lean.Data.Json

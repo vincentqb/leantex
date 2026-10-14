@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/CssColorData.lean from the vendored CSS named-colour table
 (testdata/vendor/color-name/index.js), refusing a line of any other shape.
-Usage: lake env lean --run scripts/gen-csscolor-data.lean [--check]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-csscolor-data.lean [--check]
 -/
 import scripts.GenData
 

@@ -1,7 +1,7 @@
 /-
 Regenerate LeanTex/Core/CollateData.lean: the Unicode::Collate::Locale tailorings biber sorts
 by, as `Collate`'s weight rows, and biber's `%LOCALE_MAP`, read from the host through perl.
-Usage: lake env lean --run scripts/gen-collate-data.lean [path/to/Biber/Constants.pm]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-collate-data.lean [path/to/Biber/Constants.pm]
 -/
 import scripts.GenData
 

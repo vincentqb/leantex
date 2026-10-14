@@ -6,7 +6,7 @@ open GenData
 /-
 Regenerate LeanTex/Core/NfcData.lean from UnicodeData.txt (TeX Live's `unicode-data`, found with
 kpsewhich without a source).
-Usage: lake env lean --run scripts/gen-nfc-data.lean [source] [--output path]
+Usage: lake build scripts.GenData && lake env lean --run scripts/gen-nfc-data.lean [source] [--output path]
 -/
 
 def notice : String := "/-
